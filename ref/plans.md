@@ -93,6 +93,11 @@ Deferred from the arc:
   firm, so not built: when it matters, a per-creator namespace count and a
   per-namespace (or total) byte budget checked on create / PATCH. A page
   read is already held to 8 MB.
+- **Shared values: history retention** (2026-10-28). `shared_values_history`
+  keeps every write forever, each row holding the value before and after
+  (up to 1 MB each). Fine at today's volume (a game record changes rarely);
+  when it grows, a retention rule (age or rows per key) run by a sweep, and
+  say so on the Shared values page.
 
 ---
 

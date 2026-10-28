@@ -28,6 +28,15 @@
  *                                           rev n updates only from rev n (409 code
  *                                           'rev_conflict' with `current`)
  *   DELETE /api/shared/:ns/:k[?rev=n]       one key; ?rev makes it compare-and-delete
+ *   GET    /api/shared/:ns/_history         { ns, namespace|null, history: [{ id, ns, k, op,
+ *                                           old_v, new_v, old_rev, new_rev, changed_by,
+ *                                           changed_act, changed_at }], next, limit, trimmed }
+ *                                           newest first; ?k=<key> one key; ?limit 1-200
+ *                                           (default 50); ?before=<id> pages; at most 8 MB of
+ *                                           old_v + new_v per page. Readable after the
+ *                                           namespace is deleted (the audit outlives it).
+ *                                           `_history`, not `history`: a key may be named
+ *                                           "history", but no key starts with `_` (NAME_RE).
  *
  * Responses: { status:'success', … } | { status:'error', message, code?, current? }.
  * 400 bad input · 403 not allowed · 404 no such namespace / key · 409 conflict
@@ -85,6 +94,14 @@ router.delete('/api/shared/:ns', staff, async (req, res) => {
   try {
     res.json({ status: 'success', ...(await svc.deleteNamespace(req.db, req.params.ns, req.auth)) });
   } catch (err) { send(res, 'DELETE /api/shared/:ns', err); }
+});
+
+// Before /:ns/:k — a key never starts with '_', so this path names no key.
+router.get('/api/shared/:ns/_history', staff, async (req, res) => {
+  try {
+    const out = await svc.listHistory(req.db, req.params.ns, { k: req.query.k, limit: req.query.limit, before: req.query.before });
+    res.json({ status: 'success', ...out });
+  } catch (err) { send(res, 'GET /api/shared/:ns/_history', err); }
 });
 
 router.get('/api/shared/:ns/:k', staff, async (req, res) => {

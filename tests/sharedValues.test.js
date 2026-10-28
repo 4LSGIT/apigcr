@@ -34,6 +34,16 @@
  *     why); this engine has no snapshots, so here the statement is pinned.
  *   - A namespace page holds at most 8 MB of values: limit ≤
  *     floor(8 MB / max_value_bytes), `trimmed` says it was cut.
+ *   - HISTORY: every successful write — namespace create / update / delete,
+ *     value create / update / delete — writes exactly ONE
+ *     shared_values_history row with the right op, before / after, revs and
+ *     writer (+ the View-as actor); a namespace delete writes one row carrying
+ *     the key count; NO failure path (400 / 403 / 404 / 409 / 413) writes
+ *     one; a history INSERT that fails rolls the write back.
+ *   - GET /api/shared/:ns/_history: newest first, ?k, ?before paging with
+ *     `next`, limit 1-200, an 8 MB byte budget on old_v + new_v (at least one
+ *     row), readable after the namespace is deleted (namespace null), 404
+ *     when there is neither; `_history` never shadows a key named history.
  *
  * Run: npx jest tests/sharedValues.test.js
  */
@@ -46,144 +56,10 @@ process.env.INTERNAL_API_KEY = 'yci_shared_values_test_internal';   // secret-sc
 const express = require('express');
 const http = require('http');
 const jwt = require('jsonwebtoken');
-const { withTransaction } = require('../lib/withTransaction');
 
 const SECRET = process.env.JWT_SECRET;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// In-memory engine
-// ─────────────────────────────────────────────────────────────────────────────
-
-const NS_COLS = ['ns', 'description', 'write_mode', 'max_value_bytes', 'max_keys', 'created_by', 'created_at', 'updated_at'];
-const V_COLS = ['ns', 'k', 'v', 'rev', 'updated_by', 'updated_act', 'created_at', 'updated_at'];
-const WRITE_MODES = ['staff', 'creator', 'own_key'];
-
-function sqlError(code, msg) { const e = new Error(msg || code); e.code = code; return e; }
-
-/** "a = ? AND b > ?" → [{ col, op }] — anything else throws. */
-function parseWhere(text) {
-  return text.split(/\s+AND\s+/i).map((part) => {
-    const m = part.trim().match(/^(?:\w+\.)?(\w+)\s*(=|>)\s*\?$/);
-    if (!m) throw new Error('engine: unsupported predicate ' + JSON.stringify(part));
-    return { col: m[1], op: m[2] };
-  });
-}
-
-function matches(row, conds, params) {
-  return conds.every((c, i) => {
-    const want = params[i];
-    const got = row[c.col];
-    if (got === undefined) throw new Error('engine: unknown column ' + c.col);
-    if (c.op === '=') return typeof got === 'number' ? got === Number(want) : got === want;
-    return String(got) > String(want);              // utf8mb4_bin: byte order
-  });
-}
-
-function makeEngine() {
-  let tables = { shared_namespaces: [], shared_values: [] };
-  const calls = [];
-  let clock = 0;
-  const stamp = () => `2026-10-28 00:00:${String(clock++).padStart(2, '0')}`;
-  const pick = (row, cols) => Object.fromEntries(cols.map((c) => [c, row[c]]));
-
-  async function query(sql, params = []) {
-    const s = String(sql).replace(/\s+/g, ' ').trim();
-    calls.push({ sql: s, params });
-    let m;
-
-    if (/jwt_api_audit_log/.test(s)) return [{ affectedRows: 1 }];
-
-    // SELECT … FROM shared_namespaces n … key_count (the listing)
-    if (/^SELECT .*\(SELECT COUNT\(\*\) FROM shared_values v WHERE v\.ns = n\.ns\) AS key_count FROM shared_namespaces n ORDER BY n\.ns$/.test(s)) {
-      const rows = tables.shared_namespaces.slice().sort((a, b) => (a.ns < b.ns ? -1 : 1))
-        .map((r) => ({ ...pick(r, NS_COLS), key_count: tables.shared_values.filter((v) => v.ns === r.ns).length }));
-      return [rows];
-    }
-    if ((m = s.match(/^SELECT (.+) FROM shared_namespaces WHERE (.+?)( FOR UPDATE)?$/))) {
-      const rows = tables.shared_namespaces.filter((r) => matches(r, parseWhere(m[2]), params));
-      return [rows.map((r) => pick(r, NS_COLS))];
-    }
-    if ((m = s.match(/^SELECT COUNT\(\*\) AS n FROM shared_values WHERE (.+)$/))) {
-      return [[{ n: tables.shared_values.filter((r) => matches(r, parseWhere(m[1]), params)).length }]];
-    }
-    if ((m = s.match(/^SELECT (.+) FROM shared_values WHERE (.+?)(?: ORDER BY k)?(?: LIMIT (\d+))?(?: FOR SHARE)?$/))) {
-      let rows = tables.shared_values.filter((r) => matches(r, parseWhere(m[2]), params));
-      if (/ORDER BY k/.test(s)) rows.sort((a, b) => (a.k < b.k ? -1 : 1));
-      if (m[3]) rows = rows.slice(0, Number(m[3]));
-      return [rows.map((r) => pick(r, V_COLS))];
-    }
-    if ((m = s.match(/^INSERT INTO shared_namespaces \(([^)]+)\) VALUES \(([^)]+)\)$/))) {
-      const cols = m[1].split(',').map((x) => x.trim());
-      const row = Object.fromEntries(cols.map((c, i) => [c, params[i]]));
-      if (tables.shared_namespaces.some((r) => r.ns === row.ns)) throw sqlError('ER_DUP_ENTRY');
-      if (!WRITE_MODES.includes(row.write_mode)) row.write_mode = '';     // relaxed sql_mode enum
-      const now = stamp();
-      tables.shared_namespaces.push({ description: null, write_mode: 'staff', max_value_bytes: 65536, max_keys: 1000,
-        ...row, created_at: now, updated_at: now });
-      return [{ affectedRows: 1 }];
-    }
-    if ((m = s.match(/^INSERT INTO shared_values \(([^)]+)\) VALUES \(([^)]+)\)$/))) {
-      const cols = m[1].split(',').map((x) => x.trim());
-      const vals = m[2].split(',').map((x) => x.trim());
-      let p = 0;
-      const row = Object.fromEntries(cols.map((c, i) => [c, vals[i] === '?' ? params[p++] : Number(vals[i])]));
-      if (!tables.shared_namespaces.some((r) => r.ns === row.ns)) throw sqlError('ER_NO_REFERENCED_ROW_2');
-      if (tables.shared_values.some((r) => r.ns === row.ns && r.k === row.k)) throw sqlError('ER_DUP_ENTRY');
-      const now = stamp();
-      tables.shared_values.push({ updated_act: null, ...row, created_at: now, updated_at: now });
-      return [{ affectedRows: 1 }];
-    }
-    if ((m = s.match(/^UPDATE (shared_namespaces|shared_values) SET (.+) WHERE (.+)$/))) {
-      const sets = m[2].split(/,\s*/).map((a) => {
-        const x = a.match(/^(\w+) = (\?|rev \+ 1)$/);
-        if (!x) throw new Error('engine: unsupported SET ' + a);
-        return { col: x[1], expr: x[2] };
-      });
-      const nParams = sets.filter((x) => x.expr === '?').length;
-      const setParams = params.slice(0, nParams);
-      const rows = tables[m[1]].filter((r) => matches(r, parseWhere(m[3]), params.slice(nParams)));
-      for (const r of rows) {
-        let p = 0;
-        for (const st of sets) {
-          if (!(st.col in r)) throw new Error('engine: unknown column ' + st.col);
-          r[st.col] = st.expr === '?' ? setParams[p++] : r[st.col] + 1;
-        }
-        if (m[1] === 'shared_namespaces' && !WRITE_MODES.includes(r.write_mode)) r.write_mode = '';
-        r.updated_at = stamp();
-      }
-      return [{ affectedRows: rows.length }];
-    }
-    if ((m = s.match(/^DELETE FROM (shared_namespaces|shared_values) WHERE (.+)$/))) {
-      const conds = parseWhere(m[2]);
-      const gone = tables[m[1]].filter((r) => matches(r, conds, params));
-      tables[m[1]] = tables[m[1]].filter((r) => !gone.includes(r));
-      if (m[1] === 'shared_namespaces') {                                // ON DELETE CASCADE
-        tables.shared_values = tables.shared_values.filter((v) => !gone.some((n) => n.ns === v.ns));
-      }
-      return [{ affectedRows: gone.length }];
-    }
-    throw new Error('engine: unsupported statement ' + s);
-  }
-
-  const db = {
-    calls,
-    query,
-    get tables() { return tables; },
-    seed(t) { tables = JSON.parse(JSON.stringify(t)); },
-    getConnection: async () => {
-      let snapshot = null;
-      return {
-        query,
-        beginTransaction: async () => { snapshot = JSON.stringify(tables); },
-        commit: async () => { snapshot = null; },
-        rollback: async () => { if (snapshot) tables = JSON.parse(snapshot); snapshot = null; },
-        release: () => {}, destroy: () => {},
-      };
-    },
-  };
-  db.withTransaction = (fn, opts) => withTransaction(db, fn, opts);
-  return db;
-}
+const { makeEngine } = require('./helpers/sharedValuesEngine');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HTTP
@@ -533,5 +409,169 @@ describe('reads and deletes', () => {
     expect(r.status).toBe(200);
     expect(db.tables.shared_values).toEqual([]);
     expect((await call(db, 'DELETE', '/api/shared/board/x', { headers: STAFF5 })).status).toBe(404);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// History
+// ─────────────────────────────────────────────────────────────────────────────
+
+const hist = (db) => db.tables.shared_values_history;
+const strip = (h) => { const { id, changed_at, ...rest } = h; return rest; };   // eslint-disable-line no-unused-vars
+const rules = (o) => JSON.stringify({ description: null, write_mode: 'staff', max_value_bytes: 65536, max_keys: 1000, ...o });
+
+describe('history: one row per successful write', () => {
+  test('namespace create / update / delete, each one row, with the rules as JSON', async () => {
+    const db = seeded([]);
+    expect((await call(db, 'POST', '/api/shared', { headers: STAFF7, body: { ns: 'board', description: 'B' } })).status).toBe(201);
+    expect(hist(db).map(strip)).toEqual([{ ns: 'board', k: null, op: 'ns_create', old_v: null, new_v: rules({ description: 'B' }),
+      old_rev: null, new_rev: null, changed_by: 7, changed_act: null }]);
+    expect((await call(db, 'PATCH', '/api/shared/board', { headers: STAFF7, body: { write_mode: 'creator', max_keys: 5 } })).status).toBe(200);
+    expect(strip(hist(db)[1])).toEqual({ ns: 'board', k: null, op: 'ns_update', old_v: rules({ description: 'B' }),
+      new_v: rules({ description: 'B', write_mode: 'creator', max_keys: 5 }), old_rev: null, new_rev: null, changed_by: 7, changed_act: null });
+    await call(db, 'PUT', '/api/shared/board/a', { headers: STAFF7, body: { v: '1', rev: null } });
+    await call(db, 'PUT', '/api/shared/board/b', { headers: STAFF7, body: { v: '2', rev: null } });
+    expect((await call(db, 'DELETE', '/api/shared/board', { headers: ADMIN9 })).status).toBe(200);
+    const last = hist(db)[hist(db).length - 1];
+    expect(strip(last)).toEqual({ ns: 'board', k: null, op: 'ns_delete',
+      old_v: rules({ description: 'B', write_mode: 'creator', max_keys: 5, key_count: 2 }), new_v: null,
+      old_rev: null, new_rev: null, changed_by: 9, changed_act: null });
+    expect(hist(db).map((h) => h.op)).toEqual(['ns_create', 'ns_update', 'create', 'create', 'ns_delete']);   // ONE row for the delete
+    expect(hist(db).map((h) => h.id)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  test('value create / update / delete: before, after, revs, writer', async () => {
+    const db = seeded();
+    await call(db, 'PUT', '/api/shared/scores/high', { headers: STAFF5, body: { v: '100', rev: null } });
+    await call(db, 'PUT', '/api/shared/scores/high', { headers: STAFF7, body: { v: '250', rev: 1 } });
+    await call(db, 'DELETE', '/api/shared/scores/high?rev=2', { headers: STAFF5 });
+    expect(hist(db).map(strip)).toEqual([
+      { ns: 'scores', k: 'high', op: 'create', old_v: null, new_v: '100', old_rev: null, new_rev: 1, changed_by: 5, changed_act: null },
+      { ns: 'scores', k: 'high', op: 'update', old_v: '100', new_v: '250', old_rev: 1, new_rev: 2, changed_by: 7, changed_act: null },
+      { ns: 'scores', k: 'high', op: 'delete', old_v: '250', new_v: null, old_rev: 2, new_rev: null, changed_by: 5, changed_act: null },
+    ]);
+  });
+
+  test('a delete without ?rev records the rev it removed; a live View-as stamps the actor', async () => {
+    const db = seeded(undefined, [vRow('scores', 'high', '7', 3)]);
+    await call(db, 'DELETE', '/api/shared/scores/high', {
+      headers: as({ sub: 5, view_as: true, view_as_mode: 'live', act: { sub: '6', username: 'fred' } }) });
+    expect(strip(hist(db)[0])).toEqual({ ns: 'scores', k: 'high', op: 'delete', old_v: '7', new_v: null, old_rev: 3, new_rev: null,
+      changed_by: 5, changed_act: 6 });
+  });
+
+  test('NO failure path writes a history row', async () => {
+    const big = 'x'.repeat(65537);
+    const cases = [
+      ['POST', '/api/shared', { ns: 'scores' }, STAFF5, 409],                         // duplicate namespace
+      ['POST', '/api/shared', { ns: 'Bad' }, STAFF5, 400],
+      ['PATCH', '/api/shared/scores', { max_keys: 5 }, STAFF7, 403],                 // not the creator
+      ['PATCH', '/api/shared/nope', { max_keys: 5 }, STAFF5, 404],
+      ['DELETE', '/api/shared/scores', undefined, STAFF7, 403],
+      ['PUT', '/api/shared/scores/high', { v: 'x', rev: null }, STAFF5, 409],          // exists
+      ['PUT', '/api/shared/scores/high', { v: 'x', rev: 1 }, STAFF5, 409],             // stale rev (row is at 2)
+      ['PUT', '/api/shared/scores/gone', { v: 'x', rev: 1 }, STAFF5, 409],             // no such key
+      ['PUT', '/api/shared/scores/high', { v: big, rev: 2 }, STAFF5, 413],
+      ['PUT', '/api/shared/scores/high', { v: 'x' }, STAFF5, 400],                     // no rev
+      ['PUT', '/api/shared/nope/high', { v: 'x', rev: null }, STAFF5, 404],
+      ['PUT', '/api/shared/locked/k', { v: 'x', rev: null }, STAFF7, 403],             // creator-only namespace
+      ['PUT', '/api/shared/one/b', { v: 'x', rev: null }, STAFF5, 409],               // full
+      ['DELETE', '/api/shared/scores/high?rev=1', undefined, STAFF5, 409],
+      ['DELETE', '/api/shared/scores/none', undefined, STAFF5, 404],
+    ];
+    for (const [method, url, body, headers, status] of cases) {
+      const db = seeded([nsRow('scores'), nsRow('locked', { write_mode: 'creator' }), nsRow('one', { max_keys: 1 })],
+        [vRow('scores', 'high', '100', 2), vRow('one', 'a', '1')]);
+      const r = await call(db, method, url, { headers, body });
+      expect([method, url, r.status, hist(db)]).toEqual([method, url, status, []]);
+    }
+  });
+
+  test('a failed history INSERT rolls the write back — no value without its history', async () => {
+    const db = seeded(undefined, [vRow('scores', 'high', '100', 1)]);
+    db.failHistory = true;
+    expect((await call(db, 'PUT', '/api/shared/scores/high', { headers: STAFF5, body: { v: '200', rev: 1 } })).status).toBe(500);
+    expect((await call(db, 'PUT', '/api/shared/scores/new', { headers: STAFF5, body: { v: '1', rev: null } })).status).toBe(500);
+    expect((await call(db, 'DELETE', '/api/shared/scores/high', { headers: STAFF5 })).status).toBe(500);
+    expect((await call(db, 'POST', '/api/shared', { headers: STAFF5, body: { ns: 'fresh' } })).status).toBe(500);
+    expect((await call(db, 'PATCH', '/api/shared/scores', { headers: STAFF5, body: { max_keys: 9 } })).status).toBe(500);
+    expect((await call(db, 'DELETE', '/api/shared/scores', { headers: STAFF5 })).status).toBe(500);
+    expect(db.tables.shared_values).toEqual([vRow('scores', 'high', '100', 1)]);
+    expect(db.tables.shared_namespaces.map((n) => [n.ns, n.max_keys])).toEqual([['scores', 1000]]);
+    expect(hist(db)).toEqual([]);
+  });
+});
+
+describe('GET /api/shared/:ns/_history', () => {
+  async function writeN(db, n) {
+    await call(db, 'PUT', '/api/shared/scores/high', { headers: STAFF5, body: { v: 'v1', rev: null } });
+    for (let i = 2; i <= n; i++) await call(db, 'PUT', '/api/shared/scores/high', { headers: STAFF5, body: { v: 'v' + i, rev: i - 1 } });
+  }
+
+  test('newest first; ?k filters; ?before + next page; the namespace is attached', async () => {
+    const db = seeded();
+    await writeN(db, 5);
+    await call(db, 'PUT', '/api/shared/scores/other', { headers: STAFF7, body: { v: 'o', rev: null } });
+    let r = await call(db, 'GET', '/api/shared/scores/_history', { headers: STAFF7 });
+    expect(r.status).toBe(200);
+    expect(r.body.history.map((h) => [h.id, h.k, h.op])).toEqual([[6, 'other', 'create'], [5, 'high', 'update'], [4, 'high', 'update'],
+      [3, 'high', 'update'], [2, 'high', 'update'], [1, 'high', 'create']]);
+    expect(r.body).toMatchObject({ ns: 'scores', namespace: { ns: 'scores' }, next: null, limit: 50, trimmed: false });
+    expect(r.body.history[1]).toEqual({ id: 5, ns: 'scores', k: 'high', op: 'update', old_v: 'v4', new_v: 'v5', old_rev: 4, new_rev: 5,
+      changed_by: 5, changed_act: null, changed_at: expect.any(String) });
+    r = await call(db, 'GET', '/api/shared/scores/_history?k=high&limit=2', { headers: STAFF7 });
+    expect([r.body.history.map((h) => h.id), r.body.next]).toEqual([[5, 4], 4]);
+    r = await call(db, 'GET', '/api/shared/scores/_history?k=high&limit=2&before=4', { headers: STAFF7 });
+    expect([r.body.history.map((h) => h.id), r.body.next]).toEqual([[3, 2], 2]);
+    r = await call(db, 'GET', '/api/shared/scores/_history?k=high&limit=2&before=2', { headers: STAFF7 });
+    expect([r.body.history.map((h) => h.id), r.body.next]).toEqual([[1], null]);
+  });
+
+  test('bad paging input → 400', async () => {
+    const db = seeded();
+    for (const q of ['limit=0', 'limit=201', 'limit=abc', 'before=0', 'before=-1', 'before=x', 'k=Bad', 'k=a%20b']) {
+      expect([q, (await call(db, 'GET', `/api/shared/scores/_history?${q}`, { headers: STAFF5 })).status]).toEqual([q, 400]);
+    }
+  });
+
+  test('an 8 MB byte budget on old_v + new_v: the page stops early, trimmed + next; never fewer than one row', async () => {
+    // Seeded directly (a 1 MB value over HTTP is the 10 MB body limit's business, not this test's).
+    const mb = 'x'.repeat(1048576);
+    const hrow = (id, oldV, newV) => ({ id, ns: 'big', k: 'k', op: oldV ? 'update' : 'create', old_v: oldV, new_v: newV,
+      old_rev: oldV ? id - 1 : null, new_rev: id, changed_by: 5, changed_act: null, changed_at: 't' });
+    const db = makeEngine();
+    db.seed({ shared_namespaces: [nsRow('big', { max_value_bytes: 1048576 })], shared_values: [],
+      shared_values_history: [hrow(1, null, mb), ...[2, 3, 4, 5, 6].map((i) => hrow(i, mb, mb))] });   // 1 MB, then 2 MB each
+    const r = await call(db, 'GET', '/api/shared/big/_history', { headers: STAFF5 });
+    expect(r.body.history.map((h) => h.id)).toEqual([6, 5, 4, 3]);                      // 8 MB: four 2 MB rows
+    expect([r.body.trimmed, r.body.next]).toEqual([true, 3]);
+    // a single row over the budget still comes back alone (never an empty page)
+    const one = makeEngine();
+    one.seed({ shared_namespaces: [nsRow('big', { max_value_bytes: 1048576 })], shared_values: [],
+      shared_values_history: [hrow(1, null, 'x'.repeat(9 * 1048576)), hrow(2, null, 'y')] });
+    const r1 = await call(one, 'GET', '/api/shared/big/_history?before=2', { headers: STAFF5 });
+    expect([r1.body.history.map((h) => h.id), r1.body.trimmed]).toEqual([[1], false]);
+  });
+
+  test('readable after the namespace is deleted (namespace null); 404 when there is neither', async () => {
+    const db = seeded();
+    await call(db, 'PUT', '/api/shared/scores/high', { headers: STAFF5, body: { v: '1', rev: null } });
+    await call(db, 'DELETE', '/api/shared/scores', { headers: STAFF5 });
+    const r = await call(db, 'GET', '/api/shared/scores/_history', { headers: STAFF7 });
+    expect(r.status).toBe(200);
+    expect([r.body.namespace, r.body.history.map((h) => h.op)]).toEqual([null, ['ns_delete', 'create']]);
+    expect((await call(db, 'GET', '/api/shared/never/_history', { headers: STAFF7 })).status).toBe(404);
+    expect((await call(db, 'GET', '/api/shared/never/_history?k=high', { headers: STAFF7 })).status).toBe(404);
+    // the deleted namespace HAS history, just none for this key: an empty page, not a 404
+    const r2 = await call(db, 'GET', '/api/shared/scores/_history?k=nokey', { headers: STAFF7 });
+    expect([r2.status, r2.body.namespace, r2.body.history, r2.body.next]).toEqual([200, null, [], null]);
+  });
+
+  test('staff only; `_history` never shadows a key named "history"', async () => {
+    const db = seeded();
+    expect((await call(db, 'GET', '/api/shared/scores/_history')).status).toBe(401);
+    expect((await call(db, 'PUT', '/api/shared/scores/history', { headers: STAFF5, body: { v: 'kept', rev: null } })).status).toBe(200);
+    const r = await call(db, 'GET', '/api/shared/scores/history', { headers: STAFF5 });
+    expect([r.status, r.body.value && r.body.value.v]).toEqual([200, 'kept']);
   });
 });

@@ -236,6 +236,7 @@ manual/08-Admin-Tools/08-mailboxes.md
 manual/08-Admin-Tools/09-comms-transcription.md
 manual/08-Admin-Tools/10-comms-archive.md
 manual/08-Admin-Tools/11-tool-actions.md
+manual/08-Admin-Tools/12-shared-values.md
 manual/08-Admin-Tools/README.md
 manual/README.md
 package-lock.json
@@ -408,6 +409,7 @@ public/scripts.js
 public/sendingform-bk.html
 public/sendingform.html
 public/settings.html
+public/sharedValues.html
 public/streak.html
 public/style.css
 public/survey.html
@@ -620,6 +622,7 @@ ref/migrations/2026-10-28_appt_length_smallint.sql
 ref/migrations/2026-10-28_hook_executions_async_receiver.sql
 ref/migrations/2026-10-28_intake_review_assignee.sql
 ref/migrations/2026-10-28_shared_values.sql
+ref/migrations/2026-10-28_shared_values_history.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -917,6 +920,7 @@ scripts/mobile-survey/fixtures/api/phone-lines/all/conversations/5555550199.json
 scripts/mobile-survey/fixtures/api/phone-lines/readable.json
 scripts/mobile-survey/fixtures/api/phone-lines/readable.staff.json
 scripts/mobile-survey/fixtures/api/readonly-keys.json
+scripts/mobile-survey/fixtures/api/shared.json
 scripts/mobile-survey/fixtures/api/tasks.json
 scripts/mobile-survey/fixtures/api/ui-config.json
 scripts/mobile-survey/fixtures/api/ui-config/pickers.json
@@ -937,6 +941,7 @@ scripts/sec2ScrubAuditShapes.js
 scripts/secret-scan.js
 scripts/seedRoleContacts.js
 scripts/settingsArcMigrate.js
+scripts/sharedValuesHistoryMigrate.js
 scripts/sharedValuesMigrate.js
 scripts/sweep_validate_live.js
 scripts/test_availability.js
@@ -1416,6 +1421,7 @@ tests/helpers/phoneSPHWorld.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
 tests/helpers/settingsApiFake.js
+tests/helpers/sharedValuesEngine.js
 tests/helpers/shellHtml.js
 tests/helpers/toolShell.js
 tests/helpers/u6aEventsDb.js
@@ -1640,7 +1646,9 @@ tests/settingsRegistry.test.js
 tests/settingsToolHomes.test.js
 tests/sharedValues.mysql.test.js
 tests/sharedValues.test.js
+tests/sharedValuesHistoryMigrate.test.js
 tests/sharedValuesMigrate.test.js
+tests/sharedValuesPage.test.js
 tests/smtpAdapter.deliveryInfo.test.js
 tests/sqlGuard.secretTables.test.js
 tests/ssnModifiers.test.js

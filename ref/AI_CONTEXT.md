@@ -3236,7 +3236,12 @@ updated_by, updated_act; FK ns ON DELETE CASCADE); migration
 `scripts/sharedValuesMigrate.js` (+ `ref/migrations/2026-10-28_shared_values.sql`).
 Rules in `services/sharedValuesService.js` (its header); HTTP in
 `routes/api.shared.js`: GET/POST `/api/shared`, GET/PATCH/DELETE
-`/api/shared/:ns`, GET/PUT/DELETE `/api/shared/:ns/:k`.
+`/api/shared/:ns`, GET/PUT/DELETE `/api/shared/:ns/:k`, GET
+`/api/shared/:ns/_history` (`_history`, not `history`: a key may be named
+history, none starts with `_`). History table `shared_values_history`
+(`scripts/sharedValuesHistoryMigrate.js` + its dated SQL). Admin page
+`public/sharedValues.html` (Admin → Shared values; the tile's `firm.settings`
+gate is visibility only); operator chapter manual 08/12.
 
 **Invariants.**
 - Staff JWT only (`requireAuth({audience:'staff'})`, no API keys). Read-only
@@ -3266,3 +3271,19 @@ Rules in `services/sharedValuesService.js` (its header); HTTP in
 - Out of automation's reach: not in update_db / insert_db WRITE_POLICY nor
   query_db (lib/internal_functions/db.js, DELIBERATELY EXCLUDED). Readable by
   session keys through `/api/readonly/sql` (not a secret table) — as data.
+- HISTORY: every SUCCESSFUL write — namespace create / rules change / delete,
+  value create / update / delete — inserts ONE `shared_values_history` row
+  in the write's own transaction (`recordHistory`): op, old_v / new_v (for a
+  namespace, its rules as JSON; ns_delete adds key_count — one row, not one
+  per value), old_rev / new_rev, changed_by (+ changed_act for View-as). A
+  failed write writes none; a history insert that fails rolls the write back.
+  An update / delete locks the row FOR UPDATE first, so "before" is the value
+  it replaced. No FK: `_history` stays readable after the namespace is
+  deleted (namespace null). Reads are newest first, `?k` / `?before=<id>`
+  paged, held to 8 MB of old_v + new_v per page (two passes: ids + byte
+  lengths, then only the rows that fit; never empty). A deleted namespace's
+  history: 404 only when the name never had any; a `?k` it lacks is an empty
+  page. History is keyed by NAME: a namespace re-created under a deleted one's
+  name shares its history (each ns_create row marks a beginning). The page's
+  "History by name" box reaches a deleted namespace (it is not listed). Indexes
+  (ns, k, id) and (ns, id). No retention yet (`ref/plans.md`).

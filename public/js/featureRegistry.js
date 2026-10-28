@@ -360,6 +360,16 @@ window.FEATURE_REGISTRY = {
     gate: 'su',
     hoverAnim: 'fa-fade', styleVars: '--fa-animation-duration:1.6s',
   },
+  // Shared values (/api/shared, 2026-10-28). gate 'firm.settings' is
+  // VISIBILITY ONLY — an admin/audit page most staff never need: every route
+  // the page calls is open to any staff member, and the server enforces each
+  // namespace's write rule (and creator-or-firm.settings for its rules and
+  // deletes) whoever opens it.
+  adminSharedValues: {
+    label: 'Shared values', icon: 'share-nodes', target: 'sharedValuesDiv', group: 'admin',
+    gate: 'firm.settings',
+    hoverAnim: 'fa-beat', styleVars: '--fa-beat-scale:1.15; --fa-animation-duration:1.2s',
+  },
   adminUsers: {
     label: 'Users', icon: 'users-gear', target: 'usersDiv', group: 'admin',
     gate: 'users.impersonate',
@@ -546,7 +556,7 @@ window.DEFAULT_LAYOUTS = {
     { item: 'adminDbConsole' }, { item: 'adminConnections' }, { item: 'adminApiTester' },
     { break: true },
     // Things you run rather than read, plus the cross-session notes.
-    { item: 'adminTools' }, { item: 'adminEtch' }, { item: 'adminScratch' },
+    { item: 'adminTools' }, { item: 'adminEtch' }, { item: 'adminScratch' }, { item: 'adminSharedValues' },
     { break: true },
     // Who is using it and what they are telling you: accounts, the alerts the
     // system raises on its own, and the ones staff raise by hand.

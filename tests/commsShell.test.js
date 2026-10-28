@@ -60,7 +60,7 @@ describe('wiring: Comms is a sidebar tab, Settings lives in More Features', () =
     expect(HTML).toMatch(/<div id="tabComms" class="tab-main">\s*<iframe data-src="\/comms.html" title="Comms"><\/iframe>\s*<\/div>/);
     expect(HTML).not.toMatch(/commsDiv/);
     const admin = noComments(between('<div id="tabAdmin"', '<div id="sequencesDiv"'));
-    expect((admin.match(/class="big-button"/g) || []).length).toBe(13); // 12 + Mailboxes (row 5, short by design)
+    expect((admin.match(/class="big-button"/g) || []).length).toBe(14); // 13 + Mailboxes (row 5, short by design)
     expect(admin).toMatch(/data-target="mailboxesDiv"/);
   });
 

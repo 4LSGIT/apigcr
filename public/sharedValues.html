@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shared values</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
+<style>
+  /* ══════════════════════════════════════════════
+     SHARED VALUES (Admin → Shared values) — self-contained styles (house
+     pattern: theme.css tokens, no style.css). Labels and hints by CLASS
+     only (.yc-flabel / .yc-hint — the pane-local copies caseconfig/lists.html
+     carries, AI_CONTEXT §12). Block layout, one column: no overflow on a
+     flex child (CLAUDE.md), tables scroll inside their own block box.
+     ══════════════════════════════════════════════ */
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--page-bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+  }
+  body { padding: 12px; }
+  h2 { margin: 0 0 4px; font-size: 16px; }
+  h3 { margin: 0 0 8px; font-size: 14px; }
+  .muted { color: var(--text-muted); font-size: 12px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .yc-flabel { display: block; font-size: var(--fs-sm, 12px); font-weight: 700; color: var(--text); margin: 0 0 4px; }
+  .yc-hint { display: block; font-size: var(--fs-xs, 11px); color: var(--text-muted); margin-top: 4px; line-height: 1.45; }
+
+  button {
+    background: var(--accent); color: var(--accent-text); border: none;
+    padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-family: inherit;
+  }
+  button:hover { opacity: .85; }
+  /* --fill-text: the base rule's --accent-text fails contrast on --danger-fill. */
+  button.danger { background: var(--danger-fill); color: var(--fill-text); }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  button.link { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; }
+  button:disabled { opacity: .45; cursor: default; }
+
+  input, select, textarea {
+    background: var(--page-bg); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 8px; border-radius: 4px; font-size: 12px; font-family: inherit;
+    max-width: 100%;
+  }
+  textarea { width: 100%; min-height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .row > * { min-width: 0; }
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px; margin-bottom: 12px; min-width: 0;
+  }
+  .crumbs { margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .crumbs .sep { color: var(--text-muted); }
+  .field { margin-bottom: 10px; }
+  .field input, .field select { width: 100%; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0 12px; }
+
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--text-muted); font-weight: 500; }
+  td { overflow-wrap: anywhere; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tbody tr.click { cursor: pointer; }
+  tbody tr.click:hover td { background: var(--page-bg); }
+
+  .value {
+    margin: 0; padding: 10px; border-radius: 4px; overflow: auto; max-height: 50vh;
+    background: var(--page-bg); border: 1px solid var(--border);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .value.small { max-height: 20vh; padding: 6px 8px; }
+  .err { color: var(--danger); overflow-wrap: anywhere; }
+  .ok { color: var(--ok); }
+  .notice {
+    border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; line-height: 1.45;
+    background: var(--warn-soft, var(--page-bg)); border: 1px solid var(--warn); overflow-wrap: anywhere;
+  }
+  .hist-op { font-weight: 700; }
+  /* Phone width: each row becomes a labelled card (the label is the column's
+     static header, from data-label) instead of six crushed columns. */
+  @media (max-width: 600px) {
+    table.cards thead { display: none; }
+    table.cards tr { display: block; padding: 6px 0; border-bottom: 1px solid var(--border); }
+    table.cards td { display: flex; gap: 8px; border: none; padding: 2px 0; text-align: left; white-space: normal; }
+    table.cards td::before { content: attr(data-label); flex: 0 0 6.5em; color: var(--text-muted); }
+    table.cards td > * { flex: 1 1 auto; min-width: 0; }
+    table.cards td:empty { display: none; }
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<h2>Shared values</h2>
+<p class="muted">Values staff and tools share — an office high score, a counter a tool keeps. Not settings.
+  Everything here is text staff typed: it is shown as plain text, never as a page.</p>
+
+<div class="crumbs" id="crumbs"></div>
+<div id="flash" class="panel" hidden></div>
+<div id="view"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// SHARED VALUES PAGE (Admin → Shared values) — 2026-10-28
+//
+// A browser over /api/shared (routes/api.shared.js; AI_CONTEXT §35):
+//   namespaces → a namespace (its keys, its rules, its history) → a key (its
+//   value, compare-and-set edit, delete, its history).
+// The tile is gated firm.settings — VISIBILITY ONLY: every route here is open
+// to any staff member and the server enforces every write rule (creator /
+// own_key / firm.settings for rules and deletes). A refusal shows the
+// server's own sentence.
+//
+// SAFETY: every name, description and value is staff-typed text. It reaches
+// the DOM through textContent / value only — the el() helper below never
+// sets innerHTML. Static markup only is ever innerHTML.
+//
+// Shell protocol: P.apiSend (waitForParent), P.firmData.users for names.
+// No inline handlers (CLAUDE.md: a document member can shadow them).
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+const KEY_PAGE = 100;
+const HIST_PAGE = 50;
+const PREVIEW = 80;
+const WRITE_MODES = { staff: 'Any staff member', creator: 'Its creator (and admins)', own_key: 'Each user only their own key' };
+// The server's name pattern (services/sharedValuesService.js NAME_RE).
+const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+const state = { view: 'list', ns: null, k: null };
+
+// ── DOM helpers: text only ─────────────────────────────────────
+/** el('td', { class: 'num' }, 'text', childNode, …) — strings become TEXT nodes. */
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'class') n.className = v;
+    else if (k === 'text') n.textContent = v;
+    else n.setAttribute(k, v === true ? '' : String(v));
+  }
+  for (const c of kids.flat()) if (c != null) n.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return n;
+}
+const $ = (id) => document.getElementById(id);
+const api = (...a) => P.apiSend(...a);
+const enc = encodeURIComponent;
+
+function who(id) {
+  if (id == null) return '—';
+  const users = (P.firmData && Array.isArray(P.firmData.users)) ? P.firmData.users : [];
+  const u = users.find((x) => Number(x.user) === Number(id));
+  return u ? String(u.user_name) : '#' + id;
+}
+function when(t) {
+  if (!t) return '';
+  const d = new Date(t);
+  return isNaN(d) ? String(t) : d.toLocaleString();
+}
+const preview = (v) => { const s = v == null ? '' : String(v); return s.length > PREVIEW ? s.slice(0, PREVIEW) + '…' : s; };
+
+/** A table whose cells carry their column's header as data-label (the phone
+ *  card layout shows it); heads are static text, never data. */
+function cardTable(heads, tbody) {
+  const label = () => {
+    for (const tr of tbody.querySelectorAll('tr')) [...tr.children].forEach((td, i) => { if (heads[i]) td.setAttribute('data-label', heads[i]); });
+  };
+  label();
+  new MutationObserver(label).observe(tbody, { childList: true });
+  return el('div', { class: 'table-wrap' }, el('table', { class: 'cards' },
+    el('thead', null, el('tr', null, heads.map((h) => el('th', null, h)))), tbody));
+}
+
+function flash(msg, kind) {
+  const f = $('flash');
+  if (!msg) { f.hidden = true; f.textContent = ''; return; }
+  f.hidden = false;
+  f.className = 'panel ' + (kind === 'ok' ? 'ok' : 'err');
+  f.textContent = msg;
+}
+const errText = (e) => (e && e.message) || 'Request failed';
+
+function crumbs() {
+  const c = $('crumbs');
+  c.textContent = '';
+  const link = (label, go) => { const b = el('button', { class: 'link', type: 'button' }, label); b.addEventListener('click', go); return b; };
+  c.append(link('Namespaces', () => go('list')));
+  if (state.ns) { c.append(el('span', { class: 'sep' }, '/'), state.k ? link(state.ns, () => go('ns', state.ns)) : el('strong', { class: 'mono' }, state.ns)); }
+  if (state.k) c.append(el('span', { class: 'sep' }, '/'), el('strong', { class: 'mono' }, state.k));
+}
+
+function go(view, ns = null, k = null) {
+  Object.assign(state, { view, ns, k });
+  flash(null);
+  crumbs();
+  if (view === 'list') return showList();
+  if (view === 'ns') return showNs(ns);
+  return showKey(ns, k);
+}
+
+function init() { go('list'); }
+
+// ═══════════════════════════════════════════════════════════════
+// NAMESPACES
+// ═══════════════════════════════════════════════════════════════
+async function showList() {
+  const v = $('view');
+  v.textContent = '';
+  const box = el('div', { class: 'panel' }, el('p', { class: 'muted', text: 'Loading…' }));
+  v.append(box);
+  let data;
+  try { data = await api('/api/shared'); } catch (e) { box.textContent = ''; box.append(el('p', { class: 'err' }, 'Could not load: ' + errText(e))); return; }
+  box.textContent = '';
+  const list = data.namespaces || [];
+  if (!list.length) box.append(el('p', { class: 'muted' }, 'No namespaces yet.'));
+  else {
+    const tb = el('tbody');
+    for (const n of list) {
+      const tr = el('tr', { class: 'click', 'data-ns': n.ns },
+        el('td', { class: 'mono' }, n.ns),
+        el('td', null, n.description || ''),
+        el('td', null, WRITE_MODES[n.write_mode] || n.write_mode || '(none)'),
+        el('td', { class: 'num' }, String(n.key_count ?? '')),
+        el('td', null, who(n.created_by)),
+        el('td', null, when(n.updated_at)));
+      tr.addEventListener('click', () => go('ns', n.ns));
+      tb.append(tr);
+    }
+    box.append(cardTable(['Namespace', 'What it is for', 'Who writes', 'Keys', 'Created by', 'Updated'], tb));
+  }
+  v.append(createNsPanel(), lookupPanel());
+}
+
+/** History by name: a deleted namespace is not listed, but its history is
+ *  kept — typing its name opens showNs, which shows it (or the live page). */
+function lookupPanel() {
+  const name = el('input', { id: 'lookupNs', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'e.g. carve' });
+  const btn = el('button', { class: 'ghost', type: 'button', id: 'lookupGo' }, 'Open');
+  const open = () => {
+    const n = name.value.trim();
+    if (!NAME_RE.test(n)) { flash('A namespace name is lowercase letters, digits, - and _, starting with a letter or digit (up to 64).'); return; }
+    go('ns', n);
+  };
+  btn.addEventListener('click', open);
+  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
+  return el('div', { class: 'panel', id: 'lookup' }, el('h3', null, 'History by name'),
+    el('div', { class: 'field' }, el('label', { class: 'yc-flabel', for: 'lookupNs' }, 'Namespace name'), name,
+      el('span', { class: 'yc-hint' }, 'A deleted namespace is not listed above, but its history is kept: type its name to see it.')),
+    el('div', { class: 'row' }, btn));
+}
+
+function createNsPanel() {
+  const ns = el('input', { id: 'newNs', type: 'text', placeholder: 'e.g. carve', autocomplete: 'off', spellcheck: 'false' });
+  const desc = el('input', { id: 'newDesc', type: 'text', maxlength: '500' });
+  const mode = el('select', { id: 'newMode' }, Object.entries(WRITE_MODES).map(([k, l]) => el('option', { value: k }, l)));
+  const btn = el('button', { id: 'createNs', type: 'button' }, 'Create namespace');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      const body = { ns: ns.value.trim(), write_mode: mode.value };
+      if (desc.value.trim()) body.description = desc.value;
+      const r = await api('/api/shared', 'POST', body);
+      go('ns', r.namespace.ns);
+      flash(`Created "${r.namespace.ns}".`, 'ok');
+    } catch (e) { flash(errText(e)); btn.disabled = false; }
+  });
+  return el('div', { class: 'panel' }, el('h3', null, 'New namespace'),
+    el('div', { class: 'grid2' },
+      el('div', { class: 'field' }, el('label', { class: 'yc-flabel', for: 'newNs' }, 'Name'), ns,
+        el('span', { class: 'yc-hint' }, 'Lowercase letters, digits, - and _; up to 64.')),
+      el('div', { class: 'field' }, el('label', { class: 'yc-flabel', for: 'newMode' }, 'Who may write values'), mode)),
+    el('div', { class: 'field' }, el('label', { class: 'yc-flabel', for: 'newDesc' }, 'What it is for'), desc),
+    el('div', { class: 'row' }, btn));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ONE NAMESPACE
+// ═══════════════════════════════════════════════════════════════
+async function showNs(ns) {
+  const v = $('view');
+  v.textContent = '';
+  const head = el('div', { class: 'panel' }, el('p', { class: 'muted', text: 'Loading…' }));
+  const keysBox = el('div', { class: 'panel', id: 'keys' });
+  v.append(head, keysBox);
+  let page;
+  try { page = await api(`/api/shared/${enc(ns)}?limit=${KEY_PAGE}`); }
+  catch (e) {
+    head.textContent = '';
+    head.append(el('p', { class: e && e.status === 404 ? 'muted' : 'err' },
+      e && e.status === 404 ? `"${ns}" does not exist (now). Any history it had is below.` : errText(e)));
+    if (e && e.status === 404) v.append(historyPanel(ns, null));   // a deleted namespace keeps its history
+    return;
+  }
+  const n = page.namespace;
+  head.textContent = '';
+  head.append(
+    el('h3', { class: 'mono' }, n.ns),
+    n.description ? el('p', null, n.description) : null,
+    el('p', { class: 'muted' }, `${WRITE_MODES[n.write_mode] || n.write_mode || '(no valid write rule)'} · up to ${n.max_value_bytes} bytes per value, ${n.max_keys} keys · created by ${who(n.created_by)} ${when(n.created_at)}`));
+  const actions = el('div', { class: 'row' });
+  const editBtn = el('button', { class: 'ghost', type: 'button', id: 'editRules' }, 'Edit rules');
+  const delBtn = el('button', { class: 'danger', type: 'button', id: 'delNs' }, 'Delete namespace');
+  actions.append(editBtn, delBtn);
+  head.append(actions);
+  const editor = rulesEditor(n);
+  const deleter = nsDeleter(n);
+  head.append(editor, deleter);
+  editBtn.addEventListener('click', () => { editor.hidden = !editor.hidden; deleter.hidden = true; });
+  delBtn.addEventListener('click', () => { deleter.hidden = !deleter.hidden; editor.hidden = true; });
+
+  renderKeys(keysBox, n, page);
+  v.append(addKeyPanel(n), historyPanel(ns, null));
+}
+
+function renderKeys(box, n, page) {
+  box.textContent = '';
+  box.append(el('h3', null, 'Keys'));
+  const tb = el('tbody', { id: 'keyRows' });
+  const add = (vals) => {
+    for (const r of vals) {
+      const tr = el('tr', { class: 'click', 'data-k': r.k },
+        el('td', { class: 'mono' }, r.k), el('td', { class: 'mono' }, preview(r.v)), el('td', { class: 'num' }, String(r.rev)),
+        el('td', null, who(r.updated_by)), el('td', null, when(r.updated_at)));
+      tr.addEventListener('click', () => go('key', n.ns, r.k));
+      tb.append(tr);
+    }
+  };
+  if (!page.values.length) { box.append(el('p', { class: 'muted' }, 'No keys yet.')); return; }
+  add(page.values);
+  box.append(cardTable(['Key', 'Value', 'Rev', 'Last writer', 'When'], tb));
+  const more = el('div', { class: 'row' });
+  box.append(more);
+  const paint = (p) => {
+    more.textContent = '';
+    if (p.trimmed) more.append(el('span', { class: 'yc-hint' }, `Pages are cut to ${p.limit} keys here (large values).`));
+    if (!p.next) return;
+    const b = el('button', { class: 'ghost', type: 'button', id: 'moreKeys' }, 'More keys');
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      try {
+        const nx = await api(`/api/shared/${enc(n.ns)}?limit=${KEY_PAGE}&after=${enc(p.next)}`);
+        add(nx.values);
+        paint(nx);
+      } catch (e) { flash(errText(e)); b.disabled = false; }
+    });
+    more.append(b);
+  };
+  paint(page);
+}
+
+function rulesEditor(n) {
+  const desc = el('input', { id: 'ruleDesc', type: 'text', maxlength: '500' });
+  desc.value = n.description || '';
+  const mode = el('select', { id: 'ruleMode' }, Object.entries(WRITE_MODES).map(([k, l]) => el('option', { value: k }, l)));
+  mode.value = WRITE_MODES[n.write_mode] ? n.write_mode : 'staff';
+  const bytes = el('input', { id: 'ruleBytes', type: 'number', min: '1', max: '1048576' });
+  bytes.value = String(n.max_value_bytes);
+  const keys = el('input', { id: 'ruleKeys', type: 'number', min: '1', max: '10000' });
+  keys.value = String(n.max_keys);
+  const save = el('button', { type: 'button', id: 'saveRules' }, 'Save rules');
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      await api(`/api/shared/${enc(n.ns)}`, 'PATCH', {
+        description: desc.value, write_mode: mode.value, max_value_bytes: Number(bytes.value), max_keys: Number(keys.value),
+      });
+      await go('ns', n.ns);
+      flash('Rules saved.', 'ok');
+    } catch (e) { flash(errText(e)); save.disabled = false; }
+  });
+  return el('div', { hidden: true, id: 'rulesEditor', style: 'margin-top:10px' },
+    el('div', { class: 'field' }, el('label', { class: 'yc-flabel', for: 'ruleDesc' }, 'What it is for'), desc),
+    el('div', { class: 'grid2' },
+      el('div', { class: 'field' }, el('label', { class: 'yc-flabel', for: 'ruleMode' }, 'Who may write values'), mode),
+      el('div', { class: 'field' }, el('label', { class: 'yc-flabel', for: 'ruleBytes' }, 'Largest value (bytes)'), bytes),
+      el('div', { class: 'field' }, el('label', { class: 'yc-flabel', for: 'ruleKeys' }, 'Most keys'), keys)),
+    el('span', { class: 'yc-hint' }, 'Only its creator or an admin may change these.'),
+    el('div', { class: 'row', style: 'margin-top:8px' }, save));
+}
+
+function nsDeleter(n) {
+  const typed = el('input', { id: 'delNsName', type: 'text', autocomplete: 'off', spellcheck: 'false' });
+  const go2 = el('button', { class: 'danger', type: 'button', id: 'delNsGo', disabled: true }, 'Delete it and every value');
+  typed.addEventListener('input', () => { go2.disabled = typed.value !== n.ns; });
+  go2.addEventListener('click', async () => {
+    if (typed.value !== n.ns) return;
+    go2.disabled = true;
+    try {
+      const r = await api(`/api/shared/${enc(n.ns)}`, 'DELETE');
+      await go('list');
+      flash(`Deleted "${n.ns}" and ${r.values_deleted} value(s). Its history is kept.`, 'ok');
+    } catch (e) { flash(errText(e)); go2.disabled = false; }
+  });
+  return el('div', { hidden: true, id: 'nsDeleter', style: 'margin-top:10px' },
+    el('div', { class: 'notice' }, `This deletes "${n.ns}" and every value in it. It cannot be undone; its history is kept. Only its creator or an admin may.`),
+    el('div', { class: 'field' }, el('label', { class: 'yc-flabel', for: 'delNsName' }, 'Type the namespace name to confirm'), typed),
+    el('div', { class: 'row' }, go2));
+}
+
+function addKeyPanel(n) {
+  const k = el('input', { id: 'newKey', type: 'text', autocomplete: 'off', spellcheck: 'false' });
+  const val = el('textarea', { id: 'newVal' });
+  const btn = el('button', { type: 'button', id: 'addKey' }, 'Add key');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      const r = await api(`/api/shared/${enc(n.ns)}/${enc(k.value.trim())}`, 'PUT', { v: val.value, rev: null });
+      await go('key', n.ns, r.value.k);
+      flash(`Added "${r.value.k}".`, 'ok');
+    } catch (e) { flash(errText(e)); btn.disabled = false; }
+  });
+  return el('div', { class: 'panel' }, el('h3', null, 'New key'),
+    el('div', { class: 'field' }, el('label', { class: 'yc-flabel', for: 'newKey' }, 'Key'), k,
+      el('span', { class: 'yc-hint' }, 'Lowercase letters, digits, - and _; up to 64.')),
+    el('div', { class: 'field' }, el('label', { class: 'yc-flabel', for: 'newVal' }, 'Value'), val),
+    el('div', { class: 'row' }, btn));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ONE KEY
+// ═══════════════════════════════════════════════════════════════
+async function showKey(ns, k) {
+  const v = $('view');
+  v.textContent = '';
+  const box = el('div', { class: 'panel' }, el('p', { class: 'muted', text: 'Loading…' }));
+  v.append(box);
+  let row;
+  try { row = (await api(`/api/shared/${enc(ns)}/${enc(k)}`)).value; }
+  catch (e) {
+    box.textContent = '';
+    box.append(el('p', { class: 'err' }, errText(e)));
+    v.append(historyPanel(ns, k));
+    return;
+  }
+  paintKey(box, row);
+  v.append(historyPanel(ns, k));
+}
+
+function paintKey(box, row) {
+  box.textContent = '';
+  const meta = el('p', { class: 'muted', id: 'keyMeta' },
+    `rev ${row.rev} · last written by ${who(row.updated_by)}${row.updated_act != null ? ` (View-as by ${who(row.updated_act)})` : ''} · ${when(row.updated_at)}`);
+  const value = el('pre', { class: 'value', id: 'keyValue' });
+  value.textContent = row.v;
+  const edit = el('textarea', { id: 'editVal' });
+  edit.value = row.v;
+  const save = el('button', { type: 'button', id: 'saveVal' }, 'Save');
+  const del = el('button', { class: 'danger', type: 'button', id: 'delKey' }, 'Delete key');
+  const conflict = el('div', { class: 'notice', id: 'conflict', hidden: true });
+  box.append(el('h3', null, 'Value'), meta, value, conflict,
+    el('div', { class: 'field', style: 'margin-top:10px' }, el('label', { class: 'yc-flabel', for: 'editVal' }, 'Change it'), edit,
+      el('span', { class: 'yc-hint' }, `Saves only if nobody changed it since rev ${row.rev}.`)),
+    el('div', { class: 'row' }, save, del));
+
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      const r = await api(`/api/shared/${enc(row.ns)}/${enc(row.k)}`, 'PUT', { v: edit.value, rev: row.rev });
+      await go('key', row.ns, row.k);
+      flash(`Saved — now rev ${r.value.rev}.`, 'ok');
+    } catch (e) {
+      save.disabled = false;
+      if (e && e.status === 409) return showConflict(conflict, row, e.body && e.body.current, edit);
+      flash(errText(e));
+    }
+  });
+  del.addEventListener('click', async () => {
+    // Native confirm, not Swal: a second Swal.fire() would replace whatever the shell has open.
+    if (!window.confirm(`Delete key "${row.k}" from "${row.ns}"? Its history is kept.`)) return;
+    del.disabled = true;
+    try {
+      await api(`/api/shared/${enc(row.ns)}/${enc(row.k)}?rev=${row.rev}`, 'DELETE');
+      await go('ns', row.ns);
+      flash(`Deleted "${row.k}".`, 'ok');
+    } catch (e) {
+      del.disabled = false;
+      if (e && e.status === 409) return showConflict(conflict, row, e.body && e.body.current, edit);
+      flash(errText(e));
+    }
+  });
+}
+
+/** Someone wrote first: show what is there now; "Retry on it" keeps the draft and moves to their rev. */
+function showConflict(box, row, current, edit) {
+  box.hidden = false;
+  box.textContent = '';
+  if (!current) {
+    box.append(el('p', null, 'This key was deleted since you opened it.'));
+    const back = el('button', { class: 'ghost', type: 'button', id: 'conflictBack' }, 'Back to the namespace');
+    back.addEventListener('click', () => go('ns', row.ns));
+    box.append(back);
+    return;
+  }
+  box.append(el('p', null, `Someone changed it first — it is now rev ${current.rev}, written by ${who(current.updated_by)}:`));
+  const now = el('pre', { class: 'value small', id: 'conflictValue' });
+  now.textContent = current.v;
+  const retry = el('button', { type: 'button', id: 'conflictRetry' }, `Retry my change on rev ${current.rev}`);
+  retry.addEventListener('click', () => {
+    const draft = edit.value;
+    const fresh = { ...current };
+    const panel = box.closest('.panel');
+    paintKey(panel, fresh);
+    $('editVal').value = draft;                         // keep what the user typed
+    flash(`Now editing rev ${fresh.rev}. Your text is kept — Save again to write it.`, 'ok');
+  });
+  box.append(now, el('div', { class: 'row' }, retry));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HISTORY (GET /api/shared/:ns/_history — newest first)
+// ═══════════════════════════════════════════════════════════════
+const OPS = { ns_create: 'namespace created', ns_update: 'rules changed', ns_delete: 'namespace deleted',
+  create: 'created', update: 'changed', delete: 'deleted' };
+
+function historyPanel(ns, k) {
+  const box = el('div', { class: 'panel', id: 'history' }, el('h3', null, k ? 'History of this key' : 'History'));
+  const tb = el('tbody', { id: 'histRows' });
+  const table = cardTable(['When', 'Who', 'What', 'Key', 'Before', 'After'], tb);
+  const more = el('div', { class: 'row' });
+  const status = el('p', { class: 'muted' }, 'Loading…');
+  box.append(status, table, more);
+  table.hidden = true;
+  const load = async (before) => {
+    const q = [`limit=${HIST_PAGE}`];
+    if (k) q.push('k=' + enc(k));
+    if (before) q.push('before=' + before);
+    let page;
+    try { page = await api(`/api/shared/${enc(ns)}/_history?${q.join('&')}`); }
+    catch (e) { status.textContent = e && e.status === 404 ? 'No history.' : 'Could not load the history: ' + errText(e); status.className = e && e.status === 404 ? 'muted' : 'err'; return; }
+    if (!before && !page.history.length) { status.textContent = 'No history yet.'; return; }
+    status.hidden = true;
+    table.hidden = false;
+    for (const h of page.history) {
+      const cell = (x) => { const td = el('td'); if (x != null) { const p = el('pre', { class: 'value small' }); p.textContent = x; td.append(p); } return td; };
+      tb.append(el('tr', { 'data-id': h.id },
+        el('td', null, when(h.changed_at)),
+        el('td', null, who(h.changed_by) + (h.changed_act != null ? ` (View-as by ${who(h.changed_act)})` : '')),
+        el('td', { class: 'hist-op' }, (OPS[h.op] || h.op) + (h.new_rev != null ? ` → rev ${h.new_rev}` : '')),
+        el('td', { class: 'mono' }, h.k == null ? '' : h.k),
+        cell(h.old_v), cell(h.new_v)));
+    }
+    more.textContent = '';
+    if (page.next) {
+      const b = el('button', { class: 'ghost', type: 'button', id: 'moreHist' }, 'Older');
+      b.addEventListener('click', () => { b.disabled = true; load(page.next); });
+      more.append(b);
+    }
+  };
+  load(null);
+  return box;
+}
+
+// Test / debug handle.
+window.SharedValuesPage = { go, state, el, who };
+
+// Boot LAST: init() reaches the const helpers above, which a call from the
+// top of the script would hit before they are initialised.
+(function waitForParent() {
+  if (P && typeof P.apiSend === 'function') return init();
+  setTimeout(waitForParent, 100);
+})();
+</script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-28T05:04:23.734Z_  
-_819 routes total — DELETE: 68, GET: 341, PATCH: 59, POST: 310, PUT: 38, _ALL: 3_
+_Generated 2026-10-28T12:28:00.623Z_  
+_820 routes total — DELETE: 68, GET: 342, PATCH: 59, POST: 310, PUT: 38, _ALL: 3_
 
 ## Global middleware chain
 
@@ -617,6 +617,7 @@ _819 routes total — DELETE: 68, GET: 341, PATCH: 59, POST: 310, PUT: 38, _ALL:
 | DELETE | `/api/shared/:ns` | `staffAuth` | — |
 | GET | `/api/shared/:ns` | `staffAuth` | — |
 | PATCH | `/api/shared/:ns` | `staffAuth` | — |
+| GET | `/api/shared/:ns/_history` | `staffAuth` | — |
 | DELETE | `/api/shared/:ns/:k` | `staffAuth` | — |
 | GET | `/api/shared/:ns/:k` | `staffAuth` | — |
 | PUT | `/api/shared/:ns/:k` | `staffAuth` | — |
@@ -1094,4 +1095,4 @@ _819 routes total — DELETE: 68, GET: 341, PATCH: 59, POST: 310, PUT: 38, _ALL:
 
 ---
 
-_819 routes total — DELETE: 68, GET: 341, PATCH: 59, POST: 310, PUT: 38, _ALL: 3_
+_820 routes total — DELETE: 68, GET: 342, PATCH: 59, POST: 310, PUT: 38, _ALL: 3_

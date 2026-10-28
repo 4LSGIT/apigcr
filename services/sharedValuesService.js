@@ -12,6 +12,13 @@
  *                      max_keys, created_by, …)
  *   shared_values     (ns, k PK; v, rev, updated_by, updated_act, …;
  *                      FK ns → shared_namespaces ON DELETE CASCADE)
+ *   shared_values_history (scripts/sharedValuesHistoryMigrate.js) — one row
+ *                      per SUCCESSFUL write, in the same transaction:
+ *                      ns_create / ns_update / ns_delete (k NULL; old_v /
+ *                      new_v = the rules as JSON — ns_delete's carries the
+ *                      key count) and create / update / delete (the value
+ *                      before and after, the revs). A failed write writes
+ *                      none. No FK: history outlives a deleted namespace.
  *
  * RULES
  *   - Any staff member creates a namespace; its creator and firm.settings
@@ -71,6 +78,9 @@ const MAX_DESCRIPTION = 500;
 const LIST_DEFAULT = 200;
 const LIST_MAX = 1000;
 const PAGE_BYTES = 8 * 1024 * 1024;   // worst-case value bytes in one GET /api/shared/:ns page
+const HISTORY_DEFAULT = 50;
+const HISTORY_MAX = 200;
+const HISTORY_OPS = Object.freeze(['ns_create', 'ns_update', 'ns_delete', 'create', 'update', 'delete']);
 const MANAGE_CAP = 'firm.settings';
 
 class SharedError extends Error {
@@ -170,6 +180,8 @@ function checkRev(rev, { optional = false } = {}) {
 const NS_COLS = 'ns, description, write_mode, max_value_bytes, max_keys, created_by, created_at, updated_at';
 const V_COLS = 'ns, k, v, rev, updated_by, updated_act, created_at, updated_at';
 
+const H_COLS = 'id, ns, k, op, old_v, new_v, old_rev, new_rev, changed_by, changed_act, changed_at';
+
 const nsOut = (r) => ({
   ns: r.ns, description: r.description, write_mode: r.write_mode,
   max_value_bytes: Number(r.max_value_bytes), max_keys: Number(r.max_keys),
@@ -181,6 +193,26 @@ const vOut = (r) => ({
   updated_act: r.updated_act == null ? null : Number(r.updated_act),
   created_at: r.created_at, updated_at: r.updated_at,
 });
+const numOrNull = (x) => (x == null ? null : Number(x));
+const hOut = (r) => ({
+  id: Number(r.id), ns: r.ns, k: r.k == null ? null : r.k, op: r.op,
+  old_v: r.old_v == null ? null : r.old_v, new_v: r.new_v == null ? null : r.new_v,
+  old_rev: numOrNull(r.old_rev), new_rev: numOrNull(r.new_rev),
+  changed_by: numOrNull(r.changed_by), changed_act: numOrNull(r.changed_act), changed_at: r.changed_at,
+});
+
+/** A namespace's rules as the JSON a history row stores (fixed key order). */
+const rulesJson = (r, extra = {}) => JSON.stringify({
+  description: r.description == null ? null : r.description, write_mode: r.write_mode,
+  max_value_bytes: Number(r.max_value_bytes), max_keys: Number(r.max_keys), ...extra,
+});
+
+/** One history row — call inside the write's transaction, after the write succeeded. */
+async function recordHistory(conn, { ns, k = null, op, oldV = null, newV = null, oldRev = null, newRev = null }, auth) {
+  await conn.query(
+    'INSERT INTO shared_values_history (ns, k, op, old_v, new_v, old_rev, new_rev, changed_by, changed_act) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [ns, k, op, oldV, newV, oldRev, newRev, userIdOf(auth), actIdOf(auth)]);
+}
 
 async function loadNs(q, ns, { lock = false } = {}) {
   const [[row]] = await q.query(`SELECT ${NS_COLS} FROM shared_namespaces WHERE ns = ?${lock ? ' FOR UPDATE' : ''}`, [ns]);
@@ -190,6 +222,12 @@ async function loadNs(q, ns, { lock = false } = {}) {
 
 async function loadValue(q, ns, k) {
   const [[row]] = await q.query(`SELECT ${V_COLS} FROM shared_values WHERE ns = ? AND k = ?`, [ns, k]);
+  return row || null;
+}
+
+/** The row, locked for this write — the value a history row records as "before". */
+async function loadValueForUpdate(q, ns, k) {
+  const [[row]] = await q.query(`SELECT ${V_COLS} FROM shared_values WHERE ns = ? AND k = ? FOR UPDATE`, [ns, k]);
   return row || null;
 }
 
@@ -223,15 +261,19 @@ async function createNamespace(db, body, auth) {
   const maxKeys = b.max_keys == null ? LIMITS.max_keys.def : checkLimit('max_keys', b.max_keys);
   const uid = userIdOf(auth);
   if (uid == null) throw new SharedError(403, 'Creating a namespace needs a signed-in staff user');
-  try {
-    await db.query(
-      'INSERT INTO shared_namespaces (ns, description, write_mode, max_value_bytes, max_keys, created_by) VALUES (?, ?, ?, ?, ?, ?)',
-      [ns, description, writeMode, maxValueBytes, maxKeys, uid]);
-  } catch (err) {
-    if (err && err.code === 'ER_DUP_ENTRY') throw new SharedError(409, `Namespace "${ns}" already exists`, { code: 'exists' });
-    throw err;
-  }
-  return nsOut(await loadNs(db, ns));
+  return db.withTransaction(async (conn) => {
+    try {
+      await conn.query(
+        'INSERT INTO shared_namespaces (ns, description, write_mode, max_value_bytes, max_keys, created_by) VALUES (?, ?, ?, ?, ?, ?)',
+        [ns, description, writeMode, maxValueBytes, maxKeys, uid]);
+    } catch (err) {
+      if (err && err.code === 'ER_DUP_ENTRY') throw new SharedError(409, `Namespace "${ns}" already exists`, { code: 'exists' });
+      throw err;
+    }
+    const row = await loadNs(conn, ns);
+    await recordHistory(conn, { ns, op: 'ns_create', newV: rulesJson(row) }, auth);
+    return nsOut(row);
+  }, { retries: 1 });
 }
 
 async function updateNamespace(db, ns, body, auth) {
@@ -245,10 +287,14 @@ async function updateNamespace(db, ns, body, auth) {
     if (b[name] !== undefined) { sets.push(`${name} = ?`); params.push(checkLimit(name, b[name])); }
   }
   if (!sets.length) throw new SharedError(400, 'Nothing to change: send description, write_mode, max_value_bytes or max_keys');
-  const row = await loadNs(db, ns);
-  if (!mayManage(row, auth)) throw new SharedError(403, `Only the creator of "${ns}" (or an admin) may change it`);
-  await db.query(`UPDATE shared_namespaces SET ${sets.join(', ')} WHERE ns = ?`, [...params, ns]);
-  return nsOut(await loadNs(db, ns));
+  return db.withTransaction(async (conn) => {
+    const row = await loadNs(conn, ns, { lock: true });
+    if (!mayManage(row, auth)) throw new SharedError(403, `Only the creator of "${ns}" (or an admin) may change it`);
+    await conn.query(`UPDATE shared_namespaces SET ${sets.join(', ')} WHERE ns = ?`, [...params, ns]);
+    const after = await loadNs(conn, ns);
+    await recordHistory(conn, { ns, op: 'ns_update', oldV: rulesJson(row), newV: rulesJson(after) }, auth);
+    return nsOut(after);
+  }, { retries: 1 });
 }
 
 async function deleteNamespace(db, ns, auth) {
@@ -260,6 +306,8 @@ async function deleteNamespace(db, ns, auth) {
     // without relying on it.
     const [dv] = await conn.query('DELETE FROM shared_values WHERE ns = ?', [ns]);
     await conn.query('DELETE FROM shared_namespaces WHERE ns = ?', [ns]);
+    // ONE row for the namespace: every value's states are already in history.
+    await recordHistory(conn, { ns, op: 'ns_delete', oldV: rulesJson(row, { key_count: Number(dv.affectedRows) }) }, auth);
     return { ns, values_deleted: dv.affectedRows };
   }, { retries: 1 });
 }
@@ -343,7 +391,10 @@ async function putValue(db, ns, k, body, auth) {
         }
         throw err;
       }
+      await recordHistory(conn, { ns, k, op: 'create', newV: b.v, newRev: 1 }, auth);
     } else {
+      // Lock the row first: its value is the history row's "before".
+      const before = await loadValueForUpdate(conn, ns, k);
       const [r] = await conn.query(
         'UPDATE shared_values SET v = ?, rev = rev + 1, updated_by = ?, updated_act = ? WHERE ns = ? AND k = ? AND rev = ?',
         [b.v, uid, act, ns, k, rev]);
@@ -354,6 +405,7 @@ async function putValue(db, ns, k, body, auth) {
           : `"${k}" no longer exists in "${ns}" — create it again with rev null`,
         { code: 'rev_conflict', current: cur ? vOut(cur) : null });
       }
+      await recordHistory(conn, { ns, k, op: 'update', oldV: before.v, newV: b.v, oldRev: rev, newRev: rev + 1 }, auth);
     }
     return vOut(await loadValue(conn, ns, k));
   }, { retries: 1 });
@@ -373,10 +425,14 @@ async function deleteValue(db, ns, k, rawRev, auth) {
     const nsRow = await loadNs(conn, ns);
     const refusal = writeRefusal(nsRow, k, auth);
     if (refusal) throw new SharedError(403, refusal);
+    const before = await loadValueForUpdate(conn, ns, k);
     const [r] = await conn.query(
       `DELETE FROM shared_values WHERE ns = ? AND k = ?${rev !== undefined ? ' AND rev = ?' : ''}`,
       rev !== undefined ? [ns, k, rev] : [ns, k]);
-    if (r.affectedRows === 1) return { ns, k, deleted: true };
+    if (r.affectedRows === 1) {
+      await recordHistory(conn, { ns, k, op: 'delete', oldV: before.v, oldRev: Number(before.rev) }, auth);
+      return { ns, k, deleted: true };
+    }
     const cur = await loadValueLatest(conn, ns, k);
     if (!cur) throw new SharedError(404, `No key "${k}" in "${ns}"`);
     throw new SharedError(409, `"${k}" changed since you read it (rev ${cur.rev}, you sent ${rev})`,
@@ -384,9 +440,76 @@ async function deleteValue(db, ns, k, rawRev, auth) {
   }, { retries: 1 });
 }
 
+// ── history ─────────────────────────────────────────────────────────────────
+
+/**
+ * A namespace's history, newest first — readable after the namespace is
+ * deleted (the audit outlives it). ?k filters to one key; ?before=<id> pages.
+ * A page holds at most PAGE_BYTES of old_v + new_v: the first pass reads ids
+ * and byte lengths, the second only the rows that fit (at least one).
+ * → { ns, namespace (null once deleted), history, next, limit, trimmed }
+ */
+async function listHistory(db, ns, { k, limit, before } = {}) {
+  checkName('ns', ns);
+  if (k !== undefined) checkName('k', k);
+  let n = HISTORY_DEFAULT;
+  if (limit !== undefined) {
+    const s = String(limit);
+    if (!/^[0-9]{1,3}$/.test(s) || Number(s) < 1 || Number(s) > HISTORY_MAX) {
+      throw new SharedError(400, `limit must be an integer from 1 to ${HISTORY_MAX}`);
+    }
+    n = Number(s);
+  }
+  let beforeId;
+  if (before !== undefined) {
+    const s = String(before);
+    if (!/^[1-9][0-9]{0,18}$/.test(s)) throw new SharedError(400, 'before must be a positive integer (a history id)');
+    beforeId = s;
+  }
+  const [[nsRow]] = await db.query(`SELECT ${NS_COLS} FROM shared_namespaces WHERE ns = ?`, [ns]);
+  const where = ['ns = ?'];
+  const params = [ns];
+  if (k !== undefined) { where.push('k = ?'); params.push(k); }
+  if (beforeId !== undefined) { where.push('id < ?'); params.push(beforeId); }
+  const [sizes] = await db.query(
+    `SELECT id, COALESCE(LENGTH(old_v), 0) + COALESCE(LENGTH(new_v), 0) AS bytes FROM shared_values_history WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${n + 1}`,
+    params);
+  if (!nsRow && !sizes.length && beforeId === undefined) {
+    // 404 only when the name has never existed: a deleted namespace with
+    // history, asked for a key it never had, is an empty page.
+    let any = false;
+    if (k !== undefined) {
+      const [one] = await db.query(
+        'SELECT id, COALESCE(LENGTH(old_v), 0) + COALESCE(LENGTH(new_v), 0) AS bytes FROM shared_values_history WHERE ns = ? ORDER BY id DESC LIMIT 1',
+        [ns]);
+      any = one.length > 0;
+    }
+    if (!any) throw new SharedError(404, `No shared namespace "${ns}" and no history for it`);
+  }
+  const ids = [];
+  let total = 0;
+  for (const r of sizes.slice(0, n)) {
+    const b = Number(r.bytes);
+    if (ids.length && total + b > PAGE_BYTES) break;
+    ids.push(Number(r.id));
+    total += b;
+  }
+  let rows = [];
+  if (ids.length) {
+    [rows] = await db.query(`SELECT ${H_COLS} FROM shared_values_history WHERE id IN (?) ORDER BY id DESC`, [ids]);
+  }
+  const history = rows.map(hOut);
+  const more = sizes.length > ids.length;
+  return {
+    ns, namespace: nsRow ? nsOut(nsRow) : null, history,
+    next: more && history.length ? history[history.length - 1].id : null,
+    limit: n, trimmed: ids.length < Math.min(n, sizes.length),
+  };
+}
+
 module.exports = {
-  NAME_RE, WRITE_MODES, LIMITS, LIST_MAX, PAGE_BYTES, SharedError,
+  NAME_RE, WRITE_MODES, LIMITS, LIST_MAX, PAGE_BYTES, HISTORY_MAX, HISTORY_OPS, SharedError,
   userIdOf, actIdOf, mayManage, writeRefusal,
   listNamespaces, getNamespace, createNamespace, updateNamespace, deleteNamespace,
-  listValues, getValue, putValue, deleteValue,
+  listValues, getValue, putValue, deleteValue, listHistory,
 };

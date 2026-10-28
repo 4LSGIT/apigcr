@@ -40,6 +40,9 @@ const BIN_COLUMNS = [
   ['shared_namespaces', 'ns'],
   ['shared_values',     'ns'],
   ['shared_values',     'k'],
+  // Its write history — ref/migrations/2026-10-28_shared_values_history.sql.
+  ['shared_values_history', 'ns'],
+  ['shared_values_history', 'k'],
 ];
 
 /**

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-28T05:04:30.862Z
+-- Generated: 2026-10-28T12:28:07.629Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:5527948b6d8185e668f071e9ace439d2
+-- Fingerprint: sha256:b89dd315c69b7ddee201ce881f9df101
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -3491,6 +3491,27 @@ CREATE TABLE `shared_values` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `shared_values_history`
+--
+
+DROP TABLE IF EXISTS `shared_values_history`;
+CREATE TABLE `shared_values_history` (
+  `id` bigint unsigned NOT NULL,
+  `ns` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'shared_namespaces.ns at the time of the write (no FK: history outlives a deleted namespace); utf8mb4_bin like the source column',
+  `k` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'shared_values.k; NULL = a namespace event (ns_create / ns_update / ns_delete)',
+  `op` enum('ns_create','ns_update','ns_delete','create','update','delete') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'what the write did. App-written only (relaxed sql_mode would store an unknown value as an empty string)',
+  `old_v` mediumtext COLLATE utf8mb4_general_ci COMMENT 'before: the value (update / delete), or the namespace rules as JSON (ns_update; ns_delete adds key_count). NULL for a create. UNTRUSTED staff-written text',
+  `new_v` mediumtext COLLATE utf8mb4_general_ci COMMENT 'after: the value (create / update), or the namespace rules as JSON (ns_create / ns_update). NULL for a delete. UNTRUSTED staff-written text',
+  `old_rev` int unsigned DEFAULT NULL COMMENT 'shared_values.rev before the write (update / delete); NULL otherwise',
+  `new_rev` int unsigned DEFAULT NULL COMMENT 'shared_values.rev after the write (create = 1 / update); NULL otherwise',
+  `changed_by` tinyint NOT NULL COMMENT 'users.user who wrote it, stamped by the server from the JWT (a live View-as: the target user)',
+  `changed_act` tinyint DEFAULT NULL COMMENT 'users.user of the human behind a live View-as session; NULL otherwise',
+  `changed_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Shared values write history (routes/api.shared.js _history; the Shared values admin page): one row per successful write, in its transaction. UNTRUSTED staff-written text — render with textContent. No retention yet (ref/plans.md).';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `signing_request_events`
 --
 
@@ -5278,6 +5299,14 @@ ALTER TABLE `shared_values`
   ADD PRIMARY KEY (`ns`,`k`);
 
 --
+-- Indexes for table `shared_values_history`
+--
+ALTER TABLE `shared_values_history`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_shared_values_history_ns_k_id` (`ns`,`k`,`id`),
+  ADD KEY `idx_shared_values_history_ns_id` (`ns`,`id`);
+
+--
 -- Indexes for table `signing_request_events`
 --
 ALTER TABLE `signing_request_events`
@@ -6221,6 +6250,12 @@ ALTER TABLE `sequences`
 --
 ALTER TABLE `settings`
   MODIFY `setting_id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `shared_values_history`
+--
+ALTER TABLE `shared_values_history`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `signing_request_events`

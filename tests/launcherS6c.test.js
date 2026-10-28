@@ -80,7 +80,7 @@ const PAW = '<div class="more-egg-row"><button type="button" class="more-egg" on
 const HOME_ALL = '<div class="home-egg-row"><button type="button" id="homeAll" class="home-egg" onclick="openMainTab(\'tabAll\')" title="All features" aria-label="All features"><i class="fa-solid fa-table-cells" aria-hidden="true"></i></button></div>';
 const SU_TILES = ['adminReadonlyKeys', 'adminApiKeys', 'adminCtaLinks', 'adminDbConsole', 'adminConnections', 'adminApiTester', 'adminTools',
   'adminScratch', 'adminSystemAlerts', 'adminSupportInbox', 'adminMailboxes'];
-const CAP_TILES = ['adminUsers'];
+const CAP_TILES = ['adminUsers', 'adminSharedValues'];
 const SURFACES = ['home', 'sidebar', 'homeIcons', 'more', 'moreIcons', 'admin', 'adminIcons'];
 const FIRM_URL = { id: 'firm:payroll', label: 'Payroll', icon: 'money-check', action: { type: 'url', href: 'https://payroll.example.com/', present: 'window' } };
 const ui = ({ layout, firm, ro } = {}) => ({ firm: { ...(ro ? { registry_overrides: ro } : {}), ...(firm ? { layout: firm } : {}) }, user: layout ? { layout } : {} });
@@ -88,11 +88,12 @@ const SU = { isAdmin: true, roles: ['su'], denied: [] };
 
 // ─────────────────────────────────────────────────────────────────────────
 describe('1. gates', () => {
-  test('the Admin tiles: superuser tools use su, Users uses its capability, Etch and the Admin page are open', () => {
+  test('the Admin tiles: superuser tools use su, Users and Shared values use their capability, Etch and the Admin page are open', () => {
     const gated = Object.keys(REG).filter((k) => REG[k].gate !== undefined);
     expect(gated.sort()).toEqual([...SU_TILES, ...CAP_TILES].sort());
     for (const k of SU_TILES) expect([k, REG[k].gate]).toEqual([k, 'su']);
     expect(REG.adminUsers.gate).toBe('users.impersonate');
+    expect(REG.adminSharedValues.gate).toBe('firm.settings');   // visibility only: /api/shared is any staff
     expect(REG.adminEtch.gate).toBeUndefined();
     expect(REG.admin.gate).toBeUndefined();
     // the classification covers every Admin grid tile but Etch
@@ -137,26 +138,26 @@ describe('1. gates', () => {
     }
   });
 
-  test('for real: a non-su\'s su tiles are HIDDEN on the Admin grid (data-yc-denied), Etch shows, the Admin row follows the page item; su sees all 13', () => {
+  test('for real: a non-su\'s su tiles are HIDDEN on the Admin grid (data-yc-denied), Etch shows, the Admin row follows the page item; su sees all 14', () => {
     const t = boot();
     try {
       t.L.applyAccess({ isAdmin: false, roles: ['it'], denied: [], ui: ui({ ro: { visible_to: { admin: ['it', 'admin'] } } }) });
       const tiles = [...t.d.querySelectorAll('#tabAdmin > .big-button')];
-      expect(tiles).toHaveLength(13);
-      expect(tiles.filter((b) => t.shown(b)).map((b) => b.textContent.trim())).toEqual(['Etch', 'Users']);
+      expect(tiles).toHaveLength(14);
+      expect(tiles.filter((b) => t.shown(b)).map((b) => b.textContent.trim())).toEqual(['Etch', 'Shared values', 'Users']);
       for (const id of SU_TILES) expect([id, t.L.elementsOf(id).admin.hasAttribute('data-yc-denied'), t.L.elementsOf(id).admin.style.display]).toEqual([id, true, '']);
       expect(t.d.getElementById('sbAdmin').hasAttribute('data-yc-denied')).toBe(false);   // the page item is theirs
       // drilled in, the strip has no su pill
       t.w.openMainTab('tabAdmin');
       t.L.elementsOf('adminEtch').admin.click();   // a dialog tile: no drill; build the strip through a panel-less path instead
       t.w.ensureStrip(t.d.getElementById('tabAdmin'));
-      expect([...t.d.querySelectorAll('#tabAdmin > .feature-strip .pill-button')].map((p) => p.textContent.trim())).toEqual(['All', 'Etch', 'Users']);
+      expect([...t.d.querySelectorAll('#tabAdmin > .feature-strip .pill-button')].map((p) => p.textContent.trim())).toEqual(['All', 'Etch', 'Shared values', 'Users']);
       // staff with the live rule: the page item hidden too; su: nothing hidden
       t.L.applyAccess({ roles: ['staff'] });
       expect(t.d.getElementById('sbAdmin').hasAttribute('data-yc-denied')).toBe(true);
       t.L.applyAccess({ roles: ['su'] });
       expect(t.d.querySelectorAll('#tabAdmin [data-yc-denied], #appSidebar [data-yc-denied]')).toHaveLength(0);
-      expect(tiles.filter((b) => t.shown(b))).toHaveLength(13);
+      expect(tiles.filter((b) => t.shown(b))).toHaveLength(14);
     } finally { t.close(); }
   });
 
@@ -168,7 +169,7 @@ describe('1. gates', () => {
     expect(ids(VL.computeEffective({ isAdmin: false, roles: ['staff'], ui: ui({ ro }) }))).not.toContain('admin');
     const it = VL.computeEffective({ isAdmin: false, roles: ['it'], ui: ui({ ro }) });
     expect(ids(it)).toContain('admin');
-    expect(ids(it.filter((e) => e.group === 'Admin'))).toEqual(['adminEtch', 'adminUsers']);
+    expect(ids(it.filter((e) => e.group === 'Admin'))).toEqual(['adminEtch', 'adminSharedValues', 'adminUsers']);
     expect(ids(VL.computeEffective({ isAdmin: false, roles: ['su'], ui: ui({ ro }) }).filter((e) => e.group === 'Admin'))).toEqual(placed('admin'));
   });
 });
