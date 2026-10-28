@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-28T03:34:03.960Z_  
-_810 routes total — DELETE: 66, GET: 337, PATCH: 58, POST: 309, PUT: 37, _ALL: 3_
+_Generated 2026-10-28T04:37:58.885Z_  
+_811 routes total — DELETE: 66, GET: 338, PATCH: 58, POST: 309, PUT: 37, _ALL: 3_
 
 ## Global middleware chain
 
@@ -580,6 +580,7 @@ _810 routes total — DELETE: 66, GET: 337, PATCH: 58, POST: 309, PUT: 37, _ALL:
 | POST | `/api/readonly-keys/children` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | DELETE | `/api/readonly-keys/children/:id` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | POST | `/api/readonly-keys/children/:id/renew` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| GET | `/api/readonly/settings` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | POST | `/api/readonly/sql` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | GET | `/api/redirects` | `jwtOrApiKey` | — |
 | POST | `/api/redirects` | `jwtOrApiKey` | — |
@@ -1085,4 +1086,4 @@ _810 routes total — DELETE: 66, GET: 337, PATCH: 58, POST: 309, PUT: 37, _ALL:
 
 ---
 
-_810 routes total — DELETE: 66, GET: 337, PATCH: 58, POST: 309, PUT: 37, _ALL: 3_
+_811 routes total — DELETE: 66, GET: 338, PATCH: 58, POST: 309, PUT: 37, _ALL: 3_

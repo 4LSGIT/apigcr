@@ -175,8 +175,8 @@ function readonlyMounts() {
 describe('every readonly-key mount declares its surface', () => {
   const mounts = readonlyMounts();
 
-  test('the inventory: 21 mounts across the 8 files', () => {
-    expect(mounts).toHaveLength(21);
+  test('the inventory: 22 mounts across the 8 files', () => {
+    expect(mounts).toHaveLength(22);
     expect([...new Set(mounts.map(m => m.file))].sort()).toEqual(Object.keys(SURFACE_BY_FILE).sort());
   });
 

@@ -6,6 +6,9 @@
 // Body:    { sql: string, params?: array, maxRows?: number, timeoutMs?: number }
 // Returns: { ok, rows, fields, rowCount, truncated, durationMs }
 //
+// GET /api/readonly/settings — app_settings without its secrets (below).
+// Same auth and scope; one readonly_query_log row per call.
+//
 // Safety layers (in order):
 //   1. DB user `yc_readonly` has only SELECT — hard guarantee, can't
 //      DDL/DML regardless of any bug above.
@@ -28,6 +31,7 @@ const roPool  = require("../startup/dbReadonly");
 const { readonlyApiKeyAuth, requireKeyScope } = require("../lib/auth.readonly");
 const { isReadOnlyQuery, hasFileExfilClause, deniedTable } = require("../lib/sqlGuard");
 const { keyAllows } = require("../lib/capabilities");
+const reg = require("../lib/settingsRegistry");
 
 const SENSITIVE_SCOPE = "sql.ro.sensitive";
 // Explicit scope: a legacy NULL-scopes key does not hold it (lib/capabilities).
@@ -170,4 +174,74 @@ router.post("/api/readonly/sql", readonlyApiKeyAuth, requireKeyScope("sql.ro"), 
   }
 });
 
+// ─── GET /api/readonly/settings ──────────────────────────────────────
+// app_settings is a SECRET table to POST /api/readonly/sql (lib/sqlGuard):
+// it holds live credentials, and a statement regex cannot split it by row.
+// This endpoint serves the rest, judged by the settings registry in code, so
+// a key registered kind 'secret' is withheld the moment it is registered —
+// no list to keep in step (a view would need one: a row's is_secret flag is
+// not reliable — RingCentral's renewal REPLACEs rc_subscriptions without it).
+//
+// Served (fail closed — anything not matched is withheld):
+//   - a REGISTERED key whose kind is not secret / access / retired
+//     (reg.NEVER_SERVED), except AI_WITHHELD below;
+//   - an UNREGISTERED row with is_editable = 1 that does not fold onto a
+//     registered key (the collation: app_settings.key ignores case and
+//     trailing spaces, so 'Quo_Api_Key ' would read as quo_api_key);
+//   and in both cases never a row that is secret by either source
+//   (reg.isSecret: registry kind or the row's is_secret = 1).
+// A secret row's value is also NULLed inside MySQL, so it never reaches
+// this process from the read-only pool; the registry filter is the boundary.
+// → { ok, settings: [{ key, value, updated_at, registered, kind, home }],
+//     count, durationMs }  ordered by key.
+
+// Not credentials by kind, but not for AI sessions: the live Clio 2FA code
+// (staff read it through GET /clio-code).
+const AI_WITHHELD = Object.freeze(["clio_login_code"]);
+
+function aiReadableSetting(row) {
+  const key = row && row.key;
+  if (typeof key !== "string") return null;
+  if (reg.isSecret(key, row.is_secret)) return null;
+  const entry = reg.get(key);
+  if (entry) {
+    if (reg.NEVER_SERVED.includes(entry.kind) || AI_WITHHELD.includes(key)) return null;
+    return { key, value: row.value, updated_at: row.updated_at, registered: true, kind: entry.kind, home: entry.home };
+  }
+  if (reg.registeredSpelling(key)) return null;
+  if (Number(row.is_editable) !== 1) return null;
+  return { key, value: row.value, updated_at: row.updated_at, registered: false, kind: "variable", home: "firm" };
+}
+
+const SETTINGS_SQL =
+  "SELECT `key`, IF(is_secret = 0, `value`, NULL) AS `value`, is_secret, is_editable, updated_at " +
+  "FROM app_settings ORDER BY `key`";
+
+router.get("/api/readonly/settings", readonlyApiKeyAuth, requireKeyScope("sql.ro"), async (req, res) => {
+  const started = Date.now();
+  let conn;
+  try {
+    conn = await roPool.getConnection();
+    await conn.query("SET SESSION MAX_EXECUTION_TIME = ?", [DEFAULT_TIMEOUT]);
+    const [rows] = await conn.query(SETTINGS_SQL);
+    const settings = rows.map(aiReadableSetting).filter(Boolean);
+    logQuery(req, {
+      sql_text: "GET /api/readonly/settings",
+      row_count: settings.length, duration_ms: Date.now() - started,
+      status: "success",
+    });
+    res.json({ ok: true, settings, count: settings.length, durationMs: Date.now() - started });
+  } catch (err) {
+    logQuery(req, {
+      sql_text: "GET /api/readonly/settings",
+      duration_ms: Date.now() - started,
+      status: "error", error_text: err.message,
+    });
+    res.status(500).json({ error: "settings read failed" });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
 module.exports = router;
+module.exports.aiReadableSetting = aiReadableSetting;

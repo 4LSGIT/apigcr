@@ -1669,6 +1669,16 @@ Matching is a bare-word regex over the whole statement, so a sensitive name
 inside a string literal (an information_schema size query naming
 `ai_calls`) is refused too.
 
+**`GET /api/readonly/settings`** (`sql.ro`) → `{ok, settings: [{key, value,
+updated_at, registered, kind, home}], count}`: app_settings without its
+secrets, judged by the settings registry in code (§32) — a registered key
+unless its kind is secret / access / retired, an unregistered `is_editable`
+row that does not fold onto a registered key, never a row secret by either
+source, never `clio_login_code`. A new secret-kind key is withheld the moment
+it is registered; a view would need its own list (a row's `is_secret` is not
+reliable: the RingCentral renewal REPLACEs `rc_subscriptions` without it).
+app_settings itself stays a SECRET table to the SQL endpoint.
+
 **`POST /api/readonly/sql`** `{sql, params?, maxRows?, timeoutMs?}` →
 `{ok, rows, fields, rowCount, truncated, durationMs}`. First keyword must
 be SELECT/SHOW/DESCRIBE/DESC/EXPLAIN (comments stripped first). `WITH`
