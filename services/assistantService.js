@@ -1008,9 +1008,6 @@ const APPT_MANAGE_TOKEN_MAX = 32;
 const APPT_CONFIRM_PROPOSED_COLUMNS = Object.freeze(['appt_date', 'appt_end', 'appt_length', 'appt_type', 'appt_platform', 'appt_status', 'appt_note']);
 // appts.appt_platform enum members; MySQL stores a case-insensitive match as the member.
 const APPT_PLATFORM_ENUM = Object.freeze(['telephone', 'Zoom', 'in-person']);
-// appts.appt_length is a SIGNED tinyint: the production sql_mode stores a
-// longer length as 127 without an error.
-const APPT_LENGTH_STORED_MAX = 127;
 
 /** The appts row the route will resolve against, before it exists — as mysql2 (pool timezone 'Z') reads it. */
 function apptConfirmProposedRow({ appt_date, appt_length, appt_type, appt_platform, note }) {
@@ -1057,9 +1054,6 @@ async function apptActionMessageFields(db, value, { cancel = false, kind, contac
     if (r.table !== 'appts') throw refuse(`cannot use {{${r.table}.${r.column}}} — only {{contacts.*}} and {{appts.*}} resolve in a confirmation`);
     if (proposed && !APPT_CONFIRM_PROPOSED_COLUMNS.includes(r.column)) {
       throw refuse(`cannot use {{appts.${r.column}}}: it is not known until the appointment is created — use ${APPT_CONFIRM_PROPOSED_COLUMNS.map((c) => `appts.${c}`).join(', ')}, or the manage link`);
-    }
-    if (proposed && (r.column === 'appt_length' || r.column === 'appt_end') && proposed.appt_length > APPT_LENGTH_STORED_MAX) {
-      throw refuse(`cannot use {{appts.${r.column}}}: a ${proposed.appt_length}-minute length is stored as ${APPT_LENGTH_STORED_MAX} — write the length literally`);
     }
   }
   if (links.length && !proposed) {

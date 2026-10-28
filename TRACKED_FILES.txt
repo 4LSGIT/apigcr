@@ -614,6 +614,7 @@ ref/migrations/2026-10-27_hook_dedup_key.sql
 ref/migrations/2026-10-27_ingest_rule_edit_stamp_change_log.sql
 ref/migrations/2026-10-27_mailboxes_ingest_state_comment.sql
 ref/migrations/2026-10-27_optout_contact_columns_drop.sql
+ref/migrations/2026-10-28_appt_length_smallint.sql
 ref/migrations/2026-10-28_hook_executions_async_receiver.sql
 ref/migrations/2026-10-28_intake_review_assignee.sql
 ref/migrations/S1_notes_migration.sql
@@ -793,6 +794,7 @@ scripts/accessD1ParentKey.js
 scripts/accessD3TaskSessionKey.js
 scripts/accessSec3SensitiveTier.js
 scripts/add-path-headers.js
+scripts/apptLengthSmallint.js
 scripts/auditLogCredHeaderScrub.js
 scripts/b2SchedulerKeySwap.sh
 scripts/backfill-password-hashes.js

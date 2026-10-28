@@ -529,8 +529,8 @@ labeled element — the one disclosed exception to shown-is-sent. Create and
 reschedule resolve `{{appts.*}}` from the card's own values shaped as mysql2
 reads the stored row (date/end/length/type/platform/status/note; reschedule as
 the successor: the old type/length/platform at the new time with this note);
-any other appts column refuses, as does a length the signed tinyint would store
-as 127. Cancel resolves against the real row (so status/note read as before the
+any other appts column refuses (`appts.appt_length` is a smallint, so every
+length the card allows is stored as itself). Cancel resolves against the real row (so status/note read as before the
 cancel) and only checks that a token exists — the token never enters the card.
 An unresolved placeholder, another table, a non-canonical link, or braces left
 after resolution refuse. Recipient and sender are the route's: the contact's

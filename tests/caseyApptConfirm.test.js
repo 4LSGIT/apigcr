@@ -138,8 +138,9 @@ describe('Ask Casey appointment confirmations', () => {
     await expect(on('Hi {{name}}')).rejects.toThrow(/still contains/);
     await expect(on('{{trigger_data.amount}}')).rejects.toThrow(/trigger_data/);
     await expect(on(`{${LINK}`)).rejects.toThrow(/cannot show/);
+    // appts.appt_length is a smallint (since 2026-10-28): a length past the old tinyint's 127 resolves as itself.
     await expect(svc.normalizeActionDraft(world().db, createValue({ appt_length: 180, confirm_sms: true,
-      confirm_message: '{{appts.appt_length}} minutes' }), contactEvidence)).rejects.toThrow(/stored as 127/);
+      confirm_message: '{{appts.appt_length}} minutes' }), contactEvidence)).resolves.toMatchObject({ appt_length: 180, confirm_message: '180 minutes' });
     await expect(on(`${'x'.repeat(980)} ${LINK}`)).rejects.toThrow(/limit is 1000/);
   });
 

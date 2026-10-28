@@ -841,8 +841,10 @@ async function getSlots(db, {
   //    so plain string comparison in SQL is correct) ──
   const rangeStartStr = `${from} 00:00:00`;
   const rangeEndStr   = toDay.plus({ days: 1 }).toFormat('yyyy-MM-dd HH:mm:ss');
-  // Look back one civil day for point-start sources (events ≤ ~24h,
-  // appts ≤ 127 min + buffer) that began before `from` but overlap into it.
+  // Look back one civil day for point-start sources (events ≤ ~24h; appts are
+  // in practice ≤ a few hours — appt_length is smallint since 2026-10-28 and
+  // createAppt has no upper bound, so an appt spanning >1 day would be missed
+  // here; bound filed in ref/plans.md).
   const lookbackStr   = fromDay.minus({ days: 1 }).toFormat('yyyy-MM-dd');
 
   // ── One query per source for the whole range × all providers ──

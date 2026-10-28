@@ -1717,3 +1717,16 @@ which never shows it). Two steps:
 - **Task forwarding** (2026-10-27): while A is out, new tasks for A go to B
   with a short "forwarded from A" preamble. Hook point: `taskService.createTask`
   (the only task insert). Watch its 1000-char desc cap.
+
+## From the appt_length smallint migration (2026-10-28)
+
+- **`createAppt` has no upper bound on `appt_length`** (Casey caps its card at
+  1440; the native route caps nothing). While the column was tinyint the clamp
+  bounded it at 127 by accident; it is smallint now, and
+  `availabilityService.getSlots` looks back one civil day for overlapping
+  appointments — an appointment longer than ~1 day starting ≥2 days earlier
+  would be missed. Fix = a 1440 bound in `createAppt` (matching Casey) or a
+  wider lookback. Low urgency: live max ever stored is 90 minutes.
+- **`routes/booking.js` keeps its 1–127 bookable-length cap** as a product cap
+  (the comment no longer blames the column). Raising it is a product decision
+  for the booking owner.

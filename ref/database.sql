@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-27T17:38:47.077Z
+-- Generated: 2026-10-28T01:44:14.667Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:11474a1134760bc8babf73d659d83bc5
+-- Fingerprint: sha256:c33407b4bb88bdb882d050b33fc3fafa
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -258,7 +258,7 @@ CREATE TABLE `appts` (
   `appt_link_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Anchor id for appt_link_type: case_id | contact_id | docket (either form). Derived, never PATCHed directly.',
   `appt_type` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `type_key` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'U2: calendar_item_types.type_key (by value, no FK). NULL = appt_type NULL, unresolved, or pre-backfill.',
-  `appt_length` tinyint DEFAULT NULL,
+  `appt_length` smallint DEFAULT NULL COMMENT 'minutes; smallint since 2026-10-28 — was signed tinyint, relaxed sql_mode clamped >127 to 127 silently',
   `appt_form` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `appt_status` enum('Attended','No Show','Rescheduled','Canceled','Scheduled') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `appt_date` datetime NOT NULL COMMENT 'Firm-local NAIVE datetime (America/Detroit). Pool runs UTC — use CONVERT_TZ/DATE_FORMAT, Luxon server-side',

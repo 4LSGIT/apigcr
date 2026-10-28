@@ -263,7 +263,7 @@ function normalizePageWindows(raw) {
 /**
  * Load an active booking view by slug, parse provider_ids, and sanity-check
  * config. Misconfigured views (bad provider list, appt_length outside the
- * appts.appt_length tinyint range 1–127, non-positive granularity) are
+ * 1–127 product cap, non-positive granularity) are
  * treated as not-found — fail safe for the visitor — and alerted so staff
  * see it. Returns null when missing/inactive/misconfigured.
  */
@@ -291,7 +291,7 @@ async function loadView(db, slug) {
   const gran = Number(view.granularity_min);
   const bad =
     !pids ||
-    !Number.isInteger(len) || len < 1 || len > 127 ||   // appts.appt_length is tinyint
+    !Number.isInteger(len) || len < 1 || len > 127 ||   // product cap on bookable length (column is smallint since 2026-10-28; raising this is a product decision)
     !Number.isInteger(gran) || gran < 1 ||
     (view.provider_mode === 'fixed_one' && pids.length !== 1);
 

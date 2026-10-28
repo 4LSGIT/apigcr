@@ -6,7 +6,9 @@
  * ── GATED ON YC_TEST_MYSQL_URL — SKIPPED OTHERWISE ──────────────────────────
  *   YC_TEST_MYSQL_URL=mysql://root@127.0.0.1:3378/yc_apptconf_test npx jest tests/caseyApptConfirm.mysql.test.js --runInBand
  * The database must end in _test and hold the REAL schema (load
- * ref/database.sql into it first). This suite deletes and re-seeds rows in
+ * ref/database.sql into it first; a dump older than 2026-10-28 still has
+ * appts.appt_length as tinyint — run scripts/apptLengthSmallint.js --apply
+ * against it with APPT_LENGTH_DB_URL). This suite deletes and re-seeds rows in
  * users, contacts, contact_phones, contact_emails, appts and app_settings.
  *
  * WHAT IS LOCKED (ruling 15's A14 bar on the appointment cards)
@@ -203,6 +205,28 @@ d('Ask Casey appointment confirmations on real MySQL', () => {
     finally { await q('UPDATE contact_phones SET sms_optout = 1 WHERE id = 2'); }
   });
 
+  test('a length past the old tinyint ceiling round-trips intact: 180 is shown, stored, and resolved by the route as 180', async () => {
+    // appts.appt_length was a SIGNED tinyint until 2026-10-28 (scripts/apptLengthSmallint.js): under this
+    // sql_mode 180 was stored as 127 without an error, and appt_end with it.
+    const [col] = await q("SELECT DATA_TYPE AS t FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'appts' AND COLUMN_NAME = 'appt_length'");
+    expect(col.t).toBe('smallint');
+    const raw = 'Long: {{appts.appt_length}} min, {{appts.appt_date|time:h:mm A}} to {{appts.appt_end|time:h:mm A}}';
+    const draft = await create({ appt_length: 180, confirm_sms: true, confirm_message: raw });
+    expect(draft.appt_length).toBe(180);
+    // The time filter's clock zone is the environment's; the 3-hour span is not.
+    const m = draft.confirm_message.match(/^Long: 180 min, (\d+):(\d\d) ([AP])M to (\d+):(\d\d) ([AP])M$/);
+    expect(m).not.toBeNull();
+    const mins = (h, mm, ap) => ((Number(h) % 12) + (ap === 'P' ? 12 : 0)) * 60 + Number(mm);
+    expect((mins(m[4], m[5], m[6]) - mins(m[1], m[2], m[3]) + 1440) % 1440).toBe(180);
+    await insertAppt({ id: 93, client: 1309, date: '2027-01-05 10:00:00', length: 180, token: 'Lg3dEf6hIj9kLm2nOp5qRs' });
+    const [row] = await q('SELECT appt_length, appt_end FROM appts WHERE appt_id = 93');
+    expect(row.appt_length).toBe(180);
+    expect(row.appt_end).toEqual(new Date('2027-01-05T13:00:00Z'));
+    expect(await rowResolve(raw, 1309, 93)).toBe(draft.confirm_message);
+    const sent = await routeSend({ contactId: 1309, apptId: 93, sms: true, email: false, message: draft.confirm_message });
+    expect(sent.sms.map((s) => s.text)).toEqual([draft.confirm_message]);
+  });
+
   test('strict for Casey: unresolved, unknown-before-create, foreign-table, mangled-link and brace-carrying text all refuse', async () => {
     const on = (confirm_message) => create({ confirm_sms: true, confirm_message });
     await expect(on('Hi {{contacts.contact_pname}}')).rejects.toThrow(/do not resolve \(\{\{contacts\.contact_pname\}\}\)/);
@@ -212,9 +236,6 @@ d('Ask Casey appointment confirmations on real MySQL', () => {
     await expect(on('Hi {{name}}')).rejects.toThrow(/still contains "\{\{" or "\}\}"/);
     await expect(on('Hi {{trigger_data.x}}')).rejects.toThrow(/trigger_data/);
     await expect(on('{' + LINK)).rejects.toThrow(/cannot show/);
-    // appts.appt_length is a signed tinyint: 180 would be stored (and resolved by the route) as 127.
-    await expect(create({ appt_length: 180, confirm_sms: true, confirm_message: 'Long: {{appts.appt_length}}' })).rejects.toThrow(/stored as 127/);
-    await expect(create({ appt_length: 180, confirm_sms: true, confirm_message: 'Ends {{appts.appt_end|time:h:mm A}}' })).rejects.toThrow(/stored as 127/);
     // Contact data that itself carries braces would be re-resolved by the route: refused.
     await expect(svc.normalizeActionDraft(pool, { kind: 'appt.create.v1', contact_id: 1312, appt_type: 'Consultation', appt_length: 60,
       appt_platform: 'Zoom', appt_date: '2027-01-05 10:00', appt_with: 7, confirm_sms: true, confirm_message: 'Hi {{contacts.contact_pname}}', evidence: ref },
