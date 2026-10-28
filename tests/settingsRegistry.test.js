@@ -256,6 +256,40 @@ describe('HOME_CAPS', () => {
   });
 });
 
+describe('alsoWrite — a per-key write grant (settings-access 2026-10-28)', () => {
+  test('exactly one key carries one, and it is the reviewed precedent', () => {
+    const granted = Object.keys(reg.SETTINGS).filter((k) => reg.SETTINGS[k].alsoWrite !== undefined);
+    expect(granted.map((k) => [k, reg.SETTINGS[k].alsoWrite])).toEqual([['fe-lead_sources', 'firm.lists']]);
+    expect(reg.writeCapsOf(reg.get('fe-lead_sources'))).toEqual(['firm.settings', 'firm.lists']);   // additive
+    expect(reg.writeCapsOf(reg.get('fe-event_types'))).toEqual(['firm.settings']);
+    expect(reg.writeCapsOf(reg.get('quo_api_key'))).toEqual([]);
+  });
+
+  test('the load-time rules refuse every illegal grant (crafted entries)', () => {
+    const ok = { kind: 'vocab', home: 'config', section: 'lists', type: 'json_array', alsoWrite: 'firm.lists' };
+    expect(() => reg.assertAlsoWrite({ x: ok }, {})).not.toThrow();
+    const cases = [
+      [{ ...ok, alsoWrite: 'nope.cap' }, /names no capability/],
+      [{ ...ok, alsoWrite: 42 }, /names no capability/],
+      [{ ...ok, alsoWrite: 'constructor' }, /names no capability/],
+      [{ ...ok, alsoWrite: '__proto__' }, /names no capability/],
+      [{ ...ok, alsoWrite: 'toString' }, /names no capability/],
+      [{ ...ok, alsoWrite: 'tools.author' }, /names a root capability/],
+      [{ ...ok, kind: 'system' }, /not allowed on kind system/],
+      [{ ...ok, kind: 'secret' }, /not allowed on kind secret/],
+      [{ ...ok, kind: 'state' }, /not allowed on kind state/],
+      [{ ...ok, home: 'system' }, /not allowed in home system/],
+      [{ ...ok, home: 'cta' }, /not allowed in home cta/],
+      [{ ...ok, home: 'console' }, /not allowed in home console/],
+      [{ ...ok, edit: 'console' }, /console-posture/],
+      [{ ...ok, automation: true }, /automation-writable/],
+    ];
+    for (const [entry, re] of cases) expect(() => reg.assertAlsoWrite({ x: entry }, {})).toThrow(re);
+    expect(() => reg.assertAlsoWrite({ email_it: { ...ok, kind: 'firm', home: 'firm' } }, { email_it: {} })).toThrow(/firmConfig key/);
+    expect(() => reg.assertAlsoWrite(reg.SETTINGS)).not.toThrow();
+  });
+});
+
 describe('lookups', () => {
   test('get / isRegistered', () => {
     expect(reg.get('firm_name').home).toBe('firm');

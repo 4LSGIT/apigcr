@@ -21,7 +21,9 @@
  *   values     { key: value } — REGISTERED keys that have a row
  *   variables  [{ key, value, type, label?, description?, category?,
  *                sort_order?, is_secret?, is_editable? }] — UNREGISTERED rows
- *   caps       { firm, system } — the caller's firm.settings / system.settings
+ *   caps       { firm, system, lists? } — the caller's firm.settings /
+ *              system.settings / firm.lists (a key's alsoWrite — the staff
+ *              role holds it; default off, so a caller is modelled as before)
  *              (change st.caps mid-test to model a role revoked since load)
  *   required   [key] — rows served with required:true (the arc adds the field;
  *              a registry entry's own `required: true` counts too)
@@ -69,7 +71,10 @@ function makeSettingsApi({ values = {}, variables = [], caps = { firm: true, sys
     { id: 4, name: 'E-sign reminders', type: 'esign', active: 1 }, { id: 5, name: 'Old reminders', type: 'esign', active: 0 },
     { id: 6, name: 'Intake follow-up', type: 'lead', active: 1 }];
 
-  const has = (cap) => (cap === 'firm.settings' ? !!st.caps.firm : cap === 'system.settings' ? !!st.caps.system : false);
+  const has = (cap) => (cap === 'firm.settings' ? !!st.caps.firm : cap === 'system.settings' ? !!st.caps.system
+    : cap === 'firm.lists' ? !!st.caps.lists : false);
+  // The route's mayWrite (a staff JWT): the home's write capability, or the key's alsoWrite.
+  const mayWrite = (e) => reg.writeCapsOf(e).some(has);
   const readOk = (c) => c.read === null || (typeof c.read === 'string' && has(c.read));
   const sectionTitle = (home, section) => ((reg.SECTIONS[home] || []).find((s) => s.id === section) || {}).title || null;
 
@@ -79,14 +84,17 @@ function makeSettingsApi({ values = {}, variables = [], caps = { firm: true, sys
     return { key, value: db ? db.value : null, updated_at: db ? db.updated_at : null, exists: !!db, registered: true,
       kind: e.kind, home: e.home, section: e.section, type: e.type, options: e.options ? e.options.slice() : null,
       label: e.label, description: e.desc || null, sort_order: e.sort ?? null, edit, editor: e.editor || null,
-      env: e.env || null, can_edit: edit === 'ui' && !!c.write && has(c.write), category: sectionTitle(e.home, e.section),
+      env: e.env || null, can_edit: edit === 'ui' && !!c.write && mayWrite(e),
+      also_write: edit === 'ui' && !!c.write && !has(c.write) && e.alsoWrite && has(e.alsoWrite) ? e.alsoWrite : null,
+      category: sectionTitle(e.home, e.section),
       required: e.required === true || required.includes(key) };
   }
   function variableRow(key) {
     const db = st.rows.get(key);
     return { key, value: db.value, updated_at: db.updated_at, exists: true, registered: false, kind: 'variable', home: 'firm',
       section: 'variables', type: db.type, options: null, label: db.label || key, description: db.description || null,
-      sort_order: db.sort_order, edit: 'ui', editor: null, env: null, can_edit: has('firm.settings'), category: db.category, required: false };
+      sort_order: db.sort_order, edit: 'ui', editor: null, env: null, can_edit: has('firm.settings'), also_write: null,
+      category: db.category, required: false };
   }
   function served() {
     const out = [];
@@ -117,7 +125,7 @@ function makeSettingsApi({ values = {}, variables = [], caps = { firm: true, sys
         throw apiError(403, `${e.label} is changed from the SU db console only`);
       }
       const c = reg.capsOf(e);
-      if (!c.write || !has(c.write)) throw apiError(403, `Changing ${e.label} needs the ${c.write} permission`);
+      if (!c.write || !mayWrite(e)) throw apiError(403, `Changing ${e.label} needs the ${c.write} permission`);
       const v = reg.validate(key, value);
       if (v !== true) throw apiError(400, v);
       return;
@@ -191,7 +199,7 @@ function makeSettingsApi({ values = {}, variables = [], caps = { firm: true, sys
       if (e) {
         if (reg.NEVER_SERVED.includes(e.kind)) throw apiError(404, 'Setting not found');
         const c = reg.capsOf(e);
-        if (!c.write || !has(c.write)) throw apiError(403, `Changing ${e.label} needs the ${c.write} permission`);
+        if (!c.write || !mayWrite(e)) throw apiError(403, `Changing ${e.label} needs the ${c.write} permission`);
       } else {
         const db = st.rows.get(key);
         if (!db || db.is_secret) throw apiError(404, 'Setting not found');

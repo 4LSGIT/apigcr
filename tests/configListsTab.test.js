@@ -467,8 +467,8 @@ describe('lead sources, firmData, refusals, guards', () => {
 
 // ─────────────────────────────────────────────────────────────────────────
 describe('under the real Config shell', () => {
-  async function shell() {
-    const fake = makeSettingsApi({ values: VALUES, caps: { firm: true, system: false } });
+  async function shell(caps = { firm: true, system: false }) {
+    const fake = makeSettingsApi({ values: VALUES, caps });
     const top = new JSDOM('<!DOCTYPE html><html><body></body></html>', { runScripts: 'dangerously', url: 'https://app.test/', pretendToBeVisual: true, virtualConsole: new VirtualConsole() }).window;
     let release;
     const probe = new Promise((r) => { release = r; });
@@ -508,6 +508,44 @@ describe('under the real Config shell', () => {
     await flush();
     expect(t.writes()).toEqual([['PUT /api/app-settings/fe-lead_sources', '["Search","Referral"]']]);
     expect([t.firmLoads(), t.shown()]).toEqual([1, ['refresh']]);
+  });
+
+  test('a staff member (firm.lists, no firm.settings): Lead sources editable, Event types read-only; Save on THIS tab only, saving only Lead sources', async () => {
+    const t = await shell({ firm: false, system: false, lists: true });
+    await t.release({ can_edit_firm: false });
+    expect([t.$('body').classList.contains('cc-ro'), t.ls().length > 0, t.et().length, t.roBanner(), t.shown()])
+      .toEqual([false, true, 0, null, ['refresh']]);
+    expect(t.row('fe-event_types').querySelector('.ycsr-ro').textContent).toBe(ET);              // the value as text
+    expect(t.row('fe-event_types').querySelectorAll('input, select, textarea, button').length).toBe(0);
+    expect(t.$('#ls-status').textContent).toBe('All changes saved');
+    expect([t.mid.isReadOnlyTab('lists'), t.mid.isReadOnlyTab('types')]).toEqual([false, true]);   // the other tabs stay read-only
+    t.setVal(t.ls()[0], 'Search');
+    expect(t.shown()).toEqual(['save', 'refresh']);
+    t.mid.onTopbarSave();
+    await flush();
+    expect(t.writes()).toEqual([['PUT /api/app-settings/fe-lead_sources', '["Search","Referral"]']]);
+    expect(t.firmLoads()).toBe(1);
+    // the page's one write gate: Lead sources' own paths only
+    await expect(t.L.api('/api/app-settings/fe-event_types', 'PUT', { value: '["X"]' })).rejects.toThrow(RO_MSG);
+    await expect(t.L.api('/api/app-settings/fe-event_types/restore', 'POST', { version_id: 1 })).rejects.toThrow(RO_MSG);
+    await expect(t.L.api('/api/app-settings/fe-lead_sources-x', 'PUT', { value: '[]' })).rejects.toThrow(RO_MSG);
+    for (const p of ['/api/app-settings/fe-lead_sources/../fe-event_types', '/api/app-settings/fe-lead_sources/%2e%2e/fe-event_types',
+      '/api/app-settings/fe-lead_sources/./restore']) {
+      await expect(t.L.api(p, 'PUT', { value: '["X"]' })).rejects.toThrow(RO_MSG);
+    }
+    await expect(t.L.api('/api/app-settings', 'POST', { key: 'k' })).rejects.toThrow(RO_MSG);
+    expect(t.writes()).toHaveLength(1);
+  });
+
+  test('a staff member WITHOUT firm.lists: everything read-only, the banner, Save masked', async () => {
+    const t = await shell({ firm: false, system: false, lists: false });
+    await t.release({ can_edit_firm: false });
+    expect([t.$('body').classList.contains('cc-ro'), t.controls().length, t.shown(), t.roBanner(), t.mid.isReadOnlyTab('lists')])
+      .toEqual([true, 0, ['refresh'], RO_MSG, true]);
+    t.mid.onTopbarSave();
+    await t.w.onSave();
+    await flush();
+    expect(t.writes()).toEqual([]);
   });
 
   test('the answer false: the banner, Save masked, no control — and the shell\'s Save hook refuses too', async () => {

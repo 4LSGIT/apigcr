@@ -56,6 +56,13 @@ Deferred from the arc:
 - **Delete the `quo_api_key` row** (its last reader, services/quoService.js, was deleted 2026-10-28; Quo sends authenticate through a Connections credential) — then the key can retire;
   `rc_token` / `rc_subscriptions` go with the RingCentral retirement.
 - **The legacy `settings` table** has no reader (AUDIT_TENANCY §B4): drop it.
+- **A stale-value check on settings writes.** `PUT /api/app-settings/:key`
+  writes the body's value unconditionally (last write wins). Lead sources is
+  now edited by every staff member (alsoWrite, 2026-10-28), so two people
+  editing the list at once can drop one's change. Fix: an optional `base`
+  (the value as read) → 409 with the current value, sent by
+  `public/js/ycSettingRows.js` — the `/api/ui-config` `base` precedent.
+  Deferred from the settings-access arc: it changes every settings editor.
 - **`fe-*` shipping.** Every `fe-` row ships to every staff browser through
   `/api/firm-data`; a registry flag could replace the prefix (YC 3.0).
 - **Terminology layer** (YC 3.0: the case / matter label map) — a future

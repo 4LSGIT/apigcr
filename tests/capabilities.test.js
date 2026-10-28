@@ -124,6 +124,7 @@ describe('capability registry', () => {
       'templates.code': false,
       'tools.author': true,
       'system.settings': false,
+      'firm.lists': false,
     });
   });
 
@@ -141,7 +142,7 @@ describe('capability registry', () => {
       admin: ['firm.settings', 'automations.manage', 'archives.purge'],
       attorney: ['comms.read_all'],
       form_dev: ['templates.code'],
-      staff: [],
+      staff: ['firm.lists'],
       automation: [],
     });
   });
@@ -223,11 +224,12 @@ describe('can()', () => {
     expect(can(live6, 'firm.settings')).toBe(true);
     expect(can(live6, 'comms.read_all')).toBe(false);
     const ss = jwtAuth(['staff', 'attorney']);      // user 1
-    expect(ALL.filter(c => can(ss, c))).toEqual(['comms.read_all']);
+    expect(ALL.filter(c => can(ss, c))).toEqual(['comms.read_all', 'firm.lists']);
   });
 
-  test('staff, automation, no roles, unknown role: denied everything', () => {
-    for (const roles of [['staff'], ['automation'], [], ['bogus'], ['constructor'], ['__proto__']]) {
+  test('staff: firm.lists only; automation, no roles, unknown role: denied everything', () => {
+    expect(ALL.filter(c => can(jwtAuth(['staff']), c))).toEqual(['firm.lists']);
+    for (const roles of [['automation'], [], ['bogus'], ['constructor'], ['__proto__']]) {
       for (const c of ALL) expect(can(jwtAuth(roles), c)).toBe(false);
     }
     // missing roles claim on a non-SU token

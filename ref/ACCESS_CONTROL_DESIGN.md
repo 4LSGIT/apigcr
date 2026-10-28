@@ -135,7 +135,7 @@ capabilities**:
 | `su` | root within the tenant (the YC role) | everything — nothing blocks it ever |
 | `it` | firm technical operator | **all firm-grade capabilities** (incl. `firm.settings` — Q2 yes — `system.settings`, and `users.impersonate`: read-only View-as only, §2.9), never root-grade |
 | `admin` | firm administrator | `firm.settings`, `users.manage`*, `automations.manage`, `archives.purge`† |
-| `staff` | baseline employee | the implicit everything-not-gated surface (no registry entry needed in v2) |
+| `staff` | baseline employee | the implicit everything-not-gated surface, plus `firm.lists` (2026-10-28: the Lead sources list — a settings key's `alsoWrite`) |
 | `attorney` | legal read scope | `comms.read_all` (the existing mailbox/phone read bypass) |
 | `form_dev` | template code author | `templates.code` |
 | `automation` | machine pseudo-user | none (exists for attribution/filtering, not grants) |
@@ -173,7 +173,8 @@ gratuitous churn). `'authorized - SU'` and the phantom
   demand: `firm.settings`, `tools.author` (root), `users.manage` (root in
   v2 — delegation later is a registry flip), `templates.code`,
   `comms.read_all`, `archives.purge`, `automations.manage`, and — from the
-  settings arc — `system.settings`; and `users.impersonate` (View-as, §2.9). Growing it = a
+  settings arc — `system.settings`; `users.impersonate` (View-as, §2.9); and `firm.lists`
+  (settings-access, 2026-10-28 — a settings key's per-key write grant). Growing it = a
   code change + test snapshot (same deliberate-choice pattern as
   CTA_FN_DENYLIST). Shipped in A1 as `lib/capabilities.js`.
 - `ROLE_CAPS` — role → capability-set map (table above). `su` and `it` are
@@ -333,7 +334,9 @@ and the View-as caller is the target) — revisit if Live use grows.
    per KEY: `lib/settingsRegistry.js` gives each app_settings key one editor
    home, and the home names the capability — firm / portal / config homes
    write with `firm.settings`, cta with `system.settings` (all four read by
-   any staff); system / comms read AND write with `system.settings`; secrets,
+   any staff); system / comms read AND write with `system.settings`; a key's
+   `alsoWrite` may add one more write capability (today `fe-lead_sources` →
+   `firm.lists`, every staff member); secrets,
    interim access lists and retired keys are never served. A row's
    `is_editable` governs only UNREGISTERED rows (automation variables);
    `is_secret` still hides a row whatever the registry says.

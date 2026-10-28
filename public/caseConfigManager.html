@@ -421,6 +421,19 @@ function onTopbarNew()     { if (!isReadOnlyTab(activeSubPageId)) callSubPageHoo
 let configCanEdit = null;
 let accessState = 'pending';
 
+// A vocabulary sub-page whose SERVER rows let this user write some of it
+// without firm.settings (a key's alsoWrite in lib/settingsRegistry.js — the
+// Lists tab's Lead sources for every staff member, 2026-10-28) says so with
+// setTabEditable(id, true): Save shows and the banner hides on that tab only.
+// VISIBILITY ONLY, like everything here — the server re-checks every write,
+// and the sub-page still draws its other rows read-only.
+const tabEditable = Object.create(null);
+function setTabEditable(id, on) {
+  if (!SUB_PAGES.some(p => p.id === id)) return;
+  tabEditable[id] = on === true;
+  applyTopbarButtons();
+}
+
 Object.defineProperty(window, 'configCanEdit', {
   get() { return configCanEdit; },
   configurable: true,
@@ -434,7 +447,7 @@ const RO_TEXT = {
 /** A vocabulary tab (no gate) while this user may not change Config. */
 function isReadOnlyTab(id) {
   const page = SUB_PAGES.find(p => p.id === id);
-  return !!page && !page.gate && configCanEdit !== true;
+  return !!page && !page.gate && configCanEdit !== true && tabEditable[id] !== true;
 }
 
 /** The banner: only once the probe settled (no flash for holders while it
@@ -457,6 +470,7 @@ function deliverAccess(id) {
 // ── Expose to sub-pages via window.parent ──────────────────────
 window.apiSend          = apiSend;
 window.setTopbarButtons = setTopbarButtons;
+window.setTabEditable   = setTabEditable;
 window.esc              = esc;
 
 // ── Gated tabs (Firm, System) + the access answer ──────────────

@@ -31,11 +31,16 @@
  *   is_editable = 0 rows.
  *   ROW = { key, value, updated_at, exists, registered, kind, home, section,
  *           type, options, label, description, sort_order, edit, editor, env,
- *           required, can_edit, category }
+ *           required, can_edit, also_write, category }
+ *   also_write = the capability THIS caller writes the key through when it is
+ *   the key's alsoWrite (lib/settingsRegistry.js) and not the home's — else
+ *   null (a home-capability holder, or no write at all). An editor that gates
+ *   its whole tab on the home's capability opens exactly these rows without
+ *   it (Config → Lists: Lead sources for a staff member).
  *   required = the registry refuses a blank value for this key (unregistered:
  *   false).
  *   can_edit = posture 'ui' (kind not state) AND the caller holds the home's
- *   WRITE capability. category = the section's title (registered) or the DB
+ *   WRITE capability or the key's alsoWrite (reg.writeCapsOf). category = the section's title (registered) or the DB
  *   category (unregistered). Order: home (HOME_CAPS order), section, sort_order
  *   (unset last), key. sections = SECTIONS of every home present in settings.
  *   ?home = comma-separated homes (repeatable; empty = all); an unknown home → 400.
@@ -45,8 +50,8 @@
  *   REGISTERED key:
  *     - kind secret / access / retired / state, or posture 'console' → 403
  *       "<label> is changed from the SU db console only";
- *     - caller without the home's WRITE capability → 403 "Changing <label>
- *       needs the <cap> permission";
+ *     - caller holding neither the home's WRITE capability nor the key's
+ *       alsoWrite → 403 "Changing <label> needs the <home cap> permission";
  *     - value not a string, or over 60000 characters → 400;
  *     - reg.validate(key, value) fails → 400 with the reason;
  *     - its row flagged is_secret = 1 → 403 (console only, as above);
@@ -98,6 +103,9 @@
  *     ACCESS_CONTROL_DESIGN §8 Q3) and a SCOPED key passes only when its
  *     scopes name that capability — with no route scope, as on every
  *     requireAuth({ can }) route (access-control B2). The handler checks again.
+ *     A key's alsoWrite (lib/settingsRegistry.js) widens STAFF writes only:
+ *     the machine-key mount gate stays the home's capability, so keyGates
+ *     never needs a gate per alsoWrite capability.
  *   - GET stays on jwtOrApiKey: any signed-in staff user reads; WHAT a caller
  *     sees follows the READ rule above.
  *   - A secret is never returned, written or versioned here. Keys are never
@@ -253,7 +261,7 @@ function authorize(req, key, { forHistory = false } = {}) {
   } else if (!cap || CONSOLE_KINDS.includes(entry.kind) || reg.editOf(entry) !== 'ui') {
     throw new HttpError(403, `${label} is changed from the SU db console only`);
   }
-  if (!can(req.auth, cap)) throw deny(req, `${what(label)} needs the ${cap} permission`);
+  if (!mayWrite(req.auth, entry)) throw deny(req, `${what(label)} needs the ${cap} permission`);
   return { entry, label };
 }
 
@@ -339,9 +347,27 @@ function readable(auth, entry) {
   return r === null || (typeof r === 'string' && can(auth, r));
 }
 
+/** The capability the caller writes the key through: the home's write
+ *  capability if held, else — a staff JWT only — the key's alsoWrite; null
+ *  when neither (and for a key no API writes). */
+function writeVia(auth, entry) {
+  const caps = reg.NEVER_SERVED.includes(entry.kind) ? [] : reg.writeCapsOf(entry);
+  if (!caps.length) return null;
+  if (can(auth, caps[0])) return caps[0];
+  if (!(auth && auth.type === 'jwt')) return null;
+  return caps.slice(1).find((c) => can(auth, c)) || null;
+}
+const mayWrite = (auth, entry) => writeVia(auth, entry) !== null;
+
 function canEdit(auth, entry) {
-  const cap = reg.capsOf(entry).write;
-  return reg.editOf(entry) === 'ui' && !CONSOLE_KINDS.includes(entry.kind) && !!cap && can(auth, cap);
+  return reg.editOf(entry) === 'ui' && !CONSOLE_KINDS.includes(entry.kind) && mayWrite(auth, entry);
+}
+
+/** ROW.also_write: the alsoWrite capability this caller edits the key through. */
+function alsoWriteOf(auth, entry) {
+  if (!canEdit(auth, entry)) return null;
+  const via = writeVia(auth, entry);
+  return via && via !== reg.capsOf(entry).write ? via : null;
 }
 
 const sectionsOf = (home) => reg.SECTIONS[home] || [];
@@ -382,7 +408,8 @@ router.get('/api/app-settings', jwtOrApiKey, async (req, res) => {
         registered: true, kind: e.kind, home: e.home, section: e.section, type: e.type,
         options: e.options ? e.options.slice() : null, label: e.label || key, description: e.desc || null,
         sort_order: e.sort == null ? null : e.sort, edit: reg.editOf(e), editor: e.editor || null, env: e.env || null,
-        required: e.required === true, can_edit: canEdit(auth, e), category: sec ? sec.title : null,
+        required: e.required === true, can_edit: canEdit(auth, e), also_write: alsoWriteOf(auth, e),
+        category: sec ? sec.title : null,
       });
     }
     if (variables) {
@@ -393,7 +420,7 @@ router.get('/api/app-settings', jwtOrApiKey, async (req, res) => {
           registered: false, kind: 'variable', home: 'firm', section: 'variables', type: row.type,
           options: null, label: row.label || row.key, description: row.description == null ? null : row.description,
           sort_order: row.sort_order == null ? null : Number(row.sort_order), edit: 'ui', editor: null, env: null,
-          required: false, can_edit: caps.firm, category: row.category == null ? null : row.category,
+          required: false, can_edit: caps.firm, also_write: null, category: row.category == null ? null : row.category,
         });
       }
     }

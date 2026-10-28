@@ -329,9 +329,9 @@
       // console error — a typo must be seen, never silently open). Visibility
       // only: the route still refuses.
       var CAP_ROOT = { 'firm.settings': false, 'users.manage': true, 'users.impersonate': false, 'automations.manage': false, 'archives.purge': false,
-        'comms.read_all': false, 'templates.code': false, 'tools.author': true, 'system.settings': false };
+        'comms.read_all': false, 'templates.code': false, 'tools.author': true, 'system.settings': false, 'firm.lists': false };
       var ROLE_CAPS = { admin: ['firm.settings', 'automations.manage', 'archives.purge'], attorney: ['comms.read_all'],
-        form_dev: ['templates.code'], staff: [], automation: [] };
+        form_dev: ['templates.code'], staff: ['firm.lists'], automation: [] };
       function gatePasses(gate, opts) {
         if (gate == null) return true;
         if (gate !== 'su' && !hasOwn(CAP_ROOT, gate)) { warn('unknown gate "' + gate + '" — hidden'); return false; }

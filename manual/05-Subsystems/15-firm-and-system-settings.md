@@ -80,11 +80,14 @@ login code, which a phone rule stores, is allowed). See
 
 ## The Lists tab
 
-Two simple lists, for the *firm settings* holders (everyone else sees them
+Two simple lists. **Lead sources** can be changed by any staff member (anyone
+with the *staff* role — every user created from the Users pane has it); **Event
+types** only by the *firm settings* holders (everyone else sees that list
 read-only):
 
 - **Lead sources** — the suggestions offered in a case's Lead Source box. They
-  are only suggestions: the box still accepts anything typed.
+  are only suggestions: the box still accepts anything typed. Every staff
+  member may add, remove and reorder them; each change keeps its history.
 - **Event types (legacy list)** — the list the new-event dialog and the Events
   tab's filter offer, and the event form's fallback when Calendar Types cannot
   be read (Calendar Types is the event form's real vocabulary). Add, rename,
@@ -113,7 +116,9 @@ Everyone can open YisraCase Config's vocabulary tabs — Types & Subtypes,
 Pipelines, Custom Fields, Contact Roles, Calendar Types, Lists — but only the
 *firm settings* holders can change them. Others see a banner, *Read-only —
 changing YisraCase Config needs the admin permission*, the editing controls
-are gone, and detail dialogs open to view.
+are gone, and detail dialogs open to view. The one exception is the Lead
+sources list on the Lists tab, which every staff member may change (no
+banner there; Event types beside it stays read-only).
 
 ## For IT: the registry
 

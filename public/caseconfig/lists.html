@@ -103,8 +103,8 @@
   <div class="ls-page">
     <p class="ls-intro">The firm's short vocabulary lists. <b>Lead sources</b> are the suggestions offered on a case's
       Lead Source field — suggestions only: the field still accepts free text. <b>Event types</b> are the list the
-      new-event dialog and the Events filter offer. Only staff with the firm-settings permission change them; everyone
-      else sees them read-only.</p>
+      new-event dialog and the Events filter offer. Any staff member may change the lead sources; event types need the
+      firm-settings permission (everyone else sees them read-only).</p>
     <div class="ls-banner" id="ls-banner" role="alert" hidden></div>
     <section class="ls-section" id="ls-sec-lists">
       <header class="ls-sec-head"><h2><i class="fa-solid fa-list"></i> Lists</h2>
@@ -149,8 +149,14 @@
 // the Events filter, the case Lead Source suggestions — re-read firmData).
 //
 // Read-only: the Config handshake (settings arc §3b) — see ccApplyAccess.
-// Read-only rows are handed to the rows module with can_edit false (text,
-// no control, no History), so nothing that writes is drawn at all.
+// One exception, per row: a key whose served row names an also_write
+// capability (lib/settingsRegistry.js alsoWrite — fe-lead_sources: firm.lists,
+// every staff member, settings-access 2026-10-28) is editable without the
+// handshake when the server says can_edit (rowEditable). Every other row
+// needs the handshake AND can_edit, as before. Read-only rows go to the rows
+// module with can_edit false (text, no control, no History), so nothing that
+// writes is drawn for them. The page is editable (pageCanEdit) when any row
+// is; it then tells the shell (setTabEditable) so Save shows on this tab.
 //
 // Shell protocol: P.apiSend relay (through api() only); P.setTopbarButtons
 // (Save while dirty, Refresh); hooks onShow / onHide / onSave / onRefresh /
@@ -163,29 +169,52 @@ const P = window.parent;
 // ONE idiom (types.html, pipelines.html, fields.html, calendarTypes.html).
 // ccCanEdit is true only when the shell says so — P.configCanEdit === true
 // at init, or onAccess({ canEdit: true }) later; anything else is read-only
-// (fail closed — the server is the authority either way). Read-only =
+// (fail closed — the server is the authority either way). While the page is
+// not editable (pageCanEdit false) =
 //   · body.cc-ro hides every write control (.cc-w);
 //   · the rows are drawn with can_edit false: the values as text, no
 //     control, no History (rowsFor) — and ccLock() disables any form control
 //     that is drawn anyway;
 //   · api() refuses every non-GET call, so no stray or hidden control writes.
+// Without the handshake, api() lets a non-GET through only to a key whose
+// served row is editable through its also_write (its own PUT / history /
+// restore paths).
 let ccCanEdit = false;
 const CC_RO_MSG = 'Read-only — changing YisraCase Config needs the admin permission.';
 const ccIsRead = (method) => method == null || /^(GET|HEAD)$/i.test(String(method));
+const rowEditable = (r) => !!r && (r.can_edit === true || r.can_edit === 1)
+  && (ccCanEdit || (typeof r.also_write === 'string' && r.also_write !== ''));
+function pageCanEdit() { return Page.rows.some(rowEditable); }
 function ccApplyAccess(canEdit) {
   const next = canEdit === true;
   const changed = next !== ccCanEdit;
   ccCanEdit = next;
-  document.body.classList.toggle('cc-ro', !next);
+  ccApplyEditable();
   if (changed && Page.loaded) Page.render();
+}
+/** body.cc-ro and the shell's Save follow pageCanEdit (the handshake or a row). */
+function ccApplyEditable() {
+  const on = pageCanEdit();
+  document.body.classList.toggle('cc-ro', !on);
+  if (typeof P.setTabEditable === 'function') P.setTabEditable('lists', !ccCanEdit && on);
 }
 function onAccess(access) { ccApplyAccess(access && access.canEdit); }
 function ccLock(root) {
-  if (ccCanEdit || !root) return;
+  if (pageCanEdit() || !root) return;
   root.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
 }
+/** A non-GET path that writes a key whose served row is editable. */
+function ccRowWritePath(path) {
+  const p = String(path || '');
+  if (/(^|\/)\.\.?(\/|$|\?)|%2e/i.test(p)) return false;     // no dot segments, plain or encoded
+  return Page.rows.some((r) => {
+    if (!rowEditable(r)) return false;
+    const base = '/api/app-settings/' + encodeURIComponent(r.key);
+    return p === base || p.startsWith(base + '/') || p.startsWith(base + '?');
+  });
+}
 
-const api = (...args) => (ccCanEdit || ccIsRead(args[1]))
+const api = (...args) => (ccCanEdit || ccIsRead(args[1]) || ccRowWritePath(args[0]))
   ? P.apiSend(...args)
   : Promise.reject(new Error(CC_RO_MSG));
 const E = id => document.getElementById(id);
@@ -376,7 +405,7 @@ const EDITORS = { eventTypes: eventTypesEditor };
 const Page = {
   rows: [], view: null, loaded: false, saving: false, inflight: null,
   dirty() { return !!(this.view && this.view.isDirty()); },
-  syncTopbar() { P.setTopbarButtons({ save: ccCanEdit && this.dirty() && !this.saving, refresh: true }); },
+  syncTopbar() { P.setTopbarButtons({ save: pageCanEdit() && this.dirty() && !this.saving, refresh: true }); },
 
   load() {
     if (!this.inflight) this.inflight = this.loadOnce().finally(() => { this.inflight = null; });
@@ -393,10 +422,13 @@ const Page = {
     this.rows = (Array.isArray(r && r.settings) ? r.settings : [])
       .filter((x) => isObj(x) && x.home === 'config' && x.section === 'lists');
     this.loaded = true;
+    ccApplyEditable();
     this.render();
   },
   fail(msg) {
     this.loaded = false;
+    this.rows = [];
+    ccApplyEditable();
     this.view = null;
     ET.current = null;
     E('ls-rows').innerHTML = '<div class="empty-state"><i class="fa-solid fa-triangle-exclamation"></i><div></div></div>';
@@ -406,13 +438,13 @@ const Page = {
     this.syncTopbar();
   },
 
-  /** The served rows as this page draws them: editable only while the
-   *  Config answer is true (and the server says can_edit); fe-event_types
-   *  through its dedicated editor. */
+  /** The served rows as this page draws them: editable per rowEditable (the
+   *  handshake AND can_edit, or an also_write row's can_edit alone);
+   *  fe-event_types through its dedicated editor. */
   rowsFor() {
     return this.rows.map((r) => ({
       ...r,
-      can_edit: ccCanEdit && (r.can_edit === true || r.can_edit === 1),
+      can_edit: rowEditable(r),
       editor: r.key === ET_KEY ? (r.editor || 'eventTypes') : r.editor,
     }));
   },
@@ -437,12 +469,12 @@ const Page = {
   status() {
     const el = E('ls-status');
     const d = this.dirty();
-    el.textContent = !this.view ? '' : !ccCanEdit ? 'Read-only' : d ? 'Unsaved changes' : 'All changes saved';
+    el.textContent = !this.view ? '' : !pageCanEdit() ? 'Read-only' : d ? 'Unsaved changes' : 'All changes saved';
     el.classList.toggle('dirty', d);
   },
 
   async save() {
-    if (!ccCanEdit || !this.view || this.saving || !this.view.isDirty()) return;
+    if (!pageCanEdit() || !this.view || this.saving || !this.view.isDirty()) return;
     // settings.html's question: a stored event type that is gone — renamed,
     // or edited away — leaves existing events on the old value. (A ✕ remove
     // asked already; a list the editor refuses is refused below, no PUT.)
@@ -503,7 +535,7 @@ window.addEventListener('beforeunload', (e) => {
 });
 
 // Test / debug handle.
-window.ListsPage = { Page, api, ET, ET_KEY, etParse, eventTypesEditor, SESSION_MSG, CC_RO_MSG, canEdit: () => ccCanEdit };
+window.ListsPage = { Page, api, ET, ET_KEY, etParse, eventTypesEditor, SESSION_MSG, CC_RO_MSG, canEdit: () => ccCanEdit, pageCanEdit };
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {

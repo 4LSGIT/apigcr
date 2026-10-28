@@ -23,7 +23,8 @@
 'use strict';
 
 jest.mock('../lib/alerting', () => ({ alert: jest.fn(async () => {}) }));
-jest.mock('../lib/firmConfig', () => ({ publicUrl: jest.fn(() => 'https://4lsg.com') }));
+// REGISTRY: the real key map — lib/settingsRegistry's load-time alsoWrite check reads it.
+jest.mock('../lib/firmConfig', () => ({ publicUrl: jest.fn(() => 'https://4lsg.com'), REGISTRY: jest.requireActual('../lib/firmConfig').REGISTRY }));
 
 const registry = require('../lib/internal_functions');
 const cta = require('../services/ctaService');

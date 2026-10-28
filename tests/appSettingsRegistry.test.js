@@ -71,6 +71,7 @@ const SECRET_IF = 'IF(is_secret = 0, `value`, NULL) AS `value`';
 const KEYS = {
   firmCap: { raw: 'yck_' + 'f'.repeat(22), row: { id: 11, label: 'firm-bot', revoked_at: null, expires_at: null, scopes: ['firm.settings'] } },
   sysCap:  { raw: 'yck_' + 's'.repeat(22), row: { id: 12, label: 'system-bot', revoked_at: null, expires_at: null, scopes: ['system.settings'] } },
+  listsCap: { raw: 'yck_' + 'l'.repeat(22), row: { id: 14, label: 'lists-bot', revoked_at: null, expires_at: null, scopes: ['firm.lists'] } },
   route:   { raw: 'yck_' + 'r'.repeat(22), row: { id: 13, label: 'route-bot', revoked_at: null, expires_at: null, scopes: ['route:/api/app-settings'] } },
 };
 
@@ -327,13 +328,16 @@ describe('GET /api/app-settings — per caller', () => {
       expect(r.body.settings.filter((s) => s.registered).map((s) => s.key).sort()).toEqual(want);
     });
 
-    test(`${who}: can_edit = posture ui (not state) AND the home's write capability`, async () => {
+    test(`${who}: can_edit = posture ui (not state) AND the home's write capability (or, staff JWTs, the key's alsoWrite)`, async () => {
       const db = world({ rows: ROWS() });
       const r = await call(db, 'GET', '/api/app-settings', { headers });
+      // every JWT caller here holds the staff role or it / su → firm.lists
+      const lists = who !== 'internal';
       for (const s of r.body.settings) {
         if (!s.registered) { expect([s.key, s.can_edit]).toEqual([s.key, caps.firm]); continue; }
         const e = reg.SETTINGS[s.key];
-        const capHeld = reg.capsOf(e).write === 'firm.settings' ? caps.firm : caps.system;
+        const capHeld = (reg.capsOf(e).write === 'firm.settings' ? caps.firm : caps.system)
+          || (e.alsoWrite === 'firm.lists' && lists);
         const want = reg.editOf(e) === 'ui' && e.kind !== 'state' && capHeld;
         expect([s.key, s.can_edit]).toEqual([s.key, want]);
       }
@@ -344,6 +348,15 @@ describe('GET /api/app-settings — per caller', () => {
     const admin = byKey(await call(world({ rows: ROWS() }), 'GET', '/api/app-settings', { headers: ADMIN }));
     expect([admin.firm_name.can_edit, admin.portal_live.can_edit, admin['fe-lead_sources'].can_edit,
       admin.cta_default_timeout_once.can_edit, admin.cloud_tasks_enabled]).toEqual([true, true, true, false, undefined]);
+    // firm.lists (staff role): Lead sources only — not its neighbour on the Lists tab
+    const staff = byKey(await call(world({ rows: ROWS() }), 'GET', '/api/app-settings', { headers: STAFF }));
+    expect([staff['fe-lead_sources'].can_edit, staff['fe-event_types'].can_edit, staff['fe-case_types'].can_edit,
+      staff.firm_name.can_edit]).toEqual([true, false, false, false]);
+    expect([staff['fe-lead_sources'].also_write, staff['fe-event_types'].also_write]).toEqual(['firm.lists', null]);
+    const itRows = byKey(await call(world({ rows: ROWS() }), 'GET', '/api/app-settings', { headers: IT }));
+    expect(itRows['fe-lead_sources'].also_write).toBe(null);
+    const noRoles = byKey(await call(world({ rows: ROWS() }), 'GET', '/api/app-settings', { headers: tok([], 7, 'noroles') }));
+    expect([noRoles['fe-lead_sources'].can_edit, noRoles['fe-lead_sources'].also_write]).toEqual([false, null]);
     const it = byKey(await call(world({ rows: ROWS() }), 'GET', '/api/app-settings', { headers: IT }));
     expect([it.cta_default_timeout_once.can_edit, it.cloud_tasks_enabled.can_edit, it.comms_archive_enabled.can_edit,
       it.app_url.can_edit, it.clio_login_code.can_edit, it.alert_last_sweep_at.can_edit]).toEqual([true, true, true, false, false, false]);
@@ -385,7 +398,7 @@ describe('GET /api/app-settings — per caller', () => {
     expect(r.firm_name).toEqual({
       key: 'firm_name', value: 'Acme Law', updated_at: T0, exists: true, registered: true, kind: 'firm', home: 'firm',
       section: 'identity', type: 'string', options: null, label: 'Firm name', description: reg.SETTINGS.firm_name.desc,
-      sort_order: 5, edit: 'ui', editor: null, env: null, required: false, can_edit: true, category: 'Firm identity',
+      sort_order: 5, edit: 'ui', editor: null, env: null, required: false, can_edit: true, also_write: null, category: 'Firm identity',
     });
     expect(r['fe-firm_phone']).toMatchObject({ type: 'phone', env: 'FIRM_PHONE', category: 'Firm identity' });
     expect(r['fe-lead_sources']).toMatchObject({ home: 'config', section: 'lists', category: 'Lists', kind: 'vocab' });
@@ -397,6 +410,8 @@ describe('GET /api/app-settings — per caller', () => {
     expect(r.dropbox_case_folder_templates).toMatchObject({ editor: 'dropboxTemplates', exists: false });
     expect(r.app_url).toMatchObject({ edit: 'console', can_edit: false, value: 'https://app.example.com', category: 'Platform' });
     expect(r.clio_login_code).toMatchObject({ kind: 'state', edit: 'console', can_edit: false, category: 'Runtime state (read-only)' });
+    // ADMIN writes Lead sources through firm.settings → also_write null (its tab's handshake governs)
+    expect([r['fe-lead_sources'].also_write, r['fe-event_types'].also_write]).toEqual([null, null]);
   });
 
   test('unregistered rows: editable + non-secret only, as Firm → Automation variables with their DB metadata', async () => {
@@ -406,7 +421,7 @@ describe('GET /api/app-settings — per caller', () => {
     expect(byKey(r).my_var).toEqual({
       key: 'my_var', value: 'hello', updated_at: T0, exists: true, registered: false, kind: 'variable', home: 'firm',
       section: 'variables', type: 'text', options: null, label: 'my_var', description: 'A var', sort_order: 2,
-      edit: 'ui', editor: null, env: null, required: false, can_edit: false, category: 'Automations',
+      edit: 'ui', editor: null, env: null, required: false, can_edit: false, also_write: null, category: 'Automations',
     });
     expect(byKey(r).another_var).toMatchObject({ label: 'Another', type: 'number', sort_order: null });
     const admin = await call(world({ rows: ROWS() }), 'GET', '/api/app-settings', { headers: ADMIN });
@@ -509,7 +524,8 @@ describe('PUT — registered keys', () => {
   test.each([
     ['firm_name', STAFF, 'Changing Firm name needs the firm.settings permission'],
     ['portal_live', STAFF, 'Changing Portal live needs the firm.settings permission'],
-    ['fe-lead_sources', STAFF, 'Changing Lead sources needs the firm.settings permission'],
+    ['fe-event_types', STAFF, 'Changing Event types (legacy list) needs the firm.settings permission'],
+    ['fe-lead_sources', tok([], 7, 'noroles'), 'Changing Lead sources needs the firm.settings permission'],
     ['cloud_tasks_enabled', ADMIN, 'Changing Cloud Tasks accelerator needs the system.settings permission'],
     ['cta_default_timeout_once', ADMIN, 'Changing Default expiry (single-use) needs the system.settings permission'],
     ['comms_archive_enabled', ADMIN, 'Changing Comms archive sweep needs the system.settings permission'],
@@ -520,6 +536,15 @@ describe('PUT — registered keys', () => {
     expect(settingsSql(db)).toEqual([]);
     expect(db.audits.map((a) => a[2])).toEqual(['authorized', 'unauthorized']);
     expect(db.audits[1][0]).toBe('jwt');
+  });
+
+  test('firm.lists (the staff role): a staff JWT writes Lead sources — versioned under its user — and nothing else on the tab', async () => {
+    const db = world({ rows: ROWS() });
+    const r = await PUT(db, 'fe-lead_sources', '["Web","Radio"]', STAFF);
+    expect([r.status, r.body.setting.value, db.st.rows.get('fe-lead_sources').value]).toEqual([200, '["Web","Radio"]', '["Web","Radio"]']);
+    expect(db.st.versions.map((v) => [v.setting_key, v.changed_via, v.changed_by])).toEqual([['fe-lead_sources', 'ui', 5]]);
+    expect((await PUT(db, 'fe-event_types', '["X"]', STAFF)).status).toBe(403);
+    expect((await PUT(db, 'fe-case_types', '{}', STAFF)).status).toBe(403);
   });
 
   test('holders write: admin firm / portal / config, it and su system / cta / comms', async () => {
@@ -916,6 +941,13 @@ describe('machine keys on the per-key routes', () => {
     expect((await PUT(db, 'firm_name', 'x', keyHdr('sysCap'))).status).toBe(403);
     expect((await HIST(db, 'cloud_tasks_enabled', keyHdr('sysCap'))).status).toBe(200);
     expect((await HIST(db, 'firm_name', keyHdr('sysCap'))).status).toBe(403);
+  });
+
+  test('scoped firm.lists alone: not even Lead sources — alsoWrite widens staff JWTs, the machine gate stays the home\'s', async () => {
+    const db = world({ rows: ROWS() });
+    const r = await PUT(db, 'fe-lead_sources', '["Bot"]', keyHdr('listsCap'));
+    expect([r.status, r.body]).toEqual([403, { error: 'Forbidden', missingCapability: 'firm.settings' }]);
+    expect(writes(db)).toEqual([]);
   });
 
   test('a route scope alone does not stand in for the capability', async () => {

@@ -39,6 +39,8 @@ jest.mock('../services/emailService', () => ({ sendEmail: jest.fn(async () => ({
 jest.mock('../lib/firmConfig', () => ({
   publicUrl: jest.fn(() => 'https://4lsg.com'),
   cfg: jest.fn(() => 'auto@4lsg.com'),
+  // the real key map — lib/settingsRegistry's load-time alsoWrite check reads it
+  REGISTRY: jest.requireActual('../lib/firmConfig').REGISTRY,
 }));
 
 const alerting = require('../lib/alerting');

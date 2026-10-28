@@ -2305,7 +2305,9 @@ Mounted today: firm.settings (ui-config firm writes, entitlements, the Config
 vocabulary writes — field-defs, calendar-types-admin, pipeline-admin,
 contact-role-types — and app-settings writes of firm / portal / config keys),
 system.settings (app-settings writes AND reads of system / comms / cta keys —
-it + su; admin does not hold it), automations.manage (/api/hooks management +
+it + su; admin does not hold it), firm.lists (the staff role's one grant: an
+app-settings key's `alsoWrite` — today `fe-lead_sources`, §32),
+automations.manage (/api/hooks management +
 pages create-hook, and every writer of a STANDARD-mode code body: workflow
 step routes + test-step and Casey's step preview via lib/codeStepGate, the
 scheduled-jobs POST/PATCH, email/phone ingest rule + suppression writes and
@@ -2574,7 +2576,8 @@ Kind is also the YC 3.0 provisioning classification (plans.md open decision
 16): firm / vocab tenant-configured, system platform-provisioned, state
 starts empty, secret per-tenant credentials.
 
-**Homes → capabilities (derived, never per key — `HOME_CAPS`).** firm (Config
+**Homes → capabilities (derived from the home — `HOME_CAPS` — plus a key's
+`alsoWrite`).** firm (Config
 → Firm), portal (Portal Manager → Settings), config (Config vocabulary tabs:
 Lists; Types & Subtypes for `fe-case_types`) — read any staff, write
 `firm.settings`; cta (CTA Links → Link defaults) — read any staff, write
@@ -2583,6 +2586,16 @@ arc gives its knobs a home) — read AND write `system.settings` (it + su);
 console — never served (secrets, the interim access lists
 `comms_archive_admins` / `comms_eval_reviewers`, retired keys). A row whose
 `is_secret = 1` is a secret whatever the registry says (`isSecret`).
+A key may ALSO be written through `alsoWrite` (a capability, in code, never
+the DB): additive to the home's, staff JWTs only (a machine key's mount gate
+stays the home's), legal only on a firm / vocab key edited in the UI, not
+automation-writable, in home firm / portal / config, not read through
+firmConfig, naming a non-root capability — `assertAlsoWrite` throws at load
+otherwise. One today: `fe-lead_sources` → `firm.lists` (the staff role). GET
+rows carry `also_write` = the capability THIS caller writes the key through
+when it is the grant rather than the home's (else null); Config → Lists opens
+exactly those rows without the firm.settings handshake (`setTabEditable` on
+the shell). PUT has no stale-value check: last write wins (plans.md).
 
 **API** (`routes/api.appSettings.js`). GET `/api/app-settings[?home=]` (any
 staff) → `{ caps: { firm, system }, sections, settings: [ROW] }`: every
