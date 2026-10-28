@@ -3921,6 +3921,7 @@ async function repairActionDraft(db, approved, evidence, rejectedValue, rejectio
     model: attachmentService.modelForMode(approved.modelMode),
     outputType: 'json', timeout_ms: ANSWER_TIMEOUT_MS,
     consumerRef: `assistant_task_draft_repair:u${Number(userId) || 0}`,
+    cacheSystemPrefix: true,
     // The repair prompt registers 1000 output tokens; a report definition
     // (SQL + columns_meta + caveats) needs more room to come back whole, and so
     // does an ingest rule (conditions + mapper + actions).
@@ -4434,6 +4435,7 @@ async function plan(db, { question, history, userId, modelMode, temporaryAttachm
     model: attachmentService.modelForMode(mode),
     outputType: 'json', timeout_ms: PLAN_TIMEOUT_MS,
     consumerRef: `assistant_plan:u${Number(userId) || 0}`,
+    cacheSystemPrefix: true,
     logContent: false,
   });
   if (!ai.ok) throw httpError(502, 'The assistant planner could not be reached', ai.detail || ai.error);
@@ -4574,6 +4576,7 @@ async function repairRejectedPlan(db, approved, failedQuery, repair, userId, att
     model: attachmentService.modelForMode(approved.modelMode),
     outputType: 'json', timeout_ms: PLAN_TIMEOUT_MS,
     consumerRef: `assistant_plan_repair:u${Number(userId) || 0}`,
+    cacheSystemPrefix: true,
     logContent: false,
   });
   if (!ai.ok) return null;
@@ -4676,6 +4679,7 @@ async function investigateNext(db, approved, attached, evidence, plans, budget, 
     max_tokens: Math.max(1, Math.min(INVESTIGATE_ATTEMPT_MAX_TOKENS, Number(budget.remaining_output_tokens) || INVESTIGATE_ATTEMPT_MAX_TOKENS)),
     outputType: 'json', timeout_ms: Math.max(1000, Math.min(INVESTIGATE_TIMEOUT_MS, Number(budget.remaining_ms) || INVESTIGATE_TIMEOUT_MS)),
     consumerRef: `assistant_investigate:u${Number(userId) || 0}`,
+    cacheSystemPrefix: true,
     logContent: false,
   });
   const outputTokens = Math.max(0, Number(ai.usage && ai.usage.output_tokens) || 0);
@@ -4823,7 +4827,9 @@ async function execute(db, { signedTicket, continuation: continuationToken, chat
   const model = attachmentService.modelForMode(approved.modelMode);
   let costCents = prior ? Math.max(0, Number(prior.cost_cents) || 0) : 0;
   const addCost = (usage) => {
-    if (usage) costCents += aiService.computeCostCents(usage.input_tokens, usage.output_tokens, model) || 0;
+    // usage carries the prompt-cache token counts (aiService cacheSystemPrefix);
+    // input_tokens alone is only the uncached remainder.
+    if (usage) costCents += aiService.computeCostCents(usage.input_tokens, usage.output_tokens, model, usage) || 0;
   };
   const evidenceCap = Math.min(MAX_EVIDENCE_CHARS * (grants + 1), MAX_CONTINUED_EVIDENCE_CHARS);
 
@@ -4981,6 +4987,7 @@ async function execute(db, { signedTicket, continuation: continuationToken, chat
     // non-automation answer.
     max_tokens: answerMaxTokens(evidence, approved),
     consumerRef: `assistant_answer:u${Number(userId) || 0}`,
+    cacheSystemPrefix: true,
     logContent: false,
   });
   if (!ai.ok) throw httpError(502, 'The assistant could not summarize the query results', ai.detail || ai.error);

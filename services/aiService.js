@@ -52,6 +52,20 @@
 // The Files API (source.type:'file' + beta header) is intentionally NOT
 // implemented — out of scope for this slice.
 //
+// Prompt caching (opts.cacheSystemPrefix, OPT-IN — Ask Casey): the system
+// text is sent as TWO text blocks instead of one string — the descriptor's own
+// (substituted) text with an ephemeral cache_control breakpoint, then the rest
+// (systemAppend, guards, the JSON retry guard) uncached. The two texts
+// concatenate to exactly the string a non-caching call sends; the messages are
+// untouched. Only that static prefix can cache: everything after it varies per
+// call (currentContext carries the time). Usage then carries
+// cache_read_input_tokens / cache_creation_input_tokens, priced in
+// computeCostCents; the ai_calls row stores input_tokens as the TOTAL prompt
+// size (uncached + read + written, so the column keeps meaning "prompt
+// tokens"), cost_cents at cache rates, and a log-only "[prompt_cache: …]"
+// line at the head of request_excerpt (token counts, never content — it rides
+// outside the logContent:false marker). Absent → byte-identical to before.
+//
 // async mode is intentionally unimplemented (see throw below) — it needs the
 // scheduled_jobs integration, scoped as its own later slice. No v1 consumer
 // needs it.
@@ -99,6 +113,17 @@ const MODEL_PRICING = {
 // this preserves historical numbers. Documented in computeCostCents below.
 const DEFAULT_PRICING_MODEL = 'claude-sonnet-4-6';
 
+// Prompt-cache pricing, as multiples of the model's input rate (Claude API
+// pricing, verified 2026-10-28): a cache read 0.1x, a 5-minute cache write
+// 1.25x — true for every model in MODEL_PRICING (claude-opus-5: $0.50 read /
+// $6.25 write per MTok). NOT true of every model: Claude Opus 5.5 reads at
+// 0.05x and Claude Fable 5.1 at 0.025x — adding one of those to MODEL_PRICING
+// means giving it its own read multiplier here first. Only the default 5-minute
+// TTL is ever requested (a 1-hour write is 2x).
+const CACHE_READ_MULTIPLIER  = 0.1;
+const CACHE_WRITE_MULTIPLIER = 1.25;
+const CACHE_CONTROL = { type: 'ephemeral' };
+
 // Storage caps. request_excerpt is a TEXT column (~64KB) but we keep it short;
 // response is MEDIUMTEXT (~16MB) but we cap defensively.
 const REQUEST_EXCERPT_CAP = 2000;
@@ -136,12 +161,19 @@ const JSON_RETRY_GUARD =
  *     price for an unknown model).
  *   - model present and known → that model's rates.
  *
+ * Prompt caching: inputTokens is the API's `input_tokens` — the UNCACHED
+ * remainder only. Pass the response usage (or any object carrying
+ * cache_read_input_tokens / cache_creation_input_tokens) as `cache` and those
+ * tokens are priced at the cache read / write multipliers. Omitted → exactly
+ * the old 3-arg arithmetic.
+ *
  * @param {number|null} inputTokens
  * @param {number|null} outputTokens
  * @param {string} [model]
+ * @param {{cache_read_input_tokens?:number, cache_creation_input_tokens?:number}|null} [cache]
  * @returns {number|null} cents, or null for an unknown model
  */
-function computeCostCents(inputTokens, outputTokens, model) {
+function computeCostCents(inputTokens, outputTokens, model, cache) {
   let pricing;
   if (model == null) {
     pricing = MODEL_PRICING[DEFAULT_PRICING_MODEL];
@@ -151,7 +183,29 @@ function computeCostCents(inputTokens, outputTokens, model) {
   }
   const i = Number(inputTokens) || 0;
   const o = Number(outputTokens) || 0;
-  return (i / 1e6) * pricing.in * 100 + (o / 1e6) * pricing.out * 100;
+  const cents = (i / 1e6) * pricing.in * 100 + (o / 1e6) * pricing.out * 100;
+  if (!cache) return cents;
+  const r = Number(cache.cache_read_input_tokens) || 0;
+  const w = Number(cache.cache_creation_input_tokens) || 0;
+  return cents
+    + (r / 1e6) * pricing.in * CACHE_READ_MULTIPLIER * 100
+    + (w / 1e6) * pricing.in * CACHE_WRITE_MULTIPLIER * 100;
+}
+
+/**
+ * The request's `system` field. No cache prefix → the string itself (the
+ * pre-caching shape). With one → [prefix block + cache_control, rest block]:
+ * the block texts concatenate to exactly `full`. A prefix that is empty or not
+ * actually a prefix of `full` falls back to the plain string (no caching,
+ * never altered text); a prefix that IS the whole text is one marked block.
+ */
+function systemField(full, cachePrefix) {
+  if (!cachePrefix || typeof full !== 'string' || !full.startsWith(cachePrefix)) return full;
+  if (full.length === cachePrefix.length) return [{ type: 'text', text: full, cache_control: { ...CACHE_CONTROL } }];
+  return [
+    { type: 'text', text: cachePrefix, cache_control: { ...CACHE_CONTROL } },
+    { type: 'text', text: full.slice(cachePrefix.length) },
+  ];
 }
 
 /** {{var}} substitution from a plain object. Unknown vars are left intact. */
@@ -381,6 +435,17 @@ async function logCall(db, row) {
  *                                     For callers whose prompt or output is privileged
  *                                     (comms archive summaries — ai_calls is readable
  *                                     on the read-only endpoint).
+ * @param {boolean} [opts.cacheSystemPrefix=false] OPT-IN (Ask Casey): cache the
+ *                                     descriptor's own system text (or the
+ *                                     inline system, after {{var}} substitution)
+ *                                     as a prompt-cache prefix — see the header
+ *                                     "Prompt caching". Only for callers whose
+ *                                     prefix repeats across calls: every write
+ *                                     costs 1.25x on those tokens, every read
+ *                                     0.1x. The result's usage then also carries
+ *                                     cache_read_input_tokens /
+ *                                     cache_creation_input_tokens (input_tokens
+ *                                     stays the API's uncached remainder).
  * Every result that reached the API also carries stopReason (the envelope's
  * stop_reason, or null); the early fail-fast returns (bad_attachments,
  * unknown_prompt, no_model, no_auth) keep their exact pre-W-AI shape.
@@ -405,6 +470,7 @@ async function call(db, {
   outputConfig,
   noRetryOnStop = false,
   logContent = true,
+  cacheSystemPrefix = false,
 } = {}) {
   // W-AI: what an ai_calls row may hold. Default = exactly as before.
   const omit = (v) => `[omitted: ${String(v == null ? '' : (typeof v === 'string' ? v : JSON.stringify(v))).length} chars]`;
@@ -492,6 +558,9 @@ async function call(db, {
 
   // ---- Build system + user content ----
   systemText = substituteVars(systemText || '', vars);
+  // The cacheable prefix is the substituted descriptor text, captured BEFORE
+  // any append: the appends (server context with the time, guards) vary.
+  const cachePrefix = cacheSystemPrefix ? systemText : null;
 
   // Caller-supplied system text appended AFTER substitution, never before:
   // an appendix is generated from data (report_build's custom-field list is
@@ -551,7 +620,7 @@ async function call(db, {
     const body = {
       model: resolvedModel,
       max_tokens: resolvedMaxTokens,
-      system: systemForAttempt,
+      system: systemField(systemForAttempt, cachePrefix),
       messages: [{ role: 'user', content: messageContent }],
     };
     if (resolvedOutputConfig) body.output_config = resolvedOutputConfig;   // W-AI opt-in only
@@ -574,6 +643,7 @@ async function call(db, {
       let parseOk = false;
       let status, errorMsg = null, text = '', json;
       let inTok = null, outTok = null;
+      let cacheRead = null, cacheWrite = null;
       const stopReason = envelope && typeof envelope.stop_reason === 'string' ? envelope.stop_reason : null;
 
       if (!resp.ok) {
@@ -590,6 +660,10 @@ async function call(db, {
           .join('');
         inTok  = envelope.usage?.input_tokens  ?? null;
         outTok = envelope.usage?.output_tokens ?? null;
+        if (cachePrefix) {
+          cacheRead  = envelope.usage?.cache_read_input_tokens     ?? null;
+          cacheWrite = envelope.usage?.cache_creation_input_tokens ?? null;
+        }
 
         if (resolvedOutputType === 'json') {
           const parsed = tryParseJson(text);
@@ -609,18 +683,35 @@ async function call(db, {
         }
       }
 
-      const cost = (inTok != null || outTok != null)
-        ? computeCostCents(inTok, outTok, resolvedModel)
+      const cacheUsage = cachePrefix && (cacheRead != null || cacheWrite != null)
+        ? { cache_read_input_tokens: cacheRead ?? 0, cache_creation_input_tokens: cacheWrite ?? 0 }
         : null;
+      const cost = (inTok != null || outTok != null || cacheUsage)
+        ? computeCostCents(inTok, outTok, resolvedModel, cacheUsage)
+        : null;
+      // ai_calls.input_tokens = the whole prompt (uncached + read + written)
+      // on a caching call, so the column keeps meaning "prompt tokens".
+      const loggedInTok = cacheUsage
+        ? (Number(inTok) || 0) + cacheUsage.cache_read_input_tokens + cacheUsage.cache_creation_input_tokens
+        : inTok;
+      const cacheLine = cacheUsage
+        ? `[prompt_cache: read=${cacheUsage.cache_read_input_tokens} write=${cacheUsage.cache_creation_input_tokens} uncached=${inTok ?? 0}]`
+        : null;
+      if (cacheLine) {
+        console.log(`[aiService] ${promptKey || 'inline'} ${resolvedModel} ${cacheLine} out=${outTok ?? 0}`
+          + ` cost=${cost == null ? 'null' : cost.toFixed(4)}c latency=${latency}ms`);
+      }
 
       const callId = await logCall(db, {
         prompt_key: promptKey ?? null, prompt_version: promptVersion,
         model: resolvedModel, mode, output_type: resolvedOutputType,
         consumer_ref: consumerRef, status, error: errorMsg,
-        input_tokens: inTok, output_tokens: outTok,
+        input_tokens: loggedInTok, output_tokens: outTok,
         cost_cents: cost, latency_ms: latency,
         // Descriptor prefix is log-only — the API sees systemForAttempt as-is.
-        request_excerpt: logText(logExcerptPrefix + systemForAttempt),
+        // The cache line is token counts, not content, so it rides OUTSIDE the
+        // logContent:false marker.
+        request_excerpt: (cacheLine ? `${cacheLine}\n` : '') + logText(logExcerptPrefix + systemForAttempt),
         // On a transport-ok attempt store the model's text (incl. garbage JSON)
         // for inspection; otherwise store the raw envelope/error body.
         response: logText(transportOk ? text : envelope),
@@ -628,7 +719,7 @@ async function call(db, {
 
       return {
         transportOk, parseOk, status, text, json, errorMsg, callId, latency, stopReason,
-        usage: transportOk ? { input_tokens: inTok, output_tokens: outTok } : null,
+        usage: transportOk ? { input_tokens: inTok, output_tokens: outTok, ...(cacheUsage || {}) } : null,
       };
     } catch (err) {
       const latency = Date.now() - startedAt;
@@ -697,4 +788,4 @@ async function call(db, {
   return { ok: false, error: 'json_parse', output: r2.text, usage: r2.usage, callId: r2.callId, stopReason: r2.stopReason };
 }
 
-module.exports = { call, computeCostCents };
+module.exports = { call, computeCostCents, systemField };

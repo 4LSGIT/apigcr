@@ -1105,6 +1105,7 @@ tests/adminUsersRoles.test.js
 tests/adminapikeys.k2.test.js
 tests/aiMatchTypes.registry.test.js
 tests/aiService.attachments.test.js
+tests/aiService.promptCache.test.js
 tests/aiService.wai.test.js
 tests/aimatch.service.test.js
 tests/alertingDigestCta.test.js

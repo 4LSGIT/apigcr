@@ -51,6 +51,13 @@ const EXEMPT = {
     'was consumed, so both drift directions are already caught.',
   'scriptGuardCoverage.test.js':
     'this file — its own source text contains the pattern it searches for.',
+  'aiService.promptCache.test.js':
+    'two non-DB queues: responses.shift() sequences stubbed FETCH BODIES for ' +
+    'the provider endpoint (empty queue falls through to a default envelope), ' +
+    'and replies.shift() hands scripted aiService.call() RETURN VALUES to the ' +
+    'investigation-flow replay. Its DB stub has no script array; the byte-' +
+    'identity assertions compare whole request bodies, so a drifted sequence ' +
+    'fails the comparison rather than passing silently.',
 };
 
 /** `.shift()` called on something that looks like a script array. */

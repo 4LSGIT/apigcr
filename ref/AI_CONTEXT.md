@@ -24,6 +24,20 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey model calls cache their registered prompt (cspeed, 10-28):** the
+  five assistant stages (`assistant_plan`, plan repair, `assistant_investigate`,
+  `assistant_answer`, `assistant_task_draft_repair`) call
+  `aiService.call({cacheSystemPrefix:true})`: the registered prompt goes out as
+  a cached system block (5-min TTL), the volatile remainder (currentContext
+  timestamp, guards) after it. Landmines: any per-request text prepended or
+  substituted INTO a registered prompt silently kills the cache (verify via
+  the `[prompt_cache: read=…]` first line of `ai_calls.request_excerpt`);
+  on caching rows `ai_calls.input_tokens` is the WHOLE prompt (uncached +
+  cache read + cache write) and `cost_cents` is priced at cache rates; a new
+  model needs its cache multipliers added in `computeCostCents` before opting
+  in. Deeper caching (conversation/evidence prefix) needs prompt-content
+  changes — ruled on separately, see scratch cspeed_2026_10_28.
+
 - **Casey sends one SMS / email (A14, ruling 15, 10-27):** kinds
   `sms.send.v1` / `email.send.v1` drive `POST /api/phone-lines/:id/sms` and
   `POST /api/mail/send` from the card. Invariants: the recipient is one
