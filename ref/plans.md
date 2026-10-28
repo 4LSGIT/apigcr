@@ -1075,6 +1075,21 @@ COMMENTs.)
   that step fails without sending — and the card does not warn.
   The card could read the contact's active phone/email rows and say so.
 
+## From the Ask Casey arc — A7 group A case/contact notes (2026-10-28) — deferred
+
+- **Native note-length limits disagree with the route.** The route caps
+  `case_notes` / `contact_notes` at 10,000 (`lib/noteLimits`), but
+  `public/forms/casedetails-bk.html` gives `case_notes` `maxlength="5000"`,
+  `public/forms/casedetails.html` gives it `65535`, and
+  `public/forms/contact-form.html` gives `contact_notes` `maxlength="1000"`.
+  A longer note saved through the case Overview, checklistView's pinned card
+  or a Casey card shows in those forms but cannot be extended there by typing.
+  One limit, read from the same constant, would end it.
+- **Later A7 groups.** `case_source` (Fred, 2026-10-28: allowed, not
+  intake-excluded) and other low-impact descriptive fields; the first
+  client-facing group brings a conditional-write precondition on the PATCH
+  (ruling 2 of the A7 record).
+
 ## From the Ask Casey arc — A6 contact relations and roles (2026-10-28) — deferred
 
 - **Native sync-bus gap: relations and roles broadcast nothing.**

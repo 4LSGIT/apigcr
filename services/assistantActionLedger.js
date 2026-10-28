@@ -16,6 +16,10 @@ const KINDS = new Map([
   // A6: the receipt is the relation / role row the route created or edited.
   ...['create', 'update'].map(k => [`contact.relation.${k}.v1`, 'relation_id']),
   ...['create', 'update'].map(k => [`contact.role.${k}.v1`, 'role_id']),
+  // A7 group A: the receipt is the record whose one text column was written.
+  ['case.notes.update.v1', 'case_id'],
+  ['case.alerts.update.v1', 'case_id'],
+  ['contact.notes.update.v1', 'contact_id'],
   ['job.code_safe.create.v1', 'job_id'],
   ['workflow.draft.v1', 'workflow_id'],
   ['workflow.step_insert.v1', 'workflow_id'],
@@ -39,6 +43,13 @@ const KINDS = new Map([
   ...['create', 'update', 'set_active', 'action_add', 'action_update', 'action_remove']
     .map(k => [`ingest_rule.${k}.v1`, 'ingest_rule_id']),
 ]);
+// Receipt fields that are NOT integers, each with its own validator. Only
+// case_id: cases.case_id is a varchar(20) PRIMARY KEY (an 8-char Crockford id
+// since Aug 2026, mixed-case base64url before it, never renumbered — see
+// lib/caseId.js), so a case has no integer id to receipt. Every other field
+// stays a positive safe integer; a new family whose record HAS an integer id
+// must use it, not this path.
+const STRING_RECEIPT_FIELDS = new Map([['case_id', /^[A-Za-z0-9_-]{1,20}$/]]);
 function fail(status, message) { const e = new Error(message); e.status = status; throw e; }
 function actor(userId) {
   const value = typeof userId === 'string' && /^\d{1,3}$/.test(userId) ? Number(userId) : userId;
@@ -94,7 +105,12 @@ async function record(db, userId, draftId, token, result) {
     WHERE user_id = ? AND draft_id = ?`, [userId, draftId]);
   if (!row || row.claim_token !== token) fail(404, 'Action claim not found');
   const field = KINDS.get(row.kind);
-  if (!field || !result || Object.keys(result).length !== 1 || !Number.isSafeInteger(result[field]) || result[field] < 1) {
+  const stringReceipt = STRING_RECEIPT_FIELDS.get(field);
+  if (stringReceipt) {
+    if (!result || Object.keys(result).length !== 1 || typeof result[field] !== 'string' || !stringReceipt.test(result[field])) {
+      fail(400, 'Invalid action receipt');
+    }
+  } else if (!field || !result || Object.keys(result).length !== 1 || !Number.isSafeInteger(result[field]) || result[field] < 1) {
     fail(400, 'Invalid action receipt');
   }
   const json = JSON.stringify({ [field]: result[field] });
@@ -112,4 +128,4 @@ async function record(db, userId, draftId, token, result) {
   }
   return { outcome: 'applied', replayed: false };
 }
-module.exports = { issue, claim, record, read, KINDS };
+module.exports = { issue, claim, record, read, KINDS, STRING_RECEIPT_FIELDS };

@@ -340,7 +340,8 @@ async function recordActionResult(draft, resultMessage) {
     if (draft.__ledgerReceipt) {
       const pending = draft.__ledgerReceipt;
       const receipt = { claim_token: pending.token,
-        result: { [pending.field]: Number(resultMessage.action_result[pending.field]) } };
+        result: { [pending.field]: pending.stringReceipt ? actionStringReceipt(resultMessage.action_result[pending.field])
+          : Number(resultMessage.action_result[pending.field]) } };
       // Retry only persistence, never the canonical write. A repeat receipt is
       // immutable and value-identical; the server handles lost acknowledgements.
       try { await api(`/api/assistant/actions/${draft.draft_id}/result`, receipt, 'POST'); }
@@ -1021,6 +1022,189 @@ function contactRoleResult(draft, result) {
 function contactRelationOpenTarget(draft) {
   const contact = draft.contact || (draft.relation && draft.relation.contact_a) || {};
   return { id: Number(contact.contact_id), label: String(contact.contact_name || 'Contact') };
+}
+
+// Case notes, case alerts and contact notes (A7 group A). Each card writes ONE
+// column WHOLE through the native PATCH /api/cases/:id or /api/contacts/:id —
+// the routes the case Overview, the case-detail forms and the contact form
+// save through. The column comes from the KIND here, never from the draft, and
+// the body carries that one column and nothing else (both routes accept far
+// more). The server resolved "add a line" to the complete after-value and
+// baked the current value into `expected`; the click-time re-read compares by
+// VALUE (cases has no updated_at; contact_updated moves on unrelated writes).
+// No Idempotency-Key: setting a column to a value is naturally idempotent, and
+// the ledger allows one claim per draft. A replay of the contact PATCH would
+// re-push the contact to Google Contacts (the route pushes on every update) —
+// harmless, the same contact data. Both routes are on the sync bus
+// (yc-sync MATCHERS: the case PATCH's data.changes, the contact PATCH's
+// data.changes), and case.html / contact.html / checklistView's native note
+// cards repaint these columns from it.
+const CASE_TEXT_ACTION_KINDS = new Set(['case.notes.update.v1', 'case.alerts.update.v1']);
+const CONTACT_TEXT_ACTION_KINDS = new Set(['contact.notes.update.v1']);
+const RECORD_TEXT_SPECS = {
+  'case.notes.update.v1': { column: 'case_notes', label: 'Case notes', noun: 'case notes', max: 10000 },
+  'case.alerts.update.v1': { column: 'case_alerts', label: 'Case alerts', noun: 'case alerts', max: 5000 },
+  'contact.notes.update.v1': { column: 'contact_notes', label: 'Contact notes', noun: 'contact notes', max: 10000 },
+};
+// The card never renders a whole 10,000-character note: only the changed
+// region, with this much unchanged text either side, each part bounded.
+const RECORD_TEXT_CONTEXT = 80;
+const RECORD_TEXT_PART_MAX = 600;
+const RECORD_TEXT_WORD_MAX = 40;
+
+function recordTextSpec(draft) { return RECORD_TEXT_SPECS[draft && draft.kind] || null; }
+
+function recordTextLabel(draft) {
+  const spec = recordTextSpec(draft);
+  if (!spec) return 'Record text action';
+  return draft.after === '' ? `Clear ${spec.noun}` : `Update ${spec.noun}`;
+}
+
+function recordTextCount(n) { return `${Number(n || 0).toLocaleString('en-US')} character${Number(n) === 1 ? '' : 's'}`; }
+
+// One text line per card value (the card splits its text on newlines), so a
+// stored line break shows as ↵ and a long part keeps its head and tail.
+function recordTextShow(text) {
+  const value = String(text == null ? '' : text);
+  const cut = value.length > RECORD_TEXT_PART_MAX
+    ? `${value.slice(0, RECORD_TEXT_PART_MAX / 2)} … [${recordTextCount(value.length - RECORD_TEXT_PART_MAX)} not shown] … ${value.slice(-RECORD_TEXT_PART_MAX / 2)}`
+    : value;
+  return cut.replace(/\r\n|\r|\n/g, ' ↵ ');
+}
+
+// The changed region: the longest common prefix and suffix are unchanged;
+// what lies between them is removed (before) and added (after). When stored
+// text is removed, the region widens to whole words ("second" → "2nd", not
+// "seco" → "2"); a pure addition stays exact, so it never reads as a removal.
+function recordTextDiff(before, after) {
+  const a = String(before == null ? '' : before); const b = String(after == null ? '' : after);
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p += 1;
+  let s = 0;
+  while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s += 1;
+  if (a.length - s > p) {
+    // At most RECORD_TEXT_WORD_MAX characters each way; text with no break
+    // that near keeps the exact boundary.
+    let wp = p;
+    while (wp > 0 && p - wp < RECORD_TEXT_WORD_MAX && /\S/.test(a[wp - 1]) && /\S/.test(a[wp])) wp -= 1;
+    if (wp === 0 || !/\S/.test(a[wp - 1]) || !/\S/.test(a[wp])) p = wp;
+    let ws = s;
+    while (ws > 0 && s - ws < RECORD_TEXT_WORD_MAX && /\S/.test(a[a.length - ws]) && /\S/.test(a[a.length - ws - 1])) ws -= 1;
+    if (ws === 0 || !/\S/.test(a[a.length - ws]) || !/\S/.test(a[a.length - ws - 1])) s = ws;
+  }
+  const lead = a.slice(Math.max(0, p - RECORD_TEXT_CONTEXT), p);
+  const trail = a.slice(a.length - s, Math.min(a.length, a.length - s + RECORD_TEXT_CONTEXT));
+  return {
+    removed: a.slice(p, a.length - s), added: b.slice(p, b.length - s),
+    lead: (p > RECORD_TEXT_CONTEXT ? '…' : '') + lead,
+    trail: trail + (s > RECORD_TEXT_CONTEXT ? '…' : ''),
+  };
+}
+
+function recordTextBefore(draft) {
+  const spec = recordTextSpec(draft);
+  const expected = draft && draft.expected;
+  return spec && expected && typeof expected[spec.column] === 'string' ? expected[spec.column] : '';
+}
+
+function recordTextTargetLines(draft) {
+  const t = draft.target || {};
+  if (t.type === 'contact') {
+    return [`Contact: ${t.contact_name} (contact #${t.contact_id}${t.contact_kind ? `, ${t.contact_kind}` : ''})`,
+      `Scope: the CONTACT's own notes — not a case note. The same text shows wherever this contact appears (${Number(t.case_count || 0)} linked case${Number(t.case_count) === 1 ? '' : 's'}).`];
+  }
+  const clients = (t.clients || []).join(', ');
+  return [`Case: ${t.case_number || t.case_id} (case ${t.case_id}${t.case_type ? `, ${t.case_type}` : ''})`,
+    `Clients: ${clients || 'none listed'}`];
+}
+
+function recordTextText(draft) {
+  const spec = recordTextSpec(draft) || { label: 'Text', noun: 'text' };
+  const before = recordTextBefore(draft); const after = String(draft.after == null ? '' : draft.after);
+  const d = recordTextDiff(before, after);
+  const lines = [`${spec.label} proposal — not applied`, `Action: ${recordTextLabel(draft)}`, ...recordTextTargetLines(draft),
+    `Field: ${spec.label} (${spec.column})`,
+    `Size: ${recordTextCount(before.length)} → ${recordTextCount(after.length)}`];
+  if (after === '') {
+    lines.push(`Clears: the ${spec.noun} — all ${recordTextCount(before.length)} are removed and the field is left empty.`,
+      `Removed: ${recordTextShow(before) || 'nothing'}`);
+  } else {
+    if (draft.mode === 'append') lines.push(`Adds: a new line at the end — the existing ${recordTextCount(before.length)} stay exactly as they are.`);
+    if (d.lead) lines.push(`Unchanged before: ${recordTextShow(d.lead)}`);
+    lines.push(`Removed: ${d.removed ? recordTextShow(d.removed) : 'nothing'}`, `Added: ${d.added ? recordTextShow(d.added) : 'nothing'}`);
+    if (d.trail) lines.push(`Unchanged after: ${recordTextShow(d.trail)}`);
+  }
+  lines.push(`Writes: ${spec.column} only — the whole new text replaces the stored text; no other field is sent.`,
+    `Stale check: if the ${spec.noun} change before you apply, nothing is written.`,
+    'Other open pages: case and contact pages showing this field update on their own.', 'Notification: nothing is sent.');
+  return lines.join('\n');
+}
+
+// A card that removes or alters existing text (anything but a pure addition)
+// is danger-styled: the stored words it drops are gone once it is applied.
+function recordTextDanger(draft) {
+  return recordTextDiff(recordTextBefore(draft), draft.after).removed.length > 0;
+}
+
+function recordTextRequest(draft) {
+  const spec = recordTextSpec(draft);
+  if (!spec) throw new Error('This card has no usable field.');
+  const after = draft.after;
+  if (typeof after !== 'string') throw new Error(`This card has no usable ${spec.noun} text.`);
+  if (after.length > spec.max) throw new Error(`The ${spec.noun} would be longer than the ${recordTextCount(spec.max)} Casey may write. Ask Casey to prepare it again.`);
+  const t = draft.target || {};
+  if (CASE_TEXT_ACTION_KINDS.has(draft.kind)) {
+    const id = actionStringReceipt(t.type === 'case' ? t.case_id : '');
+    if (!id) throw new Error('This card has no usable case id.');
+    return { path: `/api/cases/${encodeURIComponent(id)}`, method: 'PATCH', body: { [spec.column]: after } };
+  }
+  const cid = Number(t.type === 'contact' ? t.contact_id : NaN);
+  if (!Number.isSafeInteger(cid) || cid < 1) throw new Error('This card has no usable contact id.');
+  return { path: `/api/contacts/${cid}`, method: 'PATCH', body: { [spec.column]: after } };
+}
+
+async function recordTextPrecheck(draft) {
+  const spec = recordTextSpec(draft);
+  const t = draft.target || {};
+  const isCase = CASE_TEXT_ACTION_KINDS.has(draft.kind);
+  // The same ids the builder will send — a card that cannot be written is never read.
+  const caseId = isCase ? actionStringReceipt(t.type === 'case' ? t.case_id : '') : '';
+  if (isCase && !caseId) throw new Error('This card has no usable case id.');
+  if (!isCase && !(t.type === 'contact' && Number.isSafeInteger(Number(t.contact_id)) && Number(t.contact_id) > 0)) throw new Error('This card has no usable contact id.');
+  if (!spec || typeof draft.after !== 'string') throw new Error('This card has no usable text.');
+  if (draft.after.length > spec.max) throw new Error(`the text is longer than the ${recordTextCount(spec.max)} Casey may write — ask Casey to prepare it again`);
+  const name = isCase ? `Case ${t.case_number || caseId}` : `${t.contact_name} (contact #${t.contact_id})`;
+  let got;
+  try {
+    got = isCase ? await api(`/api/cases/${encodeURIComponent(caseId)}`, null, 'GET')
+      : await api(`/api/contacts/${Number(t.contact_id)}`, null, 'GET');
+  } catch (e) { if (e && e.status === 404) return `${name} no longer exists. Nothing was written.`; throw e; }
+  const row = got && (isCase ? got.case : got.contact);
+  if (!row || typeof row !== 'object') throw new Error(`the ${isCase ? 'case' : 'contact'} could not be read`);
+  const stored = row[spec.column] == null ? '' : String(row[spec.column]);
+  if (stored !== recordTextBefore(draft)) {
+    return `The ${spec.noun} changed since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function caseTextResult(draft, result) {
+  const id = actionStringReceipt(result && result.data && result.data.case_id != null ? String(result.data.case_id) : '');
+  if (!id || id.toLowerCase() !== String(draft.target && draft.target.case_id).toLowerCase()) throw new Error('The case route returned no usable case id');
+  return { case_id: String(draft.target.case_id) };
+}
+
+function contactTextResult(draft, result) {
+  const id = Number(result && result.data && result.data.contact_id);
+  if (!Number.isSafeInteger(id) || id < 1 || id !== Number(draft.target && draft.target.contact_id)) throw new Error('The contact route returned no usable contact id');
+  return { contact_id: id };
+}
+
+function recordTextOpenTarget(draft) {
+  const t = draft.target || {};
+  return t.type === 'case'
+    ? { kind: 'case', id: String(t.case_id), label: String(t.case_number || t.case_id || 'Case') }
+    : { kind: 'contact', id: Number(t.contact_id), label: String(t.contact_name || 'Contact') };
 }
 
 // Safe code jobs (safe-mode S3). The body runs ONCE in the QuickJS guest
@@ -2320,6 +2504,43 @@ const ACTION_FAMILIES = [
     open: (draft) => { const t = contactRelationOpenTarget(draft); openEntity('contact', t.id, t.label); },
   },
   {
+    // The one string-receipt family: a case's id is its varchar case_id.
+    id: 'case_text', kinds: CASE_TEXT_ACTION_KINDS, title: 'Case notes / alerts', noun: 'case', errorNoun: 'case edit',
+    label: recordTextLabel, text: recordTextText, request: recordTextRequest, result: caseTextResult,
+    idField: 'case_id', appliedKey: 'result_text_case_id', stringReceipt: true,
+    danger: recordTextDanger,
+    precheck: recordTextPrecheck,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `case ${payload.case_id}`,
+    entity: (draft) => { const t = recordTextOpenTarget(draft); return { kind: 'case', id: t.id, label: t.label }; },
+    failure: 'The case edit could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — ${recordTextSpec(draft) ? recordTextSpec(draft).noun : 'case'} saved`,
+      warning: `The ${recordTextSpec(draft) ? recordTextSpec(draft).noun : 'case text'} of case ${recordTextOpenTarget(draft).label} were saved using your signed-in account.`,
+      button: `Open ${recordTextOpenTarget(draft).label}`,
+    }),
+    reviewWarning: 'Review the change and the size line — applying replaces the stored text with exactly the new text. Nothing is sent. Canceling writes nothing.',
+    open: (draft) => { const t = recordTextOpenTarget(draft); openEntity('case', t.id, t.label); },
+  },
+  {
+    id: 'contact_text', kinds: CONTACT_TEXT_ACTION_KINDS, title: 'Contact notes', noun: 'contact', errorNoun: 'contact notes edit',
+    label: recordTextLabel, text: recordTextText, request: recordTextRequest, result: contactTextResult,
+    idField: 'contact_id', appliedKey: 'result_text_contact_id',
+    danger: recordTextDanger,
+    precheck: recordTextPrecheck,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `contact #${payload.contact_id}`,
+    entity: (draft) => { const t = recordTextOpenTarget(draft); return { kind: 'contact', id: String(t.id), label: t.label }; },
+    failure: 'The contact notes edit could not be applied.',
+    appliedCopy: (draft) => ({
+      status: 'Applied — contact notes saved',
+      warning: `${recordTextOpenTarget(draft).label}'s contact notes were saved using your signed-in account.`,
+      button: `Open ${recordTextOpenTarget(draft).label}`,
+    }),
+    reviewWarning: 'This is the CONTACT\'s note, not a case note — review the contact and the change; applying replaces the stored text with exactly the new text. Nothing is sent. Canceling writes nothing.',
+    open: (draft) => { const t = recordTextOpenTarget(draft); openEntity('contact', t.id, t.label); },
+  },
+  {
     id: 'job', kinds: JOB_ACTION_KINDS, title: 'Safe code job', noun: 'scheduled job', errorNoun: 'job action',
     label: jobActionLabel, text: jobDraftText, request: jobActionRequest, result: jobActionResult,
     idField: 'job_id', appliedKey: 'result_job_id',
@@ -2536,10 +2757,23 @@ const ACTION_FAMILIES = [
   },
 ];
 
-function actionAppliedId(family, draft) { return Number(draft[family.appliedKey]) || 0; }
+// Receipts are positive integers, except for a family declaring stringReceipt:
+// the two case families, whose record id is cases.case_id — a varchar(20)
+// PRIMARY KEY (services/assistantActionLedger.js STRING_RECEIPT_FIELDS). Its
+// receipt stays the exact string (never Number(), which would make it NaN and
+// read as "not applied"); anything else reads as no receipt.
+function actionStringReceipt(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,20}$/.test(value) ? value : '';
+}
+
+function actionAppliedId(family, draft) {
+  if (family.stringReceipt) return actionStringReceipt(draft[family.appliedKey]);
+  return Number(draft[family.appliedKey]) || 0;
+}
 
 function markActionApplied(family, draft, payload) {
   if (family.markApplied) { family.markApplied(draft, payload); return; }
+  if (family.stringReceipt) { draft[family.appliedKey] = actionStringReceipt(payload[family.idField]); return; }
   draft[family.appliedKey] = Number(payload[family.idField]);
 }
 
@@ -2606,7 +2840,7 @@ async function executeActionDraft(message) {
     }
     claimed = true;
     // Never serialize this receipt capability into chat or model history.
-    Object.defineProperty(draft, '__ledgerReceipt', { value: { token: claim.claim_token, field: family.idField }, configurable: true });
+    Object.defineProperty(draft, '__ledgerReceipt', { value: { token: claim.claim_token, field: family.idField, stringReceipt: !!family.stringReceipt }, configurable: true });
     // Idempotency (P4). A create carries the server-minted draft_id as its
     // Idempotency-Key: stable across retries of THIS card, unique per
     // proposal, user-scoped, and never model-chosen. The canonical route
@@ -2703,7 +2937,8 @@ function applyActionResults(messages, ledger = []) {
     const result = message && message.action_result;
     const family = actionFamily(result);
     if (family && typeof result.draft_id === 'string'
-        && Number.isSafeInteger(Number(result[family.idField])) && Number(result[family.idField]) > 0) {
+        && (family.stringReceipt ? !!actionStringReceipt(result[family.idField])
+          : Number.isSafeInteger(Number(result[family.idField])) && Number(result[family.idField]) > 0)) {
       applied.set(result.draft_id, { family, result });
     }
   }

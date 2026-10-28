@@ -1187,6 +1187,7 @@ tests/caseyHookCreate.test.js
 tests/caseyIngestRule.mysql.test.js
 tests/caseyIngestRule.test.js
 tests/caseyJobCodeAction.test.js
+tests/caseyRecordText.test.js
 tests/caseyReportDraft.mysql.test.js
 tests/caseyReportDraft.test.js
 tests/caseySend.routes.test.js

@@ -427,6 +427,28 @@ body. Governing migrations in `ref/migrations/`.*
   the contact. Off switch `casey_contact_relations_enabled` (on unless '0').
   Tests: `tests/caseyContactRelations.test.js`, gated
   `tests/caseyContactRelations.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A6.
+- **Casey case-notes / case-alerts / contact-notes cards (A7 group A, 10-28):**
+  kinds `case.notes.update.v1`, `case.alerts.update.v1` (PATCH
+  `/api/cases/:id`) and `contact.notes.update.v1` (PATCH `/api/contacts/:id`);
+  the column comes from the KIND and the browser body carries that one column
+  only (both routes accept far more — Casey's table `RECORD_TEXT_FIELDS` is the
+  narrowing). Invariants: the model gives `value` (complete text, `''` clears)
+  XOR `append`; the normalizer resolves either to the FULL after-value (append
+  = stored text byte-for-byte + newline + text) and bakes the whole current
+  value into `expected`; the click-time precheck re-reads the native GET and
+  compares by VALUE (cases has no updated_at; `contact_updated` moves on
+  unrelated writes). Caps on the whole result: notes = `lib/noteLimits`
+  NOTE_MAX_CHARS (the route's own 400), alerts 5000 (TEXT, no server cap — the
+  case-detail forms' maxlength). Reads go through `caseService.getCase` /
+  `contactService.getContact` (no SQL of its own, so no twin). The case
+  receipt is the STRING `case_id` (varchar(20) PK): the ledger's
+  `STRING_RECEIPT_FIELDS` and the engine's family `stringReceipt` flag carry it
+  — the ONLY string receipt; every other family stays a positive integer. No
+  Idempotency-Key (setting a value is idempotent; one ledger claim per draft;
+  a contact replay re-pushes Google Contacts, harmless). Both routes are
+  already on the sync bus and case.html / contact.html / checklistView repaint
+  these columns. Off switch `casey_record_edits_enabled` (on unless '0').
+  Tests: `tests/caseyRecordText.test.js` + assistantUi; plan: ASK_CASEY_ACTIONS_PLAN A7.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL

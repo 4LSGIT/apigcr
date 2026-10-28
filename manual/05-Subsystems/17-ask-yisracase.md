@@ -290,7 +290,7 @@ reschedule.
 Casey can prepare one reviewed create, narrow update, or end action for one
 contact phone, email, or address row. It cannot use these actions to edit the
 contact's scalar identity fields, and it cannot combine several rows in one
-proposal (relationships and roles are their own cards, below).
+proposal (relationships, roles and contact notes are their own cards, below).
 
 Creation requires current evidence containing the exact parent `contact_id`.
 Phone and email values are normalized by the native services and cannot be
@@ -377,6 +377,40 @@ of Dana Client" — so the direction of a one-way type is never ambiguous.
 
 The off switch for these cards is the `casey_contact_relations_enabled`
 setting (on unless set to 0).
+
+### Case notes, case alerts and contact notes
+
+Casey can edit three text fields, one per card: a case's **notes**, a case's
+**alerts** (the banner at the top of the case), and a contact's **notes**.
+Ask it to add a line ("add a note to the case that the client is sending pay
+stubs Friday") or to rewrite, replace or clear the field. Nothing else on a
+case or contact — status, stage, dates, names, docket, trustee, judge, source,
+tags — is available to Casey; edit those on the case or contact page.
+
+- **Adding keeps what is there.** An added line goes at the end, on its own
+  line; the existing text is kept exactly as it is. A rewrite replaces the
+  whole field with the new text, and a clear empties it — the card says
+  "Clears" in so many words.
+- **The card shows the change, not the whole note.** Notes can run to 10,000
+  characters, so the card shows the size before and after ("1,204 characters
+  → 1,251 characters"), what is removed and what is added, with a little
+  unchanged text either side. A card that removes or changes existing text is
+  shown in warning style; a card that only adds is not.
+- **Contact notes belong to the contact, not a case.** The card names the
+  contact and says the same text shows wherever that contact appears, with how
+  many cases they are on.
+- **Limits.** Notes are capped at 10,000 characters and alerts at 5,000,
+  counting the whole field after the change; Casey refuses a longer result
+  rather than let it be cut.
+- **Freshness.** When you confirm, the card re-reads the field. If anyone
+  changed it since the card was prepared, nothing is written — ask Casey to
+  prepare it again.
+- Once applied, the card opens the case or contact. Other open case and
+  contact pages showing the field update on their own, as they do for an edit
+  made on the page.
+
+The off switch for these cards is the `casey_record_edits_enabled` setting (on
+unless set to 0).
 
 ### Sending a text or email
 

@@ -66,6 +66,9 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'contactRelationLabel', 'contactRelationValue', 'contactRelationLines', 'contactRelationText', 'contactRoleAttrLines', 'contactRoleText',
   'contactRelationRequest', 'contactRoleRequest', 'contactRelationStableJson', 'contactRelationDay', 'contactRelationPrecheck',
   'contactRolePrecheck', 'contactRelationResult', 'contactRoleResult', 'contactRelationOpenTarget',
+  'recordTextSpec', 'recordTextLabel', 'recordTextCount', 'recordTextShow', 'recordTextDiff', 'recordTextBefore',
+  'recordTextTargetLines', 'recordTextText', 'recordTextDanger', 'recordTextRequest', 'recordTextPrecheck',
+  'caseTextResult', 'contactTextResult', 'recordTextOpenTarget',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
   'workflowDraftLabel', 'workflowSendLines', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
   'workflowStepActionLabel', 'workflowStepWorkflowLine', 'workflowStepInsertText', 'workflowStepEditValue',
@@ -83,7 +86,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'sendIsSms', 'sendActionLabel', 'sendRecipientLine', 'sendOptoutText', 'sendFactLines', 'sendDraftText', 'sendDraftFields', 'sendConfirmText', 'sendActionRequest',
   'sendPrecheck', 'sendActionDispatch', 'sendActionResult', 'sendResultText', 'openSendRecord',
   'reportDraftLabel', 'reportSsnText', 'reportVizText', 'reportCardText', 'reportDraftFields', 'reportConfirmText', 'reportDraftRequest', 'reportDraftResult',
-  'actionFamily', 'isActionDraft', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
+  'actionFamily', 'isActionDraft', 'actionStringReceipt', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
   'executeActionDraft', 'applyActionResults', 'hydrateActionDraft'];
 
 const APPT_CONFIRM_FNS = ['apptManageLinkPattern', 'apptConfirmation', 'apptConfirmFields', 'apptConfirmLinkLabel', 'apptConfirmDisplay', 'apptConfirmLines', 'apptConfirmMessageBlock'];
@@ -98,6 +101,8 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'TASK_ACTION_KINDS'), constSrc(html, 'EVENT_ACTION_KINDS'),
     constSrc(html, 'APPT_ACTION_KINDS'), constSrc(html, 'CONTACT_SUBRECORD_ACTION_KINDS'),
     constSrc(html, 'CONTACT_RELATION_ACTION_KINDS'), constSrc(html, 'CONTACT_ROLE_ACTION_KINDS'),
+    constSrc(html, 'CASE_TEXT_ACTION_KINDS'), constSrc(html, 'CONTACT_TEXT_ACTION_KINDS'), constSrc(html, 'RECORD_TEXT_SPECS'),
+    constSrc(html, 'RECORD_TEXT_CONTEXT'), constSrc(html, 'RECORD_TEXT_PART_MAX'), constSrc(html, 'RECORD_TEXT_WORD_MAX'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
     constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEQUENCE_ENROLL_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
@@ -2396,5 +2401,203 @@ describe('R1 Keep going control', () => {
     const history = [{ role: 'user', text: 'Original question?' }, answerAt(), { role: 'user', text: 'Keep going', continuation: true }, answerAt()];
     keepSandbox({ history, input }).askCaseyAgain(history[3]);
     expect(input.value).toBe('Original question?');
+  });
+});
+
+// A7 group A: case notes / case alerts / contact notes through the SHARED
+// engine. Pinned: the click-time re-read compares the stored text by VALUE and
+// refuses BEFORE the ledger claim; the builder sends exactly ONE column, named
+// by the KIND (never by the draft), with the complete after-value and no
+// Idempotency-Key; the case receipt is the STRING case_id and survives the
+// ledger round trip intact (never Number() → NaN); the contact receipt is an
+// integer; the card renders a bounded changed region, never a whole 10k note.
+describe('A7 record text cards (case.notes / case.alerts / contact.notes)', () => {
+  const CASE_ID = '7KQ2M9XA';
+  const caseDraft = (over = {}) => ({ action_draft: {
+    draft_id: '8c8c8c8c-1b2c-4d3e-8f40-123456789abc', kind: 'case.notes.update.v1', status: 'draft', received_at: Date.now(),
+    target: { type: 'case', case_id: CASE_ID, case_number: '25-12345-abc', case_type: 'Chapter 7', clients: ['Dana Client', 'Sam Client'] },
+    field: 'case_notes', mode: 'append', before_length: 22, after_length: 33, max: 10000,
+    after: 'first line\nsecond line\nthird line', expected: { case_notes: 'first line\nsecond line' }, evidence: [],
+    // Model-shaped junk that must never reach a request.
+    case_status: 'Closed', changes: { case_stage: 'x' }, value: 'zzz',
+    ...over } });
+  const contactDraft = (over = {}) => caseDraft({ draft_id: '9d9d9d9d-1b2c-4d3e-8f40-123456789abc', kind: 'contact.notes.update.v1',
+    target: { type: 'contact', contact_id: 77, contact_name: 'Dana Client', contact_kind: 'person', case_count: 2 },
+    field: 'contact_notes', after: 'Prefers email\nTexts after 5pm', expected: { contact_notes: 'Prefers email' }, ...over });
+  const reads = (over = {}) => (path) => {
+    if (over.gone) throw Object.assign(new Error('not found'), { status: 404 });
+    if (path === `/api/cases/${CASE_ID}`) return { case: { case_id: CASE_ID, case_notes: 'first line\nsecond line', case_alerts: '', ...(over.case || {}) } };
+    if (path === '/api/contacts/77') return { contact: { contact_id: 77, contact_notes: 'Prefers email', ...(over.contact || {}) } };
+    throw new Error(`unexpected read ${path}`);
+  };
+  function runText(message, { read = reads(), write = async (path) => (path.startsWith('/api/cases/')
+    ? { status: 'success', data: { case_id: CASE_ID, updated_fields: ['case_notes'], changes: {} } }
+    : { status: 'success', data: { contact_id: 77, updated_fields: ['contact_notes'], changes: {} } }), confirm = true } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); return read(path); }
+      writes.push({ path, body, method, headers }); return write(path, body);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a7' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) } };
+    const history = []; const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, openEntity, sandbox }));
+  }
+
+  test('case notes append: re-read, ONE PATCH of case_notes only, the STRING case_id receipt, opens the case', async () => {
+    const m = caseDraft();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runText(m);
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('case_text');
+    expect(gets).toEqual([`/api/cases/${CASE_ID}`]);
+    expect(writes).toEqual([{ path: `/api/cases/${CASE_ID}`, method: 'PATCH', headers: undefined, body: { case_notes: 'first line\nsecond line\nthird line' } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a7', result: { case_id: CASE_ID } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_text_case_id: CASE_ID });
+    expect(history[0].text).toBe(`Update case notes applied to case ${CASE_ID}.`);
+    expect(history[0].action_result).toMatchObject({ kind: 'case.notes.update.v1', case_id: CASE_ID });
+    expect(history[0].entities).toEqual([{ kind: 'case', id: CASE_ID, label: '25-12345-abc' }]);
+    expect(openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345-abc');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    // A pure addition is not danger-styled.
+    expect(dialog).toMatchObject({ icon: 'question', confirmButtonText: 'Update case notes' });
+    expect(dialog.text).toContain(`Case: 25-12345-abc (case ${CASE_ID}, Chapter 7)`);
+    expect(dialog.text).toContain('Clients: Dana Client, Sam Client');
+    expect(dialog.text).toContain('Size: 22 characters → 33 characters');
+    expect(dialog.text).toContain('Adds: a new line at the end — the existing 22 characters stay exactly as they are.');
+    expect(dialog.text).toContain('Removed: nothing');
+    expect(dialog.text).toContain('Added:  ↵ third line');
+    expect(dialog.text).toContain('Writes: case_notes only');
+  });
+
+  test('the builder names the column by the KIND and sends nothing else; a bad id or over-cap text never reaches the route', async () => {
+    // A draft claiming another field still writes the kind's own column.
+    const alerts = caseDraft({ kind: 'case.alerts.update.v1', field: 'case_status', after: 'Hard of hearing', expected: { case_alerts: '' } });
+    const r = await runText(alerts, { write: async () => ({ status: 'success', data: { case_id: CASE_ID } }) });
+    expect(r.writes).toEqual([{ path: `/api/cases/${CASE_ID}`, method: 'PATCH', headers: undefined, body: { case_alerts: 'Hard of hearing' } }]);
+    for (const [over, why] of [[{ target: { type: 'case', case_id: 'bad id' } }, 'This card has no usable case id.'],
+      [{ after: 'x'.repeat(10001) }, 'longer than the 10,000 characters'],
+      [{ kind: 'case.alerts.update.v1', after: 'x'.repeat(5001), expected: { case_alerts: '' } }, 'longer than the 5,000 characters'],
+      [{ after: 5 }, 'This card has no usable text.']]) {
+      const d = caseDraft(over);
+      const x = await runText(d);
+      // Refused at the re-check, before any read, claim or write.
+      expect({ why, gets: x.gets, ledger: x.ledger, writes: x.writes }).toEqual({ why, gets: [], ledger: [], writes: [] });
+      expect(d.action_draft.action_error).toContain(why);
+    }
+  });
+
+  test('click-time freshness compares by VALUE and refuses BEFORE the claim; a failed read leaves the card retryable', async () => {
+    for (const [read, why] of [
+      [reads({ case: { case_notes: 'first line\nsecond line ' } }), 'The case notes changed since this card was prepared. Nothing was written. Ask Casey to prepare it again.'],
+      [reads({ case: { case_notes: '' } }), 'The case notes changed since this card was prepared.'],
+      [reads({ gone: true }), 'Case 25-12345-abc no longer exists. Nothing was written.'],
+    ]) {
+      const d = caseDraft();
+      const x = await runText(d, { read });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(d.action_draft.refusal_error).toContain(why);
+    }
+    // An unrelated column changing is not staleness.
+    const ok = await runText(caseDraft(), { read: reads({ case: { case_alerts: 'new alert', case_stage: 'Filed' } }) });
+    expect(ok.writes).toHaveLength(1);
+    const u = caseDraft();
+    const ur = await runText(u, { read: () => ({ status: 'success' }) });
+    expect([ur.writes, ur.ledger]).toEqual([[], []]);
+    expect(u.action_draft.action_error).toMatch(/^Could not re-check the record before applying \(the case could not be read\)/);
+  });
+
+  test('contact notes: the CONTACT is named, the PATCH carries contact_notes only, the receipt is the integer contact_id', async () => {
+    const m = contactDraft();
+    const r = await runText(m);
+    expect(r.sandbox.actionFamily(m.action_draft).id).toBe('contact_text');
+    expect(r.gets).toEqual(['/api/contacts/77']);
+    expect(r.writes).toEqual([{ path: '/api/contacts/77', method: 'PATCH', headers: undefined, body: { contact_notes: 'Prefers email\nTexts after 5pm' } }]);
+    expect(r.ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a7', result: { contact_id: 77 } } }]);
+    expect(m.action_draft.result_text_contact_id).toBe(77);
+    expect(r.openEntity).toHaveBeenCalledWith('contact', 77, 'Dana Client');
+    const text = r.P.Swal.fire.mock.calls[0][0].text;
+    expect(text).toContain('Contact: Dana Client (contact #77, person)');
+    expect(text).toContain("Scope: the CONTACT's own notes — not a case note. The same text shows wherever this contact appears (2 linked cases).");
+    const stale = contactDraft();
+    const s = await runText(stale, { read: reads({ contact: { contact_notes: 'Prefers phone' } }) });
+    expect([s.writes, s.ledger]).toEqual([[], []]);
+    expect(stale.action_draft.refusal_error).toBe('The contact notes changed since this card was prepared. Nothing was written. Ask Casey to prepare it again.');
+  });
+
+  test('a clear says so and is danger-styled; a rewrite that drops text is danger-styled; outcomes map like every family', async () => {
+    const clear = caseDraft({ kind: 'case.alerts.update.v1', after: '', mode: 'clear', expected: { case_alerts: 'Hard of hearing' } });
+    const c = await runText(clear, { read: reads({ case: { case_alerts: 'Hard of hearing' } }), confirm: false });
+    const dialog = c.P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true, title: 'Clear case alerts', confirmButtonText: 'Clear case alerts' });
+    expect(dialog.text).toContain('Clears: the case alerts — all 15 characters are removed and the field is left empty.');
+    expect(dialog.text).toContain('Removed: Hard of hearing');
+    expect([c.writes, c.gets, c.ledger]).toEqual([[], [], []]);
+    const rewrite = caseDraft({ after: 'first line\n2nd line', mode: 'replace' });
+    const rw = await runText(rewrite, { confirm: false });
+    expect(rw.P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning' });
+    expect(rw.P.Swal.fire.mock.calls[0][0].text).toContain('Removed: second');
+    expect(rw.P.Swal.fire.mock.calls[0][0].text).toContain('Added: 2nd');
+    const refused = caseDraft();
+    await runText(refused, { write: async () => { throw Object.assign(new Error('case_notes is 10,001 characters'), { status: 400 }); } });
+    expect(refused.action_draft.refusal_error).toBe('Refused — nothing written (case_notes is 10,001 characters). Ask Casey to prepare it again.');
+    const lost = caseDraft();
+    await runText(lost, { write: async () => { throw Object.assign(new Error('Internal'), { status: 500 }); } });
+    expect(lost.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    // A route answering for another case is not this card's receipt.
+    const wrong = caseDraft();
+    await runText(wrong, { write: async () => ({ status: 'success', data: { case_id: 'OTHER123' } }) });
+    expect(wrong.action_draft.ambiguous_error).toMatch(/The case route returned no usable case id/);
+    const wrongContact = contactDraft();
+    await runText(wrongContact, { write: async () => ({ status: 'success', data: { contact_id: 78 } }) });
+    expect(wrongContact.action_draft.ambiguous_error).toMatch(/The contact route returned no usable contact id/);
+  });
+
+  test('a 10,000-character note renders only the changed region, bounded', async () => {
+    const before = `${'a'.repeat(5000)}MIDDLE${'b'.repeat(4994)}`;
+    const after = `${'a'.repeat(5000)}CENTER${'b'.repeat(4994)}`;
+    const m = caseDraft({ after, mode: 'replace', expected: { case_notes: before } });
+    const r = await runText(m, { read: reads({ case: { case_notes: before } }), confirm: false });
+    const text = r.P.Swal.fire.mock.calls[0][0].text;
+    expect(text).toContain('Size: 10,000 characters → 10,000 characters');
+    expect(text).toContain('Removed: MIDDLE');
+    expect(text).toContain('Added: CENTER');
+    // Exactly RECORD_TEXT_CONTEXT unchanged characters, then the next line.
+    expect(text).toContain(`Unchanged before: …${'a'.repeat(80)}\nRemoved: MIDDLE`);
+    expect(text).toContain(`Unchanged after: ${'b'.repeat(80)}…`);
+    expect(text.length).toBeLessThan(2000);
+    // A whole rewrite keeps each part's head and tail and says how much is not shown.
+    const big = caseDraft({ after: 'y'.repeat(9000), mode: 'replace', expected: { case_notes: 'x'.repeat(9000) } });
+    const b = await runText(big, { read: reads({ case: { case_notes: 'x'.repeat(9000) } }), confirm: false });
+    const bigText = b.P.Swal.fire.mock.calls[0][0].text;
+    expect(bigText).toContain(`Removed: ${'x'.repeat(300)} … [8,400 characters not shown] … ${'x'.repeat(300)}`);
+    expect(bigText.length).toBeLessThan(3000);
+  });
+
+  test('reopened cards restore from the ledger: the string case receipt survives intact, never NaN', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    for (const [m, result, chip, open] of [[caseDraft(), { case_id: CASE_ID }, 'Applied — case notes saved', 'Open 25-12345-abc'],
+      [contactDraft(), { contact_id: 77 }, 'Applied — contact notes saved', 'Open Dana Client']]) {
+      box.applyActionResults([m], [{ draft_id: m.action_draft.draft_id, kind: m.action_draft.kind, outcome: 'applied', result }]);
+      expect(m.action_draft.status).toBe('applied');
+      const host = dom.window.document.createElement('div');
+      box.hydrateActionDraft(box.actionFamily(m.action_draft), host, m, m.action_draft);
+      expect(host.querySelector('.action-draft-status').textContent).toBe(chip);
+      expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual([open, 'Copy details']);
+    }
+    const restored = caseDraft();
+    box.applyActionResults([restored], [{ draft_id: restored.action_draft.draft_id, kind: 'case.notes.update.v1', outcome: 'applied', result: { case_id: CASE_ID } }]);
+    expect(restored.action_draft.result_text_case_id).toBe(CASE_ID);
+    // The legacy chat-marker path (no ledger row) restores the string too.
+    const legacy = caseDraft();
+    box.applyActionResults([legacy, { role: 'assistant', action_result: { kind: 'case.notes.update.v1', draft_id: legacy.action_draft.draft_id, case_id: CASE_ID } }], []);
+    expect([legacy.action_draft.status, legacy.action_draft.result_text_case_id]).toEqual(['applied', CASE_ID]);
+    // Two families, distinct applied keys; only the case family is string-receipted.
+    const ct = box.actionFamily({ kind: 'case.alerts.update.v1' }); const kt = box.actionFamily({ kind: 'contact.notes.update.v1' });
+    expect([[...ct.kinds], [...kt.kinds]]).toEqual([['case.notes.update.v1', 'case.alerts.update.v1'], ['contact.notes.update.v1']]);
+    expect([ct.appliedKey, kt.appliedKey, ct.idField, kt.idField, ct.stringReceipt, !!kt.stringReceipt]).toEqual(['result_text_case_id', 'result_text_contact_id', 'case_id', 'contact_id', true, false]);
+    for (const kind of ['case.update.v1', 'case.source.update.v1', 'contact.update.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    dom.window.close();
   });
 });

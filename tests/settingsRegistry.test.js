@@ -49,6 +49,7 @@ describe('classification snapshot', () => {
     "casey_contact_relations_enabled": "system system casey ui bool",
     "casey_hook_authoring_enabled": "system system casey ui bool",
     "casey_ingest_authoring_enabled": "system system casey ui bool",
+    "casey_record_edits_enabled": "system system casey ui bool",
     "casey_report_authoring_enabled": "system system casey ui bool",
     "casey_sequence_authoring_enabled": "system system casey ui bool",
     "casey_sequence_enroll_enabled": "system system casey ui bool",

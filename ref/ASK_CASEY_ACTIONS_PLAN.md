@@ -46,8 +46,8 @@ them:
   rollback criteria, and controlled live smoke tests.
 
 Decisions requested in the upcoming review are: confirm the A6-A18 ordering;
-choose the first low-impact A7 scalar fields (A6 removal is decided: a later
-sub-slice, see A6); set the P1
+(A7's first field group is decided and shipped: case notes, case alerts and
+contact notes, see A7; A6 removal is decided: a later sub-slice, see A6); set the P1
 extraction point; and define the rollout bar for the first external-send or
 fan-out action. Destructive/admin/access/credential work, arbitrary tools,
 multi-action plans, and unattended execution remain outside this roadmap.
@@ -634,13 +634,60 @@ class as remove; manager ruling 2026-10-28), role removal and deactivation
 (PATCH `active=0`, the native "remove"), reactivation of either, a relation
 type change, and editing an ended relation. Each is refused by name today.
 
-#### A7: Narrow scalar contact and case edits
+#### A7: Narrow scalar contact and case edits — group A shipped 2026-10-28
 
 Expose small field groups rather than the broad bodies accepted by
 `PATCH /api/contacts/:id` and `PATCH /api/cases/:id`. Every proposal shows
 before and after values and carries a server-owned stale-value/version check
 through confirmation. Start with low-impact descriptive fields. Identity,
 access, merge, docket, intake ownership, and pipeline state remain excluded.
+
+**Fred's rulings (2026-10-28, recorded by the manager).**
+1. The first field group is `case_notes` + `case_alerts` (cases) and
+   `contact_notes` (contacts) — group A.
+2. Freshness is the A6-style check: the server bakes the expected current
+   value into the card and the click-time re-read refuses on a mismatch. A
+   conditional-write route change (a precondition on the PATCH itself) is
+   deferred until a client-facing field group needs it.
+3. `case_source` is allowed in a LATER group — it is not intake-excluded.
+
+**Shipped contract (group A).** Three kinds: `case.notes.update.v1` and
+`case.alerts.update.v1` (PATCH `/api/cases/:id`) and `contact.notes.update.v1`
+(PATCH `/api/contacts/:id`). The column is fixed by the kind and the browser's
+builder sends that one column only. The model gives `value` (the complete new
+text; `''` clears) XOR `append` (one addition); the normalizer reads the
+record through the routes' own GET services and resolves either to the FULL
+after-value — an append keeps the stored text byte-for-byte and adds a new
+line — so the PATCH always carries the whole value. Caps count the whole
+result: notes 10,000 (`lib/noteLimits`, the route's own limit), alerts 5,000
+(the column is TEXT with no server cap; the case-detail forms' maxlength).
+Unknown keys (including any other column) refuse by name; a no-op refuses.
+Evidence: a cited row carrying the exact `case_id` / `contact_id`. The card
+shows the size before → after and the changed region with bounded context
+(never the whole note), says "Clears" for a clear, danger-styles any card that
+removes stored text, and names the CONTACT on a contact-notes card (with its
+linked-case count) so it never reads as case-scoped. Click-time freshness
+compares the stored value (cases has no `updated_at`; `contact_updated` moves
+on unrelated writes). Idempotency: none needed — setting a value is
+idempotent, and the ledger allows one claim per draft (a replay of the contact
+PATCH re-pushes Google Contacts, harmless). Receipts: the case kinds' receipt
+is the STRING `case_id` (cases.case_id is a varchar(20) PK) — the one string
+receipt, carried by the ledger's `STRING_RECEIPT_FIELDS` and the engine's
+family `stringReceipt` flag (manager ruling 2026-10-28; every integer family
+unchanged); contact notes receipt `contact_id`. Sync: both routes already
+carry yc-sync matchers and case.html, contact.html and checklistView repaint
+these columns — nothing added. Off switch `casey_record_edits_enabled` (on
+unless '0'). Tests: `tests/caseyRecordText.test.js` (no twin: the normalizer
+adds no SQL of its own) + `tests/assistantUi.test.js`.
+
+**Live sweep (manager, 2026-10-28).** No stored trigger rule, sequence or
+ingest rule reacts to these three columns. Their readers are the casedetails
+and bk_worksheet form templates, reports 10 and 13, and the case-merge
+workflows — all deliberate consumers of the text.
+
+**Later groups.** `case_source` (ruling 3) and the other low-impact
+descriptive fields, each as its own group with its own refusal table; a
+client-facing group brings the conditional-write precondition (ruling 2).
 
 #### A8: Case-contact membership
 
@@ -2798,8 +2845,8 @@ slice if explain-answers should link back to a specific record.
    the ordinary roadmap until separately approved.
 
 For the upcoming review, the key decisions are whether this ordering is right,
-which low-impact scalar fields belong in A7, whether delete variants in A6
-should be deferred entirely, and what operational bar must be met before the
+which scalar fields A7's later groups take (the first group is decided — see
+A7), whether delete variants in A6 should be deferred entirely, and what operational bar must be met before the
 first external-send or fan-out action. A5 deliberately excluded hard delete;
 after the fix package, P1 extraction and minimal P4/P5, the next action slice
 is A6 contact relations and roles.

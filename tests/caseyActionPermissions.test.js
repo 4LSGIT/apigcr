@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 49 shipped kinds:
+ * These tests ask that claim two questions for all 52 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 49 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 52 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -107,6 +107,11 @@ const KINDS = [
   { kind: 'contact.relation.update.v1', method: 'PATCH', path: '/api/contact-relations/1' },
   { kind: 'contact.role.create.v1', method: 'POST', path: '/api/contacts/1/roles' },
   { kind: 'contact.role.update.v1', method: 'PATCH', path: '/api/contacts/1/roles/1' },
+  // A7 group A: the case and contact pages' own generic PATCH (case notes and
+  // alerts share one mount).
+  { kind: 'case.notes.update.v1', method: 'PATCH', path: '/api/cases/1' },
+  { kind: 'case.alerts.update.v1', method: 'PATCH', path: '/api/cases/1' },
+  { kind: 'contact.notes.update.v1', method: 'PATCH', path: '/api/contacts/1' },
   { kind: 'job.code_safe.create.v1', method: 'POST', path: '/scheduled-jobs' },
   { kind: 'workflow.draft.v1', method: 'POST', path: '/workflows/bulk' },
   { kind: 'workflow.step_insert.v1', method: 'POST', path: '/workflows/1/steps' },
@@ -138,7 +143,11 @@ const KINDS = [
 // NOT in this list: it legitimately holds the automations.manage gate on
 // STANDARD-mode code (safe-mode S2), which the job family never sends.
 const CAPABILITY_FREE_ROUTE_FILES = ['routes/api.tasks.js', 'routes/api.events.js', 'routes/api.appts.js',
-  'routes/api.contactPhones.js', 'routes/api.contactEmails.js', 'routes/api.contactAddresses.js'];
+  'routes/api.contactPhones.js', 'routes/api.contactEmails.js', 'routes/api.contactAddresses.js',
+  // A7 group A: the generic case / contact PATCH files — jwtOrApiKey only.
+  // Their mounts are whole-segment (/api/contacts/:id), so they never catch
+  // /api/contacts/:id/roles ahead of the role router.
+  'routes/api.cases.js', 'routes/api.contacts.js'];
 const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/api.contactRelations.js',
   // A6: the per-contact role routes are jwtOrApiKey only; the file's
   // requireAuth gates the role-TYPE catalog writes, which no card sends.
@@ -202,19 +211,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 49 kinds (no database)
+// SECTION 1 — the route-level gate, for all 52 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 49 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 52 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 49 kinds cover 44 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(49);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(44);
+  test('the 52 kinds cover 46 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(52);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(46);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -222,7 +231,7 @@ describe('P2 — what the canonical write route gates on (all 49 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 49', async () => {
+  test('no token: every kind is 401 — authentication is required for all 52', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -290,6 +299,9 @@ describe('P2 — what the canonical write route gates on (all 49 shipped kinds)'
       // A6: both relation/role write routes behind the same bare gate.
       ['contact relation', 'services/contactRelationService', 'createRelation', { method: 'POST', path: '/api/contact-relations' }, { contact_a_id: 1, contact_b_id: 2, type_code: 'spouse' }, () => ({ relation: { id: 1 } }), 201],
       ['contact role', 'services/contactRoleService', 'attachRole', { method: 'POST', path: '/api/contacts/1/roles' }, { role: 'judge', attrs: { judge_3: 'abc' } }, () => ({ id: 1 }), 201],
+      // A7 group A: the generic case / contact PATCH behind the same bare gate.
+      ['case text', 'services/caseService', 'updateCase', { method: 'PATCH', path: '/api/cases/1' }, { case_notes: 'x' }, () => ({ case_id: '1', updated_fields: ['case_notes'], changes: {} })],
+      ['contact text', 'services/contactService', 'updateContact', { method: 'PATCH', path: '/api/contacts/1' }, { contact_notes: 'x' }, () => ({ contact_id: 1, updated_fields: ['contact_notes'], changes: {} })],
     ];
     test.each(cases)('%s family', async (_family, modPath, fnName, route, body, result, created = 200) => {
       const mod = require(path.join(REPO, modPath));

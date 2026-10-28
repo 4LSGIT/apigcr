@@ -328,6 +328,32 @@ const CONTACT_RELATION_NOTES_MAX = 500;
 const CONTACT_ROLE_ATTRS_MAX_JSON = 2000;
 // contact.relations read: rows per read (the per-step cap is MAX_ROWS).
 const CONTACT_RELATIONS_READ_MAX = 20;
+// A7 group A (Fred, 2026-10-28): the case's notes and alerts and the
+// contact's notes, each written WHOLE through the native PATCH
+// /api/cases/:id or /api/contacts/:id. Both routes accept far more (every
+// column of the case; the contact's names, SSN, aggregates …): this table is
+// the narrowing, and the browser's fixed builder sends only its one column.
+// The model gives the complete new text (`value`, '' clears) or one addition
+// (`append`); either resolves HERE to the full after-value, and the current
+// value is baked into `expected` for the click-time re-read (A6-style
+// freshness — neither route has a precondition, and compare by VALUE: cases
+// has no updated_at and contact_updated moves on unrelated writes).
+// One per-family switch, casey_record_edits_enabled (on unless '0').
+const RECORD_TEXT_ACTION_KINDS = new Set([
+  'case.notes.update.v1', 'case.alerts.update.v1', 'contact.notes.update.v1',
+]);
+// kind → its one column, the record it lives on, and its Casey-side cap. The
+// notes caps ARE lib/noteLimits' (the route's own 400), so the route never
+// refuses what the card approved. case_alerts is TEXT with NO server cap; 5000
+// is the case-detail forms' maxlength, so Casey never writes an alert those
+// forms cannot hold.
+const RECORD_TEXT_FIELDS = Object.freeze({
+  'case.notes.update.v1': { record: 'case', column: 'case_notes', label: 'case notes', max: require('../lib/noteLimits').NOTE_MAX_CHARS },
+  'case.alerts.update.v1': { record: 'case', column: 'case_alerts', label: 'case alerts', max: 5000 },
+  'contact.notes.update.v1': { record: 'contact', column: 'contact_notes', label: 'contact notes', max: require('../lib/noteLimits').NOTE_MAX_CHARS },
+});
+const RECORD_TEXT_CASE_KEYS = new Set(['kind', 'case_id', 'value', 'append', 'evidence']);
+const RECORD_TEXT_CONTACT_KEYS = new Set(['kind', 'contact_id', 'value', 'append', 'evidence']);
 const CONTACT_PHONE_UPDATE_KEYS = new Set(['label', 'is_primary', 'sms_optout', 'mms_capable', 'notes']);
 const CONTACT_EMAIL_UPDATE_KEYS = new Set(['label', 'is_primary', 'email_optout', 'notes']);
 const CONTACT_ADDRESS_UPDATE_KEYS = new Set(['address1', 'address2', 'city', 'state', 'zip', 'country', 'label', 'is_primary', 'notes']);
@@ -1915,6 +1941,113 @@ async function contactRelationsRead(db, contactId) {
       attrs_schema: t.attrs_schema == null ? null : JSON.stringify(t.attrs_schema) });
   }
   return { rows: rows.slice(0, MAX_ROWS), truncated: listed.total > listed.relations.length || rows.length > MAX_ROWS };
+}
+
+// ── A7 group A: case notes / case alerts / contact notes ──────────────────
+// The records are read through the services behind the routes' own GETs
+// (caseService.getCase, contactService.getContact): no SQL of this file's own.
+
+function recordTextError(message) { return httpError(422, message); }
+
+// The complete after-value. `append` adds one piece of text at the end, on its
+// own line; the stored text before it is kept byte-for-byte (never trimmed).
+function recordTextAfter(value, current, spec) {
+  // A key the model sent as null counts as absent ("" is the clear).
+  const hasValue = Object.prototype.hasOwnProperty.call(value, 'value') && value.value != null;
+  const hasAppend = Object.prototype.hasOwnProperty.call(value, 'append') && value.append != null;
+  if (hasValue === hasAppend) {
+    throw recordTextError(`A ${spec.label} edit takes exactly one of value (the COMPLETE new text; "" clears it) or append (text added at the end)`);
+  }
+  const raw = hasValue ? value.value : value.append;
+  if (typeof raw !== 'string') throw recordTextError(`The ${spec.label} ${hasValue ? 'value' : 'append'} must be text`);
+  const text = raw.trim();
+  let after; let mode;
+  if (hasValue) {
+    after = text;
+    mode = text ? 'replace' : 'clear';
+  } else {
+    if (!text) throw recordTextError(`The ${spec.label} append is empty — give the text to add`);
+    after = !current ? text : /\n$/.test(current) ? `${current}${text}` : `${current}\n${text}`;
+    mode = 'append';
+  }
+  if (after.length > spec.max) {
+    throw recordTextError(`The ${spec.label} would be ${after.length.toLocaleString('en-US')} characters — the limit is ${spec.max.toLocaleString('en-US')}${mode === 'append' ? ` (it holds ${current.length.toLocaleString('en-US')} now)` : ''}. Nothing is proposed — shorten it`);
+  }
+  if (after === current) throw recordTextError(`That does not change the ${spec.label} — the stored text is already exactly that`);
+  return { after, mode };
+}
+
+async function normalizeRecordTextCase(db, value, evidence, spec) {
+  const unknown = Object.keys(value).filter((k) => !RECORD_TEXT_CASE_KEYS.has(k));
+  if (unknown.length) {
+    throw recordTextError(`A ${spec.label} edit carries unsupported fields: ${unknown.join(', ')} — it takes case_id, value or append, and evidence only (it writes ${spec.column} and nothing else)`);
+  }
+  const caseId = String(value.case_id == null ? '' : value.case_id).trim();
+  if (!caseId || caseId.length > 20 || !/^[A-Za-z0-9_-]+$/.test(caseId)) throw recordTextError(`A ${spec.label} edit needs the case's exact case_id`);
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  const cited = refs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return row && String(row.case_id) === caseId;
+  });
+  if (!cited) throw recordTextError(`The ${spec.label} edit evidence does not identify case ${caseId} — cite a row carrying its exact case_id (read the case first)`);
+  const found = await require('./caseService').getCase(db, caseId, 'contacts');
+  if (!found || !found.case) throw recordTextError(`Case ${caseId} no longer exists`);
+  const row = found.case;
+  const current = String(row[spec.column] == null ? '' : row[spec.column]);
+  const { after, mode } = recordTextAfter(value, current, spec);
+  const id = String(row.case_id);
+  const number = String(row.case_number_full || row.case_number || '').trim();
+  // Names only: getCase's contacts are SELECT co.*, which carries the SSN.
+  const clients = (Array.isArray(found.clients) ? found.clients : [])
+    .filter((c) => c && (c.relate_type === 'Primary' || c.relate_type === 'Secondary'))
+    .map((c) => String(c.contact_name || '').trim().slice(0, 200)).filter(Boolean).slice(0, 4);
+  return {
+    draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft',
+    target: { type: 'case', case_id: id, case_number: number.slice(0, 40), case_type: String(row.case_type || '').slice(0, 40), clients },
+    field: spec.column, mode, before_length: current.length, after_length: after.length, max: spec.max,
+    after, expected: { [spec.column]: current }, evidence: refs,
+  };
+}
+
+async function normalizeRecordTextContact(db, value, evidence, spec) {
+  const unknown = Object.keys(value).filter((k) => !RECORD_TEXT_CONTACT_KEYS.has(k));
+  if (unknown.length) {
+    throw recordTextError(`A ${spec.label} edit carries unsupported fields: ${unknown.join(', ')} — it takes contact_id, value or append, and evidence only (it writes ${spec.column} and nothing else)`);
+  }
+  const contactId = Number(value.contact_id);
+  if (!Number.isSafeInteger(contactId) || contactId < 1) throw recordTextError(`A ${spec.label} edit needs the contact's exact positive contact_id`);
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!contactEvidenceSupports(refs, evidence, contactId, null)) {
+    throw recordTextError(`The ${spec.label} edit evidence does not identify contact ${contactId} — cite a row carrying its exact contact_id (read the contact first)`);
+  }
+  const found = await require('./contactService').getContact(db, contactId, 'cases');
+  if (!found || !found.contact) throw recordTextError(`Contact ${contactId} no longer exists`);
+  const row = found.contact;
+  const current = String(row[spec.column] == null ? '' : row[spec.column]);
+  const { after, mode } = recordTextAfter(value, current, spec);
+  return {
+    draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft',
+    target: {
+      type: 'contact', contact_id: contactId,
+      contact_name: String(row.contact_name || '').trim().slice(0, 200) || `Contact ${contactId}`,
+      contact_kind: row.contact_kind === 'org' ? 'org' : 'person',
+      case_count: Array.isArray(found.cases) ? found.cases.length : 0,
+    },
+    field: spec.column, mode, before_length: current.length, after_length: after.length, max: spec.max,
+    after, expected: { [spec.column]: current }, evidence: refs,
+  };
+}
+
+async function normalizeRecordTextAction(db, value, evidence) {
+  // The per-family switch: '0' and the A7 kinds do not exist.
+  if (require('../lib/firmConfig').cfg('casey_record_edits_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const spec = RECORD_TEXT_FIELDS[value.kind];
+  return spec.record === 'case'
+    ? normalizeRecordTextCase(db, value, evidence, spec)
+    : normalizeRecordTextContact(db, value, evidence, spec);
 }
 
 async function taskDraftLink(db, value) {
@@ -4833,6 +4966,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && APPT_ACTION_KINDS.has(value.kind)) return normalizeApptAction(db, value, evidence);
   if (value && CONTACT_SUBRECORD_ACTION_KINDS.has(value.kind)) return normalizeContactSubrecordAction(db, value, evidence);
   if (value && CONTACT_RELATION_ACTION_KINDS.has(value.kind)) return normalizeContactRelationAction(db, value, evidence);
+  if (value && RECORD_TEXT_ACTION_KINDS.has(value.kind)) return normalizeRecordTextAction(db, value, evidence);
   if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Action kind is unavailable');
   if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
   if (!onlyKeys(value, TASK_CREATE_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
@@ -4981,7 +5115,13 @@ function taskDraftRequested(question, history = []) {
     /\b(?:draft|propose|prepare|create|make|add|link|connect|record|mark|update|change|edit)\b/i.test(request);
   const role = /\b(?:roles?|as (?:a |the )?(?:trustee|judge))\b/i.test(text) &&
     /\b(?:draft|propose|prepare|create|make|add|give|assign|attach|mark|record|update|change|edit)\b/i.test(request);
-  return task || event || appt || contactSubrecord || relation || role || job || workflow || hook || sequence || send || ingestRule ||
+  // A7 group A: a case's notes / alerts or a contact's notes. The noun pair
+  // keeps a bare "note" (a task or appointment note) out; "note" itself is
+  // never a verb here ("note that …" is too common in plain questions).
+  const recordText = /\b(?:notes?|alerts?)\b/i.test(text) &&
+    /\b(?:case|file|matter|contact|client|debtor)s?\b/i.test(text) &&
+    /\b(?:draft|propose|prepare|add|append|put|write|record|update|change|edit|replace|rewrite|set|clear|empty|remove|delete)\b/i.test(request);
+  return task || event || appt || contactSubrecord || relation || role || recordText || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 

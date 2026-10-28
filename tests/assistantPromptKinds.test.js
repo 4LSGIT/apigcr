@@ -45,6 +45,7 @@ const PLAN_FAMILY_MARKERS = {
   event: 'Reviewed event actions are available',
   appt: 'Reviewed appointment actions are available',
   contact: 'Reviewed contact phone, email, and address subrecord actions are available',
+  case: 'Reviewed case notes, case alerts and contact notes actions are available',
   job: 'reviewed safe code job action is available',
   workflow: 'reviewed workflow-draft action is available',
   hook: 'reviewed hook action is available',
@@ -213,6 +214,28 @@ describe('A6 — every stage teaches contact relations and roles, and the contac
     expect(answerPrompt).toContain('Ending, deactivating, reactivating or deleting\n    a relation, changing its type');
     expect(repairPrompt).toContain('changes allows ONLY status,start_date,notes');
     expect(repairPrompt).toContain('attrs is the COMPLETE\n  replacement object');
+  });
+});
+
+// A7 group A: the 'contact' prefix again (contact.notes) plus a new 'case'
+// family. Each stage must teach the append-vs-value semantics — a stage that
+// thinks "value" is a patch writes a partial note over the whole field.
+describe('A7 — every stage teaches case notes / alerts and contact notes, and append vs value', () => {
+  test('the plan carries its own bullet and the A5 bullet no longer excludes every scalar contact edit', () => {
+    expect(planPrompt).toContain('Reviewed case notes, case alerts and contact notes actions are available');
+    expect(planPrompt).toContain('or other scalar contact edits (relations and roles, and contact notes, have their own bullets below)');
+    expect(planPrompt).not.toContain('or scalar contact edits (relations and roles are the next bullet)');
+  });
+  test('the investigate stage names the proposal family', () => {
+    expect(investigatePrompt).toContain('case notes / case\n  alerts / contact notes proposals, which need a row carrying the exact case_id or contact_id');
+  });
+  test('the answer and repair stages teach value XOR append, the complete-text rule, and the caps', () => {
+    expect(answerPrompt).toContain('Case notes, case alerts and contact notes rules (A7');
+    expect(answerPrompt).toContain('Never send a partial value');
+    expect(answerPrompt).toContain('Contact notes belong to the CONTACT, not a case');
+    expect(answerPrompt).toContain('case-and-contact-notes');
+    expect(repairPrompt).toContain('case.notes.update.v1 / case.alerts.update.v1: kind,case_id,(value XOR append),evidence');
+    expect(repairPrompt).toContain('contact.notes.update.v1: kind,contact_id,(value XOR append),evidence');
   });
 });
 
