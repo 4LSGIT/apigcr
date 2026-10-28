@@ -81,13 +81,13 @@ const ALLOW = {
 /** (a) coverage — registered, non-retired keys the forward scan cannot see, and why. */
 const SCAN_BLIND = {
   // Nothing reads it: the Calendly hooks verify signatures with the per-hook
-  // secret in hooks.auth_config (services/hookService.js — "org copy:
-  // app_settings.calendly_webhook_signing_key"); the row is the record of a
-  // secret the provider never shows again.
-  calendly_webhook_signing_key: 'stored for the record only — no code reads it',
+  // secret in hooks.auth_config (services/hookService.js). Its row — a record
+  // copy of that secret — was deleted 2026-10-28; the key stays registered so
+  // the name is never reused.
+  calendly_webhook_signing_key: 'no code reads it; its row was deleted 2026-10-28',
   // Nothing reads it since services/quoService.js was deleted (2026-10-28): the
-  // Quo phone driver authenticates through its Connections credential. Stays a
-  // registered secret until its row is deleted.
+  // Quo phone driver authenticates through its Connections credential. Its row
+  // was deleted the same day; the key stays registered so the name is never reused.
   quo_api_key: 'no code reads it — the phone driver uses its Connections credential',
   // Read only by an automation definition: the payment-failed workflow's
   // get_settings step (registered 2026-10-28; was an automation variable).
@@ -96,7 +96,7 @@ const SCAN_BLIND = {
 
 /** (b) Registered, non-retired keys with no quoted literal anywhere, and why. */
 const EXEMPT = {
-  calendly_webhook_signing_key: 'stored for the record only — no code reads it (see SCAN_BLIND)',
+  calendly_webhook_signing_key: 'no code reads it; its row was deleted 2026-10-28 (see SCAN_BLIND)',
   quo_api_key: 'no code reads it since services/quoService.js was deleted (2026-10-28); the phone driver uses its Connections credential',
   payment_failed_cooldown_days: 'read by the payment-failed workflow (get_settings), not by code',
 };

@@ -53,8 +53,26 @@ Deferred from the arc:
   non-attorney), so a send- or manage-only line grant shows in neither My
   access nor Manage access (none exists today; only SU manages lines).
   Fix: an any-grant phone listing for the caller.
-- **Delete the `quo_api_key` row** (its last reader, services/quoService.js, was deleted 2026-10-28; Quo sends authenticate through a Connections credential) — then the key can retire;
-  `rc_token` / `rc_subscriptions` go with the RingCentral retirement.
+- **`rc_token` / `rc_subscriptions` go with the RingCentral retirement.** (The
+  `quo_api_key` and `calendly_webhook_signing_key` rows were deleted 2026-10-28;
+  both keys stay registered as secrets so their names are never reused.) Note:
+  the RC renewal `REPLACE`s `rc_subscriptions` without `is_secret`, so its row
+  flag reads 0 — the registry's kind is what keeps it secret.
+- **Encrypt the remaining app_settings secrets in place** (deferred until the
+  RingCentral retirement, Fred 2026-10-28). Today the only barrier between a
+  session key and live credentials is lib/sqlGuard's word match: the read-only
+  MySQL grant is schema-wide. Encrypting the values (`lib/secretAtRest`, the
+  credentials pattern) makes a bypass yield ciphertext. After RC: five keys —
+  `internal_api_key` + `_prev` (the dual slot: rotateInternal's CASE UPDATE,
+  jwtOrApiKey's refresh-on-miss, taskQueue / hookSpool stamping at enqueue,
+  credentialInjection's 'internal' type, firmConfig + the INTERNAL_API_KEY env
+  fallback — a rolling deploy reading two shapes can 401 the Cloud Tasks
+  doorbells), `esign_webhook_secret`, `esign_webhook_token`,
+  `pabbly_internal_url`. Do NOT move them to `credentials`: any staff member
+  can select a credential in a webhook step and an empty `allowed_urls` allows
+  any URL, so inbound verifiers and the app's own key would become sendable.
+  Only an OUTBOUND secret belongs there, with `allowed_urls` set
+  (`pabbly_internal_url` qualifies, but Pabbly is retiring). Reviewer required.
 - **The legacy `settings` table** has no reader (AUDIT_TENANCY §B4): drop it.
 - **A stale-value check on settings writes.** `PUT /api/app-settings/:key`
   writes the body's value unconditionally (last write wins). Lead sources is

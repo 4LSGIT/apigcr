@@ -203,6 +203,13 @@ Gates beyond Commands & gates below, every model:
   (`commsSummarize.audit` vs `commsSummarize`, 2026-10-25). Prove
   order-independence on a fresh `_test` DB (`--default-time-zone=+00:00`,
   prod sql_mode) with a forced testSequencer over every order.
+- A module-scope check that reads ANOTHER module's export at load
+  (settingsRegistry's `assertAlsoWrite` reads `firmConfig.REGISTRY`) throws in
+  every test that `jest.mock`s that module with a partial factory — red CI on a
+  correct change, from suites that never mention it (settings-access step 4
+  review, 2026-10-28). Before landing one, grep `jest.mock('../lib/<module>'`
+  and give those factories the real export via `jest.requireActual`; never make
+  the check pass when the export is missing.
 - Retiring a VALUE (an enum string, a magic constant): inventory by the
   COLUMN/claim name, never the literal — comparison idioms
   (indexOf('SU'), startsWith) don't contain the literal. Two frontend SU

@@ -198,7 +198,7 @@ function authenticateRequest(hook, req) {
     //   Calendly-Webhook-Signature: t=1492774577,v1=<hmac-sha256 hex>
     //   signed payload = t + '.' + raw request body
     // The per-hook secret lives in auth_config.secret like every other hmac
-    // hook (org copy: app_settings.calendly_webhook_signing_key).
+    // hook — the only copy (the app_settings record copy was deleted 2026-10-28).
     //
     // Chained .update(t + '.').update(rawBody) rather than string concat so a
     // Buffer rawBody keeps its exact wire bytes (same reasoning as above).
