@@ -70,6 +70,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'workflowPublishLabel', 'workflowPublishChangeLine', 'workflowPublishText', 'workflowPublishRequest', 'workflowPublishResult',
   'hookCreateLabel', 'hookTargetText', 'hookCreateText', 'hookCreateRequest', 'hookCreateResult',
   'sequenceStepActionLabel', 'sequenceStepParamValue', 'sequenceStepText', 'sequenceStepActionRequest', 'sequenceStepActionResult',
+  'sequencePublishLabel', 'sequencePublishChangeLine', 'sequencePublishText', 'sequencePublishRequest', 'sequencePublishResult',
   'ingestRulePath', 'ingestRuleId', 'ingestRuleLabel', 'ingestRuleValue', 'ingestRuleHead', 'ingestRuleSideText', 'ingestRuleActionLine',
   'ingestRuleText', 'ingestRuleRequest', 'ingestRuleDispatch', 'ingestRuleResult', 'ingestRulePrecheck', 'openIngestRuleRecord',
   'openAutomationRecord',
@@ -92,7 +93,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'APPT_ACTION_KINDS'), constSrc(html, 'CONTACT_SUBRECORD_ACTION_KINDS'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'),
-    constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
+    constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
     constSrc(html, 'REPORT_ACTION_KINDS'), constSrc(html, 'INGEST_RULE_ACTION_KINDS'), constSrc(html, 'INGEST_RULE_PATHS'),
     constSrc(html, 'INGEST_RULE_UPDATE_FIELDS'), constSrc(html, 'INGEST_ACTION_UPDATE_FIELDS'),
     constSrc(html, 'SEQUENCE_STEP_FUNCTIONS'), constSrc(html, 'SEQUENCE_STEP_ERROR_POLICY'),
@@ -1272,6 +1273,57 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     const stale = seqMessage();
     await actionSandbox({ P, api: refusedApi, ledgerApi, saveAssistantMessage: jest.fn() }).executeActionDraft(stale);
     expect(stale.action_draft.refusal_error).toMatch(/^The sequence template changed since this card was prepared/);
+    expect(stale.action_draft).not.toHaveProperty('ambiguous_error');
+  });
+
+  // A18.3: the sequence publish family through the SHARED engine — always
+  // danger-styled, the fixed disclosures on the card, migrate_in_flight
+  // pinned false, no Idempotency-Key (the publish route honours none; the
+  // ledger claim is the single-flight), a one-field receipt, the deep link,
+  // and the route's precondition 409 rendered as the publish's own refusal.
+  test('sequence publish card: disclosures, pinned request, receipt, and the base-conflict refusal', async () => {
+    const pubMessage = () => ({ action_draft: {
+      draft_id: '6f1d2e3f-4a5b-4c6d-8e7f-0123456789ab', kind: 'sequence.publish.v1', status: 'draft', received_at: Date.now(),
+      template: { sequence_template_id: 12, name: 'No-Show Follow-Up', type: 'no_show', active: 1 },
+      publish: { from_version: 3, to_version: 4, step_count: 3 },
+      classification: 'structural', structural_reasons: ['template condition changed'],
+      changes: [{ step_number: null, kind: 'modified', fields: ['template_condition'] }, { step_number: 3, kind: 'added' }],
+      validation_warnings: [], in_flight_count: 2, stranded_count: 1,
+      starters: [{ source: 'hook', name: 'No-show hook', active: 1 }],
+      effects: ['step 3: send_email — external-send: messages {{contacts.contact_email}} on every enrollment that reaches it'],
+      expected_base: { draft_version: 4, step_count: 3, draft_fingerprint: 'c'.repeat(64) },
+      migrate_in_flight: true,
+    } });
+    const writes = [];
+    const receipts = [];
+    const api = jest.fn(async (path, body, method, headers) => { writes.push({ path, body, method, headers }); return { success: true, published_version: 4, previous_version: 3, migrated_count: null }; });
+    const ledgerApi = jest.fn(async (path, body) => {
+      if (path.endsWith('/claim')) return { outcome: 'in_flight', claimed: true, claim_token: 'tok-pub' };
+      receipts.push(body); return { outcome: 'applied' };
+    });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, ycAssistantNavigate: jest.fn().mockResolvedValue(true) };
+    const sandbox = actionSandbox({ P, api, ledgerApi, saveAssistantMessage: jest.fn() });
+    const m = pubMessage();
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('sequence_publish');
+    await sandbox.executeActionDraft(m);
+    expect(writes).toEqual([{ path: '/sequences/templates/12/publish', method: 'POST', headers: undefined,
+      body: { migrate_in_flight: false, expected_base: { draft_version: 4, step_count: 3, draft_fingerprint: 'c'.repeat(64) } } }]);
+    expect(receipts).toEqual([{ claim_token: 'tok-pub', result: { sequence_template_id: 12 } }]);
+    expect(m.action_draft.status).toBe('applied');
+    expect(P.ycAssistantNavigate).toHaveBeenCalledWith('automations.sequence', { id: 12 });
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Publish sequence version' });
+    expect(dialog.text).toContain('Class rule (sequences are stricter than workflows): content-only means ONLY an action_config change on an unchanged sms, email or task step.');
+    expect(dialog.text).toContain('  template: modified (template_condition)\n  step 3: added');
+    expect(dialog.text).toContain('Enrollments running on v3: 2 — publishing does NOT move them (Casey never migrates enrollments): each stays on v3 and finishes there, and no queued step is rewritten.');
+    expect(dialog.text).toContain('  step 3: send_email — external-send: messages {{contacts.contact_email}} on every enrollment that reaches it');
+    expect(dialog.text).toContain('THERE IS NO ROLLBACK ROUTE');
+
+    const refusedApi = jest.fn(async () => { throw Object.assign(new Error('changed'), { status: 409,
+      body: { conflict: { changed: 'draft_fingerprint', expected: 'c', actual: 'd' } } }); });
+    const stale = pubMessage();
+    await actionSandbox({ P, api: refusedApi, ledgerApi, saveAssistantMessage: jest.fn() }).executeActionDraft(stale);
+    expect(stale.action_draft.refusal_error).toBe('The sequence template changed since this card was reviewed, so the server refused the publish — nothing was written. Ask Casey to read the template again and rebuild the proposal.');
     expect(stale.action_draft).not.toHaveProperty('ambiguous_error');
   });
 

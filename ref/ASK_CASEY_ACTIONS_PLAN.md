@@ -1052,9 +1052,8 @@ sms/email/task/internal_function steps measured clean first):
 Still open (the P11 remainder):
 
 - Publish (both engines) re-runs shape and branch-target validation but
-  **not** `__meta` param validation. The workflow publish route carries the
-  expected-base precondition (A17.6); the sequence publish route does not yet
-  (A18.3's half).
+  **not** `__meta` param validation. Both publish routes carry the
+  expected-base precondition (workflow A17.6, sequence A18.3).
 
 **What Casey cannot author (initial contract).** Excluded by construction: a
 STANDARD-mode `custom_code` **body** (A17.4c adds an inert stub plus copyable
@@ -1677,14 +1676,60 @@ their window passes — disclosed rather than banned, ruling 14). Measured
 the appointment-anchored types are 23 (all `internal_function` or webhook),
 and all 5 live absolute `delay.at` values are placeholders.
 
-**A18.3: Publish a sequence template draft.**
-
-Same impact preview as A17.6, with the sequence classifier's stricter rule
-noted in review: content-only means an `action_config` change on an unchanged
-`sms`/`email`/`task` step and nothing else — `action_type`, `timing`,
-`condition`, `fire_guard`, `error_policy`, webhook/`start_workflow` config,
-numbering and the template-level condition are all structural. Publishing
-repoints `active` enrollments only and does not rewrite queued jobs.
+**A18.3: Publish a sequence template draft. SHIPPED 2026-10-28** — kind
+`sequence.publish.v1` on the card engine, A17.6 on the sequence engine. The
+model supplies only `{sequence_template_id, evidence}` (evidence must carry
+that exact id from an `automation.definition` read, as A18.2); the normalizer
+computes the whole impact preview onto the card with the functions `GET
+/sequences/templates/:id/draft-diff` runs — `diffSequenceSteps` over the step
+rows AND both version rows' `template_condition`, and the route's own
+`validateSequenceDraft` (exported from `routes/sequences.js`, reused, never
+copied; errors refuse the card, warnings show on it). The card shows the
+classification (`first_publish` when `current_version` is 0) with the stricter
+rule stated in words — content-only means an `action_config` change on an
+unchanged `sms`/`email`/`task` step and nothing else; `action_type`, `timing`,
+`condition`, `fire_guard`, `error_policy`, webhook / `start_workflow` /
+`internal_function` config, numbering and the template-level condition are all
+structural — the per-step diff (capped at 30), the running and stranded
+enrollment counts, what can enroll it (`automation.references`) plus a
+type-cascade line, external effects (sends named `external-send` with their
+recipient expression through A17.6's shared effect helpers, webhooks reduced
+to method + host, `start_workflow` named), and the no-rollback statement.
+`migrate_in_flight` is pinned false by the fixed request builder and never
+offered, so — the route's actual behaviour, read from code — publishing
+**repoints no enrollment at all**: every running enrollment stays pinned to its
+version (steps and template condition) and finishes there, no queued job is
+rewritten, and only enrollments that start after the publish run the new
+version. (The earlier line here — "repoints `active` enrollments only and does
+not rewrite queued jobs" — describes the `migrate_in_flight` path, which Casey
+never takes.) `POST /sequences/templates/:id/publish` gained the P11 publish
+precondition: optional `expected_base {draft_version, step_count,
+draft_fingerprint}` checked inside the publish transaction under the
+parent-row `FOR UPDATE`, the same structured 409 as the step routes; absent,
+the route runs as before with no extra query. The fingerprint is
+`lib/versionDiff.sequenceDraftFingerprint` — the ordered per-step
+`sequenceStepFingerprint`s hashed together **with the draft version row's
+`template_condition`** (manager-flagged judgment call): `PUT
+/sequences/templates/:id` writes the condition onto the draft row without
+moving `draft_version` or touching a step, and a failing template condition
+cancels the enrollment, so a steps-only hash would publish a reviewed-then-
+edited condition blind. The native sequence editor does not send the token
+(filed, ref/plans.md). Code steps: no sequence action type carries a runnable
+code body (sms/email/task/internal_function dispatch with `type` pinned last,
+no internal function loads a code runner, conditions are declarative SELECTs),
+so A17.6's standard-mode refusal has nothing to bite on; the action-type
+inventory is pinned against the route's `ALLOWED_ACTION_TYPES` and a stored
+type outside it refuses the card. The 409 renders as a refusal ("the template
+changed … nothing was written"). The publish route honours no
+`Idempotency-Key` (as A17.6); the ledger claim is the single-flight. Family
+flag `casey_sequence_authoring_enabled` (A17.6 shares its family's flag the
+same way). The applied card deep-links to the template
+(`automations.sequence`). No Casey-only bus emit: no sequence route is in
+`public/js/yc-sync.js` MATCHERS, and the precondition is the protection. The
+P2 matrix covers 43 kinds / 38 mounts and now asserts it equals the ledger's
+kind registry. Tests: `tests/caseySequencePublish.test.js`, gated
+`tests/caseySequencePublish.mysql.test.js`, the UI card in
+`tests/assistantUi.test.js`.
 
 **A19.0: Create an inactive hook with one internal target. SHIPPED
 2026-10-22** (Fred's ask: "make a hook to trigger something"). Kind
@@ -2385,8 +2430,8 @@ the five step-mutating routes; unknown `function_name`, undeclared param keys,
 save — see the measured-gaps list above for exactly what closed and what
 remains). **Sequence half SHIPPED 2026-10-26** (same precondition on the five
 sequence step routes; sms/email/task/internal_function step validation). The
-workflow publish precondition shipped with A17.6; open: the sequence publish
-precondition (A18.3) and param re-validation at publish (both engines).
+workflow publish precondition shipped with A17.6, the sequence one with A18.3
+(2026-10-28); open: param re-validation at publish (both engines).
 Fred's ruling on the human-path divergence: validate only
 the fields being written — an existing step whose function was since renamed
 keeps its label editable; a PUT that rewrites the whole step is validated

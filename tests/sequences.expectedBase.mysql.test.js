@@ -147,7 +147,11 @@ d('sequence step routes on real MySQL (P11 sequence half)', () => {
     pool = mysql.createPool({ uri: URL_, connectionLimit: 4, timezone: 'Z' });
     pool.on('connection', (conn) => conn.query(`SET SESSION sql_mode = '${PROD_SQL_MODE}'`));
     pool.withTransaction = (fn, opts) => withTransaction(pool, fn, opts);
-    for (const t of [...TABLES].reverse()) await q(`DROP TABLE IF EXISTS \`${t}\``);
+    // Sibling twins on the same YC_TEST_MYSQL_URL (caseySequenceStep,
+    // caseySequencePublish) create sequence_enrollments with an FK to
+    // sequence_templates; drop that child first or DROP sequence_templates is
+    // refused and every test here fails on a shared _test DB.
+    for (const t of ['sequence_enrollments', ...[...TABLES].reverse()]) await q(`DROP TABLE IF EXISTS \`${t}\``);
     const { creates, alters } = schemaFor(TABLES);
     for (const sql of creates) await q(sql);
     for (const sql of alters) await q(sql);

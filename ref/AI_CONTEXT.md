@@ -324,6 +324,25 @@ body. Governing migrations in `ref/migrations/`.*
   2026-10-22 ruling on 10-25: safe-mode steps publish, disclosed on the
   card) and drafts with validation errors. Tests:
   `tests/caseyWorkflowPublish.test.js`.
+- **Sequence publish precondition + Casey publish card (A18.3, 10-28):**
+  `POST /sequences/templates/:id/publish` takes the same optional
+  `expected_base` `{draft_version, step_count, draft_fingerprint}`, checked
+  inside the publish transaction under the parent-row `FOR UPDATE`, same
+  structured 409; absent, no extra query. The fingerprint is
+  `lib/versionDiff.sequenceDraftFingerprint` — ordered
+  `sequenceStepFingerprint`s PLUS the draft version row's
+  `template_condition` (the PUT route writes that onto the draft without
+  moving `draft_version` or any step). Kind `sequence.publish.v1`: the card
+  is server-computed with draft-diff's own functions (`diffSequenceSteps`,
+  the route's exported `validateSequenceDraft`); `migrate_in_flight` pinned
+  false, so a Casey publish repoints NO enrollment — running ones finish on
+  their pinned version, no queued job is rewritten. No sequence action type
+  carries runnable code; the type inventory is pinned and an unknown stored
+  type refuses the card. Flag `casey_sequence_authoring_enabled` (covers
+  both sequence kinds). The native sequence editor sends no token
+  (ref/plans.md). Tests: `tests/caseySequencePublish.test.js`, gated
+  `tests/caseySequencePublish.mysql.test.js`; plan:
+  ref/ASK_CASEY_ACTIONS_PLAN.md A18.3.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL

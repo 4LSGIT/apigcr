@@ -857,17 +857,20 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
   effect. It does NOT retire `custom_code`: the remainder is genuinely bespoke
   (wf27's 19.5 KB formatter, the 7-way Clio command router, the multi-field
   e-sign reshaping), so the execution-boundary question stays live either way.
-- **No optimistic concurrency on the SEQUENCE publish route.** The WORKFLOW
-  step-mutating routes take an optional `expected_base` precondition since
-  A17.4 (2026-10-24), `POST /workflows/:id/publish` since A17.6
-  (2026-10-25: `{draft_version, step_count, draft_fingerprint}` — the
+- **The native automation editors send no optimistic-concurrency token.**
+  The WORKFLOW step-mutating routes take an optional `expected_base`
+  precondition since A17.4 (2026-10-24), `POST /workflows/:id/publish` since
+  A17.6 (2026-10-25: `{draft_version, step_count, draft_fingerprint}` — the
   whole-draft hash — refused as a structured 409 inside the publish
-  transaction), and the five SEQUENCE step-mutating routes since the P11
-  sequence half (2026-10-26, `lib/versionDiff.sequenceStepFingerprint`).
-  Still open: the sequence publish route (A18.3's half). Neither native
-  editor SENDS the precondition yet, so human-vs-human stale writes and
-  review-then-edit publishes remain possible there until it does — wiring
-  the editors to send it is a small native slice.
+  transaction), the five SEQUENCE step-mutating routes since the P11
+  sequence half (2026-10-26, `lib/versionDiff.sequenceStepFingerprint`), and
+  `POST /sequences/templates/:id/publish` since A18.3 (2026-10-28, same shape;
+  the fingerprint is `sequenceDraftFingerprint`, which also covers the draft's
+  template condition). Only Casey's cards send it. Neither native editor
+  (workflow or sequence) SENDS the precondition yet, so human-vs-human stale
+  writes and review-then-edit publishes remain possible there until it does —
+  wiring the editors to send it (build it from `draft-diff` / `GET
+  …/templates/:id` when the publish modal opens) is a small native slice.
 - **Automation publish is not a param-validation authority.** Step saves are:
   the workflow half closed with A17.4 (unknown `function_name`, undeclared
   param keys, `params: null`, `error_policy` shape/strategy refused at save),

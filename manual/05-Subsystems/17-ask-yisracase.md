@@ -671,8 +671,18 @@ an appointment-based step would be skipped because its time has already
 passed. Nothing runs until someone publishes the template in the sequence
 editor. Enrollments already running stay on their version; a text or email
 step then messages clients from the first new enrollment after the publish.
-Conditions, fire guards, and other step types are added by hand. The off
-switch is the `casey_sequence_authoring_enabled` setting. The card
+Conditions, fire guards, and other step types are added by hand. It may
+instead be one `sequence.publish.v1` proposal: publishing a sequence
+template's draft. The card is the review — what changed (with the rule that
+only a change to the message or task details of an unchanged text, email
+or task step counts as content-only; everything else, including timing and the template's own
+condition, is structural), the enrollments currently running (they stay on
+their version and finish there; only enrollments that start after the publish
+use the new one), what can enroll contacts in it, every text or email step and
+whom it messages, and the fact that there is no rollback. If anyone edits the
+draft — a step or the template condition — after the card was prepared, the
+publish is refused and nothing changes. The off switch for both sequence cards
+is the `casey_sequence_authoring_enabled` setting. The card
 shows the full code for review, the browser pins the safe engine in the
 request, and the system off switch is the `casey_code_actions_enabled`
 setting. The proposal

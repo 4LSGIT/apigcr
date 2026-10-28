@@ -1150,6 +1150,67 @@ function sequenceStepActionResult(draft, result) {
   return { sequence_template_id: Number(draft.template.sequence_template_id), step_number: stepNumber };
 }
 
+// Sequence publish (A18.3): A17.6 on the sequence engine — the card IS the
+// impact preview, server-computed. The request pins migrate_in_flight:false
+// (never offered to Casey), so publishing repoints NO running enrollment, and
+// carries the whole-draft fingerprint (steps + the draft's template
+// condition), so a draft edited after this review is refused by the route.
+const SEQUENCE_PUBLISH_ACTION_KINDS = new Set(['sequence.publish.v1']);
+
+function sequencePublishLabel() { return 'Publish sequence version'; }
+
+function sequencePublishChangeLine(change) {
+  if (change.step_number == null) return `template: modified${Array.isArray(change.fields) && change.fields.length ? ` (${change.fields.join(', ')})` : ''}`;
+  return workflowPublishChangeLine(change);
+}
+
+function sequencePublishText(draft) {
+  const t = draft.template || {};
+  const pub = draft.publish || {};
+  const lines = ['Sequence publish proposal — not applied',
+    `Template: #${t.sequence_template_id} "${t.name}"${t.type ? ` (type ${t.type})` : ''} — ${t.active ? 'active' : 'INACTIVE'}`,
+    pub.from_version > 0
+      ? `Publishes draft v${pub.to_version} (${pub.step_count} steps) over live v${pub.from_version}`
+      : `FIRST PUBLISH: draft v${pub.to_version} (${pub.step_count} steps) becomes the live version — this template has never been published, so nothing has enrolled in it yet`,
+    `Change class: ${draft.classification}${(draft.structural_reasons || []).length ? ` — ${draft.structural_reasons.join('; ')}` : ''}`,
+    'Class rule (sequences are stricter than workflows): content-only means ONLY an action_config change on an unchanged sms, email or task step. A change to action_type, timing, a step condition, a fire guard, an error policy, any webhook / start_workflow / internal_function config, the numbering or step count, or the template-level condition is structural.'];
+  if ((draft.changes || []).length) {
+    lines.push(`Changes (${draft.changes.length}${draft.changes.length === 30 ? '+, truncated' : ''}):`);
+    for (const change of draft.changes) lines.push(`  ${sequencePublishChangeLine(change)}`);
+  }
+  if ((draft.validation_warnings || []).length) {
+    lines.push('Validation warnings (do not block, review them):');
+    for (const w of draft.validation_warnings) lines.push(`  ${w}`);
+  }
+  lines.push(`Enrollments running on v${pub.from_version}: ${draft.in_flight_count} — publishing does NOT move them (Casey never migrates enrollments): each stays on v${pub.from_version} and finishes there, and no queued step is rewritten. Enrollments running on older versions: ${draft.stranded_count}. Only enrollments that START after the publish run v${pub.to_version}.`);
+  if ((draft.starters || []).length) {
+    lines.push('What can enroll contacts in this template once published:');
+    for (const s of draft.starters) lines.push(`  ${s.source}: "${s.name}"${s.active === 0 ? ' (inactive)' : ''}`);
+  } else {
+    lines.push('No hook, trigger, ingest rule, workflow step or link enrolls this template — enrollments happen only by hand, API, or app-internal callers.');
+  }
+  if (t.type) lines.push(`Type "${t.type}": an enrollment requested by type can also select this template through the type cascade.`);
+  if ((draft.effects || []).length) {
+    lines.push('External and chaining effects this version can produce:');
+    for (const e of draft.effects) lines.push(`  ${e}`);
+  }
+  lines.push('THERE IS NO ROLLBACK ROUTE: restoring a previous version means rebuilding a draft step by step.');
+  lines.push('If anyone edits the draft before you apply, the server refuses the publish and Casey must re-read it.');
+  return lines.join('\n');
+}
+
+function sequencePublishRequest(draft) {
+  const tplId = Number(draft.template && draft.template.sequence_template_id);
+  return { path: `/sequences/templates/${tplId}/publish`, method: 'POST',
+    body: { migrate_in_flight: false, expected_base: draft.expected_base }, idempotent: false };
+}
+
+function sequencePublishResult(draft, result) {
+  const version = Number(result && result.published_version);
+  if (!(result && result.success === true) || !Number.isSafeInteger(version) || version < 1) throw new Error('The publish returned no usable version');
+  return { sequence_template_id: Number(draft.template.sequence_template_id), published_version: version };
+}
+
 // Applied automation cards deep-link to their record through the shell's
 // semantic navigation (Fred, 2026-10-22: "take the user right there"). The
 // destination ids and token grammar are the SHELL's; this passes only the
@@ -1869,6 +1930,20 @@ const ACTION_FAMILIES = [
     open: (draft) => openAutomationRecord('automations.sequence', draft.result_step_template_id,
       `Sequence template #${draft.result_step_template_id}`,
       'Find it under More → Automations → Sequences. The step sits in its draft until you publish there.'),
+  },
+  {
+    id: 'sequence_publish', kinds: SEQUENCE_PUBLISH_ACTION_KINDS, title: 'Sequence publish', noun: 'sequence publish', errorNoun: 'sequence publish',
+    label: sequencePublishLabel, text: sequencePublishText, request: sequencePublishRequest,
+    result: sequencePublishResult, idField: 'sequence_template_id', appliedKey: 'result_published_template_id',
+    danger: () => true,
+    resultText: (payload) => `sequence template #${payload.sequence_template_id} v${payload.published_version} (now live)`,
+    entity: (draft, payload) => ({ kind: 'sequence', id: String(payload.sequence_template_id), label: `${draft.template.name} #${payload.sequence_template_id} v${payload.published_version} (published)` }),
+    failure: 'The sequence publish could not be applied.',
+    conflictRefusal: 'The sequence template changed since this card was reviewed, so the server refused the publish — nothing was written. Ask Casey to read the template again and rebuild the proposal.',
+    reviewWarning: 'Publishing makes this version WHAT NEW ENROLLMENTS RUN: every enrollment that starts from this moment uses it, and any text or email step in it messages clients. Enrollments already running stay on their own version. No rollback route exists — restoring an older version means rebuilding a draft by hand. Canceling writes nothing.',
+    open: (draft) => openAutomationRecord('automations.sequence', draft.result_published_template_id,
+      `Sequence template #${draft.result_published_template_id}`,
+      'Find it under More → Automations → Sequences. The published version is now live.'),
   },
   {
     id: 'hook', kinds: HOOK_ACTION_KINDS, title: 'Hook', noun: 'hook', errorNoun: 'hook action',

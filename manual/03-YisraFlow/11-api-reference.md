@@ -48,7 +48,7 @@ Standard auth headers: `Authorization: Bearer <jwt>` or `x-api-key: <key>`. The 
 | `/executions/:id/cancel` | POST | Cancel execution. Requires non-empty `cancel_reason` (≥3 chars). |
 | `/api/contacts/:id/workflows` | GET | Executions tied to one contact (`?scope=active\|all`, `?status=...`) |
 
-**Step writes are validated at save** (workflow and sequence step routes alike): an unknown `function_name`, a param the function does not declare, a missing required param, a `type` key inside `config` and (workflows) an `error_policy` whose `strategy` is not one of the four are all 400s — they used to pass save and fail at run time. **Stale-write precondition:** the five step-mutating routes (insert, PUT, PATCH, DELETE, reorder) of both engines, and `POST /workflows/:id/publish`, take an optional `expected_base` (`{draft_version, step_count, step_fingerprint?}`; publish: `draft_fingerprint`). It is checked inside the write transaction; a mismatch is **409** `{conflict:{changed, expected, actual}}` and nothing is written. The native editors do not send it yet; Ask Casey's cards always do. `POST /workflows/:id/steps` and `POST /sequences/templates/:id/steps` honour an `Idempotency-Key` header.
+**Step writes are validated at save** (workflow and sequence step routes alike): an unknown `function_name`, a param the function does not declare, a missing required param, a `type` key inside `config` and (workflows) an `error_policy` whose `strategy` is not one of the four are all 400s — they used to pass save and fail at run time. **Stale-write precondition:** the five step-mutating routes (insert, PUT, PATCH, DELETE, reorder) of both engines, and both publish routes (`POST /workflows/:id/publish`, `POST /sequences/templates/:id/publish`), take an optional `expected_base` (`{draft_version, step_count, step_fingerprint?}`; publish: `draft_fingerprint` — for a sequence it also covers the draft's template condition). It is checked inside the write transaction; a mismatch is **409** `{conflict:{changed, expected, actual}}` and nothing is written. The native editors do not send it yet; Ask Casey's cards always do. `POST /workflows/:id/steps` and `POST /sequences/templates/:id/steps` honour an `Idempotency-Key` header.
 
 #### `POST /workflows/:id/start` body shapes
 
@@ -83,7 +83,7 @@ Returns **202** with `{ success, executionId, workflowId, contactId, status: "pr
 | `/sequences/templates/:id/steps/reorder` | PATCH | Reorder steps |
 | `/sequences/templates/:id/versions` | GET | Version history (ch. 16) |
 | `/sequences/templates/:id/draft-diff` | GET | Draft vs published: classification, changes, validation, in-flight + stranded enrollments |
-| `/sequences/templates/:id/publish` | POST | Publish the draft. Body `{ migrate_in_flight?: bool }` — content-only only; migration repoints active enrollments (queued jobs resolve by step_number at fire time) |
+| `/sequences/templates/:id/publish` | POST | Publish the draft. Body `{ migrate_in_flight?: bool, expected_base?: {…} }` — content-only only; migration repoints active enrollments (queued jobs resolve by step_number at fire time) |
 | `/sequences/templates/:id/discard-draft` | POST | Retire the draft in place |
 | `/sequences/enroll` | POST | Enroll a contact (cascade by type or direct by id). Never-published templates: filtered out of cascade, 409-equivalent throw on direct id |
 | `/sequences/cancel` | POST | Cancel by `(contact_id, template_type)`; omit type for all |

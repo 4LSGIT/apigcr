@@ -228,7 +228,21 @@ const WORKFLOW_PUBLISH_EFFECT_FNS = new Set(['enroll_sequence', 'start_workflow'
 // the browser's fixed builder pins the editor's no-retry policy (a retried
 // send can reach a client twice). Same expected_base precondition as A17.4,
 // and the route honours the card's draft_id as Idempotency-Key.
-const SEQUENCE_ACTION_KINDS = new Set(['sequence.step_insert.v1']);
+// A18.3 adds publish, mirroring A17.6: the card IS the impact preview
+// (classification under the sequence classifier's stricter content-only
+// rule, per-step diff, validation, running enrollments — which STAY on their
+// version, since migrate_in_flight is never sent — what can enroll it, its
+// external effects, and no rollback route), and expected_base carries the
+// whole-draft fingerprint (steps + the draft's template condition), so a
+// draft edited after the review is refused by the route with a 409.
+const SEQUENCE_ACTION_KINDS = new Set(['sequence.step_insert.v1', 'sequence.publish.v1']);
+const SEQUENCE_PUBLISH_KEYS = new Set(['kind', 'sequence_template_id', 'evidence']);
+// Every sequence_steps.action_type this card has been reviewed against — the
+// route's ALLOWED_ACTION_TYPES (pinned by tests/caseySequencePublish.test.js).
+// None carries a runnable code body (see normalizeSequencePublishAction), so
+// A17.6's standard-mode code refusal has nothing to bite on here; a stored
+// type outside this list refuses the card (fail closed) until it is reviewed.
+const SEQUENCE_PUBLISH_ACTION_TYPES = new Set(['sms', 'email', 'task', 'internal_function', 'webhook', 'start_workflow']);
 const SEQUENCE_STEP_INSERT_KEYS = new Set(['kind', 'sequence_template_id', 'step_number', 'action_type', 'action_config', 'timing', 'evidence']);
 const SEQUENCE_ACTION_CONFIG_KEYS = new Set(['function_name', 'params']);
 const SEQUENCE_STEP_MAX_PARAMS_JSON = 20000;
@@ -1843,6 +1857,27 @@ async function normalizeWorkflowStepAction(db, value, evidence) {
   };
 }
 
+// Publish-card effect lines, shared by A17.6 (workflows) and A18.3
+// (sequences). Webhook URLs reduce to method + host (chat payloads never
+// carry a secret-bearing URL); templated hosts say so.
+function publishWebhookEffect(stepNumber, cfg) {
+  let host = 'templated URL';
+  if (typeof cfg.url === 'string' && !/\{\{.*?\}\}/.test(cfg.url)) {
+    try { host = new URL(cfg.url).host; } catch (_) { host = 'unparseable URL'; }
+  }
+  return `step ${stepNumber}: webhook ${String(cfg.method || 'POST').toUpperCase()} → ${host}`;
+}
+
+// An internal function that leaves the firm or fans out, or null. Ruling 15:
+// a send names its class and its recipient expression, so the publish review
+// says in words that this version messages people (`when` says how often).
+function publishFunctionEffect(stepNumber, fn, params, when) {
+  if (typeof fn !== 'string' || !(WORKFLOW_PUBLISH_EFFECT_RE.test(fn) || WORKFLOW_PUBLISH_EFFECT_FNS.has(fn))) return null;
+  if (!/^send_/.test(fn)) return `step ${stepNumber}: ${fn}`;
+  const to = params && params.to != null ? (typeof params.to === 'string' ? params.to : JSON.stringify(params.to)).slice(0, 200) : '(no recipient set)';
+  return `step ${stepNumber}: ${fn} — external-send: messages ${to} ${when}`;
+}
+
 // A17.6: publish a workflow's draft. The model proposes only {workflow_id};
 // everything on the card — classification, diff, warnings, in-flight counts,
 // inbound references, external effects — is computed HERE from the live rows,
@@ -1918,28 +1953,19 @@ async function normalizeWorkflowPublishAction(db, value, evidence) {
     .map((row) => ({ source: row.source, name: String(row.source_name || row.source_id || ''), active: row.active === null ? null : (row.active ? 1 : 0) }));
 
   // External/chaining effects the published version can produce, for the
-  // card. Webhook URLs reduce to method + host (chat payloads never carry a
-  // secret-bearing URL); templated hosts say so.
+  // card (publishWebhookEffect / publishFunctionEffect, shared with A18.3).
   const effects = [];
   for (const s of draftSteps) {
     const cfg = (() => { try { return typeof s.config === 'string' ? JSON.parse(s.config) : (s.config || {}); } catch (_) { return {}; } })();
     if (s.type === 'webhook') {
-      let host = 'templated URL';
-      if (typeof cfg.url === 'string' && !/\{\{.*?\}\}/.test(cfg.url)) {
-        try { host = new URL(cfg.url).host; } catch (_) { host = 'unparseable URL'; }
-      }
-      effects.push(`step ${s.step_number}: webhook ${String(cfg.method || 'POST').toUpperCase()} → ${host}`);
+      effects.push(publishWebhookEffect(s.step_number, cfg));
     } else if (s.type === 'custom_code') {
       // Only safe-mode steps survive the gate above; still disclose them —
       // publishing makes them run.
       effects.push(`step ${s.step_number}: safe-mode code (sandboxed — no network, no database)`);
-    } else if (s.type === 'internal_function' && typeof cfg.function_name === 'string' &&
-               (WORKFLOW_PUBLISH_EFFECT_RE.test(cfg.function_name) || WORKFLOW_PUBLISH_EFFECT_FNS.has(cfg.function_name))) {
-      // Ruling 15: a send names its class and its recipient expression, so the
-      // publish review says in words that this version messages people.
-      effects.push(/^send_/.test(cfg.function_name)
-        ? `step ${s.step_number}: ${cfg.function_name} — external-send: messages ${cfg.params && cfg.params.to != null ? (typeof cfg.params.to === 'string' ? cfg.params.to : JSON.stringify(cfg.params.to)).slice(0, 200) : '(no recipient set)'} every time this version runs`
-        : `step ${s.step_number}: ${cfg.function_name}`);
+    } else if (s.type === 'internal_function') {
+      const line = publishFunctionEffect(s.step_number, cfg.function_name, cfg.params, 'every time this version runs');
+      if (line) effects.push(line);
     }
     if (effects.length >= 20) break;
   }
@@ -2453,6 +2479,142 @@ async function normalizeSequenceStepInsertAction(db, value, evidence) {
     ...(senderNote ? { sender_note: senderNote } : {}),
     ...(assignee ? { assignee } : {}),
     expected_base: expectedBase,
+    evidence: refs,
+  };
+}
+
+// A18.3: publish a sequence template's draft — A17.6 on the sequence engine.
+// The model proposes only {sequence_template_id}; everything on the card is
+// computed HERE from the live rows with the same functions GET
+// /sequences/templates/:id/draft-diff runs (diffSequenceSteps over the step
+// rows AND both version rows' template_condition, the route's own
+// validateSequenceDraft), and the whole-draft fingerprint pins exactly what
+// was reviewed. The route re-checks it inside the publish transaction (P11).
+//
+// Code steps (A17.6's mode-scoped refusal): NO sequence action type carries a
+// runnable code body. sms / email / task / internal_function dispatch through
+// executeJob with `type` pinned to internal_function LAST (lib/sequenceEngine,
+// b087fa5) and the route refuses a `type` key inside action_config, so no
+// stored row reaches the custom_code branch; no internal function runs a code
+// body (none requires the code runners — pinned); webhook and start_workflow
+// have their own executors. Template / step conditions are declarative SELECT
+// queries with assertions, not code. So there is nothing to refuse — the
+// inventory is pinned instead (SEQUENCE_PUBLISH_ACTION_TYPES vs the route's
+// ALLOWED_ACTION_TYPES, tests/caseySequencePublish.test.js) and an unreviewed
+// stored type refuses the card. Known limit, as A17.6: a start_workflow step
+// may start a workflow that has code steps; transitive closure is not chased.
+async function normalizeSequencePublishAction(db, value, evidence) {
+  if (require('../lib/firmConfig').cfg('casey_sequence_authoring_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const unknown = value && typeof value === 'object' ? Object.keys(value).filter((k) => !SEQUENCE_PUBLISH_KEYS.has(k)) : [];
+  if (unknown.length) {
+    throw httpError(422, `Sequence publish carries unsupported fields: ${unknown.join(', ')} — it takes sequence_template_id and evidence only`);
+  }
+  const templateId = Number(value.sequence_template_id);
+  if (!Number.isSafeInteger(templateId) || templateId < 1) {
+    throw httpError(422, 'Sequence publish needs a positive sequence_template_id');
+  }
+  const refs = jobDraftEvidence(value.evidence, evidence);
+  if (!refs.length || !evidenceSupportsSequence(refs, evidence, templateId)) {
+    throw httpError(422, 'Sequence publish evidence does not identify the target template — read it with automation.definition (sequence_template_id) first');
+  }
+  const [[tpl]] = await db.query(
+    'SELECT id, name, type, active, current_version, draft_version FROM sequence_templates WHERE id = ?', [templateId]);
+  if (!tpl) throw httpError(422, `Sequence template ${templateId} is unavailable`);
+  if (tpl.draft_version == null) {
+    throw httpError(422, `Sequence template ${templateId} has no unpublished changes — there is nothing to publish`);
+  }
+  const draftV = Number(tpl.draft_version);
+  const oldV = Number(tpl.current_version);
+  const [draftSteps] = await db.query(
+    `SELECT * FROM sequence_steps WHERE template_id = ? AND version = ? ORDER BY step_number ASC`,
+    [templateId, draftV]);
+  if (!draftSteps.length) throw httpError(422, `Sequence template ${templateId}'s draft has no steps — publish would be refused`);
+
+  const unreviewed = draftSteps.filter((s) => !SEQUENCE_PUBLISH_ACTION_TYPES.has(s.action_type));
+  if (unreviewed.length) {
+    throw httpError(422, `Sequence template ${templateId}'s draft has step${unreviewed.length > 1 ? 's' : ''} ` +
+      `${unreviewed.map((s) => `${s.step_number} (${s.action_type})`).join(', ')} of a type Casey's publish card does not cover — the user publishes in the sequence editor`);
+  }
+
+  // The route's own publish validation (shape + the editor's per-step
+  // timing / config validators across the whole draft).
+  let validation;
+  try {
+    validation = await require('../routes/sequences').validateSequenceDraft(db, draftSteps);
+  } catch (e) {
+    throw httpError(422, `Sequence template ${templateId}'s draft could not be validated (${e.message}) — fix it in the sequence editor first`);
+  }
+  if (validation.errors.length) {
+    throw httpError(422, `Sequence template ${templateId}'s draft fails publish validation: ${validation.errors.join('; ')} — fix the draft first`);
+  }
+
+  const { diffSequenceSteps, sequenceDraftFingerprint, parseMaybeJson } = require('../lib/versionDiff');
+  const [currentSteps] = oldV > 0
+    ? await db.query(`SELECT * FROM sequence_steps WHERE template_id = ? AND version = ? ORDER BY step_number ASC`, [templateId, oldV])
+    : [[]];
+  const [condRows] = await db.query(
+    `SELECT version, template_condition FROM sequence_template_versions WHERE template_id = ? AND version IN (?, ?)`,
+    [templateId, oldV, draftV]);
+  const condOf = (v) => { const row = condRows.find((r) => Number(r.version) === v); return row ? row.template_condition : null; };
+  const diff = diffSequenceSteps(currentSteps, draftSteps, { currentCondition: condOf(oldV), draftCondition: condOf(draftV) });
+
+  // Running enrollments: publish without migrate_in_flight (Casey never sends
+  // it) repoints NONE of them — each stays pinned to its version and finishes
+  // there. Stranded = active on any other version (an enrollment can never
+  // pin a draft, so only current_version is excluded — as draft-diff does).
+  const [inFlight] = await db.query(
+    `SELECT COUNT(*) AS n FROM sequence_enrollments WHERE template_id = ? AND template_version = ? AND status = 'active'`,
+    [templateId, oldV]);
+  const [stranded] = await db.query(
+    `SELECT COUNT(*) AS n FROM sequence_enrollments WHERE template_id = ? AND template_version <> ? AND status = 'active'`,
+    [templateId, oldV]);
+
+  const referenceRows = await require('./automationReadService').references(db, { sequence_template_id: templateId });
+  const starters = referenceRows
+    .filter((row) => row.source !== 'none')
+    .slice(0, 20)
+    .map((row) => ({ source: row.source, name: String(row.source_name || row.source_id || ''), active: row.active === null ? null : (row.active ? 1 : 0) }));
+
+  const effects = [];
+  for (const s of draftSteps) {
+    const cfg = (() => { const c = parseMaybeJson(s.action_config); return c && typeof c === 'object' ? c : {}; })();
+    if (s.action_type === 'webhook') {
+      effects.push(publishWebhookEffect(s.step_number, cfg));
+    } else if (s.action_type === 'start_workflow') {
+      effects.push(`step ${s.step_number}: start_workflow → workflow #${String(cfg.workflow_id).slice(0, 20)} — starts a workflow run on every enrollment that reaches it`);
+    } else {
+      const line = publishFunctionEffect(s.step_number, cfg.function_name, cfg.params, 'on every enrollment that reaches it');
+      if (line) effects.push(line);
+    }
+    if (effects.length >= 20) break;
+  }
+
+  return {
+    draft_id: crypto.randomUUID(),
+    kind: 'sequence.publish.v1',
+    status: 'draft',
+    template: {
+      sequence_template_id: templateId,
+      name: String(tpl.name || `Template ${templateId}`).slice(0, 200),
+      type: tpl.type == null ? null : String(tpl.type).slice(0, 100),
+      active: tpl.active ? 1 : 0,
+    },
+    publish: { from_version: oldV, to_version: draftV, step_count: draftSteps.length },
+    classification: oldV > 0 ? diff.classification : 'first_publish',
+    structural_reasons: (diff.structural_reasons || []).slice(0, 15),
+    changes: (diff.changes || []).slice(0, 30),
+    validation_warnings: (validation.warnings || []).slice(0, 15),
+    in_flight_count: Number(inFlight[0] && inFlight[0].n) || 0,
+    stranded_count: Number(stranded[0] && stranded[0].n) || 0,
+    starters,
+    effects,
+    expected_base: {
+      draft_version: draftV,
+      step_count: draftSteps.length,
+      draft_fingerprint: sequenceDraftFingerprint(draftSteps, condOf(draftV)),
+    },
     evidence: refs,
   };
 }
@@ -3852,7 +4014,10 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && REPORT_ACTION_KINDS.has(value.kind)) return normalizeReportDraftAction(db, value, evidence, { currentUserId, question });
   if (value && SEND_ACTION_KINDS.has(value.kind)) return normalizeSendAction(db, value, evidence, { currentUserId });
   if (value && HOOK_ACTION_KINDS.has(value.kind)) return normalizeHookCreateAction(db, value, evidence);
-  if (value && SEQUENCE_ACTION_KINDS.has(value.kind)) return normalizeSequenceStepInsertAction(db, value, evidence);
+  if (value && SEQUENCE_ACTION_KINDS.has(value.kind)) {
+    if (value.kind === 'sequence.publish.v1') return normalizeSequencePublishAction(db, value, evidence);
+    return normalizeSequenceStepInsertAction(db, value, evidence);
+  }
   if (value && WORKFLOW_ACTION_KINDS.has(value.kind)) {
     if (value.kind === 'workflow.draft.v1') return normalizeWorkflowDraftAction(db, value, evidence);
     if (value.kind === 'workflow.publish.v1') return normalizeWorkflowPublishAction(db, value, evidence);
@@ -3982,10 +4147,10 @@ function taskDraftRequested(question, history = []) {
   const hook = /\b(?:hook|webhook endpoint|inbound endpoint)\b/i.test(text) &&
     /\b(?:create|make|add|build|set up|propose|prepare)\b/i.test(request);
   // A18.2: one step into a sequence template's draft. "drip" and "reminder
-  // sequence" are how staff name them; the verb set is insert-shaped (there
-  // is no sequence edit or publish kind yet).
+  // sequence" are how staff name them; the verb set is insert-shaped plus
+  // A18.3's publish verbs (there is no sequence edit kind yet).
   const sequence = /\b(?:sequences?|sequence template|drip)\b/i.test(text) &&
-    /\b(?:draft|propose|prepare|insert|add|append|create|make|build|set up)\b/i.test(request);
+    /\b(?:draft|propose|prepare|insert|add|append|create|make|build|set up|publish|go live|make it live|activate the draft)\b/i.test(request);
   // A14: a send to someone. A send verb (or "text/email/message" used AS the
   // verb) in a request message — but never one addressed to the user
   // themselves ("email me the list", "text it to me"), which asks for no

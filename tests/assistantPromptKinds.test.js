@@ -144,6 +144,20 @@ describe('ruling 15 — no stage still teaches the send exclusion', () => {
   });
 });
 
+// A18.3: the sequence-step bullet used to say "publishing a sequence ... not
+// available"; a stage still saying so refuses the new kind (the job lesson).
+describe('A18.3 — every stage teaches sequence publish, none still excludes it', () => {
+  test('the plan carries its own publish bullet and drops the old exclusion', () => {
+    expect(planPrompt).toContain('A reviewed sequence publish action is available');
+    expect(planPrompt).not.toContain('publishing a sequence');
+  });
+  test('the answer stage states the stricter class rule and that running enrollments stay put', () => {
+    expect(answerPrompt).toContain('Sequence publish rules (A18.3');
+    expect(answerPrompt).toContain('content-only means only an action_config change on\n    an unchanged sms/email/task step');
+    expect(answerPrompt).toContain('enrollments already running STAY on their version');
+  });
+});
+
 describe('a job request forces the draft-required path like the other families', () => {
   const svc = require(path.join(REPO, 'services', 'assistantService'));
 
@@ -162,6 +176,10 @@ describe('a job request forces the draft-required path like the other families',
     expect(svc.taskDraftRequested('Add a text reminder step to the no-show sequence')).toBe(true);
     expect(svc.taskDraftRequested('Please insert an email into sequence 12 two days later')).toBe(true);
     expect(svc.taskDraftRequested('Why did the no-show sequence skip step 3?')).toBe(false);
+    // A18.3: publishing a sequence rides the same clause; asking about one does not.
+    expect(svc.taskDraftRequested('Publish the no-show sequence')).toBe(true);
+    expect(svc.taskDraftRequested('Make it live — sequence 12 is ready')).toBe(true);
+    expect(svc.taskDraftRequested('When was the no-show sequence last published?')).toBe(false);
     // A20.2 / A20.3: ingest-rule-only phrases ride the ingest clause; a bare
     // "rule" (trigger rules are explain-only) and questions do not.
     for (const q of ['Create an email rule that forwards court notices to Shoshana', 'Turn off the phone rule for 202',

@@ -27,7 +27,7 @@ const express         = require('express');
 const router          = express.Router();
 const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
 const { enrollContact, enrollContactByTemplateId, previewEnrollmentSteps, cancelSequences, validateTemplateFilters, scheduleFromStep, logStep, CONDITION_ERROR_REASONS, HELD_STEP_SKIPPED } = require('../lib/sequenceEngine');
-const { diffSequenceSteps, validateSequenceDraftShape, canonical, parseMaybeJson, sequenceStepFingerprint } = require('../lib/versionDiff');
+const { diffSequenceSteps, validateSequenceDraftShape, canonical, parseMaybeJson, sequenceStepFingerprint, sequenceDraftFingerprint } = require('../lib/versionDiff');
 const internalFunctions = require('../lib/internal_functions'); // __validateSequenceFunctionStep (P11)
 const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency'); // POST steps (A18.2)
 const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
@@ -751,13 +751,42 @@ async function _validateSequenceDraft(db, draftSteps) {
   return { errors, warnings, info };
 }
 
-// POST /sequences/templates/:id/publish — body { migrate_in_flight? }
+// POST /sequences/templates/:id/publish — body { migrate_in_flight?, expected_base? }
 router.post('/sequences/templates/:id/publish', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const templateId = parseInt(req.params.id, 10);
   if (isNaN(templateId) || templateId <= 0) return res.status(400).json({ error: 'Invalid template ID' });
   const migrateInFlight = req.body?.migrate_in_flight === true;
+  const expectedBase = req.body ? req.body.expected_base : undefined;
   const publishedBy = (req.auth?.username || req.auth?.key_label || 'api').slice(0, 100);
+
+  // expected_base precondition, publish shape (P11, A18.3) — the
+  // routes/workflows.js publish contract on sequence templates: the publisher
+  // states the draft it REVIEWED — {draft_version, step_count,
+  // draft_fingerprint} where the fingerprint is lib/versionDiff's
+  // sequenceDraftFingerprint (the ordered per-step sequenceStepFingerprints
+  // plus the draft version row's template_condition, the one versioned field
+  // outside the step rows) — and the publish is refused with a structured 409
+  // when the draft moved after the review. Optional for native callers (the
+  // sequence editor is unchanged and sends none — ref/plans.md); required on
+  // every Casey publish card. Absent, the route runs exactly as before, with
+  // no extra query. Shape checked up front so a malformed object is a 400,
+  // never a silent pass.
+  if (expectedBase !== undefined) {
+    const err =
+      (expectedBase == null || typeof expectedBase !== 'object' || Array.isArray(expectedBase)) ? 'expected_base must be a JSON object'
+      : Object.keys(expectedBase).some((k) => !['draft_version', 'step_count', 'draft_fingerprint'].includes(k))
+        ? 'expected_base (publish) takes draft_version, step_count and draft_fingerprint only'
+      : (!Number.isInteger(expectedBase.draft_version) || expectedBase.draft_version < 1)
+        ? 'expected_base.draft_version must be a positive integer (publishing requires an existing draft)'
+      : (!Number.isInteger(expectedBase.step_count) || expectedBase.step_count < 0)
+        ? 'expected_base.step_count must be a non-negative integer'
+      : (expectedBase.draft_fingerprint !== undefined &&
+         (typeof expectedBase.draft_fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(expectedBase.draft_fingerprint)))
+        ? 'expected_base.draft_fingerprint must be a lowercase sha256 hex string'
+      : null;
+    if (err) return res.status(400).json({ error: err });
+  }
 
   try {
     const outcome = await db.withTransaction(async (connection) => {
@@ -772,10 +801,38 @@ router.post('/sequences/templates/:id/publish', jwtOrApiKey, async (req, res) =>
       const draftV = t.draft_version;
       const oldV = t.current_version;
 
+      // Same 409 shape as checkExpectedBase / the workflow publish route, so
+      // a Casey card reads it as a refusal (nothing written).
+      const conflict = (changed, expected, actual) => ({ respond: { status: 409, body: {
+        error: 'The sequence draft changed since it was reviewed — re-read the diff and review again',
+        conflict: { changed, expected, actual },
+      } } });
+      if (expectedBase !== undefined && Number(draftV) !== expectedBase.draft_version) {
+        return conflict('draft_version', expectedBase.draft_version, Number(draftV));
+      }
+
       const [draftSteps] = await connection.query(
         `SELECT * FROM sequence_steps WHERE template_id = ? AND version = ? ORDER BY step_number ASC`,
         [templateId, draftV]
       );
+      if (expectedBase !== undefined) {
+        if (draftSteps.length !== expectedBase.step_count) {
+          return conflict('step_count', expectedBase.step_count, draftSteps.length);
+        }
+        if (expectedBase.draft_fingerprint !== undefined) {
+          // Under the parent-row FOR UPDATE above: PUT /sequences/templates/:id
+          // writes the draft's condition behind the same lock (ensureDraft),
+          // so the value read here is the one this publish ships.
+          const [[condRow]] = await connection.query(
+            `SELECT template_condition FROM sequence_template_versions WHERE template_id = ? AND version = ?`,
+            [templateId, draftV]
+          );
+          const actual = sequenceDraftFingerprint(draftSteps, condRow ? condRow.template_condition : null);
+          if (actual !== expectedBase.draft_fingerprint) {
+            return conflict('draft_fingerprint', expectedBase.draft_fingerprint, actual);
+          }
+        }
+      }
       const validation = await _validateSequenceDraft(connection, draftSteps);
       if (validation.errors.length) {
         return { respond: { status: 400, body: { error: 'Draft failed publish validation', validation } } };
@@ -2795,6 +2852,11 @@ router.get('/sequences/templates/:id/captured', jwtOrApiKey, async (req, res) =>
 });
 
 module.exports = router;
+
+// Casey's sequence publish card (A18.3, services/assistantService.js) runs
+// the route's OWN publish validation at proposal time — reused, never copied,
+// so the card refuses exactly the drafts this route would.
+router.validateSequenceDraft = _validateSequenceDraft;
 
 // Test-only handle (tests/sequences.ensureDraft.test.js) — mirrors
 // routes/workflows.js.
