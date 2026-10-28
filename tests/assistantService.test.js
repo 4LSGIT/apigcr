@@ -374,6 +374,35 @@ describe('assistant read-plan boundary', () => {
     }
   });
 
+  test('a JSON function over non-JSON rows is guarded once in place', async () => {
+    const old = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = 'assistant-service-test-secret';
+    const plan = svc.validatePlan({ action: 'query', summary: 'Count long calls', steps: [
+      sql("SELECT COUNT(*) AS calls_over_60 FROM log WHERE log_type = 'call' AND log_date >= '2026-10-27 00:00:00' AND CAST(JSON_UNQUOTE(JSON_EXTRACT(log_data,'$.duration_seconds')) AS UNSIGNED) > 60 LIMIT 1"),
+    ] });
+    const signed = assistantTicket.sign({ v: 1, uid: 7, question: 'How many calls ran over a minute?', history: [], plan: { action: 'query', ...plan } });
+    const run = jest.spyOn(reportService, 'execute')
+      .mockRejectedValueOnce(new Error('Invalid JSON text in argument 1 to function json_extract: "Invalid value." at position 0.'))
+      .mockResolvedValueOnce({ rows: [{ calls_over_60: 4 }], rowCount: 1, truncated: false });
+    const repair = jest.spyOn(aiService, 'call')
+      .mockResolvedValueOnce({ ok: true, callId: 20, json: {
+        action: 'query', summary: 'Count long calls over valid JSON rows', steps: [
+          sql("SELECT COUNT(*) AS calls_over_60 FROM log WHERE log_type = 'call' AND log_date >= '2026-10-27 00:00:00' AND JSON_VALID(log_data) AND CAST(JSON_UNQUOTE(JSON_EXTRACT(log_data,'$.duration_seconds')) AS UNSIGNED) > 60 LIMIT 1"),
+        ],
+      } })
+      .mockResolvedValueOnce({ ok: true, callId: 21, json: { action: 'finish' } })
+      .mockResolvedValueOnce({ ok: true, callId: 22, json: { answer: '4 calls ran over a minute.', citations: [] } });
+    try {
+      const out = await svc.execute(capDb(), { signedTicket: signed, userId: 7, auth: { type: 'jwt', userId: 7 } });
+      expect(out.investigation).toMatchObject({ repairs: 1, notices: [expect.stringMatching(/guarded a JSON read/i)] });
+      expect(repair.mock.calls[0][1].userInput).toMatch(/JSON_VALID/);
+      expect(run).toHaveBeenCalledTimes(2);
+    } finally {
+      run.mockRestore(); repair.mockRestore();
+      if (old === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = old;
+    }
+  });
+
   test('runs a second bounded read pass, accumulates evidence, and cites both rounds', async () => {
     const old = process.env.JWT_SECRET;
     process.env.JWT_SECRET = 'assistant-service-test-secret';

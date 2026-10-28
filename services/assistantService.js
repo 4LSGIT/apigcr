@@ -4559,6 +4559,11 @@ function repairFailure(failure) {
     guidance: 'Make the query substantially cheaper. Apply indexed date/type filters before joins, use a LIMITed derived candidate set before joining broad tables, and do not repeat the rejected join shape.',
     notice: 'I narrowed an overly expensive query and retried the search.',
   };
+  if (/invalid json text in argument/i.test(failure)) return {
+    category: 'a JSON function ran over a column holding non-JSON rows',
+    guidance: 'The column is free text that only SOMETIMES holds JSON (log.log_data is the usual case). Guard every JSON function call on such a column with JSON_VALID: filter with AND JSON_VALID(col) where non-JSON rows should be excluded, or wrap the read as CASE WHEN JSON_VALID(col) THEN JSON_EXTRACT(col, ...) END where they should count as NULL — and say in the answer how non-JSON rows were treated.',
+    notice: 'I guarded a JSON read against non-JSON rows and retried the search.',
+  };
   return null;
 }
 
