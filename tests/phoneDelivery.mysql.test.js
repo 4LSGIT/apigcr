@@ -10,9 +10,11 @@
  *
  * ── GATED ON YC_TEST_MYSQL_URL — SKIPPED OTHERWISE ──────────────────────────
  * A THROWAWAY database whose name ends in _test (the suite deletes rows in
- * phone_event_log, phone_lines, log, phone_ingest_executions, app_settings):
+ * phone_event_log, phone_lines, log, phone_ingest_executions, app_settings,
+ * and seeds credentials row 9 for the line's FK if it is missing):
  *   mysql -uroot -e "CREATE DATABASE yc_phdel_test CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
  *   mysql -uroot yc_phdel_test < ref/database.sql
+ *   mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -uroot mysql   # a fresh server: else CONVERT_TZ is NULL and ingest fails
  *   YC_TEST_MYSQL_URL=mysql://user:pass@127.0.0.1:3306/yc_phdel_test npx jest --runInBand tests/phoneDelivery.mysql.test.js
  * The migration script runs INSIDE the suite (and again, asserting
  * idempotence), so the suite is green whether or not ref/database.sql already
@@ -89,6 +91,8 @@ maybe('phone-delivery S1 on real MySQL', () => {
     await pool.query(`DELETE FROM app_settings WHERE \`key\` = ?`, [svc.ENABLED_KEY]);
     await pool.query('INSERT INTO app_settings (`key`, `value`) VALUES (?, ?)', [svc.ENABLED_KEY, '1']);
     await pool.query(`DELETE FROM phone_lines WHERE phone_number IN ('2485592400')`);
+    // fk_phone_lines_credential: a fresh dump has no credentials rows.
+    await pool.query(`INSERT IGNORE INTO credentials (id, name, type) VALUES (9, 'rc-test', 'oauth2')`);
     await pool.query(
       `INSERT INTO phone_lines (phone_number, provider, active, credential_id) VALUES ('2485592400', 'ringcentral', 1, 9)`
     );

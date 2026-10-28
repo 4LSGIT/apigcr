@@ -1581,7 +1581,7 @@ async function openAddRelationModal() {
       </div>
       <div style="margin-bottom:6px">
         <label class="yc-flabel" style="display:block;margin-bottom:4px">Notes</label>
-        <textarea id="crelm-notes" rows="3" style="width:100%;padding:6px;resize:vertical" maxlength="2000"></textarea>
+        <textarea id="crelm-notes" rows="3" style="width:100%;padding:6px;resize:vertical" maxlength="500"></textarea>
       </div>
     </div>
   `;
@@ -1822,7 +1822,7 @@ async function openEditRelationModal(id) {
       </div>
       <div style="margin-bottom:6px">
         <label class="yc-flabel" style="display:block;margin-bottom:4px">Notes</label>
-        <textarea id="crelm-notes" rows="3" style="width:100%;padding:6px;resize:vertical" maxlength="2000">${crelEsc(row.notes || '')}</textarea>
+        <textarea id="crelm-notes" rows="3" style="width:100%;padding:6px;resize:vertical" maxlength="500">${crelEsc(row.notes || '')}</textarea>
       </div>
     </div>
   `;

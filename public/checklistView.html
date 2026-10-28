@@ -503,8 +503,8 @@
    VIEW, not a migration: the column stays the one and only store, the card
    reads and writes it directly, and there is nothing to sync and nothing to
    drift. No route, no table, no column was added for this. cases.case_notes in
-   particular cannot move — caseService.searchCases, report definition 10, and
-   three published form templates all read it.
+   particular cannot move — caseService.listCases (its text search), report
+   definition 10, and three published form templates all read it.
 
    A native card has no checklists row, so it has no id, no tag, no items and
    no status. Everything keyed by checklist id must therefore tolerate one:
