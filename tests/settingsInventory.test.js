@@ -89,12 +89,16 @@ const SCAN_BLIND = {
   // Quo phone driver authenticates through its Connections credential. Stays a
   // registered secret until its row is deleted.
   quo_api_key: 'no code reads it — the phone driver uses its Connections credential',
+  // Read only by an automation definition: the payment-failed workflow's
+  // get_settings step (registered 2026-10-28; was an automation variable).
+  payment_failed_cooldown_days: 'read by the payment-failed workflow, not by code',
 };
 
 /** (b) Registered, non-retired keys with no quoted literal anywhere, and why. */
 const EXEMPT = {
   calendly_webhook_signing_key: 'stored for the record only — no code reads it (see SCAN_BLIND)',
   quo_api_key: 'no code reads it since services/quoService.js was deleted (2026-10-28); the phone driver uses its Connections credential',
+  payment_failed_cooldown_days: 'read by the payment-failed workflow (get_settings), not by code',
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

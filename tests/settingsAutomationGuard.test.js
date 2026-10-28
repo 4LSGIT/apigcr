@@ -59,7 +59,7 @@ function seedRows() {
     row('email_automations', 'auto@firm.example'),
     row('firm_attorney_name', 'A. Attorney'),
     row('billing_tasks_to', '7'),
-    row('payment_failed_cooldown_days', '3'),       // unregistered: an automation variable
+    row('payment_failed_cooldown_days', '3'),       // registered 2026-10-28 (was an automation variable)
     row('court_ingest_live', '1'),
     row('esign_test_mode', '0'),
     row('dropbox_unsorted_forms_path', '  _Unsorted Forms '),   // load-bearing spaces
@@ -197,7 +197,7 @@ test('fixture premises match the registry', () => {
     expect(settingsRegistry.isRegistered(k)).toBe(true);
   }
   expect(settingsRegistry.get('quo_api_key').kind).toBe('secret');
-  for (const k of ['payment_failed_cooldown_days', 'vendor_side_token', 'intake_banner_text', 'no_such_key']) {
+  for (const k of ['vendor_side_token', 'intake_banner_text', 'no_such_key']) {
     expect(settingsRegistry.isRegistered(k)).toBe(false);
   }
 });

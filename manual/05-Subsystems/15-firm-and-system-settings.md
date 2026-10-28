@@ -42,7 +42,7 @@ first.
 |---|---|
 | **Firm identity** | Name, logo, phone, website, office email, mailing address, signing attorney — on generated documents and client-facing pages |
 | **Senders** | The automations address, the default sender, the firm's email domains, the default and staff text lines |
-| **Notifications & routing** | Where IT and system alerts go, the catch-all inbox, and who gets office alerts, billing tasks, appointment follow-ups and the events digest |
+| **Notifications & routing** | Where IT and system alerts go, the catch-all inbox, and who gets office alerts, billing tasks, appointment follow-ups and the events digest; the payment-failure drip cooldown |
 | **Client self-service & booking** | What a client may do from their manage link (cancel, reschedule, rebook), the cutoff and horizon, the texts sent, and the Shabbos booking window |
 | **Dropbox filing** | The case folder templates and the "unsorted" folders for uploads, forms, generated and signed documents |
 | **E-Sign** | Test mode, the default reminder sequence, and the credit balance and its low-credit alert |

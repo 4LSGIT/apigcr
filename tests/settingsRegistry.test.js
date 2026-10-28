@@ -136,6 +136,7 @@ describe('classification snapshot', () => {
     "manage_reschedule_template": "firm firm booking ui template",
     "min_client_build": "system system platform ui date",
     "office_alerts_to": "firm firm routing ui user_csv",
+    "payment_failed_cooldown_days": "firm firm routing ui number",
     "pabbly_internal_url": "secret console console ui url",
     "phone_delivery_failed_workflow_id": "firm comms comms ui number",
     "phone_delivery_sync_enabled": "firm comms comms ui bool",
@@ -258,7 +259,7 @@ describe('HOME_CAPS', () => {
 describe('lookups', () => {
   test('get / isRegistered', () => {
     expect(reg.get('firm_name').home).toBe('firm');
-    expect(reg.get('payment_failed_cooldown_days')).toBeNull();
+    expect(reg.get('intake_banner_text')).toBeNull();
     expect(reg.get('constructor')).toBeNull();
     expect(reg.get('__proto__')).toBeNull();
     expect(reg.get(undefined)).toBeNull();
@@ -272,7 +273,7 @@ describe('lookups', () => {
     expect(reg.registeredSpelling('FE-Lead_Sources')).toBe('fe-lead_sources');
     expect(reg.registeredSpelling('firm_name')).toBe('firm_name');
     expect(reg.registeredSpelling(' firm_name')).toBeNull();          // leading spaces count
-    expect(reg.registeredSpelling('payment_failed_cooldown_days')).toBeNull();
+    expect(reg.registeredSpelling('intake_banner_text')).toBeNull();
     expect(reg.registeredSpelling('CONSTRUCTOR')).toBeNull();
     expect(reg.registeredSpelling(undefined)).toBeNull();
     // the fold must be unambiguous: no two registered keys differ only in case
@@ -290,9 +291,9 @@ describe('lookups', () => {
 
   test('automationMayWrite', () => {
     expect(reg.automationMayWrite('clio_login_code', 0)).toEqual({ ok: true });
-    expect(reg.automationMayWrite('payment_failed_cooldown_days', 0)).toEqual({ ok: true });
+    expect(reg.automationMayWrite('intake_banner_text', 0)).toEqual({ ok: true });
     for (const k of ['landing_hosts', 'comms_archive_admins', 'firm_name', 'min_client_build',
-                     'portal_sms_counter', 'fe-case_types', 'unified_singleton_enabled']) {
+                     'portal_sms_counter', 'fe-case_types', 'unified_singleton_enabled', 'payment_failed_cooldown_days']) {
       const r = reg.automationMayWrite(k, 0);
       expect([k, r.ok]).toEqual([k, false]);
       expect(r.reason).toMatch(/registered setting/);
@@ -391,6 +392,8 @@ describe('validators', () => {
     expect(reg.validate('alert_email_min_severity', 'warn')).toBe(true);
     expect(reg.validate('alert_email_min_severity', 'loud')).toMatch(/one of: error, warn, info/);
     expect(reg.validate('default_task_assignee', 'Rena')).toMatch(/user id/);
-    expect(() => reg.validate('payment_failed_cooldown_days', '6')).toThrow(/unregistered/);
+    expect(() => reg.validate('intake_banner_text', '6')).toThrow(/unregistered/);
+    expect(reg.validate('payment_failed_cooldown_days', '6')).toBe(true);
+    expect(reg.validate('payment_failed_cooldown_days', 'six')).toMatch(/number/);
   });
 });
