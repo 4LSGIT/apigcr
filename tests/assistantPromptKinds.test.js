@@ -158,6 +158,21 @@ describe('A18.3 — every stage teaches sequence publish, none still excludes it
   });
 });
 
+// A17.7: the workflow family marker in PLAN_FAMILY_MARKERS is the draft
+// bullet, so start needs its own pin — a planner that only knows drafting and
+// publishing refuses "start the workflow" (the job lesson).
+describe('A17.7 — every stage teaches workflow start, published-only and inputless', () => {
+  test('the plan carries its own start bullet', () => {
+    expect(planPrompt).toContain('A reviewed workflow start action is available');
+  });
+  test('the answer and repair stages teach published-only, no input, and the standard-code refusal', () => {
+    expect(answerPrompt).toContain('Workflow start rules (A17.7');
+    expect(answerPrompt).toContain('PUBLISHED VERSION ONLY: never a draft — there is no use_draft key');
+    expect(answerPrompt).toContain('NO INPUT: the run starts with empty input');
+    expect(repairPrompt).toContain('no use_draft, init_data, contact_id or input key');
+  });
+});
+
 describe('a job request forces the draft-required path like the other families', () => {
   const svc = require(path.join(REPO, 'services', 'assistantService'));
 
@@ -176,6 +191,12 @@ describe('a job request forces the draft-required path like the other families',
     expect(svc.taskDraftRequested('Add a text reminder step to the no-show sequence')).toBe(true);
     expect(svc.taskDraftRequested('Please insert an email into sequence 12 two days later')).toBe(true);
     expect(svc.taskDraftRequested('Why did the no-show sequence skip step 3?')).toBe(false);
+    // A17.7: a start request rides the workflow clause; a question about a run does not.
+    expect(svc.taskDraftRequested('Start the daily appointment report workflow')).toBe(true);
+    expect(svc.taskDraftRequested('Kick off workflow 5 now please')).toBe(true);
+    expect(svc.taskDraftRequested('Run the workflow called daily report')).toBe(true);
+    expect(svc.taskDraftRequested('Explain why workflow 5\'s last run failed')).toBe(false);
+    expect(svc.taskDraftRequested('When did the workflow last run?')).toBe(false);
     // A18.3: publishing a sequence rides the same clause; asking about one does not.
     expect(svc.taskDraftRequested('Publish the no-show sequence')).toBe(true);
     expect(svc.taskDraftRequested('Make it live — sequence 12 is ready')).toBe(true);

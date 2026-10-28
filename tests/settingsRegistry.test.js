@@ -52,6 +52,7 @@ describe('classification snapshot', () => {
     "casey_sequence_authoring_enabled": "system system platform ui bool",
     "casey_send_enabled": "system system platform ui bool",
     "casey_workflow_authoring_enabled": "system system platform ui bool",
+    "casey_workflow_start_enabled": "system system platform ui bool",
     "clio_login_code": "state system state console string auto",
     "cloud_tasks_enabled": "system system platform ui bool",
     "custom_code_child_process": "system system platform ui bool",

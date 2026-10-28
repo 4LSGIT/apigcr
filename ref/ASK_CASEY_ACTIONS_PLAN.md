@@ -1435,8 +1435,8 @@ refusal is narrowed to STANDARD-mode code steps only (`code_mode` absent,
 `'standard'`, or unparseable config — fail closed). Safe-mode steps publish
 and are disclosed on the card like every other effect. This closes the loop
 ruling 13 opened: Casey can author a safe-code workflow, edit it, and walk
-the user to a reviewed publish. A17.7's start refusal, when built, follows
-the same mode-scoped rule. Original spec:
+the user to a reviewed publish. A17.7's start refusal follows the same
+mode-scoped rule. Original spec:
 
 Fred, 2026-10-22: publish is allowed but stays its
 own step.
@@ -1543,20 +1543,96 @@ every stage. At run time `send_sms` / `send_email` refuse an opted-out
 recipient (ruling 2026-10-27) and the engine records the step skipped — for
 human-authored send steps too.
 
-**A17.7: Start a workflow.**
+**A17.7: Start a workflow. SHIPPED 2026-10-28** — kind `workflow.start.v1`
+on the card engine: ONE run of a workflow's PUBLISHED version, started now.
+An irreversible fan-out, not an extension of publish: the execution row
+commits and the advance is detached, so every step that sends, calls, writes
+or chains runs as it is reached, and cancel (A17.8) stops only the steps a
+run has not reached.
 
-An irreversible fan-out, not an extension of publish: `POST
-/workflows/:id/start` has no idempotency or dedup today, so every call creates
-another execution, and the advance is detached. Requires the P4 extension and
-an impact preview covering the triggers the run can fan out to, its external
-calls, and its estimated writes. Review requires a fresh confirmation.
+**Server half — P4 extended to starts.** `POST /workflows/:id/start` takes an
+optional `Idempotency-Key` (scope `workflows.start`) through the existing
+facility, under A14's SEND rule (`releaseOnRefusalOnly`), not the creates'
+rule: the route's refusals — 404, inactive, never published, no draft to run,
+an invalid `contact_id` — are raised BEFORE the execution INSERT and are
+thrown out of the claim as status-bearing 4xx, which releases it (the
+refusal's transaction still commits, so a refused start's capture sample is
+kept exactly as before; `captureRefusedStart` is arm-once guarded, so a
+retried key cannot capture twice). Any other failure — a 5xx, a commit whose
+acknowledgement was lost — keeps the claim, so the same key is 409
+`in_flight` → `unknown` and can never start a second run. A replay answers
+the FIRST run's body (same `executionId`) with `replayed: true` and advances
+nothing. No key = the old behaviour and zero extra queries (the editor's Run
+button, x-api-key callers, every native start). Before this, every call
+created another execution.
 
-**The A17.6 code-step refusal applies here too** (Fred, 2026-10-22): Casey may
-not start a version carrying a `custom_code` step, and that explicitly includes
-the draft — the route takes `use_draft`, so a draft runs on demand and starting
-is the path a publish refusal would otherwise leave open. Casey never sends
-`use_draft` at all: running an unpublished draft is an author's own test, not a
-reviewed action.
+**The card.** The model supplies only `{workflow_id, evidence}`; evidence
+must carry that exact id from an `automation.definition` read. Fixed rules:
+
+- **Published version only.** `use_draft` is refused by name (any value) and
+  the fixed request builder cannot express it — no query string, no body key.
+  Running an unpublished draft is an author's own test, not a reviewed action
+  (Fred, 2026-10-22). An inactive or never-published workflow refuses at
+  proposal time.
+- **No input** (judgment call, flagged for Fred). The builder pins the body to
+  `{init_data: {}}` with no `contact_id`; `init_data`, `initData`,
+  `contact_id` and `input` are refused by name. Measured live 2026-10-28:
+  7,999 of 8,002 runs in 90 days carried input (the 3 empty ones were a test
+  workflow), and of the 13 live workflows with no standard-mode code step
+  most are event handlers whose payloads are provider envelopes. So the card
+  lists the `{{placeholders}}` the version reads that no step stores
+  (`output_var` / `set_vars` / `set_var`; `this` and `env.*` excluded; a code
+  step's returned variables are invisible, so it over-reports) and says each
+  resolves blank on this run. A reviewed input payload is its own decision —
+  filed in `ref/plans.md`.
+- **The A17.6 code-step refusal, mode-scoped** (Fred, 2026-10-22, narrowed
+  2026-10-25): a STANDARD-mode `custom_code` step in the published version
+  (`code_mode` absent, `'standard'`, or unparseable config) refuses the card;
+  safe-mode steps start and are disclosed. `standardCodeStepNumbers` is one
+  helper shared with the publish card.
+- **Impact preview**, all server-computed: the effects the version can
+  produce (`workflowStepEffects`, shared with the publish card — sends named
+  `external-send` with their recipient expression, webhooks reduced to method
+  + host, chaining/write functions named, safe code disclosed), what normally
+  starts it (`automation.references`), runs already in flight (`pending`,
+  `active`, `processing`, `delayed`, `held`, any version), 90-day run volume
+  with average steps executed (the read surface gives no per-run write
+  estimate), whether an unpublished draft exists (this start runs the
+  published version, not the draft), and the statement that a start is
+  immediate and irreversible. Danger styling; a fresh confirmation dialog.
+- **Click-time freshness** (correction 1): the precheck re-reads
+  `GET /workflows/:id` and refuses before the ledger claim when the workflow
+  is gone, deactivated, or its `current_version` moved. A published version's
+  steps are never edited in place (every step writer targets the draft), so an
+  unchanged `current_version` is an unchanged step set; with no draft the
+  read returns those very steps and a standard-mode code step among them
+  refuses too.
+- **Outcomes** in A14's vocabulary. The route's 409s are all pre-INSERT
+  (audited), so the family reads a plain 409 as a refusal (`refusal409`):
+  "Refused — nothing started". An idempotency 409, any 5xx or a dead socket
+  reads *Outcome unknown — check the workflow's executions before starting
+  again*, and the write control is gone. The ledger receipt is the run
+  (`execution_id`); success names the execution and the applied card
+  deep-links to it. The deep link reuses A19.1's record-kind fix: the shell's
+  `automations.workflow` destination carries a closed `records` list
+  (`['execution']`), `ycAssistantNavigate(…, {id, record: 'execution'})`
+  holds the rest `workflows~<id>~execution`, and the Automations manager's
+  `parseAssistantRest` (now also the cold-boot parser) accepts only that
+  secondary kind, handing `{id, record: 'execution'}` to the workflows pane's
+  execution viewer.
+- **Off switch** `casey_workflow_start_enabled` — its own, not
+  `casey_workflow_authoring_enabled`: a start executes rather than authors,
+  so Fred can keep authoring on with starts dark (ruling 4's per-family flag).
+- **Sync bus:** no workflow route is in `public/js/yc-sync.js` MATCHERS and the
+  executions pane is not bus-watched; the run's own writes are server-side
+  (P6), so no Casey-only emit was added.
+
+Known limit, as A17.6: the predicate is direct — a `start_workflow` step or a
+trigger downstream may reach a workflow with standard code; transitive closure
+is not chased. The P2 matrix covers 44 kinds / 39 mounts. Tests:
+`tests/caseyWorkflowStart.test.js`, gated `tests/caseyWorkflowStart.mysql.test.js`,
+the UI card in `tests/assistantUi.test.js`, the deep-link grammar in
+`tests/assistantSidebar.test.js`.
 
 **A17.8: Cancel one known execution.**
 
@@ -1726,8 +1802,7 @@ flag `casey_sequence_authoring_enabled` (A17.6 shares its family's flag the
 same way). The applied card deep-links to the template
 (`automations.sequence`). No Casey-only bus emit: no sequence route is in
 `public/js/yc-sync.js` MATCHERS, and the precondition is the protection. The
-P2 matrix covers 43 kinds / 38 mounts and now asserts it equals the ledger's
-kind registry. Tests: `tests/caseySequencePublish.test.js`, gated
+P2 matrix now asserts it equals the ledger's kind registry. Tests: `tests/caseySequencePublish.test.js`, gated
 `tests/caseySequencePublish.mysql.test.js`, the UI card in
 `tests/assistantUi.test.js`.
 
@@ -2307,10 +2382,11 @@ ledger claim leaves the card unknown: **the write control is removed entirely**
 and the user is told to open the record, because offering it again could apply
 the action twice. Copy and Discard remain available.
 
-Still open from P4's full scope: enrollment, starts, replays and fan-out are
+Still open from P4's full scope: enrollment, replays and other fan-out are
 not wired (their families are not built yet), and an ambiguous outcome is only
 logged server-side, not alerted — that belongs to P7. Sends are wired (A14),
-with the stricter keep-the-claim-on-failure rule described there.
+with the stricter keep-the-claim-on-failure rule described there, and so are
+workflow starts (A17.7, scope `workflows.start`, the same rule).
 
 #### P5: Durable applied-result persistence
 
@@ -2580,8 +2656,8 @@ slice if explain-answers should link back to a specific record.
    A6-A16. P12 (the read surface) and P13 (workspace context) gate the
    read-only slices A17.0, A17.1, A18.0 and A18.1, which need no write
    machinery and can ship alongside A6-A8. P11 gates every A17/A18 write;
-   A17.6 and A18.3 publish additionally need P3 generalized. A17.7 start and
-   A18.4 enrollment stay behind A14's send machinery. A20 (ingest rules)
+   A17.6 and A18.3 publish additionally need P3 generalized. A17.7 start
+   shipped on A14's send machinery; A18.4 enrollment stays behind it. A20 (ingest rules)
    follows A18.2 (Fred, 2026-10-26); its read rungs A20.0/A20.1 have no
    prerequisite beyond the P12 pattern and may bundle.
 6. Expand via P10 gates. Keep destructive/admin/bulk/autonomous work outside

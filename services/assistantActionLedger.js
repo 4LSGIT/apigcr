@@ -18,6 +18,8 @@ const KINDS = new Map([
   ['workflow.step_insert.v1', 'workflow_id'],
   ['workflow.step_edit.v1', 'workflow_id'],
   ['workflow.publish.v1', 'workflow_id'],
+  // A17.7: the receipt is the new run (POST /workflows/:id/start's executionId).
+  ['workflow.start.v1', 'execution_id'],
   ['hook.create.v1', 'hook_id'],
   ['sequence.step_insert.v1', 'sequence_template_id'],
   ['sequence.publish.v1', 'sequence_template_id'],

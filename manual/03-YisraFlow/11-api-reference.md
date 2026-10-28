@@ -64,6 +64,8 @@ Standard auth headers: `Authorization: Bearer <jwt>` or `x-api-key: <key>`. The 
 
 Returns **202** with `{ success, executionId, workflowId, contactId, status: "processing", message }`.
 
+An optional `Idempotency-Key` header makes the start at-most-once per key: a repeat of the key answers the first run's body with `replayed: true` and starts nothing. A refusal (404, inactive, never published, no draft, invalid `contact_id`) releases the key; any failure after the run may have been created keeps it, so the same key then answers **409** (`idempotency.outcome` `in_flight`, later `unknown`) — check the workflow's executions, then use a new key. Without the header the route behaves as before. Ask Casey's start card always sends one.
+
 ---
 
 ### Sequences — chapter 3

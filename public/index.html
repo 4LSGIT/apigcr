@@ -7045,8 +7045,13 @@
       // ids are NOT offered to the model (normalizeDestinations allows only
       // court_review) — they are called by the assistant pane's own fixed
       // open() handlers with ids from applied server responses.
+      // `records` (A17.7): the secondary record kinds a deep link may name
+      // ({ id, record }) — vocabulary from this frozen list only, appended to
+      // the rest as `<sub>~<id>~<record>`. 'execution' opens that run in the
+      // workflows pane's execution viewer (an applied workflow-start card).
       'automations.workflow': Object.freeze({
         launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', sub: 'workflows',
+        records: Object.freeze(['execution']),
       }),
       'automations.sequence': Object.freeze({
         launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', sub: 'sequences',
@@ -7089,6 +7094,12 @@
           return Promise.reject(new Error('That record link is malformed.'));
         }
         rest = spec.sub + '~' + id;
+        if (params.record !== undefined) {
+          if (!spec.records || !spec.records.includes(params.record)) {
+            return Promise.reject(new Error('That record link is malformed.'));
+          }
+          rest += '~' + params.record;
+        }
       }
       const panel = E(spec.panel);
       const frame = panel && panel.querySelector(':scope > iframe');

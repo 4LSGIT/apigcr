@@ -642,6 +642,19 @@ setting);
 Casey never adds email attachments. The same applies when Casey inserts or
 edits a step in an existing workflow, and the publish card names every send
 step and its recipient.
+It may instead be one `workflow.start.v1` proposal: starting ONE run of an
+active workflow's published version now, with no input — no contact and no
+variables; the card lists the placeholders that will therefore be blank.
+Casey never runs a draft (testing a draft is the editor's Run button) and
+never starts a version that contains a standard-mode code step. The card
+shows what the run can send, call, write and start, what normally starts the
+workflow, and how many runs are already in flight, and it is styled as a
+warning: a start cannot be undone — cancelling the run later stops only the
+steps it has not reached. If the workflow is deactivated or a new version is
+published before you confirm, nothing starts. If the outcome cannot be
+confirmed, the card says so and offers no second start; check the workflow's
+executions. Once applied, the card opens the new run. The off switch is the
+`casey_workflow_start_enabled` setting.
 It may instead be one `ingest_rule.create.v1`, `ingest_rule.update.v1`,
 `ingest_rule.set_active.v1`, `ingest_rule.action_add.v1`,
 `ingest_rule.action_update.v1`, or `ingest_rule.action_remove.v1` proposal for

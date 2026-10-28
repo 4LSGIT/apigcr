@@ -72,7 +72,11 @@ d('ruling 15 workflow send steps on real MySQL', () => {
     pool = mysql.createPool({ uri: URL_, connectionLimit: 4, timezone: 'Z' });
     pool.on('connection', (conn) => conn.query(`SET SESSION sql_mode = '${PROD_SQL_MODE}'`));
     await q('SET FOREIGN_KEY_CHECKS = 0');
-    for (const t of [...TABLES].reverse()) await q(`DROP TABLE IF EXISTS \`${t}\``);
+    // Sibling twins on the same YC_TEST_MYSQL_URL (caseyWorkflowStart, optout)
+    // create workflow_versions / workflow_executions / workflow_execution_steps
+    // with FKs into workflows; left behind, they make the re-CREATE of
+    // workflows fail ("Cannot add foreign key constraint") — drop them first.
+    for (const t of ['workflow_execution_steps', 'workflow_executions', 'workflow_versions', ...[...TABLES].reverse()]) await q(`DROP TABLE IF EXISTS \`${t}\``);
     await q('SET FOREIGN_KEY_CHECKS = 1');
     const { creates, alters } = schemaFor(TABLES);
     for (const sql of creates) await q(sql);

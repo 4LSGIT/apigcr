@@ -106,7 +106,10 @@ d('opt-out on real MySQL', () => {
     pool.on('connection', (conn) => conn.query(`SET SESSION sql_mode = '${PROD_SQL_MODE}'`));
     pool.withTransaction = (fn, opts) => withTransaction(pool, fn, opts);
     await q('SET FOREIGN_KEY_CHECKS = 0');
-    for (const t of [...TABLES].reverse()) await q(`DROP TABLE IF EXISTS \`${t}\``);
+    // caseyWorkflowStart's twin also creates workflow_versions (FK into
+    // workflows) on a shared _test DB — drop it first, as the re-CREATE of
+    // workflows is refused while a child FK still points at it.
+    for (const t of ['workflow_versions', ...[...TABLES].reverse()]) await q(`DROP TABLE IF EXISTS \`${t}\``);
     await q('SET FOREIGN_KEY_CHECKS = 1');
     const { creates, alters } = schemaFor(TABLES);
     for (const sql of creates) await q(sql);

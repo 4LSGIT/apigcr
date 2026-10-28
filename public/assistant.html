@@ -1080,6 +1080,79 @@ function workflowPublishResult(draft, result) {
   return { workflow_id: Number(draft.workflow.workflow_id), published_version: version };
 }
 
+// Workflow start (A17.7): ONE run of the workflow's PUBLISHED version, NOW,
+// with no input. The request is pinned here — `{init_data: {}}`, no
+// contact_id, and never use_draft (no query string, no body key) — and the
+// draft_id rides as Idempotency-Key: the route keeps the claim on any
+// failure after the run was created, so an unknown outcome can never start a
+// second run. The card is the server-computed impact preview; a start is
+// immediate and irreversible fan-out, so it is danger-styled. Click-time
+// freshness re-reads the workflow (correction 1): deactivated, or a different
+// published version, refuses before the ledger claim. A published version's
+// steps are never edited in place, so an unchanged current_version is an
+// unchanged step set; with no draft the read also returns those very steps,
+// and a standard-mode code step among them refuses too (belt and braces).
+const WORKFLOW_START_ACTION_KINDS = new Set(['workflow.start.v1']);
+
+function workflowStartLabel() { return 'Start workflow run'; }
+
+function workflowStartText(draft) {
+  const wf = draft.workflow || {};
+  const recent = draft.recent || {};
+  const lines = ['Workflow start proposal — not started',
+    `Workflow: #${wf.workflow_id} "${wf.name}" — active, runs published v${wf.version} (${wf.step_count} steps)${wf.has_draft ? '; it also has an unpublished draft — this start runs v' + wf.version + ', NOT the draft' : ''}`,
+    'Input: NONE — no contact and no variables are sent with this start.'];
+  if ((draft.unset_inputs || []).length) {
+    lines.push(`Blank inputs: this version reads ${draft.unset_inputs.map((n) => `{{${n}}}`).join(', ')}, which no step sets — on this run each resolves BLANK.`);
+  }
+  if ((draft.starters || []).length) {
+    lines.push('Normally started by:');
+    for (const s of draft.starters) lines.push(`  ${s.source}: "${s.name}"${s.active === 0 ? ' (inactive)' : ''}`);
+  } else {
+    lines.push('Normally started by: nothing references this workflow — it starts only by hand or API call.');
+  }
+  if ((draft.effects || []).length) {
+    lines.push('External and chaining effects this run can produce:');
+    for (const e of draft.effects) lines.push(`  ${e}`);
+  } else {
+    lines.push('Effects: no send, webhook, record write or chained start among the steps.');
+  }
+  lines.push(`Runs in flight: ${draft.in_flight_count} already running (any version). Recent volume: ${recent.runs_90d} run(s) in 90 days${recent.avg_steps != null ? `, about ${recent.avg_steps} steps each` : ''}.`);
+  lines.push('Effect: starts ONE run NOW. A start is immediate and irreversible fan-out — every step above runs as it is reached. One known run can be cancelled from the workflow\'s executions, but steps that already ran stay run.');
+  lines.push('Stale check: if the workflow is deactivated or its published version changes before you apply, nothing is started.');
+  return lines.join('\n');
+}
+
+function workflowStartRequest(draft) {
+  const wfId = Number(draft.workflow && draft.workflow.workflow_id);
+  if (!Number.isSafeInteger(wfId) || wfId < 1) throw new Error('This start has no usable workflow.');
+  return { path: `/workflows/${wfId}/start`, method: 'POST', body: { init_data: {} }, idempotent: true };
+}
+
+async function workflowStartPrecheck(draft) {
+  const wfId = Number(draft.workflow && draft.workflow.workflow_id);
+  const reviewed = Number(draft.expected && draft.expected.current_version);
+  const read = await api(`/workflows/${wfId}`, null, 'GET');
+  const wf = read && read.workflow;
+  if (!wf) return 'The workflow no longer exists. Nothing was started.';
+  if (!wf.active) return 'The workflow was deactivated since this card was prepared. Nothing was started.';
+  if (Number(wf.current_version) !== reviewed) {
+    return `The workflow's published version changed (v${reviewed} → v${Number(wf.current_version)}) since this card was prepared. Nothing was started. Ask Casey to prepare it again — the new card reviews the version that is live now.`;
+  }
+  if (read.has_draft === false && Array.isArray(read.steps) && read.steps.some((s) => {
+    if (!s || s.type !== 'custom_code') return false;
+    try { return (typeof s.config === 'string' ? JSON.parse(s.config) : (s.config || {})).code_mode !== 'safe'; }
+    catch (_) { return true; }
+  })) return 'The published version now has a standard-mode code step. Nothing was started. The user starts it in the workflow editor.';
+  return '';
+}
+
+function workflowStartResult(draft, result) {
+  const id = Number(result && result.executionId);
+  if (!(result && result.success === true) || !Number.isSafeInteger(id) || id < 1) throw new Error('The start returned no usable execution id');
+  return { execution_id: id };
+}
+
 // Sequence step insert (A18.2): ONE sms / email / task step into an existing
 // sequence template's DRAFT. The function is pinned HERE per action type —
 // the draft's own function_name is never read — and the error policy is the
@@ -1216,14 +1289,17 @@ function sequencePublishResult(draft, result) {
 // destination ids and token grammar are the SHELL's; this passes only the
 // applied record's numeric id. The info dialog stays as the fallback when the
 // shell or the destination is unavailable.
-function openAutomationRecord(destination, id, title, fallbackText) {
+// `record` (optional) names a secondary record kind the destination's own
+// shell entry allows — 'execution' on automations.workflow opens that run in
+// the workflows pane's execution viewer instead of a workflow (A17.7).
+function openAutomationRecord(destination, id, title, fallbackText, record) {
   const fallback = () => {
     try { P.Swal?.fire({ icon: 'info', title, text: fallbackText, heightAuto: false }); }
     catch (_) { /* outside the shell the chat line already names the id */ }
   };
   try {
     if (typeof P.ycAssistantNavigate !== 'function') return fallback();
-    P.ycAssistantNavigate(destination, { id }).catch(fallback);
+    P.ycAssistantNavigate(destination, record ? { id, record } : { id }).catch(fallback);
   } catch (_) { fallback(); }
 }
 
@@ -1918,6 +1994,37 @@ const ACTION_FAMILIES = [
       'Find it under More → Automations → Workflows. The published version is now live.'),
   },
   {
+    id: 'workflow_start', kinds: WORKFLOW_START_ACTION_KINDS, title: 'Workflow start', noun: 'workflow run', errorNoun: 'workflow start',
+    label: workflowStartLabel, text: workflowStartText, request: workflowStartRequest,
+    result: workflowStartResult, idField: 'execution_id', appliedKey: 'result_started_execution_id',
+    danger: () => true,
+    precheck: workflowStartPrecheck,
+    // Audited (routes/workflows.js POST /workflows/:id/start): every 409 the
+    // route answers — inactive, never published, no draft — is raised BEFORE
+    // the execution INSERT, so a plain 409 is a refusal; its idempotency 409s
+    // carry body.idempotency and stay ambiguous.
+    refusal409: true,
+    refusalText: (detail) => `Refused — nothing started (${detail}). Ask Casey to prepare the start again.`,
+    refusedStatus: 'Refused — nothing started',
+    confirmText: (draft) => `This starts ONE run of "${draft.workflow.name}" NOW. It cannot be undone: cancelling the run later stops only the steps it has not reached yet.\n\n${workflowStartText(draft)}`,
+    resultText: (payload) => `execution #${payload.execution_id}`,
+    appliedMessage: (draft, payload, replayed) => replayed
+      ? `This start of "${draft.workflow.name}" had already run as execution #${payload.execution_id}; nothing was started a second time.`
+      : `Started "${draft.workflow.name}" (workflow #${draft.workflow.workflow_id}, v${draft.workflow.version}): execution #${payload.execution_id}.`,
+    entity: (draft, payload) => ({ kind: 'workflow', id: String(draft.workflow.workflow_id), label: `${draft.workflow.name} — execution #${payload.execution_id}` }),
+    failure: 'The workflow start could not be applied.',
+    ambiguousText: (detail) => `Outcome unknown — the run may or may not have started${detail ? ` (${detail})` : ''}. Check the workflow's executions before starting again. Do not apply this card again.`,
+    appliedCopy: (draft) => ({
+      status: `Started — execution #${draft.result_started_execution_id}`,
+      warning: `Execution #${draft.result_started_execution_id} of "${draft.workflow ? draft.workflow.name : 'the workflow'}" was started using your signed-in account. Its steps run as they are reached; steps already run cannot be undone.`,
+      button: `Open execution #${draft.result_started_execution_id}`,
+    }),
+    reviewWarning: 'This STARTS A RUN NOW of the published version, with no input — every send, webhook, record write and chained start listed above happens as its step is reached, and none can be recalled. Cancelling the run later stops only the steps it has not reached. Canceling the dialog starts nothing.',
+    open: (draft) => openAutomationRecord('automations.workflow', draft.result_started_execution_id,
+      `Execution #${draft.result_started_execution_id}`,
+      'Find it under More → Automations → Workflows, on the workflow\'s Executions tab.', 'execution'),
+  },
+  {
     id: 'sequence_step', kinds: SEQUENCE_STEP_ACTION_KINDS, title: 'Sequence step', noun: 'sequence step', errorNoun: 'sequence step action',
     label: sequenceStepActionLabel, text: sequenceStepText, request: sequenceStepActionRequest,
     result: sequenceStepActionResult, idField: 'sequence_template_id', appliedKey: 'result_step_template_id',
@@ -2157,7 +2264,8 @@ async function executeActionDraft(message) {
     } else if (baseConflict) {
       draft.refusal_error = family.conflictRefusal || 'The workflow changed since this card was prepared, so the server refused the write — nothing was changed. Ask Casey to read the workflow again and rebuild the proposal.';
     } else if (refused) {
-      draft.refusal_error = `The server refused this (${e.message || `HTTP ${e.status}`}). Nothing was written. Ask Casey to prepare the action again.`;
+      draft.refusal_error = family.refusalText ? family.refusalText(e.message || `HTTP ${e.status}`)
+        : `The server refused this (${e.message || `HTTP ${e.status}`}). Nothing was written. Ask Casey to prepare the action again.`;
     } else if (claimed || outcome === 'unknown') {
       draft.ambiguous_error = family.ambiguousText ? family.ambiguousText(e.message || '')
         : `This may already have been applied: the server claimed the request but never recorded its result (${e.message || 'no result recorded'}). Open the record and check before asking Casey to prepare it again. Do not apply this card again.`;
@@ -2258,7 +2366,7 @@ function hydrateActionDraft(family, host, message, draft) {
   const status = document.createElement('span'); status.className = 'action-draft-status';
   status.textContent = applied ? (appliedCopy ? appliedCopy.status : `Applied — ${family.noun} #${appliedId}`)
     : draft.ambiguous_error ? 'Outcome unknown — check the record'
-      : draft.refusal_error ? 'Refused — nothing written'
+      : draft.refusal_error ? (family.refusedStatus || 'Refused — nothing written')
       : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
   head.append(title, status);
 

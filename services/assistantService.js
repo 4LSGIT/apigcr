@@ -154,7 +154,12 @@ const JOB_CODE_MAX_INPUT_JSON_CHARS = 10000;
 // NOT publish a version containing a STANDARD-mode custom_code step (Fred's
 // ruling 2026-10-22, narrowed 2026-10-25: safe-mode steps publish and are
 // disclosed on the card). migrate_in_flight is never offered and never sent.
-const WORKFLOW_ACTION_KINDS = new Set(['workflow.draft.v1', 'workflow.step_insert.v1', 'workflow.step_edit.v1', 'workflow.publish.v1']);
+// A17.7 adds start: ONE run of the PUBLISHED version, now, with no input —
+// the one workflow kind that executes rather than authors, so it has its own
+// off switch (casey_workflow_start_enabled). use_draft is never sent, the
+// standard-mode code refusal applies, and the route honours the card's
+// draft_id as Idempotency-Key under the keep-the-claim rule.
+const WORKFLOW_ACTION_KINDS = new Set(['workflow.draft.v1', 'workflow.step_insert.v1', 'workflow.step_edit.v1', 'workflow.publish.v1', 'workflow.start.v1']);
 
 // Hook authoring (A19.0, Fred's ask 2026-10-22: "make a hook to trigger
 // something"). One card creates an INBOUND hook born INACTIVE with exactly one
@@ -208,6 +213,7 @@ const WORKFLOW_STEP_INSERT_KEYS = new Set(['kind', 'workflow_id', 'step_number',
 const WORKFLOW_STEP_EDIT_KEYS = new Set(['kind', 'workflow_id', 'step_number', 'changes', 'evidence']);
 const WORKFLOW_STEP_EDIT_CHANGE_KEYS = new Set(['label', 'note', 'params', 'code', 'input']);
 const WORKFLOW_PUBLISH_KEYS = new Set(['kind', 'workflow_id', 'evidence']);
+const WORKFLOW_START_KEYS = new Set(['kind', 'workflow_id', 'evidence']);
 // Functions whose presence in a draft the publish card must call out: they
 // leave the firm or fan out the moment a published version runs. Prefix
 // classes (send_/esign_) plus the named chain/write functions. This is CARD
@@ -1878,6 +1884,72 @@ function publishFunctionEffect(stepNumber, fn, params, when) {
   return `step ${stepNumber}: ${fn} — external-send: messages ${to} ${when}`;
 }
 
+function workflowStepConfig(step) {
+  try { return typeof step.config === 'string' ? JSON.parse(step.config) : (step.config || {}); } catch (_) { return {}; }
+}
+
+// RULED (Fred, 2026-10-22; narrowed 2026-10-25): Casey may not publish
+// (A17.6) or start (A17.7) a version containing a STANDARD-mode custom_code
+// step — arbitrary server-side JS a human must vouch for in the editor.
+// SAFE-mode steps (the QuickJS boundary, ruling 13 — code Casey itself may
+// author) publish and start through the card and are disclosed on it like
+// every other effect. code_mode absent, 'standard', or an unparseable config
+// all count as standard (fail closed). Returns the offending step numbers.
+function standardCodeStepNumbers(steps) {
+  return steps.filter((s) => {
+    if (s.type !== 'custom_code') return false;
+    try {
+      const cfg = typeof s.config === 'string' ? JSON.parse(s.config) : (s.config || {});
+      return cfg.code_mode !== 'safe';
+    } catch (_) { return true; } // unparseable config: fail closed as standard
+  }).map((s) => s.step_number);
+}
+
+// The external/chaining effects a workflow version can produce, one card line
+// each (A17.6 publish, A17.7 start; `when` says how often). Only safe-mode
+// code survives standardCodeStepNumbers, and it is still disclosed.
+function workflowStepEffects(steps, when) {
+  const effects = [];
+  for (const s of steps) {
+    const cfg = workflowStepConfig(s);
+    if (s.type === 'webhook') {
+      effects.push(publishWebhookEffect(s.step_number, cfg));
+    } else if (s.type === 'custom_code') {
+      effects.push(`step ${s.step_number}: safe-mode code (sandboxed — no network, no database)`);
+    } else if (s.type === 'internal_function') {
+      const line = publishFunctionEffect(s.step_number, cfg.function_name, cfg.params, when);
+      if (line) effects.push(line);
+    }
+    if (effects.length >= 20) break;
+  }
+  return effects;
+}
+
+// What can start a workflow (automationReadService.references), for a card.
+function workflowStarters(referenceRows) {
+  return referenceRows
+    .filter((row) => row.source !== 'none')
+    .slice(0, 20)
+    .map((row) => ({ source: row.source, name: String(row.source_name || row.source_id || ''), active: row.active === null ? null : (row.active ? 1 : 0) }));
+}
+
+// A17.7: placeholder roots a workflow version reads that no step's config
+// stores (output_var / set_vars / set_var). A start with NO input leaves each
+// blank — the workflow engine blanks an unresolved {{x}} silently. A code
+// step's returned set_vars cannot be seen from config, so this over-reports
+// rather than under-reports; `this` and `env.*` are engine-provided.
+function workflowUnsetInputs(steps) {
+  const parsedSteps = steps.map((s) => ({ ...s, config: workflowStepConfig(s) }));
+  const roots = new Set();
+  for (const s of parsedSteps) {
+    for (const m of JSON.stringify(s.config).matchAll(/{{([^}]{1,200})}}/g)) {
+      const root = m[1].trim().split(/[.[|\s]/)[0];
+      if (root && root !== 'this' && root !== 'env') roots.add(root.slice(0, 64));
+    }
+  }
+  return [...roots].filter((name) => !parsedSteps.some((s) => workflowStepWritesVar(s, name))).sort().slice(0, 20);
+}
+
 // A17.6: publish a workflow's draft. The model proposes only {workflow_id};
 // everything on the card — classification, diff, warnings, in-flight counts,
 // inbound references, external effects — is computed HERE from the live rows,
@@ -1909,18 +1981,7 @@ async function normalizeWorkflowPublishAction(db, value, evidence) {
     [workflowId, draftV]);
   if (!draftSteps.length) throw httpError(422, `Workflow ${workflowId}'s draft has no steps — publish would be refused`);
 
-  // RULED (Fred, 2026-10-22; narrowed 2026-10-25): Casey may not publish a
-  // version containing a STANDARD-mode custom_code step — arbitrary
-  // server-side JS a human must vouch for in the editor. SAFE-mode steps
-  // (the QuickJS boundary, ruling 13 — code Casey itself may author) publish
-  // through the card and are disclosed on it like every other effect.
-  const standardCodeSteps = draftSteps.filter((s) => {
-    if (s.type !== 'custom_code') return false;
-    try {
-      const cfg = typeof s.config === 'string' ? JSON.parse(s.config) : (s.config || {});
-      return cfg.code_mode !== 'safe';
-    } catch (_) { return true; } // unparseable config: fail closed as standard
-  }).map((s) => s.step_number);
+  const standardCodeSteps = standardCodeStepNumbers(draftSteps);
   if (standardCodeSteps.length) {
     throw httpError(422, `Workflow ${workflowId}'s draft contains standard-mode code step${standardCodeSteps.length > 1 ? 's' : ''} ` +
       `${standardCodeSteps.join(', ')} — Casey does not publish versions with standard-mode code; the user publishes in the workflow editor`);
@@ -1946,29 +2007,11 @@ async function normalizeWorkflowPublishAction(db, value, evidence) {
       WHERE workflow_id = ? AND workflow_version NOT IN (?, ?) AND status IN ('active','delayed','held')`,
     [workflowId, oldV, draftV]);
 
-  const referenceRows = await require('./automationReadService').references(db, { workflow_id: workflowId });
-  const starters = referenceRows
-    .filter((row) => row.source !== 'none')
-    .slice(0, 20)
-    .map((row) => ({ source: row.source, name: String(row.source_name || row.source_id || ''), active: row.active === null ? null : (row.active ? 1 : 0) }));
+  const starters = workflowStarters(await require('./automationReadService').references(db, { workflow_id: workflowId }));
 
   // External/chaining effects the published version can produce, for the
   // card (publishWebhookEffect / publishFunctionEffect, shared with A18.3).
-  const effects = [];
-  for (const s of draftSteps) {
-    const cfg = (() => { try { return typeof s.config === 'string' ? JSON.parse(s.config) : (s.config || {}); } catch (_) { return {}; } })();
-    if (s.type === 'webhook') {
-      effects.push(publishWebhookEffect(s.step_number, cfg));
-    } else if (s.type === 'custom_code') {
-      // Only safe-mode steps survive the gate above; still disclose them —
-      // publishing makes them run.
-      effects.push(`step ${s.step_number}: safe-mode code (sandboxed — no network, no database)`);
-    } else if (s.type === 'internal_function') {
-      const line = publishFunctionEffect(s.step_number, cfg.function_name, cfg.params, 'every time this version runs');
-      if (line) effects.push(line);
-    }
-    if (effects.length >= 20) break;
-  }
+  const effects = workflowStepEffects(draftSteps, 'every time this version runs');
 
   return {
     draft_id: crypto.randomUUID(),
@@ -1994,6 +2037,100 @@ async function normalizeWorkflowPublishAction(db, value, evidence) {
       step_count: draftSteps.length,
       draft_fingerprint: draftFingerprint(draftSteps),
     },
+    evidence: refs,
+  };
+}
+
+// A17.7: start ONE run of a workflow's PUBLISHED version, now. A start is an
+// immediate, irreversible fan-out — not an extension of publish — so the card
+// is its impact preview, computed HERE from the live rows: what the version's
+// steps send, call, write and start (the publish card's shared effect lines),
+// what normally starts it, the runs already in flight, recent run volume, and
+// the inputs it reads that this start does not supply.
+// Fixed rules, none model-chosen:
+//   * PUBLISHED VERSION ONLY. `use_draft` is refused by name and the
+//     browser's fixed builder cannot express it — running an unpublished draft
+//     is an author's own test (the editor's Run button), not a reviewed action.
+//   * NO INPUT. The start body is pinned to `{init_data: {}}` with no contact_id
+//     (measured 2026-10-28: 7,999 of 8,002 live runs in 90 days carried input,
+//     so the card lists the placeholders that will resolve blank). A reviewed
+//     input payload is its own decision, not this slice.
+//   * The A17.6 code-step refusal, mode-scoped: a STANDARD-mode custom_code
+//     step in the published version refuses the card (standardCodeStepNumbers,
+//     shared with publish); safe-mode steps start and are disclosed.
+//   * The browser re-reads the workflow at click time (active, current_version
+//     unchanged) before the ledger claim; a published version's steps are
+//     never edited in place (every step writer targets the draft), so an
+//     unchanged current_version is an unchanged step set.
+// Known limit, as A17.6: a start_workflow step or a trigger downstream may
+// reach a workflow with standard code; transitive closure is not chased.
+async function normalizeWorkflowStartAction(db, value, evidence) {
+  if (require('../lib/firmConfig').cfg('casey_workflow_start_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  if (value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, 'use_draft')) {
+    throw httpError(422, 'Workflow start never runs a draft (use_draft) — Casey starts the PUBLISHED version only; a draft test-run is the author\'s own Run button in the editor');
+  }
+  const payloadKeys = value && typeof value === 'object'
+    ? Object.keys(value).filter((k) => ['init_data', 'initData', 'contact_id', 'input'].includes(k)) : [];
+  if (payloadKeys.length) {
+    throw httpError(422, `Workflow start takes no input (${payloadKeys.join(', ')}) — Casey starts a run with empty input; the user starts it with data in the workflow editor`);
+  }
+  if (!onlyKeys(value, WORKFLOW_START_KEYS)) throw httpError(422, 'Workflow start contains unsupported fields — it takes workflow_id and evidence only');
+  const workflowId = Number(value.workflow_id);
+  if (!Number.isSafeInteger(workflowId) || workflowId < 1) {
+    throw httpError(422, 'Workflow start needs a positive workflow_id');
+  }
+  const refs = jobDraftEvidence(value.evidence, evidence);
+  if (!refs.length || !evidenceSupportsAutomation(refs, evidence, workflowId)) {
+    throw httpError(422, 'Workflow start evidence does not identify the target workflow — read it with automation.definition first');
+  }
+  const [[wf]] = await db.query(
+    'SELECT id, name, active, current_version, draft_version FROM workflows WHERE id = ?', [workflowId]);
+  if (!wf) throw httpError(422, `Workflow ${workflowId} is unavailable`);
+  if (!wf.active) throw httpError(422, `Workflow ${workflowId} is inactive — the start route refuses it; the user activates it in the workflow editor first`);
+  const version = Number(wf.current_version);
+  if (!(version > 0)) {
+    throw httpError(422, `Workflow ${workflowId} has never been published — Casey starts published versions only (publish it first; a draft test-run is the editor's Run button)`);
+  }
+  const [steps] = await db.query(
+    `SELECT * FROM workflow_steps WHERE workflow_id = ? AND version = ? ORDER BY step_number ASC`,
+    [workflowId, version]);
+  if (!steps.length) throw httpError(422, `Workflow ${workflowId}'s published version has no steps — there is nothing to run`);
+  const standardCodeSteps = standardCodeStepNumbers(steps);
+  if (standardCodeSteps.length) {
+    throw httpError(422, `Workflow ${workflowId}'s published version contains standard-mode code step${standardCodeSteps.length > 1 ? 's' : ''} ` +
+      `${standardCodeSteps.join(', ')} — Casey does not start versions with standard-mode code; the user starts it in the workflow editor`);
+  }
+
+  // Non-terminal runs of ANY version (the enum's five live states).
+  const [[inFlight]] = await db.query(
+    `SELECT COUNT(*) AS n FROM workflow_executions
+      WHERE workflow_id = ? AND status IN ('pending','active','processing','delayed','held')`, [workflowId]);
+  const [[recent]] = await db.query(
+    `SELECT COUNT(*) AS n, AVG(steps_executed_count) AS avg_steps FROM workflow_executions
+      WHERE workflow_id = ? AND created_at >= NOW() - INTERVAL 90 DAY`, [workflowId]);
+  const starters = workflowStarters(await require('./automationReadService').references(db, { workflow_id: workflowId }));
+  const avgSteps = recent && recent.avg_steps != null ? Math.round(Number(recent.avg_steps) * 10) / 10 : null;
+
+  return {
+    draft_id: crypto.randomUUID(),
+    kind: 'workflow.start.v1',
+    status: 'draft',
+    workflow: {
+      workflow_id: workflowId,
+      name: String(wf.name || `Workflow ${workflowId}`).slice(0, 200),
+      active: 1,
+      version,
+      step_count: steps.length,
+      has_draft: wf.draft_version != null ? 1 : 0,
+    },
+    unset_inputs: workflowUnsetInputs(steps),
+    starters,
+    effects: workflowStepEffects(steps, 'on this run'),
+    in_flight_count: Number(inFlight && inFlight.n) || 0,
+    recent: { runs_90d: Number(recent && recent.n) || 0, avg_steps: Number.isFinite(avgSteps) ? avgSteps : null },
+    expected: { current_version: version },
     evidence: refs,
   };
 }
@@ -4021,6 +4158,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && WORKFLOW_ACTION_KINDS.has(value.kind)) {
     if (value.kind === 'workflow.draft.v1') return normalizeWorkflowDraftAction(db, value, evidence);
     if (value.kind === 'workflow.publish.v1') return normalizeWorkflowPublishAction(db, value, evidence);
+    if (value.kind === 'workflow.start.v1') return normalizeWorkflowStartAction(db, value, evidence);
     return normalizeWorkflowStepAction(db, value, evidence);
   }
   if (value && JOB_ACTION_KINDS.has(value.kind)) return normalizeJobCodeAction(db, value, evidence);
@@ -4142,8 +4280,10 @@ function taskDraftRequested(question, history = []) {
     /\b(?:draft|propose|prepare|create|make|add|edit|update|change|end|deactivate|remove)\b/i.test(request);
   const job = /\bjob\b/i.test(text) &&
     /\b(?:schedule|create|make|propose|prepare|set up)\b/i.test(request);
+  // A17.7 adds the start verbs; a bare "run" is a noun too often ("its last
+  // run failed"), so only the request-shaped forms count.
   const workflow = /\bworkflow\b/i.test(text) &&
-    /\b(?:draft|create|make|build|compose|propose|prepare|set up|insert|add|edit|update|change|fix|modify|tweak|adjust|publish|go live|activate the draft)\b/i.test(request);
+    /\b(?:draft|create|make|build|compose|propose|prepare|set up|insert|add|edit|update|change|fix|modify|tweak|adjust|publish|go live|activate the draft|start|kick off|launch|run it|run (?:the|this|that) workflow)\b/i.test(request);
   const hook = /\b(?:hook|webhook endpoint|inbound endpoint)\b/i.test(text) &&
     /\b(?:create|make|add|build|set up|propose|prepare)\b/i.test(request);
   // A18.2: one step into a sequence template's draft. "drip" and "reminder

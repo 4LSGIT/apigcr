@@ -175,6 +175,43 @@ describe('Automations → Court Review semantic navigation proof', () => {
     expect(w.open_('workflows~61x')).toBe(false);
     expect(w.open_('workflows~')).toBe(false);
     expect(w.open_('evil~1')).toBe(false);
+    // A17.7: a closed SECONDARY record kind routes an applied start card's id
+    // to the workflows pane's execution viewer; anything else fails closed.
+    expect(w.open_('workflows~77~execution')).toBe(true);
+    expect(w.focusCalls[2]).toEqual(['workflows', { id: 77, record: 'execution' }]);
+    expect(w.open_('workflows~77~evil')).toBe(false);
+    expect(w.open_('hooks~77~execution')).toBe(false);
+    expect(w.open_('workflows~77~execution~x')).toBe(false);
+    expect(w.focusCalls).toHaveLength(3);
+    dom.window.close();
+  });
+
+  test('a cold manager queues the same secondary-record payload through the one parser', () => {
+    const dom = new JSDOM('<!doctype html>', { runScripts: 'outside-only' });
+    const w = dom.window;
+    const subPages = MANAGER.slice(MANAGER.indexOf('const SUB_PAGES = ['), MANAGER.indexOf('// ── Shell state'));
+    const map = MANAGER.slice(MANAGER.indexOf('const ASSISTANT_DESTINATION_BY_SUB'), MANAGER.indexOf('function notifyAssistantDestinationReady'));
+    const recordMap = MANAGER.slice(MANAGER.indexOf('const ASSISTANT_RECORD_BY_SUB'), MANAGER.indexOf('function ycAssistantOpenDestination'));
+    w.eval(`${subPages}\n${map}\n${recordMap}\nvar pendingFocus = {}; var held = null;\n` +
+      'var ycSubTab = { leaf: { take: () => held } };\n' + fnSrc(MANAGER, 'wsBootSubPage') +
+      '\nwindow.boot_ = (rest) => { held = rest; pendingFocus = {}; const page = wsBootSubPage(); return [page, pendingFocus]; };');
+    expect(w.boot_('workflows~77~execution')).toEqual(['workflows', { workflows: { id: 77, record: 'execution' } }]);
+    expect(w.boot_('workflows~61')).toEqual(['workflows', { workflows: { id: 61, record: 'workflow' } }]);
+    expect(w.boot_('workflows~61~evil')).toEqual(['workflows', {}]);
+    dom.window.close();
+  });
+
+  test('the workflows pane opens an execution-record payload in its execution viewer', () => {
+    const PANE = fs.readFileSync(path.join(ROOT, 'public/automation/workflows.html'), 'utf8');
+    const start = PANE.indexOf('window.onFocusRecord = (payload) => {');
+    const src = PANE.slice(start, PANE.indexOf('};', start) + 2);
+    const dom = new JSDOM('<!doctype html>', { runScripts: 'outside-only' });
+    const w = dom.window;
+    w.calls = [];
+    w.eval('function selectWorkflow(id) { calls.push(["workflow", id]); }\nfunction viewWorkflowExecution(id) { calls.push(["execution", id]); }\n' + src);
+    w.onFocusRecord({ id: 77, record: 'execution' });
+    w.onFocusRecord({ id: 61, record: 'workflow' });
+    expect(w.calls).toEqual([['execution', 77], ['workflow', 61]]);
     dom.window.close();
   });
 
@@ -231,6 +268,22 @@ describe('Automations → Court Review semantic navigation proof', () => {
     expect(t.w.ycAssistantChildReady(t.frame, { destination: 'automations.workflow' })).toBe(true);
     await expect(promise).resolves.toEqual({ destination: 'automations.workflow', ready: true });
     t.dom.window.close();
+  });
+
+  test('a secondary record kind rides the rest only from the destination\'s own frozen list', async () => {
+    const t = navigationWorld(true);
+    const promise = t.w.ycAssistantNavigate('automations.workflow', { id: 77, record: 'execution' });
+    expect(t.w.ycSubTab.host.lastRest(t.frame)).toBe('workflows~77~execution');
+    expect(t.w.ycAssistantChildReady(t.frame, { destination: 'automations.workflow' })).toBe(true);
+    await expect(promise).resolves.toEqual({ destination: 'automations.workflow', ready: true });
+    t.dom.window.close();
+    const u = navigationWorld(false);
+    for (const [destination, params] of [['automations.workflow', { id: 77, record: 'evil' }], ['automations.workflow', { id: 77, record: 'execution~x' }],
+      ['automations.hook', { id: 77, record: 'execution' }], ['automations.workflow', { id: 77, record: null }]]) {
+      await expect(u.w.ycAssistantNavigate(destination, params)).rejects.toThrow(/malformed/);
+    }
+    expect(u.exec).not.toHaveBeenCalled();
+    u.dom.window.close();
   });
 
   test('a malformed record id rejects before the launcher runs — the id is shell-validated', async () => {

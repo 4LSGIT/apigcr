@@ -485,7 +485,10 @@ function parseAssistantRest(rest) {
   if (!page || !ASSISTANT_DESTINATION_BY_SUB[page.id]) return null;
   if (parts[1] === undefined) return { pageId: page.id, id: null };
   if (!/^\d{1,10}$/.test(parts[1])) return null;
-  return { pageId: page.id, id: Number(parts[1]) };
+  if (parts.length > 3) return null;
+  if (parts[2] === undefined) return { pageId: page.id, id: Number(parts[1]) };
+  if (!(ASSISTANT_SECONDARY_RECORDS[page.id] || []).includes(parts[2])) return null;
+  return { pageId: page.id, id: Number(parts[1]), record: parts[2] };
 }
 
 function notifyAssistantDestinationReady(id) {
@@ -507,12 +510,17 @@ function notifyAssistantDestinationReady(id) {
 const ASSISTANT_RECORD_BY_SUB = Object.freeze({
   workflows: 'workflow', sequences: 'sequence', scheduledJobs: 'job', hooks: 'hook',
 });
+// A17.7: a third segment may name a SECONDARY record kind the sub-page opens
+// with its own opener — `workflows~<id>~execution` is an applied
+// workflow-start card's run, routed to the pane's execution viewer. Closed
+// vocabulary (mirrors the shell's `records` list); anything else fails closed.
+const ASSISTANT_SECONDARY_RECORDS = Object.freeze({ workflows: Object.freeze(['execution']) });
 
 function ycAssistantOpenDestination(rest) {
   const parsed = parseAssistantRest(rest);
   if (!parsed) return false;
   if (parsed.id != null) {
-    focusSubPageRecord(parsed.pageId, { id: parsed.id, record: ASSISTANT_RECORD_BY_SUB[parsed.pageId] });
+    focusSubPageRecord(parsed.pageId, { id: parsed.id, record: parsed.record || ASSISTANT_RECORD_BY_SUB[parsed.pageId] });
   } else switchSubPage(parsed.pageId);
   return true;
 }
@@ -567,11 +575,13 @@ function wsBootSubPage() {
   const held = window.ycSubTab ? ycSubTab.leaf.take() : null;
   const parts = String(held == null ? '' : held).split('~');
   const page = SUB_PAGES.find(p => p.id === parts[0]);
-  // A held `<sub>~<digits>` (an assistant record deep link on a COLD manager)
-  // queues the focus payload; the boot switch drains it through the same T4
-  // machinery a warm navigation uses.
-  if (page && parts[1] !== undefined && /^\d{1,10}$/.test(parts[1]) && ASSISTANT_DESTINATION_BY_SUB[page.id]) {
-    pendingFocus[page.id] = { id: Number(parts[1]), record: ASSISTANT_RECORD_BY_SUB[page.id] };
+  // A held `<sub>~<digits>[~<record>]` (an assistant record deep link on a
+  // COLD manager) queues the focus payload; the boot switch drains it through
+  // the same T4 machinery a warm navigation uses. Same grammar as the warm
+  // bridge — parseAssistantRest is the one parser.
+  const parsed = page ? parseAssistantRest(held) : null;
+  if (parsed && parsed.id != null) {
+    pendingFocus[page.id] = { id: parsed.id, record: parsed.record || ASSISTANT_RECORD_BY_SUB[page.id] };
   }
   return page ? page.id : SUB_PAGES[0].id;
 }

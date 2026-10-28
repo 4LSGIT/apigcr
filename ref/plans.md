@@ -1025,6 +1025,26 @@ COMMENTs.)
   limit below): the route's refusal is shown live, but reopening the chat
   shows the conservative wording.
 
+## From the Ask Casey arc — A17.7 workflow start (2026-10-28) — deferred
+
+- **A reviewed input payload for Casey starts.** A17.7 starts with NO input
+  (`{init_data: {}}`, no `contact_id`) — the narrowest reviewable shape.
+  Measured live 2026-10-28 (read-only account): 7,999 of 8,002 runs in 90 days
+  carried input (the 3 empty ones were workflow 41, a test); of the 35 live
+  workflows 22 carry a standard-mode code step in their published version (so
+  the card refuses them anyway), and of the 13 left most are provider event
+  handlers (17/18/21: message/call envelopes) — only a few, such as the Daily
+  Appointment Report (77 runs, input `{source}`), plausibly run with nothing.
+  A payload slice would need: a closed key set per workflow (from its
+  `test_input` / `captured_input` sample, or the placeholders it reads), values
+  shown verbatim on the card, `contact_id` only from an evidence row, and a
+  decision on whether a payload makes the start a send-class action (A14's
+  bar). Fred's call on whether it is wanted at all.
+- **The editor's Run button and native starts send no `Idempotency-Key`.**
+  The route honours one (scope `workflows.start`); a double-clicked Run or a
+  retried x-api-key start still creates two runs. Wiring the editor would be
+  a one-line header plus an "already started" message on replay.
+
 ## From the Ask Casey arc — A16 report drafts (2026-10-27) — deferred
 
 - **The other report kinds.** Update (PUT, honouring the lock), run, lock /

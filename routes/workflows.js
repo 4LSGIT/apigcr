@@ -226,7 +226,7 @@ const validateInternalFunctionParams = internalFunctions.__validateFunctionParam
 // custom_code — see ref/plans.md.
 // ─────────────────────────────────────────────────────────────
 const { refuseCodeStepWithoutCapability } = require("../lib/codeStepGate");
-const { idempotentRequest, sendIdempotencyError } = require("../lib/requestIdempotency");
+const { idempotentRequest, sendIdempotencyError, releaseOnRefusalOnly } = require("../lib/requestIdempotency");
 
 function validateInternalFunctionConfig(stepType, config) {
   // Type-INDEPENDENT guard first. `type` is executeJob's dispatch selector, so
@@ -633,6 +633,10 @@ router.get('/workflows/functions', jwtOrApiKey, (req, res) => {
  *   explicit wrapped body.contact_id > workflow.default_contact_id_from > NULL
  *
  * Returns the new execution ID and kicks off advanceWorkflow in the background.
+ *
+ * Optional `Idempotency-Key` header (scope workflows.start): a repeat of the
+ * key answers the first run's response with `replayed: true` and starts
+ * nothing; a failure after the claim keeps it (see the handler).
  */
 router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
   const db = req.db;
@@ -670,6 +674,19 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
   }
 
   try {
+    // Optional `Idempotency-Key` header (P4, extended here for A17.7 — scope
+    // workflows.start). A start is a FAN-OUT, not a create: once the execution
+    // row commits, the detached advance may already be running steps that
+    // send, write and start other runs. So it follows the SENDS rule
+    // (releaseOnRefusalOnly), not the creates' rule: only a status-bearing 4xx
+    // refusal raised below BEFORE the INSERT (404 / inactive / never published
+    // / no draft / bad contact_id) gives the key back; any other failure —
+    // a 5xx, a lost commit acknowledgement — KEEPS the claim, so a repeat of
+    // the key is 409 in_flight → unknown and can never start a second run. A
+    // replay answers the FIRST run's response (same executionId) with
+    // `replayed: true` and starts nothing. No key = unchanged behaviour and no
+    // extra query (native callers, the editor's Run button, x-api-key starts).
+    const { value: started, replayed } = await idempotentRequest(req, 'workflows.start', async () => {
     const outcome = await db.withTransaction(async (connection) => {
 
     // Load id + default_contact_id_from in one shot. Adding the column to the
@@ -755,20 +772,32 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
       return { executionId: result.insertId, contactId };
     });
 
+    // A refusal is thrown (not returned) so the idempotency claim is released
+    // — it is raised before the INSERT, so nothing started. The transaction
+    // has already COMMITTED by here, which keeps a refused start's capture
+    // sample exactly as before (captureRefusedStart is arm-once guarded, so a
+    // retried key cannot capture twice).
     if (outcome.respond) {
-      return res.status(outcome.respond.status).json(outcome.respond.body);
+      throw Object.assign(new Error(outcome.respond.body.error), { status: outcome.respond.status, startRefusal: outcome.respond });
     }
-
-    const { executionId, contactId } = outcome;
-
-    res.status(202).json({
+    return {
       success: true,
-      executionId,
+      executionId: outcome.executionId,
       workflowId,
-      contactId,     // echo back so callers can verify the resolved value
+      contactId: outcome.contactId,     // echo back so callers can verify the resolved value
       status: "processing",
       message: "Workflow execution started and is now processing"
-    });
+    };
+    }, { releaseOnError: releaseOnRefusalOnly });
+
+    if (replayed) {
+      // The first request's run, not a new one — and nothing is advanced.
+      return res.status(202).json({ ...started, replayed: true,
+        message: `This request already started execution ${started.executionId}; nothing was started again` });
+    }
+
+    const { executionId } = started;
+    res.status(202).json(started);
 
     // Background advance — no timeout needed; recoverStuckJobs handles hangs
     (async () => {
@@ -781,6 +810,10 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     })();
 
   } catch (err) {
+    if (err && err.startRefusal) {
+      return res.status(err.startRefusal.status).json(err.startRefusal.body);
+    }
+    if (sendIdempotencyError(res, err)) return;
     console.error(`[START] Failed:`, err);
     res.status(500).json({ error: "Failed to start workflow", message: err.message });
   }

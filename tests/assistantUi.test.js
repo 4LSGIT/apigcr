@@ -68,6 +68,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'workflowStepActionLabel', 'workflowStepWorkflowLine', 'workflowStepInsertText', 'workflowStepEditValue',
   'workflowStepEditText', 'workflowStepActionText', 'workflowStepActionRequest', 'workflowStepActionResult',
   'workflowPublishLabel', 'workflowPublishChangeLine', 'workflowPublishText', 'workflowPublishRequest', 'workflowPublishResult',
+  'workflowStartLabel', 'workflowStartText', 'workflowStartRequest', 'workflowStartPrecheck', 'workflowStartResult',
   'hookCreateLabel', 'hookTargetText', 'hookCreateText', 'hookCreateRequest', 'hookCreateResult',
   'sequenceStepActionLabel', 'sequenceStepParamValue', 'sequenceStepText', 'sequenceStepActionRequest', 'sequenceStepActionResult',
   'sequencePublishLabel', 'sequencePublishChangeLine', 'sequencePublishText', 'sequencePublishRequest', 'sequencePublishResult',
@@ -92,7 +93,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'TASK_ACTION_KINDS'), constSrc(html, 'EVENT_ACTION_KINDS'),
     constSrc(html, 'APPT_ACTION_KINDS'), constSrc(html, 'CONTACT_SUBRECORD_ACTION_KINDS'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
-    constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'),
+    constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
     constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
     constSrc(html, 'REPORT_ACTION_KINDS'), constSrc(html, 'INGEST_RULE_ACTION_KINDS'), constSrc(html, 'INGEST_RULE_PATHS'),
     constSrc(html, 'INGEST_RULE_UPDATE_FIELDS'), constSrc(html, 'INGEST_ACTION_UPDATE_FIELDS'),
@@ -1325,6 +1326,112 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     await actionSandbox({ P, api: refusedApi, ledgerApi, saveAssistantMessage: jest.fn() }).executeActionDraft(stale);
     expect(stale.action_draft.refusal_error).toBe('The sequence template changed since this card was reviewed, so the server refused the publish — nothing was written. Ask Casey to read the template again and rebuild the proposal.');
     expect(stale.action_draft).not.toHaveProperty('ambiguous_error');
+  });
+
+  // A17.7: the workflow start card through the SHARED engine — the one
+  // automation card that EXECUTES. Pinned: the click-time re-read refuses
+  // before the ledger claim, the request is exactly {init_data:{}} keyed by
+  // the draft_id, the receipt is the run, the applied card deep-links to the
+  // EXECUTION (not the workflow — the A19.1 record-kind lesson), and every
+  // outcome reads in A14's vocabulary.
+  const startMessage = (over = {}) => ({ action_draft: {
+    draft_id: '7a1d2e3f-4a5b-4c6d-8e7f-0123456789ab', kind: 'workflow.start.v1', status: 'draft', received_at: Date.now(),
+    workflow: { workflow_id: 5, name: 'Daily Appointment Report', active: 1, version: 3, step_count: 4, has_draft: 1 },
+    unset_inputs: ['day', 'source'],
+    starters: [{ source: 'trigger_rule', name: 'Daily 7am', active: 1 }],
+    effects: ['step 3: send_email — external-send: messages staff@4lsg.com on this run', 'step 4: webhook POST → hooks.example.com'],
+    in_flight_count: 1, recent: { runs_90d: 77, avg_steps: 10.7 },
+    expected: { current_version: 3 }, evidence: [],
+    // Model-shaped junk that must never reach the request.
+    use_draft: true, init_data: { x: 1 }, contact_id: 9,
+    ...over } });
+  const startReads = (over = {}) => (path) => {
+    if (path !== '/workflows/5') throw new Error(`unexpected read ${path}`);
+    return { success: true, workflow: { id: 5, active: 1, current_version: 3, draft_version: 4, ...(over.workflow || {}) },
+      steps: over.steps || [], has_draft: over.has_draft !== undefined ? over.has_draft : true };
+  };
+  function runStart(message, { read = startReads(), write = async () => ({ success: true, executionId: 901, workflowId: 5, contactId: null, status: 'processing' }), confirm = true } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); return read(path); }
+      writes.push({ path, body, method, headers }); return write(path, body);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-start' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) }, ycAssistantNavigate: jest.fn().mockResolvedValue(true) };
+    const history = [];
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, sandbox }));
+  }
+
+  test('workflow start card: danger dialog, click-time re-read, ONE keyed POST of {init_data:{}}, execution receipt and deep link', async () => {
+    const m = startMessage();
+    const { writes, gets, ledger, P, history, sandbox } = await runStart(m);
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('workflow_start');
+    expect(gets).toEqual(['/workflows/5']);
+    expect(writes).toEqual([{ path: '/workflows/5/start', method: 'POST', body: { init_data: {} },
+      headers: { 'Idempotency-Key': m.action_draft.draft_id } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-start', result: { execution_id: 901 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_started_execution_id: 901 });
+    expect(history[0].text).toBe('Started "Daily Appointment Report" (workflow #5, v3): execution #901.');
+    expect(P.ycAssistantNavigate).toHaveBeenCalledWith('automations.workflow', { id: 901, record: 'execution' });
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Start workflow run' });
+    expect(dialog.text).toMatch(/^This starts ONE run of "Daily Appointment Report" NOW\. It cannot be undone/);
+    expect(dialog.text).toContain('runs published v3 (4 steps); it also has an unpublished draft — this start runs v3, NOT the draft');
+    expect(dialog.text).toContain('Input: NONE — no contact and no variables are sent with this start.');
+    expect(dialog.text).toContain('Blank inputs: this version reads {{day}}, {{source}}, which no step sets — on this run each resolves BLANK.');
+    expect(dialog.text).toContain('  trigger_rule: "Daily 7am"');
+    expect(dialog.text).toContain('  step 3: send_email — external-send: messages staff@4lsg.com on this run');
+    expect(dialog.text).toContain('Runs in flight: 1 already running (any version). Recent volume: 77 run(s) in 90 days, about 10.7 steps each.');
+    expect(dialog.text).toContain('A start is immediate and irreversible fan-out');
+  });
+
+  test('workflow start card: a deactivated workflow, a new published version, or standard code refuses BEFORE the claim', async () => {
+    const cases = [
+      [startReads({ workflow: { active: 0 } }), 'The workflow was deactivated since this card was prepared. Nothing was started.'],
+      [startReads({ workflow: { current_version: 4, draft_version: null } }), 'The workflow\'s published version changed (v3 → v4) since this card was prepared. Nothing was started.'],
+      [startReads({ has_draft: false, workflow: { draft_version: null },
+        steps: [{ step_number: 1, type: 'custom_code', config: { code: '1;' } }] }), 'The published version now has a standard-mode code step. Nothing was started.'],
+      [() => ({ success: true }), 'The workflow no longer exists. Nothing was started.'],
+    ];
+    for (const [read, why] of cases) {
+      const m = startMessage();
+      const { writes, ledger } = await runStart(m, { read });
+      expect({ why, writes, ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(m.action_draft.refusal_error).toContain(why);
+    }
+    // Safe-mode code on the published steps passes the re-read.
+    const safe = startMessage();
+    const ok = await runStart(safe, { read: startReads({ has_draft: false, workflow: { draft_version: null },
+      steps: [{ step_number: 1, type: 'custom_code', config: JSON.stringify({ code: '1;', code_mode: 'safe' }) }] }) });
+    expect(ok.writes).toHaveLength(1);
+  });
+
+  test('workflow start card: refusal, unknown and replay outcomes read in A14\'s vocabulary', async () => {
+    // A plain 409 (audited pre-INSERT) is a refusal — nothing started.
+    const refused = startMessage();
+    await runStart(refused, { write: async () => { throw Object.assign(new Error('Workflow is inactive'), { status: 409, body: { error: 'Workflow is inactive' } }); } });
+    expect(refused.action_draft.refusal_error).toBe('Refused — nothing started (Workflow is inactive). Ask Casey to prepare the start again.');
+    expect(refused.action_draft).not.toHaveProperty('ambiguous_error');
+    // An idempotency 409, a 5xx and a dead socket are UNKNOWN — the write control goes.
+    for (const err of [
+      Object.assign(new Error('The same request is still being applied.'), { status: 409, body: { idempotency: { outcome: 'in_flight' } } }),
+      Object.assign(new Error('Failed to start workflow'), { status: 500, body: {} }),
+      new Error('Failed to fetch'),
+    ]) {
+      const m = startMessage();
+      await runStart(m, { write: async () => { throw err; } });
+      expect(m.action_draft.ambiguous_error).toMatch(/^Outcome unknown — the run may or may not have started .*Check the workflow's executions before starting again\. Do not apply this card again\.$/);
+      expect(m.action_draft).not.toHaveProperty('refusal_error');
+    }
+    // A replay names the first run and says nothing started twice.
+    const replay = startMessage();
+    const { history } = await runStart(replay, { write: async () => ({ success: true, executionId: 900, workflowId: 5, replayed: true }) });
+    expect(history[0].text).toBe('This start of "Daily Appointment Report" had already run as execution #900; nothing was started a second time.');
+    expect(replay.action_draft.result_started_execution_id).toBe(900);
+    // Cancel starts nothing and reads nothing.
+    const cancelled = await runStart(startMessage(), { confirm: false });
+    expect([cancelled.writes, cancelled.gets, cancelled.ledger]).toEqual([[], [], []]);
   });
 
   // A20.2 / A20.3: the ingest rule family through the SHARED engine. The

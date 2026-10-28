@@ -70,8 +70,9 @@ body. Governing migrations in `ref/migrations/`.*
   user can send from (the route stays the authority). Both routes take an
   optional `Idempotency-Key` (`phone_lines.sms_send`, `mail.send`) with
   `releaseOnRefusalOnly`: a send that fails after dispatch KEEPS its claim
-  (409 in_flight → unknown), only a pre-dispatch 4xx releases it — the one
-  wired scope where a failure does not free the key. Native callers without a
+  (409 in_flight → unknown), only a pre-dispatch 4xx releases it — with
+  `workflows.start` (A17.7), the wired scopes where a failure does not free
+  the key. Native callers without a
   key are unchanged. Off switch `casey_send_enabled`. Plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A14.
 - **Casey authors email/phone ingest rules (A20.2 + A20.3, 10-27):** six
@@ -343,6 +344,33 @@ body. Governing migrations in `ref/migrations/`.*
   (ref/plans.md). Tests: `tests/caseySequencePublish.test.js`, gated
   `tests/caseySequencePublish.mysql.test.js`; plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A18.3.
+- **Workflow start idempotency + Casey start card (A17.7, 10-28):**
+  `POST /workflows/:id/start` takes an optional `Idempotency-Key` (scope
+  `workflows.start`) under the SEND rule (`releaseOnRefusalOnly`): only a
+  pre-INSERT 4xx refusal (404 / inactive / never published / no draft / bad
+  contact_id) releases the claim; a 5xx or lost commit ack keeps it, so a key
+  can never start a second run. A replay answers the FIRST run's body with
+  `replayed: true` and advances nothing. No key = unchanged, zero extra
+  queries. Kind `workflow.start.v1`: the model supplies only `workflow_id`
+  + evidence; Casey starts the PUBLISHED version only (`use_draft` refused by
+  name, unexpressible by the fixed builder) with NO input — the body is pinned
+  `{init_data: {}}` (measured 10-28: 7,999 of 8,002 live runs in 90 days
+  carried input, so the card lists the `{{placeholders}}` no step sets, which
+  resolve blank). Refused: inactive, never published, a STANDARD-mode code
+  step in the published version (`standardCodeStepNumbers`, shared with
+  A17.6). The card shows effects (shared with publish), starters, in-flight
+  runs (`pending|active|processing|delayed|held`, any version), 90-day
+  volume. Click-time precheck re-reads `GET /workflows/:id` (active,
+  `current_version` unchanged — a published version's steps are never edited
+  in place). Ledger receipt `execution_id`; the applied card deep-links to
+  the run via `ycAssistantNavigate('automations.workflow', {id, record:
+  'execution'})` → rest `workflows~<id>~execution` (closed `records` list in
+  the shell, `ASSISTANT_SECONDARY_RECORDS` in the manager). Own off switch
+  `casey_workflow_start_enabled` (a start executes, authoring flags do not
+  cover it). No yc-sync matcher (no workflow route has one; the run's own
+  writes are server-side). Tests: `tests/caseyWorkflowStart.test.js`, gated
+  `tests/caseyWorkflowStart.mysql.test.js`; plan:
+  ref/ASK_CASEY_ACTIONS_PLAN.md A17.7.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL
