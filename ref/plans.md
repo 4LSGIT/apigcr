@@ -53,7 +53,7 @@ Deferred from the arc:
   non-attorney), so a send- or manage-only line grant shows in neither My
   access nor Manage access (none exists today; only SU manages lines).
   Fix: an any-grant phone listing for the caller.
-- **`quo_api_key` → a credentials row** like `comms_stt_credential_id`;
+- **Delete the `quo_api_key` row** (its last reader, services/quoService.js, was deleted 2026-10-28; Quo sends authenticate through a Connections credential) — then the key can retire;
   `rc_token` / `rc_subscriptions` go with the RingCentral retirement.
 - **The legacy `settings` table** has no reader (AUDIT_TENANCY §B4): drop it.
 - **`fe-*` shipping.** Every `fe-` row ships to every staff browser through
@@ -1280,7 +1280,7 @@ Active surfaces with known next steps.
 - **Custom fields: per-case-type scoping as data (if it gets common).** Since 2026-10-06 a case field meant for some types is a `show_when` on `case_type` (one Custom Fields section, mounted by every Case Details variant). `show_when` v1 is ONE condition, so a type-scoped field cannot also carry a second condition. If that bites, add a first-class `case_types` (JSON list) to `field_defs`, ANDed with `show_when`, rather than growing v1 into and/or trees.
 
 
-- **SMS auth-only migration (active now, not really "future").** `quoService.js` and `ringcentralService.js` move from `app_settings.quo_api_key` / `app_settings.rc_token` + parallel OAuth state to `buildHeadersForCredential(db, credential_id, url)`. Quo first (smaller blast radius), RC after. Cleanup deletes `loadToken`, `refreshAccessToken`, the boot-time load, and the `routes/internal/mms.js` `loadToken` middleware. The same pattern applies to email (`emailService.js`) once SMS is done — `email_credentials.smtp_pass` (ENCv1-encrypted since 2026-10-08) also goes away as part of email's migration to Connections.
+- **SMS auth-only migration (active now, not really "future").** `ringcentralService.js` moves from `app_settings.rc_token` + parallel OAuth state to `buildHeadersForCredential(db, credential_id, url)`. Quo is done: its phone driver authenticates through its credential, and the dead `quoService.js` / `smsService.js` were deleted 2026-10-28. Cleanup deletes `loadToken`, `refreshAccessToken`, the boot-time load, and the `routes/internal/mms.js` `loadToken` middleware. The same pattern applies to email (`emailService.js`) once SMS is done — `email_credentials.smtp_pass` (ENCv1-encrypted since 2026-10-08) also goes away as part of email's migration to Connections.
 
 ---
 

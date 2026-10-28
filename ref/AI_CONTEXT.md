@@ -691,7 +691,7 @@ general-practice firm), Google Cloud Run, ~8 staff accounts.
 
 Shared: `scheduled_jobs` unified queue; `lib/internal_functions/` registry;
 `resolverService` ({{table.column}}); `calendarService` (Jewish business
-calendar); `smsService`/`emailService` (routed via `phone_lines` /
+calendar); `phoneService`/`emailService` (routed via `phone_lines` /
 `email_credentials`); `settingsService`; `timezoneService`; `pabblyService`
 (retiring bridge). All job types drain through `/process-jobs` (Cloud
 Scheduler, every minute; near-due jobs also get a Cloud Tasks push — §10) →
@@ -800,7 +800,7 @@ ref/plans.md).
 `res.json()` — never block the response. Consequence: the UI can report
 success while a post-commit side effect fails; verify via DB, not UI.
 
-**Signature quirks:** `smsService.sendSms(db, from, to, message)` positional;
+**Signature quirks:** `phoneService.sendSms(db, from, to, message)` positional;
 `emailService.sendEmail(db, {from,to,subject,text?,html?,attachments?})`
 object. `/internal/mms/send` takes singular `attachment_url`.
 

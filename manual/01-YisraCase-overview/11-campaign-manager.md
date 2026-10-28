@@ -27,7 +27,7 @@ POST /api/campaigns
                 ├─ Check campaign status (bail if canceled)
                 ├─ Check the destination's opt-out (its phone / email row)
                 ├─ Resolve {{placeholders}} via resolverService
-                ├─ Send via smsService or emailService
+                ├─ Send via phoneService or emailService
                 ├─ Record result in campaign_results
                 └─ Check if campaign is complete → finalize status
 ```
@@ -212,7 +212,7 @@ When `/process-jobs` picks up a `campaign_send` job, `job_executor.js` delegates
 4. **Check opt-out** — the destination's active phone / email row opted out → record as `skipped` (`sms_optout` / `email_optout`)
 5. **Check channel info** — missing phone for SMS or email for email → record as `failed`
 6. **Resolve placeholders** — `resolverService.resolve()` with `refs: { contacts: { contact_id } }`
-7. **Send** — `smsService.sendSms()` or `emailService.sendEmail()` (handles text↔html auto-conversion)
+7. **Send** — `phoneService.sendSms()` or `emailService.sendEmail()` (handles text↔html auto-conversion)
 8. **Record result** — INSERT into `campaign_results` (INSERT IGNORE for retry safety)
 9. **Check completion** — if all contacts processed, finalize campaign status
 

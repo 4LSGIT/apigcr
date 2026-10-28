@@ -372,7 +372,7 @@ Send a single SMS via the firm's phone lines.
 | `to` | string | yes (placeholderAllowed) | — | Recipient phone (any common format). |
 | `message` | string | yes (placeholderAllowed, multiline) | — | Message body. |
 
-Uses `smsService.sendSms(db, from, to, message)` (positional args). MMS only works with RingCentral provider.
+Uses `phoneService.sendSms(db, from, to, message)` (positional args). MMS only works with RingCentral provider.
 
 #### `send_email`
 

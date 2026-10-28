@@ -85,11 +85,16 @@ const SCAN_BLIND = {
   // app_settings.calendly_webhook_signing_key"); the row is the record of a
   // secret the provider never shows again.
   calendly_webhook_signing_key: 'stored for the record only — no code reads it',
+  // Nothing reads it since services/quoService.js was deleted (2026-10-28): the
+  // Quo phone driver authenticates through its Connections credential. Stays a
+  // registered secret until its row is deleted.
+  quo_api_key: 'no code reads it — the phone driver uses its Connections credential',
 };
 
 /** (b) Registered, non-retired keys with no quoted literal anywhere, and why. */
 const EXEMPT = {
   calendly_webhook_signing_key: 'stored for the record only — no code reads it (see SCAN_BLIND)',
+  quo_api_key: 'no code reads it since services/quoService.js was deleted (2026-10-28); the phone driver uses its Connections credential',
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -498,7 +503,6 @@ describe('the forward scan has not rotted', () => {
     expect(via('email_it', / cfg\(\)$/)).toBe(true);
     expect(via('firm_address', / cfgJson\(\)$/)).toBe(true);
     expect(via('landing_hosts', / cfgList\(\)$/)).toBe(true);
-    expect(via('quo_api_key', /services\/quoService\.js SQL$/)).toBe(true);
     expect(via('gcontacts_exclude_email_domains', /services\/gContactsService\.js SQL$/)).toBe(true);   // joined across +
     expect(via('internal_api_key_prev', /routes\/admin\.apiKeys\.js SQL$/)).toBe(true);
     expect(via('gcontacts_group', /SQL$/)).toBe(true);                                             // INSERT … VALUES ('k'

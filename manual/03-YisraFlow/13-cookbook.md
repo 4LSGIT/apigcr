@@ -119,7 +119,7 @@ Available in `lib/internal_functions/`, callable by all three engines. Signature
 
 ```js
 // positional args — no object
-smsService.sendSms(db, from, to, message)
+phoneService.sendSms(db, from, to, message)
 
 // object arg
 emailService.sendEmail(db, { from, to, subject, text?, html?, attachments?, attachment_urls? })
@@ -1374,7 +1374,7 @@ These have tripped you up before. They're different on purpose:
 
 ```js
 // SMS — POSITIONAL
-await smsService.sendSms(db, from, to, message);
+await phoneService.sendSms(db, from, to, message);
 
 // Email — OBJECT
 await emailService.sendEmail(db, { from, to, subject, text, html, attachments, attachment_urls });

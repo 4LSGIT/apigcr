@@ -1076,7 +1076,6 @@ services/portalAuthService.js
 services/portalCallbackService.js
 services/portalCaseService.js
 services/portalDocsService.js
-services/quoService.js
 services/reportAuthorService.js
 services/reportService.js
 services/requirementDetectors.js
@@ -1085,7 +1084,6 @@ services/resolverService.js
 services/ringcentralService.js
 services/searchService.js
 services/settingsService.js
-services/smsService.js
 services/stepPreviewService.js
 services/storageService.js
 services/taskService.js
