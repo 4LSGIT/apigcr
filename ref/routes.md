@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-28T04:37:58.885Z_  
-_811 routes total — DELETE: 66, GET: 338, PATCH: 58, POST: 309, PUT: 37, _ALL: 3_
+_Generated 2026-10-28T05:04:23.734Z_  
+_819 routes total — DELETE: 68, GET: 341, PATCH: 59, POST: 310, PUT: 38, _ALL: 3_
 
 ## Global middleware chain
 
@@ -612,6 +612,14 @@ _811 routes total — DELETE: 66, GET: 338, PATCH: 58, POST: 309, PUT: 37, _ALL:
 | DELETE | `/api/sequence-types/:type` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/sequence-types/:type` | `jwtOrApiKey` | — |
 | PUT | `/api/sequence-types/:type` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| GET | `/api/shared` | `staffAuth` | — |
+| POST | `/api/shared` | `staffAuth` | — |
+| DELETE | `/api/shared/:ns` | `staffAuth` | — |
+| GET | `/api/shared/:ns` | `staffAuth` | — |
+| PATCH | `/api/shared/:ns` | `staffAuth` | — |
+| DELETE | `/api/shared/:ns/:k` | `staffAuth` | — |
+| GET | `/api/shared/:ns/:k` | `staffAuth` | — |
+| PUT | `/api/shared/:ns/:k` | `staffAuth` | — |
 | POST | `/api/streak/auth/:slug` | `<anonymous>`, `memberAuth` | — |
 | GET | `/api/streak/board/:slug` | `<anonymous>`, `memberAuth` | — |
 | DELETE | `/api/streak/board/:slug/checkin` | `<anonymous>`, `memberAuth` | — |
@@ -1086,4 +1094,4 @@ _811 routes total — DELETE: 66, GET: 338, PATCH: 58, POST: 309, PUT: 37, _ALL:
 
 ---
 
-_811 routes total — DELETE: 66, GET: 338, PATCH: 58, POST: 309, PUT: 37, _ALL: 3_
+_819 routes total — DELETE: 68, GET: 341, PATCH: 59, POST: 310, PUT: 38, _ALL: 3_

@@ -61,6 +61,13 @@ Deferred from the arc:
 - **Terminology layer** (YC 3.0: the case / matter label map) — a future
   Firm-tab section; a structured document, so ui_config-shaped, not
   app_settings scalars.
+- **Shared values: storage caps** (AI_CONTEXT §35, 2026-10-28). Any staff
+  member creates a namespace and its creator may raise its limits to
+  10,000 keys × 1 MB — up to ~10 GB in one namespace, and nothing caps how
+  many namespaces one person makes. Insider-only and unlikely in a small
+  firm, so not built: when it matters, a per-creator namespace count and a
+  per-namespace (or total) byte budget checked on create / PATCH. A page
+  read is already held to 8 MB.
 
 ---
 

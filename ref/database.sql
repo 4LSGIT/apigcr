@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-28T01:44:14.667Z
+-- Generated: 2026-10-28T05:04:30.862Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:c33407b4bb88bdb882d050b33fc3fafa
+-- Fingerprint: sha256:5527948b6d8185e668f071e9ace439d2
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -3455,6 +3455,42 @@ CREATE TABLE `settings` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `shared_namespaces`
+--
+
+DROP TABLE IF EXISTS `shared_namespaces`;
+CREATE TABLE `shared_namespaces` (
+  `ns` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'namespace name, ^[a-z0-9][a-z0-9_-]{0,63}$ (route-enforced); utf8mb4_bin so case never folds two names together (it is still PAD SPACE, so trailing spaces would: the pattern refusing spaces keeps every name distinct)',
+  `description` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'what the namespace is for (free text, shown in listings)',
+  `write_mode` enum('staff','creator','own_key') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'staff' COMMENT 'who may write values: staff = any staff; creator = created_by or a firm.settings holder; own_key = each user only the key equal to their users.user (firm.settings any). App-validated (relaxed sql_mode stores an unknown value as an empty string, which writes refuse)',
+  `max_value_bytes` int unsigned NOT NULL DEFAULT '65536' COMMENT 'largest value (UTF-8 bytes) a write may store; refused at the route BEFORE SQL (relaxed sql_mode would truncate silently). 1..1048576',
+  `max_keys` int unsigned NOT NULL DEFAULT '1000' COMMENT 'most keys the namespace may hold; a create beyond it is refused. 1..10000',
+  `created_by` tinyint NOT NULL COMMENT 'users.user who created it (manages it, with firm.settings holders)',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Shared values: staff-created namespaces of staff-written key/value pairs (routes/api.shared.js). Values are UNTRUSTED text: render with textContent, never as HTML. Not config: app_settings is.';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `shared_values`
+--
+
+DROP TABLE IF EXISTS `shared_values`;
+CREATE TABLE `shared_values` (
+  `ns` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'shared_namespaces.ns (FK, cascade delete)',
+  `k` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'key within the namespace, ^[a-z0-9][a-z0-9_-]{0,63}$ (route-enforced); utf8mb4_bin',
+  `v` mediumtext COLLATE utf8mb4_general_ci NOT NULL COMMENT 'the value, verbatim (UNTRUSTED staff-written text; size capped per namespace by the route)',
+  `rev` int unsigned NOT NULL DEFAULT '1' COMMENT 'compare-and-set revision: 1 on create, +1 per write; a write names the rev it read and is refused (409) when it moved',
+  `updated_by` tinyint NOT NULL COMMENT 'users.user of the last writer, stamped by the server from the JWT (a live View-as: the target user)',
+  `updated_act` tinyint DEFAULT NULL COMMENT 'users.user of the human behind a live View-as session that made the last write; NULL otherwise',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Shared values (routes/api.shared.js): one row per key. UNTRUSTED staff-written text — render with textContent. Kept out of update_db / insert_db / query_db.';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `signing_request_events`
 --
 
@@ -5230,6 +5266,18 @@ ALTER TABLE `settings`
   ADD UNIQUE KEY `uniq_setting_name` (`setting_name`);
 
 --
+-- Indexes for table `shared_namespaces`
+--
+ALTER TABLE `shared_namespaces`
+  ADD PRIMARY KEY (`ns`);
+
+--
+-- Indexes for table `shared_values`
+--
+ALTER TABLE `shared_values`
+  ADD PRIMARY KEY (`ns`,`k`);
+
+--
 -- Indexes for table `signing_request_events`
 --
 ALTER TABLE `signing_request_events`
@@ -6501,6 +6549,12 @@ ALTER TABLE `sequence_steps`
 --
 ALTER TABLE `sequence_template_versions`
   ADD CONSTRAINT `fk_stv_template` FOREIGN KEY (`template_id`) REFERENCES `sequence_templates` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `shared_values`
+--
+ALTER TABLE `shared_values`
+  ADD CONSTRAINT `fk_shared_values_ns` FOREIGN KEY (`ns`) REFERENCES `shared_namespaces` (`ns`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `tool_versions`

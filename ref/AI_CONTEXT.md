@@ -3162,3 +3162,47 @@ Routes: `routes/api.commsArchive.js`, `api.commsEval.js`; the archive rides
 `api.phoneComms.js` / `api.entityComms.js` via `commsArchiveView.decorate`
 (§20). Health: `GET /api/comms-archive/health` (System Alerts → Comms archive).
 Deferred work: `ref/plans.md`, the comms phone-tab list.
+
+## ═══════════════════════════════════════════════════════════════
+## 35. SHARED VALUES — STAFF-WRITTEN NAMESPACES (settings-access arc, Oct 2026)
+## ═══════════════════════════════════════════════════════════════
+
+**What.** Runtime data several staff write — an office high score, a "who is
+on call" note, a counter a tool keeps. NOT configuration (that is
+app_settings, §32: one editor per key, history, cache) and NOT AI-session
+state (rw_scratch, §22). Tables `shared_namespaces` (ns, write_mode,
+max_value_bytes, max_keys, created_by) and `shared_values` (ns, k, v, rev,
+updated_by, updated_act; FK ns ON DELETE CASCADE); migration
+`scripts/sharedValuesMigrate.js` (+ `ref/migrations/2026-10-28_shared_values.sql`).
+Rules in `services/sharedValuesService.js` (its header); HTTP in
+`routes/api.shared.js`: GET/POST `/api/shared`, GET/PATCH/DELETE
+`/api/shared/:ns`, GET/PUT/DELETE `/api/shared/:ns/:k`.
+
+**Invariants.**
+- Staff JWT only (`requireAuth({audience:'staff'})`, no API keys). Read-only
+  View-as writes are refused by the middleware; a live View-as writes as its
+  target with the human stamped in `updated_act`.
+- Any staff member creates a namespace (Fred, 2026-10-28); its creator and
+  `firm.settings` holders manage it. `write_mode` staff (default) | creator |
+  own_key (k = the caller's users.user); any other stored value (relaxed
+  sql_mode turns a bad enum into '') refuses every write.
+- Every value write is compare-and-set on `rev`: PUT `{v, rev}` with rev null
+  = create-only, rev n = update only from n; a miss is 409 with `current`.
+  `rev` is required — there is no blind overwrite. Creates lock the namespace
+  row so `max_keys` holds under concurrency (real-engine twin
+  `tests/sharedValues.mysql.test.js`). Every 409 / 404 decision after a
+  failed write re-reads FOR SHARE: under REPEATABLE READ a plain read returns
+  the transaction's snapshot, so a loser was told a stale rev (and a lost
+  delete race read 409, not 404) — review of b902a84.
+- A namespace page (`GET /api/shared/:ns`) holds at most 8 MB of values:
+  limit ≤ floor(8 MB / max_value_bytes); `trimmed` says it was cut. Storage
+  caps per creator / per namespace are deferred (`ref/plans.md`).
+- Sizes are refused in UTF-8 bytes BEFORE SQL (relaxed sql_mode truncates
+  silently): `max_value_bytes` ≤ 1 MB, `max_keys` ≤ 10,000.
+- ns / k match `^[a-z0-9][a-z0-9_-]{0,63}$`; the columns are utf8mb4_bin, which
+  is still PAD SPACE — the pattern (no spaces) is what keeps names distinct.
+- Values are UNTRUSTED staff-written text: render with textContent, never
+  innerHTML (a tool runs on the app origin as whoever opens it).
+- Out of automation's reach: not in update_db / insert_db WRITE_POLICY nor
+  query_db (lib/internal_functions/db.js, DELIBERATELY EXCLUDED). Readable by
+  session keys through `/api/readonly/sql` (not a secret table) — as data.

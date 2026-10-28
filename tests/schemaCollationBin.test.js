@@ -34,6 +34,12 @@ const BIN_COLUMNS = [
   ['users',             'reset_token'],
   // CTA bearer (/c/<t>) — ref/migrations/2026-10-07_cta.sql creates it _bin.
   ['cta_links',         'token'],
+  // Shared values (2026-10-28) — ref/migrations/2026-10-28_shared_values.sql.
+  // Names are case-SENSITIVE; the route's lowercase-only regex keeps PAD SPACE
+  // from ever merging two of them.
+  ['shared_namespaces', 'ns'],
+  ['shared_values',     'ns'],
+  ['shared_values',     'k'],
 ];
 
 /**
