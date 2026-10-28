@@ -99,6 +99,19 @@ describe('assistant read-plan boundary', () => {
       .toThrow(/unsupported URL parameter/);
   });
 
+  test('a firm page head (launcher-nits L4a: ?open=firm:<slug>[~panel~rest]) is a workspace tab; nothing else outside the list is', () => {
+    const { FIRM_ID_RE } = require('../lib/uiConfigShape');
+    const ctx = (open) => ({ v: 1, canonical_url: '/?open=' + encodeURIComponent(open), files: [],
+      active: { kind: 'workspace', tab: open.split('~')[0], rest: open.split('~').slice(1).join('~') } });
+    expect(svc.normalizeWorkspaceContext(ctx('firm:more~moreAutomations~workflows')).active)
+      .toEqual({ kind: 'workspace', tab: 'firm:more', rest: 'moreAutomations~workflows' });
+    // the same grammar as a firm item id: what that refuses, this refuses
+    for (const head of ['firm:ops', 'firm:a-b-1', 'firm:' + 'x'.repeat(40), 'firm:' + 'x'.repeat(41), 'firm:Ops', 'firm:', 'firm:a_b', 'user:desk', 'ycPage-1', 'firm:ops:x']) {
+      const ok = (() => { try { svc.normalizeWorkspaceContext(ctx(head)); return true; } catch (e) { expect(e.message).toMatch(/unavailable workspace tab/); return false; } })();
+      expect([head, ok]).toEqual([head, FIRM_ID_RE.test(head)]);
+    }
+  });
+
   test('workspace entity ids are checked before the model sees them', async () => {
     const db = { query: jest.fn().mockResolvedValueOnce([[]]) };
     await expect(svc.validateWorkspaceContext(db, WORKSPACE)).rejects.toThrow(/case that is unavailable/);

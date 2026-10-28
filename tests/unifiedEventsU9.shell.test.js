@@ -422,10 +422,13 @@ describe('U9b-P2 — F5 restore goes through each tab\'s opener', () => {
       openApptsTab: rec('openApptsTab'), openCalendarTab: rec('openCalendarTab'),
       openEventsTab: rec('openEventsTab'), openLogsTab: rec('openLogsTab'),
       openMainTab: (t) => calls.push('openMainTab:' + t),
+      E: () => null,                                   // no DOM here: no firm page tab exists
     });
-    // wsurl S2: openMainTabOnBoot reads the drill-surface map — the real source, extracted.
+    // wsurl S2: openMainTabOnBoot reads the drill-surface map — the real source, extracted
+    // (and, since launcher-nits L4a, the firm-page test beside it).
     vm.runInContext(/var WS_DRILL_SURFACE = \{[^}]*\};/.exec(SHELL)[0] + '\n'
-      + fnSrc(SHELL, 'openMainTabOnBoot') + '\nthis.f = openMainTabOnBoot;', ctx);
+      + /var WS_FIRM_PAGE_RE = [^;\n]*;/.exec(SHELL)[0] + '\n'
+      + ['wsFirmPageId', 'wsDrillSurface', 'openMainTabOnBoot'].map((n) => fnSrc(SHELL, n)).join('\n') + '\nthis.f = openMainTabOnBoot;', ctx);
     return { f: ctx.f, calls };
   }
 

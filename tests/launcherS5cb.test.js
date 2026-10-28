@@ -68,7 +68,8 @@ const TABS_SRC = slice('    function openMainTab(tabName) {', '    // ---- Globa
 const CURRENT_SRC = fnSrc('currentMainTabId');
 const WS_SRC = [pick(/const YC_LABEL_KEY = "ycFileLabels";/), pick(/var wsMainRest = \{\};/), pick(/var wsPanelRest = \{\};/),
   pick(/var WS_DRILL_SURFACE = \{[^}]*\};/),
-  ...['wsDrillPanels', 'wsOpenPanel', 'wsTabRest', 'wsSetFileRest', 'wsOpenTarget', 'wsMainTabAllowed', 'currentOpenFilesUrl'].map(fnSrc)].join('\n');
+  pick(/var WS_FIRM_PAGE_RE = [^;\n]*;/),
+  ...['wsFirmPageId', 'wsFirmPageTabs', 'wsDrillSurface', 'wsDrillPanels', 'wsOpenPanel', 'wsTabRest', 'wsSetFileRest', 'wsOpenTarget', 'wsMainTabAllowed', 'currentOpenFilesUrl'].map(fnSrc)].join('\n');
 const HIDE_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 
 const J = (x) => JSON.parse(JSON.stringify(x));

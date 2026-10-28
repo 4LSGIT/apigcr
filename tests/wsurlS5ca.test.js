@@ -274,7 +274,8 @@ function realShell() {
     ${pick(/var wsMainRest = \{\};/)}
     ${pick(/var wsPanelRest = \{\};/)}
     ${pick(/var WS_DRILL_SURFACE = \{[^}]*\};/)}
-    ${['wsDrillPanels', 'wsPageTile', 'wsOpenPanel', 'wsTabRest', 'wsRestoreDrill', 'wsSetFileRest', 'wsFrameOwner',
+    ${pick(/var WS_FIRM_PAGE_RE = [^;\n]*;/)}
+    ${['wsFirmPageId', 'wsFirmPageTabs', 'wsDrillSurface', 'wsDrillPanels', 'wsPageTile', 'wsOpenPanel', 'wsTabRest', 'wsRestoreDrill', 'wsSetFileRest', 'wsFrameOwner',
       'wsOpenTarget', 'wsMainTabAllowed', 'currentOpenFilesUrl', 'openMainTabOnBoot'].map((n) => fnSrc(SHELL, n)).join('\n')}
     ${assignedFnSrc(SHELL, 'ycReportSubTab')}
     ${assignedFnSrc(SHELL, 'ycTakeSubTab')}

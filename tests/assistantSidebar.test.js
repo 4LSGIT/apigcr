@@ -1,5 +1,9 @@
 'use strict';
 
+// one test requires services/assistantService (its normalizeWorkspaceContext, pure): no read-only pool,
+// as in tests/assistantService.test.js — on a dev machine 127.0.0.1:3306 is production
+jest.mock('../startup/dbReadonly', () => ({}));
+
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
@@ -90,6 +94,22 @@ describe('Ask Casey sidebar host', () => {
       display_label: 'Ada Case',
     });
     expect(w.ycAssistantContext().snapshot.canonical_url).not.toContain('Ada');
+  });
+
+  test('on a firm page (launcher-nits L4a: ?open=firm:<slug>) the chip reads the page\'s label, and the snapshot passes the server\'s own check', () => {
+    const dom = new JSDOM('<!doctype html><body><div id="tabOpenFiles"></div></body>', { url: 'https://app.test/', runScripts: 'outside-only' });
+    const w = dom.window;
+    w.currentOpenFilesUrl = () => 'https://app.test/?open=firm%3Aops~moreAutomations~workflows';
+    w.ycSubTab = { normalize: (rest) => rest };
+    w.ycLauncher = { effectiveRegistry: () => [{ id: 'cases', label: 'Cases' }, { id: 'firm:ops', label: 'Operations' }] };
+    w.eval(assignedFnSrc(SHELL, 'ycAssistantContext'));
+    const ctx = w.ycAssistantContext();
+    expect(JSON.parse(JSON.stringify(ctx.snapshot.active))).toEqual({ kind: 'workspace', tab: 'firm:ops', rest: 'moreAutomations~workflows' });
+    expect(ctx.display_label).toBe('Operations');
+    const snap = JSON.parse(JSON.stringify(ctx.snapshot));
+    expect(require('../services/assistantService').normalizeWorkspaceContext(snap)).toEqual(snap);
+    w.ycLauncher = { effectiveRegistry: () => [] };          // a page the launcher no longer lists: the generic label
+    expect(w.ycAssistantContext().display_label).toBe('Current workspace');
   });
 
   test('workspace URL synchronization refreshes the long-lived assistant chip', () => {

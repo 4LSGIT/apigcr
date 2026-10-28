@@ -85,6 +85,10 @@
 //        refuses, not in the effective registry
 //   (p5) staff: the user page shows no su tile (adminUsers, adminDbConsole)
 //        and its strip has no pill for them
+//   (p6) launcher-nits L4a: a FIRM page IS named — exec('firm:ops') writes
+//        ?open=firm:ops, a panel opened on it firm:ops~<its id>, and a reload
+//        comes back to that page with that panel open on it; ?open=firm:nope
+//        → Home; staff (firm:ops is not theirs) ?open=firm:ops → Home
 //
 // S-links — the links the server emits (lib/shellLinks), opened cold:
 //   (L1) /?files=c<id>&open=file:0 in a FRESH context (no label cache), the
@@ -848,6 +852,20 @@ const activeTab = (page) => page.evaluate(() => window.currentMainTabId());
       const opened = await page.evaluate(() => ycLauncher.exec('firm:ops')); await sleep(300);
       check('(p4) SU: the firm page firm:ops has a tab, a tile on More, is a page in the effective registry, and exec opens it',
         !!fp.tab && fp.tile && fp.eff && opened === true && await page.evaluate(() => currentMainTabId()) === fp.tab, JSON.stringify(fp));
+      // (p6) the firm page in the address bar (L4a)
+      const openNow = () => page.evaluate(() => new URL(location.href).searchParams.get('open'));
+      check('(p6) on the firm page the URL names it by its item id', await openNow() === 'firm:ops', String(await openNow()));
+      const panelId = await page.evaluate((t) => { const b = document.querySelector(`#${t} > .big-button[data-target]`); if (b) b.click(); return b ? b.getAttribute('data-yc-shortcut') : null; }, fp.tab);
+      await sleep(1500);
+      check('(p6) …a panel opened on it rides as the rest', !!panelId && await openNow() === 'firm:ops~' + panelId, JSON.stringify({ panelId, open: await openNow() }));
+      await page.reload({ waitUntil: 'networkidle2' }); await settle(page); await sleep(1000);
+      const p6 = await page.evaluate((t) => ({ cur: currentMainTabId(), tab: (document.querySelector('#ycPages > [data-yc-page="firm:ops"]') || {}).id || null,
+        open: new URL(location.href).searchParams.get('open'), stage: [...document.getElementById('ycPanels').children].filter((p) => p.style.display !== 'none').map((p) => p.id) }));
+      const tgt = await page.evaluate((id) => (document.querySelector(`#ycPages > [data-yc-page="firm:ops"] > .big-button[data-yc-shortcut="${id}"]`) || {}).getAttribute?.('data-target') || null, panelId);
+      check('(p6) …a reload comes back to the page with that panel open on it, and the URL settles unchanged',
+        !!p6.tab && p6.cur === p6.tab && p6.open === 'firm:ops~' + panelId && p6.stage.join() === tgt, JSON.stringify({ p6, tgt }));
+      await page.goto(url + '/?open=firm:nope', { waitUntil: 'networkidle2' }); await settle(page);
+      check('(p6) ?open=firm:nope → Home', await page.evaluate(() => currentMainTabId()) === 'tabHome', await page.evaluate(() => currentMainTabId()));
       await ctx.close();
     }
     {
@@ -856,6 +874,8 @@ const activeTab = (page) => page.evaluate(() => window.currentMainTabId());
       const st = await page.evaluate(() => ({ tab: !!document.querySelector('#ycPages > [data-yc-page="firm:ops"]'), tile: !!document.querySelector('#tabMore > .big-button[data-yc-shortcut="firm:ops"]'),
         eff: ycLauncher.effectiveRegistry().some((e) => e.id === 'firm:ops'), exec: ycLauncher.exec('firm:ops') }));
       check('(p4) staff: firm:ops has no tab, no tile, is not effective, exec refuses', !st.tab && !st.tile && !st.eff && st.exec === false, JSON.stringify(st));
+      await page.goto(url + '/?open=firm:ops', { waitUntil: 'networkidle2' }); await settle(page);
+      check('(p6) staff: ?open=firm:ops (not their page) → Home', await page.evaluate(() => currentMainTabId()) === 'tabHome', await page.evaluate(() => currentMainTabId()));
       const utab = await pageTab(page, 'user:my-desk');
       const utiles = utab ? await tilesOf(page, utab) : [];
       // (the fixture restricts Automations to admin / attorney: staff drills the first panel tile the page gives them)

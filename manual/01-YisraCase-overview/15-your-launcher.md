@@ -515,5 +515,7 @@ arrangement:
 - **More Features and Admin** keep the order your firm and the app give them.
   Only Home, the sidebar and your own pages are yours to arrange.
 - Firm-wide keyboard shortcuts: shortcuts are personal only.
-- **A page in the address bar.** Reloading while on one of your pages lands on
-  Home; a link to a page of your own can't be shared or bookmarked yet.
+- **Your own page in the address bar.** Reloading while on one of your pages
+  lands on Home, and a link to one can't be shared or bookmarked. (Your
+  firm's pages do come back: see [Your workspace in the address
+  bar](14-workspace-url.md).)

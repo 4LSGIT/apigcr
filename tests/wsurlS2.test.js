@@ -85,6 +85,7 @@ const DOM = `<!DOCTYPE html><html><body>
     <button class="big-button" id="tEtch" onclick="etchSwal()">Etch</button>
     <button class="big-button" id="tUsers" data-target="usersDiv" data-exclusive-group="admin">Users</button>
   </div>
+  <div id="ycPages"><div id="ycPage-1" class="tab-main yc-hub" data-yc-page="firm:ops" style="display:none"><h1>Ops</h1><button class="big-button" data-yc-shortcut="moreAutomations" data-target="automationsDiv">Automations</button><button class="big-button" data-yc-shortcut="adminEtch">Etch</button><div class="page-egg-row"></div></div><div id="ycPage-2" class="tab-main yc-hub" data-yc-page="user:desk" style="display:none"><h1>Desk</h1><button class="big-button" data-yc-shortcut="moreManuals" data-target="manualsDiv">Manuals</button><div class="page-egg-row"></div></div></div>
   <div id="ycPanels" style="display:none">
     <div id="unplacedDiv" style="display:none"><iframe id="unplacedFrame" data-src="/unplaced.html"></iframe></div>
     <div id="automationsDiv" style="display:none"><iframe id="autoFrame" data-src="/automationManager.html"></iframe><div><iframe id="deepFrame"></iframe></div></div>
@@ -124,7 +125,8 @@ function shell({ su = true, denied = [] } = {}) {
     ${pick(/var wsMainRest = \{\};/)}
     ${pick(/var wsPanelRest = \{\};/)}
     ${pick(/var WS_DRILL_SURFACE = \{[^}]*\};/)}
-    ${['wsDrillPanels', 'wsPageTile', 'wsOpenPanel', 'wsTabRest', 'wsRestoreDrill', 'wsSetFileRest', 'wsFrameOwner',
+    ${pick(/var WS_FIRM_PAGE_RE = [^;\n]*;/)}
+    ${['wsFirmPageId', 'wsFirmPageTabs', 'wsDrillSurface', 'wsDrillPanels', 'wsPageTile', 'wsOpenPanel', 'wsTabRest', 'wsRestoreDrill', 'wsSetFileRest', 'wsFrameOwner',
       'wsOpenTarget', 'wsMainTabAllowed', 'currentOpenFilesUrl', 'openMainTabOnBoot'].map((n) => fnSrc(SHELL, n)).join('\n')}
     ${assignedFnSrc(SHELL, 'ycReportSubTab')}
     ${assignedFnSrc(SHELL, 'ycTakeSubTab')}
@@ -182,7 +184,9 @@ function shell({ su = true, denied = [] } = {}) {
       // the S6c-4 routing: the first page that SHOWS a tile for the id
       const home = TAB[sf], def = m[sf];
       let at = null;
-      for (const t of [opts && opts.page, w.currentMainTabId(), 'tabMore', 'tabAdmin']) {
+      // …then the pages (ui-custom S6c-5), firm first, as gridTileFor does
+      const pageTabs = Array.from(d.querySelectorAll('#ycPages > .tab-main')).map((e) => e.id);
+      for (const t of [opts && opts.page, w.currentMainTabId(), 'tabMore', 'tabAdmin'].concat(pageTabs)) {
         if (!t || !$(t)) continue;
         if (t === home && !def.hasAttribute('data-yc-unplaced')) { at = { tab: t, el: def }; break; }
         const n = $(t).querySelector(`:scope > .big-button[data-yc-shortcut="${id}"][data-target]`);
@@ -463,5 +467,97 @@ describe('wsurl S2 — a panel\'s pane frame (S4\'s automationManager) reports',
     await tick();
     expect(w.__ws.panel).toEqual({});
     expect(lastOpen()).toBe('tabMore~moreAutomations');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// launcher-nits L4a (Fred, 2026-10-28): a FIRM page is a drill page the URL
+// names by its firm item id — ?open=firm:<slug>[~panel~rest] — so F5, the
+// update reload and a link come back to it (More and Admin become firm pages
+// next, L4b). A user's OWN page is never named: its id is made from the
+// name the user typed, and the URL rides Referer into jwt_api_audit_log
+// (ruling Q4 stands for it). ycPage-1 = firm:ops (Automations, and an action
+// tile), ycPage-2 = user:desk (Manuals).
+describe('launcher-nits L4a — a firm page in the address bar', () => {
+  test.each([
+    ['firm:ops', { tab: 'ycPage-1', rest: '' }],
+    ['firm:ops~moreAutomations~workflows~27', { tab: 'ycPage-1', rest: 'moreAutomations~workflows~27' }],
+    ['firm:ops~x"><b>', { tab: 'ycPage-1', rest: '' }],            // an invalid rest is dropped, the page kept
+    ['firm:gone', { tab: 'tabHome', rest: '' }],                    // no such page built (not effective here)
+    ['user:desk', { tab: 'tabHome', rest: '' }],                    // a user's own page: never a head
+    ['ycPage-1', { tab: 'tabHome', rest: '' }],                     // nor any page by its tab id
+    ['ycPage-2~moreManuals', { tab: 'tabHome', rest: '' }],
+    ['FIRM:ops', { tab: 'tabHome', rest: '' }],
+    ['firm:ops"', { tab: 'tabHome', rest: '' }],
+  ])('?open=%s → %j', (open, want) => {
+    const { w } = shell();
+    expect(JSON.parse(JSON.stringify(w.wsOpenTarget(open)))).toEqual(want);
+  });
+
+  test('written: on a firm page the head is its item id, with its open panel and that panel\'s rest; on a user page there is no open= at all', async () => {
+    const { w, $, tick, lastOpen, showPanel } = shell();
+    w.enableWorkspaceUrlSync();
+    w.openMainTab('ycPage-1');
+    await tick();
+    expect(lastOpen()).toBe('firm:ops');
+    expect(JSON.parse(JSON.stringify(w.wsDrillPanels('ycPage-1').map((p) => p.id)))).toEqual(['moreAutomations']);   // the action tile has no panel
+    showPanel('automationsDiv', 'ycPage-1'); w.syncWorkspaceUrl(); await tick();
+    expect(lastOpen()).toBe('firm:ops~moreAutomations');
+    expect(JSON.parse(JSON.stringify(w.wsFrameOwner($('autoFrame'))))).toEqual({ tab: 'ycPage-1', panel: 'moreAutomations' });
+    w.ycReportSubTab($('autoFrame'), 'workflows~27');
+    await tick();
+    expect(lastOpen()).toBe('firm:ops~moreAutomations~workflows~27');
+    // a user page: nothing names it, open or not
+    w.openMainTab('ycPage-2');
+    showPanel('manualsDiv', 'ycPage-2'); w.syncWorkspaceUrl(); await tick();
+    expect(w.currentMainTabId()).toBe('ycPage-2');
+    expect(lastOpen()).toBe(null);
+    expect(w.wsDrillSurface('ycPage-2')).toBe(null);
+  });
+
+  test('a firm page\'s panel that reports while another tab is active is remembered, and shown when the page is back', async () => {
+    const { w, $, tick, lastOpen, showPanel } = shell();
+    w.enableWorkspaceUrlSync();
+    const base = w.ycLauncher.elementsOf;
+    w.ycLauncher.elementsOf = (id) => (id === 'moreAutomations' ? {} : base(id));       // no hub tile: only the page shows Automations
+    w.openMainTab('ycPage-1');
+    showPanel('automationsDiv', 'ycPage-1');
+    w.openMainTab('tabCases');
+    await tick();
+    expect(JSON.parse(JSON.stringify(w.wsFrameOwner($('autoFrame'))))).toEqual({ tab: 'ycPage-1', panel: 'moreAutomations' });
+    w.ycReportSubTab($('autoFrame'), 'activity~42');
+    await tick();
+    expect(lastOpen()).toBe('tabCases');
+    expect(w.__ws.panel).toEqual({ moreAutomations: 'activity~42' });
+    w.openMainTab('ycPage-1');
+    await tick();
+    expect(lastOpen()).toBe('firm:ops~moreAutomations~activity~42');
+  });
+
+  test('restored: firm:ops~moreAutomations~workflows~27 reopens Automations ON that page (exec told the page), its rest held for the pane', async () => {
+    const { w, $, tick, lastOpen } = shell();
+    w.enableWorkspaceUrlSync();
+    const at = w.wsOpenTarget('firm:ops~moreAutomations~workflows~27');
+    w.openMainTabOnBoot(at.tab, at.rest);
+    expect(w.__calls.exec).toEqual(['moreAutomations@ycPage-1']);
+    expect(w.currentMainTabId()).toBe('ycPage-1');
+    expect($('automationsDiv').style.display).toBe('');
+    expect($('ycPage-1').classList.contains('drill-active')).toBe(true);
+    expect(w.ycTakeSubTab($('autoFrame'))).toBe('workflows~27');
+    await tick();
+    expect(lastOpen()).toBe('firm:ops~moreAutomations~workflows~27');   // the round trip
+  });
+
+  test.each([
+    ['moreManuals', 'a panel this page has no tile for'],
+    ['adminEtch', 'an ACTION tile on the page (no data-target)'],
+    ['firm:x', 'a firm item'],
+  ])('restore refused on a firm page: %s — %s → the page\'s own grid', (id) => {
+    const { w, $ } = shell();
+    w.openMainTabOnBoot('ycPage-1', id + '~x');
+    expect(w.__calls.exec).toEqual([]);
+    expect(w.__calls.openMainTab).toEqual(['ycPage-1']);
+    expect(w.wsOpenPanel('ycPage-1')).toBeNull();
+    expect(w.ycTakeSubTab($('manFrame'))).toBeNull();
   });
 });

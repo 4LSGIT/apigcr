@@ -181,8 +181,10 @@ for anyone else). Like More Features, the page's tiles are the firm's to
 arrange, not each person's; people arrange their own pages instead
 ([Your own launcher → Pages](../01-YisraCase-overview/15-your-launcher.md#pages)).
 
-Reloading the browser while on a firm page lands on Home (the address bar
-never names a page); More Features and Admin come back as before.
+Reloading the browser while on a firm page brings you back to it, with the
+panel you had open on it, and so does a link to it: the address bar names the
+page by its item's id (`?open=firm:payroll`). Each person's own pages are not
+named there, so a reload on one of those lands on Home.
 
 ## Who sees what
 

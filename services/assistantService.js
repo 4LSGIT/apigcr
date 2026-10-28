@@ -72,6 +72,8 @@ const WORKSPACE_TABS = new Set([
   'tabTasks', 'tabComms', 'tabLogs', 'tabBills', 'tabPipeline', 'tabMore',
   'tabSettings', 'tabAdmin', 'tabAll',
 ]);
+// A firm page's head (launcher-nits L4a): its firm item id — lib/uiConfigShape.js FIRM_ID_RE.
+const WORKSPACE_FIRM_PAGE_RE = /^firm:[a-z0-9-]{1,40}$/;
 const ASSISTANT_DESTINATIONS = Object.freeze({
   'automations.court_review': 'Open Court Review',
 });
@@ -520,7 +522,7 @@ function normalizeWorkspaceContext(raw) {
   } else {
     const parts = open.split('~');
     const tab = parts.shift() || 'tabHome';
-    if (!WORKSPACE_TABS.has(tab)) throw httpError(400, 'Workspace context names an unavailable workspace tab');
+    if (!WORKSPACE_TABS.has(tab) && !WORKSPACE_FIRM_PAGE_RE.test(tab)) throw httpError(400, 'Workspace context names an unavailable workspace tab');
     active = { kind: 'workspace', tab, rest: workspaceRest(parts.join('~')) };
   }
   const normalized = { v: 1, canonical_url: url.pathname + url.search, files, active };

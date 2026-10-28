@@ -276,7 +276,7 @@ role: what a staff run drills), two panels from different hubs, the tab button, 
 tool for the gate; icons Casey, All, My Tasks) — surveyed by ITEM id as
 `page:<id>` (the page's grid; its tab id is per session, so the tabs pass skips
 page tabs) and `page:<id>:drilled` (its first panel open on the page itself);
-`wsurl.js` (p1–p5) proves the URL never names a page, the in-place panel, the
+`wsurl.js` (p1–p6) proves the URL never names a user's page but names a firm page (`?open=firm:ops~<panel>`, reload restores it), the in-place panel, the
 same Automations iframe from More and the page, and the staff view) —
 enough to fill the tables
 that tend to overflow and to put every conditional Overview / Case Details box

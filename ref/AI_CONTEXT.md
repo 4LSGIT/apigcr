@@ -1320,8 +1320,8 @@ the version guard reloads through `window.ycReloadUrl`):
 `?files=c<case_id>|p<contact_id>|b<id>[~rest],…` + `?open=file:<n>` (a file's
 rest lives in its token) or `?open=<mainTabId>[~rest]`. A rest = one
 `~`-joined segment per frame layer, each layer owning its vocabulary (case /
-contact: `data-ws-tab`; comms: email|phone|team; tabMore/tabAdmin: the open
-drill panel's FEATURE_REGISTRY id; automationManager / caseConfigManager:
+contact: `data-ws-tab`; comms: email|phone|team; tabMore/tabAdmin and a
+firm page's `firm:<slug>` head (§31): the open drill panel's FEATURE_REGISTRY id; automationManager / caseConfigManager:
 their `SUB_PAGES` id, e.g. `tabMore~moreAutomations~triggers`). Grammar in `public/js/ycSubTab.js`:
 `[A-Za-z0-9_-]{1,32}`, depth ≤4, ≤128, empty = default, invalid → dropped at
 its layer (file/tab kept). Vocabulary or surrogate DB ids ONLY: the URL rides
@@ -2535,8 +2535,13 @@ data-yc-page="<item id>">` per effective page item into `#ycPages` (between
 icons }`, no base: the lists ARE the page; non-effective items not drawn);
 `exec(pageId)` → `openMainTab`; a sidebar neutral for a page carries its
 tab in `data-tab`. The tab id is per session and opaque: the WORKSPACE URL
-never writes it and refuses it as a head (F5 on a page lands on Home —
-Fred's ruling Q4, v1). The class is `yc-hub`, NOT the design's `yc-page`:
+never writes it and refuses it as a head. A FIRM page is named there by its
+item id instead — `?open=firm:<slug>[~panel~rest]`, a drill page like the
+hubs (launcher-nits L4a; index.html `wsDrillSurface`), and Casey's
+workspace context accepts that head (`assistantService`
+`WORKSPACE_FIRM_PAGE_RE`, = uiConfigShape `FIRM_ID_RE`). A user's own page
+never is: its id is made from the name they typed and the URL rides Referer
+into `jwt_api_audit_log` (Fred's ruling Q4 — F5 on it lands on Home). The class is `yc-hub`, NOT the design's `yc-page`:
 `/js/ycPager.js` owns `.yc-page` in the shell document. The drawer kind is
 called **List** in every UI string; its stored type stays `drawer`.
 

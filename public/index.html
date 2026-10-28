@@ -1293,8 +1293,10 @@
       //   - The tab id is opaque and per session: ycPage-N by first sight of
       //     the item id (pageTabId), never a name. A sidebar neutral of the
       //     page carries it as data-tab (the highlight); exec(pageId) opens
-      //     it; the WORKSPACE URL never writes it (v1, Fred's ruling Q4: F5 on
-      //     your own page lands on Home) and refuses it as an ?open= head.
+      //     it; the WORKSPACE URL never writes it and refuses it as an
+      //     ?open= head. A FIRM page is named there by its item id instead
+      //     (?open=firm:<slug>[~panel~rest], launcher-nits L4a); a user's own
+      //     page not at all (Fred's ruling Q4: F5 on it lands on Home).
       //   - At most PAGE_TABS_MAX page tabs per tier (the arc's item cap);
       //     the rest are listed and openable nowhere, with a console error.
       //   - The egg-row CSS and the hubs' phone rules key on .yc-hub /
@@ -8415,7 +8417,9 @@ async function initAuth() {
        drill panel (tabMore~moreAutomations), read live from which panel is
        showing on the stage (#ycPanels), never a DOM id or a tile position.
        Anything after it is that panel's own pane's rest
-       (tabMore~moreAutomations~<rest>). Restoring one goes through
+       (tabMore~moreAutomations~<rest>). A FIRM page (#ycPages, launcher-nits
+       L4a) is a drill page the same way, its head being its firm item id:
+       firm:<slug>~moreAutomations~<rest>; a user's own page is never named. Restoring one goes through
        ycLauncher.exec, and only for a plain registry id whose tile on that
        PAGE opens a PANEL (data-target; a default tile or a firm-placed
        neutral, S6c-4) — never an action tile (dialogs) or a firm item; exec
@@ -8491,13 +8495,33 @@ async function initAuth() {
     /** Drill panel registry id → its pane's last reported rest (the id is the
      *  item's, whichever page it was opened from). */
     var wsPanelRest = {};
-    /** The drill PAGES the URL can name, and the launcher surface each one's
-     *  default tiles are mounted on (ycLauncher.elementsOf(id)[surface]). The
-     *  custom pages (ui-custom S6c-5, #ycPages) are deliberately NOT here:
-     *  the URL never names one (v1, Fred's ruling Q4), so their open panel
-     *  is never a rest and a pane's report while one is active is remembered
-     *  (wsPanelRest) but synced only once a hub shows that panel. */
+    /** The hubs, and the launcher surface each one's default tiles are
+     *  mounted on (ycLauncher.elementsOf(id)[surface]). */
     var WS_DRILL_SURFACE = { tabMore: "more", tabAdmin: "admin" };
+    /** A FIRM page (ui-custom S6c-5, #ycPages) is a drill page too, named in
+     *  ?open= by its firm item id — firm:<slug>, firm vocabulary like a
+     *  registry id (launcher-nits L4a, Fred 2026-10-28): its open panel
+     *  rides as the rest, so F5, the update reload and a link come back to
+     *  it. A user's OWN page is never named: its id is made from the name the
+     *  user typed, and the URL rides Referer into jwt_api_audit_log (v1,
+     *  Fred's ruling Q4, stands for them); its panel is remembered
+     *  (wsPanelRest) but synced only once a named page shows it. */
+    var WS_FIRM_PAGE_RE = /^firm:[a-z0-9-]{1,40}$/;   // lib/uiConfigShape.js FIRM_ID_RE
+    /** The firm page item a tab shows, or null (a hub, a user page, anything else). */
+    function wsFirmPageId(tabId) {
+      const el = tabId ? E(tabId) : null;
+      const id = el && el.parentElement && el.parentElement.id === "ycPages" ? el.getAttribute("data-yc-page") : null;
+      return id && WS_FIRM_PAGE_RE.test(id) ? id : null;
+    }
+    /** The built tabs of the firm pages, in #ycPages order. */
+    function wsFirmPageTabs() {
+      return Array.from(document.querySelectorAll("#ycPages > .tab-main[data-yc-page]"))
+        .filter((el) => WS_FIRM_PAGE_RE.test(el.getAttribute("data-yc-page"))).map((el) => el.id);
+    }
+    /** A drill page's surface: the hub's, "page" for a firm page, else null. */
+    function wsDrillSurface(tabId) {
+      return WS_DRILL_SURFACE[tabId] || (wsFirmPageId(tabId) ? "page" : null);
+    }
 
     /**
      * The drill panels a page can show, [{ id, panel }]: every item of the
@@ -8512,7 +8536,7 @@ async function initAuth() {
      * it). Firm items (firm:<slug>) have no panel and are skipped.
      */
     function wsDrillPanels(tabId) {
-      const sf = WS_DRILL_SURFACE[tabId];
+      const sf = wsDrillSurface(tabId);
       const L = window.ycLauncher;
       const tab = E(tabId);
       const stage = E("ycPanels");
@@ -8546,7 +8570,7 @@ async function initAuth() {
     /** A main tab's rest for the URL: tabMore / tabAdmin read it live from
      *  the open panel (+ that panel's pane rest); others, from wsMainRest. */
     function wsTabRest(tabId) {
-      if (!WS_DRILL_SURFACE[tabId]) return wsMainRest[tabId] || "";
+      if (!wsDrillSurface(tabId)) return wsMainRest[tabId] || "";
       const open = wsOpenPanel(tabId);
       if (!open) return "";
       return wsPanelRest[open.id] ? open.id + "~" + wsPanelRest[open.id] : open.id;
@@ -8567,7 +8591,7 @@ async function initAuth() {
      * lazy iframe. true = done; false = show the grid.
      */
     function wsRestoreDrill(tabId, rest) {
-      const sf = WS_DRILL_SURFACE[tabId];
+      const sf = wsDrillSurface(tabId);
       const L = window.ycLauncher;
       const tab = E(tabId);
       const segs = String(rest || "").split("~");
@@ -8615,7 +8639,7 @@ async function initAuth() {
       if (stage && div && div.parentElement === stage) {
         // a drill panel's own pane frame (S4's panes report through this)
         const cur = currentMainTabId();
-        const pages = (WS_DRILL_SURFACE[cur] ? [cur] : []).concat(Object.keys(WS_DRILL_SURFACE).filter((t) => t !== cur));
+        const pages = (wsDrillSurface(cur) ? [cur] : []).concat(Object.keys(WS_DRILL_SURFACE), wsFirmPageTabs()).filter((t, i, a) => a.indexOf(t) === i);
         for (const tabId of pages) {
           const p = wsDrillPanels(tabId).find((x) => x.panel === div);
           if (p) return { tab: tabId, panel: p.id };
@@ -8682,9 +8706,12 @@ async function initAuth() {
       const head = cut < 0 ? raw : raw.slice(0, cut);
       const m = /^file:(\d+)$/.exec(head);
       if (m) return { file: Number(m[1]) };
-      if (!wsMainTabAllowed(head)) return { tab: "tabHome", rest: "" };
+      // a firm page by its item id (L4a): its tab is built only when the page is effective for this user
+      const tab = WS_FIRM_PAGE_RE.test(head) ? wsFirmPageTabs().find((t) => wsFirmPageId(t) === head) || null
+        : wsMainTabAllowed(head) ? head : null;
+      if (!tab) return { tab: "tabHome", rest: "" };
       const rest = cut < 0 || !window.ycSubTab ? "" : ycSubTab.normalize(raw.slice(cut + 1));
-      return { tab: head, rest: rest || "" };
+      return { tab, rest: rest || "" };
     }
 
     /**
@@ -8765,16 +8792,18 @@ async function initAuth() {
         // Nor the button tab (ui-custom S5c-b, window.ycButtonTabs): its only
         // name is the button's id, made from the button's NAME, and the URL
         // carries ids only — so a reload there lands on Home (wsMainTabAllowed
-        // refuses it too). Nor a custom page (ui-custom S6c-5, #ycPages
-        // data-yc-page: the firm's / the user's own): its tab id is per
-        // session and its item id is a NAME — Fred's ruling Q4, v1: F5 on
-        // your own page lands on Home.
+        // refuses it too). A custom page (ui-custom S6c-5, #ycPages
+        // data-yc-page) never by its tab id (per session): a FIRM page by its
+        // item id, firm:<slug> (L4a), the user's own not at all — its id is a
+        // NAME (Fred's ruling Q4: F5 on your own page lands on Home).
         const curEl = cur ? E(cur) : null;
+        const firmPage = wsFirmPageId(cur);
         const emit = cur && cur !== "tabHome" && cur !== "tabUserItem" && cur.indexOf("file-div") !== 0
-          && !(curEl && curEl.hasAttribute("data-yc-page"));
+          && !(curEl && curEl.hasAttribute("data-yc-page") && !firmPage);
         if (emit) {
+          const head = firmPage || cur;
           const rest = wsTabRest(cur);
-          u.searchParams.set("open", rest ? cur + "~" + rest : cur);
+          u.searchParams.set("open", rest ? head + "~" + rest : head);
         }
       }
       return u.toString();
@@ -8818,6 +8847,10 @@ async function initAuth() {
           tabSettings: 'Settings', tabAdmin: 'Admin', tabAll: 'All features',
         };
         displayLabel = names[active.tab] || 'Current workspace';
+        if (/^firm:/.test(active.tab)) {   // a firm page (launcher-nits L4a): its own label
+          const pageItem = window.ycLauncher && ycLauncher.effectiveRegistry().find(function (e) { return e.id === active.tab; });
+          if (pageItem) displayLabel = pageItem.label;
+        }
         if (active.tab === 'tabMore' && /^moreAutomations(?:~courtReview)?$/.test(active.rest)) {
           displayLabel = active.rest.endsWith('~courtReview') ? 'Automations → Court Review' : 'Automations';
         }
@@ -8960,7 +8993,7 @@ async function initAuth() {
      * run exitDrillMode on the tab now current and close the panel).
      */
     function openMainTabOnBoot(tabId, rest) {
-      if (WS_DRILL_SURFACE[tabId]) {
+      if (wsDrillSurface(tabId)) {
         if (!(rest && wsRestoreDrill(tabId, rest))) openMainTab(tabId);
         return;
       }
