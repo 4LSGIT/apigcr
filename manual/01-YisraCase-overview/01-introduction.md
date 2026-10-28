@@ -115,9 +115,10 @@ and in an email editor Ctrl+K keeps its usual job there: inserting a link.
 A feature your firm has switched off for you is not in the sidebar, on Home,
 in the More menu, under All, or in the search.
 
-All and the search also list **More actions**: **My Tasks**, **Log out** and
-**Casey** (the cat). They do what the My Tasks and Log Out buttons at the top
-of the screen and Casey's paw on More Features do, and you can put them on
+All and the search also list **More actions**: **My Tasks** and **Log out**,
+which do what the buttons at the top of the screen do, and **Code**, for
+running a line of JavaScript someone at the firm gave you (see
+[Code](15-your-launcher.md#code-running-javascript)). You can put them on
 your Home or sidebar as shortcuts (see below).
 
 **Customize my launcher**, under the search box on All, arranges your own Home

@@ -1775,8 +1775,9 @@
       // layout (group More actions) have no element to click — a neutral
       // shortcut of one calls exec, so exec can never click it. exec runs them
       // through this CLOSED dispatch, one named page function each, the one
-      // the fixed chrome calls (the header's My Tasks and Log Out) — never an
-      // eval of the registry's onclick string. Placed or not, the same path.
+      // the fixed chrome calls (the header's My Tasks and Log Out; Code's is
+      // openCodeBox, public/js/ycCodeBox.js) — never an eval of the
+      // registry's onclick string. Placed or not, the same path.
       // An item an element does draw is clicked like any other: Casey's paw
       // is the `casey` item's element since S6c (DEFAULT_LAYOUTS.moreIcons),
       // so casey left this set — a firm-removed default stays in the DOM.
@@ -1791,6 +1792,7 @@
           return pageCall('openTasksTab', [{ assigned_to: u && u.user, status: 'Incomplete', defer: 'active' }]);
         },
         logout: function () { return pageCall('confirmLogout', []); },
+        code: function () { return pageCall('openCodeBox', []); },
       };
       function pageCall(name, args) {
         var f = window[name];
@@ -3507,6 +3509,9 @@
        same-origin panes (window.top.ycIconPicker.open). Draws in this
        document; its catalog (/js/faIcons-<v>.json) loads on first open. -->
   <script src="/js/ycIconPicker.js"></script>
+  <!-- The Code dialog: run JavaScript in the shell as the signed-in user,
+       audited first (window.openCodeBox; the launcher's `code` item). -->
+  <script src="/js/ycCodeBox.js"></script>
 
   <div id="tabBills" class="tab-main">
     <h1><i class="fa-solid fa-file-invoice-dollar"></i> Billing <i class="fa-solid fa-file-invoice-dollar"></i></h1>

@@ -107,7 +107,7 @@ describe('the registry data', () => {
     // registry ("More actions") and runs through exec's closed NO_ELEMENT
     // dispatch. That set is deliberate, so it is pinned: a new orphan fails
     // here until it is added on purpose (and to NO_ELEMENT).
-    expect(Object.keys(REG).filter((k) => !placed.has(k))).toEqual(['myTasks', 'logout']);   // casey: More's icon row since S6c
+    expect(Object.keys(REG).filter((k) => !placed.has(k))).toEqual(['myTasks', 'logout', 'code']);   // casey: More's icon row since S6c
     for (const k of Object.keys(REG)) expect(k).toMatch(/^[a-z][A-Za-z0-9]*$/);
     for (const e of LAY.more.filter((x) => x.item)) expect(e.item).toMatch(/^more[A-Z]/);
     for (const e of LAY.admin.filter((x) => x.item)) expect(e.item).toMatch(/^admin[A-Z]/);

@@ -64,7 +64,7 @@ type. A heading is plain text, 1 to 40 characters.
   one and it goes to the end of the list; move it with the arrows. Anything
   can go on Home or the sidebar: a More Features or Admin panel, a firm item,
   a sidebar feature on Home, or one of the **More actions** (My Tasks, Log
-  out, Casey), which have no tile or sidebar item of their own until you add
+  out, [Code](#code-running-javascript)), which have no tile or sidebar item of their own until you add
   one. A shortcut does exactly what the feature does anywhere else. A More
   panel pinned to Home, for example, opens More Features with that panel
   showing.
@@ -428,6 +428,37 @@ buttons (*On “My desk”*).
   ([Firm Launcher](../05-Subsystems/14-firm-launcher.md#firm-pages)). A firm
   page you can see is a tab like your own; a firm page meant for other roles
   is simply not there for you.
+
+## Code: running JavaScript
+
+**Code** opens a box where you can paste or type JavaScript and run it inside
+YisraCase. It is the browser's developer console without opening the
+developer tools: handy when IT sends you a line to run, or for a quick
+`await apiSend('/api/…')`.
+
+- **Opening it.** Code is not on any page by default, because it is an
+  advanced tool. Press **Ctrl+K** (**⌘K** on a Mac) and type *code*, or add
+  it to your Home or sidebar, or give it a [keyboard shortcut](#keyboard-shortcuts).
+- **It runs as you.** The code can do anything your login can do, and nothing
+  more: every request it makes is checked against your account, the same as
+  if you clicked through the screens yourself. That is also why it is open to
+  everyone: it gives no one extra access.
+- **Only run code from someone you trust at the firm.** Never paste code sent
+  to you in an email or a text, found on a website, or read to you by a
+  caller. Someone asking you to do that is trying to scam you: code run here
+  can read your login and send it, or your clients' data, anywhere.
+- **Every run is recorded** (who ran it, when, and the code itself) before it
+  runs. If the record can't be saved, the code does not run.
+- **Running.** Press **Run**, or **Ctrl+Enter** (**⌘+Enter** on a Mac).
+  Nothing runs when you paste. A single expression shows its value
+  (`1 + 1` shows `2`); longer code shows whatever it `return`s. You can use
+  `await`. **Copy output** copies the whole result.
+- **Things to know.** The box always opens empty, and closing it clears it.
+  A click outside the box does not close it; **Esc**, **Close** and **×** do.
+  Variables don't carry over from one run to the next (store one on
+  `window` to keep it). Code that is already running can't be stopped, the
+  same as in the console. Pop-up messages the code opens (alerts,
+  confirmations, toasts) appear on top of the box.
 
 ## What your firm controls
 

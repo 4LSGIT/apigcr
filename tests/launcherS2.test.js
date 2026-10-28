@@ -88,7 +88,7 @@ const ids = (eff) => eff.map((e) => e.id);
 describe('the effective registry (pure)', () => {
   test('non-admin: every placed item (and every S6b extra) once, minus gated', () => {
     const eff = L.computeEffective({ isAdmin: false });
-    expect(EXTRAS).toEqual(['myTasks', 'logout']);
+    expect(EXTRAS).toEqual(['myTasks', 'logout', 'code']);
     const want = ALL_LISTED.filter((k) => !GATED.has(k));
     expect(ids(eff).sort()).toEqual(want.sort());
     expect(new Set(ids(eff)).size).toBe(eff.length);

@@ -373,6 +373,7 @@ public/js/yc-forms.js
 public/js/yc-frame-fit.js
 public/js/yc-sync.js
 public/js/ycAll.js
+public/js/ycCodeBox.js
 public/js/ycIcon.js
 public/js/ycIconPicker.js
 public/js/ycLayoutEditor.js
@@ -663,6 +664,7 @@ routes/api.calendarTypesAdmin.js
 routes/api.caseEvents.js
 routes/api.cases.js
 routes/api.checklists.js
+routes/api.codeBox.js
 routes/api.commsArchive.js
 routes/api.commsEval.js
 routes/api.contactAddresses.js
@@ -1191,6 +1193,7 @@ tests/clioTool.test.js
 tests/clioTool2.test.js
 tests/codeBodyParity.test.js
 tests/codeBodySites.guest.test.js
+tests/codeBox.test.js
 tests/codeChildResultOrder.test.js
 tests/commsAdminTools.pane.test.js
 tests/commsArchive.lockNames.mysql.test.js

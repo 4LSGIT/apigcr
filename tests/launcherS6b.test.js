@@ -50,7 +50,7 @@ const ICON_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycIcon.js'), 'utf8')
 const EDITOR_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycLayoutEditor.js'), 'utf8');
 const RENDERER_SRC = RAW.match(/<script id="ycLauncher">([\s\S]*?)<\/script>/)[1];
 const { launcher: VL, registry: REG, layouts: LAY } = loadLauncher(RAW);
-const EXTRAS = ['myTasks', 'logout'];   // casey: placed in More's icon row since S6c
+const EXTRAS = ['myTasks', 'logout', 'code'];   // casey: placed in More's icon row since S6c
 
 function slice(from, to) {
   const a = RAW.indexOf(from);
@@ -313,7 +313,7 @@ describe('4. the sticky Home entry (CSS hooks)', () => {
 describe('5. the S6b items: myTasks, logout, casey', () => {
   test('in the registry with the spec\'s labels and icons; their onclick is the fixed chrome\'s, verbatim', () => {
     expect([...EXTRAS, 'casey'].map((id) => [id, REG[id].label, REG[id].icon])).toEqual([
-      ['myTasks', 'My Tasks', 'list'], ['logout', 'Log out', 'right-from-bracket'], ['casey', 'Casey', 'paw']]);
+      ['myTasks', 'My Tasks', 'list'], ['logout', 'Log out', 'right-from-bracket'], ['code', 'Code', 'terminal'], ['casey', 'Casey', 'paw']]);
     expect(REG.myTasks.onclick).toBe(HDR_TASKS.match(/onclick="([^"]*)"/)[1]);
     expect(REG.logout.onclick).toBe(HDR_LOGOUT.match(/onclick="([^"]*)"/)[1]);
     expect(REG.casey.onclick).toBe(PAW_ROW.match(/onclick="([^"]*)"/)[1]);
@@ -380,8 +380,9 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
       expect(t.L.exec('myTasks')).toBe(true);
       expect(t.L.exec('logout')).toBe(true);
       expect(t.L.exec('casey')).toBe(true);
+      expect(t.L.exec('code')).toBe(true);
       expect(t.calls).toEqual([
-        ['openTasksTab', { assigned_to: 7, status: 'Incomplete', defer: 'active' }], ['confirmLogout'], ['toggleMascot']]);
+        ['openTasksTab', { assigned_to: 7, status: 'Incomplete', defer: 'active' }], ['confirmLogout'], ['toggleMascot'], ['openCodeBox']]);
       expect(t.errors).toEqual([]);
     });
 
@@ -391,7 +392,7 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
       t.d.querySelector('#hdr [title="Log Out"]').click();
       t.d.querySelector('#tabMore .more-egg').click();
       const chrome = t.calls.splice(0);
-      [...EXTRAS, 'casey'].forEach((id) => t.L.exec(id));
+      ['myTasks', 'logout', 'casey'].forEach((id) => t.L.exec(id));   // code has no chrome
       expect(t.calls).toEqual(chrome);
       expect(chrome).toHaveLength(3);
     });
@@ -440,6 +441,7 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
       expect(src).not.toMatch(/\beval\b|new Function|\.onclick|setTimeout\(\s*['"`]/);
       expect(src).toMatch(/pageCall\('openTasksTab'/);
       expect(src).toMatch(/pageCall\('confirmLogout'/);
+      expect(src).toMatch(/pageCall\('openCodeBox'/);
       expect(src).not.toMatch(/pageCall\('toggleMascot'/);   // casey has an element since S6c
       // a registry item with an onclick of its own but no element is not run from it
       t.w.eval('FEATURE_REGISTRY.qaOrphan = { label: "QA", icon: "bug", onclick: "__calls.push([\\"orphan\\"])" };');

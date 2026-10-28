@@ -786,6 +786,27 @@ async function walk(page, W, record) {
       await record(`dialog:${key}`, await measure(page, fr), await shot('dialog_' + key));
       await fr.evaluate(() => { if (state.composer) closeComposer(state.composer, { keepDraft: false }); closeThread(); });
     }
+
+    // The Code dialog (public/js/ycCodeBox.js), opened through the launcher's
+    // own dispatch, with code typed in and run (the mock answers the audit
+    // POST with its generic success): the result, an unbroken 4,000-character
+    // string, must wrap inside the box. The editor scrolls sideways by design
+    // (wrap off) and holds no child nodes, so m.boxes never sees its text.
+    await page.evaluate(() => openMainTab('tabHome')); await sleep(500);
+    const cbOpen = await page.evaluate(() => ycLauncher.exec('code') === true && !!(window.ycCodeBox && ycCodeBox.isOpen())); await sleep(300);
+    if (cbOpen) {
+      await page.evaluate(() => {
+        document.querySelector('#ycCodeBox textarea').value = "'" + 'x'.repeat(400) + "'.repeat(10)";
+        document.querySelector('#ycCodeBox .ycb-run').click();
+      }); await sleep(800);
+    }
+    const cm = await measure(page, null);
+    // the run must have produced its long result, or the box measured is an error state
+    const cbRan = cbOpen && await page.evaluate(() => document.querySelector('#ycCodeBox .ycb-out').textContent.length === 4000);
+    cm.boxes = cbRan ? [await page.evaluate(measureBox, '#ycCodeBox .ycb-box'), await page.evaluate(measureBox, '#ycCodeBox .ycb-out')]
+      : [{ sel: cbOpen ? '#ycCodeBox .ycb-out (the run did not produce its result)' : '#ycCodeBox (did not open)', missing: true }];
+    await record('dialog:code-box', cm, await shot('dialog_code_box'));
+    await page.evaluate(() => window.ycCodeBox && ycCodeBox.close()); await sleep(200);
   }
 }
 

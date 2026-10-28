@@ -386,7 +386,8 @@ window.FEATURE_REGISTRY = {
   },
 
   // ── In no default layout: "More actions" (ui-custom S6b) ─────────────────
-  // Launcher items for things the shell already does from fixed chrome. They
+  // Launcher items for things the shell already does from fixed chrome, and
+  // the Code dialog, which has no chrome of its own. They
   // sit in NO default layout, so no surface changes; computeEffective lists
   // them in their own group (All, the palette, the shortcut picker) and a
   // user can place them on Home or the sidebar (a neutral shortcut). With no
@@ -403,6 +404,15 @@ window.FEATURE_REGISTRY = {
   logout: {
     label: 'Log out', icon: 'right-from-bracket',
     onclick: 'confirmLogout()',
+  },
+  // Code: run JavaScript in the shell as if typed into the browser console
+  // (public/js/ycCodeBox.js — every run audited first). Open to all staff: it
+  // grants nothing the console doesn't. In no default layout because it is
+  // advanced, not privileged: Ctrl-K → "code", a user's own shortcut or
+  // placement. A firm may hide it or limit it to roles like any item.
+  code: {
+    label: 'Code', title: 'Run code', icon: 'terminal',
+    onclick: 'openCodeBox()',
   },
   // Casey the YisraCat (ui-custom S6b item; placed in More's icon row by
   // S6c). toggleMascot() is the old tile's handler: the first press summons,

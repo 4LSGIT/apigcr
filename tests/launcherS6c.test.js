@@ -209,9 +209,9 @@ describe('2. icon rows: the surfaces and their markup', () => {
     expect(errors).toHaveLength(2);
   });
 
-  test('the effective registry: casey is placed (group More, after the grid); all is placed (group Settings, the sidebar wins); the extras are myTasks and logout', () => {
+  test('the effective registry: casey is placed (group More, after the grid); all is placed (group Settings, the sidebar wins); the extras are myTasks, logout and code', () => {
     const eff = VL.computeEffective(SU);
-    expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(['myTasks', 'logout']);
+    expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(['myTasks', 'logout', 'code']);
     expect(ids(eff.filter((e) => e.group === 'More'))).toEqual([...placed('more'), 'casey']);
     expect(eff.find((e) => e.id === 'all').group).toBe('Settings');
     expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);
@@ -220,7 +220,7 @@ describe('2. icon rows: the surfaces and their markup', () => {
     const e2 = VL.computeEffective(SU, REG, lay);
     expect(e2.find((e) => e.id === 'myTasks').group).toBe('Admin');
     expect(e2.find((e) => e.id === 'logout').group).toBe('Home');
-    expect(ids(e2.filter((e) => e.group === 'More actions'))).toEqual([]);
+    expect(ids(e2.filter((e) => e.group === 'More actions'))).toEqual(['code']);
   });
 });
 

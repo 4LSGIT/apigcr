@@ -849,8 +849,10 @@ describe('S6a: My buttons choose their icon in the picker', () => {
     t.w.ycAll.open(t.d);
     const pq = t.d.querySelector('#ycPalette .yc-pal-input');
     pq.value = 'code'; pq.dispatchEvent(new t.w.Event('input', { bubbles: true }));
-    const row = [...t.d.querySelectorAll('#ycPalette .yc-pal-item')].find((r) => r.querySelector('span').textContent === 'Code');
-    expect(row.querySelector('i').className).toBe('fa-brands fa-github');
+    // two rows read Code: this button and the registry's own Code item (terminal)
+    const icons = [...t.d.querySelectorAll('#ycPalette .yc-pal-item')].filter((r) => r.querySelector('span').textContent === 'Code')
+      .map((r) => r.querySelector('i').className).sort();
+    expect(icons).toEqual(['fa-brands fa-github', 'fa-solid fa-terminal']);
     expect(t.errors).toEqual([]);
   });
 
