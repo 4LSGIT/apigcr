@@ -63,6 +63,9 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'apptActionLabel', 'apptChannelsText', 'apptDraftText', 'apptCreateBody', 'apptActionRequest', 'apptActionResult',
   'contactSubrecordActionLabel', 'contactAddressText', 'contactSubrecordValue', 'contactSubrecordDraftText',
   'contactSubrecordCreateBody', 'contactSubrecordActionRequest', 'contactSubrecordActionResult',
+  'contactRelationLabel', 'contactRelationValue', 'contactRelationLines', 'contactRelationText', 'contactRoleAttrLines', 'contactRoleText',
+  'contactRelationRequest', 'contactRoleRequest', 'contactRelationStableJson', 'contactRelationDay', 'contactRelationPrecheck',
+  'contactRolePrecheck', 'contactRelationResult', 'contactRoleResult', 'contactRelationOpenTarget',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
   'workflowDraftLabel', 'workflowSendLines', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
   'workflowStepActionLabel', 'workflowStepWorkflowLine', 'workflowStepInsertText', 'workflowStepEditValue',
@@ -94,6 +97,7 @@ function actionSandbox(deps = {}) {
     'const ACTION_DRAFT_TTL_MS=15*60*1000;',
     constSrc(html, 'TASK_ACTION_KINDS'), constSrc(html, 'EVENT_ACTION_KINDS'),
     constSrc(html, 'APPT_ACTION_KINDS'), constSrc(html, 'CONTACT_SUBRECORD_ACTION_KINDS'),
+    constSrc(html, 'CONTACT_RELATION_ACTION_KINDS'), constSrc(html, 'CONTACT_ROLE_ACTION_KINDS'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
     constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEQUENCE_ENROLL_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
@@ -1613,6 +1617,190 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     box.hydrateActionDraft(box.actionFamily(m.action_draft), host, m, m.action_draft);
     expect(host.querySelector('.action-draft-status').textContent).toBe('Enrolled — enrollment #812');
     expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open enrollment #812', 'Copy details']);
+    dom.window.close();
+  });
+
+  // A6: the relation and role cards through the SHARED engine. Pinned: the
+  // click-time re-read through the native GETs refuses BEFORE the ledger
+  // claim; each request is exactly the fixed route/body (no Idempotency-Key —
+  // these routes take none; one claim per draft + the routes' UNIQUE keys);
+  // the receipt is the relation / role row; a 4xx is a refusal; the applied
+  // card opens the contact.
+  const relDraft = (over = {}) => ({ action_draft: {
+    draft_id: '6a6a6a6a-1b2c-4d3e-8f40-123456789abc', kind: 'contact.relation.create.v1', status: 'draft', received_at: Date.now(),
+    relation: { type_code: 'parent_child', forward_label: 'Parent of', reverse_label: 'Child of', is_symmetric: false,
+      contact_a: { contact_id: 77, contact_name: 'Dana Client', contact_kind: 'person' }, contact_b: { contact_id: 78, contact_name: 'Sam Client', contact_kind: 'person' } },
+    fields: { status: 'adopted', start_date: '2015-01-02', notes: 'n' }, evidence: [],
+    // Model-shaped junk that must never reach a request.
+    active: 0, end_date: '2020-01-01', created_by: 1, contact_id: 99,
+    ...over } });
+  const relUpdateDraft = (over = {}) => relDraft({ kind: 'contact.relation.update.v1',
+    relation: { relation_id: 44, type_code: 'spouse', forward_label: 'Spouse of', reverse_label: 'Spouse of', is_symmetric: true, type_retired: false,
+      contact_a: { contact_id: 77, contact_name: 'Dana Client' }, contact_b: { contact_id: 78, contact_name: 'Sam Client' } },
+    current: { status: '', start_date: '2010-06-12', notes: 'old' }, changes: { status: 'separated', notes: '', type_code: 'x', end_date: '2020-01-01' },
+    expected: { updated_at: '2026-10-01T12:00:00.000Z' }, fields: undefined, ...over });
+  const roleDraft = (over = {}) => ({ action_draft: {
+    draft_id: '7b7b7b7b-1b2c-4d3e-8f40-123456789abc', kind: 'contact.role.create.v1', status: 'draft', received_at: Date.now(),
+    contact: { contact_id: 77, contact_name: 'Dana Client' },
+    role: { role_code: 'trustee', label: 'Trustee', fields: [{ key: 'chapter', label: 'Chapters', type: 'multi_select', required: true },
+      { key: 'zoom_link', label: '341 Zoom link', type: 'url', required: false }] },
+    attrs: { chapter: [7, 13] }, effects: ['Trustee roster: the contact is on the panel-trustee roster for chapter(s) 7, 13 — case trustee matching reads it.'],
+    evidence: [], active: 0, sort_order: 4, ...over } });
+  const roleUpdateDraft = (over = {}) => roleDraft({ kind: 'contact.role.update.v1',
+    role: { role_id: 31, role_code: 'trustee', label: 'Trustee', fields: [{ key: 'chapter', label: 'Chapters', type: 'multi_select', required: true }] },
+    current_attrs: { chapter: [7, 13], legacy: 'x' }, attrs: { chapter: [13] }, dropped_keys: ['legacy'],
+    expected: { attrs: { legacy: 'x', chapter: [7, 13] } }, ...over });
+  const RELATION_ROW = { id: 44, type_code: 'spouse', contact_a_id: 77, contact_b_id: 78, active: 1, status: '', start_date: '2010-06-12T00:00:00.000Z',
+    end_date: null, notes: 'old', updated_at: '2026-10-01T12:00:00.000Z' };
+  const relReads = (over = {}) => (path) => {
+    if (over.gone) { throw Object.assign(new Error('Contact not found'), { status: 404 }); }
+    if (/^\/api\/contacts\/77\/relations\?type_code=(parent_child|spouse)&limit=100$/.test(path)) {
+      const rows = over.rows || [];
+      return { status: 'success', relations: rows, total: over.total != null ? over.total : rows.length };
+    }
+    if (path === '/api/contacts/77/roles') return { status: 'success', roles: over.roles || [] };
+    throw new Error(`unexpected read ${path}`);
+  };
+  function runRel(message, { read = relReads(), write = async () => ({ status: 'success', relation: { id: 501 } }), confirm = true } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); return read(path); }
+      writes.push({ path, body, method, headers }); return write(path, body);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a6' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) } };
+    const history = []; const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, openEntity, sandbox }));
+  }
+
+  test('relationship create: plain-language card, click-time re-read, ONE fixed POST without a key, relation receipt, opens contact A', async () => {
+    const m = relDraft();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runRel(m);
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('contact_relation');
+    expect(gets).toEqual(['/api/contacts/77/relations?type_code=parent_child&limit=100']);
+    expect(writes).toEqual([{ path: '/api/contact-relations', method: 'POST', headers: undefined,
+      body: { contact_a_id: 77, contact_b_id: 78, type_code: 'parent_child', status: 'adopted', start_date: '2015-01-02', notes: 'n' } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a6', result: { relation_id: 501 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_relation_id: 501 });
+    expect(history[0].text).toBe('Add relationship applied to relationship #501.');
+    expect(history[0].entities).toEqual([{ kind: 'contact', id: '77', label: 'Dana Client' }]);
+    expect(openEntity).toHaveBeenCalledWith('contact', 77, 'Dana Client');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'question', confirmButtonText: 'Add relationship' });
+    expect(dialog.text).toContain("On Dana Client's record: \"Parent of Sam Client\"");
+    expect(dialog.text).toContain("On Sam Client's record: \"Child of Dana Client\"");
+    expect(dialog.text).toContain('Type: parent_child — one-way (the two records read differently)');
+    expect(dialog.text).toContain('Contact B: Sam Client (#78, person)');
+    expect(dialog.text).toContain('Created as: active, with no end date.');
+  });
+
+  test('relationship update: only the reviewed status/start_date/notes reach the PATCH; a stale, ended or vanished relation refuses BEFORE the claim', async () => {
+    const m = relUpdateDraft();
+    const ok = await runRel(m, { read: relReads({ rows: [RELATION_ROW] }), write: async () => ({ status: 'success', relation: { id: 44 } }) });
+    expect(ok.writes).toEqual([{ path: '/api/contact-relations/44', method: 'PATCH', headers: undefined, body: { status: 'separated', notes: '' } }]);
+    expect(m.action_draft.result_relation_id).toBe(44);
+    const text = ok.P.Swal.fire.mock.calls[0][0].text;
+    expect(text).toContain('Relation: #44');
+    expect(text).toContain('New status: separated');
+    expect(text).toContain('Stays: active — the type, both contacts and the end fields are unchanged.');
+    const cases = [
+      [relReads({ rows: [{ ...RELATION_ROW, updated_at: '2026-10-02T09:00:00.000Z' }] }), 'Relation #44 was edited since this card was prepared. Nothing was written.'],
+      [relReads({ rows: [{ ...RELATION_ROW, notes: 'edited in the same second' }] }), 'Relation #44 was edited since this card was prepared.'],
+      [relReads({ rows: [{ ...RELATION_ROW, active: 0 }] }), 'Relation #44 was ended or deactivated since this card was prepared. Nothing was written.'],
+      [relReads({ rows: [{ ...RELATION_ROW, end_date: '2026-10-05T00:00:00.000Z' }] }), 'Relation #44 was ended or deactivated'],
+      [relReads({ rows: [] }), 'Relation #44 no longer exists, or its type changed, since this card was prepared. Nothing was written.'],
+      [relReads({ gone: true }), 'Dana Client (contact #77) no longer exists. Nothing was written.'],
+    ];
+    for (const [read, why] of cases) {
+      const d = relUpdateDraft();
+      const r = await runRel(d, { read });
+      expect({ why, writes: r.writes, ledger: r.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(d.action_draft.refusal_error).toContain(why);
+    }
+    // A truncated list cannot prove freshness: nothing claimed, the card stays retryable.
+    const t = relUpdateDraft();
+    const tr = await runRel(t, { read: relReads({ rows: [RELATION_ROW], total: 101 }) });
+    expect([tr.writes, tr.ledger]).toEqual([[], []]);
+    expect(t.action_draft.action_error).toMatch(/^Could not re-check the record before applying \(the contact's relationships could not be read in full\)/);
+  });
+
+  test('relationship create: a pair that became related (either direction) refuses before the claim; a 400 from the route is a refusal', async () => {
+    for (const row of [{ id: 9, type_code: 'parent_child', contact_a_id: 77, contact_b_id: 78 }, { id: 9, type_code: 'parent_child', contact_a_id: 78, contact_b_id: 77 }]) {
+      const d = relDraft();
+      const r = await runRel(d, { read: relReads({ rows: [row] }) });
+      expect([r.writes, r.ledger]).toEqual([[], []]);
+      expect(d.action_draft.refusal_error).toBe('Dana Client and Sam Client now have a parent_child relation (#9), added since this card was prepared. Nothing was written.');
+    }
+    const other = await runRel(relDraft(), { read: relReads({ rows: [{ id: 9, type_code: 'parent_child', contact_a_id: 77, contact_b_id: 90 }] }) });
+    expect(other.writes).toHaveLength(1);
+    const d = relDraft();
+    await runRel(d, { write: async () => { throw Object.assign(new Error('This relation already exists (same A, B, and type)'), { status: 400, body: { status: 'error' } }); } });
+    expect(d.action_draft.refusal_error).toBe('Refused — nothing written (This relation already exists (same A, B, and type)). Ask Casey to prepare it again.');
+    expect(d.action_draft).not.toHaveProperty('ambiguous_error');
+    const u = relDraft();
+    await runRel(u, { write: async () => { throw Object.assign(new Error('Internal'), { status: 500 }); } });
+    expect(u.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    const cancelled = await runRel(relDraft(), { confirm: false });
+    expect([cancelled.writes, cancelled.gets, cancelled.ledger]).toEqual([[], [], []]);
+  });
+
+  test('role create / update: fixed bodies, held-role and stale-attrs refusals, key-order-insensitive freshness, role receipt', async () => {
+    const m = roleDraft();
+    const r = await runRel(m, { write: async () => ({ status: 'success', id: 61 }) });
+    expect(r.sandbox.actionFamily(m.action_draft).id).toBe('contact_role');
+    expect(r.gets).toEqual(['/api/contacts/77/roles']);
+    expect(r.writes).toEqual([{ path: '/api/contacts/77/roles', method: 'POST', headers: undefined, body: { role: 'trustee', attrs: { chapter: [7, 13] } } }]);
+    expect(r.ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a6', result: { role_id: 61 } } }]);
+    const text = r.P.Swal.fire.mock.calls[0][0].text;
+    expect(text).toContain('Role: Trustee (trustee)');
+    expect(text).toContain('Chapters (required): 7, 13');
+    expect(text).toContain('341 Zoom link: —');
+    expect(text).toContain('Effect: Trustee roster: the contact is on the panel-trustee roster for chapter(s) 7, 13');
+    for (const [roles, why] of [[[{ id: 5, role: 'Trustee', active: 1 }], 'Dana Client now has a trustee role row (#5), added since this card was prepared. Nothing was written.'],
+      [[{ id: 6, role: 'trustee', active: 0 }], 'Dana Client now has a trustee role row (#6, inactive), added since this card was prepared.']]) {
+      const d = roleDraft();
+      const x = await runRel(d, { read: relReads({ roles }) });
+      expect([x.writes, x.ledger]).toEqual([[], []]);
+      expect(d.action_draft.refusal_error).toContain(why);
+    }
+    // Update: the stored attrs come back in another key order — still fresh.
+    const u = roleUpdateDraft();
+    const ok = await runRel(u, { read: relReads({ roles: [{ id: 31, role: 'trustee', active: 1, attrs: { chapter: [7, 13], legacy: 'x' } }] }), write: async () => ({ status: 'success', id: 31 }) });
+    expect(ok.writes).toEqual([{ path: '/api/contacts/77/roles/31', method: 'PATCH', headers: undefined, body: { attrs: { chapter: [13] } } }]);
+    expect(ok.P.Swal.fire.mock.calls[0][0].text).toContain('Removed attributes: legacy (not in the new set, so they are deleted).');
+    for (const [roles, why] of [[[{ id: 31, role: 'trustee', active: 1, attrs: { chapter: [7] } }], "Role row #31's attributes were edited since this card was prepared."],
+      [[{ id: 31, role: 'trustee', active: 0, attrs: { chapter: [7, 13], legacy: 'x' } }], 'Role row #31 was deactivated since this card was prepared.'],
+      [[], 'Role row #31 is no longer on Dana Client. Nothing was written.']]) {
+      const d = roleUpdateDraft();
+      const x = await runRel(d, { read: relReads({ roles }) });
+      expect([x.writes, x.ledger]).toEqual([[], []]);
+      expect(d.action_draft.refusal_error).toContain(why);
+    }
+    // An AMBIGUOUS judge-suffix effect danger-styles the dialog.
+    const j = roleDraft({ role: { role_code: 'judge', label: 'Judge', fields: [] }, attrs: { judge_3: 'abc' },
+      effects: ['Judge resolution: x', 'AMBIGUOUS SUFFIX: Hon. Other (#5) already carries judge suffix "abc"'] });
+    const jr = await runRel(j, { confirm: false });
+    expect(jr.P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning', focusCancel: true });
+  });
+
+  test('reopened relation / role cards restore from the ledger and offer only the contact', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    for (const [m, field, id, chip] of [[relDraft(), 'relation_id', 501, 'Applied — relationship #501'], [roleDraft(), 'role_id', 61, 'Applied — role row #61']]) {
+      box.applyActionResults([m], [{ draft_id: m.action_draft.draft_id, kind: m.action_draft.kind, outcome: 'applied', result: { [field]: id } }]);
+      expect(m.action_draft.status).toBe('applied');
+      const host = dom.window.document.createElement('div');
+      box.hydrateActionDraft(box.actionFamily(m.action_draft), host, m, m.action_draft);
+      expect(host.querySelector('.action-draft-status').textContent).toBe(chip);
+      expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open Dana Client', 'Copy details']);
+    }
+    // Two families, distinct applied keys, the four A6 kinds and nothing else.
+    const rel = box.actionFamily({ kind: 'contact.relation.update.v1' }); const role = box.actionFamily({ kind: 'contact.role.update.v1' });
+    expect([[...rel.kinds], [...role.kinds]]).toEqual([['contact.relation.create.v1', 'contact.relation.update.v1'], ['contact.role.create.v1', 'contact.role.update.v1']]);
+    expect([rel.appliedKey, role.appliedKey, rel.idField, role.idField]).toEqual(['result_relation_id', 'result_role_id', 'relation_id', 'role_id']);
+    for (const kind of ['contact.relation.end.v1', 'contact.relation.delete.v1', 'contact.role.remove.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
   });
 

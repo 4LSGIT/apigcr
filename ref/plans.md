@@ -1075,6 +1075,34 @@ COMMENTs.)
   that step fails without sending — and the card does not warn.
   The card could read the contact's active phone/email rows and say so.
 
+## From the Ask Casey arc — A6 contact relations and roles (2026-10-28) — deferred
+
+- **Native sync-bus gap: relations and roles broadcast nothing.**
+  `public/js/yc-sync.js` has no matcher for `/api/contact-relations*` (POST,
+  PATCH, DELETE) or `/api/contacts/:id/roles*` (POST, PATCH, DELETE), and
+  neither route family's response carries a `changes` diff. The Relationships
+  tab (contact.html) and the contact form's Roles section each reload only
+  themselves, so every other open frame — the other contact of a relation, a
+  second tab, a roster consumer — stays stale until reloaded, whether the
+  write came from the native page or a Casey card. A canonical bus arc: a
+  matcher per route family addressing BOTH contacts of a relation (the
+  response carries `contact_a_id` / `contact_b_id`), a refetch marker for the
+  role rows, readers in the two panes, and the ycSync tests — never a
+  Casey-only emit (manager ruling 2026-10-28).
+- **The A6 remove sub-slice.** Relation DELETE, ending a relation (`active`
+  / `end_date` / `end_reason` with the type's `allowed_end_reasons` vocab),
+  role deactivation (PATCH `active=0`, the native "remove") and hard detach,
+  reactivation of either, a relation type change (vocab re-validation +
+  symmetric collision), and editing an ended relation. Each is refused by name
+  in the A6 normalizer today; a sub-slice needs its own card wording for the
+  downstream effect (a trustee leaving the roster, a judge suffix no longer
+  resolving) and click-time freshness.
+- **Symmetric reverse race.** `contactRelationService.createRelation` refuses
+  the reverse of a SYMMETRIC type with an application-level SELECT, not a key,
+  so two concurrent creates of (A,B,spouse) and (B,A,spouse) can both store.
+  A generated canonical-pair column (`LEAST`/`GREATEST` of the ids, for
+  symmetric types) with a UNIQUE key would close it for every caller.
+
 ## From the Ask Casey arc — A16 report drafts (2026-10-27) — deferred
 
 - **The other report kinds.** Update (PUT, honouring the lock), run, lock /

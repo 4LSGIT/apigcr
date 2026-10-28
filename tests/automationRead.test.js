@@ -483,7 +483,7 @@ describe('both read-planning prompts teach every read kind (the S3b lesson, read
 
   // The validator is the authority on which kinds exist; both prompts must
   // name each one, or the stage that is blind will refuse what the other runs.
-  const READ_KINDS = ['sql.read', 'manual.search', 'comms.search', 'weather.lookup',
+  const READ_KINDS = ['sql.read', 'manual.search', 'comms.search', 'weather.lookup', 'contact.relations',
     'automation.list', 'automation.definition', 'automation.run', 'automation.references',
     'automation.preview_step', 'automation.preview_ingest_rule'];
 
@@ -492,6 +492,7 @@ describe('both read-planning prompts teach every read kind (the S3b lesson, read
     // a shared bag with several ids would itself be invalid.
     const PARAMS = {
       'manual.search': { query: 'xx' }, 'comms.search': { query: 'xx' }, 'weather.lookup': { location: 'xx' },
+      'contact.relations': { contact_id: 1 },
       'automation.list': {}, 'automation.definition': { workflow_id: 1 },
       'automation.run': { execution_id: 1 }, 'automation.references': { workflow_id: 1 },
       'automation.preview_step': { step_type: 'internal_function', config: { function_name: 'noop' } },

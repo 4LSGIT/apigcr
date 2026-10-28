@@ -189,6 +189,33 @@ describe('A18.4b — every stage teaches sequence enroll, contact-scoped and dat
   });
 });
 
+// A6: the relation/role kinds share the `contact` prefix with A5, so the
+// family marker above cannot see a stage that forgot them. The plan's own
+// bullet must exist and the old "relations/roles" exclusion must be gone from
+// the A5 bullet (a stage still excluding them refuses — the job lesson).
+describe('A6 — every stage teaches contact relations and roles, and the contact.relations read', () => {
+  test('the plan carries its own bullet and the A5 bullet no longer excludes relations/roles', () => {
+    expect(planPrompt).toContain('Reviewed contact relation and role actions are available');
+    expect(planPrompt).not.toContain('relations/roles, or scalar contact edits');
+    expect(planPrompt).toContain('Ending, removing, deactivating or reactivating a relationship');
+  });
+  test('the investigate stage names the read and the proposal family', () => {
+    expect(investigatePrompt).toContain('contact relation / role proposals, which need a contact.relations read');
+    // In each stage's "Available kinds" list itself, not only in prose (a
+    // stage whose list omits a kind treats it as nonexistent).
+    expect(investigatePrompt).toContain('- Available kinds are sql.read, manual.search, comms.search, weather.lookup, contact.relations ({"contact_id"}');
+    expect(planPrompt).toContain('Available kinds are sql.read, manual.search, comms.search, weather.lookup,\n  contact.relations ({"contact_id":N}');
+  });
+  test('the answer and repair stages teach direction, the registry, and the deferred remove', () => {
+    expect(answerPrompt).toContain('Contact relation and role rules (A6');
+    expect(answerPrompt).toContain('for parent_child contact_a is the PARENT');
+    expect(answerPrompt).toContain('type_code / role / status MUST be values from those registry rows');
+    expect(answerPrompt).toContain('Ending, deactivating, reactivating or deleting\n    a relation, changing its type');
+    expect(repairPrompt).toContain('changes allows ONLY status,start_date,notes');
+    expect(repairPrompt).toContain('attrs is the COMPLETE\n  replacement object');
+  });
+});
+
 describe('a job request forces the draft-required path like the other families', () => {
   const svc = require(path.join(REPO, 'services', 'assistantService'));
 
@@ -226,6 +253,17 @@ describe('a job request forces the draft-required path like the other families',
     }
     for (const q of ['What does email rule 12 do?', 'Why did the ingest rule not match?', 'Show me the phone rules',
       'Change the trigger rule for new cases']) {
+      expect({ q, forced: svc.taskDraftRequested(q) }).toEqual({ q, forced: false });
+    }
+    // A6: relation- and role-only phrases (no contact/phone/task noun) ride
+    // the new clauses; questions, and a bare trustee/judge case edit, do not.
+    for (const q of ['Record Dana as Sam\'s spouse', 'Link Acme Corp as the employer of Dana Client',
+      'Add Ruth as the guarantor for Boaz', 'Make Jane Smith a trustee for chapter 13 — add the role',
+      'Add Judge Lee as a judge with suffix abc', 'Update relationship 44 to say separated']) {
+      expect({ q, forced: svc.taskDraftRequested(q) }).toEqual({ q, forced: true });
+    }
+    for (const q of ['Who is Dana\'s spouse?', 'Is Acme the employer of Dana?', 'Show me Dana\'s relationships',
+      'Update the trustee on case 25-12345', 'What roles does Jane have?']) {
       expect({ q, forced: svc.taskDraftRequested(q) }).toEqual({ q, forced: false });
     }
   });

@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 45 shipped kinds:
+ * These tests ask that claim two questions for all 49 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 45 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 49 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -102,6 +102,11 @@ const KINDS = [
   { kind: 'contact.address.create.v1', method: 'POST', path: '/api/contact-addresses' },
   { kind: 'contact.address.update.v1', method: 'PATCH', path: '/api/contact-addresses/1' },
   { kind: 'contact.address.end.v1', method: 'PATCH', path: '/api/contact-addresses/1' },
+  // A6: the Relationships tab's and the contact form Roles section's own routes.
+  { kind: 'contact.relation.create.v1', method: 'POST', path: '/api/contact-relations' },
+  { kind: 'contact.relation.update.v1', method: 'PATCH', path: '/api/contact-relations/1' },
+  { kind: 'contact.role.create.v1', method: 'POST', path: '/api/contacts/1/roles' },
+  { kind: 'contact.role.update.v1', method: 'PATCH', path: '/api/contacts/1/roles/1' },
   { kind: 'job.code_safe.create.v1', method: 'POST', path: '/scheduled-jobs' },
   { kind: 'workflow.draft.v1', method: 'POST', path: '/workflows/bulk' },
   { kind: 'workflow.step_insert.v1', method: 'POST', path: '/workflows/1/steps' },
@@ -134,7 +139,10 @@ const KINDS = [
 // STANDARD-mode code (safe-mode S2), which the job family never sends.
 const CAPABILITY_FREE_ROUTE_FILES = ['routes/api.tasks.js', 'routes/api.events.js', 'routes/api.appts.js',
   'routes/api.contactPhones.js', 'routes/api.contactEmails.js', 'routes/api.contactAddresses.js'];
-const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/scheduled_jobs.js', 'routes/workflows.js', 'routes/api.hooks.js', 'routes/sequences.js',
+const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/api.contactRelations.js',
+  // A6: the per-contact role routes are jwtOrApiKey only; the file's
+  // requireAuth gates the role-TYPE catalog writes, which no card sends.
+  'routes/api.contactRoles.js', 'routes/scheduled_jobs.js', 'routes/workflows.js', 'routes/api.hooks.js', 'routes/sequences.js',
   // A14: the comms hub's send routes — the one family whose route IS an
   // authorization seat (per-channel can_send grants, SU step-up), pinned below.
   'routes/api.phoneComms.js', 'routes/api.mail.js',
@@ -194,19 +202,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 45 kinds (no database)
+// SECTION 1 — the route-level gate, for all 49 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 45 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 49 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 45 kinds cover 40 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(45);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(40);
+  test('the 49 kinds cover 44 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(49);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(44);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -214,7 +222,7 @@ describe('P2 — what the canonical write route gates on (all 45 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 45', async () => {
+  test('no token: every kind is 401 — authentication is required for all 49', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -279,8 +287,11 @@ describe('P2 — what the canonical write route gates on (all 45 shipped kinds)'
       ['event', 'services/eventService', 'completeEvent', { method: 'PATCH', path: '/api/events/1/complete' }, {}, () => ({ event: { event_id: 1 } })],
       ['appt', 'services/apptService', 'markAttended', { method: 'POST', path: '/api/appts/1/attended' }, {}, () => ({ appt_id: 1 })],
       ['contact subrecord', 'services/contactPhoneService', 'updateContactPhone', { method: 'PATCH', path: '/api/contact-phones/1' }, { notes: 'x' }, () => ({ phone: { id: 1 } })],
+      // A6: both relation/role write routes behind the same bare gate.
+      ['contact relation', 'services/contactRelationService', 'createRelation', { method: 'POST', path: '/api/contact-relations' }, { contact_a_id: 1, contact_b_id: 2, type_code: 'spouse' }, () => ({ relation: { id: 1 } }), 201],
+      ['contact role', 'services/contactRoleService', 'attachRole', { method: 'POST', path: '/api/contacts/1/roles' }, { role: 'judge', attrs: { judge_3: 'abc' } }, () => ({ id: 1 }), 201],
     ];
-    test.each(cases)('%s family', async (_family, modPath, fnName, route, body, result) => {
+    test.each(cases)('%s family', async (_family, modPath, fnName, route, body, result, created = 200) => {
       const mod = require(path.join(REPO, modPath));
       const spy = jest.spyOn(mod, fnName).mockImplementation(async () => result());
       try {
@@ -288,7 +299,7 @@ describe('P2 — what the canonical write route gates on (all 45 shipped kinds)'
           spy.mockClear();
           const res = await call(app(), route, bearer(token({ roles })), body);
           expect({ roles: roles.join(',') || 'none', status: res.status, reached: spy.mock.calls.length })
-            .toEqual({ roles: roles.join(',') || 'none', status: 200, reached: 1 });
+            .toEqual({ roles: roles.join(',') || 'none', status: created, reached: 1 });
         }
       } finally { spy.mockRestore(); }
     });
@@ -305,6 +316,20 @@ describe('P2 — what the canonical write route gates on (all 45 shipped kinds)'
       expect({ f, superuser: /isSuperuser|superuserOnly/.test(src) }).toEqual({ f, superuser: false });
       expect({ f, jwtOrApiKey: /require\('\.\.\/lib\/auth\.jwtOrApiKey'\)/.test(src) })
         .toEqual({ f, jwtOrApiKey: true });
+    }
+  });
+
+  // A6: the relation routes mount no capability gate at all; the role routes'
+  // only requireAuth is the role-TYPE catalog's (firm.settings), on exactly the
+  // two type-write mounts — never on the per-contact rows a card writes.
+  test('A6 route files: relations ungated; the roles file gates only the role-type catalog writes', () => {
+    const rel = read('routes/api.contactRelations.js');
+    expect(/requireAuth/.test(rel)).toBe(false);
+    const roles = read('routes/api.contactRoles.js');
+    const gated = [...roles.matchAll(/router\.(\w+)\('([^']+)',\s*firmSettingsWrite/g)].map((m) => `${m[1]} ${m[2]}`);
+    expect(gated).toEqual(['post /api/contact-role-types', 'put /api/contact-role-types/:code']);
+    for (const mount of ["router.post('/api/contacts/:id/roles', jwtOrApiKey", "router.patch('/api/contacts/:id/roles/:roleRowId', jwtOrApiKey"]) {
+      expect(roles).toContain(mount);
     }
   });
 

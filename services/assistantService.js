@@ -297,6 +297,33 @@ const CONTACT_ADDRESS_UPDATE_ACTION_KEYS = new Set(['kind', 'contact_id', 'addre
 const CONTACT_PHONE_END_KEYS = new Set(['kind', 'contact_id', 'phone_id', 'end_date', 'end_reason', 'evidence']);
 const CONTACT_EMAIL_END_KEYS = new Set(['kind', 'contact_id', 'email_id', 'end_date', 'end_reason', 'evidence']);
 const CONTACT_ADDRESS_END_KEYS = new Set(['kind', 'contact_id', 'address_id', 'end_date', 'end_reason', 'evidence']);
+// A6: contact relations and roles — create, and a narrow update that keeps the
+// record ACTIVE. Ending a relation (active / end_date / end_reason), removing
+// either kind, role reactivation and relation type changes are the deferred
+// sub-slice (ref/ASK_CASEY_ACTIONS_PLAN.md A6): each is refused BY NAME. The
+// type / role code comes from the server registry (contact_relation_types /
+// contact_role_types), never from model text; both ends and the role row come
+// from a contact.relations read or a contacts read in the same conversation.
+// One per-family switch, casey_contact_relations_enabled (on unless '0').
+const CONTACT_RELATION_ACTION_KINDS = new Set([
+  'contact.relation.create.v1', 'contact.relation.update.v1',
+  'contact.role.create.v1', 'contact.role.update.v1',
+]);
+const CONTACT_RELATION_CREATE_KEYS = new Set(['kind', 'contact_a_id', 'contact_b_id', 'type_code', 'status', 'start_date', 'notes', 'evidence']);
+const CONTACT_RELATION_UPDATE_KEYS = new Set(['kind', 'relation_id', 'changes', 'evidence']);
+const CONTACT_RELATION_CHANGE_KEYS = new Set(['status', 'start_date', 'notes']);
+const CONTACT_ROLE_CREATE_KEYS = new Set(['kind', 'contact_id', 'role', 'attrs', 'evidence']);
+const CONTACT_ROLE_UPDATE_KEYS = new Set(['kind', 'contact_id', 'role_id', 'attrs', 'evidence']);
+// Taking a relation out of active state is the deferred remove (manager
+// ruling 3, 2026-10-28), never an update.
+const CONTACT_RELATION_ENDING_KEYS = ['active', 'end_date', 'end_reason'];
+// contact_relations.notes is varchar(500); the relaxed sql_mode truncates
+// longer text silently, so a longer reviewed note would be stored as text the
+// user never saw.
+const CONTACT_RELATION_NOTES_MAX = 500;
+const CONTACT_ROLE_ATTRS_MAX_JSON = 2000;
+// contact.relations read: rows per read (the per-step cap is MAX_ROWS).
+const CONTACT_RELATIONS_READ_MAX = 20;
 const CONTACT_PHONE_UPDATE_KEYS = new Set(['label', 'is_primary', 'sms_optout', 'mms_capable', 'notes']);
 const CONTACT_EMAIL_UPDATE_KEYS = new Set(['label', 'is_primary', 'email_optout', 'notes']);
 const CONTACT_ADDRESS_UPDATE_KEYS = new Set(['address1', 'address2', 'city', 'state', 'zip', 'country', 'label', 'is_primary', 'notes']);
@@ -1482,6 +1509,408 @@ async function normalizeContactSubrecordAction(db, value, evidence) {
   }
   return { draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft', family, target, changes,
     demoted_primary: demotedPrimary, evidence: refs };
+}
+
+// ── A6: contact relations and roles ───────────────────────────────────────
+// The canonical routes (routes/api.contactRelations.js,
+// routes/api.contactRoles.js) are jwtOrApiKey only and validate the registry
+// themselves; the normalizer resolves the same registry first so the card
+// names exactly what will be stored, and refuses what the route would refuse
+// (or, for the reverse of an asymmetric relation, what it should).
+
+function relationError(message) { return httpError(422, message); }
+
+function relationId(value, field) {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id < 1) throw relationError(`Contact relation action needs a positive ${field}`);
+  return id;
+}
+
+function relationKeyRefusal(value, allowed, label) {
+  const unknown = Object.keys(value).filter((k) => !allowed.has(k));
+  if (unknown.length) {
+    throw relationError(`${label} carries unsupported fields: ${unknown.join(', ')} — it takes ${[...allowed].filter((k) => k !== 'kind').join(', ')} only`);
+  }
+}
+
+function relationDate(value, field) {
+  if (value == null || value === '') return null;
+  const text = String(value).trim();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(text) ? new Date(`${text}T00:00:00Z`) : null;
+  if (!date || Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== text) {
+    throw relationError(`Contact relation ${field} must be a real YYYY-MM-DD date`);
+  }
+  if (text > nowLocal().toFormat('yyyy-MM-dd')) throw relationError(`Contact relation ${field} cannot be in the future`);
+  return text;
+}
+
+function relationNotes(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (text.length > CONTACT_RELATION_NOTES_MAX) {
+    throw relationError(`Contact relation notes exceed ${CONTACT_RELATION_NOTES_MAX} characters (the column stores no more)`);
+  }
+  return text;
+}
+
+async function relationContact(db, contactId, which) {
+  const [rows] = await db.query('SELECT contact_id, contact_name, contact_kind FROM contacts WHERE contact_id = ? LIMIT 1', [contactId]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) throw relationError(`Contact ${contactId} (${which}) is unavailable — it no longer exists`);
+  return {
+    contact_id: Number(row.contact_id),
+    contact_name: String(row.contact_name || '').trim().slice(0, 200) || `Contact ${contactId}`,
+    contact_kind: row.contact_kind === 'org' ? 'org' : 'person',
+  };
+}
+
+// The relation-type registry, resolved by code. contact_relation_types is
+// utf8mb4_general_ci, so 'Spouse' finds 'spouse' — the card carries the
+// registry's own spelling, never the model's.
+async function relationTypeRow(db, code, { forNew }) {
+  const text = String(code == null ? '' : code).trim();
+  if (!text) throw relationError('Contact relation action needs a type_code from the relation-type registry');
+  const [rows] = await db.query(
+    'SELECT type_code, forward_label, reverse_label, is_symmetric, allowed_statuses, active FROM contact_relation_types WHERE type_code = ? LIMIT 1',
+    [text.slice(0, 40)]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row || (forNew && !row.active)) {
+    const [active] = await db.query('SELECT type_code, forward_label FROM contact_relation_types WHERE active = 1 ORDER BY sort_order ASC, type_code ASC');
+    const list = (active || []).map((r) => `${r.type_code} ("${r.forward_label}")`).join(', ') || 'none';
+    throw relationError(!row
+      ? `Relation type "${text.slice(0, 40)}" is not in the relation-type registry — use one of: ${list}`
+      : `Relation type "${row.type_code}" is retired (inactive) and cannot be used for a new relation — use one of: ${list}`);
+  }
+  return {
+    type_code: String(row.type_code),
+    forward_label: String(row.forward_label || ''),
+    reverse_label: String(row.reverse_label || ''),
+    is_symmetric: row.is_symmetric === 1 || row.is_symmetric === true || row.is_symmetric === '1',
+    allowed_statuses: require('./contactRelationService').parseVocabCsv(row.allowed_statuses),
+    active: !!Number(row.active),
+  };
+}
+
+function relationStatus(type, value) {
+  const status = String(value == null ? '' : value).trim();
+  if (!status) return '';
+  if (!type.allowed_statuses.includes(status)) {
+    throw relationError(type.allowed_statuses.length
+      ? `Status "${status.slice(0, 40)}" is not allowed for ${type.type_code} (allowed: ${type.allowed_statuses.join(', ')})`
+      : `Relation type ${type.type_code} takes no status`);
+  }
+  return status;
+}
+
+function relationEvidenceSupports(refs, evidence, relId) {
+  return refs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return row && Number(row.relation_id) === relId;
+  });
+}
+
+function relationTypeCard(type) {
+  return { type_code: type.type_code, forward_label: type.forward_label, reverse_label: type.reverse_label, is_symmetric: type.is_symmetric };
+}
+
+async function normalizeContactRelationCreate(db, value, evidence) {
+  const ending = Object.keys(value).filter((k) => CONTACT_RELATION_ENDING_KEYS.includes(k));
+  if (ending.length) {
+    throw relationError(`A relation Casey adds is created ACTIVE — it takes no ${ending.join(', ')}. Ending a relation is not available to Casey; the user ends it on the contact's Relationships tab`);
+  }
+  relationKeyRefusal(value, CONTACT_RELATION_CREATE_KEYS, 'Relation create');
+  const aId = relationId(value.contact_a_id, 'contact_a_id');
+  const bId = relationId(value.contact_b_id, 'contact_b_id');
+  if (aId === bId) throw relationError('A contact cannot be related to itself — contact_a_id and contact_b_id must differ');
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!contactEvidenceSupports(refs, evidence, aId, null)) {
+    throw relationError(`Relation create evidence does not identify contact_a (${aId}) — cite a row carrying its exact contact_id (read the contact first)`);
+  }
+  if (!contactEvidenceSupports(refs, evidence, bId, null)) {
+    throw relationError(`Relation create evidence does not identify contact_b (${bId}) — cite a row carrying its exact contact_id (read the contact first)`);
+  }
+  const a = await relationContact(db, aId, 'contact_a');
+  const b = await relationContact(db, bId, 'contact_b');
+  const type = await relationTypeRow(db, value.type_code, { forNew: true });
+  const fields = {
+    status: relationStatus(type, value.status),
+    start_date: relationDate(value.start_date, 'start date'),
+    notes: relationNotes(value.notes),
+  };
+  // One relation per pair and type, in EITHER direction. The route's UNIQUE
+  // (contact_a_id, contact_b_id, type_code) refuses an exact duplicate and its
+  // app-level check refuses the reverse of a SYMMETRIC type; the reverse of an
+  // asymmetric type (B "Parent of" A when A "Parent of" B exists) the route
+  // would store, and this card refuses (approved, 2026-10-28). An inactive row
+  // refuses too: reactivating it is the deferred sub-slice.
+  // RESIDUAL RACE (on record, 2026-10-28): the symmetric reverse check is
+  // application-level in contactRelationService.createRelation, not a key, so
+  // two DIFFERENT cards proposing (A,B,spouse) and (B,A,spouse), clicked at the
+  // same moment, can both pass it and store two rows. One card cannot write
+  // twice (the ledger allows one claim per draft), and the exact duplicate is
+  // the UNIQUE key's; only the opposite-order pair races.
+  const [dups] = await db.query(
+    `SELECT id, contact_a_id, contact_b_id, active FROM contact_relations
+      WHERE type_code = ? AND ((contact_a_id = ? AND contact_b_id = ?) OR (contact_a_id = ? AND contact_b_id = ?))
+      ORDER BY id ASC LIMIT 1`,
+    [type.type_code, aId, bId, bId, aId]);
+  const dup = Array.isArray(dups) ? dups[0] : null;
+  if (dup) {
+    const same = Number(dup.contact_a_id) === aId;
+    const inactive = !Number(dup.active) ? ' It is INACTIVE; reactivating or editing an ended relation is not available to Casey — the user does it on the Relationships tab.' : '';
+    const recorded = same || type.is_symmetric
+      ? `${a.contact_name} and ${b.contact_name} already have a ${type.type_code} relation (#${dup.id})`
+      : `${b.contact_name} is already recorded as "${type.forward_label} ${a.contact_name}" (relation #${dup.id}) — the reverse of what was asked; a ${type.type_code} relation cannot run both ways`;
+    throw relationError(`${recorded}. Nothing is proposed.${inactive}`);
+  }
+  return {
+    draft_id: crypto.randomUUID(), kind: 'contact.relation.create.v1', status: 'draft',
+    relation: { ...relationTypeCard(type), contact_a: a, contact_b: b },
+    fields, evidence: refs,
+  };
+}
+
+async function normalizeContactRelationUpdate(db, value, evidence) {
+  relationKeyRefusal(value, CONTACT_RELATION_UPDATE_KEYS, 'Relation update');
+  const relId = relationId(value.relation_id, 'relation_id');
+  const changes = value.changes;
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes) || !Object.keys(changes).length) {
+    throw relationError('Relation update needs a changes object with at least one of status, start_date, notes');
+  }
+  const ending = Object.keys(changes).filter((k) => CONTACT_RELATION_ENDING_KEYS.includes(k));
+  if (ending.length) {
+    throw relationError(`Relation update cannot change ${ending.join(', ')} — ending or deactivating a relation is not available to Casey (it takes the relation out of active state); the user ends it on the contact's Relationships tab`);
+  }
+  if (Object.prototype.hasOwnProperty.call(changes, 'type_code')) {
+    throw relationError('Relation update cannot change type_code — a type change is not available to Casey; the user edits the type on the Relationships tab');
+  }
+  const ends = ['contact_a_id', 'contact_b_id'].filter((k) => Object.prototype.hasOwnProperty.call(changes, k));
+  if (ends.length) throw relationError(`Relation update cannot change ${ends.join(', ')} — either end of a relation is fixed`);
+  const unknown = Object.keys(changes).filter((k) => !CONTACT_RELATION_CHANGE_KEYS.has(k));
+  if (unknown.length) throw relationError(`Relation update changes unsupported fields: ${unknown.join(', ')} — it changes status, start_date and notes only`);
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!relationEvidenceSupports(refs, evidence, relId)) {
+    throw relationError(`Relation update evidence does not identify relation ${relId} — cite a contact.relations row carrying its exact relation_id`);
+  }
+  const row = await require('./contactRelationService').getRelation(db, relId);
+  if (!row) throw relationError(`Relation ${relId} no longer exists`);
+  if (!Number(row.active) || row.end_date != null) {
+    throw relationError(`Relation ${relId} is ended or inactive — editing or reactivating an ended relation is not available to Casey; the user does it on the Relationships tab`);
+  }
+  const updatedAt = contactActionTimestamp(row.updated_at);
+  if (!updatedAt) throw relationError(`Relation ${relId} has no usable concurrency version`);
+  // Grandfathered: an existing row on a since-retired type keeps its non-type
+  // edits, exactly as the native PATCH allows (contactRelationService).
+  const type = await relationTypeRow(db, row.type_code, { forNew: false });
+  const current = { status: String(row.status || ''), start_date: taskStoredDate(row.start_date), notes: String(row.notes || '') };
+  const next = {};
+  if ('status' in changes) next.status = relationStatus(type, changes.status);
+  if ('start_date' in changes) next.start_date = relationDate(changes.start_date, 'start date');
+  if ('notes' in changes) next.notes = relationNotes(changes.notes);
+  const changed = Object.keys(next).filter((k) => String(next[k] ?? '') !== String(current[k] ?? ''));
+  if (!changed.length) throw relationError(`Relation update does not change any value of relation ${relId}`);
+  const out = {};
+  for (const k of changed) out[k] = next[k];
+  // getRelation projects from contact_a's perspective and carries no name for
+  // contact_a itself, so both ends are read here (and must still exist).
+  const a = await relationContact(db, Number(row.contact_a_id), 'contact_a');
+  const b = await relationContact(db, Number(row.contact_b_id), 'contact_b');
+  return {
+    draft_id: crypto.randomUUID(), kind: 'contact.relation.update.v1', status: 'draft',
+    relation: { relation_id: relId, ...relationTypeCard(type), type_retired: !type.active, contact_a: a, contact_b: b },
+    current, changes: out, expected: { updated_at: updatedAt }, evidence: refs,
+  };
+}
+
+// Role types: contact_role_types (role_code is a slug, label, attrs_schema).
+async function roleTypeRow(db, code, { forNew }) {
+  const text = String(code == null ? '' : code).trim();
+  if (!text) throw relationError('Contact role action needs a role code from the role-type registry');
+  const [rows] = await db.query('SELECT role_code, label, attrs_schema, active FROM contact_role_types WHERE role_code = ? LIMIT 1', [text.slice(0, 40)]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row || (forNew && !Number(row.active))) {
+    const [active] = await db.query('SELECT role_code, label FROM contact_role_types WHERE active = 1 ORDER BY sort_order ASC, role_code ASC');
+    const list = (active || []).map((r) => `${r.role_code} ("${r.label}")`).join(', ') || 'none';
+    throw relationError(!row
+      ? `Role "${text.slice(0, 40)}" is not in the role-type registry — use one of: ${list}`
+      : `Role "${row.role_code}" is retired (inactive) and cannot be given to a contact — use one of: ${list}`);
+  }
+  const { _parseAttrs } = require('./contactRoleService');
+  const schema = _parseAttrs(row.attrs_schema);
+  return { role_code: String(row.role_code), label: String(row.label || row.role_code), schema: Array.isArray(schema) ? schema : null, active: !!Number(row.active) };
+}
+
+function roleAttrs(type, raw, { required }) {
+  if (raw === undefined && required) throw relationError('Role update needs the COMPLETE new attrs object (it replaces the stored one)');
+  // Omitted on a create = null, still validated: a role whose schema has a
+  // required field refuses here, not at the route.
+  const value = raw === undefined ? null : raw;
+  if (value !== null && (typeof value !== 'object' || Array.isArray(value))) throw relationError('Role attrs must be a JSON object or null');
+  const json = JSON.stringify(value);
+  if (json && json.length > CONTACT_ROLE_ATTRS_MAX_JSON) throw relationError(`Role attrs exceed ${CONTACT_ROLE_ATTRS_MAX_JSON} characters of JSON`);
+  // The route's own validator, against the role type's attrs_schema: number
+  // identity is load-bearing (trustee chapters are NUMBERS, never '7').
+  try { require('./contactRoleService').validateRoleAttrs(type.schema, value); }
+  catch (err) { throw relationError(`Role "${type.role_code}" attrs are invalid: ${err && err.message ? err.message : 'invalid'}`); }
+  return value == null ? null : JSON.parse(json);
+}
+
+function roleStableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(roleStableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${roleStableJson(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value === undefined ? null : value);
+}
+
+function roleFields(type) {
+  return (type.schema || []).map((f) => ({ key: String(f.key), label: String(f.label || f.key), type: String(f.type || ''), required: !!f.required }));
+}
+
+// What saving the role changes beyond the row (disclosed on the card).
+async function roleEffects(db, type, attrs, contactId) {
+  const effects = [];
+  if (type.role_code === 'trustee') {
+    const chapters = attrs && Array.isArray(attrs.chapter) ? attrs.chapter.join(', ') : 'none';
+    effects.push(`Trustee roster: the contact is on the panel-trustee roster for chapter(s) ${chapters} — case trustee matching, the case-details trustee list, /api/trustees and the trustee e-sign tokens read it from the moment it is saved.`);
+  } else if (type.role_code === 'judge') {
+    const suffix = attrs && typeof attrs.judge_3 === 'string' ? attrs.judge_3.trim().toLowerCase() : '';
+    effects.push(`Judge resolution: cases whose docket number ends in -${suffix || '(none)'} resolve to this contact as their judge from the moment it is saved.`);
+    if (suffix) {
+      const [others] = await db.query(
+        `SELECT cr.contact_id, c.contact_name FROM contact_roles cr JOIN contacts c ON c.contact_id = cr.contact_id
+          WHERE cr.role = 'judge' AND cr.active = 1 AND cr.contact_id <> ?
+            AND LOWER(JSON_UNQUOTE(JSON_EXTRACT(cr.attrs, '$.judge_3'))) = ? LIMIT 5`,
+        [contactId, suffix]);
+      if (Array.isArray(others) && others.length) {
+        effects.push(`AMBIGUOUS SUFFIX: ${others.map((o) => `${String(o.contact_name || '').slice(0, 200)} (#${o.contact_id})`).join(', ')} already carr${others.length > 1 ? 'y' : 'ies'} judge suffix "${suffix}" — docket resolution for it falls back to the judge's name.`);
+      }
+    }
+  }
+  effects.push(`Every ${type.label.toLowerCase()} picker, filter and roster lists the contact in this role immediately.`);
+  return effects;
+}
+
+async function normalizeContactRoleCreate(db, value, evidence) {
+  if (Object.prototype.hasOwnProperty.call(value, 'active')) {
+    throw relationError('A role Casey adds is created ACTIVE — it takes no active flag; deactivating or reactivating a role is not available to Casey');
+  }
+  relationKeyRefusal(value, CONTACT_ROLE_CREATE_KEYS, 'Role create');
+  const contactId = relationId(value.contact_id, 'contact_id');
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!contactEvidenceSupports(refs, evidence, contactId, null)) {
+    throw relationError(`Role create evidence does not identify contact ${contactId} — cite a row carrying its exact contact_id (read the contact first)`);
+  }
+  const contact = await relationContact(db, contactId, 'contact');
+  const type = await roleTypeRow(db, value.role, { forNew: true });
+  const attrs = roleAttrs(type, value.attrs, { required: false });
+  const [existing] = await db.query('SELECT id, active FROM contact_roles WHERE contact_id = ? AND role = ? LIMIT 1', [contactId, type.role_code]);
+  const held = Array.isArray(existing) ? existing[0] : null;
+  if (held) {
+    throw relationError(Number(held.active)
+      ? `${contact.contact_name} already holds the ${type.role_code} role (role row #${held.id}). Nothing is proposed — to change its details, propose a role update`
+      : `${contact.contact_name} has an INACTIVE ${type.role_code} role row (#${held.id}). Reactivating a role is not available to Casey — the user reactivates it in the contact form's Roles section. Nothing is proposed`);
+  }
+  return {
+    draft_id: crypto.randomUUID(), kind: 'contact.role.create.v1', status: 'draft',
+    contact: { contact_id: contact.contact_id, contact_name: contact.contact_name },
+    role: { role_code: type.role_code, label: type.label, fields: roleFields(type) },
+    attrs, effects: await roleEffects(db, type, attrs, contactId), evidence: refs,
+  };
+}
+
+async function normalizeContactRoleUpdate(db, value, evidence) {
+  if (Object.prototype.hasOwnProperty.call(value, 'active')) {
+    throw relationError('Role update cannot change active — deactivating (removing) or reactivating a role is not available to Casey; the user does it in the contact form\'s Roles section');
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'role')) {
+    throw relationError('Role update cannot change the role code — it is immutable on a role row');
+  }
+  relationKeyRefusal(value, CONTACT_ROLE_UPDATE_KEYS, 'Role update');
+  const contactId = relationId(value.contact_id, 'contact_id');
+  const roleRowId = relationId(value.role_id, 'role_id');
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!contactEvidenceSupports(refs, evidence, contactId, { idField: 'role_id' }, roleRowId)) {
+    throw relationError(`Role update evidence does not identify role row ${roleRowId} on contact ${contactId} — cite a contact.relations role row carrying both the exact contact_id and role_id`);
+  }
+  const contact = await relationContact(db, contactId, 'contact');
+  const row = await require('./contactRoleService').getRoleRow(db, roleRowId);
+  if (!row || Number(row.contact_id) !== contactId) throw relationError(`Role row ${roleRowId} is not on contact ${contactId}`);
+  if (!Number(row.active)) {
+    throw relationError(`Role row ${roleRowId} (${row.role}) is INACTIVE — reactivating a role is not available to Casey; the user reactivates it in the contact form's Roles section`);
+  }
+  const type = await roleTypeRow(db, row.role, { forNew: false });
+  const attrs = roleAttrs(type, value.attrs, { required: true });
+  const current = row.attrs == null ? null : row.attrs;
+  if (roleStableJson(current) === roleStableJson(attrs)) throw relationError(`Role update does not change role row ${roleRowId}'s attrs`);
+  const dropped = current && typeof current === 'object' ? Object.keys(current).filter((k) => !(attrs && Object.prototype.hasOwnProperty.call(attrs, k))) : [];
+  return {
+    draft_id: crypto.randomUUID(), kind: 'contact.role.update.v1', status: 'draft',
+    contact: { contact_id: contact.contact_id, contact_name: contact.contact_name },
+    role: { role_id: roleRowId, role_code: type.role_code, label: type.label, fields: roleFields(type), type_retired: !type.active },
+    current_attrs: current, attrs, dropped_keys: dropped,
+    effects: await roleEffects(db, type, attrs, contactId),
+    expected: { attrs: current }, evidence: refs,
+  };
+}
+
+async function normalizeContactRelationAction(db, value, evidence) {
+  // The per-family switch: '0' and the A6 kinds do not exist.
+  if (require('../lib/firmConfig').cfg('casey_contact_relations_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  if (value.kind === 'contact.relation.create.v1') return normalizeContactRelationCreate(db, value, evidence);
+  if (value.kind === 'contact.relation.update.v1') return normalizeContactRelationUpdate(db, value, evidence);
+  if (value.kind === 'contact.role.create.v1') return normalizeContactRoleCreate(db, value, evidence);
+  return normalizeContactRoleUpdate(db, value, evidence);
+}
+
+// The contact.relations read (A6.0): one contact's relations (both
+// directions, from its own perspective), its role rows, and both live
+// registries — through the services the native Relationships tab and Roles
+// section read, on the app pool (these tables are outside the curated report
+// schema and the yc_report grants, the P12 automation-read precedent). Every
+// row carries row_type; relation rows alias relation_id, role rows role_id.
+async function contactRelationsRead(db, contactId) {
+  const relSvc = require('./contactRelationService');
+  const roleSvc = require('./contactRoleService');
+  const listed = await relSvc.listContactRelations(db, contactId, { limit: CONTACT_RELATIONS_READ_MAX });
+  if (!listed) return { rows: [{ row_type: 'not_found', contact_id: contactId, note: `Contact ${contactId} does not exist` }], truncated: false };
+  const [[self]] = await db.query('SELECT contact_name FROM contacts WHERE contact_id = ? LIMIT 1', [contactId]);
+  const selfName = String(self && self.contact_name || '').trim() || `Contact ${contactId}`;
+  const [{ roles }, { types: relationTypes }, { types: roleTypes }] = await Promise.all([
+    roleSvc.listContactRoles(db, contactId, { activeOnly: false }),
+    relSvc.listRelationTypes(db),
+    roleSvc.listRoleTypes(db),
+  ]);
+  const rows = [];
+  for (const r of listed.relations) {
+    const other = String(r.perspective && r.perspective.other_contact_name || '').trim() || `Contact ${r.perspective && r.perspective.other_contact_id}`;
+    const isA = Number(r.contact_a_id) === contactId;
+    const aName = isA ? selfName : other;
+    const bName = isA ? other : selfName;
+    rows.push({
+      row_type: 'relation', contact_id: contactId, relation_id: Number(r.id), type_code: r.type_code,
+      contact_a_id: Number(r.contact_a_id), contact_a_name: aName, contact_b_id: Number(r.contact_b_id), contact_b_name: bName,
+      reads: `${aName}: ${r.forward_label} ${bName}`, reads_reverse: `${bName}: ${r.reverse_label} ${aName}`,
+      is_symmetric: r.is_symmetric ? 1 : 0, active: r.active ? 1 : 0, status: r.status || '',
+      start_date: taskStoredDate(r.start_date), end_date: taskStoredDate(r.end_date), end_reason: r.end_reason || '',
+      notes: r.notes || '', updated_at: contactActionTimestamp(r.updated_at),
+    });
+  }
+  for (const r of roles) {
+    rows.push({ row_type: 'role', contact_id: contactId, role_id: Number(r.id), role: r.role, role_label: r.label || r.role,
+      attrs: r.attrs == null ? null : JSON.stringify(r.attrs), active: r.active ? 1 : 0 });
+  }
+  for (const t of relationTypes) {
+    rows.push({ row_type: 'relation_type', type_code: t.type_code, forward_label: t.forward_label, reverse_label: t.reverse_label,
+      is_symmetric: t.is_symmetric ? 1 : 0, allowed_statuses: (t.allowed_statuses || []).join(',') });
+  }
+  for (const t of roleTypes) {
+    rows.push({ row_type: 'role_type', role_code: t.role_code, role_label: t.label,
+      attrs_schema: t.attrs_schema == null ? null : JSON.stringify(t.attrs_schema) });
+  }
+  return { rows: rows.slice(0, MAX_ROWS), truncated: listed.total > listed.relations.length || rows.length > MAX_ROWS };
 }
 
 async function taskDraftLink(db, value) {
@@ -4399,6 +4828,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && EVENT_ACTION_KINDS.has(value.kind)) return normalizeEventAction(db, value, evidence);
   if (value && APPT_ACTION_KINDS.has(value.kind)) return normalizeApptAction(db, value, evidence);
   if (value && CONTACT_SUBRECORD_ACTION_KINDS.has(value.kind)) return normalizeContactSubrecordAction(db, value, evidence);
+  if (value && CONTACT_RELATION_ACTION_KINDS.has(value.kind)) return normalizeContactRelationAction(db, value, evidence);
   if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Action kind is unavailable');
   if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
   if (!onlyKeys(value, TASK_CREATE_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
@@ -4540,7 +4970,14 @@ function taskDraftRequested(question, history = []) {
   // incoming mail / calls / texts.
   const ingestRule = /\b(?:ingest(?:ion)?\s+rules?|(?:e-?mail|mail|inbox|phone|call|text|sms)\s+(?:ingest\s+)?rules?|rules?\s+(?:for|on)\s+(?:incoming|inbound|new)\s+(?:e-?mails?|mail|calls|texts|messages))\b/i.test(text) &&
     /\b(?:draft|propose|prepare|create|make|add|build|set up|edit|update|change|modify|fix|tweak|adjust|rename|activate|deactivate|enable|disable|turn on|turn off|remove|delete)\b/i.test(request);
-  return task || event || appt || contactSubrecord || job || workflow || hook || sequence || send || ingestRule ||
+  // A6: a contact relation or role. The noun is a relationship word or a role
+  // phrase; "trustee" / "judge" alone are too common in case questions, so
+  // they count only as "role" or "as a/the trustee|judge".
+  const relation = /\b(?:relationships?|relations?|related to|spouse|married|wife|husband|parents?|child|son|daughter|siblings?|brother|sister|in-laws?|employer|guarantor|co-?debtor|power of attorney|poa|emergency contact|referred by|registered agent|authorized signer|business partner|domestic partner|opposing (?:party|counsel))\b/i.test(text) &&
+    /\b(?:draft|propose|prepare|create|make|add|link|connect|record|mark|update|change|edit)\b/i.test(request);
+  const role = /\b(?:roles?|as (?:a |the )?(?:trustee|judge))\b/i.test(text) &&
+    /\b(?:draft|propose|prepare|create|make|add|give|assign|attach|mark|record|update|change|edit)\b/i.test(request);
+  return task || event || appt || contactSubrecord || relation || role || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 
@@ -4702,6 +5139,13 @@ function validateStep(query, index) {
     const limit = Math.max(1, Math.min(Number(query.limit) || 20, 20));
     if (!search || search.length > 200) throw httpError(422, `Step ${id} needs a 1-200 character communications search`);
     return { id, kind, purpose, query: search, limit };
+  }
+  // A6.0 — one contact's relations, roles and both registries (typed, id-keyed:
+  // the relation/role tables are outside the curated schema).
+  if (kind === 'contact.relations') {
+    const contactId = Number(query.contact_id);
+    if (!Number.isSafeInteger(contactId) || contactId < 1) throw httpError(422, `Step ${id} needs a positive contact_id`);
+    return { id, kind, purpose, contact_id: contactId };
   }
   if (kind === 'weather.lookup') {
     const location = String(query.location || '').trim();
@@ -4882,6 +5326,7 @@ function stepFingerprint(step) {
   const kind = String(step && step.kind || '');
   if (kind === 'sql.read') return `${kind}:${String(step.sql || '').replace(/\s+/g, ' ').trim().toLowerCase()}`;
   if (kind === 'weather.lookup') return `${kind}:${String(step.location || '').trim().toLowerCase()}`;
+  if (kind === 'contact.relations') return `${kind}:${Number(step.contact_id)}`;
   if (kind === 'automation.definition') return `${kind}:${recordFingerprint(step)}:${step.version === undefined ? 'current' : Number(step.version)}`;
   if (kind === 'automation.run') {
     if (step.execution_id !== undefined) return `${kind}:x${Number(step.execution_id)}`;
@@ -5163,6 +5608,11 @@ async function executeReadStep(db, query, { auth, userId }) {
   } else if (query.kind === 'weather.lookup') {
     rows = [await weather.current(query.location)];
     rowCount = 1;
+  } else if (query.kind === 'contact.relations') {
+    const out = await contactRelationsRead(db, query.contact_id);
+    rows = out.rows;
+    rowCount = rows.length;
+    truncated = out.truncated;
   } else if (query.kind === 'automation.preview_step') {
     // Dry run only, by construction; the same capability gate as test-step
     // runs inside the service with this session's auth.
@@ -5719,7 +6169,7 @@ module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
-  normalizeActionDraft, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
+  normalizeActionDraft, contactRelationsRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
   repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan, answerSystemAppend, answerMaxTokens,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,

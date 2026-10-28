@@ -289,8 +289,8 @@ reschedule.
 
 Casey can prepare one reviewed create, narrow update, or end action for one
 contact phone, email, or address row. It cannot use these actions to edit the
-contact's scalar identity fields, relations, or roles, and it cannot combine
-several rows in one proposal.
+contact's scalar identity fields, and it cannot combine several rows in one
+proposal (relationships and roles are their own cards, below).
 
 Creation requires current evidence containing the exact parent `contact_id`.
 Phone and email values are normalized by the native services and cannot be
@@ -332,6 +332,51 @@ chat history and open the parent contact. Canonical `yc-sync` matchers announce
 create and PATCH responses to every open recipient contact; native forced
 phone/email transfers continue to announce the donor too. No Casey-only bus
 event or execution endpoint exists.
+
+### Relationships and roles
+
+Casey can add ONE relationship between two contacts ("record Sam as Dana's
+son", "Acme is Dana's employer"), or give a contact ONE role ("make Jane Smith
+a chapter 13 trustee"), through the same routes as the contact page's
+**Relationships** tab and the contact form's **Roles** section. It can also
+edit an ACTIVE relationship's status, start date or notes, or replace an
+active role's details (for a trustee: chapters and 341 Zoom link; for a judge:
+the docket suffix).
+
+Casey first reads the contact's relationships and roles together with the
+firm's lists of relationship types and roles — it never invents a type: an
+unknown or retired one is refused and the refusal names the ones that exist.
+For a new relationship it also reads the other contact. The card names both
+contacts and shows, in plain words, how each contact's page will read — "On
+Dana Client's record: Parent of Sam Client" and "On Sam Client's record: Child
+of Dana Client" — so the direction of a one-way type is never ambiguous.
+
+- **No duplicates.** Two contacts can have each type of relationship once. A
+  pair that already has that type, in either direction and even if the
+  existing one is inactive, is refused — including the reverse of a one-way
+  type (Dana cannot be both Sam's parent and Sam's child). A contact that
+  already holds a role, or holds an inactive row for it, is refused too.
+- **Role details are checked as the Roles section checks them**: a trustee
+  needs at least one chapter, a judge needs the docket suffix. A role card
+  says what reads the role: trustees appear on the trustee roster that case
+  trustee matching and the case-details list use; a judge's suffix resolves
+  cases' judges from their docket numbers — and a suffix another active judge
+  already carries is flagged in warning style, because resolution for it then
+  falls back to the judge's name. A role update replaces the whole set of
+  details; anything the new set leaves out is listed as removed.
+- **Not available to Casey**: ending, removing, deactivating or reactivating a
+  relationship or role, changing a relationship's type or either contact, and
+  managing the lists of types and roles. Do these on the contact page.
+- **Freshness.** When you confirm, the card re-reads the contact's
+  relationships or roles first. If the pair became related, the relationship
+  was edited or ended, or the role was added, edited or deactivated since the
+  card was prepared, nothing is written. If the route refuses (for example a
+  duplicate added a moment earlier), the card says nothing was written.
+- Once applied, the card opens the contact. Other open pages show the change
+  after a reload — exactly as for an edit made on the contact page itself.
+
+The off switch for these cards is the `casey_contact_relations_enabled`
+setting (on unless set to 0).
 
 ### Sending a text or email
 
@@ -593,7 +638,10 @@ put in a URL.
 
 The plan format names every operation by type. Enabled executable operations
 remain read-only: `sql.read`, `manual.search`, `comms.search`, the narrowly
-scoped `weather.lookup` external read, and the typed automation reads —
+scoped `weather.lookup` external read, the typed `contact.relations` read (one
+contact's relationships, roles, and the relationship-type and role lists —
+those tables are outside the report schema, so it is the only way Casey sees
+them), and the typed automation reads —
 `automation.list`, `automation.definition`, `automation.run`, and
 `automation.references` — which let Casey explain a workflow or sequence, one
 of its runs or enrollments, and what can start or enroll it. Those projections redact webhook URLs to method + host + credential

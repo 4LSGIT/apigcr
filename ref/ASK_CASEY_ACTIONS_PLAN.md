@@ -46,8 +46,8 @@ them:
   rollback criteria, and controlled live smoke tests.
 
 Decisions requested in the upcoming review are: confirm the A6-A18 ordering;
-decide whether A6 relation removal and role removal ship with creation/update or
-as later sub-slices; choose the first low-impact A7 scalar fields; set the P1
+choose the first low-impact A7 scalar fields (A6 removal is decided: a later
+sub-slice, see A6); set the P1
 extraction point; and define the rollout bar for the first external-send or
 fan-out action. Destructive/admin/access/credential work, arbitrary tools,
 multi-action plans, and unattended execution remain outside this roadmap.
@@ -119,7 +119,8 @@ he rules):
 - Casey tasks land in the machine-Notices preset via `source:'Casey'`; the
   completion-notice default differs from the native form. Default: unchanged.
 - Opus remains the `better_quality` default model.
-- A6 remove variants: the review recommends deferring them; default deferred.
+- A6 remove variants: deferred (A6 shipped create/update 2026-10-28); ENDING a
+  relation counts as remove, not update (manager ruling 2026-10-28). See A6.
 
 ## Governing principle: actions run through the user
 
@@ -580,12 +581,58 @@ PATCH recipients to all open contact readers, plus the existing donor marker
 for native forced phone/email transfers. No Casey-only emit exists. Applied
 results persist and open the parent contact.
 
-#### A6: Contact relations and roles
+#### A6: Contact relations and roles — create and update shipped 2026-10-28
 
 Add relation and role create/update/remove separately from scalar contact
 editing. Resolve both ends and the role/type registry on the server, protect
 directionality and uniqueness rules, and display the relationship in plain
 language. Firm-level role-type administration is not part of this slice.
+
+**Read prerequisite (A6.0).** The relation/role tables (`contact_relations`,
+`contact_relation_types`, `contact_roles`, `contact_role_types`) are not in
+the curated report manifest, so `sql.read` (and the yc_report grants behind
+it) cannot see them: an update's `relation_id` / `role_id` evidence and the
+live registry had no read at all. A6.0 adds the typed read
+`contact.relations {contact_id}` on the app pool (the P12 automation-read
+precedent, ruled 2026-10-28): the contact's relation rows from its own
+perspective (`relation_id`, both ends with names, both plain readings), its
+role rows (`role_id`, attrs), and both active registries, through the services
+the Relationships tab and the Roles section read.
+
+**Shipped contract (A6.1).** Four kinds: `contact.relation.create.v1`
+(POST `/api/contact-relations`), `contact.relation.update.v1` (PATCH
+`/api/contact-relations/:id` — status, start_date, notes of an ACTIVE
+relation), `contact.role.create.v1` (POST `/api/contacts/:id/roles`) and
+`contact.role.update.v1` (PATCH `/api/contacts/:id/roles/:rowId` — the
+complete attrs object of an active row). The type / role code resolves in the
+registry and carries its spelling; an unknown or retired code refuses and
+names the live ones; status from the type's vocabulary; role attrs through
+the route's own validator. One relation per pair and type in EITHER
+direction, active or not — the reverse of a one-way type refuses with its own
+wording (stricter than the route, which would store it). A held or inactive
+role row refuses by id. Evidence: both contact ids for a relation create, the
+contact id for a role create, the exact `relation_id` row / `role_id` +
+`contact_id` row for an update. The card reads "On A's record: <forward
+label> B" and "On B's record: <reverse label> A"; a role card discloses the
+trustee roster / judge docket-suffix consumers and flags a judge suffix
+another active judge already carries. Click-time freshness re-reads the
+native GETs (relations: `updated_at` plus the reviewed values; roles: attrs,
+key-order-insensitive) and refuses before the claim. Idempotency: no
+Idempotency-Key — the ledger allows one claim per draft and the routes'
+UNIQUE keys refuse a second card's duplicate (400, a refusal); residual race
+on record: two cards for the opposite orders of a SYMMETRIC pair (the
+route's reverse check is application-level). Neither route has a yc-sync
+matcher (a native gap, `ref/plans.md`); the cards keep native behaviour.
+Off switch `casey_contact_relations_enabled` (on unless '0'). Tests:
+`tests/caseyContactRelations.test.js`, gated
+`tests/caseyContactRelations.mysql.test.js`.
+
+**Deferred (the remove sub-slice).** Relation removal (the hard DELETE),
+ENDING a relation (`active` / `end_date` / `end_reason` — it takes the
+relation out of active state and feeds downstream consumers, the same risk
+class as remove; manager ruling 2026-10-28), role removal and deactivation
+(PATCH `active=0`, the native "remove"), reactivation of either, a relation
+type change, and editing an ended relation. Each is refused by name today.
 
 #### A7: Narrow scalar contact and case edits
 

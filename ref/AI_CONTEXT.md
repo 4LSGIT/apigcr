@@ -397,6 +397,33 @@ body. Governing migrations in `ref/migrations/`.*
   Tests: `tests/caseySequenceEnroll.test.js`, gated
   `tests/caseySequenceEnroll.mysql.test.js`; plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A18.4.
+- **Casey relation/role cards + `contact.relations` read (A6, 10-28):** the
+  relation/role tables are NOT in the report manifest (so not in `sql.read` or
+  the yc_report grants); the typed read `contact.relations {contact_id}`
+  (app pool, `contactRelationsRead`, P12 precedent) returns `row_type`-tagged
+  rows: relations from that contact's view (`relation_id`, both ids + names,
+  `reads` / `reads_reverse` = "A: <forward_label> B" / "B: <reverse_label> A"),
+  roles (`role_id`, attrs JSON), and both ACTIVE registries. Kinds
+  `contact.relation.create/update.v1` (POST/PATCH `/api/contact-relations`)
+  and `contact.role.create/update.v1` (POST/PATCH `/api/contacts/:id/roles`).
+  Invariants: type / role code resolved in the registry (general_ci — the card
+  carries the registry spelling), unknown/retired refused listing live codes;
+  one relation per pair+type in EITHER direction, active or not (stricter than
+  the route, which stores the reverse of an asymmetric type); update keeps the
+  record ACTIVE — `active` / `end_date` / `end_reason` (ending = the deferred
+  remove), `type_code`, either contact id, role `active` / `role` refused by
+  name; role attrs through `contactRoleService.validateRoleAttrs` (omitted =
+  null, still validated); role update is a COMPLETE replacement (dropped keys
+  listed; no-change compare is key-order-insensitive — MySQL JSON reorders);
+  notes capped at 500 (varchar). `getRelation` names only contact B — the
+  normalizer reads both contacts. No Idempotency-Key (one ledger claim per
+  draft + the routes' UNIQUE keys; residual race: two cards for the opposite
+  orders of a SYMMETRIC pair, the reverse check being app-level). Click-time
+  precheck re-reads the native GETs. Neither route has a yc-sync matcher
+  (native gap, ref/plans.md). Receipts `relation_id` / `role_id`; card opens
+  the contact. Off switch `casey_contact_relations_enabled` (on unless '0').
+  Tests: `tests/caseyContactRelations.test.js`, gated
+  `tests/caseyContactRelations.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A6.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL

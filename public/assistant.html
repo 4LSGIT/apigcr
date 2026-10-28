@@ -828,6 +828,201 @@ function contactSubrecordActionResult(draft) {
   return { contact_id: contactId, contact_label: draft.contact ? draft.contact.label : draft.target.contact.label };
 }
 
+// Contact relations and roles (A6). Create, and an update that keeps the
+// record ACTIVE, through the native routes the Relationships tab and the
+// contact form's Roles section use: POST/PATCH /api/contact-relations and
+// POST/PATCH /api/contacts/:id/roles. Neither route takes an Idempotency-Key:
+// a card writes at most once (the ledger allows one claim per draft), and a
+// second card for the same relation or role is refused by the route's UNIQUE
+// key (400, nothing written). Click-time freshness re-reads the contact's
+// relations / roles through those routes' GETs and refuses before the claim.
+// Neither route has a yc-sync matcher (a native gap, ref/plans.md): the card
+// behaves exactly as the native tab does — other open pages refresh on reload.
+const CONTACT_RELATION_ACTION_KINDS = new Set(['contact.relation.create.v1', 'contact.relation.update.v1']);
+const CONTACT_ROLE_ACTION_KINDS = new Set(['contact.role.create.v1', 'contact.role.update.v1']);
+
+function contactRelationLabel(draft) {
+  return ({ 'contact.relation.create.v1': 'Add relationship', 'contact.relation.update.v1': 'Update relationship',
+    'contact.role.create.v1': 'Add contact role', 'contact.role.update.v1': 'Update contact role' })[draft && draft.kind] || 'Contact relation action';
+}
+
+function contactRelationValue(value) {
+  if (value == null || value === '') return '—';
+  if (Array.isArray(value)) return value.map((v) => String(v)).join(', ') || '—';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function contactRelationLines(rel) {
+  const a = rel.contact_a || {}; const b = rel.contact_b || {};
+  return [
+    `Contact A: ${a.contact_name} (#${a.contact_id}${a.contact_kind ? `, ${a.contact_kind}` : ''})`,
+    `Contact B: ${b.contact_name} (#${b.contact_id}${b.contact_kind ? `, ${b.contact_kind}` : ''})`,
+    `Type: ${rel.type_code} — ${rel.is_symmetric ? 'two-way (reads the same from both sides)' : 'one-way (the two records read differently)'}${rel.type_retired ? '; this type is retired — the relation keeps it' : ''}`,
+    `On ${a.contact_name}'s record: "${rel.forward_label} ${b.contact_name}"`,
+    `On ${b.contact_name}'s record: "${rel.reverse_label} ${a.contact_name}"`,
+  ];
+}
+
+function contactRelationText(draft) {
+  const lines = ['Relationship proposal — not applied', `Action: ${contactRelationLabel(draft)}`];
+  const rel = draft.relation || {};
+  if (draft.kind === 'contact.relation.update.v1') lines.push(`Relation: #${rel.relation_id}`);
+  lines.push(...contactRelationLines(rel));
+  if (draft.kind === 'contact.relation.create.v1') {
+    const f = draft.fields || {};
+    lines.push(`Status: ${f.status || 'None'}`, `Start date: ${f.start_date || 'Not recorded'}`, `Notes: ${f.notes || 'Empty'}`,
+      'Created as: active, with no end date.',
+      `Already related: no — these two contacts have no ${rel.type_code} relation in either direction (re-checked when you apply).`);
+  } else {
+    const c = draft.current || {};
+    lines.push(`Current status: ${c.status || 'None'}`, `Current start date: ${c.start_date || 'Not recorded'}`, `Current notes: ${c.notes || 'Empty'}`);
+    const names = { status: 'New status', start_date: 'New start date', notes: 'New complete notes' };
+    Object.entries(draft.changes || {}).forEach(([key, value]) => lines.push(`${names[key] || key}: ${value || 'Clear'}`));
+    lines.push('Stays: active — the type, both contacts and the end fields are unchanged.',
+      'Stale check: if the relation is edited, ended or removed before you apply, nothing is written.');
+  }
+  lines.push('Other open pages: the Relationships tab shows the change after a reload (as it does for an edit made there).',
+    'Notification: nothing is sent.');
+  return lines.join('\n');
+}
+
+function contactRoleAttrLines(fields, attrs, prefix) {
+  const a = attrs && typeof attrs === 'object' ? attrs : {};
+  const declared = (fields || []).map((f) => f.key);
+  const lines = (fields || []).map((f) => `${prefix}${f.label}${f.required ? ' (required)' : ''}: ${contactRelationValue(a[f.key])}`);
+  Object.keys(a).filter((k) => !declared.includes(k)).forEach((k) => lines.push(`${prefix}${k} (undeclared): ${contactRelationValue(a[k])}`));
+  if (!lines.length) lines.push(`${prefix}attributes: ${attrs == null ? 'None' : contactRelationValue(attrs)}`);
+  return lines;
+}
+
+function contactRoleText(draft) {
+  const c = draft.contact || {}; const role = draft.role || {};
+  const lines = ['Contact role proposal — not applied', `Action: ${contactRelationLabel(draft)}`,
+    `Contact: ${c.contact_name} (#${c.contact_id})`, `Role: ${role.label} (${role.role_code})${role.type_retired ? ' — this role type is retired; the row keeps it' : ''}`];
+  if (draft.kind === 'contact.role.create.v1') {
+    lines.push(...contactRoleAttrLines(role.fields, draft.attrs, ''),
+      'Created as: active.', `Already holds role: no — the contact has no ${role.role_code} role row, active or inactive (re-checked when you apply).`);
+  } else {
+    lines.push(`Role row: #${role.role_id}`, ...contactRoleAttrLines(role.fields, draft.current_attrs, 'Current '),
+      ...contactRoleAttrLines(role.fields, draft.attrs, 'New '),
+      'Replaces: the complete attribute set — the stored one is overwritten with exactly the new values above.');
+    if ((draft.dropped_keys || []).length) lines.push(`Removed attributes: ${draft.dropped_keys.join(', ')} (not in the new set, so they are deleted).`);
+    lines.push('Stays: active — the role code is unchanged.', 'Stale check: if the role row is edited, deactivated or removed before you apply, nothing is written.');
+  }
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  lines.push('Other open pages: the contact form shows the change after a reload (as it does for an edit made there).', 'Notification: nothing is sent.');
+  return lines.join('\n');
+}
+
+function contactRelationRequest(draft) {
+  const rel = draft.relation || {};
+  if (draft.kind === 'contact.relation.create.v1') {
+    const a = Number(rel.contact_a && rel.contact_a.contact_id); const b = Number(rel.contact_b && rel.contact_b.contact_id);
+    if (!Number.isSafeInteger(a) || a < 1 || !Number.isSafeInteger(b) || b < 1 || a === b || !rel.type_code) throw new Error('This relationship has no usable contacts or type.');
+    const f = draft.fields || {};
+    if (String(f.notes || '').length > 500) throw new Error('The notes are longer than the 500 characters YisraCase stores. Ask Casey to prepare it again with shorter notes.');
+    return { path: '/api/contact-relations', method: 'POST',
+      body: { contact_a_id: a, contact_b_id: b, type_code: String(rel.type_code), status: String(f.status || ''), start_date: f.start_date || null, notes: String(f.notes || '') } };
+  }
+  const id = Number(rel.relation_id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('This relationship update has no usable relation id.');
+  const body = {};
+  ['status', 'start_date', 'notes'].forEach((key) => { if (Object.prototype.hasOwnProperty.call(draft.changes || {}, key)) body[key] = draft.changes[key]; });
+  if (!Object.keys(body).length) throw new Error('This relationship update changes nothing.');
+  if ('start_date' in body && !body.start_date) body.start_date = null;
+  if ('notes' in body && String(body.notes || '').length > 500) throw new Error('The notes are longer than the 500 characters YisraCase stores. Ask Casey to prepare it again with shorter notes.');
+  return { path: `/api/contact-relations/${id}`, method: 'PATCH', body };
+}
+
+function contactRoleRequest(draft) {
+  const cid = Number(draft.contact && draft.contact.contact_id);
+  if (!Number.isSafeInteger(cid) || cid < 1) throw new Error('This role has no usable contact.');
+  const attrs = draft.attrs == null ? null : draft.attrs;
+  if (draft.kind === 'contact.role.create.v1') {
+    if (!draft.role || !draft.role.role_code) throw new Error('This role has no usable role code.');
+    return { path: `/api/contacts/${cid}/roles`, method: 'POST', body: { role: String(draft.role.role_code), attrs } };
+  }
+  const rid = Number(draft.role && draft.role.role_id);
+  if (!Number.isSafeInteger(rid) || rid < 1) throw new Error('This role update has no usable role row.');
+  return { path: `/api/contacts/${cid}/roles/${rid}`, method: 'PATCH', body: { attrs } };
+}
+
+function contactRelationStableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(contactRelationStableJson).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${contactRelationStableJson(value[k])}`).join(',')}}`;
+  return JSON.stringify(value === undefined ? null : value);
+}
+
+function contactRelationDay(value) {
+  if (value == null || value === '') return null;
+  return String(value).slice(0, 10);
+}
+
+async function contactRelationPrecheck(draft) {
+  const rel = draft.relation || {};
+  const a = rel.contact_a || {}; const b = rel.contact_b || {};
+  const aId = Number(a.contact_id); const bId = Number(b.contact_id);
+  let list;
+  try { list = await api(`/api/contacts/${aId}/relations?type_code=${encodeURIComponent(rel.type_code)}&limit=100`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `${a.contact_name} (contact #${aId}) no longer exists. Nothing was written.`; throw e; }
+  const rows = list && Array.isArray(list.relations) ? list.relations : null;
+  const total = Number(list && list.total);
+  if (!rows || !Number.isFinite(total) || total > rows.length) throw new Error('the contact\'s relationships could not be read in full');
+  if (draft.kind === 'contact.relation.create.v1') {
+    const dup = rows.find((r) => r.type_code === rel.type_code
+      && ((Number(r.contact_a_id) === aId && Number(r.contact_b_id) === bId) || (Number(r.contact_a_id) === bId && Number(r.contact_b_id) === aId)));
+    return dup ? `${a.contact_name} and ${b.contact_name} now have a ${rel.type_code} relation (#${Number(dup.id)}), added since this card was prepared. Nothing was written.` : '';
+  }
+  const id = Number(rel.relation_id);
+  const row = rows.find((r) => Number(r.id) === id);
+  if (!row) return `Relation #${id} no longer exists, or its type changed, since this card was prepared. Nothing was written.`;
+  if (!Number(row.active) || row.end_date) return `Relation #${id} was ended or deactivated since this card was prepared. Nothing was written.`;
+  const c = draft.current || {};
+  const stamp = (() => { const d = new Date(row.updated_at); return Number.isNaN(d.getTime()) ? null : d.toISOString(); })();
+  if (stamp !== (draft.expected && draft.expected.updated_at) || String(row.status || '') !== String(c.status || '')
+      || contactRelationDay(row.start_date) !== (c.start_date || null) || String(row.notes || '') !== String(c.notes || '')) {
+    return `Relation #${id} was edited since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+async function contactRolePrecheck(draft) {
+  const c = draft.contact || {}; const role = draft.role || {};
+  const list = await api(`/api/contacts/${Number(c.contact_id)}/roles`, null, 'GET');
+  const rows = list && Array.isArray(list.roles) ? list.roles : null;
+  if (!rows) throw new Error('the contact\'s roles could not be read');
+  if (draft.kind === 'contact.role.create.v1') {
+    const held = rows.find((r) => String(r.role || '').toLowerCase() === String(role.role_code || '').toLowerCase());
+    return held ? `${c.contact_name} now has a ${role.role_code} role row (#${Number(held.id)}${Number(held.active) ? '' : ', inactive'}), added since this card was prepared. Nothing was written.` : '';
+  }
+  const id = Number(role.role_id);
+  const row = rows.find((r) => Number(r.id) === id);
+  if (!row) return `Role row #${id} is no longer on ${c.contact_name}. Nothing was written.`;
+  if (!Number(row.active)) return `Role row #${id} was deactivated since this card was prepared. Nothing was written.`;
+  if (contactRelationStableJson(row.attrs == null ? null : row.attrs) !== contactRelationStableJson(draft.expected ? draft.expected.attrs : undefined)) {
+    return `Role row #${id}'s attributes were edited since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function contactRelationResult(draft, result) {
+  const id = Number(result && result.relation && result.relation.id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('The relationship route returned no usable relation id');
+  return { relation_id: id };
+}
+
+function contactRoleResult(draft, result) {
+  const id = Number(result && result.id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('The role route returned no usable role row id');
+  return { role_id: id };
+}
+
+function contactRelationOpenTarget(draft) {
+  const contact = draft.contact || (draft.relation && draft.relation.contact_a) || {};
+  return { id: Number(contact.contact_id), label: String(contact.contact_name || 'Contact') };
+}
+
 // Safe code jobs (safe-mode S3). The body runs ONCE in the QuickJS guest
 // engine (no network, no DB, no host realm), so the reviewed card schedules a
 // computation, not server-side execution capability. code_mode is pinned
@@ -2085,6 +2280,44 @@ const ACTION_FAMILIES = [
       draft.result_contact_label = String(payload.contact_label || 'Contact');
     },
     open: (draft) => openEntity('contact', draft.result_contact_id, draft.result_contact_label),
+  },
+  {
+    id: 'contact_relation', kinds: CONTACT_RELATION_ACTION_KINDS, title: 'Relationship', noun: 'relationship', errorNoun: 'relationship action',
+    label: contactRelationLabel, text: contactRelationText, request: contactRelationRequest, result: contactRelationResult,
+    idField: 'relation_id', appliedKey: 'result_relation_id',
+    danger: () => false,
+    precheck: contactRelationPrecheck,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `relationship #${payload.relation_id}`,
+    entity: (draft) => { const t = contactRelationOpenTarget(draft); return { kind: 'contact', id: String(t.id), label: t.label }; },
+    failure: 'The relationship action could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — relationship #${draft.result_relation_id}`,
+      warning: `Relationship #${draft.result_relation_id} was saved using your signed-in account.`,
+      button: `Open ${contactRelationOpenTarget(draft).label}`,
+    }),
+    reviewWarning: 'Review both contacts and how each record will read — the direction matters for one-way types. Nothing is sent. Canceling writes nothing.',
+    open: (draft) => { const t = contactRelationOpenTarget(draft); openEntity('contact', t.id, t.label); },
+  },
+  {
+    id: 'contact_role', kinds: CONTACT_ROLE_ACTION_KINDS, title: 'Contact role', noun: 'role row', errorNoun: 'role action',
+    label: contactRelationLabel, text: contactRoleText, request: contactRoleRequest, result: contactRoleResult,
+    idField: 'role_id', appliedKey: 'result_role_id',
+    // A judge suffix another active judge already carries breaks docket
+    // resolution for both: the card says so in an AMBIGUOUS effect line.
+    danger: (draft) => (draft.effects || []).some((e) => /^AMBIGUOUS/.test(String(e))),
+    precheck: contactRolePrecheck,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `role row #${payload.role_id}`,
+    entity: (draft) => { const t = contactRelationOpenTarget(draft); return { kind: 'contact', id: String(t.id), label: t.label }; },
+    failure: 'The role action could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — role row #${draft.result_role_id}`,
+      warning: `Role row #${draft.result_role_id} was saved using your signed-in account. Every effect listed above applies from now.`,
+      button: `Open ${contactRelationOpenTarget(draft).label}`,
+    }),
+    reviewWarning: 'Review the role and every attribute — rosters, pickers and case matching read it the moment it is saved. Nothing is sent. Canceling writes nothing.',
+    open: (draft) => { const t = contactRelationOpenTarget(draft); openEntity('contact', t.id, t.label); },
   },
   {
     id: 'job', kinds: JOB_ACTION_KINDS, title: 'Safe code job', noun: 'scheduled job', errorNoun: 'job action',
