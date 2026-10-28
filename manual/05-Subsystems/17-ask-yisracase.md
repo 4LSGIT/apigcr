@@ -70,6 +70,21 @@ the same chat, can continue it. A continuation lasts 15 minutes and is never
 saved with the chat: after that, or in a chat reopened from **Recent chats**,
 the button becomes **Ask Casey again**, which refills the original question.
 
+### The answer as it is written
+
+Once the reads are done, the answer's words appear as Casey writes them, with a
+blinking cursor, instead of all at once when it is finished. The streamed text
+is a preview: when the answer is complete it is replaced by the finished
+answer — with its sources, record links, suggestions and any action card — and
+that finished answer is what is saved with the chat. The two are normally the
+same; when they differ (for example, a card could not be prepared and the text
+says so), the finished answer wins. If the connection drops while the answer
+is being written, the bubble reads **Answer interrupted — retrying…** and
+Casey writes the answer once more from the evidence it already read, without
+searching again; if that also fails, the ordinary error is shown. The off
+switch is the `casey_answer_streaming_enabled` setting (**Casey streams its
+answers**): `0` restores answers that arrive whole.
+
 After execution, the answer includes source rows for important claims. When a
 source contains a case, contact, appointment, event, or task id, visible buttons
 under the citation open those records directly in YisraCase. Open those sources when an answer

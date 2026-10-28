@@ -37,6 +37,19 @@ body. Governing migrations in `ref/migrations/`.*
   model needs its cache multipliers added in `computeCostCents` before opting
   in. Deeper caching (conversation/evidence prefix) needs prompt-content
   changes — ruled on separately, see scratch cspeed_2026_10_28.
+  The answer now STREAMS (behind `casey_answer_streaming_enabled`, only `'0'`
+  is off): the plan response offers `answer_streaming`, the pane asks execute
+  for `stream:true` through apiSend `responseType:'response'` (the JWT stays on
+  the shell transport), and at the answer stage the route turns NDJSON —
+  `answer_retry` (the answer input, sealed like a continuation, own kind, 2
+  min, in-process single use), `delta`/`reset` (lib/jsonFieldStream: the root
+  `answer` string only), `final` (exactly the unstreamed body). aiService
+  `onTextDelta` adds only `stream:true` to the request. Invariants: the streamed
+  text is cosmetic — the parsed answer replaces it; a broken stream spends the
+  token ONCE on an ordinary execute (no re-investigation, same user AND chat
+  or 403, used/expired 410 — never 401, which apiSend reads as a dead session);
+  the chat saves once from whichever attempt returned; streaming responses
+  need `Cache-Control: no-transform` or compression() buffers them.
 
 - **Casey sends one SMS / email (A14, ruling 15, 10-27):** kinds
   `sms.send.v1` / `email.send.v1` drive `POST /api/phone-lines/:id/sms` and

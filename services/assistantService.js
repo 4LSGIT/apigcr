@@ -27,6 +27,7 @@ const { auditAdminAction } = require('../lib/auth.superuser');
 const { validateSql } = require('../lib/reportSchema/validator');
 const ticket = require('../lib/assistantTicket');
 const continuation = require('../lib/assistantContinuation');
+const { createFieldExtractor } = require('../lib/jsonFieldStream');
 
 const MAX_QUESTION = 2000;
 const MAX_HISTORY = 8;
@@ -4791,10 +4792,75 @@ function openContinuation(token, userId, chat) {
   return state;
 }
 
-async function execute(db, { signedTicket, continuation: continuationToken, chatId, userId, auth, temporaryAttachments } = {}) {
+// Answer streaming (casey_answer_streaming_enabled). When the route passes
+// `stream` ({begin, delta, reset}), the answer stage first seals its whole
+// input — the answer-retry token — and hands it to stream.begin, then streams
+// the "answer" field's prose through stream.delta while the model writes. The
+// returned payload is exactly the non-streamed one: the streamed text is
+// cosmetic, the parsed answer is authoritative. If the stream breaks, the
+// browser spends the token ONCE on an ordinary (non-streamed) execute — the
+// answer call runs again over the sealed evidence, with no re-investigation.
+// Same seal as a continuation (lib/assistantContinuation), its own kind, 2
+// minutes. Single use is BEST EFFORT and in-process (retryClaims): Cloud Run
+// runs up to 6 instances, so a replay that lands on another instance runs once
+// there too. The bound is the same signed-in user and chat (403 otherwise),
+// the execute rate limit and 2 minutes — at worst one more answer call billed
+// to the user who already asked; the browser saves the answer once whichever
+// attempt completes.
+const ANSWER_RETRY_KIND = 'assistant_answer_retry';
+const ANSWER_RETRY_TTL_MS = 2 * 60 * 1000;
+const ANSWER_RETRY_GONE = 'This answer can no longer be retried. Ask Casey again.';
+const retryClaims = new Map(); // jti -> exp (ms)
+
+function claimAnswerRetry(jti, exp) {
+  const now = Date.now();
+  for (const [k, until] of retryClaims) if (until < now) retryClaims.delete(k);
+  if (retryClaims.has(jti)) return false;
+  retryClaims.set(jti, Number(exp) || now + ANSWER_RETRY_TTL_MS);
+  return true;
+}
+
+// 410, not 401: the shell's apiSend reads any other 401 as an expired session
+// and prompts a re-login.
+function openAnswerRetry(token, userId, chat) {
+  let state;
+  try { state = continuation.open(token); } catch (_) { throw httpError(410, ANSWER_RETRY_GONE); }
+  if (!state || state.v !== 1 || state.kind !== ANSWER_RETRY_KIND || typeof state.jti !== 'string') throw httpError(410, ANSWER_RETRY_GONE);
+  if (Number(state.uid) !== Number(userId) || (state.chat == null ? null : Number(state.chat)) !== chat) {
+    throw httpError(403, 'This answer cannot be retried from this session.');
+  }
+  const counts = ['grants', 'rounds', 'total_steps', 'returned_rows', 'repairs', 'controller_output_tokens'];
+  if (!state.ctx || typeof state.ctx !== 'object' || !Array.isArray(state.evidence) || !Array.isArray(state.plans)
+      || !Array.isArray(state.seen) || !Array.isArray(state.notices) || !state.seg || typeof state.seg !== 'object'
+      || counts.some((k) => !Number.isSafeInteger(state[k]) || state[k] < 0)) {
+    throw httpError(410, ANSWER_RETRY_GONE);
+  }
+  if (!claimAnswerRetry(state.jti, state.exp)) throw httpError(410, ANSWER_RETRY_GONE);
+  return state;
+}
+
+async function execute(db, { signedTicket, continuation: continuationToken, answerRetry, chatId, userId, auth, temporaryAttachments, stream } = {}) {
   const resuming = continuationToken != null && continuationToken !== '';
+  const retrying = answerRetry != null && answerRetry !== '';
   if (resuming && signedTicket) throw httpError(400, 'Send either a query plan or a continuation, not both');
+  if (retrying && (resuming || signedTicket)) throw httpError(400, 'Send either a query plan, a continuation or an answer retry');
   const chat = await boundChat(db, chatId, userId);
+  if (retrying) {
+    const sealed = openAnswerRetry(answerRetry, userId, chat);
+    const approvedRetry = validateTicket({ ...sealed.ctx }, userId);
+    await assertAssistantSpendAllowed(db);
+    const attachedRetry = await attachmentService.prepareExecution(db, approvedRetry.attachments, temporaryAttachments);
+    return answerStage(db, {
+      ctx: sealed.ctx, approved: approvedRetry, attached: attachedRetry, chat, userId,
+      model: attachmentService.modelForMode(approvedRetry.modelMode),
+      evidence: sealed.evidence, plans: sealed.plans, seen: sealed.seen, pending: sealed.pending == null ? null : sealed.pending,
+      stopReason: String(sealed.stop_reason || ''), rounds: sealed.rounds, totalSteps: sealed.total_steps,
+      totalRows: sealed.returned_rows, grants: sealed.grants, widened: !!sealed.widened,
+      segRounds: Number(sealed.seg.rounds) || 0, segSteps: Number(sealed.seg.steps) || 0, segRows: Number(sealed.seg.rows) || 0,
+      repairs: sealed.repairs, notices: sealed.notices, controllerOutputTokens: sealed.controller_output_tokens,
+      costCents: Math.max(0, Number(sealed.cost_cents) || 0),
+    }, {});
+  }
   let ctx;
   let prior = null;
   if (resuming) {
@@ -4974,7 +5040,52 @@ async function execute(db, { signedTicket, continuation: continuationToken, chat
     }
   }
 
+  return answerStage(db, {
+    ctx, approved, attached, chat, userId, model, evidence, plans, seen: [...seen], pending, stopReason,
+    rounds, totalSteps, totalRows, grants, widened, segRounds, segSteps, segRows, repairs, notices,
+    controllerOutputTokens, costCents,
+  }, { stream });
+}
+
+// The answer model call and everything after it, from the investigation's
+// final state — run at the end of an investigation, or alone from a sealed
+// answer-retry token.
+async function answerStage(db, s, { stream } = {}) {
+  const { ctx, approved, attached, chat, userId, model, evidence, plans, pending, stopReason,
+    rounds, totalSteps, totalRows, grants, widened, segRounds, segSteps, segRows, repairs, notices,
+    controllerOutputTokens } = s;
+  let costCents = s.costCents;
+  const addCost = (usage) => {
+    if (usage) costCents += aiService.computeCostCents(usage.input_tokens, usage.output_tokens, model, usage) || 0;
+  };
   const continuable = CONTINUABLE_STOPS.has(stopReason);
+  // Streaming only when the whole answer input could be sealed for the
+  // browser's one retry; a state too large to seal is answered unstreamed.
+  let onTextDelta = null;
+  if (stream) {
+    let token = null;
+    try {
+      token = continuation.seal({
+        v: 1, kind: ANSWER_RETRY_KIND, jti: crypto.randomUUID(), uid: Number(userId), chat, ctx,
+        grants, rounds, total_steps: totalSteps, returned_rows: totalRows, widened,
+        evidence, plans, seen: s.seen, pending, stop_reason: stopReason, cost_cents: costCents,
+        seg: { rounds: segRounds, steps: segSteps, rows: segRows }, repairs, notices,
+        controller_output_tokens: controllerOutputTokens,
+      }, ANSWER_RETRY_TTL_MS);
+    } catch (err) {
+      console.error('[assistant] answer retry could not be sealed; answering unstreamed:', err.message);
+    }
+    if (token) {
+      stream.begin(token);
+      const extractor = createFieldExtractor({ field: 'answer', onText: (text) => stream.delta(text) });
+      let current = 1;
+      onTextDelta = (text, info) => {
+        const n = (info && info.attempt) || 1;
+        if (n !== current) { current = n; extractor.reset(); stream.reset(); }
+        extractor.push(text);
+      };
+    }
+  }
   const ai = await aiService.call(db, {
     promptKey: 'assistant_answer',
     // The run-explainer rules ride only when automation evidence was read —
@@ -4994,6 +5105,9 @@ async function execute(db, { signedTicket, continuation: continuationToken, chat
     consumerRef: `assistant_answer:u${Number(userId) || 0}`,
     cacheSystemPrefix: true,
     logContent: false,
+    // Streaming adds only this callback: aiService sends the same body plus
+    // stream:true (tests/assistantAnswerStream.test.js pins it).
+    ...(onTextDelta ? { onTextDelta } : {}),
   });
   if (!ai.ok) throw httpError(502, 'The assistant could not summarize the query results', ai.detail || ai.error);
   addCost(ai.usage);
@@ -5039,7 +5153,7 @@ async function execute(db, { signedTicket, continuation: continuationToken, chat
       continuationOut = continuation.seal({
         v: 1, kind: 'assistant_continuation', uid: Number(userId), chat, ctx,
         grants, rounds, total_steps: totalSteps, returned_rows: totalRows, widened,
-        evidence, plans, seen: [...seen], pending, stop_reason: stopReason, cost_cents: costCents,
+        evidence, plans, seen: s.seen, pending, stop_reason: stopReason, cost_cents: costCents,
       });
     } catch (err) {
       console.error('[assistant] continuation could not be sealed:', err.message);

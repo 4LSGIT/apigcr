@@ -9,6 +9,14 @@ const { makeLimiter } = require('../lib/rateLimiter');
 const svc = require('../services/assistantService');
 const chats = require('../services/assistantChatService');
 const ledger = require('../services/assistantActionLedger');
+const firmConfig = require('../lib/firmConfig');
+
+// Kill switch for answer streaming: only an explicit '0' turns it off (the
+// casey_* flag convention). Off = the plan response never offers it, so the
+// browser never asks, and an execute that asks anyway is answered unstreamed.
+function answerStreamingEnabled() {
+  return firmConfig.cfg('casey_answer_streaming_enabled') !== '0';
+}
 
 const planLimited = makeLimiter(60 * 60 * 1000, 30);
 const executeLimited = makeLimiter(60 * 60 * 1000, 60);
@@ -51,7 +59,7 @@ router.post('/api/assistant/plan', jwtOrApiKey, staffOnly, async (req, res) => {
       workspaceContext: req.body && req.body.workspace_context,
       userId: req.auth.userId,
     });
-    res.json({ status: 'success', ...out });
+    res.json({ status: 'success', ...out, ...(out.outcome === 'plan' && answerStreamingEnabled() ? { answer_streaming: true } : {}) });
   } catch (err) { fail(res, 'plan', err); }
 });
 
@@ -59,23 +67,73 @@ router.post('/api/assistant/execute', jwtOrApiKey, staffOnly, async (req, res) =
   if (executeLimited(`u${req.auth.userId}`)) {
     return res.status(429).json({ status: 'error', message: 'You have run a lot of assistant searches this hour. Try again later.' });
   }
+  // Answer streaming (body.stream === true, flag on, never on a retry): the
+  // investigation runs exactly as before — any failure up to the answer stage
+  // is the ordinary JSON error. When the answer stage starts, the response
+  // becomes NDJSON, one event per line:
+  //   {type:'answer_retry', token}  sealed answer input, spent ONCE on an
+  //                                 ordinary execute {answer_retry} if the
+  //                                 stream breaks (assistantService; the
+  //                                 single-use claim is in-process only —
+  //                                 with up to 6 instances a replay landing
+  //                                 elsewhere runs once there too)
+  //   {type:'delta', text}          prose of the answer as it is written
+  //   {type:'reset'}                the model's JSON retry: the text restarts
+  //   {type:'final', body}          exactly the JSON body the unstreamed
+  //                                 request answers
+  //   {type:'error', status, message}  fail()'s status and message
+  // Cache-Control: no-transform keeps compression() (server.js) from
+  // buffering it. The JWT rides the shell's apiSend (responseType
+  // 'response'); nothing here is a bearer credential.
+  const wantsStream = !!(req.body && req.body.stream === true && !req.body.answer_retry && answerStreamingEnabled());
+  let streaming = false;
+  const send = (event) => {
+    if (res.writableEnded || res.destroyed) return;
+    try { res.write(`${JSON.stringify(event)}\n`); } catch (_) { /* the browser went away */ }
+  };
+  const stream = wantsStream ? {
+    begin(token) {
+      streaming = true;
+      res.status(200).set({
+        'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'Cache-Control': 'no-store, no-transform',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      res.flushHeaders();
+      send({ type: 'answer_retry', token });
+    },
+    delta(text) { if (text) send({ type: 'delta', text }); },
+    reset() { send({ type: 'reset' }); },
+  } : undefined;
   try {
     const out = await svc.execute(req.db, {
       signedTicket: req.body && req.body.ticket,
       // R1: a sealed continuation (the user's "Keep going" click) and the chat
       // it is bound to. Evidence is never read from the body.
       continuation: req.body && req.body.continuation,
+      // A broken stream's one retry (above); bound to the same user and chat.
+      answerRetry: req.body && req.body.answer_retry,
       chatId: req.body && req.body.chat_id,
       userId: req.auth.userId,
       auth: req.auth,
       temporaryAttachments: req.body && req.body.temporary_attachments,
+      ...(stream ? { stream } : {}),
     });
     // Older browser builds still use chat markers and cannot claim receipts.
     if (out.action_draft && req.body && req.body.action_ledger_version === 1) {
       await ledger.issue(req.db, req.auth.userId, out.action_draft);
     }
-    res.json({ status: 'success', outcome: 'answer', ...out });
-  } catch (err) { fail(res, 'execute', err); }
+    const body = { status: 'success', outcome: 'answer', ...out };
+    if (!streaming) return res.json(body);
+    send({ type: 'final', body });
+    return res.end();
+  } catch (err) {
+    if (!streaming) return fail(res, 'execute', err);
+    const status = Number.isInteger(err && err.status) ? err.status : 500;
+    if (status >= 500) console.error('[api.assistant] execute (streaming) error:', err);
+    send({ type: 'error', status, message: status >= 500 ? 'The assistant request failed' : err.message });
+    return res.end();
+  }
 });
 
 router.get('/api/assistant/chats', jwtOrApiKey, staffOnly, chatRate, async (req, res) => {

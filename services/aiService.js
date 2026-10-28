@@ -66,6 +66,22 @@
 // line at the head of request_excerpt (token counts, never content — it rides
 // outside the logContent:false marker). Absent → byte-identical to before.
 //
+// Streaming (opts.onTextDelta, OPT-IN — Ask Casey's answer): the request body
+// gains `stream: true` as its LAST key and nothing else changes — same system
+// blocks, messages, max_tokens, output_config. The provider's SSE events are
+// folded back into the envelope a non-streaming call receives (text blocks in
+// index order, stop_reason, usage merged from message_start + message_delta),
+// and from there the attempt runs the SAME parse / retry / log / return path:
+// one ai_calls row per attempt, same status / error / tokens / cost / cache
+// line. onTextDelta(text, {attempt}) sees each text delta as it arrives; it is
+// cosmetic (a throw from it is swallowed), the returned output/json are
+// authoritative. Error taxonomy: a non-2xx answers JSON even to a stream
+// request, so it logs exactly as today; an in-stream `error` event or a stream
+// that ends before message_stop is a failed transport (api_error), like a 5xx;
+// the timeout covers the whole read. latency_ms on a streamed row is the time
+// to the LAST byte (a non-streamed response's headers arrive with its body).
+// Absent → byte-identical to before.
+//
 // async mode is intentionally unimplemented (see throw below) — it needs the
 // scheduled_jobs integration, scoped as its own later slice. No v1 consumer
 // needs it.
@@ -334,6 +350,81 @@ function buildAttachmentBlocks(attachments) {
 }
 
 /**
+ * Read an Anthropic SSE response body into the envelope a non-streaming call
+ * returns ({content, stop_reason, usage}). onText(text) per text delta.
+ * Returns {envelope} or {failure:'stream_error'|'stream_incomplete', detail}.
+ * Read errors (incl. AbortError) propagate to the caller's catch.
+ */
+async function readMessageStream(resp, onText) {
+  const blocks = [];
+  let usage = {};
+  let stopReason = null;
+  let done = false;
+  let failure = null;
+  const onEvent = (data) => {
+    let ev;
+    try { ev = JSON.parse(data); } catch (_) { return; }
+    if (!ev || typeof ev !== 'object') return;
+    if (ev.type === 'message_start' && ev.message) {
+      if (ev.message.usage && typeof ev.message.usage === 'object') usage = { ...ev.message.usage };
+    } else if (ev.type === 'content_block_start' && Number.isInteger(ev.index) && ev.content_block) {
+      blocks[ev.index] = { ...ev.content_block, ...(ev.content_block.type === 'text' ? { text: String(ev.content_block.text || '') } : {}) };
+    } else if (ev.type === 'content_block_delta' && Number.isInteger(ev.index) && ev.delta) {
+      const block = blocks[ev.index];
+      if (block && block.type === 'text' && ev.delta.type === 'text_delta' && typeof ev.delta.text === 'string') {
+        block.text += ev.delta.text;
+        try { onText(ev.delta.text); } catch (_) { /* cosmetic only */ }
+      }
+    } else if (ev.type === 'message_delta') {
+      if (ev.delta && typeof ev.delta.stop_reason === 'string') stopReason = ev.delta.stop_reason;
+      if (ev.usage && typeof ev.usage === 'object') {
+        for (const [k, v] of Object.entries(ev.usage)) if (v != null) usage[k] = v;
+      }
+    } else if (ev.type === 'message_stop') {
+      done = true;
+    } else if (ev.type === 'error') {
+      failure = { failure: 'stream_error', detail: ev.error || ev };
+    }
+  };
+  const decoder = new TextDecoder();
+  let buf = '';
+  let dataLines = [];
+  const feed = (line) => {
+    if (line.endsWith('\r')) line = line.slice(0, -1);
+    if (line === '') {
+      if (dataLines.length) onEvent(dataLines.join('\n'));
+      dataLines = [];
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.slice(line[5] === ' ' ? 6 : 5));
+    }
+  };
+  const reader = resp.body.getReader();
+  for (;;) {
+    const { value, done: eof } = await reader.read();
+    if (eof) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      feed(buf.slice(0, nl));
+      buf = buf.slice(nl + 1);
+      if (failure) break;
+    }
+    if (failure) break;
+  }
+  if (!failure) {
+    buf += decoder.decode();
+    if (buf) feed(buf);
+    feed('');
+  }
+  if (failure) {
+    try { await reader.cancel(); } catch (_) { /* already closed */ }
+    return failure;
+  }
+  if (!done) return { failure: 'stream_incomplete', detail: { stop_reason: stopReason } };
+  return { envelope: { content: blocks.filter(Boolean), stop_reason: stopReason, usage } };
+}
+
+/**
  * Insert one ai_calls row. Never throws — logging failures must not break the
  * call path. Returns insertId or null.
  */
@@ -446,6 +537,14 @@ async function logCall(db, row) {
  *                                     cache_read_input_tokens /
  *                                     cache_creation_input_tokens (input_tokens
  *                                     stays the API's uncached remainder).
+ * @param {Function} [opts.onTextDelta] OPT-IN (Ask Casey answer streaming): the
+ *                                     request is sent with stream:true (appended as
+ *                                     the body's last key, nothing else changes) and
+ *                                     onTextDelta(text, {attempt}) is called per text
+ *                                     delta — attempt 2 is the JSON retry, whose
+ *                                     text starts over. Return shape, ai_calls row
+ *                                     and error taxonomy as without it — see the
+ *                                     header "Streaming".
  * Every result that reached the API also carries stopReason (the envelope's
  * stop_reason, or null); the early fail-fast returns (bad_attachments,
  * unknown_prompt, no_model, no_auth) keep their exact pre-W-AI shape.
@@ -471,7 +570,9 @@ async function call(db, {
   noRetryOnStop = false,
   logContent = true,
   cacheSystemPrefix = false,
+  onTextDelta,
 } = {}) {
+  const streaming = typeof onTextDelta === 'function';
   // W-AI: what an ai_calls row may hold. Default = exactly as before.
   const omit = (v) => `[omitted: ${String(v == null ? '' : (typeof v === 'string' ? v : JSON.stringify(v))).length} chars]`;
   const logText = (v) => (logContent ? v : omit(v));
@@ -616,7 +717,7 @@ async function call(db, {
   //   parseOk     : (json only) the extracted text parsed as JSON
   //   status      : logged ai_calls.status — 'ok' iff usable result
   //   json        : parsed value when parseOk
-  async function attempt(systemForAttempt) {
+  async function attempt(systemForAttempt, attemptNo = 1) {
     const body = {
       model: resolvedModel,
       max_tokens: resolvedMaxTokens,
@@ -624,6 +725,7 @@ async function call(db, {
       messages: [{ role: 'user', content: messageContent }],
     };
     if (resolvedOutputConfig) body.output_config = resolvedOutputConfig;   // W-AI opt-in only
+    if (streaming) body.stream = true;   // opt-in only, always the last key
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), resolvedTimeoutMs);
@@ -636,8 +738,18 @@ async function call(db, {
         body: JSON.stringify(body),
         signal: controller.signal,
       });
-      const latency = Date.now() - startedAt;
-      const envelope = await resp.json().catch(() => null);
+      let latency = Date.now() - startedAt;
+      // A non-2xx answers JSON even to a stream request: same path as today.
+      let envelope;
+      let streamFailure = null;
+      if (streaming && resp.ok && resp.body && typeof resp.body.getReader === 'function') {
+        const read = await readMessageStream(resp, (t) => onTextDelta(t, { attempt: attemptNo }));
+        latency = Date.now() - startedAt;
+        if (read.failure) streamFailure = read;
+        else envelope = read.envelope;
+      } else {
+        envelope = await resp.json().catch(() => null);
+      }
 
       let transportOk = false;
       let parseOk = false;
@@ -646,7 +758,11 @@ async function call(db, {
       let cacheRead = null, cacheWrite = null;
       const stopReason = envelope && typeof envelope.stop_reason === 'string' ? envelope.stop_reason : null;
 
-      if (!resp.ok) {
+      if (streamFailure) {
+        status   = 'error';
+        errorMsg = logContent ? `${streamFailure.failure}: ${truncate(streamFailure.detail, 500)}` : streamFailure.failure;
+        envelope = streamFailure.detail;
+      } else if (!resp.ok) {
         status   = 'error';
         errorMsg = logContent ? `http_${resp.status}: ${truncate(envelope, 500)}` : `http_${resp.status}`;
       } else if (!envelope || !Array.isArray(envelope.content)) {
@@ -773,7 +889,7 @@ async function call(db, {
   // ---- JSON parse failed on attempt 1 → retry once with a stricter system ----
   // NOTE: attempt() rebuilds the same body, so any attachments are RE-SENT on
   // this retry — a parse-failed multimodal json call bills its input twice.
-  const r2 = await attempt(`${systemText}\n${JSON_RETRY_GUARD}`);
+  const r2 = await attempt(`${systemText}\n${JSON_RETRY_GUARD}`, 2);
   if (!r2.transportOk) {
     return {
       ok: false,

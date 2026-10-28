@@ -58,6 +58,15 @@ const EXEMPT = {
     'investigation-flow replay. Its DB stub has no script array; the byte-' +
     'identity assertions compare whole request bodies, so a drifted sequence ' +
     'fails the comparison rather than passing silently.',
+  'aiService.stream.test.js':
+    'responses.shift() sequences stubbed provider FETCH RESPONSES (plain or ' +
+    'SSE-bodied), not DB rows; an exhausted queue returns undefined, which ' +
+    'fails the call under test loudly. No DB stub exists in the file.',
+  'assistantAnswerStream.test.js':
+    'queue.shift() hands scripted aiService.call() RETURN VALUES for the ' +
+    'answer stage only (an exhausted queue throws "unscripted answer call" — ' +
+    'fail-loud by construction); investigate calls are fixed, not scripted. ' +
+    'Its DB is the shared capDb() mock keyed on SQL text, with no script array.',
 };
 
 /** `.shift()` called on something that looks like a script array. */

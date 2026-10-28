@@ -100,6 +100,7 @@ lib/internal_functions/trustee.js
 lib/internal_functions/users.js
 lib/internal_functions/variables.js
 lib/job_executor.js
+lib/jsonFieldStream.js
 lib/legacyTrap.js
 lib/logMeta.js
 lib/maintenance.js
@@ -1106,6 +1107,7 @@ tests/adminapikeys.k2.test.js
 tests/aiMatchTypes.registry.test.js
 tests/aiService.attachments.test.js
 tests/aiService.promptCache.test.js
+tests/aiService.stream.test.js
 tests/aiService.wai.test.js
 tests/aimatch.service.test.js
 tests/alertingDigestCta.test.js
@@ -1131,6 +1133,7 @@ tests/apptTypeKey.patch.test.js
 tests/apptsSearch.picker.test.js
 tests/assignPickersActive.test.js
 tests/assistantActionLedger.mysql.test.js
+tests/assistantAnswerStream.test.js
 tests/assistantAttachmentService.test.js
 tests/assistantChatService.test.js
 tests/assistantContinuation.mysql.test.js
@@ -1444,6 +1447,7 @@ tests/internalFn.enrollSkipIfEnrolled.test.js
 tests/internal_functions.meta.test.js
 tests/issnCodebtor.test.js
 tests/jest.setup.js
+tests/jsonFieldStream.test.js
 tests/keyDelegation.mysql.test.js
 tests/keyDelegation.test.js
 tests/keyEditRenew.mysql.test.js

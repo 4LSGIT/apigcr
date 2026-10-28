@@ -44,6 +44,7 @@ describe('classification snapshot', () => {
     "assistant_ai_monthly_cap_cents": "firm system integrations console number",
     "billing_tasks_to": "firm firm routing ui user",
     "calendly_webhook_signing_key": "secret console console ui string",
+    "casey_answer_streaming_enabled": "system system platform ui bool",
     "casey_code_actions_enabled": "system system platform ui bool",
     "casey_hook_authoring_enabled": "system system platform ui bool",
     "casey_ingest_authoring_enabled": "system system platform ui bool",

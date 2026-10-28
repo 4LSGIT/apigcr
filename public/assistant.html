@@ -81,6 +81,8 @@
   .thinking-wand::after { width: 3px; height: 3px; top: 7px; right: 0; animation-delay: .35s; }
   .thinking-copy { color: var(--text-muted); }
   .thinking-line { display: block; width: 0; height: 2px; margin-top: 3px; border-radius: 2px; background: var(--accent); animation: writeLine 1.7s ease-in-out infinite; }
+  .msg.streaming::after { content: ''; display: inline-block; width: 7px; height: 1em; margin-left: 2px; vertical-align: text-bottom; background: var(--accent); animation: streamCaret 1s steps(2, start) infinite; }
+  @keyframes streamCaret { to { visibility: hidden; } }
   .composer { position: sticky; bottom: 0; background: var(--page-bg); padding: 10px 0 4px; }
   .compose-box { display: flex; gap: 8px; align-items: end; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 8px; box-shadow: 0 -4px 18px color-mix(in srgb, #000 7%, transparent); }
   .attach-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 2px 7px; }
@@ -189,6 +191,9 @@ const pickerSearch = document.getElementById('pickerSearch');
 const pickerResults = document.getElementById('pickerResults');
 let history = [];
 let busy = false;
+// Offered by the latest plan response (casey_answer_streaming_enabled). False
+// = execute is called exactly as before streaming existed.
+let answerStreaming = false;
 let currentChatId = null;
 let historyAvailable = true;
 let pendingAttachments = [];
@@ -2320,7 +2325,7 @@ async function keepGoing(message) {
   render();
   try {
     const attachmentRequest = await requestAttachments(turnAttachments);
-    const r = await api('/api/assistant/execute', {
+    const r = await executeAnswer({
       continuation: spent, chat_id: message.continuation_chat || null,
       temporary_attachments: attachmentRequest.temporary, action_ledger_version: 1,
     });
@@ -2361,6 +2366,7 @@ function render() {
   chat.innerHTML = history.map((m, i) => {
     if (m.role === 'user') return `<div class="msg user">${esc(m.text)}${messageContextHtml(m.workspace_context_label)}${messageAttachmentsHtml(m.attachments, i)}</div>`;
     if (m.type === 'thinking') return `<div class="msg assistant">${thinkingHtml(m.text)}</div>`;
+    if (m.type === 'streaming') return `<div class="msg assistant streaming" data-streaming>${esc(m.text)}</div>`;
     const entities = Array.isArray(m.entities) && m.entities.length ? `<div class="record-links"><b>Open records</b><div class="source-actions">${m.entities.map(actionHtml).join('')}</div></div>` : '';
     const sources = Array.isArray(m.sources) && m.sources.length ? `<div class="sources"><b>Sources</b>${m.sources.map((s) =>
       `<div class="source"><div class="source-label">${esc(s.label)} · ${esc(s.query_id)} row ${esc(s.row_number)}</div>${Array.isArray(s.actions) && s.actions.length ? `<div class="source-actions">${s.actions.map(actionHtml).join('')}</div>` : ''}<details><summary>View evidence row</summary><pre>${esc(JSON.stringify(s.row, null, 2))}</pre></details></div>`).join('')}</div>` : '';
@@ -2400,7 +2406,7 @@ function openEntity(kind, id, label) {
 }
 
 function publicHistory() {
-  return history.filter((m) => m.type !== 'thinking').slice(-8).map((m) => ({ role: m.role, text: m.text }));
+  return history.filter((m) => m.type !== 'thinking' && m.type !== 'streaming').slice(-8).map((m) => ({ role: m.role, text: m.text }));
 }
 
 async function api(path, body, method, headers) {
@@ -2722,6 +2728,7 @@ async function ask() {
       document_ids: attachmentRequest.documentIds,
       workspace_context: turnContext && turnContext.snapshot,
     });
+    answerStreaming = r.answer_streaming === true;
     if (r.outcome === 'plan') {
       const maxRounds = Number(r.investigation && r.investigation.max_rounds) || 1;
       history[history.length - 1].text = maxRounds > 1
@@ -2749,13 +2756,93 @@ async function ask() {
 async function executeAutomatically(initialTicket, temporaryAttachments) {
   let ticket = initialTicket;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const r = await api('/api/assistant/execute', { ticket, temporary_attachments: temporaryAttachments, action_ledger_version: 1, chat_id: currentChatId || null });
+    const r = await executeAnswer({ ticket, temporary_attachments: temporaryAttachments, action_ledger_version: 1, chat_id: currentChatId || null });
     if (r.outcome !== 'plan') return r;
     ticket = r.ticket;
     history[history.length - 1].text = r.notice || 'Narrowing the search and trying again…';
     render();
   }
   throw new Error('The read-only search could not be made safe and efficient automatically.');
+}
+
+// Answer streaming. The streamed prose is cosmetic: the turn shows it while the
+// model writes, then the caller replaces the turn with answerMessage(final) —
+// the PARSED answer, which wins whenever the two differ (the server may also
+// rewrite it, e.g. answerWithoutCard). The chat is saved by the caller, once,
+// from whichever attempt returned.
+async function executeAnswer(body) {
+  if (!answerStreaming) return api('/api/assistant/execute', body);
+  const res = await P.apiSend('/api/assistant/execute', 'POST', { ...body, stream: true }, {}, { responseType: 'response' });
+  if (!/application\/x-ndjson/i.test(String((res && res.headers && res.headers.get('content-type')) || ''))) {
+    // Answered unstreamed (state too large to seal, or the switch flipped).
+    const r = await res.json();
+    if (!r || r.status === 'error') throw new Error((r && (r.message || r.error)) || 'Request failed');
+    return r;
+  }
+  const turn = history[history.length - 1];
+  try {
+    return await readAnswerStream(res, streamingTurn(turn));
+  } catch (e) {
+    if (!e || !e.answerRetry) throw e;
+    // One unstreamed retry over the evidence the server sealed; its failure is
+    // the ordinary error.
+    turn.type = 'thinking';
+    turn.text = 'Answer interrupted — retrying…';
+    render();
+    return api('/api/assistant/execute', {
+      answer_retry: e.answerRetry, chat_id: body.chat_id || null,
+      temporary_attachments: body.temporary_attachments, action_ledger_version: body.action_ledger_version,
+    });
+  }
+}
+
+// NDJSON events → the final body. Anything else — a dropped connection, an
+// error event, a stream that ends without its final — throws, carrying the
+// answer-retry token when one arrived.
+async function readAnswerStream(res, onText) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let retry = null;
+  let final = null;
+  let failure = null;
+  const handle = (line) => {
+    if (!line.trim()) return;
+    let ev;
+    try { ev = JSON.parse(line); } catch (_) { return; }
+    if (!ev || typeof ev !== 'object') return;
+    if (ev.type === 'answer_retry' && typeof ev.token === 'string') retry = ev.token;
+    else if (ev.type === 'delta' || ev.type === 'reset') { try { onText(ev); } catch (_) { /* cosmetic */ } }
+    else if (ev.type === 'final' && ev.body && typeof ev.body === 'object') final = ev.body;
+    else if (ev.type === 'error') failure = ev;
+  };
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) { handle(buf.slice(0, nl)); buf = buf.slice(nl + 1); }
+    }
+    buf += decoder.decode();
+    handle(buf);
+  } catch (_) { /* dropped mid-answer: handled below */ }
+  if (final && final.status !== 'error') return final;
+  const err = new Error((failure && failure.message) || 'The answer was interrupted');
+  err.answerRetry = retry;
+  throw err;
+}
+
+// The thinking turn becomes the progressive text on the first words. Deltas
+// update that one element in place: a render() per delta would rebuild every
+// card in the chat.
+function streamingTurn(turn) {
+  return (ev) => {
+    if (turn.type !== 'streaming') { turn.type = 'streaming'; turn.text = ''; render(); }
+    turn.text = ev.type === 'reset' ? '' : turn.text + String(ev.text || '');
+    const el = chat.querySelector('[data-streaming]');
+    if (el) { el.textContent = turn.text; chat.scrollTop = chat.scrollHeight; }
+  };
 }
 
 function setBusy(value) {

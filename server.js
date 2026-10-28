@@ -43,8 +43,10 @@ app.set('trust proxy', 1);//google cloud run
 //   - Cache-Control: no-transform is honored;
 //   - Accept-Encoding negotiation: br (quality 4) when offered, else gzip,
 //     else identity, with Vary: Accept-Encoding set.
-// No SSE / streaming responses exist in this app (verified 2026-09-16), so
-// the classic "compression buffers my EventSource" footgun does not apply.
+// Streaming responses opt out with `Cache-Control: no-transform`, which this
+// middleware honors (never compresses, so never buffers): today that is Ask
+// Casey's streamed answer (routes/api.assistant.js, NDJSON). A new streaming
+// route that forgets the header is buffered until it ends.
 app.use(require("compression")());
 
 // Stamp EVERY response (API and static) with the build this instance is running,

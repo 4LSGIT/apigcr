@@ -1483,8 +1483,9 @@ test('opening saved history reconciles receipts before rendering and fails close
 
 test('the browser requests ledger-backed drafts on each automatic read attempt', async () => {
   const api = jest.fn().mockResolvedValue({ outcome: 'answer' });
-  const execute = new Function('api', `const history = []; function render() {}; const currentChatId = 41;
-    ${fnSrcAuto(html, 'executeAutomatically')}; return executeAutomatically;`)(api);
+  // Streaming not offered (answerStreaming false): executeAnswer is api().
+  const execute = new Function('api', `const history = []; function render() {}; const currentChatId = 41; const answerStreaming = false;
+    ${fnSrcAuto(html, 'executeAnswer')}; ${fnSrcAuto(html, 'executeAutomatically')}; return executeAutomatically;`)(api);
   await execute('read-ticket', []);
   // R1: the chat id rides along so a budget stop's continuation is bound to it.
   expect(api.mock.calls).toEqual([['/api/assistant/execute', {
@@ -1793,13 +1794,13 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
 // R1 read-loop continuation: the Keep going control. The real functions run
 // out of assistant.html; api() and the history saves are the stubs.
 describe('R1 Keep going control', () => {
-  const KEEP_FNS = ['compactInvestigation', 'keepGoingHtml', 'answerMessage', 'keepGoing', 'askCaseyAgain', 'saveAssistantMessage'];
+  const KEEP_FNS = ['compactInvestigation', 'keepGoingHtml', 'answerMessage', 'executeAnswer', 'keepGoing', 'askCaseyAgain', 'saveAssistantMessage'];
   function keepSandbox(deps = {}) {
     const supplied = {
       history: [], busy: false, currentChatId: 41, historyAvailable: true, modelMode: { value: 'better_quality' },
       api: jest.fn(), render: jest.fn(), setBusy: jest.fn(), saveUserMessage: jest.fn().mockResolvedValue(),
       requestAttachments: jest.fn().mockResolvedValue({ temporary: [], documentIds: [] }),
-      input: { value: '', focus: jest.fn() }, ...deps,
+      input: { value: '', focus: jest.fn() }, answerStreaming: false, ...deps,
     };
     const names = Object.keys(supplied);
     const src = `${constSrc(html, 'esc')}\n${constSrc(html, 'CONTINUATION_TTL_MS')}\n${constSrc(html, 'STOP_LABELS')}\n` +
