@@ -6,7 +6,8 @@
  * ref/YISRAMAIL_DESIGN.md §4.4; tables from
  * ref/migrations/2026-10-29_yisramail_p1_consent_core.sql.
  *
- * For every ACTIVE row carrying a flag, ONE event through the one writer
+ * For every ACTIVE row carrying a flag whose destination has NO consent
+ * state yet for the flag's scope, ONE event through the one writer
  * (services/optoutService.recordConsent), on this connection, in its own
  * transaction:
  *   contact_phones.sms_optout = 1   → sms   scope 'all'        opt_out
@@ -14,12 +15,16 @@
  *   source 'migration', provider_event_id 'migration:phone:<row id>' /
  *   'migration:email:<row id>', occurred_at = the row's updated_at (UTC),
  *   contact_id = the row's, evidence { row_id, column }.
- * The UNIQUE (source, provider_event_id) makes a re-run a no-op per row, and
- * the state guard makes an event recorded after a NEWER consent change lose.
- * Ended rows are history and are not migrated (live 2026-10-29: none flagged).
+ * A destination that already has a state row is never a candidate: the
+ * ledger already speaks for it (the first run, or the new code — a row born
+ * from the state, a staff tick), and a later 'migration' event would only
+ * misattribute it. The UNIQUE (source, provider_event_id) makes a re-run a
+ * no-op per row besides. Ended rows are history and are not migrated (live
+ * 2026-10-29: none flagged).
  *
- * RUN IT TWICE — before the backend deploy AND after it — so a flag written
- * by the old code in the gap is picked up:
+ * RUN IT TWICE — before the backend deploy AND after it. The second run only
+ * fills gaps: a flag the old code set, in the minutes before the deploy, on
+ * a destination the ledger had never seen:
  *   1. the migration SQL (creates the tables)
  *   2. node scripts/yisramailP1MigrateConsent.js --apply
  *   3. backend deploy
@@ -33,12 +38,15 @@
  * VERIFIED END STATE (check and --apply alike): every ACTIVE phone / email row's
  * flag equals its destination's state for the flag's scope (opted_out ⇔ 1; no
  * state row ⇔ 0). A row that disagrees AFTER --apply is NO-GO and is listed:
- *   flag 0, state opted_out  — someone cleared the flag through code that
- *                              bypassed the ledger (the old code, in the gap):
- *                              recording an opt_in is a consent decision, not
- *                              a migration (the re-consent guard) — a human
- *                              re-ticks or clears it on the contact form.
- *   flag 1, state opted_in   — a writer bypassed recordConsent: a bug to find.
+ *   flag 0, state opted_out  — the flag was cleared outside the ledger (the
+ *                              old code, in the gap). Recording an opt_in is
+ *                              a consent decision, not a migration.
+ *   flag 1, state opted_in   — the flag was set outside the ledger.
+ * Either way the script prints the SU-console statement that restores the
+ * row's cache from the ledger, and what staff do next if the ledger is the
+ * one that is wrong: change it on the contact form, which records it (the
+ * form's three-way consent compare needs the cache to match the ledger first
+ * — until then a change there is refused as "consent changed").
  * Pure DB, one connection, no session settings beyond time_zone (+00:00, so
  * updated_at reads as UTC).
  */
@@ -57,12 +65,14 @@ const SQL = Object.freeze({
   destCollation: `SELECT TABLE_NAME AS t, COLLATION_NAME AS c FROM information_schema.COLUMNS
                    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('comm_consent_events', 'comm_consent_state')
                      AND COLUMN_NAME = 'destination'`,
+  // Every active flagged row, with its destination's state for the flag's
+  // scope; the ones with NO state row are the migration's work.
   candidates: (f) => `SELECT r.id, r.contact_id, r.${f.col} AS destination,
                              DATE_FORMAT(r.updated_at, '%Y-%m-%d %H:%i:%s') AS at,
-                             e.id AS event_id
+                             s.state
                         FROM ${f.table} r
-                        LEFT JOIN comm_consent_events e
-                          ON e.source = 'migration' AND e.provider_event_id = CONCAT('migration:${f.key}:', r.id)
+                        LEFT JOIN comm_consent_state s
+                          ON s.channel = '${f.channel}' AND s.destination = r.${f.col} AND s.scope = '${f.scope}'
                        WHERE r.end_date IS NULL AND r.${f.flag} = 1
                        ORDER BY r.id`,
   mismatches: (f) => `SELECT r.id, r.contact_id, r.${f.col} AS destination, r.${f.flag} AS flag, s.state, s.last_event_id
@@ -85,16 +95,23 @@ async function readState(conn) {
   for (const f of FAMILIES) {
     const [cand] = await conn.query(SQL.candidates(f));
     const [mis] = await conn.query(SQL.mismatches(f));
-    out.families[f.channel] = { candidates: cand, pending: cand.filter((r) => r.event_id == null), mismatches: mis };
+    out.families[f.channel] = { candidates: cand, pending: cand.filter((r) => r.state == null), mismatches: mis };
   }
   return out;
 }
 
 function describeMismatch(f, r) {
-  const why = Number(r.flag) === 1
-    ? (r.state === 'opted_in' ? 'flag 1 but the state says opted_in — a writer bypassed the ledger' : 'flag 1, no state yet — migrate it')
-    : 'flag 0 but the state says opted_out — the flag was cleared outside the ledger; re-tick or clear it on the contact form';
-  return `${f.table} #${r.id} (contact ${r.contact_id}) ${r.destination}: ${why}`;
+  const head = `${f.table} #${r.id} (contact ${r.contact_id}) ${r.destination}`;
+  if (Number(r.flag) === 1 && r.state == null) return `${head}: flag 1, no state yet — migrate it (--apply)`;
+  const ledger = r.state === 'opted_out' ? 1 : 0;
+  const what = ledger === 1
+    ? `flag 0 but the ledger says opted out — the flag was cleared outside the ledger`
+    : `flag 1 but the ledger says ${r.state === 'opted_in' ? 'opted in' : 'not opted out'} — the flag was set outside the ledger`;
+  const fix = `UPDATE ${f.table} SET ${f.flag} = ${ledger} WHERE id = ${Number(r.id)};`;
+  const then = ledger === 1
+    ? 'then, only if the client really opted back in, untick it on the contact form and save (that records the opt-in)'
+    : 'then, only if the client really opted out, tick it on the contact form and save (that records the opt-out)';
+  return `${head}: ${what}. Restore the cache from the ledger in the SU DB console: ${fix} — ${then}`;
 }
 
 /**
@@ -117,7 +134,7 @@ async function run(conn, { apply = false, say = console.log, optout = require('.
   }
   for (const f of FAMILIES) {
     const st = s.families[f.channel];
-    say(`${f.table}.${f.flag}: ${st.candidates.length} active flagged row(s), ${st.candidates.length - st.pending.length} already in the ledger, ${st.pending.length} to migrate`);
+    say(`${f.table}.${f.flag}: ${st.candidates.length} active flagged row(s), ${st.candidates.length - st.pending.length} whose destination the ledger already holds, ${st.pending.length} to migrate`);
     for (const r of st.pending) say(`  · #${r.id} (contact ${r.contact_id}) ${r.destination}  updated_at ${r.at} UTC`);
   }
 

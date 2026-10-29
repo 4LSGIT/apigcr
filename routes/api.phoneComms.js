@@ -486,7 +486,7 @@ router.post('/api/phone-lines/:id/sms', jwtOrApiKey, requireJwt, async (req, res
     if (!replayed) {
       audit(req, 'sent', {
         ...meta, via: access.su ? 'su' : 'grant', length: out.length,
-        ...(gate.overridden.length ? { acknowledged_optout: gate.overridden.map((r) => r.contact_id) } : {}),
+        ...(gate.overridden.length ? optout.overrideAudit(gate.overridden) : {}),
       }, SEND_TOOL);
     }
     res.json({ status: 'success', line_id: id, to: out.to, result: out.result, ...(replayed ? { replayed: true } : {}) });

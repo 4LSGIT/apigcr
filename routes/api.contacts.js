@@ -20,6 +20,7 @@ const express        = require('express');
 const router         = express.Router();
 const jwtOrApiKey    = require('../lib/auth.jwtOrApiKey');
 const contactService = require('../services/contactService');
+const optoutService  = require('../services/optoutService');
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -127,7 +128,7 @@ router.post('/api/contacts', jwtOrApiKey, async (req, res) => {
 
   try {
     const userId = resolveCreatedBy(req);
-    const result = await contactService.createContact(req.db, req.body, { userId });
+    const result = await contactService.createContact(req.db, req.body, { userId, consentActor: optoutService.consentActor(req.auth) });
     res.json({ status: 'success', ...result });
   } catch (err) {
     console.error('POST /api/contacts error:', err);
@@ -165,7 +166,9 @@ router.patch('/api/contacts/:id', jwtOrApiKey, async (req, res) => {
       req.db,
       req.params.id,
       req.body,
-      { userId, force }
+      // consentActor: who a consent change is attributed to — an API key
+      // may set an opt-out, never clear one (optoutService.consentActor).
+      { userId, force, consentActor: optoutService.consentActor(req.auth) }
     );
 
     // Detect whether an aggregate array was supplied. If so, return the
@@ -216,7 +219,10 @@ router.patch('/api/contacts/:id', jwtOrApiKey, async (req, res) => {
       : m.includes('not found')                                ? 404
       : (m.includes('concurrent') || m.includes('Concurrent')) ? 400
       : 500;
-    res.status(status).json({ status: 'error', message: err.message });
+    // A consent refusal names its code (409 consent_changed — the contact
+    // form reloads; 422 opt_in_needs_staff).
+    res.status(status).json({ status: 'error', message: err.message,
+      ...(err.name === 'ConsentWriteRefusal' ? { code: err.code, consent: err.consent } : {}) });
   }
 });
 

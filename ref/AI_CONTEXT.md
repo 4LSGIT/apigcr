@@ -100,8 +100,9 @@ body. Governing migrations in `ref/migrations/`.*
   configs closed per type, targets existing + active, internal functions from
   the A17 allowlist plus the ingest-only forwards (`forward_as_email` /
   `forward_as_sms`: event `"$"` on a passthrough rule, literal firm sender,
-  literal destination classified firm/outside on the card, opted-out
-  destination refused; NOT workflow-draft authorable), `send_email`/`send_sms`
+  literal destination classified firm/outside on the card, an opted-out
+  NUMBER refused (an email opt-out is marketing-only — D18 — and never
+  refuses a forward); NOT workflow-draft authorable), `send_email`/`send_sms`
   from a quoted literal firm sender, no `http` actions (A17.4b unbuilt; existing ones may be renamed /
   toggled / moved / removed, never re-pointed). Code-mode bodies are
   authorable; the route's ingest code gate decides (automations.manage).
@@ -213,13 +214,30 @@ body. Governing migrations in `ref/migrations/`.*
   (`POST /api/phone-lines/:id/sms`, JWT callers of `/internal/{sms,mms}`, the
   SU CTA send → 409 `opted_out` until `acknowledge_optout:true`, gate before
   the limiter and the idempotency claim; `public/js/optoutAck.js`); API-key
-  callers get 422. Every row writer (contactPhone/EmailService create/update,
-  contactService aggregate + scalar + createContact) goes through
-  `applyRowConsent` / `cachedStateFlag` on its own transaction: a new row is
-  born from the state and never opts in (a transfer keeps the opt-out), a
-  flag change on an active row is one `staff` event, end-and-replace carries
-  as `row_replace`. A hit for a destination no row holds has null
-  `contact_id` / `row_id`. Exempt by design: the portal login PIN. Migration:
+  callers get 422. LOCK ORDER everywhere: the destination's contact row,
+  then its state row — a row writer holds its row by primary key and passes
+  it to recordConsent (`rowId`: no further row lock, cache sync by id); a
+  direct caller's recordConsent locks the active row through `*_active_uniq`
+  first. Never re-lock a held row through that index (a deadlock against a
+  waiting direct caller). Flag-deciding state reads are `FOR SHARE`, the
+  post-upsert read `FOR UPDATE`; deadlocks are not retried. The app's row
+  writers (contactPhone/EmailService create/update, contactService aggregate
+  + scalar + createContact) go through optoutService on their own
+  transaction: a new row is written, then `bornRow` sets its flag from the
+  state (never an opt-in; a correction carries the old number's consent as
+  `row_replace`, a transfer donor's flag only where the destination has no
+  state); an active row's flag goes through `decideRowFlag`'s three-way
+  compare — the contact form sends each loaded row's `*_optout_base`; a
+  resent unchanged value records nothing, a change against moved consent is
+  409 `consent_changed` — then `applyRowDecision` (one `staff` event).
+  Opt-in needs a signed-in user: an API key gets 422 `opt_in_needs_staff`
+  (opt-out is fine, evidence `via:'api_key'`). `update_db` / `insert_db`
+  cannot write the flags (WRITE_POLICY block) and realign every row they
+  touch from the state (`syncRowCaches`, no event);
+  `scripts/reviveScalarReplacedValues.js` revives rows outside that rule (its
+  header). Override audits record `acknowledged_optout` (contact ids) AND
+  `acknowledged_optout_destinations`. A hit for a destination no row holds
+  has null `contact_id` / `row_id`. Exempt by design: the portal login PIN. Migration:
   `scripts/yisramailP1MigrateConsent.js`. Manual: 01-YisraCase-overview/02-contacts.md,
   03-YisraFlow/08-error-policies.md.
 - **Casey reads email/phone ingest rules (A20.0/A20.1, 10-26):** the P12
@@ -3232,8 +3250,9 @@ reschedule-now), the normalizer resolves the message STRICT with the route's
 resolver and refs before the card is shown, the browser sends that resolved
 text, and the route's own non-strict resolve fills only the manage link
 `{{appts.appt_manage_token|default:}}` (shown as a labeled element); recipient,
-sender and subject are the route's, and an opted-out channel refuses (an
-automation send). Contract: `ref/ASK_CASEY_ACTIONS_PLAN.md` A4.1 *Client
+sender and subject are the route's, and an opted-out NUMBER refuses the SMS
+confirmation (an automation send; an email opt-out is marketing-only — D18 —
+so the email confirmation still goes). Contract: `ref/ASK_CASEY_ACTIONS_PLAN.md` A4.1 *Client
 confirmations*. The normalized type carries the server-owned `type_key` and
 singleton flag.
 

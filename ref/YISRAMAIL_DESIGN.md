@@ -6,9 +6,9 @@ D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
 Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
 later; D15 no RC push in v1, D16 over-cap operational sends with
 `campaigns.bulk`, D17 bounce tasks for clients only; D18 opt-outs gate
-PROMOTION, not operational automation. Open: D5 (Fred + SS), D8 (SS), D19
-(SMS STOP still stops automated texts — recommended); D3, D4, D7, D10,
-D12–D14 stand as recommendations until ruled. v0.5 also folds in a second,
+PROMOTION, not operational automation; D19 an SMS STOP still stops automated
+texts. Open: D5 (Fred + SS), D8 (SS); D3, D4, D7, D10, D12–D14 stand as
+recommendations until ruled. v0.5 also folds in a second,
 unaffiliated review (send reservation / at-most-once, transport rate limit,
 pause semantics, complaint hold before the first send, re-consent guard,
 EventBridge DLQ). v0.3 folds in an
@@ -327,6 +327,23 @@ its read rule (one service, automation refuses, staff warn) stands.
   validated in JS first (channel, scope per channel — `all` is SMS-only,
   `marketing` email-only, a topic must exist on that channel — action, source,
   a normalizable destination).
+- **Lock order, every writer: the destination's contact row, then its state
+  row.** A row writer holds its row by primary key and passes it to
+  recordConsent (`rowId`), which then takes no further row lock and syncs the
+  cache by primary key. A direct caller (the migration, P2's keyword handler)
+  holds nothing, so recordConsent locks the destination's ACTIVE row first
+  (`SELECT … WHERE phone_active_uniq = ? FOR UPDATE` — the active-only unique
+  key, so ended history rows are never locked, and a concurrent insert waits
+  on the gap). A writer must never re-lock its own row through that index: a
+  direct caller waiting on the row holds the index entry, and the second ask
+  is a deadlock (proven on the engine — the reviewer's suggested `WHERE
+  phone = ? AND end_date IS NULL FOR UPDATE` alone deadlocks the same way).
+  Deadlocks are not retried (`withTransaction` retries connection blips
+  only), so the order is load-bearing. The state is re-read after the upsert with a LOCKING read
+  (`FOR UPDATE`), and every read that decides a row's flag is `FOR SHARE`:
+  live runs REPEATABLE-READ, and a plain read would return the writer's
+  older snapshot (no state row → "missing after its upsert"; a stale row →
+  the cache synced to the wrong value).
 - **The cache** a row flag holds is the flag's scope: `sms_optout` = SMS
   `all`, `email_optout` = email `marketing` (D18) — recordConsent syncs the
   ACTIVE row's flag when it writes that scope, never for a topic.
@@ -335,8 +352,8 @@ its read rule (one service, automation refuses, staff warn) stands.
   scopes — plus the topic row when a topic is named, and decides in JS.
   Operational email returns `[]` without a query. An unknown, inactive or
   other-channel topic blocks every destination (fail closed) in
-  `findOptedOut` and `*OptedOutSql` alike. Built to D19 as recommended
-  (operational SMS = scope `all`, unchanged); ruling D19 the other way is one
+  `findOptedOut` and `*OptedOutSql` alike. D19 as ruled (Fred, 2026-10-29):
+  operational SMS = scope `all`, unchanged; reversing it would be one
   line in `blockingScopes`.
 - **Casey's consent read** goes through `optoutService.consentVersions`
   (operational read + the newest event id per destination, any scope): the
@@ -345,23 +362,53 @@ its read rule (one service, automation refuses, staff warn) stands.
   the card's click-time re-check compares those instead of the row flag. The
   contact-subrecord kinds still diff the row flag (the cache) — moves with the
   column drop.
-- **Writers** call `optoutService.applyRowConsent` (+ `cachedStateFlag` before
-  an insert) on their own connection. A row whose `end_date` goes back to NULL
-  (reactivation) is treated as a create; a flag edit on a row that is ended
-  before and after the write records nothing (history). Casey's writes are
-  attributed by the card sending `casey_draft_id`, which the phone/email routes
-  accept only while it is the user's in-flight ledger claim of a matching kind
-  (`assistantActionLedger.attribution`) → evidence `{ via: 'casey', draft_id }`.
+- **Writers**, on their own connection:
+  - a NEW active row (insert, transfer, end-and-replace, reactivation) is
+    written first, then `optoutService.bornRow` reads the state and sets the
+    flag to max(the caller's intent, carried flags, the state) — never an
+    opt-in. A correction's old row always carries (its destination's CURRENT
+    consent → `row_replace`); a transfer's donor flag and a reactivated row's
+    own history flag carry only where the destination has no state row yet
+    (a stale flag never overrides a recorded decision);
+  - an ACTIVE row's flag goes through `decideRowFlag`, the three-way compare:
+    the contact form sends, per loaded row, the flag it loaded
+    (`sms_optout_base` / `email_optout_base`). Sent = base → no decision, the
+    cache takes the current state (the repeater resends every field of every
+    row, so a stale `0` must not become an opt-in). Sent ≠ base → the user's
+    decision, unless base ≠ current → 409 `consent_changed`, nothing written
+    (the form offers a reload). No base (Casey, API callers, an older tab) →
+    sent vs current. Chosen over the list routes' `consent.version`: the base
+    is per flag scope and the aggregate save has no version loaded, while a
+    version moves on any scope's change (P3 topics) and would 409 spuriously;
+  - who: routes pass `optoutService.consentActor(req.auth)`. An opt-in needs
+    a signed-in user — an API key gets 422 `opt_in_needs_staff` and may only
+    opt out (evidence `via: 'api_key'` + the key id); in-process automation
+    (intake, booking, update_contact) never decides consent. A flag edit on a
+    row ended before and after the write records nothing (history). Casey's
+    writes are attributed by the card sending `casey_draft_id`, which the
+    phone/email routes accept only while it is the user's in-flight ledger
+    claim of a matching kind (`assistantActionLedger.attribution`) → evidence
+    `{ via: 'casey', draft_id }`.
+- **Generic writers:** `update_db` / `insert_db` refuse `sms_optout` /
+  `email_optout` (WRITE_POLICY `block`) and realign the cache of every row
+  they touch from its destination's state (`after` → `syncRowCaches`, no
+  event), so an inserted, revived or renumbered row is never a stray 0.
+  `scripts/reviveScalarReplacedValues.js` predates this and says so.
 - **Sync bus:** the per-row routes already announce the parent contact
   (`contactSubrecordGetter`, a refetch); the contact form's aggregate save does
   not ride the bus by the bus's own rule ("SCALARS only", yc-sync header) —
   unchanged, consent is no different from any other row field there.
-- **Migration:** `scripts/yisramailP1MigrateConsent.js` verifies the end state
-  (every active flag = its destination's state) and is NO-GO on a flag that was
-  cleared or set outside the ledger — an opt_in is a decision, not a migration.
-  A flag the old code writes on a row that a transfer then ends, in the
-  minutes between the first run and the deploy, is not picked up by the second
-  run (it reads active rows) — accepted.
+- **Migration:** `scripts/yisramailP1MigrateConsent.js` migrates only active
+  flagged rows whose destination has NO state row for the scope — the second
+  run (after the deploy) fills gaps and never re-attributes a destination the
+  new code already recorded. It verifies the end state (every active flag =
+  its destination's state) and is NO-GO on a flag cleared or set outside the
+  ledger, printing the SU-console UPDATE that restores the cache from the
+  ledger and the form change that records a real decision afterwards — an
+  opt_in is a decision, not a migration. A flag the old code writes on a row
+  that a transfer then ends, in the minutes between the first run and the
+  deploy, is not picked up by the second run (it reads active rows) —
+  accepted.
 - **Not done in P1:** the two flag columns' COMMENTs still describe the
   2026-10-27 rule (changing a COMMENT is a live-table ALTER — the drop slice,
   `ref/plans.md`).
@@ -1035,7 +1082,7 @@ C4 S, C5 S, C6 M, C7 S.
 | D16 | Operational sends over the 50 cap (e.g. office-closure notice to all active clients, email or SMS)? | **RULED:** allowed with `campaigns.bulk` + a typed confirmation of the count, audited; still operational (no footer), still consent-checked. | Informational notices to clients are legitimate; the cap exists to stop accidental blasts, not these. |
 | D17 | Who gets the "case email is bouncing" task? | **RULED:** clients only, to the case's assigned staff member, else the firm default; non-client bounces → campaign stats only. | One task per bounce would flood on a cold import. |
 | D18 | Do opt-outs stop automations? | **RULED (Fred, 2026-10-29): no — opt-outs gate promotion.** Automations are operational (a stand-in for a person); a later `promotional` checkbox (C7) makes an automation send obey marketing consent. Email opt-outs are marketing-only; no "send to opt-outs" switch on marketing campaigns — the operational class is the honest path. | CAN-SPAM covers commercial mail only; the 10-27 "automation refuses" rule was broader than the law and blocked the reminders clients need. |
-| D19 | Does an SMS STOP still stop automated (operational) texts? | Rec: **yes** — the one exception to D18. | A STOP revokes consent for texts (FCC "any reasonable means"; FCC 26-67 only lets informational revocations be scoped by category from 2026-11-25), and the providers block anyway — RC the pair, Quo every Quo line — so the send would fail. The client gets a staff task to be reached by phone/email (§4.6). |
+| D19 | Does an SMS STOP still stop automated (operational) texts? | **RULED (Fred, 2026-10-29): yes** — the one exception to D18. | A STOP revokes consent for texts (FCC "any reasonable means"; FCC 26-67 only lets informational revocations be scoped by category from 2026-11-25), and the providers block anyway — RC the pair, Quo every Quo line — so the send would fail. The client gets a staff task to be reached by phone/email (§4.6). |
 
 ## Appendix C — Compliance & provider opt-out facts (fetched 2026-10-29; engineering input, not legal advice)
 

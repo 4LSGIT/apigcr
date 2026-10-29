@@ -36,7 +36,7 @@ const express = require("express");
 const router = express.Router();
 const jwtOrApiKey = require("../../lib/auth.jwtOrApiKey");
 const emailService = require("../../services/emailService");
-const { optoutGate } = require("../../services/optoutService");
+const { optoutGate, overrideLine } = require("../../services/optoutService");
 
 router.post("/internal/email/send", jwtOrApiKey, async (req, res) => {
   const { from, to, subject, text, html, attachments, attachment_urls, signature } = req.body;
@@ -54,7 +54,7 @@ router.post("/internal/email/send", jwtOrApiKey, async (req, res) => {
       automation: !(req.auth && req.auth.type === "jwt"),
     });
     if (opt.refusal) return res.status(opt.refusal.status).json(opt.refusal.body);
-    if (opt.overridden.length) console.log(`[internal/email] user ${req.auth.userId} acknowledged opt-out for contact(s) ${opt.overridden.map((r) => r.contact_id).join(",")}`);
+    if (opt.overridden.length) console.log(`[internal/email] user ${req.auth.userId} acknowledged opt-out for ${overrideLine(opt.overridden)}`);
     const result = await emailService.sendEmail(req.db, {
       from, to, subject, text, html, attachments, attachment_urls,
       signature: signature === true

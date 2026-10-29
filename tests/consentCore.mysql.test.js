@@ -39,22 +39,36 @@ const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVIS
 const TABLES = ['contacts', 'contact_phones', 'contact_emails', 'users', 'field_defs'];
 const { CONSENT_TABLES: COMM, consentStatements: migrationStatements } = require('./helpers/consentSchema');
 
-// Line-based extraction (column COMMENTs may hold ';'); constraint clauses
-// naming a table outside the list are dropped — this suite tests predicates.
+// Line-based extraction (column COMMENTs may hold ';'): each table's CREATE
+// block AND its ALTER blocks — the dump puts every key there (PRIMARY KEY,
+// uk_phone_active / uk_email_active on the *_active_uniq columns, the
+// AUTO_INCREMENT). Without them ids are all 0, active uniqueness is not
+// enforced and a locking read locks the whole table, so neither the writers
+// nor the lock-order scenarios below would mean anything (fix round: P1's
+// first cut extracted the CREATE blocks only). FK clauses naming a table
+// outside the list are dropped — this suite tests consent, not the FK graph.
 function schemaFor(tables) {
   const lines = fs.readFileSync(path.join(__dirname, '..', 'ref', 'database.sql'), 'utf8').split('\n');
   const creates = [];
+  const alters = [];
   for (let i = 0; i < lines.length; i++) {
     for (const t of tables) {
       if (lines[i].startsWith(`CREATE TABLE \`${t}\` (`)) {
         const buf = [];
         for (; i < lines.length; i++) { buf.push(lines[i]); if (/^\) ENGINE=.*;$/.test(lines[i])) break; }
         creates.push(buf.join('\n'));
+      } else if (lines[i] === `ALTER TABLE \`${t}\``) {
+        const buf = [];
+        for (; i < lines.length; i++) { buf.push(lines[i]); if (/;\s*$/.test(lines[i])) break; }
+        const clauses = buf.slice(1).map((l) => l.replace(/[,;]\s*$/, ''))
+          .filter((l) => { const m = /REFERENCES `([a-z_]+)`/.exec(l); return !m || tables.includes(m[1]); });
+        if (clauses.length) alters.push(`${buf[0]}\n${clauses.join(',\n')};`);
       }
     }
   }
   if (creates.length !== tables.length) throw new Error(`schema extraction found ${creates.length} CREATE blocks of ${tables.length}`);
-  return creates;
+  alters.sort((a, b) => /FOREIGN KEY/.test(a) - /FOREIGN KEY/.test(b));
+  return [...creates, ...alters];
 }
 
 const PAT = '3135550001';
@@ -63,6 +77,8 @@ const ANN = '3135550003';
 const GHOST = '3135550009';
 const T1 = new Date('2026-10-01T10:00:00.000Z');
 const T2 = new Date('2026-10-02T10:00:00.000Z');
+const STAFF6 = { kind: 'user', userId: 6 };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 d('consent core on real MySQL', () => {
   let pool;
@@ -300,8 +316,8 @@ d('consent core on real MySQL', () => {
       await phoneSvc.updateContactPhone(pool, phone.id, { sms_optout: 0, label: 'Work' }, { updatedBy: 6 });
       await phoneSvc.updateContactPhone(pool, phone.id, { notes: 'evenings' }, { updatedBy: 6 });
       expect(await events()).toEqual([]);
-      await phoneSvc.updateContactPhone(pool, phone.id, { sms_optout: 1 }, { updatedBy: 6 });
-      await phoneSvc.updateContactPhone(pool, phone.id, { sms_optout: 0 }, { updatedBy: 6 });
+      await phoneSvc.updateContactPhone(pool, phone.id, { sms_optout: 1 }, { updatedBy: 6, consentActor: STAFF6 });
+      await phoneSvc.updateContactPhone(pool, phone.id, { sms_optout: 0 }, { updatedBy: 6, consentActor: STAFF6 });
       expect((await events()).map((e) => e.action)).toEqual(['opt_out', 'opt_in']);
       expect([(await stateOf('sms', PAT, 'all')).state, await flag('contact_phones', phone.id)]).toEqual(['opted_in', 0]);
     });
@@ -369,11 +385,199 @@ d('consent core on real MySQL', () => {
         const bad = await migrateScript.run(conn, { apply: true, say });
         expect(bad.ok).toBe(false);
         expect(bad.line).toMatch(/^NO-GO — the end state does not verify \(0 unmigrated, 1 disagreeing row\(s\) above\)/);
-        expect(said.join('\n')).toContain(`contact_phones #11 (contact 1) ${PAT}: flag 0 but the state says opted_out`);
+        // the advice names the SU-console statement that restores the cache from the ledger, then the form change
+        expect(said.join('\n')).toContain(`contact_phones #11 (contact 1) ${PAT}: flag 0 but the ledger says opted out — the flag was cleared outside the ledger. `
+          + 'Restore the cache from the ledger in the SU DB console: UPDATE contact_phones SET sms_optout = 1 WHERE id = 11; — then, only if the client really opted back in, untick it on the contact form');
         // and before the tables exist the script says so and writes nothing
         await q('DROP TABLE comm_consent_state');
         const none = await migrateScript.run(conn, { apply: true, say });
         expect(none.line).toMatch(/^NO-GO — missing table\(s\) comm_consent_state/);
+      } finally { conn.release(); }
+    });
+  });
+  // ───────────────────────────────────────────────────────────────────────
+  // Fix round (review 2026-10-29)
+  // ───────────────────────────────────────────────────────────────────────
+  describe('MAJOR 3 — concurrency inside recordConsent, on the engine (REPEATABLE-READ)', () => {
+    const conns = [];
+    const open = async () => {
+      const c = await pool.getConnection();
+      await c.query('SET SESSION innodb_lock_wait_timeout = 10');
+      conns.push(c);
+      return c;
+    };
+    afterEach(async () => { for (const c of conns.splice(0)) { try { await c.rollback(); } catch (_) {} c.release(); } });
+    const optOut = (conn, id, at, extra = {}) => optout.recordConsent(conn, { channel: 'sms', destination: PAT, scope: 'all', action: 'opt_out',
+      source: 'sms_keyword', providerEventId: id, occurredAt: at, ...extra });
+
+    test('(a) a writer whose read view predates a newer committed opt-out: an OLDER recordConsent does not throw; the cache ends 1', async () => {
+      // no state row in B's snapshot — a plain read after the upsert would throw "missing after its upsert"
+      await reset(); await seedContacts(2);
+      await q(`INSERT INTO contact_phones (id, contact_id, phone, sms_optout) VALUES (11, 1, '${PAT}', 0)`);
+      const A = await open(); const B = await open();
+      await B.beginTransaction();
+      await B.query('SELECT COUNT(*) AS n FROM comm_consent_state');           // B's read view opens here
+      await A.beginTransaction(); await optOut(A, 'kw-1', T2); await A.commit();
+      const r = await optout.recordConsent(B, { channel: 'sms', destination: PAT, scope: 'all', action: 'opt_in', source: 'staff', occurredAt: T1, actorUserId: 6 });
+      await B.commit();
+      expect(r).toMatchObject({ duplicate: false, applied: false, state: 'opted_out' });
+      expect([(await stateOf('sms', PAT, 'all')).state, await flag('contact_phones', 11)]).toEqual(['opted_out', 1]);
+    });
+
+    test('(a) …and with a STALE state row in the snapshot the cache is not synced to the stale value', async () => {
+      await reset(); await seedContacts(2);
+      await q(`INSERT INTO contact_phones (id, contact_id, phone, sms_optout) VALUES (11, 1, '${PAT}', 0)`);
+      await pool.withTransaction((c) => optout.recordConsent(c, { channel: 'sms', destination: PAT, scope: 'all', action: 'opt_in', source: 'staff',
+        occurredAt: new Date('2026-09-01T00:00:00Z'), actorUserId: 6 }));
+      const A = await open(); const B = await open();
+      await B.beginTransaction();
+      await B.query('SELECT state FROM comm_consent_state');                   // snapshot: opted_in
+      await A.beginTransaction(); await optOut(A, 'kw-2', T2); await A.commit();
+      const r = await optout.recordConsent(B, { channel: 'sms', destination: PAT, scope: 'all', action: 'opt_in', source: 'staff', occurredAt: T1, actorUserId: 6 });
+      await B.commit();
+      expect(r.state).toBe('opted_out');
+      expect([(await stateOf('sms', PAT, 'all')).state, await flag('contact_phones', 11)]).toEqual(['opted_out', 1]);
+    });
+
+    test('(a) a new row decides its flag with a LOCKING read: an opt-out committed after the writer\'s read view still births it 1', async () => {
+      await reset(); await seedContacts(2);
+      const A = await open(); const B = await open();
+      await B.beginTransaction();
+      await B.query('SELECT COUNT(*) AS n FROM comm_consent_state');
+      await A.beginTransaction(); await optout.recordConsent(A, { channel: 'sms', destination: SAM, scope: 'all', action: 'opt_out', source: 'sms_keyword', providerEventId: 'kw-3' }); await A.commit();
+      const [ins] = await B.query(`INSERT INTO contact_phones (contact_id, phone, sms_optout) VALUES (1, '${SAM}', 0)`);
+      const born = await optout.bornRow(B, { channel: 'sms', rowId: ins.insertId, destination: SAM });
+      await B.commit();
+      expect([born.flag, await flag('contact_phones', ins.insertId), (await events()).length]).toEqual([1, 1, 1]);
+    });
+
+    test('(b) the reviewer\'s interleave — a row writer holds the row, a direct caller records for the same number: no deadlock, consistent end', async () => {
+      await reset(); await seedContacts(2);
+      await q(`INSERT INTO contact_phones (id, contact_id, phone, sms_optout) VALUES (11, 1, '${PAT}', 0)`);
+      const W = await open(); const C = await open();
+      // W is updateContactPhone, statement for statement: lock the row BY ID,
+      // decide (row, then state), write the row, record with the row it holds.
+      await W.beginTransaction();
+      await W.query('SELECT * FROM contact_phones WHERE id = 11 FOR UPDATE');
+      await C.beginTransaction();
+      let cDone = false;
+      const cP = optOut(C, 'kw-4', T2).then(async (r) => { cDone = true; await C.commit(); return r; });
+      await sleep(400);
+      expect(cDone).toBe(false);                                             // C waits on the row W holds
+      const decision = await optout.decideRowFlag(W, { channel: 'sms', rowId: 11, sent: 1, actor: STAFF6 });
+      expect(decision).toMatchObject({ action: 'opt_out', flag: 1 });
+      await W.query('UPDATE contact_phones SET sms_optout = ?, label = ? WHERE id = 11', [decision.flag, 'Work']);
+      await optout.applyRowDecision(W, { channel: 'sms', rowId: 11, destination: PAT, action: decision.action, actor: STAFF6, contactId: 1 });
+      await W.commit();
+      await expect(cP).resolves.toMatchObject({ duplicate: false });
+      expect([(await stateOf('sms', PAT, 'all')).state, await flag('contact_phones', 11), (await events()).map((e) => e.source)])
+        .toEqual(['opted_out', 1, ['staff', 'sms_keyword']]);
+    });
+
+    test('(b) a new row and a direct caller on a number with NO row, in either order: no deadlock; the row ends with the ledger\'s value', async () => {
+      for (const callerFirst of [true, false]) {
+        await reset(); await seedContacts(2);
+        const W = await open(); const C = await open();
+        const birth = async () => {
+          await W.beginTransaction();
+          const [ins] = await W.query(`INSERT INTO contact_phones (contact_id, phone, sms_optout) VALUES (1, '${SAM}', 0)`);
+          await optout.bornRow(W, { channel: 'sms', rowId: ins.insertId, destination: SAM });
+          await W.commit();
+          return ins.insertId;
+        };
+        await C.beginTransaction();
+        let id;
+        if (callerFirst) {
+          await optout.recordConsent(C, { channel: 'sms', destination: SAM, scope: 'all', action: 'opt_out', source: 'sms_keyword', providerEventId: 'kw-5' });
+          const wP = birth();
+          await sleep(300);
+          await C.commit();
+          id = await wP;
+        } else {
+          const wP = birth();
+          await sleep(100);
+          const cP = optout.recordConsent(C, { channel: 'sms', destination: SAM, scope: 'all', action: 'opt_out', source: 'sms_keyword', providerEventId: 'kw-6' })
+            .then(async () => { await C.commit(); });
+          id = await wP;
+          await cP;
+        }
+        expect([callerFirst, (await stateOf('sms', SAM, 'all')).state, await flag('contact_phones', id)]).toEqual([callerFirst, 'opted_out', 1]);
+        for (const c of conns.splice(0)) c.release();
+      }
+    });
+  });
+
+  describe('MAJOR 2 — the three-way compare through the real services, with the real rollback', () => {
+    test('a stale form value records nothing; a stale DECISION is 409 and rolls back the WHOLE save (other fields included)', async () => {
+      await reset(); await seedContacts(2);
+      await q("UPDATE contacts SET contact_notes = 'before' WHERE contact_id = 1");
+      const { phone } = await phoneSvc.createContactPhone(pool, 1, { phone: PAT, label: 'Mobile' }, { createdBy: 6 });
+      // a STOP lands after the form loaded (base 0)
+      await pool.withTransaction((c) => optout.recordConsent(c, { channel: 'sms', destination: PAT, scope: 'all', action: 'opt_out', source: 'sms_keyword', providerEventId: 'kw-7' }));
+      await contactService.updateContact(pool, 1, { phones: [{ id: phone.id, phone: PAT, label: 'Work', sms_optout: 0, sms_optout_base: 0 }] },
+        { userId: 6, consentActor: STAFF6 });
+      expect([(await events()).length, (await stateOf('sms', PAT, 'all')).state, await flag('contact_phones', phone.id)]).toEqual([1, 'opted_out', 1]);
+      await expect(contactService.updateContact(pool, 1, { contact_notes: 'after',
+        phones: [{ id: phone.id, phone: PAT, label: 'Home', sms_optout: 1, sms_optout_base: 0 }] }, { userId: 6, consentActor: STAFF6 }))
+        .rejects.toMatchObject({ status: 409, code: 'consent_changed' });
+      expect((await q('SELECT contact_notes FROM contacts WHERE contact_id = 1'))[0].contact_notes).toBe('before');
+      expect((await q('SELECT label FROM contact_phones WHERE id = ?', [phone.id]))[0].label).toBe('Work');
+      expect((await events()).length).toBe(1);
+      // a genuine toggle against the current state goes through
+      await contactService.updateContact(pool, 1, { phones: [{ id: phone.id, phone: PAT, sms_optout: 0, sms_optout_base: 1 }] }, { userId: 6, consentActor: STAFF6 });
+      expect([(await stateOf('sms', PAT, 'all')).state, await flag('contact_phones', phone.id)]).toEqual(['opted_in', 0]);
+    });
+  });
+
+  describe('minor 5 — a transfer carries a donor flag the ledger has not seen', () => {
+    test('donor flag 1 with no state → the new row is born 1 with ONE row_replace event; over a recorded opt-in it is not carried', async () => {
+      await reset(); await seedContacts(3);
+      await q(`INSERT INTO contact_phones (id, contact_id, phone, is_primary, sms_optout) VALUES (40, 2, '${PAT}', 1, 1)`);
+      const { phone } = await phoneSvc.createContactPhone(pool, 1, { phone: PAT }, { force: true, createdBy: 6 });
+      expect(phone.sms_optout).toBe(1);
+      expect((await events()).map((e) => [e.source, e.evidence.carried_by, e.evidence.from_row_id])).toEqual([['row_replace', 'transfer', 40]]);
+      await reset(); await seedContacts(3);
+      await pool.withTransaction((c) => optout.recordConsent(c, { channel: 'sms', destination: PAT, scope: 'all', action: 'opt_in', source: 'staff', actorUserId: 6 }));
+      await q(`INSERT INTO contact_phones (id, contact_id, phone, is_primary, sms_optout) VALUES (40, 2, '${PAT}', 1, 1)`);
+      const r2 = await phoneSvc.createContactPhone(pool, 1, { phone: PAT }, { force: true, createdBy: 6 });
+      expect([r2.phone.sms_optout, (await events()).length]).toEqual([0, 1]);
+    });
+  });
+
+  describe('MAJOR 1 — update_db / insert_db on the engine', () => {
+    const dbFns = require('../lib/internal_functions/db');
+    test('the flags are refused; an inserted or revived row takes its number\'s consent; nothing is recorded', async () => {
+      await reset(); await seedContacts(2);
+      await pool.withTransaction((c) => optout.recordConsent(c, { channel: 'sms', destination: PAT, scope: 'all', action: 'opt_out', source: 'sms_keyword', providerEventId: 'kw-8' }));
+      await pool.withTransaction((c) => optout.recordConsent(c, { channel: 'sms', destination: SAM, scope: 'all', action: 'opt_out', source: 'sms_keyword', providerEventId: 'kw-9' }));
+      await q(`INSERT INTO contact_phones (id, contact_id, phone, sms_optout, end_date) VALUES (12, 1, '${SAM}', 0, '2026-01-01')`);
+      await expect(dbFns.update_db({ table: 'contact_phones', set: { sms_optout: 0 }, where: [{ column: 'id', value: 12 }] }, pool))
+        .rejects.toThrow(/sms_optout is blocked from writes by policy — consent is not a column automation writes/);
+      await expect(dbFns.insert_db({ table: 'contact_emails', values: { contact_id: 1, email: 'x@y.co', email_optout: 1 } }, pool))
+        .rejects.toThrow(/email_optout is blocked from writes by policy/);
+      const ins = await dbFns.insert_db({ table: 'contact_phones', values: { contact_id: 2, phone: PAT } }, pool);
+      expect(await flag('contact_phones', ins.output.insert_id)).toBe(1);
+      await dbFns.update_db({ table: 'contact_phones', set: { end_date: null }, where: [{ column: 'id', value: 12 }] }, pool);
+      expect(await flag('contact_phones', 12)).toBe(1);
+      expect((await events()).length).toBe(2);
+    });
+  });
+
+  describe('minor 4 — the migration\'s second run only fills gaps', () => {
+    test('a destination the ledger already holds is never migrated again; a gap flag is', async () => {
+      await reset(); await seedContacts(3);
+      const conn = await pool.getConnection();
+      try {
+        await q(`INSERT INTO contact_phones (id, contact_id, phone, sms_optout, updated_at) VALUES (11, 1, '${PAT}', 1, '2026-06-20 19:46:28')`);
+        expect(await migrateScript.run(conn, { apply: true, say: () => {} })).toMatchObject({ ok: true, migrated: 1 });
+        // after the deploy: the new code ticks SAM (a staff event) …
+        const { phone } = await phoneSvc.createContactPhone(pool, 2, { phone: SAM, sms_optout: 1 }, { createdBy: 6 });
+        // … and the old code, in the gap, flagged ANN with no ledger event
+        await q(`INSERT INTO contact_phones (id, contact_id, phone, sms_optout) VALUES (13, 3, '${ANN}', 1)`);
+        const run2 = await migrateScript.run(conn, { apply: true, say: () => {} });
+        expect(run2).toMatchObject({ ok: true, migrated: 1 });
+        expect((await events()).map((e) => [e.destination, e.source])).toEqual([[PAT, 'migration'], [SAM, 'staff'], [ANN, 'migration']]);
+        expect(await flag('contact_phones', phone.id)).toBe(1);
       } finally { conn.release(); }
     });
   });

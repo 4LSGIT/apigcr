@@ -465,11 +465,13 @@ router.post('/api/cta/:id/send', guard, async (req, res) => {
       channel, dest: channel === 'sms' ? phone10(to) : to, acknowledged: body.acknowledge_optout,
     });
     if (gate.refusal) {
-      await audit(req, { ...auditBase, opted_out: gate.refusal.body.opted_out.map((r) => r.contact_id) },
+      await audit(req, { ...auditBase, opted_out: gate.refusal.body.opted_out.map((r) => r.contact_id),
+        opted_out_destinations: gate.refusal.body.opted_out.map((r) => r.destination) },
         { status: 'error', errorMessage: 'refused_opted_out' });
       return res.status(gate.refusal.status).json(gate.refusal.body);
     }
-    if (gate.overridden.length) auditBase.acknowledged_optout = gate.overridden.map((r) => r.contact_id);
+    // Contact ids AND destinations: a destination with no active row has no contact.
+    if (gate.overridden.length) Object.assign(auditBase, optout.overrideAudit(gate.overridden));
 
     try {
       if (channel === 'email') {

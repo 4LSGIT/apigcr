@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-28T12:28:07.629Z
+-- Generated: 2026-10-29T20:03:34.514Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:b89dd315c69b7ddee201ce881f9df101
+-- Fingerprint: sha256:9daf0c4836094c364a6232bda59638d4
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -879,6 +879,64 @@ CREATE TABLE `checklists1` (
   `checklist_link` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `checklist_status` enum('complete','incomplete') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'incomplete'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `comm_consent_events`
+--
+
+DROP TABLE IF EXISTS `comm_consent_events`;
+CREATE TABLE `comm_consent_events` (
+  `id` bigint unsigned NOT NULL,
+  `channel` enum('email','sms') COLLATE utf8mb4_general_ci NOT NULL,
+  `destination` varchar(254) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'normalized: 10 digits (contactPhoneService.normalizePhone) | trimmed lowercased address (contactEmailService.normalizeEmail)',
+  `scope` varchar(40) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'sms: all | topic; email: marketing | topic. There is NO email all (D18: an email opt-out is marketing-only)',
+  `action` enum('opt_out','opt_in') COLLATE utf8mb4_general_ci NOT NULL,
+  `source` varchar(32) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'staff | unsub_page | one_click | pref_page | sms_keyword | sms_review | provider_optout | provider_bounce | provider_complaint | import | web_form | migration | row_replace (app-validated, optoutService.SOURCES)',
+  `provider_event_id` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'dedup key with source (uk_source_event): a provider event id, or migration:phone|email:<row id>; NULL never collides',
+  `occurred_at` datetime(3) NOT NULL COMMENT 'UTC; when it happened (provider time when known). Orders the state: (occurred_at, id) newest wins',
+  `contact_id` int unsigned DEFAULT NULL COMMENT 'best-effort attribution at the time — consent belongs to the destination, not the contact',
+  `line_number` char(10) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'SMS: the firm line it arrived on / was sent from',
+  `send_ref` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'campaign_results id / provider message id',
+  `evidence` json DEFAULT NULL COMMENT 'proof: row_id, via (casey + draft_id), ip, user_agent, keyword text, raw inbound body, consent wording, form id …',
+  `actor_user_id` int DEFAULT NULL COMMENT 'users.user of a staff change; NULL for automation / provider / migration',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Consent ledger (the proof). Append-only: never updated, never deleted. ONE writer: optoutService.recordConsent';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `comm_consent_state`
+--
+
+DROP TABLE IF EXISTS `comm_consent_state`;
+CREATE TABLE `comm_consent_state` (
+  `channel` enum('email','sms') COLLATE utf8mb4_general_ci NOT NULL,
+  `destination` varchar(254) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'same normalization as comm_consent_events.destination',
+  `scope` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
+  `state` enum('opted_out','opted_in') COLLATE utf8mb4_general_ci NOT NULL,
+  `occurred_at` datetime(3) NOT NULL COMMENT 'occurred_at of the event that set this row',
+  `last_event_id` bigint unsigned NOT NULL COMMENT 'comm_consent_events.id that set this row; an event wins only if (occurred_at, id) is newer',
+  `updated_at` datetime(3) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Current consent per (channel, destination, scope) — THE truth sends read (D2 a). contact_phones.sms_optout / contact_emails.email_optout cache the sms all / email marketing rows for one release. Written ONLY by optoutService.recordConsent';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `comm_topics`
+--
+
+DROP TABLE IF EXISTS `comm_topics`;
+CREATE TABLE `comm_topics` (
+  `topic_key` varchar(40) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'scope name a consent row / send uses for this topic; [a-z0-9_]{1,40} (optoutService interpolates it into SQL, the shape is load-bearing)',
+  `channel` enum('email','sms') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'the one channel this topic belongs to; a marketing send on another channel treats the topic as unknown (blocked)',
+  `label` varchar(100) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'shown on the preference page (P3)',
+  `description` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'shown on the preference page (P3)',
+  `consent_model` enum('opt_out','opt_in') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'opt_out: sendable unless opted out; opt_in: sendable ONLY with state(topic)=opted_in (marketing SMS, D1)',
+  `active` tinyint(1) NOT NULL DEFAULT '1' COMMENT '0 = retired: a marketing send naming it is blocked for every destination (fail closed)',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='YisraMail marketing topics (config-as-data). Read only through services/optoutService.js';
 
 -- --------------------------------------------------------
 
@@ -4453,6 +4511,26 @@ ALTER TABLE `checklists1`
   ADD PRIMARY KEY (`checklist_id`);
 
 --
+-- Indexes for table `comm_consent_events`
+--
+ALTER TABLE `comm_consent_events`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_source_event` (`source`,`provider_event_id`),
+  ADD KEY `ix_dest` (`channel`,`destination`,`occurred_at`);
+
+--
+-- Indexes for table `comm_consent_state`
+--
+ALTER TABLE `comm_consent_state`
+  ADD PRIMARY KEY (`channel`,`destination`,`scope`);
+
+--
+-- Indexes for table `comm_topics`
+--
+ALTER TABLE `comm_topics`
+  ADD PRIMARY KEY (`topic_key`);
+
+--
 -- Indexes for table `comms_eval_items`
 --
 ALTER TABLE `comms_eval_items`
@@ -5692,6 +5770,12 @@ ALTER TABLE `checklists`
 --
 ALTER TABLE `checklists1`
   MODIFY `checklist_id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `comm_consent_events`
+--
+ALTER TABLE `comm_consent_events`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `comms_eval_reviews`

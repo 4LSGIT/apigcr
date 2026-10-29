@@ -379,6 +379,21 @@ async function consentVersions(db, channel, dests) {
 // ─────────────────────────────────────────────────────────────
 // Writes
 // ─────────────────────────────────────────────────────────────
+//
+// LOCK ORDER, every writer: the destination's contact row FIRST, then its
+// consent state row. InnoDB does not retry a deadlock here
+// (lib/withTransaction retries connection blips only), so it is load-bearing.
+//   - A ROW WRITER already holds its row — by PRIMARY KEY (`WHERE id = ?`) —
+//     and passes it as `rowId`: recordConsent then takes no further row lock
+//     and syncs the cache by primary key. It must not touch the row through
+//     the unique index: a direct caller waiting on that row holds its
+//     uk_*_active entry, and asking for it again is a deadlock (proven on the
+//     engine — tests/consentCore.mysql, "the reviewer's interleave").
+//   - A DIRECT caller (the migration, P2's keyword handler) holds nothing:
+//     recordConsent locks the destination's ACTIVE row first, through the
+//     generated *_active_uniq unique key — exactly the active row, or the gap
+//     where one would go (so a concurrent insert waits for it), never the
+//     destination's ended history rows.
 
 const EVENT_INSERT_SQL = 'INSERT INTO comm_consent_events'
   + ' (channel, destination, scope, action, source, provider_event_id, occurred_at, contact_id, line_number, send_ref, evidence, actor_user_id)'
@@ -391,14 +406,41 @@ const STATE_GUARD_SQL = 'UPDATE comm_consent_state SET state = ?, occurred_at = 
   + ' WHERE channel = ? AND destination = ? AND scope = ?'
   + ' AND (occurred_at < ? OR (occurred_at = ? AND last_event_id < ?))';
 const STATE_READ_SQL = 'SELECT state, last_event_id FROM comm_consent_state WHERE channel = ? AND destination = ? AND scope = ?';
+// LOCKING reads of the state: they see the newest COMMITTED row, never the
+// transaction's REPEATABLE-READ snapshot (a writer opened its read view
+// before a newer decision committed elsewhere).
+const STATE_SHARE_SQL = `${STATE_READ_SQL} FOR SHARE`;   // decides a row's flag
+const STATE_LOCK_SQL  = `${STATE_READ_SQL} FOR UPDATE`;  // recordConsent, after its upsert
+// The destination's ACTIVE row, locked (recordConsent's first statement).
+const ACTIVE_LOCK_SQL = Object.freeze({
+  sms:   'SELECT id FROM contact_phones WHERE phone_active_uniq = ? FOR UPDATE',
+  email: 'SELECT id FROM contact_emails WHERE email_active_uniq = ? FOR UPDATE',
+});
+// One row by id, locked — the three-way decision reads its destination and flag.
+const ROW_LOCK_SQL = Object.freeze({
+  sms:   'SELECT id, phone AS destination, sms_optout AS flag, end_date FROM contact_phones WHERE id = ? FOR UPDATE',
+  email: 'SELECT id, email AS destination, email_optout AS flag, end_date FROM contact_emails WHERE id = ? FOR UPDATE',
+});
 // Align the destination's ACTIVE row's cache flag with a state value (only when it differs).
 const CACHE_SYNC_SQL = Object.freeze({
-  sms:   'UPDATE contact_phones SET sms_optout = ? WHERE phone = ? AND end_date IS NULL AND sms_optout <> ?',
-  email: 'UPDATE contact_emails SET email_optout = ? WHERE email = ? AND end_date IS NULL AND email_optout <> ?',
+  sms:   'UPDATE contact_phones SET sms_optout = ? WHERE phone_active_uniq = ? AND sms_optout <> ?',
+  email: 'UPDATE contact_emails SET email_optout = ? WHERE email_active_uniq = ? AND email_optout <> ?',
 });
-// Exported, like FIND_SQL, so an in-memory world can answer the writer by identity.
+// The same, for a row writer's own (already locked) row — by primary key.
+const CACHE_SYNC_ROW_SQL = Object.freeze({
+  sms:   'UPDATE contact_phones SET sms_optout = ? WHERE id = ? AND end_date IS NULL AND sms_optout <> ?',
+  email: 'UPDATE contact_emails SET email_optout = ? WHERE id = ? AND end_date IS NULL AND email_optout <> ?',
+});
+// Set ONE row's cache flag (a new row's birth value; only when it differs).
+const ROW_FLAG_SQL = Object.freeze({
+  sms:   'UPDATE contact_phones SET sms_optout = ? WHERE id = ? AND sms_optout <> ?',
+  email: 'UPDATE contact_emails SET email_optout = ? WHERE id = ? AND email_optout <> ?',
+});
+// Exported, like FIND_SQL, so an in-memory world can answer the writers by identity.
 const WRITE_SQL = Object.freeze({
-  event: EVENT_INSERT_SQL, seed: STATE_SEED_SQL, guard: STATE_GUARD_SQL, read: STATE_READ_SQL, cache: CACHE_SYNC_SQL,
+  event: EVENT_INSERT_SQL, seed: STATE_SEED_SQL, guard: STATE_GUARD_SQL, read: STATE_READ_SQL,
+  share: STATE_SHARE_SQL, lock: STATE_LOCK_SQL, active: ACTIVE_LOCK_SQL, row: ROW_LOCK_SQL,
+  cache: CACHE_SYNC_SQL, cacheRow: CACHE_SYNC_ROW_SQL, rowFlag: ROW_FLAG_SQL,
 });
 
 function badArg(msg) { return new Error(`recordConsent: ${msg}`); }
@@ -430,21 +472,26 @@ async function assertScope(conn, c, scope) {
  * comm_consent_state. Runs on the CALLER's connection, inside the caller's
  * transaction (it never opens its own: a consent write inside a contact save
  * must commit or roll back with it).
+ *   0. Lock order: row, then state. A row writer passes the row it holds
+ *      (`rowId`) and nothing more is locked; a direct caller has the
+ *      destination's ACTIVE row locked here, through the unique key.
  *   1. INSERT the event; a duplicate (source, provider_event_id) is a no-op
  *      ({ duplicate: true } — nothing else is touched).
  *   2. Guarded upsert of the state row: this event wins only when
  *      (occurred_at, id) is newer than the stored (occurred_at, last_event_id),
  *      so racing writers or a replayed old event can't leave the state on the
- *      older one.
+ *      older one. The state is then re-read with a LOCKING read — the newest
+ *      committed row, whatever this transaction's snapshot holds.
  *   3. When `scope` is the scope a row flag caches (SMS 'all', email
  *      'marketing'), align the destination's ACTIVE row's flag with the
- *      resulting state. A cache sync is never itself an event.
+ *      resulting state (the writer's `rowId` by primary key, else through
+ *      the unique key). A cache sync is never itself an event.
  * → { event_id, duplicate, applied, state }
  */
 async function recordConsent(conn, {
   channel, destination, scope, action, source,
   occurredAt = null, providerEventId = null, contactId = null, lineNumber = null,
-  sendRef = null, evidence = null, actorUserId = null,
+  sendRef = null, evidence = null, actorUserId = null, rowId = null,
 } = {}) {
   if (!conn || typeof conn.query !== 'function') throw badArg('needs the caller\'s connection');
   const c = channelOf(channel);
@@ -459,6 +506,10 @@ async function recordConsent(conn, {
   const line = lineNumber == null || lineNumber === '' ? null : normalizePhone(lineNumber);
   if (line !== null && !/^\d{10}$/.test(line)) throw badArg('lineNumber must be a 10-digit number');
   if (evidence != null && (typeof evidence !== 'object' || Array.isArray(evidence))) throw badArg('evidence must be an object');
+
+  const heldRow = rowId == null ? null : Number(rowId);
+  if (heldRow !== null && (!Number.isSafeInteger(heldRow) || heldRow < 1)) throw badArg('rowId must be a positive integer');
+  if (heldRow === null) await conn.query(ACTIVE_LOCK_SQL[c], [dest]);
 
   let eventId;
   try {
@@ -480,64 +531,247 @@ async function recordConsent(conn, {
   const st = action === 'opt_out' ? 'opted_out' : 'opted_in';
   await conn.query(STATE_SEED_SQL, [c, dest, scope, st, at, eventId]);
   await conn.query(STATE_GUARD_SQL, [st, at, eventId, c, dest, scope, at, at, eventId]);
-  const [[now]] = await conn.query(STATE_READ_SQL, [c, dest, scope]);
+  const [[now]] = await conn.query(STATE_LOCK_SQL, [c, dest, scope]);
   if (!now) throw badArg('the state row is missing after its upsert');
 
   if (scope === CACHE_SCOPE[c]) {
     const val = now.state === 'opted_out' ? 1 : 0;
-    await conn.query(CACHE_SYNC_SQL[c], [val, dest, val]);
+    if (heldRow !== null) await conn.query(CACHE_SYNC_ROW_SQL[c], [val, heldRow, val]);
+    else await conn.query(CACHE_SYNC_SQL[c], [val, dest, val]);
   }
   return { event_id: eventId, duplicate: false, applied: Number(now.last_event_id) === eventId, state: now.state };
 }
 
 /**
- * The cache value a NEW active row for `destination` must carry: 1 when the
- * destination's state for the flag's scope is 'opted_out', else 0. The
- * re-consent guard reads this — a row is never born opted IN past the state.
+ * The destination's state for the scope its row flag caches, read with a
+ * LOCKING read (FOR SHARE — the newest committed decision). Call it while
+ * holding the destination's contact row (lock order).
+ * → { exists, flag } — flag 1 when the state is 'opted_out'.
  */
-async function cachedStateFlag(conn, channel, destination) {
+async function stateFlag(conn, channel, destination) {
   const c = channelOf(channel);
   const dest = normalizeDestination(c, destination);
-  if (!dest) return 0;
-  const [[s]] = await conn.query(STATE_READ_SQL, [c, dest, CACHE_SCOPE[c]]);
-  return s && s.state === 'opted_out' ? 1 : 0;
+  if (!dest) return { exists: false, flag: 0 };
+  const [[s]] = await conn.query(STATE_SHARE_SQL, [c, dest, CACHE_SCOPE[c]]);
+  return { exists: !!s, flag: s && s.state === 'opted_out' ? 1 : 0 };
+}
+
+// ─── Who is writing (fix round, minor 7) ────────────────────
+//
+// A consent change records who made it. A signed-in staff member ('user') may
+// opt a destination in or out; an API key ('api_key' — an integration, a
+// workflow webhook) and in-process automation ('system') may opt OUT only: an
+// opt-in is a human consent decision. Routes build the actor from req.auth.
+
+/** req.auth → the consent actor. Anything unrecognised is 'system' (fails closed: no opt-in). */
+function consentActor(auth) {
+  const a = auth && typeof auth === 'object' ? auth : {};
+  if (a.type === 'jwt') {
+    const n = Number(a.userId);
+    return { kind: 'user', userId: Number.isSafeInteger(n) && n > 0 ? n : null };
+  }
+  if (a.type === 'api_key') return { kind: 'api_key', keyId: a.key_id != null ? a.key_id : null, keyLabel: a.key_label || null };
+  return { kind: 'system' };
+}
+
+// No actor passed: an in-process caller (intake, booking, update_contact) —
+// automation. Writers pass their own `system` actor carrying the user id they
+// were given, so attribution survives.
+function actorOf(actor) {
+  if (actor && (actor.kind === 'user' || actor.kind === 'api_key' || actor.kind === 'system')) return actor;
+  return { kind: 'system', userId: null };
+}
+
+/** A writer's actor: the route's (consentActor), else automation attributed to the given user id. */
+function writerActor(consentActorOpt, userId) {
+  if (consentActorOpt && consentActorOpt.kind) return consentActorOpt;
+  const n = Number(userId);
+  return { kind: 'system', userId: Number.isSafeInteger(n) && n > 0 ? n : null };
 }
 
 /**
- * Writer hook for a contact row's consent flag — every row writer calls this,
- * on its own connection, AFTER its row write. Encodes the re-consent guard
- * (design §4.4):
- *   kind 'create'  — a new ACTIVE row (insert, transfer, replace, reactivation).
- *                    `intent` is the flag the caller sent or the row carried
- *                    over; `stateFlag` is cachedStateFlag() read BEFORE the
- *                    insert (the cache the row was born with is
- *                    max(intent, stateFlag)). intent 1 over a not-opted-out
- *                    state is ONE opt_out event; nothing else records — a
- *                    create never opts in.
- *   kind 'update'  — an existing row's flag changed (`before` → `intent`)
- *                    while the row was active before or after the write: ONE
- *                    event in the direction of the change. No change, no event.
- * → the recordConsent result, or null when nothing was recorded.
+ * The evidence keys an actor adds to an event: an API key is named (it has no
+ * user); a user is actor_user_id; automation keeps the caller's own `via`.
  */
-async function applyRowConsent(conn, {
-  channel, kind, destination, intent, before = null, stateFlag = 0,
-  source = 'staff', contactId = null, actorUserId = null, evidence = null,
-}) {
-  const c = channelOf(channel);
-  const want = intent ? 1 : 0;
-  let action = null;
-  if (kind === 'create') {
-    if (want === 1 && !stateFlag) action = 'opt_out';
-  } else if (kind === 'update') {
-    if (before != null && want !== (before ? 1 : 0)) action = want === 1 ? 'opt_out' : 'opt_in';
-  } else {
-    throw new Error(`applyRowConsent: unknown kind "${kind}"`);
+function actorEvidence(a) {
+  if (a.kind === 'api_key') return { via: 'api_key', ...(a.keyId != null ? { key_id: a.keyId } : {}), ...(a.keyLabel ? { key_label: a.keyLabel } : {}) };
+  return {};
+}
+
+/** A consent write refused with an HTTP status (routes answer err.status with err.code). */
+class ConsentWriteRefusal extends Error {
+  constructor(status, code, message, destination) {
+    super(message);
+    this.name = 'ConsentWriteRefusal';
+    this.status = status;
+    this.code = code;
+    this.consent = { destination };
   }
+}
+
+function shown(c, dest) { return c === 'sms' ? fmtPhone(dest) : dest; }
+
+function optInRefusal(c, dest) {
+  return new ConsentWriteRefusal(422, 'opt_in_needs_staff',
+    `Clearing the ${c === 'sms' ? 'SMS' : 'marketing email'} opt-out on ${shown(c, dest)} is a consent decision a signed-in staff member makes — an API key or automation can set an opt-out, never clear one.`,
+    dest);
+}
+
+function toFlag(v) { return v ? 1 : 0; }
+/** A sent / base flag → 0 | 1, or undefined when absent ('false' / '0' read as 0). */
+function presentFlag(v) { return v === undefined || v === null || v === '' ? undefined : toFlag(v === 'false' || v === '0' ? 0 : v); }
+
+/** 409: the caller decided against a consent value that is no longer current. */
+function consentChanged(channel, destination) {
+  const c = channelOf(channel);
+  const dest = normalizeDestination(c, destination) || String(destination);
+  return new ConsentWriteRefusal(409, 'consent_changed',
+    `Consent for ${shown(c, dest)} changed since you opened this contact — reload it, then make the change again if it is still needed. Nothing was saved.`,
+    dest);
+}
+
+/**
+ * One row's destination and that destination's CURRENT consent — the state
+ * for the flag's scope when one exists, else the row's flag. Locks the row
+ * first, then reads the state (lock order). Works on an ended row too (an
+ * end-and-replace reads the row it just ended).
+ * → { destination, current, rowFlag }
+ */
+async function rowConsent(conn, { channel, rowId }) {
+  const c = channelOf(channel);
+  const [[row]] = await conn.query(ROW_LOCK_SQL[c], [rowId]);
+  if (!row) throw new Error(`rowConsent: ${c === 'sms' ? 'phone' : 'email'} row ${rowId} not found`);
+  const dest = normalizeDestination(c, row.destination);
+  const rowFlag = toFlag(Number(row.flag) === 1);
+  const st = await stateFlag(conn, c, dest);
+  return { destination: dest, current: st.exists ? st.flag : rowFlag, rowFlag };
+}
+
+/**
+ * The three-way consent decision for a write that carries an EXISTING ACTIVE
+ * row's flag (fix round, MAJOR 2). Locks the row, then reads the
+ * destination's state (lock order). `current` = the state for the flag's
+ * scope when one exists, else the row's flag.
+ *   sent   the flag the caller sent
+ *   base   the flag the caller LOADED (the contact form sends `*_base`), or
+ *          undefined
+ *     base given, sent = base   → no decision: the row's cache = current
+ *                                  (a stale form never undoes a newer change)
+ *     base given, sent ≠ base   → the user's decision, unless base ≠ current:
+ *                                  then 409 consent_changed, nothing written
+ *     base absent (Casey, an API caller, an older tab) → sent vs current
+ * An opt_in from anything but a signed-in user is refused (422).
+ * → { action: null | 'opt_out' | 'opt_in', flag, current, destination }
+ */
+async function decideRowFlag(conn, { channel, rowId, sent, base, actor }) {
+  const c = channelOf(channel);
+  const { destination: dest, current } = await rowConsent(conn, { channel: c, rowId });
+  const s = presentFlag(sent);
+  const b = presentFlag(base);
+  if (s === undefined) return { action: null, flag: current, current, destination: dest };
+  if (b !== undefined) {
+    if (s === b) return { action: null, flag: current, current, destination: dest };
+    if (b !== current) throw consentChanged(c, dest);
+  }
+  if (s === current) return { action: null, flag: current, current, destination: dest };
+  const action = s === 1 ? 'opt_out' : 'opt_in';
+  if (action === 'opt_in' && actorOf(actor).kind !== 'user') throw optInRefusal(c, dest);
+  return { action, flag: s, current, destination: dest };
+}
+
+/**
+ * Record the decision decideRowFlag returned (no-op when there is none) —
+ * source 'staff', attributed to the actor. Call it AFTER the row write, with
+ * the row's id (`rowId` — the row the writer holds; see the lock order).
+ */
+async function applyRowDecision(conn, { channel, rowId, destination, action, actor, contactId = null, evidence = null }) {
   if (!action) return null;
+  const c = channelOf(channel);
+  const a = actorOf(actor);
+  if (action === 'opt_in' && a.kind !== 'user') throw optInRefusal(c, normalizeDestination(c, destination));
   return recordConsent(conn, {
-    channel: c, destination, scope: CACHE_SCOPE[c], action, source,
-    contactId, actorUserId, evidence,
+    channel: c, destination, scope: CACHE_SCOPE[c], action, source: 'staff', rowId,
+    contactId, actorUserId: a.userId, evidence: { ...(evidence || {}), ...actorEvidence(a) },
   });
+}
+
+/**
+ * A NEW active row for a destination — an insert, a transfer, an
+ * end-and-replace, a reactivation. Call it right AFTER the row is written
+ * (the caller holds its lock), on the same connection. Reads the state with a
+ * LOCKING read and sets the row's flag to
+ *     max(intent, carried flags, state)   — never born opted IN past the state
+ *   intent   1 when the CALLER decided an opt-out (a staff tick, an API value)
+ *   carried  [{ flag, gap_only, from_row_id, from_destination, via }] — flags
+ *            an older row hands over. A correction's old row (end-and-replace)
+ *            always carries; a transfer's donor and a reactivated row's own
+ *            history flag (gap_only) carry only when the destination has NO
+ *            state row yet — a stale history flag never overrides a recorded
+ *            decision.
+ * One opt_out event when the result is 1 and the state is not already
+ * 'opted_out': source 'staff' when the intent decided it, 'row_replace' when
+ * only a carry did. Never an opt_in. → { flag, state, event }
+ */
+async function bornRow(conn, { channel, rowId, destination, intent = 0, carried = [], actor, contactId = null, evidence = null }) {
+  const c = channelOf(channel);
+  const dest = normalizeDestination(c, destination);
+  if (!dest) return { flag: toFlag(intent), state: { exists: false, flag: 0 }, event: null };
+  const st = await stateFlag(conn, c, dest);
+  const carry = (carried || []).find((k) => k && toFlag(Number(k.flag) === 1) && !(k.gap_only && st.exists)) || null;
+  const want = toFlag(intent) || (carry ? 1 : 0) || st.flag;
+  await conn.query(ROW_FLAG_SQL[c], [want, rowId, want]);
+  let event = null;
+  if (want === 1 && !st.flag) {
+    const a = actorOf(actor);
+    const byIntent = !!toFlag(intent);
+    const from = byIntent ? {} : {
+      ...(carry.from_destination ? { from_destination: carry.from_destination } : {}),
+      ...(carry.from_row_id != null ? { from_row_id: carry.from_row_id } : {}),
+      ...(carry.via ? { carried_by: carry.via } : {}),
+    };
+    event = await recordConsent(conn, {
+      channel: c, destination: dest, scope: CACHE_SCOPE[c], action: 'opt_out', rowId,
+      source: byIntent ? 'staff' : 'row_replace', contactId, actorUserId: a.userId,
+      evidence: { ...(evidence || {}), ...from, ...actorEvidence(a) },
+    });
+  }
+  return { flag: want, state: st, event };
+}
+
+/**
+ * Realign the cache flag of rows a GENERIC writer touched (update_db /
+ * insert_db — fix round, MAJOR 1) with their destination's state: each row
+ * that is ACTIVE takes the state's value where a state row exists. Ended rows
+ * are history; a destination with no state keeps its row's flag. Never an
+ * event — a generic writer makes no consent decision (the flag columns are
+ * blocked from it). Lock order: each row, then its state.
+ * → the number of rows whose flag changed
+ */
+async function syncRowCaches(conn, channel, rowIds) {
+  const c = channelOf(channel);
+  let changed = 0;
+  for (const id of rowIds || []) {
+    const [[row]] = await conn.query(ROW_LOCK_SQL[c], [id]);
+    if (!row || row.end_date != null) continue;
+    const st = await stateFlag(conn, c, row.destination);
+    if (!st.exists) continue;
+    const [r] = await conn.query(ROW_FLAG_SQL[c], [st.flag, id, st.flag]);
+    changed += Number((r && r.affectedRows) || 0);
+  }
+  return changed;
+}
+
+/**
+ * An opt-out override's audit fields (fix round, minor 6): the contact ids as
+ * before, plus every destination — a destination with no active row has no
+ * contact to name.
+ */
+function overrideAudit(hits) {
+  const h = hits || [];
+  return { acknowledged_optout: h.map((r) => r.contact_id), acknowledged_optout_destinations: h.map((r) => r.destination) };
+}
+function overrideLine(hits) {
+  return (hits || []).map((r) => (r.contact_id != null ? `contact ${r.contact_id} (${r.destination})` : `${r.destination} (no active row)`)).join(', ');
 }
 
 module.exports = {
@@ -547,6 +781,7 @@ module.exports = {
   CACHE_SCOPE,
   SOURCES,
   OptOutRefusal,
+  ConsentWriteRefusal,
   isOptOutRefusal,
   findOptedOut,
   assertNotOptedOut,
@@ -555,8 +790,18 @@ module.exports = {
   emailOptedOutSql,
   consentVersions,
   recordConsent,
-  cachedStateFlag,
-  applyRowConsent,
+  stateFlag,
+  consentActor,
+  writerActor,
+  rowConsent,
+  consentChanged,
+  decideRowFlag,
+  presentFlag,
+  applyRowDecision,
+  bornRow,
+  syncRowCaches,
+  overrideAudit,
+  overrideLine,
   // helpers (tests)
   phoneKeys,
   emailKeys,

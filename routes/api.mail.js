@@ -334,7 +334,7 @@ router.post('/api/mail/send', ...guard, async function sendMail(req, res) {
       append: out.append.appended ? `appended:${out.append.folder}` : out.append.reason,
       read_seed_job: out.read_seed.job_id,
       warnings: out.warnings.map(w => w.code),
-      ...(gate.overridden.length ? { acknowledged_optout: gate.overridden.map((r) => r.contact_id) } : {}),
+      ...(gate.overridden.length ? optout.overrideAudit(gate.overridden) : {}),
     });
     res.json({ status: 'success', ...out });
   } catch (err) {

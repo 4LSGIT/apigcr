@@ -963,7 +963,7 @@ come back: each active one is its own named `cf_*` column on the table, so
 
 #### `insert_db`
 
-Parameterized single-row INSERT from a JSON descriptor — no raw SQL. Whitelisted tables with insert:true only (checkitems, checklists, case_relate, contact_phones, contact_emails, contact_addresses). app_settings is update-only (create keys in the DB console); tasks is update-only (use create_task). PK / auto_increment / generated / timestamp columns are never settable. Duplicate-key collisions throw.
+Parameterized single-row INSERT from a JSON descriptor — no raw SQL. Whitelisted tables with insert:true only (checkitems, checklists, case_relate, contact_phones, contact_emails, contact_addresses). app_settings is update-only (create keys in the DB console); tasks is update-only (use create_task). PK / auto_increment / generated / timestamp columns are never settable. contact_phones.sms_optout / contact_emails.email_optout are never settable — a new row takes its number's / address's consent. Duplicate-key collisions throw.
 
 | Param | Type | Required | Description |
 |---|---|---|---|
@@ -986,7 +986,7 @@ Example:
 
 #### `update_db`
 
-Parameterized UPDATE from a JSON descriptor — no raw SQL. Whitelisted tables only (app_settings, tasks, checkitems, checklists, case_relate, contact_phones, contact_emails, contact_addresses). On app_settings the same rule as set_setting: never a secret, and a registered setting only where the settings registry allows automation. WHERE is mandatory, restricted to identity columns, and LIKE is excluded. max_rows defaults to 1 — the UPDATE is REFUSED if the where clause matches more rows than that. PK / auto_increment / generated / created_at / updated_at columns are never settable. From ingest-rule actions and hook targets use the flat set_column/set_value + where_column/where_value form — their params_mapping does not recurse into nested objects.
+Parameterized UPDATE from a JSON descriptor — no raw SQL. Whitelisted tables only (app_settings, tasks, checkitems, checklists, case_relate, contact_phones, contact_emails, contact_addresses). On app_settings the same rule as set_setting: never a secret, and a registered setting only where the settings registry allows automation. contact_phones.sms_optout / contact_emails.email_optout are never writable — consent is recorded on the contact form; a touched row takes its number's / address's consent. WHERE is mandatory, restricted to identity columns, and LIKE is excluded. max_rows defaults to 1 — the UPDATE is REFUSED if the where clause matches more rows than that. PK / auto_increment / generated / created_at / updated_at columns are never settable. From ingest-rule actions and hook targets use the flat set_column/set_value + where_column/where_value form — their params_mapping does not recurse into nested objects.
 
 | Param | Type | Required | Description |
 |---|---|---|---|

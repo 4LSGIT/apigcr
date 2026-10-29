@@ -313,6 +313,7 @@ describe('SMS: card → POST /api/phone-lines/:id/sms → Quo', () => {
     const audit = world.W.T.admin_audit_log.filter((a) => a.tool === 'phone_send');
     expect(audit.map((a) => a.status)).toEqual(['refused_opted_out', 'sent']);
     expect(JSON.stringify(audit[1].details)).toContain('"acknowledged_optout":[1309]');
+    expect(audit[1].details.acknowledged_optout_destinations).toEqual([draft.recipient.phone]);   // fix round minor 6
   });
 
   test('ruling 17: Cancel on the opt-out confirm sends nothing — one refused POST, no Quo call, the key stays free', async () => {

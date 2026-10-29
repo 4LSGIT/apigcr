@@ -42,6 +42,18 @@
  * Test-shaped contacts (names matching Test/Tester, 555xxxxxxx numbers,
  * @example.com addresses) are excluded by default — reviving fixture rows
  * just makes the next person wonder what they mean.
+ *
+ * ── CONSENT (YisraMail P1, 2026-10-29) — NOT RE-RUN-SAFE AS WRITTEN ──────
+ * A revived row becomes ACTIVE with whatever sms_optout / email_optout it was
+ * ended with. Since P1 the row flag is only a cache of the destination's
+ * consent state (comm_consent_state), and every app writer births a newly
+ * active row FROM that state (services/optoutService.bornRow). This raw
+ * `UPDATE … SET end_date = NULL` does not: a number that opted out after the
+ * row ended would revive showing "not opted out" (sends still refuse — they
+ * read the state — but the contact form shows the stale flag and refuses a
+ * change there as "consent changed"). Before running it again, add
+ * `optoutService.syncRowCaches(conn, 'sms' | 'email', [revivedIds])` in the
+ * same transaction after the UPDATE (ref/plans.md, YisraMail P1).
  */
 
 'use strict';

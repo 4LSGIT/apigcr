@@ -30,7 +30,7 @@ const router       = express.Router();
 const jwtOrApiKey  = require('../../lib/auth.jwtOrApiKey');
 const phoneService = require('../../services/phoneService');
 const { staffSendGate } = require('../../services/phoneCommsService');
-const { optoutGate } = require('../../services/optoutService');
+const { optoutGate, overrideLine } = require('../../services/optoutService');
 
 router.post('/internal/mms/send', jwtOrApiKey, async (req, res) => {
   const { from, to, text, attachment_url } = req.body || {};
@@ -52,7 +52,7 @@ router.post('/internal/mms/send', jwtOrApiKey, async (req, res) => {
       automation: !(req.auth && req.auth.type === 'jwt'),
     });
     if (opt.refusal) return res.status(opt.refusal.status).json(opt.refusal.body);
-    if (opt.overridden.length) console.log(`[internal/mms] user ${req.auth.userId} acknowledged opt-out for contact(s) ${opt.overridden.map((r) => r.contact_id).join(',')}`);
+    if (opt.overridden.length) console.log(`[internal/mms] user ${req.auth.userId} acknowledged opt-out for ${overrideLine(opt.overridden)}`);
     const result = await phoneService.sendMms(req.db, from, to, text || '', attachment_url);
     res.json({ status: 'success', result });
   } catch (err) {

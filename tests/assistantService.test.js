@@ -3,6 +3,7 @@
 jest.mock('../startup/dbReadonly', () => ({}));
 
 const svc = require('../services/assistantService');
+const { answerOptout } = require('./helpers/optoutFake');
 const knowledge = require('../services/assistantKnowledgeService');
 const prompts = require('../lib/aiPrompts');
 const aiService = require('../services/aiService');
@@ -771,7 +772,10 @@ describe('assistant contact subrecord actions', () => {
   }) });
 
   test('normalizes closed phone, email, and address creates with native defaults and no transfer', async () => {
-    const createDb = (table) => ({ query: jest.fn(async (sql) => {
+    const createDb = (table, states = []) => ({ query: jest.fn(async (sql, params) => {
+      // The born-from-state read (YisraMail P1): optoutService's own statements.
+      const consent = answerOptout(sql, params, { states });
+      if (consent) return consent;
       if (/FROM contacts WHERE/.test(sql)) return [[contact]];
       if (/end_date IS NULL LIMIT 1/.test(sql)) return [[]];
       if (/COUNT\(\*\) AS row_count/.test(sql)) return [[{ row_count: 0 }]];
@@ -790,6 +794,31 @@ describe('assistant contact subrecord actions', () => {
       address1: '123 Main St', city: 'Detroit', state: 'MI', zip: '48201', label: 'Home', evidence: ref(1) }, evidence)).resolves.toMatchObject({
       family: 'address', fields: { address1: '123 Main St', city: 'Detroit', state: 'MI', zip: '48201', country: 'US', label: 'Home', is_primary: true },
     });
+  });
+
+  test('a create for a destination that already opted out shows the row it will produce: the flag Yes, marked inherited (YisraMail P1)', async () => {
+    const createDb = (table, states) => ({ query: jest.fn(async (sql, params) => {
+      const consent = answerOptout(sql, params, { states });
+      if (consent) return consent;
+      if (/FROM contacts WHERE/.test(sql)) return [[contact]];
+      if (/end_date IS NULL LIMIT 1/.test(sql)) return [[]];
+      if (/COUNT\(\*\) AS row_count/.test(sql)) return [[{ row_count: 0 }]];
+      if (sql.includes(`FROM ${table}`)) return [[]];
+      throw new Error(`Unexpected SQL: ${sql}`);
+    }) });
+    const smsOut = [{ channel: 'sms', destination: '2485550100', scope: 'all', state: 'opted_out', last_event_id: 5 }];
+    const phone = await svc.normalizeActionDraft(createDb('contact_phones', smsOut), { kind: 'contact.phone.create.v1', contact_id: 1309,
+      phone: '(248) 555-0100', evidence: ref(1) }, evidence);
+    expect([phone.fields.sms_optout, phone.consent_inherited]).toEqual([1, true]);
+    // email reads its MARKETING scope (the flag's scope, D18)
+    const mktOut = [{ channel: 'email', destination: 'client@example.com', scope: 'marketing', state: 'opted_out', last_event_id: 6 }];
+    const email = await svc.normalizeActionDraft(createDb('contact_emails', mktOut), { kind: 'contact.email.create.v1', contact_id: 1309,
+      email: 'Client@Example.com', evidence: ref(1) }, evidence);
+    expect([email.fields.email_optout, email.consent_inherited]).toEqual([1, true]);
+    // not opted out → unchanged, no marker; a tick the user asked for is not "inherited"
+    const plain = await svc.normalizeActionDraft(createDb('contact_phones', []), { kind: 'contact.phone.create.v1', contact_id: 1309,
+      phone: '(248) 555-0100', sms_optout: true, evidence: ref(1) }, evidence);
+    expect([plain.fields.sms_optout, 'consent_inherited' in plain]).toEqual([1, false]);
   });
 
   test('reloads active targets and normalizes narrow update and reversible end proposals', async () => {

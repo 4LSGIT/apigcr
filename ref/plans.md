@@ -1248,12 +1248,24 @@ objects AND stored definitions). Readers and writers to move first:
   (`contactActionTarget`, `CONTACT_*_KEYS`, the card bodies in
   `public/assistant.html`) — they become consent actions with the
   `consent_version` stamp the send cards already use.
-- **Every writer's `cachedStateFlag` / max(intent, state) insert value** goes
-  with the column; `applyRowConsent` stays.
+- **Every writer's cache plumbing** goes with the column: `bornRow`'s row-flag
+  write, `decideRowFlag`'s `*_optout_base` three-way compare (it then compares
+  against the state the form loaded), `syncRowCaches` (update_db / insert_db's
+  `after` hook) and `CACHE_SYNC_SQL`. `recordConsent` and the row-then-state
+  lock order stay.
 - **Until then, the two columns' COMMENTs** still state the 2026-10-27 rule
   ("THE consent flag … automation refuses, staff sends warn") — false for
   email since D18. Changing a COMMENT is a live-table ALTER: node-script
   pattern with a low `lock_wait_timeout`, or fold into the drop.
+- **`scripts/reviveScalarReplacedValues.js` revives rows with a raw
+  `UPDATE … SET end_date = NULL`**, outside the born-from-state rule (its
+  header says so). Before it is ever run again, call
+  `optoutService.syncRowCaches` on the revived ids in the same transaction —
+  or retire the script (its one-off job ran before P1).
+- **`comm_consent_events` joins the `lib/sqlGuard` SENSITIVE tier** once P2 /
+  P3 start storing an IP, a user agent or a raw SMS body in `evidence` (today
+  it holds row ids, a draft id, an API key id). Same slice that starts
+  writing them.
 
 ## From the contact-intake safety slices (2026-10-27) — deferred
 

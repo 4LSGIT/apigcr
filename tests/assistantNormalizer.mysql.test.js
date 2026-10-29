@@ -7,7 +7,8 @@
  *   YC_TEST_MYSQL_URL=mysql://root@127.0.0.1:3321/yc_casey_test npx jest tests/assistantNormalizer.mysql.test.js --runInBand
  * The database name must end in _test; this suite DROPS and recreates users,
  * contacts and contact_phones in it (only the columns the normalizer reads,
- * with the live types).
+ * with the live types), plus the YisraMail P1 consent tables from their
+ * migration file (a create card reads the number's consent).
  *
  * WHY (independent review 2026-10-21, finding 1): appt.create.v1 shipped with
  * `user_auth = 1` against a varchar holding 'authorized'. MySQL coerces the
@@ -30,6 +31,7 @@
 const mysql = require('mysql2/promise');
 const svc = require('../services/assistantService');
 const calendarTypeService = require('../services/calendarTypeService');
+const { buildConsentTables } = require('./helpers/consentSchema');
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const d = URL_ ? describe : describe.skip;
@@ -71,6 +73,7 @@ d('Ask Casey normalizer SQL on real MySQL', () => {
       (0, 'Automations', 'authorized', 0, 1), (1, 'Host', 'authorized', 1, 1),
       (2, 'Not a host', 'authorized', 1, 0), (3, 'Disabled host', 'disabled', 1, 1)`);
     await q("INSERT INTO contacts (contact_id, contact_name) VALUES (1309, 'Client'), (1400, 'Other client')");
+    await buildConsentTables(q);
     resolveType = jest.spyOn(calendarTypeService, 'resolveForCreate').mockResolvedValue({ type_key: 'consult', kind: 'meeting' });
     getType = jest.spyOn(calendarTypeService, 'getType').mockResolvedValue({ type_key: 'consult', label: 'Consultation', kind: 'meeting', active: 1, singleton: 0 });
   });
@@ -99,7 +102,13 @@ d('Ask Casey normalizer SQL on real MySQL', () => {
     await expect(phone({})).rejects.toThrow(/already active on a contact/);
     await q("UPDATE contact_phones SET end_date = '2026-03-31', end_reason = 'ended'");
     await expect(phone({ start_date: '2026-03-15' })).rejects.toThrow(/overlaps existing phone ownership/);
-    await expect(phone({})).resolves.toMatchObject({ fields: { phone: '2485550100', start_date: '2026-04-01' } });
+    await expect(phone({})).resolves.toMatchObject({ fields: { phone: '2485550100', start_date: '2026-04-01', sms_optout: 0 } });
+    // YisraMail P1: a number that already opted out shows the row the create will produce — Yes, inherited
+    await q(`INSERT INTO comm_consent_state (channel, destination, scope, state, occurred_at, last_event_id, updated_at)
+             VALUES ('sms', '2485550100', 'all', 'opted_out', '2026-10-01 10:00:00.000', 1, NOW(3))`);
+    try {
+      await expect(phone({})).resolves.toMatchObject({ fields: { sms_optout: 1 }, consent_inherited: true });
+    } finally { await q('DELETE FROM comm_consent_state'); }
   });
 
   test('end_reason: the engine truncates past 40 characters silently, so the normalizer refuses it', async () => {

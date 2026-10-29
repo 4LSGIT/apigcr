@@ -42,10 +42,11 @@
  * CONSENT (YisraMail P1, ref/YISRAMAIL_DESIGN.md §4.4): email_optout is a
  * CACHE of the address's MARKETING consent state (comm_consent_state, scope
  * 'marketing' — D18: an email opt-out never stops operational mail) for one
- * release. Every flag write here goes through optoutService.applyRowConsent
- * on the SAME transaction connection: a new active row is born with
- * max(sent flag, state) and never opts in; an existing row's flag change is
- * one ledger event, no change no event.
+ * release. Every flag write here goes through optoutService on the SAME
+ * transaction connection, row lock first, then the state — exactly as
+ * contactPhoneService (bornRow for a new active row; decideRowFlag's
+ * three-way compare against `email_optout_base` + applyRowDecision for an
+ * active row's flag; an opt-in needs a signed-in user).
  *
  * Usage:
  *   const emailSvc = require('../services/contactEmailService');
@@ -420,7 +421,7 @@ async function getContactEmail(db, emailId) {
  * @param {number}  [opts.createdBy=0]
  * @returns {Promise<{email: object, auto_promoted: boolean, transferred_from?: object}>}
  */
-async function createContactEmail(db, contactId, fields = {}, { force = false, createdBy = 0, expectedPrimaryId, consentEvidence = null } = {}) {
+async function createContactEmail(db, contactId, fields = {}, { force = false, createdBy = 0, expectedPrimaryId, consentEvidence = null, consentActor = null } = {}) {
   // ─── Validation (pre-transaction) ───
   const validated = validateEmailRow(fields, { mode: 'insert' });
 
@@ -438,7 +439,7 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
     // 1. Active-uniqueness collision check
     let transferredFrom = null;
     const [[collision]] = await conn.query(
-      `SELECT ce.id AS email_id, ce.contact_id, c.contact_name,
+      `SELECT ce.id AS email_id, ce.contact_id, c.contact_name, ce.email_optout AS donor_flag,
               DATE_FORMAT(ce.start_date, '%Y-%m-%d') AS start_date
          FROM contact_emails ce
          JOIN contacts c ON c.contact_id = ce.contact_id
@@ -528,11 +529,6 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
     // participates in the default (yesterday → new row starts today).
     const startDate = await resolveStartDate(conn, validated.email, validated.start_date);
 
-    // Consent (P1): the address's state decides the cache; a 0 / omitted flag
-    // never clears an opt-out the address already carries (a transfer keeps it).
-    const optout = require('./optoutService'); // lazy: optoutService requires this module
-    const stateFlag = await optout.cachedStateFlag(conn, 'email', validated.email);
-
     let newId;
     try {
       const [insertResult] = await conn.query(
@@ -543,7 +539,7 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           cid, validated.email, validated.label, isPrimary,
-          validated.email_optout || stateFlag ? 1 : 0,
+          validated.email_optout,        // bornRow below sets the flag the address's consent implies
           validated.verified,
           startDate,
           validated.notes,
@@ -566,10 +562,15 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
       throw err;
     }
 
-    // A ticked flag over an address not yet opted out is one opt_out event.
-    await optout.applyRowConsent(conn, {
-      channel: 'email', kind: 'create', destination: validated.email,
-      intent: validated.email_optout, stateFlag, contactId: cid, actorUserId: createdBy,
+    // Consent (P1) — see createContactPhone: row written and locked, then the
+    // address's state; max(sent, a transfer donor's flag where there is no
+    // state yet, the state); never an opt-in.
+    const optout = require('./optoutService'); // lazy: optoutService requires this module
+    await optout.bornRow(conn, {
+      channel: 'email', rowId: newId, destination: validated.email, intent: validated.email_optout,
+      carried: transferredFrom ? [{ flag: collision.donor_flag, gap_only: true, from_row_id: collision.email_id,
+                                    from_destination: validated.email, via: 'transfer' }] : [],
+      actor: optout.writerActor(consentActor, createdBy), contactId: cid,
       evidence: { row_id: newId, via: 'row_create', ...(consentEvidence || {}) },
     });
 
@@ -623,20 +624,23 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
  * @param {number} [opts.updatedBy=0]
  * @returns {Promise<{ email: object }>}
  */
-async function updateContactEmail(db, emailId, fields, { updatedBy = 0, expectedUpdatedAt, expectedPrimaryId, consentEvidence = null } = {}) {
+async function updateContactEmail(db, emailId, fields, { updatedBy = 0, expectedUpdatedAt, expectedPrimaryId, consentEvidence = null, consentActor = null } = {}) {
   if (!fields || !Object.keys(fields).length) {
     throw new Error('updateContactEmail requires at least one field');
   }
 
-  const ALLOWED = ['label', 'is_primary', 'email_optout',
+  const ALLOWED = ['label', 'is_primary', 'email_optout', 'email_optout_base',
                    'verified', 'start_date', 'end_date', 'end_reason', 'notes'];
   const unknown = Object.keys(fields).filter(k => !ALLOWED.includes(k));
   if (unknown.length) {
     throw new Error(`Cannot update ${unknown.join(', ')}`);
   }
 
-  // validateEmailRow (update mode) — sparse, per-field shape validation.
-  const incoming = validateEmailRow(fields, { mode: 'update' });
+  // email_optout_base is the flag the caller LOADED (three-way consent
+  // compare), never a column. validateEmailRow (update mode) — sparse,
+  // per-field shape validation.
+  const { email_optout_base: emailBase, ...rowFields } = fields;
+  const incoming = validateEmailRow(rowFields, { mode: 'update' });
 
   await db.withTransaction(async (conn) => {
 
@@ -684,6 +688,20 @@ async function updateContactEmail(db, emailId, fields, { updatedBy = 0, expected
       );
     }
 
+    // Consent (P1, fix round MAJOR 2) — see updateContactPhone: an ACTIVE
+    // row's flag goes through the three-way compare (row locked above, state
+    // read second); an ended row's flag is history.
+    const optout = require('./optoutService'); // lazy: optoutService requires this module
+    const actor = optout.writerActor(consentActor, updatedBy);
+    const activeBefore = current.end_date === null;
+    const activeAfter  = 'end_date' in incoming ? incoming.end_date === null : activeBefore;
+    let decision = null;
+    if (activeBefore && 'email_optout' in incoming) {
+      decision = await optout.decideRowFlag(conn, { channel: 'email', rowId: current.id, sent: incoming.email_optout, base: emailBase, actor });
+      incoming.email_optout = decision.flag;
+    }
+    const reactivationIntent = 'email_optout' in incoming && incoming.email_optout !== optout.presentFlag(emailBase) ? incoming.email_optout : 0;
+
     incoming.updated_by = updatedBy;
     const setKeys = Object.keys(incoming);
     const setSQL  = setKeys.map(k => `\`${k}\` = ?`).join(', ');
@@ -705,23 +723,18 @@ async function updateContactEmail(db, emailId, fields, { updatedBy = 0, expected
       throw err;
     }
 
-    // Consent (P1) — see updateContactPhone: reactivation is a new active row
-    // (max(flag, state), never opting in); a flag change on a row active
-    // before or after the write is one event; an ended row's flag is history.
-    const optout = require('./optoutService'); // lazy: optoutService requires this module
-    const activeBefore = current.end_date === null;
-    const activeAfter  = 'end_date' in incoming ? incoming.end_date === null : activeBefore;
-    const flagAfter    = 'email_optout' in incoming ? incoming.email_optout : current.email_optout;
-    const consentCtx   = { channel: 'email', destination: current.email, contactId: current.contact_id,
-                           actorUserId: updatedBy, evidence: { row_id: current.id, via: 'row_patch', ...(consentEvidence || {}) } };
+    // Consent, after the row write — see updateContactPhone (reactivation is
+    // a new active row; its history flag carries only where there is no state).
+    const evidence = { row_id: current.id, via: 'row_patch', ...(consentEvidence || {}) };
     if (!activeBefore && activeAfter) {
-      const stateFlag = await optout.cachedStateFlag(conn, 'email', current.email);
-      if (stateFlag && !flagAfter) {
-        await conn.query('UPDATE contact_emails SET email_optout = 1 WHERE id = ?', [current.id]);
-      }
-      await optout.applyRowConsent(conn, { ...consentCtx, kind: 'create', intent: flagAfter, stateFlag });
-    } else if ((activeBefore || activeAfter) && 'email_optout' in incoming) {
-      await optout.applyRowConsent(conn, { ...consentCtx, kind: 'update', intent: incoming.email_optout, before: current.email_optout });
+      await optout.bornRow(conn, {
+        channel: 'email', rowId: current.id, destination: current.email, intent: reactivationIntent,
+        carried: [{ flag: current.email_optout, gap_only: true, from_row_id: current.id, from_destination: current.email, via: 'reactivation' }],
+        actor, contactId: current.contact_id, evidence,
+      });
+    } else if (decision && decision.action) {
+      await optout.applyRowDecision(conn, { channel: 'email', rowId: current.id, destination: current.email, action: decision.action,
+        actor, contactId: current.contact_id, evidence });
     }
 
     const mirrorAffected = 'is_primary' in incoming || 'end_date' in incoming;

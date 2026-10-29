@@ -36,7 +36,7 @@ describe('contact subrecord optimistic concurrency', () => {
     // Phones / emails also strip Casey's consent-evidence marker (YisraMail P1).
     const marker = suffix === 'Addresses' ? '' : 'casey_draft_id, ';
     expect(source).toContain(`const { expected_updated_at, expected_primary_id, ${marker}...fields } = req.body || {};`);
-    expect(source).toMatch(/fields, \{ updatedBy, expectedUpdatedAt: expected_updated_at, expectedPrimaryId: expected_primary_id(, consentEvidence)? \}/);
+    expect(source).toMatch(/fields, \{ updatedBy, expectedUpdatedAt: expected_updated_at, expectedPrimaryId: expected_primary_id(, consentEvidence)?(,\s+consentActor: optout\.consentActor\(req\.auth\))? \}/);
   });
 
   test('primary promotion rejects a changed current-primary set before demotion', async () => {

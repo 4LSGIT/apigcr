@@ -480,7 +480,7 @@ describe('opt-out (ruling 2026-10-27 for SMS; D18 for email): staff are warned, 
     const [a] = sendAudits();
     expect(sendAudits()).toHaveLength(1);
     expect(a).toMatchObject({ status: 'error', error_message: 'refused_opted_out' });
-    expect(a.details).toMatchObject({ channel: 'sms', opted_out: [900] });
+    expect(a.details).toMatchObject({ channel: 'sms', opted_out: [900], opted_out_destinations: ['3135550199'] });
   });
 
   test('sms: the 10-digit number is what is looked up (a formatted `to` matches); 409, nothing sent', async () => {
@@ -510,6 +510,8 @@ describe('opt-out (ruling 2026-10-27 for SMS; D18 for email): staff are warned, 
     const ok = sendAudits().filter((a) => a.status === 'ok');
     expect(ok).toHaveLength(1);
     expect(ok[0].details.acknowledged_optout).toEqual([900]);
+    // fix round minor 6: the destination too — a destination with no active row has no contact id
+    expect(ok[0].details.acknowledged_optout_destinations).toEqual(['3135550199']);
   });
 
   test('not gated: a consenting row, an ENDED opted-out row, an unknown address, and dry_run', async () => {

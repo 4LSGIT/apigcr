@@ -822,6 +822,16 @@ describe('Ask Casey UI wiring', () => {
     expect(p4.Swal.fire).toHaveBeenCalledWith(expect.objectContaining({ icon: 'question' }));
   });
 
+  test('a create card for a destination that already opted out says the new row keeps it (consent_inherited, YisraMail P1)', () => {
+    const text = new Function(`${fnSrc(html, 'contactSubrecordActionLabel')};${fnSrc(html, 'contactAddressText')};${fnSrc(html, 'contactSubrecordValue')};${fnSrc(html, 'contactSubrecordDraftText')};return contactSubrecordDraftText;`)(); // eslint-disable-line no-new-func
+    const contact = { contact_id: 1309, label: 'Client' };
+    const phone = { kind: 'contact.phone.create.v1', family: 'phone', contact, fields: { phone: '2485550100', label: 'Mobile', is_primary: true, sms_optout: 1, mms_capable: 1, notes: '' } };
+    expect(text({ ...phone, consent_inherited: true })).toContain('\nSMS opt-out: Yes (already opted out; the new row keeps it)\n');
+    expect(text(phone)).toContain('\nSMS opt-out: Yes\nMMS capable');
+    const email = { kind: 'contact.email.create.v1', family: 'email', contact, fields: { email: 'a@b.co', label: 'Personal', is_primary: true, email_optout: 1, notes: '' }, consent_inherited: true };
+    expect(text(email)).toContain('\nNo marketing email: Yes (already opted out; the new row keeps it)\n');
+  });
+
   test('maps every contact subrecord action to one canonical route and exact allowlisted body', () => {
     const request = new Function(`${fnSrc(html, 'contactSubrecordCreateBody')};${fnSrc(html, 'contactSubrecordActionRequest')};return contactSubrecordActionRequest;`)(); // eslint-disable-line no-new-func
     const contact = { contact_id: 1309, label: 'Client' };

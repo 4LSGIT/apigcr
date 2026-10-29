@@ -42,6 +42,7 @@ function makeWorld({ contacts = [], phones = [], emails = [], states = [], topic
     topics: topics || [{ topic_key: 'newsletter', channel: 'email', consent_model: 'opt_out', active: 1 }],
     unhandled: [],
     seen: [],
+    locks: [],   // consent lock / sync statements in order: row:active|id|generic, state:share|update|plain, cache:row|index
   };
   let nextRow = 1000;
   let nextEvent = 1;
@@ -81,17 +82,50 @@ function makeWorld({ contacts = [], phones = [], emails = [], states = [], topic
       }
       return [{ affectedRows: 0 }];
     }
-    if (s === WRITE_SQL.read) {
+    // The plain read and its two LOCKING forms (FOR SHARE decides a row's
+    // flag, FOR UPDATE re-reads after the upsert) read the same store here;
+    // tests/consentCore.mysql.test.js holds the locking semantics to MySQL.
+    if (s === WRITE_SQL.read || s === WRITE_SQL.share || s === WRITE_SQL.lock) {
+      W.locks.push(s === WRITE_SQL.read ? 'state:plain' : s === WRITE_SQL.share ? 'state:share' : 'state:update');
       const [channel, destination, scope] = p;
       const r = W.states.find((x) => x.channel === channel && lc(x.destination) === lc(destination) && x.scope === scope);
       return [r ? [{ state: r.state, last_event_id: r.last_event_id }] : []];
     }
+    if (s === WRITE_SQL.active.sms || s === WRITE_SQL.active.email) {
+      W.locks.push('row:active');
+      const f = fam(s === WRITE_SQL.active.sms ? 'contact_phones' : 'contact_emails');
+      return [f.rows.filter((r) => r.end_date == null && f.key(r[f.col]) === f.key(p[0])).map((r) => ({ id: r.id }))];
+    }
+    if (s === WRITE_SQL.row.sms || s === WRITE_SQL.row.email) {
+      W.locks.push('row:id');
+      const f = fam(s === WRITE_SQL.row.sms ? 'contact_phones' : 'contact_emails');
+      const r = byId(f.rows, p[0]);
+      return [r ? [{ id: r.id, destination: r[f.col], flag: r[f.flag], end_date: r.end_date }] : []];
+    }
     if (s === WRITE_SQL.cache.sms || s === WRITE_SQL.cache.email) {
+      W.locks.push('cache:index');
       const f = fam(s === WRITE_SQL.cache.sms ? 'contact_phones' : 'contact_emails');
       const [val, dest] = p;
       let n = 0;
       for (const r of f.rows) if (r.end_date == null && f.key(r[f.col]) === f.key(dest) && Number(r[f.flag]) !== val) { r[f.flag] = val; n++; }
       return [{ affectedRows: n }];
+    }
+    if (s === WRITE_SQL.cacheRow.sms || s === WRITE_SQL.cacheRow.email) {
+      W.locks.push('cache:row');
+      const f = fam(s === WRITE_SQL.cacheRow.sms ? 'contact_phones' : 'contact_emails');
+      const [val, id] = p;
+      const r = byId(f.rows, id);
+      if (!r || r.end_date != null || Number(r[f.flag]) === Number(val)) return [{ affectedRows: 0 }];
+      r[f.flag] = Number(val);
+      return [{ affectedRows: 1 }];
+    }
+    if (s === WRITE_SQL.rowFlag.sms || s === WRITE_SQL.rowFlag.email) {
+      const f = fam(s === WRITE_SQL.rowFlag.sms ? 'contact_phones' : 'contact_emails');
+      const [val, id] = p;
+      const r = byId(f.rows, id);
+      if (!r || Number(r[f.flag]) === Number(val)) return [{ affectedRows: 0 }];
+      r[f.flag] = Number(val);
+      return [{ affectedRows: 1 }];
     }
     return answerOptout(s, p, { phones: W.phones, emails: W.emails, contacts: W.contacts, states: W.states, topics: W.topics });
   }
@@ -131,6 +165,35 @@ function makeWorld({ contacts = [], phones = [], emails = [], states = [], topic
     }
     if (s === 'SELECT * FROM contacts WHERE contact_id = ?') { const ct = contact(p[0]); return [ct ? [{ ...ct }] : []]; }
 
+    // ── update_db / insert_db (lib/internal_functions/db.js) on the two row
+    //    tables — backticked identifiers, a WHERE on `id` only. ──
+    if (/FROM information_schema\.COLUMNS WHERE TABLE_SCHEMA = DATABASE\(\) AND TABLE_NAME = \?$/.test(s) && /^contact_(phones|emails)$/.test(p[0])) {
+      const f = fam(p[0]);
+      const base = ['contact_id', f.col, 'label', 'is_primary', f.flag, 'verified', 'start_date', 'end_date', 'end_reason', 'notes'];
+      return [[{ COLUMN_NAME: 'id', COLUMN_KEY: 'PRI', EXTRA: 'auto_increment', COLUMN_DEFAULT: null, GENERATION_EXPRESSION: '' },
+        ...base.map((c) => ({ COLUMN_NAME: c, COLUMN_KEY: '', EXTRA: '', COLUMN_DEFAULT: null, GENERATION_EXPRESSION: '' })),
+        { COLUMN_NAME: `${f.col}_active_uniq`, COLUMN_KEY: 'UNI', EXTRA: 'VIRTUAL GENERATED', COLUMN_DEFAULT: null, GENERATION_EXPRESSION: 'if((`end_date` is null),`x`,NULL)' }]];
+    }
+    if ((m = /^SELECT (COUNT\(\*\) AS n|id) FROM `(contact_phones|contact_emails)` WHERE `id` = \?( FOR UPDATE)?$/.exec(s))) {
+      const r = byId(fam(m[2]).rows, p[0]);
+      if (m[3]) W.locks.push('row:generic');
+      return [m[1] === 'id' ? (r ? [{ id: r.id }] : []) : [{ n: r ? 1 : 0 }]];
+    }
+    if ((m = /^UPDATE `(contact_phones|contact_emails)` SET ((?:`[a-z_]+` = \?(?:, )?)+) WHERE `id` = \? LIMIT \d+$/.exec(s))) {
+      const r = byId(fam(m[1]).rows, p[p.length - 1]);
+      if (!r) return [{ affectedRows: 0, changedRows: 0 }];
+      [...m[2].matchAll(/`([a-z_]+)`/g)].map((x) => x[1]).forEach((c, i) => { r[c] = p[i]; });
+      return [{ affectedRows: 1, changedRows: 1 }];
+    }
+    if ((m = /^INSERT INTO `(contact_phones|contact_emails)` \(((?:`[a-z_]+`(?:, )?)+)\) VALUES \([?, ]+\)$/.exec(s))) {
+      const f = fam(m[1]);
+      const row = { id: nextRow++ };
+      [...m[2].matchAll(/`([a-z_]+)`/g)].map((x) => x[1]).forEach((c, i) => { row[c] = p[i]; });
+      f.rows.push({ is_primary: 0, [f.flag]: 0, verified: 0, label: 'Other', start_date: null, end_date: null, end_reason: null, notes: '',
+        ...(m[1] === 'contact_phones' ? { mms_capable: 1 } : {}), ...row, contact_id: Number(row.contact_id) });
+      return [{ insertId: row.id, affectedRows: 1 }];
+    }
+
     // ── contact_phones / contact_emails ──
     const tm = /(contact_phones|contact_emails)/.exec(s);
     if (tm) {
@@ -147,21 +210,23 @@ function makeWorld({ contacts = [], phones = [], emails = [], states = [], topic
       if (s === `SELECT id FROM ${table} WHERE contact_id = ? AND ${col} = ? AND end_date IS NULL LIMIT 1`) {
         const r = R.find((x) => x.contact_id === Number(p[0]) && f.key(x[col]) === f.key(p[1]) && x.end_date == null); return [r ? [{ id: r.id }] : []];
       }
-      if (s === `SELECT ${A}.id, ${A}.contact_id, c.contact_name FROM ${table} ${A} JOIN contacts c ON c.contact_id = ${A}.contact_id WHERE ${A}.${col} = ? AND ${A}.end_date IS NULL AND ${A}.contact_id <> ?`) {
+      // The collision reads carry the donor's flag (donor_flag) — a transfer
+      // carries it where the destination has no consent state yet.
+      if (s === `SELECT ${A}.id, ${A}.contact_id, c.contact_name, ${A}.${f.flag} AS donor_flag FROM ${table} ${A} JOIN contacts c ON c.contact_id = ${A}.contact_id WHERE ${A}.${col} = ? AND ${A}.end_date IS NULL AND ${A}.contact_id <> ?`) {
         const r = R.find((x) => f.key(x[col]) === f.key(p[0]) && x.end_date == null && x.contact_id !== Number(p[1]));
-        return [r ? [{ id: r.id, contact_id: r.contact_id, contact_name: nameOf(r) }] : []];
+        return [r ? [{ id: r.id, contact_id: r.contact_id, contact_name: nameOf(r), donor_flag: r[f.flag] }] : []];
       }
-      if (s === `SELECT ${A}.id AS ${col}_id, ${A}.contact_id, c.contact_name, DATE_FORMAT(${A}.start_date, '%Y-%m-%d') AS start_date FROM ${table} ${A} JOIN contacts c ON c.contact_id = ${A}.contact_id WHERE ${A}.${col} = ? AND ${A}.end_date IS NULL`) {
+      if (s === `SELECT ${A}.id AS ${col}_id, ${A}.contact_id, c.contact_name, ${A}.${f.flag} AS donor_flag, DATE_FORMAT(${A}.start_date, '%Y-%m-%d') AS start_date FROM ${table} ${A} JOIN contacts c ON c.contact_id = ${A}.contact_id WHERE ${A}.${col} = ? AND ${A}.end_date IS NULL`) {
         const r = R.find((x) => f.key(x[col]) === f.key(p[0]) && x.end_date == null);
-        return [r ? [{ [`${col}_id`]: r.id, contact_id: r.contact_id, contact_name: nameOf(r), start_date: r.start_date }] : []];
+        return [r ? [{ [`${col}_id`]: r.id, contact_id: r.contact_id, contact_name: nameOf(r), donor_flag: r[f.flag], start_date: r.start_date }] : []];
       }
-      if (s === `SELECT id, contact_id FROM ${table} WHERE ${col} = ? AND end_date IS NULL`) {
-        const r = R.find((x) => f.key(x[col]) === f.key(p[0]) && x.end_date == null); return [r ? [{ id: r.id, contact_id: r.contact_id }] : []];
+      if (s === `SELECT id, contact_id, ${f.flag} AS donor_flag FROM ${table} WHERE ${col} = ? AND end_date IS NULL`) {
+        const r = R.find((x) => f.key(x[col]) === f.key(p[0]) && x.end_date == null); return [r ? [{ id: r.id, contact_id: r.contact_id, donor_flag: r[f.flag] }] : []];
       }
-      if ((m = new RegExp(`^SELECT ${A}\\.id AS ${col}_id, ${A}\\.contact_id, ${A}\\.${col}, c\\.contact_name FROM ${table} ${A} JOIN contacts c ON c\\.contact_id = ${A}\\.contact_id WHERE ${A}\\.${col} IN \\(([?, ]+)\\) AND ${A}\\.end_date IS NULL AND ${A}\\.contact_id <> \\?$`).exec(s))) {
+      if ((m = new RegExp(`^SELECT ${A}\\.id AS ${col}_id, ${A}\\.contact_id, ${A}\\.${col}, c\\.contact_name, ${A}\\.${f.flag} AS donor_flag FROM ${table} ${A} JOIN contacts c ON c\\.contact_id = ${A}\\.contact_id WHERE ${A}\\.${col} IN \\(([?, ]+)\\) AND ${A}\\.end_date IS NULL AND ${A}\\.contact_id <> \\?$`).exec(s))) {
         const vals = p.slice(0, -1).map(f.key); const cid = Number(p[p.length - 1]);
         return [R.filter((x) => vals.includes(f.key(x[col])) && x.end_date == null && x.contact_id !== cid)
-          .map((x) => ({ [`${col}_id`]: x.id, contact_id: x.contact_id, [col]: x[col], contact_name: nameOf(x) }))];
+          .map((x) => ({ [`${col}_id`]: x.id, contact_id: x.contact_id, [col]: x[col], contact_name: nameOf(x), donor_flag: x[f.flag] }))];
       }
       if (/^SELECT id, (phone|email), label, is_primary, .* FROM contact_(phones|emails) WHERE contact_id = \? AND end_date IS NULL$/.test(s)) {
         return [R.filter((x) => x.contact_id === Number(p[0]) && x.end_date == null).map((x) => ({ ...x }))];
@@ -207,7 +272,6 @@ function makeWorld({ contacts = [], phones = [], emails = [], states = [], topic
         for (const r of R) if (r.contact_id === Number(p[1]) && r.is_primary === 1 && r.end_date == null && (p[2] === undefined || r.id !== Number(p[2]))) r.is_primary = 0;
         return [{ affectedRows: 1 }];
       }
-      if (s === `UPDATE ${table} SET ${f.flag} = 1 WHERE id = ?`) { byId(R, p[0])[f.flag] = 1; return [{ affectedRows: 1 }]; }
       if ((m = new RegExp(`^UPDATE ${table} SET ((?:\`[a-z_]+\` = \\?(?:, )?)+) WHERE id = \\?$`).exec(s))) {
         const r = byId(R, p[p.length - 1]);
         const cols = [...m[1].matchAll(/`([a-z_]+)`/g)].map((x) => x[1]);

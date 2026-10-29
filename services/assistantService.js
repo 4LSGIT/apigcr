@@ -1616,8 +1616,22 @@ async function normalizeContactSubrecordAction(db, value, evidence) {
       fields.is_primary = Number(counts && counts[0] && counts[0].row_count) === 0 ? 1 : 0;
     }
     const makePrimary = fields.is_primary === 1;
+    // Consent (YisraMail P1): a new row is born with its destination's consent
+    // (optoutService.bornRow) — a number / address that already opted out
+    // keeps the opt-out whatever the card sends. Show the row the create will
+    // really produce: the flag as Yes, marked inherited. SMS reads scope all,
+    // email its marketing scope (the flag's scope, D18).
+    let consentInherited = false;
+    if (family === 'phone' || family === 'email') {
+      const optout = require('./optoutService'); // lazy require (convention)
+      const flagKey = family === 'phone' ? 'sms_optout' : 'email_optout';
+      const hits = await optout.findOptedOut(db, family === 'phone' ? 'sms' : 'email', fields[config.valueField],
+        family === 'phone' ? {} : { klass: 'marketing' });
+      if (hits.length && !fields[flagKey]) { fields[flagKey] = 1; consentInherited = true; }
+    }
     return { draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft', contact, family,
-      fields: { ...fields, is_primary: makePrimary }, demoted_primary: await contactCreatePrimaryEffect(db, config, contactId, makePrimary), evidence: refs };
+      fields: { ...fields, is_primary: makePrimary }, ...(consentInherited ? { consent_inherited: true } : {}),
+      demoted_primary: await contactCreatePrimaryEffect(db, config, contactId, makePrimary), evidence: refs };
   }
 
   const recordId = contactActionId(value[config.idField], config.idField.replace('_', ' '));

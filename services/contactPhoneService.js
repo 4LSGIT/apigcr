@@ -38,10 +38,15 @@
  *
  * CONSENT (YisraMail P1, ref/YISRAMAIL_DESIGN.md §4.4): sms_optout is a CACHE
  * of the number's SMS scope-'all' consent state (comm_consent_state) for one
- * release. Every flag write here goes through optoutService.applyRowConsent on
- * the SAME transaction connection: a new active row is born with
- * max(sent flag, state) and never opts in; an existing row's flag change is
- * one ledger event, no change no event.
+ * release. Every flag write here goes through optoutService on the SAME
+ * transaction connection, row lock first, then the state:
+ *   - a new active row (create, transfer, reactivation) → bornRow: born with
+ *     max(sent flag, a transferred donor's flag where the number has no state
+ *     yet, the state); never opts in;
+ *   - an active row's flag → decideRowFlag (the three-way compare: sent vs the
+ *     `sms_optout_base` the caller loaded vs the current state — a stale
+ *     value records nothing, a stale DECISION is a 409) → applyRowDecision.
+ * An opt-in needs a signed-in user (consentActor): an API key gets 422.
  *
  * Usage:
  *   const phoneSvc = require('../services/contactPhoneService');
@@ -460,7 +465,7 @@ async function getContactPhone(db, phoneId) {
  * @param {number}  [opts.createdBy=0]      - users.user value, or 0 for system
  * @returns {Promise<{phone: object, auto_promoted: boolean, transferred_from?: object}>}
  */
-async function createContactPhone(db, contactId, fields = {}, { force = false, createdBy = 0, expectedPrimaryId, consentEvidence = null } = {}) {
+async function createContactPhone(db, contactId, fields = {}, { force = false, createdBy = 0, expectedPrimaryId, consentEvidence = null, consentActor = null } = {}) {
   // ─── Validation (pre-transaction) ───
   // validatePhoneRow throws on bad phone/label; preserves is_primary as
   // undefined when caller didn't set it, so auto-promote works below.
@@ -488,7 +493,7 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
     //       force=true ends the donor's row + recomputes donor mirror.
     let transferredFrom = null;
     const [[collision]] = await conn.query(
-      `SELECT cp.id AS phone_id, cp.contact_id, c.contact_name,
+      `SELECT cp.id AS phone_id, cp.contact_id, c.contact_name, cp.sms_optout AS donor_flag,
               DATE_FORMAT(cp.start_date, '%Y-%m-%d') AS start_date
          FROM contact_phones cp
          JOIN contacts c ON c.contact_id = cp.contact_id
@@ -578,11 +583,6 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
     // participates in the default (yesterday → new row starts today).
     const startDate = await resolveStartDate(conn, validated.phone, validated.start_date);
 
-    // Consent (P1): the number's state decides the cache; a 0 / omitted flag
-    // never clears an opt-out the number already carries (a transfer keeps it).
-    const optout = require('./optoutService'); // lazy: optoutService requires this module
-    const stateFlag = await optout.cachedStateFlag(conn, 'sms', validated.phone);
-
     let newId;
     try {
       const [insertResult] = await conn.query(
@@ -593,7 +593,7 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           cid, validated.phone, validated.label, isPrimary,
-          validated.sms_optout || stateFlag ? 1 : 0,
+          validated.sms_optout,          // bornRow below sets the flag the number's consent implies
           validated.mms_capable,
           validated.verified,
           startDate,
@@ -620,10 +620,18 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
       throw err;
     }
 
-    // A ticked flag over a number not yet opted out is one opt_out event.
-    await optout.applyRowConsent(conn, {
-      channel: 'sms', kind: 'create', destination: validated.phone,
-      intent: validated.sms_optout, stateFlag, contactId: cid, actorUserId: createdBy,
+    // Consent (P1): the row is written and locked — NOW read the number's
+    // state (lock order: row, then state). The flag becomes max(the sent
+    // flag, the donor's flag when this is a transfer and the number has no
+    // state yet, the state): a 0 / omitted flag never clears an opt-out the
+    // number carries. A ticked flag over a number not yet opted out is one
+    // opt_out event; a create never opts in.
+    const optout = require('./optoutService'); // lazy: optoutService requires this module
+    await optout.bornRow(conn, {
+      channel: 'sms', rowId: newId, destination: validated.phone, intent: validated.sms_optout,
+      carried: transferredFrom ? [{ flag: collision.donor_flag, gap_only: true, from_row_id: collision.phone_id,
+                                    from_destination: validated.phone, via: 'transfer' }] : [],
+      actor: optout.writerActor(consentActor, createdBy), contactId: cid,
       evidence: { row_id: newId, via: 'row_create', ...(consentEvidence || {}) },
     });
 
@@ -679,22 +687,25 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
  * @param {number} [opts.updatedBy=0]
  * @returns {Promise<{ phone: object }>}
  */
-async function updateContactPhone(db, phoneId, fields, { updatedBy = 0, expectedUpdatedAt, expectedPrimaryId, consentEvidence = null } = {}) {
+async function updateContactPhone(db, phoneId, fields, { updatedBy = 0, expectedUpdatedAt, expectedPrimaryId, consentEvidence = null, consentActor = null } = {}) {
   if (!fields || !Object.keys(fields).length) {
     throw new Error('updateContactPhone requires at least one field');
   }
 
-  const ALLOWED = ['label', 'is_primary', 'sms_optout', 'mms_capable',
+  const ALLOWED = ['label', 'is_primary', 'sms_optout', 'sms_optout_base', 'mms_capable',
                    'verified', 'start_date', 'end_date', 'end_reason', 'notes'];
   const unknown = Object.keys(fields).filter(k => !ALLOWED.includes(k));
   if (unknown.length) {
     throw new Error(`Cannot update ${unknown.join(', ')}`);
   }
 
-  // validatePhoneRow (update mode) does the per-field shape validation
-  // + normalization that used to be inline. Sparse output — only fields
-  // actually present in `fields` appear in `incoming`.
-  const incoming = validatePhoneRow(fields, { mode: 'update' });
+  // sms_optout_base is the flag the caller LOADED (the three-way consent
+  // compare), never a column. validatePhoneRow (update mode) does the
+  // per-field shape validation + normalization that used to be inline.
+  // Sparse output — only fields actually present in `fields` appear in
+  // `incoming`.
+  const { sms_optout_base: smsBase, ...rowFields } = fields;
+  const incoming = validatePhoneRow(rowFields, { mode: 'update' });
 
   await db.withTransaction(async (conn) => {
 
@@ -750,6 +761,23 @@ async function updateContactPhone(db, phoneId, fields, { updatedBy = 0, expected
       );
     }
 
+    // Consent (P1, fix round MAJOR 2). An ACTIVE row's flag is a consent
+    // write: the three-way compare decides it (row already locked above, so
+    // the state is read second) and the row's cache takes the decided value —
+    // the current state when nothing was decided. An ended row's flag is
+    // history: written as sent, nothing recorded.
+    const optout = require('./optoutService'); // lazy: optoutService requires this module
+    const actor = optout.writerActor(consentActor, updatedBy);
+    const activeBefore = current.end_date === null;
+    const activeAfter  = 'end_date' in incoming ? incoming.end_date === null : activeBefore;
+    let decision = null;
+    if (activeBefore && 'sms_optout' in incoming) {
+      decision = await optout.decideRowFlag(conn, { channel: 'sms', rowId: current.id, sent: incoming.sms_optout, base: smsBase, actor });
+      incoming.sms_optout = decision.flag;
+    }
+    // Reactivation: a sent flag the caller did not change is not a decision.
+    const reactivationIntent = 'sms_optout' in incoming && incoming.sms_optout !== optout.presentFlag(smsBase) ? incoming.sms_optout : 0;
+
     // Build UPDATE
     incoming.updated_by = updatedBy;
     const setKeys = Object.keys(incoming);
@@ -772,24 +800,19 @@ async function updateContactPhone(db, phoneId, fields, { updatedBy = 0, expected
       throw err;
     }
 
-    // Consent (P1). Reactivation (end_date → NULL) is a new active row for
-    // the number: born with max(its flag, the state), never opting in. A
-    // flag change on a row active before or after the write is one event;
-    // an ended row's flag is history and records nothing.
-    const optout = require('./optoutService'); // lazy: optoutService requires this module
-    const activeBefore = current.end_date === null;
-    const activeAfter  = 'end_date' in incoming ? incoming.end_date === null : activeBefore;
-    const flagAfter    = 'sms_optout' in incoming ? incoming.sms_optout : current.sms_optout;
-    const consentCtx   = { channel: 'sms', destination: current.phone, contactId: current.contact_id,
-                           actorUserId: updatedBy, evidence: { row_id: current.id, via: 'row_patch', ...(consentEvidence || {}) } };
+    // Consent, after the row write. Reactivation (end_date → NULL) is a new
+    // active row for the number: born from the state, its own history flag
+    // carrying only where the number has no state yet; never an opt-in.
+    const evidence = { row_id: current.id, via: 'row_patch', ...(consentEvidence || {}) };
     if (!activeBefore && activeAfter) {
-      const stateFlag = await optout.cachedStateFlag(conn, 'sms', current.phone);
-      if (stateFlag && !flagAfter) {
-        await conn.query('UPDATE contact_phones SET sms_optout = 1 WHERE id = ?', [current.id]);
-      }
-      await optout.applyRowConsent(conn, { ...consentCtx, kind: 'create', intent: flagAfter, stateFlag });
-    } else if ((activeBefore || activeAfter) && 'sms_optout' in incoming) {
-      await optout.applyRowConsent(conn, { ...consentCtx, kind: 'update', intent: incoming.sms_optout, before: current.sms_optout });
+      await optout.bornRow(conn, {
+        channel: 'sms', rowId: current.id, destination: current.phone, intent: reactivationIntent,
+        carried: [{ flag: current.sms_optout, gap_only: true, from_row_id: current.id, from_destination: current.phone, via: 'reactivation' }],
+        actor, contactId: current.contact_id, evidence,
+      });
+    } else if (decision && decision.action) {
+      await optout.applyRowDecision(conn, { channel: 'sms', rowId: current.id, destination: current.phone, action: decision.action,
+        actor, contactId: current.contact_id, evidence });
     }
 
     // Mirror recompute if anything touching primary-active changed

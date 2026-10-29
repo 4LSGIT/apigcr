@@ -758,8 +758,10 @@ function contactSubrecordDraftText(draft) {
       `${draft.family[0].toUpperCase() + draft.family.slice(1)}: ${contactSubrecordValue(draft.family, f)}`,
       `Label: ${f.label}`, `Primary: ${f.is_primary ? 'Yes' : 'No'}`, `Start date: ${f.start_date || 'Since forever (no prior ownership)'}`,
       `Notes: ${f.notes || 'Empty'}`);
-    if (draft.family === 'phone') lines.push(`SMS opt-out: ${f.sms_optout ? 'Yes' : 'No'}`, `MMS capable: ${f.mms_capable ? 'Yes' : 'No'}`);
-    if (draft.family === 'email') lines.push(`No marketing email: ${f.email_optout ? 'Yes' : 'No'}`);
+    // consent_inherited: the number / address already opted out — the new row is born with it (YisraMail P1).
+    const inherited = draft.consent_inherited ? ' (already opted out; the new row keeps it)' : '';
+    if (draft.family === 'phone') lines.push(`SMS opt-out: ${f.sms_optout ? 'Yes' : 'No'}${inherited}`, `MMS capable: ${f.mms_capable ? 'Yes' : 'No'}`);
+    if (draft.family === 'email') lines.push(`No marketing email: ${f.email_optout ? 'Yes' : 'No'}${inherited}`);
     lines.push(`Primary side effect: ${draft.demoted_primary ? `demote current ${draft.demoted_primary.label} primary ${draft.demoted_primary.value}` : 'no current primary will be demoted'}.`,
       'Contact mirror / sync: the contact summary and open contact views refresh through the canonical route response.',
       'Transfer / notification: no ownership transfer, message, email, or SMS is sent.');

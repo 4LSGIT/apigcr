@@ -35,6 +35,9 @@ const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdemp
  * global active-uniqueness collisions.
  */
 function mapErrorStatus(err) {
+  // A consent refusal carries its own status (optoutService.ConsentWriteRefusal:
+  // 409 consent_changed, 422 opt_in_needs_staff).
+  if (err && err.name === 'ConsentWriteRefusal' && Number.isInteger(err.status)) return err.status;
   if (err && err.conflict) return 409;
   const m = (err && err.message) || '';
   if (!m) return 500;
@@ -127,7 +130,8 @@ router.post('/api/contact-phones', jwtOrApiKey, async (req, res) => {
     // first create's response instead of inserting a second row. Header only —
     // nothing in the body can set it (lib/requestIdempotency.js).
     const { value: result, replayed } = await idempotentRequest(req, 'contact_phones.create', () =>
-      phoneSvc.createContactPhone(req.db, contact_id, fields, { force, createdBy, expectedPrimaryId: expected_primary_id, consentEvidence })
+      phoneSvc.createContactPhone(req.db, contact_id, fields, { force, createdBy, expectedPrimaryId: expected_primary_id, consentEvidence,
+        consentActor: optout.consentActor(req.auth) })
     );
     res.status(201).json({ status: 'success', ...result, ...(replayed ? { replayed: true } : {}) });
   } catch (err) {
@@ -135,6 +139,7 @@ router.post('/api/contact-phones', jwtOrApiKey, async (req, res) => {
     console.error('POST /api/contact-phones error:', err);
     const status = mapErrorStatus(err);
     const body = { status: 'error', message: err.message };
+    if (err.name === 'ConsentWriteRefusal') { body.code = err.code; body.consent = err.consent; }
     if (err.conflict) body.conflict = err.conflict;
     if (err.same_contact) body.same_contact = err.same_contact;
     res.status(status).json(body);
@@ -148,12 +153,14 @@ router.patch('/api/contact-phones/:id', jwtOrApiKey, async (req, res) => {
     const updatedBy = resolveCreatedBy(req);
     const { expected_updated_at, expected_primary_id, casey_draft_id, ...fields } = req.body || {};
     const consentEvidence = await caseyEvidence(req, casey_draft_id, ['contact.phone.update.v1', 'contact.phone.end.v1']);
-    const result = await phoneSvc.updateContactPhone(req.db, req.params.id, fields, { updatedBy, expectedUpdatedAt: expected_updated_at, expectedPrimaryId: expected_primary_id, consentEvidence });
+    const result = await phoneSvc.updateContactPhone(req.db, req.params.id, fields, { updatedBy, expectedUpdatedAt: expected_updated_at, expectedPrimaryId: expected_primary_id, consentEvidence,
+      consentActor: optout.consentActor(req.auth) });
     res.json({ status: 'success', ...result });
   } catch (err) {
     console.error('PATCH /api/contact-phones/:id error:', err);
     const status = mapErrorStatus(err);
-    res.status(status).json({ status: 'error', message: err.message });
+    res.status(status).json({ status: 'error', message: err.message,
+      ...(err.name === 'ConsentWriteRefusal' ? { code: err.code, consent: err.consent } : {}) });
   }
 });
 

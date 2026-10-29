@@ -296,6 +296,10 @@ const C1 = { contact_id: 1, contact_name: 'Pat One' };
 const C2 = { contact_id: 2, contact_name: 'Sam Two' };
 const optedState = (destination, channel = 'sms', scope = channel === 'sms' ? 'all' : 'marketing') =>
   ({ channel, destination, scope, state: 'opted_out', last_event_id: 99 });
+// The actor a signed-in staff route passes (optoutService.consentActor of a JWT) —
+// an opt-in needs it; an API key or automation may only opt out.
+const STAFF6 = { kind: 'user', userId: 6 };
+const STAFF22 = { kind: 'user', userId: 22 };
 
 describe('writers — contactPhoneService / contactEmailService (POST/PATCH /api/contact-{phones,emails}, Casey\'s kinds)', () => {
   test('create with the box ticked = ONE opt_out event (staff, actor, evidence); the row is born with its cache set', async () => {
@@ -335,12 +339,12 @@ describe('writers — contactPhoneService / contactEmailService (POST/PATCH /api
     await phoneSvc.updateContactPhone(W.db, 11, { sms_optout: 1, label: 'Work' }, { updatedBy: 6 });
     await phoneSvc.updateContactPhone(W.db, 11, { notes: 'call after 5' }, { updatedBy: 6 });
     expect(W.events).toEqual([]);
-    const { phone } = await phoneSvc.updateContactPhone(W.db, 11, { sms_optout: 0 }, { updatedBy: 6 });
+    const { phone } = await phoneSvc.updateContactPhone(W.db, 11, { sms_optout: 0 }, { updatedBy: 6, consentActor: STAFF6 });
     expect(phone.sms_optout).toBe(0);
     expect(W.events).toEqual([expect.objectContaining({ action: 'opt_in', source: 'staff', actor_user_id: 6, contact_id: 1,
       evidence: { row_id: 11, via: 'row_patch' } })]);
     expect(W.state('sms', PAT, 'all')).toMatchObject({ state: 'opted_in', last_event_id: W.events[0].id });
-    await phoneSvc.updateContactPhone(W.db, 11, { sms_optout: true }, { updatedBy: 6 });
+    await phoneSvc.updateContactPhone(W.db, 11, { sms_optout: true }, { updatedBy: 6, consentActor: STAFF6 });
     expect(W.events.map((e) => e.action)).toEqual(['opt_in', 'opt_out']);
     expect(W.unhandled).toEqual([]);
   });
@@ -351,13 +355,19 @@ describe('writers — contactPhoneService / contactEmailService (POST/PATCH /api
     expect(W.events).toEqual([]);
   });
 
-  test('reactivation is a new active row: born max(its flag, the state); never opts in; its own carried flag over no state is one event', async () => {
+  test('reactivation is a new active row: born max(its flag, the state); never opts in; its own history flag carries only over NO state', async () => {
     const W = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT, sms_optout: 0, end_date: '2026-01-01' }], states: [optedState(PAT)] });
     const { phone } = await phoneSvc.updateContactPhone(W.db, 11, { end_date: null }, { updatedBy: 6 });
     expect([phone.sms_optout, W.events]).toEqual([1, []]);
     const W2 = makeWorld({ contacts: [C1], phones: [{ id: 12, contact_id: 1, phone: SAM, sms_optout: 1, end_date: '2026-01-01' }] });
     await phoneSvc.updateContactPhone(W2.db, 12, { end_date: null }, { updatedBy: 6 });
-    expect(W2.events).toEqual([expect.objectContaining({ destination: SAM, action: 'opt_out', evidence: { row_id: 12, via: 'row_patch' } })]);
+    expect(W2.events).toEqual([expect.objectContaining({ destination: SAM, action: 'opt_out', source: 'row_replace',
+      evidence: { row_id: 12, via: 'row_patch', from_destination: SAM, from_row_id: 12, carried_by: 'reactivation' } })]);
+    // A stale history flag never overrides a recorded decision: the number opted back IN since → born 0, nothing recorded.
+    const W3 = makeWorld({ contacts: [C1], phones: [{ id: 13, contact_id: 1, phone: SAM, sms_optout: 1, end_date: '2026-01-01' }],
+      states: [{ channel: 'sms', destination: SAM, scope: 'all', state: 'opted_in', last_event_id: 98 }] });
+    const r3 = await phoneSvc.updateContactPhone(W3.db, 13, { end_date: null }, { updatedBy: 6 });
+    expect([r3.phone.sms_optout, W3.events]).toEqual([0, []]);
   });
 
   test('email twins: the flag is scope marketing (D18) — create ticked and a change each record one event', async () => {
@@ -366,9 +376,9 @@ describe('writers — contactPhoneService / contactEmailService (POST/PATCH /api
     expect(email.email_optout).toBe(1);
     expect(W.events).toEqual([expect.objectContaining({ channel: 'email', destination: 'pat@example.com', scope: 'marketing', action: 'opt_out',
       evidence: { row_id: email.id, via: 'row_create' } })]);
-    await emailSvc.updateContactEmail(W.db, email.id, { email_optout: 1, notes: 'x' }, { updatedBy: 6 });
+    await emailSvc.updateContactEmail(W.db, email.id, { email_optout: 1, notes: 'x' }, { updatedBy: 6, consentActor: STAFF6 });
     expect(W.events).toHaveLength(1);
-    await emailSvc.updateContactEmail(W.db, email.id, { email_optout: 0 }, { updatedBy: 6 });
+    await emailSvc.updateContactEmail(W.db, email.id, { email_optout: 0 }, { updatedBy: 6, consentActor: STAFF6 });
     expect(W.events.map((e) => [e.scope, e.action])).toEqual([['marketing', 'opt_out'], ['marketing', 'opt_in']]);
     // the guard on email too
     const W2 = makeWorld({ contacts: [C1], states: [optedState('pat@example.com', 'email')] });
@@ -380,7 +390,7 @@ describe('writers — contactPhoneService / contactEmailService (POST/PATCH /api
   test('consentEvidence (Casey) is merged into the event evidence', async () => {
     const W = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT, sms_optout: 0 }] });
     const D = '0e0e0e0e-0e0e-4e0e-8e0e-0e0e0e0e0e0e';
-    await phoneSvc.updateContactPhone(W.db, 11, { sms_optout: 1 }, { updatedBy: 22, consentEvidence: { via: 'casey', draft_id: D } });
+    await phoneSvc.updateContactPhone(W.db, 11, { sms_optout: 1 }, { updatedBy: 22, consentEvidence: { via: 'casey', draft_id: D }, consentActor: STAFF22 });
     expect(W.events[0].evidence).toEqual({ row_id: 11, via: 'casey', draft_id: D });
     const { email } = await emailSvc.createContactEmail(W.db, 1, { email: 'a@b.co', email_optout: 1 }, { createdBy: 22, consentEvidence: { via: 'casey', draft_id: D } });
     expect(W.events[1].evidence).toEqual({ row_id: email.id, via: 'casey', draft_id: D });
@@ -412,7 +422,7 @@ describe('writers — contactService (the contact form\'s aggregate save, scalar
     const fresh = W.active('contact_phones', SAM);
     expect(fresh.sms_optout).toBe(1);
     expect(W.events).toEqual([expect.objectContaining({ destination: SAM, action: 'opt_out', source: 'row_replace', actor_user_id: 6,
-      evidence: { from_destination: PAT, from_row_id: 11, row_id: fresh.id, via: 'aggregate' } })]);
+      evidence: { from_destination: PAT, from_row_id: 11, row_id: fresh.id, via: 'aggregate', carried_by: 'replace' } })]);
     expect(W.state('sms', PAT, 'all')).toMatchObject({ state: 'opted_out', last_event_id: 99 });
     expect(W.phone(11).end_reason).toBe('replaced');
     // the form echoing the old flag back is still a carry …
@@ -604,5 +614,412 @@ describe('routes — consent on the list, casey_draft_id on the writes', () => {
     expect(r.status).toBe(201);
     expect(W.events[0].evidence).toEqual({ row_id: r.json.email.id, via: 'casey', draft_id: D });
     claim = null;
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fix round (review 2026-10-29): MAJOR 1–3, minors 5–7
+// ─────────────────────────────────────────────────────────────────────────────
+
+// A STOP / any newer decision landing on its own connection after the form loaded.
+async function stopLands(W, destination, channel = 'sms') {
+  await optout.recordConsent({ query: W.db.query }, { channel, destination, scope: optout.CACHE_SCOPE[channel],
+    action: 'opt_out', source: channel === 'sms' ? 'sms_keyword' : 'unsub_page', providerEventId: `late-${destination}` });
+}
+
+describe('MAJOR 2 — the three-way compare: a stale contact-form save never records an opt-in', () => {
+  test('the reviewer\'s scenario: form loaded 0, a STOP lands, staff save a label edit → nothing recorded, the number stays opted out', async () => {
+    const W = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT, sms_optout: 0, is_primary: 1 }] });
+    await stopLands(W, PAT);
+    expect(W.phone(11).sms_optout).toBe(1);                        // the STOP synced the cache
+    await contactService.updateContact(W.db, 1, { phones: [{ id: 11, phone: PAT, label: 'Work', sms_optout: 0, sms_optout_base: 0 }] },
+      { userId: 6, consentActor: STAFF6 });
+    expect(W.events.map((e) => [e.action, e.source])).toEqual([['opt_out', 'sms_keyword']]);
+    expect(W.state('sms', PAT, 'all').state).toBe('opted_out');
+    expect(W.phone(11)).toMatchObject({ label: 'Work', sms_optout: 1 });
+    // the per-row PATCH is the same compare
+    await phoneSvc.updateContactPhone(W.db, 11, { notes: 'x', sms_optout: 0, sms_optout_base: 0 }, { updatedBy: 6, consentActor: STAFF6 });
+    expect([W.events.length, W.state('sms', PAT, 'all').state, W.phone(11).sms_optout]).toEqual([1, 'opted_out', 1]);
+    expect(W.unhandled).toEqual([]);
+  });
+
+  test('email: the same stale form records nothing for the marketing scope', async () => {
+    const W = makeWorld({ contacts: [C1], emails: [{ id: 21, contact_id: 1, email: 'pat@example.com', email_optout: 0, is_primary: 1 }] });
+    await stopLands(W, 'pat@example.com', 'email');
+    await contactService.updateContact(W.db, 1, { emails: [{ id: 21, email: 'pat@example.com', label: 'Work', email_optout: 0, email_optout_base: 0 }] },
+      { userId: 6, consentActor: STAFF6 });
+    expect([W.events.length, W.state('email', 'pat@example.com', 'marketing').state, W.email(21).email_optout]).toEqual([1, 'opted_out', 1]);
+  });
+
+  test('a genuine toggle (sent ≠ base, base = current) still records opt_out / opt_in', async () => {
+    const W = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT, sms_optout: 0, is_primary: 1 }] });
+    await contactService.updateContact(W.db, 1, { phones: [{ id: 11, phone: PAT, sms_optout: 1, sms_optout_base: 0 }] }, { userId: 6, consentActor: STAFF6 });
+    await contactService.updateContact(W.db, 1, { phones: [{ id: 11, phone: PAT, sms_optout: 0, sms_optout_base: 1 }] }, { userId: 6, consentActor: STAFF6 });
+    expect(W.events.map((e) => [e.action, e.source, e.actor_user_id, e.evidence.via])).toEqual([
+      ['opt_out', 'staff', 6, 'aggregate'], ['opt_in', 'staff', 6, 'aggregate']]);
+    expect([W.state('sms', PAT, 'all').state, W.phone(11).sms_optout]).toEqual(['opted_in', 0]);
+    // per-row PATCH with a base
+    await phoneSvc.updateContactPhone(W.db, 11, { sms_optout: 1, sms_optout_base: 0 }, { updatedBy: 6, consentActor: STAFF6 });
+    expect(W.events.map((e) => e.action)).toEqual(['opt_out', 'opt_in', 'opt_out']);
+  });
+
+  test('base ≠ current → 409 consent_changed, NOTHING written (row, ledger, state)', async () => {
+    const W = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT, sms_optout: 0, is_primary: 1, label: 'Mobile' }] });
+    await stopLands(W, PAT);                                        // form loaded 0; the number opted out since
+    const before = JSON.stringify([W.phones, W.events, W.states]);
+    // the user ticks it (a decision against a stale base) …
+    await expect(contactService.updateContact(W.db, 1, { phones: [{ id: 11, phone: PAT, label: 'Work', sms_optout: 1, sms_optout_base: 0 }] },
+      { userId: 6, consentActor: STAFF6 })).rejects.toMatchObject({ status: 409, code: 'consent_changed', consent: { destination: PAT } });
+    await expect(phoneSvc.updateContactPhone(W.db, 11, { label: 'Work', sms_optout: 1, sms_optout_base: 0 }, { updatedBy: 6, consentActor: STAFF6 }))
+      .rejects.toMatchObject({ status: 409, code: 'consent_changed' });
+    expect(JSON.stringify([W.phones, W.events, W.states])).toBe(before);
+    // … and an untick against an opt-in that landed since.
+    const W2 = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT, sms_optout: 1, is_primary: 1 }], states: [optedState(PAT)] });
+    await optout.recordConsent({ query: W2.db.query }, { channel: 'sms', destination: PAT, scope: 'all', action: 'opt_in', source: 'staff', actorUserId: 9 });
+    await expect(contactService.updateContact(W2.db, 1, { phones: [{ id: 11, phone: PAT, sms_optout: 0, sms_optout_base: 1 }] }, { userId: 6, consentActor: STAFF6 }))
+      .rejects.toMatchObject({ status: 409, code: 'consent_changed' });
+    expect(W2.events).toHaveLength(1);
+    // an end-and-replace whose flag was changed against a moved base is refused too
+    const W3 = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT, sms_optout: 0, is_primary: 1 }] });
+    await stopLands(W3, PAT);
+    await expect(contactService.updateContact(W3.db, 1, { phones: [{ id: 11, phone: SAM, sms_optout: 1, sms_optout_base: 0 }] }, { userId: 6, consentActor: STAFF6 }))
+      .rejects.toMatchObject({ status: 409, code: 'consent_changed' });
+  });
+
+  test('email: a stale DECISION is 409 too, through the aggregate save and the per-row PATCH', async () => {
+    const W = makeWorld({ contacts: [C1], emails: [{ id: 21, contact_id: 1, email: 'pat@example.com', email_optout: 0, is_primary: 1 }] });
+    await stopLands(W, 'pat@example.com', 'email');
+    const before = JSON.stringify([W.emails, W.events, W.states]);
+    await expect(contactService.updateContact(W.db, 1, { emails: [{ id: 21, email: 'pat@example.com', email_optout: 1, email_optout_base: 0 }] },
+      { userId: 6, consentActor: STAFF6 })).rejects.toMatchObject({ status: 409, code: 'consent_changed', consent: { destination: 'pat@example.com' } });
+    await expect(emailSvc.updateContactEmail(W.db, 21, { email_optout: 1, email_optout_base: 0 }, { updatedBy: 6, consentActor: STAFF6 }))
+      .rejects.toMatchObject({ status: 409, code: 'consent_changed' });
+    expect(JSON.stringify([W.emails, W.events, W.states])).toBe(before);
+    // an end-and-replace of the address whose flag was changed against the moved base is refused too
+    // (the fake world has no rollback, so the ledger is the check here; the twin proves the full rollback)
+    await expect(contactService.updateContact(W.db, 1, { emails: [{ id: 21, email: 'new@example.com', email_optout: 1, email_optout_base: 0 }] },
+      { userId: 6, consentActor: STAFF6 })).rejects.toMatchObject({ status: 409, code: 'consent_changed', consent: { destination: 'pat@example.com' } });
+    expect([W.events.length, W.active('contact_emails', 'new@example.com')]).toEqual([1, undefined]);
+  });
+
+  test('a stale form CORRECTING a number (end-and-replace) with the flag untouched carries the CURRENT opt-out — no 409', async () => {
+    for (const [table, fam, col, flagKey, oldV, newV, ch] of [
+      ['contact_phones', 'phones', 'phone', 'sms_optout', PAT, SAM, 'sms'],
+      ['contact_emails', 'emails', 'email', 'email_optout', 'old@example.com', 'new@example.com', 'email']]) {
+      const W = makeWorld({ contacts: [C1], [fam]: [{ id: 11, contact_id: 1, [col]: oldV, [flagKey]: 0, is_primary: 1 }] });
+      await stopLands(W, oldV, ch);                                  // the old number/address opted out after the form loaded
+      await contactService.updateContact(W.db, 1, { [fam]: [{ id: 11, [col]: newV, [flagKey]: 0, [`${flagKey}_base`]: 0 }] },
+        { userId: 6, consentActor: STAFF6 });
+      const fresh = W.active(table, newV);
+      expect([table, fresh[flagKey]]).toEqual([table, 1]);
+      expect(W.events.map((e) => [e.destination, e.source, e.evidence && e.evidence.carried_by])).toEqual([[oldV, ch === 'sms' ? 'sms_keyword' : 'unsub_page', null],
+        [newV, 'row_replace', 'replace']]);
+    }
+  });
+
+  test('no base (Casey, an API caller, an older tab) — the decision is sent vs current, as before', async () => {
+    const W = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT, sms_optout: 0, is_primary: 1 }] });
+    await stopLands(W, PAT);
+    await contactService.updateContact(W.db, 1, { phones: [{ id: 11, phone: PAT, label: 'Work', sms_optout: 0 }] }, { userId: 6, consentActor: STAFF6 });
+    expect(W.events.map((e) => [e.action, e.source])).toEqual([['opt_out', 'sms_keyword'], ['opt_in', 'staff']]);
+    // a resent current value is no decision
+    await phoneSvc.updateContactPhone(W.db, 11, { sms_optout: 0 }, { updatedBy: 6, consentActor: STAFF6 });
+    expect(W.events).toHaveLength(2);
+  });
+
+  test('a resent UNCHANGED flag drops out of the plan: a row with nothing else changed is a no-op (no UPDATE at all)', async () => {
+    const W = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT, sms_optout: 0, is_primary: 1, label: 'Mobile' }] });
+    await stopLands(W, PAT);
+    W.seen.length = 0;
+    await contactService.updateContact(W.db, 1, { phones: [{ id: 11, phone: PAT, label: 'Mobile', is_primary: 1, sms_optout: 0, sms_optout_base: 0 }] },
+      { userId: 6, consentActor: STAFF6 });
+    expect(W.seen.filter((x) => /^UPDATE contact_phones SET /.test(x))).toEqual([]);
+  });
+});
+
+describe('minor 7 — who may decide: an opt-in needs a signed-in user', () => {
+  test('consentActor maps req.auth: jwt → user, api_key → api_key (+ key id), anything else → system', () => {
+    expect(optout.consentActor({ type: 'jwt', userId: '22' })).toEqual({ kind: 'user', userId: 22 });
+    expect(optout.consentActor({ type: 'api_key', key_id: 7, key_label: 'zapier' })).toEqual({ kind: 'api_key', keyId: 7, keyLabel: 'zapier' });
+    expect(optout.consentActor({ type: 'api_key', key_label: 'internal' })).toEqual({ kind: 'api_key', keyId: null, keyLabel: 'internal' });
+    expect(optout.consentActor(undefined)).toEqual({ kind: 'system' });
+  });
+
+  test('an API key may opt OUT (evidence names it) but never IN (422, nothing written); automation never opts in', async () => {
+    const KEY = { kind: 'api_key', keyId: 7, keyLabel: 'zapier' };
+    const W = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT, sms_optout: 0, is_primary: 1 }] });
+    await phoneSvc.updateContactPhone(W.db, 11, { sms_optout: 1 }, { updatedBy: 0, consentActor: KEY });
+    expect(W.events).toEqual([expect.objectContaining({ action: 'opt_out', source: 'staff', actor_user_id: null,
+      evidence: { row_id: 11, via: 'api_key', key_id: 7, key_label: 'zapier' } })]);
+    const before = JSON.stringify([W.phones, W.events, W.states]);
+    await expect(phoneSvc.updateContactPhone(W.db, 11, { sms_optout: 0 }, { updatedBy: 0, consentActor: KEY }))
+      .rejects.toMatchObject({ status: 422, code: 'opt_in_needs_staff' });
+    await expect(contactService.updateContact(W.db, 1, { phones: [{ id: 11, phone: PAT, sms_optout: 0 }] }, { userId: 0, consentActor: KEY }))
+      .rejects.toMatchObject({ status: 422, code: 'opt_in_needs_staff' });
+    await expect(phoneSvc.updateContactPhone(W.db, 11, { sms_optout: 0 }, { updatedBy: 0 }))      // no actor = automation
+      .rejects.toMatchObject({ status: 422, code: 'opt_in_needs_staff' });
+    expect(JSON.stringify([W.phones, W.events, W.states])).toBe(before);
+    // email the same
+    const W2 = makeWorld({ contacts: [C1], emails: [{ id: 21, contact_id: 1, email: 'pat@example.com', email_optout: 1 }], states: [optedState('pat@example.com', 'email')] });
+    await expect(emailSvc.updateContactEmail(W2.db, 21, { email_optout: 0 }, { consentActor: KEY })).rejects.toMatchObject({ status: 422 });
+  });
+
+  test('a create never opts in, so an API key (workflow 33\'s Calendly POST) creates as before', async () => {
+    const W = makeWorld({ contacts: [C1], states: [optedState(SAM)] });
+    const { phone } = await phoneSvc.createContactPhone(W.db, 1, { phone: SAM, label: 'Other', notes: 'From Calendly booking', is_primary: 0 },
+      { createdBy: 0, consentActor: { kind: 'api_key', keyId: 1 } });
+    expect([phone.sms_optout, W.events]).toEqual([1, []]);
+  });
+});
+
+describe('minor 5 — a transfer carries the donor\'s flag where the destination has no state yet', () => {
+  const donor = (flag = 1) => ({ id: 31, contact_id: 2, phone: PAT, sms_optout: flag, is_primary: 1 });
+  const OPTED_IN = { channel: 'sms', destination: PAT, scope: 'all', state: 'opted_in', last_event_id: 97 };
+  const carried = (W, newRowId) => W.events.map((e) => [e.destination, e.action, e.source, e.evidence.carried_by, e.evidence.from_row_id, e.evidence.row_id === newRowId]);
+
+  test('per-row create (force): the donor\'s gap flag carries — one row_replace event; over a recorded opt-in it does not', async () => {
+    const W = makeWorld({ contacts: [C1, C2], phones: [donor()] });
+    const { phone } = await phoneSvc.createContactPhone(W.db, 1, { phone: PAT }, { force: true, createdBy: 6 });
+    expect(phone.sms_optout).toBe(1);
+    expect(carried(W, phone.id)).toEqual([[PAT, 'opt_out', 'row_replace', 'transfer', 31, true]]);
+    const W2 = makeWorld({ contacts: [C1, C2], phones: [donor()], states: [OPTED_IN] });
+    const r2 = await phoneSvc.createContactPhone(W2.db, 1, { phone: PAT }, { force: true, createdBy: 6 });
+    expect([r2.phone.sms_optout, W2.events]).toEqual([0, []]);
+  });
+
+  test('aggregate insert (force), scalar propagation (force) and createContact carry it too', async () => {
+    const A = makeWorld({ contacts: [C1, C2], phones: [donor()] });
+    await contactService.updateContact(A.db, 1, { phones: [{ phone: PAT }] }, { userId: 6, force: true });
+    expect([A.active('contact_phones', PAT).sms_optout, A.events.map((e) => [e.source, e.evidence.carried_by, e.evidence.from_row_id])])
+      .toEqual([1, [['row_replace', 'transfer', 31]]]);
+    const S = makeWorld({ contacts: [C1, C2], phones: [donor()] });
+    await contactService.updateContact(S.db, 1, { contact_phone: PAT }, { userId: 6, force: true });
+    expect([S.active('contact_phones', PAT).sms_optout, S.events.map((e) => [e.source, e.evidence.carried_by, e.evidence.via])])
+      .toEqual([1, [['row_replace', 'transfer', 'scalar']]]);
+    const K = makeWorld({ contacts: [C2], phones: [donor()] });
+    const { contact_id } = await contactService.createContact(K.db, { fname: 'New', lname: 'Owner', phone: PAT }, { userId: 6 });
+    expect([K.active('contact_phones', PAT).contact_id, K.active('contact_phones', PAT).sms_optout, K.events.map((e) => e.evidence.carried_by)])
+      .toEqual([contact_id, 1, ['transfer']]);
+    expect([A.unhandled, S.unhandled, K.unhandled]).toEqual([[], [], []]);
+  });
+
+  test('email: the donor\'s marketing flag carries the same way', async () => {
+    const W = makeWorld({ contacts: [C1, C2], emails: [{ id: 41, contact_id: 2, email: 'pat@example.com', email_optout: 1, is_primary: 1 }] });
+    const { email } = await emailSvc.createContactEmail(W.db, 1, { email: 'pat@example.com' }, { force: true, createdBy: 6 });
+    expect([email.email_optout, W.events.map((e) => [e.scope, e.source, e.evidence.from_row_id])]).toEqual([1, [['marketing', 'row_replace', 41]]]);
+  });
+});
+
+describe('MAJOR 1 — update_db / insert_db cannot write consent, and realign what they touch', () => {
+  const dbFns = require('../lib/internal_functions/db');
+  test('setting either flag is refused by policy, pointing at the supported path — nothing written', async () => {
+    const W = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT, sms_optout: 1 }], emails: [{ id: 21, contact_id: 1, email: 'a@b.co' }],
+      states: [optedState(PAT)] });
+    const before = JSON.stringify([W.phones, W.emails, W.events]);
+    await expect(dbFns.update_db({ table: 'contact_phones', set: { sms_optout: 0 }, where: [{ column: 'id', value: 11 }] }, W.db))
+      .rejects.toThrow(/update_db: contact_phones\.sms_optout is blocked from writes by policy — consent is not a column automation writes .*contact form/);
+    await expect(dbFns.update_db({ table: 'contact_emails', set_column: 'email_optout', set_value: 1, where_column: 'id', where_value: 21 }, W.db))
+      .rejects.toThrow(/contact_emails\.email_optout is blocked from writes by policy/);
+    await expect(dbFns.insert_db({ table: 'contact_phones', values: { contact_id: 1, phone: SAM, sms_optout: 1 } }, W.db))
+      .rejects.toThrow(/insert_db: contact_phones\.sms_optout is blocked from writes by policy — consent/);
+    await expect(dbFns.insert_db({ table: 'contact_emails', values: { contact_id: 1, email: 'c@d.co', email_optout: 0 } }, W.db))
+      .rejects.toThrow(/insert_db: contact_emails\.email_optout is blocked/);
+    expect(JSON.stringify([W.phones, W.emails, W.events])).toBe(before);
+  });
+
+  test('an inserted row and a revived row take their destination\'s consent (no event); an ended row is left alone', async () => {
+    const W = makeWorld({ contacts: [C1], phones: [{ id: 12, contact_id: 1, phone: SAM, sms_optout: 0, end_date: '2026-01-01' }],
+      states: [optedState(PAT), optedState(SAM)] });
+    const ins = await dbFns.insert_db({ table: 'contact_phones', values: { contact_id: 1, phone: PAT } }, W.db);
+    expect(W.phone(ins.output.insert_id).sms_optout).toBe(1);
+    await dbFns.update_db({ table: 'contact_phones', set: { notes: 'history' }, where: [{ column: 'id', value: 12 }] }, W.db);
+    expect(W.phone(12).sms_optout).toBe(0);                            // still ended: history untouched
+    await dbFns.update_db({ table: 'contact_phones', set: { end_date: null }, where: [{ column: 'id', value: 12 }] }, W.db);
+    expect(W.phone(12).sms_optout).toBe(1);                            // revived → born from the state
+    expect(W.events).toEqual([]);
+    // the row is locked before its state is read (lock order)
+    expect(W.locks.slice(-3)).toEqual(['row:generic', 'row:id', 'state:share']);
+  });
+});
+
+describe('MAJOR 3 — lock order and locking reads (the statements; tests/consentCore.mysql proves the engine behaviour)', () => {
+  test('recordConsent locks the destination\'s ACTIVE row first and re-reads the state FOR UPDATE — never a snapshot read', async () => {
+    const W = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT }] });
+    await optout.recordConsent({ query: W.db.query }, { channel: 'sms', destination: PAT, scope: 'all', action: 'opt_out', source: 'migration', providerEventId: 'm:1' });
+    expect(W.locks).toEqual(['row:active', 'state:update', 'cache:index']);
+    expect(W.seen.indexOf(optout.WRITE_SQL.active.sms)).toBeLessThan(W.seen.indexOf(optout.WRITE_SQL.seed));
+    expect(W.seen).not.toContain(optout.WRITE_SQL.read);
+  });
+
+  test('a new row is written BEFORE its state is read (FOR SHARE); a decided row is locked by id before its state, and never re-locked through the unique key', async () => {
+    const W = makeWorld({ contacts: [C1] });
+    await phoneSvc.createContactPhone(W.db, 1, { phone: PAT, sms_optout: 1 });
+    const ins = W.seen.findIndex((x) => /^INSERT INTO contact_phones /.test(x));
+    expect(ins).toBeGreaterThan(-1);
+    expect(W.seen.indexOf(optout.WRITE_SQL.share)).toBeGreaterThan(ins);
+    expect(W.locks).toEqual(['state:share', 'state:update', 'cache:row']);       // the born row's own event: by row id
+    W.locks.length = 0;
+    await phoneSvc.updateContactPhone(W.db, W.phones[0].id, { sms_optout: 0 }, { consentActor: STAFF6 });
+    expect(W.locks).toEqual(['row:id', 'state:share', 'state:update', 'cache:row']);
+  });
+});
+
+describe('minor 6 — override audits keep the destination', () => {
+  test('overrideAudit lists contact ids AND destinations; overrideLine names a row-less destination', () => {
+    const hits = [{ contact_id: 1, destination: PAT }, { contact_id: null, destination: SAM }];
+    expect(optout.overrideAudit(hits)).toEqual({ acknowledged_optout: [1, null], acknowledged_optout_destinations: [PAT, SAM] });
+    expect(optout.overrideLine(hits)).toBe(`contact 1 (${PAT}), ${SAM} (no active row)`);
+  });
+});
+
+describe('routes — the fix round\'s refusals reach the caller with their status and code', () => {
+  const express = require('express');
+  const jwt = require('jsonwebtoken');
+  const apiKeys = require('../lib/apiKeys');
+  let server; let base; let W;
+  beforeAll(async () => {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.db = { getConnection: async () => { throw new Error('no'); }, withTransaction: (fn) => W.db.withTransaction(fn),
+        query: async (sql, p) => (/^\s*INSERT INTO jwt_api_audit_log/.test(sql) ? [{ insertId: 1 }] : W.db.query(sql, p)) };
+      next();
+    });
+    app.use(require('../routes/api.contactPhones'));
+    app.use(require('../routes/api.contacts'));
+    await new Promise((r) => { server = app.listen(0, '127.0.0.1', r); });
+    base = `http://127.0.0.1:${server.address().port}`;
+  });
+  afterAll(() => new Promise((r) => server.close(r)));
+  afterEach(() => jest.restoreAllMocks());
+  const tok = () => jwt.sign({ sub: '22', username: 'rena', user_auth: 'authorized', roles: [], aud: 'staff' }, process.env.JWT_SECRET);
+  const call = async (method, p, body, headers = { Authorization: `Bearer ${tok()}` }) => {
+    const r = await fetch(`${base}${p}`, { method, headers: { 'Content-Type': 'application/json', ...headers }, body: body && JSON.stringify(body) });
+    return { status: r.status, json: await r.json() };
+  };
+
+  test('PATCH /api/contacts/:id (the contact form): a stale decision is 409 code consent_changed; a staff opt-in is attributed to the user', async () => {
+    W = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT, sms_optout: 0, is_primary: 1 }] });
+    await stopLands(W, PAT);
+    const r = await call('PATCH', '/api/contacts/1', { phones: [{ id: 11, phone: PAT, sms_optout: 1, sms_optout_base: 0 }] });
+    expect([r.status, r.json.code, r.json.consent]).toEqual([409, 'consent_changed', { destination: PAT }]);
+    expect(W.events).toHaveLength(1);
+    const ok = await call('PATCH', '/api/contact-phones/11', { sms_optout: 0, sms_optout_base: 1 });
+    expect(ok.status).toBe(200);
+    expect(W.events[1]).toMatchObject({ action: 'opt_in', actor_user_id: 22, evidence: { row_id: 11, via: 'row_patch' } });
+  });
+
+  test('an API key: PATCH opt-in → 422 opt_in_needs_staff, nothing written; opt-out → 200, evidence names the key', async () => {
+    jest.spyOn(apiKeys, 'lookup').mockResolvedValue({ id: 7, label: 'zapier', scopes: null });
+    W = makeWorld({ contacts: [C1], phones: [{ id: 11, contact_id: 1, phone: PAT, sms_optout: 1, is_primary: 1 }], states: [optedState(PAT)] });
+    const KEY = { 'X-API-Key': 'yck_fake_route_test_key_0000000000' };   // secret-scan: allow
+    const no = await call('PATCH', '/api/contact-phones/11', { sms_optout: 0 }, KEY);
+    expect([no.status, no.json.code]).toEqual([422, 'opt_in_needs_staff']);
+    const agg = await call('PATCH', '/api/contacts/1', { phones: [{ id: 11, phone: PAT, sms_optout: 0 }] }, KEY);
+    expect([agg.status, agg.json.code]).toEqual([422, 'opt_in_needs_staff']);
+    expect([W.events, W.phone(11).sms_optout]).toEqual([[], 1]);
+    W.states.length = 0; W.phone(11).sms_optout = 0;
+    const yes = await call('PATCH', '/api/contact-phones/11', { sms_optout: 1 }, KEY);
+    expect(yes.status).toBe(200);
+    expect(W.events[0]).toMatchObject({ action: 'opt_out', actor_user_id: null, evidence: { row_id: 11, via: 'api_key', key_id: 7, key_label: 'zapier' } });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAJOR 2 — the contact form (the REAL page + the REAL YCForm, in jsdom)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('contact-form.html: every LOADED phone/email row carries the flag it loaded; a 409 consent_changed offers a reload', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { JSDOM, ResourceLoader } = require('jsdom');
+  const ROOT = path.join(__dirname, '..');
+  const SERVED = {
+    '/js/yc-forms.js':         fs.readFileSync(path.join(ROOT, 'public/js/yc-forms.js')),
+    '/js/yc-custom-fields.js': fs.readFileSync(path.join(ROOT, 'public/js/yc-custom-fields.js')),
+  };
+  class Loader extends ResourceLoader {
+    fetch(url) { return Promise.resolve(SERVED[new URL(url).pathname] || Buffer.from('')); }
+  }
+  const DOMS = [];
+  afterEach(() => { DOMS.splice(0).forEach((d) => { try { d.window.close(); } catch (_) {} }); });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const contactRow = (over = {}) => ({
+    contact_id: 5, contact_kind: 'person', contact_fname: 'Pat', contact_lname: 'One', contact_mname: '', contact_pname: '',
+    contact_org_name: '', contact_dob: null, contact_ssn: '', contact_tags: '', contact_notes: '', custom: {},
+    phones: [{ id: 11, phone: PAT, label: 'Mobile', is_primary: 1, sms_optout: 0, mms_capable: 1, verified: 0, notes: '' }],
+    emails: [{ id: 21, email: 'pat@example.com', label: 'Personal', is_primary: 1, email_optout: 1, verified: 0, notes: '' }],
+    addresses: [], ...over,
+  });
+
+  async function boot({ patch, reload } = {}) {
+    const calls = [];
+    const swal = [];
+    const apiSend = async (url, method, body) => {
+      calls.push({ url, method, body: body && JSON.parse(JSON.stringify(body)) });
+      if (method === 'PATCH' && url.startsWith('/api/contacts/5')) return patch(body);
+      if (method === 'GET' && url === '/api/contacts/5') return reload();
+      if (url.startsWith('/api/forms/latest')) return { submitted: null, draft: null };
+      if (url === '/api/field-defs') return { status: 'success', defs: [] };
+      if (url === '/api/contact-role-types') return { status: 'success', role_types: [] };
+      if (url === '/api/contacts/5/roles') return { status: 'success', roles: [] };
+      return { status: 'success' };
+    };
+    const dom = new JSDOM(fs.readFileSync(path.join(ROOT, 'public/forms/contact-form.html'), 'utf8'), {
+      url: 'https://app.4lsg.com/forms/contact-form.html?contact_id=5',
+      runScripts: 'dangerously', resources: new Loader(), pretendToBeVisual: true,
+      beforeParse(w) {
+        w.apiSend = apiSend;                     // window.parent === window here, so this IS `P`
+        w.entityData = { contact: contactRow() };
+        w.firmData = { settings: {}, users: [] };
+        w.Swal = { mixin: () => ({ fire: () => {} }), stopTimer() {}, resumeTimer() {},
+          fire: async (o) => { swal.push(o); return { isConfirmed: true }; } };
+        if (!w.CSS) w.CSS = {};
+        if (!w.CSS.escape) w.CSS.escape = (v) => String(v);
+      },
+    });
+    DOMS.push(dom);
+    const w = dom.window;
+    for (let i = 0; i < 300 && !(w.ycForm && w.ycForm._original && w.ycForm._original.phones); i++) await sleep(10);
+    if (!w.ycForm) throw new Error('contact-form: YCForm never booted');
+    await sleep(30);
+    return { w, calls, swal, patches: () => calls.filter((c) => c.method === 'PATCH').map((c) => c.body) };
+  }
+  const editPhoneLabel = (w, label) => {
+    const sel = w.document.querySelector('#phonesRepeater .yc-repeater-item [name="label"]');
+    sel.value = label;
+    sel.dispatchEvent(new w.Event('change', { bubbles: true }));
+  };
+
+  test('a label edit sends every loaded row with its *_optout_base (the loaded flag); a new row carries none', async () => {
+    const { w, patches } = await boot({ patch: () => ({ status: 'success', data: {} }) });
+    editPhoneLabel(w, 'Work');
+    const emailLabel = w.document.querySelector('#emailsRepeater .yc-repeater-item [name="label"]');
+    emailLabel.value = 'Work';
+    emailLabel.dispatchEvent(new w.Event('change', { bubbles: true }));
+    w.ycForm._addRepeaterItemWithData('phones', { phone: SAM, label: 'Other', sms_optout: false });   // the "+ Add Phone" path
+    await w.ycForm.save();
+    const [body] = patches();
+    expect(body.phones[0]).toMatchObject({ id: '11', label: 'Work', sms_optout_base: 0 });
+    expect(body.emails[0]).toMatchObject({ id: '21', label: 'Work', email_optout_base: 1 });
+    const added = body.phones.filter((x) => !x.id);
+    expect(added).toHaveLength(1);
+    expect('sms_optout_base' in added[0]).toBe(false);
+  });
+
+  test('409 consent_changed: nothing more is sent, the modal says so, and Reload fetches the contact fresh', async () => {
+    const fresh = contactRow({ phones: [{ id: 11, phone: PAT, label: 'Mobile', is_primary: 1, sms_optout: 1, mms_capable: 1, verified: 0, notes: '' }] });
+    const err = Object.assign(new Error('Consent changed'), { status: 409,
+      body: { status: 'error', code: 'consent_changed', message: 'Consent for (313) 555-0001 changed since you opened this contact — reload it.' } });
+    const { w, calls, swal, patches } = await boot({ patch: () => { throw err; },
+      reload: () => ({ contact: fresh, phones: fresh.phones, emails: fresh.emails, addresses: [] }) });
+    editPhoneLabel(w, 'Work');
+    await w.ycForm.save();
+    await sleep(20);
+    expect(patches()).toHaveLength(1);                                   // no force-retry loop
+    expect(swal.map((o) => o.title)).toEqual(['Consent changed']);
+    expect(swal[0].text).toMatch(/^Consent for \(313\) 555-0001 changed since you opened this contact/);
+    expect(calls.some((c) => c.method === 'GET' && c.url === '/api/contacts/5' && /phones/.test(JSON.stringify(c.body)))).toBe(true);
+    expect(w.ycForm._original.phones[0]).toMatchObject({ id: '11', sms_optout: true });   // re-baselined on the fresh flag
   });
 });

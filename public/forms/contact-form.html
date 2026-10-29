@@ -1226,6 +1226,11 @@
 
         // 3. PATCH with 409/400 handling and force-retry loop
         const patchPayload = this._buildPatchPayload();
+        // Consent (YisraMail P1): each phone/email row this form LOADED
+        // carries the opt-out it loaded, so the server applies a flag only
+        // when the user changed it (a resent stale value records nothing) and
+        // refuses a change made against consent that moved since the load.
+        addConsentBase(patchPayload, this._original);
         let patchResp = null;
 
         if (Object.keys(patchPayload).length > 0) {
@@ -1237,6 +1242,15 @@
               patchResp = await P.apiSend(url, 'PATCH', patchPayload);
               break;
             } catch (e) {
+              // Consent moved since this form loaded and the user changed the
+              // flag: the server applied nothing. Offer the reload.
+              if (e.status === 409 && e.body && e.body.code === 'consent_changed') {
+                await showConsentChangedModal(e.body.message);
+                this._showLoading(false);
+                this._saving = false;
+                this._showLastSaved();
+                return;
+              }
               if (e.status === 409 && e.body && Array.isArray(e.body.conflicts) && e.body.conflicts.length) {
                 const accept = await showTransferModal(e.body.conflicts);
                 if (!accept) {
@@ -1505,6 +1519,48 @@
     // visual cues the moment the user dismisses the modal, before they
     // could act on them.
     // ────────────────────────────────────────────────────────────────
+    /**
+     * Consent (YisraMail P1 fix round): stamp every phone / email row the form
+     * LOADED with the opt-out flag it loaded (`sms_optout_base` /
+     * `email_optout_base`, from the repeater's baseline snapshot). The
+     * aggregate PATCH treats a flag as a consent change only when it differs
+     * from its base, and answers 409 consent_changed when the base no longer
+     * matches the current consent. New rows (no id) carry no base.
+     */
+    function addConsentBase(payload, original) {
+      for (const [kind, flag] of [['phones', 'sms_optout'], ['emails', 'email_optout']]) {
+        if (!Array.isArray(payload[kind])) continue;
+        const loaded = new Map(((original && original[kind]) || [])
+          .filter((r) => r && r.id != null && r.id !== '')
+          .map((r) => [String(r.id), r]));
+        for (const row of payload[kind]) {
+          const was = row && row.id != null && row.id !== '' ? loaded.get(String(row.id)) : null;
+          if (was) row[`${flag}_base`] = was[flag] ? 1 : 0;
+        }
+      }
+    }
+
+    /** 409 consent_changed: say so, and offer to reload the contact (discarding the pending edits). */
+    async function showConsentChangedModal(message) {
+      const result = await Swal.fire({
+        icon: 'warning',
+        title: 'Consent changed',
+        text: `${message || 'Consent changed since you opened this contact. Nothing was saved.'} Reloading discards your unsaved edits on this contact.`,
+        showCancelButton: true,
+        confirmButtonText: 'Reload contact',
+        cancelButtonText: 'Keep editing',
+      });
+      if (!result.isConfirmed) return;
+      try {
+        const fresh = await P.apiSend(`/api/contacts/${contactId}`, 'GET', { include: 'phones,emails,addresses' });
+        const flat = { ...fresh.contact, phones: fresh.phones || [], emails: fresh.emails || [], addresses: fresh.addresses || [] };
+        try { if (P.entityData) P.entityData.contact = flat; } catch (_) { /* cross-origin */ }
+        await form.refresh({ liveData: flat, force: true });
+      } catch (err) {
+        form._toast('error', 'Reload failed', (err && err.message) || 'Refresh the page');
+      }
+    }
+
     async function showValidationModal(errors) {
       // 1. Clear any stamps from a prior save attempt.
       document.querySelectorAll('.yc-repeater-item[data-ycp-error]')

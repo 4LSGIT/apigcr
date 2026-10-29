@@ -54,6 +54,16 @@ keeps its opt-out. What each one stops:
   no warning — the law that requires the opt-out (CAN-SPAM) covers commercial
   mail only.
 
+Only a box you actually change counts as a consent decision. Saving the
+contact for some other edit never touches consent, even if the number opted
+out (a STOP, another staff member) after you opened the contact. If you DO
+change a box and the number's or address's consent already moved since you
+opened the contact, the save is refused with **"Consent changed"** and nothing
+is saved: reload the contact, check the box's current state, and make the
+change again if it is still needed. Clearing an opt-out is a staff decision —
+an API integration can set one but never clear one. Automations
+(`update_db` / `insert_db`) cannot write either box at all.
+
 Search reaches into these tables, so looking up an old number still finds the
 contact — including numbers that have been ended.
 
