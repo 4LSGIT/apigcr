@@ -221,7 +221,9 @@ describe('resolverService escape option', () => {
   });
 
   test('an unsupported escape mode fails loudly rather than silently not escaping', async () => {
-    await expect(resolve({ db: noDb, text: '{{trigger_data.name}}', refs, escape: 'html' }))
+    // 'html' became a real mode (campaign email bodies, 2026-10-29) — any
+    // other unknown mode must still throw.
+    await expect(resolve({ db: noDb, text: '{{trigger_data.name}}', refs, escape: 'xml' }))
       .rejects.toThrow(/unsupported escape mode/);
   });
 });

@@ -1028,12 +1028,25 @@ async function previewCampaign() {
     const res = await P.apiSend('/api/campaigns/preview', 'POST', {
       body,
       subject: subject || null,
-      contactId: selectedContacts[0].contact_id
+      contactId: selectedContacts[0].contact_id,
+      type: channel === 'sms' ? 'sms' : 'email'
     });
 
+    // The resolved body is NEVER concatenated into this markup. An SMS body is
+    // text (escaped). An email body is a document: it renders inside a fully
+    // sandboxed iframe (sandbox="" — no scripts, an opaque origin, so nothing
+    // in it can reach the shell or apiSend), and it is handed over through the
+    // srcdoc PROPERTY once the dialog exists. The server HTML-escapes the
+    // substituted values too (campaignService.bodyEscapeFor) — this is the
+    // second wall, for the authored HTML around them.
     let html = '';
     if (res.subject) html += `<p><strong>Subject:</strong> ${esc(res.subject)}</p><hr>`;
-    html += res.body;
+    if (channel === 'sms') {
+      html += `<div style="white-space:pre-wrap;text-align:left;">${esc(res.body)}</div>`;
+    } else {
+      html += '<iframe data-campaign-preview sandbox="" title="Email preview" '
+            + 'style="width:100%;height:420px;border:1px solid var(--border);border-radius:6px;background:#fff;"></iframe>';
+    }
 
     if (res.unresolved?.length) {
       html += `<hr><p style="color:var(--warn);font-size:13px;"><strong>Unresolved placeholders:</strong> ${res.unresolved.map(esc).join(', ')}</p>`;
@@ -1041,7 +1054,13 @@ async function previewCampaign() {
 
     html += `<hr><p class="text-muted" style="font-size:12px;">Preview shown for: ${esc(selectedContacts[0].contact_name || 'Contact #' + selectedContacts[0].contact_id)}</p>`;
 
-    Swal.fire({ title: 'Campaign Preview', html, width: 700, confirmButtonText: 'Close' });
+    Swal.fire({
+      title: 'Campaign Preview', html, width: 700, confirmButtonText: 'Close',
+      didOpen: (popup) => {
+        const frame = popup && popup.querySelector('iframe[data-campaign-preview]');
+        if (frame) frame.srcdoc = String(res.body || '');
+      }
+    });
   } catch (err) {
     Toast.fire({ icon: 'error', title: err.message || 'Preview failed' });
   }

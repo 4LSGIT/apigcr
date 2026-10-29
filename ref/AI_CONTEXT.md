@@ -1191,7 +1191,9 @@ Cancellation is UPDATE (status trail), never DELETE.
 escape:'json')` → `JSON.parse` (both serialized-config sites): each
 substituted value is JSON-escaped, so a resolved quote cannot break the parse
 — which used to run the step with its config entirely unresolved (literal
-`{{…}}` in a client SMS). Other resolver callers pass no escape.
+`{{…}}` in a client SMS). Campaign EMAIL bodies pass `escape:'html'` (preview
+and send — `campaignService.bodyEscapeFor`; subjects and SMS bodies never): a
+substituted value can't become markup. Other resolver callers pass no escape.
 
 ## 8. UNIVERSAL RESOLVER
 

@@ -98,6 +98,7 @@ function htmlToText(html) {
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;|&#x0*27;|&apos;/gi, "'")
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }

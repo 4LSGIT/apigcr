@@ -463,23 +463,45 @@ async function getCampaignResults(db, campaignId) {
 
 
 // ─────────────────────────────────────────────────────────────
+// BODY ESCAPING
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * The resolver escape mode for a campaign body: an email body is an HTML
+ * document, so a substituted value (a contact field — staff- or web-form-
+ * supplied) is HTML-escaped and can never become markup; an SMS body is
+ * plain text and is substituted verbatim. Anything that is not 'sms' is
+ * treated as email (fail closed: escaping text is cosmetic, not escaping
+ * HTML is an injection).
+ */
+function bodyEscapeFor(type) {
+  return type === 'sms' ? null : 'html';
+}
+
+// ─────────────────────────────────────────────────────────────
 // PREVIEW CAMPAIGN
 // ─────────────────────────────────────────────────────────────
 
 /**
  * Resolve placeholders against a sample contact for preview.
  *
+ * An email body is HTML, so its substituted values are HTML-escaped exactly
+ * as executeSend escapes them (the preview shows what will be sent, and a
+ * contact field carrying markup stays text). An SMS body and every subject
+ * are plain text: no escaping — the client renders them as text.
+ *
  * @param {object} db
  * @param {object} opts
  * @param {string} opts.body
  * @param {string} [opts.subject]
  * @param {number} opts.contactId  — sample contact to resolve against
+ * @param {string} [opts.type]     — 'email' (default) | 'sms'
  * @returns {{ body, subject, unresolved }}
  */
-async function previewCampaign(db, { body, subject, contactId }) {
+async function previewCampaign(db, { body, subject, contactId, type = 'email' }) {
   const refs = { contacts: { contact_id: contactId } };
 
-  const resolvedBody = await resolve({ db, text: body, refs });
+  const resolvedBody = await resolve({ db, text: body, refs, escape: bodyEscapeFor(type) });
 
   let resolvedSubject = null;
   if (subject) {
@@ -610,7 +632,9 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
 
     const refs = { contacts: { contact_id: contactId } };
 
-    const resolvedBody = await resolve({ db, text: campaign.body, refs, strict: true });
+    // Email bodies are HTML: substituted values are escaped (bodyEscapeFor).
+    // The subject below is a header, never HTML — resolved unescaped.
+    const resolvedBody = await resolve({ db, text: campaign.body, refs, strict: true, escape: bodyEscapeFor(campaign.type) });
 
     if (resolvedBody.status !== 'success') {
       // Semantic resolver failure — permanent.

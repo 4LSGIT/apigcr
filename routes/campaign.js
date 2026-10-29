@@ -76,14 +76,17 @@ router.get('/api/campaigns/case-types', jwtOrApiKey, async (req, res) => {
 // POST /campaigns/preview — resolve placeholders for one contact
 // ─────────────────────────────────────────────────────────────
 router.post('/api/campaigns/preview', jwtOrApiKey, async (req, res) => {
-  const { body, subject, contactId } = req.body;
+  const { body, subject, contactId, type } = req.body;
 
   if (!body || !contactId) {
     return res.status(400).json({ error: 'body and contactId are required' });
   }
 
   try {
-    const result = await campaignService.previewCampaign(req.db, { body, subject, contactId });
+    // type: 'email' (default — values HTML-escaped) | 'sms' (verbatim text)
+    const result = await campaignService.previewCampaign(req.db, {
+      body, subject, contactId, type: type === 'sms' ? 'sms' : 'email'
+    });
     res.json(result);
   } catch (err) {
     console.error('[POST /campaigns/preview]', err);

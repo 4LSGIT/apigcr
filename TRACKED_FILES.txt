@@ -1170,6 +1170,7 @@ tests/calendarEvents.registry.test.js
 tests/calendarTypeService.test.js
 tests/calendarUi.sync.test.js
 tests/campaignCaseTypeFilter.test.js
+tests/campaignPreviewEscape.test.js
 tests/capabilities.test.js
 tests/captureBeforePublish.test.js
 tests/caseEventService.test.js

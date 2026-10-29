@@ -253,6 +253,8 @@ All resolver modifiers work: `|phone`, `|upper`, `|cap`, `|email_mask`, `|defaul
 
 The preview endpoint (`POST /api/campaigns/preview`) resolves against a sample contact so staff can verify placeholders before sending.
 
+Contact values are always inserted as text. In an email body they are HTML-escaped — a name containing `<` or `&` shows those characters, never markup — both in the preview and in the email that goes out, and the email preview renders inside a sandboxed frame. Subjects and SMS bodies are plain text and are inserted as typed.
+
 ---
 
 ## Frontend (campaign.html)

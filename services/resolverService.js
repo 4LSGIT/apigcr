@@ -362,15 +362,33 @@ function scanExpressionRefs(text) {
 // a backslash or a newline breaks the parse — and the caller's catch then runs
 // the step with its config ENTIRELY unresolved, i.e. a client message full of
 // literal {{...}}. `escape: 'json'` escapes each substituted value for a JSON
-// string context so that cannot happen. Plain-text callers (campaign bodies,
-// portal cards, esign prefill, POST /resolve) pass nothing and are unaffected.
+// string context so that cannot happen. Plain-text callers (SMS campaign
+// bodies, portal cards, esign prefill, POST /resolve) pass nothing and are
+// unaffected; campaign EMAIL bodies pass `escape: 'html'` (below).
 function escapeForJsonString(s) {
   const encoded = JSON.stringify(s);   // '"a\"b"'
   return encoded.slice(1, -1);         //  'a\"b'
 }
 
+// `escape: 'html'` — for callers that substitute into an HTML document (the
+// campaign email body and its preview). A substituted VALUE is data, never
+// markup: a contact name like `<img src=x onerror=…>` (web-form intake,
+// imports) must arrive as text. Escapes the five characters that can open a
+// tag, an entity or an attribute (single quote included — authored HTML may
+// use single-quoted attributes). The authored template around the
+// placeholders is untouched. Applied once, to the final value of each
+// placeholder, so a nested {{…|default:{{…}}}} is never double-escaped.
+function escapeForHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 async function resolve({ db, text, refs = {}, strict = false, escape = null }) {
-  if (escape !== null && escape !== 'json') {
+  if (escape !== null && escape !== 'json' && escape !== 'html') {
     throw new Error(`resolve: unsupported escape mode ${JSON.stringify(escape)}`);
   }
   if (!text || typeof text !== 'string') {
@@ -669,7 +687,9 @@ async function resolve({ db, text, refs = {}, strict = false, escape = null }) {
       unresolved.add(match);
       return null;   // replacePlaceholders keeps the literal {{...}}
     }
-    return escape === 'json' ? escapeForJsonString(resolved) : resolved;
+    if (escape === 'json') return escapeForJsonString(resolved);
+    if (escape === 'html') return escapeForHtml(resolved);
+    return resolved;
   });
 
   const status = unresolved.size === 0
