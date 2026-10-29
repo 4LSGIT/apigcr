@@ -1399,7 +1399,10 @@ Active surfaces with known next steps.
 
 - **Pinned pages on a second public domain (2026-10-21).** `pages.host` is bound to `landing_hosts` (pageService.assertHostAllowed), but the landing branch of `pageHostMiddleware` canonicalizes every GET on a non-first landing host to `landing_hosts[0]` BEFORE the pin lookup, so a page pinned to e.g. `www.4lsg.com` is accepted at write and never served by GET. No live row is affected (all 8 `pages` rows had `host` NULL on 2026-10-21). RULED (Fred, 2026-10-22): refuse non-canonical hosts at write — done in `pageService.assertHostAllowed` (only `landing_hosts[0]` is accepted). Revisit — check pins before canonicalizing — when a second marketing domain is wanted; converges with YCv3 multi-site (`pages.site_id`).
 - **YisraMail direction (review 2026-10-21; Fred: yes, future plan, nothing
-  started).** YisraMail is a bulk **transport** — an email adapter /
+  started).** Full design (consent + unsubscribe for both channels, transport,
+  campaigns v2, builder): `ref/YISRAMAIL_DESIGN.md` — draft under review
+  since 2026-10-29; it supersedes this entry once ratified.
+  YisraMail is a bulk **transport** — an email adapter /
   credential carrying `bulk_ok` (`ref/MAILBOX_SYSTEM_DESIGN.md` §4.2: specified,
   never built) — plus campaign-audience → **sequence enrollment**. It is NOT a
   third flow engine: steps, waits, conditions, holds, dedup and versioned

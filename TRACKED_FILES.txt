@@ -452,6 +452,7 @@ ref/THEME-HANDOFF-v2.md
 ref/TOKEN-MAP.md
 ref/UNIFIED_EVENTS_DESIGN_V0_5.md
 ref/YISRACASE_STORE_AND_BUS_DESIGN_V2.md
+ref/YISRAMAIL_DESIGN.md
 ref/archive/2026-09-04_dbkq_cutover_runbook.md
 ref/archive/2026-09-04_dbkq_workflow_spec.md
 ref/archive/2026-10-17_settings_arc_spec.md

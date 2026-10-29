@@ -35,7 +35,8 @@ Reference material that lives next to the code. Three tiers:
   `COMMS_ARCHIVE_DESIGN.md`, `MAILBOX_SYSTEM_DESIGN.md`,
   `MAILBOX_GMAIL_PARITY.md` + its `.console.js` (living runbook; retires with the
   Apps Script source), `EMAIL_PROVIDER_PLAN.md` (draft), `CHAT_DESIGN.md`
-  (design only), and `AUDIT_TENANCY.md` (the tenancy arc's input inventory).
+  (design only), `YISRAMAIL_DESIGN.md` (draft — consent, bulk email,
+  campaigns v2), and `AUDIT_TENANCY.md` (the tenancy arc's input inventory).
 - `gas.js` — deployed Apps Script source, kept byte-identical to the live
   script. Cite it by FUNCTION name (`services/emailIngestService.js` cites
   `forwardTestTrigger()`), never by line number — the file is re-pasted from the
