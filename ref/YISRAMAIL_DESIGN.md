@@ -1,10 +1,11 @@
 # YisraMail — consent, bulk email & campaigns v2 (DESIGN)
 
-Status: **DRAFT v0.3 — 2026-10-29. Nothing built.** Ruled 2026-10-29 (Fred):
+Status: **DRAFT v0.4 — 2026-10-29. Nothing built.** Ruled 2026-10-29 (Fred):
 D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
 Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
-later. Open: D5 (Fred + SS), D8 (SS), D15–D17 (new from review); D3, D4, D7,
-D10, D12–D14 stand as recommendations until ruled. v0.3 folds in an
+later; D15 no RC push in v1, D16 over-cap operational sends with
+`campaigns.bulk`, D17 bounce tasks for clients only. Open: D5 (Fred + SS), D8
+(SS); D3, D4, D7, D10, D12–D14 stand as recommendations until ruled. v0.3 folds in an
 independent review against code `08f1737` + the live DB (2 blockers, 8 majors,
 11 minors — all addressed below).
 Supersedes the "YisraMail direction" entry in `ref/plans.md` (which now
@@ -132,7 +133,8 @@ CREATE TABLE comm_consent_events (
   action            enum('opt_out','opt_in') NOT NULL,
   source            varchar(32)  NOT NULL,       -- staff | unsub_page | one_click | pref_page | sms_keyword |
                                                  -- sms_review | provider_optout | provider_bounce |
-                                                 -- provider_complaint | import | web_form | migration
+                                                 -- provider_complaint | import | web_form | migration |
+                                                 -- row_replace (a corrected number/address inherits the old one's opt-out)
   provider_event_id varchar(128) NULL,           -- provider message/event id when the source is external
   occurred_at       datetime(3)  NOT NULL,       -- when it happened (provider time when known)
   contact_id        int unsigned NULL,           -- best-effort attribution at the time
@@ -240,6 +242,15 @@ Readers that bypass `optoutService` today:
   (`lib/aiPrompts/assistantPlan.js`, `assistantAnswer.js`,
   `assistantTaskDraftRepair.js`) tell the model "the row's flag is the only
   consent field".
+
+Row lifecycle under (a): a number/address **moved to another contact keeps
+its opt-out** (today the transfer INSERTs the new row with the flag at 0 —
+`contactService._propagatePhone` / `_propagateEmail` collision branches and
+the intake transfer — silently dropping it); a new row's cache column is read
+from the destination's state, never defaulted. A **correction to a different
+number/address** (end-and-replace in `_applyPhonePlan` / `_applyEmailPlan`)
+keeps today's behaviour of carrying the opt-out, recorded as an explicit
+`row_replace` event for the new destination.
 
 Transition (fail closed): during the cache release a destination counts as
 opted out (scope `all`) if EITHER the state table or the active row's flag
@@ -559,6 +570,29 @@ puts consent in a second system, and does nothing for SMS. Use it only as a
 bridge if SS needs a send before C2 lands — and import its unsubscribes into
 the ledger at cutover.
 
+### 5.6 Relation to the mailbox / Migadu arc
+
+Independent — nothing here changes `ref/EMAIL_PROVIDER_PLAN.md` or
+`ref/MAILBOX_SYSTEM_DESIGN.md`, and nothing there changes this. The seams:
+- **Bulk rule.** The provider plan already says any send over ~50 recipients
+  goes through a transactional provider on a subdomain, never the mailbox
+  host (Migadu's terms prohibit mailing people who didn't opt in, and its
+  quotas are account-wide). SES on `news.<domain>` is that provider.
+- **DNS.** The sending subdomain has its own DKIM, MAIL FROM and DMARC; the
+  apex keeps its MX/SPF for the mailbox host (Gmail now, Migadu later).
+  `d=news.4lsg.com` aligns (relaxed) under the 4lsg.com DMARC, so tightening
+  the apex policy during the provider migration doesn't break bulk mail; set
+  the apex `sp=` deliberately when it happens.
+- **Replies.** Reply-To is a hub mailbox, wherever it is hosted.
+- **The provider plan's Microsoft fallback** ("send human mail via SES if
+  Migadu's shared IPs get junked") must never reuse this identity: SES's
+  account-level suppression list is shared by the whole AWS account, so a
+  newsletter complaint would suppress that person's correspondence too. If
+  that fallback is ever used, it gets its own AWS account (or a config set
+  with the suppression override), never the `bulk_ok` row.
+- **Hub budget.** The bulk row is not a mailbox identity (§5.2), so a
+  newsletter never counts against the hub.
+
 ## 6. Campaigns v2 — enhance, don't replace
 
 The engine is sound: frozen audience, one idempotent job per recipient
@@ -629,16 +663,16 @@ with no token, footer or headers.
   reject, don't silently strip), and the C3 spike includes a malicious
   `design_json` (a component with an `onerror` attribute / a script property)
   that must not execute.
-- **Merge values are escaped in HTML bodies.** `resolverService` has no HTML
-  escape mode (only `escape: 'json'`), so a contact name containing markup is
-  inserted raw. Pre-existing: today's campaign preview injects the resolved
-  body through Swal's `html` option (`public/campaign.html` preview), i.e.
-  markup in a contact field would run in a pane that can reach
-  `parent.apiSend` (live: 0 contacts carry `<`/`>` in a name field today;
-  web-form intake and C5 imports widen it). C2 adds `escape: 'html'` and uses
-  it for every HTML body the campaign path renders, and the preview moves
-  into a sandboxed iframe (`srcdoc`, `sandbox` without `allow-scripts` /
-  `allow-same-origin`) in C2, not C3.
+- **Merge values are escaped in HTML bodies — DONE 2026-10-29** (shipped
+  ahead of the arc, separately): `resolverService` gained `escape: 'html'`;
+  `campaignService` uses it for every campaign EMAIL body, preview and send
+  (`bodyEscapeFor` — subjects and SMS bodies stay verbatim); `campaign.html`'s
+  preview renders the email body in a `sandbox=""` iframe fed through the
+  `srcdoc` property and SMS bodies as escaped text
+  (`tests/campaignPreviewEscape.test.js`). Before that fix the resolved body
+  went straight into the shell's Swal `html`, so markup in a contact field
+  could run in a pane that reaches `parent.apiSend`. The marketing path (C2)
+  inherits all of it.
 - Signature append (`include_signature`) is disabled for Designer content (a
   full HTML document can't take a `<br><br>` + signature after `</html>`).
 - Builder pick: §7.
@@ -755,9 +789,28 @@ Full table: `ref/archive/YISRAMAIL_SURVEY_2026-10-29.md`.
 - **Drivers:** transport and events are per-credential drivers (§5.1). A
   provisioning driver (create domain, return DNS records, poll verification)
   is the YC3 onboarding piece; v2 does DNS by hand.
-- **Platform vs BYO sending:** decide at YC3, not now. The criterion the
-  provider pick (D6) must not foreclose: per-tenant isolation (sub-accounts /
-  tenants / servers) and per-tenant domains via API.
+- **Managed services, offered not required (Fred, 2026-10-29).** YC3 may
+  offer tenants hosted mailboxes (Migadu) and hosted bulk sending (SES);
+  any tenant can bring its own provider instead (the driver model, §5.1).
+  What that commits YC to:
+  - **Mailboxes: one Migadu account PER TENANT**, never tenant domains inside
+    one shared account. Migadu's terms make the account holder solely
+    responsible for all mail, quotas are account-wide (one tenant's volume
+    would cap everyone), and a blocked account's domains go on Migadu's
+    permanent blacklist — so one tenant's abuse would take every tenant's
+    domains down. Whether Migadu permits an operator to hold accounts for
+    its customers (agency/reseller terms) is UNVERIFIED — confirm with
+    Migadu before offering it. Provisioning via the Migadu API is the
+    mailbox arc's YC3 driver.
+  - **Bulk: one YC-operated AWS account using SES Tenants** — per-tenant
+    reputation and automatic pause, a per-tenant configuration set and
+    verified sending domain created through the provisioning driver, usage
+    metered per tenant tag for billing. YC carries the AUP relationship, so
+    each tenant gets its own `marketing_send_enabled` kill switch (it lives
+    in the tenant DB) and onboarding includes a consent/compliance
+    attestation; a tenant's SES pause stops only that tenant.
+  - **Separation holds at every scale:** the mailbox host never carries bulk,
+    and the bulk identity never carries correspondence (§5.6).
 - **Builder licensing:** a commercial SDK priced per end user or per tenant
   becomes a per-tenant cost line in YC3 (see the survey); an open-source builder
   has no such line.
@@ -788,7 +841,7 @@ is ruled.
 | T1 | Transport contract | adapter capabilities (`bulk`, `headers`, `tags`, `events`, `batch`); `headers` / `replyTo` / `tags` options through `sendEmailDirect` + `smtp.js` (marketing path only; public `sendEmail` strips them); driver-owned headers (SES `X-SES-*`); SES message id from the SMTP reply; `email_credentials.bulk_ok` + `events_driver`; bulk rows fenced out of `emailFrom`, public `sendEmail` and operational campaigns; DKIM `h=` acceptance test | — |
 | T2 | Events | SES → EventBridge API destination → YisraHook hook (`api_key` auth, `dedup_path` on the event id) → `mail_event_ingest` internal function (added to `CTA_FN_DENYLIST` — engine plumbing) → ledger (bounce/complaint/unsub) + `campaign_results` delivery columns by `result_id` tag; SES suppression-list removal on re-opt-in | T1, P1 |
 | C1 | Campaign hardening | `campaigns.class` / `topic_key`; 50 cap in `createCampaign` + D16 over-cap path; `campaigns.bulk` capability; `bulk_ok` refused for operational; **`marketing_send_enabled` kill switch (`'0'`): marketing refused 422 at create and skipped at send**; per-campaign pump + doorbells; cron per-tick `campaign_send` quota; `paused` status | P1, T1 |
-| C2 | Marketing send path | executeSend marketing branch: scope check, token mint, explicit text part, footer inject/lock + post-render assert, headers/tags, transport, send-start snapshot (MRPC 7.2(b)), `email_log` without body; resolver `escape:'html'` for HTML bodies; sandboxed preview; test send | P1, **P2**, P3, C1, T2 |
+| C2 | Marketing send path | executeSend marketing branch: scope check, token mint, explicit text part, footer inject/lock + post-render assert, headers/tags, transport, send-start snapshot (MRPC 7.2(b)), `email_log` without body; test send (HTML escaping + the sandboxed preview already shipped — §6.3) | P1, **P2**, P3, C1, T2 |
 | C3 | Designs + builder | spike first (§7, incl. a malicious `design_json`); then `email_designs` with server-side validation on save; Designer editor mode (GrapesJS + MJML); merge-tag picker; locked footer block; asset upload via AssetPicker/`apiSend` | C2 (can build in parallel, lands after) |
 | C4 | Segments + reporting | saved segments; campaign stats; complaint-rate alerts; bounce digest | C2 |
 | C5 | Outside-list import | provenance-recording import; hygiene check; first-send warm-up order | G2, C2 |
@@ -826,9 +879,9 @@ C4 S, C5 S, C6 M.
 | D12 | Default marketing send rate | Rec: **60/min** (2k ≈ 33 min), firm setting. | Gentle on a new domain; the pump keeps the queue clear. |
 | D13 | Who may send marketing / over-cap | Rec: new capability **`campaigns.bulk`** (admin role) covering the marketing class AND over-cap operational sends. | Today any staff login can send as any firm address. |
 | D14 | Designate an exclusive SMS revocation method (FCC 26-67, from 2026-11-25)? | Rec: **no, not in v1.** | Requires the disclosure in every text, case texts included; the review queue covers plain-language opt-outs. |
-| D15 | Push YC-captured SMS opt-outs to RingCentral? | Rec: **no push in v1**; read-only reconcile. | A `from:"*"` push blocks every RC line, so staff-acknowledged replies (2026-10-27 override) would fail with 413, and a later START lifts only one pair. YC already refuses automation; the push only protects texts staff send from the RC app directly. Revisit after P2 step 0. |
-| D16 | Operational sends over the 50 cap (e.g. office-closure notice to all active clients, email or SMS)? | Rec: allowed with `campaigns.bulk` + a typed confirmation of the count, audited; still operational (no footer), still consent-checked. | Informational notices to clients are legitimate; the cap exists to stop accidental blasts, not these. |
-| D17 | Who gets the "case email is bouncing" task? | Rec: clients only, to the case's assigned staff member, else the firm default; non-client bounces → campaign stats only. | One task per bounce would flood on a cold import. |
+| D15 | Push YC-captured SMS opt-outs to RingCentral? | **RULED: no push in v1**; read-only reconcile. | A `from:"*"` push blocks every RC line, so staff-acknowledged replies (2026-10-27 override) would fail with 413, and a later START lifts only one pair. YC already refuses automation; the push only protects texts staff send from the RC app directly. Revisit after P2 step 0. |
+| D16 | Operational sends over the 50 cap (e.g. office-closure notice to all active clients, email or SMS)? | **RULED:** allowed with `campaigns.bulk` + a typed confirmation of the count, audited; still operational (no footer), still consent-checked. | Informational notices to clients are legitimate; the cap exists to stop accidental blasts, not these. |
+| D17 | Who gets the "case email is bouncing" task? | **RULED:** clients only, to the case's assigned staff member, else the firm default; non-client bounces → campaign stats only. | One task per bounce would flood on a cold import. |
 
 ## Appendix C — Compliance & provider opt-out facts (fetched 2026-10-29; engineering input, not legal advice)
 
