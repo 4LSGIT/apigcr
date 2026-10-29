@@ -100,7 +100,7 @@ Shell-mode features:
 - **Preset chips** — My open · Overdue · Notices · All open — one-tap common views.
 - **Filters auto-apply** — changing a select re-queries immediately; the query box is debounced.
 - **Source filter** — All / Work only / Notices only. Machine-pushed notices (e-sign received, client uploads, court review, …) carry a robot chip naming their source, so they're distinguishable from human-assigned work at a glance.
-- **Ordering** — within each status group, dated work sorts above undated notices.
+- **Ordering** — by default the work queue: overdue first, then due today, then pending; within each status group dated work sorts above undated notices, and scheduled (not yet started) work below both. **Order By** — or a click on the Status, Title, Due, Assigned To, Assigned By, Linked To or Created header — sorts by that column instead, blanks last; Status sorts by the pill the row shows. The Due header steps through overdue first → soonest due → latest due. Sorting works on the case and contact pages' Tasks tabs too, and Export follows the order on screen.
 - **Aging badge** — overdue rows show how many days overdue (`14d`), so a 2024 straggler no longer looks like yesterday's.
 - **Inline actions** — ✓ Complete (one click, no dialog), ✎ Edit, ✕ Cancel (optional note) directly on the row; Reinstate on cancelled rows; Mark Incomplete on completed ones.
 - **Bulk actions** — select rows with the checkboxes (or select-all) and complete or cancel them in one pass; a partial failure reports exactly which tasks failed.

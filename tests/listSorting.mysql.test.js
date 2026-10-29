@@ -4,7 +4,9 @@
  * DOB orders, the BIRTHDAYS window), caseService.listCases (client name reads
  * the PRIMARY client; every order ends on case_id), GET /api/appts (the
  * 'upcoming' agenda, column sorts, the unchanged default) and
- * eventService.listEvents (the same for events). ORDER BY predicates are the
+ * eventService.listEvents (the same for events), and taskService.listTasks /
+ * GET /api/tasks (the work-queue default, every column sort, the Status
+ * column sorting by the pill it shows). ORDER BY predicates are the
  * thing under test, so they run on MySQL 8.4 with production's sql_mode — a
  * mocked query would only echo the SQL back.
  *
@@ -31,13 +33,14 @@ jest.mock('../lib/auth.jwtOrApiKey', () => (req, res, next) => next());
 const contactService = require('../services/contactService');
 const caseService = require('../services/caseService');
 const eventService = require('../services/eventService');
+const taskService = require('../services/taskService');
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const d = URL_ ? describe : describe.skip;
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
-const TABLES = ['users', 'contacts', 'cases', 'case_relate', 'appts', 'events'];
+const TABLES = ['users', 'contacts', 'cases', 'case_relate', 'appts', 'events', 'tasks'];
 const NOW = Date.parse('2026-10-27T16:00:00Z');   // noon, America/Detroit (EDT)
 
 function dumpBlocks(dumpLines, table) {
@@ -127,8 +130,28 @@ d('list sorts on a real engine', () => {
       (205, 'Deadline', 'Objection',       '2026-10-20', NULL,       1, 'Scheduled'),
       (206, 'Hearing',  'Status',          '2026-08-01', '09:00:00', 0, 'Scheduled')`);
 
+    // Tasks around "today" (Oct 27). Stored task_status is what the sweep last
+    // wrote: 302 is due today but still stored Pending (sweep not run yet),
+    // 305 is past due but deferred (starts Nov 1) — due BEFORE 301, so only the
+    // default's deferred-sinks clause keeps it under 301. 303/308 tie on due, title
+    // AND created — task_id breaks it. 303 is from the Automation pseudo-user
+    // (task_from 0, no users row). 302 links a case with no case_number_full,
+    // 307 one whose case_number_full is '' (free text) — both read case_number.
+    await q(`INSERT INTO tasks (task_id, task_status, task_from, task_to, task_date, task_start, task_due,
+        task_link, task_link_type, task_link_id, task_title, task_desc) VALUES
+      (301, 'Overdue',   6,  22, '2026-10-01 09:00:00', NULL,         '2026-10-20', '', 'contact', '1',        'Bravo',   ''),
+      (302, 'Pending',   22, 6,  '2026-10-02 09:00:00', NULL,         '2026-10-27', '', 'case',    'CASEAAAA', 'alpha',   ''),
+      (303, 'Pending',   0,  6,  '2026-10-03 09:00:00', NULL,         '2026-11-05', '', NULL,      NULL,       'Charlie', ''),
+      (304, 'Pending',   6,  22, '2026-10-04 09:00:00', NULL,         NULL,         '', 'appt',    '101',      '',        ''),
+      (305, 'Overdue',   6,  6,  '2026-10-05 09:00:00', '2026-11-01', '2026-10-15', '', NULL,      NULL,       'Delta',   ''),
+      (306, 'Completed', 6,  22, '2026-10-06 09:00:00', NULL,         '2026-10-01', '', 'contact', '3',        'Echo',    ''),
+      (307, 'Deleted',   22, 6,  '2026-10-07 09:00:00', NULL,         '2026-10-10', '', 'case',    'CASEBBBB', 'Foxtrot', ''),
+      (308, 'Pending',   22, 6,  '2026-10-03 09:00:00', NULL,         '2026-11-05', '', NULL,      NULL,       'Charlie', '')`);
+    await q(`UPDATE cases SET case_number_full = '' WHERE case_id = 'CASEBBBB'`);
+
     const app = express();
     app.use((req, res, next) => { req.db = pool; next(); });
+    app.use(require('../routes/api.tasks'));
     app.use(require('../routes/api.appts'));
     app.use(require('../routes/api.contacts'));
     server = http.createServer(app);
@@ -277,6 +300,70 @@ d('list sorts on a real engine', () => {
       expect(await order({ sort: 'asc', sort_by: 'title' })).toEqual([202, 205, 201, 206, 203, 204]);
       expect(await order({ sort: 'desc', sort_by: 'title' })).toEqual([203, 206, 201, 205, 202, 204]);
       expect(await order({ sort: 'asc', sort_by: 'type' })).toEqual([205, 204, 201, 206, 202, 203]);
+    });
+  });
+
+  describe('tasks', () => {
+    const order = async (o) => ids((await taskService.listTasks(pool, { status: 'All', limit: 50, ...o })).data, 'id');
+    const DEFAULT = [301, 305, 302, 308, 303, 304, 306, 307];
+
+    test('no sort_by: the work queue, unchanged — stored status group, deferred sinks, undated last', async () => {
+      expect(await order({})).toEqual(DEFAULT);
+      expect(await order({ sort_by: 'priority' })).toEqual(DEFAULT);
+    });
+
+    test('an unlisted sort_by is the default, never interpolated', async () => {
+      expect(await order({ sort_by: 'task_desc;DROP', sort_dir: 'DESC; x' })).toEqual(DEFAULT);
+    });
+
+    test('pages never repeat or skip a row', async () => {
+      const pages = [];
+      for (let off = 0; off < 8; off += 3) pages.push(...await order({ limit: 3, offset: off }));
+      expect(pages).toEqual(DEFAULT);
+      const byTitle = [];
+      for (let off = 0; off < 8; off += 3) byTitle.push(...await order({ sort_by: 'title', limit: 3, offset: off }));
+      expect(byTitle).toEqual(await order({ sort_by: 'title' }));
+    });
+
+    test('status sorts by the PILL (derived from the dates), not the stored value', async () => {
+      // 302: stored Pending, due today → Due Today. 305: stored Overdue, deferred → Scheduled.
+      expect(await order({ sort_by: 'status' })).toEqual([301, 302, 308, 303, 304, 305, 306, 307]);
+      expect(await order({ sort_by: 'status', sort_dir: 'DESC' })).toEqual([307, 306, 305, 304, 308, 303, 302, 301]);
+    });
+
+    test('"today" is the FIRM day: 01:00 UTC on Oct 28 is still Oct 27 in Detroit', async () => {
+      Settings.now = () => Date.parse('2026-10-28T01:00:00Z');
+      expect(await order({ sort_by: 'status' })).toEqual([301, 302, 308, 303, 304, 305, 306, 307]);
+    });
+
+    test('due: undated last both ways', async () => {
+      expect(await order({ sort_by: 'due' })).toEqual([306, 307, 305, 301, 302, 303, 308, 304]);
+      expect(await order({ sort_by: 'due', sort_dir: 'DESC' })).toEqual([308, 303, 302, 301, 305, 307, 306, 304]);
+    });
+
+    test('text columns: case-insensitive, blanks last both ways, ties by due', async () => {
+      expect(await order({ sort_by: 'title' })).toEqual([302, 301, 308, 303, 305, 306, 307, 304]);
+      expect(await order({ sort_by: 'title', sort_dir: 'DESC' })).toEqual([307, 306, 305, 308, 303, 301, 302, 304]);
+      expect(await order({ sort_by: 'to' })).toEqual([307, 305, 302, 308, 303, 306, 301, 304]);
+      // 303 is from Automation (no users row): last both ways.
+      expect(await order({ sort_by: 'by' })).toEqual([306, 305, 301, 304, 307, 302, 308, 303]);
+      expect(await order({ sort_by: 'by', sort_dir: 'DESC' })).toEqual([307, 302, 308, 306, 305, 301, 304, 303]);
+    });
+
+    test('linked to: the title the column shows — a case without case_number_full (NULL or \'\') reads case_number', async () => {
+      expect(await order({ sort_by: 'link' })).toEqual([302, 307, 301, 306, 305, 308, 303, 304]);
+    });
+
+    test('created both ways, task_id breaking the tie', async () => {
+      expect(await order({ sort_by: 'created' })).toEqual([301, 302, 303, 308, 304, 305, 306, 307]);
+      expect(await order({ sort_by: 'created', sort_dir: 'DESC' })).toEqual([307, 306, 305, 304, 308, 303, 302, 301]);
+    });
+
+    test('the route passes sort_by / sort_dir through', async () => {
+      const r = await get('/api/tasks?status=All&limit=50&sort_by=due&sort_dir=DESC');
+      expect(r.status).toBe(200);
+      expect(ids(r.body.data, 'id')).toEqual([308, 303, 302, 301, 305, 307, 306, 304]);
+      expect(ids((await get('/api/tasks?status=All&limit=50')).body.data, 'id')).toEqual(DEFAULT);
     });
   });
 });

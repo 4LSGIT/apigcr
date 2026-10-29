@@ -21,6 +21,8 @@
  * body for the theme observer) plus the handful of globals tasks.html gets
  * from /scripts.js (E, Toast, Swal, getTabPref/setTabPref, and the filter
  * bar's ycFiltersToggle/ycFiltersSync) and /js/ycPager.js (YcPager). Everything else is the real file, inline script and all.
+ * The header sort (sort / sortSelect / sortMarkStrip) is NOT stubbed: those
+ * run from the real scripts.js source.
  *
  *   npx jest tests/tasksUi.boot.test.js
  */
@@ -33,6 +35,22 @@ const { JSDOM } = require('jsdom');
 
 const ROOT = path.join(__dirname, '..');
 const HTML = fs.readFileSync(path.join(ROOT, 'public/tasks.html'), 'utf8');
+const SCRIPTS = fs.readFileSync(path.join(ROOT, 'public/scripts.js'), 'utf8');
+
+/** A top-level declaration's source from scripts.js (balanced braces). */
+function declSrc(src, head) {
+  const at = src.indexOf(head);
+  if (at < 0 || src.indexOf(head, at + 1) >= 0) throw new Error(`${head}: not exactly one`);
+  if (!head.startsWith('function')) return src.slice(at, src.indexOf('\n', at));
+  let depth = 0;
+  for (let j = src.indexOf('{', src.indexOf(')', at)); j < src.length; j++) {
+    if (src[j] === '{') depth++;
+    else if (src[j] === '}' && --depth === 0) return src.slice(at, j + 1);
+  }
+  throw new Error(`${head}: unbalanced`);
+}
+const SORT_SRC = ['const sortMarkStrip =', 'function sort(', 'function sortSelect(']
+  .map((h) => declSrc(SCRIPTS, h)).join('\n');
 
 // Close every window so jsdom timers (waitForShell's 100ms poll, the query
 // debounce) don't hold jest open.
@@ -111,6 +129,13 @@ async function boot({ search = '', tasks = [mkTask()], warmShell = true } = {}) 
   window.ycFiltersToggle = () => {};
   window.ycFiltersSync = () => {};
   window.Swal = { fire: async () => ({ isConfirmed: false }), close: () => {}, showLoading: () => {}, update: () => {} };
+  // The header sort, from the real scripts.js. jsdom has no innerText (sort()
+  // reads and writes it); in a browser it replaces the element's children
+  // with text exactly as this textContent stand-in does.
+  Object.defineProperty(window.HTMLElement.prototype, 'innerText', {
+    get() { return this.textContent; }, set(v) { this.textContent = v; }, configurable: true,
+  });
+  window.eval(SORT_SRC + '\nwindow.sort = sort; window.sortSelect = sortSelect;');
 
   // Body markup + the inline script, exactly as shipped.
   window.document.body.innerHTML = HTML
@@ -368,4 +393,83 @@ test('no inline on* handler references an undefined function', async () => {
     }
   }
   expect(missing).toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// Column sorting — scripts.js sort() / sortSelect() on this page
+// ─────────────────────────────────────────────────────────────
+
+describe('column sorting', () => {
+  const lastList = (calls) => calls.filter(c => c.url === '/api/tasks' && c.params && 'limit' in c.params).pop().params;
+  const settle = (w) => new Promise(r => w.setTimeout(r, 20));
+  // Dispatch on the rendered header: an inline handler resolves names against
+  // the element and document first (CLAUDE.md), which a direct call skips.
+  const click = (w, sel) => w.document.querySelector(sel).dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  const th = (key) => `#tasksTable th[onclick="sort(this, '${key}')"]`;
+
+  test('the default is the work queue: no sort params, as before', async () => {
+    const { window, calls } = await boot();
+    expect(window.document.getElementById('fSort').value).toBe('priority');
+    const p = lastList(calls);
+    expect(p).not.toHaveProperty('sort_by');
+    expect(p).not.toHaveProperty('sort_dir');
+  });
+
+  test('a header click sorts by it; a second click flips it', async () => {
+    const { window, calls } = await boot();
+    click(window, th('title'));
+    await settle(window);
+    expect(lastList(calls)).toMatchObject({ sort_by: 'title', sort_dir: 'ASC', offset: 0 });
+    expect(window.document.querySelector(th('title')).textContent).toBe('Title ↑');
+    expect(window.document.querySelector(th('due')).textContent).toBe('Due');
+    click(window, th('title'));
+    await settle(window);
+    expect(lastList(calls)).toMatchObject({ sort_by: 'title', sort_dir: 'DESC' });
+    expect(window.document.querySelector(th('title')).textContent).toBe('Title ↓');
+  });
+
+  test('Due cycles overdue-first → soonest → latest → overdue-first', async () => {
+    const { window, calls } = await boot();
+    const due = () => window.document.querySelector(th('due')).textContent;
+    expect(due()).toBe('Due ⇅');
+    click(window, th('due')); await settle(window);
+    expect(lastList(calls)).toMatchObject({ sort_by: 'due', sort_dir: 'ASC' });
+    expect(due()).toBe('Due ↑');
+    click(window, th('due')); await settle(window);
+    expect(lastList(calls)).toMatchObject({ sort_by: 'due', sort_dir: 'DESC' });
+    click(window, th('due')); await settle(window);
+    expect(lastList(calls)).not.toHaveProperty('sort_by');
+    expect(due()).toBe('Due ⇅');
+  });
+
+  test('sorting never touches the select-all checkbox header', async () => {
+    const { window } = await boot();
+    click(window, th('created')); await settle(window);
+    window.E('fSort').value = 'to';
+    window.sortSelect(window.E('fSort'));
+    await settle(window);
+    expect(window.document.getElementById('tkSelAll')).not.toBeNull();
+    expect(window.document.querySelector(th('to')).textContent).toBe('Assigned To ↑');
+    expect(window.document.querySelector(th('created')).textContent).toBe('Created');
+  });
+
+  test('the Order By selects send what the headers send, in entity mode too', async () => {
+    const { window, calls } = await boot({ search: '?link_type=case&link_id=5' });
+    window.E('fSort').value = 'link';
+    window.E('fSortDir').value = 'DESC';
+    window.sortSelect(window.E('fSortDir'));
+    await settle(window);
+    expect(lastList(calls)).toMatchObject({ link_type: 'case', link_id: '5', sort_by: 'link', sort_dir: 'DESC' });
+  });
+
+  test('every sortable header is wired to a value the Order By select offers', async () => {
+    const { window } = await boot();
+    const offered = [...window.E('fSort').options].map(o => o.value);
+    const heads = [...window.document.querySelectorAll('#tasksTable th[onclick]')];
+    const keys = heads.map(h => h.getAttribute('onclick').split("'")[1]);
+    const ups = heads.map(h => h.dataset.sortUpcoming).filter(Boolean);
+    expect(keys).toEqual(['status', 'title', 'due', 'to', 'by', 'link', 'created']);
+    expect(ups).toEqual(['priority']);
+    for (const k of [...keys, ...ups]) expect({ k, offered: offered.includes(k) }).toEqual({ k, offered: true });
+  });
 });
