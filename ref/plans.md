@@ -1262,10 +1262,32 @@ objects AND stored definitions). Readers and writers to move first:
   header says so). Before it is ever run again, call
   `optoutService.syncRowCaches` on the revived ids in the same transaction —
   or retire the script (its one-off job ran before P1).
-- **`comm_consent_events` joins the `lib/sqlGuard` SENSITIVE tier** once P2 /
-  P3 start storing an IP, a user agent or a raw SMS body in `evidence` (today
-  it holds row ids, a draft id, an API key id). Same slice that starts
-  writing them.
+- **`comm_consent_events` is in the `lib/sqlGuard` SENSITIVE tier** since P3
+  (2026-10-30) started storing a recipient's IP / user agent / note in
+  `evidence` (`comm_consent_state` stays readable).
+
+## YisraMail P3 (email unsubscribe surface, 2026-10-30) — deferred
+
+- **A `mailto:` List-Unsubscribe alternate** (`<mailto:unsubscribe+<token>@…>`
+  beside the https URI) needs an inbound handler that reads the token from
+  the address and records `one_click`-equivalent consent; v1 ships HTTPS only
+  (design §4.5).
+- **A per-TOKEN limiter on the one-click POST** if abuse ever shows. Never a
+  per-IP one: the POSTs come from a few mail-provider IPs and a 429 drops an
+  unsubscribe. The call is idempotent on state today, so a flood only costs
+  a token-row lock and a read per request.
+- **`comm_unsub_tokens` retention: never, today.** CAN-SPAM needs ≥ 30 days;
+  the ledger's `evidence.token` points back at the row. A purge would keep
+  rows a ledger event names.
+- **Malformed one-click bodies hit the global parsers first.** `server.js`
+  mounts `express.json` / `express.urlencoded` before every route, so a POST
+  to `/u/:token` that DECLARES JSON or urlencoded with a malformed body, or an
+  unsupported charset, gets 400 / 415 before `routes/unsubActions.js` runs
+  (verified 2026-10-30; RFC 8058 senders post urlencoded / multipart UTF-8,
+  which pass). Fix in `server.js`: skip the two global parsers for
+  `/^\/u\/[^/]+$/` POSTs (the handler ignores the body anyway).
+- **Topic-level consent on the contact page** (only `marketing` shows, as the
+  row's "No marketing email" flag) — P4's badges.
 
 ## From the contact-intake safety slices (2026-10-27) — deferred
 

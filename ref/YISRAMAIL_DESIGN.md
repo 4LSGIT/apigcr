@@ -1,7 +1,8 @@
 # YisraMail — consent, bulk email & campaigns v2 (DESIGN)
 
 Status: **DRAFT v0.5 — 2026-10-29. P1 (consent core) built — §4.4 "As built";
-nothing else built.** Ruled 2026-10-29 (Fred):
+P3 (email unsubscribe surface) built — §4.5 "As built"; nothing else built.**
+Ruled 2026-10-29 (Fred):
 D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
 Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
 later; D15 no RC push in v1, D16 over-cap operational sends with
@@ -83,6 +84,8 @@ Fred's planning numbers hold against the data: a monthly newsletter of
 **≤ 5k per send, ≤ 10k/month**, and a single-day burst of the whole list.
 
 ## 3. Current state (verified 2026-10-29 against main `1e64d4e` + live DB; re-verified by the review against `08f1737`)
+
+The pre-build snapshot. What P1 and P3 changed since is in §4.4 and §4.5 "As built".
 
 | Area | As built | Gap for bulk/marketing |
 |---|---|---|
@@ -192,6 +195,9 @@ CREATE TABLE comm_unsub_tokens (
   topic_key    varchar(40)  NOT NULL,
   campaign_id  int NULL,
   contact_id   int unsigned NULL,
+  send_ref     varchar(64)  NULL,              -- campaign_results id / provider message id passed at
+                                               -- mint; copied onto the consent event (§6.5 reports
+                                               -- unsubscribes from the ledger by send_ref)
   created_at   datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   used_at      datetime NULL                   -- first use; the link keeps working after
 );
@@ -423,10 +429,13 @@ its read rule (one service, automation refuses, staff warn) stands.
     contact (MRPC 7.2(d)), the 11 U.S.C. §528 debt-relief-agency statement
     (bankruptcy ads, incl. electronic messages — attorney to confirm
     wording), and an "advertisement" identification unless the topic's
-    consent is affirmative (CAN-SPAM (a)(5)). Values come from new resolver
-    pseudo-tables in the `trigger_data` style (`{{send.unsubscribe_url}}`,
-    `{{send.preferences_url}}`, `{{firm.postal_address}}`,
-    `{{firm.compliance_footer}}` — in-memory, no SQL). In Designer content
+    consent is affirmative (CAN-SPAM (a)(5)). The footer is a **block** built
+    by `lib/complianceFooter.js`, not a resolver placeholder: campaign email
+    bodies resolve with `escape:'html'` (`campaignService.bodyEscapeFor`), which
+    would escape its markup. Its scalar values are resolver pseudo-tables in
+    the `trigger_data` style (`{{send.unsubscribe_url}}`,
+    `{{send.preferences_url}}`, `{{firm.postal_address}}` … — in-memory, no
+    SQL) for a template that wants to place them itself. In Designer content
     the footer is a **locked block** the editor can't delete; in Rich Text /
     HTML content it is injected **before `</body>`** (or appended when there
     is no `</body>`) — never after `</html>`.
@@ -479,6 +488,81 @@ its read rule (one service, automation refuses, staff warn) stands.
   for anything beyond marketing.
 - Replies saying "remove me" land in the reply-to mailbox (YC hub); staff
   unsubscribe via the contact page (source `staff`).
+
+**As built (P3).** Nothing mints a token until C2 wires `executeSend`; the
+surface is live and smoke-tested ahead of it (gate G1).
+- **Table** `comm_unsub_tokens` as in §4.2 (with `send_ref`), created by
+  `scripts/yisramailP3Migrate.js` (CHECK / `--apply`: verifies every column,
+  the keys and — in a rolled-back transaction on the engine — that two tokens
+  differing only in case are two rows).
+- **Substrate** `services/unsubService.js`: `mintUnsubToken(conn, …)` (C2's,
+  on the caller's connection; the topic must exist, be an email topic —
+  `optoutService.assertScope`, the check `recordConsent` runs — and be
+  ACTIVE; collision retry), `urlFor` / `preferencesUrlFor` (the landing
+  origin, `firmConfig.publicUrl()`; preferences = the same page's `#prefs`),
+  `lookupToken` (read only, `lib/token.PUBLIC_TOKEN_RE` gate first),
+  `oneClick`, `applyPage`. Every write goes through `recordConsent` inside
+  `withTransaction(retries: 1)`.
+- **Sources:** `one_click` (`POST /u/:token`, scope = the token's topic,
+  D4), `unsub_page` (the page's "Unsubscribe from <topic>" → the topic;
+  "Stop all marketing email" → `marketing`), `pref_page` (the checkboxes).
+  Evidence: `token`, `via` (`rfc8058` | `unsub_page`), `ip`, `user_agent`,
+  `campaign_id`; `send_ref` and `contact_id` are copied from the token onto
+  the event.
+- **Idempotency is on STATE:** an event is recorded only for a scope whose
+  requested state differs from the current one — a second one-click writes
+  nothing; a one-click after a page opt-in writes again. `used_at` = the
+  first POST only.
+- **Locks:** the token row `FOR UPDATE` first (serializes requests on one
+  token); the current state is then read with a PLAIN read, so the
+  transaction's snapshot is taken after that lock — and no state lock is
+  taken ahead of `recordConsent`'s contact-row lock (which would invert §4.4's
+  lock order); scopes are written marketing first, then topics by key. Held to
+  the engine (`tests/unsubService.mysql.test.js`): a same-token race records
+  one event; cross-token races for one address, with and without a contact
+  row, never deadlock.
+- **Re-subscribing after "stop all":** ticking a topic opts `marketing` back
+  in AND opts out every unticked topic that would otherwise resume with it.
+- **A token whose topic row was deleted:** the one-click falls back to scope
+  `marketing` (evidence `topic_missing`) — an unsubscribe is never thrown
+  away. A retired (inactive) topic still records its own scope.
+- **No oracle:** an unknown token gets the neutral page (200) and a one-click
+  on it is 200 empty; a bogus topic key is 422 for unknown and known tokens
+  alike (validated before the token is read). An infrastructure failure on
+  the one-click is a 500 — an unsubscribe that did not record must not read
+  as done.
+- **The free-text note** (≤ 1000 characters; longer is kept to 1000, never
+  refused) rides on the request's first event (`evidence.note`) and becomes
+  ONE staff task after the commit — from 0, `source 'consent'`, linked to the
+  token's contact, the full text also in the task's created-log
+  `consent_note` — for the firm setting `consent_task_user_id` (an active
+  user; Config → Firm → Marketing email & consent; P2's stranded-client task
+  reads it too). Unset → an IT warning once per UTC day
+  (`consent_task_unassigned`), the event flagged `evidence.note_unassigned`; a
+  note that changed nothing has no event, so it gets a warning of its own
+  carrying the text.
+- **The footer** `lib/complianceFooter.buildComplianceFooter({ unsubscribeUrl,
+  preferencesUrl, topic })` → `{ html, text }`: ad label (opt_out topics
+  only), why + unsubscribe URL (an `href` AND visible) + manage preferences,
+  firm name · address · phone, responsible attorney, the §528 statement;
+  inline styles, no tables, every value escaped. Throws on a missing firm
+  name, postal address or attorney name, or a non-http(s) URL. Settings
+  `marketing_ad_label` (blank = "Advertisement") and
+  `marketing_debt_relief_statement` (blank = the statutory sentence; SS
+  confirms the wording, P0).
+- **Resolver:** `PSEUDO_TABLES` = `trigger_data`, `send`, `firm`. `firm.*`
+  (name, postal_address, phone, attorney_name, debt_relief_statement,
+  ad_label) is computed from `firmConfig` unless the caller passes `refs.firm`
+  (C2's send-start snapshot, MRPC 7.2(b)); `send.*` is caller-supplied only.
+  `scanExpressionRefs` is unchanged: it still reports `send.*` / `firm.*` as
+  table refs, so the whitelist validators built on it (e-sign expressions,
+  portal cards, Casey's confirmations) keep refusing them.
+- **Body parsing:** `server.js`'s global JSON / urlencoded parsers run before
+  every route, so a one-click POST that DECLARES JSON or urlencoded but
+  carries a malformed body, or an unsupported charset, is refused by the
+  parser (400 / 415) before the route runs. RFC 8058 senders post
+  urlencoded or multipart UTF-8, which pass; closing the gap is a
+  `server.js` change (`ref/plans.md`).
 
 ### 4.6 SMS opt-out
 
@@ -1041,7 +1125,7 @@ is ruled for that list (ruled 2026-10-30 for SS's own lead lists).
 | P0 | Decisions + accounts (no code) | open decisions ruled; SES account + production-access request (marketing use); sending subdomain DNS (DKIM, custom MAIL FROM, DMARC p=none); Google Postmaster Tools for the domain; SS legal review of the footer (§528 wording, responsible attorney, ad label) and of D5; brand/from/reply-to chosen (D8) | — |
 | P1 | Consent core | `comm_topics` / `comm_consent_events` / `comm_consent_state`; `optoutService` scopes + `recordConsent(conn, …)` (guarded upsert); hit shape kept; EVERY writer and bypassing reader of the row flags moved (§4.4 list); dual-read/dual-write transition; migration run before AND after the backend deploy; yc-sync MATCHERS for consent writes; `optoutFake` + test worlds; real-MySQL twin tests for the scope predicates and the race guard | — |
 | P2 | Inbound SMS opt-out | **step 0:** RC consent-API permission/role/rate-group check + live STOP/START test on one RC and one Quo line; keyword handler after the dedup precheck (also on the backfill path); RC 413 failures + read-only nightly consent reconcile → ledger; Quo REVOKE/OPT OUT confirmation job (gate exemption); client-stranded staff task; free-text review task; wf17/wf18 `phone_log` pin test + per-provider inbound liveness alert | P1 |
-| P3 | Email unsubscribe surface | `comm_unsub_tokens`; `/u/:token` GET page + one-click POST + prefs POST on the landing origin (all three `pageLanding` enumerations, test-locked; no-store / noindex / no-referrer; no per-IP limit on the one-click POST); `{{send.*}}` / `{{firm.*}}` resolver pseudo-tables | P1 |
+| P3 | Email unsubscribe surface — **built** (§4.5 "As built") | `comm_unsub_tokens` (+ `send_ref`) via `scripts/yisramailP3Migrate.js`; `services/unsubService.js` (mint for C2, lookup, one-click, page form); `/u/:token` GET page + one-click POST + prefs POST on the landing origin (all three `pageLanding` enumerations, test-locked; no-store / noindex / no-referrer; no per-IP limit on the one-click POST); `{{send.*}}` / `{{firm.*}}` resolver pseudo-tables; `lib/complianceFooter.js` (the footer block C2 injects); settings `consent_task_user_id`, `marketing_ad_label`, `marketing_debt_relief_statement` | P1 |
 | P4 | Staff consent UI | badges + history on contact rows; compose counts; SU suppression import/export | P1 |
 | T1 | Transport contract | adapter capabilities (`bulk`, `headers`, `tags`, `events`, `batch`); `headers` / `replyTo` / `tags` options through `sendEmailDirect` + `smtp.js` (marketing path only; public `sendEmail` strips them); driver-owned headers (SES `X-SES-*`); SES message id from the SMTP reply; `email_credentials.bulk_ok` + `events_driver`; bulk rows fenced out of `emailFrom`, public `sendEmail` and operational campaigns; DKIM `h=` acceptance test | — |
 | T2 | Events | SES → EventBridge API destination (+ SQS DLQ and a tested replay procedure) → YisraHook hook (`api_key` auth, `dedup_path` on the event id) → `mail_event_ingest` internal function (added to `CTA_FN_DENYLIST` — engine plumbing) → ledger (bounce/complaint/unsub) + `campaign_results` delivery columns by `result_id` tag + the per-transport complaint/bounce tally (§6.5); SES suppression-list removal on re-opt-in | T1, P1 |

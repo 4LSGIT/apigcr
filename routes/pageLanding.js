@@ -257,6 +257,9 @@ router.post('/p/:slug', async (req, res) => {
 //   /api/m/:token/{cancel,reschedule} (POST)
 //   /v/:slug (GET)               — video landing pages (routes/videoLanding.js)
 //   /api/v/:slug/{track,cta-click} (POST) — the page's own beacons
+//   /t/, /d/, /c/ action links   — see their blocks below
+//   /u/:token (GET/POST), /u/:token/prefs (POST) — email unsubscribe
+//                                  (routes/unsubActions.js, YisraMail P3)
 //   /theme.css, /css/yc-forms.css, /js/yc-forms.js, /favicon.ico (GET)
 // EVERYTHING ELSE — /login, the shell, every staff/API route, every other
 // static file — gets the deadPage treatment (firm-site redirect / 404). If a
@@ -399,6 +402,20 @@ const C_ROUTE_RE      = /^\/c\/[A-Za-z0-9_-]{10,40}$/;
 const C_VALUE_RE      = /^\/c\/[A-Za-z0-9_-]{10,40}\/[A-Za-z0-9_-]{1,64}$/;
 const C_POST_RE       = /^\/c\/[A-Za-z0-9_-]{10,40}\/respond$/;
 
+// ── Email unsubscribe — 2026-10-30 (YisraMail P3, ref/YISRAMAIL_DESIGN.md §4.5) ─
+// routes/unsubActions.js (/u/): the page (GET), the RFC 8058 one-click POST
+// on the SAME path, and the page's form POST. Bearer token in the PATH, so
+// all three are in isCredentialedPath. isMigratedPath carries U_ROUTE_RE only
+// and only ever sees GET/HEAD (its gate) — the one-click POST must NEVER meet
+// a 302: RFC 8058 forbids redirects, and a POST missing from landingAllowed
+// would meet deadPage's 303 instead (test-locked both ways). Order in
+// landingAllowed: U_PREFS_RE before U_ROUTE_RE — today '/u/<t>/prefs' cannot
+// match U_ROUTE_RE (one segment after the token), but keeping the
+// specific-before-general order of /d/ and /c/ means a widened U_ROUTE_RE can
+// never shadow the form POST.
+const U_ROUTE_RE      = /^\/u\/[A-Za-z0-9_-]{10,40}$/;          // GET page + one-click POST
+const U_PREFS_RE      = /^\/u\/[A-Za-z0-9_-]{10,40}\/prefs$/;   // page form POST
+
 /**
  * Paths that carry a bearer credential — keep them out of indexes.
  *
@@ -451,7 +468,10 @@ function isCredentialedPath(p) {
     // CTA links (2026-10-07): bearer token in the path, same class as /d/.
     C_ROUTE_RE.test(p) ||
     C_VALUE_RE.test(p) ||
-    C_POST_RE.test(p)
+    C_POST_RE.test(p) ||
+    // Email unsubscribe (2026-10-30): bearer token in the path.
+    U_ROUTE_RE.test(p) ||
+    U_PREFS_RE.test(p)
   );
 }
 
@@ -522,6 +542,10 @@ function landingAllowed(req) {
   if (C_POST_RE.test(p))               return m === 'POST';   // BEFORE C_VALUE_RE
   if (C_ROUTE_RE.test(p))              return isRead;
   if (C_VALUE_RE.test(p))              return isRead;
+  // Email unsubscribe (2026-10-30). The page GET and the RFC 8058 one-click
+  // POST share a path; the form POST is tested first (see the block above).
+  if (U_PREFS_RE.test(p))              return m === 'POST';   // BEFORE U_ROUTE_RE
+  if (U_ROUTE_RE.test(p))              return isRead || m === 'POST';
   // Shared static assets the allowlisted pages load. theme.css is a HARD
   // dependency of yc-forms.css, not a nicety: the density/colour arc
   // tokenised that sheet, so with theme.css missing every var() in it is
@@ -583,6 +607,10 @@ function isMigratedPath(req) {
   // excluded by construction (GET/HEAD gate), as for /d/.
   if (C_ROUTE_RE.test(p)) return true;
   if (C_VALUE_RE.test(p)) return true;
+  // Unsubscribe page (2026-10-30): the GET moves; both POSTs are excluded by
+  // construction (GET/HEAD gate) — the one-click POST answers in place, 200,
+  // on whichever host it reaches (RFC 8058: never a redirect).
+  if (U_ROUTE_RE.test(p)) return true;
   return false;
 }
 

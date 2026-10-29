@@ -72,7 +72,7 @@ describe('lib/sqlGuard — two tiers', () => {
     expect(SECRET_TABLES).toEqual(['app_settings', 'email_ingest_sources']);
     expect(SENSITIVE_TABLES).toEqual([
       'jwt_api_audit_log', 'ai_calls', 'comms_transcripts', 'comms_no_transcribe', 'comms_summary_guides', 'admin_audit_log', 'readonly_query_log',
-      'assistant_chats', 'assistant_chat_messages',
+      'assistant_chats', 'assistant_chat_messages', 'comm_consent_events',
     ]);
   });
 

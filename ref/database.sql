@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-29T20:03:34.514Z
+-- Generated: 2026-10-29T23:48:19.967Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:9daf0c4836094c364a6232bda59638d4
+-- Fingerprint: sha256:aa81123057b8308a7d4a90a089633c30
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -937,6 +937,25 @@ CREATE TABLE `comm_topics` (
   `active` tinyint(1) NOT NULL DEFAULT '1' COMMENT '0 = retired: a marketing send naming it is blocked for every destination (fail closed)',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='YisraMail marketing topics (config-as-data). Read only through services/optoutService.js';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `comm_unsub_tokens`
+--
+
+DROP TABLE IF EXISTS `comm_unsub_tokens`;
+CREATE TABLE `comm_unsub_tokens` (
+  `token` char(22) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'lib/token.js base62; the bearer in /u/<token> (landing origin). Never expires (CAN-SPAM: works >= 30 days after the send; kept forever)',
+  `channel` enum('email') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'email' COMMENT 'email only: SMS opt-out is a keyword (P2), never a link',
+  `destination` varchar(254) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'normalized address (contactEmailService.normalizeEmail) — the consent subject every /u/ action records against',
+  `topic_key` varchar(40) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'comm_topics.topic_key of the send; the one-click POST opts out of THIS (D4). A topic deleted since mint falls back to scope marketing',
+  `campaign_id` int DEFAULT NULL COMMENT 'campaigns.id of the send that minted it (NULL: test/smoke mints)',
+  `contact_id` int unsigned DEFAULT NULL COMMENT 'best-effort attribution at mint; consent belongs to the destination, not the contact',
+  `send_ref` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'campaign_results id / provider message id passed at mint; copied onto the consent event (comm_consent_events.send_ref)',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'UTC mint time',
+  `used_at` datetime DEFAULT NULL COMMENT 'UTC first POST (one-click or page form); the link keeps working after'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Per-recipient email unsubscribe capability (one per marketing send). Minted only by services/unsubService.mintUnsubToken; every consent change it carries goes through optoutService.recordConsent';
 
 -- --------------------------------------------------------
 
@@ -4529,6 +4548,14 @@ ALTER TABLE `comm_consent_state`
 --
 ALTER TABLE `comm_topics`
   ADD PRIMARY KEY (`topic_key`);
+
+--
+-- Indexes for table `comm_unsub_tokens`
+--
+ALTER TABLE `comm_unsub_tokens`
+  ADD PRIMARY KEY (`token`),
+  ADD KEY `ix_dest` (`destination`),
+  ADD KEY `ix_campaign` (`campaign_id`);
 
 --
 -- Indexes for table `comms_eval_items`

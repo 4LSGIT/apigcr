@@ -240,6 +240,28 @@ body. Governing migrations in `ref/migrations/`.*
   has null `contact_id` / `row_id`. Exempt by design: the portal login PIN. Migration:
   `scripts/yisramailP1MigrateConsent.js`. Manual: 01-YisraCase-overview/02-contacts.md,
   03-YisraFlow/08-error-policies.md.
+  **Email unsubscribe (P3, 10-30 — design §4.5 "As built"):** one
+  `comm_unsub_tokens` row per marketing send (minted by C2 through
+  `services/unsubService.mintUnsubToken(conn, …)` — nothing mints before
+  C2), a bearer for ONE address's MARKETING consent only (D18: no control
+  stops case mail; recordConsent refuses an email `all`). Three public routes,
+  `routes/unsubActions.js`, landing origin, sessionless: `GET /u/:token` (the
+  page — never mutates), `POST /u/:token` (RFC 8058 one-click: any content
+  type, body ignored, 200 EMPTY, never a redirect, NO per-IP limiter — a 429
+  would drop a mail provider's unsubscribe), `POST /u/:token/prefs` (the form;
+  10/min/IP; the GET 30/min/IP). Sources `one_click` (the token's topic, D4),
+  `unsub_page` (topic / "stop all" = `marketing`), `pref_page` (checkboxes —
+  ticking a topic after "stop all" opts `marketing` back in). Idempotent on
+  STATE (a scope is written only when its state changes); tokens never
+  expire; `used_at` = first POST. No oracle: unknown token → neutral page /
+  200 empty; bogus topic → 422 for any token. Locks: token `FOR UPDATE`, then
+  a PLAIN state read, then recordConsent's own order. Every response:
+  no-store, noindex, `Referrer-Policy: no-referrer`. The free-text note → one
+  post-commit task for firm setting `consent_task_user_id` (unset → daily IT
+  warning; the note stays in `evidence.note`). The marketing footer is a
+  BLOCK (`lib/complianceFooter.js`, throws on a hole), not a placeholder;
+  its scalars are resolver pseudo-tables (§8). Migration:
+  `scripts/yisramailP3Migrate.js`. Manual: 06-Client-Facing/07-email-unsubscribe.md.
 - **Casey reads email/phone ingest rules (A20.0/A20.1, 10-26):** the P12
   kinds take `email_ingest_rule_id` / `phone_ingest_rule_id` (definition,
   references), `email_ingest_execution_id` / `phone_ingest_execution_id` or a
@@ -1097,6 +1119,13 @@ cannot repaint a later run. Execution remains in the top shell. Operator view: m
   `scripts/auditLogCredHeaderScrub.js`. Keep new logging/capture sites on this
   side of the line; a new credential header whose name doesn't say so joins the
   regex's exact names and the test's list.
+- *Public bearer-link surfaces are ENUMERATED on the landing origin:* `/t/`,
+  `/d/`, `/c/` and `/u/` (unsubscribe) — like `/m/`, `/f/`, `/book/` — sit in
+  all three sets of `routes/pageLanding.js`: `landingAllowed` (method-aware;
+  a POST missing from it meets `deadPage`'s 303), `isCredentialedPath`
+  (noindex) and `isMigratedPath` (their HTML GETs only — a POST never meets a
+  302; `/u/`'s RFC 8058 one-click must not). A new public route joins all
+  three with a `tests/pageLanding.originsep.test.js` block in the same slice.
 - *No authored-executable MIME on the app origin:* operator-authored bytes
   never execute on app.4lsg.com. Authored page HTML serves only on
   registered landing hosts — enforced in code: pageService refuses any
@@ -1241,6 +1270,12 @@ substituted value can't become markup. Other resolver callers pass no escape.
   transient infra; `status:'failed'` = permanent semantic.
 - `POST /resolve` always HTTP 200 — check body.
 Filters: `|date:fmt`, `|phone`, `|upper`, chained `|default:`.
+Pseudo-tables (`PSEUDO_TABLES`, no SQL, dot-paths): `trigger_data.*` and
+`send.*` from `refs.<name>` only; `firm.*` (name, postal_address, phone,
+attorney_name, debt_relief_statement, ad_label) from `refs.firm` when given,
+else `lib/complianceFooter.firmValues()` (firmConfig, in memory). Unset →
+unresolved, `|default:` fills. `scanExpressionRefs` still reports `send` /
+`firm` as table refs, so whitelist validators built on it refuse them.
 
 ## 9. CALENDAR SERVICE
 
@@ -1905,8 +1940,9 @@ named at mint. A miss is a 403 whose body names `missingScope`.
 `SECRET_TABLES` (`app_settings`, `email_ingest_sources`) — refused to every
 key (400). `SENSITIVE_TABLES` (`jwt_api_audit_log`, `ai_calls`,
 `comms_transcripts`, `comms_no_transcribe`, `comms_summary_guides`,
-`admin_audit_log`, `readonly_query_log`, and Ask Casey's `assistant_chats` /
-`assistant_chat_messages`) — a 403 naming `sql.ro.sensitive` unless the key
+`admin_audit_log`, `readonly_query_log`, Ask Casey's `assistant_chats` /
+`assistant_chat_messages`, and the consent ledger `comm_consent_events` — its
+`evidence` holds recipients' IPs / user agents / notes since YisraMail P3) — a 403 naming `sql.ro.sensitive` unless the key
 holds it. The report-SQL validator (reports preview, Casey's `sql.read`)
 refuses both tiers outright (its deny word-scan, lib/reportSchema/validator). The `ai_spend` VIEW (ai_calls minus `error` / `request_excerpt` /
 `response`; not in `ref/database.sql` — schemaDump dumps base tables only, its

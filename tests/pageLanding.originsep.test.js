@@ -170,6 +170,11 @@ beforeAll((done) => {
   app.get('/c/:token',                  (req, res) => res.type('html').send('CTAPAGE'));
   app.get('/c/:token/:value',           (req, res) => res.type('html').send('CTACONFIRM'));
   app.post('/c/:token/respond',         (req, res) => res.json({ probe: 'CRESPOND' }));
+  // routes/unsubActions.js stand-ins (2026-10-30, YisraMail P3). The one-click
+  // stand-in answers like the real route: 200, empty, no Location.
+  app.get('/u/:token',                  (req, res) => res.type('html').send('UNSUBPAGE'));
+  app.post('/u/:token',                 (req, res) => res.status(200).end());
+  app.post('/u/:token/prefs',           (req, res) => res.type('html').send('UNSUBPREFS'));
   app.get('/api/cta',                   (req, res) => res.json({ probe: 'CTALIST' }));
   app.post('/api/cta',                  (req, res) => res.json({ probe: 'CTAMINT' }));
   app.post('/api/videos/upload-asset',  (req, res) => res.json({ probe: 'VIDEOUPLOAD' }));
@@ -1072,6 +1077,92 @@ describe('CTA links on the landing host', () => {
 
   test('a too-short token, or a three-segment path, is not allowlisted', async () => {
     for (const p of ['/c/short', `/c/${TOK}/spam/extra`]) {
+      const res = await landing(p);
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe(FIRM);
+    }
+  });
+});
+
+describe('email unsubscribe (/u/) on the landing host', () => {
+  const TOK = 'Ab3dEfGh1jKlMn0pQr5tUv';   // 22-char base62 — the real mint shape
+  const RFC = { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'List-Unsubscribe=One-Click' };
+
+  test('GET /u/:token serves on the landing host, noindex', async () => {
+    const res = await landing(`/u/${TOK}`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('UNSUBPAGE');
+    expect(res.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+  });
+
+  test('LOCK: the RFC 8058 one-click POST serves on the landing host — 200, NO Location (never a redirect)', async () => {
+    const res = await landing(`/u/${TOK}`, RFC);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+    expect(await res.text()).toBe('');
+    expect(res.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+  });
+
+  test('LOCK: a multipart one-click POST passes the host gate too', async () => {
+    const fd = new FormData();
+    fd.append('List-Unsubscribe', 'One-Click');
+    const res = await landing(`/u/${TOK}`, { method: 'POST', body: fd });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  test('LOCK: the page form POST /u/:token/prefs serves on the landing host, noindex', async () => {
+    const res = await landing(`/u/${TOK}/prefs`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'action=all' });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('UNSUBPREFS');
+    expect(res.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+  });
+
+  test('LOCK: the predicate itself — exactly GET/HEAD/POST on the page path, POST only on /prefs', () => {
+    const allowed = (path, method) => pageLanding._landingAllowed({ path, method });
+    expect(allowed(`/u/${TOK}`, 'GET')).toBe(true);
+    expect(allowed(`/u/${TOK}`, 'HEAD')).toBe(true);
+    expect(allowed(`/u/${TOK}`, 'POST')).toBe(true);
+    expect(allowed(`/u/${TOK}/prefs`, 'POST')).toBe(true);
+    expect(allowed(`/u/${TOK}/prefs`, 'GET')).toBe(false);
+    expect(allowed(`/u/${TOK}`, 'PUT')).toBe(false);
+    expect(allowed(`/u/${TOK}`, 'DELETE')).toBe(false);
+    expect(allowed(`/u/${TOK}/other`, 'POST')).toBe(false);
+    expect(allowed('/u/short', 'GET')).toBe(false);
+    expect(allowed('/u', 'GET')).toBe(false);
+  });
+
+  test('LOCK: app host 302s the GET to the landing host, path intact', async () => {
+    const res = await appHost(`/u/${TOK}`);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe(`https://4lsg.com/u/${TOK}`);
+  });
+
+  test('LOCK: neither POST ever meets a redirect on the app host (RFC 8058 forbids it)', async () => {
+    const one = await appHost(`/u/${TOK}`, RFC);
+    expect(one.status).toBe(200);
+    expect(one.headers.get('location')).toBeNull();
+    const form = await appHost(`/u/${TOK}/prefs`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'action=all' });
+    expect(form.status).toBe(200);
+    expect(await form.text()).toBe('UNSUBPREFS');
+  });
+
+  test('a SECONDARY landing host serves the one-click POST in place (canonicalizing moves GETs only)', async () => {
+    process.env.LANDING_HOSTS = '4lsg.com,www.4lsg.com';
+    try {
+      const res = await onHost('www.4lsg.com', `/u/${TOK}`, RFC);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('location')).toBeNull();
+      const page = await onHost('www.4lsg.com', `/u/${TOK}`);
+      expect(page.status).toBe(302);
+      expect(page.headers.get('location')).toBe(`https://4lsg.com/u/${TOK}`);
+    } finally {
+      process.env.LANDING_HOSTS = '4lsg.com';
+    }
+  });
+
+  test('a too-short token, or a three-segment path, is not allowlisted (dead end)', async () => {
+    for (const p of ['/u/short', `/u/${TOK}/prefs/extra`]) {
       const res = await landing(p);
       expect(res.status).toBe(302);
       expect(res.headers.get('location')).toBe(FIRM);

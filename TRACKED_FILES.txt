@@ -42,6 +42,7 @@ lib/caseRoleResolver.js
 lib/caseyAutomationAllowlist.js
 lib/checklistStatus.js
 lib/codeStepGate.js
+lib/complianceFooter.js
 lib/contactMirror.js
 lib/courtCitation.js
 lib/courtResolve.js
@@ -219,6 +220,7 @@ manual/06-Client-Facing/03-self-service-links.md
 manual/06-Client-Facing/04-booking-and-scheduling.md
 manual/06-Client-Facing/05-document-requests.md
 manual/06-Client-Facing/06-landing-pages.md
+manual/06-Client-Facing/07-email-unsubscribe.md
 manual/06-Client-Facing/README.md
 manual/07-ESign/01-overview.md
 manual/07-ESign/02-templates.md
@@ -627,6 +629,7 @@ ref/migrations/2026-10-28_shared_values.sql
 ref/migrations/2026-10-28_shared_values_history.sql
 ref/migrations/2026-10-29_lead_list_drop_pt_raw_table.sql
 ref/migrations/2026-10-29_yisramail_p1_consent_core.sql
+ref/migrations/2026-10-30_yisramail_p3_unsub_tokens.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -793,6 +796,7 @@ routes/sequences.js
 routes/taskActions.js
 routes/test_wf_advance.js
 routes/unplacehold.js
+routes/unsubActions.js
 routes/videoLanding.js
 routes/workflows.js
 scripts/Courtapprovetest.js
@@ -968,6 +972,7 @@ scripts/updateRoutes.js
 scripts/verifyTrusteeReadthrough.js
 scripts/verify_strictstring_live.js
 scripts/yisramailP1MigrateConsent.js
+scripts/yisramailP3Migrate.js
 server.js
 services/adapters/email/gmail.js
 services/adapters/email/pabbly.js
@@ -1111,6 +1116,7 @@ services/templateRenderService.js
 services/timezoneService.js
 services/triggerService.js
 services/uiConfigService.js
+services/unsubService.js
 services/uploadTargetService.js
 services/videoService.js
 services/workflowExecutionService.js
@@ -1258,6 +1264,7 @@ tests/commsTranscribe.migration.mysql.test.js
 tests/commsTranscribe.mysql.test.js
 tests/commsTranscribeAudio.test.js
 tests/commsTranscribeVendor.test.js
+tests/complianceFooter.test.js
 tests/configListsTab.test.js
 tests/configReadOnly.test.js
 tests/configShellAccess.test.js
@@ -1451,6 +1458,7 @@ tests/helpers/shellHtml.js
 tests/helpers/toolShell.js
 tests/helpers/u6aEventsDb.js
 tests/helpers/uiConfigStore.js
+tests/helpers/unsubWorld.js
 tests/hookAsyncReceiverS0.test.js
 tests/hookDedupPath.routes.test.js
 tests/hookDedupS3.test.js
@@ -1641,6 +1649,7 @@ tests/reportsDeepLink.test.js
 tests/requestIdempotency.mysql.test.js
 tests/requestIdempotency.test.js
 tests/requirementService.test.js
+tests/resolverPseudoTables.test.js
 tests/safeCodeMode.test.js
 tests/scheduleResume.accel.test.js
 tests/scheduledJobs.codeGate.test.js
@@ -1746,6 +1755,8 @@ tests/unifiedEventsU8.approaching.test.js
 tests/unifiedEventsU9.eventform.test.js
 tests/unifiedEventsU9.range.test.js
 tests/unifiedEventsU9.shell.test.js
+tests/unsubActions.routes.test.js
+tests/unsubService.mysql.test.js
 tests/updateContactFnDelegation.test.js
 tests/usersFreebusyOwnership.test.js
 tests/validateCaseTrustee.test.js

@@ -802,9 +802,10 @@ module.exports = {
   syncRowCaches,
   overrideAudit,
   overrideLine,
-  // helpers (tests)
+  // helpers (tests; normalizeDestination + assertScope are also unsubService's — P3)
   phoneKeys,
   emailKeys,
   normalizeDestination,
+  assertScope,
   refusalMessage,
 };

@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-29T23:32:38.244Z_  
-_821 routes total — DELETE: 68, GET: 342, PATCH: 59, POST: 311, PUT: 38, _ALL: 3_
+_Generated 2026-10-29T23:48:13.245Z_  
+_824 routes total — DELETE: 68, GET: 343, PATCH: 59, POST: 313, PUT: 38, _ALL: 3_
 
 ## Global middleware chain
 
@@ -1048,6 +1048,14 @@ _821 routes total — DELETE: 68, GET: 342, PATCH: 59, POST: 311, PUT: 38, _ALL:
 |--------|------|-------------|---------|
 | GET | `/tool/:key` | — | — |
 
+## /u
+
+| Method | Path | Middlewares | Handler |
+|--------|------|-------------|---------|
+| GET | `/u/:token([A-Za-z0-9_\-]{10,40})` | — | — |
+| POST | `/u/:token([A-Za-z0-9_\-]{10,40})` | — | — |
+| POST | `/u/:token([A-Za-z0-9_\-]{10,40})/prefs` | — | — |
+
 ## /unplacehold
 
 | Method | Path | Middlewares | Handler |
@@ -1096,4 +1104,4 @@ _821 routes total — DELETE: 68, GET: 342, PATCH: 59, POST: 311, PUT: 38, _ALL:
 
 ---
 
-_821 routes total — DELETE: 68, GET: 342, PATCH: 59, POST: 311, PUT: 38, _ALL: 3_
+_824 routes total — DELETE: 68, GET: 343, PATCH: 59, POST: 313, PUT: 38, _ALL: 3_

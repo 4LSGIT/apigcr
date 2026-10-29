@@ -18,7 +18,7 @@ Every setting has exactly one place where it is changed:
 
 | Where | What |
 |---|---|
-| Config → **Firm** | Firm identity, senders, notifications & routing, client self-service & booking, Dropbox filing, E-Sign, and the firm's automation variables |
+| Config → **Firm** | Firm identity, senders, notifications & routing, client self-service & booking, Dropbox filing, E-Sign, marketing email & consent, and the firm's automation variables |
 | Portal Manager → **Settings** | The client portal's switch, branding, senders and assignees — see [the client portal](../06-Client-Facing/02-client-portal.md) |
 | Config → **Lists** | The lead sources offered on a case, and the legacy event-type list |
 | Config → **Types & Subtypes** | Case types (with usage checks and pipeline repointing) |
@@ -46,7 +46,16 @@ first.
 | **Client self-service & booking** | What a client may do from their manage link (cancel, reschedule, rebook), the cutoff and horizon, the texts sent, and the Shabbos booking window |
 | **Dropbox filing** | The case folder templates and the "unsorted" folders for uploads, forms, generated and signed documents |
 | **E-Sign** | Test mode, the default reminder sequence, and the credit balance and its low-credit alert |
+| **Marketing email & consent** | Who gets consent follow-up tasks (unsubscribe-page notes, opted-out clients), and the marketing footer's advertisement label and debt-relief-agency statement — see [Email unsubscribe](../06-Client-Facing/07-email-unsubscribe.md) |
 | **Automation variables** | Settings the firm made for its own workflows (below) |
+
+**Marketing email & consent** holds three settings: *Consent follow-up
+assignee* (a staff picker — unset, or a user who is no longer active, means
+no task is created and IT is warned once a day), *Advertisement label*
+(blank = "Advertisement") and *Debt-relief agency statement* (blank = the
+statutory wording; the firm's attorney confirms it before the first
+marketing send). The marketing footer also reads the firm's name, mailing
+address, phone and signing attorney from **Firm identity**.
 
 **Spaces are kept exactly.** Dropbox folder names carry leading spaces on
 purpose (they set the sort order), so nothing here trims what you type.

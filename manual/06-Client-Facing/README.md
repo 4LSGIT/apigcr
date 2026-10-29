@@ -14,6 +14,7 @@ a client who only needs to move one appointment should never have to log in:
 | See everything on their case | client portal | yes — PIN |
 | Read a marketing / intake page | landing page | no |
 | Sign something | [e-signature](../07-ESign/) | no — the envelope link is the credential |
+| Stop our marketing email | unsubscribe link (`4lsg.com/u/…`) or their mail app's Unsubscribe button | no — the link is the credential |
 
 ## Contents
 
@@ -25,6 +26,7 @@ a client who only needs to move one appointment should never have to log in:
 | 4 | [04-booking-and-scheduling.md](04-booking-and-scheduling.md) | Public booking pages (`/book/<slug>`), the availability engine and its five busy sources, provider modes, the anti-abuse defences and the double-booking lock. |
 | 5 | [05-document-requests.md](05-document-requests.md) | Asking a client for documents and receiving them back — no attachments, no logins, nothing landing on our servers. |
 | 6 | [06-landing-pages.md](06-landing-pages.md) | Hosted marketing/intake pages, optionally on a custom domain, with form submissions wired into a YisraHook. (More → Landing Pages) |
+| 7 | [07-email-unsubscribe.md](07-email-unsubscribe.md) | The unsubscribe page (`4lsg.com/u/…`) and the mail app's one-click Unsubscribe — what each control records, the "Anything else?" note task, and why case email is never affected. |
 
 ---
 

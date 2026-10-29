@@ -22,11 +22,23 @@
 //   {{table.column|default:fallback text}}
 //   {{table.column|default:{{other.column}}|upper}}
 //
-// Pseudo-table `trigger_data`:
-//   {{trigger_data.key}}         — resolves from refs.trigger_data (in-memory, no SQL)
+// Pseudo-tables (PSEUDO_TABLES — in-memory, no SQL, dot-paths supported):
+//   {{trigger_data.key}}         — from refs.trigger_data = <the object>
 //   {{trigger_data.a.b.c}}       — dot-path supported for nested objects
-//   Caller must pass refs.trigger_data = <the object>. Missing / unset keys
-//   leave the placeholder unresolved (soft-fail), same as missing columns.
+//   {{send.unsubscribe_url}}     — from refs.send, CALLER-SUPPLIED only (YisraMail
+//                                  C2 passes { unsubscribe_url, preferences_url,
+//                                  topic_key, topic_label } for a marketing send)
+//   {{firm.postal_address}}      — from refs.firm when the caller passes it (a
+//                                  send-start snapshot), else computed now from
+//                                  lib/firmConfig via lib/complianceFooter.firmValues:
+//                                  name, postal_address, phone, attorney_name,
+//                                  debt_relief_statement, ad_label
+//   Missing / unset keys leave the placeholder unresolved (soft-fail), same as
+//   missing columns — a |default: fills them. The compliance FOOTER is not a
+//   placeholder (escape:'html' would escape its markup): lib/complianceFooter.js.
+//   scanExpressionRefs still reports send.* / firm.* as table refs, so the
+//   whitelist validators built on it (esign expressions, portal cards, Casey's
+//   appointment confirmations) keep refusing them — exactly as before.
 //
 // Modifiers (applied left-to-right):
 //   default:VALUE or default:{{table.col}}
@@ -77,6 +89,9 @@ const BLOCKED_COLUMNS = {
   cases: ['custom'],
   contacts: ['custom'],
 };
+
+// Resolved from refs.<name> by the same dot-path walk, never by SQL (header).
+const PSEUDO_TABLES = Object.freeze(['trigger_data', 'send', 'firm']);
 
 // ─────────────────────────────────────────────────────────────
 // Placeholder scanner — depth-counting character scanner
@@ -281,7 +296,7 @@ function applyTextTransform(value, mod) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Nested path accessor — used for trigger_data pseudo-table.
+// Nested path accessor — used for the pseudo-tables (trigger_data, send, firm).
 // Mirrors sequenceEngine.checkCondition's dot-path lookup so that
 // {{trigger_data.a.b.c}} and paramMap: { x: "trigger_data.a.b.c" }
 // walk an object the same way.
@@ -400,11 +415,11 @@ async function resolve({ db, text, refs = {}, strict = false, escape = null }) {
   const tableColumns = new Map(); // Map<table, Set<column>>
   const scanErrors   = [];
 
-  // hasTriggerData: tracks whether any {{trigger_data.X}} placeholder was seen.
-  // trigger_data is a pseudo-table — resolved from refs.trigger_data at resolve
-  // time, not via SQL. We still need to know it's present so the "no SQL tables
-  // referenced → short-circuit" gate doesn't bypass the resolve pass.
-  let hasTriggerData = false;
+  // hasPseudo: tracks whether any pseudo-table placeholder ({{trigger_data.X}},
+  // {{send.X}}, {{firm.X}}) was seen. Those are resolved from refs at resolve
+  // time, not via SQL. We still need to know one is present so the "no SQL
+  // tables referenced → short-circuit" gate doesn't bypass the resolve pass.
+  let hasPseudo = false;
 
   // unknownTables: tables referenced in placeholders but not in ALLOWED_TABLES.
   // These are treated as soft unresolved (not hard errors) so the rest can still resolve.
@@ -422,13 +437,13 @@ async function resolve({ db, text, refs = {}, strict = false, escape = null }) {
     const tableName  = entityField.slice(0, dotIdx).trim();
     const columnName = entityField.slice(dotIdx + 1).trim();
 
-    // trigger_data is a pseudo-table — resolved from refs.trigger_data directly,
-    // no SQL lookup. Don't add to tableColumns (which drives SELECT), but DO
-    // recurse into default: modifiers so that a construct like
+    // A pseudo-table is resolved from refs.<name> directly, no SQL lookup.
+    // Don't add to tableColumns (which drives SELECT), but DO recurse into
+    // default: modifiers so that a construct like
     //   {{trigger_data.amount|default:{{contacts.contact_fname}}}}
     // still picks up the real-table ref for the default branch.
-    if (tableName === 'trigger_data') {
-      hasTriggerData = true;
+    if (PSEUDO_TABLES.includes(tableName)) {
+      hasPseudo = true;
       for (const mod of parts.slice(1)) {
         if (mod.startsWith('default:')) {
           const inner = mod.slice(8).trim();
@@ -475,7 +490,7 @@ async function resolve({ db, text, refs = {}, strict = false, escape = null }) {
     return { status: 'failed', text, unresolved: [], errors: scanErrors, errorType: 'security' };
   }
 
-  if (tableColumns.size === 0 && !hasTriggerData) {
+  if (tableColumns.size === 0 && !hasPseudo) {
     return { status: 'success', text, unresolved: [] };
   }
 
@@ -511,12 +526,12 @@ async function resolve({ db, text, refs = {}, strict = false, escape = null }) {
 
   const resolvableTables = [...tableColumns.keys()].filter(isUsableRef);
 
-  // ── Step 3 & 4: Build + execute SQL (skipped entirely when only trigger_data is referenced) ──
+  // ── Step 3 & 4: Build + execute SQL (skipped entirely when only pseudo-tables are referenced) ──
   //
   // `row` stays null when there are no real-table placeholders; resolveContent's
-  // trigger_data branch doesn't need a row, and the non-trigger_data branch
-  // guards against null before touching row[aliasKey]. Skipping the query here
-  // also avoids a meaningless "no rows" early return in trigger_data-only cases.
+  // pseudo-table branch doesn't need a row, and the real-table branch guards
+  // against null before touching row[aliasKey]. Skipping the query here also
+  // avoids a meaningless "no rows" early return in pseudo-table-only cases.
 
   let row = null;
 
@@ -609,6 +624,15 @@ async function resolve({ db, text, refs = {}, strict = false, escape = null }) {
 
   const unresolved = new Set();
 
+  // The pseudo-tables' sources. `firm` is computed once per resolve, and only
+  // when a {{firm.*}} placeholder actually reaches here without refs.firm.
+  let firmComputed;
+  const pseudoSource = (name) => {
+    if (name !== 'firm' || refs.firm != null) return refs[name];
+    if (firmComputed === undefined) firmComputed = require('../lib/complianceFooter').firmValues();
+    return firmComputed;
+  };
+
   const resolveContent = (content, depth = 0) => {
     if (depth > 20) return null;
 
@@ -624,14 +648,14 @@ async function resolve({ db, text, refs = {}, strict = false, escape = null }) {
     const aliasKey   = `${tableName}__${columnName}`;
 
     // Two value sources:
-    //   • trigger_data — dot-path walk over the in-memory object in refs.trigger_data
+    //   • a pseudo-table — dot-path walk over its in-memory object (pseudoSource)
     //   • anything else — `table__column` alias on the row returned by the SQL
-    // For the non-trigger_data branch, `row` can be null only when no real-table
+    // For the real-table branch, `row` can be null only when no real-table
     // placeholders were present in the text (SQL was skipped). In that case we
     // fall through to null here and let modifiers/defaults take over.
     let value;
-    if (tableName === 'trigger_data') {
-      const td = refs.trigger_data;
+    if (PSEUDO_TABLES.includes(tableName)) {
+      const td = pseudoSource(tableName);
       const v  = td ? getNestedValue(td, columnName) : undefined;
       value = (v !== undefined && v !== null && v !== '') ? v : null;
     } else {
@@ -703,4 +727,4 @@ async function resolve({ db, text, refs = {}, strict = false, escape = null }) {
   };
 }
 
-module.exports = { resolve, scanExpressionRefs, ALLOWED_TABLES, BLOCKED_COLUMNS };
+module.exports = { resolve, scanExpressionRefs, ALLOWED_TABLES, BLOCKED_COLUMNS, PSEUDO_TABLES };
