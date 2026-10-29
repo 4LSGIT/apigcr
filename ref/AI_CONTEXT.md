@@ -1060,8 +1060,8 @@ New raw `fetch` with a lifted token is a regression, not a pattern.
 **The Code dialog (`public/js/ycCodeBox.js`, launcher item `code`):** runs
 staff-typed JavaScript in the shell as an async function: the browser console
 made reachable, open to all staff because it grants nothing the console
-doesn't. Three invariants keep it no worse than the console: it opens EMPTY
-(no parameter, link, launcher action or frame may fill it, or a link becomes
+doesn't. Three invariants keep it no worse than the console: a fresh draft is
+EMPTY (no parameter, link, launcher action or frame may fill it, or a link becomes
 a one-click attack on every user); Run is the user's own click or Ctrl/⌘+Enter;
 and the code is posted to `POST /api/code-box/runs` (`admin_audit_log`, tool
 `code_box`, `details.code`) BEFORE it runs, with no run unless that answers
@@ -1069,7 +1069,16 @@ success. The route allows read-only View-as (`markViewAsControl`: it records a
 run, it writes no data); a View-as row names the real actor, the target in
 `details`. A row proves the dialog recorded the code before running it, not
 the reverse: a bare POST leaves a row with no run, and the real console
-leaves none. Operator view: manual/01-YisraCase-overview/15-your-launcher.md.
+leaves none. The initial response returns `run_id`; `POST …/runs/:id/finish`
+updates that row once from `run` to browser-reported `success`/`error` and
+`duration_ms`, restricted to the same real actor AND effective user. It stores
+no result or console output; a missing/failed finish leaves `run` (outcome
+unknown), never triggers a rerun. Close/Esc hides the dialog; the local draft,
+logs, result and execution lock survive reopening until explicit Clear or reload.
+Each snippet gets a scoped console wrapper (levels, dir/table/trace/assert/clear),
+never a window.console tee: app logs and explicit window.console calls stay in
+DevTools. Captured messages are snapshots, bounded to 200k chars; stale callbacks
+cannot repaint a later run. Execution remains in the top shell. Operator view: manual/01-YisraCase-overview/15-your-launcher.md.
 
 **Serving invariants (2026-10-05, verified):**
 - *No Authorization persistence:* the login token's one durable place is

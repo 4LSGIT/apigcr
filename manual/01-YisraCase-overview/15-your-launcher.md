@@ -489,13 +489,29 @@ developer tools: handy when IT sends you a line to run, or for a quick
   caller. Someone asking you to do that is trying to scam you: code run here
   can read your login and send it, or your clients' data, anywhere.
 - **Every run is recorded** (who ran it, when, and the code itself) before it
-  runs. If the record can't be saved, the code does not run.
+  runs. If the record can't be saved, the code does not run. After execution,
+  the browser reports success or a thrown error and elapsed time on that record.
+  If this final report fails, the result stays visible and the box tells you;
+  the script is never rerun to retry a record. Output is not saved in the audit.
 - **Running.** Press **Run**, or **Ctrl+Enter** (**⌘+Enter** on a Mac).
   Nothing runs when you paste. A single expression shows its value
   (`1 + 1` shows `2`); longer code shows whatever it `return`s. You can use
-  `await`. **Copy output** copies the whole result.
-- **Things to know.** The box always opens empty, and closing it clears it.
-  A click outside the box does not close it; **Esc**, **Close** and **×** do.
+  `await`. `console.log`, `info`, `warn`, `error`, `debug`, `dir`, `dirxml`,
+  `table`, `trace` and failed `assert` messages appear live above the result
+  (objects and tables show as readable text). These messages also appear in
+  developer tools. `console.clear()` clears the captured messages. This is
+  the snippet's own console: explicit `window.console` calls and logs inside
+  app functions still go to developer tools. Captured messages are capped at
+  200,000 characters; a notice tells you when later messages are omitted.
+  **Copy output** copies all retained messages and the full result.
+- **Closing and clearing.** **Esc**, **Close** and **×** hide the box. Reopen
+  it to resume the same code, messages and result, even if the script finished
+  while hidden. Closing during recording or execution does not cancel the run;
+  **Run** and **Clear** stay disabled until execution finishes. **Clear** starts
+  an empty draft. A page reload also clears it; drafts are held only in memory.
+  A click outside the box does not close it.
+- **Things to know.** Code runs in the main app window (`window.top`), even
+  when a case or contact pane is open.
   Variables don't carry over from one run to the next (store one on
   `window` to keep it). Code that is already running can't be stopped, the
   same as in the console. Pop-up messages the code opens (alerts,

@@ -20,6 +20,10 @@
  * Awaited, not fire-and-forget: a run the audit could not record does not
  * happen (the dialog fails closed on any non-success answer).
  *
+ * POST /api/code-box/runs/:id/finish records browser-reported success/error
+ * and elapsed milliseconds on that same row (no console output or result).
+ * A row left at 'run' has no received outcome; it does not prove a failure.
+ *
  * What a row proves: the dialog recorded this code before running it. Not
  * the reverse — anyone may POST here without running anything, and code run
  * in the real browser console leaves no row at all.
@@ -45,7 +49,7 @@ router.post('/api/code-box/runs', markViewAsControl, requireAuth({ audience: 'st
   }
   const actor = req.auth.impersonator || null;   // View-as: the real person at the keyboard
   try {
-    await auditAdminAction(req.db, {
+    const [result] = await auditAdminAction(req.db, {
       tool: TOOL,
       userId: actor ? actor.userId : req.auth.userId,
       username: actor ? actor.username : req.auth.username,
@@ -59,11 +63,39 @@ router.post('/api/code-box/runs', markViewAsControl, requireAuth({ audience: 'st
         ...(actor ? { target_user_id: req.auth.userId, target_username: req.auth.username } : {}),
       },
     });
+    return res.json({ status: 'success', run_id: result.insertId });
   } catch (err) {
     console.error('[api.codeBox] audit write failed:', err.message);
     return res.status(500).json({ status: 'error', message: 'The run could not be recorded' });
   }
-  res.json({ status: 'success' });
+});
+
+// A browser-reported outcome, not proof of execution. Only the same real
+// actor AND effective user may finish an initial row, and only once. Keep
+// the code and original receipt timestamp; never store console/result data.
+router.post('/api/code-box/runs/:id/finish', markViewAsControl, requireAuth({ audience: 'staff' }), async (req, res) => {
+  const id = Number(req.params.id);
+  const { status, duration_ms: duration } = req.body || {};
+  if (!/^[1-9]\d*$/.test(req.params.id) || !Number.isSafeInteger(id)
+      || !['success', 'error'].includes(status)
+      || !Number.isInteger(duration) || duration < 0 || duration > 2147483647) {
+    return res.status(400).json({ status: 'error', message: 'Invalid run outcome' });
+  }
+  const actor = req.auth.impersonator || req.auth;
+  try {
+    const [result] = await req.db.query(`
+      UPDATE admin_audit_log SET status = ?, duration_ms = ?
+      WHERE id = ? AND tool = ? AND status = 'run' AND user_id = ?
+        AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(details, '$.target_user_id')), user_id) = ?
+    `, [status, duration, id, TOOL, actor.userId, req.auth.userId]);
+    if (!result.affectedRows) {
+      return res.status(404).json({ status: 'error', message: 'Pending run not found' });
+    }
+    return res.json({ status: 'success' });
+  } catch (err) {
+    console.error('[api.codeBox] outcome write failed:', err.message);
+    return res.status(500).json({ status: 'error', message: 'The outcome could not be recorded' });
+  }
 });
 
 module.exports = router;

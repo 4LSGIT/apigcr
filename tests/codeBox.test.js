@@ -25,7 +25,7 @@ const router = require('../routes/api.codeBox');
 // ─────────────────────────────────────────────────────────────────────────
 // the route
 
-function makeDb({ failAudit = false } = {}) {
+function makeDb({ failAudit = false, failFinish = false } = {}) {
   const audits = [];
   return {
     audits,
@@ -36,7 +36,16 @@ function makeDb({ failAudit = false } = {}) {
         if (failAudit) throw new Error('db down');
         const [tool, user_id, username, route, method, status, error_message, duration_ms, ip, ua, details] = params;
         audits.push({ tool, user_id, username, route, method, status, details: JSON.parse(details) });
-        return [{ insertId: 1 }];
+        return [{ insertId: audits.length }];
+      }
+      if (/UPDATE admin_audit_log SET status/.test(s)) {
+        if (failFinish) throw new Error('db down');
+        const [status, duration, id, tool, actor, target] = params;
+        const row = audits[id - 1];
+        const eligible = row && row.tool === tool && row.status === 'run' && row.user_id === actor
+          && (row.details.target_user_id || row.user_id) === target;
+        if (eligible) Object.assign(row, { status, duration_ms: duration });
+        return [{ affectedRows: eligible ? 1 : 0 }];
       }
       throw new Error('unscripted query: ' + s);
     },
@@ -48,7 +57,7 @@ function token({ sub = 2, username = 'staff', roles = ['staff'], extra = {} } = 
     process.env.JWT_SECRET, { expiresIn: '1h' });
 }
 
-async function post(db, { body, headers = {} }) {
+async function post(db, { body, headers = {}, url = '/api/code-box/runs' }) {
   const app = express();
   app.use(express.json({ limit: '10mb' }));
   app.use((req, _res, next) => { req.db = db; next(); });
@@ -58,7 +67,7 @@ async function post(db, { body, headers = {} }) {
     const { port } = server.address();
     const payload = JSON.stringify(body);
     return await new Promise((resolve, reject) => {
-      const req = http.request({ port, method: 'POST', path: '/api/code-box/runs',
+      const req = http.request({ port, method: 'POST', path: url,
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...headers } }, (res) => {
         let data = '';
         res.on('data', (c) => { data += c; });
@@ -77,7 +86,7 @@ describe('POST /api/code-box/runs', () => {
     const db = makeDb();
     const code = "await apiSend('/api/cases/1')\nreturn 1;";
     const r = await post(db, { body: { code }, headers: { Authorization: 'Bearer ' + token() } });
-    expect(r).toEqual({ status: 200, body: { status: 'success' } });
+    expect(r).toEqual({ status: 200, body: { status: 'success', run_id: 1 } });
     expect(db.audits).toEqual([{ tool: 'code_box', user_id: 2, username: 'staff', route: '/api/code-box/runs',
       method: 'POST', status: 'run', details: { code } }]);
   });
@@ -129,7 +138,8 @@ describe('POST /api/code-box/runs', () => {
 // ─────────────────────────────────────────────────────────────────────────
 // the dialog
 
-function boot({ audit = () => Promise.resolve({ status: 'success' }) } = {}) {
+function boot({ audit = () => Promise.resolve({ status: 'success', run_id: 1 }),
+  finish = () => Promise.resolve({ status: 'success' }) } = {}) {
   const dom = new JSDOM('<!DOCTYPE html><html><head></head><body>'
     + '<button id="launch" onclick="openCodeBox()">Code</button><input id="before"></body></html>',
   { runScripts: 'dangerously', pretendToBeVisual: true });
@@ -139,6 +149,7 @@ function boot({ audit = () => Promise.resolve({ status: 'success' }) } = {}) {
   w.apiSend = (url, method, payload) => {
     log.push(['apiSend', url, method, payload]);
     if (url === '/api/code-box/runs') return audit(payload);
+    if (/^\/api\/code-box\/runs\/\d+\/finish$/.test(url)) return finish(payload);
     return Promise.resolve({ from: url });
   };
   w.eval(SRC);
@@ -168,7 +179,7 @@ describe('the Code dialog', () => {
     expect(t.d.activeElement).toBe(t.d.getElementById('before'));   // focus goes back
   });
 
-  test('it can never be pre-filled: arguments are ignored, and a reopen starts empty', () => {
+  test('it cannot be pre-filled: reopen preserves only the locally typed draft, and Clear resets it', () => {
     t = boot();
     t.w.openCodeBox('window.__log.push("prefilled")');
     expect(t.q('textarea').value).toBe('');
@@ -180,7 +191,9 @@ describe('the Code dialog', () => {
     expect(t.q('textarea').value).toBe('');
     t.type('1+1');
     t.w.ycCodeBox.close();
-    t.w.ycCodeBox.open();
+    t.w.ycCodeBox.open('untrusted replacement');
+    expect(t.q('textarea').value).toBe('1+1');
+    t.q('.ycb-clear').click();
     expect(t.q('textarea').value).toBe('');
     expect(t.w.ycCodeBox.open.length).toBe(0);
   });
@@ -197,6 +210,7 @@ describe('the Code dialog', () => {
     expect(t.log).toEqual([
       ['apiSend', '/api/code-box/runs', 'POST', { code: '(window.__log.push(["ran"]), 1 + 1)' }],
       ['ran'],
+      ['apiSend', '/api/code-box/runs/1/finish', 'POST', { status: 'success', duration_ms: expect.any(Number) }],
     ]);
     expect(t.q('.ycb-out').textContent).toBe('2');
     expect(t.q('.ycb-out').classList.contains('is-error')).toBe(false);
@@ -209,7 +223,7 @@ describe('the Code dialog', () => {
     t.type("const r = await apiSend('/api/cases/5');\nreturn { r, n: [1, 2] };");
     t.q('.ycb-run').click();
     await t.flush();
-    expect(t.log.map((x) => x[1])).toEqual(['/api/code-box/runs', '/api/cases/5']);
+    expect(t.log.map((x) => x[1])).toEqual(['/api/code-box/runs', '/api/cases/5', '/api/code-box/runs/1/finish']);
     expect(JSON.parse(t.q('.ycb-out').textContent)).toEqual({ r: { from: '/api/cases/5' }, n: [1, 2] });
   });
 
@@ -233,7 +247,7 @@ describe('the Code dialog', () => {
     t = null;
   });
 
-  test('closed while the audit is in flight: the code does not run', async () => {
+  test('closed while recording: run continues once, and reopen restores its result', async () => {
     let release;
     t = boot({ audit: () => new Promise((r) => { release = r; }) });
     t.w.openCodeBox();
@@ -242,9 +256,13 @@ describe('the Code dialog', () => {
     await t.flush();
     expect(t.q('.ycb-run').disabled).toBe(true);
     t.q('.ycb-x').click();
-    release({ status: 'success' });
+    release({ status: 'success', run_id: 1 });
     await t.flush();
-    expect(t.log.filter((x) => x[0] === 'ran')).toEqual([]);
+    expect(t.log.filter((x) => x[0] === 'ran')).toHaveLength(1);
+    t.w.openCodeBox();
+    expect(t.q('textarea').value).toBe('window.__log.push(["ran"])');
+    expect(t.q('.ycb-out').hidden).toBe(false);
+    expect(t.q('.ycb-status').textContent).toMatch(/^Done in/);
   });
 
   test('a syntax error is reported and nothing is audited or run', async () => {
@@ -347,6 +365,7 @@ describe('the Code dialog', () => {
     const x = t.q('.ycb-x'), run = t.q('.ycb-run'), close = t.q('.ycb-close');
     const tab = (shift) => t.d.activeElement.dispatchEvent(new t.w.KeyboardEvent('keydown', { key: 'Tab', shiftKey: !!shift, bubbles: true, cancelable: true }));
     expect(t.d.activeElement).toBe(t.q('textarea'));
+    tab(); expect(t.d.activeElement).toBe(t.q('.ycb-clear'));
     tab(); expect(t.d.activeElement).toBe(close);   // output and Copy are hidden before a run
     tab(); expect(t.d.activeElement).toBe(run);
     tab(); expect(t.d.activeElement).toBe(x);       // wraps
@@ -393,4 +412,254 @@ describe('the Code dialog', () => {
     t = boot();
     expect(t.w.ycCodeBox.CODE_MAX).toBe(router.CODE_MAX);
   });
+});
+
+
+describe('Code run outcomes', () => {
+  const auth = (opts) => ({ Authorization: 'Bearer ' + token(opts) });
+  const start = (db, opts) => post(db, { body: { code: '1' }, headers: auth(opts) });
+  const finish = (db, body = { status: 'success', duration_ms: 12 }, opts, id = '1') => post(db, {
+    url: '/api/code-box/runs/' + id + '/finish', body, headers: auth(opts),
+  });
+
+  test.each(['success', 'error'])('records %s and duration on the original row, only once', async (status) => {
+    const db = makeDb();
+    await start(db);
+    expect((await finish(db, { status, duration_ms: 17 })).status).toBe(200);
+    expect(db.audits).toHaveLength(1);
+    expect(db.audits[0]).toMatchObject({ status, duration_ms: 17, details: { code: '1' } });
+    expect((await finish(db)).status).toBe(404);
+  });
+
+  test('another staff user, another tool, or another View-as target cannot finish a run', async () => {
+    const db = makeDb();
+    await start(db);
+    expect((await finish(db, undefined, { sub: 3 })).status).toBe(404);
+    db.audits[0].tool = 'api_tester';
+    expect((await finish(db)).status).toBe(404);
+    db.audits[0].tool = 'code_box';
+    const view = { sub: 4, extra: { view_as: true, view_as_mode: 'readonly', act: { sub: '2', username: 'staff' } } };
+    expect((await finish(db, undefined, view)).status).toBe(404);
+    expect(db.audits[0].status).toBe('run');
+    await start(db, view);
+    expect((await finish(db, undefined, view, '2')).status).toBe(200);
+    expect(db.audits[1]).toMatchObject({ user_id: 2, status: 'success', details: { target_user_id: 4 } });
+  });
+
+  test('missing auth and invalid outcomes are refused; DB failure is visible', async () => {
+    const db = makeDb();
+    await start(db);
+    expect((await post(db, { url: '/api/code-box/runs/1/finish', body: { status: 'success', duration_ms: 0 } })).status).toBe(401);
+    for (const body of [{}, { status: 'run', duration_ms: 1 }, { status: 'success', duration_ms: -1 },
+      { status: 'error', duration_ms: 1.5 }, { status: 'error', duration_ms: '2' },
+      { status: 'success', duration_ms: 2147483648 }]) {
+      expect((await finish(db, body)).status).toBe(400);
+    }
+    for (const id of ['0', '-1', 'abc', '9007199254740992']) {
+      expect((await finish(db, undefined, undefined, id)).status).toBe(400);
+    }
+    const broken = makeDb({ failFinish: true });
+    await start(broken);
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try { expect((await finish(broken)).status).toBe(500); } finally { spy.mockRestore(); }
+    expect(broken.audits[0].status).toBe('run');
+  });
+});
+
+describe('Code console and retained session', () => {
+  let t;
+  afterEach(() => t && t.close());
+
+  test('captures console levels, objects and assertions live without replacing the shell console', async () => {
+    t = boot();
+    const native = t.w.console;
+    const spies = ['log', 'info', 'warn', 'error', 'debug', 'table', 'dir', 'assert', 'trace']
+      .map((name) => jest.spyOn(native, name).mockImplementation(() => {}));
+    t.w.openCodeBox();
+    t.type(`console.log('hello', { n: 1 }); console.info('info'); console.warn('warn');
+      console.error('error'); console.debug('debug'); console.table([{ a: 2 }]); console.dir({ b: 3 });
+      console.assert(true, 'not shown'); console.assert(false, 'failed'); console.trace('trace');
+      await new Promise(r => window.releaseRun = r); return 'finished';`);
+    t.q('.ycb-run').click();
+    await t.flush();
+    expect(t.w.console).toBe(native);
+    const output = t.q('.ycb-out').textContent;
+    for (const level of ['log', 'info', 'warn', 'error', 'debug', 'table', 'dir', 'assert', 'trace']) {
+      expect(output).toContain('[' + level + ']');
+    }
+    expect(output).toContain('"n": 1');
+    expect(output).not.toContain('not shown');
+    native.log('unrelated app log');
+    expect(t.q('.ycb-out').textContent).toBe(output);
+    expect(spies[0]).toHaveBeenCalledWith('hello', { n: 1 });
+    t.w.releaseRun();
+    await t.flush();
+    expect(t.q('.ycb-out').textContent).toContain('finished');
+    expect(t.q('.ycb-status').textContent).toMatch(/^Done in/); // console.error is a message, not a thrown error
+    spies.forEach((s) => s.mockRestore());
+  });
+
+  test('closing while running preserves the draft, output and lock; reopening cannot start a duplicate', async () => {
+    t = boot();
+    jest.spyOn(t.w.console, 'log').mockImplementation(() => {});
+    t.w.openCodeBox();
+    t.type(`console.log('before'); await new Promise(r => window.releaseRun = r); console.log('after'); return 42;`);
+    t.q('.ycb-run').click();
+    await t.flush();
+    t.key('Escape');
+    expect(t.w.ycCodeBox.isOpen()).toBe(false);
+    t.w.openCodeBox();
+    expect(t.q('.ycb-out').textContent).toContain('before');
+    expect(t.q('.ycb-run').disabled).toBe(true);
+    expect(t.q('.ycb-clear').disabled).toBe(true);
+    t.key('Enter', { ctrlKey: true });
+    t.q('.ycb-clear').click();
+    expect(t.log.filter((x) => x[1] === '/api/code-box/runs')).toHaveLength(1);
+    t.q('.ycb-close').click();
+    t.w.releaseRun();
+    await t.flush();
+    t.w.openCodeBox();
+    expect(t.q('.ycb-out').textContent).toContain('[log] after\n\n42');
+    expect(t.q('.ycb-run').disabled).toBe(false);
+    t.q('.ycb-clear').click();
+    expect(t.q('textarea').value).toBe('');
+    expect(t.q('.ycb-out').hidden).toBe(true);
+  });
+
+  test('late callbacks cannot overwrite a newer run; output is capped and Copy uses retained text', async () => {
+    t = boot();
+    jest.spyOn(t.w.console, 'log').mockImplementation(() => {});
+    t.w.openCodeBox();
+    t.type(`window.lateLog = () => console.log('old callback'); window.lateClear = () => console.clear(); console.log('x'.repeat(300000)); return 1;`);
+    t.q('.ycb-run').click();
+    await t.flush();
+    expect(t.q('.ycb-out').textContent.length).toBeLessThan(201000);
+    expect(t.q('.ycb-out').textContent).toContain('more characters');
+    expect(t.q('.ycb-out').textContent).toContain('console output limit reached');
+    let copied;
+    t.w.navigator.clipboard = { writeText: (text) => { copied = text; return Promise.resolve(); } };
+    t.q('.ycb-copy').click();
+    await t.flush();
+    expect(copied).toContain('console output limit reached');
+    expect(copied).toMatch(/\n\n1$/);
+    t.type('2');
+    t.q('.ycb-run').click();
+    await t.flush();
+    t.w.lateLog();
+    t.w.lateClear();
+    expect(t.q('.ycb-out').textContent).toBe('2');
+  });
+
+  test('console.clear clears captured messages without clearing the draft', async () => {
+    t = boot();
+    jest.spyOn(t.w.console, 'log').mockImplementation(() => {});
+    t.w.openCodeBox();
+    t.type(`console.log('removed'); console.clear(); console.log('kept'); return 3;`);
+    t.q('.ycb-run').click();
+    await t.flush();
+    expect(t.q('.ycb-out').textContent).toBe('[log] kept\n\n3');
+    expect(t.q('textarea').value).toContain('removed');
+  });
+
+  test.each([false, true])('reports completion or error, retaining results when the outcome write fails (throws=%s)', async (throws) => {
+    t = boot({ finish: () => Promise.reject(new Error('offline')) });
+    t.w.openCodeBox();
+    t.type(throws ? `throw new Error('boom')` : '21 * 2');
+    t.q('.ycb-run').click();
+    await t.flush();
+    expect(t.q('.ycb-out').textContent).toContain(throws ? 'boom' : '42');
+    expect(t.q('.ycb-status').textContent).toContain('Completion could not be recorded.');
+    expect(t.q('.ycb-run').disabled).toBe(false);
+    expect(t.log.filter((x) => /finish$/.test(x[1]))).toEqual([
+      ['apiSend', '/api/code-box/runs/1/finish', 'POST', { status: throws ? 'error' : 'success', duration_ms: expect.any(Number) }],
+    ]);
+    expect(t.log.filter((x) => x[1] === '/api/code-box/runs')).toHaveLength(1);
+  });
+});
+
+
+describe('Code execution compatibility and pending audit', () => {
+  let t;
+  afterEach(() => t && t.close());
+
+  test('keeps top-shell this, zero snippet arguments, and locally declared console bindings', async () => {
+    t = boot();
+    t.w.openCodeBox();
+    t.type(`const console = { local: true }; return { top: this === window.top, args: arguments.length, local: console.local };`);
+    t.q('.ycb-run').click();
+    await t.flush();
+    expect(JSON.parse(t.q('.ycb-out').textContent)).toEqual({ top: true, args: 0, local: true });
+  });
+
+  test('a delayed outcome does not lock execution or repaint a newer run in the same session', async () => {
+    let release, calls = 0;
+    t = boot({ finish: () => ++calls === 1 ? new Promise(r => { release = r; }) : Promise.resolve({ status: 'success' }) });
+    t.w.openCodeBox();
+    t.type('1');
+    t.q('.ycb-run').click();
+    await t.flush();
+    expect(t.q('.ycb-run').disabled).toBe(false);
+    expect(t.q('.ycb-clear').disabled).toBe(false);
+    t.type('2');
+    t.q('.ycb-run').click();
+    await t.flush();
+    const status = t.q('.ycb-status').textContent;
+    release({ status: 'error' });
+    await t.flush();
+    expect(t.q('.ycb-status').textContent).toBe(status);
+    expect(t.q('.ycb-out').textContent).toBe('2');
+  });
+
+  test.each([null, { status: 'error' }])('a non-success outcome answer is visible without retrying the snippet: %s', async (answer) => {
+    t = boot({ finish: () => Promise.resolve(answer) });
+    t.w.openCodeBox();
+    t.type('window.__log.push(["once"]); return 9;');
+    t.q('.ycb-run').click();
+    await t.flush();
+    expect(t.q('.ycb-status').textContent).toContain('Completion could not be recorded.');
+    expect(t.q('.ycb-out').textContent).toBe('9');
+    expect(t.log.filter(x => x[0] === 'once')).toHaveLength(1);
+  });
+});
+
+
+test('old log and clear callbacks independently leave a newer run alone', async () => {
+  const t = boot();
+  jest.spyOn(t.w.console, 'log').mockImplementation(() => {});
+  try {
+    t.w.openCodeBox();
+    t.type(`window.oldLog = () => console.log('old'); window.oldClear = () => console.clear(); console.log('first run'); return 1;`);
+    t.q('.ycb-run').click();
+    await t.flush();
+    t.type('2');
+    t.q('.ycb-run').click();
+    await t.flush();
+    t.w.oldLog();
+    expect(t.q('.ycb-out').textContent).toBe('2');
+    t.w.oldClear();
+    expect(t.q('.ycb-out').textContent).toBe('2');
+  } finally { t.close(); }
+});
+
+
+test('a new syntax error retires callbacks and the pending outcome of the prior run', async () => {
+  let release;
+  const t = boot({ finish: () => new Promise(r => { release = r; }) });
+  jest.spyOn(t.w.console, 'log').mockImplementation(() => {});
+  try {
+    t.w.openCodeBox();
+    t.type(`window.oldLog = () => console.log('old'); return 1;`);
+    t.q('.ycb-run').click();
+    await t.flush();
+    t.type('return (;');
+    t.q('.ycb-run').click();
+    await t.flush();
+    const before = t.q('.ycb-out').textContent;
+    expect(before).toContain('SyntaxError');
+    t.w.oldLog();
+    release({ status: 'success' });
+    await t.flush();
+    expect(t.q('.ycb-out').textContent).toBe(before);
+    expect(t.q('.ycb-status').textContent).toBe('Not run: the code has a syntax error.');
+  } finally { t.close(); }
 });

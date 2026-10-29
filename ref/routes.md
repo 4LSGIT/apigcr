@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-28T12:28:00.623Z_  
-_820 routes total — DELETE: 68, GET: 342, PATCH: 59, POST: 310, PUT: 38, _ALL: 3_
+_Generated 2026-10-29T23:32:38.244Z_  
+_821 routes total — DELETE: 68, GET: 342, PATCH: 59, POST: 311, PUT: 38, _ALL: 3_
 
 ## Global middleware chain
 
@@ -161,6 +161,7 @@ _820 routes total — DELETE: 68, GET: 342, PATCH: 59, POST: 310, PUT: 38, _ALL:
 | GET | `/api/cases/search` | `jwtOrApiKey` | — |
 | GET | `/api/cause_error` | `jwtOrApiKey` | — |
 | POST | `/api/code-box/runs` | `markViewAsControl`, `staffAuth` | — |
+| POST | `/api/code-box/runs/:id/finish` | `markViewAsControl`, `staffAuth` | — |
 | GET | `/api/comms-archive/admin` | `jwtOrApiKey` | — |
 | GET | `/api/comms-archive/health` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/comms-archive/media/:id/purge` | `jwtOrApiKey` | — |
@@ -1095,4 +1096,4 @@ _820 routes total — DELETE: 68, GET: 342, PATCH: 59, POST: 310, PUT: 38, _ALL:
 
 ---
 
-_820 routes total — DELETE: 68, GET: 342, PATCH: 59, POST: 310, PUT: 38, _ALL: 3_
+_821 routes total — DELETE: 68, GET: 342, PATCH: 59, POST: 311, PUT: 38, _ALL: 3_

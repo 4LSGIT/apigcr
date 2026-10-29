@@ -1225,6 +1225,7 @@ tests/clioTool.test.js
 tests/clioTool2.test.js
 tests/codeBodyParity.test.js
 tests/codeBodySites.guest.test.js
+tests/codeBox.mysql.test.js
 tests/codeBox.test.js
 tests/codeChildResultOrder.test.js
 tests/commsAdminTools.pane.test.js

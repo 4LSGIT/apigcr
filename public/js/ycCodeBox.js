@@ -1,7 +1,7 @@
 /* public/js/ycCodeBox.js — the Code dialog: run JavaScript in the shell, as if
  * it were typed into the browser console.
  *
- *   window.ycCodeBox.open()    opens the dialog EMPTY (no arguments, ever)
+ *   window.ycCodeBox.open()    opens/resumes the local draft (no arguments)
  *   window.ycCodeBox.close()   closes it (a running snippet keeps running)
  *   window.ycCodeBox.isOpen()  → boolean
  *   window.openCodeBox()       the page call the launcher's `code` item makes
@@ -15,9 +15,10 @@
  * it is privileged.
  *
  * Three rules that keep it no worse than the console:
- *   1. It opens EMPTY. Nothing fills it — no URL parameter, no launcher or
+ *   1. A fresh draft is EMPTY. Nothing fills it — no URL parameter, no launcher or
  *      firm action, no other page or frame. Code arrives only by the user
- *      typing or pasting it. A pre-filled box is one click from a link, i.e.
+ *      typing or pasting it. Close preserves that draft in memory; only Clear
+ *      or a page reload discards it. A remotely pre-filled box is one click from a link, i.e.
  *      a cross-user attack; the console has no such door, and neither may this.
  *   2. Run is the user's own act: the Run button or Ctrl/⌘+Enter, never on
  *      paste or on open.
@@ -35,7 +36,14 @@
  * between runs (use window.x to keep one). The value is shown as JSON where
  * it can be (cycles, Maps, Sets, Errors and elements made readable), capped
  * at OUT_MAX characters on screen; Copy output copies all of it. A snippet
- * cannot be stopped once it runs — the same as the console.
+ * cannot be stopped once it runs — the same as the console. Close only hides
+ * the dialog; reopening resumes the same draft, output and running state.
+ * Each run gets a local console wrapper: log/info/warn/error/debug,
+ * dir/dirxml/table/trace and assert appear live here and in DevTools;
+ * console.clear clears captured messages. window.console is never replaced.
+ * Console text is capped at OUT_MAX; Copy includes all retained text plus
+ * the result. The server row is finished with browser-reported success/error
+ * and duration (never output); a failed finish leaves the original run row.
  *
  * Draws in the shell document. z-index 1052: above the palette (1050), the
  * layout editor (1045) and the tool dialog (1040); below the icon picker
@@ -58,7 +66,7 @@
   var MAC = /Mac|iPhone|iPad/.test((navigator && navigator.platform) || '');
 
   var D = null;                    // the DOM, built on first open
-  var S = null;                    // the open session; null when closed
+  var S = null;                    // draft/run retained until Clear or page reload
 
   // ── evaluation (pure) ────────────────────────────────────────────────
   /** Compile code as an async function: one expression returns its value;
@@ -68,11 +76,11 @@
     while (end > 0 && /[\s;]/.test(expr.charAt(end - 1))) end--;   // a loop: the regex form is quadratic on long runs
     expr = expr.slice(0, end);
     try {
-      return { fn: new AsyncFunction('return (' + expr + '\n);'), expr: true };
+      return { fn: new AsyncFunction('console', 'return (async function(){ return (' + expr + '\n); }).call(this);'), expr: true };
     } catch (e) {
       if (!(e instanceof SyntaxError)) throw e;
     }
-    return { fn: new AsyncFunction(code), expr: false };
+    return { fn: new AsyncFunction('console', 'return (async function(){\n' + code + '\n}).call(this);'), expr: false };
   }
 
   // Duck-typed, not instanceof: a value made in a pane's frame is another
@@ -250,10 +258,12 @@
     var hint = el('span', 'ycb-hint', (MAC ? '⌘' : 'Ctrl') + '+Enter runs. More than one statement? End with return x to see x.');
     var copy = button('ycb-btn ycb-copy', 'Copy output', 'copy');
     copy.hidden = true;
+    var clear = button('ycb-btn ycb-clear', 'Clear', 'clear');
     var close = button('ycb-btn ycb-close', 'Close', 'close');
     var run = button('ycb-btn ycb-run', 'Run', 'run');
     foot.appendChild(hint);
     foot.appendChild(copy);
+    foot.appendChild(clear);
     foot.appendChild(close);
     foot.appendChild(run);
     box.appendChild(head);
@@ -269,16 +279,22 @@
     // a press on the backdrop never blurs the editor, and never closes the
     // dialog: a stray click must not throw away pasted code
     back.addEventListener('mousedown', function (e) { e.preventDefault(); });
-    D = { root: root, box: box, ta: ta, status: status, out: out, copy: copy, run: run };
+    D = { root: root, box: box, ta: ta, status: status, out: out, copy: copy, clear: clear, run: run };
     return D;
   }
 
   // ── the session ──────────────────────────────────────────────────────
   // No parameters, on purpose (rule 1 above): whatever a caller passes is
-  // ignored, and the editor is cleared.
+  // ignored. Only the current local draft may be resumed.
   function open() {
     ensureDom();
-    if (S) { D.ta.focus(); return; }
+    if (S) {
+      if (D.root.hidden) S.from = document.activeElement;
+      D.root.hidden = false;
+      document.addEventListener('keydown', onGuardKey, true);
+      D.ta.focus();
+      return;
+    }
     S = { running: false, text: '', from: document.activeElement };
     D.ta.value = '';
     D.status.textContent = '';
@@ -287,15 +303,15 @@
     D.out.classList.remove('is-error');
     D.copy.hidden = true;
     D.run.disabled = false;
+    D.clear.disabled = false;
     D.root.hidden = false;
     document.addEventListener('keydown', onGuardKey, true);
     D.ta.focus();
   }
 
   function close() {
-    if (!S) return;
+    if (!S || D.root.hidden) return;
     var s = S;
-    S = null;
     document.removeEventListener('keydown', onGuardKey, true);
     D.root.hidden = true;
     try {
@@ -303,7 +319,57 @@
     } catch (_) { /* gone */ }
   }
 
+  function clear() {
+    if (!S || S.running) return;
+    var from = S.from;
+    S = null;
+    open();
+    S.from = from;
+  }
+
   function setStatus(t) { D.status.textContent = t; }
+
+  // Each snippet receives its own console. Never replace window.console:
+  // unrelated app logs must not appear here or be attributed to this run.
+  // Snapshots are bounded; callbacks from a previous run cannot change a new
+  // run's output. Messages still go to the browser's original console too.
+  function runConsole(mine, run) {
+    var native = window.console;
+    var local = Object.create(native);
+    function emit(level, args) {
+      if (S !== mine || mine.run !== run || run.truncated) return;
+      var line = '[' + level + '] ' + Array.from(args).map(format).join(' ') + '\n';
+      var notice = '\n… console output limit reached; further messages are omitted.\n';
+      var room = OUT_MAX - notice.length - run.logs.length;
+      run.logs += line.slice(0, room);
+      if (line.length > room) {
+        run.logs += notice;
+        run.truncated = true;
+      }
+      renderRun(run);
+    }
+    ['log', 'info', 'warn', 'error', 'debug', 'dir', 'dirxml', 'table', 'trace'].forEach(function (name) {
+      local[name] = function () {
+        if (typeof native[name] === 'function') native[name].apply(native, arguments);
+        emit(name, arguments);
+      };
+    });
+    local.assert = function (condition) {
+      if (typeof native.assert === 'function') native.assert.apply(native, arguments);
+      if (!condition) emit('assert', arguments.length > 1 ? Array.from(arguments).slice(1) : ['Assertion failed']);
+    };
+    local.clear = function () {
+      if (S !== mine || mine.run !== run) return;
+      run.logs = '';
+      run.truncated = false;
+      renderRun(run);
+    };
+    return local;
+  }
+
+  function renderRun(run) {
+    show(run.logs + (run.result === null ? '' : (run.logs ? '\n' : '') + run.result), run.error);
+  }
 
   function show(text, isError) {
     S.text = text;
@@ -321,6 +387,7 @@
     var code = D.ta.value;
     if (!code.trim()) { setStatus('Type or paste some code first.'); return; }
     if (code.length > CODE_MAX) { setStatus('Too long: ' + code.length + ' characters (the limit is ' + CODE_MAX + ').'); return; }
+    mine.run = null;                       // retire prior callbacks, even on a syntax error
     var compiled;
     try {
       compiled = compile(code);
@@ -330,35 +397,58 @@
       return;
     }
     mine.running = true;
+    var run = mine.run = { logs: '', result: null, error: false, truncated: false };
+    D.out.hidden = true;
+    D.copy.hidden = true;
+    mine.text = '';
     D.run.disabled = true;
+    D.clear.disabled = true;
     setStatus('Recording the run…');
+    var r;
     try {
-      var r = await window.apiSend(AUDIT_URL, 'POST', { code: code });
+      r = await window.apiSend(AUDIT_URL, 'POST', { code: code });
       if (!r || r.status !== 'success') throw new Error('unexpected answer from ' + AUDIT_URL);
     } catch (e) {
       if (S === mine) {
         mine.running = false;
         D.run.disabled = false;
+        D.clear.disabled = false;
         setStatus('Not run: the run could not be recorded.');
         show(formatError(e), true);
       }
       return;
     }
-    if (S !== mine) return;                  // closed while recording: run nothing
+    if (S !== mine) return;
     setStatus('Running…');
     var t0 = Date.now();
     var ok = true, value;
     try {
-      value = await compiled.fn.call(window);
+      value = await compiled.fn.call(window, runConsole(mine, run));
     } catch (e) {
       ok = false;
       value = e;
     }
-    if (S !== mine) return;                  // closed while running: the result has nowhere to go
+    var duration = Math.min(2147483647, Math.max(0, Date.now() - t0));
+    run.error = !ok;
+    run.result = ok ? format(value) : formatError(value);
+    renderRun(run);
+    var message = (ok ? 'Done' : 'Threw an error') + ' in ' + duration + ' ms.';
     mine.running = false;
     D.run.disabled = false;
-    setStatus((ok ? 'Done' : 'Threw an error') + ' in ' + (Date.now() - t0) + ' ms.');
-    show(ok ? format(value) : formatError(value), !ok);
+    D.clear.disabled = false;
+    setStatus(message + ' Recording outcome…');
+    // Outcome is best-effort AFTER execution: failure must never run the
+    // snippet again or hide its result. Old servers have no run_id yet.
+    try {
+      if (!Number.isSafeInteger(r.run_id) || r.run_id < 1) throw new Error('Missing run id');
+      var finished = await window.apiSend(AUDIT_URL + '/' + r.run_id + '/finish', 'POST', {
+        status: ok ? 'success' : 'error', duration_ms: duration,
+      });
+      if (!finished || finished.status !== 'success') throw new Error('Outcome not recorded');
+    } catch (_) {
+      message += ' Completion could not be recorded.';
+    }
+    if (S === mine && mine.run === run) setStatus(message);
   }
 
   function copyOutput() {
@@ -379,6 +469,7 @@
     var list = [D.root.querySelector('.ycb-x'), D.ta];
     if (!D.out.hidden) list.push(D.out);
     if (!D.copy.hidden) list.push(D.copy);
+    if (!D.clear.disabled) list.push(D.clear);
     list.push(D.root.querySelector('.ycb-close'));
     if (!D.run.disabled) list.push(D.run);
     return list;
@@ -427,12 +518,13 @@
     if (act === 'close') close();
     else if (act === 'run') run();
     else if (act === 'copy') copyOutput();
+    else if (act === 'clear') clear();
   }
 
   window.ycCodeBox = Object.freeze({
     open: open,
     close: close,
-    isOpen: function () { return !!S; },
+    isOpen: function () { return !!S && !D.root.hidden; },
     _compile: compile,
     _format: format,
     CODE_MAX: CODE_MAX,
