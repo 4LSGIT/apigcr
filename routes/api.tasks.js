@@ -53,6 +53,8 @@ router.get('/api/tasks', jwtOrApiKey, async (req, res) => {
       link_id:     req.query.link_id     || null,
       source:      req.query.source      || null,
       defer:       req.query.defer       || null,
+      sort_by:     req.query.sort_by     || null,
+      sort_dir:    req.query.sort_dir    || 'ASC',
       limit:       req.query.limit  || 100,
       offset:      req.query.offset || 0
     });

@@ -382,8 +382,12 @@ function dateTimeParts(dateString) {
 /* sort() / sortSelect() find their sort controls by scope, not by DOM
    distance. Both used to count parentNode hops (th→tr→tbody→table→tab, and
    select→bar→tab); the .yc-filters bar wraps each control in a unit, which
-   adds a hop. closest('.tab-main') is the tab either way; the old hop chain
-   stays as the fallback for a caller outside a .tab-main.
+   adds a hop. closest('.tab-main') is the tab either way; a page outside the
+   shell's tabs marks its own scope with data-sort-scope (tasks.html — a
+   .tab-main there would hide it); the old hop chain stays as the fallback.
+   Only the sort headers (th[onclick^="sort("]) are repainted: rewriting a
+   header's innerText destroys anything in it, like tasks.html's select-all
+   checkbox.
 
    A date header carrying data-sort-upcoming="<sortBy value>" cycles three
    ways: upcoming first (today, then later, then the past) → oldest first →
@@ -391,11 +395,11 @@ function dateTimeParts(dateString) {
    mark: ↑ ascending, ↓ descending, ⇅ upcoming. */
 const sortMarkStrip = (t) => t.replace(/\s*[↑↓⇅]\s*$/, '');
 function sort(header, sort) {
-  const parentDiv = header.closest('.tab-main') || header.parentNode.parentNode.parentNode.parentNode;
+  const parentDiv = header.closest('.tab-main, [data-sort-scope]') || header.parentNode.parentNode.parentNode.parentNode;
   const sortBy = parentDiv.querySelector('select[data-type="sortBy"]');
   const sortDi = parentDiv.querySelector('select[data-type="sortDi"]');
   const go = parentDiv.querySelector('button[data-type="goButton"]');
-  const headers = parentDiv.querySelectorAll("th");
+  const headers = parentDiv.querySelectorAll('th[onclick^="sort("]');
   sort = sort || sortMarkStrip(header.innerText);
   const upcoming = header.dataset.sortUpcoming;
   if (upcoming) {
@@ -421,18 +425,15 @@ function swalWide(pct) {
 }
 
 function sortSelect(element) {
-  const tab = element.closest('.tab-main');
+  const tab = element.closest('.tab-main, [data-sort-scope]');
   const bar = tab || element.parentNode;
   const sortBy = bar.querySelector('select[data-type="sortBy"]');
   const sortDi = bar.querySelector('select[data-type="sortDi"]');
   const go = bar.querySelector('button[data-type="goButton"]');
   const table = (tab || element.parentNode.parentNode).querySelector("table");
-  const headers = table.querySelectorAll("th");
+  const headers = table.querySelectorAll('th[onclick^="sort("]');
   headers.forEach((head) => {
-    let header = "";
-    if (head.onclick) {
-      header = head.getAttribute("onclick").split("'")[1];
-    }
+    const header = head.getAttribute("onclick").split("'")[1];
     const text = sortMarkStrip(head.innerText);
     if (head.dataset.sortUpcoming && sortBy.value === head.dataset.sortUpcoming) {
       head.innerText = `${text} ⇅`;

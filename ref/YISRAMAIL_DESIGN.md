@@ -1,11 +1,16 @@
 # YisraMail — consent, bulk email & campaigns v2 (DESIGN)
 
-Status: **DRAFT v0.4 — 2026-10-29. Nothing built.** Ruled 2026-10-29 (Fred):
+Status: **DRAFT v0.5 — 2026-10-29. Nothing built.** Ruled 2026-10-29 (Fred):
 D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
 Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
 later; D15 no RC push in v1, D16 over-cap operational sends with
-`campaigns.bulk`, D17 bounce tasks for clients only. Open: D5 (Fred + SS), D8
-(SS); D3, D4, D7, D10, D12–D14 stand as recommendations until ruled. v0.3 folds in an
+`campaigns.bulk`, D17 bounce tasks for clients only; D18 opt-outs gate
+PROMOTION, not operational automation. Open: D5 (Fred + SS), D8 (SS), D19
+(SMS STOP still stops automated texts — recommended); D3, D4, D7, D10,
+D12–D14 stand as recommendations until ruled. v0.5 also folds in a second,
+unaffiliated review (send reservation / at-most-once, transport rate limit,
+pause semantics, complaint hold before the first send, re-consent guard,
+EventBridge DLQ). v0.3 folds in an
 independent review against code `08f1737` + the live DB (2 blockers, 8 majors,
 11 minors — all addressed below).
 Supersedes the "YisraMail direction" entry in `ref/plans.md` (which now
@@ -22,11 +27,14 @@ here because §4 is built on it.
    SMS, until scoped destination-keyed consent with a ledger, a working
    unsubscribe (link + RFC 8058 one-click + preference page) and inbound SMS
    opt-out handling are live (§4).
-2. **Marketing ≠ operational.** Today's flags mean "automation sends nothing
-   on this channel". A newsletter unsubscribe must never stop a 341 reminder,
-   so consent gets scopes (`all` / `marketing` / topic), stored by address
-   with a ledger; the flags become scope `all` (§4.1, D2 ruled). Marketing
-   sends stay off behind a kill switch until the consent gate is met (§6.1).
+2. **Opt-outs gate promotion, not operational mail (D18).** Automations
+   stand in for a person ("your payment failed", "your appointment is
+   tomorrow"); they are operational and keep sending after an email
+   unsubscribe. Consent gets scopes stored by address with a ledger:
+   email opt-outs are marketing-only; an SMS STOP (scope `all`) still stops
+   every automated text — the law and the providers both require it (D19).
+   Marketing sends stay off behind a kill switch until the consent gate is
+   met (§6.1).
 3. **SMS:** the providers enforce STOP themselves — RingCentral per (number,
    recipient) pair, **Quo across every Quo number**. Marketing SMS is out of
    v1 (ruled) and, if ever done, runs on its own RingCentral number and 10DLC
@@ -95,10 +103,24 @@ Fred's planning numbers hold against the data: a monthly newsletter of
   number), per channel — not to a contact and not to a contact row. A person
   who says stop at an address stays stopped when staff end the row, move the
   address to another contact, or the address arrives in an import.
-- **Scopes.** `all` = nothing on this channel (today's flag, unchanged
-  meaning: automation refuses, staff warned). `marketing` = every marketing
-  topic. `<topic>` = one topic (e.g. `newsletter`). Operational sends check
-  `all` only; marketing sends check `all` + `marketing` + their topic.
+- **Consent gates promotion, not operational mail (D18, Fred 2026-10-29).**
+  Every send is `operational` (case/appointment/payment/document mail — an
+  automation standing in for a person, a staff message, an operational
+  campaign) or `promotional` (marketing campaigns; later, automations flagged
+  promotional — slice C7). Email: CAN-SPAM reaches commercial mail only, so
+  an email opt-out is a marketing opt-out and **operational email is never
+  blocked by consent**. SMS: a STOP revokes consent for texts generally
+  (FCC "any reasonable means"), and RingCentral/Quo block the recipient
+  themselves, so **an SMS STOP blocks operational texts too** (D19) — the
+  client is reached by phone/email instead (§4.6 staff task).
+- **Scopes.** Email: `marketing` (every marketing topic) and `<topic>`
+  (e.g. `newsletter`) — there is no email `all`. SMS: `all` (STOP, staff,
+  provider signal) and `sms_marketing` (future, D1).
+
+  | send | email checks | SMS checks |
+  |---|---|---|
+  | operational | nothing | `all` |
+  | promotional | `marketing` + topic | `all` + `sms_marketing` (refused in v1, D1) |
 - **Every change is an event.** An append-only ledger (who/what/when/how,
   with evidence) is the proof; a current-state table is what sends read. One
   writer keeps them in step, on the caller's transaction, order-independent
@@ -187,9 +209,11 @@ list holds needs the driver to remove it there too (`events`-side hook, T2).
 
 ```
 findOptedOut(db, channel, dest, { klass = 'operational', topic } = {})
-  operational → blocked by scope 'all'                  (today's behaviour)
-  marketing   → blocked by 'all' | 'marketing' | topic, and, for an opt_in
-                topic, also blocked unless state(topic) = 'opted_in'
+  operational, email → never blocked (returns [])
+  operational, sms   → blocked by scope 'all'          (today's SMS behaviour)
+  marketing (promotional) → email: 'marketing' | topic; sms: 'all' |
+                topic; and, for an opt_in topic, also blocked unless
+                state(topic) = 'opted_in'
   hit shape UNCHANGED: { channel, destination, contact_id, contact_name, row_id }
   — contact_id/row_id via LEFT JOIN to the destination's ACTIVE row; a
   destination with no row returns null ids and who() prints the address only
@@ -222,6 +246,27 @@ scope; `sms_optout` / `email_optout` become a cache for one release, then drop
 with the column-drop sweep (CLAUDE.md). **It is not "callers untouched"**:
 every writer and every reader that bypasses `optoutService` moves in P1.
 
+**The two flags mean different things from P1 on (D18/D19):**
+`contact_phones.sms_optout` = SMS scope `all` (unchanged: automation
+refuses, staff warned). `contact_emails.email_optout` = email scope
+`marketing` — relabelled on the contact form "No marketing email"; it no
+longer stops automation or warns staff (live: 0 email opt-outs, so nothing
+in flight changes). This revises the 2026-10-27 read rule for email only.
+
+**Re-consent guard.** An `opt_in` is never manufactured by an ordinary save:
+- creating a row (any path — form, Casey, intake, transfer) never opts in;
+  an incoming `0` / omitted flag on create is ignored when the destination's
+  state is `opted_out` (the new row's cache is read FROM the state);
+- an update records a consent event only when the flag the caller sent
+  differs from the row's current value (which the cache keeps equal to the
+  state) — an unrelated field edit records nothing;
+- an `opt_in` needs an explicit consent action with attribution: a staff
+  toggle on an existing row (`source='staff'`, `actor_user_id`), a provider
+  opt-in keyword (`sms_keyword`), the preference page (`pref_page`), or
+  P4's consent control (with a note as evidence);
+- cache synchronisation writes (recordConsent updating the row column) are
+  never themselves consent events.
+
 Writers (all must call `recordConsent`, in the same deploy that switches reads):
 - `services/contactPhoneService.js` create/update (`sms_optout` in the
   validated fields and the `ALLOWED` list) and `services/contactEmailService.js`
@@ -253,8 +298,8 @@ keeps today's behaviour of carrying the opt-out, recorded as an explicit
 `row_replace` event for the new destination.
 
 Transition (fail closed): during the cache release a destination counts as
-opted out (scope `all`) if EITHER the state table or the active row's flag
-says so; writers write both. Run the migration (live flags →
+opted out for the flag's scope (SMS `all`, email `marketing`) if EITHER the
+state table or the active row's flag says so; writers write both. Run the migration (live flags →
 `source='migration'` events) before the backend deploy AND again after it,
 so a flag written in the gap isn't lost. Consent writes on contact rows are
 announced on the sync bus (`public/js/yc-sync.js` MATCHERS + the response's
@@ -328,10 +373,10 @@ its read rule (one service, automation refuses, staff warn) stands.
     plus `Referrer-Policy: no-referrer`.
   - Tokens never expire (CAN-SPAM: must work ≥ 30 days after send). Unknown
     token → the same neutral page with "contact us" (no oracle).
-- **The page offers marketing scopes only.** "Stop ALL email from the firm"
-  (scope `all`) is not offered to the public: it would silently stop
-  case-critical mail. A free-text box ("anything else?") opens a staff task
-  instead.
+- **The page offers marketing scopes only** — there is no email scope that
+  stops case mail (D18): an unsubscribe can't silently cut a client off
+  from their own case. A free-text box ("anything else?") opens a staff task
+  for anything beyond marketing.
 - Replies saying "remove me" land in the reply-to mailbox (YC hub); staff
   unsubscribe via the contact page (source `staff`).
 
@@ -417,8 +462,9 @@ provider decides "can send".
 - Contact page email/phone rows: badges per scope (`plans.md` open item),
   history popover from the ledger, toggles that call `recordConsent` with
   `source='staff'` and an optional note.
-- Compose surfaces: the existing 409 warn stays (operational); marketing
-  class shows how many recipients each scope removes.
+- Compose surfaces: the 409 warn stays for SMS (scope `all`); operational
+  email no longer warns (D18). The marketing class shows how many recipients
+  each scope removes.
 - SU tool: import a suppression list (CSV of addresses/numbers, scope,
   source `import`), and export the ledger for a destination (proof request).
 
@@ -516,12 +562,16 @@ events: { verify(req, credential) → bool,
 Provider webhook → a YisraHook hook (ack-first, `dedup_path` on the
 provider's event id — both exist) → target internal function
 `mail_event_ingest` → by type: `bounce_hard`/`complaint`/`unsubscribe` →
-`recordConsent` (§4.2, idempotent on the provider event id); all types →
+`recordConsent` (§4.2, idempotent on the provider event id); the complaint /
+bounce tally for §6.5; all types →
 `campaign_results` delivery columns, joined by the `result_id` message tag
 first and `provider_message_id` second (§5.2). Signature verification: `hooks.auth_type` already has
 `hmac` and a Calendly-style scheme; a provider whose scheme differs gets its
 verify in the adapter's `events.verify` (the "parsing into drivers" item in
-`ref/plans.md`).
+`ref/plans.md`). **Lost events:** the EventBridge API-destination rule gets an
+SQS dead-letter queue (exhausted retries are otherwise dropped) and T2 ships a
+tested replay procedure (DLQ → re-POST to the hook); the hook's `dedup_path`
+on the event id makes a replay safe.
 
 ### 5.5 Provider (DECISION D6)
 
@@ -605,12 +655,23 @@ those. What changes:
 | | `operational` (today's use: mail merge) | `marketing` (broadcast / newsletter) |
 |---|---|---|
 | Who/why | a note to a dozen clients, a hearing-change notice, an office-closure notice | newsletter, announcements, re-engagement |
-| Consent check | scope `all` (today) | `all` + `marketing` + topic (§4.3) |
+| Consent check | email: none; SMS: scope `all` (a STOP) — §4.1 | email: `marketing` + topic; SMS refused (D1) |
 | Transport | any staff `email_credentials` row except `bulk_ok` (Gmail/SMTP) | only a `bulk_ok` row (§5) |
 | Cap | **50 recipients** (ruled 2026-10-22), firm-configurable, enforced in `campaignService.createCampaign` (API keys reach it). Over the cap only with `campaigns.bulk` + a typed confirmation, audited (D16) | none beyond provider/plan limits; rate-controlled |
 | Unsubscribe | none | mandatory token, footer, headers (§4.5) |
 | Topic | — | required (`comm_topics`) |
 | SMS | allowed (≤ cap, or over it per D16 — informational texts to clients) | **refused** (D1) |
+
+**No "send to opt-outs" switch.** A marketing campaign never reaches a
+marketing opt-out (that send is the CAN-SPAM violation, and the reason
+Gmail/Yahoo demand one-click unsubscribe). The legitimate need — telling
+everyone, opted-out or not, that the office is closed or a hearing moved —
+is the operational class, which marketing opt-outs never block. The class
+is the switch, so it must be honest: choosing operational shows "this
+message is about the recipient's case, appointment or account — not
+promoting services" and records who chose it; an operational message must
+not carry promotional content (CAN-SPAM's primary-purpose test can turn a
+mixed message commercial).
 
 The class is stored (`campaigns.class`, `campaigns.topic_key`). The
 marketing class and any over-cap operational send require a new
@@ -679,51 +740,88 @@ with no token, footer or headers.
 
 ### 6.4 Send pipeline changes
 
-- **Rate control without starving the queue — a per-campaign pump.** At
-  create, a marketing (or over-cap) campaign inserts its per-recipient jobs
-  with `scheduled_time` staggered at the campaign's rate (D12) and ONE
-  `campaign_pump` job due now. Each pump run rings Cloud Tasks doorbells
-  (`lib/taskQueue.enqueueJobDispatch`) only for that campaign's jobs due
-  within `ACCEL_WINDOW_MS` (90 s), then reschedules itself ~60 s later until
-  no pending jobs remain. This keeps `lib/taskQueue.js` invariant 3 ("a
-  DOORBELL, not a CALENDAR" — no far-future tasks) and keeps
-  `POST /api/campaigns` fast (thousands of awaited `createTask` calls in the
-  request would take minutes; detached ones starve under Cloud Run's
-  post-response CPU throttle). 2,000 at 60/min ≈ 33 min.
-- **Cron fallback can't starve other jobs.** If Cloud Tasks is off, the
-  `process-jobs` batch claim (`ORDER BY scheduled_time LIMIT 10`) would fill
-  with campaign rows due at 60/min — the very starvation §3 describes. The
-  batch claim takes at most N `campaign_send` rows per tick (N < 10, e.g. 5);
-  other due jobs claim first.
+- **Send reservation — at most once.** Today `executeSend` sends, then
+  records; a failure in `recordResult` / `checkCompletion` is retried as a
+  job and **sends again** (the `recordResult` header says so). From C1, for
+  every campaign class: (1) reserve — upsert the `campaign_results` row as
+  `sending` with an attempt id (and, for marketing, mint the unsub token)
+  BEFORE any provider call; (2) send; (3) update to `sent` with the provider
+  message id. A retry that finds its row `sending` does NOT resend: the
+  outcome is ambiguous (the provider may have accepted it), so the row goes
+  to `unknown` and counts as such in the stats — a missed message over a
+  duplicate, the rule AI_CONTEXT §17 already states for unrecognized
+  errors. Provider errors received before acceptance (a 4xx/5xx reply) are
+  definite and keep today's retry/permanent classification. New
+  `campaign_results.status` values `sending` / `unknown` (enum expansion).
+  The reserved row also gives early provider events something to update
+  (§5.4).
+- **Delivery-state precedence:** complained > bounced > delivered > sent —
+  the step-(3) `sent` update never overwrites an event that arrived first.
+- **Rate — enforced at dispatch, per transport.** Staggered
+  `scheduled_time` paces a healthy campaign but enforces nothing after an
+  outage (hundreds of overdue jobs) or with two campaigns on one transport.
+  So: before step (1), the send checks a per-transport window (sends
+  recorded for this transport in the last 60 s ≥ the transport's rate →
+  defer the job a few seconds, consuming no attempt). Soft at the edge, like
+  the hub budget. The **pump** stays the accelerator and catches up bounded:
+  each tick rings doorbells for at most `rate × tick` due jobs, overdue
+  ones included, never all of them.
+- **The pump.** At create, a marketing (or over-cap) campaign inserts its
+  per-recipient jobs with `scheduled_time` staggered at the campaign's rate
+  (D12) and ONE `campaign_pump` job due now. Each tick rings Cloud Tasks
+  doorbells (`lib/taskQueue.enqueueJobDispatch`) only for that campaign's
+  jobs due within `ACCEL_WINDOW_MS` (90 s), bounded as above, then
+  reschedules itself ~60 s later until no pending jobs remain. This keeps
+  `lib/taskQueue.js` invariant 3 ("a DOORBELL, not a CALENDAR") and keeps
+  `POST /api/campaigns` fast. 2,000 at 60/min ≈ 33 min.
+- **Cron fallback can't starve other jobs.** The `process-jobs` batch claim
+  (`ORDER BY scheduled_time LIMIT 10`) takes at most N `campaign_send` rows
+  per tick (N < 10, e.g. 5); other due jobs claim first.
+- **Campaign status as the job sees it:**
+
+  | status | job does |
+  |---|---|
+  | `scheduled` | proceeds; the first send flips the campaign to `sending` |
+  | `sending` | proceeds |
+  | `paused` (new) | **defers** — reschedules itself, records nothing, consumes no attempt; resumable |
+  | `canceled` | records `skipped` (today) |
+  | `sent` / `failed` / `partial_fail` | records `skipped` (a straggler after completion) |
+
+  Pause = status `paused` + pump stopped; pending jobs stay pending (no
+  `active=0` flip). Resume = status back to `sending` + pump restarted.
+  `cancelCampaign` accepts `paused`.
+- **Account pause.** SMTP 5xx is classified permanent today, so an SES
+  "sending paused" reply would fail every remaining recipient. The send
+  detects the provider's account-level refusal explicitly BEFORE
+  classification → the campaign (and every other marketing campaign on that
+  transport) goes `paused`, the transport is held (§6.5), an `error` alert
+  fires; that recipient's row goes back to pending (the refusal came before
+  acceptance).
 - **Volume per send.** Per recipient: one `scheduled_jobs` row, one
   `campaign_results` row, one `comm_unsub_tokens` row, one `email_log` row.
   The marketing path writes `email_log` WITHOUT the body (the campaign's
   snapshot is the copy — §4.5), so a 5k send adds rows, not megabytes.
-- **Account pause.** SMTP 5xx is classified permanent today
-  (`campaignService` error classification), so an SES "sending paused"
-  response would mark every remaining recipient failed. The marketing path
-  detects the provider's account-level refusal explicitly BEFORE
-  classification: the campaign goes to a new `paused` status (enum
-  expansion), its pending jobs are deactivated (`active=0`), the pump stops,
-  and an `error` alert fires. `paused` may be resumed (re-activate + restart
-  the pump) or canceled (`cancelCampaign` accepts `paused`); `executeSend`
-  treats a non-`sending` campaign as it treats `canceled` today (record
-  `skipped`).
-- Provider 429/4xx-transient keep their transient classification (retry with
-  backoff).
 - Per-recipient event columns on `campaign_results`: `provider_message_id`
-  (indexed), `delivery_state` (precedence: complained > bounced > delivered >
-  sent — a later lower-ranked event never overwrites), `delivery_at`,
-  `bounce_type`; `opened_at` / `clicked_at` arrive with C6. Fed by §5.4.
+  (indexed), `delivery_state`, `delivery_at`, `bounce_type`; `opened_at` /
+  `clicked_at` arrive with C6. Fed by §5.4.
 - Test send: "send a test to me" renders against a chosen contact and goes
   through the same transport (no token write, `[TEST]` subject prefix).
 
-### 6.5 Reporting
+### 6.5 Complaint safety (enforced from the first send) and reporting
 
-Campaign view adds delivered / bounced / complained / unsubscribed (from the
-ledger by `send_ref`) counts. Complaint rate > 0.1 % on a campaign → `warning`
-alert; > 0.3 % (the Gmail ceiling, Appendix C) → `error` alert and further
-marketing campaigns on that transport require SU release.
+- **Enforcement — T2 + C2, part of gate G1.** T2's event ingest keeps a
+  rolling per-transport tally (complaints and hard bounces over delivered,
+  last 24 h and per campaign). C2 checks it before every marketing send:
+  complaint rate > 0.1 % → `warning` alert; > 0.3 % (the Gmail ceiling,
+  Appendix C) or hard bounces > 5 % → the **transport is held**: every
+  running marketing campaign on it is paused (§6.4), new ones refuse, an
+  `error` alert fires, and only an SU release (audited) lifts it. Rates are
+  computed only once a campaign has ≥ 200 deliveries, so one early
+  complaint doesn't trip a hold — but any single complaint in the first
+  200 still alerts (`warning`).
+- **Reporting — C4.** Campaign view adds delivered / bounced / complained /
+  unsubscribed / unknown counts (unsubscribes from the ledger by
+  `send_ref`) and the transport's current rates.
 
 ### 6.6 What stays out (later, `ref/plans.md`)
 
@@ -825,8 +923,9 @@ ALTER on a live table ships as the node-script pattern with a low
 `lock_wait_timeout` (CLAUDE.md "A migration that needs a session").
 
 **Gate G1 (Fred, 2026-10-29: unsubscribe for both channels before
-anything).** No marketing send until P1, P2 and P3 are live, plus T1, T2,
-verified DNS (§5.3) and SES production access. Enforced in code, not just
+anything).** No marketing send until P1, P2 and P3 are live, plus T1, T2
+(incl. the DLQ), C1, C2 (incl. the complaint hold), verified DNS (§5.3) and
+SES production access. Enforced in code, not just
 procedure: `marketing_send_enabled` ships `'0'` (C1) and an SU flips it only
 after this checklist. **Gate G2:** no import/send to an outside list until D5
 is ruled.
@@ -839,13 +938,14 @@ is ruled.
 | P3 | Email unsubscribe surface | `comm_unsub_tokens`; `/u/:token` GET page + one-click POST + prefs POST on the landing origin (all three `pageLanding` enumerations, test-locked; no-store / noindex / no-referrer; no per-IP limit on the one-click POST); `{{send.*}}` / `{{firm.*}}` resolver pseudo-tables | P1 |
 | P4 | Staff consent UI | badges + history on contact rows; compose counts; SU suppression import/export | P1 |
 | T1 | Transport contract | adapter capabilities (`bulk`, `headers`, `tags`, `events`, `batch`); `headers` / `replyTo` / `tags` options through `sendEmailDirect` + `smtp.js` (marketing path only; public `sendEmail` strips them); driver-owned headers (SES `X-SES-*`); SES message id from the SMTP reply; `email_credentials.bulk_ok` + `events_driver`; bulk rows fenced out of `emailFrom`, public `sendEmail` and operational campaigns; DKIM `h=` acceptance test | — |
-| T2 | Events | SES → EventBridge API destination → YisraHook hook (`api_key` auth, `dedup_path` on the event id) → `mail_event_ingest` internal function (added to `CTA_FN_DENYLIST` — engine plumbing) → ledger (bounce/complaint/unsub) + `campaign_results` delivery columns by `result_id` tag; SES suppression-list removal on re-opt-in | T1, P1 |
-| C1 | Campaign hardening | `campaigns.class` / `topic_key`; 50 cap in `createCampaign` + D16 over-cap path; `campaigns.bulk` capability; `bulk_ok` refused for operational; **`marketing_send_enabled` kill switch (`'0'`): marketing refused 422 at create and skipped at send**; per-campaign pump + doorbells; cron per-tick `campaign_send` quota; `paused` status | P1, T1 |
-| C2 | Marketing send path | executeSend marketing branch: scope check, token mint, explicit text part, footer inject/lock + post-render assert, headers/tags, transport, send-start snapshot (MRPC 7.2(b)), `email_log` without body; test send (HTML escaping + the sandboxed preview already shipped — §6.3) | P1, **P2**, P3, C1, T2 |
+| T2 | Events | SES → EventBridge API destination (+ SQS DLQ and a tested replay procedure) → YisraHook hook (`api_key` auth, `dedup_path` on the event id) → `mail_event_ingest` internal function (added to `CTA_FN_DENYLIST` — engine plumbing) → ledger (bounce/complaint/unsub) + `campaign_results` delivery columns by `result_id` tag + the per-transport complaint/bounce tally (§6.5); SES suppression-list removal on re-opt-in | T1, P1 |
+| C1 | Campaign hardening | `campaigns.class` / `topic_key`; 50 cap in `createCampaign` + D16 over-cap path; `campaigns.bulk` capability; `bulk_ok` refused for operational; **`marketing_send_enabled` kill switch (`'0'`): marketing refused 422 at create and skipped at send**; **send reservation / at-most-once for every campaign** (`sending` / `unknown` statuses); per-transport rate window at dispatch; per-campaign pump with bounded catch-up; cron per-tick `campaign_send` quota; `paused` status with defer semantics (§6.4 table); operational-class honesty prompt | P1, T1 |
+| C2 | Marketing send path | executeSend marketing branch: scope check, token mint, explicit text part, footer inject/lock + post-render assert, headers/tags, transport, send-start snapshot (MRPC 7.2(b)), `email_log` without body; **complaint/bounce transport hold enforced before every send** (§6.5); account-pause detection; test send (HTML escaping + the sandboxed preview already shipped — §6.3) | P1, **P2**, P3, C1, T2 |
 | C3 | Designs + builder | spike first (§7, incl. a malicious `design_json`); then `email_designs` with server-side validation on save; Designer editor mode (GrapesJS + MJML); merge-tag picker; locked footer block; asset upload via AssetPicker/`apiSend` | C2 (can build in parallel, lands after) |
-| C4 | Segments + reporting | saved segments; campaign stats; complaint-rate alerts; bounce digest | C2 |
+| C4 | Segments + reporting | saved segments; campaign stats incl. `unknown`; transport-rate display; bounce digest | C2 |
 | C5 | Outside-list import | provenance-recording import; hygiene check; first-send warm-up order | G2, C2 |
 | C6 | Open/click tracking (v2, D11) | SES config-set open + click events on a **custom tracking domain** under the sending subdomain (not the provider's shared one); `campaign_results.opened_at` / `clicked_at` + per-link click counts; campaign stats; clicks are the primary metric, opens shown as approximate (Apple Mail Privacy Protection pre-fetches images); a per-campaign toggle; one line on the preference page that marketing mail is tracked | C2, C4 |
+| C7 | Promotional automations | `send_email` / `send_sms` internal functions gain `promotional` (default false) + `topic`: a promotional automation send takes the marketing path (consent check by topic, token, footer, headers, transport rules) and skips opted-out recipients; SMS `promotional` refused while D1 stands. Workflow/sequence editors show the checkbox | C2 |
 | — | Deferred | marketing SMS (D1), drips via sequences, provider domain provisioning (YC3) | — |
 
 Per-slice obligations (CLAUDE.md): settings-registry entries for every new
@@ -857,8 +957,8 @@ consent chapter, with the section README TOC; `ref/plans.md` for anything
 deferred.
 
 Estimated size (rough, for planning): P1 L (the writer/reader inventory makes
-it bigger than it looked), P2 M, P3 M, P4 S, T1 M, T2 M, C1 M, C2 M, C3 L,
-C4 S, C5 S, C6 M.
+it bigger than it looked), P2 M, P3 M, P4 S, T1 M, T2 M, C1 L, C2 M, C3 L,
+C4 S, C5 S, C6 M, C7 S.
 
 ## 10. Decisions for Fred (and SS where marked)
 
@@ -882,6 +982,8 @@ C4 S, C5 S, C6 M.
 | D15 | Push YC-captured SMS opt-outs to RingCentral? | **RULED: no push in v1**; read-only reconcile. | A `from:"*"` push blocks every RC line, so staff-acknowledged replies (2026-10-27 override) would fail with 413, and a later START lifts only one pair. YC already refuses automation; the push only protects texts staff send from the RC app directly. Revisit after P2 step 0. |
 | D16 | Operational sends over the 50 cap (e.g. office-closure notice to all active clients, email or SMS)? | **RULED:** allowed with `campaigns.bulk` + a typed confirmation of the count, audited; still operational (no footer), still consent-checked. | Informational notices to clients are legitimate; the cap exists to stop accidental blasts, not these. |
 | D17 | Who gets the "case email is bouncing" task? | **RULED:** clients only, to the case's assigned staff member, else the firm default; non-client bounces → campaign stats only. | One task per bounce would flood on a cold import. |
+| D18 | Do opt-outs stop automations? | **RULED (Fred, 2026-10-29): no — opt-outs gate promotion.** Automations are operational (a stand-in for a person); a later `promotional` checkbox (C7) makes an automation send obey marketing consent. Email opt-outs are marketing-only; no "send to opt-outs" switch on marketing campaigns — the operational class is the honest path. | CAN-SPAM covers commercial mail only; the 10-27 "automation refuses" rule was broader than the law and blocked the reminders clients need. |
+| D19 | Does an SMS STOP still stop automated (operational) texts? | Rec: **yes** — the one exception to D18. | A STOP revokes consent for texts (FCC "any reasonable means"; FCC 26-67 only lets informational revocations be scoped by category from 2026-11-25), and the providers block anyway — RC the pair, Quo every Quo line — so the send would fail. The client gets a staff task to be reached by phone/email (§4.6). |
 
 ## Appendix C — Compliance & provider opt-out facts (fetched 2026-10-29; engineering input, not legal advice)
 

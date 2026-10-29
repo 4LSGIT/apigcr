@@ -868,6 +868,15 @@ async function notifyCompletion(db, task, completedByName, note) {
  *   absent / 'all' → no filter
  *   'active'       → task_start IS NULL OR task_start <= today (firm tz)
  *   'scheduled'    → task_start > today  (deferred, not yet in play)
+ *
+ * sort_by (optional) — absent / 'priority' / anything unlisted → the default
+ * order (overdue first, see ORDER below). A column in sort_dir's direction:
+ *   'status'  → the pill tasks.html shows (displayStatus): Overdue, Due Today,
+ *               Pending, No due date, Scheduled, Completed, Deleted
+ *   'due'     → task_due (undated last both ways)
+ *   'title' | 'to' | 'by' | 'link' → text (blanks last both ways), then by due
+ *   'created' → task_date
+ * Every order ends on task_id, so a page boundary never repeats or skips a row.
  */
 async function listTasks(db, {
   query       = '',
@@ -879,6 +888,8 @@ async function listTasks(db, {
   source      = null,
   defer       = null,
   session_key_id = null,   // D3: only this key's tasks (names task_session_key_id — key routes only)
+  sort_by     = null,
+  sort_dir    = 'ASC',
   limit       = 100,
   offset      = 0
 } = {}) {
@@ -940,6 +951,47 @@ async function listTasks(db, {
 
   const whereSQL = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
+  // ORDER. Whitelisted — no user input is interpolated. The default is the
+  // work queue: status group, then deferred work (task_start in the future,
+  // not in play yet) sinks below everything actionable within its group,
+  // then dated work soonest first, undated (mostly machine notices) below it.
+  const dir = String(sort_dir).toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+  const BY_DUE = 't.task_due IS NULL, t.task_due ASC, t.task_id DESC';
+  const TASK_SORTS = {
+    title: 't.task_title', to: 'ut.user_name', by: 'uf.user_name',
+    link:  "COALESCE(co.contact_name, NULLIF(ca.case_number_full, ''), ca.case_number)",
+  };
+  const orderParams = [];
+  let orderSQL;
+  if (sort_by === 'status') {
+    // Mirrors tasks.html displayStatus(), so the column sorts by what it shows.
+    orderSQL = `ORDER BY CASE
+        WHEN t.task_status = 'Completed' THEN 6
+        WHEN t.task_status = 'Deleted'   THEN 7
+        WHEN t.task_start IS NOT NULL AND t.task_start > ? THEN 5
+        WHEN t.task_due IS NULL  THEN 4
+        WHEN t.task_due < ?      THEN 1
+        WHEN t.task_due = ?      THEN 2
+        ELSE 3 END ${dir}, ${BY_DUE}`;
+    orderParams.push(todayFirm, todayFirm, todayFirm);
+  } else if (sort_by === 'due') {
+    orderSQL = `ORDER BY t.task_due IS NULL, t.task_due ${dir}, t.task_id ${dir}`;
+  } else if (sort_by === 'created') {
+    orderSQL = `ORDER BY t.task_date ${dir}, t.task_id ${dir}`;
+  } else if (TASK_SORTS[sort_by]) {
+    const col = TASK_SORTS[sort_by];
+    orderSQL = `ORDER BY ${col} IS NULL OR ${col} = '', ${col} ${dir}, ${BY_DUE}`;
+  } else {
+    orderSQL = `ORDER BY
+       FIELD(t.task_status, 'Overdue','Due Today','Pending','Completed','Deleted'),
+       (t.task_start IS NOT NULL AND t.task_start > ?),
+       t.task_due IS NULL,      -- MySQL sorts NULL first in ASC; push undated
+       t.task_due ASC,          -- (mostly machine notices) BELOW dated work
+       t.task_date DESC,
+       t.task_id DESC`;
+    orderParams.push(todayFirm);
+  }
+
   const [[{ total }]] = await db.query(
     `SELECT COUNT(*) AS total
      FROM tasks t
@@ -962,16 +1014,9 @@ async function listTasks(db, {
      LEFT JOIN contacts co ON (t.task_link_type = 'contact' AND t.task_link_id = co.contact_id)
      LEFT JOIN cases    ca ON (t.task_link_type = 'case'    AND t.task_link_id = ca.case_id)
      ${whereSQL}
-     ORDER BY
-       FIELD(t.task_status, 'Overdue','Due Today','Pending','Completed','Deleted'),
-       -- Deferred work (task_start in the future) isn't in play yet, so it
-       -- sinks below everything actionable within its status group.
-       (t.task_start IS NOT NULL AND t.task_start > ?),
-       t.task_due IS NULL,      -- MySQL sorts NULL first in ASC; push undated
-       t.task_due ASC,          -- (mostly machine notices) BELOW dated work
-       t.task_date DESC
+     ${orderSQL}
      LIMIT ? OFFSET ?`,
-    [...params, todayFirm, Number(limit), Number(offset)]
+    [...params, ...orderParams, Number(limit), Number(offset)]
   );
 
   const data = rows.map(r => shapeRow(r));

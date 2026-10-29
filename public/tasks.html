@@ -202,7 +202,7 @@
 
 <div id="tkError" style="display:none;padding:24px;color:#b91c1c;font-size:15px"></div>
 
-<div id="tkMain" style="display:none">
+<div id="tkMain" style="display:none" data-sort-scope>
   <!-- DOM order is entity order (heading, then button); in shell mode the h2
        is hidden so grid auto-placement puts the button in col 1 and the h1
        banner in col 2. -->
@@ -255,9 +255,27 @@
       <select id="fBy" style="width:auto"><option value="">All</option></select></label>
     <label class="yc-f shell-only"><span class="yc-f-l">Assigned To</span>
       <select id="fTo" style="width:auto"><option value="">All</option></select></label>
+    <!-- Order By: the headers below drive these two (scripts.js sort() /
+         sortSelect(), scoped by #tkMain's data-sort-scope). Due carries the
+         default, the work queue: overdue first. -->
+    <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
+      <select id="fSort" style="width:auto" data-type="sortBy" onchange="sortSelect(this)">
+        <option value="priority">Overdue first</option>
+        <option value="status">Status</option>
+        <option value="title">Title</option>
+        <option value="due">Due</option>
+        <option value="to">Assigned To</option>
+        <option value="by">Assigned By</option>
+        <option value="link">Linked To</option>
+        <option value="created">Created</option>
+      </select>
+      <select id="fSortDir" style="width:auto" data-type="sortDi" onchange="sortSelect(this)">
+        <option value="ASC">Ascending</option>
+        <option value="DESC">Descending</option>
+      </select></span>
     </div>
     <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
-    <button id="tkSearchBtn" class="yc-f-go" onclick="fetchTasks(0)">Search</button>
+    <button id="tkSearchBtn" class="yc-f-go" onclick="fetchTasks(0)" data-type="goButton">Search</button>
   </div>
 
   <div id="tkBulkBar">
@@ -271,13 +289,13 @@
     <tr>
       <th class="col-sel"><input type="checkbox" id="tkSelAll" title="Select all open tasks on this page" onchange="toggleSelectAll(this.checked)"></th>
       <th>Actions</th>
-      <th>Status</th>
-      <th>Title</th>
-      <th>Due</th>
-      <th class="col-to">Assigned To</th>
-      <th class="col-by">Assigned By</th>
-      <th class="col-link">Linked To</th>
-      <th class="col-created">Created</th>
+      <th onclick="sort(this, 'status')">Status</th>
+      <th onclick="sort(this, 'title')">Title</th>
+      <th onclick="sort(this, 'due')" data-sort-upcoming="priority" title="Overdue first → soonest due → latest due">Due ⇅</th>
+      <th class="col-to" onclick="sort(this, 'to')">Assigned To</th>
+      <th class="col-by" onclick="sort(this, 'by')">Assigned By</th>
+      <th class="col-link" onclick="sort(this, 'link')">Linked To</th>
+      <th class="col-created" onclick="sort(this, 'created')">Created</th>
     </tr>
   </table>
   <div id="tasksTableFoot"></div>
@@ -557,6 +575,11 @@ async function fetchTasks(off, quiet) {
   if (!isEntity && defer  && defer  !== 'all')  params.defer  = defer;
   if (!isEntity && E('fBy').value) params.assigned_by = E('fBy').value;
   if (!isEntity && E('fTo').value) params.assigned_to = E('fTo').value;
+  // 'priority' is the route's default order: send nothing, as before.
+  if (E('fSort').value !== 'priority') {
+    params.sort_by = E('fSort').value;
+    params.sort_dir = E('fSortDir').value;
+  }
 
   try {
     const data = await api('/api/tasks', 'GET', params);
