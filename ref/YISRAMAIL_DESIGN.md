@@ -1,13 +1,17 @@
 # YisraMail — consent, bulk email & campaigns v2 (DESIGN)
 
-Status: **DRAFT v0.1 — 2026-10-29, for review. Nothing built.** Decisions in
-§10 are recommendations until Fred (and SS where marked) rules them.
+Status: **DRAFT v0.2 — 2026-10-29. Nothing built.** Ruled 2026-10-29 (Fred):
+D0 build, D1 no marketing SMS in v1, D6 Amazon SES, D9 GrapesJS + MJML (spike
+first), D11 no tracking in v1 / planned as C6. Still open: D2 (storage — §4.4
+option (c)), D5 (Fred + SS), D8 (SS); D3, D4, D7, D10, D12–D14 stand as
+recommendations until ruled.
 Supersedes the "YisraMail direction" entry in `ref/plans.md` (which now
 points here). Related: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.2 (`bulk_ok`, hub
 budget), `ref/EMAIL_PROVIDER_PLAN.md` (bulk rule, OQ6), `services/optoutService.js`
 (ruling 2026-10-27), `manual/01-YisraCase-overview/11-campaign-manager.md`.
-Appendices A–C are a dated market/legal survey (2026-10-29) — move them to
-`ref/archive/` once D6/D9 are ruled; the body stays living.
+The provider and builder surveys behind D6/D9 are archived in
+`ref/archive/YISRAMAIL_SURVEY_2026-10-29.md`; Appendix C (compliance facts) stays
+here because §4 is built on it.
 
 ## 0. Summary
 
@@ -21,19 +25,19 @@ Appendices A–C are a dated market/legal survey (2026-10-29) — move them to
    scope `all` (§4.1, D2).
 3. **SMS:** the providers enforce STOP themselves — RingCentral per (number,
    recipient) pair, **Quo across every Quo number**. Marketing SMS is out of
-   v1 and, if ever done, runs on its own RingCentral number and 10DLC
+   v1 (ruled) and, if ever done, runs on its own RingCentral number and 10DLC
    marketing campaign (§4.6, D1).
 4. **Transport = a driver, not lock-in** (§5.1, D7) — the existing email/
    phone adapter pattern. Every candidate speaks SMTP, so the existing `smtp`
    adapter sends; per-provider code is the events parser. YC owns list,
    consent, templates and the campaign engine.
-5. **Provider: Amazon SES** (≈ $1/mo at 10k, own unsubscribe headers allowed,
-   tenants for YC3); runner-up Resend Pro $20/mo (§5.5, D6).
+5. **Provider: Amazon SES — ruled** (pay per use, no monthly commitment,
+   ≈ $1/mo at 10k, own unsubscribe headers allowed, tenants for YC3) (§5.5, D6).
 6. **Campaigns: enhance, don't replace** (§6, D10) — add a send class
    (operational mail merge ≤ 50 vs marketing broadcast), topics, rate control
    that doesn't starve the job queue, events and reporting.
-7. **Builder: GrapesJS + grapesjs-mjml** (BSD, in-browser, no vendor, no
-   per-tenant cost) after a short spike; fallback Unlayer Launch $250/mo (§7, D9).
+7. **Builder: GrapesJS + grapesjs-mjml — ruled** (BSD, in-browser, no vendor,
+   no per-tenant cost), spike first; fallback Unlayer Launch $250/mo (§7, D9).
 8. **Bankruptcy-specific:** every marketing email carries the 11 U.S.C. §528
    debt-relief-agency statement, a responsible attorney (MRPC 7.2(d)), the
    postal address and an ad label; copies kept 2 years (MRPC 7.2(b)) — SS to
@@ -193,6 +197,24 @@ already read through `optoutService`.
 (b): keep the row flags as the truth for `all`; the new tables hold only
 marketing scopes. Smaller, but two stores, and an `all` opt-out still dies
 with its row.
+(c) (raised by Fred 2026-10-29): replace each row's flag with a LIST of
+scopes on the row (`email_optout` → e.g. a JSON array `["all"]`,
+`["newsletter"]`). Agreed that a list is the right model — (a) *is* that
+list, one row per scope. What (c) changes is where the list lives, and the
+row is the wrong owner:
+- **It dies with the row.** Ending a row (address moved to another contact,
+  intake's "separate new contact" transfer, cleanup) drops the opt-out
+  unless every end/transfer/re-add path copies it. CAN-SPAM and TCPA
+  attach to the address/number, and the company DNC record must be kept
+  5 years (Appendix C §B).
+- **No row, no opt-out.** Addresses outside `contacts` — imported lists, a
+  bounce from an address no row holds any more — can't be suppressed.
+- **Opt-in topics need three states** (never asked / opted in with proof /
+  opted out). A list of outs can't say "opted in to marketing SMS on
+  2026-11-02 via form X".
+- **The ledger is needed either way** for proof, so (c) still adds a table.
+The contact form shows (a) exactly as (c) would: per address/number, a
+checkbox per scope, read from `comm_consent_state` by the row's address.
 This revises the STORAGE half of the 2026-10-27 ruling (row → destination);
 its read rule (one service, automation refuses, staff warn) stands.
 
@@ -319,7 +341,7 @@ Driver, with one default provider. Why:
   `phone_lines.provider` → `services/adapters/phone/*`, and the YC3 direction
   says "driver pattern extends" (`ref/plans.md` YC 3.0).
 - The marginal cost of a driver is small here because **every candidate
-  speaks SMTP** (Appendix A): the existing `smtp` adapter sends through any
+  speaks SMTP** (survey in `ref/archive/YISRAMAIL_SURVEY_2026-10-29.md`): the existing `smtp` adapter sends through any
   of them on day one. The per-provider code is (1) the events parser +
   signature verify, (2) optionally an API send (batch, tags), (3) optionally
   domain provisioning for YC3 self-serve onboarding.
@@ -331,7 +353,7 @@ Driver, with one default provider. Why:
 - YC3: a tenant either brings its own account (its reputation, its ToS
   relationship) or uses a platform default. One tenant's complaint spike on
   a shared platform account can pause everyone's sending unless the
-  provider isolates tenants (sub-accounts / tenants / servers — Appendix A).
+  provider isolates tenants (sub-accounts / tenants / servers — see the survey).
   That isolation is a provider-choice criterion for YC3, not a reason to
   hard-wire one.
 
@@ -391,7 +413,7 @@ verify in the adapter's `events.verify` (the "parsing into drivers" item in
 
 ### 5.5 Provider (DECISION D6)
 
-Hard requirements (Appendix A): marketing allowed by the AUP; **we set our
+Hard requirements (survey: `ref/archive/YISRAMAIL_SURVEY_2026-10-29.md`): marketing allowed by the AUP; **we set our
 own `List-Unsubscribe` / `-Post` headers** (YC owns unsubscribe — §4); a
 2k-recipient day on the paid tier; SMTP; signed (or otherwise authenticated)
 event webhooks; a path to per-tenant isolation for YC3.
@@ -407,7 +429,7 @@ event webhooks; a path to per-tenant isolation for YC3.
 | Brevo / Mailjet / SMTP2GO / Elastic / Bird | $9–19 | unsigned or unverified webhooks; Elastic forces its own unsubscribe link; Bird rejects custom List-Unsubscribe (422) |
 | ZeptoMail, Cloudflare Email, Mandrill | — | transactional-only terms → excluded |
 
-**Recommendation: Amazon SES** as the default driver.
+**Ruled 2026-10-29: Amazon SES** as the default driver (Fred: no monthly commitment, far cheaper than any alternative).
 - Cost is noise (≈ $1/mo at 10k), our own headers allowed, SMTP endpoint
   for the existing `smtp` adapter, account-level suppression of bounces/
   complaints with an API, custom MAIL FROM, and **SES Tenants** (per-tenant
@@ -525,7 +547,8 @@ marketing campaigns on that transport require SU release.
 
 Drips/journeys = sequence enrollment from a campaign audience (the existing
 YisraMail direction — no third flow engine); A/B subjects; send-time
-optimization; dynamic content blocks.
+optimization; dynamic content blocks. Open/click tracking is not "out" — it is
+slice C6, after v1 (D11).
 
 ## 7. Builder (DECISION D9)
 
@@ -535,7 +558,7 @@ ours (`{{contacts.contact_fname|cap}}`); images go to our asset store
 (`POST /api/assets`); YC3 wants no per-tenant cost line; client content
 should not round-trip a vendor.
 
-**Recommendation: GrapesJS core + `grapesjs-mjml`** (BSD-3, free), version-
+**Ruled 2026-10-29: GrapesJS core + `grapesjs-mjml`** (BSD-3, free), version-
 pinned, loaded like Quill (or vendored under `public/vendor/` to drop the
 runtime CDN dependency).
 - Runs entirely in the browser; MJML compiles client-side (`mjml-browser`)
@@ -567,7 +590,7 @@ activity). **Watch:** Templatical (ESM CDN, merge tags + media hooks built
 in, SaaS embedding allowed under FSL-1.1-MIT) — attractive API, but created
 2026-03, pre-1.0, single maintainer.
 
-Full table: Appendix B.
+Full table: `ref/archive/YISRAMAIL_SURVEY_2026-10-29.md`.
 
 ## 8. YC3 fit
 
@@ -585,7 +608,7 @@ Full table: Appendix B.
   provider pick (D6) must not foreclose: per-tenant isolation (sub-accounts /
   tenants / servers) and per-tenant domains via API.
 - **Builder licensing:** a commercial SDK priced per end user or per tenant
-  becomes a per-tenant cost line in YC3 (Appendix B); an open-source builder
+  becomes a per-tenant cost line in YC3 (see the survey); an open-source builder
   has no such line.
 - **Consent is portable:** the ledger exports per destination (a tenant's
   proof belongs to the tenant); nothing consent-related lives only at the
@@ -613,94 +636,35 @@ is ruled.**
 | C3 | Designs + builder | spike first (§7); then `email_designs`; Designer editor mode (GrapesJS + MJML); merge-tag picker; asset upload hook; sandboxed preview | C2 (can build in parallel, lands after) |
 | C4 | Segments + reporting | saved segments; campaign stats; complaint-rate alerts | C2 |
 | C5 | Outside-list import | provenance-recording import; hygiene check; first-send warm-up order | G2, C2 |
-| — | Deferred | marketing SMS (D1), drips via sequences, open/click tracking (D11), provider domain provisioning (YC3) | — |
+| C6 | Open/click tracking (v2, D11) | SES config-set open + click events on a **custom tracking domain** under the sending subdomain (not the provider's shared one); `campaign_results.opened_at` / `clicked_at` + per-link click counts; campaign stats; clicks are the primary metric, opens shown as approximate (Apple Mail Privacy Protection pre-fetches images); a per-campaign toggle; one line on the preference page that marketing mail is tracked | C2, C4 |
+| — | Deferred | marketing SMS (D1), drips via sequences, provider domain provisioning (YC3) | — |
 
 Docs per slice (living-docs rule): this file's "As built" blocks, AI_CONTEXT
 §17 (campaigns) + the opt-out entry, manual 11-campaign-manager.md + a new
 consent chapter, schema COMMENTs on every new column.
 
 Estimated size (rough, for planning): P1 M, P2 M, P3 M, P4 S, T1 S, T2 M,
-C1 M, C2 M, C3 L, C4 S, C5 S.
+C1 M, C2 M, C3 L, C4 S, C5 S, C6 M.
 
 ## 10. Decisions for Fred (and SS where marked)
 
 | # | Decision | Recommendation | Why / trade-off |
 |---|---|---|---|
-| D0 | Build (YisraMail) or buy (Brevo/MailerLite + sync)? | **Build**; buy only as a bridge if SS needs a send before C2. | §5.5 last paragraph. Build is a YC3 feature and the consent work is needed for SMS anyway; buy ships in days but splits consent across two systems. |
-| D1 | Marketing SMS in v1? **(SS)** | **No.** Email newsletter only; SMS campaigns stay operational ≤ cap. | Needs a dedicated RC number on a MARKETING/MIXED 10DLC campaign, written-consent capture, DNC scrub, quiet hours (Appendix C). Never Quo: one STOP there blocks every Quo line. Revisit as its own slice. |
-| D2 | Consent storage | **(a)** destination-keyed state table is THE truth for every scope; row flags become a cache, then drop. | Survives row end/transfer/import; one store. Revises the storage half of 2026-10-27; callers unchanged. |
+| D0 | Build (YisraMail) or buy (Brevo/MailerLite + sync)? | **RULED: build.** Buy only as a bridge if SS needs a send before C2. | §5.5 last paragraph. Build is a YC3 feature and the consent work is needed for SMS anyway; buy ships in days but splits consent across two systems. |
+| D1 | Marketing SMS in v1? | **RULED: no.** Email newsletter only; SMS campaigns stay operational ≤ cap. | Needs a dedicated RC number on a MARKETING/MIXED 10DLC campaign, written-consent capture, DNC scrub, quiet hours (Appendix C). Never Quo: one STOP there blocks every Quo line. Revisit as its own slice. |
+| D2 | Consent storage | **OPEN.** Recommended (a): destination-keyed state table — the scope list stored by address — is THE truth; row flags become a cache, then drop. Fred raised (c), a list of scopes on the row (§4.4). | Survives row end/transfer/import; one store. Revises the storage half of 2026-10-27; callers unchanged. |
 | D3 | Scope of an SMS STOP on a case line | **`all` SMS** (today's semantics) + a staff task to reach the client another way. | Quo already blocks the whole Quo account and RC the pair; YC matching that stops automation from sending into blocks. |
 | D4 | One-click scope | **The send's topic**; the page offers "all marketing". | Matches RFC 8058 intent (this list); with one topic today they're the same. |
-| D5 | Outside lists (legacy 1,494, `temp_contacts` 2,022) **(SS)** | Import only with a stated basis per list (who are they, how did they reach the firm); send to them last, after hygiene; or leave them out. | Cold lists drive bounces/complaints, the only real threat to a new sending domain; MRPC solicitation rules may apply (Appendix C §D). |
-| D6 | Provider | **Amazon SES** (SMTP send + EventBridge events); runner-up Resend Pro $20. | §5.5. ≈ $1/mo, own headers, tenants for YC3; costs an AWS setup + production-access review. MailerSend rejected. |
+| D5 | Outside lists (legacy 1,494, `temp_contacts` 2,022) **(SS)** | **Fred owns (with SS).** Import only with a stated basis per list (who are they, how did they reach the firm); send to them last, after hygiene; or leave them out. | Cold lists drive bounces/complaints, the only real threat to a new sending domain; MRPC solicitation rules may apply (Appendix C §D). |
+| D6 | Provider | **RULED: Amazon SES** (SMTP send + EventBridge events); runner-up Resend Pro $20. | §5.5. ≈ $1/mo, own headers, tenants for YC3; costs an AWS setup + production-access review. MailerSend rejected. |
 | D7 | Driver vs lock-in | **Driver**, one default provider, SMTP send + provider events parser. | §5.1. |
-| D8 | Brand, From, subdomain, Reply-To **(SS)** | e.g. `Legal Solutions Group <news@news.4lsg.com>`, Reply-To `office@4lsg.com`. | Which brand speaks (LSG vs MDBL) is SS's call; one subdomain per brand. |
-| D9 | Builder | **GrapesJS + grapesjs-mjml** (BSD, self-hosted), after a ½–1 day spike; fallback Unlayer Launch $250/mo. | §7. Free, no vendor round-trip, no per-tenant cost; we build the merge-tag picker. |
+| D8 | Brand, From, subdomain, Reply-To **(SS)** | **OPEN** — not blocking P1–P4/T1; needed before P0's DNS. Default if SS has no view: `Legal Solutions Group <news@news.4lsg.com>`, Reply-To `office@4lsg.com`. | Which brand speaks (LSG vs MDBL) is SS's call. The default matches `firm_name` and puts unsubscribe links (`4lsg.com/u/…`) on the sender's own domain; an MDBL sender would want MDBL as a landing host too. One subdomain per brand. |
+| D9 | Builder | **RULED: GrapesJS + grapesjs-mjml** (BSD, self-hosted), after a ½–1 day spike; fallback Unlayer Launch $250/mo. | §7. Free, no vendor round-trip, no per-tenant cost; we build the merge-tag picker. |
 | D10 | Campaigns | **Enhance** with send classes (§6.1); keep Rich Text / HTML modes for operational mail merge. | The engine is sound; the gaps are consent, transport, content, rate. |
-| D11 | Open/click tracking | **Off in v1** (delivered/bounce/complaint/unsubscribe only). | Opens are unreliable (Apple MPP); click tracking rewrites links through a provider domain unless a custom tracking domain is set up. Add later if SS wants numbers. |
+| D11 | Open/click tracking | **RULED: off in v1, built in v2 as slice C6** (Fred: a good feature). | v1 ships delivered/bounce/complaint/unsubscribe. Opens are approximate (Apple MPP); click tracking needs a custom tracking domain so links aren't rewritten through a shared provider domain. |
 | D12 | Default marketing send rate | **60/min** (2k ≈ 33 min), firm setting. | Gentle on a new domain; doorbells keep the job queue clear. |
 | D13 | Who may send marketing | New capability `campaigns.marketing` (admin role). | Today any staff login can send as any firm address. |
 | D14 | Designate an exclusive SMS revocation method (FCC 26-67, from 2026-11-25)? | **No, not in v1.** Keep "any reasonable means" + the free-text review queue. | Designating requires the disclosure in every text, case texts included; the review queue already covers plain-language opt-outs. Revisit with marketing SMS. |
-
-## Appendix A — Bulk transport survey (official pricing/docs pages, fetched 2026-10-29)
-
-Prices move; re-check before signing up. "Own headers" = we may set our own
-`List-Unsubscribe` + `List-Unsubscribe-Post` on marketing mail.
-
-| Provider | Free (month / day) | Plan covering 5k/mo + a 2k day | @10k | @50k | Marketing OK | Own headers | Webhooks signed | Tenant isolation |
-|---|---|---|---|---|---|---|---|---|
-| **Amazon SES** | sandbox 200/day; $200 AWS credit 6 mo | $0.10/1k → ≈ $0.50 | $1 | $5 | yes, after production-access review | yes | yes (SNS SHA256) / EventBridge | **Tenants** (reputation + auto-pause, API) |
-| Resend | 3k / 100 per day | Pro $20 (50k) | $20 | $20 | yes (opt-in) | yes (`/emails`) | yes (Svix) | none (domain-scoped keys) |
-| Mailgun | 100/day | Basic $15 (10k) | $15 | $35 | yes (provable opt-in) | yes | yes (HMAC) | sub-accounts not self-serve |
-| SendGrid | 60-day trial, 100/day | Essentials $19.95 (50k) | $19.95 | $19.95 | yes | yes | yes (ECDSA) | subusers Pro+ |
-| Postmark | 100/mo | Basic $15 (10k) | $15 | $55–66 | Broadcast stream, vetted | needs support approval; Broadcast adds its own | **no** | Servers + Domains API |
-| MailerSend | 500/mo | Hobby $7 (5k; 1,000 req/day incl. SMTP) | ≈ $14.50 / $35 | $35 | yes | only Professional $110 | yes (HMAC) | none found |
-| Brevo (API) | 300/day | Starter $9 (5k) | $17 | $56 | yes | unverified one-click | unverified | unverified |
-| Mailjet | 6k / 200 per day | Starter $9 (8k) | $19 | $40–59 | yes | yes | **no** | 1–20 sub-accounts |
-| SMTP2GO | 1k / 200 per day | Starter $10 (10k) | $10 | $75 | 100 % opt-in | unverified | **no** | sub-accounts |
-| Mailtrap | 4k / 150 per day | Basic $15 (10k) | $15 | $20 | Bulk Stream | Bulk Stream adds them | yes (HMAC) | unverified |
-| Elastic Email | 3k/mo | Starter $19 (50k) | $19 | $19 | with consent | forced own unsubscribe link | unverified | Pro $49 |
-| Bird (ex-SparkPost) | 1k / 50 per day | $15 deposit, $0.40/1k | $15 | ≈ $20 | yes | **rejected (422)** | yes | workspaces |
-| ZeptoMail / Cloudflare Email / Mandrill | — | — | — | — | **transactional only** | — | — | — |
-
-All-in-one marketing platforms (~2,500 contacts, monthly sends): Brevo
-Marketing ≈ $25 (+$12 no logo); MailerLite Comfort $33 / Power $49;
-EmailOctopus Pro $20, or Connect $17 sending through your own SES; Sender.net
-free tier covers 2.5k/15k; Mailchimp/Kit/Constant Contact prices unverified.
-All but Constant Contact report unsubscribes by webhook.
-
-Sources: aws.amazon.com/ses/pricing, docs.aws.amazon.com/ses (production
-access, suppression list, tenants, event destinations), resend.com/pricing +
-/legal/acceptable-use, mailgun.com/pricing + /legal/aup, twilio.com SendGrid
-pricing, postmarkapp.com/pricing + message-streams + webhooks, mailersend.com/pricing
-+ help/smtp-relay, brevo.com/pricing.md, mailjet.com/pricing, smtp2go.com/terms,
-mailtrap.io/pricing, elasticemail.com/email-api-pricing, bird.com/pricing/email,
-zoho.com/zeptomail/pricing, developers.cloudflare.com/email-service,
-mailchimp.com/pricing/transactional-email, mailerlite.com/pricing, emailoctopus.com/pricing.
-
-## Appendix B — Email builder survey (fetched 2026-10-29; npm registry, GitHub, vendor pricing pages)
-
-| Candidate | License | Price (free / paid) | CDN, no build | Self-hosted | Client-side HTML+JSON | Merge tags | Upload hook | Health 2026 |
-|---|---|---|---|---|---|---|---|---|
-| **GrapesJS + grapesjs-mjml** | BSD-3 | free | yes | yes | yes (mjml-browser) | no picker (build one) | `uploadFile` | core 0.23.8 (10-15), mjml plugin active |
-| GrapesJS + preset-newsletter | BSD-3 | free | yes | yes | yes (juice inline) | no picker | `uploadFile` | preset stale (2023) |
-| Unlayer | commercial | Free / Launch $250 / Scale $750 / Optimize $2,000 per mo | yes | no (vendor iframe) | yes, unmetered | any syntax | Launch+ | active |
-| Beefree SDK | commercial | Free (10 users) / $400 / $1,200 / $3,000 per mo | yes + server token | no | no (vendor renders) | Core+ "smart" | paid | active |
-| Stripo Plugin | commercial | Free (100 emails/mo) / $100 / $550 | yes + server token | no (emails stored at Stripo) | partial | yes | all plans (GCS) | active |
-| Topol Plugin | commercial | trial / $70 / $140 / $300 per mo + per-MAU | yes | no | no (vendor backend) | yes | Expansion+ | active |
-| Chamaileon SDK | commercial | Free (10 MAU) / from $200 | yes + server token | no | no (metered generator) | via variables | `onEditImage` | active |
-| GrapesJS Studio SDK | proprietary | Free (1k sessions, branding) / $200 / $2,000 | yes (UMD) | mostly (licence key) | yes | plugins | `onUpload` | active |
-| Templatical | FSL-1.1-MIT / MIT renderer | free | yes (ESM) | yes | JSON+MJML; HTML needs MJML compiler | yes | `onRequestMedia` | very active; created 2026-03, pre-1.0, solo |
-| Easy Email | MIT (Pro commercial) | free / Pro $199–499 | no (React 18) | yes | yes (MJML) | `mergeTags` | `onUploadImage` | moderate |
-| EmailBuilder.js | MIT | free | no (React app to fork) | yes | yes | no | none | slow |
-| Maily | MIT | free | no (React/Tiptap; not drag-drop canvas) | yes | via renderer | variable nodes | `onImageUpload` | moderate |
-| Mosaico | GPL-3.0 | free | built dist | needs backend | yes | — | backend | low |
-| MJML / react-email | MIT | free | — | — | rendering layers, not builders | | | active |
-
-Sources: unlayer.com/pricing, developers.beefree.io/pricing-plans,
-stripo.email/plugin, topol.io/pricing, chamaileon.io/sdk, grapesjs.com/sdk/pricing,
-github.com/GrapesJS/grapesjs, github.com/GrapesJS/mjml, github.com/templatical/sdk,
-easyemail.pro, github.com/usewaypoint/email-builder-js, github.com/arikchakma/maily.to.
 
 ## Appendix C — Compliance & provider opt-out facts (fetched 2026-10-29; engineering input, not legal advice)
 
