@@ -44,6 +44,8 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const { rawShellHtml, loadLauncher } = require('./helpers/shellHtml');
+// More Features and Admin: the firm's pages since launcher-nits C4 (tests/helpers/hubPages.js)
+const { hubFirm, stageHtml, HISTORIC_LAYOUTS } = require('./helpers/hubPages');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
@@ -73,36 +75,42 @@ const LOAD_FIRMDATA = slice('async function loadFirmData() {', '\n}\n') + '\n}\n
 const LUC_HEAD = slice('    async function loadUserContext() {', '      tasksBadgeRefresh();') + '\n    }\n';
 const LUC_FULL = slice('    async function loadUserContext() {', '    async function ') ;
 
-const placed = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
-const ALL_PLACED = [...new Set(['sidebar', 'home', 'homeIcons', 'more', 'moreIcons', 'admin', 'adminIcons'].flatMap(placed))];   // the icon rows place too (S6c)
+// (more / admin and their icon rows: the pre-C4 hub lists, now the firm pages' — tests/helpers/hubPages.js)
+const placed = (sf) => (LAY[sf] || HISTORIC_LAYOUTS[sf]).filter((e) => e.item).map((e) => e.item);
+const ALL_PLACED = [...new Set(['sidebar', 'home', 'homeIcons', 'more', 'moreIcons', 'admin', 'adminIcons'].flatMap(placed))]
+  .filter((k) => REG[k]);   // the icon rows place too (S6c); (the retired hub items gone with C4)
 // ui-custom S6b: registry items in no default layout are listed too, group
 // "More actions" (the set itself is pinned by featureRegistry.test.js).
 const EXTRAS = Object.keys(REG).filter((k) => !ALL_PLACED.includes(k));
 const ALL_LISTED = [...ALL_PLACED, ...EXTRAS];
 // ui-custom S6c: a gate is the registry's own (`gate`), no longer derived from
-// the Admin grid; the Admin PAGE (`admin`) is visibility (the firm's visible_to).
+// the Admin grid; the Admin PAGE (firm:admin since C4) is visibility (the firm's visible_to).
 const GATED = new Set(Object.keys(REG).filter((k) => REG[k].gate));
 const ids = (eff) => eff.map((e) => e.id);
+// the firm's documents with More Features and Admin as its pages (launcher-nits C4); Admin
+// unrestricted unless a visible_to is given
+const PAGES = ['firm:more', 'firm:admin'];
+const FUI = (visibleTo = null, ro = {}) => ({ firm: hubFirm({ visibleTo, ro }), user: {} });
+const LIVE_VT = { 'firm:admin': ['it', 'admin'] };   // the live firm's rule
 
 // ─────────────────────────────────────────────────────────────────────────
 describe('the effective registry (pure)', () => {
   test('non-admin: every placed item (and every S6b extra) once, minus gated', () => {
-    const eff = L.computeEffective({ isAdmin: false });
+    const eff = L.computeEffective({ isAdmin: false, ui: FUI() });
     expect(EXTRAS).toEqual(['myTasks', 'logout', 'code']);
-    const want = ALL_LISTED.filter((k) => !GATED.has(k));
+    const want = [...ALL_LISTED.filter((k) => !GATED.has(k)), ...PAGES];
     expect(ids(eff).sort()).toEqual(want.sort());
     expect(new Set(ids(eff)).size).toBe(eff.length);
     expect(ids(eff)).not.toContain('adminDbConsole');
     // the Admin page item is not gated: the firm's visible_to decides (S6c)
-    expect(ids(eff)).toContain('admin');
-    const ro = { visible_to: { admin: ['it', 'admin'] } };
-    expect(ids(L.computeEffective({ isAdmin: false, roles: ['staff'], ui: { firm: { registry_overrides: ro } } }))).not.toContain('admin');
-    expect(ids(L.computeEffective({ isAdmin: false, roles: ['admin'], ui: { firm: { registry_overrides: ro } } }))).toContain('admin');
+    expect(ids(eff)).toContain('firm:admin');
+    expect(ids(L.computeEffective({ isAdmin: false, roles: ['staff'], ui: FUI(LIVE_VT) }))).not.toContain('firm:admin');
+    expect(ids(L.computeEffective({ isAdmin: false, roles: ['admin'], ui: FUI(LIVE_VT) }))).toContain('firm:admin');
   });
 
   test('admin: the Admin grid and the Admin item come back', () => {
-    const eff = L.computeEffective({ isAdmin: true });
-    expect(ids(eff).sort()).toEqual([...ALL_LISTED].sort());
+    const eff = L.computeEffective({ isAdmin: true, ui: FUI() });
+    expect(ids(eff).sort()).toEqual([...ALL_LISTED, ...PAGES].sort());
     for (const k of GATED) expect(ids(eff)).toContain(k);
   });
 
@@ -122,19 +130,24 @@ describe('the effective registry (pure)', () => {
     expect(ids(L.computeEffective({ isAdmin: true, customTab: { src: '/forms.html', title: 'My Forms', icon: 'book' } }))).not.toContain('custom');
   });
 
-  test('groups: by origin — sidebar section, else Home, else the grid, else More actions — in the shipped order', () => {
-    const eff = L.computeEffective({ isAdmin: true });
-    // the order rides on the list (computeEffective is pure since S4a)
-    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);
+  test('groups: by origin — sidebar section, else Home, else More actions, else the firm page — in the shipped order', () => {
+    const eff = L.computeEffective({ isAdmin: true, ui: FUI() });
+    // the order rides on the list (computeEffective is pure since S4a); the firm's pages (C4) group
+    // under their own labels, then Firm (the firm's items, the page items themselves among them)
+    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin', 'Firm']);
     // S6b: the items no default layout places, in registry order
     expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(EXTRAS);
     const g = Object.fromEntries(eff.map((e) => [e.id, e.group]));
-    expect([g.cases, g.calendar, g.pipeline, g.newClient, g.admin, g.helpSupport, g.moreManuals, g.adminMailboxes])
-      .toEqual(['Records', 'Records', 'Actions', 'Actions', 'Settings', 'Settings', 'More', 'Admin']);
+    expect([g.cases, g.calendar, g.pipeline, g.newClient, g['firm:admin'], g.helpSupport, g.moreManuals, g.adminMailboxes])
+      .toEqual(['Records', 'Records', 'Actions', 'Actions', 'Firm', 'Settings', 'More Features', 'Admin']);
+    // no firm pages at all: what they held is unplaced, so More actions (S6b)
+    const bare = L.computeEffective({ isAdmin: true });
+    expect(bare.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions']);
+    expect(bare.find((e) => e.id === 'moreManuals').group).toBe('More actions');
     // ordered by group, then by layout order within it
     const order = eff.groups;
     for (let i = 1; i < eff.length; i++) expect(order.indexOf(eff[i - 1].group)).toBeLessThanOrEqual(order.indexOf(eff[i].group));
-    expect(ids(eff.filter((e) => e.group === 'More'))).toEqual([...placed('more'), ...placed('moreIcons')]);   // the icon row is the grid's group (S6c)
+    expect(ids(eff.filter((e) => e.group === 'More Features'))).toEqual([...placed('more'), ...placed('moreIcons')]);   // the icon row is the grid's group (S6c)
     // surfaceLabels feed the matcher
     expect(eff.find((e) => e.id === 'bills').labels).toEqual(['Bills', 'Billing']);
   });
@@ -170,11 +183,9 @@ describe('the matcher (pure)', () => {
 // A page skeleton with the real mounts, panels and tab divs; the page's own
 // drill-in and tab code evaluated into it.
 function boot({ withAll = false } = {}) {
-  const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
-    .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
+  const tabs = new Set(['tabHome', 'tabSettings']);   // (tabSettings: Settings opens it by call since C4)
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${DENIED_CSS}</head><body>
@@ -185,9 +196,8 @@ function boot({ withAll = false } = {}) {
     <div id="tabHome" class="tab-main"><script>ycLauncher.mount('home')</script></div>
     ${withAll ? ALL_TAB : '<div id="tabAll" class="tab-main"></div>'}
     ${plainTabs}
-    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
-    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
+    <div id="ycPages"></div>
+    <div id="ycPanels" style="display:none">${stageHtml(REG)}</div>
     <textarea id="elsewhere"></textarea><b id="myNameIs"></b><div id="hdrUserArea"></div>
   </body></html>`;
   const errors = [];
@@ -214,7 +224,10 @@ function boot({ withAll = false } = {}) {
   const shown = (el) => w.getComputedStyle(el).display !== 'none';
   const active = () => [...d.querySelectorAll('#appSidebar .sb-item.active')].map((e) => e.dataset.tab || e.id);
   const pills = (tab) => [...d.querySelectorAll(`#${tab} > .feature-strip .pill-button`)].slice(1).map((p) => p.dataset.target || p.textContent.trim());
-  return { w, d, $, L: w.ycLauncher, calls, errors, shown, active, pills, close: () => w.close() };
+  // a firm page's tab id (More Features: firm:more) and one tile on it
+  const pageId = (pid = 'firm:more') => { const el = d.querySelector(`#ycPages > [data-yc-page="${pid}"]`); return el && el.id; };
+  const tile = (id, pid = 'firm:more') => d.querySelector(`#ycPages > [data-yc-page="${pid}"] > [data-yc-shortcut="${id}"]`);
+  return { w, d, $, L: w.ycLauncher, calls, errors, shown, active, pills, pageId, tile, close: () => w.close() };
 }
 
 describe('the id → element map (mount, for real)', () => {
@@ -225,7 +238,7 @@ describe('the id → element map (mount, for real)', () => {
   test('every laid-out item maps to its element on every surface it is on — no strays, no repeats', () => {
     expect(t.errors).toEqual([]);
     const seen = new Set();
-    for (const sf of ['sidebar', 'home', 'more', 'admin']) for (const id of placed(sf)) {
+    for (const sf of ['sidebar', 'home']) for (const id of placed(sf)) {
       const el = t.L.elementsOf(id)[sf];
       expect([id, sf, !!el]).toEqual([id, sf, true]);
       expect(seen.has(el)).toBe(false);
@@ -235,8 +248,17 @@ describe('the id → element map (mount, for real)', () => {
     expect(Object.keys(cases).sort()).toEqual(['home', 'sidebar']);
     expect(cases.sidebar.dataset.tab).toBe('tabCases');
     expect(cases.home.className).toBe('home-btn');
-    expect(t.L.elementsOf('moreAutomations').more.dataset.target).toBe('automationsDiv');
     expect(t.L.elementsOf('nope')).toEqual({});
+    // More Features and Admin are the firm's pages (C4): their tiles are the page's, one per item
+    t.L.applyAccess({ isAdmin: true, ui: FUI() });
+    for (const [sf, pid] of [['more', 'firm:more'], ['admin', 'firm:admin']]) for (const id of placed(sf)) {
+      const el = t.tile(id, pid);
+      expect([id, sf, !!el]).toEqual([id, sf, true]);
+      expect(seen.has(el)).toBe(false);
+      seen.add(el);
+    }
+    expect(t.L.elementsOf('moreAutomations')).toEqual({});
+    expect(t.tile('moreAutomations').dataset.target).toBe('automationsDiv');
   });
 });
 
@@ -246,54 +268,55 @@ describe('the hide pass (for real)', () => {
   afterEach(() => t.close());
 
   test('a denied shared item is hidden on BOTH surfaces; a denied tile is hidden and gets no pill', () => {
-    t.L.applyAccess({ isAdmin: false, denied: ['cases', 'moreAutomations'] });
+    t.L.applyAccess({ isAdmin: false, denied: ['cases', 'moreAutomations'], ui: FUI() });
     const c = t.L.elementsOf('cases');
     expect([t.shown(c.sidebar), t.shown(c.home)]).toEqual([false, false]);
-    expect(t.shown(t.L.elementsOf('moreAutomations').more)).toBe(false);
+    expect(t.tile('moreAutomations')).toBe(null);          // a firm page (C4) lays out only what the user may use
     expect(t.shown(t.L.elementsOf('contacts').sidebar)).toBe(true);
-    t.L.elementsOf('moreManuals').more.click();          // drill in: builds the strip
-    expect(t.d.getElementById('tabMore').classList.contains('drill-active')).toBe(true);
-    expect(t.pills('tabMore')).not.toContain('automationsDiv');
-    expect(t.pills('tabMore')).toHaveLength(placed('more').length - 1);
+    t.tile('moreManuals').click();                         // drill in: builds the strip
+    expect(t.d.getElementById(t.pageId()).classList.contains('drill-active')).toBe(true);
+    expect(t.pills(t.pageId())).not.toContain('automationsDiv');
+    expect(t.pills(t.pageId())).toHaveLength(placed('more').length - 1);
   });
 
   test('the undeniable set stays shown whatever denied[] says', () => {
-    t.L.applyAccess({ denied: ['moreSettings', 'helpSupport'] });
-    expect(t.shown(t.L.elementsOf('moreSettings').more)).toBe(true);
+    t.L.applyAccess({ denied: ['moreSettings', 'helpSupport'], ui: FUI() });
+    expect(t.shown(t.tile('moreSettings'))).toBe(true);
     expect(t.shown(t.L.elementsOf('helpSupport').sidebar)).toBe(true);
-    expect(t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)')).toHaveLength(0);   // (#tabAdmin: the su tiles, hidden for this non-su since S6c)
+    expect(t.d.querySelectorAll('[data-yc-denied]')).toHaveLength(0);
   });
 
   test('idempotent: re-running neither double-hides nor sticks; a style.display write cannot resurrect a denied item', () => {
     t.L.applyAccess({ denied: ['newClient', 'cases'] });
-    const n = t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)').length;   // (the su tiles carry it too for a non-su, S6c)
+    const n = t.d.querySelectorAll('[data-yc-denied]').length;
     expect(n).toBe(4);                                     // newClient ×2 + cases ×2
     t.L.applyAccess({ denied: ['newClient', 'cases'] });
-    expect(t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)')).toHaveLength(n);
+    expect(t.d.querySelectorAll('[data-yc-denied]')).toHaveLength(n);
     const c = t.L.elementsOf('newClient');
-    c.sidebar.style.display = ''; c.home.style.display = '';   // what loadUserContext does to #sbAdmin
+    c.sidebar.style.display = ''; c.home.style.display = '';   // what an element's owner may do to it
     expect([t.shown(c.sidebar), t.shown(c.home)]).toEqual([false, false]);
     expect(t.L.effectiveRegistry().map((e) => e.id)).not.toContain('newClient');
     t.L.applyAccess({ denied: [] });                      // lifted → back
-    expect(t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)')).toHaveLength(0);
+    expect(t.d.querySelectorAll('[data-yc-denied]')).toHaveLength(0);
     expect([t.shown(c.sidebar), t.shown(c.home)]).toEqual([true, true]);
     expect(t.L.effectiveRegistry().map((e) => e.id)).toContain('newClient');
   });
 
   test('a strip built under another denied set is rebuilt, drilled-in state and active pill kept', () => {
-    t.L.applyAccess({ denied: [] });
-    t.L.elementsOf('moreManuals').more.click();
-    expect(t.pills('tabMore')).toContain('themeCustomDiv');
+    t.L.applyAccess({ denied: [], ui: FUI() });
+    t.tile('moreManuals').click();
+    const more = t.pageId();                                   // More Features: a firm page (C4)
+    expect(t.pills(more)).toContain('themeCustomDiv');
     t.L.applyAccess({ denied: ['moreTheme'] });
-    expect(t.pills('tabMore')).not.toContain('themeCustomDiv');
-    expect(t.d.querySelectorAll('#tabMore > .feature-strip')).toHaveLength(1);
-    expect(t.d.querySelector('#tabMore > .feature-strip .pill-button.active').dataset.target).toBe('manualsDiv');
+    expect(t.pills(more)).not.toContain('themeCustomDiv');
+    expect(t.d.querySelectorAll(`#${more} > .feature-strip`)).toHaveLength(1);
+    expect(t.d.querySelector(`#${more} > .feature-strip .pill-button.active`).dataset.target).toBe('manualsDiv');
   });
 });
 
 describe('exec(id) (for real)', () => {
   let t;
-  beforeEach(() => { t = boot(); t.L.applyAccess({ isAdmin: false, denied: ['moreViews'] }); t.w.openMainTab('tabHome'); });
+  beforeEach(() => { t = boot(); t.L.applyAccess({ isAdmin: false, denied: ['moreViews'], ui: FUI() }); t.w.openMainTab('tabHome'); });
   afterEach(() => t.close());
 
   test('before login it refuses', () => {
@@ -316,15 +339,15 @@ describe('exec(id) (for real)', () => {
     ref.close();
   });
 
-  test('a More panel: tabMore drilled into it, lazy iframe promoted, its pill lit, More Features lit', () => {
+  test('a More panel: the More Features page drilled into it, lazy iframe promoted, its pill lit, More Features lit', () => {
     t.L.exec('moreAutomations');
-    const panel = t.d.getElementById('automationsDiv');
-    expect(t.w.currentMainTabId()).toBe('tabMore');
+    const panel = t.d.getElementById('automationsDiv'), more = t.pageId();   // a firm page (C4)
+    expect(t.w.currentMainTabId()).toBe(more);
     expect(t.shown(panel)).toBe(true);
     expect(panel.querySelector('iframe').getAttribute('src')).toBe('/automationsDiv.html');
-    expect(t.d.getElementById('tabMore').classList.contains('drill-active')).toBe(true);
-    expect(t.d.querySelector('#tabMore > .feature-strip .pill-button.active').dataset.target).toBe('automationsDiv');
-    expect(t.active()).toEqual(['tabMore']);
+    expect(t.d.getElementById(more).classList.contains('drill-active')).toBe(true);
+    expect(t.d.querySelector(`#${more} > .feature-strip .pill-button.active`).dataset.target).toBe('automationsDiv');
+    expect(t.active()).toEqual([more]);
   });
 
   test('a panel already open is not toggled shut — arriving from another tab, or from tabMore itself', () => {
@@ -332,7 +355,7 @@ describe('exec(id) (for real)', () => {
     t.L.exec('cases');
     t.L.exec('moreAutomations');                           // drill-in kept by openMainTab: already up
     expect(t.shown(t.d.getElementById('automationsDiv'))).toBe(true);
-    t.L.exec('moreAutomations');                           // on tabMore: openMainTab backs out, click reopens
+    t.L.exec('moreAutomations');                           // on its page: openMainTab backs out, click reopens
     expect(t.shown(t.d.getElementById('automationsDiv'))).toBe(true);
     t.L.exec('moreReports');                               // switching panels within the group
     expect([t.shown(t.d.getElementById('automationsDiv')), t.shown(t.d.getElementById('reportsDiv'))]).toEqual([false, true]);
@@ -349,8 +372,8 @@ describe('exec(id) (for real)', () => {
 
   test('grid actions click their real element', () => {
     t.L.exec('moreSettings');
-    expect([t.w.currentMainTabId(), t.active()]).toEqual(['tabSettings', ['tabMore']]);
-    t.L.applyAccess({ isAdmin: true });            // the one dialog tile left on a grid is Admin's
+    expect([t.w.currentMainTabId(), t.active()]).toEqual(['tabSettings', [t.pageId()]]);
+    t.L.applyAccess({ isAdmin: true });            // the one dialog tile on a page is Admin's (Etch)
     t.L.exec('adminEtch');
     expect(t.calls).toContain('etchSwal');
   });
@@ -360,13 +383,13 @@ describe('exec(id) (for real)', () => {
     for (const id of ['moreViews', 'adminDbConsole', 'nope']) expect(t.L.exec(id)).toBe(false);
     expect([t.w.currentMainTabId(), t.calls.length]).toEqual(before);
     expect(t.shown(t.d.getElementById('viewsDiv'))).toBe(false);
-    // the Admin page: refused when the firm's visible_to leaves this user out (S6c)
-    t.L.applyAccess({ roles: ['staff'], ui: { firm: { registry_overrides: { visible_to: { admin: ['it', 'admin'] } } } } });
-    expect(t.L.exec('admin')).toBe(false);
+    // the Admin page (firm:admin, C4): refused when the firm's visible_to leaves this user out (S6c)
+    t.L.applyAccess({ roles: ['staff'], ui: FUI(LIVE_VT) });
+    expect(t.L.exec('firm:admin')).toBe(false);
     expect([t.w.currentMainTabId(), t.calls.length]).toEqual(before);
-    t.L.applyAccess({ isAdmin: true, roles: ['su'], ui: null });
+    t.L.applyAccess({ isAdmin: true, roles: ['su'], ui: FUI(LIVE_VT) });
     expect(t.L.exec('adminDbConsole')).toBe(true);
-    expect([t.w.currentMainTabId(), t.shown(t.d.getElementById('dbConsoleDiv'))]).toEqual(['tabAdmin', true]);
+    expect([t.w.currentMainTabId(), t.shown(t.d.getElementById('dbConsoleDiv'))]).toEqual([t.pageId('firm:admin'), true]);
   });
 });
 
@@ -380,16 +403,17 @@ describe('the All tab (public/js/ycAll.js, for real)', () => {
 
   test('empty before login; then every effective item once, grouped, in order; Admin only for admins', () => {
     expect(entries()).toEqual([]);
-    t.L.applyAccess({ isAdmin: false, denied: ['moreAutomations'] });
-    // Admin holds what this user can use: Etch is open to staff (S6c gates), the su tools are not
-    expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);
+    t.L.applyAccess({ isAdmin: false, denied: ['moreAutomations'], ui: FUI() });
+    // Admin holds what this user can use: Etch is open to staff (S6c gates), the su tools are not;
+    // More Features and Admin are the firm's pages (C4), Firm the firm's items (the page items among them)
+    expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin', 'Firm']);
     expect(t.L.effectiveRegistry().filter((e) => e.group === 'Admin').map((e) => e.id)).toEqual(['adminEtch']);
     // every effective item but All itself (S6c ruling: the All tab doesn't list All; Ctrl-K does)
     expect(t.L.effectiveRegistry().map((e) => e.id)).toContain('all');
     expect(entries()).toEqual(t.L.effectiveRegistry().map((e) => e.id).filter((id) => id !== 'all'));
     expect(entries()).not.toContain('moreAutomations');
     t.L.applyAccess({ isAdmin: true });
-    expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);
+    expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin', 'Firm']);
     expect(new Set(entries()).size).toBe(entries().length);
   });
 
@@ -399,9 +423,9 @@ describe('the All tab (public/js/ycAll.js, for real)', () => {
   });
 
   test('an entry runs exec(): a click opens the real panel', () => {
-    t.L.applyAccess({});
+    t.L.applyAccess({ ui: FUI() });
     t.d.querySelector('#ycAllList [data-yc-item="moreDocuments"]').click();
-    expect([t.w.currentMainTabId(), t.shown(t.d.getElementById('documentsDiv'))]).toEqual(['tabMore', true]);
+    expect([t.w.currentMainTabId(), t.shown(t.d.getElementById('documentsDiv'))]).toEqual([t.pageId(), true]);
   });
 
   test('search ranks with the palette matcher; Enter runs the top hit; Esc clears', () => {
@@ -573,36 +597,40 @@ describe('the boot wiring (review fixes): loadFirmData + loadUserContext, extrac
     return t;
   };
 
-  test('non-SU: the effective registry has no su-gated item; denied items hidden on both surfaces; #sbAdmin follows the Admin item (S6c)', async () => {
-    const ro = { visible_to: { admin: ['it', 'admin'] } };   // the live firm's rule
-    const t = await luc('admin,it', ['cases', 'moreAutomations'], { firm: { registry_overrides: ro } });
+  // the Admin row: the firm page's sidebar shortcut (C4; #sbAdmin is gone with the hub)
+  const adminRow = (t) => t.d.querySelector('#appSidebar [data-yc-shortcut="firm:admin"]');
+
+  test('non-SU: the effective registry has no su-gated item; denied items hidden on both surfaces; the Admin row follows the Admin page (S6c)', async () => {
+    const t = await luc('admin,it', ['cases', 'moreAutomations'], FUI(LIVE_VT));
     const eff = t.L.effectiveRegistry().map((e) => e.id);
     expect(t.L.isReady()).toBe(true);
     expect(eff.filter((id) => REG[id] && REG[id].gate === 'su')).toEqual([]);
     expect(eff).not.toContain('cases');
     const c = t.L.elementsOf('cases');
-    expect([t.shown(c.sidebar), t.shown(c.home), t.shown(t.L.elementsOf('moreAutomations').more)]).toEqual([false, false, false]);
-    // it/admin: the Admin page is theirs (visible_to), with the one tile they can use
-    expect(t.shown(t.d.getElementById('sbAdmin'))).toBe(true);
-    expect(eff.filter((id) => id.startsWith('admin'))).toEqual(['admin', 'adminEtch', 'adminSharedValues', 'adminUsers']);
+    expect([t.shown(c.sidebar), t.shown(c.home), t.tile('moreAutomations')]).toEqual([false, false, null]);
+    // it/admin: the Admin page is theirs (visible_to), with the tiles they can use
+    expect(t.shown(adminRow(t))).toBe(true);
+    expect(eff).toContain('firm:admin');
+    expect(eff.filter((id) => id.startsWith('admin'))).toEqual(['adminEtch', 'adminSharedValues', 'adminUsers']);
     t.close();
     // staff: the firm's visible_to leaves them out — no Admin row, no Admin page item
-    const s = await luc('staff', [], { firm: { registry_overrides: ro } });
-    expect(s.shown(s.d.getElementById('sbAdmin'))).toBe(false);
-    expect(s.L.effectiveRegistry().map((e) => e.id)).not.toContain('admin');
+    const s = await luc('staff', [], FUI(LIVE_VT));
+    expect(adminRow(s)).toBe(null);
+    expect(s.pageId('firm:admin')).toBe(null);
+    expect(s.L.effectiveRegistry().map((e) => e.id)).not.toContain('firm:admin');
     s.close();
   });
 
-  test('SU: #sbAdmin shown and every Admin item effective', async () => {
-    const t = await luc('it,su', []);
-    expect(t.shown(t.d.getElementById('sbAdmin'))).toBe(true);
-    expect(t.L.effectiveRegistry().filter((e) => e.group === 'Admin')).toHaveLength(placed('admin').length);
+  test('SU: the Admin row shown and every Admin item effective', async () => {
+    const t = await luc('it,su', [], FUI(LIVE_VT));
+    expect(t.shown(adminRow(t))).toBe(true);
+    expect(t.L.effectiveRegistry().filter((e) => e.group === 'Admin')).toHaveLength([...placed('admin'), ...placed('adminIcons')].length);
     t.close();
   });
 
   test('order inside loadUserContext: applyAccess, then the ?open= restore; no custom tab left', () => {
     const at = (needle) => { const i = LUC_FULL.indexOf(needle); expect([needle, i >= 0]).toEqual([needle, true]); return i; };
-    const access = at('const eff = ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied');
+    const access = at('ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied');
     const restore = at('else openMainTabOnBoot(openTab, openAt.rest);');
     expect(access < restore).toBe(true);
     expect(LUC_FULL).not.toMatch(/applyCustomTab|user_custom_tab|customTab/);
@@ -612,7 +640,12 @@ describe('the boot wiring (review fixes): loadFirmData + loadUserContext, extrac
 describe('placeholders (review fix)', () => {
   test('a placed placeholder square is not an effective item', () => {
     const reg = { a: { label: 'A', icon: 'x', target: 'aDiv', group: 'more' }, p: { label: 'P', icon: 'x', placeholder: true } };
-    const lay = { sidebar: [], home: [], more: [{ item: 'a' }, { item: 'p' }], admin: [] };
-    expect(L.computeEffective({}, reg, lay).map((e) => e.id)).toEqual(['a']);
+    const lay = { sidebar: [], home: [] };
+    // grid squares are a firm page's since C4: the page places both
+    const ui = { firm: {
+      registry_overrides: { items: [{ id: 'firm:more', label: 'More Features', icon: 'grip', action: { type: 'page' } }] },
+      layout: { pages: { 'firm:more': { tiles: [{ item: 'a' }, { item: 'p' }] } } } } };
+    const eff = L.computeEffective({ ui }, reg, lay);
+    expect(eff.map((e) => [e.id, e.group])).toEqual([['a', 'More Features'], ['firm:more', 'Firm']]);
   });
 });

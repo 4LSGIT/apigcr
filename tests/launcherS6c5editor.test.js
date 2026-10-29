@@ -25,8 +25,10 @@
  *      drops its entry (the prompt says so, the box closes); deleting a
  *      button on a page takes it off the page (the prompt names the page);
  *      the dots: a page's tiles light My buttons, not Home or Sidebar.
- *   3. THE FIRM MODE: the fourth tab, Firm pages — a note when the firm has
- *      none; one block per firm page with its two sections; open({ section:
+ *   3. THE FIRM MODE: the third tab, Firm pages (Home, Sidebar, Firm pages
+ *      since launcher-nits C4 retired the More / Admin panes) — a note when
+ *      the firm has none; one block per firm page with its two sections, More
+ *      Features and Admin among them; open({ section:
  *      'pages', page }) lands on that block; an arrangement is ONE PUT whose
  *      `pages` the shell repaints into a page tab; a 400 naming
  *      pages.<id>.<part> lands under that section.
@@ -47,6 +49,7 @@ const path = require('path');
 const vm = require('vm');
 const { JSDOM } = require('jsdom');
 const { rawShellHtml } = require('./helpers/shellHtml');
+const { hubFirm, stageHtml, HUB_MORE, HUB_ADMIN } = require('./helpers/hubPages');
 const { makeStore } = require('./helpers/uiConfigStore');
 const shape = require('../lib/uiConfigShape');
 const svc = require('../services/uiConfigService');
@@ -76,7 +79,7 @@ const HIDE_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 const STYLES = [...RAW.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((m) => m[1]);
 const EGG_CSS = (() => { const h = STYLES.filter((s) => s.includes('.home-egg-row')); if (h.length !== 1) throw new Error('egg css'); return h[0]; })();
 
-const FIRM_SURFACES = ['home', 'sidebar', 'homeIcons', 'more', 'moreIcons', 'admin', 'adminIcons'];
+const FIRM_SURFACES = ['home', 'sidebar', 'homeIcons'];   // More and Admin are firm pages since launcher-nits C4, not surfaces
 const CLIO = { id: 'firm:clio-code', label: 'Get Clio Code', icon: 'key', action: { type: 'url', href: 'https://clio.example.com/code', present: 'window' } };
 const OPS = { id: 'firm:ops', label: 'Operations', icon: 'layer-group', action: { type: 'page' } };
 const RO = { items: [CLIO, OPS], hidden: [], locked: [], renames: {} };
@@ -210,11 +213,12 @@ describe('1. the core: a page is two pseudo-surfaces', () => {
   });
 
   test('the firm tier: the same core over firm:… pages validates at scope firm; a firm page may hold a firm item but never a user button', () => {
-    const cat = J(VE.firmCatalog({ firm: { registry_overrides: RO } }));
-    expect(cat.pages).toEqual(['firm:ops']);
+    expect(J(VE.FIRM_SURFACES)).toEqual(FIRM_SURFACES);                                   // no more / admin surface (launcher-nits C4)
+    const cat = J(VE.firmCatalog({ firm: hubFirm({ items: [CLIO, OPS] }) }));
+    expect(cat.pages).toEqual(['firm:ops', 'firm:more', 'firm:admin']);
     expect(cat.entries.find((e) => e.id === 'firm:ops').page).toBe(true);
     expect(cat.entries.find((e) => e.id === 'firm:clio-code')).not.toHaveProperty('page');
-    const s = VE.session({ stored: null, effective: cat.entries, locked: [], base: LAY, registry: REG, groups: cat.groups, surfaces: FIRM_SURFACES, pass: [], seed: { more: cat.seed }, pages: cat.pages });
+    const s = VE.session({ stored: null, effective: cat.entries, locked: [], base: LAY, registry: REG, groups: cat.groups, surfaces: FIRM_SURFACES, pass: [], pages: cat.pages });
     const T2 = P('firm:ops', 'tiles');
     expect(s.add(T2, 'moreManuals')).toBe(true);
     expect(s.add(T2, 'firm:clio-code')).toBe(true);
@@ -230,15 +234,12 @@ describe('1. the core: a page is two pseudo-surfaces', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// The shell skeleton (as launcherS6c3's), with #ycPages and the stage.
+// The shell skeleton (as launcherS6c3's), with #ycPages (More Features and Admin built there, C4) and the stage.
 const ADMIN = { type: 'jwt', userId: 1, roles: ['admin'] };
 function shellPage() {
-  const placedIds = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
-  const grid = (sf) => placedIds(sf).map((k) => REG[k]).filter((it) => it.target)
-    .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabAll', 'tabUserItem']);
+  const tabs = new Set(['tabHome', 'tabAll', 'tabUserItem', 'tabSettings']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   return `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}<style>${EGG_CSS}</style></head><body>
@@ -249,14 +250,8 @@ function shellPage() {
       <div class="home-egg-row"><script>ycLauncher.mount('homeIcons')</script></div></div>
     ${ALL_TAB}
     ${plainTabs}
-    <div id="tabMore" class="tab-main yc-hub"><h1>More</h1>
-  <script>ycLauncher.mount('more')</script>
-  <div class="more-egg-row"><script>ycLauncher.mount('moreIcons')</script></div></div>
-    <div id="tabAdmin" class="tab-main yc-hub"><h1>Admin</h1>
-  <script>ycLauncher.mount('admin')</script>
-  <div class="admin-egg-row"><script>ycLauncher.mount('adminIcons')</script></div></div>
     <div id="ycPages"></div>
-    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
+    <div id="ycPanels" style="display:none">${stageHtml(REG)}</div>
   </body></html>`;
 }
 const PAGE = shellPage();
@@ -313,8 +308,16 @@ async function boot({ store = makeStore(), canEdit = true, auth = ADMIN, access 
   return { w, d, L, store, api, errors, toasts, asked, answer: (v) => { answer = v; }, flush, panel, sec, names, rowNamed, click, tab, save, mb, mbRow, setVal, pick, pageTab, pageTiles, dot, close: () => w.close() };
 }
 const open = async (t, o) => { const ok = await t.w.ycLayoutEditor.open(o); await t.flush(); return ok; };
-const seedFirm = async (store, items = [CLIO, OPS]) => {
-  await svc.write(store.db, { scope: 'firm', config_key: 'registry_overrides', config: { hidden: [], locked: [], renames: {}, items } }, ADMIN);
+// the firm's documents as production has them: its items + More Features and Admin as pages (hubFirm, launcher-nits C4);
+// hubs:false is a firm with no page item at all
+const seedFirm = async (store, items = [CLIO, OPS], { hubs = true } = {}) => {
+  if (!hubs) {
+    await svc.write(store.db, { scope: 'firm', config_key: 'registry_overrides', config: { hidden: [], locked: [], renames: {}, items } }, ADMIN);
+    return store;
+  }
+  const f = hubFirm({ items });
+  await svc.write(store.db, { scope: 'firm', config_key: 'registry_overrides', config: f.registry_overrides }, ADMIN);
+  await svc.write(store.db, { scope: 'firm', config_key: 'layout', config: f.layout }, ADMIN);
   return store;
 };
 const seedUser = async (store, items, layout) => {
@@ -335,13 +338,14 @@ describe('1b. FUZZ: random edits over pages and surfaces — every document vali
       { id: 'user:box', label: 'Box', icon: 'box', action: { type: 'drawer', items: ['cases'] } },
     ] };
     const eff = J(t.L.computeEffective({ isAdmin: true, roles: ['su'], denied: [], ui: { firm: { registry_overrides: RO }, user: { items } } }));
-    const cat = J(t.w.ycLayoutEditor.firmCatalog({ firm: { registry_overrides: RO } }));
+    const HF = hubFirm({ items: [CLIO, OPS] });                                          // as seedFirm stored it
+    const cat = J(t.w.ycLayoutEditor.firmCatalog({ firm: HF }));
     const ops = ['move', 'remove', 'add', 'break', 'add', 'add'];
     for (let run = 0; run < 20; run++) {
       const us = t.w.ycLayoutEditor.session({ stored: null, effective: eff, locked: [], base: LAY, registry: REG, groups: eff.groups, pages: ['user:a', 'user:b'] });
-      const fsess = t.w.ycLayoutEditor.session({ stored: null, effective: cat.entries, locked: [], base: LAY, registry: REG, groups: cat.groups, surfaces: FIRM_SURFACES, pass: [], seed: { more: cat.seed }, pages: cat.pages });
+      const fsess = t.w.ycLayoutEditor.session({ stored: J(HF.layout), effective: cat.entries, locked: [], base: LAY, registry: REG, groups: cat.groups, surfaces: FIRM_SURFACES, pass: [], pages: cat.pages });
       const sfs = [P('user:a', 'tiles'), P('user:a', 'icons'), P('user:b', 'tiles'), 'home', 'sidebar'];
-      const fsfs = [P('firm:ops', 'tiles'), P('firm:ops', 'icons'), 'more', 'homeIcons'];
+      const fsfs = [P('firm:ops', 'tiles'), P('firm:ops', 'icons'), P('firm:more', 'tiles'), P('firm:admin', 'icons'), 'sidebar', 'homeIcons'];
       for (let step = 0; step < 30; step++) {
         for (const [s, list] of [[us, sfs], [fsess, fsfs]]) {
           const sf = list[rnd(list.length)], n = s.view(sf).length, op = ops[rnd(ops.length)];
@@ -355,11 +359,13 @@ describe('1b. FUZZ: random edits over pages and surfaces — every document vali
       expect([run, okUser(udoc)]).toEqual([run, { ok: true, errors: [], same: true }]);
       expect([run, okFirm(fdoc)]).toEqual([run, { ok: true, errors: [], same: true }]);
       // the shell: what the editor showed is what the pages draw
-      t.L.applyAccess({ ui: { firm: { registry_overrides: RO, layout: fdoc }, user: { items, layout: udoc } } });
+      t.L.applyAccess({ ui: { firm: { registry_overrides: HF.registry_overrides, layout: fdoc }, user: { items, layout: udoc } } });
       for (const id of ['user:a', 'user:b']) expect([run, id, t.pageTiles(id)]).toEqual([run, id, J(us.view(P(id, 'tiles'))).map((r) => (r.kind === 'item' ? r.id : '|'))]);
-      expect([run, t.pageTiles('firm:ops')]).toEqual([run, J(fsess.view(P('firm:ops', 'tiles'))).map((r) => (r.kind === 'item' ? r.id : '|'))]);
-      expect([run, [...t.pageTab('firm:ops').querySelectorAll('.page-egg-row > *')].map((b) => b.getAttribute('data-yc-shortcut'))])
-        .toEqual([run, J(fsess.view(P('firm:ops', 'icons'))).map((r) => r.id)]);
+      for (const id of ['firm:ops', 'firm:more', 'firm:admin']) {
+        expect([run, id, t.pageTiles(id)]).toEqual([run, id, J(fsess.view(P(id, 'tiles'))).map((r) => (r.kind === 'item' ? r.id : '|'))]);
+        expect([run, id, [...t.pageTab(id).querySelectorAll('.page-egg-row > *')].map((b) => b.getAttribute('data-yc-shortcut'))])
+          .toEqual([run, id, J(fsess.view(P(id, 'icons'))).map((r) => r.id)]);
+      }
     }
     expect(t.errors).toEqual([]);
   });
@@ -529,7 +535,7 @@ describe('3. the firm mode: the Firm pages pane', () => {
   afterEach(() => t && t.close());
 
   test('no firm pages: the pane says how to make one; with pages: a block per page with its two sections; the arrangement is ONE PUT the shell repaints into a page tab', async () => {
-    t = await boot({ store: await seedFirm(makeStore(), [CLIO]) });
+    t = await boot({ store: await seedFirm(makeStore(), [CLIO], { hubs: false }) });           // a firm with no page item at all
     await open(t, { scope: 'firm', section: 'pages' });
     expect(t.panel().querySelector('#ylePane_pages').hidden).toBe(false);
     expect(t.panel().querySelector('.yle-no-pages').textContent).toMatch(/No firm pages yet/);
@@ -541,6 +547,9 @@ describe('3. the firm mode: the Firm pages pane', () => {
     expect(t.pageTab('firm:ops')).not.toBe(null);                                      // su sees the (empty) firm page
     expect(t.pageTiles('firm:ops')).toEqual([]);
     await open(t, { scope: 'firm', section: 'pages', page: 'firm:ops' });
+    // one block per firm page, in item order — More Features and Admin among them (launcher-nits C4); no More / Admin pane
+    expect([...t.panel().querySelectorAll('.yle-page-block')].map((b) => b.getAttribute('data-page'))).toEqual(['firm:ops', 'firm:more', 'firm:admin']);
+    expect([...t.panel().querySelectorAll('.yle-tab')].map((b) => b.getAttribute('data-pane'))).toEqual(['home', 'sidebar', 'pages']);
     const blk = t.panel().querySelector('.yle-page-block[data-page="firm:ops"]');
     expect(blk.querySelector('.yle-page-title').textContent).toBe(' Operations');
     expect(blk.querySelector('.yle-page-title i').className).toBe('fa-solid fa-layer-group');
@@ -553,12 +562,16 @@ describe('3. the firm mode: the Firm pages pane', () => {
     t.click(t.sec(TS).querySelector('[data-act="add-break"]'));
     t.pick(P('firm:ops', 'icons'), 'myTasks');
     expect(t.names(TS)).toEqual(['Manuals', 'Users', 'Get Clio Code', '|']);
-    expect([t.dot('pages'), t.dot('more'), t.dot('home')]).toEqual([true, false, false]);
+    expect([t.dot('pages'), t.dot('home'), t.dot('sidebar')]).toEqual([true, false, false]);
+    const before = J(t.store.doc('firm', 0, 'layout'));
+    const head = (await t.api('/api/ui-config', 'GET')).firm_versions.layout;   // the seeded layout's version (C4: the hubs' pages)
+    expect(Number.isInteger(head)).toBe(true);
     await t.save();
     const puts = t.api.calls.filter((c) => c.method === 'PUT');
     expect(puts).toHaveLength(1);
-    expect([puts[0].body.scope, puts[0].body.config_key, puts[0].body.base]).toEqual(['firm', 'layout', null]);
-    expect(t.store.doc('firm', 0, 'layout').pages).toEqual({ 'firm:ops': { tiles: [{ item: 'moreManuals' }, { item: 'adminUsers' }, { item: 'firm:clio-code' }, { break: true }], icons: [{ item: 'myTasks' }] } });
+    expect([puts[0].body.scope, puts[0].body.config_key, puts[0].body.base]).toEqual(['firm', 'layout', head]);
+    // Ops gains its arrangement; More Features' and Admin's pages ride through untouched
+    expect(t.store.doc('firm', 0, 'layout').pages).toEqual({ ...before.pages, 'firm:ops': { tiles: [{ item: 'moreManuals' }, { item: 'adminUsers' }, { item: 'firm:clio-code' }, { break: true }], icons: [{ item: 'myTasks' }] } });
     expect(t.w.ycLayoutEditor.isOpen()).toBe(false);
     expect(t.pageTiles('firm:ops')).toEqual(['moreManuals', 'adminUsers', 'firm:clio-code', '|']);
     expect([...t.pageTab('firm:ops').querySelectorAll('.page-egg-row > *')].map((b) => b.getAttribute('data-yc-shortcut'))).toEqual(['myTasks']);
@@ -619,16 +632,17 @@ describe('4. firm.html: the Page kind', () => {
     expect(card.textContent).toMatch(/Save it first, then arrange its tiles/);
     expect(card.querySelector('[data-act="arrange-page"]').disabled).toBe(true);
     expect(card.querySelector('[data-f="key"], [data-f="href"], [data-f="size"]')).toBe(null);
-    expect(t.F.LauncherSection.doc().items[1]).toEqual({ id: 'firm:operations', label: 'Operations', icon: 'layer-group', action: { type: 'page' } });
+    expect(i).toBe(3);                                                                    // after Clio, More Features and Admin (C4)
+    expect(t.F.LauncherSection.doc().items[3]).toEqual({ id: 'firm:operations', label: 'Operations', icon: 'layer-group', action: { type: 'page' } });
     t.fire(card.querySelector('[data-act="arrange-page"]'));                              // disabled: nothing opens
     await t.flush();
     expect(t.w.ycLayoutEditor.isOpen()).toBe(false);
     await t.F.Page.save();
     await t.flush();
     const stored = t.store.doc('firm', 0, 'registry_overrides');
-    expect(stored.items[1]).toEqual({ id: 'firm:operations', label: 'Operations', icon: 'layer-group', action: { type: 'page' } });
+    expect(stored.items[3]).toEqual({ id: 'firm:operations', label: 'Operations', icon: 'layer-group', action: { type: 'page' } });
     // saved: the row's Arrange opens the top editor on the Firm pages pane, on this page's block
-    const row = t.$$('.fm-item')[1];
+    const row = t.$$('.fm-item')[3];
     expect(row.textContent).toMatch(/Its tiles are arranged in the editor/);
     const b = row.querySelector('[data-act="arrange-page"]');
     expect(b.disabled).toBe(false);
@@ -672,8 +686,9 @@ describe('7. L4b1 — your arrangement of a firm page', () => {
   const OT = 'over:firm:ops:tiles', OI = 'over:firm:ops:icons';
   const FIRM_OPS = { pages: { 'firm:ops': { tiles: [{ item: 'moreAutomations' }, { item: 'moreManuals' }, { break: true }, { item: 'adminUsers' }], icons: [{ item: 'casey' }] } } };
   const seedOps = async (store, locked = []) => {
-    await svc.write(store.db, { scope: 'firm', config_key: 'registry_overrides', config: { hidden: [], locked, renames: {}, items: [OPS] } }, ADMIN);
-    await svc.write(store.db, { scope: 'firm', config_key: 'layout', config: FIRM_OPS }, ADMIN);
+    const f = hubFirm({ items: [OPS], ro: { locked }, layout: FIRM_OPS });             // beside More Features and Admin (C4)
+    await svc.write(store.db, { scope: 'firm', config_key: 'registry_overrides', config: f.registry_overrides }, ADMIN);
+    await svc.write(store.db, { scope: 'firm', config_key: 'layout', config: f.layout }, ADMIN);
     return store;
   };
   const OV = { placed: {}, removed: {}, overlays: { 'firm:ops': { placed: { tiles: [{ item: 'adminUsers' }, { item: 'moreAutomations' }] }, removed: { tiles: ['moreManuals'], icons: ['casey'] } } } };
@@ -706,8 +721,10 @@ describe('7. L4b1 — your arrangement of a firm page', () => {
     await open(t, { section: 'pages' });
     expect(t.panel().querySelector('.yle-tab[data-pane="pages"]').hidden).toBe(false);
     expect(t.panel().querySelector('#ylePane_pages').hidden).toBe(false);
-    expect([...t.panel().querySelectorAll('#ylePane_pages .yle-page-title')].map((h) => h.textContent.trim())).toEqual(['Operations']);
-    expect([...t.panel().querySelectorAll('#ylePane_pages .yle-sec')].map((x) => [x.getAttribute('data-sf'), x.querySelector('h3').textContent])).toEqual([[OT, 'Tiles'], [OI, 'Small buttons']]);
+    // the firm's pages in item order: More Features and Admin among them (launcher-nits C4)
+    expect([...t.panel().querySelectorAll('#ylePane_pages .yle-page-title')].map((h) => h.textContent.trim())).toEqual(['Operations', 'More Features', 'Admin']);
+    expect([...t.panel().querySelectorAll('#ylePane_pages .yle-sec')].map((x) => [x.getAttribute('data-sf'), x.querySelector('h3').textContent])).toEqual([
+      [OT, 'Tiles'], [OI, 'Small buttons'], ['over:firm:more:tiles', 'Tiles'], ['over:firm:more:icons', 'Small buttons'], ['over:firm:admin:tiles', 'Tiles'], ['over:firm:admin:icons', 'Small buttons']]);
     expect(t.names(OT)).toEqual(['Automations', 'Manuals', '|', 'Users']);
     expect(t.sec(OT).querySelector('.yle-reset').textContent).toBe('Reset to the firm’s');
     expect(t.rowNamed(OT, 'Manuals').querySelector('[data-act="hide"]')).not.toBe(null);   // a firm tile: hidden, not removed

@@ -27,14 +27,14 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const { rawShellHtml, loadLauncher } = require('./helpers/shellHtml');
+const { stageHtml } = require('./helpers/hubPages');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
 const REGISTRY_SRC = fs.readFileSync(path.join(ROOT, 'public/js/featureRegistry.js'), 'utf8');
 const ICON_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycIcon.js'), 'utf8');
 const RENDERER_SRC = RAW.match(/<script id="ycLauncher">([\s\S]*?)<\/script>/)[1];
-const { registry: REG, layouts: LAY } = loadLauncher(RAW);
-const placed = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
+const { registry: REG } = loadLauncher(RAW);
 
 function slice(from, to) {
   const a = RAW.indexOf(from);
@@ -56,9 +56,8 @@ const STAFF = { isAdmin: false, roles: ['staff'], denied: [], ui: UI };
 
 function boot() {
   // every hub panel on the stage, as in the shell — but no hub tab, no hub mount
-  const panels = [...placed('more'), ...placed('admin')].map((k) => REG[k]).filter((it) => it.target)
-    .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabAll']);
+  const panels = stageHtml(REG);
+  const tabs = new Set(['tabHome', 'tabAll', 'tabSettings']);   // Settings: a tab no registry item names since C4 (moreFeatures' tabAlso)
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
   const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabAll', 'tabMore', 'tabAdmin'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
@@ -163,12 +162,11 @@ describe('launcher-nits C1 — exec with no hub tiles', () => {
   });
 });
 
-// launcher-nits C2: the Admin hub's sidebar row (#sbAdmin) goes with the hub
-// in L4b2 — every write to it is guarded, or login throws before applyAccess.
-describe('launcher-nits C2 — no write to #sbAdmin without its element', () => {
-  test('each E("sbAdmin") use is guarded', () => {
-    const uses = [...RAW.matchAll(/E\("sbAdmin"\)\.style/g)].map((m) => RAW.slice(Math.max(0, m.index - 20), m.index));
-    expect(uses.length).toBeGreaterThanOrEqual(3);
-    for (const before of uses) expect(before).toMatch(/if \(E\("sbAdmin"\)\) $/);
+// launcher-nits C2 guarded every write to the Admin hub's sidebar row
+// (#sbAdmin); C4 removed the row and every write with it — an unguarded one
+// left behind throws at login, before applyAccess.
+describe('launcher-nits C4 — no write to #sbAdmin is left', () => {
+  test('the shell names sbAdmin nowhere', () => {
+    expect(RAW).not.toMatch(/sbAdmin/);
   });
 });

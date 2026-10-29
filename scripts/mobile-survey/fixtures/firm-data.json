@@ -120,18 +120,38 @@
        "action": { "type": "url", "href": "https://payroll.example.com/", "present": "window" } },
      { "id": "firm:payroll-portal", "label": "Payroll and timesheets portal (vendor)", "icon": "money-check",
        "action": { "type": "url", "href": "https://payroll.example.com/firm/sign-in?return=/timesheets/weekly-overview-with-a-long-path", "present": "window" } },
-     { "id": "firm:ops", "label": "Operations desk (a firm page)", "icon": "layer-group", "action": { "type": "page" } }
+     { "id": "firm:ops", "label": "Operations desk (a firm page)", "icon": "layer-group", "action": { "type": "page" } },
+     { "id": "firm:more", "label": "More Features", "icon": "grip", "action": { "type": "page" } },
+     { "id": "firm:admin", "label": "Admin", "icon": "mug-hot", "action": { "type": "page" } }
     ],
     "visible_to": {
      "moreAutomations": ["admin", "attorney"],
      "firm:payroll-portal": [],
      "tasks": ["it", "admin", "staff", "attorney", "automation", "form_dev"],
      "admin": ["it", "admin"],
-     "firm:ops": ["it", "admin"]
+     "firm:ops": ["it", "admin"],
+     "firm:admin": ["it", "admin"]
     }
    },
    "layout": {
     "placed": {
+     "home": [
+      { "item": "cases" }, { "item": "contacts" }, { "item": "appts" },
+      { "break": true },
+      { "item": "bills" }, { "item": "pipeline" }, { "item": "events" },
+      { "break": true },
+      { "item": "tasks" }, { "item": "newClient" }, { "item": "log" },
+      { "break": true },
+      { "item": "calendar" }, { "item": "firm:more" }, { "item": "comms" }
+     ],
+     "sidebar": [
+      { "label": "Records" },
+      { "item": "cases" }, { "item": "contacts" }, { "item": "appts" }, { "item": "calendar" }, { "item": "events" }, { "item": "tasks" }, { "item": "comms" }, { "item": "log" }, { "item": "bills" },
+      { "label": "Actions" },
+      { "item": "pipeline" }, { "item": "newClient" },
+      { "label": "Settings" },
+      { "item": "firm:admin" }, { "item": "firm:more" }, { "item": "helpSupport" }, { "item": "all" }
+     ],
      "more": [
       { "item": "moreManuals" }, { "item": "moreSettings" }, { "item": "moreTheme" }, { "item": "moreFeatureRequests" },
       { "break": true },
@@ -151,8 +171,42 @@
      ],
      "moreIcons": [{ "item": "casey" }, { "item": "myTasks" }]
     },
-    "removed": { "admin": ["adminScratch"] },
+    "removed": { "home": ["moreFeatures"], "sidebar": ["moreFeatures", "admin"], "admin": ["adminScratch"] },
     "pages": {
+     "firm:more": {
+      "tiles": [
+       { "item": "moreManuals" }, { "item": "moreSettings" }, { "item": "moreTheme" }, { "item": "moreFeatureRequests" },
+       { "break": true },
+       { "item": "moreSimpleForms" }, { "item": "moreFormBuilder" }, { "item": "moreFormInbox" }, { "item": "morePortalManager" },
+       { "break": true },
+       { "item": "moreSignatures" }, { "item": "moreAssetManager" }, { "item": "moreVideoManager" }, { "item": "moreDocuments" },
+       { "break": true },
+       { "item": "moreCaseConfig" }, { "item": "moreChecklists" }, { "item": "moreAutomations" }, { "item": "moreViews" },
+       { "break": true },
+       { "item": "moreAvailability" }, { "item": "moreBooking" }, { "item": "moreCourtPreview" }, { "item": "firm:clio-code" },
+       { "break": true },
+       { "item": "moreCampaigns" }, { "item": "moreRedirects" }, { "item": "moreLandingPages" }, { "item": "moreReports" }, { "item": "moreAssistant" },
+       { "break": true },
+       { "item": "firm:unbroken" }, { "item": "firm:intake-checklist" }, { "item": "firm:payroll" }, { "item": "firm:payroll-portal" },
+       { "break": true },
+       { "item": "adminUsers" }, { "item": "firm:ops" }
+      ],
+      "icons": [{ "item": "casey" }, { "item": "myTasks" }]
+     },
+     "firm:admin": {
+      "tiles": [
+       { "item": "adminReadonlyKeys" }, { "item": "adminApiKeys" }, { "item": "adminCtaLinks" },
+       { "break": true },
+       { "item": "adminDbConsole" }, { "item": "adminConnections" }, { "item": "adminApiTester" },
+       { "break": true },
+       { "item": "adminTools" }, { "item": "adminEtch" }, { "item": "adminSharedValues" },
+       { "break": true },
+       { "item": "adminUsers" }, { "item": "adminSystemAlerts" }, { "item": "adminSupportInbox" },
+       { "break": true },
+       { "item": "adminMailboxes" }
+      ],
+      "icons": []
+     },
      "firm:ops": {
       "tiles": [
        { "item": "moreManuals" }, { "item": "adminUsers" }, { "item": "moreCaseConfig" },
@@ -175,7 +229,7 @@
       { "item": "appts" }, { "item": "events" }, { "item": "tasks" }, { "item": "newClient" }, { "item": "firm:intake-checklist" },
       { "item": "user:long-tool" }, { "item": "user:morning-drawer" }, { "item": "user:my-desk" },
       { "break": true },
-      { "item": "custom" }, { "item": "moreFeatures" }, { "item": "pipeline" }, { "item": "bills" }
+      { "item": "custom" }, { "item": "firm:more" }, { "item": "pipeline" }, { "item": "bills" }
      ],
      "sidebar": [
       { "label": "Mine: the forty-character section label" },
@@ -185,7 +239,7 @@
       { "label": "Actions" },
       { "item": "pipeline" }, { "item": "newClient" }, { "item": "custom" },
       { "label": "Settings" },
-      { "item": "admin" }, { "item": "moreFeatures" }, { "item": "helpSupport" }
+      { "item": "firm:admin" }, { "item": "firm:more" }, { "item": "helpSupport" }
      ]
     },
     "removed": { "home": ["log", "bills"], "sidebar": ["log"] },

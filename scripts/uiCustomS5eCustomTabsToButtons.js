@@ -237,6 +237,13 @@ function loadCore() {
   ctx.window = ctx;
   vm.runInContext(read('public/js/ycIcon.js'), ctx, { filename: 'ycIcon.js' });
   vm.runInContext(read('public/js/featureRegistry.js'), ctx, { filename: 'featureRegistry.js' });
+  // after launcher-nits C4 the More Features / Admin items and lists are gone too: this world
+  // predates them leaving, so put them back first, as the C3 script froze them (its HISTORIC)
+  if (!Object.prototype.hasOwnProperty.call(ctx.window.FEATURE_REGISTRY, 'moreFeatures')) {
+    const { HISTORIC: C3 } = require('./launcherC3MoreAdminPages');
+    for (const [id, it] of Object.entries(C3.items)) ctx.window.FEATURE_REGISTRY[id] = J(it);
+    ctx.window.DEFAULT_LAYOUTS = J(C3.layouts);
+  }
   const historic = !Object.prototype.hasOwnProperty.call(ctx.window.FEATURE_REGISTRY, 'custom');
   if (historic) restoreCustomTab(ctx.window);
   vm.runInContext(m[1], ctx, { filename: 'index.html#ycLauncher' });

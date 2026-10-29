@@ -26,7 +26,7 @@
  *   - The page sets no inline handlers and never assigns data to innerHTML.
  *   - Phone width: every table cell carries its column header (data-label),
  *     rows added after the first paint included (the CSS card layout).
- *   - The tile: Admin grid, gate firm.settings, the panel div loads the page.
+ *   - The tile: on the Admin page (firm:admin), gate firm.settings, the panel div loads the page.
  *
  * Run: npx jest tests/sharedValuesPage.test.js
  */
@@ -339,12 +339,14 @@ describe('staff-typed text is only ever text', () => {
 });
 
 describe('the tile', () => {
-  test('Admin grid, gate firm.settings (visibility only), the panel div loads the page', () => {
+  test('Admin page (a firm page since launcher-nits C4), gate firm.settings (visibility only), the panel div loads the page', () => {
     const src = fs.readFileSync(path.join(ROOT, 'public', 'js', 'featureRegistry.js'), 'utf8');
     const entry = src.match(/adminSharedValues: \{([\s\S]*?)\n {2}\},/)[1];
     expect(entry).toMatch(/target: 'sharedValuesDiv', group: 'admin'/);
     expect(entry).toMatch(/gate: 'firm\.settings'/);
-    expect(src).toMatch(/\{ item: 'adminScratch' \}, \{ item: 'adminSharedValues' \}/);
+    // Admin is the firm's page firm:admin: its tile sits after Scratch there (the C3 data step's copy of the old grid)
+    const tiles = require('./helpers/hubPages').hubPages()['firm:admin'].tiles.map((e) => e.item || '|');
+    expect(tiles[tiles.indexOf('adminSharedValues') - 1]).toBe('adminScratch');
     const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
     expect(html).toMatch(/<div id="sharedValuesDiv" style="display:none; margin-top:10px;">\s*<iframe data-src="\/sharedValues\.html"/);
   });

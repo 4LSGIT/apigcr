@@ -250,12 +250,14 @@ async function walk(page, W, record) {
   }), p);
 
   if (ONLY.has('tabs')) {
-    // data-tab-also: tabs reached from a hub rather than their own sidebar item
-    // (Settings, from More Features since 2026-10-11) — surveyed all the same.
-    // (a custom page's sidebar row carries its per-session tab id, ui-custom
-    // S6c-5 — those pages are surveyed by item id in the pages pass below)
+    // data-tab-also: tabs reached from elsewhere rather than their own sidebar
+    // item — surveyed all the same. Settings is a tile on the firm's More
+    // Features page (launcher-nits C4), so no row names it: listed by hand.
+    // (a page's sidebar row carries its per-session tab id, ui-custom S6c-5 —
+    // pages, More Features and Admin among them, are surveyed by item id in
+    // the pages pass below)
     const tabs = await page.evaluate(() => [...new Set([...document.querySelectorAll('#appSidebar [data-tab]')]
-      .flatMap((e) => [e.dataset.tab, ...(e.dataset.tabAlso || '').split(' ').filter(Boolean)]))]
+      .flatMap((e) => [e.dataset.tab, ...(e.dataset.tabAlso || '').split(' ').filter(Boolean)]).concat(['tabSettings']))]
       .filter((t) => { const el = document.getElementById(t); return !(el && el.hasAttribute('data-yc-page')); }));
     for (const t of tabs) {
       await page.evaluate((t) => openMainTab(t), t); await sleep(1500);
@@ -292,8 +294,9 @@ async function walk(page, W, record) {
       if (sf) { await sf.evaluate(() => location.reload()); await sleep(1500); }
     }
 
-    // The custom pages (ui-custom S6c-5): the firm's (fixture: firm:ops, restricted to
-    // it / admin — the fixture user is su) and the user's own (user:my-desk) — each
+    // The custom pages (ui-custom S6c-5): the firm's (fixture: More Features, Admin and
+    // firm:ops, the last two restricted to it / admin — the fixture user is su) and the
+    // user's own (user:my-desk) — each
     // page's grid, then drilled into its first panel tile (the panel opens on the
     // page itself, on the stage). Named by item id: the tab id is per session.
     const pages = await page.evaluate(() => [...document.querySelectorAll('#ycPages > [data-yc-page]')].map((e) => ({ tab: e.id, id: e.getAttribute('data-yc-page') })));
@@ -555,11 +558,19 @@ async function walk(page, W, record) {
   }
 
   if (ONLY.has('panels')) {
-    const panels = await page.evaluate(() => [...document.querySelectorAll('#tabMore > [data-target], #tabAdmin > [data-target]')]
-      .map((b) => ({ id: b.dataset.target, hub: b.closest('.tab-main').id })));
+    // every panel the firm's More Features and Admin pages hold (firm pages since launcher-nits C4), each once,
+    // opened from the first of the two that shows it
+    const panels = await page.evaluate(() => {
+      const seen = new Set(), out = [];
+      for (const pid of ['firm:more', 'firm:admin']) {
+        const pg = document.querySelector(`#ycPages > [data-yc-page="${pid}"]`);
+        if (pg) for (const b of pg.querySelectorAll(':scope > [data-target]')) if (!seen.has(b.dataset.target)) { seen.add(b.dataset.target); out.push({ id: b.dataset.target, hub: pg.id }); }
+      }
+      return out;
+    });
+    if (panels.length < 20) throw new Error(`panels: only ${panels.length} on the firm's More Features / Admin pages — the fixture's pages did not build`);
     for (const { id, hub } of panels) {
       await page.evaluate((hub) => { openMainTab(hub); const t = E(hub); if (t.classList.contains('drill-active')) exitDrillMode(t); }, hub);
-      // the HUB's tile: a firm layout may place the same panel's neutral on the other hub (S6c-4 gives it data-target)
       await page.evaluate((hub, id) => document.querySelector(`#${hub} > [data-target="${id}"]`).click(), hub, id); await sleep(2000);
       const fr = await frameOf(page, `document.querySelector('#${id} iframe')`);
       await record(`panel:${id}`, await measure(page, fr), await shot('panel_' + id));
@@ -655,16 +666,17 @@ async function walk(page, W, record) {
             : [{ sel: '#ycLayoutEditor (firm mode did not open)', missing: true }];
           return m;
         };
-        for (const pane of ['home', 'sidebar', 'more', 'admin']) {
+        for (const pane of ['home', 'sidebar', 'pages']) {
           if (ok) { await page.evaluate((p) => document.querySelector(`#ycLayoutEditor .yle-tab[data-pane="${p}"]`).click(), pane); await sleep(300); }
           await record('panel:caseConfigDiv:firm-editor:' + pane, await firmBox(await measure(page, null)), await shot('panel_caseconfig_firm_editor_' + pane));
           if (!ok) break;
         }
         if (ok) {
           await page.evaluate(() => {
-            document.querySelector('#ycLayoutEditor .yle-tab[data-pane="more"]').click();
-            document.querySelector('#ycLayoutEditor .yle-sec[data-sf="more"] [data-act="pick"]').click();
-            document.querySelector('#ycLayoutEditor .yle-sec[data-sf="more"] .yle-picker').scrollIntoView();
+            const sf = 'page:firm:more:tiles';   // More Features' tiles (a firm page since C4)
+            document.querySelector('#ycLayoutEditor .yle-tab[data-pane="pages"]').click();
+            document.querySelector(`#ycLayoutEditor .yle-sec[data-sf="${sf}"] [data-act="pick"]`).click();
+            document.querySelector(`#ycLayoutEditor .yle-sec[data-sf="${sf}"] .yle-picker`).scrollIntoView();
           }); await sleep(400);
           await record('panel:caseConfigDiv:firm-editor:more-picker', await firmBox(await measure(page, null)), await shot('panel_caseconfig_firm_editor_more_picker'));
           await page.evaluate(() => ycLayoutEditor.close()); await sleep(300);

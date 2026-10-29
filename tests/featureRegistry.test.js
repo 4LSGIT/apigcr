@@ -4,8 +4,9 @@
  * ui-custom S1 — the launcher registry (public/js/featureRegistry.js) and the
  * shell's renderer (the `<script id="ycLauncher">` block in public/index.html).
  *
- * The four launcher surfaces (Home tiles; the sidebar's Records / Actions /
- * Settings sections; the More Features and Admin grids) are rendered from data
+ * The launcher surfaces (Home tiles and Home's icon row; the sidebar's
+ * Records / Actions / Settings sections — More Features and Admin are firm
+ * pages since launcher-nits C4) are rendered from data
  * at parse time. What used to be guaranteed by the markup simply existing now
  * depends on three things lining up, and this file fences each:
  *
@@ -45,15 +46,17 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const { rawShellHtml, expandedShellHtml, loadLauncher, MOUNT } = require('./helpers/shellHtml');
+const { HISTORIC_LAYOUTS: HIST } = require('./helpers/hubPages');
 
 const ROOT = path.join(__dirname, '..');
 const REGISTRY_SRC = fs.readFileSync(path.join(ROOT, 'public/js/featureRegistry.js'), 'utf8');
 const RAW = rawShellHtml();
 const { launcher: LAUNCHER, registry: REG, layouts: LAY, warnings: WARNINGS } = loadLauncher(RAW);
 const RENDERER_SRC = RAW.match(/<script id="ycLauncher">([\s\S]*?)<\/script>/)[1];
-// the mounts, in page order (ui-custom S6c added the three icon rows)
-const SURFACES = ['sidebar', 'home', 'homeIcons', 'more', 'moreIcons', 'admin', 'adminIcons'];
-const ICON_ROWS = ['homeIcons', 'moreIcons', 'adminIcons'];
+// the mounts, in page order (ui-custom S6c added the icon rows; launcher-nits C4
+// retired More's and Admin's — they are the firm pages firm:more / firm:admin)
+const SURFACES = ['sidebar', 'home', 'homeIcons'];
+const ICON_ROWS = ['homeIcons'];
 
 /** The markup of one tab-main div in the raw page, up to the next tab-main. */
 function tabDiv(id) {
@@ -65,7 +68,7 @@ function tabDiv(id) {
 
 describe('the registry data', () => {
   test('the shipped layouts render without a skipped entry', () => {
-    for (const sf of SURFACES) expect([sf, LAUNCHER.build(sf).length > 0]).toEqual([sf, LAY[sf].length > 0]);   // adminIcons ships empty
+    for (const sf of SURFACES) expect([sf, LAUNCHER.build(sf).length > 0]).toEqual([sf, LAY[sf].length > 0]);
     expect(WARNINGS).toEqual([]);   // collected by the helper's console stub during the builds above
     expect(Object.keys(LAY).sort()).toEqual([...SURFACES].sort());
     for (const s of SURFACES) for (const e of LAY[s]) {
@@ -91,48 +94,49 @@ describe('the registry data', () => {
     expect(REG.moreAssistant).toMatchObject({ overlay: true, onclick: 'openCasey({ expanded: true })' });
   });
 
-  test('the shipped More grid has no row over four items and YisrAI stands alone last', () => {
-    const rows = [[]];
-    for (const entry of LAY.more) {
-      if (entry.break) rows.push([]);
-      else if (entry.item) rows[rows.length - 1].push(entry.item);
-    }
-    expect(Math.max(...rows.map((row) => row.length))).toBeLessThanOrEqual(4);
-    expect(rows[rows.length - 1]).toEqual(['moreAssistant']);
+  test('launcher-nits C4: More Features and Admin are not shipped — no hub lists, no moreFeatures / admin items (the firm pages firm:more / firm:admin hold them)', () => {
+    for (const sf of ['more', 'moreIcons', 'admin', 'adminIcons']) expect([sf, Object.prototype.hasOwnProperty.call(LAY, sf)]).toEqual([sf, false]);
+    for (const id of ['moreFeatures', 'admin']) expect([id, Object.prototype.hasOwnProperty.call(REG, id)]).toEqual([id, false]);
+    expect(REGISTRY_SRC).toMatch(/moreFeatures and admin \(2026-10-29/);   // listed as retired: never reused
+    for (const sf of SURFACES) expect([sf, JSON.stringify(LAY[sf])]).not.toEqual([sf, expect.stringMatching(/"(moreFeatures|admin)"/)]);
   });
 
-  test('every item is placed on a surface (bar the S6b extras), ids are camelCase, grid ids carry their prefix', () => {
+  test('every item is placed on a surface or was on a hub (now the firm\'s pages), bar the S6b extras; ids are camelCase, grid ids carry their prefix', () => {
     const placed = new Set(SURFACES.flatMap((s) => LAY[s].filter((e) => e.item).map((e) => e.item)));
+    // what the hubs held: the firm pages firm:more / firm:admin hold it since
+    // launcher-nits C3 / C4 (the firm's data, not the code's)
+    const hub = new Set(['more', 'moreIcons', 'admin', 'adminIcons'].flatMap((s) => HIST[s].filter((e) => e.item).map((e) => e.item)));
     // ui-custom S6b: an item in NO default layout is listed by the effective
     // registry ("More actions") and runs through exec's closed NO_ELEMENT
     // dispatch. That set is deliberate, so it is pinned: a new orphan fails
     // here until it is added on purpose (and to NO_ELEMENT).
-    expect(Object.keys(REG).filter((k) => !placed.has(k))).toEqual(['myTasks', 'logout', 'code']);   // casey: More's icon row since S6c
+    expect(Object.keys(REG).filter((k) => !placed.has(k) && !hub.has(k))).toEqual(['myTasks', 'logout', 'code']);
+    // and nothing new appears only on the firm's data: a new registry item must be placed, or join this list
+    expect([...hub].filter((k) => !Object.prototype.hasOwnProperty.call(REG, k)).filter((k) => k !== 'moreFeatures' && k !== 'admin')).toEqual([]);
     for (const k of Object.keys(REG)) expect(k).toMatch(/^[a-z][A-Za-z0-9]*$/);
-    for (const e of LAY.more.filter((x) => x.item)) expect(e.item).toMatch(/^more[A-Z]/);
-    for (const e of LAY.admin.filter((x) => x.item)) expect(e.item).toMatch(/^admin[A-Z]/);
+    for (const e of HIST.more.filter((x) => x.item)) expect(e.item).toMatch(/^more[A-Z]/);
+    for (const e of HIST.admin.filter((x) => x.item)) expect(e.item).toMatch(/^admin[A-Z]/);
     for (const [k, it] of Object.entries(REG)) {
       expect([k, typeof it.label, typeof it.icon]).toEqual([k, 'string', 'string']);
     }
   });
 
-  test('grid panel tiles have NO onclick and open a real panel on the stage (#ycPanels), never one inside a hub, in their own group', () => {
-    // the stage: one container after the hubs, closed before the drill CSS
+  test('panel items have NO onclick and open a real panel on the stage (#ycPanels), after the pages, never inside a tab', () => {
+    // the stage: one container after the pages (#ycPages), closed before the drill CSS
     const a = RAW.indexOf('<div id="ycPanels" style="display:none">');
     const b = RAW.indexOf('<style>\n  /* Drill-in pill strip for big-button tabs */', a);
-    expect(a).toBeGreaterThan(RAW.indexOf('<div id="tabAdmin" class="tab-main yc-hub"'));
+    expect(a).toBeGreaterThan(RAW.indexOf('<div id="ycPages">'));
     expect(b).toBeGreaterThan(a);
     const stage = RAW.slice(a, b);
     expect(stage).not.toMatch(/class="tab-main/);
-    for (const [surface, tab] of [['more', 'tabMore'], ['admin', 'tabAdmin']]) {
-      const html = tabDiv(tab).split('<div id="ycPanels"')[0];   // the hub ends where the stage begins
-      for (const e of LAY[surface].filter((x) => x.item)) {
+    expect(RAW).not.toMatch(/<div id="tab(More|Admin)"/);   // the hubs are gone (launcher-nits C4)
+    for (const surface of ['more', 'admin']) {
+      for (const e of HIST[surface].filter((x) => x.item)) {
         const it = REG[e.item];
         if (it.target == null) { expect([e.item, typeof it.onclick]).toEqual([e.item, 'string']); continue; }
         expect([e.item, it.onclick]).toEqual([e.item, undefined]);
         expect([e.item, it.group]).toEqual([e.item, surface]);
         expect([e.item, stage.includes(`<div id="${it.target}"`)]).toEqual([e.item, true]);
-        expect([e.item, html.includes(`<div id="${it.target}"`)]).toEqual([e.item, false]);
       }
     }
     // and nothing else on the stage opens a panel: every stage div is some tile's target
@@ -149,7 +153,7 @@ describe('the registry data', () => {
     }
     // the shipped Home: Calendar is the first tile of the last row (-3), right after its break
     const home = LAY.home;
-    expect(home.slice(-4)).toEqual([{ break: true }, { item: 'calendar' }, { item: 'moreFeatures' }, { item: 'comms' }]);
+    expect(home.slice(-3)).toEqual([{ break: true }, { item: 'calendar' }, { item: 'comms' }]);   // More Features: the firm page firm:more, placed by the firm's layout (C4)
     expect(home.filter((e) => e.item === 'calendar')).toHaveLength(1);
     // the sidebar's Actions section lost its slot, nothing took it
     const sb = LAY.sidebar, a = sb.findIndex((e) => e.label === 'Actions'), z = sb.findIndex((e) => e.label === 'Settings');
@@ -185,20 +189,16 @@ describe('the mounts in public/index.html', () => {
     expect(RAW).toContain(`<div class="home-grid"><script>ycLauncher.mount('home')</script></div>`);
     // the icon rows (S6c) mount inside their .<page>-egg-row divs, right under each grid
     within('homeIcons', '<div class="home-egg-row">', '<div class="home-search">');
-    within('more', '<div id="tabMore" class="tab-main yc-hub">', '<div class="more-egg-row">');
-    within('moreIcons', '<div class="more-egg-row">', '<div id="formSimpleDiv"');
-    within('admin', '<div id="tabAdmin" class="tab-main yc-hub"', '<div class="admin-egg-row">');
-    within('adminIcons', '<div class="admin-egg-row">', '<div id="sequencesDiv"');
-    for (const row of ['home', 'more', 'admin']) expect(RAW).toContain(`<div class="${row}-egg-row"><script>ycLauncher.mount('${row}Icons')</script></div>`);
+    expect(RAW).toContain(`<div class="home-egg-row"><script>ycLauncher.mount('homeIcons')</script></div>`);
     // the renderer is defined before the first mount; the boot runs after the last
     expect(RAW.indexOf('<script id="ycLauncher">')).toBeLessThan(at('sidebar'));
     expect(RAW.indexOf('src="/js/featureRegistry.js"')).toBeLessThan(RAW.indexOf('<script id="ycLauncher">'));
-    expect(at('admin')).toBeLessThan(RAW.indexOf('\n    initAuth();\n'));
+    expect(at('homeIcons')).toBeLessThan(RAW.indexOf('\n    initAuth();\n'));
   });
 
   test('the expanded page still holds every element other code looks up by id', () => {
     const html = expandedShellHtml();
-    for (const id of ['sbAdmin', 'sbComms', 'homeComms', 'sbTasksBadge', 'sbCommsBadge', 'sbAll', 'homeAll']) {
+    for (const id of ['sbComms', 'homeComms', 'sbTasksBadge', 'sbCommsBadge', 'sbAll', 'homeAll']) {
       expect([id, (html.match(new RegExp(`id="${id}"`, 'g')) || []).length]).toEqual([id, 1]);
     }
   });
@@ -216,13 +216,6 @@ describe('mount(), run for real in jsdom', () => {
       <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
       <div class="home-egg-row"><script>ycLauncher.mount('homeIcons')</script></div>
       <div class="home-search"></div></div>
-    <div id="tabMore" class="tab-main"><h1>More</h1>
-      <script>ycLauncher.mount('more')</script>
-      <div class="more-egg-row"><script>ycLauncher.mount('moreIcons')</script></div><div id="manualsDiv"></div></div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1>
-      <script>ycLauncher.mount('admin')</script>
-      <div class="admin-egg-row"><script>ycLauncher.mount('adminIcons')</script></div>
-      <div id="sequencesDiv"></div></div>
   </body></html>`;
   let doc, win;
   beforeAll(() => {
@@ -236,17 +229,6 @@ describe('mount(), run for real in jsdom', () => {
   });
 
   test('the markup lands in the mount\'s place as DIRECT children, between the page\'s neighbours', () => {
-    const kids = (sel) => [...doc.querySelector(sel).children];
-    for (const [tab, after, before, n] of [['#tabMore', 'H1', 'more-egg-row', LAY.more.filter((e) => e.item).length],
-                                           ['#tabAdmin', 'H1', 'admin-egg-row', LAY.admin.filter((e) => e.item).length]]) {
-      const tiles = doc.querySelectorAll(`${tab} > .big-button`);
-      expect(tiles).toHaveLength(n);
-      expect(doc.querySelectorAll(`${tab} > br`)).toHaveLength(LAY[tab === '#tabMore' ? 'more' : 'admin'].filter((e) => e.break).length * 2);
-      const k = kids(tab);
-      expect(k[k.indexOf(tiles[0]) - 1].tagName).toBe(after);
-      const next = k[k.indexOf(tiles[tiles.length - 1]) + 1];
-      expect(next.className || next.id).toBe(before);
-    }
     // Home: direct children of its .home-grid container (S4a), which sits
     // right before the quick search; a break is a .home-break sentinel
     const home = doc.querySelectorAll('#tabHome > .home-grid > .home-btn');
@@ -255,10 +237,8 @@ describe('mount(), run for real in jsdom', () => {
     expect(home[home.length - 1].nextElementSibling).toBe(null);
     expect(home[0].parentElement.nextElementSibling.className).toBe('home-egg-row');   // then the quick search
     expect(home[0].parentElement.nextElementSibling.nextElementSibling.className).toBe('home-search');
-    // the icon rows: the buttons are the row div's only children; Admin's row is empty
+    // the icon row: the buttons are the row div's only children
     expect([...doc.querySelectorAll('#tabHome > .home-egg-row > *')].map((b) => b.className + '#' + b.id)).toEqual(['home-egg#homeAll']);
-    expect([...doc.querySelectorAll('#tabMore > .more-egg-row > *')].map((b) => b.className + '|' + b.getAttribute('onclick'))).toEqual(['more-egg|toggleMascot()']);
-    expect(doc.querySelector('#tabAdmin > .admin-egg-row').childNodes).toHaveLength(0);
     const sb = doc.querySelectorAll('#appSidebar > .sb-item');
     expect(sb).toHaveLength(LAY.sidebar.filter((e) => e.item).length);
     expect(doc.querySelectorAll('#appSidebar > .sb-section-label')).toHaveLength(LAY.sidebar.filter((e) => e.label).length);
@@ -266,16 +246,16 @@ describe('mount(), run for real in jsdom', () => {
   });
 
   test('the elements boot looks up are there, in their pre-login state', () => {
-    expect(doc.getElementById('sbAdmin').style.display).toBe('none');
+    expect(doc.getElementById('sbAdmin')).toBe(null);   // the Admin hub's row: retired with the hub (launcher-nits C4)
     expect(doc.getElementById('sbAll').getAttribute('onclick')).toBe("openMainTab('tabAll')");   // the `all` item (S6c)
     expect(doc.getElementById('sbTasksBadge').style.display).toBe('none');
     expect(doc.getElementById('homeComms').className).toBe('home-btn');
-    expect(doc.querySelector('#appSidebar [data-tab="tabMore"]').dataset.tabAlso).toBe('tabSettings');
+    expect(doc.querySelector('#appSidebar [data-tab="tabMore"]')).toBe(null);
     // panel tiles carry no onclick; the delegated listener opens them
     expect(doc.querySelectorAll('.big-button[data-target][onclick]')).toHaveLength(0);
   });
 
   test('called outside a parsing inline script, mount() refuses loudly', () => {
-    expect(() => win.ycLauncher.mount('more')).toThrow(/while the page parses/);
+    expect(() => win.ycLauncher.mount('home')).toThrow(/while the page parses/);
   });
 });

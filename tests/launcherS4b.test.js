@@ -37,6 +37,8 @@ const vm = require('vm');
 const { JSDOM } = require('jsdom');
 const shape = require('../lib/uiConfigShape');
 const { rawShellHtml } = require('./helpers/shellHtml');
+// More Features and Admin: the firm's pages since launcher-nits C4 (tests/helpers/hubPages.js)
+const { stageHtml } = require('./helpers/hubPages');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
@@ -396,12 +398,9 @@ describe('the editor core (pure, real resolver, real validator)', () => {
 // what the server holds now (GET /api/ui-config) — the same unless a test says.
 function boot({ layout = null, ro = RO, access = ACCESS, serverLayout = layout, serverRo = ro } = {}) {
   const LAYD = LAY;
-  const placedIds = (sf) => LAYD[sf].filter((e) => e.item).map((e) => e.item);
-  const grid = (sf) => placedIds(sf).map((k) => REG[k]).filter((it) => it.target)
-    .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
+  const tabs = new Set(['tabHome']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
@@ -412,9 +411,8 @@ function boot({ layout = null, ro = RO, access = ACCESS, serverLayout = layout, 
       <button id="homeAll" class="home-btn"></button></div>
     ${ALL_TAB}
     ${plainTabs}
-    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
-    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
+    <div id="ycPages"></div>
+    <div id="ycPanels" style="display:none">${stageHtml(REG)}</div>
   </body></html>`;
   const errors = [];
   const dom = new JSDOM(page, { runScripts: 'dangerously', pretendToBeVisual: true });

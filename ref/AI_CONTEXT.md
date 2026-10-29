@@ -529,11 +529,12 @@ body. Governing migrations in `ref/migrations/`.*
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL
-  (`open=tabMore~moreAutomations~workflows~27`); `assistantService`
+  (`open=firm:more~moreAutomations~workflows~27`); `assistantService`
   derives and verifies `workspace.automation {kind, id, label}` (403 on a
   dead id, like a dead case file). Keyed on the REST under any drill head —
-  tabMore, tabAdmin, tabPanel or a firm page `firm:<slug>` (launcher-nits C2:
-  More becomes the firm page firm:more) — never under another tab's head. The segment also restores the open record
+  a firm page `firm:<slug>` (More Features and Admin are `firm:more` /
+  `firm:admin` since launcher-nits C4), tabPanel, or the old hub heads
+  tabMore / tabAdmin an old link still carries — never under another tab's head. The segment also restores the open record
   on reload via the existing deep-link boot path.
 - **Court NEF dedupe + quiet empty-pool cancel (10-13):** `court_extract`
   claims sha256(normWs(subject)+'\n'+normWs(body)) in `court_email_hashes`
@@ -1424,9 +1425,11 @@ the version guard reloads through `window.ycReloadUrl`):
 `?files=c<case_id>|p<contact_id>|b<id>[~rest],…` + `?open=file:<n>` (a file's
 rest lives in its token) or `?open=<mainTabId>[~rest]`. A rest = one
 `~`-joined segment per frame layer, each layer owning its vocabulary (case /
-contact: `data-ws-tab`; comms: email|phone|team; tabMore/tabAdmin, a
-firm page's `firm:<slug>` head and the panel tab `tabPanel` (§31): the open drill panel's FEATURE_REGISTRY id; automationManager / caseConfigManager:
-their `SUB_PAGES` id, e.g. `tabMore~moreAutomations~triggers`). Grammar in `public/js/ycSubTab.js`:
+contact: `data-ws-tab`; comms: email|phone|team; a firm page's
+`firm:<slug>` head (More Features / Admin: `firm:more` / `firm:admin`) and the
+panel tab `tabPanel` (§31): the open drill panel's FEATURE_REGISTRY id;
+automationManager / caseConfigManager: their `SUB_PAGES` id, e.g.
+`firm:more~moreAutomations~triggers`). Grammar in `public/js/ycSubTab.js`:
 `[A-Za-z0-9_-]{1,32}`, depth ≤4, ≤128, empty = default, invalid → dropped at
 its layer (file/tab kept). Vocabulary or surrogate DB ids ONLY: the URL rides
 Referer into jwt_api_audit_log, redacted by key (credentials, `q`), not value.
@@ -1438,14 +1441,14 @@ frame or a drill panel's direct iframe (not Swal / tool dialogs), shows only
 the ACTIVE view's rest, and never opens anything on a report. `?open=`'s head
 must be a tab the effective registry offers (`wsMainTabAllowed`, after
 applyAccess; else Home — Settings by its own item `moreSettings`, launcher-nits
-C2); once a hub tab is gone (L4b2) `tabMore` / `tabAdmin` are ALIASES
-(`WS_HUB_ALIAS`): the firm page `firm:more` / `firm:admin`, else, with a panel
-named, the panel tab — resolved client-side only, the server never rewrites a
+C2); the hub tabs are gone (launcher-nits C4), so `tabMore` / `tabAdmin` are
+ALIASES (`WS_HUB_ALIAS`): the firm page `firm:more` / `firm:admin`, else, with
+a panel named, the panel tab — resolved client-side only, the server never rewrites a
 head (`WORKSPACE_TABS` keeps both, for old links and signed tickets); a drill panel reopens ONLY via `ycLauncher.exec(id,
 { page })`, for a plain registry id whose tile ON THAT PAGE has `data-target`
-— its default tile, or a neutral the firm placed there (S6c-4: `tabMore~
-adminUsers` reopens Users on More) — never action/dialog tiles, firm-unplaced
-tiles or `firm:` ids. The panels live on the stage (`#ycPanels`, below);
+— a neutral the page's layout placed there (S6c-4: `firm:more~adminUsers`
+reopens Users on More Features when its page holds Users) — never
+action/dialog tiles, unplaced tiles or `firm:` ids. The panels live on the stage (`#ycPanels`, below);
 `wsDrillPanels(tab)` maps a page's tiles to stage panels, `wsFrameOwner` maps
 a stage pane to the active page when it has a tile for the panel, else the
 first drill page that has. Leaves: case.html, contact.html, comms.html, and two drill-panel
@@ -2401,7 +2404,7 @@ iframe child of the shell and reaches it through the tool shell API,
 customView-style contract, still works and is legacy.
 
 Code: `routes/api.tools.js` — **its header block is the contract; read it
-before changing anything here.** UI `public/toolManager.html` (Admin tab →
+before changing anything here.** UI `public/toolManager.html` (Admin →
 Tools (SU)). Manual `manual/08-Admin-Tools/06-tools.md`. Tests
 `tests/apiTools.routes.test.js`.
 
@@ -2464,7 +2467,8 @@ No migration is filed for either table: plain DDL, wholly captured by
   and customView.
 - **Firm actions are tools** (2026-10-15): there is no declarative `action`
   launcher kind. An SU writes a tool; a firm admin places it as a `tool` firm
-  item (the More grid's firm row, All, Ctrl-K). Reference copies of DB-stored
+  item (wherever the firm's layout places it — a page such as More Features,
+  Home, the sidebar — and All, Ctrl-K). Reference copies of DB-stored
   tools live in `ref/tools/` (`clio-code.html`, kept byte-identical to the
   live row).
 - **The one sanctioned exception** (2026-10-16): `ref/tools/clio-code-2.html`
@@ -2607,11 +2611,14 @@ unchanged; full history scrubbed 2026-10-14.
 **What.** `public/js/featureRegistry.js` holds `FEATURE_REGISTRY` (one entry
 per launcher button; the id is API surface — never renamed, never reused; its
 header lists retired ids; an item's `gate` — `'su'` or a lib/capabilities
-name — is what its routes enforce) and `DEFAULT_LAYOUTS` (home / sidebar /
-more / admin as `{item}|{break}|{label}`, plus the icon rows homeIcons /
-moreIcons / adminIcons — `{item}` only, ≤12: the small buttons under each
-grid, Casey's paw and All). `window.ycLauncher` (public/index.html) renders
-the seven surfaces at parse time, then `applyAccess({ isAdmin, roles, denied,
+name — is what its routes enforce) and `DEFAULT_LAYOUTS` (home / sidebar as
+`{item}|{break}|{label}`, plus Home's icon row homeIcons — `{item}` only, ≤12:
+All under Home's grid). More Features and Admin are NOT shipped: since
+launcher-nits C4 they are firm PAGES, `firm:more` / `firm:admin` (made from
+the old hubs by `scripts/launcherC3MoreAdminPages.js`), so a firm with no
+config has neither and every hub tool lists in All under More actions.
+`window.ycLauncher` (public/index.html) renders the three surfaces at parse
+time, then `applyAccess({ isAdmin, roles, denied,
 ui })` (from loadUserContext; re-run after any editor save) applies
 the overlays. `computeEffective` (pure) = registry − gated (a `gate` the
 user's roles don't pass by `can()`'s rule, su passes all; the Admin PAGE item
@@ -2624,8 +2631,14 @@ a hub tile (launcher-nits C1): a PANEL item opens on the first page that
 shows a tile for it, else on the PANEL TAB (`#tabPanel`, made on first use:
 the page heading and ONE neutral tile for the hosted panel, so the drill
 script, pill strip and URL — `?open=tabPanel~<id>`, restored through exec —
-treat it as a page); the hubs' action items (moreSettings, adminEtch, casey,
-moreAssistant) run their `NO_ELEMENT` call when they have no element. The All tab +
+treat it as a page); the items the old hubs drew themselves (moreSettings,
+adminEtch, casey, moreAssistant) have no element — a page tile is a neutral —
+and run their `NO_ELEMENT` call. All's groups follow the firm's sidebar and
+pages: the sidebar's sections, More actions (effective items placed nowhere),
+one group per firm page in item order, named by its item's label (an item
+in the first that places it), Firm, Mine — and the firm editor's lists group
+the same way (firm.html `catalogUi` hands computeEffective the firm's items
+and layout). The All tab +
 palette live in `public/js/ycAll.js`, whose single keydown dispatcher also
 runs user shortcuts (the All tab never lists `all` itself; the palette does);
 the personal editor is `public/js/ycLayoutEditor.js` (All > Customize my
@@ -2635,15 +2648,15 @@ firm's settings sections (§32), then Launcher + Who sees what, History over
 both firm documents), whose "Arrange
 pages and defaults…" opens the same `ycLayoutEditor` in firm mode
 (`open({ scope:'firm' })`, drawn in the top document; edits the firm `layout`
-over all seven surfaces and the firm's pages, ONE PUT with `base`, 409 →
-Reload; the More list closes with the firm row while the firm has no
-`placed.more`; `open({ scope:'firm', section:'pages', page })` lands on one
+over Home, the sidebar, Home's icon row and the firm's pages — panes Home ·
+Sidebar · Firm pages — ONE PUT with `base`, 409 → Reload;
+`open({ scope:'firm', section:'pages', page })` lands on one
 firm page's block — firm.html's "Arrange its tiles…" on a Page item).
 **Pages (S6c-5).** A firm item or a user's button of kind `{ type:'page' }`
-is a main tab of its own like More / Admin: `ycLauncher.buildPages` (from
-applyAccess) draws one `<div class="tab-main yc-hub" id="ycPage-N"
-data-yc-page="<item id>">` per effective page item into `#ycPages` (between
-`#tabAdmin` and the stage) — heading as text + ycIcon, tiles as neutrals
+is a main tab of its own (More Features and Admin are two):
+`ycLauncher.buildPages` (from applyAccess) draws one `<div class="tab-main
+yc-hub" id="ycPage-N" data-yc-page="<item id>">` per effective page item into
+`#ycPages` (after the fixed tabs, before the stage) — heading as text + ycIcon, tiles as neutrals
 (a panel item's with `data-target`, opening in place on the stage), a
 `.page-egg-row`; contents from that tier's `layout.pages[id]` (`{ tiles,
 icons }`; a USER page has no base: the lists ARE the page; a FIRM page's
@@ -2651,10 +2664,11 @@ lists are the base of the user's own overlay, `ui.user.layout.overlays[id]`
 `{ placed?, removed? }` per part — the surfaces' merge rule, firm locks
 holding, launcher-nits L4b1: `pageRows`; non-effective items not drawn);
 `exec(pageId)` → `openMainTab`; a sidebar neutral for a page carries its
-tab in `data-tab`. The tab id is per session and opaque: the WORKSPACE URL
+tab in `data-tab` (Settings, which no row names, lights the row of the first
+page holding its tile — `updateSidebarActive`). The tab id is per session and opaque: the WORKSPACE URL
 never writes it and refuses it as a head. A FIRM page is named there by its
-item id instead — `?open=firm:<slug>[~panel~rest]`, a drill page like the
-hubs (launcher-nits L4a; index.html `wsDrillSurface`), and Casey's
+item id instead — `?open=firm:<slug>[~panel~rest]`, a drill page
+(launcher-nits L4a; index.html `wsDrillSurface`), and Casey's
 workspace context accepts that head (`assistantService`
 `WORKSPACE_FIRM_PAGE_RE`, = uiConfigShape `FIRM_ID_RE`). A user's own page
 never is: its id is made from the name they typed and the URL rides Referer
@@ -2665,8 +2679,11 @@ called **List** in every UI string; its stored type stays `drawer`.
 **Storage.** One table, `ui_config` (scope firm|user; `user_id` 0 / `role`
 '' sentinels are load-bearing for the UNIQUE; `role` reserved). Firm
 `registry_overrides` = `{ hidden, renames, locked, items, visible_to, retired }`
-and firm `layout` = `{ placed, removed, pages? }` over every surface (the
-firm's default; More, Admin and their icon rows are firm-only) plus
+and firm `layout` = `{ placed, removed, pages? }` over home, sidebar and
+homeIcons (the firm's default; the hubs' old surfaces more / moreIcons /
+admin / adminIcons, which the live document and older History versions still
+carry, are DROPPED when a firm document is read — `RETIRED_FIRM_SURFACES` —
+and refused in a user's) plus
 `pages { 'firm:<slug>': { tiles?, icons? } }` (S6c-5; ≤50 keys, tiles the
 grid grammar ≤100, icons items-only ≤12, keys of the scope's own id shape) —
 both versioned in `ui_config_versions`, optimistic `base` → 409. User keys:
@@ -2688,25 +2705,25 @@ DB-per-tenant plan (ref/plans.md) firm scope simply becomes the tenant's.
 - Visibility only: every hide — deny, firm hide, `visible_to`, a user's
   removal — hides tiles; routes enforce their own gates.
 - Removal HIDES, reorder MOVES: default launcher elements always stay in the
-  DOM (ids like sbAdmin / sbComms / badges are looked up elsewhere), hidden by
+  DOM (ids like sbComms / badges are looked up elsewhere), hidden by
   attribute (`data-yc-denied`, `data-yc-unplaced`) + `!important`, never
   `style.display`. Added placements are neutral `exec` shortcuts — except a
   PANEL item's tile on a grid page, which carries the item's `data-target`
   and no listener (S6c-4): the page's delegated handler opens the panel in
   place.
-- The panel stage (S6c-4): every More / Admin panel div is a child of ONE
-  container after the tabs, `#ycPanels` (not a `.tab-main`), and never
-  moves — a moved `<iframe>` reloads and loses unsaved work. The drill is
-  page-scoped: a tile's page is `closest('.tab-main')` (More, Admin or a
-  custom page in `#ycPages`), each page remembers the panel it last opened
+- The panel stage (S6c-4): every panel div (a registry item's `target`) is
+  a child of ONE container after the tabs, `#ycPanels` (not a `.tab-main`),
+  and never moves — a moved `<iframe>` reloads and loses unsaved work. The
+  drill is page-scoped: a tile's page is `closest('.tab-main')` (a page in
+  `#ycPages` or the panel tab), each page remembers the panel it last opened
   (`drillMemory`), `openMainTab` shows the active page's remembered panel or
   hides the stage (`stageSync`), `exitDrillMode` forgets; a panel's
   `display` is '' iff it is the one on the stage now. One panel may sit on
-  any number of pages (one element). `exec` of a grid item routes by page:
-  `opts.page`, the active page, More, Admin, the firm pages, the user's
-  pages — the first that SHOWS a tile for it; else the hidden default tile.
-  Panel CSS targets `#ycPanels > div`; the hubs' phone grid rules and the
-  egg rows key on `.yc-hub` / `.page-egg-row` (every hub carries `yc-hub`).
+  any number of pages (one element). `exec` of a panel item routes by page:
+  `opts.page`, the active page, the firm pages in item order, the user's
+  pages — the first that SHOWS a tile for it; else the panel tab.
+  Panel CSS targets `#ycPanels > div`; the pages' phone grid rules and the
+  egg rows key on `.yc-hub` / `.page-egg-row` (every page carries `yc-hub`).
   Pane pages reach the shell via `window.parent`, unchanged; the Simple
   Forms → Form Builder hand-off goes through `exec('moreFormBuilder')`.
 - A page (S6c-5) deleted or restricted while open: `buildPages` opens Home
@@ -2719,13 +2736,18 @@ DB-per-tenant plan (ref/plans.md) firm scope simply becomes the tenant's.
   through All. Per-tier page count = the items cap (50).
 - Layouts resolve shipped → firm → user with ONE merge rule applied twice
   (`resolveLayout`): a firm Home / sidebar change only ADDS for a user who
-  already arranged that surface (`locked` is how the firm insists). More /
-  Admin grids are firm-editable, never user-editable: every grid item keeps
-  its tile under any layout — found by id, hidden by `data-yc-unplaced` when
-  left out (the wsurl drill restore depends on `elementsOf(id).more/.admin`
-  and refuses an unplaced tile); the More firm row draws only while the firm
-  has no `placed.more`.
-- Layout entries are `{item}`, `{break}` (Home and the grids) and `{label}`
+  already arranged that surface (`locked` is how the firm insists). A firm
+  page's lists are the base a user's overlay rearranges (L4b1); a tile left
+  off a page is not drawn there (Home's default tiles stay in the DOM, hidden
+  by `data-yc-unplaced`), and the wsurl drill restore refuses a panel its
+  page does not show.
+- A NEW registry item is on no page: More Features and Admin are the firm's
+  data, not shipped lists (C4), so it lists in All (More actions) and Ctrl-K
+  only until the firm places it. A slice adding a tool the firm should see on
+  a page ships that placement too — Fred in the arrangement editor, or a
+  checked data step on the firm `layout` (base asserted, like
+  `scripts/launcherC3MoreAdminPages.js`).
+- Layout entries are `{item}`, `{break}` (Home and a page's tiles) and `{label}`
   (sidebar) ONLY: no pixel spacing and no stored column counts — how many
   tiles fit a row is CSS's call per viewport. The one extension the design
   allows is a per-list density preset; anything else is a design decision
@@ -2733,7 +2755,7 @@ DB-per-tenant plan (ref/plans.md) firm scope simply becomes the tenant's.
 - All (`all`) is GUARANTEED in Home's icon row and in Ctrl-K (ruling
   2026-10-16): undeniable, and the resolver puts it back whatever a layout
   says; the sidebar's All is an ordinary, removable item.
-- The Admin page follows the firm's `visible_to` on `admin` (live: it, admin;
+- The Admin page follows the firm's `visible_to` on `firm:admin` (live: it, admin;
   su always); each Admin tile follows its own `gate` (today `su` on every
   tool but Etch, which is open, and Users, which is `users.impersonate` — it
   opens for an `it` holder's View-as; user management inside stays SU-only),
@@ -2760,7 +2782,8 @@ DB-per-tenant plan (ref/plans.md) firm scope simply becomes the tenant's.
   Awesome the shell loads (index.html's CDN link): upgrade the two together.
 - NO_ELEMENT (S6b): an effective item with no rendered element — the
   registry's "More actions" placed in no default layout (`myTasks`,
-  `logout`) — runs through `exec`'s CLOSED dispatch of named page functions
+  `logout`, `code`) and, since C4, the items the hubs drew (`moreSettings`,
+  `adminEtch`, `casey`, `moreAssistant`) — runs through `exec`'s CLOSED dispatch of named page functions
   (the fixed header's own calls), never an eval of the registry's `onclick`
   string. A new element-less registry item needs an entry there, or `exec`
   refuses it ("no rendered element"). An icon-row button is clicked in

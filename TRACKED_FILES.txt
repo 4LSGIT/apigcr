@@ -1420,6 +1420,7 @@ tests/helpers/commsArchiveSchema.js
 tests/helpers/ctaWorld.js
 tests/helpers/fakeGcs.js
 tests/helpers/homeLayoutBrowser.js
+tests/helpers/hubPages.js
 tests/helpers/imapWire.js
 tests/helpers/ingestNativeSequence.js
 tests/helpers/mailRenderBrowser.js

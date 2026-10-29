@@ -233,9 +233,12 @@ describe('"YisraCase Config" rename (labels only — ids and targets unchanged)'
   });
 
   test('index.html More button label changed, target untouched', () => {
-    // The grid renders from public/js/featureRegistry.js (ui-custom S1).
+    // The tile is a neutral on the firm's More Features page since launcher-nits C4,
+    // drawn from the registry entry: its label and target are the registry's.
+    const { registry: REG } = require('./helpers/shellHtml').loadLauncher(require('./helpers/shellHtml').rawShellHtml());
+    expect([REG.moreCaseConfig.label, REG.moreCaseConfig.target]).toEqual(['YisraCase Config', 'caseConfigDiv']);
+    expect(require('./helpers/hubPages').hubPages()['firm:more'].tiles.some((e) => e.item === 'moreCaseConfig')).toBe(true);
     const idx = require('./helpers/shellHtml').expandedShellHtml();
-    expect(idx).toMatch(/data-target="caseConfigDiv"[^>]*>[\s\S]*?YisraCase Config<\/button>/);
     expect(idx).toMatch(/id="caseConfigDiv"/);
   });
 });

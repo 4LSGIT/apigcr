@@ -2,20 +2,23 @@
 //
 /**
  * ui-custom S6c-3 — the firm mode of the layout editor: the firm arranges
- * More Features, Admin, the default Home and sidebar and their icon rows
- * (S6c_DESIGN §4.5, §5 S6c-3, Fred's rulings on §6).
+ * the default Home and sidebar and Home's icon row, and its pages — More
+ * Features and Admin among them since launcher-nits C4 retired the static
+ * hubs (firm:more / firm:admin; S6c_DESIGN §4.5, §5 S6c-3, Fred's rulings on §6).
  *
  *   1. THE CORE (ycLayoutEditor.session — pure) in a bare vm with the page's
  *      REAL ycLauncher over the real registry, every document checked by the
- *      REAL server validator (lib/uiConfigShape.js, scope firm): the catalogue
- *      (computeEffective as su under the firm overlay; firm items in, user
- *      buttons out, the retired custom tab nowhere); the More list closes with the firm row
- *      while nothing is placed there (the seed), and an edit writes it as
- *      placed entries; Fred's scenario (rows of four, Get Clio Code in row 5);
- *      breaks only on the grids, icon rows ≤12 and items only; All always in
- *      Home's icon row; reset per surface; a seeded fuzz over all seven
- *      surfaces — every document validates unchanged and the renderer's own
- *      resolve draws exactly what the editor showed.
+ *      REAL server validator (lib/uiConfigShape.js, scope firm): the grammar
+ *      (the hubs' four surfaces retired — dropped from a firm document, any
+ *      other unknown surface refused); the catalogue (computeEffective as su
+ *      under the firm overlay; firm items in, user buttons out, the retired
+ *      custom tab and hub items nowhere; the hub pages its pages; no seed);
+ *      Fred's scenario on the More Features page (rows of four, Get Clio Code
+ *      in row 5); breaks only on Home and a page's tiles, icon rows ≤12 and
+ *      items only; All always in Home's icon row; reset per surface (a page
+ *      has none); a seeded fuzz over the surfaces and both hub pages — every
+ *      document validates unchanged and the renderer's own resolve draws
+ *      exactly what the editor showed.
  *   2. THE USER EDITOR STARTS FROM THE FIRM'S (01/15): its lists are the user
  *      step over the firm step — what the renderer draws; an item the firm
  *      placed is a standard one (hidden, never removed); reset follows the firm.
@@ -23,9 +26,9 @@
  *      mount, the All tab, ycAll.js, ycLayoutEditor.js) over an API whose
  *      every call runs the REAL services/uiConfigService on an in-memory store
  *      (tests/helpers/uiConfigStore.js): no can_edit_firm → nothing opens;
- *      four tabs (the fourth, Firm pages, is S6c-5's), seven sections; Fred's scenario by clicks → ONE PUT
+ *      three tabs (Home, Sidebar, Firm pages); Fred's scenario by clicks → ONE PUT
  *      { scope:'firm', config_key:'layout', base } → the shell repaints with no
- *      reload (the More grid in its new order, the firm row gone); a second
+ *      reload (the More Features page in its new order); a second
  *      session saving first → 409, edits kept, Reload discards them for the
  *      firm's; 400 errors under their sections; 403 the session message; the
  *      personal editor still opens afterwards (the panel is rebuilt).
@@ -49,6 +52,7 @@ const { JSDOM, VirtualConsole } = require('jsdom');
 const { rawShellHtml } = require('./helpers/shellHtml');
 const { makeStore } = require('./helpers/uiConfigStore');
 const shape = require('../lib/uiConfigShape');
+const { hubFirm, stageHtml } = require('./helpers/hubPages');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
@@ -75,11 +79,13 @@ const HIDE_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 const STYLES = [...RAW.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((m) => m[1]);
 const EGG_CSS = (() => { const h = STYLES.filter((s) => s.includes('.home-egg-row')); if (h.length !== 1) throw new Error('egg css'); return h[0]; })();
 
-const FIRM_SURFACES = ['home', 'sidebar', 'homeIcons', 'more', 'moreIcons', 'admin', 'adminIcons'];
+const FIRM_SURFACES = ['home', 'sidebar', 'homeIcons'];   // More and Admin are the firm's pages since launcher-nits C4, not surfaces
 const CLIO = { id: 'firm:clio-code', label: 'Get Clio Code', icon: 'key', action: { type: 'url', href: 'https://clio.example.com/code', present: 'window' } };
 const PAYROLL = { id: 'firm:payroll', label: 'Payroll', icon: 'money-check', action: { type: 'url', href: 'https://payroll.example.com/', present: 'window' } };
 const GONE = { id: 'firm:gone', label: 'Gone for now', icon: 'ghost', action: { type: 'url', href: 'https://gone.example.com/', present: 'window' } };
-const RO = { items: [CLIO, PAYROLL, GONE], hidden: ['firm:gone'], locked: ['bills'], renames: { moreViews: { label: 'Saved views' } } };
+// the firm's documents as production has them: its items + More Features and Admin as pages (hubFirm, launcher-nits C4)
+const HF = hubFirm({ items: [CLIO, PAYROLL, GONE], ro: { hidden: ['firm:gone'], locked: ['bills'], renames: { moreViews: { label: 'Saved views' } } } });
+const RO = HF.registry_overrides;
 const firmValid = (doc) => {
   const r = shape.validate('firm', 'layout', J(doc));
   return { ok: r.ok, errors: r.errors, same: r.ok && shape.canonical(r.value) === shape.canonical(J(doc)) };
@@ -97,36 +103,52 @@ function core() {
   return { L: ctx.window.ycLauncher, E: ctx.window.ycLayoutEditor, REG: ctx.window.FEATURE_REGISTRY, LAY: J(ctx.window.DEFAULT_LAYOUTS) };
 }
 const { L: VL, E: VE, REG, LAY } = core();
+const P = VE.pageSf;
+const MT = P('firm:more', 'tiles'), MI = P('firm:more', 'icons'), AT = P('firm:admin', 'tiles'), AI = P('firm:admin', 'icons');
+const PAGE_SFS = [MT, MI, AT, AI];
 const CAT = J(VE.firmCatalog({ firm: { registry_overrides: RO } }));
 const firmSess = (stored, o = {}) => VE.session({
   stored, effective: CAT.entries, locked: [], lockedForUsers: RO.locked, base: LAY, registry: REG, groups: CAT.groups,
-  surfaces: FIRM_SURFACES, pass: [], seed: { more: CAT.seed }, ...o,
+  surfaces: FIRM_SURFACES, pass: [], pages: CAT.pages, ...o,
 });
 const viewKeys = (s, sf) => J(s.view(sf)).map(key);
-const items = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
 // the renderer's own merge over a stored firm document, for this catalogue
 const drawn = (sf, firm) => J(VL.resolveLayout(sf, { base: LAY[sf], firm, user: null, effective: CAT.entries, locked: [] })).map(key);
+// a page part as the document stores it (every id here is in the catalogue: the view IS the list)
+const listed = (doc, sf) => { const m = /^page:(.+):(tiles|icons)$/.exec(sf); return ((doc.pages && doc.pages[m[1]] && doc.pages[m[1]][m[2]]) || []).map((e) => (e.break ? '|' : e.item)); };
 // rows of a grid's keys, split at the breaks
 const rowsOf = (keys) => keys.reduce((out, k) => { if (k === '|') out.push([]); else out[out.length - 1].push(k); return out; }, [[]]);
 
 describe('1. the firm mode\'s core (pure)', () => {
-  test('the editor\'s copies of the server\'s grammar match lib/uiConfigShape.js', () => {
+  test('the editor\'s copies of the server\'s grammar match lib/uiConfigShape.js; the hubs\' four surfaces are retired (dropped from a firm document, refused anywhere else)', () => {
     expect(J(VE.FIRM_SURFACES)).toEqual(J(shape.FIRM_LAYOUT_SURFACES));
     expect(J(VE.GUARANTEED)).toEqual(J(shape.GUARANTEED));
-    expect(J(shape.BREAK_SURFACES)).toEqual(['home', 'more', 'admin']);
+    expect(J(shape.BREAK_SURFACES)).toEqual(['home', 'more']);                             // 'more' = the grammar a page's tiles borrow
     expect(shape.CAPS.icons).toBe(12);
     expect(FIRM_SURFACES).toEqual(J(shape.FIRM_LAYOUT_SURFACES));
+    expect(J(shape.RETIRED_FIRM_SURFACES)).toEqual(['more', 'moreIcons', 'admin', 'adminIcons']);
+    // a pre-C4 firm document (the live row until its next save, older History versions): accepted, the four DROPPED
+    const old = { placed: { home: [{ item: 'cases' }], more: [{ item: 'moreReports' }], moreIcons: [{ item: 'casey' }], admin: [{ item: 'adminEtch' }], adminIcons: [] },
+      removed: { sidebar: ['log'], more: ['moreDocuments'], moreIcons: [], admin: ['adminScratch'], adminIcons: ['x'] } };
+    const r = shape.validate('firm', 'layout', J(old));
+    expect([r.ok, r.errors]).toEqual([true, []]);
+    expect(J(r.value)).toEqual({ placed: { home: [{ item: 'cases' }] }, removed: { sidebar: ['log'] } });
+    // any other unknown surface is still refused, at both tiers; the user tier never had the four
+    expect(shape.validate('firm', 'layout', { placed: { bogus: [] } }).ok).toBe(false);
+    expect(shape.validate('firm', 'layout', { removed: { tabMore: [] } }).ok).toBe(false);
+    for (const sf of ['more', 'admin', 'bogus']) expect([sf, shape.validate('user', 'layout', { placed: { [sf]: [] } }).ok]).toEqual([sf, false]);
   });
 
-  test('the catalogue: every feature a superuser has under the firm overlay, firm items in, user buttons / hidden items out (the retired custom tab nowhere); seed = the firm row', () => {
+  test('the catalogue: every feature a superuser has under the firm overlay, firm items in, user buttons / hidden items out (the retired custom tab nowhere); More Features and Admin are its pages; no seed', () => {
     const ids = CAT.entries.map((e) => e.id);
     const hid = J(VE.firmCatalog({ firm: { registry_overrides: { ...RO, hidden: ['firm:gone', 'moreVideoManager'] } } })).entries.map((e) => e.id);
     expect(hid).toEqual(ids.filter((id) => id !== 'moreVideoManager'));
-    for (const id of ['moreAutomations', 'adminDbConsole', 'adminEtch', 'admin', 'all', 'casey', 'myTasks', 'firm:clio-code', 'firm:payroll']) expect([id, ids.includes(id)]).toEqual([id, true]);
-    for (const id of ['custom', 'firm:gone']) expect([id, ids.includes(id)]).toEqual([id, false]);
+    for (const id of ['moreAutomations', 'adminDbConsole', 'adminEtch', 'firm:more', 'firm:admin', 'all', 'casey', 'myTasks', 'firm:clio-code', 'firm:payroll']) expect([id, ids.includes(id)]).toEqual([id, true]);
+    for (const id of ['custom', 'firm:gone', 'moreFeatures', 'admin']) expect([id, ids.includes(id)]).toEqual([id, false]);   // the hub items are gone (C4)
     expect(ids.some((id) => /^user:/.test(id))).toBe(false);
     expect(CAT.entries.find((e) => e.id === 'moreViews').label).toBe('Saved views');       // the firm's rename
-    expect(CAT.seed).toEqual(['firm:clio-code', 'firm:payroll']);                          // effective firm items, in order
+    expect(CAT.pages).toEqual(['firm:more', 'firm:admin']);
+    expect(CAT).not.toHaveProperty('seed');                                                // the More firm row is retired with the hub
     expect(CAT.groups).toContain('Firm');
     expect(CAT.groups.every((g) => CAT.entries.some((e) => e.group === g))).toBe(true);
     // a user's buttons in the ui never reach it
@@ -134,89 +156,64 @@ describe('1. the firm mode\'s core (pure)', () => {
     expect(withUser.entries.map((e) => e.id)).toEqual(ids);
   });
 
-  test('no firm layout: every surface is the shipped one; More closes with a break and the firm row; nothing is dirty and the document is empty', () => {
+  test('no firm layout: every surface is the shipped one, and no firm item is placed anywhere; nothing is dirty and the document is empty', () => {
     const s = firmSess(null);
     for (const sf of FIRM_SURFACES) {
-      const want = J(VL.resolveLayout(sf, { base: LAY[sf], user: null, effective: CAT.entries, locked: [] })).map(key);
-      expect([sf, viewKeys(s, sf)]).toEqual([sf, sf === 'more' ? [...want, '|', 'firm:clio-code', 'firm:payroll'] : want]);
+      expect([sf, viewKeys(s, sf)]).toEqual([sf, J(VL.resolveLayout(sf, { base: LAY[sf], user: null, effective: CAT.entries, locked: [] })).map(key)]);
     }
+    for (const sf of [...FIRM_SURFACES, ...PAGE_SFS]) expect([sf, viewKeys(s, sf).filter((k) => /^firm:(clio|payroll)/.test(k))]).toEqual([sf, []]);
     expect(s.isDirty()).toBe(false);
     expect(J(s.doc())).toEqual({ placed: {}, removed: {} });
     // Firm admins get a warning, not a disabled control: the lock constrains
     // users' personal layouts, not the firm's own default.
     const bills = J(s.view('home')).find((r) => r.id === 'bills');
     expect([bills.locked, bills.lockedForUsers, bills.act]).toEqual([false, true, 'hide']);
-    // the seeded rows are the firm's own (tag Firm, removable)
-    const v = J(s.view('more'));
-    expect(v.slice(-2).map((r) => [r.id, r.firm, r.act])).toEqual([['firm:clio-code', true, 'remove'], ['firm:payroll', true, 'remove']]);
-    expect(v[v.length - 3]).toEqual({ kind: 'break', act: 'remove' });
   });
 
-  test('Fred\'s scenario: Get Clio Code moved up into row 5, the trailing firm break removed → rows of four plus YisrAI; valid; the renderer draws exactly that', () => {
-    const s = firmSess(null);
-    let at = viewKeys(s, 'more').indexOf('firm:clio-code');
-    // up past YisrAI, its break, row 6 (four tiles), and the break above it
-    // → the end of row 5
-    for (let n = 0; n < 8; n++) { expect(s.move('more', at, -1)).toBe(true); at--; }
-    expect(rowsOf(viewKeys(s, 'more')).map((r) => r.length)).toEqual([4, 4, 4, 4, 4, 4, 1, 1]);
-    // the break the seed added now sits before Payroll: take Payroll off More, then the trailing break
-    const keys = viewKeys(s, 'more');
-    expect(s.remove('more', keys.indexOf('firm:payroll'))).toBe(true);
-    expect(viewKeys(s, 'more').slice(-1)).toEqual(['|']);
-    expect(s.remove('more', viewKeys(s, 'more').length - 1)).toBe(true);
+  test('Fred\'s scenario on the More Features page: Get Clio Code added and moved up into row 5 → rows of four plus YisrAI; valid; the other lists written exactly as stored', () => {
+    const s = firmSess(J(HF.layout));
+    expect(rowsOf(viewKeys(s, MT)).map((r) => r.length)).toEqual([4, 4, 4, 4, 3, 4, 1]);   // the historic More grid
+    expect(s.add(MT, 'firm:clio-code')).toBe(true);
+    let at = viewKeys(s, MT).indexOf('firm:clio-code');
+    expect(at).toBe(viewKeys(s, MT).length - 1);                                           // added at the end, beside YisrAI
+    // up past YisrAI, its break, row 6 (four tiles), and the break above it → the end of row 5
+    for (let n = 0; n < 7; n++) { expect(s.move(MT, at, -1)).toBe(true); at--; }
     const doc = J(s.doc());
-    expect(Object.keys(doc.placed)).toEqual(['more']);
-    expect(doc.removed).toEqual({});
-    const rows = rowsOf(doc.placed.more.map((e) => (e.break ? '|' : e.item)));
+    const rows = rowsOf(listed(doc, MT));
     expect(rows.map((r) => r.length)).toEqual([4, 4, 4, 4, 4, 4, 1]);
     expect(rows[4]).toEqual(['moreAvailability', 'moreBooking', 'moreCourtPreview', 'firm:clio-code']);
     expect(rows[6]).toEqual(['moreAssistant']);
+    expect(listed(doc, MT)).toEqual(viewKeys(s, MT));
+    expect([doc.placed, doc.removed, doc.pages['firm:more'].icons, doc.pages['firm:admin']]).toEqual([HF.layout.placed, HF.layout.removed, HF.layout.pages['firm:more'].icons, HF.layout.pages['firm:admin']]);
     expect(firmValid(doc)).toEqual({ ok: true, errors: [], same: true });
-    expect(drawn('more', doc)).toEqual(viewKeys(s, 'more'));
     expect(s.isDirty()).toBe(true);
   });
 
-  test('a feature the firm hid is not offered, and a placement of it is carried through an edit (it comes back where it was)', () => {
+  test('a feature the firm hid is not offered, and a placement of it on a page is carried through an edit (it comes back where it was)', () => {
     const cat = J(VE.firmCatalog({ firm: { registry_overrides: { ...RO, hidden: ['moreVideoManager'] } } }));
-    const stored = { placed: { more: items('more').map((id) => ({ item: id })) }, removed: {} };
-    const s = VE.session({ stored, effective: cat.entries, locked: [], base: LAY, registry: REG, groups: cat.groups, surfaces: FIRM_SURFACES, pass: [], seed: { more: cat.seed } });
-    expect(viewKeys(s, 'more')).not.toContain('moreVideoManager');
-    expect(s.move('more', 0, 1)).toBe(true);
-    const placed = J(s.doc()).placed.more.map((e) => e.item);
+    const s = VE.session({ stored: J(HF.layout), effective: cat.entries, locked: [], base: LAY, registry: REG, groups: cat.groups, surfaces: FIRM_SURFACES, pass: [], pages: cat.pages });
+    expect(viewKeys(s, MT)).not.toContain('moreVideoManager');
+    expect(J(s.candidates(MT, '')).flatMap((g) => g.items).map((c) => c.id)).not.toContain('moreVideoManager');
+    expect(s.move(MT, 0, 1)).toBe(true);
+    const placed = listed(J(s.doc()), MT);
     expect(placed.indexOf('moreVideoManager')).toBe(placed.indexOf('moreAssetManager') + 1);
   });
 
-  test('the seed stops once More is placed: a stored placed.more (even []) shows only what it places; reset brings the firm row back', () => {
-    const placed = { placed: { more: [{ item: 'moreReports' }, { break: true }, { item: 'firm:payroll' }] }, removed: {} };
-    const s = firmSess(placed);
-    expect(viewKeys(s, 'more')).toEqual(drawn('more', placed));                            // what the renderer draws, no seed
-    expect(viewKeys(s, 'more')).toContain('firm:payroll');
-    expect(viewKeys(s, 'more')).not.toContain('firm:clio-code');                           // not placed: not on More
-    expect(firmSess({ placed: { more: [] }, removed: {} }).view('more').some((r) => r.firm)).toBe(false);
-    expect(s.reset('more')).toBe(true);
-    expect(viewKeys(s, 'more').slice(-3)).toEqual(['|', 'firm:clio-code', 'firm:payroll']);
-    expect(J(s.doc())).toEqual({ placed: {}, removed: {} });
-    // a reset of a surface with nothing stored is no change at all
-    const fresh = firmSess(null);
-    expect(fresh.reset('more')).toBe(true);
-    expect([fresh.mode('more'), fresh.isDirty()]).toEqual(['stored', false]);
-  });
-
-  test('breaks on the grids only; icon rows hold items, at most 12; labels on the sidebar only', () => {
-    const s = firmSess(null);
-    for (const sf of ['home', 'more', 'admin']) expect([sf, s.addBreak(sf)]).toEqual([sf, true]);
-    for (const sf of ['sidebar', 'homeIcons', 'moreIcons', 'adminIcons']) expect([sf, s.addBreak(sf)]).toEqual([sf, false]);
+  test('breaks on Home and a page\'s tiles only; icon rows hold items, at most 12; labels on the sidebar only', () => {
+    const s = firmSess(J(HF.layout));
+    for (const sf of ['home', MT, AT]) expect([sf, s.addBreak(sf)]).toEqual([sf, true]);
+    for (const sf of ['sidebar', 'homeIcons', MI, AI]) expect([sf, s.addBreak(sf)]).toEqual([sf, false]);
     expect(s.addBreak()).toBe(true);                                                       // no surface = Home (the personal editor's call)
     expect(s.addLabel('Billing')).toBe(true);
-    // fill More's icon row to the cap
-    const free = CAT.entries.map((e) => e.id).filter((id) => !viewKeys(s, 'moreIcons').includes(id));
-    let n = viewKeys(s, 'moreIcons').length;
-    for (const id of free) { if (n >= 12) break; expect(s.add('moreIcons', id)).toBe(true); n++; }
-    expect([viewKeys(s, 'moreIcons').length, s.room('moreIcons')]).toEqual([12, 0]);
-    expect(s.add('moreIcons', free[free.length - 1])).toBe(false);
-    expect(s.room('more')).toBeGreaterThan(50);
+    // fill More Features' icon row to the cap
+    const free = CAT.entries.map((e) => e.id).filter((id) => !viewKeys(s, MI).includes(id) && !CAT.pages.includes(id));
+    let n = viewKeys(s, MI).length;
+    for (const id of free) { if (n >= 12) break; expect(s.add(MI, id)).toBe(true); n++; }
+    expect([viewKeys(s, MI).length, s.room(MI)]).toEqual([12, 0]);
+    expect(s.add(MI, free[free.length - 1])).toBe(false);
+    expect(s.room(MT)).toBeGreaterThan(50);
     const doc = J(s.doc());
-    expect(doc.placed.moreIcons.every((e) => Object.keys(e).join() === 'item')).toBe(true);
+    expect(doc.pages['firm:more'].icons.every((e) => Object.keys(e).join() === 'item')).toBe(true);
     expect(firmValid(doc)).toEqual({ ok: true, errors: [], same: true });
   });
 
@@ -238,32 +235,34 @@ describe('1. the firm mode\'s core (pure)', () => {
     expect([sb.always, sb.act]).toEqual([false, 'hide']);
   });
 
-  test('hide / show / reset per surface; the other surfaces are written exactly as stored', () => {
-    const stored = { placed: { admin: [{ item: 'adminEtch' }, { break: true }, { item: 'adminUsers' }], moreIcons: [{ item: 'myTasks' }, { item: 'casey' }] }, removed: { sidebar: ['log'] } };
+  test('hide / show / reset per surface; the other surfaces and the pages are written exactly as stored', () => {
+    const stored = { placed: { home: [{ item: 'comms' }, { break: true }, { item: 'cases' }] }, removed: { sidebar: ['log'] }, pages: { 'firm:more': { icons: [{ item: 'myTasks' }, { item: 'casey' }] } } };
     const s = firmSess(stored);
     expect(s.isDirty()).toBe(false);
-    const i = viewKeys(s, 'more').indexOf('moreDocuments');
-    expect(s.hide('more', i)).toBe(true);
-    expect(J(s.hidden('more')).map((h) => h.id)).toEqual(['moreDocuments']);
-    expect(s.reset('admin')).toBe(true);
+    const i = viewKeys(s, 'sidebar').indexOf('cases');
+    expect(s.hide('sidebar', i)).toBe(true);
+    expect(J(s.hidden('sidebar')).map((h) => h.id).sort()).toEqual(['cases', 'log']);
+    expect(s.reset('home')).toBe(true);
     const doc = J(s.doc());
-    expect(doc.removed.more).toEqual(['moreDocuments']);
-    expect(doc.placed.admin).toBeUndefined();                                              // reset: both keys gone
-    expect(doc.placed.moreIcons).toEqual(stored.placed.moreIcons);                         // untouched: as stored
-    expect(doc.removed.sidebar).toEqual(['log']);
+    expect(doc.removed.sidebar.sort()).toEqual(['cases', 'log']);
+    expect(doc.placed.home).toBeUndefined();                                               // reset: both keys gone
+    expect(doc.pages).toEqual(stored.pages);                                               // untouched: as stored
     expect(firmValid(doc).ok).toBe(true);
-    expect(s.show('more', 'moreDocuments')).toBe(true);
-    expect(J(s.doc()).removed.more).toBeUndefined();
+    expect(s.show('sidebar', 'cases')).toBe(true);
+    expect(J(s.doc()).removed.sidebar).toEqual(['log']);
+    // a page has no hide and no reset (S6c-5): the firm takes a tile off with remove
+    expect([s.hide(MT, 0), s.reset(MT)]).toEqual([false, false]);
   });
 
-  test('FUZZ: random edits over all seven surfaces — every document validates unchanged (scope firm), and the renderer draws what the editor showed', () => {
+  test('FUZZ: random edits over the three surfaces and both hub pages — every document validates unchanged (scope firm), and the renderer draws what the editor showed', () => {
     let seedN = 7;
     const rnd = (n) => { seedN = (seedN * 1103515245 + 12345) % 2147483648; return seedN % n; };
     const ops = ['move', 'hide', 'remove', 'add', 'break', 'label', 'reset', 'show'];
+    const SFS = [...FIRM_SURFACES, ...PAGE_SFS];
     for (let run = 0; run < 60; run++) {
-      const s = firmSess(run % 3 === 0 ? { placed: { more: [{ item: 'moreReports' }] }, removed: { admin: ['adminScratch'] } } : null);
+      const s = firmSess(run % 3 === 0 ? J(HF.layout) : run % 3 === 1 ? { placed: { home: [{ item: 'moreReports' }] }, removed: { sidebar: ['log'] } } : null);
       for (let step = 0; step < 25; step++) {
-        const sf = FIRM_SURFACES[rnd(FIRM_SURFACES.length)];
+        const sf = SFS[rnd(SFS.length)];
         const n = s.view(sf).length;
         const op = ops[rnd(ops.length)];
         if (op === 'move') s.move(sf, rnd(n + 1), rnd(2) ? 1 : -1);
@@ -277,12 +276,8 @@ describe('1. the firm mode\'s core (pure)', () => {
       }
       const doc = J(s.doc());
       expect([run, firmValid(doc)]).toEqual([run, { ok: true, errors: [], same: true }]);
-      for (const sf of FIRM_SURFACES) {
-        const seeded = sf === 'more' && !(doc.placed && doc.placed.more);
-        const want = drawn(sf, doc);
-        expect([run, sf, viewKeys(s, sf)]).toEqual([run, sf, seeded && want.length !== viewKeys(s, sf).length
-          ? [...want, '|', ...CAT.seed.filter((id) => !want.includes(id))] : want]);
-      }
+      for (const sf of FIRM_SURFACES) expect([run, sf, viewKeys(s, sf)]).toEqual([run, sf, drawn(sf, doc)]);
+      for (const sf of PAGE_SFS) expect([run, sf, viewKeys(s, sf)]).toEqual([run, sf, listed(doc, sf)]);
     }
   });
 });
@@ -345,12 +340,9 @@ describe('2. the personal editor starts from the firm\'s default', () => {
 const ADMIN = { type: 'jwt', userId: 1, roles: ['admin'] };
 const REG_KEYS = Object.keys(REG);
 function shellPage() {
-  const placedIds = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
-  const grid = (sf) => placedIds(sf).map((k) => REG[k]).filter((it) => it.target)
-    .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabAll']);
+  const tabs = new Set(['tabHome', 'tabAll', 'tabSettings']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   return `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}<style>${EGG_CSS}</style></head><body>
@@ -361,12 +353,8 @@ function shellPage() {
       <div class="home-egg-row"><script>ycLauncher.mount('homeIcons')</script></div></div>
     ${ALL_TAB}
     ${plainTabs}
-    <div id="tabMore" class="tab-main"><h1>More</h1>
-  <script>ycLauncher.mount('more')</script>
-  <div class="more-egg-row"><script>ycLauncher.mount('moreIcons')</script></div>${grid('more')}</div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1>
-  <script>ycLauncher.mount('admin')</script>
-  <div class="admin-egg-row"><script>ycLauncher.mount('adminIcons')</script></div>${grid('admin')}</div>
+    <div id="ycPages"></div>
+    <div id="ycPanels" style="display:none">${stageHtml(REG)}</div>
   </body></html>`;
 }
 const PAGE = shellPage();
@@ -410,12 +398,13 @@ async function boot({ store = makeStore(), canEdit = true, auth = ADMIN, access 
   const click = (el) => { if (!el) throw new Error('no element to click'); el.click(); };
   const tab = (id) => click(panel().querySelector(`.yle-tab[data-pane="${id}"]`));
   const save = async () => { click(panel().querySelector('.yle-save')); await flush(); };
-  // what the shell's More grid shows, in order: tile labels / '|' — visible tiles only
+  // what a firm page's grid shows, in order: tile labels / '|' — visible tiles only (More Features = firm:more, C4)
   const shown = (el) => w.getComputedStyle(el).display !== 'none';
-  const grid = (tabId) => {
+  const pageOf = (id) => d.querySelector(`#ycPages > [data-yc-page="${id}"]`);
+  const grid = (pageId) => {
     const out = [];
     let brs = 0;
-    const t = d.getElementById(tabId);
+    const t = pageOf(pageId);
     for (let n = t.querySelector('h1').nextElementSibling; n && !/-egg-row$/.test(n.className); n = n.nextElementSibling) {
       if (n.tagName === 'BR') { if (++brs === 2) { out.push('|'); brs = 0; } continue; }
       brs = 0;
@@ -423,11 +412,16 @@ async function boot({ store = makeStore(), canEdit = true, auth = ADMIN, access 
     }
     return out;
   };
-  return { w, d, L, store, api, errors, toasts, asked, answer: (v) => { answer = v; }, flush, panel, sec, names, rowNamed, click, tab, save, grid, close: () => w.close() };
+  return { w, d, L, store, api, errors, toasts, asked, answer: (v) => { answer = v; }, flush, panel, sec, names, rowNamed, click, tab, save, grid, pageOf, close: () => w.close() };
 }
 const firmOpen = async (t, o = {}) => { const ok = await t.w.ycLayoutEditor.open({ scope: 'firm', ...o }); await t.flush(); return ok; };
-const seedClio = async (store) => {   // the firm's items, saved through the real service (registry_overrides)
-  await require('../services/uiConfigService').write(store.db, { scope: 'firm', config_key: 'registry_overrides', config: { hidden: [], locked: ['bills'], renames: {}, items: [CLIO, PAYROLL] } }, ADMIN);
+// the firm's documents, saved through the real service: its items + More Features and Admin as pages (hubFirm, C4);
+// layout:false leaves the layout document unwritten (History builds its own versions)
+const seedClio = async (store, { layout = true } = {}) => {
+  const svc = require('../services/uiConfigService');
+  const f = hubFirm({ items: [CLIO, PAYROLL], ro: { locked: ['bills'] } });
+  await svc.write(store.db, { scope: 'firm', config_key: 'registry_overrides', config: f.registry_overrides }, ADMIN);
+  if (layout) await svc.write(store.db, { scope: 'firm', config_key: 'layout', config: f.layout }, ADMIN);
   return store;
 };
 const rowsOfGrid = (keys) => rowsOf(keys).map((r) => r.length);
@@ -449,80 +443,90 @@ describe('3. the panel, firm mode, for real', () => {
     expect(t.toasts).toEqual(['Couldn’t load the firm’s arrangement; try again.']);
   });
 
-  test('opens on five tabs (Firm pages joined in S6c-5, Home / Sidebar split in launcher-nits L1) and seven surface sections; More lists the grid then the firm row (tagged Firm); All is "Always here"; nothing to save', async () => {
+  test('opens on three tabs (Home, Sidebar, Firm pages — the More and Admin panes retired in launcher-nits C4); Home\'s and the sidebar\'s sections, then each hub page\'s two; More Features lists its grid, no firm row; All is "Always here"; nothing to save', async () => {
     t = await boot({ store: await seedClio(makeStore()) });
     expect(await firmOpen(t)).toBe(true);
     expect(t.panel().getAttribute('data-scope')).toBe('firm');
     expect(t.d.getElementById('yleTitle').textContent.trim()).toBe('Arrange pages and defaults for everyone');
-    expect([...t.panel().querySelectorAll('.yle-tab')].map((b) => b.getAttribute('data-pane'))).toEqual(['home', 'sidebar', 'more', 'admin', 'pages']);
-    expect([...t.panel().querySelectorAll('.yle-sec')].map((s) => s.getAttribute('data-sf'))).toEqual(['home', 'homeIcons', 'sidebar', 'more', 'moreIcons', 'admin', 'adminIcons']);
+    expect([...t.panel().querySelectorAll('.yle-tab')].map((b) => b.getAttribute('data-pane'))).toEqual(['home', 'sidebar', 'pages']);
+    expect([...t.panel().querySelectorAll('.yle-sec')].map((s) => s.getAttribute('data-sf'))).toEqual(['home', 'homeIcons', 'sidebar', MT, MI, AT, AI]);
+    expect([...t.panel().querySelectorAll('#ylePane_pages .yle-page-title')].map((h) => h.textContent.trim())).toEqual(['More Features', 'Admin']);
     expect(t.panel().querySelector('#ylePane_home').hidden).toBe(false);
-    expect(t.panel().querySelector('#ylePane_more').hidden).toBe(true);
+    expect(t.panel().querySelector('#ylePane_pages').hidden).toBe(true);
     const bills = t.rowNamed('home', 'Billing');
     expect(bills.querySelector('.yle-tag').textContent.trim()).toBe('Locked for users');
     expect(bills.querySelector('[data-act="hide"]').disabled).toBe(false);
-    const more = t.names('more');
-    expect(more.slice(-3)).toEqual(['|', 'Get Clio Code', 'Payroll']);
-    expect(t.rowNamed('more', 'Get Clio Code').querySelector('.yle-tag').textContent).toBe('Firm');
-    expect(t.names('moreIcons')).toEqual(['Casey']);
-    expect(t.names('adminIcons')).toEqual([]);
+    const more = t.names(MT);
+    expect(rowsOf(more).map((r) => r.length)).toEqual([4, 4, 4, 4, 3, 4, 1]);           // the More grid as it was
+    expect(more).not.toContain('Get Clio Code');                                          // no seeded firm row (C4)
+    expect(more).not.toContain('Payroll');
+    expect(t.names(MI)).toEqual(['Casey']);
+    expect(t.names(AI)).toEqual([]);
     const all = t.rowNamed('homeIcons', 'All');
     expect(all.querySelector('.yle-tag').textContent).toBe('Always here');
     expect(all.querySelector('[data-act="hide"]').disabled).toBe(true);
     expect(t.sec('homeIcons').querySelector('[data-act="add-break"]')).toBe(null);
-    expect(t.sec('more').querySelector('[data-act="add-break"]')).not.toBe(null);
+    expect(t.sec(MT).querySelector('[data-act="add-break"]')).not.toBe(null);
+    expect(t.sec(MI).querySelector('[data-act="add-break"]')).toBe(null);
     expect(t.sec('sidebar').querySelector('[data-act="label-open"]')).not.toBe(null);
     expect(t.panel().querySelector('.yle-save').disabled).toBe(true);
     // the personal editor's own tabs are not in this panel
     expect(t.panel().querySelector('.ysc-sec, .ymb-sec')).toBe(null);
   });
 
-  test('Fred\'s scenario by clicks: rows of four with Get Clio Code in row 5 and YisrAI alone → ONE PUT with the base → stored, versioned, and the shell repaints with no reload (firm row gone)', async () => {
-    t = await boot({ store: await seedClio(makeStore()) });
-    expect(t.grid('tabMore').slice(-3)).toEqual(['|', 'Get Clio Code', 'Payroll']);       // today: the firm row
-    await firmOpen(t, { section: 'more' });
-    expect(t.panel().querySelector('#ylePane_more').hidden).toBe(false);
-    for (let n = 0; n < 8; n++) t.click(t.rowNamed('more', 'Get Clio Code').querySelector('[data-act="up"]'));
-    t.click(t.rowNamed('more', 'Payroll').querySelector('[data-act="remove"]'));
-    const rows = [...t.sec('more').querySelectorAll('.yle-rows > .yle-row')];
-    t.click(rows[rows.length - 1].querySelector('[data-act="remove"]'));                  // the trailing break
-    expect(t.panel().querySelector('.yle-tab[data-pane="more"] .yle-tab-dot').hidden).toBe(false);
+  test('Fred\'s scenario by clicks on the More Features page: Get Clio Code added, moved into row 5, YisrAI alone → ONE PUT with the base → stored, versioned, and the shell repaints with no reload', async () => {
+    const store = await seedClio(makeStore());
+    t = await boot({ store });
+    expect(t.grid('firm:more')).not.toContain('Get Clio Code');
+    await firmOpen(t, { section: 'pages', page: 'firm:more' });
+    expect(t.panel().querySelector('#ylePane_pages').hidden).toBe(false);
+    t.click(t.sec(MT).querySelector('[data-act="pick"]'));
+    t.click(t.sec(MT).querySelector('.yle-pick-item[data-id="firm:clio-code"]'));
+    expect(t.names(MT).slice(-2)).toEqual(['Ask Casey', 'Get Clio Code']);
+    for (let n = 0; n < 7; n++) t.click(t.rowNamed(MT, 'Get Clio Code').querySelector('[data-act="up"]'));
+    expect(t.panel().querySelector('.yle-tab[data-pane="pages"] .yle-tab-dot').hidden).toBe(false);
     expect(t.panel().querySelector('.yle-tab[data-pane="home"] .yle-tab-dot').hidden).toBe(true);
+    const other = store.apiFor(ADMIN);
+    const head = (await other('/api/ui-config', 'GET')).firm_versions.layout;
+    const seeded = J(store.doc('firm', 0, 'layout'));
     await t.save();
     const puts = t.api.calls.filter((c) => c.method === 'PUT');
     expect(puts).toHaveLength(1);
-    expect([puts[0].body.scope, puts[0].body.config_key, puts[0].body.base]).toEqual(['firm', 'layout', null]);   // no layout row yet: base null
+    expect([puts[0].body.scope, puts[0].body.config_key, puts[0].body.base]).toEqual(['firm', 'layout', head]);
     const stored = t.store.doc('firm', 0, 'layout');
-    expect(Object.keys(stored.placed)).toEqual(['more']);
-    expect(rowsOfGrid(stored.placed.more.map((e) => (e.break ? '|' : e.item)))).toEqual([4, 4, 4, 4, 4, 4, 1]);
-    expect(t.store.versions.filter((v) => v.config_key === 'layout')).toHaveLength(1);
+    expect([stored.placed, stored.removed, stored.pages['firm:admin'], stored.pages['firm:more'].icons]).toEqual([seeded.placed, seeded.removed, seeded.pages['firm:admin'], seeded.pages['firm:more'].icons]);
+    expect(rowsOfGrid(stored.pages['firm:more'].tiles.map((e) => (e.break ? '|' : e.item)))).toEqual([4, 4, 4, 4, 4, 4, 1]);
+    expect(t.store.versions.filter((v) => v.config_key === 'layout')).toHaveLength(2);
     expect(t.w.firmData.ui.firm.layout).toEqual(stored);
     expect(t.w.ycLayoutEditor.isOpen()).toBe(false);
-    const g = t.grid('tabMore');
+    const g = t.grid('firm:more');
     expect(rowsOf(g).map((r) => r.length)).toEqual([4, 4, 4, 4, 4, 4, 1]);
     expect(rowsOf(g)[4][3]).toBe('Get Clio Code');
     expect(rowsOf(g)[6]).toEqual(['Ask Casey']);
     expect(g).not.toContain('Payroll');
-    expect(t.d.querySelectorAll('#tabMore [data-yc-firm-row]')).toHaveLength(0);
     expect(t.toasts.slice(-1)).toEqual(['Saved — everyone gets the new arrangement as they load YisraCase']);
     // a second save sends the version it now holds as its base
-    await firmOpen(t, { section: 'more' });
-    t.click(t.rowNamed('more', 'Get Clio Code').querySelector('[data-act="up"]'));
+    const head2 = (await other('/api/ui-config', 'GET')).firm_versions.layout;
+    expect(head2).not.toBe(head);
+    await firmOpen(t, { section: 'pages', page: 'firm:more' });
+    t.click(t.rowNamed(MT, 'Get Clio Code').querySelector('[data-act="up"]'));
     await t.save();
     const put2 = t.api.calls.filter((c) => c.method === 'PUT')[1];
-    expect(put2.body.base).toBe(t.store.versions.filter((v) => v.config_key === 'layout')[0].id);
-    expect(t.store.versions.filter((v) => v.config_key === 'layout')).toHaveLength(2);
+    expect(put2.body.base).toBe(head2);
+    expect(t.store.versions.filter((v) => v.config_key === 'layout')).toHaveLength(3);
   });
 
   test('a second session saved first → 409: nothing saved, every edit kept, Reload discards them for the firm\'s arrangement', async () => {
     const store = await seedClio(makeStore());
     t = await boot({ store });
-    await firmOpen(t, { section: 'admin' });
-    t.click(t.rowNamed('admin', 'Etch').querySelector('[data-act="up"]'));
-    // another admin, another tab: saves the firm's layout behind this panel's back
+    await firmOpen(t, { section: 'pages', page: 'firm:admin' });
+    t.click(t.rowNamed(AT, 'Etch').querySelector('[data-act="up"]'));
+    // another admin, another tab: saves the firm's layout behind this panel's back (More Features' small buttons)
     const other = store.apiFor(ADMIN);
-    const head = (await other('/api/ui-config', 'GET')).firm_versions.layout;
-    await other('/api/ui-config', 'PUT', { scope: 'firm', config_key: 'layout', config: { placed: { moreIcons: [{ item: 'myTasks' }, { item: 'casey' }] }, removed: {} }, base: head });
+    const got = await other('/api/ui-config', 'GET');
+    const theirs = J(got.firm.layout);
+    theirs.pages['firm:more'].icons = [{ item: 'myTasks' }, { item: 'casey' }];
+    await other('/api/ui-config', 'PUT', { scope: 'firm', config_key: 'layout', config: theirs, base: got.firm_versions.layout });
     const before = J(store.doc('firm', 0, 'layout'));
     await t.save();
     expect(t.store.doc('firm', 0, 'layout')).toEqual(before);
@@ -535,29 +539,31 @@ describe('3. the panel, firm mode, for real', () => {
     t.click(reload.querySelector('[data-act="reload"]'));
     await t.flush();
     expect(t.w.ycLayoutEditor.isDirty()).toBe(false);
-    expect(t.names('moreIcons')).toEqual(['My Tasks', 'Casey']);
+    expect(t.names(MI)).toEqual(['My Tasks', 'Casey']);
     expect(t.panel().querySelector('.yle-conflict').hidden).toBe(true);
-    expect(t.panel().querySelector('#ylePane_admin').hidden).toBe(false);                 // the tab it was on
+    expect(t.panel().querySelector('#ylePane_pages').hidden).toBe(false);                 // the tab it was on
     expect(t.w.firmData.ui.firm.layout).toEqual(store.doc('firm', 0, 'layout'));          // the shell caught up
     // and a save now goes through with the new base
-    t.click(t.rowNamed('admin', 'Etch').querySelector('[data-act="up"]'));
+    t.click(t.rowNamed(AT, 'Etch').querySelector('[data-act="up"]'));
     await t.save();
     expect(t.w.ycLayoutEditor.isOpen()).toBe(false);
-    expect(store.doc('firm', 0, 'layout').placed.admin).toBeDefined();
+    const admin = store.doc('firm', 0, 'layout').pages['firm:admin'].tiles.map((e) => e.item);
+    expect(admin.indexOf('adminEtch')).toBe(admin.indexOf('adminTools') - 1);              // Etch moved up past Tools
+    expect(store.doc('firm', 0, 'layout').pages['firm:more'].icons).toEqual([{ item: 'myTasks' }, { item: 'casey' }]);   // theirs kept
   });
 
   test('a refusal: 400 errors under their section (its tab shown); 403 the session message; edits kept either way', async () => {
-    t = await boot();
+    t = await boot({ store: await seedClio(makeStore()) });
     await firmOpen(t);
-    t.click(t.rowNamed('admin', 'Etch').querySelector('[data-act="up"]'));
+    t.click(t.rowNamed(AT, 'Etch').querySelector('[data-act="up"]'));
     const real = t.w.apiSend;
     t.w.apiSend = (url, method, body) => (method === 'PUT'
-      ? Promise.reject(Object.assign(new Error('refused'), { status: 400, body: { status: 'error', errors: ['placed.adminIcons: at most 12 entries', 'something general'] } }))
+      ? Promise.reject(Object.assign(new Error('refused'), { status: 400, body: { status: 'error', errors: ['pages.firm:admin.icons: at most 12 entries', 'something general'] } }))
       : real(url, method, body));
     await t.save();
-    const errs = t.sec('adminIcons').querySelector('.yle-errs');
-    expect([errs.hidden, errs.textContent]).toEqual([false, 'placed.adminIcons: at most 12 entries']);
-    expect(t.panel().querySelector('#ylePane_admin').hidden).toBe(false);
+    const errs = t.sec(AI).querySelector('.yle-errs');
+    expect([errs.hidden, errs.textContent]).toEqual([false, 'pages.firm:admin.icons: at most 12 entries']);
+    expect(t.panel().querySelector('#ylePane_pages').hidden).toBe(false);
     expect(t.panel().querySelector('.yle-banner').textContent).toBe('The server refused the save. something general Your changes are still here.');
     t.w.apiSend = (url, method, body) => (method === 'PUT' ? Promise.reject(Object.assign(new Error('Forbidden'), { status: 403 })) : real(url, method, body));
     await t.save();
@@ -567,14 +573,14 @@ describe('3. the panel, firm mode, for real', () => {
 
   test('reset per surface asks, then deletes that surface\'s keys only; leaving with changes asks', async () => {
     const store = makeStore();
-    await require('../services/uiConfigService').write(store.db, { scope: 'firm', config_key: 'layout', config: { placed: { admin: [{ item: 'adminEtch' }] }, removed: { more: ['moreReports'] } } }, ADMIN);
+    await require('../services/uiConfigService').write(store.db, { scope: 'firm', config_key: 'layout', config: { placed: { home: [{ item: 'comms' }, { item: 'cases' }] }, removed: { sidebar: ['log'] } } }, ADMIN);
     t = await boot({ store });
-    await firmOpen(t, { section: 'admin' });
-    t.click(t.sec('admin').querySelector('[data-act="reset"]'));
+    await firmOpen(t, { section: 'home' });
+    t.click(t.sec('home').querySelector('[data-act="reset"]'));
     await t.flush();
-    expect(t.asked.slice(-1)).toEqual(['Reset Admin to the app’s standard layout? The firm’s arrangement of it is replaced when you Save.']);
+    expect(t.asked.slice(-1)).toEqual(['Reset Home to the app’s standard layout? The firm’s arrangement of it is replaced when you Save.']);
     await t.save();
-    expect(store.doc('firm', 0, 'layout')).toEqual({ placed: {}, removed: { more: ['moreReports'] } });
+    expect(store.doc('firm', 0, 'layout')).toEqual({ placed: {}, removed: { sidebar: ['log'] } });
     await firmOpen(t);
     t.click(t.rowNamed('home', 'Cases').querySelector('[data-act="down"]'));
     t.answer(false);
@@ -628,8 +634,10 @@ async function bootFirmPage(opts = {}) {
   const fire = (el, type = 'click') => el.dispatchEvent(new firm.Event(type, { bubbles: true }));
   return { ...t, mid, firm, $, $$, fire, F: firm.FirmPage };
 }
-const LAYOUT_A = { placed: { more: [{ item: 'moreReports' }, { break: true }, { item: 'firm:clio-code' }] }, removed: { admin: ['adminScratch'] } };
-const LAYOUT_B = { placed: { moreIcons: [{ item: 'myTasks' }, { item: 'casey' }] }, removed: {} };
+// two firm layouts over the firm's pages (C4): A puts Reports | Get Clio Code on More Features and hides Log from the
+// sidebar; B gives More Features only small buttons
+const LAYOUT_A = { placed: {}, removed: { sidebar: ['log'] }, pages: { 'firm:more': { tiles: [{ item: 'moreReports' }, { break: true }, { item: 'firm:clio-code' }] } } };
+const LAYOUT_B = { placed: {}, removed: {}, pages: { 'firm:more': { icons: [{ item: 'myTasks' }, { item: 'casey' }] } } };
 
 describe('4. firm.html: Arrange pages and defaults…, and History of the layout', () => {
   let t;
@@ -656,12 +664,12 @@ describe('4. firm.html: Arrange pages and defaults…, and History of the layout
   });
 
   test('History switches to the layout document: lists its versions, views one as text, restores an older one (base = the newest listed) and the shell follows', async () => {
-    const store = await seedClio(makeStore());
+    const store = await seedClio(makeStore(), { layout: false });
     const svc = require('../services/uiConfigService');
     const v1 = await svc.write(store.db, { scope: 'firm', config_key: 'layout', config: LAYOUT_A }, ADMIN);
     await svc.write(store.db, { scope: 'firm', config_key: 'layout', config: LAYOUT_B, base: v1.version_id }, ADMIN);
     t = await bootFirmPage({ store });
-    expect(t.d.querySelectorAll('#tabMore [data-yc-firm-row]').length).toBeGreaterThan(0);   // B places no More: the firm row
+    expect(t.grid('firm:more')).toEqual([]);                                                 // B gives More Features no tiles
     t.fire(t.$('[data-act="history"]'));
     await t.flush();
     const docs = t.$$('[data-hist-doc]');
@@ -676,7 +684,7 @@ describe('4. firm.html: Arrange pages and defaults…, and History of the layout
     t.fire(rows[1].querySelector('[data-ver-act="view"]'));
     await t.flush();
     expect(rows[1].querySelector('.fm-ver-view').textContent)
-      .toBe('More FeaturesRow 1: Reports; Row 2: Get Clio CodeAdminhidden: Scratch (SU)');
+      .toBe('Sidebarhidden: LogPage “More Features”Row 1: Reports; Row 2: Get Clio Code');
     t.firm.confirm = () => true;
     t.fire(rows[1].querySelector('[data-ver-act="restore"]'));
     await t.flush(); await t.flush();
@@ -684,17 +692,16 @@ describe('4. firm.html: Arrange pages and defaults…, and History of the layout
     expect(restore.map((c) => [c.url, c.body])).toEqual([[`/api/ui-config/versions/${v1.version_id}/restore`, { base: v1.version_id + 1 }]]);
     expect(store.doc('firm', 0, 'layout')).toEqual(LAYOUT_A);
     expect(t.w.firmData.ui.firm.layout).toEqual(LAYOUT_A);
-    // the shell repainted: A places More (Get Clio Code a tile there, Payroll not), so no firm row
-    expect(t.d.querySelectorAll('#tabMore [data-yc-firm-row]')).toHaveLength(0);
-    expect(t.grid('tabMore')).toContain('Get Clio Code');
-    expect(t.grid('tabMore')).not.toContain('Payroll');
+    // the shell repainted: A's More Features page (Get Clio Code a tile there, Payroll not)
+    expect(t.grid('firm:more')).toEqual(['Reports', '|', 'Get Clio Code']);
+    expect(t.grid('firm:more')).not.toContain('Payroll');
     const after = t.$$('.fm-ver');
     expect(after).toHaveLength(3);
     expect(after[0].querySelector('.fm-badge').textContent).toBe('current');
   });
 
   test('a layout restore after someone saved since the list loaded → 409, nothing written', async () => {
-    const store = await seedClio(makeStore());
+    const store = await seedClio(makeStore(), { layout: false });
     const svc = require('../services/uiConfigService');
     const v1 = await svc.write(store.db, { scope: 'firm', config_key: 'layout', config: LAYOUT_A }, ADMIN);
     await svc.write(store.db, { scope: 'firm', config_key: 'layout', config: LAYOUT_B }, ADMIN);
@@ -713,13 +720,15 @@ describe('4. firm.html: Arrange pages and defaults…, and History of the layout
     void v1;
   });
 
-  test('layoutParts: one line per arranged surface — rows at the breaks, the sidebar under its headings, what it hides; nothing arranged says so', async () => {
+  test('layoutParts: one line per arranged surface and page — rows at the breaks, the sidebar under its headings, what it hides; a pre-C4 version\'s hub lists still read; nothing arranged says so', async () => {
     t = await bootFirmPage();
     const lp = (doc) => J(t.F.layoutParts(doc, (id) => id.toUpperCase()));
     expect(lp({ placed: { sidebar: [{ item: 'a' }, { label: 'Records' }, { item: 'b' }, { item: 'c' }, { label: 'Empty' }], home: [{ item: 'x' }, { item: 'y' }],
       moreIcons: [{ item: 'casey' }] }, removed: { home: ['z'], adminIcons: ['q'] } }))
       .toEqual([['Home', 'X, Y · hidden: Z'], ['Sidebar', 'A; Records: B, C; Empty: —'], ['More Features’ small buttons', 'CASEY'], ['Admin’s small buttons', 'hidden: Q']]);
+    // a version saved before launcher-nits C4 still holds the hubs' lists: History names them
     expect(lp({ placed: { more: [] }, removed: {} })).toEqual([['More Features', 'nothing']]);
+    expect(lp({ pages: { 'firm:more': { tiles: [{ item: 'a' }, { break: true }, { item: 'b' }], icons: [{ item: 'c' }] } } })).toEqual([['Page “FIRM:MORE”', 'Row 1: A; Row 2: B · small buttons: C']]);
     expect(lp({ placed: { admin: [{ item: 'a' }, { break: true }, { break: true }, { item: 'b' }] } })).toEqual([['Admin', 'Row 1: A; Row 2: B']]);
     for (const empty of [null, {}, { placed: {}, removed: {} }]) expect(lp(empty)).toEqual([['Arrangement', 'The app’s standard layout everywhere']]);
   });

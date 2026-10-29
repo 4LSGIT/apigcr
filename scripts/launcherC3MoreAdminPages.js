@@ -103,6 +103,14 @@ const mapId = (id) => (typeof id === 'string' && hasOwn(MAP, id) ? MAP[id] : id)
 // ─────────────────────────────────────────────────────────────────────────
 // The client's own code
 // ─────────────────────────────────────────────────────────────────────────
+/** The registry entries and DEFAULT_LAYOUTS as they were when this script ran
+ *  live (main 323edb5, 2026-10-28/29): launcher-nits C4 retired moreFeatures /
+ *  admin and the hubs' lists. loadCore puts them back when the client no longer
+ *  has them, so the script stays runnable as the record of that run (its CHECK
+ *  on the live state reads "nothing to write"), as
+ *  scripts/uiCustomS5eCustomTabsToButtons.js does for the custom tab.
+ *  tests/helpers/hubPages.js builds the tests' More / Admin pages from it. */
+const HISTORIC = Object.freeze({"items": {"admin": {"label": "Admin", "icon": "mug-hot", "onclick": "openMainTab('tabAdmin')", "tab": "tabAdmin", "domIds": {"sidebar": "sbAdmin"}, "defaultHidden": true}, "moreFeatures": {"label": "More Features", "icon": "grip", "onclick": "openMainTab('tabMore')", "tab": "tabMore", "tabAlso": "tabSettings"}}, "layouts": {"home": [{"item": "cases"}, {"item": "contacts"}, {"item": "appts"}, {"break": true}, {"item": "bills"}, {"item": "pipeline"}, {"item": "events"}, {"break": true}, {"item": "tasks"}, {"item": "newClient"}, {"item": "log"}, {"break": true}, {"item": "calendar"}, {"item": "moreFeatures"}, {"item": "comms"}], "sidebar": [{"label": "Records"}, {"item": "cases"}, {"item": "contacts"}, {"item": "appts"}, {"item": "calendar"}, {"item": "events"}, {"item": "tasks"}, {"item": "comms"}, {"item": "log"}, {"item": "bills"}, {"label": "Actions"}, {"item": "pipeline"}, {"item": "newClient"}, {"label": "Settings"}, {"item": "admin"}, {"item": "moreFeatures"}, {"item": "helpSupport"}, {"item": "all"}], "homeIcons": [{"item": "all"}], "more": [{"item": "moreManuals"}, {"item": "moreSettings"}, {"item": "moreTheme"}, {"item": "moreFeatureRequests"}, {"break": true}, {"item": "moreSimpleForms"}, {"item": "moreFormBuilder"}, {"item": "moreFormInbox"}, {"item": "morePortalManager"}, {"break": true}, {"item": "moreSignatures"}, {"item": "moreAssetManager"}, {"item": "moreVideoManager"}, {"item": "moreDocuments"}, {"break": true}, {"item": "moreCaseConfig"}, {"item": "moreChecklists"}, {"item": "moreAutomations"}, {"item": "moreViews"}, {"break": true}, {"item": "moreAvailability"}, {"item": "moreBooking"}, {"item": "moreCourtPreview"}, {"break": true}, {"item": "moreCampaigns"}, {"item": "moreRedirects"}, {"item": "moreLandingPages"}, {"item": "moreReports"}, {"break": true}, {"item": "moreAssistant"}], "moreIcons": [{"item": "casey"}], "admin": [{"item": "adminReadonlyKeys"}, {"item": "adminApiKeys"}, {"item": "adminCtaLinks"}, {"break": true}, {"item": "adminDbConsole"}, {"item": "adminConnections"}, {"item": "adminApiTester"}, {"break": true}, {"item": "adminTools"}, {"item": "adminEtch"}, {"item": "adminScratch"}, {"item": "adminSharedValues"}, {"break": true}, {"item": "adminUsers"}, {"item": "adminSystemAlerts"}, {"item": "adminSupportInbox"}, {"break": true}, {"item": "adminMailboxes"}], "adminIcons": []}});
 let CORE = null;
 function loadCore() {
   if (CORE) return CORE;
@@ -113,12 +121,16 @@ function loadCore() {
   ctx.window = ctx;
   vm.runInContext(read('public/js/ycIcon.js'), ctx, { filename: 'ycIcon.js' });
   vm.runInContext(read('public/js/featureRegistry.js'), ctx, { filename: 'featureRegistry.js' });
+  const historic = Object.keys(MAP).some((id) => !hasOwn(ctx.window.FEATURE_REGISTRY, id));
+  if (historic) {   // after C4: the retired items and lists, as they were
+    for (const [id, it] of Object.entries(HISTORIC.items)) ctx.window.FEATURE_REGISTRY[id] = J(it);
+    ctx.window.DEFAULT_LAYOUTS = J(HISTORIC.layouts);
+  }
   vm.runInContext(m[1], ctx, { filename: 'index.html#ycLauncher' });
   const L = ctx.window.ycLauncher;
   for (const n of ['computeEffective', 'resolveLayout']) if (!L || typeof L[n] !== 'function') throw new Error('the client core has no ycLauncher.' + n);
   const REG = ctx.window.FEATURE_REGISTRY;
-  for (const id of Object.keys(MAP)) if (!hasOwn(REG, id)) throw new Error(`the registry has no ${id}: this script is for the code before C4`);
-  CORE = { L, REG, LAY: J(ctx.window.DEFAULT_LAYOUTS) };
+  CORE = { L, REG, LAY: J(ctx.window.DEFAULT_LAYOUTS), historic };
   return CORE;
 }
 
@@ -152,6 +164,21 @@ const rowOf = (rows, scope, uid, key) => rows.find((r) => r.scope === scope && r
 // ─────────────────────────────────────────────────────────────────────────
 // The plan (pure)
 // ─────────────────────────────────────────────────────────────────────────
+// The grammar each hub list follows: a grid's (breaks) or an icon row's — the names a page's
+// tiles and small buttons borrow, which the client keeps after C4 (it drops 'admin' / 'adminIcons').
+const GRAMMAR = Object.freeze({ more: 'more', admin: 'more', moreIcons: 'moreIcons', adminIcons: 'moreIcons' });
+/** resolveLayout of a hub list (base: the shipped list) under a firm document, with the grammar
+ *  its page borrows: the firm's own lists for it are moved under the grammar's name for the call. */
+function resolveHub(L, LAY, sf, firmDoc, user, effective, locked) {
+  const g = GRAMMAR[sf] || sf;
+  let firm = firmDoc;
+  if (g !== sf) {
+    firm = { placed: {}, removed: {} };
+    if (isObj(firmDoc) && isObj(firmDoc.placed) && hasOwn(firmDoc.placed, sf)) firm.placed[g] = firmDoc.placed[sf];
+    if (isObj(firmDoc) && isObj(firmDoc.removed) && hasOwn(firmDoc.removed, sf)) firm.removed[g] = firmDoc.removed[sf];
+  }
+  return L.resolveLayout(g, { base: LAY[sf] || [], firm, user, effective, locked });
+}
 const entriesOf = (rows) => rows.map((r) => (r.kind === 'item' ? { item: r.id } : r.kind === 'break' ? { break: true } : { label: r.text }));
 /** Map the ids of a placed list; an id twice keeps its first place. */
 function mapEntries(list) {
@@ -203,7 +230,8 @@ function planFirm(core, rows) {
   // sees only what they may open, as on the hubs)
   const everything = Object.keys(REG).filter((id) => !REG[id].placeholder).map((id) => ({ id }))
     .concat(ro2.items.filter((it) => it && typeof it.id === 'string').map((it) => ({ id: it.id })));
-  const resolveFirm = (sf) => L.resolveLayout(sf, { base: LAY[sf] || [], firm: lay, user: null, effective: everything, locked: [] });
+  const resolveFirm = (sf) => (hasOwn(GRAMMAR, sf) ? resolveHub(L, LAY, sf, lay, null, everything, [])
+    : L.resolveLayout(sf, { base: LAY[sf] || [], firm: lay, user: null, effective: everything, locked: [] }));
   const lay2 = J(lay);
   lay2.placed = isObj(lay2.placed) ? lay2.placed : {};
   lay2.removed = isObj(lay2.removed) ? lay2.removed : {};
@@ -276,7 +304,12 @@ function validationProblems(writes) {
     if (!r.ok) { out.push(`${w.scope} ${w.uid} ${w.key}: ${r.errors.slice(0, 3).join(' · ')}`); continue; }
     const v = J(r.value);
     if (isObj(v)) delete v.retired;
-    if (canon(v) !== canon(w.after)) out.push(`${w.scope} ${w.uid} ${w.key}: does not normalize to itself`);
+    // after C4 the validator drops the hubs' old surfaces from a firm layout (stored as dropped)
+    const want = J(w.after);
+    if (w.scope === 'firm' && w.key === 'layout' && Array.isArray(shape.RETIRED_FIRM_SURFACES)) {
+      for (const half of ['placed', 'removed']) if (isObj(want[half])) for (const sf of shape.RETIRED_FIRM_SURFACES) delete want[half][sf];
+    }
+    if (canon(v) !== canon(want)) out.push(`${w.scope} ${w.uid} ${w.key}: does not normalize to itself`);
   }
   return out;
 }
@@ -315,21 +348,22 @@ function viewOf(core, rows, u) {
   const hub = {};
   for (const [pid, p] of Object.entries(PAGES)) {
     for (const part of ['tiles', 'icons']) {
-      hub[pid + ':' + part] = L.resolveLayout(p[part], { base: LAY[p[part]] || [], firm: ui.firm.layout || null, user: null, effective: eff, locked: [] })
+      hub[pid + ':' + part] = resolveHub(L, LAY, p[part], ui.firm.layout || null, null, eff, [])
         .concat(firmRow(ro, ui.firm.layout, p[part]))
         .filter((r) => r.kind === 'item' && effIds.has(r.id)).map((r) => r.id);
     }
   }
-  const pages = {};
+  const pages = {}, hasPage = {};
   const fl = ui.firm.layout && isObj(ui.firm.layout.pages) ? ui.firm.layout.pages : {};
   for (const pid of Object.keys(PAGES)) {
+    hasPage[pid] = isObj(fl[pid]);
     for (const part of ['tiles', 'icons']) {
       const list = isObj(fl[pid]) && Array.isArray(fl[pid][part]) ? fl[pid][part] : [];
       pages[pid + ':' + part] = list.filter((e) => e && typeof e.item === 'string' && effIds.has(e.item)).map((e) => e.item);
     }
   }
   const shortcuts = ui.user.shortcuts && Array.isArray(ui.user.shortcuts.bindings) ? ui.user.shortcuts.bindings.map((b) => b.id) : [];
-  return { effIds, surf, hub, pages, shortcuts };
+  return { effIds, surf, hub, pages, hasPage, shortcuts };
 }
 /** → problems: a user whose launcher would change beyond the id swap. */
 function verify(core, before, after, users) {
@@ -344,9 +378,11 @@ function verify(core, before, after, users) {
     for (const [pid, p] of Object.entries(PAGES)) {
       if (a.effIds.has(pid) !== b.effIds.has(p.from)) out.push(`${who}: ${pid} is ${a.effIds.has(pid) ? '' : 'not '}theirs, ${p.from} was ${b.effIds.has(p.from) ? '' : 'not '}`);
       if (!a.effIds.has(pid)) continue;
+      // a page the firm already had is kept (planFirm), so it must read as it was — after C4 its
+      // hub's lists are gone from the stored layout, and the hub is no longer what it showed
       for (const part of ['tiles', 'icons']) {
-        const k = pid + ':' + part;
-        if (JSON.stringify(a.pages[k]) !== JSON.stringify(b.hub[k])) out.push(`${who} ${k}: ${JSON.stringify(a.pages[k])} ≠ the hub's ${JSON.stringify(b.hub[k])}`);
+        const k = pid + ':' + part, want = b.hasPage[pid] ? b.pages[k] : b.hub[k];
+        if (JSON.stringify(a.pages[k]) !== JSON.stringify(want)) out.push(`${who} ${k}: ${JSON.stringify(a.pages[k])} ≠ ${b.hasPage[pid] ? 'as it was' : "the hub's"} ${JSON.stringify(want)}`);
       }
     }
     const sc = b.shortcuts.map(mapId);
@@ -445,7 +481,7 @@ async function run(conn, { apply = false, expect = null, log = console.log, loca
   return { ok: !bad.length, line, digest, writes };
 }
 
-module.exports = { run, plan, planFirm, planUserDoc, verify, applyPlan, digestOf, validationProblems, loadCore, MAP, PAGES };
+module.exports = { run, plan, planFirm, planUserDoc, verify, applyPlan, digestOf, validationProblems, loadCore, MAP, PAGES, HISTORIC };
 
 // ─────────────────────────────────────────────────────────────────────────
 // CLI

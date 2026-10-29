@@ -15,6 +15,11 @@
  * extracted from the page and RUN in jsdom against a stub apiSend.
  * The real shell is exercised by the mobile survey and the Chrome shots.
  *
+ * Since launcher-nits C4 More Features and Admin are the firm's pages
+ * firm:more / firm:admin, no longer markup in the shell: their grids are the
+ * firm's data, fenced here as the lists production got (tests/helpers/
+ * hubPages.js, the C3 script's frozen copy) over the real registry.
+ *
  * Mutation-checked: badge shown with zero mailboxes / hidden on a failed
  * fetch / total miscounted; the 5-minute refresh ignoring visibility;
  * updateSidebarActive dropping data-tab-also; a Settings sidebar item left
@@ -32,7 +37,13 @@ const { JSDOM } = require('jsdom');
 // The shell as the parser sees it: the launcher markup (sidebar items, Home
 // tiles, the More/Admin grids) is rendered from public/js/featureRegistry.js
 // at parse time since ui-custom S1 — see tests/helpers/shellHtml.js.
-const HTML = require('./helpers/shellHtml').expandedShellHtml();
+const SHELL = require('./helpers/shellHtml');
+const HTML = SHELL.expandedShellHtml();
+const { registry: REG } = SHELL.loadLauncher();
+const { hubPages } = require('./helpers/hubPages');
+const PAGES = hubPages();
+/** A page part's rows: its items split at the breaks, each by registry label. */
+const rowsOf = (list) => list.reduce((rows, e) => { if (e.break) rows.push([]); else rows[rows.length - 1].push(e.item); return rows; }, [[]]);
 
 /** The source text between two exact markers (inclusive of the first). */
 function between(start, end) {
@@ -43,7 +54,7 @@ function between(start, end) {
 }
 const noComments = (s) => s.replace(/<!--[\s\S]*?-->/g, '');
 
-describe('wiring: Comms is a sidebar tab, Settings lives in More Features', () => {
+describe('wiring: Comms is a sidebar tab, Settings lives in More Features (the firm page firm:more since C4)', () => {
   const sidebar = noComments(between('<nav id="appSidebar"', '</nav>'));
 
   test('sidebar: a Comms item (always shown — no wait on a fetch) opening tabComms, with its badge; no Settings item', () => {
@@ -53,15 +64,20 @@ describe('wiring: Comms is a sidebar tab, Settings lives in More Features', () =
     // Comms sits in Records, between Tasks and Log
     expect(sidebar.indexOf('data-tab="tabTasks"')).toBeLessThan(sidebar.indexOf('data-tab="tabComms"'));
     expect(sidebar.indexOf('data-tab="tabComms"')).toBeLessThan(sidebar.indexOf('data-tab="tabLogs"'));
-    expect(sidebar).toMatch(/<div class="sb-item" data-tab="tabMore" data-tab-also="tabSettings" onclick="openMainTab\('tabMore'\)"/);
+    // no hub item left: More Features is the firm page firm:more (C4), placed by the firm's sidebar
+    expect(sidebar).not.toMatch(/tabMore|tabAdmin/);
   });
 
   test('the tab: one tab-main div whose own iframe lazy-loads /comms.html; the Admin pilot tile and panel are gone', () => {
     expect(HTML).toMatch(/<div id="tabComms" class="tab-main">\s*<iframe data-src="\/comms.html" title="Comms"><\/iframe>\s*<\/div>/);
     expect(HTML).not.toMatch(/commsDiv/);
-    const admin = noComments(between('<div id="tabAdmin"', '<div id="sequencesDiv"'));
-    expect((admin.match(/class="big-button"/g) || []).length).toBe(14); // 13 + Mailboxes (row 5, short by design)
-    expect(admin).toMatch(/data-target="mailboxesDiv"/);
+    expect(HTML).not.toMatch(/id="tabAdmin"/);   // Admin is the firm page firm:admin (C4)
+    const admin = rowsOf(PAGES['firm:admin'].tiles);
+    expect(admin.flat().length).toBe(14); // 13 + Mailboxes (row 5, short by design)
+    expect(admin[4]).toEqual(['adminMailboxes']);
+    expect(REG.adminMailboxes.target).toBe('mailboxesDiv');
+    expect(HTML).toMatch(/<div id="mailboxesDiv"/);   // its panel on the stage
+    expect(admin.flat().filter((id) => /comms/i.test(id) || /comms/i.test(REG[id].target || ''))).toEqual([]);
   });
 
   test('Home: Comms took Settings\' button (always shown, like the sidebar item); Settings is still one click from the greeting', () => {
@@ -72,21 +88,25 @@ describe('wiring: Comms is a sidebar tab, Settings lives in More Features', () =
     expect(HTML).toMatch(/<div id="tabSettings" class="tab-main">/);
   });
 
-  test('More Features: row 5 three since Get Clio Code left for the firm row (ui-custom S3.3b), Ask Casey alone in row 7 (YisrAI, 2026-10-19) — Settings in row 1 beside Theme, no mascot tile', () => {
-    const grid = noComments(between('<div id="tabMore" class="tab-main yc-hub">', '<div class="more-egg-row">'));
-    const rows = grid.split(/\n\s*<br><br>\s*\n/).map((r) => (r.match(/<button class="big-button"[^>]*>[\s\S]*?<\/button>/g) || []).map((b) => b.replace(/<[^>]+>/g, '').trim()));
+  test('More Features (firm:more): row 5 three since Get Clio Code left for the firm row (ui-custom S3.3b), Ask Casey alone in row 7 (YisrAI, 2026-10-19) — Settings in row 1 beside Theme, no mascot tile', () => {
+    expect(HTML).not.toMatch(/id="tabMore"/);
+    const ids = rowsOf(PAGES['firm:more'].tiles);
+    const rows = ids.map((r) => r.map((id) => REG[id].label));
     expect(rows.map((r) => r.length)).toEqual([4, 4, 4, 4, 3, 4, 1]);
     expect(rows[0]).toEqual(['Manuals', 'Settings', 'Theme', 'Feature Requests']);
     expect(rows[4]).toEqual(['Availability Manager', 'Booking Manager', 'Court Preview']);
-    expect(rows[6]).toEqual(['Ask Casey']);   // the assistant stands alone (featureRegistry DEFAULT_LAYOUTS.more)
-    expect(grid).not.toMatch(/Get Clio Code|showClioCode/);   // a firm tool now (ref/tools/clio-code.html)
-    expect(grid).toMatch(/<button class="big-button" onclick="openMainTab\('tabSettings'\)"/);
-    expect(grid).not.toMatch(/fa-cat/);
+    expect(rows[6]).toEqual(['Ask Casey']);   // the assistant stands alone
+    expect(ids.flat().filter((id) => /clio/i.test(id) || /Clio Code|showClioCode/.test(JSON.stringify(REG[id])))).toEqual([]);   // a firm tool now (ref/tools/clio-code.html)
+    expect(REG.moreSettings.onclick).toBe("openMainTab('tabSettings')");
+    expect(ids.flat()).not.toContain('casey');
+    expect(ids.flat().filter((id) => REG[id].icon === 'cat' || REG[id].icon === 'paw')).toEqual([]);
   });
 
-  test('Casey: a paw under the grid (not a tile) runs the old tile\'s handler, and drill-in hides it', () => {
-    expect(HTML).toMatch(/<div class="more-egg-row"><button type="button" class="more-egg" onclick="toggleMascot\(\)" title="Casey the YisraCat"/);
-    expect(HTML).toMatch(/\.drill-active > \.more-egg-row \{ display:none; \}/);
+  test('Casey: a paw in firm:more\'s icon row under the grid (not a tile) runs the old tile\'s handler, and drill-in hides it', () => {
+    expect(PAGES['firm:more'].icons).toEqual([{ item: 'casey' }]);
+    expect(REG.casey).toMatchObject({ icon: 'paw', onclick: 'toggleMascot()' });
+    expect(HTML).toMatch(/row\.className = 'page-egg-row';/);   // a page's icon row (makePage)
+    expect(HTML).toMatch(/\.drill-active > \.page-egg-row \{ display:none; \}/);
     expect(HTML).toMatch(/function toggleMascot\(\)/);
   });
 });
@@ -105,7 +125,8 @@ describe('the badge and the active item, run for real', () => {
       <nav id="appSidebar">
         <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div>
         <div class="sb-item" id="sbComms" data-tab="tabComms"><span class="sb-badge" id="sbCommsBadge" style="display:none">0</span></div>
-        <div class="sb-item" id="sbMore" data-tab="tabMore" data-tab-also="tabSettings"></div>
+        <div class="sb-item" id="sbMore" data-tab="ycPage-1"></div>
+        <div class="sb-item" id="sbAlso" data-tab="tabX" data-tab-also="tabY tabSettings"></div>
       </nav>
       <button id="homeComms"></button></body>`, { runScripts: 'outside-only' });
     const w = dom.window;
@@ -167,14 +188,19 @@ describe('the badge and the active item, run for real', () => {
     expect(t.calls).toEqual([['GET', '/api/mail/mailboxes']]);
   });
 
-  test('the sidebar lights Comms on tabComms, and More Features while you are in Settings (data-tab-also)', () => {
+  // More Features' row is a firm PAGE item since C4: it carries its page tab
+  // (S6c-5). A registry item's tabAlso (data-tab-also) still lights a row on
+  // the other tabs it names.
+  test('the sidebar lights Comms on tabComms, More Features on its page tab, and a data-tab-also row on each tab it names', () => {
     const t = boot({ api: () => ({}) });
     const active = () => [...t.w.document.querySelectorAll('.sb-item.active')].map((e) => e.id);
     t.w.updateSidebarActive('tabComms');
     expect(active()).toEqual(['sbComms']);
+    t.w.updateSidebarActive('ycPage-1');
+    expect(active()).toEqual(['sbMore']);
     t.w.updateSidebarActive('tabSettings');
-    expect(active()).toEqual(['sbMore']);
-    t.w.updateSidebarActive('tabMore');
-    expect(active()).toEqual(['sbMore']);
+    expect(active()).toEqual(['sbAlso']);
+    t.w.updateSidebarActive('tabX');
+    expect(active()).toEqual(['sbAlso']);
   });
 });

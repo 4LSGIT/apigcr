@@ -6,7 +6,7 @@
  * (S6c_DESIGN.md §4.2, §5 S6c-2; Fred's rulings 1, 3, 4).
  *
  *   - `layout` is a key of BOTH scopes: the firm's covers every launcher
- *     surface (home, sidebar, homeIcons, more, moreIcons, admin, adminIcons);
+ *     surface (home, sidebar, homeIcons; More / Admin are firm pages since launcher-nits C4);
  *     a user's stays home / sidebar / homeIcons. The same grammar at both
  *     tiers: a break on a grid, a label on the sidebar, an icon row takes
  *     { item } only and at most 12 (refused at the length check); a firm
@@ -36,65 +36,72 @@ const svc = require('../services/uiConfigService');
 const errs = (r) => r.errors.join(' | ');
 const F = (doc) => shape.validate('firm', 'layout', doc);
 const U = (doc) => shape.validate('user', 'layout', doc);
-const ALL7 = ['home', 'sidebar', 'homeIcons', 'more', 'moreIcons', 'admin', 'adminIcons'];
+const FIRM3 = ['home', 'sidebar', 'homeIcons'];   // the firm's surfaces since launcher-nits C4 (More / Admin: firm pages)
+const HUBS = ['more', 'moreIcons', 'admin', 'adminIcons'];
 
 describe('the firm layout key and the surfaces', () => {
   test('CONFIG_KEYS: layout is a firm key too; the surface lists per scope', () => {
     expect(shape.CONFIG_KEYS.firm).toEqual(['registry_overrides', 'layout']);
     expect(shape.CONFIG_KEYS.user).toEqual(['shortcuts', 'layout', 'prefs', 'items']);
-    expect(shape.FIRM_LAYOUT_SURFACES).toEqual(ALL7);
+    expect(shape.FIRM_LAYOUT_SURFACES).toEqual(FIRM3);
     expect(shape.LAYOUT_SURFACES).toEqual(['home', 'sidebar', 'homeIcons']);
-    expect(shape.ICON_SURFACES).toEqual(['homeIcons', 'moreIcons', 'adminIcons']);
-    expect(shape.BREAK_SURFACES).toEqual(['home', 'more', 'admin']);
+    expect(shape.RETIRED_FIRM_SURFACES).toEqual(HUBS);
+    // grammar names: a page's tiles borrow 'more' (a grid), its small buttons 'moreIcons' (an icon row)
+    expect(shape.ICON_SURFACES).toEqual(['homeIcons', 'moreIcons']);
+    expect(shape.BREAK_SURFACES).toEqual(['home', 'more']);
+    expect(shape.PAGE_PARTS).toEqual({ tiles: 'more', icons: 'moreIcons' });
     expect(shape.CAPS.icons).toBe(12);
     expect(shape.validate('firm', 'layout', {}).value).toEqual({ placed: {}, removed: {} });
   });
 
-  test('firm: every surface; user: home / sidebar / homeIcons only (More, Admin and their rows are firm-only)', () => {
-    const placedAll = Object.fromEntries(ALL7.map((sf) => [sf, []]));
-    expect(F({ placed: placedAll, removed: placedAll }).value).toEqual({ placed: placedAll, removed: placedAll });
-    const r = U({ placed: { more: [], moreIcons: [], admin: [], adminIcons: [], home: [] }, removed: { more: [] } });
-    expect(r.ok).toBe(false);
-    expect(errs(r)).toMatch(/placed: unknown field "more"/);
-    expect(errs(r)).toMatch(/placed: unknown field "moreIcons"/);
-    expect(errs(r)).toMatch(/placed: unknown field "admin"/);
-    expect(errs(r)).toMatch(/placed: unknown field "adminIcons"/);
-    expect(errs(r)).toMatch(/removed: unknown field "more"/);
+  test('launcher-nits C4: the hubs\' old surfaces — a firm document\'s are DROPPED (the live one and older History versions still carry them), a user\'s refused; any other unknown surface is still an error', () => {
+    const hubs = Object.fromEntries(HUBS.map((sf) => [sf, [{ item: 'moreReports' }]]));
+    const r = F({ placed: { ...hubs, home: [{ item: 'cases' }] }, removed: { more: ['moreViews'], admin: ['adminDbConsole'], sidebar: ['bills'] } });
+    expect([r.ok, r.errors]).toEqual([true, []]);
+    expect(r.value).toEqual({ placed: { home: [{ item: 'cases' }] }, removed: { sidebar: ['bills'] } });
+    // even malformed: they are not read at all
+    expect(F({ placed: { more: 'x', adminIcons: [{ break: true }] } }).value).toEqual({ placed: {}, removed: {} });
+    expect(errs(F({ placed: { bogus: [] } }))).toBe('placed: unknown field "bogus"');
+    const u = U({ placed: { more: [], home: [] }, removed: { admin: [] } });
+    expect(u.ok).toBe(false);
+    expect(errs(u)).toMatch(/placed: unknown field "more"/);
+    expect(errs(u)).toMatch(/removed: unknown field "admin"/);
     expect(U({ placed: { homeIcons: [{ item: 'all' }] }, removed: { homeIcons: ['myTasks'] } }).value)
       .toEqual({ placed: { homeIcons: [{ item: 'all' }] }, removed: { homeIcons: ['myTasks'] } });
   });
 
-  test('a break is for a grid (home, more, admin), a label for the sidebar, an icon row takes items only', () => {
-    expect(F({ placed: { more: [{ item: 'moreManuals' }, { break: true }, { item: 'firm:x' }], admin: [{ break: true }] } }).ok).toBe(true);
+  test('a break is for a grid (Home, a page\'s tiles), a label for the sidebar, an icon row takes items only', () => {
+    expect(F({ placed: { home: [{ item: 'cases' }, { break: true }, { item: 'firm:x' }] }, pages: { 'firm:p': { tiles: [{ break: true }, { item: 'moreManuals' }] } } }).ok).toBe(true);
     const r = F({ placed: {
-      more: [{ label: 'x' }],
-      moreIcons: [{ break: true }, { label: 'x' }, { item: 'casey', break: true }],
+      home: [{ label: 'x' }],
+      homeIcons: [{ break: true }, { label: 'x' }, { item: 'all', break: true }],
       sidebar: [{ break: true }],
-      homeIcons: [{ nope: 1 }],
-    } });
+    }, pages: { 'firm:p': { tiles: [{ label: 'x' }], icons: [{ break: true }] } } });
     expect(r.ok).toBe(false);
     const e = errs(r);
-    expect(e).toMatch(/placed\.more\[0\]: a label is for the sidebar only/);
-    expect(e).toMatch(/placed\.moreIcons\[0\]: a break is for a grid \(home, more, admin\) only/);
-    expect(e).toMatch(/placed\.moreIcons\[1\]: a label is for the sidebar only/);
-    expect(e).toMatch(/placed\.moreIcons\[2\] must be exactly one of \{ item \}$|placed\.moreIcons\[2\] must be exactly one of \{ item \} \|/);
-    expect(e).toMatch(/placed\.sidebar\[0\]: a break is for a grid \(home, more, admin\) only/);
-    expect(e).toMatch(/placed\.homeIcons\[0\]: unknown field "nope" \(an entry is \{ item \}\)/);
+    expect(e).toMatch(/placed\.home\[0\]: a label is for the sidebar only/);
+    expect(e).toMatch(/placed\.homeIcons\[0\]: a break is for a grid \(Home, a page's tiles\) only/);
+    expect(e).toMatch(/placed\.homeIcons\[1\]: a label is for the sidebar only/);
+    expect(e).toMatch(/placed\.homeIcons\[2\] must be exactly one of \{ item \}$|placed\.homeIcons\[2\] must be exactly one of \{ item \} \|/);
+    expect(e).toMatch(/placed\.sidebar\[0\]: a break is for a grid \(Home, a page's tiles\) only/);
+    expect(e).toMatch(/pages\.firm:p\.tiles\[0\]: a label is for the sidebar only/);
+    expect(e).toMatch(/pages\.firm:p\.icons\[0\]: a break is for a grid \(Home, a page's tiles\) only/);
+    expect(errs(F({ placed: { homeIcons: [{ nope: 1 }] } }))).toMatch(/placed\.homeIcons\[0\]: unknown field "nope" \(an entry is \{ item \}\)/);
   });
 
   test('an icon row holds at most 12, refused at the length check before an entry is read; a grid 100', () => {
     const junk = Array.from({ length: 13 }, () => ({ nope: 1 }));
-    const r = F({ placed: { adminIcons: junk } });
-    expect(r.errors).toEqual(['placed.adminIcons: at most 12 entries']);
-    expect(F({ placed: { adminIcons: Array.from({ length: 12 }, (_, i) => ({ item: 'i' + i })) } }).ok).toBe(true);
+    expect(F({ placed: { homeIcons: junk } }).errors).toEqual(['placed.homeIcons: at most 12 entries']);
+    expect(F({ placed: { homeIcons: Array.from({ length: 12 }, (_, i) => ({ item: 'i' + i })) } }).ok).toBe(true);
     expect(errs(U({ placed: { homeIcons: junk } }))).toBe('placed.homeIcons: at most 12 entries');
-    expect(errs(F({ placed: { more: Array.from({ length: 101 }, (_, i) => ({ item: 'x' + i })) } }))).toBe('placed.more: at most 100 entries');
+    expect(errs(F({ pages: { 'firm:p': { icons: junk } } }))).toBe('pages.firm:p.icons: at most 12 entries');
+    expect(errs(F({ placed: { home: Array.from({ length: 101 }, (_, i) => ({ item: 'x' + i })) } }))).toBe('placed.home: at most 100 entries');
     // an item once per surface
-    expect(errs(F({ placed: { moreIcons: [{ item: 'casey' }, { item: 'casey' }] } }))).toMatch(/placed\.moreIcons\[1\]: casey is already placed at placed\.moreIcons\[0\]/);
+    expect(errs(F({ placed: { homeIcons: [{ item: 'all' }, { item: 'all' }] } }))).toMatch(/placed\.homeIcons\[1\]: all is already placed at placed\.homeIcons\[0\]/);
   });
 
   test('refs by scope: a firm document names registry and firm ids, never a user\'s button; a user\'s may', () => {
-    expect(F({ placed: { home: [{ item: 'cases' }, { item: 'firm:clio-code' }] }, removed: { more: ['moreViews', 'firm:x'] } }).ok).toBe(true);
+    expect(F({ placed: { home: [{ item: 'cases' }, { item: 'firm:clio-code' }] }, removed: { sidebar: ['moreViews', 'firm:x'] } }).ok).toBe(true);
     const r = F({ placed: { home: [{ item: 'user:mine' }] }, removed: { sidebar: ['user:mine'] } });
     expect(errs(r)).toMatch(/placed\.home\[0\]: not an item id/);
     expect(errs(r)).toMatch(/removed\.sidebar\[0\]: not an item id/);
@@ -108,7 +115,7 @@ describe('the firm layout key and the surfaces', () => {
     expect(errs(F({ pages: { 'user:ops': {} } }))).toBe('pages.user:ops: not a firm page id (firm:…)');
     expect(errs(U({ pages: { 'firm:ops': {} } }))).toBe('pages.firm:ops: not one of your page ids (user:…)');
     for (const v of [null, 1, []]) expect(errs(F({ pages: v }))).toBe('pages must be an object { <page id>: { tiles?, icons? } }');
-    expect(errs(F({ pages: 1, placed: { more: 'x' } }))).toBe('placed.more must be an array | pages must be an object { <page id>: { tiles?, icons? } }');
+    expect(errs(F({ pages: 1, placed: { home: 'x' } }))).toBe('placed.home must be an array | pages must be an object { <page id>: { tiles?, icons? } }');
     expect(errs(F({ foo: 1 }))).toBe('layout: unknown field "foo"');
   });
 
@@ -124,11 +131,11 @@ describe('the firm layout key and the surfaces', () => {
   });
 
   test('removals: per surface, the flat form refused with the scope\'s surfaces named; absent stays absent; de-duplicated', () => {
-    expect(errs(F({ removed: ['moreViews'] }))).toBe('removed must be an object { home?, sidebar?, homeIcons?, more?, moreIcons?, admin?, adminIcons? } — removals are per surface');
+    expect(errs(F({ removed: ['moreViews'] }))).toBe('removed must be an object { home?, sidebar?, homeIcons? } — removals are per surface');
     expect(errs(U({ removed: [] }))).toBe('removed must be an object { home?, sidebar?, homeIcons? } — removals are per surface');
-    expect(F({ removed: { more: ['a', 'a', 'firm:b'] } }).value).toEqual({ placed: {}, removed: { more: ['a', 'firm:b'] } });
-    expect(F({ placed: { adminIcons: [] } }).value).toEqual({ placed: { adminIcons: [] }, removed: {} });   // [] is kept: it means "this order"
-    expect(errs(F({ removed: { more: Array.from({ length: 101 }, (_, i) => 'x' + i) } }))).toBe('removed.more: at most 100 entries');
+    expect(F({ removed: { sidebar: ['a', 'a', 'firm:b'] } }).value).toEqual({ placed: {}, removed: { sidebar: ['a', 'firm:b'] } });
+    expect(F({ placed: { homeIcons: [] } }).value).toEqual({ placed: { homeIcons: [] }, removed: {} });   // [] is kept: it means "this order"
+    expect(errs(F({ removed: { home: Array.from({ length: 101 }, (_, i) => 'x' + i) } }))).toBe('removed.home: at most 100 entries');
   });
 
   test('differential: documents of the pre-S6c user grammar normalize exactly as before', () => {
@@ -169,7 +176,7 @@ describe('write(): the firm layout is versioned like registry_overrides (scripte
     };
     return { stmts, writes: () => stmts.filter((x) => /^(INSERT|UPDATE|DELETE)\b/.test(x.s)), getConnection: async () => conn, query: async () => { throw new Error('no'); } };
   }
-  const MORE = { placed: { more: [{ item: 'moreReports' }, { break: true }, { item: 'firm:clio-code' }], moreIcons: [{ item: 'casey' }] }, removed: { admin: ['adminDbConsole'] } };
+  const MORE = { placed: { home: [{ item: 'moreReports' }, { break: true }, { item: 'firm:clio-code' }], homeIcons: [{ item: 'casey' }] }, removed: { sidebar: ['adminDbConsole'] } };
 
   test('a first firm layout: the row and ONE version; the response carries version_id and the normalized document', async () => {
     const db = txDb(null);
@@ -184,7 +191,7 @@ describe('write(): the firm layout is versioned like registry_overrides (scripte
   });
 
   test('base: the newest version id passes, a stale one is a 409 that writes nothing; absent means no check', async () => {
-    const stored = { placed: { more: [] }, removed: {} };
+    const stored = { placed: { home: [] }, removed: {} };
     const ok = txDb(stored, 7);
     const r = await svc.write(ok, { scope: 'firm', config_key: 'layout', config: MORE, base: 7 }, admin);
     expect([r.changed, r.versioned, r.version_id]).toEqual([true, true, 8]);
@@ -196,7 +203,7 @@ describe('write(): the firm layout is versioned like registry_overrides (scripte
   });
 
   test('the same document again — keys in MySQL\'s order — is a no-op carrying the current version id', async () => {
-    const asMysql = { removed: { admin: ['adminDbConsole'] }, placed: { moreIcons: [{ item: 'casey' }], more: [{ item: 'moreReports' }, { break: true }, { item: 'firm:clio-code' }] } };
+    const asMysql = { removed: { sidebar: ['adminDbConsole'] }, placed: { homeIcons: [{ item: 'casey' }], home: [{ item: 'moreReports' }, { break: true }, { item: 'firm:clio-code' }] } };
     const db = txDb(asMysql, 7);
     const r = await svc.write(db, { scope: 'firm', config_key: 'layout', config: MORE, base: 7 }, admin);
     expect([r.changed, r.versioned, r.version_id]).toEqual([false, false, 7]);
@@ -206,7 +213,7 @@ describe('write(): the firm layout is versioned like registry_overrides (scripte
   test('refusals: staff (no firm.settings) 403; a user page in the firm\'s pages, a user id in a firm list, a removal of all → 400 with errors; nothing written', async () => {
     const db = txDb(null);
     await expect(svc.write(db, { scope: 'firm', config_key: 'layout', config: MORE }, staff)).rejects.toMatchObject({ status: 403 });
-    for (const bad of [{ pages: { 'user:x': {} } }, { placed: { home: [{ item: 'user:x' }] } }, { removed: { homeIcons: ['all'] } }, { placed: { adminIcons: [{ break: true }] } }]) {
+    for (const bad of [{ pages: { 'user:x': {} } }, { placed: { home: [{ item: 'user:x' }] } }, { removed: { homeIcons: ['all'] } }, { placed: { homeIcons: [{ break: true }] } }]) {
       const e = await svc.write(db, { scope: 'firm', config_key: 'layout', config: bad }, admin).catch((x) => x);
       expect([bad, e.status, Array.isArray(e.errors) && e.errors.length > 0]).toEqual([bad, 400, true]);
     }

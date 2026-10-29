@@ -1,8 +1,8 @@
 # Your own launcher: All, Ctrl+K, Home and the sidebar, keyboard shortcuts, and your own buttons
 
-The **launcher** is every way into a feature: the sidebar, the Home tiles, the
-More Features and Admin grids, your firm's own **pages**, the **All** tab and
-the **Ctrl+K** search. Your firm sets it up for everyone. On top of that, you
+The **launcher** is every way into a feature: the sidebar, the Home tiles, your
+firm's **pages** (**More Features** and **Admin** among them), the **All** tab
+and the **Ctrl+K** search. Your firm sets it up for everyone. On top of that, you
 can arrange **your own Home tiles and your own sidebar**, give features
 **keyboard shortcuts** of your own, and make **buttons of your own** (a saved
 view, a tool, a link to another website, a **list** that holds several, or a
@@ -130,7 +130,8 @@ you've rearranged that surface. You can then move it or hide it like any other.
 
 ## Your firm's pages
 
-Your firm can make pages of its own: tabs of tiles like More Features (see
+Your firm's pages are tabs of tiles — **More Features** and **Admin** are two,
+and your firm can make more (see
 [Firm pages](../05-Subsystems/14-firm-launcher.md#firm-pages)). The firm
 arranges them for everyone, and you can arrange them **for yourself** on the
 **Firm pages** tab. It has one block per page you can see, each with its
@@ -537,8 +538,6 @@ arrangement:
 
 ## Not here (yet)
 
-- **More Features and Admin** keep the order your firm and the app give them.
-  Only Home, the sidebar and your own pages are yours to arrange.
 - Firm-wide keyboard shortcuts: shortcuts are personal only.
 - **Your own page in the address bar.** Reloading while on one of your pages
   lands on Home, and a link to one can't be shared or bookmarked. (Your

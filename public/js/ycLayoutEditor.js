@@ -147,14 +147,13 @@
  * its Tiles and Small buttons sections over `layout.pages['firm:…']`;
  * open({ scope:'firm', section:'pages', page }) lands on one block, which is
  * firm.html's "Arrange its tiles…" on a saved Page item) — five tabs
- * (FIRM_PANES: Home, Sidebar, More Features, Admin, Firm pages). Same session core and rules as above, with the firm's document as
+ * (FIRM_PANES: Home, Sidebar, Firm pages — More Features and Admin among
+ * the firm pages since launcher-nits C4). Same session core and rules as above, with the firm's document as
  * the edited layer over the shipped DEFAULT_LAYOUTS; nothing is locked
  * against the firm itself, except All in Home's icon row (GUARANTEED). The
  * catalogue: the shell's computeEffective as a superuser sees it with the
  * firm's own overlay (hides, renames, firm items — what the shell renders),
- * no user buttons. The More list starts from what More shows: while the firm
- * has no placed.more, the firm row (a break, then every firm item) closes it
- * (o.seed), so the first save keeps Get Clio Code where it was. Open: a
+ * no user buttons. Open: a
  * fresh GET /api/ui-config (can_edit_firm, else nothing opens; its
  * firm_versions.layout is the base). Save: ONE PUT { scope:'firm',
  * config_key:'layout', config, base } → firmData.ui.firm.layout := the
@@ -174,7 +173,7 @@
  *   buttons': see there.
  *   open({ section: 'home' | 'sidebar' | 'shortcuts' | 'buttons' }) opens on that tab (default:
  *   Home — so does any other name, 'layout', the tab's name before L1, included);
- *   open({ scope: 'firm', section?: 'home' | 'sidebar' | 'more' | 'admin' | 'pages', page?, from? }) the firm mode.
+ *   open({ scope: 'firm', section?: 'home' | 'sidebar' | 'pages', page?, from? }) the firm mode.
  */
 (function () {
   'use strict';
@@ -195,12 +194,13 @@
   // launcher-nits L1 gave Home's icon row its section.
   var PASS = [];
   // The firm's layout (S6c-3): every surface (lib/uiConfigShape.js FIRM_LAYOUT_SURFACES).
-  var FIRM_SURFACES = ['home', 'sidebar', 'homeIcons', 'more', 'moreIcons', 'admin', 'adminIcons'];
-  var BREAK_SF = { home: true, more: true, admin: true };              // lib/uiConfigShape.js BREAK_SURFACES
-  var ICON_SF = { homeIcons: true, moreIcons: true, adminIcons: true }; // lib/uiConfigShape.js ICON_SURFACES
+  // (More, Admin and their icon rows were firm surfaces until launcher-nits C4: they are the
+  // firm's pages now, arranged in the Firm pages tab; 'more' / 'moreIcons' stay grammar names)
+  var FIRM_SURFACES = ['home', 'sidebar', 'homeIcons'];
+  var BREAK_SF = { home: true, more: true };              // lib/uiConfigShape.js BREAK_SURFACES
+  var ICON_SF = { homeIcons: true, moreIcons: true };     // lib/uiConfigShape.js ICON_SURFACES
   var GUARANTEED = { homeIcons: ['all'] };                             // lib/uiConfigShape.js GUARANTEED
-  var NAME = { home: 'Home', sidebar: 'Sidebar', homeIcons: 'Home’s small buttons', more: 'More Features',
-    moreIcons: 'More Features’ small buttons', admin: 'Admin', adminIcons: 'Admin’s small buttons' };
+  var NAME = { home: 'Home', sidebar: 'Sidebar', homeIcons: 'Home’s small buttons' };
   var CAP = 100;          // lib/uiConfigShape.js CAPS.placed / CAPS.removed
   var ICON_CAP = 12;      // lib/uiConfigShape.js CAPS.icons (an icon row's placed list)
   function capOf(sf) { var pg = pageOf(sf); return (pg ? pg.part === 'icons' : ICON_SF[gram(sf)]) ? ICON_CAP : CAP; }
@@ -1095,7 +1095,6 @@
   var DRAWER_CAP = 30;                            // lib/uiConfigShape.js CAPS.drawer
   var TAB_KEEP = 3;                               // index.html ycButtonTabs MAX: pages kept open
   var MINE = 'Mine';                              // ycLauncher's group for them
-  var ADMIN = 'Admin';                            // ycLauncher's GRID_GROUP.admin
 
   /** label → 'user:<slug>' that no id in `taken` holds (public/caseconfig/
    *  firm.html makeId, with the user: prefix). */
@@ -1403,13 +1402,13 @@
    *  superuser sees it under the firm's overlay — its hides (a hidden item is
    *  drawn nowhere, so it isn't offered; a placement of one is carried), its
    *  renames and its firm items — with no user buttons and no denies: what
-   *  the launcher draws. seed: the firm items in order — the
-   *  More grid's firm row, which closes the More list while the firm has no
-   *  placed.more. ui = { firm: { registry_overrides? } }.
-   *  → { entries: [{ id, group, label, labels, icon }], groups, seed } */
+   *  the launcher draws, grouped as All groups it (the firm's pages by
+   *  their layout — launcher-nits C4). ui = { firm: { registry_overrides?, layout? } }.
+   *  → { entries: [{ id, group, label, labels, icon }], groups, pages } */
   function firmCatalog(ui) {
     var ro = isObj(ui) && isObj(ui.firm) && isObj(ui.firm.registry_overrides) ? ui.firm.registry_overrides : {};
-    var list = L.computeEffective({ isAdmin: true, roles: ['su'], denied: [], ui: { firm: { registry_overrides: ro } } });
+    var fl = isObj(ui) && isObj(ui.firm) && isObj(ui.firm.layout) ? { layout: ui.firm.layout } : {};
+    var list = L.computeEffective({ isAdmin: true, roles: ['su'], denied: [], ui: { firm: Object.assign({ registry_overrides: ro }, fl) } });
     var mine = list.filter(function (e) { return !USER_ID_RE.test(e.id); });
     var isPg = function (e) { return !!(e.action && e.action.type === 'page'); };
     return {
@@ -1419,7 +1418,6 @@
         return o;
       }),
       groups: (list.groups || []).filter(function (g) { return mine.some(function (e) { return e.group === g; }); }),
-      seed: mine.filter(function (e) { return !!e.action; }).map(function (e) { return e.id; }),
       pages: mine.filter(isPg).map(function (e) { return e.id; }),   // the firm's pages (S6c-5), in order
     };
   }
@@ -1461,13 +1459,10 @@
     { id: 'sidebar', label: 'Sidebar', icon: 'bars', surfaces: ['sidebar'],
       intro: 'What everyone\u2019s sidebar starts from. Someone who has arranged their own keeps their arrangement; ' +
         'what you add here is added for them too, next to its neighbour.' },
-    { id: 'more', label: 'More Features', icon: 'grip', surfaces: ['more', 'moreIcons'],
-      intro: 'The More Features page for everyone: the tiles left to right, a row break starts a new row. Your firm\u2019s own items go wherever you put them.' },
-    { id: 'admin', label: 'Admin', icon: 'mug-hot', surfaces: ['admin', 'adminIcons'],
-      intro: 'The Admin page for everyone who sees it. Each person still sees only the tiles they are allowed to open.' },
     // the firm's pages (S6c-5): one block per firm page item, built by buildFirmPages
     { id: 'pages', label: 'Firm pages', icon: 'layer-group', surfaces: [],
-      intro: 'Your firm\u2019s own pages: each is a tab of tiles like More Features, for everyone who sees it. ' +
+      intro: 'Your firm\u2019s own pages — More Features and Admin among them: each is a tab of tiles, for everyone who sees it. ' +
+        'Each person still sees only the tiles they are allowed to open, and may rearrange a page for themselves. ' +
         'A page\u2019s name, icon and who sees it are set in the Firm tab (Firm items, Who sees what); here you arrange what is on it.' },
   ];
   var NO_FIRM_PAGES = 'No firm pages yet. Add one in the Firm tab\u2019s Firm items (kind Page), save there, then arrange its tiles here.';
@@ -1491,8 +1486,6 @@
   var USER_HINT = { homeIcons: 'The small round buttons under your Home tiles (up to 12). All always stays here: you can move it, not hide it.' };
   var FIRM_HINT = {
     homeIcons: 'The small round buttons under the Home tiles. All always stays here.',
-    moreIcons: 'The small round buttons under the More Features tiles (Casey\u2019s paw).',
-    adminIcons: 'The small round buttons under the Admin tiles (none as shipped).',
   };
   var SESSION_MSG = 'Your session predates a permissions change \u2014 sign out and back in.';   // firm.html SESSION_MSG
   var CONFLICT_MSG = 'Someone else saved the firm\u2019s arrangement since you opened this, so nothing was saved. ' +
@@ -2203,19 +2196,16 @@
   // ── The My buttons tab (S5a) ──
   // The effective registry the layout and shortcut tabs work from while the
   // panel is open: the shell's, with its stored buttons swapped for the ones
-  // being edited here (group Mine, after Firm, before Admin) — so a new
+  // being edited here (group Mine, last) — so a new
   // button can be placed or bound before it is saved, and a deleted one
   // can't.
   function editorEffective() {
     var base = L.effectiveRegistry().filter(function (e) { return !USER_ID_RE.test(e.id); });
-    var mine = its ? its.entries() : [];
-    var at = base.length;
-    for (var i = 0; i < base.length; i++) if (base[i].group === ADMIN) { at = i; break; }
-    return base.slice(0, at).concat(mine, base.slice(at));
+    return base.concat(its ? its.entries() : []);   // Mine last, as All orders it (launcher-nits C4)
   }
   function editorGroups() {
     var g = L.groups().filter(function (x) { return x !== MINE; });
-    if (its && its.entries().length) { var a = g.indexOf(ADMIN); g.splice(a < 0 ? g.length : a, 0, MINE); }
+    if (its && its.entries().length) g.push(MINE);
     return g;
   }
   function retargetAll() {
@@ -2677,7 +2667,7 @@
     var general = [];
     errors.forEach(function (m) {
       // (\b: placed.home never matches placed.homeIcons — I is a word character)
-      var hit = key === 'layout' ? /^(?:placed|removed)\.(home|sidebar|homeIcons|more|moreIcons|admin|adminIcons)\b/.exec(String(m))
+      var hit = key === 'layout' ? /^(?:placed|removed)\.(home|sidebar|homeIcons)\b/.exec(String(m))
         : [null, PANE_OF[key]];
       // a page's list (S6c-5): under that page's section when it is built (an open arrange box / the Firm pages pane)
       var pm = key === 'layout' && !hit ? /^pages\.([^.\s]+)\.(tiles|icons)\b/.exec(String(m)) : null;
@@ -3427,7 +3417,7 @@
     var cat = firmCatalog(ui);
     sessOpts = {
       stored: firmLayoutOf(ui), effective: cat.entries, locked: [], lockedForUsers: lockedOf(ui), base: window.DEFAULT_LAYOUTS || {},
-      registry: window.FEATURE_REGISTRY || {}, groups: cat.groups, surfaces: FIRM_SURFACES, pass: [], seed: { more: cat.seed },
+      registry: window.FEATURE_REGISTRY || {}, groups: cat.groups, surfaces: FIRM_SURFACES, pass: [],
       pages: cat.pages,
     };
     sess = session(sessOpts);

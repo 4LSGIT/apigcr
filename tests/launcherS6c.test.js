@@ -3,21 +3,25 @@
 /**
  * ui-custom S6c-1+2 — icon rows, real Admin tile gates, and the firm default
  * layout (no visible change). S6c_DESIGN.md §4.2–§4.4, §4.7, §5 S6c-1 / S6c-2,
- * and Fred's rulings on §6.
+ * and Fred's rulings on §6. Since launcher-nits C4 the static More and Admin
+ * hubs are gone: More Features and Admin are the firm's pages firm:more /
+ * firm:admin (tests/helpers/hubPages.js builds them as production has them),
+ * so what this file pinned on the hubs it now pins on those pages.
  *
  *   1. GATES: every Admin tile carries the gate its routes enforce (`gate:
  *      'su'` on the eleven superuserOnly tools, users.impersonate on Users,
  *      none on Etch — a static page),
- *      pinned as a set; the Admin PAGE item carries none (its visibility is the
- *      firm's visible_to). computeEffective applies a gate with the user's
- *      roles by lib/capabilities' rule — the shell's CAP_ROOT / ROLE_CAPS copies
- *      are pinned to the module, and the behaviour is checked on a synthetic
- *      registry (su, it, a role, a root capability, an unknown gate: closed).
- *   2. ICON ROWS: three new surfaces (homeIcons / moreIcons / adminIcons) render
- *      S6b's hand-written paw and #homeAll markup BYTE FOR BYTE (the expanded
- *      page), Admin's row an empty div; casey and all are placed items (group
- *      More / Settings); exec(casey) clicks the paw in place (no tab switch);
- *      a firm-placed icon is a neutral `.<page>-egg` button that runs exec.
+ *      pinned as a set; the Admin PAGE (firm:admin) carries none (its
+ *      visibility is the firm's visible_to). computeEffective applies a gate
+ *      with the user's roles by lib/capabilities' rule — the shell's CAP_ROOT /
+ *      ROLE_CAPS copies are pinned to the module, and the behaviour is checked
+ *      on a synthetic registry (su, it, a role, a root capability, an unknown
+ *      gate: closed); on the page a gated tile is not drawn.
+ *   2. ICON ROWS: one mounted icon row (homeIcons) renders S6b's #homeAll
+ *      markup BYTE FOR BYTE; More's paw is the More Features page's casey
+ *      neutral; Admin's row is empty; casey and all are placed items (group
+ *      More Features / Settings); exec(casey) runs in place (no tab switch);
+ *      a firm-placed icon is a neutral `.page-egg` button that runs exec.
  *   3. ALL IS GUARANTEED in Home's icon row (ruling 3): a firm or user removal
  *      is ignored, a placed row without it gets it back; the sidebar's All is an
  *      ordinary item a user may remove, and exec(all) still works then.
@@ -26,14 +30,17 @@
  *      firm's own step ignores `locked`; resolveLayout without `firm` is the
  *      S4a contract.
  *   5. THE RENDERER under a firm layout, for real (jsdom, the page's own
- *      mounts, drill-in, tabs): with no firm row every surface is the mounted
- *      DOM byte for byte; More rebalanced moves the SAME tiles (found by id,
- *      never by position); a firm-removed tile stays in the DOM hidden by
- *      data-yc-unplaced, out of the pill strip, still reached by exec; a firm
- *      item placed on the grid is a neutral tile and the firm row is gone; an
- *      Admin item on More opens in place there (S6c-4, the panel stage); a FUZZ of random firm
- *      layouts never drops a mounted default element nor duplicates an id, and
- *      an empty firm layout restores the default DOM; a re-run changes nothing.
+ *      mounts, drill-in, tabs): with no firm layout every mounted surface is
+ *      the DOM byte for byte; a firm-removed Home tile stays in the DOM hidden
+ *      by data-yc-unplaced, in its default place; the More Features page laid
+ *      out by the firm (rows at its breaks, a firm item a neutral tile); a tile
+ *      the firm takes off it is drawn nowhere, gets no pill and exec still opens
+ *      its panel (the panel tab, C1); an Admin item on More opens in place
+ *      there (S6c-4, the panel stage); no firm row anywhere; a user document
+ *      naming the retired surfaces changes nothing; a FUZZ of random firm
+ *      layouts never drops a mounted default element nor duplicates an id,
+ *      and an empty firm layout restores the default DOM; a re-run changes
+ *      nothing.
  *   6. THE USER EDITOR carries homeIcons through a save untouched.
  *
  * Mutation-checked (see local/ui-custom/S6c12_worker_report.md).
@@ -51,6 +58,7 @@ const { rawShellHtml, expandedShellHtml, loadLauncher } = require('./helpers/she
 const CAPS_MOD = require('../lib/capabilities');
 const { UNDENIABLE } = require('../services/entitlementService');
 const shape = require('../lib/uiConfigShape');
+const { hubFirm, hubPages, stageHtml, HUB_ADMIN, HISTORIC_LAYOUTS: HL } = require('./helpers/hubPages');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
@@ -62,6 +70,8 @@ const { launcher: VL, registry: REG, layouts: LAY } = loadLauncher(RAW);
 const J = (x) => JSON.parse(JSON.stringify(x));
 const ids = (list) => list.map((e) => e.id);
 const placed = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
+// a hub page's tiles as production has them (the C3 data step's frozen copy of the pre-C4 lists)
+const hubTiles = (pg) => hubPages()[pg].tiles.filter((e) => e.item).map((e) => e.item);
 
 function slice(from, to) {
   const a = RAW.indexOf(from);
@@ -76,28 +86,30 @@ const HIDE_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 const STYLES = [...RAW.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((m) => m[1]);
 const EGG_CSS = (() => { const h = STYLES.filter((s) => s.includes('.home-egg-row')); if (h.length !== 1) throw new Error('egg css'); return h[0]; })();
 
-const PAW = '<div class="more-egg-row"><button type="button" class="more-egg" onclick="toggleMascot()" title="Casey the YisraCat" aria-label="Casey the YisraCat"><i class="fa-solid fa-paw" aria-hidden="true"></i></button></div>';
 const HOME_ALL = '<div class="home-egg-row"><button type="button" id="homeAll" class="home-egg" onclick="openMainTab(\'tabAll\')" title="All features" aria-label="All features"><i class="fa-solid fa-table-cells" aria-hidden="true"></i></button></div>';
 const SU_TILES = ['adminReadonlyKeys', 'adminApiKeys', 'adminCtaLinks', 'adminDbConsole', 'adminConnections', 'adminApiTester', 'adminTools',
   'adminScratch', 'adminSystemAlerts', 'adminSupportInbox', 'adminMailboxes'];
 const CAP_TILES = ['adminUsers', 'adminSharedValues'];
-const SURFACES = ['home', 'sidebar', 'homeIcons', 'more', 'moreIcons', 'admin', 'adminIcons'];
+const SURFACES = ['home', 'sidebar', 'homeIcons'];   // the mounted ones; More and Admin are pages (C4)
 const FIRM_URL = { id: 'firm:payroll', label: 'Payroll', icon: 'money-check', action: { type: 'url', href: 'https://payroll.example.com/', present: 'window' } };
 const ui = ({ layout, firm, ro } = {}) => ({ firm: { ...(ro ? { registry_overrides: ro } : {}), ...(firm ? { layout: firm } : {}) }, user: layout ? { layout } : {} });
+// the firm as production has it: its items + More Features and Admin as pages (Admin for it + admin); hubFirm's options
+const hub = (o = {}, layout) => ({ firm: hubFirm(o), user: layout ? { layout } : {} });
 const SU = { isAdmin: true, roles: ['su'], denied: [] };
 
 // ─────────────────────────────────────────────────────────────────────────
 describe('1. gates', () => {
-  test('the Admin tiles: superuser tools use su, Users and Shared values use their capability, Etch and the Admin page are open', () => {
+  test('the Admin tiles: superuser tools use su, Users and Shared values use their capability, Etch and the Admin page (firm:admin) are open', () => {
     const gated = Object.keys(REG).filter((k) => REG[k].gate !== undefined);
     expect(gated.sort()).toEqual([...SU_TILES, ...CAP_TILES].sort());
     for (const k of SU_TILES) expect([k, REG[k].gate]).toEqual([k, 'su']);
     expect(REG.adminUsers.gate).toBe('users.impersonate');
     expect(REG.adminSharedValues.gate).toBe('firm.settings');   // visibility only: /api/shared is any staff
     expect(REG.adminEtch.gate).toBeUndefined();
-    expect(REG.admin.gate).toBeUndefined();
-    // the classification covers every Admin grid tile but Etch
-    expect(placed('admin').filter((k) => k !== 'adminEtch').sort()).toEqual([...SU_TILES, ...CAP_TILES].sort());
+    expect(REG.admin).toBeUndefined();                                                     // the hub item is gone (C4)
+    expect(Object.keys(HUB_ADMIN).sort()).toEqual(['action', 'icon', 'id', 'label']);       // the page item: no gate (visible_to decides)
+    // the classification covers every Admin page tile but Etch
+    expect(hubTiles('firm:admin').filter((k) => k !== 'adminEtch').sort()).toEqual([...SU_TILES, ...CAP_TILES].sort());
   });
 
   test('the shell\'s CAP_ROOT / ROLE_CAPS are lib/capabilities, verbatim', () => {
@@ -138,87 +150,90 @@ describe('1. gates', () => {
     }
   });
 
-  test('for real: a non-su\'s su tiles are HIDDEN on the Admin grid (data-yc-denied), Etch shows, the Admin row follows the page item; su sees all 14', () => {
+  test('for real: a non-su\'s su tiles are not drawn on the Admin page, Etch shows, the Admin row follows the page item; su sees all 14', () => {
     const t = boot();
     try {
-      t.L.applyAccess({ isAdmin: false, roles: ['it'], denied: [], ui: ui({ ro: { visible_to: { admin: ['it', 'admin'] } } }) });
-      const tiles = [...t.d.querySelectorAll('#tabAdmin > .big-button')];
-      expect(tiles).toHaveLength(14);
-      expect(tiles.filter((b) => t.shown(b)).map((b) => b.textContent.trim())).toEqual(['Etch', 'Shared values', 'Users']);
-      for (const id of SU_TILES) expect([id, t.L.elementsOf(id).admin.hasAttribute('data-yc-denied'), t.L.elementsOf(id).admin.style.display]).toEqual([id, true, '']);
-      expect(t.d.getElementById('sbAdmin').hasAttribute('data-yc-denied')).toBe(false);   // the page item is theirs
+      t.L.applyAccess({ isAdmin: false, roles: ['it'], denied: [], ui: hub() });
+      const A = t.pageOf('firm:admin');
+      const tiles = () => [...t.pageOf('firm:admin').querySelectorAll(':scope > .big-button')];
+      expect(tiles().filter((b) => t.shown(b)).map((b) => b.textContent.trim())).toEqual(['Etch', 'Shared values', 'Users']);
+      expect(tiles()).toHaveLength(3);                                                     // a gated tile is never drawn on a page
+      for (const id of SU_TILES) expect([id, A.querySelector(`[data-yc-shortcut="${id}"]`)]).toEqual([id, null]);
+      expect(t.d.querySelector('#appSidebar .sb-item[data-yc-shortcut="firm:admin"]')).not.toBe(null);   // the page item is theirs
       // drilled in, the strip has no su pill
-      t.w.openMainTab('tabAdmin');
-      t.L.elementsOf('adminEtch').admin.click();   // a dialog tile: no drill; build the strip through a panel-less path instead
-      t.w.ensureStrip(t.d.getElementById('tabAdmin'));
-      expect([...t.d.querySelectorAll('#tabAdmin > .feature-strip .pill-button')].map((p) => p.textContent.trim())).toEqual(['All', 'Etch', 'Shared values', 'Users']);
-      // staff with the live rule: the page item hidden too; su: nothing hidden
+      t.w.openMainTab(A.id);
+      t.w.ensureStrip(A);
+      expect([...A.querySelectorAll(':scope > .feature-strip .pill-button')].map((p) => p.textContent.trim())).toEqual(['All', 'Etch', 'Shared values', 'Users']);
+      // staff with the live rule: the page and its row gone; su: every tile drawn, nothing hidden
       t.L.applyAccess({ roles: ['staff'] });
-      expect(t.d.getElementById('sbAdmin').hasAttribute('data-yc-denied')).toBe(true);
+      expect([t.pageOf('firm:admin'), t.d.querySelector('#appSidebar .sb-item[data-yc-shortcut="firm:admin"]')]).toEqual([null, null]);
       t.L.applyAccess({ roles: ['su'] });
-      expect(t.d.querySelectorAll('#tabAdmin [data-yc-denied], #appSidebar [data-yc-denied]')).toHaveLength(0);
-      expect(tiles.filter((b) => t.shown(b))).toHaveLength(14);
+      expect(t.d.querySelectorAll('#ycPages [data-yc-denied], #appSidebar [data-yc-denied]')).toHaveLength(0);
+      expect(tiles().filter((b) => t.shown(b)).map((b) => b.getAttribute('data-yc-shortcut'))).toEqual(hubTiles('firm:admin'));
+      expect(tiles()).toHaveLength(14);
     } finally { t.close(); }
   });
 
-  test('over the real registry: a non-su sees Etch and the Admin page (no visible_to), never a su tool; visible_to on `admin` hides the page', () => {
-    const staff = VL.computeEffective({ isAdmin: false, roles: ['staff'] });
+  test('over the real registry: a non-su sees Etch and the Admin page (no visible_to), never a su tool; visible_to on `firm:admin` hides the page', () => {
+    const staff = VL.computeEffective({ isAdmin: false, roles: ['staff'], ui: hub({ visibleTo: null }) });
     expect(ids(staff.filter((e) => e.group === 'Admin'))).toEqual(['adminEtch']);
-    expect(ids(staff)).toContain('admin');
-    const ro = { visible_to: { admin: ['it', 'admin'] } };   // the live firm's rule
-    expect(ids(VL.computeEffective({ isAdmin: false, roles: ['staff'], ui: ui({ ro }) }))).not.toContain('admin');
-    const it = VL.computeEffective({ isAdmin: false, roles: ['it'], ui: ui({ ro }) });
-    expect(ids(it)).toContain('admin');
+    expect(ids(staff)).toContain('firm:admin');
+    // the live firm's rule (hubFirm's default: it + admin)
+    expect(ids(VL.computeEffective({ isAdmin: false, roles: ['staff'], ui: hub() }))).not.toContain('firm:admin');
+    const it = VL.computeEffective({ isAdmin: false, roles: ['it'], ui: hub() });
+    expect(ids(it)).toContain('firm:admin');
     expect(ids(it.filter((e) => e.group === 'Admin'))).toEqual(['adminEtch', 'adminSharedValues', 'adminUsers']);
-    expect(ids(VL.computeEffective({ isAdmin: false, roles: ['su'], ui: ui({ ro }) }).filter((e) => e.group === 'Admin'))).toEqual(placed('admin'));
+    expect(ids(VL.computeEffective({ isAdmin: false, roles: ['su'], ui: hub() }).filter((e) => e.group === 'Admin'))).toEqual(hubTiles('firm:admin'));
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
 describe('2. icon rows: the surfaces and their markup', () => {
-  test('the shipped icon rows: all on Home, casey on More, Admin empty', () => {
+  test('the shipped icon row: all on Home; the hub pages (the C3 data step): casey on More Features, Admin empty; the hubs\' rows are no surface', () => {
+    expect(Object.keys(LAY).sort()).toEqual(['home', 'homeIcons', 'sidebar']);
     expect(LAY.homeIcons).toEqual([{ item: 'all' }]);
-    expect(LAY.moreIcons).toEqual([{ item: 'casey' }]);
-    expect(LAY.adminIcons).toEqual([]);
-    expect(shape.ICON_SURFACES).toEqual(['homeIcons', 'moreIcons', 'adminIcons']);
+    expect(hubPages()['firm:more'].icons).toEqual([{ item: 'casey' }]);
+    expect(hubPages()['firm:admin'].icons).toEqual([]);
+    expect(shape.ICON_SURFACES).toEqual(['homeIcons', 'moreIcons']);                        // 'moreIcons' = the grammar a page's small buttons borrow
   });
 
-  test('the expanded page holds S6b\'s paw and #homeAll markup byte for byte; Admin\'s row is an empty div; the sidebar All is the `all` item', () => {
+  test('the expanded page holds S6b\'s #homeAll markup byte for byte and no hub icon row; the sidebar All is the `all` item', () => {
     const html = expandedShellHtml();
-    expect(html).toContain(PAW);
     expect(html).toContain(HOME_ALL);
-    expect(html).toContain('<div class="admin-egg-row"></div>');
-    expect(VL.build('adminIcons')).toBe('');
+    expect(html).not.toMatch(/(more|admin)-egg/);                                         // the paw and Admin's row went with the hubs (C4)
+    expect(() => VL.build('adminIcons')).toThrow(/unknown surface "adminIcons"/);
+    expect(() => VL.build('moreIcons')).toThrow(/unknown surface "moreIcons"/);
     expect(html).toContain('<div class="sb-item" id="sbAll" data-tab="tabAll" onclick="openMainTab(\'tabAll\')" title="All features">\n      <i class="fa-solid fa-table-cells"></i><span>All</span>\n    </div>');
     expect((html.match(/id="sbAll"/g) || []).length).toBe(1);
     expect((html.match(/id="homeAll"/g) || []).length).toBe(1);
-    // an empty icon row takes no space; a drilled-in Admin hides its row like More's
-    expect(EGG_CSS).toMatch(/\.more-egg-row:empty, \.home-egg-row:empty, \.admin-egg-row:empty, \.page-egg-row:empty \{ display:none; \}/);
-    expect(EGG_CSS).toMatch(/\.drill-active > \.admin-egg-row \{ display:none; \}/);
+    // an empty icon row takes no space; a drilled-in page hides its row
+    expect(EGG_CSS).toMatch(/\.home-egg-row:empty, \.page-egg-row:empty \{ display:none; \}/);
+    expect(EGG_CSS).toMatch(/\.drill-active > \.page-egg-row \{ display:none; \}/);
   });
 
   test('an icon-row item: title (else the label) is also its aria-label; a renderer break or label there is skipped with a console error', () => {
-    const reg = { a: { label: 'A thing', icon: 'star', onclick: 'a()' }, b: { label: 'B', title: 'Bee', icon: 'bug', onclick: 'b()', domIds: { moreIcons: 'bId' } } };
+    const reg = { a: { label: 'A thing', icon: 'star', onclick: 'a()' }, b: { label: 'B', title: 'Bee', icon: 'bug', onclick: 'b()', domIds: { homeIcons: 'bId' } } };
     const errors = [];
     const ctx = vm.createContext({ console: { error: (m) => errors.push(String(m)) } });
     ctx.window = ctx;
     vm.runInContext(REGISTRY_SRC, ctx);
     vm.runInContext(RENDERER_SRC, ctx);
-    const html = ctx.window.ycLauncher.build('moreIcons', [{ item: 'a' }, { break: true }, { label: 'x' }, { item: 'b' }], reg);
-    expect(html).toBe('<button type="button" class="more-egg" onclick="a()" title="A thing" aria-label="A thing"><i class="fa-solid fa-star" aria-hidden="true"></i></button>'
-      + '<button type="button" id="bId" class="more-egg" onclick="b()" title="Bee" aria-label="Bee"><i class="fa-solid fa-bug" aria-hidden="true"></i></button>');
+    const html = ctx.window.ycLauncher.build('homeIcons', [{ item: 'a' }, { break: true }, { label: 'x' }, { item: 'b' }], reg);
+    expect(html).toBe('<button type="button" class="home-egg" onclick="a()" title="A thing" aria-label="A thing"><i class="fa-solid fa-star" aria-hidden="true"></i></button>'
+      + '<button type="button" id="bId" class="home-egg" onclick="b()" title="Bee" aria-label="Bee"><i class="fa-solid fa-bug" aria-hidden="true"></i></button>');
     expect(errors).toHaveLength(2);
   });
 
-  test('the effective registry: casey is placed (group More, after the grid); all is placed (group Settings, the sidebar wins); the extras are myTasks, logout and code', () => {
-    const eff = VL.computeEffective(SU);
+  test('the effective registry: casey is placed (group More Features, after its grid); all is placed (group Settings, the sidebar wins); the extras are myTasks, logout and code', () => {
+    const eff = VL.computeEffective({ ...SU, ui: hub() });
     expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(['myTasks', 'logout', 'code']);
-    expect(ids(eff.filter((e) => e.group === 'More'))).toEqual([...placed('more'), 'casey']);
+    expect(ids(eff.filter((e) => e.group === 'More Features'))).toEqual([...hubTiles('firm:more'), 'casey']);
     expect(eff.find((e) => e.id === 'all').group).toBe('Settings');
-    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);
-    // an item placed only in an icon row is placed by it: Admin's → group Admin; Home's → group Home (not an extra)
-    const lay = { ...J(LAY), adminIcons: [{ item: 'myTasks' }], homeIcons: [{ item: 'all' }, { item: 'logout' }] };
-    const e2 = VL.computeEffective(SU, REG, lay);
+    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin', 'Firm']);
+    // an item placed only in an icon row is placed by it: Admin's page → group Admin; the shipped Home row's → group Home (not an extra)
+    const pages = hubPages();
+    const lay = { ...J(LAY), homeIcons: [{ item: 'all' }, { item: 'logout' }] };
+    const e2 = VL.computeEffective({ ...SU, ui: hub({ layout: { pages: { 'firm:admin': { ...pages['firm:admin'], icons: [{ item: 'myTasks' }] } } } }) }, REG, lay);
     expect(e2.find((e) => e.id === 'myTasks').group).toBe('Admin');
     expect(e2.find((e) => e.id === 'logout').group).toBe('Home');
     expect(ids(e2.filter((e) => e.group === 'More actions'))).toEqual(['code']);
@@ -226,15 +241,14 @@ describe('2. icon rows: the surfaces and their markup', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// The page skeleton: every real mount (the icon rows in their .<page>-egg-row
-// divs), the grids' panels, the page's own tab / drill / icon-row CSS and the
-// page functions the items call, as recording stubs.
+// The page skeleton: every real mount (Home's icon row in its .home-egg-row
+// div), #ycPages (More Features and Admin are built there, C4), the panel
+// stage, the page's own tab / drill / icon-row CSS and the page functions the
+// items call, as recording stubs.
 function boot() {
-  const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
-    .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabAll']);
+  const tabs = new Set(['tabHome', 'tabAll', 'tabSettings']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}<style>${EGG_CSS}</style></head><body>
@@ -246,13 +260,8 @@ function boot() {
       <div class="home-search"></div></div>
     <div id="tabAll" class="tab-main"></div>
     ${plainTabs}
-    <div id="tabMore" class="tab-main"><h1>More</h1>
-  <script>ycLauncher.mount('more')</script>
-  <div class="more-egg-row"><script>ycLauncher.mount('moreIcons')</script></div></div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1>
-  <script>ycLauncher.mount('admin')</script>
-  <div class="admin-egg-row"><script>ycLauncher.mount('adminIcons')</script></div></div>
-    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
+    <div id="ycPages"></div>
+    <div id="ycPanels" style="display:none">${stageHtml(REG)}</div>
   </body></html>`;
   const errors = [];
   const dom = new JSDOM(page, { runScripts: 'dangerously', pretendToBeVisual: true });
@@ -275,24 +284,17 @@ function boot() {
   const d = w.document;
   const L = w.ycLauncher;
   const shown = (el) => w.getComputedStyle(el).display !== 'none';
-  const tab = { home: d.querySelector('#tabHome > .home-grid'), homeIcons: d.querySelector('#tabHome > .home-egg-row'),
-    moreIcons: d.querySelector('#tabMore > .more-egg-row'), adminIcons: d.querySelector('#tabAdmin > .admin-egg-row') };
-  // the region of a surface as HTML: a grid's = the nodes between its h1 and its egg row; the sidebar's = after #tabOpenFiles
-  const ws = (n) => n && n.nodeType === 3 && !/\S/.test(n.nodeValue);
+  const tab = { home: d.querySelector('#tabHome > .home-grid'), homeIcons: d.querySelector('#tabHome > .home-egg-row') };
+  // the region of a mounted surface as HTML: Home's grid / icon row = the div's; the sidebar's = after #tabOpenFiles
   const region = (sf) => {
     if (tab[sf]) return tab[sf].innerHTML;
     const out = [];
-    if (sf === 'sidebar') { for (let n = d.getElementById('tabOpenFiles').nextSibling; n; n = n.nextSibling) out.push(n); }
-    else {
-      const t = d.getElementById(sf === 'more' ? 'tabMore' : 'tabAdmin');
-      for (let n = t.querySelector('h1').nextSibling; n && !(n.nodeType === 1 && /-egg-row$/.test(n.className)); n = n.nextSibling) out.push(n);
-      if (ws(out[0])) out.splice(0, 1);                  // the skeleton's own whitespace around the mount
-      if (ws(out[out.length - 1])) out.pop();
-    }
+    for (let n = d.getElementById('tabOpenFiles').nextSibling; n; n = n.nextSibling) out.push(n);
     const tpl = d.createElement('div'); out.forEach((n) => tpl.appendChild(n.cloneNode(true))); return tpl.innerHTML;
   };
   const parsed = (sf) => { const t = d.createElement('template'); t.innerHTML = L.build(sf); return t.innerHTML; };
-  // what the user sees on a surface, in order: id (default), +id (neutral), '|' (a break: two <br> on a grid), '#text' (a label)
+  const pageOf = (id) => d.querySelector(`#ycPages > [data-yc-page="${id}"]`);
+  // what the user sees on a surface or a page, in order: id (default), +id (neutral), '|' (a break: two <br> on a grid), '#text' (a label)
   const idOf = (el, sf) => {
     if (el.hasAttribute('data-yc-shortcut')) return '+' + el.getAttribute('data-yc-shortcut');
     for (const id of Object.keys(w.FEATURE_REGISTRY)) if (L.elementsOf(id)[sf] === el) return id;
@@ -302,7 +304,7 @@ function boot() {
     if (tab[sf]) return [...tab[sf].children];
     const out = [];
     if (sf === 'sidebar') { for (let n = d.getElementById('tabOpenFiles').nextElementSibling; n; n = n.nextElementSibling) out.push(n); }
-    else { const t = d.getElementById(sf === 'more' ? 'tabMore' : 'tabAdmin'); for (let n = t.querySelector('h1').nextElementSibling; n && !/-egg-row$/.test(n.className); n = n.nextElementSibling) out.push(n); }
+    else { const t = pageOf(sf); for (let n = t.querySelector('h1').nextElementSibling; n && !/-egg-row$/.test(n.className); n = n.nextElementSibling) out.push(n); }
     return out;
   };
   const seen = (sf) => {
@@ -316,13 +318,14 @@ function boot() {
     }
     return out;
   };
+  const icons = (pg) => [...pageOf(pg).querySelectorAll(':scope > .page-egg-row > .page-egg')].map((b) => b.getAttribute('data-yc-shortcut'));
   const observe = () => {
     const mo = new w.MutationObserver(() => {});
     mo.observe(d.body, { subtree: true, childList: true, attributes: true, characterData: true });
     return () => { const r = mo.takeRecords(); mo.disconnect(); return r; };
   };
   const defaults = () => { const m = {}; for (const id of Object.keys(w.FEATURE_REGISTRY)) m[id] = L.elementsOf(id); return m; };
-  return { w, d, L, calls, errors, shown, region, parsed, seen, nodesOf, observe, defaults, close: () => w.close() };
+  return { w, d, L, calls, errors, shown, region, parsed, pageOf, seen, icons, nodesOf, observe, defaults, close: () => w.close() };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -331,18 +334,21 @@ describe('2b. icon rows, for real: exec, neutrals, the hidden paw', () => {
   beforeEach(() => { t = boot(); });
   afterEach(() => t.close());
 
-  test('the mounted rows are the markup the page expands with; the paw and #homeAll are the items\' elements', () => {
-    expect(t.region('moreIcons')).toBe(PAW.slice('<div class="more-egg-row">'.length, -'</div>'.length));
+  test('the mounted row is the markup the page expands with; #homeAll is all\'s element; More Features\' paw is a neutral (casey has no element), Admin\'s row is empty and takes no space', () => {
     expect(t.region('homeIcons')).toBe(HOME_ALL.slice('<div class="home-egg-row">'.length, -'</div>'.length));
-    expect(t.region('adminIcons')).toBe('');
-    expect(t.L.elementsOf('casey').moreIcons).toBe(t.d.querySelector('#tabMore .more-egg'));
     expect(t.L.elementsOf('all')).toEqual({ sidebar: t.d.getElementById('sbAll'), homeIcons: t.d.getElementById('homeAll') });
-    expect(t.shown(t.d.querySelector('#tabAdmin > .admin-egg-row'))).toBe(false);   // :empty
+    t.L.applyAccess({ ...SU, ui: hub() });
+    expect(t.icons('firm:more')).toEqual(['casey']);
+    const paw = t.pageOf('firm:more').querySelector('.page-egg-row > .page-egg');
+    expect([paw.getAttribute('aria-label'), paw.hasAttribute('onclick'), paw.hasAttribute('id')]).toEqual(['Casey', false, false]);
+    expect(t.L.elementsOf('casey')).toEqual({});
+    expect(t.icons('firm:admin')).toEqual([]);
+    expect(t.shown(t.pageOf('firm:admin').querySelector(':scope > .page-egg-row'))).toBe(false);   // :empty
     expect(t.errors).toEqual([]);
   });
 
-  test('exec(casey) clicks the paw in place — no tab switch; exec(all) opens All through the sidebar item', () => {
-    t.L.applyAccess(SU);
+  test('exec(casey) runs in place — no tab switch; exec(all) opens All through the sidebar item', () => {
+    t.L.applyAccess({ ...SU, ui: hub() });
     t.w.openMainTab('tabCases');
     expect(t.L.exec('casey')).toBe(true);
     expect(t.calls).toEqual([['toggleMascot']]);
@@ -351,45 +357,47 @@ describe('2b. icon rows, for real: exec, neutrals, the hidden paw', () => {
     expect(t.w.currentMainTabId()).toBe('tabAll');
     // the rendered buttons do the same
     t.calls.length = 0;
-    t.d.querySelector('#tabMore .more-egg').click();
+    t.w.openMainTab(t.pageOf('firm:more').id);
+    t.pageOf('firm:more').querySelector('.page-egg[data-yc-shortcut="casey"]').click();
     expect(t.calls).toEqual([['toggleMascot']]);
+    expect(t.w.currentMainTabId()).toBe(t.pageOf('firm:more').id);
     t.w.openMainTab('tabCases');
     t.d.getElementById('homeAll').click();
     expect(t.w.currentMainTabId()).toBe('tabAll');
   });
 
-  test('a firm-placed icon is a neutral .<page>-egg button (title = aria-label = label, aria-hidden icon, no text) that runs exec; Admin\'s row shows once it holds one', () => {
-    t.L.applyAccess({ ...SU, ui: ui({ firm: { placed: { moreIcons: [{ item: 'casey' }, { item: 'myTasks' }], adminIcons: [{ item: 'logout' }] } } }) });
-    const b = t.d.querySelector('#tabMore > .more-egg-row > .more-egg[data-yc-shortcut="myTasks"]');
+  test('a firm-placed icon is a neutral .page-egg button (title = aria-label = label, aria-hidden icon, no text) that runs exec; Admin\'s row shows once it holds one', () => {
+    const pages = hubPages();
+    t.L.applyAccess({ ...SU, ui: hub({ layout: { pages: { 'firm:more': { ...pages['firm:more'], icons: [{ item: 'casey' }, { item: 'myTasks' }] }, 'firm:admin': { ...pages['firm:admin'], icons: [{ item: 'logout' }] } } } }) });
+    const b = t.pageOf('firm:more').querySelector(':scope > .page-egg-row > .page-egg[data-yc-shortcut="myTasks"]');
     expect(b).not.toBeNull();
     expect([b.tagName, b.type, b.getAttribute('title'), b.getAttribute('aria-label'), b.textContent, b.hasAttribute('id'), b.hasAttribute('onclick')])
       .toEqual(['BUTTON', 'button', 'My Tasks', 'My Tasks', '', false, false]);
     expect([b.children.length, b.firstElementChild.className, b.firstElementChild.getAttribute('aria-hidden')]).toEqual([1, 'fa-solid fa-list', 'true']);
-    expect(b.previousElementSibling).toBe(t.L.elementsOf('casey').moreIcons);
-    expect(t.d.querySelector('#tabMore > .more-egg-row').childNodes).toHaveLength(2);   // no whitespace between icon buttons
+    expect(b.previousElementSibling.getAttribute('data-yc-shortcut')).toBe('casey');
+    expect(t.pageOf('firm:more').querySelector(':scope > .page-egg-row').childNodes).toHaveLength(2);   // no whitespace between icon buttons
     b.click();
     expect(t.calls).toEqual([['openTasksTab', { assigned_to: 7, status: 'Incomplete', defer: 'active' }]]);
-    const row = t.d.querySelector('#tabAdmin > .admin-egg-row');
+    const row = t.pageOf('firm:admin').querySelector(':scope > .page-egg-row');
     expect([row.children.length, row.firstElementChild.className, row.firstElementChild.getAttribute('data-yc-shortcut'), t.shown(row)])
-      .toEqual([1, 'admin-egg', 'logout', true]);
+      .toEqual([1, 'page-egg', 'logout', true]);
     // the same look as the paw (the shared rules)
     const look = (el) => ['opacity', 'font-size', 'padding-left', 'border-top-width'].map((p) => t.w.getComputedStyle(el).getPropertyValue(p));
-    expect(look(row.firstElementChild)).toEqual(look(t.L.elementsOf('casey').moreIcons));
+    expect(look(row.firstElementChild)).toEqual(look(b.previousElementSibling));
     // a neutral is never a launcher element
     expect(t.L.elementsOf('myTasks')).toEqual({});
     expect(t.errors).toEqual([]);
   });
 
-  test('a firm removal of casey from More\'s row hides the paw in place (data-yc-unplaced), exec still reaches it; an empty firm layout restores the row byte for byte', () => {
-    const paw = t.L.elementsOf('casey').moreIcons;
-    t.L.applyAccess({ ...SU, ui: ui({ firm: { removed: { moreIcons: ['casey'] } } }) });
-    expect([paw.isConnected, paw.hasAttribute('data-yc-unplaced'), t.shown(paw), paw.style.display]).toEqual([true, true, false, '']);
-    expect(t.region('moreIcons')).not.toBe(PAW.slice('<div class="more-egg-row">'.length, -'</div>'.length));
+  test('the firm takes casey off More Features\' row: no paw on the page, exec still reaches it; the firm\'s row back restores it', () => {
+    const pages = hubPages();
+    t.L.applyAccess({ ...SU, ui: hub({ layout: { pages: { 'firm:more': { ...pages['firm:more'], icons: [] } } } }) });
+    expect(t.icons('firm:more')).toEqual([]);
+    expect(t.d.querySelectorAll('#ycPages [data-yc-shortcut="casey"], [data-yc-unplaced]')).toHaveLength(0);
     expect(t.L.exec('casey')).toBe(true);
     expect(t.calls).toEqual([['toggleMascot']]);
-    t.L.applyAccess({ ui: ui({ firm: {} }) });
-    expect(t.region('moreIcons')).toBe(PAW.slice('<div class="more-egg-row">'.length, -'</div>'.length));
-    expect(t.L.elementsOf('casey').moreIcons).toBe(paw);
+    t.L.applyAccess({ ui: hub() });
+    expect(t.icons('firm:more')).toEqual(['casey']);
   });
 });
 
@@ -430,35 +438,35 @@ describe('3. All is guaranteed in Home\'s icon row (ruling 3)', () => {
 
 // ─────────────────────────────────────────────────────────────────────────
 describe('4. the two-level resolver: shipped → firm → user', () => {
-  const eff = Object.keys(REG).concat('firm:payroll', 'firm:clio');
+  const eff = Object.keys(REG).concat('firm:payroll', 'firm:clio', 'firm:more');
   const R = (sf, o) => VL.resolveLayout(sf, { base: LAY[sf], effective: eff, ...o });
   const shape_ = (out) => out.map((e) => (e.kind === 'item' ? e.id : e.kind === 'label' ? '#' + e.text : '|'));
 
   test('without a firm document the S4a contract holds (base → user); an empty firm document changes nothing', () => {
     const user = { placed: { home: [{ item: 'comms' }, { item: 'cases' }, { break: true }, { item: 'moreAutomations' }] }, removed: { home: ['tasks'] } };
     const a = shape_(R('home', { user })), b = shape_(R('home', { user, firm: {} })), c = shape_(R('home', { user, firm: null }));
-    expect(a).toEqual(['comms', 'cases', 'contacts', 'appts', 'bills', 'pipeline', 'events', 'newClient', 'log', 'calendar', 'moreFeatures', '|', 'moreAutomations']);
+    expect(a).toEqual(['comms', 'cases', 'contacts', 'appts', 'bills', 'pipeline', 'events', 'newClient', 'log', 'calendar', '|', 'moreAutomations']);   // More's Home tile is the firm's (firm:more) since C4
     expect(b).toEqual(a);
     expect(c).toEqual(a);
     for (const e of R('home', { user, firm: {} })) expect(Object.keys(e).sort()).toEqual(e.kind === 'item' ? ['id', 'kind', 'origin'] : ['kind', 'origin']);
   });
 
-  test('the firm step is the base of the user step: a firm More layout is what a user sees (More is firm-only); firm placements read as default', () => {
-    const firm = { placed: { more: [{ item: 'moreReports' }, { item: 'firm:clio' }, { break: true }, { item: 'moreManuals' }] }, removed: { more: ['moreViews'] } };
-    const out = R('more', { firm });
-    expect(shape_(out).slice(0, 5)).toEqual(['moreReports', 'moreAssistant', 'firm:clio', '|', 'moreManuals']);
-    expect(shape_(out)).not.toContain('moreViews');
-    expect(shape_(out).filter((x) => x !== '|').sort()).toEqual([...placed('more').filter((k) => k !== 'moreViews'), 'firm:clio'].sort());
+  test('the firm step is the base of the user step: a firm sidebar layout is what a user sees; firm placements read as default', () => {
+    const firm = { placed: { sidebar: [{ label: 'Firm' }, { item: 'firm:clio' }, { item: 'cases' }] }, removed: { sidebar: ['log'] } };
+    const out = R('sidebar', { firm });
+    expect(shape_(out).slice(0, 3)).toEqual(['#Firm', 'firm:clio', 'cases']);
+    expect(shape_(out)).not.toContain('log');
+    expect(shape_(out).filter((x) => x[0] !== '#').sort()).toEqual([...placed('sidebar').filter((k) => k !== 'log'), 'firm:clio'].sort());
     expect(new Set(out.map((e) => e.origin))).toEqual(new Set(['default']));
-    // the user step over it: a user document naming More is ignored by the renderer (firm-only), but the resolver is one rule — a caller
-    // passing one gets the merge; what matters here is that the firm's order IS the base
-    // (a partial user list: the firm-base items neither placed nor removed slot in by the merge rule, moreReports first)
-    expect(shape_(R('more', { firm, user: { placed: { more: [{ item: 'moreManuals' }] } } })).slice(0, 4)).toEqual(['moreReports', 'moreAssistant', 'firm:clio', 'moreManuals']);
+    // the user step over it: the firm's order IS the base (a partial user list: the firm-base items slot in by the merge rule)
+    const mine = shape_(R('sidebar', { firm, user: { placed: { sidebar: [{ item: 'contacts' }] } } }));
+    expect(mine.filter((x) => ['firm:clio', 'cases', 'contacts'].includes(x))).toEqual(['firm:clio', 'cases', 'contacts']);
+    expect(mine).not.toContain('log');
   });
 
   test('ruling 4: a firm Home change only ADDS for a user who already arranged Home; a fresh user gets the firm\'s order', () => {
     // a FULL firm list, as the firm editor writes one (a partial list pulls base items next to their neighbours, S4a JC3)
-    const FIRM_HOME = ['tasks', 'cases', 'moreAutomations', '|', 'contacts', 'appts', 'bills', '|', 'pipeline', 'events', 'newClient', '|', 'calendar', 'moreFeatures', 'comms', 'firm:payroll'];
+    const FIRM_HOME = ['tasks', 'cases', 'moreAutomations', '|', 'contacts', 'appts', 'bills', '|', 'pipeline', 'events', 'newClient', '|', 'calendar', 'firm:more', 'comms', 'firm:payroll'];
     const firm = { placed: { home: FIRM_HOME.map((x) => (x === '|' ? { break: true } : { item: x })) }, removed: { home: ['log'] } };
     // no user layout: the firm's Home exactly
     const fresh = shape_(R('home', { firm }));
@@ -489,7 +497,7 @@ describe('4. the two-level resolver: shipped → firm → user', () => {
     expect(shape_(R('home', { firm: { placed: { home: [{ item: 'cases' }] }, removed: { home: ['bills'] } }, user: { placed: { home: [{ item: 'bills' }] } }, locked }))).toContain('bills');   // explicit beats the firm's removal
   });
 
-  test('junk never throws; ids missing from the effective registry drop at either tier; a user doc may not name More through the renderer path (firm-only)', () => {
+  test('junk never throws; ids missing from the effective registry drop at either tier', () => {
     for (const junk of [null, 1, 'x', [], { placed: 5 }, { placed: { home: 'x' }, removed: [] }, { removed: { home: 'x' } }]) {
       expect(() => R('home', { firm: junk, user: junk })).not.toThrow();
       expect(shape_(R('home', { firm: junk, user: junk }))).toEqual(shape_(R('home', {})));
@@ -503,7 +511,8 @@ describe('5. the renderer under a firm layout, for real', () => {
   let t;
   beforeEach(() => { t = boot(); });
   afterEach(() => t.close());
-  const MORE = { placed: { more: [
+  // More Features rebalanced by the firm: rows of four, Payroll (a firm item) in row 5, Users (an Admin panel) last
+  const MORE_TILES = [
     { item: 'moreManuals' }, { item: 'moreSettings' }, { item: 'moreTheme' }, { item: 'moreFeatureRequests' }, { break: true },
     { item: 'moreSimpleForms' }, { item: 'moreFormBuilder' }, { item: 'moreFormInbox' }, { item: 'morePortalManager' }, { break: true },
     { item: 'moreSignatures' }, { item: 'moreAssetManager' }, { item: 'moreVideoManager' }, { item: 'moreDocuments' }, { break: true },
@@ -512,111 +521,105 @@ describe('5. the renderer under a firm layout, for real', () => {
     { item: 'moreCampaigns' }, { item: 'moreRedirects' }, { item: 'moreLandingPages' }, { item: 'moreReports' }, { break: true },
     { item: 'moreAssistant' }, { break: true },
     { item: 'adminUsers' },
-  ] } };
+  ];
+  const MORE = (o = {}) => hub({ items: [FIRM_URL], layout: { pages: { 'firm:more': { ...hubPages()['firm:more'], tiles: MORE_TILES } } }, ...o });
 
-  test('no firm layout: every surface is the mounted DOM byte for byte, and applyAccess changes nothing', () => {
+  test('no firm layout: every mounted surface is the DOM byte for byte, and applyAccess changes nothing; no firm row; the hub pages re-run changes nothing either', () => {
     for (const sf of SURFACES) expect([sf, t.region(sf)]).toEqual([sf, t.parsed(sf)]);
     t.L.applyAccess({ ...SU, ui: ui({ ro: { items: [FIRM_URL] } }) });
     const done = t.observe();
     t.L.applyAccess({ ...SU, ui: ui({ ro: { items: [FIRM_URL] } }) });
     expect(done().map((r) => r.type + ' ' + (r.target.id || r.target.nodeName))).toEqual([]);
-    for (const sf of SURFACES.filter((s) => s !== 'more')) expect([sf, t.region(sf)]).toEqual([sf, t.parsed(sf)]);
-    // More: the grid plus the firm row (S3.3) after it — the only addition
-    expect(t.region('more').startsWith(t.parsed('more'))).toBe(true);
-    expect(t.d.querySelectorAll('#tabMore > [data-yc-firm-row]')).toHaveLength(3);
+    for (const sf of SURFACES) expect([sf, t.region(sf)]).toEqual([sf, t.parsed(sf)]);
+    expect([t.d.querySelectorAll('[data-yc-firm-row]').length, t.d.getElementById('ycPages').childNodes.length]).toEqual([0, 0]);   // the More firm row retired (C4)
+    t.L.applyAccess({ ...SU, ui: hub({ items: [FIRM_URL] }) });
+    const done2 = t.observe();
+    t.L.applyAccess({ ...SU, ui: hub({ items: [FIRM_URL] }) });
+    expect(done2().map((r) => r.type + ' ' + (r.target.id || r.target.nodeName))).toEqual([]);
+    expect(t.d.querySelectorAll('[data-yc-firm-row], #ycPages [data-yc-shortcut="firm:payroll"]')).toHaveLength(0);
     expect(t.errors).toEqual([]);
   });
 
-  test('More rebalanced by the firm: the SAME tiles move (by id), rows follow the breaks, the firm item is a neutral tile in row 5, the firm row is gone', () => {
-    const before = t.defaults();
-    t.L.applyAccess({ ...SU, ui: ui({ firm: MORE, ro: { items: [FIRM_URL] } }) });
-    const rows = t.seen('more').join(' ').split(' | ').map((r) => r.split(' '));
+  test('More Features laid out by the firm: rows follow the breaks, the firm item is a neutral tile in row 5', () => {
+    t.L.applyAccess({ ...SU, ui: MORE() });
+    const rows = t.seen('firm:more').join(' ').split(' | ').map((r) => r.split(' '));
     expect(rows.map((r) => r.length)).toEqual([4, 4, 4, 4, 4, 4, 1, 1]);
-    expect(rows[4]).toEqual(['moreAvailability', 'moreBooking', 'moreCourtPreview', '+firm:payroll']);
-    expect(rows[6]).toEqual(['moreAssistant']);
+    expect(rows[4]).toEqual(['+moreAvailability', '+moreBooking', '+moreCourtPreview', '+firm:payroll']);
+    expect(rows[6]).toEqual(['+moreAssistant']);
     expect(rows[7]).toEqual(['+adminUsers']);
-    // a firm break on a grid is two <br> elements, never a .home-break
-    expect(t.nodesOf('more').filter((n) => n.tagName === 'BR')).toHaveLength(14);
-    expect(t.d.querySelectorAll('#tabMore .home-break, #tabAdmin .home-break')).toHaveLength(0);
-    for (const id of placed('more')) expect(t.L.elementsOf(id).more).toBe(before[id].more);
-    expect(t.d.querySelectorAll('#tabMore > [data-yc-firm-row]')).toHaveLength(0);   // §4.3 step 4: placed.more replaces the firm row
-    const n = t.d.querySelector('#tabMore > .big-button[data-yc-shortcut="firm:payroll"]');
+    // a firm break on a page is two <br> elements, never a .home-break
+    expect(t.nodesOf('firm:more').filter((n) => n.tagName === 'BR')).toHaveLength(14);
+    expect(t.d.querySelectorAll('#ycPages .home-break')).toHaveLength(0);
+    const n = t.pageOf('firm:more').querySelector(':scope > .big-button[data-yc-shortcut="firm:payroll"]');
     expect([n.className, n.hasAttribute('data-target'), n.hasAttribute('data-exclusive-group'), n.hasAttribute('onclick'), n.hasAttribute('id')]).toEqual(['big-button', false, false, false, false]);
     expect([...n.childNodes].map((c) => c.nodeName)).toEqual(['I', 'BR', 'BR', '#text']);
     expect([n.querySelector('i').className, n.lastChild.nodeValue]).toEqual(['fa-solid fa-money-check fa-2xl', 'Payroll']);
     n.click();
     expect(t.calls.pop()).toEqual(['open', 'https://payroll.example.com/', '_blank', 'noopener']);
-    // the grid's whitespace grammar is kept: every direct child is preceded by the mount's indent
-    for (const el of t.d.querySelectorAll('#tabMore > .big-button')) expect(el.previousSibling.nodeValue).toBe('\n  ');
     expect(t.errors).toEqual([]);
   });
 
-  test('Users placed on More opens in place there, and IT keeps its capability-gated tile', () => {
-    t.L.applyAccess({ ...SU, ui: ui({ firm: MORE }) });
-    t.w.openMainTab('tabMore');
-    const n = t.d.querySelector('#tabMore > .big-button[data-yc-shortcut="adminUsers"]');
+  test('Users placed on More Features opens in place there, and IT keeps its capability-gated tile', () => {
+    t.L.applyAccess({ ...SU, ui: MORE() });
+    const M = t.pageOf('firm:more'), A = t.pageOf('firm:admin');
+    t.w.openMainTab(M.id);
+    const n = M.querySelector(':scope > .big-button[data-yc-shortcut="adminUsers"]');
     expect([n.getAttribute('data-target'), n.hasAttribute('data-exclusive-group'), n.hasAttribute('onclick')]).toEqual(['usersDiv', false, false]);
     n.click();
-    expect([t.w.currentMainTabId(), t.shown(t.d.getElementById('usersDiv')), t.d.getElementById('tabMore').classList.contains('drill-active'), t.d.getElementById('tabAdmin').classList.contains('drill-active')]).toEqual(['tabMore', true, true, false]);
-    expect(t.d.querySelector('#tabMore > .feature-strip .pill-button.active').dataset.target).toBe('usersDiv');
-    // the Admin tile is still the one element of adminUsers; More's neutral is not in elementsOf
-    expect(Object.keys(t.L.elementsOf('adminUsers'))).toEqual(['admin']);
+    expect([t.w.currentMainTabId(), t.shown(t.d.getElementById('usersDiv')), M.classList.contains('drill-active'), A.classList.contains('drill-active')]).toEqual([M.id, true, true, false]);
+    expect(M.querySelector(':scope > .feature-strip .pill-button.active').dataset.target).toBe('usersDiv');
+    // the tiles are neutrals: adminUsers has no launcher element at all
+    expect(t.L.elementsOf('adminUsers')).toEqual({});
     t.L.applyAccess({ isAdmin: false, roles: ['it'] });
-    expect(t.d.querySelector('#tabMore > .big-button[data-yc-shortcut="adminUsers"]')).not.toBeNull();
+    expect(t.pageOf('firm:more').querySelector(':scope > .big-button[data-yc-shortcut="adminUsers"]')).not.toBeNull();
   });
 
-  test('a firm-removed tile stays in the DOM hidden by data-yc-unplaced (never style.display), gets no pill, and exec still opens its panel', () => {
-    const views = t.L.elementsOf('moreViews').more;
-    t.L.applyAccess({ ...SU, ui: ui({ firm: { removed: { more: ['moreViews'] } }, ro: { items: [FIRM_URL] } }) });
-    expect([views.isConnected, views.parentElement.id, views.hasAttribute('data-yc-unplaced'), views.style.display, t.shown(views)]).toEqual([true, 'tabMore', true, '', false]);
-    expect(t.seen('more')).not.toContain('moreViews');
-    // a removal alone keeps the firm row (only placed.more replaces it)
-    expect(t.d.querySelectorAll('#tabMore > [data-yc-firm-row]')).toHaveLength(3);
-    // drill in: the strip skips the unplaced tile (and a denied one)
-    t.w.openMainTab('tabMore');
-    t.L.elementsOf('moreManuals').more.click();
-    const pills = [...t.d.querySelectorAll('#tabMore > .feature-strip .pill-button')].map((p) => p.textContent.trim());
+  test('a tile the firm takes off More Features is drawn nowhere, gets no pill, and exec still opens its panel (on the panel tab: no page shows it)', () => {
+    const tiles = hubPages()['firm:more'].tiles.filter((e) => e.item !== 'moreViews');
+    t.L.applyAccess({ ...SU, ui: hub({ items: [FIRM_URL], layout: { pages: { 'firm:more': { ...hubPages()['firm:more'], tiles } } } }) });
+    expect(t.seen('firm:more')).not.toContain('+moreViews');
+    expect(t.d.querySelectorAll('#ycPages [data-yc-shortcut="moreViews"], #ycPages [data-yc-unplaced]')).toHaveLength(0);
+    // drill in: the strip is the page's tiles
+    const M = t.pageOf('firm:more');
+    t.w.openMainTab(M.id);
+    M.querySelector('[data-yc-shortcut="moreManuals"]').click();
+    const pills = [...M.querySelectorAll(':scope > .feature-strip .pill-button')].map((p) => p.textContent.trim());
     expect(pills).toContain('Manuals');
     expect(pills).not.toContain('Views');
-    expect(pills).toContain('Payroll');
-    // exec reaches the hidden tile: the panel opens all the same (the URL restore refuses it — tests/wsurlS2.test.js)
+    // exec reaches it all the same (the URL restore refuses it — tests/wsurlS2.test.js)
     expect(t.L.exec('moreViews')).toBe(true);
-    expect(t.shown(t.d.getElementById('viewsDiv'))).toBe(true);
-    // hidden where its default neighbour is: the DOM order is the default's
-    t.L.applyAccess({ ...SU, ui: ui({ firm: { removed: { more: ['moreViews'] } } }) });
-    expect(t.region('more').replace(' data-yc-unplaced=""', '')).toBe(t.parsed('more'));
-    expect((t.region('more').match(/data-yc-unplaced/g) || []).length).toBe(1);
+    expect([t.w.currentMainTabId(), t.shown(t.d.getElementById('viewsDiv'))]).toEqual(['tabPanel', true]);
   });
 
-  test('a firm-removed tile that HEADS a row stays after its break: the DOM order is the default\'s (anchored by the structure too)', () => {
-    t.L.applyAccess({ ...SU, ui: ui({ firm: { removed: { more: ['moreSimpleForms', 'moreCampaigns'], home: ['bills', 'tasks'], admin: ['adminDbConsole'] } } }) });
-    for (const sf of ['more', 'home', 'admin']) {
-      expect([sf, t.region(sf).replace(/ data-yc-unplaced=""/g, '')]).toEqual([sf, t.parsed(sf)]);
-    }
-    expect([...t.d.querySelectorAll('[data-yc-unplaced]')].map((e) => e.textContent.trim())).toEqual(['Billing', 'Tasks', 'Simple Forms', 'Campaigns', 'DB Console (SU)']);
-    const sf = t.L.elementsOf('moreSimpleForms').more;
-    expect([sf.previousElementSibling.tagName, sf.previousElementSibling.previousElementSibling.tagName]).toEqual(['BR', 'BR']);
+  test('a firm-removed Home tile that HEADS a row stays after its break, hidden by data-yc-unplaced (never style.display): the DOM order is the default\'s', () => {
+    const bills = t.L.elementsOf('bills').home;
+    t.L.applyAccess({ ...SU, ui: ui({ firm: { removed: { home: ['bills', 'tasks'] } } }) });
+    expect([t.region('home').replace(/ data-yc-unplaced=""/g, ''), bills.style.display, t.shown(bills)]).toEqual([t.parsed('home'), '', false]);
+    expect([...t.d.querySelectorAll('[data-yc-unplaced]')].map((e) => e.textContent.trim())).toEqual(['Billing', 'Tasks']);
+    expect(bills.previousElementSibling.className).toBe('home-break');
+    expect(t.L.exec('bills')).toBe(true);                                                  // exec still reaches the hidden tile
   });
 
-  test('a USER document naming More / Admin / their icon rows is ignored by the renderer (firm-only surfaces)', () => {
-    const before = SURFACES.map((sf) => t.region(sf));
-    t.L.applyAccess({ ...SU, ui: ui({ layout: { placed: { more: [{ item: 'moreReports' }], moreIcons: [{ item: 'myTasks' }], admin: [], adminIcons: [{ item: 'logout' }] }, removed: { more: ['moreManuals'], moreIcons: ['casey'] } } }) });
-    for (const sf of ['more', 'moreIcons', 'admin', 'adminIcons']) expect([sf, t.region(sf)]).toEqual([sf, before[SURFACES.indexOf(sf)]]);
-    expect(t.d.querySelectorAll('#tabMore [data-yc-shortcut], #tabAdmin [data-yc-shortcut], #tabMore [data-yc-unplaced]')).toHaveLength(0);
+  test('a USER document naming More / Admin / their icon rows is ignored by the renderer (retired surfaces: the pages and every mounted surface unchanged)', () => {
+    t.L.applyAccess({ ...SU, ui: hub() });
+    const before = [t.d.getElementById('ycPages').innerHTML, ...SURFACES.map((sf) => t.region(sf))];
+    t.L.applyAccess({ ...SU, ui: hub({}, { placed: { more: [{ item: 'moreReports' }], moreIcons: [{ item: 'myTasks' }], admin: [], adminIcons: [{ item: 'logout' }] }, removed: { more: ['moreManuals'], moreIcons: ['casey'] } }) });
+    expect([t.d.getElementById('ycPages').innerHTML, ...SURFACES.map((sf) => t.region(sf))]).toEqual(before);
+    // and a firm document still carrying them (the live row until its next save) draws nothing from them either
+    t.L.applyAccess({ ...SU, ui: hub({ layout: { placed: { more: [{ item: 'moreReports' }], adminIcons: [{ item: 'logout' }] }, removed: { admin: ['adminEtch'] } } }) });
+    expect(t.d.getElementById('ycPages').innerHTML).toBe(before[0]);
   });
 
-  test('Admin: the firm removes a tile and places an icon; Home and the sidebar: the firm\'s defaults then the user\'s', () => {
-    t.L.applyAccess({ ...SU, ui: ui({
-      firm: { placed: { admin: [{ item: 'adminUsers' }, { item: 'adminEtch' }, { break: true }, { item: 'moreManuals' },
-        ...placed('admin').filter((k) => !['adminUsers', 'adminEtch', 'adminDbConsole'].includes(k)).map((k) => ({ item: k }))], adminIcons: [{ item: 'myTasks' }],
-        home: [{ item: 'tasks' }, { item: 'cases' }], sidebar: [{ label: 'Firm' }, { item: 'cases' }] }, removed: { admin: ['adminDbConsole'], home: ['log'] } },
-      layout: { placed: { home: [{ item: 'comms' }, { item: 'tasks' }] } },
-    }) });
-    const admin = t.seen('admin');
-    expect(admin).toEqual(['adminUsers', 'adminEtch', '|', '+moreManuals', ...placed('admin').filter((k) => !['adminUsers', 'adminEtch', 'adminDbConsole'].includes(k))]);
-    expect(admin).not.toContain('adminDbConsole');
-    expect(t.L.elementsOf('adminDbConsole').admin.hasAttribute('data-yc-unplaced')).toBe(true);
-    expect([...t.d.querySelectorAll('#tabAdmin > .admin-egg-row > .admin-egg')].map((b) => b.getAttribute('data-yc-shortcut'))).toEqual(['myTasks']);
+  test('Admin: the firm takes a tile off its page and places an icon; Home and the sidebar: the firm\'s defaults then the user\'s', () => {
+    const rest = hubTiles('firm:admin').filter((k) => !['adminUsers', 'adminEtch', 'adminDbConsole'].includes(k));
+    t.L.applyAccess({ ...SU, ui: hub({ layout: {
+      placed: { home: [{ item: 'tasks' }, { item: 'cases' }], sidebar: [{ label: 'Firm' }, { item: 'cases' }] }, removed: { home: ['log'] },
+      pages: { 'firm:admin': { tiles: [{ item: 'adminUsers' }, { item: 'adminEtch' }, { break: true }, { item: 'moreManuals' }, ...rest.map((k) => ({ item: k }))], icons: [{ item: 'myTasks' }] } },
+    } }, { placed: { home: [{ item: 'comms' }, { item: 'tasks' }] } }) });
+    const admin = t.seen('firm:admin');
+    expect(admin).toEqual(['+adminUsers', '+adminEtch', '|', '+moreManuals', ...rest.map((k) => '+' + k)]);
+    expect(admin).not.toContain('+adminDbConsole');
+    expect(t.icons('firm:admin')).toEqual(['myTasks']);
     // Home: the user's order first, the firm's additions after their firm-base neighbours, the firm's removal honoured
     const home = t.seen('home');
     expect(home[0]).toBe('comms');
@@ -627,69 +630,72 @@ describe('5. the renderer under a firm layout, for real', () => {
     expect(t.seen('sidebar')[0]).toBe('#Firm');
     expect(t.seen('sidebar')[1]).toBe('cases');
     // the More panel pinned on Admin opens in place on Admin (S6c-4)
-    t.w.openMainTab('tabAdmin');
-    t.d.querySelector('#tabAdmin > .big-button[data-yc-shortcut="moreManuals"]').click();
-    expect([t.w.currentMainTabId(), t.shown(t.d.getElementById('manualsDiv')), t.d.getElementById('tabAdmin').classList.contains('drill-active')]).toEqual(['tabAdmin', true, true]);
+    const A = t.pageOf('firm:admin');
+    t.w.openMainTab(A.id);
+    A.querySelector(':scope > .big-button[data-yc-shortcut="moreManuals"]').click();
+    expect([t.w.currentMainTabId(), t.shown(t.d.getElementById('manualsDiv')), A.classList.contains('drill-active')]).toEqual([A.id, true, true]);
     expect(t.errors).toEqual([]);
   });
 
-  test('re-running the same state changes nothing; a different firm layout then an empty one restores every surface byte for byte, same elements', () => {
+  test('re-running the same state changes nothing; a different firm layout then an empty one restores every mounted surface byte for byte, same elements', () => {
     const before = t.defaults();
-    const state = { ...SU, ui: ui({ firm: MORE, ro: { items: [FIRM_URL] } }) };
+    const state = { ...SU, ui: MORE() };
     t.L.applyAccess(state);
-    const snap = SURFACES.map((sf) => t.region(sf));
+    const snap = [t.d.getElementById('ycPages').innerHTML, ...SURFACES.map((sf) => t.region(sf))];
     const done = t.observe();
     t.L.applyAccess(state);
     t.L.applyAccess({ roles: state.roles });
     expect(done().map((r) => r.type + ' ' + (r.target.id || r.target.nodeName))).toEqual([]);
-    expect(SURFACES.map((sf) => t.region(sf))).toEqual(snap);
+    expect([t.d.getElementById('ycPages').innerHTML, ...SURFACES.map((sf) => t.region(sf))]).toEqual(snap);
     for (const empty of [{}, { placed: {}, removed: {} }, null]) {
-      t.L.applyAccess({ ...SU, ui: ui({ firm: empty, ro: { items: [FIRM_URL] } }) });
-      for (const sf of SURFACES.filter((s) => s !== 'more')) expect([sf, t.region(sf)]).toEqual([sf, t.parsed(sf)]);
-      expect(t.region('more').startsWith(t.parsed('more'))).toBe(true);
-      expect(t.d.querySelectorAll('#tabMore > [data-yc-firm-row]')).toHaveLength(3);   // the firm row is back
+      t.L.applyAccess({ ...SU, ui: ui({ firm: empty, ro: hubFirm({ items: [FIRM_URL] }).registry_overrides }) });
+      for (const sf of SURFACES) expect([sf, t.region(sf)]).toEqual([sf, t.parsed(sf)]);
+      expect([t.seen('firm:more'), t.seen('firm:admin')]).toEqual([[], []]);              // the pages, with no document: empty
       t.L.applyAccess(state);
     }
     t.L.applyAccess({ ...SU, ui: ui({}) });
     for (const sf of SURFACES) expect([sf, t.region(sf)]).toEqual([sf, t.parsed(sf)]);
     for (const id of Object.keys(REG)) expect([id, t.L.elementsOf(id)]).toEqual([id, before[id]]);
     expect(t.d.querySelectorAll('[data-yc-shortcut], [data-yc-unplaced]')).toHaveLength(0);
+    expect(t.d.getElementById('ycPages').childNodes).toHaveLength(0);
   });
 
-  test('FUZZ: after any firm layout every mounted default element is still in the DOM, in its surface, the same element — and no id repeats', () => {
+  test('FUZZ: after any firm layout (pages and the retired surfaces included) every mounted default element is still in the DOM, in its surface, the same element — and no id repeats', () => {
     let seed = 20261016;
     const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
     const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
     const pool = Object.keys(REG).concat('firm:payroll', 'firm:clio', 'nope', 'user:x');
     const before = t.defaults();
     const parent = (sf) => (sf === 'home' ? t.d.querySelector('#tabHome > .home-grid') : sf === 'sidebar' ? t.d.getElementById('appSidebar')
-      : sf === 'homeIcons' ? t.d.querySelector('#tabHome > .home-egg-row') : sf === 'moreIcons' ? t.d.querySelector('#tabMore > .more-egg-row')
-      : sf === 'adminIcons' ? t.d.querySelector('#tabAdmin > .admin-egg-row') : t.d.getElementById(sf === 'more' ? 'tabMore' : 'tabAdmin'));
+      : t.d.querySelector('#tabHome > .home-egg-row'));
     const idsIn = () => [...t.d.querySelectorAll('[id]')].map((e) => e.id);
+    const ALL_SF = [...SURFACES, 'more', 'moreIcons', 'admin', 'adminIcons'];               // the retired four: junk the renderer must ignore
     for (let round = 0; round < 60; round++) {
-      const firm = { placed: {}, removed: {} };
+      const firm = { placed: {}, removed: {}, pages: {} };
       const user = { placed: {}, removed: {} };
-      for (const sf of SURFACES) {
+      const mk = (grid, icons, sidebar) => {
+        const list = [];
+        const n = Math.floor(rnd() * (icons ? 6 : 14));
+        for (let i = 0; i < n; i++) {
+          const r = rnd();
+          if (!icons && grid && r < 0.15) list.push({ break: true });
+          else if (!icons && sidebar && r < 0.15) list.push({ label: 'L' + i });
+          else list.push({ item: pick(pool) });
+        }
+        return list;
+      };
+      for (const sf of ALL_SF) {
         const grid = ['home', 'more', 'admin'].includes(sf), icons = /Icons$/.test(sf);
-        const mk = () => {
-          const list = [];
-          const n = Math.floor(rnd() * (icons ? 6 : 14));
-          for (let i = 0; i < n; i++) {
-            const r = rnd();
-            if (!icons && grid && r < 0.15) list.push({ break: true });
-            else if (!icons && sf === 'sidebar' && r < 0.15) list.push({ label: 'L' + i });
-            else list.push({ item: pick(pool) });
-          }
-          return list;
-        };
-        if (rnd() < 0.6) firm.placed[sf] = mk();
+        if (rnd() < 0.6) firm.placed[sf] = mk(grid, icons, sf === 'sidebar');
         if (rnd() < 0.5) firm.removed[sf] = Array.from({ length: Math.floor(rnd() * 5) }, () => pick(pool));
-        if (['home', 'sidebar', 'homeIcons'].includes(sf)) {
-          if (rnd() < 0.5) user.placed[sf] = mk();
+        if (SURFACES.includes(sf)) {
+          if (rnd() < 0.5) user.placed[sf] = mk(grid, icons, sf === 'sidebar');
           if (rnd() < 0.4) user.removed[sf] = Array.from({ length: Math.floor(rnd() * 4) }, () => pick(pool));
         }
       }
-      t.L.applyAccess({ ...SU, ui: ui({ firm, layout: user, ro: { items: [FIRM_URL], locked: rnd() < 0.3 ? ['bills'] : [] } }) });
+      for (const pg of ['firm:more', 'firm:admin']) if (rnd() < 0.7) firm.pages[pg] = { tiles: mk(true, false, false), icons: mk(false, true, false) };
+      const f = hubFirm({ items: [FIRM_URL], ro: { locked: rnd() < 0.3 ? ['bills'] : [] } });
+      t.L.applyAccess({ ...SU, ui: { firm: { registry_overrides: f.registry_overrides, layout: firm }, user: { layout: user } } });
       for (const id of Object.keys(REG)) {
         for (const sf of Object.keys(before[id])) {
           const el = before[id][sf];
@@ -698,6 +704,7 @@ describe('5. the renderer under a firm layout, for real', () => {
       }
       const all = idsIn();
       expect([round, all.filter((x, i) => all.indexOf(x) !== i)]).toEqual([round, []]);
+      expect([round, !!t.pageOf('firm:more'), !!t.pageOf('firm:admin')]).toEqual([round, true, true]);
       expect([round, t.shown(t.d.getElementById('homeAll'))]).toEqual([round, true]);   // guaranteed, whatever the layouts
       expect([round, t.errors]).toEqual([round, []]);
     }
@@ -705,13 +712,12 @@ describe('5. the renderer under a firm layout, for real', () => {
     for (const sf of SURFACES) expect([sf, t.region(sf)]).toEqual([sf, t.parsed(sf)]);
   });
 
-  test('the firm row rule: no placed.more → the row; placed.more (even []) → no row, firm items only where placed', () => {
-    t.L.applyAccess({ ...SU, ui: ui({ ro: { items: [FIRM_URL] }, firm: { removed: { more: ['moreReports'] } } }) });
-    expect(t.d.querySelectorAll('#tabMore > [data-yc-firm-row]')).toHaveLength(3);
-    t.L.applyAccess({ ...SU, ui: ui({ ro: { items: [FIRM_URL] }, firm: { placed: { more: [] } } }) });
-    expect(t.d.querySelectorAll('#tabMore > [data-yc-firm-row]')).toHaveLength(0);
-    expect(t.seen('more')).not.toContain('+firm:payroll');
-    expect(ids(t.L.effectiveRegistry())).toContain('firm:payroll');   // still listed in All and the palette; exec dispatches it
+  test('no firm row (retired with the hub, C4): a firm item is drawn only where placed, still listed in All and the palette, and exec dispatches it', () => {
+    for (const firm of [undefined, { removed: { home: ['bills'] } }, { placed: { home: [] } }]) {
+      t.L.applyAccess({ ...SU, ui: hub({ items: [FIRM_URL], ...(firm ? { layout: firm } : {}) }) });
+      expect(t.d.querySelectorAll('[data-yc-firm-row], [data-yc-shortcut="firm:payroll"]')).toHaveLength(0);
+    }
+    expect(ids(t.L.effectiveRegistry())).toContain('firm:payroll');
     expect(t.L.exec('firm:payroll')).toBe(true);
     expect(t.calls.pop()).toEqual(['open', 'https://payroll.example.com/', '_blank', 'noopener']);
   });

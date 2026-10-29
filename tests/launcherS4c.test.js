@@ -38,6 +38,8 @@ const vm = require('vm');
 const { JSDOM } = require('jsdom');
 const shape = require('../lib/uiConfigShape');
 const { rawShellHtml } = require('./helpers/shellHtml');
+// More Features and Admin: the firm's pages since launcher-nits C4 (tests/helpers/hubPages.js)
+const { hubFirm, stageHtml } = require('./helpers/hubPages');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
@@ -186,16 +188,15 @@ const FIRM_GONE = { id: 'firm:gone', label: 'Gone for now', icon: 'ghost',
   action: { type: 'url', href: 'https://gone.example.com/', present: 'window' } };
 const RO = { items: [FIRM_URL, FIRM_GONE], hidden: ['firm:gone'], locked: [], renames: {} };
 const ACCESS = { isAdmin: false, denied: ['moreViews'] };
+// the firm's documents: RO, plus More Features and Admin as the firm's pages (launcher-nits C4)
+const FIRM = (ro = RO) => hubFirm({ items: ro.items, ro, visibleTo: { 'firm:admin': ['it', 'admin'], ...(ro.visible_to || {}) } });
 
 function boot({ shortcuts = null, layout = null, access = ACCESS, login = true, platform = '', editor = true } = {}) {
   const LAY = (() => { const c = vm.createContext({}); c.window = c; vm.runInContext(REGISTRY_SRC, c); return J(c.DEFAULT_LAYOUTS); })();
   const REG = (() => { const c = vm.createContext({}); c.window = c; vm.runInContext(REGISTRY_SRC, c); return c.FEATURE_REGISTRY; })();
-  const placedIds = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
-  const grid = (sf) => placedIds(sf).map((k) => REG[k]).filter((it) => it.target)
-    .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
+  const tabs = new Set(['tabHome']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
@@ -206,9 +207,8 @@ function boot({ shortcuts = null, layout = null, access = ACCESS, login = true, 
       <button id="homeAll" class="home-btn"></button></div>
     ${ALL_TAB}
     ${plainTabs}
-    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
-    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
+    <div id="ycPages"></div>
+    <div id="ycPanels" style="display:none">${stageHtml(REG)}</div>
     <textarea id="elsewhere"></textarea>
   </body></html>`;
   const errors = [];
@@ -230,7 +230,7 @@ function boot({ shortcuts = null, layout = null, access = ACCESS, login = true, 
   w.eval(stubSrc + CURRENT_SRC + TABS_SRC + DRILL_SRC);
   const opened = [];
   w.open = (url) => { opened.push(url); return null; };
-  const ui = () => ({ firm: { registry_overrides: J(RO) }, user: { ...(layout ? { layout: J(layout) } : {}), ...(shortcuts ? { shortcuts: J(shortcuts) } : {}) } });
+  const ui = () => ({ firm: FIRM(), user: { ...(layout ? { layout: J(layout) } : {}), ...(shortcuts ? { shortcuts: J(shortcuts) } : {}) } });
   w.firmData = { ui: ui() };
   // the server: GET answers what it holds; PUT validates with the real
   // validator and stores; fail[key] forces a reply for that config_key; hold
@@ -286,7 +286,7 @@ function boot({ shortcuts = null, layout = null, access = ACCESS, login = true, 
   const press = (init) => key(cap(), init);
   return {
     w, d, server, errors, calls, opened, confirms, flush, key, panel, scSec, scRows, cap, msg, addBtn, openEditor, startAdd, press,
-    tab: () => w.currentMainTabId(), answer: (v) => { answer = v; }, close: () => w.close(),
+    tab: () => w.currentMainTabId(), morePage: () => w.document.querySelector('#ycPages > [data-yc-page="firm:more"]').id, answer: (v) => { answer = v; }, close: () => w.close(),
   };
 }
 const CMD_CTRL_T = { key: 't', code: 'KeyT', ctrlKey: true, metaKey: true };
@@ -304,11 +304,11 @@ describe('the dispatcher (ycAll.js onKey, for real)', () => {
     expect([e.defaultPrevented, t.tab()]).toEqual([true, 'tabTasks']);
     const e2 = t.key(t.d.body, { key: 'a', code: 'KeyA', ctrlKey: true, altKey: true });   // a More panel
     expect(e2.defaultPrevented).toBe(true);
-    expect([t.tab(), t.w.getComputedStyle(t.d.getElementById('automationsDiv')).display]).toEqual(['tabMore', 'block']);
+    expect([t.tab(), t.w.getComputedStyle(t.d.getElementById('automationsDiv')).display]).toEqual([t.morePage(), 'block']);   // More Features: a firm page since C4
     t.key(t.d.body, { key: 'p', code: 'KeyP', ctrlKey: true, altKey: true });               // a firm item
     expect(t.opened).toEqual(['https://payroll.example.com/']);
     const e3 = t.key(t.d.body, { key: 'y', code: 'KeyY', ctrlKey: true, metaKey: true });
-    expect([e3.defaultPrevented, t.tab()]).toEqual([false, 'tabMore']);
+    expect([e3.defaultPrevented, t.tab()]).toEqual([false, t.morePage()]);
     expect(t.errors).toEqual([]);
   });
 
@@ -386,7 +386,7 @@ describe('the dispatcher (ycAll.js onKey, for real)', () => {
   test('a role-restricted target (the firm\'s visible_to, S3.4) does nothing; for a role that may see it, it runs', () => {
     t = boot({ shortcuts: { bindings: [B(['ctrl', 'meta'], 'a', 'moreAutomations')] } });
     t.w.openMainTab('tabHome');
-    t.w.firmData.ui = { ...t.w.firmData.ui, firm: { registry_overrides: { ...J(RO), visible_to: { moreAutomations: ['attorney'] } } } };
+    t.w.firmData.ui = { ...t.w.firmData.ui, firm: FIRM({ ...J(RO), visible_to: { moreAutomations: ['attorney'] } }) };
     t.w.ycLauncher.applyAccess({ ui: t.w.firmData.ui, roles: ['staff'] });
     expect(t.w.ycLauncher.effectiveRegistry().map((e) => e.id)).not.toContain('moreAutomations');
     const ev = { key: 'a', code: 'KeyA', ctrlKey: true, metaKey: true };
@@ -394,7 +394,7 @@ describe('the dispatcher (ycAll.js onKey, for real)', () => {
     expect(t.w.getComputedStyle(t.d.getElementById('automationsDiv')).display).toBe('none');
     t.w.ycLauncher.applyAccess({ roles: ['staff', 'attorney'] });
     t.key(t.d.body, ev);
-    expect(t.tab()).toBe('tabMore');
+    expect(t.tab()).toBe(t.morePage());
   });
 
   test('Dvorak: the "." key (code KeyE) does not fire Ctrl+Alt+E; the "e" key (code KeyD) does', () => {

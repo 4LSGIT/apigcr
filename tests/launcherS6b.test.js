@@ -14,8 +14,9 @@
  *      (tests/helpers/shellHtml.js) has the shipped Home tiles and breaks in
  *      order inside .home-grid, nothing else, and no surface draws an S6b item.
  *   3. #homeAll: icon-only, an accessible name and a title, in the Home icon
- *      row right under the grid, sharing the More egg row's CSS (one rule per
- *      look, not a copy), and a click on the RENDERED control opens All.
+ *      row right under the grid, sharing a page icon row's CSS (one rule per
+ *      look, not a copy — Casey's paw on More Features is the twin), and a
+ *      click on the RENDERED control opens All.
  *   4. THE STICKY HOME ENTRY: its CSS hooks (sticky, top 0, opaque, over the
  *      items, no overflow on the flex child, the hover / active tints layered
  *      and winning, the scroll-driven edge), not scoped away from skinny or
@@ -27,8 +28,10 @@
  *      dispatch with no placement and when placed (a neutral shortcut, no
  *      loop), doing exactly what the fixed chrome does (header My Tasks / Log
  *      Out — dispatched on the rendered controls); never an eval of the
- *      registry string. casey left the extras in ui-custom S6c: More's paw IS
- *      its element (DEFAULT_LAYOUTS.moreIcons), so exec clicks it in place.
+ *      registry string. casey left the extras in ui-custom S6c (More's paw
+ *      was its element); since launcher-nits C4 More Features is a firm page
+ *      and the paw a shortcut on it, so casey has no element again and exec
+ *      runs it through the closed dispatch (tests/helpers/hubPages.js).
  *
  * Mutation-checked (see the S6b worker report).
  *
@@ -42,6 +45,7 @@ const path = require('path');
 const vm = require('vm');
 const { JSDOM } = require('jsdom');
 const { rawShellHtml, expandedShellHtml, loadLauncher } = require('./helpers/shellHtml');
+const { hubFirm } = require('./helpers/hubPages');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
@@ -50,7 +54,7 @@ const ICON_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycIcon.js'), 'utf8')
 const EDITOR_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycLayoutEditor.js'), 'utf8');
 const RENDERER_SRC = RAW.match(/<script id="ycLauncher">([\s\S]*?)<\/script>/)[1];
 const { launcher: VL, registry: REG, layouts: LAY } = loadLauncher(RAW);
-const EXTRAS = ['myTasks', 'logout', 'code'];   // casey: placed in More's icon row since S6c
+const EXTRAS = ['myTasks', 'logout', 'code'];   // casey: placed on More Features' icon row (a firm page since C4)
 
 function slice(from, to) {
   const a = RAW.indexOf(from);
@@ -73,22 +77,19 @@ const EGG_CSS = styleWith('.home-egg-row');
 // Real markup, cut out of the page.
 const NAV = slice('<nav id="appSidebar" style="display:none">', '</nav>') + '</nav>';
 const HOME = slice('  <div id="tabHome" class="tab-main">', '    <!-- Quick search') + '</div>';
-// the paw row: in the raw page a mount (S6c), in the browser the paw's old markup
-const PAW_MOUNT = RAW.match(/<div class="more-egg-row">[\s\S]*?<\/div>/)[0];
-const PAW_ROW = expandedShellHtml().match(/<div class="more-egg-row">[\s\S]*?<\/div>/)[0];
 const HDR_TASKS = RAW.match(/<button class="hdr-btn" onclick="[^"]*" title="My Tasks">[\s\S]*?<\/button>/)[0];
 const HDR_LOGOUT = RAW.match(/<button class="hdr-logout" onclick="[^"]*" title="Log Out">[\s\S]*?<\/button>/)[0];
 const J = (x) => JSON.parse(JSON.stringify(x));
 const ids = (list) => list.map((e) => e.id);
 
 // ─────────────────────────────────────────────────────────────────────────
-// A page with the real sidebar, Home and More egg markup, the page's CSS, its
-// launcher and its openMainTab. Page functions the S6b items call are stubs
+// A page with the real sidebar and Home markup, the pages' mount, the page's
+// CSS, its launcher and its openMainTab. Page functions the S6b items call are stubs
 // that record their arguments.
 function boot() {
-  const tabs = new Set(['tabAll', 'tabMore', 'tabAdmin', 'tabSettings']);
+  const tabs = new Set(['tabAll', 'tabSettings']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plain = [...tabs].filter((t) => !['tabMore', 'tabAdmin'].includes(t)).map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
+  const plain = [...tabs].map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}
     <style>${SHELL_CSS}</style></head><body>
@@ -96,8 +97,7 @@ function boot() {
     ${NAV}
     ${HOME}
     ${plain}
-    <div id="tabMore" class="tab-main"><script>ycLauncher.mount('more')</script>${PAW_MOUNT}</div>
-    <div id="tabAdmin" class="tab-main"><script>ycLauncher.mount('admin')</script></div>
+    <div id="ycPages"></div>
     <style>${EGG_CSS}</style>
   </body></html>`;
   const errors = [];
@@ -122,6 +122,9 @@ function boot() {
   return { w, d, L: w.ycLauncher, calls, errors, close: () => w.close() };
 }
 const ACCESS = { isAdmin: true, denied: [] };
+// production's firm: More Features and Admin as firm pages (C3), Casey's paw on More's icon row
+const HUBS = { isAdmin: true, roles: ['admin'], denied: [], ui: { firm: hubFirm(), user: {} } };
+const PAW = '#ycPages > [data-yc-page="firm:more"] > .page-egg-row > .page-egg[data-yc-shortcut="casey"]';
 const ui = ({ layout, ro } = {}) => ({ firm: ro ? { registry_overrides: ro } : {}, user: layout ? { layout } : {} });
 
 /** A CSSOM style rule of the page's sheets whose selector list is exactly sel. */
@@ -167,7 +170,7 @@ describe('2. the default layout is unchanged (the S1 expanded page)', () => {
     const want = LAY.home.map((e) => (e.break ? '|' : REG[e.item].surfaceLabels && REG[e.item].surfaceLabels.home ? REG[e.item].surfaceLabels.home : REG[e.item].label));
     expect(kids.map((k) => (k.classList.contains('home-break') ? '|' : k.textContent.trim()))).toEqual(want);
     expect(want).toEqual(['Cases', 'Contacts', 'Appointments', '|', 'Billing', 'Pipeline Board', 'Events', '|',
-      'Tasks', 'New Client', 'Log', '|', 'Calendar', 'More Features', 'Comms']);   // Calendar in the custom tab's old slot (S5e)
+      'Tasks', 'New Client', 'Log', '|', 'Calendar', 'Comms']);   // Calendar in the custom tab's old slot (S5e); More Features: the firm's page (C4)
     expect(kids.every((k) => k.className === 'home-btn' || k.className === 'home-break')).toBe(true);
     const tpl = doc.createElement('template');
     tpl.innerHTML = VL.build('home');
@@ -175,7 +178,7 @@ describe('2. the default layout is unchanged (the S1 expanded page)', () => {
   });
 
   test('no surface draws an S6b item (they are in no default layout)', () => {
-    for (const sf of ['home', 'sidebar', 'more', 'admin']) {
+    for (const sf of ['home', 'sidebar', 'homeIcons']) {
       const html = VL.build(sf);
       for (const id of EXTRAS) {
         expect([sf, id, LAY[sf].some((e) => e.item === id)]).toEqual([sf, id, false]);
@@ -220,29 +223,31 @@ describe('3. #homeAll: an icon-only button in the Home icon row', () => {
     } finally { t.close(); }
   });
 
-  test('one look with More\'s paw: the egg-row rules are SHARED selector lists, not a copy', () => {
+  test('one look with a page\'s icon row (Casey\'s paw on More Features): the egg-row rules are SHARED selector lists, not a copy', () => {
     const t = boot();
     try {
-      // the Home row and button ride on the More rules
-      // (the custom pages' row and button joined the lists in S6c-5)
-      expect(rule(t.d, '.more-egg-row, .home-egg-row, .admin-egg-row, .page-egg-row')).toHaveLength(1);
-      expect(rule(t.d, '#tabMore .more-egg, #tabHome .home-egg, #tabAdmin .admin-egg, #ycPages .page-egg')).toHaveLength(1);
-      expect(rule(t.d, '#tabMore .more-egg:hover, #tabMore .more-egg:focus-visible, #tabHome .home-egg:hover, #tabHome .home-egg:focus-visible, #tabAdmin .admin-egg:hover, #tabAdmin .admin-egg:focus-visible, #ycPages .page-egg:hover, #ycPages .page-egg:focus-visible')).toHaveLength(1);
-      // and nothing styles a Home one without its More twin in the same rule
+      t.L.applyAccess(HUBS);
+      // the Home row and button ride on the pages' rules (S6c-5; the More /
+      // Admin tabs' own selectors left the lists with the tabs in C4)
+      expect(rule(t.d, '.home-egg-row, .page-egg-row')).toHaveLength(1);
+      expect(rule(t.d, '#tabHome .home-egg, #ycPages .page-egg')).toHaveLength(1);
+      expect(rule(t.d, '#tabHome .home-egg:hover, #tabHome .home-egg:focus-visible, #ycPages .page-egg:hover, #ycPages .page-egg:focus-visible')).toHaveLength(1);
+      // and nothing styles a Home one without its page twin in the same rule
       const lone = [];
       for (const sh of t.d.styleSheets) for (const r of sh.cssRules) {
-        if (r.selectorText && /home-egg/.test(r.selectorText) && !/more-egg/.test(r.selectorText)) lone.push(r.selectorText);
+        if (r.selectorText && /home-egg/.test(r.selectorText) && !/page-egg/.test(r.selectorText)) lone.push(r.selectorText);
       }
       expect(lone).toEqual([]);
-      const paw = t.d.querySelector('#tabMore .more-egg'), all = t.d.getElementById('homeAll');
+      const paw = t.d.querySelector(PAW), all = t.d.getElementById('homeAll');
       const PROPS = ['opacity', 'font-size', 'color', 'padding-top', 'padding-left', 'border-top-width', 'cursor', 'background-color'];
       const look = (el) => PROPS.map((p) => t.w.getComputedStyle(el).getPropertyValue(p));
       expect(look(all)).toEqual(look(paw));
       expect(t.w.getComputedStyle(all).opacity).toBe('0.45');
       const rowLook = (el) => ['text-align', 'margin-top', 'margin-bottom'].map((p) => t.w.getComputedStyle(el).getPropertyValue(p));
       expect(rowLook(all.parentElement)).toEqual(rowLook(paw.parentElement));
-      // the paw itself is exactly as it was
-      expect(PAW_ROW).toBe('<div class="more-egg-row"><button type="button" class="more-egg" onclick="toggleMascot()" title="Casey the YisraCat" aria-label="Casey the YisraCat"><i class="fa-solid fa-paw" aria-hidden="true"></i></button></div>');
+      // the paw: icon-only, named, the paw icon
+      expect([paw.className, paw.type, paw.textContent.trim(), paw.getAttribute('aria-label'), paw.firstElementChild.className])
+        .toEqual(['page-egg', 'button', '', 'Casey', 'fa-solid fa-paw']);
     } finally { t.close(); }
   });
 });
@@ -316,21 +321,23 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
       ['myTasks', 'My Tasks', 'list'], ['logout', 'Log out', 'right-from-bracket'], ['code', 'Code', 'terminal'], ['casey', 'Casey', 'paw']]);
     expect(REG.myTasks.onclick).toBe(HDR_TASKS.match(/onclick="([^"]*)"/)[1]);
     expect(REG.logout.onclick).toBe(HDR_LOGOUT.match(/onclick="([^"]*)"/)[1]);
-    expect(REG.casey.onclick).toBe(PAW_ROW.match(/onclick="([^"]*)"/)[1]);
+    expect(REG.casey.onclick).toBe('toggleMascot()');   // what the closed dispatch calls (no element since C4)
     for (const id of [...EXTRAS, 'casey']) expect([id, REG[id].tab, REG[id].target, REG[id].group]).toEqual([id, undefined, undefined, undefined]);
   });
 
-  test('the effective registry: group More actions, after the sidebar sections, before More, in registry order', () => {
-    const eff = VL.computeEffective(ACCESS);
-    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);
+  test('the effective registry: group More actions, after the sidebar sections, before the firm\'s pages, in registry order', () => {
+    const eff = VL.computeEffective(HUBS);
+    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin', 'Firm']);
     expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(EXTRAS);
-    const nonAdmin = VL.computeEffective({ isAdmin: false });
+    const nonAdmin = VL.computeEffective({ isAdmin: false, roles: ['staff'], ui: HUBS.ui });
     expect(ids(nonAdmin.filter((e) => e.group === 'More actions'))).toEqual(EXTRAS);   // not admin-gated
+    // a firm with no pages: every hub item is unplaced, so it joins them (registry order)
+    expect(ids(VL.computeEffective(ACCESS).filter((e) => e.group === 'More actions')).slice(-4)).toEqual([...EXTRAS, 'casey']);
     const e = eff.find((x) => x.id === 'logout');
     expect(J(e)).toEqual({ id: 'logout', group: 'More actions', label: 'Log out', labels: ['Log out'], icon: 'right-from-bracket' });
     // ordered: More actions entries sit between Settings' and More's
     const g = eff.map((x) => x.group);
-    expect(g.lastIndexOf('Settings') < g.indexOf('More actions') && g.lastIndexOf('More actions') < g.indexOf('More')).toBe(true);
+    expect(g.lastIndexOf('Settings') < g.indexOf('More actions') && g.lastIndexOf('More actions') < g.indexOf('More Features')).toBe(true);
   });
 
   test('denied / firm-hidden / renamed / role-restricted like any registry item', () => {
@@ -340,8 +347,8 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
     expect(eff({ ui: ui({ ro: { renames: { myTasks: { label: 'Mine to do' } } } }) }).find((x) => x.id === 'myTasks').label).toBe('Mine to do');
     expect(ids(eff({ roles: ['staff'], isAdmin: false, ui: ui({ ro: { visible_to: { casey: ['attorney'] } } }) }))).not.toContain('casey');
     expect(ids(eff({ roles: ['attorney'], isAdmin: false, ui: ui({ ro: { visible_to: { casey: ['attorney'] } } }) }))).toContain('casey');
-    // all three gone: the group has no entries (All draws no heading for it)
-    const none = eff({ denied: EXTRAS });
+    // all three gone: the group has no entries (All draws no heading for it) — the firm's pages place the rest
+    const none = eff({ denied: EXTRAS, roles: ['admin'], ui: HUBS.ui });
     expect(none.filter((x) => x.group === 'More actions')).toEqual([]);
   });
 
@@ -353,7 +360,7 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
     vm.runInContext(RENDERER_SRC, ctx);
     vm.runInContext(EDITOR_SRC, ctx);
     const L = ctx.window.ycLauncher, E = ctx.window.ycLayoutEditor;
-    const list = L.computeEffective(ACCESS);
+    const list = L.computeEffective(HUBS);
     const eff = J(list), groups = J(list.groups);
     const s = E.session({ stored: null, effective: eff, locked: [], base: J(ctx.window.DEFAULT_LAYOUTS), registry: ctx.window.FEATURE_REGISTRY, groups });
     for (const sf of ['home', 'sidebar']) {
@@ -372,10 +379,9 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
     beforeEach(() => { t = boot(); });
     afterEach(() => t.close());
 
-    test('with NO placement: no element, and exec runs each through the closed dispatch; casey through its paw', () => {
+    test('with NO placement: no element, and exec runs each through the closed dispatch — casey too (C4: the paw is a page shortcut, not its element)', () => {
       t.L.applyAccess(ACCESS);
-      for (const id of EXTRAS) expect([id, J(t.L.elementsOf(id))]).toEqual([id, {}]);
-      expect(t.L.elementsOf('casey').moreIcons).toBe(t.d.querySelector('#tabMore .more-egg'));   // S6c: the paw is its element
+      for (const id of [...EXTRAS, 'casey']) expect([id, J(t.L.elementsOf(id))]).toEqual([id, {}]);
       expect(t.d.querySelectorAll('[data-yc-shortcut]')).toHaveLength(0);
       expect(t.L.exec('myTasks')).toBe(true);
       expect(t.L.exec('logout')).toBe(true);
@@ -386,11 +392,12 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
       expect(t.errors).toEqual([]);
     });
 
-    test('exactly what the fixed chrome does: the header\'s My Tasks / Log Out and More\'s paw, clicked as rendered', () => {
-      t.L.applyAccess(ACCESS);
+    test('exactly what the fixed chrome does: the header\'s My Tasks / Log Out and More Features\' paw, clicked as rendered', () => {
+      t.L.applyAccess(HUBS);
+      expect(J(t.L.elementsOf('casey'))).toEqual({});   // the paw is a neutral shortcut on the page
       t.d.querySelector('#hdr [title="My Tasks"]').click();
       t.d.querySelector('#hdr [title="Log Out"]').click();
-      t.d.querySelector('#tabMore .more-egg').click();
+      t.d.querySelector(PAW).click();
       const chrome = t.calls.splice(0);
       ['myTasks', 'logout', 'casey'].forEach((id) => t.L.exec(id));   // code has no chrome
       expect(t.calls).toEqual(chrome);

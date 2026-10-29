@@ -70,8 +70,10 @@ describe('the Reports deep-link bridge', () => {
     expect(reportsHtml).toContain('<script src="/js/ycSubTab.js"></script>');
   });
 
-  test('the shell names the destination with its own launcher/panel vocabulary', () => {
-    const m = /'reports\.report': Object\.freeze\(\{\s*launcher: 'moreReports', page: 'tabMore', panel: 'reportsDiv', sub: 'report',\s*\}\)/.exec(shellHtml);
+  // No page hint since launcher-nits C4: the launcher places the panel (the
+  // first page showing its tile, else the panel tab), so the entry is exact.
+  test('the shell names the destination with its own launcher/panel vocabulary (no page: the launcher places it)', () => {
+    const m = /'reports\.report': Object\.freeze\(\{\s*launcher: 'moreReports', panel: 'reportsDiv', sub: 'report',\s*\}\)/.exec(shellHtml);
     expect(m).not.toBe(null);
     expect(shellHtml).toMatch(/<div id="reportsDiv" class="more-panel"[^>]*>\s*<iframe data-src="\/reports\.html"><\/iframe>/);
   });

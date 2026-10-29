@@ -13,7 +13,8 @@ run a check, open a short form — the button is a **tool**. There is no special
 the job, and a firm admin adds it as a firm item that opens that tool. It then
 appears:
 
-- as a tile at the end of the **More** grid (the firm row),
+- as a tile wherever the firm's arrangement places it (a page such as More
+  Features, Home, the sidebar),
 - under **Firm** in the **All** tab,
 - in the **Ctrl-K** (⌘K) search.
 

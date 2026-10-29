@@ -31,6 +31,8 @@ const path = require('path');
 const vm = require('vm');
 const { JSDOM } = require('jsdom');
 const { rawShellHtml } = require('./helpers/shellHtml');
+// More Features and Admin: the firm's pages since launcher-nits C4 (tests/helpers/hubPages.js)
+const { hubFirm, hubPages, stageHtml, HISTORIC_LAYOUTS } = require('./helpers/hubPages');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
@@ -62,11 +64,18 @@ function vmLauncher() {
   return { L: ctx.window.ycLauncher, E: ctx.window.ycLayoutEditor, REG: ctx.window.FEATURE_REGISTRY, LAY: ctx.window.DEFAULT_LAYOUTS, warnings };
 }
 const { L: VL, E: VE, REG, LAY } = vmLauncher();
-const placed = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
+const placed = (sf) => (LAY[sf] || HISTORIC_LAYOUTS[sf]).filter((e) => e.item).map((e) => e.item);
 
 const PAY = { id: 'firm:payroll', label: 'Payroll', icon: 'money-check', action: { type: 'url', href: 'https://payroll.example.com/', present: 'window' } };
 const TOOL = { id: 'firm:clio', label: 'Clio Code', icon: 'copyright', action: { type: 'tool', key: 'clio-code', present: 'modal' } };
-const ui = (ro, layout) => ({ firm: { registry_overrides: ro }, user: layout ? { layout } : {} });
+// the firm's documents: ro, plus More Features and Admin as the firm's pages (launcher-nits C4), the
+// firm items placed at the end of More Features (no firm row since C4: a firm item shows where the firm puts it)
+const MORE = hubPages()['firm:more'];
+const FIRM_LAYOUT = { pages: { 'firm:more': { tiles: [...MORE.tiles, { item: PAY.id }, { item: TOOL.id }], icons: MORE.icons } } };
+const ui = (ro, layout) => ({
+  firm: hubFirm({ items: ro.items || [], ro, layout: FIRM_LAYOUT, visibleTo: { 'firm:admin': ['it', 'admin'], ...(ro.visible_to || {}) } }),
+  user: layout ? { layout } : {},
+});
 // The arc's QA case: Automations for Admin + Attorney; Payroll only for su;
 // Tasks (a sidebar + Home default) for staff.
 const VT = { moreAutomations: ['admin', 'attorney'], 'firm:payroll': [], tasks: ['staff'] };
@@ -165,11 +174,9 @@ describe('the S4b layout editor\'s picker (its pure core)', () => {
 // A page skeleton with the real mounts (Home inside its .home-grid), the
 // panels and tab divs; the page's own drill-in and tab code.
 function boot() {
-  const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
-    .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
+  const tabs = new Set(['tabHome']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
@@ -180,9 +187,8 @@ function boot() {
       <button id="homeAll" class="home-btn"></button></div>
     <div id="tabAll" class="tab-main"></div>
     ${plainTabs}
-    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
-    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
+    <div id="ycPages"></div>
+    <div id="ycPanels" style="display:none">${stageHtml(REG)}</div>
     <b id="myNameIs"></b><div id="hdrUserArea"></div>
   </body></html>`;
   const errors = [];
@@ -208,8 +214,10 @@ function boot() {
   const homeGrid = d.querySelector('#tabHome > .home-grid');
   // the shortcut a user layout pinned where the item has no default element
   const neutral = (sf, id) => (sf === 'home' ? homeGrid : d.getElementById('appSidebar')).querySelector(`[data-yc-shortcut="${id}"]`);
-  const firmTile = (id) => d.querySelector(`#tabMore > [data-yc-firm-row="${id}"]`);
-  return { w, d, L, opened, errors, shown, neutral, firmTile, close: () => w.close() };
+  // a tile on the firm's More Features page (registry items and firm items alike)
+  const tile = (id) => d.querySelector(`#ycPages > [data-yc-page="firm:more"] > [data-yc-shortcut="${id}"]`);
+  const firmTile = tile;
+  return { w, d, L, opened, errors, shown, neutral, tile, firmTile, close: () => w.close() };
 }
 
 // Automations pinned to Home AND the sidebar (neutral shortcuts — it has no
@@ -229,15 +237,14 @@ describe('applyAccess with roles: every surface follows (real mounts)', () => {
 
   test('staff-only: Automations gone from its grid tile, the pinned shortcuts, All / the palette, and exec refuses', () => {
     t.L.applyAccess(STATE(['staff']));
-    const el = t.L.elementsOf('moreAutomations');
-    expect(el.more.hasAttribute('data-yc-denied')).toBe(true);
-    expect(t.shown(el.more)).toBe(false);
+    expect(t.tile('moreTheme')).not.toBeNull();                             // (the page is there…)
+    expect(t.tile('moreAutomations')).toBeNull();                           // …its tile is not: a page lays out only what the user may use
     expect(t.neutral('home', 'moreAutomations')).toBeNull();              // pinned, still hidden
     expect(t.neutral('sidebar', 'moreAutomations')).toBeNull();
     expect(ids(t.L.effectiveRegistry())).not.toContain('moreAutomations');
     expect(ids(t.L.rank('autom'))).toEqual([]);
     expect(t.L.exec('moreAutomations')).toBe(false);
-    // su-only Payroll: no More firm-row tile, no pinned Home shortcut, exec refuses (no window)
+    // su-only Payroll: no tile where the firm put it (More Features), no pinned Home shortcut, exec refuses (no window)
     expect(t.firmTile('firm:payroll')).toBeNull();
     expect(t.neutral('home', 'firm:payroll')).toBeNull();
     expect(t.L.exec('firm:payroll')).toBe(false);
@@ -256,7 +263,7 @@ describe('applyAccess with roles: every surface follows (real mounts)', () => {
 
   test('admin + staff: Automations shows everywhere it is pinned or placed, and exec runs it', () => {
     t.L.applyAccess(STATE(['admin', 'staff']));
-    expect(t.shown(t.L.elementsOf('moreAutomations').more)).toBe(true);
+    expect(t.shown(t.tile('moreAutomations'))).toBe(true);
     expect(t.neutral('home', 'moreAutomations')).not.toBeNull();
     expect(t.neutral('sidebar', 'moreAutomations')).not.toBeNull();
     expect(ids(t.L.rank('autom'))).toEqual(['moreAutomations']);
@@ -279,11 +286,11 @@ describe('applyAccess with roles: every surface follows (real mounts)', () => {
     t.L.applyAccess({ denied: [] });
     expect(ids(t.L.effectiveRegistry())).not.toContain('moreAutomations');
     t.L.applyAccess({ roles: ['attorney'] });
-    expect(t.shown(t.L.elementsOf('moreAutomations').more)).toBe(true);
-    expect(t.L.elementsOf('moreAutomations').more.hasAttribute('data-yc-denied')).toBe(false);
+    expect(t.shown(t.tile('moreAutomations'))).toBe(true);
+    expect(t.tile('moreAutomations').hasAttribute('data-yc-denied')).toBe(false);
     expect(t.shown(t.L.elementsOf('tasks').sidebar)).toBe(false);
     t.L.applyAccess({ ui: ui({ ...RO, visible_to: undefined }, PINS) });  // restrictions removed → all back
-    expect(t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)')).toHaveLength(0);   // (#tabAdmin: the su tiles, hidden for a non-su since S6c)
+    expect(t.d.querySelectorAll('[data-yc-denied]')).toHaveLength(0);
     expect(t.errors).toEqual([]);
   });
 });

@@ -3,26 +3,28 @@
  * the launcher on the panel stage S6c-4 left (S6c_DESIGN.md §4, §5 S6c-5;
  * Fred's rulings 1–4). Pins:
  *
- *   1. THE MARKUP AND CSS: the two hubs carry the shared class (yc-hub — not
- *      the design's yc-page, which /js/ycPager.js owns in this document), an
- *      EMPTY #ycPages sits between Admin and the stage (no whitespace: the
- *      default render is unchanged with no page defined), the phone grid and
- *      egg-row rules key on the class.
+ *   1. THE MARKUP AND CSS: no static hub is left (launcher-nits C4: More
+ *      Features and Admin are the firm's pages firm:more / firm:admin); an
+ *      EMPTY #ycPages sits right before the stage (no whitespace: it takes no
+ *      space); a built page carries the shared class (yc-hub — not the
+ *      design's yc-page, which /js/ycPager.js owns in this document); the
+ *      phone grid and egg-row rules key on the class / the container.
  *   2. THE PAGES, FOR REAL (the page's own launcher, drill and tab code over a
  *      skeleton shaped like the page): a user page with two panels from
  *      different hubs, a tab-presented button, a List and an icon row is built
  *      at applyAccess as a .tab-main.yc-hub with an opaque id; its tiles are
  *      neutrals (a panel item's with data-target), its strip shows only ITS
  *      pills, a panel opens IN PLACE on it (per-page memory, the SAME iframe
- *      as from More), exec(pageId) opens it, its sidebar neutral carries its
+ *      as from the More Features page), exec(pageId) opens it, its sidebar neutral carries its
  *      tab and lights; a re-run with the same content changes nothing; a
  *      change rebuilds in place and drops the strip; a page deleted while open
  *      goes to Home; a page gone from the tiers is removed.
  *   3. ACCESS: a firm page restricted by visible_to vanishes for staff (tab,
  *      tile, sidebar, All, exec) and stays for su; a gated panel placed on a
  *      page is unreachable for a non-su by every path (a fuzz over pages).
- *   4. EXEC ROUTING: the pages join after Admin; a panel the firm took off
- *      More opens on the page that shows it.
+ *   4. EXEC ROUTING: the active page first, else the firm's pages in item
+ *      order (More and Admin among them), then the user's; a panel the firm
+ *      took off More opens on the page that shows it.
  *   5. LIMITS: 50 page tabs per tier; the 51st is listed, openable nowhere,
  *      with a console error; labels are text; icons only through ycIcon.
  *
@@ -41,14 +43,14 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const { rawShellHtml, expandedShellHtml, loadLauncher } = require('./helpers/shellHtml');
+const { hubFirm, stageHtml } = require('./helpers/hubPages');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
 const REGISTRY_SRC = fs.readFileSync(path.join(ROOT, 'public/js/featureRegistry.js'), 'utf8');
 const ICON_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycIcon.js'), 'utf8');
 const RENDERER_SRC = RAW.match(/<script id="ycLauncher">([\s\S]*?)<\/script>/)[1];
-const { registry: REG, layouts: LAY } = loadLauncher(RAW);
-const placed = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
+const { registry: REG } = loadLauncher(RAW);
 
 function slice(from, to) {
   const a = RAW.indexOf(from);
@@ -81,18 +83,19 @@ const USER_LAYOUT = (pages = { 'user:desk': DESK }, extra = {}) => ({
   placed: { sidebar: [{ label: 'Mine' }, { item: 'user:desk' }, { item: 'cases' }], home: [{ item: 'user:desk' }, { item: 'cases' }], ...extra },
   removed: {}, pages,
 });
-// The firm: a page restricted to `it`, with Manuals, Users and a firm link on it
+// The firm: a page restricted to `it`, with Manuals, Users and a firm link on it — beside its More Features and
+// Admin pages (hubFirm: firm:more / firm:admin, Admin for it + admin, launcher-nits C4)
 const CLIO = { id: 'firm:clio-code', label: 'Get Clio Code', icon: 'key', action: { type: 'url', href: 'https://clio.example.com/', present: 'window' } };
 const OPS = { id: 'firm:ops', label: 'Operations', icon: 'layer-group', action: { type: 'page' } };
-const RO = { items: [CLIO, OPS], hidden: [], locked: [], renames: {}, visible_to: { 'firm:ops': ['it'], admin: ['it', 'admin'] } };
-const FIRM_LAYOUT = { placed: {}, removed: {}, pages: { 'firm:ops': { tiles: [{ item: 'moreManuals' }, { item: 'adminUsers' }, { item: 'firm:clio-code' }], icons: [{ item: 'myTasks' }] } } };
-const ui = ({ user = USER_LAYOUT(), items = MINE, ro = RO, firm = FIRM_LAYOUT } = {}) => ({ firm: { registry_overrides: ro, layout: firm }, user: { layout: user, items } });
+const VIS = { 'firm:ops': ['it'], 'firm:admin': ['it', 'admin'] };
+const FIRM_LAYOUT = { pages: { 'firm:ops': { tiles: [{ item: 'moreManuals' }, { item: 'adminUsers' }, { item: 'firm:clio-code' }], icons: [{ item: 'myTasks' }] } } };
+const ui = ({ user = USER_LAYOUT(), items = MINE, firmItems = [CLIO, OPS], firm = FIRM_LAYOUT } = {}) =>
+  ({ firm: hubFirm({ items: firmItems, visibleTo: VIS, layout: firm }), user: { layout: user, items } });
 
 // ─────────────────────────────────────────────────────────────────────────
 describe('1. the markup and the CSS', () => {
-  test('the hubs carry yc-hub (never yc-page: ycPager owns it here); an EMPTY #ycPages sits between Admin and the stage; the default render has no page', () => {
-    expect(RAW).toMatch(/<div id="tabMore" class="tab-main yc-hub">/);
-    expect(RAW).toMatch(/<div id="tabAdmin" class="tab-main yc-hub" data-all-icons=/);
+  test('no static hub (launcher-nits C4); an EMPTY #ycPages sits right before the stage; never yc-page on a tab (ycPager owns it here); the default render has no page', () => {
+    expect(RAW).not.toMatch(/id="tab(More|Admin)"/);
     expect(RAW).toContain('<div id="ycPages"></div>');                      // no whitespace inside: it takes no space
     expect(RAW.match(/id="ycPages"/g)).toHaveLength(1);
     expect(RAW).not.toMatch(/class="[^"]*\btab-main[^"]*\byc-page\b/);
@@ -101,8 +104,8 @@ describe('1. the markup and the CSS', () => {
     const d = dom.window.document;
     try {
       const pages = d.getElementById('ycPages');
-      expect([pages.previousElementSibling.id, pages.nextElementSibling.id, pages.childNodes.length]).toEqual(['tabAdmin', 'ycPanels', 0]);
-      expect([...d.querySelectorAll('.yc-hub')].map((e) => e.id)).toEqual(['tabMore', 'tabAdmin']);
+      expect([pages.nextElementSibling.id, pages.childNodes.length]).toEqual(['ycPanels', 0]);
+      expect([d.getElementById('tabMore'), d.getElementById('tabAdmin'), d.querySelectorAll('.yc-hub').length]).toEqual([null, null, 0]);
       expect(d.querySelectorAll('[data-yc-page]')).toHaveLength(0);
     } finally { dom.window.close(); }
   });
@@ -114,23 +117,23 @@ describe('1. the markup and the CSS', () => {
     expect(DRILL_CSS).toMatch(/\.yc-hub > \.big-button \{ overflow-wrap: anywhere; \}/);
     expect(DRILL_CSS).not.toMatch(/#tab(More|Admin) > \.big-button/);
     expect(DRILL_CSS).not.toMatch(/#tab(More|Admin) > br/);
-    expect(DRILL_CSS).toMatch(/\.more-egg-row, \.home-egg-row, \.admin-egg-row, \.page-egg-row \{ text-align:center; margin:14px 0 4px; \}/);
+    expect(DRILL_CSS).toMatch(/\.home-egg-row, \.page-egg-row \{ text-align:center; margin:14px 0 4px; \}/);
     expect(DRILL_CSS).toMatch(/\.page-egg-row:empty \{ display:none; \}/);
-    expect(DRILL_CSS).toMatch(/#tabAdmin \.admin-egg, #ycPages \.page-egg \{ background:transparent;/);
+    expect(DRILL_CSS).toMatch(/#tabHome \.home-egg, #ycPages \.page-egg \{ background:transparent;/);
+    expect(DRILL_CSS).not.toMatch(/(more|admin)-egg/);                                   // the hubs' own rows went with them (C4)
     expect(DRILL_CSS).toMatch(/\.drill-active > \.page-egg-row \{ display:none; \}/);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// A page skeleton shaped like the real one: the mounts, the hubs with the
-// shared class, #ycPages, the stage; the page's own drill, tab and launcher
-// code; recording stubs (openers, the button tab, Swal absent).
+// A page skeleton shaped like the real one: the mounts, #ycPages (More
+// Features and Admin are built there, launcher-nits C4), the stage; the page's
+// own drill, tab and launcher code; recording stubs (openers, the button tab,
+// Swal absent).
 function boot() {
-  const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
-    .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabAll', 'tabUserItem']);
+  const tabs = new Set(['tabHome', 'tabAll', 'tabUserItem', 'tabSettings']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}<style>${DRILL_CSS}</style></head><body>
@@ -142,14 +145,8 @@ function boot() {
       <div class="home-search"></div></div>
     <div id="tabAll" class="tab-main"></div>
     ${plainTabs}
-    <div id="tabMore" class="tab-main yc-hub"><h1>More</h1>
-  <script>ycLauncher.mount('more')</script>
-  <div class="more-egg-row"><script>ycLauncher.mount('moreIcons')</script></div></div>
-    <div id="tabAdmin" class="tab-main yc-hub"><h1>Admin</h1>
-  <script>ycLauncher.mount('admin')</script>
-  <div class="admin-egg-row"><script>ycLauncher.mount('adminIcons')</script></div></div>
     <div id="ycPages"></div>
-    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
+    <div id="ycPanels" style="display:none">${stageHtml(REG)}</div>
   </body></html>`;
   const errors = [];
   const dom = new JSDOM(page, { runScripts: 'dangerously', pretendToBeVisual: true });
@@ -220,8 +217,8 @@ describe('2. the pages, for real', () => {
     expect(pg.querySelector('[data-yc-shortcut="user:box"]').lastChild.nodeValue).toBe('My box');     // a text node
     expect(pg.querySelector('.page-egg-row [data-yc-shortcut="casey"]').className).toBe('page-egg');
     expect(pg.querySelector('.page-egg-row [data-yc-shortcut="casey"]').getAttribute('aria-label')).toBe('Casey');   // a neutral icon: the entry's label (S6c-1+2)
-    // the firm page too (su sees everything), firm pages first
-    expect([...t.d.querySelectorAll('#ycPages > [data-yc-page]')].map((e) => e.getAttribute('data-yc-page'))).toEqual(['firm:ops', 'user:desk']);
+    // the firm's pages too (su sees everything) — More Features and Admin among them, in firm item order — firm pages first
+    expect([...t.d.querySelectorAll('#ycPages > [data-yc-page]')].map((e) => e.getAttribute('data-yc-page'))).toEqual(['firm:ops', 'firm:more', 'firm:admin', 'user:desk']);
     expect(t.tiles(t.pageOf('firm:ops'))).toEqual(['moreManuals', 'adminUsers', 'firm:clio-code']);
     expect(t.icons(t.pageOf('firm:ops'))).toEqual(['myTasks']);
     const reg = t.L.effectiveRegistry();
@@ -252,13 +249,14 @@ describe('2. the pages, for real', () => {
     expect(t.errors).toEqual([]);
   });
 
-  test('a panel opens IN PLACE on the page (per-page memory), the SAME iframe as from More; the List and the tab button work from their tiles', () => {
+  test('a panel opens IN PLACE on the page (per-page memory), the SAME iframe as from More Features; the List and the tab button work from their tiles', () => {
     t = boot();
     t.L.applyAccess({ ...SU, ui: ui() });
     const pg = t.pageOf('user:desk');
-    // Automations from More first: its iframe loads once
-    t.w.openMainTab('tabMore');
-    t.L.elementsOf('moreAutomations').more.click();
+    const M = t.pageOf('firm:more'), A = t.pageOf('firm:admin');
+    // Automations from More Features first: its iframe loads once
+    t.w.openMainTab(M.id);
+    M.querySelector(':scope > .big-button[data-yc-shortcut="moreAutomations"]').click();
     const frame = t.d.querySelector('#automationsDiv iframe');
     expect(frame.getAttribute('src')).toBe('/automationsDiv.html');
     // on the page: the same panel opens here, More stays drilled behind
@@ -268,14 +266,14 @@ describe('2. the pages, for real', () => {
     expect([t.w.currentMainTabId(), t.onStage(), t.drilled(pg), t.activePill(pg)]).toEqual([pg.id, ['automationsDiv'], true, 'automationsDiv']);
     expect(t.d.querySelector('#automationsDiv iframe')).toBe(frame);
     expect(t.d.querySelectorAll('#automationsDiv').length).toBe(1);
-    expect(t.drilled(t.d.getElementById('tabMore'))).toBe(true);
+    expect(t.drilled(M)).toBe(true);
     // Users (an Admin panel) opens in place too; the pill of the open panel goes back to the grid
     pg.querySelector('[data-yc-shortcut="adminUsers"]').click();
-    expect([t.onStage(), t.activePill(pg), t.drilled(t.d.getElementById('tabAdmin'))]).toEqual([['usersDiv'], 'usersDiv', false]);
+    expect([t.onStage(), t.activePill(pg), t.drilled(A)]).toEqual([['usersDiv'], 'usersDiv', false]);
     pg.querySelector(':scope > .feature-strip .pill-button[data-target="usersDiv"]').click();
     expect([t.onStage(), t.drilled(pg)]).toEqual([[], false]);
-    // back on More: Automations again (More's memory)
-    t.w.openMainTab('tabMore');
+    // back on More Features: Automations again (its memory)
+    t.w.openMainTab(M.id);
     expect(t.onStage()).toEqual(['automationsDiv']);
     // the List tile opens the drawer; the tab button's tile opens the button tab
     t.L.exec('user:desk');
@@ -397,7 +395,7 @@ describe('3. access', () => {
 
   test('FUZZ: random firm and user pages heavy with su tiles — for it / admin / staff no su id is drawn on any page, no pill, exec refuses every one', () => {
     const SU_IDS = Object.keys(REG).filter((k) => REG[k].gate === 'su');
-    const OPEN = Object.keys(REG).filter((k) => !REG[k].gate && k !== 'admin');
+    const OPEN = Object.keys(REG).filter((k) => !REG[k].gate);
     let seed = 11;
     const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
     const pick = (list) => list[rnd(list.length)];
@@ -411,12 +409,14 @@ describe('3. access', () => {
       for (let i = 0; i < 1 + rnd(3); i++) { firmItems.push({ id: 'firm:p' + i, label: 'F' + i, icon: 'star', action: { type: 'page' } }); firmPages['firm:p' + i] = page(); }
       for (let i = 0; i < 1 + rnd(3); i++) { userItems.push({ id: 'user:p' + i, label: 'U' + i, icon: 'star', action: { type: 'page' } }); userPages['user:p' + i] = page(); }
       t = boot();
+      // the firm's More Features and Admin pages ride along (Admin's own su tiles included: adminDbConsole & co.)
       t.L.applyAccess({ ...who, ui: {
-        firm: { registry_overrides: { items: firmItems, visible_to: { admin: ['it', 'admin'] } }, layout: { placed: {}, removed: {}, pages: firmPages } },
+        firm: hubFirm({ items: firmItems, layout: { pages: firmPages } }),
         user: { items: { items: userItems }, layout: { placed: {}, removed: {}, pages: userPages } },
       } });
       const pages = [...t.d.querySelectorAll('#ycPages > [data-yc-page]')];
-      expect([run, pages.length]).toEqual([run, firmItems.length + userItems.length]);
+      const hubs = who.roles[0] === 'staff' ? 1 : 2;                                   // Admin is it + admin only
+      expect([run, pages.length]).toEqual([run, firmItems.length + hubs + userItems.length]);
       for (const pg of pages) {
         for (const id of SU_IDS) expect([run, pg.getAttribute('data-yc-page'), id, pg.querySelector(`[data-yc-shortcut="${id}"]`)]).toEqual([run, pg.getAttribute('data-yc-page'), id, null]);
         t.w.openMainTab(pg.id);
@@ -437,29 +437,36 @@ describe('4. exec routing and 5. limits', () => {
   let t;
   afterEach(() => t && t.close());
 
-  test('exec of a grid item tries the pages after More and Admin: the active page first; a panel the firm took off More opens on the page that shows it', () => {
+  test('exec of a grid item: the active page first, else the firm\'s pages in item order (More and Admin among them), then the user\'s; a panel the firm took off More opens on the page that shows it', () => {
+    const HPM = hubFirm().layout.pages['firm:more'];
     const firm = J(FIRM_LAYOUT);
-    firm.placed = { more: placed('more').filter((k) => k !== 'moreAutomations').map((k) => ({ item: k })) };
-    firm.removed = { more: ['moreAutomations'] };
+    firm.pages['firm:more'] = { ...HPM, tiles: HPM.tiles.filter((e) => e.item !== 'moreAutomations') };
     t = boot();
     t.L.applyAccess({ ...SU, ui: ui({ firm }) });
     const pg = t.pageOf('user:desk');
-    expect(t.L.elementsOf('moreAutomations').more.hasAttribute('data-yc-unplaced')).toBe(true);
-    // from Cases: More hides it, Admin has no tile, the firm page has none → the user page shows it
+    const M = t.pageOf('firm:more'), A = t.pageOf('firm:admin');
+    expect([M.querySelector('[data-yc-shortcut="moreAutomations"]'), A.querySelector('[data-yc-shortcut="moreAutomations"]')]).toEqual([null, null]);
+    // from Cases: More Features no longer shows it, Admin and the Ops page have no tile → the user page shows it
     t.w.openMainTab('tabCases');
     expect(t.L.exec('moreAutomations')).toBe(true);
     expect([t.w.currentMainTabId(), t.onStage(), t.drilled(pg)]).toEqual([pg.id, ['automationsDiv'], true]);
-    // Users sits on Admin (default), the firm page and the user page: the active page wins, else Admin
+    // Users sits on Admin (default), the Ops page and the user page: the active page wins, else the first firm page in item order
     t.L.exec('user:desk');
     expect(t.L.exec('adminUsers')).toBe(true);
     expect([t.w.currentMainTabId(), t.onStage()]).toEqual([pg.id, ['usersDiv']]);
     t.w.openMainTab('tabCases');
     expect(t.L.exec('adminUsers')).toBe(true);
-    expect([t.w.currentMainTabId(), t.onStage()]).toEqual(['tabAdmin', ['usersDiv']]);
-    // opts.page names a page tab too
+    expect([t.w.currentMainTabId(), t.onStage()]).toEqual([t.pageOf('firm:ops').id, ['usersDiv']]);   // Ops precedes More and Admin in the firm's items
+    // opts.page names a page tab
     t.w.openMainTab('tabCases');
-    expect(t.L.exec('adminUsers', { page: t.pageOf('firm:ops').id })).toBe(true);
-    expect([t.w.currentMainTabId(), t.onStage()]).toEqual([t.pageOf('firm:ops').id, ['usersDiv']]);
+    expect(t.L.exec('adminUsers', { page: A.id })).toBe(true);
+    expect([t.w.currentMainTabId(), t.onStage()]).toEqual([A.id, ['usersDiv']]);
+    // Ops without Users: Admin is the firm's first page showing it
+    const firm2 = J(firm); firm2.pages['firm:ops'].tiles = firm2.pages['firm:ops'].tiles.filter((e) => e.item !== 'adminUsers');
+    t.L.applyAccess({ ui: ui({ firm: firm2 }) });
+    t.w.openMainTab('tabCases');
+    expect(t.L.exec('adminUsers')).toBe(true);
+    expect([t.w.currentMainTabId(), t.onStage()]).toEqual([A.id, ['usersDiv']]);
     expect(t.errors).toEqual([]);
   });
 
@@ -467,7 +474,7 @@ describe('4. exec routing and 5. limits', () => {
     const items = { items: Array.from({ length: 51 }, (_, i) => ({ id: 'user:p' + i, label: i === 49 ? '<b>forty</b> & nine' : 'P' + i, icon: 'star', action: { type: 'page' } })) };
     t = boot();
     t.L.applyAccess({ ...SU, ui: ui({ items, user: { placed: {}, removed: {}, pages: { 'user:p0': { tiles: [{ item: 'user:p49' }, { item: 'user:p50' }] } } } }) });
-    expect(t.d.querySelectorAll('#ycPages > [data-yc-page]')).toHaveLength(50 + 1);            // 50 user pages + the firm's
+    expect(t.d.querySelectorAll('#ycPages > [data-yc-page]')).toHaveLength(50 + 3);            // 50 user pages + the firm's three (Ops, More Features, Admin)
     expect(t.pageOf('user:p49')).not.toBe(null);
     expect([t.pageOf('user:p50'), t.eff().includes('user:p50'), t.L.exec('user:p50')]).toEqual([null, false, false]);   // the 51st button is not read at all
     expect(t.pageOf('user:p0').querySelector('[data-yc-shortcut="user:p50"]')).toBe(null);
@@ -479,7 +486,7 @@ describe('4. exec routing and 5. limits', () => {
     // an icon that fails the grammar is never a class: circle-question
     const bad = { items: [{ id: 'user:desk', label: 'Desk', icon: 'star', action: { type: 'page' } }] };
     t.L.applyAccess({ ui: ui({ items: bad, user: USER_LAYOUT({ 'user:desk': { tiles: [{ item: 'firm:odd' }] } }),
-      ro: { items: [{ id: 'firm:odd', label: 'Odd', icon: 'x" onload="alert(1)', action: CLIO.action }] } }) });
+      firmItems: [{ id: 'firm:odd', label: 'Odd', icon: 'x" onload="alert(1)', action: CLIO.action }] }) });
     expect(t.pageOf('user:desk').querySelector('[data-yc-shortcut="firm:odd"]')).toBe(null);   // the firm item itself is refused by the grammar
     expect(t.pageOf('user:desk').querySelector(':scope > h1 i').className).toBe('fa-solid fa-star');
     // the client grammar is the server's: a page action with any other key is not a button at all (dropped, never a page)

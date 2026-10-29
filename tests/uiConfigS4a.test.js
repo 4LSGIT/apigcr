@@ -89,7 +89,7 @@ describe('the user layout document', () => {
     expect(e).toMatch(/placed\.home\[5\]: unknown field "foo"/);
     expect(e).toMatch(/placed\.home\[6\] must be an object/);
     expect(e).toMatch(/placed\.home\[7\] must be an object/);
-    expect(e).toMatch(/placed\.sidebar\[0\]: a break is for a grid \(home, more, admin\) only/);
+    expect(e).toMatch(/placed\.sidebar\[0\]: a break is for a grid \(Home, a page's tiles\) only/);
     expect(e).toMatch(/placed\.sidebar\[1\]: label must be 1-40/);
     expect(e).toMatch(/placed\.sidebar\[2\]: label must be 1-40/);
     expect(e).toMatch(/placed\.sidebar\[3\]: label must be plain text/);

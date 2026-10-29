@@ -45,6 +45,8 @@ const { JSDOM } = require('jsdom');
 const shape = require('../lib/uiConfigShape');
 const svc = require('../services/uiConfigService');
 const { rawShellHtml } = require('./helpers/shellHtml');
+// More Features and Admin: the firm's pages since launcher-nits C4 (tests/helpers/hubPages.js)
+const { hubFirm, stageHtml } = require('./helpers/hubPages');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
@@ -94,7 +96,9 @@ function vmLauncher() {
   vm.runInContext(RENDERER_SRC, ctx);
   return { L: ctx.window.ycLauncher, warnings };
 }
-const uiOf = (items, ro = RO) => ({ firm: { registry_overrides: J(ro) }, user: items ? { items: { items: J(items) } } : {} });
+// the firm's documents: ro, plus More Features and Admin as the firm's pages (launcher-nits C4)
+const FIRM = (ro = RO) => hubFirm({ items: ro.items || [], ro: J(ro), visibleTo: { 'firm:admin': ['it', 'admin'], ...(ro.visible_to || {}) } });
+const uiOf = (items, ro = RO) => ({ firm: FIRM(ro), user: items ? { items: { items: J(items) } } : {} });
 
 describe('the effective registry: a drawer is a button', () => {
   test('group Mine, in array order; its action rides as userAction, never in a copy', () => {
@@ -152,12 +156,9 @@ function memDb() {
 function boot({ items = null, layout = null, shortcuts = null, ro = RO, access = ACCESS, platform = 'MacIntel' } = {}) {
   const LAY = (() => { const c = vm.createContext({}); c.window = c; vm.runInContext(REGISTRY_SRC, c); return J(c.DEFAULT_LAYOUTS); })();
   const REG = (() => { const c = vm.createContext({}); c.window = c; vm.runInContext(REGISTRY_SRC, c); return c.FEATURE_REGISTRY; })();
-  const placedIds = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
-  const grid = (sf) => placedIds(sf).map((k) => REG[k]).filter((it) => it.target)
-    .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
+  const tabs = new Set(['tabHome']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
@@ -170,9 +171,8 @@ function boot({ items = null, layout = null, shortcuts = null, ro = RO, access =
       <button id="homeAll" class="home-btn"></button></div>
     ${ALL_TAB}
     ${plainTabs}
-    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
-    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
+    <div id="ycPages"></div>
+    <div id="ycPanels" style="display:none">${stageHtml(REG)}</div>
   </body></html>`;
   const errors = [];
   const dom = new JSDOM(page, { runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://app.example/' });
@@ -209,7 +209,7 @@ function boot({ items = null, layout = null, shortcuts = null, ro = RO, access =
   const userDoc = () => ({
     ...(items ? { items: J({ items }) } : {}), ...(layout ? { layout: J(layout) } : {}), ...(shortcuts ? { shortcuts: J(shortcuts) } : {}),
   });
-  w.firmData = { ui: { firm: { registry_overrides: J(ro) }, user: userDoc() } };
+  w.firmData = { ui: { firm: FIRM(ro), user: userDoc() } };
   const db = memDb();
   for (const [k, v] of Object.entries(userDoc())) db.rows.set(`user|9|${k}`, JSON.stringify(v));
   const server = { puts: [], gets: [], fail: {}, db };
@@ -219,7 +219,7 @@ function boot({ items = null, layout = null, shortcuts = null, ro = RO, access =
     if (method === 'GET' || method == null) {
       server.gets.push(url);
       if (url === '/api/ui-config/pickers') return Promise.resolve(J(PICKERS));
-      return Promise.resolve({ status: 'success', firm: { registry_overrides: J(ro) }, user: userNow(), can_edit_firm: false });
+      return Promise.resolve({ status: 'success', firm: FIRM(ro), user: userNow(), can_edit_firm: false });
     }
     server.puts.push(J({ url, method, body }));
     const f = server.fail[body.config_key];
@@ -315,7 +315,8 @@ describe('the drawer menu (for real)', () => {
     expect([t.isOpen(), t.tab()]).toEqual([false, 'tabTasks']);
     t.homeTile('user:box').click();
     t.entry('moreDocuments').click();
-    expect([t.isOpen(), t.tab(), t.d.getElementById('tabMore').classList.contains('drill-active'), t.w.getComputedStyle(t.d.getElementById('documentsDiv')).display !== 'none']).toEqual([false, 'tabMore', true, true]);
+    const more = t.d.querySelector('#ycPages > [data-yc-page="firm:more"]');   // More Features: a firm page since C4
+    expect([t.isOpen(), t.tab(), more.classList.contains('drill-active'), t.w.getComputedStyle(t.d.getElementById('documentsDiv')).display !== 'none']).toEqual([false, more.id, true, true]);
     t.homeTile('user:box').click();
     t.entry('user:leads').click();
     expect([t.isOpen(), t.dlg().hidden, t.dlg().querySelector('iframe').getAttribute('src')]).toEqual([false, false, '/customView.html?key=lead_followups']);
@@ -485,7 +486,7 @@ describe('the drawer menu (for real)', () => {
     t.w.ycLauncher.exec('user:box');
     t.w.ycLauncher.applyAccess({ denied: ['tasks'] });
     expect([t.isOpen(), t.entries()]).toEqual([true, ['firm:payroll']]);
-    t.w.ycLauncher.applyAccess({ ui: { firm: { registry_overrides: J(RO) }, user: { items: { items: [] } } } });
+    t.w.ycLauncher.applyAccess({ ui: { firm: FIRM(), user: { items: { items: [] } } } });
     expect(t.isOpen()).toBe(false);
   });
 

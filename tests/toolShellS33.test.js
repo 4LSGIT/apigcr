@@ -1,10 +1,11 @@
 // tests/toolShellS33.test.js
 //
 /**
- * ui-custom S3.3 — the tool shell API, tool presentation, and the More firm row
- * (public/index.html: the <script id="ycToolDialogJs"> block, which defines
- * window.openToolDialog and window.ycTool; the ycLauncher block's firm row and
- * exec), plus the `size` field in lib/uiConfigShape.js and its client copy.
+ * ui-custom S3.3 — the tool shell API, tool presentation, and firm items as
+ * tiles (public/index.html: the <script id="ycToolDialogJs"> block, which
+ * defines window.openToolDialog and window.ycTool; the ycLauncher block's
+ * pages and exec), plus the `size` field in lib/uiConfigShape.js and its
+ * client copy.
  *
  *   1. size in the grammar: optional on tool / view, 'compact' | 'large' only,
  *      absent stays absent; refused on a url item; the client's re-validation
@@ -18,10 +19,12 @@
  *      keeps ycLauncher's refusals.
  *   3. presentation: openToolDialog's size presets; exec passes a firm item's
  *      size through.
- *   4. the More firm row: tiles after a break at the end of the grid, in array
- *      order, label as text, no data-target, click → exec; idempotent re-runs,
- *      replacement, removal; hidden / denied firm items not drawn; the pill
- *      strip follows.
+ *   4. firm items on a firm page — the More firm row's heir since launcher-nits
+ *      C4 (More Features is the firm page firm:more; the firm's layout places
+ *      its items there, no automatic row anywhere): tiles where the page's
+ *      layout puts them, in its order, label as text, no data-target, click →
+ *      exec; idempotent re-runs, replacement, removal; hidden / denied firm
+ *      items not drawn; the pill strip follows.
  *
  * Mutation-checked (see local/ui-custom/S3.3_worker_report.md).
  *
@@ -33,6 +36,7 @@
 const vm = require('vm');
 const shape = require('../lib/uiConfigShape');
 const { boot, jwt, RAW, REGISTRY_SRC, RENDERER_SRC } = require('./helpers/toolShell');
+const { hubFirm, HISTORIC_LAYOUTS: HL } = require('./helpers/hubPages');
 
 const ro = (doc) => shape.validate('firm', 'registry_overrides', doc);
 const ui = (r) => ({ firm: { registry_overrides: r }, user: {} });
@@ -417,28 +421,41 @@ describe('tool presentation: size presets', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-describe('the More firm row', () => {
+// launcher-nits C4: More Features is the firm page firm:more and the firm row
+// is gone — a firm item is drawn where the firm's layout places it. Here: on
+// firm:more after a break at the end of the grid, where the row used to be.
+describe('firm items on the firm page firm:more (the More firm row\'s heir)', () => {
   let t;
   beforeEach(() => { t = boot(); });
   afterEach(() => t.close());
-  const more = () => t.d.getElementById('tabMore');
-  const row = () => [...more().querySelectorAll(':scope > [data-yc-firm-row]')];
-  const tiles = () => row().filter((n) => n.tagName === 'BUTTON');
+  const J = (x) => JSON.parse(JSON.stringify(x));
+  /** The firm's documents: these items, placed (or not) at the end of firm:more's grid. */
+  const onMore = (items, { place = items, ro = {} } = {}) => ({
+    firm: hubFirm({ items, ro, layout: { pages: { 'firm:more': {
+      tiles: [...J(HL.more), ...(place.length ? [{ break: true }, ...place.map((i) => ({ item: i.id }))] : [])], icons: J(HL.moreIcons) } } } }),
+    user: {},
+  });
+  const more = () => t.d.querySelector('#ycPages > [data-yc-page="firm:more"]');
+  const tiles = () => [...more().querySelectorAll(':scope > .big-button')].filter((b) => /^firm:/.test(b.getAttribute('data-yc-shortcut')));
   const pills = () => [...more().querySelectorAll(':scope > .feature-strip .pill-button')].slice(1).map((p) => p.textContent.trim());
 
-  test('no firm items → no row', () => {
-    t.L.applyAccess({ isAdmin: true, ui: ui({}) });
-    expect(row()).toEqual([]);
+  test('no row, ever: a firm item the layout places nowhere is drawn nowhere (no firm-row node in the shell)', () => {
+    t.L.applyAccess({ isAdmin: true, ui: onMore([FI.clio, FI.appt], { place: [] }) });
+    expect(tiles()).toEqual([]);
+    expect(t.d.querySelectorAll('[data-yc-firm-row]')).toHaveLength(0);
+    expect(t.d.querySelectorAll('[data-yc-shortcut^="firm:clio"], [data-yc-shortcut^="firm:appt"]')).toHaveLength(0);
+    expect(t.L.effectiveRegistry().map((e) => e.id)).toEqual(expect.arrayContaining(['firm:clio', 'firm:appt']));   // still All's / the palette's
   });
 
-  test('tiles at the END of the grid after a break, in array order; the grid grammar; label as text; no drill attributes', () => {
+  test('tiles where the layout puts them — after the break at the END of the grid, in its order; label as text; no drill attributes', () => {
     const evil = { id: 'firm:evil', label: '<img src=x onerror=alert(1)>', icon: 'bug', action: { type: 'tool', key: 'x', present: 'modal' } };
-    t.L.applyAccess({ ui: ui({ items: [FI.leads, FI.pay, evil, FI.clio] }) });
+    t.L.applyAccess({ ui: onMore([FI.leads, FI.pay, evil, FI.clio]) });
     const kids = [...more().children];
-    const lastReg = kids.indexOf(t.L.elementsOf('moreAssistant').more);   // the registry grid's last tile (YisrAI row, 2026-10-19)
-    expect(kids.slice(lastReg + 1, lastReg + 7).map((n) => n.tagName + (n.getAttribute('data-yc-firm-row') || '')))
+    const lastReg = kids.indexOf(more().querySelector(':scope > [data-yc-shortcut="moreAssistant"]'));   // the grid's last registry tile (YisrAI row, 2026-10-19)
+    expect(lastReg).toBeGreaterThan(0);
+    expect(kids.slice(lastReg + 1, lastReg + 7).map((n) => n.tagName + (n.getAttribute('data-yc-shortcut') || '')))
       .toEqual(['BR', 'BR', 'BUTTONfirm:leads', 'BUTTONfirm:pay', 'BUTTONfirm:evil', 'BUTTONfirm:clio']);
-    expect(kids[lastReg + 7].className).toBe('more-egg-row');
+    expect(kids[lastReg + 7].className).toBe('page-egg-row');
     for (const b of tiles()) {
       expect(b.className).toBe('big-button');
       expect(b.parentNode).toBe(more());
@@ -455,7 +472,7 @@ describe('the More firm row', () => {
   test('a tile click runs exec: the tool opens in its size; a url item opens its window', () => {
     const opened = [];
     t.w.open = (...a) => { opened.push(a); return null; };
-    t.L.applyAccess({ ui: ui({ items: [FI.pay, FI.clio] }) });
+    t.L.applyAccess({ ui: onMore([FI.pay, FI.clio]) });
     tiles()[1].click();
     expect([t.dlgOpen(), t.dlgFrame().getAttribute('src'), t.w.openToolDialog.size()]).toEqual([true, '/tool/clio-code', 'compact']);
     tiles()[0].click();
@@ -463,48 +480,46 @@ describe('the More firm row', () => {
     expect(t.dlgOpen()).toBe(false);                                // exec closes the dialog first
   });
 
-  test('idempotent: the same items re-run (applyAccess, also with only roles) leave the very same nodes', () => {
-    const doc = ui({ items: [FI.clio, FI.appt] });
+  test('idempotent: the same documents re-run (applyAccess, also with only roles) leave the very same nodes', () => {
+    const doc = onMore([FI.clio, FI.appt]);
     t.L.applyAccess({ ui: doc });
-    const first = row();
-    t.L.applyAccess({ ui: JSON.parse(JSON.stringify(doc)) });
+    const first = [...more().childNodes];
+    t.L.applyAccess({ ui: J(doc) });
     t.L.applyAccess({ roles: ['staff'] });
-    expect(row()).toEqual(first);
-    expect(row().every((n, i) => n === first[i])).toBe(true);
+    expect([...more().childNodes].every((n, i) => n === first[i])).toBe(true);
+    expect(more().childNodes.length).toBe(first.length);
     expect(tiles()).toHaveLength(2);
   });
 
-  test('a change replaces the row; no items removes it; a tile removed by hand comes back', () => {
+  // (The row's "a tile removed by hand comes back" is not carried over: a
+  // page relays out only what its layout changed — S6c-5, not a C4 contract.)
+  test('a change replaces the tiles; none placed removes them', () => {
+    t.L.applyAccess({ ui: onMore([]) });
     const bare = more().childNodes.length;
-    t.L.applyAccess({ ui: ui({ items: [FI.clio, FI.appt] }) });
+    t.L.applyAccess({ ui: onMore([FI.clio, FI.appt]) });
     // the grid's own spacing: one whitespace node before each element, as the mounted markup has
     const ws = (n) => n.previousSibling && n.previousSibling.nodeType === 3 && n.previousSibling.nodeValue === '\n  ';
-    expect(row().every(ws)).toBe(true);
-    expect(more().childNodes.length).toBe(bare + 2 * 4);
-    t.L.applyAccess({ ui: ui({ items: [FI.appt, { ...FI.clio, label: 'Clio' }, FI.leads] }) });
+    expect(tiles().every(ws)).toBe(true);
+    expect(more().childNodes.length).toBe(bare + 3 + 2 * 2);       // the break (whitespace + 2 BR), then whitespace + tile each
+    t.L.applyAccess({ ui: onMore([FI.appt, { ...FI.clio, label: 'Clio' }, FI.leads]) });
     expect(tiles().map((b) => b.textContent)).toEqual(['Appointment Form', 'Clio', 'Lead Follow-ups']);
-    expect(row().filter((n) => n.tagName === 'BR')).toHaveLength(2);
-    expect(more().childNodes.length).toBe(bare + 2 * 5);          // nothing left behind by the old row
-    tiles()[0].remove();
-    t.L.applyAccess({});
-    expect(tiles()).toHaveLength(3);
-    t.L.applyAccess({ ui: ui({}) });
-    expect(row()).toEqual([]);
-    expect(more().childNodes.length).toBe(bare + 1);              // + the hand-removed tile's orphaned whitespace only
-    t.L.applyAccess({ ui: null });
-    expect(row()).toEqual([]);
+    expect(more().childNodes.length).toBe(bare + 3 + 2 * 3);       // nothing left behind by the old tiles
+    t.L.applyAccess({ ui: onMore([]) });
+    expect(tiles()).toEqual([]);
+    expect(more().childNodes.length).toBe(bare);
   });
 
   test('firm-hidden and denied firm items are not drawn', () => {
-    t.L.applyAccess({ denied: ['firm:appt'], ui: ui({ hidden: ['firm:clio'], items: [FI.clio, FI.appt, FI.leads] }) });
-    expect(tiles().map((b) => b.getAttribute('data-yc-firm-row'))).toEqual(['firm:leads']);
+    t.L.applyAccess({ denied: ['firm:appt'], ui: onMore([FI.clio, FI.appt, FI.leads], { ro: { hidden: ['firm:clio'] } }) });
+    expect(tiles().map((b) => b.getAttribute('data-yc-shortcut'))).toEqual(['firm:leads']);
   });
 
   test('drilled in: the strip has a pill per firm tile (it runs exec), and follows a change', () => {
-    t.L.applyAccess({ ui: ui({ items: [FI.appt] }) });
-    t.L.elementsOf('moreManuals').more.click();
+    t.L.applyAccess({ ui: onMore([FI.appt]) });
+    t.L.exec('moreManuals');                                          // a panel tile on this page: drills it in
+    expect(more().classList.contains('drill-active')).toBe(true);
     expect(pills()).toContain('Appointment Form');
-    t.L.applyAccess({ ui: ui({ items: [{ ...FI.appt, label: 'Appts' }] }) });
+    t.L.applyAccess({ ui: onMore([{ ...FI.appt, label: 'Appts' }]) });
     expect(pills()).toContain('Appts');
     expect(pills()).not.toContain('Appointment Form');
     expect(more().querySelectorAll(':scope > .feature-strip')).toHaveLength(1);

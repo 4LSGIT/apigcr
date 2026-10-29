@@ -70,8 +70,8 @@ describe('layout.pages', () => {
     expect(u.ok).toBe(true);
     expect(u.value.pages['user:desk'].tiles).toEqual([{ item: 'user:leads' }, { item: 'cases' }]);
     // absent stays absent
-    expect(F({ placed: { more: [] } }).value).toEqual({ placed: { more: [] }, removed: {} });
-    expect(F({ placed: { more: [] } }).value).not.toHaveProperty('pages');
+    expect(F({ placed: { home: [] } }).value).toEqual({ placed: { home: [] }, removed: {} });
+    expect(F({ placed: { home: [] } }).value).not.toHaveProperty('pages');
   });
 
   test('keys: a tier names only its own pages — firm: for the firm, user: for a user; anything else is refused by name', () => {
@@ -95,7 +95,7 @@ describe('layout.pages', () => {
     expect(e).toMatch(/pages\.firm:ops\.tiles\[3\]: break must be true/);
     expect(e).toMatch(/pages\.firm:ops\.tiles\[4\]: not an item id/);
     expect(e).toMatch(/pages\.firm:ops\.tiles\[5\]: unknown field "nope" \(an entry is \{ item \} or \{ break: true \}\)/);
-    expect(e).toMatch(/pages\.firm:ops\.icons\[0\]: a break is for a grid \(home, more, admin\) only/);
+    expect(e).toMatch(/pages\.firm:ops\.icons\[0\]: a break is for a grid \(Home, a page's tiles\) only/);
     expect(e).toMatch(/pages\.firm:ops\.icons\[2\]: b is already placed at pages\.firm:ops\.icons\[1\]/);
     // a user's page may name their own buttons; a firm's may not
     expect(U({ pages: { 'user:d': { tiles: [{ item: 'user:y' }], icons: [{ item: 'user:y' }] } } }).ok).toBe(true);
@@ -122,8 +122,8 @@ describe('layout.pages', () => {
   test('what stood before: every S6c document shape (no pages) normalizes exactly as it did', () => {
     const docs = [
       [F, {}], [F, { placed: {}, removed: {} }],
-      [F, { placed: { more: [{ item: 'moreReports' }, { break: true }, { item: 'firm:clio-code' }], moreIcons: [{ item: 'casey' }] }, removed: { admin: ['adminDbConsole'] } }],
-      [F, { placed: { home: [{ item: 'cases' }], sidebar: [{ label: 'Mine' }, { item: 'tasks' }], homeIcons: [{ item: 'all' }], admin: [], adminIcons: [] } }],
+      [F, { placed: { home: [{ item: 'moreReports' }, { break: true }, { item: 'firm:clio-code' }], homeIcons: [{ item: 'casey' }] }, removed: { sidebar: ['adminDbConsole'] } }],
+      [F, { placed: { home: [{ item: 'cases' }], sidebar: [{ label: 'Mine' }, { item: 'tasks' }], homeIcons: [{ item: 'all' }] } }],
       [U, { placed: { home: [{ item: 'user:y' }, { break: true }], sidebar: [{ item: 'firm:x' }], homeIcons: [{ item: 'all' }, { item: 'myTasks' }] }, removed: { home: ['bills'], sidebar: ['log'], homeIcons: ['casey'] } }],
       [U, {}], [U, { removed: { home: [] } }],
     ];
@@ -159,7 +159,7 @@ describe('write(): a firm layout with pages is stored and versioned like any fir
     };
     return { stmts, writes: () => stmts.filter((x) => /^(INSERT|UPDATE|DELETE)\b/.test(x.s)), getConnection: async () => conn, query: async () => { throw new Error('no'); } };
   }
-  const DOC = { placed: { more: [{ item: 'moreReports' }] }, removed: {}, pages: { 'firm:ops': { tiles: [{ item: 'moreAutomations' }, { break: true }, { item: 'adminUsers' }], icons: [{ item: 'casey' }] } } };
+  const DOC = { placed: { home: [{ item: 'moreReports' }] }, removed: {}, pages: { 'firm:ops': { tiles: [{ item: 'moreAutomations' }, { break: true }, { item: 'adminUsers' }], icons: [{ item: 'casey' }] } } };
 
   test('stored with its pages, one version; a user key in the firm map is a 400 that writes nothing; a user layout with pages is their own row', async () => {
     const db = txDb(null);

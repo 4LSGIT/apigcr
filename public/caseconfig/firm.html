@@ -262,8 +262,8 @@
 // "Arrange pages and defaults…" → window.top.ycLayoutEditor.open({ scope:
 // 'firm' }), the shell's layout editor in its firm mode, drawn over the whole
 // app like the icon picker. It edits ANOTHER firm document, `layout` (Home,
-// the sidebar, the More Features and Admin pages and their small buttons, and
-// — S6c-5 — the tiles of the firm's own PAGES), with its own load, base and
+// the sidebar and their small buttons, and — S6c-5 — the tiles of the firm's
+// own PAGES, More Features and Admin among them since launcher-nits C4), with its own load, base and
 // save — never this page's Save. A firm item may be a PAGE (kind Page, action
 // { type:'page' }): a tab of tiles like More Features for everyone who sees
 // it; its name, icon and Who sees what live here, its tiles in the layout —
@@ -404,13 +404,24 @@ function makeId(label, taken) {
   return id;
 }
 
+/** The firm part of the ui computeEffective groups by: the stored document's
+ *  items and the shell's live firm layout. All's groups follow the firm's
+ *  pages (launcher-nits C4) — More Features and Admin are a page item's label
+ *  and its page's lists — so without them every hub item would land in More
+ *  actions. */
+function catalogUi(stored) {
+  const items = isObj(stored) && Array.isArray(stored.items) ? stored.items : [];
+  const fd = P.firmData, f = fd && isObj(fd.ui) && isObj(fd.ui.firm) ? fd.ui.firm : {};
+  return { firm: { registry_overrides: { items }, ...(isObj(f.layout) ? { layout: f.layout } : {}) } };
+}
+
 /** The registry rows the form offers, grouped like All. Read from the shell's
  *  own ycLauncher.computeEffective (never re-derived here): every item, as an
  *  admin would see it, with no hides and no renames — so hidden items are
  *  listed too. computeEffective is pure (ui-custom S4a): the group order comes
  *  back on the list (.groups) and the shell's All tab is untouched. */
-function launcherCatalog(L) {
-  const all = L.computeEffective({ isAdmin: true, denied: [] });
+function launcherCatalog(L, stored) {
+  const all = L.computeEffective({ isAdmin: true, denied: [], ui: catalogUi(stored) });
   const entries = all.filter((e) => !FIRM_ID_RE.test(e.id));
   const groups = (all.groups || []).filter((g) => entries.some((e) => e.group === g));
   const undeniable = Array.isArray(L.UNDENIABLE) ? L.UNDENIABLE.slice() : ['moreSettings', 'helpSupport'];
@@ -555,6 +566,7 @@ function placeErrors(errors, doc) {
 // A version, read-only, as one line per surface it arranges: its tiles in
 // order (a grid's / Home's rows split at the breaks, the sidebar's under
 // their headings), then what it hides there.
+// (more / admin: the retired hubs' lists, which versions saved before launcher-nits C4 still hold)
 const LAYOUT_NAMES = [['home', 'Home'], ['homeIcons', 'Home’s small buttons'], ['sidebar', 'Sidebar'],
   ['more', 'More Features'], ['moreIcons', 'More Features’ small buttons'], ['admin', 'Admin'], ['adminIcons', 'Admin’s small buttons']];
 /** A layout document → [[surface name, text]…]; nameOf(id) → its label. */
@@ -733,7 +745,6 @@ const LauncherSection = {
     }
     if (pk.status === 'rejected') banner(errText(pk.reason, 'Could not load the tool and view lists'));
     else this.st.pickers = { tools: pk.value.tools || [], views: pk.value.views || [] };
-    this.st.catalog = launcherCatalog(L);
     this.reform();
     this.st.loaded = true;
     this.st.error = null;
@@ -742,6 +753,7 @@ const LauncherSection = {
 
   /** The form, rebuilt from RegistryDoc's stored document. */
   reform() {
+    this.st.catalog = launcherCatalog(P.ycLauncher, this.st.stored);   // its groups follow the stored page items (C4)
     this.st.form = formFromDoc(this.st.stored, this.st.catalog);
     this.st.srv = null;
   },
@@ -786,9 +798,9 @@ const LauncherSection = {
       <div class="fm-history" id="fm-history" hidden></div>
       <div class="fm-block">
         <h3>Pages and defaults</h3>
-        <span class="yc-hint">Arrange the <b>More Features</b> and <b>Admin</b> pages for everyone — the order of the
-          tiles, where a row breaks, where your firm items sit, the small buttons under them — the <b>Home</b> and
-          <b>sidebar</b> everyone starts from, and the tiles of your firm's own <b>pages</b>. It opens over the app and
+        <span class="yc-hint">Arrange the <b>Home</b> and <b>sidebar</b> everyone starts from, and your firm's
+          <b>pages</b> — <b>More Features</b> and <b>Admin</b> among them: the order of the tiles, where a row breaks,
+          where your firm items sit, the small buttons under them. It opens over the app and
           saves on its own (not with this page's Save), from the settings as saved: save a new firm item here first to
           place it.</span>
         <div style="margin-top:8px"><button type="button" class="btn btn-outline btn-sm" data-act="arrange"><i class="fa-solid fa-table-cells-large"></i> Arrange pages and defaults…</button></div>
@@ -1239,8 +1251,7 @@ const SU_TIP = 'Superusers always see everything';
  *  STORED document's firm items, grouped like All — the shell's own
  *  computeEffective (pure), as launcherCatalog does. */
 function whoCatalog(L, stored) {
-  const items = isObj(stored) && Array.isArray(stored.items) ? stored.items : [];
-  const all = L.computeEffective({ isAdmin: true, denied: [], ui: { firm: { registry_overrides: { items } } } });
+  const all = L.computeEffective({ isAdmin: true, denied: [], ui: catalogUi(stored) });
   const entries = all.slice();
   const groups = (all.groups || []).filter((g) => entries.some((e) => e.group === g));
   const undeniable = Array.isArray(L.UNDENIABLE) ? L.UNDENIABLE.slice() : ['moreSettings', 'helpSupport'];

@@ -213,22 +213,25 @@ hand), the Shared values list (`shared` — a 64-character name, an unbroken
 per-user hides, one item hidden from three people, one of them not in the user
 list; `panel:caseConfigDiv:firm` — the step fails if the tab does not open — then its "Arrange pages
 and defaults…" opens the layout editor in firm mode over the firm's layout below:
-`panel:caseConfigDiv:firm-editor:home` / `:more` / `:admin` / `:more-picker`, which fail when it does not
+`panel:caseConfigDiv:firm-editor:home` / `:sidebar` / `:pages` / `:more-picker` (More Features' tiles on the Firm pages tab), which fail when it does not
 open or its scrolling body goes wider than itself, and `panel:caseConfigDiv:firm-history-layout`, History
 switched to "Pages and defaults" with a version's View open) and the firm's items (`firm-data.json`'s `ui`: a
 compact tool, a 40-character label, a 40-character unbroken one, a link and a
 38-character link with a long href, plus a long rename of Reports; surveyed in
-`tab:tabMore` and `tab:tabAll`) placed by the firm's default **layout**
-(`ui.firm.layout`, ui-custom S6c: a full More arrangement with Get Clio Code
-in row 5, the four long-labelled firm items as a row of their own — the
-40-character UNBROKEN label first: a desktop `.big-button` has no
-`overflow-wrap`, so that word runs ~100px past its 200px tile, and in the
-right-hand column at 800 that passes the viewport (the firm row placed it in
-the left column; a real finding, filed) — an Admin
-panel item (Users) on More that navigates to Admin, My Tasks beside Casey's
-paw in More's icon row, Scratch taken off the Admin grid — so the firm row is
-NOT drawn; `visible_to.admin` restricts the Admin page to it / admin like the
-live firm, which wsurl.js's non-SU "staff" runs rely on). `GET /api/ui-config` answers the SAME layers —
+`page:firm:more` and `tab:tabAll`) placed by the firm's default **layout**
+(`ui.firm.layout`: More Features and Admin are firm PAGES, `firm:more` /
+`firm:admin`, as production's since launcher-nits C3 — the fixture's are what
+`scripts/launcherC3MoreAdminPages.js` made of its old More / Admin
+arrangement: a full More Features page with Get Clio Code in row 5, the four
+long-labelled firm items as a row of their own — the 40-character UNBROKEN
+label first: a desktop `.big-button` has no `overflow-wrap`, so that word runs
+~100px past its 200px tile, and in the right-hand column at 800 that passes
+the viewport (a real finding, filed) — an Admin panel item (Users) on More
+Features, My Tasks beside Casey's paw in its small buttons, Scratch taken off
+the Admin page; `visible_to['firm:admin']` restricts the Admin page to it /
+admin like the live firm, which wsurl.js's non-SU "staff" runs rely on; and,
+like the live document, it still carries the hubs' old `more` / `moreIcons` /
+`admin` lists, which the shell, the editor and the server ignore). `GET /api/ui-config` answers the SAME layers —
 server.js builds it from `firm-data.json`'s `ui`, with only `can_edit_firm`
 and `firm_versions` from `ui-config.json` — because in production both come from one read and the
 layout editor refreshes the shell when they differ), and a user's own Home and
@@ -267,12 +270,12 @@ tab (ui-custom S5c-b: a saved view with a 39-character name, opened through
 `ycLauncher.exec` — `tab:tabUserItem`, the button tab, which also fails when its
 heading goes sideways, `m.boxes`), and two PAGES (ui-custom S6c-5): the firm's
 `firm:ops` (a firm item of kind page, `visible_to` it / admin — the fixture
-user is su; a tile for it on More's last row; its tiles in
+user is su; a tile for it on More Features' last row; its tiles in
 `ui.firm.layout.pages`: three panels incl. Users and YisraCase Config, a
 break, three firm items among them the 40-character unbroken label; icons My
 Tasks + Casey) and the user's `user:my-desk` (in `ui.user.items`, on Home and
 the sidebar; its tiles in `ui.user.layout.pages`: Manuals (open to every
-role: what a staff run drills), two panels from different hubs, the tab button, the list, the link, the long tool, the firm page, a su
+role: what a staff run drills), two panels from different hub pages (More Features, Admin), the tab button, the list, the link, the long tool, the firm page, a su
 tool for the gate; icons Casey, All, My Tasks) — surveyed by ITEM id as
 `page:<id>` (the page's grid; its tab id is per session, so the tabs pass skips
 page tabs) and `page:<id>:drilled` (its first panel open on the page itself);

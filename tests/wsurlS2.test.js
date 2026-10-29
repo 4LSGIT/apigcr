@@ -1,7 +1,13 @@
 /**
- * wsurl S2 — the workspace URL remembers the open More / Admin drill panel.
+ * wsurl S2 — the workspace URL remembers the open drill panel of a page.
  *
- *   ?open=tabMore~<registryId>[~<pane rest>]   tabAdmin~<registryId>[~…]
+ *   ?open=firm:more~<registryId>[~<pane rest>]   firm:admin~<registryId>[~…]
+ *
+ * Since launcher-nits C4 More Features and Admin are the FIRM'S PAGES
+ * (firm:more / firm:admin — tabs in #ycPages, their tiles neutrals); the
+ * static #tabMore / #tabAdmin hubs, their default tiles and the "unplaced"
+ * default tile are gone. Here they are ycPage-5 / ycPage-6, first in
+ * #ycPages as the firm's item order puts them.
  *
  * The REAL shell functions, extracted from public/index.html (the fnSrc
  * pattern of tests/unifiedEventsU9.shell.test.js), run over a DOM shaped
@@ -13,9 +19,10 @@
  * exitDrillMode, syncDrillState, ensureStrip — the page's own drill
  * script). ycLauncher is stubbed at its PUBLIC API only (isReady,
  * effectiveRegistry, elementsOf, exec) — exec keeps its real contract:
- * refuses ids outside the effective registry, picks the page by the S6c-4
- * routing (opts.page, the active page, More, Admin — the first that shows a
- * tile for the id; else the hidden default), opens it through
+ * refuses ids outside the effective registry, picks the page by its routing
+ * (opts.page, the active page, then the pages in order — the first that
+ * shows a tile for the id; with none, the real exec opens the panel tab,
+ * tests/launcherC1.test.js — this stub refuses), opens it through
  * window.openMainTab, then opens the panel there (or the dialog for an
  * action tile).
  *
@@ -65,29 +72,25 @@ const pick = (re) => { const m = re.exec(SHELL); if (!m) throw new Error('not fo
 
 // Tiles in a DIFFERENT order from the registry on purpose: mapping is by
 // data-target, never by position. The panels sit on the stage (#ycPanels),
-// after the pages, as in the real page; tUsersOnMore is a neutral the firm
-// placed on More for the Admin panel Users (data-yc-shortcut + data-target,
-// no id, no group — ycLauncher's neutral()).
+// after the pages, as in the real page. Every page tile is a neutral
+// (data-yc-shortcut, + data-target for a panel — ycLauncher's neutral()); the
+// element ids are the test's handles only. Users sits on More AND Admin.
 const DOM = `<!DOCTYPE html><html><body>
   <div id="tabOpenFiles"></div>
   <div id="tabHome" class="tab-main" style="display:block"></div>
   <div id="tabCases" class="tab-main" style="display:none"></div>
-  <div id="tabMore" class="tab-main" style="display:none">
-    <button class="big-button" id="tManuals" data-target="manualsDiv" data-exclusive-group="more">Manuals</button>
-    <button class="big-button" id="tAuto" data-target="automationsDiv" data-exclusive-group="more">Automations</button>
-    <button class="big-button" id="tSettings" onclick="openMainTab('tabSettings')">Settings</button>
-    <button class="big-button" id="tStray" data-target="strayDiv" data-exclusive-group="more">Stray</button>
-    <button class="big-button" id="tUnplaced" data-target="unplacedDiv" data-exclusive-group="more" data-yc-unplaced="">Unplaced</button>
+  <div id="ycPages"><div id="ycPage-5" class="tab-main yc-hub" data-yc-page="firm:more" style="display:none"><h1>More Features</h1>
+    <button class="big-button" id="tManuals" data-yc-shortcut="moreManuals" data-target="manualsDiv">Manuals</button>
+    <button class="big-button" id="tAuto" data-yc-shortcut="moreAutomations" data-target="automationsDiv">Automations</button>
+    <button class="big-button" id="tSettings" data-yc-shortcut="moreSettings">Settings</button>
+    <button class="big-button" id="tStray" data-yc-shortcut="moreStray" data-target="strayDiv">Stray</button>
     <button class="big-button" data-yc-shortcut="adminUsers" data-target="usersDiv">Users</button>
-  </div>
-  <div id="tabAdmin" class="tab-main" style="display:none">
-    <button class="big-button" id="tDb" data-target="dbConsoleDiv" data-exclusive-group="admin">DB</button>
-    <button class="big-button" id="tEtch" onclick="etchSwal()">Etch</button>
-    <button class="big-button" id="tUsers" data-target="usersDiv" data-exclusive-group="admin">Users</button>
-  </div>
-  <div id="ycPages"><div id="ycPage-1" class="tab-main yc-hub" data-yc-page="firm:ops" style="display:none"><h1>Ops</h1><button class="big-button" data-yc-shortcut="moreAutomations" data-target="automationsDiv">Automations</button><button class="big-button" data-yc-shortcut="adminEtch">Etch</button><div class="page-egg-row"></div></div><div id="ycPage-2" class="tab-main yc-hub" data-yc-page="user:desk" style="display:none"><h1>Desk</h1><button class="big-button" data-yc-shortcut="moreManuals" data-target="manualsDiv">Manuals</button><div class="page-egg-row"></div></div></div>
+    <div class="page-egg-row"></div></div><div id="ycPage-6" class="tab-main yc-hub" data-yc-page="firm:admin" style="display:none"><h1>Admin</h1>
+    <button class="big-button" id="tDb" data-yc-shortcut="adminDbConsole" data-target="dbConsoleDiv">DB</button>
+    <button class="big-button" id="tEtch" data-yc-shortcut="adminEtch">Etch</button>
+    <button class="big-button" id="tUsers" data-yc-shortcut="adminUsers" data-target="usersDiv">Users</button>
+    <div class="page-egg-row"></div></div><div id="ycPage-1" class="tab-main yc-hub" data-yc-page="firm:ops" style="display:none"><h1>Ops</h1><button class="big-button" data-yc-shortcut="moreAutomations" data-target="automationsDiv">Automations</button><button class="big-button" data-yc-shortcut="adminEtch">Etch</button><div class="page-egg-row"></div></div><div id="ycPage-2" class="tab-main yc-hub" data-yc-page="user:desk" style="display:none"><h1>Desk</h1><button class="big-button" data-yc-shortcut="moreManuals" data-target="manualsDiv">Manuals</button><div class="page-egg-row"></div></div></div>
   <div id="ycPanels" style="display:none">
-    <div id="unplacedDiv" style="display:none"><iframe id="unplacedFrame" data-src="/unplaced.html"></iframe></div>
     <div id="automationsDiv" style="display:none"><iframe id="autoFrame" data-src="/automationManager.html"></iframe><div><iframe id="deepFrame"></iframe></div></div>
     <div id="manualsDiv" style="display:none"><iframe id="manFrame" data-src="/manuals.html"></iframe></div>
     <div id="orphanDiv" style="display:none"><iframe id="orphanFrame"></iframe></div>
@@ -95,9 +98,12 @@ const DOM = `<!DOCTYPE html><html><body>
     <div id="usersDiv" style="display:none"><iframe id="usersFrame" data-src="/users.html"></iframe></div>
   </div>
   <div class="swal2-container"><iframe id="swalFrame"></iframe></div>
-  <!-- a More tile's panel that is NOT on the stage, and is visible (J6) -->
+  <!-- a More page tile's panel that is NOT on the stage, and is visible (J6) -->
   <div id="strayDiv"><iframe id="strayFrame"></iframe></div>
 </body></html>`;
+
+// More Features and Admin: the firm pages firm:more / firm:admin (launcher-nits C4)
+const MORE = 'ycPage-5', ADMIN = 'ycPage-6';
 
 // Every window shell() opens is closed after its test: ~20 jsdom shells per
 // run otherwise stay alive until the worker exits.
@@ -148,52 +154,35 @@ function shell({ su = true, denied = [] } = {}) {
     window.__ws = { get main() { return wsMainRest; }, get panel() { return wsPanelRest; } };
   `);
   const $ = (id) => d.getElementById(id);
-  // ycLauncher's public API, as the effective registry would answer it.
-  const EL = {
-    moreAutomations: { more: $('tAuto') },
-    moreManuals: { more: $('tManuals') },
-    moreSettings: { more: $('tSettings') },               // an ACTION tile: no data-target (it switches tab)
-    newClient: { sidebar: d.createElement('a') },        // not on the More grid at all
-    'firm:x': {},
-    // A firm item WITH a panel tile (ui-custom S3.3 adds a firm row to the
-    // More grid): still never restored from a URL — refusal (a) on its own.
-    'firm:tile': { more: $('tManuals') },
-    moreStray: { more: $('tStray') },                     // its panel is NOT inside tabMore (J6)
-    // A tile the firm's layout took off this grid (ui-custom S6c): in the DOM, hidden by
-    // data-yc-unplaced, still an effective item — the restore refuses it, the grid shows.
-    moreUnplaced: { more: $('tUnplaced') },
-  };
-  if (su) EL.adminDbConsole = { admin: $('tDb') };
-  if (su) EL.admin = { sidebar: d.createElement('a') };  // the Admin PAGE item (S6c: the URL door to tabAdmin)
-  EL.moreFeatures = { sidebar: d.createElement('a') };    // the More page item
-  if (su) EL.adminEtch = { admin: $('tEtch') };           // an ACTION tile that opens a DIALOG
-  // Users: its default tile is Admin's; the firm ALSO placed it on More as a
-  // neutral (S6c-4) — the same panel, opened in place from either page
-  if (su) EL.adminUsers = { admin: $('tUsers') };
-  const effective = Object.keys(EL).filter((id) => !denied.includes(id));
-  const TAB = { more: 'tabMore', admin: 'tabAdmin' };
+  // ycLauncher's public API, as the effective registry would answer it. No
+  // item has a hub element any more (launcher-nits C4): elementsOf is {} for
+  // all but a sidebar item; the page tiles are neutrals.
+  if (!su) {   // firm:admin is not this user's page (visible_to): not built; Users isn't theirs either
+    $(ADMIN).remove();
+    d.querySelector(`#${MORE} > [data-yc-shortcut="adminUsers"]`).remove();
+  }
+  const EL = { newClient: { sidebar: d.createElement('a') } };   // not on any page at all
+  // order = the effective registry's; 'firm:x' / 'firm:tile' are firm items (never a drill id);
+  // moreStray's panel is NOT on the stage (J6); moreSettings and adminEtch are ACTION tiles
+  const IDS = ['moreAutomations', 'moreManuals', 'moreSettings', 'newClient', 'firm:x', 'firm:tile', 'moreStray']
+    .concat(su ? ['adminDbConsole', 'adminEtch', 'adminUsers'] : []);
+  const effective = IDS.filter((id) => !denied.includes(id));
   w.ycLauncher = {
     isReady: () => true,
     effectiveRegistry: () => effective.map((id) => ({ id })),
-    elementsOf: (id) => Object.assign({}, EL[id] || {}),   // returns hidden (denied) elements too
+    elementsOf: (id) => Object.assign({}, EL[id] || {}),
     exec: (id, opts) => {
       w.__calls.exec.push(opts && opts.page ? id + '@' + opts.page : id);
-      if (!effective.includes(id)) return false;          // denied / firm-hidden / admin-gated
-      const m = EL[id];
-      const sf = m.more ? 'more' : m.admin ? 'admin' : null;
-      if (!sf) return false;
-      // the S6c-4 routing: the first page that SHOWS a tile for the id
-      const home = TAB[sf], def = m[sf];
-      let at = null;
-      // …then the pages (ui-custom S6c-5), firm first, as gridTileFor does
+      if (!effective.includes(id)) return false;          // denied / firm-hidden / gated
+      // the routing: opts.page, the active page, then the pages in order — the first that SHOWS a tile
       const pageTabs = Array.from(d.querySelectorAll('#ycPages > .tab-main')).map((e) => e.id);
-      for (const t of [opts && opts.page, w.currentMainTabId(), 'tabMore', 'tabAdmin'].concat(pageTabs)) {
+      let at = null;
+      for (const t of [opts && opts.page, w.currentMainTabId()].concat(pageTabs)) {
         if (!t || !$(t)) continue;
-        if (t === home && !def.hasAttribute('data-yc-unplaced')) { at = { tab: t, el: def }; break; }
-        const n = $(t).querySelector(`:scope > .big-button[data-yc-shortcut="${id}"][data-target]`);
+        const n = $(t).querySelector(`:scope > .big-button[data-yc-shortcut="${id}"]`);
         if (n) { at = { tab: t, el: n }; break; }
       }
-      if (!at) at = { tab: home, el: def };
+      if (!at) return false;                               // (the real exec: the panel tab — launcherC1)
       w.openMainTab(at.tab);
       const target = at.el.getAttribute('data-target');
       if (!target) { w.__calls.dialog++; return true; }  // an action tile opens its dialog
@@ -210,7 +199,7 @@ function shell({ su = true, denied = [] } = {}) {
   const lastOpen = () => new w.URL(w.__writes[w.__writes.length - 1]).searchParams.get('open');
   // What a page remembers (a tile click on it), then the stage as the active
   // tab sees it: shown only while that page is the one on screen.
-  const showPanel = (id, tab = 'tabMore') => {
+  const showPanel = (id, tab = MORE) => {
     if (id) w.drillMemory[tab] = id; else delete w.drillMemory[tab];
     w.stageSync(w.currentMainTabId());
   };
@@ -221,45 +210,45 @@ describe('wsurl S2 — the open panel → its registry id (by data-target)', () 
   test('mapping by data-target, whatever the tile order; grid showing → no segment', async () => {
     const { w, $, tick, lastOpen, showPanel } = shell();
     w.enableWorkspaceUrlSync();
-    w.openMainTab('tabMore');
+    w.openMainTab(MORE);
     await tick();
-    expect(lastOpen()).toBe('tabMore');
-    expect(JSON.parse(JSON.stringify(w.wsDrillPanels('tabMore').map((p) => p.id)))).toEqual(['moreAutomations', 'moreManuals', 'moreUnplaced', 'adminUsers']);   // firm:tile skipped; an unplaced tile still maps (only the restore refuses it); the firm-placed neutral maps (S6c-4)
-    expect(JSON.parse(JSON.stringify(w.wsDrillPanels('tabAdmin').map((p) => p.id)))).toEqual(['adminDbConsole', 'adminUsers']);
+    expect(lastOpen()).toBe('firm:more');
+    expect(JSON.parse(JSON.stringify(w.wsDrillPanels(MORE).map((p) => p.id)))).toEqual(['moreAutomations', 'moreManuals', 'adminUsers']);   // firm:tile skipped; the action tile has no panel; Users maps on both pages (S6c-4)
+    expect(JSON.parse(JSON.stringify(w.wsDrillPanels(ADMIN).map((p) => p.id)))).toEqual(['adminDbConsole', 'adminUsers']);
     showPanel('automationsDiv'); w.syncWorkspaceUrl(); await tick();
-    expect(lastOpen()).toBe('tabMore~moreAutomations');
+    expect(lastOpen()).toBe('firm:more~moreAutomations');
     showPanel('manualsDiv'); w.syncWorkspaceUrl(); await tick();
-    expect(lastOpen()).toBe('tabMore~moreManuals');
+    expect(lastOpen()).toBe('firm:more~moreManuals');
     showPanel(null); w.syncWorkspaceUrl(); await tick();
-    expect(lastOpen()).toBe('tabMore');
+    expect(lastOpen()).toBe('firm:more');
     expect($('orphanDiv')).toBeTruthy();                   // a panel no effective item owns never maps
     $('orphanDiv').style.display = '';
-    expect(w.wsTabRest('tabMore')).toBe('');
+    expect(w.wsTabRest(MORE)).toBe('');
   });
 
   test('a tile whose panel is NOT on the stage never maps (J6, restated for S6c-4)', async () => {
     const { w, $, tick, lastOpen } = shell();
     w.enableWorkspaceUrlSync();
-    w.openMainTab('tabMore');                              // the stage shows nothing
+    w.openMainTab(MORE);                              // the stage shows nothing
     await tick();
     expect(w.getComputedStyle($('strayDiv')).display).not.toBe('none');   // visible, and an effective item's target
     expect($('ycPanels').contains($('strayDiv'))).toBe(false);
-    expect(w.wsOpenPanel('tabMore')).toBeNull();
-    expect(w.wsTabRest('tabMore')).toBe('');
-    expect(lastOpen()).toBe('tabMore');
-    // its direct iframe is no tabMore panel's pane either
+    expect(w.wsOpenPanel(MORE)).toBeNull();
+    expect(w.wsTabRest(MORE)).toBe('');
+    expect(lastOpen()).toBe('firm:more');
+    // its direct iframe is no More panel's pane either
     expect(w.wsFrameOwner($('strayFrame'))).toBeNull();
     w.ycReportSubTab($('strayFrame'), 'x');
     await tick();
     expect(w.__ws.panel).toEqual({});
-    expect(lastOpen()).toBe('tabMore');
+    expect(lastOpen()).toBe('firm:more');
   });
 
   test('a denied item\'s open panel is not serialized (not in the effective registry)', () => {
     const { w, showPanel } = shell({ denied: ['moreAutomations'] });
-    w.openMainTab('tabMore');
+    w.openMainTab(MORE);
     showPanel('automationsDiv');
-    expect(w.wsTabRest('tabMore')).toBe('');
+    expect(w.wsTabRest(MORE)).toBe('');
   });
 
   test('syncDrillState and exitDrillMode both ask for a URL sync', () => {
@@ -267,41 +256,41 @@ describe('wsurl S2 — the open panel → its registry id (by data-target)', () 
     expect(fnSrc(SHELL, 'exitDrillMode')).toMatch(/syncWorkspaceUrl\(\);\s*\/\/ the address bar's drill segment/);
     // exitDrillMode, run for real: the panel closes, the page forgets it and the URL follows
     const { w, $, showPanel } = shell();
-    w.openMainTab('tabMore');
+    w.openMainTab(MORE);
     showPanel('automationsDiv');
     let syncs = 0;
     w.syncWorkspaceUrl = () => { syncs++; };
-    w.exitDrillMode($('tabMore'));
+    w.exitDrillMode($(MORE));
     expect($('automationsDiv').style.display).toBe('none');
     expect($('ycPanels').style.display).toBe('none');
-    expect(w.drillMemory.tabMore).toBeUndefined();
+    expect(w.drillMemory[MORE]).toBeUndefined();
     expect(syncs).toBe(1);
   });
 
   test('the same panel on two pages (S6c-4): each page names it by the same id; it is open on the page you are on, and only there', async () => {
     const { w, $, tick, lastOpen } = shell();
     w.enableWorkspaceUrlSync();
-    w.openMainTab('tabMore');
-    w.document.querySelector('#tabMore > [data-yc-shortcut="adminUsers"]').click();   // the neutral: in place on More
+    w.openMainTab(MORE);
+    w.document.querySelector('#' + MORE + ' > [data-yc-shortcut="adminUsers"]').click();   // the neutral: in place on More
     await tick();
-    expect(lastOpen()).toBe('tabMore~adminUsers');
-    expect([$('tabMore').classList.contains('drill-active'), $('tabAdmin').classList.contains('drill-active')]).toEqual([true, false]);
+    expect(lastOpen()).toBe('firm:more~adminUsers');
+    expect([$(MORE).classList.contains('drill-active'), $(ADMIN).classList.contains('drill-active')]).toEqual([true, false]);
     expect($('usersFrame').getAttribute('src')).toBe('/users.html');   // loaded once, here
     // Admin shows its own grid: Users is not open THERE (per-page memory)
-    w.openMainTab('tabAdmin');
+    w.openMainTab(ADMIN);
     await tick();
-    expect(lastOpen()).toBe('tabAdmin');
-    expect(w.wsOpenPanel('tabAdmin')).toBeNull();
+    expect(lastOpen()).toBe('firm:admin');
+    expect(w.wsOpenPanel(ADMIN)).toBeNull();
     expect($('usersDiv').style.display).toBe('none');
     $('tUsers').click();                                   // the default tile: in place on Admin, the same element
     await tick();
-    expect(lastOpen()).toBe('tabAdmin~adminUsers');
+    expect(lastOpen()).toBe('firm:admin~adminUsers');
     expect($('usersFrame').getAttribute('src')).toBe('/users.html');
     expect($('usersFrame').hasAttribute('data-src')).toBe(false);
     // back on More: what More had open (the same panel) — one stage panel at a time
-    w.openMainTab('tabMore');
+    w.openMainTab(MORE);
     await tick();
-    expect(lastOpen()).toBe('tabMore~adminUsers');
+    expect(lastOpen()).toBe('firm:more~adminUsers');
     expect([...$('ycPanels').children].filter((p) => p.style.display !== 'none').map((p) => p.id)).toEqual(['usersDiv']);
   });
 });
@@ -309,45 +298,44 @@ describe('wsurl S2 — the open panel → its registry id (by data-target)', () 
 describe('wsurl S2 — restore (openMainTabOnBoot), every refusal lands on the grid', () => {
   test('a panel id reopens through exec, told the PAGE; the boot does NOT open the tab a second time', () => {
     const { w, $ } = shell();
-    w.openMainTabOnBoot('tabMore', 'moreAutomations');
-    expect(w.__calls.exec).toEqual(['moreAutomations@tabMore']);
-    expect(w.__calls.openMainTab).toEqual(['tabMore']);   // exec's own, once
+    w.openMainTabOnBoot(MORE, 'moreAutomations');
+    expect(w.__calls.exec).toEqual(['moreAutomations@' + MORE]);
+    expect(w.__calls.openMainTab).toEqual([MORE]);   // exec's own, once
     expect($('automationsDiv').style.display).toBe('');
     expect($('autoFrame').getAttribute('src')).toBe('/automationManager.html');
-    expect($('tabMore').classList.contains('drill-active')).toBe(true);
+    expect($(MORE).classList.contains('drill-active')).toBe(true);
   });
 
-  test('a firm-placed neutral restores IN PLACE (S6c-4): tabMore~adminUsers reopens Users on More, tabAdmin~adminUsers on Admin', async () => {
+  test('a panel on two pages restores IN PLACE (S6c-4): firm:more~adminUsers reopens Users on More, firm:admin~adminUsers on Admin', async () => {
     const a = shell();
     a.w.enableWorkspaceUrlSync();
-    a.w.openMainTabOnBoot('tabMore', 'adminUsers~grants');
+    a.w.openMainTabOnBoot(MORE, 'adminUsers~grants');
     await a.tick();
-    expect(a.w.__calls.exec).toEqual(['adminUsers@tabMore']);
-    expect(a.w.__calls.openMainTab).toEqual(['tabMore']);
-    expect([a.w.currentMainTabId(), a.$('usersDiv').style.display, a.$('tabAdmin').classList.contains('drill-active')]).toEqual(['tabMore', '', false]);
+    expect(a.w.__calls.exec).toEqual(['adminUsers@' + MORE]);
+    expect(a.w.__calls.openMainTab).toEqual([MORE]);
+    expect([a.w.currentMainTabId(), a.$('usersDiv').style.display, a.$(ADMIN).classList.contains('drill-active')]).toEqual([MORE, '', false]);
     expect(a.w.ycTakeSubTab(a.$('usersFrame'))).toBe('grants');
-    expect(a.lastOpen()).toBe('tabMore~adminUsers~grants');
+    expect(a.lastOpen()).toBe('firm:more~adminUsers~grants');
     const b = shell();
-    b.w.openMainTabOnBoot('tabAdmin', 'adminUsers');
-    expect(b.w.__calls.exec).toEqual(['adminUsers@tabAdmin']);
-    expect(b.w.__calls.openMainTab).toEqual(['tabAdmin']);
-    expect([b.w.currentMainTabId(), b.$('usersDiv').style.display, b.$('tabMore').classList.contains('drill-active')]).toEqual(['tabAdmin', '', false]);
-    // a non-su: Users is not effective — the neutral is not drawn for them (the renderer's job); the restore refuses the id
+    b.w.openMainTabOnBoot(ADMIN, 'adminUsers');
+    expect(b.w.__calls.exec).toEqual(['adminUsers@' + ADMIN]);
+    expect(b.w.__calls.openMainTab).toEqual([ADMIN]);
+    expect([b.w.currentMainTabId(), b.$('usersDiv').style.display, b.$(MORE).classList.contains('drill-active')]).toEqual([ADMIN, '', false]);
+    // a non-su: Users is not effective — the neutral is not drawn for them (the renderer's job, done in shell()); the restore refuses the id
     const c = shell({ su: false });
-    c.w.document.querySelector('#tabMore > [data-yc-shortcut="adminUsers"]').remove();
-    c.w.openMainTabOnBoot('tabMore', 'adminUsers');
+    c.w.openMainTabOnBoot(MORE, 'adminUsers');
     expect(c.w.__calls.exec).toEqual([]);
-    expect(c.w.wsOpenPanel('tabMore')).toBeNull();
+    expect(c.w.wsOpenPanel(MORE)).toBeNull();
   });
 
   test('a rest after the id is held for the panel\'s iframe, and shown in the URL', async () => {
     const { w, $, tick, lastOpen } = shell();
     w.enableWorkspaceUrlSync();
-    w.openMainTabOnBoot('tabMore', 'moreAutomations~activity~42');
+    w.openMainTabOnBoot(MORE, 'moreAutomations~activity~42');
     expect(w.ycTakeSubTab($('autoFrame'))).toBe('activity~42');
     expect(w.ycTakeSubTab($('autoFrame'))).toBeNull();
     await tick();
-    expect(lastOpen()).toBe('tabMore~moreAutomations~activity~42');
+    expect(lastOpen()).toBe('firm:more~moreAutomations~activity~42');
   });
 
   test.each([
@@ -356,36 +344,35 @@ describe('wsurl S2 — restore (openMainTabOnBoot), every refusal lands on the g
     ['more:x', 'any ":"-bearing id'],
     ['moreSettings', 'an ACTION tile (no data-target — it switches tab)'],
     ['newClient', 'an id with no tile on this grid (wrong surface)'],
-    ['adminDbConsole', 'an Admin id on tabMore (wrong surface)'],
+    ['adminDbConsole', 'an Admin id on More (no tile for it on this page)'],
     ['moreBogus', 'an unknown id'],
-    ['moreUnplaced', 'a tile the firm\'s layout took off this grid (data-yc-unplaced, ui-custom S6c) — its panel would open with no pill lit'],
   ])('refused: %s — %s', (id) => {
     const { w, $ } = shell();
-    w.openMainTabOnBoot('tabMore', id + '~x');
+    w.openMainTabOnBoot(MORE, id + '~x');
     expect(w.__calls.exec).toEqual([]);                    // never even asked
     expect(w.__calls.dialog).toBe(0);
-    expect(w.__calls.openMainTab).toEqual(['tabMore']);   // the grid
-    expect(w.wsOpenPanel('tabMore')).toBeNull();
+    expect(w.__calls.openMainTab).toEqual([MORE]);   // the grid
+    expect(w.wsOpenPanel(MORE)).toBeNull();
     expect(w.__ws.panel).toEqual({});
     expect(w.ycTakeSubTab($('autoFrame'))).toBeNull();
-    expect(w.ycTakeSubTab($('unplacedFrame'))).toBeNull();
-    expect($('unplacedFrame').getAttribute('src')).toBeNull();   // never loaded
+    expect(w.ycTakeSubTab($('usersFrame'))).toBeNull();
+    expect($('manFrame').getAttribute('src')).toBeNull();          // nothing loaded
   });
 
-  test('refused on tabAdmin: adminEtch, an action tile that opens a DIALOG (SU)', () => {
+  test('refused on Admin: adminEtch, an action tile that opens a DIALOG (SU)', () => {
     const { w } = shell({ su: true });
-    w.openMainTabOnBoot('tabAdmin', 'adminEtch');
+    w.openMainTabOnBoot(ADMIN, 'adminEtch');
     expect(w.__calls.exec).toEqual([]);
     expect(w.__calls.dialog).toBe(0);
-    expect(w.__calls.openMainTab).toEqual(['tabAdmin']);
-    expect(w.wsOpenPanel('tabAdmin')).toBeNull();
+    expect(w.__calls.openMainTab).toEqual([ADMIN]);
+    expect(w.wsOpenPanel(ADMIN)).toBeNull();
   });
 
   test('exec refuses (a denied id): the grid, and nothing is left held', () => {
     const { w, $ } = shell({ denied: ['moreAutomations'] });
-    w.openMainTabOnBoot('tabMore', 'moreAutomations~activity');
-    expect(w.__calls.exec).toEqual(['moreAutomations@tabMore']);
-    expect(w.__calls.openMainTab).toEqual(['tabMore']);
+    w.openMainTabOnBoot(MORE, 'moreAutomations~activity');
+    expect(w.__calls.exec).toEqual(['moreAutomations@' + MORE]);
+    expect(w.__calls.openMainTab).toEqual([MORE]);
     expect($('automationsDiv').style.display).toBe('none');
     expect(w.ycTakeSubTab($('autoFrame'))).toBeNull();
     expect(w.__ws.panel).toEqual({});
@@ -393,19 +380,19 @@ describe('wsurl S2 — restore (openMainTabOnBoot), every refusal lands on the g
 
   test('Admin as SU reopens; a tab with no rest just opens its grid', () => {
     const { w, $ } = shell({ su: true });
-    w.openMainTabOnBoot('tabAdmin', 'adminDbConsole');
+    w.openMainTabOnBoot(ADMIN, 'adminDbConsole');
     expect($('dbConsoleDiv').style.display).toBe('');
     const g = shell();
-    g.w.openMainTabOnBoot('tabMore', '');
-    expect(g.w.__calls).toEqual({ openMainTab: ['tabMore'], exec: [], dialog: 0 });
+    g.w.openMainTabOnBoot(MORE, '');
+    expect(g.w.__calls).toEqual({ openMainTab: [MORE], exec: [], dialog: 0 });
   });
 
-  test('non-SU tabAdmin~<id>: the HEAD fails first → Home (the Admin page item is not effective); SU: allowed', () => {
+  test('non-SU firm:admin~<id>: the HEAD fails first → Home (the Admin page is not theirs: not built); SU: allowed', () => {
     const { w } = shell({ su: false });
-    expect(w.wsOpenTarget('tabAdmin~adminDbConsole').tab).toBe('tabHome');
-    expect(w.wsOpenTarget('tabMore~moreAutomations').tab).toBe('tabMore');
+    expect(w.wsOpenTarget('firm:admin~adminDbConsole').tab).toBe('tabHome');
+    expect(w.wsOpenTarget('firm:more~moreAutomations').tab).toBe(MORE);
     const su = shell({ su: true });
-    expect(su.w.wsOpenTarget('tabAdmin~adminDbConsole').tab).toBe('tabAdmin');
+    expect(su.w.wsOpenTarget('firm:admin~adminDbConsole').tab).toBe(ADMIN);
   });
 });
 
@@ -413,19 +400,19 @@ describe('wsurl S2 — a panel\'s pane frame (S4\'s automationManager) reports',
   test('owner: the DIRECT iframe of an effective item\'s stage panel → { tab, panel }; else null', () => {
     const { w, $ } = shell({ denied: ['moreManuals'] });
     const own = (f) => JSON.parse(JSON.stringify(w.wsFrameOwner($(f))));
-    expect(own('autoFrame')).toEqual({ tab: 'tabMore', panel: 'moreAutomations' });
+    expect(own('autoFrame')).toEqual({ tab: MORE, panel: 'moreAutomations' });
     expect(w.wsFrameOwner($('manFrame'))).toBeNull();      // its item is denied
     expect(w.wsFrameOwner($('deepFrame'))).toBeNull();     // nested in an EFFECTIVE panel, not its own
     expect(w.wsFrameOwner($('orphanFrame'))).toBeNull();   // on the stage, but no effective item's tile opens that div
     expect(w.wsFrameOwner($('swalFrame'))).toBeNull();
     expect(w.wsFrameOwner($('strayFrame'))).toBeNull();    // not on the stage (J6)
     // a panel two pages hold (S6c-4): the ACTIVE page when it has a tile for it, else the first drill page that has
-    expect(own('usersFrame')).toEqual({ tab: 'tabMore', panel: 'adminUsers' });   // on Home: More first
-    w.openMainTab('tabAdmin');
-    expect(own('usersFrame')).toEqual({ tab: 'tabAdmin', panel: 'adminUsers' });
-    w.openMainTab('tabMore');
-    expect(own('usersFrame')).toEqual({ tab: 'tabMore', panel: 'adminUsers' });
-    expect(own('dbFrame')).toEqual({ tab: 'tabAdmin', panel: 'adminDbConsole' });   // More has no tile for it
+    expect(own('usersFrame')).toEqual({ tab: MORE, panel: 'adminUsers' });   // on Home: More first
+    w.openMainTab(ADMIN);
+    expect(own('usersFrame')).toEqual({ tab: ADMIN, panel: 'adminUsers' });
+    w.openMainTab(MORE);
+    expect(own('usersFrame')).toEqual({ tab: MORE, panel: 'adminUsers' });
+    expect(own('dbFrame')).toEqual({ tab: ADMIN, panel: 'adminDbConsole' });   // More has no tile for it
   });
 
   test('shown only while that panel is the open one in the ACTIVE tab; stored otherwise', async () => {
@@ -433,13 +420,13 @@ describe('wsurl S2 — a panel\'s pane frame (S4\'s automationManager) reports',
     w.enableWorkspaceUrlSync();
     await tick();
     w.__writes.length = 0;
-    // tabMore not active: stored, not shown
+    // More not active: stored, not shown
     w.ycReportSubTab($('autoFrame'), 'workflows');
     await tick();
     expect(w.__writes).toHaveLength(0);
     expect(w.__ws.panel).toEqual({ moreAutomations: 'workflows' });
     // active tab, but ANOTHER panel open: still not shown
-    w.openMainTab('tabMore');
+    w.openMainTab(MORE);
     showPanel('manualsDiv');
     await tick();                                          // openMainTab's own sync lands first
     w.__writes.length = 0;
@@ -448,26 +435,26 @@ describe('wsurl S2 — a panel\'s pane frame (S4\'s automationManager) reports',
     expect(w.__writes).toHaveLength(0);
     // its panel opens: the stored rest rides along
     showPanel('automationsDiv'); w.syncWorkspaceUrl(); await tick();
-    expect(lastOpen()).toBe('tabMore~moreAutomations~activity');
+    expect(lastOpen()).toBe('firm:more~moreAutomations~activity');
     // and now a report is shown at once
     w.ycReportSubTab($('autoFrame'), 'triggers');
     await tick();
-    expect(lastOpen()).toBe('tabMore~moreAutomations~triggers');
+    expect(lastOpen()).toBe('firm:more~moreAutomations~triggers');
     w.ycReportSubTab($('autoFrame'), '');
     await tick();
-    expect(lastOpen()).toBe('tabMore~moreAutomations');
+    expect(lastOpen()).toBe('firm:more~moreAutomations');
   });
 
   test('a panel rest that would push id~rest over the caps is ignored', async () => {
     const { w, $, tick, lastOpen, showPanel } = shell();
     w.enableWorkspaceUrlSync();
-    w.openMainTab('tabMore');
+    w.openMainTab(MORE);
     showPanel('automationsDiv');
     w.ycReportSubTab($('autoFrame'), 'a~b~c~d');            // 5 segments with the id
     w.ycReportSubTab($('autoFrame'), 'x"><b>');
     await tick();
     expect(w.__ws.panel).toEqual({});
-    expect(lastOpen()).toBe('tabMore~moreAutomations');
+    expect(lastOpen()).toBe('firm:more~moreAutomations');
   });
 });
 
@@ -519,8 +506,7 @@ describe('launcher-nits L4a — a firm page in the address bar', () => {
   test('a firm page\'s panel that reports while another tab is active is remembered, and shown when the page is back', async () => {
     const { w, $, tick, lastOpen, showPanel } = shell();
     w.enableWorkspaceUrlSync();
-    const base = w.ycLauncher.elementsOf;
-    w.ycLauncher.elementsOf = (id) => (id === 'moreAutomations' ? {} : base(id));       // no hub tile: only the page shows Automations
+    $('tAuto').remove();                                                                  // More doesn't show it: only firm:ops does
     w.openMainTab('ycPage-1');
     showPanel('automationsDiv', 'ycPage-1');
     w.openMainTab('tabCases');
@@ -613,32 +599,28 @@ describe('launcher-nits C1 — the panel tab in the address bar', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// launcher-nits C2: once the hubs are gone (L4b2), an old ?open=tabMore… /
+// launcher-nits C2 / C4: the hubs are gone, so an old ?open=tabMore… /
 // tabAdmin… is an ALIAS — the firm page that replaced the hub (firm:more /
 // firm:admin), else, with its panel named, the panel tab (exec routes it).
-// While the hub is here, nothing changes.
-describe('launcher-nits C2 — tabMore / tabAdmin as aliases once the hubs are gone', () => {
-  const asMore = (w) => { w.document.getElementById('ycPage-1').setAttribute('data-yc-page', 'firm:more'); };
-  const noHubs = (w) => { w.document.getElementById('tabMore').remove(); w.document.getElementById('tabAdmin').remove(); };
-
-  test('with the hub here: tabMore is tabMore', () => {
+describe('launcher-nits C2 — tabMore / tabAdmin as aliases (the hubs are gone, C4)', () => {
+  test('firm:more / firm:admin built: an old tabMore… / tabAdmin… opens them, with the rest', () => {
     const { w } = shell();
-    asMore(w);
-    expect(JSON.parse(JSON.stringify(w.wsOpenTarget('tabMore~moreAutomations')))).toEqual({ tab: 'tabMore', rest: 'moreAutomations' });
+    expect(w.document.getElementById('tabMore')).toBe(null);
+    expect(JSON.parse(JSON.stringify(w.wsOpenTarget('tabMore~moreAutomations~workflows~27')))).toEqual({ tab: MORE, rest: 'moreAutomations~workflows~27' });
+    expect(JSON.parse(JSON.stringify(w.wsOpenTarget('tabMore')))).toEqual({ tab: MORE, rest: '' });
+    expect(JSON.parse(JSON.stringify(w.wsOpenTarget('tabAdmin~adminUsers')))).toEqual({ tab: ADMIN, rest: 'adminUsers' });
+    expect(JSON.parse(JSON.stringify(w.wsOpenTarget('tabAdmin')))).toEqual({ tab: ADMIN, rest: '' });
   });
 
-  test('hub gone, firm:more built: tabMore… opens firm:more with the rest; tabAdmin… (no firm:admin) the panel tab, or Home with nothing named', () => {
-    const { w } = shell();
-    asMore(w); noHubs(w);
-    expect(JSON.parse(JSON.stringify(w.wsOpenTarget('tabMore~moreAutomations~workflows~27')))).toEqual({ tab: 'ycPage-1', rest: 'moreAutomations~workflows~27' });
-    expect(JSON.parse(JSON.stringify(w.wsOpenTarget('tabMore')))).toEqual({ tab: 'ycPage-1', rest: '' });
+  test('firm:admin not this user\'s (not built): tabAdmin~<panel> → the panel tab (exec refuses what isn\'t theirs), tabAdmin alone → Home', () => {
+    const { w } = shell({ su: false });
     expect(JSON.parse(JSON.stringify(w.wsOpenTarget('tabAdmin~adminUsers')))).toEqual({ tab: 'tabPanel', rest: 'adminUsers' });
     expect(JSON.parse(JSON.stringify(w.wsOpenTarget('tabAdmin')))).toEqual({ tab: 'tabHome', rest: '' });
   });
 
-  test('hub gone, no firm:more page (the firm deleted it): tabMore~<panel> → the panel tab; restored through exec', () => {
+  test('no firm:more page (the firm deleted it): tabMore~<panel> → the panel tab; restored through exec', () => {
     const { w, $ } = shell();
-    noHubs(w);
+    $(MORE).remove();
     w.FEATURE_REGISTRY = { moreAutomations: { target: 'automationsDiv' } };
     const at = w.wsOpenTarget('tabMore~moreAutomations~workflows~27');
     expect(JSON.parse(JSON.stringify(at))).toEqual({ tab: 'tabPanel', rest: 'moreAutomations~workflows~27' });

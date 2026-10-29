@@ -88,8 +88,10 @@ d('S6c: the firm default layout on real MySQL', () => {
   const put = (who, config, extra = {}) => hit('PUT', '/api/ui-config', who, { scope: 'firm', config_key: 'layout', config, ...extra });
 
   // keys in an order MySQL will not keep (it stores shortest-key-first)
-  const V1 = { removed: { admin: ['adminDbConsole'] }, placed: { more: [{ item: 'moreReports' }, { break: true }, { item: 'firm:clio-code' }], moreIcons: [{ item: 'casey' }, { item: 'myTasks' }] } };
-  const V2 = { placed: { more: [{ item: 'moreManuals' }], adminIcons: [{ item: 'logout' }] }, removed: {} };
+  const V1 = { removed: { sidebar: ['adminDbConsole'] }, placed: { home: [{ item: 'moreReports' }, { break: true }, { item: 'firm:clio-code' }], homeIcons: [{ item: 'casey' }, { item: 'myTasks' }] } };
+  const V2 = { placed: { home: [{ item: 'moreManuals' }], sidebar: [{ item: 'logout' }] }, removed: {} };
+  // the hubs' lists (launcher-nits C4 retired the surfaces): the live firm layout and its older versions carry them
+  const HUBS = { more: [{ item: 'moreReports' }, { break: true }, { item: 'moreViews' }], moreIcons: [{ item: 'casey' }], admin: [{ item: 'adminUsers' }], adminIcons: [] };
 
   test('relaxed sql_mode, like prod', async () => {
     const [[m]] = await pool.query('SELECT @@SESSION.sql_mode m');
@@ -122,7 +124,7 @@ d('S6c: the firm default layout on real MySQL', () => {
 
   test('the same document again (MySQL\'s key order) is a no-op; a stale base is a 409 that writes nothing; the newest base passes and versions', async () => {
     const head = (await versions()).slice(-1)[0].id;
-    const same = await put('admin', { placed: { moreIcons: [{ item: 'casey' }, { item: 'myTasks' }], more: V1.placed.more }, removed: { admin: ['adminDbConsole'] } }, { base: head });
+    const same = await put('admin', { placed: { homeIcons: [{ item: 'casey' }, { item: 'myTasks' }], home: V1.placed.home }, removed: { sidebar: ['adminDbConsole'] } }, { base: head });
     expect([same.status, same.body.changed, same.body.versioned, same.body.version_id]).toEqual([200, false, false, head]);
     const stale = await put('admin', V2, { base: head + 100 });   // a version id that is not the newest (0 would fail the envelope, 400)
     expect(stale.status).toBe(409);
@@ -149,9 +151,34 @@ d('S6c: the firm default layout on real MySQL', () => {
     expect((await hit('GET', '/api/ui-config/versions?config_key=registry_overrides', 'admin')).body.versions).toEqual([]);   // its own key only
   });
 
+  test('launcher-nits C4: a stored layout and a History version that still carry the hubs\' lists — read as stored (History shows them), dropped on any write: a resave, a restore', async () => {
+    const head = (await versions()).slice(-1)[0].id;
+    const OLD = { placed: { ...HUBS, home: [{ item: 'cases' }] }, removed: { admin: ['adminScratch'] }, pages: { 'firm:more': { tiles: [{ item: 'moreReports' }] } } };
+    const LIVE = { placed: { home: [{ item: 'cases' }] }, removed: {}, pages: OLD.pages };
+    // as production's: written before C4, so the rows hold them
+    await q("UPDATE ui_config SET config = ? WHERE scope = 'firm' AND config_key = 'layout'", [JSON.stringify(OLD)]);
+    const ins = await q("INSERT INTO ui_config_versions (ui_config_id, config_key, config, saved_by) SELECT id, 'layout', ?, 1 FROM ui_config WHERE scope = 'firm' AND config_key = 'layout'", [JSON.stringify(OLD)]);
+    expect(ins.affectedRows).toBe(1);
+    const vOld = ins.insertId;
+    expect((await row()).config).toEqual(OLD);
+    expect((await hit('GET', '/api/ui-config', 'admin')).body.firm.layout).toEqual(OLD);   // the client ignores what it does not draw
+    const view = await hit('GET', `/api/ui-config/versions/${vOld}`, 'admin');
+    expect([view.status, view.body.version.config]).toEqual([200, OLD]);                 // History shows what was saved
+    // resaving the same document (an editor's Save with nothing changed) stores it WITHOUT them
+    const r = await put('admin', OLD, { base: vOld });
+    expect([r.status, r.body.changed, r.body.config]).toEqual([200, true, LIVE]);
+    expect((await row()).config).toEqual(LIVE);
+    // restoring the old version brings back what is live in it, not the hubs' lists
+    const back = await hit('POST', `/api/ui-config/versions/${head}/restore`, 'admin', { base: r.body.version_id });
+    expect(back.status).toBe(200);
+    const again = await hit('POST', `/api/ui-config/versions/${vOld}/restore`, 'admin', { base: back.body.version_id });
+    expect([again.status, again.body.restored_from]).toEqual([200, vOld]);
+    expect((await row()).config).toEqual(LIVE);
+  });
+
   test('refused and unstored: a user page in the firm\'s pages; a removal of all from Home\'s icon row; a user id in a firm list', async () => {
     const before = [await row(), (await versions()).length];
-    for (const bad of [{ pages: { 'user:x': {} } }, { removed: { homeIcons: ['all'] } }, { placed: { home: [{ item: 'user:x' }] } }, { placed: { adminIcons: Array.from({ length: 13 }, (_, i) => ({ item: 'i' + i })) } }]) {
+    for (const bad of [{ pages: { 'user:x': {} } }, { removed: { homeIcons: ['all'] } }, { placed: { home: [{ item: 'user:x' }] } }, { placed: { homeIcons: Array.from({ length: 13 }, (_, i) => ({ item: 'i' + i })) } }]) {
       const r = await put('admin', bad);
       expect([bad, r.status, Array.isArray(r.body.errors)]).toEqual([bad, 400, true]);
     }
@@ -164,7 +191,7 @@ d('S6c: the firm default layout on real MySQL', () => {
     expect([r.status, r.body.changed, r.body.versioned]).toEqual([200, true, false]);
     expect((await hit('GET', '/api/ui-config', 'staff')).body.user.layout).toEqual(LAYOUT);
     expect((await svc.readFor(pool, 9)).user.layout).toEqual(LAYOUT);
-    expect((await versions()).length).toBe(3);
+    expect((await versions()).length).toBe(7);   // + the C4 test's inserted old version and its three writes
     const bad = await hit('PUT', '/api/ui-config', 'staff', { scope: 'user', config_key: 'layout', config: { placed: { more: [] } } });
     expect(bad.status).toBe(400);
   });

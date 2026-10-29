@@ -170,7 +170,9 @@ describe('Ask Casey sidebar host', () => {
 describe('Automations → Court Review semantic navigation proof', () => {
   test('the shell registry is allowlisted and holds the cold rest before launcher execution', () => {
     expect(SHELL).toContain("'automations.court_review': Object.freeze({");
-    expect(SHELL.indexOf('ycSubTab.host.hold(frame, rest)')).toBeLessThan(SHELL.indexOf('L.exec(spec.launcher, { page: spec.page })'));
+    // no page hint since launcher-nits C4: exec places the panel (the page that shows it, else the panel tab)
+    expect(SHELL.indexOf('ycSubTab.host.hold(frame, rest)')).toBeLessThan(SHELL.indexOf('L.exec(spec.launcher) !== true'));
+    expect(NAVIGATION).not.toMatch(/\bpage:\s*'tab|spec\.page/);
     expect(SHELL).toContain("L.effectiveRegistry().some((item) => item.id === spec.launcher)");
   });
 
@@ -296,7 +298,7 @@ describe('Automations → Court Review semantic navigation proof', () => {
   test('cold navigation holds Court Review, opens through the launcher, then waits for child ready', async () => {
     const t = navigationWorld(true);
     const promise = t.w.ycAssistantNavigate('automations.court_review');
-    expect(t.exec).toHaveBeenCalledWith('moreAutomations', { page: 'tabMore' });
+    expect(t.exec.mock.calls).toEqual([['moreAutomations']]);   // no page hint (C4): the launcher places it
     expect(t.w.ycSubTab.host.lastRest(t.frame)).toBe('courtReview');
     expect(t.w.ycAssistantChildReady(t.frame, { destination: 'automations.court_review' })).toBe(true);
     await expect(promise).resolves.toEqual({ destination: 'automations.court_review', ready: true });
@@ -357,6 +359,57 @@ describe('Automations → Court Review semantic navigation proof', () => {
     }
     expect(t.exec).not.toHaveBeenCalled();
     t.dom.window.close();
+  });
+
+  // launcher-nits C4: no page hint — the REAL launcher places the panel: the
+  // first page showing its tile, else the panel tab. Either way the record
+  // rest is held for #automationsDiv's own iframe and resolves on its ready.
+  function placedWorld(firmPageTiles) {
+    const { boot } = require('./helpers/toolShell');
+    const { hubFirm } = require('./helpers/hubPages');
+    const t = boot();
+    t.w.eval(SUBTAB);
+    t.w.eval(NAVIGATION);
+    t.L.applyAccess({ ui: { firm: hubFirm({ layout: { pages: { 'firm:more': { tiles: firmPageTiles, icons: [] } } } }), user: {} } });
+    const frame = t.d.querySelector('#ycPanels > #automationsDiv > iframe');
+    return { t, frame, shown: (el) => !!el && el.style.display !== 'none' };
+  }
+
+  test('placement: Automations shown only on a firm page → a record link opens it ON that page, the rest held for #automationsDiv\'s iframe', async () => {
+    const { t, frame, shown } = placedWorld([{ item: 'moreManuals' }, { item: 'moreAutomations' }]);
+    const page = t.d.querySelector('#ycPages > [data-yc-page="firm:more"]');
+    expect(page.querySelectorAll(':scope > [data-yc-shortcut="moreAutomations"]')).toHaveLength(1);
+    expect(t.d.querySelectorAll('[data-yc-shortcut="moreAutomations"]')).toHaveLength(1);   // on no other surface
+    expect(frame.getAttribute('src')).toBe(null);                                            // cold
+    const promise = t.w.ycAssistantNavigate('automations.workflow', { id: 77, record: 'execution' });
+    expect(t.w.currentMainTabId()).toBe(page.id);
+    expect(page.classList.contains('drill-active')).toBe(true);
+    expect(shown(t.d.getElementById('automationsDiv'))).toBe(true);
+    expect(t.d.getElementById('tabPanel')).toBe(null);                                      // not the fallback
+    expect(frame.getAttribute('src')).toBe('/automationsDiv.html');                          // the lazy load ran
+    expect(t.w.ycSubTab.host.lastRest(frame)).toBe('workflows~77~execution');
+    expect(t.w.ycAssistantChildReady(frame, { destination: 'automations.workflow' })).toBe(true);
+    await expect(promise).resolves.toEqual({ destination: 'automations.workflow', ready: true });
+    t.close();
+  });
+
+  test('placement: Automations on no page → a record link opens it on the panel tab (#tabPanel), same rest / frame contract', async () => {
+    const { t, frame, shown } = placedWorld([{ item: 'moreManuals' }]);
+    expect(t.d.querySelectorAll('[data-yc-shortcut="moreAutomations"]')).toHaveLength(0);   // no page, no surface
+    const promise = t.w.ycAssistantNavigate('automations.workflow', { id: 77, record: 'execution' });
+    const host = t.d.getElementById('tabPanel');
+    expect(host).not.toBe(null);
+    expect(t.w.currentMainTabId()).toBe('tabPanel');
+    expect(host.querySelector(':scope > h1').textContent.trim()).toBe('Automations');
+    expect([...host.querySelectorAll(':scope > .big-button')].map((b) => [b.getAttribute('data-yc-shortcut'), b.getAttribute('data-target')]))
+      .toEqual([['moreAutomations', 'automationsDiv']]);
+    expect(host.classList.contains('drill-active')).toBe(true);
+    expect(shown(t.d.getElementById('automationsDiv'))).toBe(true);
+    expect(frame.getAttribute('src')).toBe('/automationsDiv.html');
+    expect(t.w.ycSubTab.host.lastRest(frame)).toBe('workflows~77~execution');
+    expect(t.w.ycAssistantChildReady(frame, { destination: 'automations.workflow' })).toBe(true);
+    await expect(promise).resolves.toEqual({ destination: 'automations.workflow', ready: true });
+    t.close();
   });
 
   test('unknown or inaccessible destinations fail closed before launcher execution', async () => {

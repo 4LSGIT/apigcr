@@ -3,7 +3,7 @@
  * PURE DATA. No DOM access, no functions, no side effects beyond the two
  * globals below. Loaded by a plain <script src> in index.html's <head>; the
  * renderer is the ycLauncher block right after that include. It turns these
- * two structures into the markup of four launcher surfaces, at parse time, in
+ * two structures into the markup of three launcher surfaces, at parse time, in
  * the exact place that markup used to be written by hand:
  *
  *   home     #tabHome's .home-btn tiles and the .home-break row breaks between
@@ -11,12 +11,15 @@
  *   sidebar  the Records / Actions / Settings sections of #appSidebar
  *            (Home, Open Files, the spacer, the version stamp and the collapse
  *            bar are shell chrome and stay in index.html)
- *   more     #tabMore's .big-button grid and its <br><br> row breaks
- *   admin    #tabAdmin's .big-button grid and its <br><br> row breaks
- *   homeIcons / moreIcons / adminIcons   (ui-custom S6c) the ICON ROW under
- *            each page's grid: small icon-only buttons (Casey's paw under
- *            More, All under Home), inside the page's .<page>-egg-row div.
+ *   homeIcons  (ui-custom S6c) the ICON ROW under Home's grid: small
+ *            icon-only buttons (All), inside its .home-egg-row div.
  *            { item } entries only — no breaks, no labels, at most 12.
+ * More Features and Admin were two more grids here (#tabMore / #tabAdmin, the
+ * `more` / `admin` lists and their icon rows) until launcher-nits C4
+ * (2026-10-29): they are the FIRM'S pages now, firm:more / firm:admin, kept in
+ * the firm's layout (ui_config) like any firm page — the C3 script made them
+ * from these lists. Their panels' tiles live there; a registry item no page
+ * shows still opens from All / Ctrl-K, on the panel tab (C1).
  *
  * The rendered markup is meant to be IDENTICAL to the hand-written markup it
  * replaced (Home's row breaks excepted: S4a made them .home-break sentinels
@@ -34,8 +37,10 @@
  * reuse a retired one. Retired: moreClioCode (2026-10-15 — Get Clio Code is the
  * firm tool `clio-code` now; ref/tools/clio-code.html); custom (2026-10-16 —
  * the per-user custom tab: every one became a launcher button, ui-custom
- * S5e). Grid items carry a surface prefix (more* / admin*); home/sidebar items
- * do not. Fields — all optional except label and icon:
+ * S5e); moreFeatures and admin (2026-10-29 — More Features and Admin became
+ * the firm pages firm:more / firm:admin, launcher-nits C3 / C4). Grid items
+ * carry a surface prefix (more* / admin*: where they were born); home/sidebar
+ * items do not. Fields — all optional except label and icon:
  *
  *   label          visible text, PLAIN (the renderer escapes it)
  *   surfaceLabels  { <surface>: label } — per-surface label override
@@ -65,8 +70,8 @@
  *                  Support) has NO tab, so it can never steal the highlight.
  *   domIds         { <surface>: element id } — ids other code looks up by
  *   badge          sidebar: { id, title } — the count pill, hidden until set
- *   defaultHidden  rendered with style="display:none" (Admin: loadUserContext
- *                  reveals it once the effective registry lists it)
+ *   defaultHidden  rendered with style="display:none", for an item something
+ *                  else reveals (no item sets it since the Admin item retired, C4)
  *   gate           (ui-custom S6c) what the item's SERVER routes enforce, so
  *                  the launcher never shows a tile that answers 403: 'su'
  *                  (lib/auth.superuser — the su role) or a lib/capabilities
@@ -165,21 +170,6 @@ window.FEATURE_REGISTRY = {
   newClient: {
     label: 'New Client', icon: 'user-plus',
     onclick: 'newContact()',
-  },
-  // Hidden until loadUserContext() shows it — to whoever the firm's
-  // visible_to on this id admits (live: it and admin; su always), ui-custom
-  // S6c, Fred's ruling 2026-10-16. No gate of its own: the Admin PAGE is
-  // visibility; each Admin TILE carries the gate its routes enforce.
-  admin: {
-    label: 'Admin', icon: 'mug-hot',
-    onclick: "openMainTab('tabAdmin')", tab: 'tabAdmin',
-    domIds: { sidebar: 'sbAdmin' }, defaultHidden: true,
-  },
-  // data-tab-also: Settings lives in More Features now (its tile opens
-  // tabSettings), so More Features is the item lit while you are there.
-  moreFeatures: {
-    label: 'More Features', icon: 'grip',
-    onclick: "openMainTab('tabMore')", tab: 'tabMore', tabAlso: 'tabSettings',
   },
   // Help & Support. Deliberately has NO data-tab: it opens a dialog, it does
   // not navigate, so updateSidebarActive() must never give it the active
@@ -449,7 +439,9 @@ window.DEFAULT_LAYOUTS = {
     // Comms took Settings' Home slot with its sidebar one (2026-10-11);
     // always shown, like the sidebar item. Calendar took the retired custom
     // tab's slot (ui-custom S5e, 2026-10-16).
-    { item: 'calendar' }, { item: 'moreFeatures' }, { item: 'comms' },
+    // More Features' slot is the firm page firm:more's since launcher-nits C4
+    // (the firm's own layout places it).
+    { item: 'calendar' }, { item: 'comms' },
   ],
 
   sidebar: [
@@ -460,7 +452,9 @@ window.DEFAULT_LAYOUTS = {
     { label: 'Actions' },
     { item: 'pipeline' }, { item: 'newClient' },
     { label: 'Settings' },
-    { item: 'admin' }, { item: 'moreFeatures' }, { item: 'helpSupport' },
+    // Admin and More Features: the firm pages firm:admin / firm:more since
+    // launcher-nits C4, placed here by the firm's own layout.
+    { item: 'helpSupport' },
     // All, the last item (S2's fixed #sbAll until S6c; an ordinary, removable
     // item since — Home's icon row and Ctrl-K are the guarantee).
     { item: 'all' },
@@ -471,104 +465,4 @@ window.DEFAULT_LAYOUTS = {
   homeIcons: [
     { item: 'all' },
   ],
-
-  // More Features.
-  //
-  // Layout rule: 4 buttons per row. Keep new buttons inside the row they
-  // belong to rather than appending to the end. Row 5 has three: Get Clio
-  // Code left the grid for the firm row (ui-custom S3.3b, 2026-10-15) — it is
-  // now a firm tool, and firm items render in a row of their own after this
-  // grid. The next tile fills that gap or waits for S4's layouts; ask first.
-  //
-  // Row 5's fourth tile was the cat before that, a toy holding the slot
-  // square until Settings took a row-1 place (2026-10-11). Casey is still
-  // summoned by long-pressing the header logo. (placeholder / data-placeholder, which ensureStrip()
-  // skips so a tile that opens nothing never reaches the pill strip, is
-  // unused; keep the mechanism for the next gap in the grid.)
-  //
-  // Rows went 3-wide to 4-wide with the Theme tile. One theme per row no
-  // longer divides evenly across 22 features, so a row is now a task rather
-  // than a subsystem: what the client fills in, what you keep, how a case is
-  // shaped, when things happen, and what goes out. The help row leads because
-  // it is the row you want when you do not know where to look.
-  more: [
-    // Where you get help, and how the app works for you: how it works, your
-    // settings and your theme, and what you want next. Settings opens its own
-    // main tab (tabSettings) — it is not a panel here; the sidebar's More
-    // Features item stays lit while you are on it (data-tab-also).
-    { item: 'moreManuals' }, { item: 'moreSettings' }, { item: 'moreTheme' }, { item: 'moreFeatureRequests' },
-    { break: true },
-    // What the client fills in: the form, what comes back from it, and the
-    // door they walk through to get to it. Simple Forms and Form Builder are
-    // two surfaces over the SAME form_templates records — the simple one hands
-    // off to the full one for tabs / repeaters / code.
-    { item: 'moreSimpleForms' }, { item: 'moreFormBuilder' }, { item: 'moreFormInbox' }, { item: 'morePortalManager' },
-    { break: true },
-    // The file you keep: get it signed, then the files everything else pulls
-    // from. Signatures sits here rather than with the forms row above because
-    // this row is "the file you keep", not "the thing the client fills in".
-    // Documents replaced this row's data-placeholder rather than starting a
-    // seventh row — the placeholders existed for exactly this.
-    { item: 'moreSignatures' }, { item: 'moreAssetManager' }, { item: 'moreVideoManager' }, { item: 'moreDocuments' },
-    { break: true },
-    // How a case is shaped: its fields, the steps on it, what runs on it by
-    // itself, and the saved views you read it back through.
-    { item: 'moreCaseConfig' }, { item: 'moreChecklists' }, { item: 'moreAutomations' }, { item: 'moreViews' },
-    { break: true },
-    // When things happen: what can be booked, when, and the court email as it
-    // will go out.
-    { item: 'moreAvailability' }, { item: 'moreBooking' }, { item: 'moreCourtPreview' },
-    { break: true },
-    // What goes out, and what comes back as numbers: the message, the page it
-    // lands on, the links that get there, and the reporting over all of it.
-    // Reports is the loosest fit on the grid — it reads everything, not just
-    // outreach — but it belongs with "look at the result" more than with any
-    // other row here.
-    { item: 'moreCampaigns' }, { item: 'moreRedirects' }, { item: 'moreLandingPages' }, { item: 'moreReports' },
-    { break: true },
-    // YisrAI stands alone: the assistant is a cross-system entry point and its
-    // future action mode does not belong to any one More-feature subsystem.
-    { item: 'moreAssistant' },
-  ],
-
-  // More's icon row: Casey's paw (its markup, byte for byte, is the item's).
-  moreIcons: [
-    { item: 'casey' },
-  ],
-
-  // Admin.
-  //
-  // Layout rule: 3 buttons per row, and every row full. 12 tiles = four full
-  // rows, grouped by what the row is for. Keep new buttons inside the row they
-  // belong to rather than appending to the end; every row is full, so the
-  // next tile starts a fifth row — see the same note on the More Features
-  // grid above. Row 5 (comms admin: mailboxes, 2026-10-08) is that row, short
-  // by design until the comms hub's phone/phonebook admin tiles join it
-  // (ref/MAILBOX_SYSTEM_DESIGN.md §5). The hub itself piloted here and moved
-  // to the sidebar (tabComms) on 2026-10-11.
-  admin: [
-    // Who gets in: the two key registries, and CTA links — the bearer grants
-    // (/c/<token>) you mint to let a recipient run one pre-authorized plan.
-    { item: 'adminReadonlyKeys' }, { item: 'adminApiKeys' }, { item: 'adminCtaLinks' },
-    { break: true },
-    // Reading and poking the live system: the rows, the outbound credentials,
-    // and the endpoints that serve them.
-    { item: 'adminDbConsole' }, { item: 'adminConnections' }, { item: 'adminApiTester' },
-    { break: true },
-    // Things you run rather than read, plus the cross-session notes.
-    { item: 'adminTools' }, { item: 'adminEtch' }, { item: 'adminScratch' }, { item: 'adminSharedValues' },
-    { break: true },
-    // Who is using it and what they are telling you: accounts, the alerts the
-    // system raises on its own, and the ones staff raise by hand.
-    { item: 'adminUsers' }, { item: 'adminSystemAlerts' }, { item: 'adminSupportInbox' },
-    { break: true },
-    // Comms admin: mailboxes and who may read / send / manage each one. The
-    // hub where granted staff read them is the sidebar's Comms tab.
-    { item: 'adminMailboxes' },
-  ],
-
-  // Admin's icon row: empty by default (the row's div takes no space while it
-  // holds nothing — the :empty rule in index.html); the firm's layout may
-  // place small items here.
-  adminIcons: [],
 };

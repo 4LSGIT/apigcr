@@ -69,7 +69,7 @@
        spot its markup used to be written by hand; the mount runs synchronously
        while the page parses, inserts the markup in its own place and removes
        itself, so the finished DOM is the same as the hand-written one and
-       every id (sbAdmin, sbComms, homeComms, …) exists before
+       every id (sbComms, homeComms, …) exists before
        initAuth() runs. -->
   <!-- The stored icon value → Font Awesome classes (ui-custom S6a): bare slug =
        solid, or solid: / regular: / brands: + slug. The launcher below renders
@@ -162,16 +162,13 @@
               '\n    </div>';
           },
         },
-        more: grid('more'),
-        admin: grid('admin'),
         // The icon rows (ui-custom S6c): the small icon-only buttons under a
-        // page's grid, inside its .<page>-egg-row div — Casey's paw under
-        // More, All under Home. S6b's hand-written markup, byte for byte: no
-        // whitespace between buttons; the title (else the label) is also the
-        // aria-label, the icon aria-hidden, no text.
+        // page's grid, inside its .<page>-egg-row div — All under Home. S6b's
+        // hand-written markup, byte for byte: no whitespace between buttons;
+        // the title (else the label) is also the aria-label, the icon
+        // aria-hidden, no text. (More's and Admin's grids and rows were here
+        // until launcher-nits C4: they are firm pages now.)
         homeIcons: iconRow('home'),
-        moreIcons: iconRow('more'),
-        adminIcons: iconRow('admin'),
         // A custom page (ui-custom S6c-5, buildPages below): its grid and its
         // icon row take the hubs' grammar, drawn as neutrals (never mounted).
         page: grid('page'),
@@ -302,18 +299,19 @@
       //     its tab (Pages below); its tiles live in that tier's layout.pages.
       // Each entry: { id, group, label, labels, icon } — labels = label +
       // surfaceLabels, what the matcher reads. group = the item's origin:
-      // its sidebar section, else Home, else the grid it is on, else More
-      // actions; groups run Home, the sidebar's sections in order (Records /
-      // Actions / Settings), More actions, More, Admin. Visibility only:
-      // hiding secures nothing.
+      // its sidebar section, else Home, else the first FIRM PAGE whose tiles or
+      // small buttons hold it (the page's name — More Features, Admin… are
+      // firm pages since launcher-nits C3 / C4), else More actions; groups run
+      // Home, the sidebar's sections in order (Records / Actions / Settings),
+      // More actions, the firm's pages in the firm's item order, Firm, Mine.
+      // Visibility only: hiding secures nothing.
       // computeEffective is PURE (ui-custom S4a): it returns the list with
       // the group order it computed alongside it — list.groups, a
       // non-enumerable array — and writes nothing. applyAccess keeps the
       // order of the list it applied, which groups() hands out (the All tab
       // renders by it); any other caller (the Firm tab) changes nothing.
       var UNDENIABLE = ['moreSettings', 'helpSupport', 'all'];   // services/entitlementService.js UNDENIABLE
-      var TAB_OF = { home: 'tabHome', more: 'tabMore', admin: 'tabAdmin' };
-      var GRID_GROUP = { more: 'More', admin: 'Admin' };
+      var TAB_OF = { home: 'tabHome' };
       var EXTRA_GROUP = 'More actions';   // registry items in no default layout (S6b)
       var GROUPS = [];   // set by applyAccess: the applied list's .groups
 
@@ -619,18 +617,27 @@
         });
         (layouts.home || []).forEach(function (e) { if (e) place(e.item, 'Home'); });
         (layouts.homeIcons || []).forEach(function (e) { if (e) place(e.item, 'Home'); });
-        ['more', 'admin'].forEach(function (sf) {
-          order.push(GRID_GROUP[sf]);
-          (layouts[sf] || []).forEach(function (e) { if (e) place(e.item, GRID_GROUP[sf]); });
-          (layouts[sf + 'Icons'] || []).forEach(function (e) { if (e) place(e.item, GRID_GROUP[sf]); });
+        // the firm's pages, in the firm's item order: a page's name is the
+        // group of what its tiles and small buttons hold (launcher-nits C4)
+        var fpages = isObj(opts.ui) && isObj(opts.ui.firm) && isObj(opts.ui.firm.layout) && isObj(opts.ui.firm.layout.pages) ? opts.ui.firm.layout.pages : {};
+        var pageGroups = [];
+        firm.items.forEach(function (fi) {
+          if (!fi.action || fi.action.type !== 'page' || !hasOwn(fpages, fi.id) || !isObj(fpages[fi.id])) return;
+          var g = String(fi.label);
+          ['tiles', 'icons'].forEach(function (part) {
+            var list = fpages[fi.id][part];
+            if (Object.prototype.toString.call(list) === '[object Array]') list.forEach(function (e) { if (isObj(e)) place(e.item, g); });
+          });
+          if (order.indexOf(g) < 0 && pageGroups.indexOf(g) < 0) pageGroups.push(g);
         });
-        // the registry items no default layout places (S6b), in registry order
+        // the registry items no layout or page places (S6b), in registry order
         var placedN = seq.length;
         Object.keys(registry).forEach(function (id) { place(id, EXTRA_GROUP); });
-        if (seq.length > placedN) order.splice(order.indexOf(GRID_GROUP.more), 0, EXTRA_GROUP);
-        if (firm.items.length) order.splice(order.indexOf(GRID_GROUP.admin), 0, FIRM_GROUP);
+        if (seq.length > placedN) order.push(EXTRA_GROUP);
+        order = order.concat(pageGroups);
+        if (firm.items.length) order.push(FIRM_GROUP);
         var mine = userItems(opts.ui);
-        if (mine.length) order.splice(order.indexOf(GRID_GROUP.admin), 0, USER_GROUP);
+        if (mine.length) order.push(USER_GROUP);
 
         var out = [];
         seq.forEach(function (id) {
@@ -650,9 +657,10 @@
           }
           out.push({ id: id, group: origin[id], label: label, labels: labels, icon: icon });
         });
-        // Firm-added items: listed in All + the palette, and drawn as tiles in
-        // the More grid's firm row (renderFirmRow, S3.3); exec() dispatches
-        // their action. Hidden / denied like any other id.
+        // Firm-added items: listed in All + the palette, and placed where the
+        // firm's layout and pages put them (the More grid's firm row is gone
+        // with the hub, launcher-nits C4); exec() dispatches their action.
+        // Hidden / denied like any other id.
         firm.items.forEach(function (fi) {
           if (denied[fi.id] || firm.hidden[fi.id] || restricted[fi.id]) return;
           seq.push(fi.id);
@@ -663,8 +671,7 @@
         // in All + the palette, placeable on Home / the sidebar (the layout
         // pass draws a neutral shortcut), bindable to a shortcut; exec()
         // dispatches their action like a firm item's. Their action rides as
-        // userAction, NOT action: the More grid's firm row draws every entry
-        // with an `action` (renderFirmRow), and that row is the firm's only.
+        // userAction, NOT action: `action` marks a FIRM item (exec, isPage).
         mine.forEach(function (ub) {
           seq.push(ub.id);
           out.push({ id: ub.id, group: USER_GROUP, label: ub.label, labels: [ub.label], icon: ub.icon, userAction: ub.action });
@@ -706,7 +713,6 @@
         var reg = window.FEATURE_REGISTRY || {};
         for (var gid in reg) if (hasOwn(reg, gid) && !gatePasses(reg[gid].gate, STATE)) hide[gid] = true;
         hidePass(hide, firm.renames);
-        renderFirmRow();
         layoutPass(firm.locked);
         buildPages(firm.locked);
         refreshDrawer();
@@ -730,92 +736,13 @@
         try { BT.sync(live); } catch (err) { warn('button tab sync failed — ' + (err && err.message)); }
       }
 
-      // ── The More firm row (ui-custom S3.3) ─────────────────────────────
-      // The firm's own items (the effective ones: hidden / denied firm items
-      // are not drawn), as tiles at the END of the More grid after a row
-      // break, in array order. The grid's markup grammar — a direct-child
-      // .big-button with the icon, <br><br> and the label — built as DOM:
-      // the icon class from the validated slug only, the label as a text
-      // node. A click runs exec(id). No data-target / data-exclusive-group
-      // (a [data-target] inside a page drills THAT page onto the panel
-      // stage, S6c-4 — a firm item has no panel), and no EL entry:
-      // hidePass / relabel never touch these, and elementsOf(firm id) stays
-      // {} — exec() dispatches a firm item declaratively, never by clicking
-      // its tile (which itself calls exec). Like every grid tile they get a
-      // pill in the drilled-in strip (ensureStrip: an action tile's pill
-      // proxies its click, as Get Clio Code's does). Re-runnable: a run with
-      // the same items changes nothing; any change replaces the whole row
-      // (and drops a built strip, rebuilt now if drilled in); no items, no row.
-      // The row draws ONLY while the firm has no More layout (ui-custom S6c,
-      // S6c_DESIGN §4.3): once the firm's `layout` places More
-      // (placed.more, even []), firm items appear where that layout puts them
-      // (the layout pass draws them as neutral grid tiles) and nowhere else.
-      var FIRM_ROW_ATTR = 'data-yc-firm-row';
-      var lastFirmRow = null;
-      function firmPlacesMore() {
-        var ui = STATE && isObj(STATE.ui) ? STATE.ui : {};
-        var lay = isObj(ui.firm) && isObj(ui.firm.layout) ? ui.firm.layout : null;
-        return !!(lay && isObj(lay.placed) && Object.prototype.toString.call(lay.placed.more) === '[object Array]');
-      }
-      function renderFirmRow() {
-        var tab = document.getElementById(TAB_OF.more);
-        if (!tab) return;
-        var items = firmPlacesMore() ? [] : EFFECTIVE.filter(function (e) { return !!e.action; });
-        // [id, label, icon] is all a tile shows; its action is resolved at click time by exec(e.id), so an action-only edit rightly keeps the nodes.
-        var key = JSON.stringify(items.map(function (e) { return [e.id, e.label, e.icon]; }));
-        var old = tab.querySelectorAll(':scope > [' + FIRM_ROW_ATTR + ']');
-        if (key === lastFirmRow && old.length === (items.length ? items.length + 2 : 0)) return;
-        lastFirmRow = key;
-        for (var o = 0; o < old.length; o++) {
-          var ws = old[o].previousSibling;
-          if (ws && ws.nodeType === 3 && !/\S/.test(ws.nodeValue)) ws.parentNode.removeChild(ws);
-          old[o].parentNode.removeChild(old[o]);
-        }
-        if (items.length) {
-          var tiles = tab.querySelectorAll(':scope > .big-button:not([' + FIRM_ROW_ATTR + '])');
-          var at = tiles.length ? tiles[tiles.length - 1] : null;
-          var frag = document.createDocumentFragment();
-          // The grid's own whitespace before every element (rules.indent): the
-          // tiles are inline-blocks, so it is part of their spacing. A text
-          // node can't carry the marker attribute, so the removal loop above
-          // drops the whitespace node before each element it removes.
-          var mark = function (n) {
-            frag.appendChild(document.createTextNode(RULES.more.indent));
-            n.setAttribute(FIRM_ROW_ATTR, '');
-            frag.appendChild(n);
-            return n;
-          };
-          mark(document.createElement('br'));
-          mark(document.createElement('br'));
-          items.forEach(function (e) {
-            var b = document.createElement('button'), i = document.createElement('i');
-            b.className = 'big-button';
-            i.className = iconClass(e.icon, ' fa-2xl');
-            b.appendChild(i);
-            b.appendChild(document.createElement('br'));
-            b.appendChild(document.createElement('br'));
-            b.appendChild(document.createTextNode(e.label));
-            b.addEventListener('click', function () { exec(e.id); });
-            mark(b).setAttribute(FIRM_ROW_ATTR, e.id);
-          });
-          if (at) at.parentNode.insertBefore(frag, at.nextSibling);
-          else tab.appendChild(frag);
-        }
-        var strip = tab.querySelector(':scope > .feature-strip');
-        if (strip) {
-          strip.parentNode.removeChild(strip);
-          if (tab.classList.contains('drill-active') && typeof window.syncDrillState === 'function') window.syncDrillState(tab, 'more');
-        }
-      }
-
       // Hide the rendered elements of denied, firm-hidden, role-restricted
       // (visible_to, S3.4) AND gated (S6c) items on every surface — one attribute for all
       // (ensureStrip and the CSS rule already honour it; firm "hide" and role
       // scoping are decluttering, a deny is visibility-only: none of them
       // secures anything). By attribute + an !important rule, not
-      // style.display: loadUserContext writes style.display on #sbAdmin, and
-      // must not be able to resurrect a hidden item. Then relabel the renamed
-      // ones.
+      // style.display, which other code writes and must not be able to
+      // resurrect a hidden item with. Then relabel the renamed ones.
       function hidePass(denied, renames) {
         renames = renames || {};
         for (var id in EL) for (var sf in EL[id]) setAttr(EL[id][sf], DENIED_ATTR, denied[id] ? '' : null);
@@ -824,17 +751,8 @@
           Object.keys(renames).sort().map(function (k) { return k + '=' + renames[k]; }).join('\u0001');
         if (key === lastDenied) return;
         lastDenied = key;
-        // A grid's pill strip is built once, from its buttons' text (ensureStrip
-        // skips [data-yc-denied]). One built under another hidden set or other
-        // renames would keep a stale pill: drop it — and rebuild it now if
-        // drilled in.
-        ['more', 'admin'].forEach(function (sf) {
-          var tab = document.getElementById(TAB_OF[sf]);
-          var strip = tab && tab.querySelector(':scope > .feature-strip');
-          if (!strip) return;
-          strip.parentNode.removeChild(strip);
-          if (tab.classList.contains('drill-active') && typeof window.syncDrillState === 'function') window.syncDrillState(tab, sf);
-        });
+        // (The hubs' pill strips were dropped here on a change; the pages'
+        // own strips follow their tiles in buildPages — launcher-nits C4.)
       }
 
       // Firm renames, in place on every rendered element of the item: the
@@ -935,12 +853,14 @@
       // removal of it is ignored (the validator refuses one anyway) and a
       // placed list without it gets it back by the base-slotting rule.
       // Deterministic: the output is a function of its inputs only.
-      var LAYOUT_SURFACES = { home: true, sidebar: true, homeIcons: true, more: true, moreIcons: true, admin: true, adminIcons: true };
+      var LAYOUT_SURFACES = { home: true, sidebar: true, homeIcons: true };
       var USER_SURFACES = { home: true, sidebar: true, homeIcons: true };   // lib/uiConfigShape.js LAYOUT_SURFACES
-      var BREAK_SURFACES = { home: true, more: true, admin: true };         // lib/uiConfigShape.js BREAK_SURFACES
-      var ICON_SURFACES = { homeIcons: true, moreIcons: true, adminIcons: true, pageIcons: true };
-      var PAGE_OF = { homeIcons: 'home', moreIcons: 'more', adminIcons: 'admin', pageIcons: 'page' };   // an icon row's page
-      var GRID_SURFACES = { more: true, admin: true, page: true };               // .big-button tiles (page = a custom page's grid, S6c-5)
+      // 'more' stays a GRAMMAR name: a page's tiles borrow it (lib/uiConfigShape.js PAGE_PARTS), as its
+      // small buttons borrow 'moreIcons' (an icon row: items only) — no hub is mounted since launcher-nits C4
+      var BREAK_SURFACES = { home: true, more: true };                      // lib/uiConfigShape.js BREAK_SURFACES
+      var ICON_SURFACES = { homeIcons: true, pageIcons: true };
+      var PAGE_OF = { homeIcons: 'home', pageIcons: 'page' };   // an icon row's page
+      var GRID_SURFACES = { page: true };               // .big-button tiles (a firm or user page's grid, S6c-5)
       var GUARANTEED = { homeIcons: ['all'] };                              // lib/uiConfigShape.js GUARANTEED
       var LAYOUT_CAP = 200;   // entries read per list (the server caps at 100)
 
@@ -1769,17 +1689,16 @@
       // it calls exec). Every item a default layout places keeps an element;
       // the items placed in none (S6b) run through NO_ELEMENT below.
       //
-      // A GRID item (a More / Admin tile — ui-custom S6c-4, the panel stage)
-      // is opened from the page you are looking at when that page shows a
-      // tile for it (its default tile, or a neutral the firm placed there);
-      // else from the first page that does — More, then Admin, then the firm
-      // pages, then the user's own (S6c-5); else by its own default tile,
-      // hidden on its page (a firm-unplaced tile still opens its panel, with
-      // no pill lit). opts.page names a page to try first (the WORKSPACE URL restore:
-      // tabAdmin~adminUsers must reopen on Admin even when Users also sits
-      // on More). A neutral panel tile is clicked like a default one — it has
-      // no exec listener (see neutral()); an ACTION item's neutral calls exec
-      // itself, so it is never a routing target: its default tile is.
+      // A PANEL item (ui-custom S6c-4, the panel stage) is opened from the
+      // page you are looking at when that page shows a tile for it; else from
+      // the first page that does — the firm's pages in item order (More
+      // Features and Admin among them since launcher-nits C4), then the
+      // user's own (S6c-5); else on the panel tab (C1). opts.page names a
+      // page to try first (the WORKSPACE URL restore: firm:admin~adminUsers
+      // must reopen on Admin even when Users also sits on More Features). A
+      // neutral panel tile is clicked — it has no exec listener (see
+      // neutral()); an ACTION item's neutral calls exec itself, so it is
+      // never a routing target: exec runs it through NO_ELEMENT.
       //
       // A PAGE item (S6c-5, firm or the user's own) opens its tab:
       // openMainTab(its ycPage-N) — refused, loudly, when the tab was not
@@ -1788,8 +1707,8 @@
       // A firm item's action is dispatched declaratively — re-validated
       // first, so a bad one never navigates — 'window' →
       // window.open(url, '_blank', 'noopener'); 'modal' →
-      // openToolDialog(url, { title, size }). Its More tile (the firm row,
-      // renderFirmRow) calls exec(); exec never clicks the tile. Either way
+      // openToolDialog(url, { title, size }). A tile of it on a page calls
+      // exec(); exec never clicks the tile. Either way
       // an open tool dialog is closed first: whatever exec() opens must not
       // sit behind it. A user's own button (S5a, its entry's userAction) is
       // dispatched the same way, by the same rules: a link always opens a
@@ -1806,17 +1725,15 @@
       // the fixed chrome calls (the header's My Tasks and Log Out; Code's is
       // openCodeBox, public/js/ycCodeBox.js) — never an eval of the
       // registry's onclick string. Placed or not, the same path.
-      // An item an element does draw is clicked like any other: Casey's paw
-      // is the `casey` item's element since S6c (DEFAULT_LAYOUTS.moreIcons),
-      // so casey left this set — a firm-removed default stays in the DOM.
+      // An item an element does draw is clicked like any other.
       //
-      // An ICON-ROW element (S6c: casey on More's, all on Home's) is clicked
-      // in place, with no tab switch: its onclick is a page call that works
-      // from anywhere (toggleMascot, openMainTab('tabAll')), and switching to
-      // More to summon the cat would be a visible navigation for nothing.
-      // The hubs' ACTION items (launcher-nits C1) — their tile on More / Admin
-      // is their element while the hubs exist; once a tile is gone (L4b2's
-      // retirement of the hubs) exec runs the same call directly.
+      // An ICON-ROW element (S6c: all on Home's) is clicked in place, with no
+      // tab switch: its onclick is a page call that works from anywhere
+      // (openMainTab('tabAll')).
+      // The hubs' ACTION items (launcher-nits C1: Settings, Etch, Ask Casey)
+      // and casey (Casey's paw) were drawn by the More / Admin tabs; since
+      // C4 those are firm pages, where an item is a neutral shortcut, so they
+      // have no element and run here.
       var NO_ELEMENT = {
         moreSettings: function () { return pageCall('openMainTab', ['tabSettings']); },
         adminEtch: function () { return pageCall('etchSwal', []); },
@@ -1850,7 +1767,7 @@
         // that happens to contain the secondary launcher tile.
         if ((window.FEATURE_REGISTRY[id] || {}).overlay) {
           var overlayEls = elementsOf(id);
-          var overlayEl = overlayEls.more || overlayEls.moreIcons || overlayEls.home || overlayEls.sidebar;
+          var overlayEl = overlayEls.home || overlayEls.homeIcons || overlayEls.sidebar;
           if (!overlayEl && hasOwn(NO_ELEMENT, id)) return NO_ELEMENT[id]();
           if (!overlayEl) { warn('exec("' + id + '"): overlay has no rendered element'); return false; }
           overlayEl.click();
@@ -1876,9 +1793,9 @@
         }
         var m = elementsOf(id);
         if (m.sidebar) { m.sidebar.click(); return true; }
-        var sf = m.home ? 'home' : m.more ? 'more' : m.admin ? 'admin' : null;
+        var sf = m.home ? 'home' : null;
         if (!sf) {
-          var row = m.homeIcons ? 'homeIcons' : m.moreIcons ? 'moreIcons' : m.adminIcons ? 'adminIcons' : null;
+          var row = m.homeIcons ? 'homeIcons' : null;
           if (row) { m[row].click(); return true; }   // an icon-row button: clicked in place (see NO_ELEMENT)
           if (hasOwn(NO_ELEMENT, id)) return NO_ELEMENT[id]();
           // a PANEL item with no tile of its own (C1): the page that shows it, else the panel tab
@@ -1916,7 +1833,7 @@
       // shows it, so it opens on the panel tab (launcher-nits C1).
       function gridTileFor(id, def, home, first) {
         var cur = typeof window.currentMainTabId === 'function' ? window.currentMainTabId() : null;
-        var pages = [first, cur, TAB_OF.more, TAB_OF.admin].concat(pageTabIds()), seen = {};
+        var pages = [first, cur].concat(pageTabIds()), seen = {};
         for (var i = 0; i < pages.length; i++) {
           var tabId = pages[i];
           if (!tabId || seen[tabId]) continue;
@@ -1928,8 +1845,7 @@
       }
       // ── The panel tab (launcher-nits C1, Fred 2026-10-28) ──
       // Where a panel opens when no page shows a tile for it: the firm took
-      // it off every page (or, once L4b2 retires the hubs, nothing hosts its
-      // default tile). A plain page, made on first use — the page heading
+      // it off every page. A plain page, made on first use — the page heading
       // (<i> label <i>) and ONE neutral tile for the panel it hosts — so the
       // drill script, the pill strip, exec's routing and the WORKSPACE URL
       // (tabPanel~<id>) treat it as one more page. Never in a layout, never
@@ -2347,10 +2263,6 @@
         max-width: 480px; max-height: 480px; border: 1px solid var(--border-strong); border-radius: var(--radius);
       }
     }
-    /* The More grid's firm row (ycLauncher renderFirmRow): a firm label is
-       DB text up to 40 characters, so an unbroken one wraps inside its tile
-       rather than widening it. */
-    #tabMore > .big-button[data-yc-firm-row] { overflow-wrap: anywhere; vertical-align: top; }
   </style>
   <style>
     /* A drawer's menu (ui-custom S5b, ycLauncher "Drawers"): a small popover
@@ -3293,8 +3205,8 @@
          layout re-orders the tiles inside it. -->
     <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
     <!-- The Home icon row (ui-custom S6b; a layout surface since S6c):
-         icon-only buttons centred under the grid, one look with Casey's paw
-         under More's (the shared egg-row CSS), rendered from FEATURE_REGISTRY
+         icon-only buttons centred under the grid, one look with a page's
+         icon row (the shared egg-row CSS), rendered from FEATURE_REGISTRY
          + DEFAULT_LAYOUTS.homeIcons by the ycLauncher block, then the firm's
          and the user's layouts. All (#homeAll) is GUARANTEED here: the
          resolver keeps it whatever a layout says, so nothing hides the way to
@@ -3638,7 +3550,7 @@
   <!-- Promoted from the More Features grid to a first-class tab. openMainTab()
        swaps data-src → src on first open, so the board's fetch doesn't run
        until someone actually looks at it. (Campaigns took the reverse trip and
-       now lives in tabMore as campaignsDiv.) -->
+       now lives on the stage as campaignsDiv, a More Features tile.) -->
   <div id="tabPipeline" class="tab-main">
     <iframe data-src="/pipelineBoard.html"></iframe>
   </div>
@@ -6179,41 +6091,12 @@
   </div>
 
 
-<!-- The two shipped HUBS and, after them, the custom pages (#ycPages). A hub /
-     page is a .tab-main.yc-hub: a heading, big tiles as DIRECT children, an
-     icon row — the drill script, the phone CSS and the pill strip key on
-     that shape (ui-custom S6c-5; the class is yc-hub, not the design's
-     yc-page: /js/ycPager.js owns .yc-page in this very document). -->
-<div id="tabMore" class="tab-main yc-hub">
-  <h1><i class="fa-solid fa-grip"></i> More Features <i class="fa-solid fa-grip"></i></h1>
-  <!-- The grid: rendered from FEATURE_REGISTRY + DEFAULT_LAYOUTS.more
-       (public/js/featureRegistry.js) — the layout rule and the row notes live
-       there. The tiles and the row breaks must stay DIRECT children of this
-       div: ensureStrip(), the drill-in and phone CSS all select them with
-       ">". The panels the tiles open live on the stage (#ycPanels, after the
-       tabs — ui-custom S6c-4), never in here. -->
-  <script>ycLauncher.mount('more')</script>
-  <!-- More's icon row (ui-custom S6c): Casey's way back in, now that its tile
-       went to Settings — a small paw under the grid, not a tile (the rows stay
-       full, the pill strip never sees it, drill-in hides it). Rendered from
-       DEFAULT_LAYOUTS.moreIcons (the `casey` item, its old markup byte for
-       byte) and the firm's layout. -->
-  <div class="more-egg-row"><script>ycLauncher.mount('moreIcons')</script></div>
-</div>
-  
-<div id="tabAdmin" class="tab-main yc-hub" data-all-icons='<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-mug-hot"></i>'>
-  <h1><i class="fa-solid fa-mug-hot"></i> Admin <i class="fa-solid fa-mug-hot"></i></h1>
-  <!-- The grid: rendered from FEATURE_REGISTRY + DEFAULT_LAYOUTS.admin
-       (public/js/featureRegistry.js) — layout rule and row notes live there;
-       same direct-child rule as the More Features grid. -->
-  <script>ycLauncher.mount('admin')</script>
-  <!-- Admin's icon row (ui-custom S6c): empty by default — the div takes no
-       space while it holds nothing (the :empty rule below); the firm's layout
-       may place small items here. -->
-  <div class="admin-egg-row"><script>ycLauncher.mount('adminIcons')</script></div>
-
-  <div id="sequencesDiv" style="display:none"></div>
-</div>
+<!-- The pages (#ycPages): the firm's — More Features and Admin among them
+     since launcher-nits C4 (the static #tabMore / #tabAdmin hubs retired) —
+     and each user's own. A page is a .tab-main.yc-hub: a heading, big tiles as
+     DIRECT children, an icon row — the drill script, the phone CSS and the
+     pill strip key on that shape (ui-custom S6c-5; the class is yc-hub, not
+     the design's yc-page: /js/ycPager.js owns .yc-page in this very document). -->
 <!-- ══ Custom pages (ui-custom S6c-5) ═════════════════════════════════════
      The firm's pages and the user's own (items of kind { type:'page' }) are
      built HERE by ycLauncher.applyAccess (buildPages): one
@@ -6403,21 +6286,18 @@
 <style>
   /* Drill-in pill strip for big-button tabs */
   .feature-strip { display:none; align-items:center; flex-wrap:wrap; gap:6px; margin:0 0 12px; }
-  /* The icon rows — Casey's paw under More's grid, All under Home's, Admin's
-     empty by default (ui-custom S6b, S6c; see the markup): icon-only, muted
-     until hover or focus. One look. A row holding nothing takes no space. */
-  .more-egg-row, .home-egg-row, .admin-egg-row, .page-egg-row { text-align:center; margin:14px 0 4px; }
-  .more-egg-row:empty, .home-egg-row:empty, .admin-egg-row:empty, .page-egg-row:empty { display:none; }
-  /* #tabMore / #tabHome / #tabAdmin / #ycPages (the custom pages, S6c-5): the
-     id outranks style.css's dark-theme button rule (0,7,2), which would
-     otherwise paint the icon a grey box */
-  #tabMore .more-egg, #tabHome .home-egg, #tabAdmin .admin-egg, #ycPages .page-egg { background:transparent; border:0; box-shadow:none; padding:4px 8px; cursor:pointer; color:var(--text-muted); opacity:.45; font-size:14px; }
-  #tabMore .more-egg:hover, #tabMore .more-egg:focus-visible,
+  /* The icon rows — All under Home's grid, a page's under its tiles (Casey's
+     paw on More Features) (ui-custom S6b, S6c, S6c-5; see the markup):
+     icon-only, muted until hover or focus. One look. A row holding nothing
+     takes no space. */
+  .home-egg-row, .page-egg-row { text-align:center; margin:14px 0 4px; }
+  .home-egg-row:empty, .page-egg-row:empty { display:none; }
+  /* #tabHome / #ycPages (the pages, S6c-5 — More Features and Admin among
+     them since launcher-nits C4): the id outranks style.css's dark-theme
+     button rule (0,7,2), which would otherwise paint the icon a grey box */
+  #tabHome .home-egg, #ycPages .page-egg { background:transparent; border:0; box-shadow:none; padding:4px 8px; cursor:pointer; color:var(--text-muted); opacity:.45; font-size:14px; }
   #tabHome .home-egg:hover, #tabHome .home-egg:focus-visible,
-  #tabAdmin .admin-egg:hover, #tabAdmin .admin-egg:focus-visible,
   #ycPages .page-egg:hover, #ycPages .page-egg:focus-visible { opacity:1; color:var(--accent-2); background:transparent; }
-  .drill-active > .more-egg-row { display:none; }
-  .drill-active > .admin-egg-row { display:none; }
   .drill-active > .page-egg-row { display:none; }
   .drill-active .feature-strip { display:flex; }
   .drill-active > .big-button, .drill-active > br { display:none; }
@@ -7093,6 +6973,16 @@
         if (bt) document.querySelectorAll('#appSidebar .sb-item[data-yc-shortcut]').forEach(el => {
           if (el.getAttribute('data-yc-shortcut') === bt) el.classList.add('active');
         });
+        // A tab reached from a page's tile rather than a row of its own —
+        // Settings, from More Features' tile (lit by moreFeatures' tabAlso
+        // until launcher-nits C4 made More a firm page): when no row lit,
+        // the row of the first page holding that tile does.
+        const via = { tabSettings: 'moreSettings' }[tabName];
+        const tile = via && !document.querySelector('#appSidebar .sb-item.active')
+          ? document.querySelector(`#ycPages > [data-yc-page] > [data-yc-shortcut="${via}"]`) : null;
+        if (tile) document.querySelectorAll('#appSidebar .sb-item').forEach(el => {
+          if (el.dataset.tab === tile.parentElement.id) el.classList.add('active');
+        });
       }
     }
 
@@ -7148,7 +7038,7 @@
     // alone owns launcher ids, panel ids, held-rest tokens and readiness.
     const YC_ASSISTANT_DESTINATIONS = Object.freeze({
       'automations.court_review': Object.freeze({
-        launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', rest: 'courtReview',
+        launcher: 'moreAutomations', panel: 'automationsDiv', rest: 'courtReview',
       }),
       // Record deep links (applied Casey cards): `sub` names the manager
       // sub-page, and the rest token is built HERE as `<sub>~<id>` from a
@@ -7164,25 +7054,25 @@
       // 'enrollment' opens that enrollment in the sequences pane's enrollment
       // viewer (an applied sequence-enroll card, A18.4b).
       'automations.workflow': Object.freeze({
-        launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', sub: 'workflows',
+        launcher: 'moreAutomations', panel: 'automationsDiv', sub: 'workflows',
         records: Object.freeze(['execution']),
       }),
       'automations.sequence': Object.freeze({
-        launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', sub: 'sequences',
+        launcher: 'moreAutomations', panel: 'automationsDiv', sub: 'sequences',
         records: Object.freeze(['enrollment']),
       }),
       'automations.job': Object.freeze({
-        launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', sub: 'scheduledJobs',
+        launcher: 'moreAutomations', panel: 'automationsDiv', sub: 'scheduledJobs',
       }),
       'automations.hook': Object.freeze({
-        launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', sub: 'hooks',
+        launcher: 'moreAutomations', panel: 'automationsDiv', sub: 'hooks',
       }),
       // A16: one saved report, opened on Reports' run panel (it auto-runs;
       // Run and CSV export live there). reports.html takes `report~<id>` —
       // cold through ycSubTab.leaf.take(), warm through its
       // ycAssistantOpenDestination bridge — and reports ready.
       'reports.report': Object.freeze({
-        launcher: 'moreReports', page: 'tabMore', panel: 'reportsDiv', sub: 'report',
+        launcher: 'moreReports', panel: 'reportsDiv', sub: 'report',
       }),
     });
     let assistantNavigationPending = null;
@@ -7233,7 +7123,9 @@
           reject(new Error('The destination did not become ready in time.'));
         }, 10000);
         assistantNavigationPending = pending;
-        if (L.exec(spec.launcher, { page: spec.page }) !== true) {
+        // no page hint (launcher-nits C4): exec routes the panel to the page that shows it — More
+        // is the firm page firm:more since C3 — else the panel tab
+        if (L.exec(spec.launcher) !== true) {
           clearTimeout(pending.timer);
           assistantNavigationPending = null;
           reject(new Error('That destination could not be opened.'));
@@ -7972,11 +7864,10 @@ async function initAuth() {
       E("appSidebar").style.display = "flex";
       // The su signal (the su role only — user_auth is authn, A2b): the
       // launcher's gate override. Who sees the Admin PAGE is the firm's
-      // visible_to on the `admin` item (ui-custom S6c, Fred's ruling
-      // 2026-10-16); each Admin tile carries its route's gate in the registry,
-      // so the effective registry below decides both — #sbAdmin follows it.
+      // visible_to on its page item, firm:admin (launcher-nits C3 / C4; Fred's
+      // ruling 2026-10-16 carried over); each Admin tile carries its route's
+      // gate in the registry, so the effective registry below decides both.
       const isAdmin = String(user.roles || "").split(",").includes("su");
-      if (E("sbAdmin")) E("sbAdmin").style.display = "none";
 
       Toast.fire({
         icon: "success",
@@ -7989,12 +7880,9 @@ async function initAuth() {
       // denied items per firmData.denied, the firm overlay per firmData.ui
       // (S3.1), the user's roles for the firm's role scoping (visible_to,
       // S3.4). Before the ?open= restore below, so a restored All tab renders
-      // full. A launcher bug must not take the boot down (Admin then stays
-      // hidden). The Admin sidebar row shows when the `admin` item is
-      // effective — never from a role test of its own.
+      // full. A launcher bug must not take the boot down.
       try {
-        const eff = ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied, ui: window.firmData.ui, roles: String(user.roles || "").split(",").map(r => r.trim()).filter(Boolean) });
-        if (E("sbAdmin")) E("sbAdmin").style.display = eff.some(e => e.id === 'admin') ? "" : "none";
+        ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied, ui: window.firmData.ui, roles: String(user.roles || "").split(",").map(r => r.trim()).filter(Boolean) });
       } catch (err) { console.error('[ycLauncher] applyAccess failed:', err); }
 
       tasksBadgeRefresh();   // sidebar Tasks badge (fire-and-forget)
@@ -8003,8 +7891,8 @@ async function initAuth() {
       // ?open= is either a main tab id (+ an optional rest), or `file:<n>`
       // pointing into ?files=. wsOpenTarget validates the head against what
       // this user's launcher offers — so it must run AFTER applyAccess above —
-      // and lands anything else on Home: an arbitrary element id, tabAdmin for
-      // a non-SU, a raw `file-div<n>` (fileCounter restarts every boot, so it
+      // and lands anything else on Home: an arbitrary element id, Admin for
+      // someone it is not shown to, a raw `file-div<n>` (fileCounter restarts every boot, so it
       // names a different file each time). file:<n> is Home here; with
       // ?files=, restoreOpenFiles() opens the file.
       const openAt = wsOpenTarget(params.open);
@@ -8176,7 +8064,6 @@ async function initAuth() {
       try {
         E("appSidebar").style.display = "none";
         E("hdrUserArea").style.display = "none";
-        if (E("sbAdmin")) E("sbAdmin").style.display = "none";
         E("myNameIs").innerHTML = "";
       } catch (_) { }
 
@@ -8516,17 +8403,17 @@ async function initAuth() {
        invalid rest is dropped at its layer; the file or tab itself is kept.
        file:<n> takes no rest (a file's lives in its ?files= token).
        A main tab's rest belongs to its own pane frame; a tab with NO pane
-       frame drops it (openMainTabOnBoot) — except tabMore / tabAdmin, whose
-       first segment is the SHELL's: the FEATURE_REGISTRY id of the open
-       drill panel (tabMore~moreAutomations), read live from which panel is
+       frame drops it (openMainTabOnBoot) — except a drill page: a FIRM page
+       (#ycPages, launcher-nits L4a; More Features and Admin are firm:more /
+       firm:admin since C4), headed by its firm item id, and the panel tab.
+       Its first segment is the SHELL's: the FEATURE_REGISTRY id of the open
+       drill panel (firm:more~moreAutomations), read live from which panel is
        showing on the stage (#ycPanels), never a DOM id or a tile position.
        Anything after it is that panel's own pane's rest
-       (tabMore~moreAutomations~<rest>). A FIRM page (#ycPages, launcher-nits
-       L4a) is a drill page the same way, its head being its firm item id:
-       firm:<slug>~moreAutomations~<rest>; a user's own page is never named. Restoring one goes through
+       (firm:more~moreAutomations~<rest>); an old tabMore / tabAdmin head is
+       an alias (WS_HUB_ALIAS). A user's own page is never named. Restoring one goes through
        ycLauncher.exec, and only for a plain registry id whose tile on that
-       PAGE opens a PANEL (data-target; a default tile or a firm-placed
-       neutral, S6c-4) — never an action tile (dialogs) or a firm item; exec
+       PAGE opens a PANEL (data-target, S6c-4) — never an action tile (dialogs) or a firm item; exec
        itself refuses denied, firm-hidden and admin-gated ids. Anything
        refused leaves the grid, silently.
 
@@ -8601,7 +8488,7 @@ async function initAuth() {
     var wsPanelRest = {};
     /** The hubs, and the launcher surface each one's default tiles are
      *  mounted on (ycLauncher.elementsOf(id)[surface]). */
-    var WS_DRILL_SURFACE = { tabMore: "more", tabAdmin: "admin" };
+    var WS_DRILL_SURFACE = {};   // the hubs (tabMore / tabAdmin) until launcher-nits C4: firm pages since (below)
     /** A FIRM page (ui-custom S6c-5, #ycPages) is a drill page too, named in
      *  ?open= by its firm item id — firm:<slug>, firm vocabulary like a
      *  registry id (launcher-nits L4a, Fred 2026-10-28): its open panel
@@ -8611,8 +8498,8 @@ async function initAuth() {
      *  Fred's ruling Q4, stands for them); its panel is remembered
      *  (wsPanelRest) but synced only once a named page shows it. */
     var WS_FIRM_PAGE_RE = /^firm:[a-z0-9-]{1,40}$/;   // lib/uiConfigShape.js FIRM_ID_RE
-    /** The firm pages that replace the hubs (L4b2's data step creates them): an old
-     *  ?open=tabMore… / tabAdmin… names them once the hub tab is gone (C2). */
+    /** The firm pages that replaced the hubs (launcher-nits C3 made them, C4 removed
+     *  the hub tabs): an old ?open=tabMore… / tabAdmin… names them (C2). */
     var WS_HUB_ALIAS = { tabMore: "firm:more", tabAdmin: "firm:admin" };
     /** The firm page item a tab shows, or null (a hub, a user page, anything else). */
     function wsFirmPageId(tabId) {
@@ -8676,8 +8563,8 @@ async function initAuth() {
       return wsDrillPanels(tabId).find((p) => getComputedStyle(p.panel).display !== "none") || null;
     }
 
-    /** A main tab's rest for the URL: tabMore / tabAdmin read it live from
-     *  the open panel (+ that panel's pane rest); others, from wsMainRest. */
+    /** A main tab's rest for the URL: a drill page reads it live from the
+     *  open panel (+ that panel's pane rest); others, from wsMainRest. */
     function wsTabRest(tabId) {
       if (!wsDrillSurface(tabId)) return wsMainRest[tabId] || "";
       const open = wsOpenPanel(tabId);
@@ -8832,7 +8719,7 @@ async function initAuth() {
       const rest = cut < 0 || !window.ycSubTab ? "" : ycSubTab.normalize(raw.slice(cut + 1));
       // a firm page by its item id (L4a): its tab is built only when the page is effective for this user;
       // the panel tab (C1) only with the panel it hosts (its restore asks exec, which refuses what isn't yours);
-      // tabMore / tabAdmin once the hubs are gone (L4b2): an ALIAS for the firm page that replaced it, else
+      // tabMore / tabAdmin (gone since C4): an ALIAS for the firm page that replaced it, else
       // — its panel named — the panel tab (exec routes it), so old links and bookmarks keep working (C2)
       const alias = WS_HUB_ALIAS[head] && !E(head)
         ? (wsFirmPageTabs().find((t) => wsFirmPageId(t) === WS_HUB_ALIAS[head]) || (rest ? "tabPanel" : null)) : undefined;
@@ -8847,11 +8734,11 @@ async function initAuth() {
     /**
      * Fail closed. Allowed: tabHome, tabAll, and every main tab an item of the
      * EFFECTIVE registry opens — its sidebar element's data-tab / data-tab-also,
-     * tabHome for a Home tile. A drill PAGE (tabMore / tabAdmin) is allowed
-     * when its page item (moreFeatures / admin) is effective — the same door
-     * as its sidebar row and Home tile (ui-custom S6c: the Admin page follows
-     * the firm's visible_to on `admin`, so a staff user with Etch on the grid
-     * still lands on Home; the grid's items stay reachable through All).
+     * tabHome for a Home tile. A firm PAGE is allowed when its page item is
+     * effective — the same door as its sidebar row and Home tile (the Admin
+     * page follows the firm's visible_to on `firm:admin`, so a staff user
+     * with Etch on it still lands on Home; its items stay reachable through
+     * All).
      * Gated and denied items are not in the effective registry; firm items
      * have no element and add nothing. ycLauncher's PUBLIC API only, and only
      * registry ids — never other launcher element ids (ui-custom S4
@@ -8870,8 +8757,8 @@ async function initAuth() {
       if (!L || typeof L.isReady !== "function" || !L.isReady()) return false;
       if (id === "tabAll") return true;
       // a tab its own item opens (inside: tests extract this function alone). Settings by
-      // moreSettings, not by More's row's data-tab-also: More goes in L4b2 (launcher-nits C2)
-      const pageItem = { tabMore: "moreFeatures", tabAdmin: "admin", tabSettings: "moreSettings" }[id];
+      // moreSettings — no sidebar row names it since More became a firm page (launcher-nits C2, C4)
+      const pageItem = { tabSettings: "moreSettings" }[id];
       if (pageItem) return L.effectiveRegistry().some((it) => it.id === pageItem);
       return L.effectiveRegistry().some((it) => {
         const m = L.elementsOf(it.id) || {};
@@ -9124,7 +9011,7 @@ async function initAuth() {
      * `rest` (already validated, wsOpenTarget) belongs to the tab's own pane —
      * a lazy iframe straight under the tab div: kept for the URL and held for
      * the pane to take() when it boots. A tab with no pane has no reader for
-     * it, so it is dropped. tabMore / tabAdmin: the rest names a drill
+     * it, so it is dropped. A drill page: the rest names a drill
      * panel, reopened through ycLauncher.exec (wsRestoreDrill) — which opens
      * the tab itself, so on success this does NOT open it again (that would
      * run exitDrillMode on the tab now current and close the panel).

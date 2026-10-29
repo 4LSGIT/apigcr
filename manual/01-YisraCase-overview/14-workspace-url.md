@@ -13,7 +13,7 @@ YisraCase keeps your workspace in the browser's address bar. Refreshing the page
 | A tab open inside a case or contact file (Documents, Tasks, Case Log, …) | The file opens on that tab |
 | A main tab on screen instead (Cases, Calendar, Tasks, …) | That tab is the one showing |
 | Comms on its Phone or Team tab | Comms opens on that tab |
-| A panel open under **More** or **Admin** (Automations, Manuals, …) | The panel reopens |
+| A panel open on a firm page — **More Features**, **Admin** or another — or on a tab of its own (Automations, Manuals, …) | The panel reopens |
 | A panel that is on no page, open on a tab of its own (opened from All or Ctrl+K) | It reopens on that tab |
 | One of your **firm's pages** on screen, with or without a panel open on it | The page reopens, and the panel on it |
 | A tab inside **Automations** (Workflows, Triggers, Activity, …) or **YisraCase Config** (Pipelines, Custom Fields, Firm, …) | The panel reopens on that tab |
@@ -25,10 +25,10 @@ The address bar updates as you work, so it is always current — there is nothin
 ## What is not remembered
 
 - **Where you were inside a tab:** scroll position, filters, search text, a selected row, an open conversation or a folder you browsed to. The tab reopens in its normal starting state.
-- **An old link to More Features or Admin** still works when your firm has
-  made those into its own pages: it opens the page that replaced them, with
-  the same panel open (or that panel on a tab of its own).
-- **Anything you are not allowed to see.** If a link points at a tab or panel the person opening it doesn't have, they land on Home or on the More / Admin grid instead — quietly, with no error. A file that can't be found is skipped, with a short "could not be reopened" notice.
+- **An old link to More Features or Admin** (from when they were fixed tabs)
+  still works: it opens the firm page of that name, with the same panel open
+  (or that panel on a tab of its own).
+- **Anything you are not allowed to see.** If a link points at a tab or panel the person opening it doesn't have, they land on Home or on the page without that panel instead — quietly, with no error. A file that can't be found is skipped, with a short "could not be reopened" notice.
 - **Unsaved form edits.** A reload is still a reload: save your work first.
 - **A button of your own that opens as a tab.** The address never names one (it would carry your button's name), so a reload or a link from one starts on Home. See [Buttons that open as a tab](15-your-launcher.md#buttons-that-open-as-a-tab).
 - **A page of your own.** The address never names one of your own pages, so a reload or a link from one starts on Home. Its name is something you typed, and the address is recorded with every request the app makes, so it is kept out. Your firm's pages are different: they come back (see the table above). See [Pages](15-your-launcher.md#pages) and [Firm pages](../05-Subsystems/14-firm-launcher.md#firm-pages).

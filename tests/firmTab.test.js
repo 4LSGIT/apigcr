@@ -41,6 +41,7 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');
 const { rawShellHtml } = require('./helpers/shellHtml');
+const { hubFirm } = require('./helpers/hubPages');
 const shape = require('../lib/uiConfigShape');
 const entSvc = require('../services/entitlementService');
 const reg = require('../lib/settingsRegistry');
@@ -168,12 +169,11 @@ function makeBackend({ doc = null, canEdit = true, lenient = false, getFails = n
 }
 
 // ── the three frames ─────────────────────────────────────────────────────
-function makeTop(backend, shellDoc, users) {
+function makeTop(backend, shellDoc, users, shellLayout) {
   const page = `<!DOCTYPE html><html><head>${DENIED_CSS}<script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script>${RENDERER_SRC}</script></head><body>
     <nav id="appSidebar"><script>ycLauncher.mount('sidebar')</script></nav>
     <div id="tabHome" class="tab-main"><script>ycLauncher.mount('home')</script></div>
-    <div id="tabMore" class="tab-main"><script>ycLauncher.mount('more')</script></div>
-    <div id="tabAdmin" class="tab-main"><script>ycLauncher.mount('admin')</script></div>
+    <div id="ycPages"></div>
   </body></html>`;
   // Frames log into one quiet virtual console; warnings are kept for asserts.
   const vc = new VirtualConsole();
@@ -184,7 +184,7 @@ function makeTop(backend, shellDoc, users) {
   w.__logs = logs;
   w.fetch = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(JSON.parse(CATALOG)) });
   w.eval(PICKER_SRC);
-  w.firmData = { ui: { firm: shellDoc ? { registry_overrides: clone(shellDoc) } : {}, user: {} } };
+  w.firmData = { ui: { firm: shellDoc ? { registry_overrides: clone(shellDoc), ...(shellLayout ? { layout: clone(shellLayout) } : {}) } : {}, user: {} } };
   if (users) w.firmData.users = clone(users);
   w.apiSend = backend.api;
   w.ycLauncher.applyAccess({ isAdmin: true, denied: [], ui: w.firmData.ui });
@@ -205,7 +205,7 @@ async function makeConfigShell(top) {
 /** Everything: the shell, the Config shell, the Firm page booted on its tab. */
 async function boot(opts = {}) {
   const backend = makeBackend(opts);
-  const top = makeTop(backend, opts.shellDoc === undefined ? opts.doc : opts.shellDoc, opts.users);
+  const top = makeTop(backend, opts.shellDoc === undefined ? opts.doc : opts.shellDoc, opts.users, opts.shellLayout);
   const mid = await makeConfigShell(top);
   mid.switchSubPage('firm');
   const firm = writeFrame(mid.document.getElementById('subpage-firm'), FIRM_HTML);
@@ -273,7 +273,7 @@ describe('Launcher form: grouping and catalog', () => {
     const groupsBefore = L.groups();
     expect(groupsBefore).toContain('Firm');                  // the shell has a firm item
     expect(titles).toEqual(groupsBefore.filter((g) => g !== 'Firm' && g !== 'Home'));
-    expect(titles).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);   // More actions: S6b
+    expect(titles).toEqual(['Records', 'Actions', 'Settings', 'More actions']);   // More actions: S6b — and, with no firm pages, every hub item (C4)
     // computeEffective's group record was left exactly as the shell's
     expect(L.groups()).toEqual(groupsBefore);
     const rowIds = $$('[data-row-id]').map((e) => e.dataset.rowId);
@@ -287,6 +287,30 @@ describe('Launcher form: grouping and catalog', () => {
     expect($$('[data-row-id="custom"]')).toEqual([]);
     expect($$('[data-rename]').map((e) => e.dataset.rename).sort()).toEqual(all.slice().sort());
     expect($$('[data-row-id^="firm:"]')).toEqual([]);           // firm items are edited below, not here
+  });
+
+  test('launcher-nits C4: with production\'s firm (More Features and Admin as firm pages) the groups follow the pages', async () => {
+    const hub = hubFirm({ items: [SHELL_ITEM] });
+    const { $, $$, L, top, F, mid, setVal } = await boot({ doc: hub.registry_overrides, shellLayout: hub.layout });
+    const titles = $$('#fm-sec-launcher .fm-group-title').map((e) => e.textContent);
+    expect(titles).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin']);
+    expect(titles).toEqual(L.groups().filter((g) => g !== 'Firm' && g !== 'Home'));
+    const inGroup = (g) => F.LauncherSection.st.catalog.entries.filter((e) => e.group === g).map((e) => e.id);
+    expect(inGroup('More actions')).toEqual(['myTasks', 'logout', 'code']);
+    expect(inGroup('Admin')).toContain('adminDbConsole');
+    expect(inGroup('More Features')).toEqual(expect.arrayContaining(['moreReports', 'casey']));
+    const all = Object.keys(top.FEATURE_REGISTRY).filter((id) => !top.FEATURE_REGISTRY[id].placeholder);
+    expect($$('[data-row-id]').map((e) => e.dataset.rowId).sort()).toEqual(all.sort());
+    // Who sees what: the same groups, the firm's items (the two pages among them) last
+    expect($$('#fm-sec-who .fm-group-title').map((e) => e.textContent)).toEqual([...titles, 'Firm']);
+    expect(F.WhoSection.st.catalog.entries.filter((e) => e.group === 'Firm').map((e) => e.id)).toEqual(['firm:payroll', 'firm:more', 'firm:admin']);
+    // a renamed page renames its group once saved: both catalogs are rebuilt from the stored items
+    expect($('#fi1-label').value).toBe('More Features');
+    setVal($('#fi1-label'), 'Toolbox');
+    await mid.onTopbarSave();
+    await flush();
+    expect($$('#fm-sec-launcher .fm-group-title').map((e) => e.textContent)).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'Toolbox', 'Admin']);
+    expect($$('#fm-sec-who .fm-group-title').map((e) => e.textContent)).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'Toolbox', 'Admin', 'Firm']);
   });
 });
 
@@ -790,7 +814,7 @@ describe('S3.4: Who sees what', () => {
   test('rows: every registry item plus the saved firm items, grouped like All; Settings and Help locked on Everyone; a section in the TOC', async () => {
     const t = await boot({ doc: DOC });
     const titles = t.$$('#fm-sec-who .fm-group-title').map((e) => e.textContent);
-    expect(titles).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More', 'Firm', 'Admin']);   // More actions: S6b
+    expect(titles).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'Firm']);   // More actions: S6b — and, with no firm pages, every hub item (C4)
     const rowIds = t.$$('[data-who-id]').map((e) => e.dataset.whoId);
     const all = Object.keys(t.top.FEATURE_REGISTRY).filter((id) => !t.top.FEATURE_REGISTRY[id].placeholder);
     expect(rowIds.slice().sort()).toEqual([...all, 'firm:payroll'].sort());
@@ -818,7 +842,7 @@ describe('S3.4: Who sees what', () => {
     expect(t.backend.st.doc.visible_to).toEqual({ moreAutomations: ['admin', 'attorney'] });   // the server's order
     expect(t.top.firmData.ui.firm.registry_overrides.visible_to).toEqual({ moreAutomations: ['admin', 'attorney'] });
     expect(ids(t.L.effectiveRegistry())).not.toContain('moreAutomations');
-    expect(t.L.elementsOf('moreAutomations').more.hasAttribute('data-yc-denied')).toBe(true);
+    // (its tile is on the firm's More Features page since C4 — no page in this shell)
     expect([t.F.WhoSection.isDirty(), t.saveBtnShown()]).toEqual([false, false]);
     expect(whoRow(t.firm, 'moreAutomations').querySelector('[data-role="admin"]').checked).toBe(true);
     // unrestrict
@@ -1058,8 +1082,9 @@ describe('S6a: firm items choose their icon in the shell\'s picker', () => {
     await flush();
     expect(puts(backend)).toHaveLength(1);
     expect(backend.st.doc.items[0].icon).toBe('regular:star');
-    // the shell: the More grid's firm row and All's registry
-    const tile = top.document.querySelector('#tabMore [data-yc-firm-row="firm:payroll"] i');
+    // the shell: a Home tile of the item (the More grid's firm row went with the tab, C4) and All's registry
+    L.applyAccess({ isAdmin: true, denied: [], ui: { ...top.firmData.ui, user: { layout: { placed: { home: [{ item: 'firm:payroll' }] } } } } });
+    const tile = top.document.querySelector('#tabHome [data-yc-shortcut="firm:payroll"] i');
     expect(tile.className).toBe('fa-regular fa-star fa-2xl');
     expect(L.effectiveRegistry().find((e) => e.id === 'firm:payroll').icon).toBe('regular:star');
     // Who sees what lists the firm item with its family too

@@ -12,16 +12,17 @@ arrangement), with every save of either kept in a history.
 
 ## What it is
 
-The launcher is every way into a feature: the sidebar, the Home tiles, the More
-Features and Admin grids, the **All** tab and the **Ctrl-K** (⌘K) search. The
+The launcher is every way into a feature: the sidebar, the Home tiles, the
+firm's pages (**More Features** and **Admin** are two of them), the **All** tab
+and the **Ctrl-K** (⌘K) search. The
 Launcher section changes it for **everyone at the firm** in three ways:
 
 | Part | What it does |
 |---|---|
-| **Hide** | Takes a feature off every launcher surface — sidebar, Home, the grids, All and the Ctrl-K search. |
+| **Hide** | Takes a feature off every launcher surface — sidebar, Home, the pages, All and the Ctrl-K search. |
 | **Rename** | Gives a feature a firm name, shown everywhere that feature appears (for example *Cases* → *Matters*). |
-| **Firm items** | Adds the firm's own entries — a link, a tool, a saved view or a **page** — as tiles on More Features, under **Firm** in All, and in Ctrl-K. |
-| **Arrange** | Sets out the **More Features** and **Admin** pages, the **Home** and **sidebar** everyone starts from, and the tiles of the firm's own pages (see [Arranging pages and defaults](#arranging-pages-and-defaults)). |
+| **Firm items** | Adds the firm's own entries — a link, a tool, a saved view or a **page** — under **Firm** in All, in Ctrl-K, and wherever the arrangement places them. |
+| **Arrange** | Sets out the **Home** and **sidebar** everyone starts from and the tiles of the firm's pages, More Features and Admin among them (see [Arranging pages and defaults](#arranging-pages-and-defaults)). |
 
 The Firm tab is a page of sections: the firm's settings first (see
 [Firm and system settings](15-firm-and-system-settings.md)), then **Launcher**
@@ -42,8 +43,10 @@ Ctrl-K), so nobody can lose their way back.
 
 ## Hide and rename
 
-One row per feature, grouped the way the **All** tab groups them (Records,
-Actions, Settings, More, Admin).
+One row per feature, grouped the way the **All** tab groups them: the
+sidebar's sections (Records, Actions, Settings), **More actions** (features
+placed nowhere), then one group per firm page, named after it (More Features,
+Admin).
 
 - **Hide** — tick it to take that feature off everyone's launcher.
 - **Rename to** — type the firm's name for it. Leave it empty to keep the usual
@@ -58,7 +61,7 @@ Each firm item has a **label**, an **icon** and what it **opens**:
 | **Link** | an address: `https://…` for another site, or an app path like `/reports` | in a new window |
 | **Tool** | one of the **live** tools from the list, and a **Dialog size** | over the app, in a dialog |
 | **Saved view** | one of the active saved views, and a **Dialog size** | over the app, in a dialog |
-| **Page** | nothing more here — its tiles are arranged after it is saved (see [Firm pages](#firm-pages)) | as a main tab of its own, like More Features |
+| **Page** | nothing more here — its tiles are arranged after it is saved (see [Firm pages](#firm-pages)) | as a main tab of its own — More Features and Admin are pages |
 
 - **Icon**: press **Choose…** and pick any free
   [Font Awesome](https://fontawesome.com/icons) icon: solid, regular or a brand
@@ -66,8 +69,8 @@ Each firm item has a **label**, an **icon** and what it **opens**:
   icon and its name show beside the button. See
   [Choosing an icon](../01-YisraCase-overview/15-your-launcher.md#choosing-an-icon).
 - **Order** — the arrow buttons move an item up or down. Firm items show in this
-  order under **Firm** in the All tab, and in the More grid's firm row until
-  the firm arranges More Features.
+  order under **Firm** in the All tab; pages also take their All groups in
+  this order.
 - **Delete** — the bin button.
 - **Dialog size** (tools and saved views): **Large**, the big working dialog
   (full screen on a phone), or **Compact**, a small card for something short
@@ -79,14 +82,12 @@ Each firm item has a **label**, an **icon** and what it **opens**:
 - A link may not point at a tool page or a saved view directly (`/tool/…`,
   `/customView…`): those only work inside the app, so pick **Tool** or **Saved
   view** for them instead.
-- Firm items appear in **All** and **Ctrl-K**, and as tiles on More Features:
-  in a row of their own at the **end of the More grid**, in this order, until
-  the firm arranges More Features — from then on, wherever the arrangement puts
-  them (and nowhere on More if it leaves one out). The arrangement can also
-  give one a firm-wide tile on Home, a row on the sidebar or a place on the
-  Admin page ([Arranging pages and defaults](#arranging-pages-and-defaults)), and
-  each person can pin one to their own Home or sidebar
-  ([Your own launcher](../01-YisraCase-overview/15-your-launcher.md)).
+- Firm items appear in **All** and **Ctrl-K**, and as tiles wherever the
+  arrangement puts them: a page (More Features, Admin or another firm page),
+  a firm-wide tile on Home or a row on the sidebar
+  ([Arranging pages and defaults](#arranging-pages-and-defaults)). A new item
+  is on no page until you place it. Each person can also pin one to their own
+  Home or sidebar ([Your own launcher](../01-YisraCase-overview/15-your-launcher.md)).
 
 **An item's id is permanent.** The id (shown under the item, like
 `firm:payroll`) is made from the label the first time the item is saved. After
@@ -98,33 +99,26 @@ refer to — it gets `firm:payroll-2` instead.
 
 **Arrange pages and defaults…** (at the top of the Launcher section) opens the
 arrangement editor over the app: a card on a computer, the whole screen on a
-phone. It has five tabs:
+phone. It has three tabs:
 
 | Tab | What it arranges |
 |---|---|
 | **Home** | The **Home** tiles and the small buttons under them that everyone starts from. |
 | **Sidebar** | The **sidebar** that everyone starts from. |
-| **More Features** | The More Features page: its tiles, where a row breaks, where your firm items sit, and the small buttons under the tiles (Casey's paw). |
-| **Admin** | The Admin page: its tiles, rows and small buttons. |
-| **Firm pages** | Each of the firm's own pages: its tiles and its small buttons (see [Firm pages](#firm-pages)). |
+| **Firm pages** | Each of the firm's pages — **More Features** and **Admin** among them: its tiles, where a row breaks, and the small buttons under the tiles (Casey's paw on More Features). See [Firm pages](#firm-pages). |
 
 Each section lists that part as everyone sees it now, top to bottom, with the
 same buttons as each person's own editor
 ([Customizing Home and the sidebar](../01-YisraCase-overview/15-your-launcher.md#customizing-home-and-the-sidebar)):
 **↑ / ↓** to move, the **eye with a slash** to hide a standard item, **×** to
 remove one you added, **Add a shortcut** (on the small-button rows, **Add a
-small button**), **Add a row break** on Home, More Features and Admin, and
+small button**), **Add a row break** on Home and a page's tiles, and
 **Add a section label** on the sidebar. Tags say **Firm** (one of your firm
 items), **Added** (not there in the app's standard layout), or **Locked for
 users** (people cannot hide that item in their own arrangement). The last tag
 is informational here: a firm admin can still move or hide the item while
 setting the firm's default. A dot on a tab means it has unsaved changes.
 
-- **The More Features list starts with the page as it is.** Until you save an
-  arrangement of More Features, your firm items sit at its end, after a row
-  break, exactly as the page shows them. Move them where you want them (for
-  example, Get Clio Code up into the row with a gap), and take out a row
-  break you no longer need with its **×**.
 - **All always stays** among the small buttons under the Home tiles: it can
   move, but not leave (the row shows **Always here**). The sidebar's All is an
   ordinary item.
@@ -139,8 +133,9 @@ setting the firm's default. A dot on a tab means it has unsaved changes.
   so and keeps your changes on screen. Nothing of theirs is overwritten.
   **Reload the firm's arrangement** shows theirs, discarding your changes.
 
-**What people see.** Everyone's More Features and Admin pages follow the
-arrangement. Home and the sidebar are where each person **starts**: someone who
+**What people see.** Everyone's pages follow the arrangement (each person may
+rearrange a firm page for themselves — see [Firm pages](#firm-pages)). Home and
+the sidebar are where each person **starts**: someone who
 has already arranged their own Home or sidebar keeps it, and a later change
 here only **adds** new items for them, next to their neighbours (Reset in their
 own editor brings back the firm's). The Admin page still shows each person only the
@@ -152,8 +147,9 @@ role can arrange the Admin page too.
 
 ## Firm pages
 
-A **firm page** is a tab of tiles like More Features, made by the firm for
-everyone who sees it: a heading, big tiles, a row of small buttons under them.
+A **firm page** is a tab of tiles made by the firm for everyone who sees it —
+**More Features** and **Admin** are two (an older link to either still opens
+it): a heading, big tiles, a row of small buttons under them.
 It is a **firm item** of kind **Page**, so its name, icon and who sees it live
 in this tab; what is on it lives in the arrangement.
 
@@ -162,8 +158,8 @@ in this tab; what is on it lives in the arrangement.
    permanent from here on, like any firm item's.)
 2. **Fill it:** press **Arrange its tiles…** on the item's row (it is greyed
    until the item is saved). The arrangement editor opens on its **Firm pages**
-   tab, at this page: **Tiles** (any feature, More Features or Admin panel, or
-   firm item — a page never holds itself; **Add a row break** starts a new row;
+   tab, at this page: **Tiles** (any feature, panel or firm item — a page
+   never holds itself; **Add a row break** starts a new row;
    up to 100 entries) and **Small buttons** (up to 12). **Save** there.
 3. **Decide who sees it** in **Who sees what**, like any firm item: Everyone,
    or Hidden except the ticked roles (SU always). A person who may not see it
@@ -172,9 +168,11 @@ in this tab; what is on it lives in the arrangement.
    the features on it stay in that person's All.
 
 What people see: everyone the page is visible to gets it as a main tab — from
-its tile on More Features (the firm row, or wherever the arrangement puts it),
-a tile or row they add to their own Home or sidebar, All, Ctrl-K or a
-shortcut. A **panel** tile on the page (Automations, Users…) opens that panel
+wherever the arrangement puts it (a tile on Home or another page, a row on the
+sidebar), a tile or row they add to their own Home or sidebar, All, Ctrl-K or
+a shortcut. While someone is on a tab that a page's tile opens rather than a
+row of its own — Settings, from More Features — the sidebar lights that page's
+row. A **panel** tile on the page (Automations, Users…) opens that panel
 on the page itself, with the page's own pill strip; each person still sees
 only the tiles they may open (a superuser-only tool is simply not on the page
 for anyone else). Your arrangement is everyone's starting point: each person
@@ -188,8 +186,7 @@ panel you had open on it, and so does a link to it: the address bar names the
 page by its item's id (`?open=firm:payroll`). Each person's own pages are not
 named there, so a reload on one of those lands on Home.
 
-A panel you leave on **no** page (taken off More Features, Admin and every
-firm page) is still in **All** and **Ctrl+K**: it opens on a tab of its own,
+A panel you leave on **no** page is still in **All** and **Ctrl+K**: it opens on a tab of its own,
 headed with its name, and a reload or a link brings it back there.
 
 ## Who sees what

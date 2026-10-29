@@ -43,6 +43,8 @@ const { JSDOM } = require('jsdom');
 const shape = require('../lib/uiConfigShape');
 const svc = require('../services/uiConfigService');
 const { rawShellHtml } = require('./helpers/shellHtml');
+// More Features and Admin: the firm's pages since launcher-nits C4 (tests/helpers/hubPages.js)
+const { hubFirm, stageHtml } = require('./helpers/hubPages');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
@@ -77,6 +79,8 @@ const TOOL = { id: 'user:intake', label: 'Intake', icon: 'clipboard-check', acti
 const LINK = { id: 'user:court', label: 'Court site', icon: 'gavel', action: { type: 'url', href: 'https://ecf.example.gov/cases', present: 'window' } };
 const FIRM_URL = { id: 'firm:payroll', label: 'Payroll', icon: 'money-check', action: { type: 'url', href: 'https://payroll.example.com/', present: 'window' } };
 const RO = { items: [FIRM_URL], hidden: [], locked: [], renames: {} };
+// the firm's documents: RO, plus More Features and Admin as the firm's pages (launcher-nits C4)
+const FIRM = (ro = RO) => hubFirm({ items: ro.items || [], ro, visibleTo: { 'firm:admin': ['it', 'admin'], ...(ro.visible_to || {}) } });
 const PICKERS = { status: 'success',
   tools: [{ key: 'qa-intake-tool', title: 'Intake checklist' }, { key: 'clio-code', title: 'Get Clio Code' }],
   views: [{ key: 'lead_followups', title: 'Leads <b>follow ups</b>' }, { key: 'upcoming_hearings', title: 'Upcoming hearings' }] };
@@ -93,22 +97,24 @@ function vmLauncher() {
   vm.runInContext(RENDERER_SRC, ctx);
   return { L: ctx.window.ycLauncher, warnings };
 }
-const ui = (items, ro = RO, extra = {}) => ({ firm: { registry_overrides: J(ro) }, user: { ...(items ? { items: { items: J(items) } } : {}), ...extra } });
+const ui = (items, ro = RO, extra = {}) => ({ firm: FIRM(J(ro)), user: { ...(items ? { items: { items: J(items) } } : {}), ...extra } });
 
 describe('computeEffective: the user\'s own buttons', () => {
-  test('group "Mine": after Firm, before Admin, in array order; the S2 group list is unchanged without buttons', () => {
+  test('group "Mine": last — after the firm\'s pages and Firm (launcher-nits C4) —, in array order; the S2 group list is unchanged without buttons', () => {
     const { L } = vmLauncher();
     const eff = L.computeEffective({ isAdmin: true, ui: ui([LINK, VIEW, TOOL]) });
-    expect(eff.groups.slice(-3)).toEqual(['Firm', 'Mine', 'Admin']);
+    expect(eff.groups.slice(-4)).toEqual(['More Features', 'Admin', 'Firm', 'Mine']);
     expect(eff.filter((e) => e.group === 'Mine').map((e) => [e.id, e.label, e.icon])).toEqual([
       ['user:court', 'Court site', 'gavel'], ['user:leads', 'My leads', 'star'], ['user:intake', 'Intake', 'clipboard-check']]);
     const ids = eff.map((e) => e.id);
-    const firstAdmin = eff.findIndex((e) => e.group === 'Admin');
+    const lastAdmin = ids.length - 1 - [...eff].reverse().findIndex((e) => e.group === 'Admin');
     expect(ids.indexOf('firm:payroll')).toBeLessThan(ids.indexOf('user:court'));
-    expect(ids.indexOf('user:intake')).toBeLessThan(firstAdmin);
-    // no firm items: Mine still sits right before Admin
-    const noFirm = L.computeEffective({ isAdmin: true, ui: ui([VIEW], {}) });
-    expect(noFirm.groups.slice(-2)).toEqual(['Mine', 'Admin']);
+    expect(ids.indexOf('user:court')).toBeGreaterThan(lastAdmin);
+    expect(ids[ids.length - 1]).toBe('user:intake');
+    // no firm items, no pages: Mine is still last
+    const noFirm = L.computeEffective({ isAdmin: true, ui: { firm: { registry_overrides: {} }, user: { items: { items: [J(VIEW)] } } } });
+    expect(noFirm.groups.slice(-1)).toEqual(['Mine']);
+    expect(noFirm.groups).not.toContain('Firm');
     // no buttons: exactly the list without them
     const none = L.computeEffective({ isAdmin: true, ui: ui(null) });
     expect(none.groups).not.toContain('Mine');
@@ -178,12 +184,9 @@ function memDb() {
 function boot({ items = null, layout = null, shortcuts = null, retired = null, platform = 'MacIntel', access = { isAdmin: false, denied: [] }, pickersFail = false } = {}) {
   const LAY = (() => { const c = vm.createContext({}); c.window = c; vm.runInContext(REGISTRY_SRC, c); return J(c.DEFAULT_LAYOUTS); })();
   const REG = (() => { const c = vm.createContext({}); c.window = c; vm.runInContext(REGISTRY_SRC, c); return c.FEATURE_REGISTRY; })();
-  const placedIds = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
-  const grid = (sf) => placedIds(sf).map((k) => REG[k]).filter((it) => it.target)
-    .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
+  const tabs = new Set(['tabHome']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
@@ -195,9 +198,8 @@ function boot({ items = null, layout = null, shortcuts = null, retired = null, p
       <button id="homeAll" class="home-btn"></button></div>
     ${ALL_TAB}
     ${plainTabs}
-    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
-    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
+    <div id="ycPages"></div>
+    <div id="ycPanels" style="display:none">${stageHtml(REG)}</div>
   </body></html>`;
   const errors = [];
   const dom = new JSDOM(page, { runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://app.example/' });
@@ -222,7 +224,7 @@ function boot({ items = null, layout = null, shortcuts = null, retired = null, p
     ...(items ? { items: J(retired ? { items, retired } : { items }) } : {}),
     ...(layout ? { layout: J(layout) } : {}), ...(shortcuts ? { shortcuts: J(shortcuts) } : {}),
   });
-  w.firmData = { ui: { firm: { registry_overrides: J(RO) }, user: userDoc() } };
+  w.firmData = { ui: { firm: FIRM(), user: userDoc() } };
   const db = memDb();
   for (const [k, v] of Object.entries(userDoc())) db.rows.set(`user|9|${k}`, JSON.stringify(v));
   const server = { puts: [], gets: [], fail: {}, hold: false, release: null, db, pickersFail };
@@ -234,7 +236,7 @@ function boot({ items = null, layout = null, shortcuts = null, retired = null, p
       if (url === '/api/ui-config/pickers') {
         return server.pickersFail ? Promise.reject(Object.assign(new Error('down'), { status: 500 })) : Promise.resolve(J(PICKERS));
       }
-      return Promise.resolve({ status: 'success', firm: { registry_overrides: J(RO) }, user: userNow(), can_edit_firm: false });
+      return Promise.resolve({ status: 'success', firm: FIRM(), user: userNow(), can_edit_firm: false });
     }
     server.puts.push(J({ url, method, body }));
     if (server.hold) return new Promise((resolve, reject) => { server.release = () => { server.hold = false; answerPut(body).then(resolve, reject); }; });
@@ -329,11 +331,13 @@ describe('exec(id) for a button, for real (jsdom, the real tool dialog)', () => 
     expect(t.dlg() ? t.dlg().hidden : true).toBe(true);
   });
 
-  test('buttons never render in the More grid\'s firm row (that row is the firm\'s only)', () => {
+  test('buttons never render on the firm\'s pages (More Features, since launcher-nits C4: a firm page holds only what the firm placed)', () => {
     t = boot({ items: [LINK, VIEW] });
-    const row = [...t.d.querySelectorAll('#tabMore > [data-yc-firm-row]')].map((n) => n.getAttribute('data-yc-firm-row')).filter(Boolean);
-    expect(row).toEqual(['firm:payroll']);
-    expect(t.d.querySelector('#tabMore').textContent).not.toMatch(/Court site|My leads/);
+    const more = t.d.querySelector('#ycPages > [data-yc-page="firm:more"]');
+    const tiles = [...more.querySelectorAll(':scope > .big-button')].map((n) => n.getAttribute('data-yc-shortcut'));
+    expect(tiles.length).toBeGreaterThan(10);
+    expect(tiles.filter((id) => /^(user|firm):/.test(id))).toEqual([]);      // neither a button nor the unplaced firm link
+    expect(more.textContent).not.toMatch(/Court site|My leads|Payroll/);
   });
 
   test('placed on Home and the sidebar: a neutral shortcut that runs exec (label as text)', () => {
@@ -352,8 +356,8 @@ describe('exec(id) for a button, for real (jsdom, the real tool dialog)', () => 
   test('All lists them under Mine; the palette finds them', () => {
     t = boot({ items: [LINK, VIEW] });
     const groups = [...t.d.querySelectorAll('#ycAllList .yc-all-group h2')].map((h) => h.textContent);
-    expect(groups.slice(-3)).toEqual(['Firm', 'Mine', 'Admin']);   // Admin: Etch is open to staff (S6c gates)
-    expect([...t.d.querySelectorAll('#ycAllList .yc-all-group:nth-last-child(2) .yc-all-item span')].map((s) => s.textContent)).toEqual(['Court site', 'My leads']);
+    expect(groups.slice(-3)).toEqual(['Admin', 'Firm', 'Mine']);   // Admin: Etch is open to staff (S6c gates); Mine last (C4)
+    expect([...t.d.querySelectorAll('#ycAllList .yc-all-group:last-child .yc-all-item span')].map((s) => s.textContent)).toEqual(['Court site', 'My leads']);
     expect(t.w.ycLauncher.rank('court site').map((e) => e.id)[0]).toBe('user:court');
     expect(t.w.ycLauncher.rank('my lea').map((e) => e.id)).toContain('user:leads');
   });

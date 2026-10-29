@@ -7,7 +7,7 @@
  *   1. THE MATH (computeEffective, in a bare vm over the real registry): firm
  *      hidden out (the undeniable set defies it), renames replace label AND
  *      surfaceLabels (a rename of an id the registry lacks names nothing), firm items in a "Firm"
- *      group after More and before Admin in array order, a bad item dropped
+ *      group after the firm's pages (More Features, Admin — launcher-nits C4) in array order, a bad item dropped
  *      with a warning, firm items hideable / deniable like any id.
  *   2. THE MECHANISM, RUN FOR REAL in jsdom (the page's own renderer, drill-in
  *      and tab code, cut out of index.html as tests/launcherS2.test.js
@@ -34,6 +34,8 @@ const path = require('path');
 const vm = require('vm');
 const { JSDOM } = require('jsdom');
 const { rawShellHtml } = require('./helpers/shellHtml');
+// More Features and Admin: the firm's pages since launcher-nits C4 (tests/helpers/hubPages.js)
+const { hubFirm, stageHtml, HISTORIC_LAYOUTS } = require('./helpers/hubPages');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
@@ -67,7 +69,7 @@ function vmLauncher() {
   return { L: ctx.window.ycLauncher, REG: ctx.window.FEATURE_REGISTRY, LAY: ctx.window.DEFAULT_LAYOUTS, warnings };
 }
 const { L, REG, LAY } = vmLauncher();
-const placed = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
+const placed = (sf) => (LAY[sf] || HISTORIC_LAYOUTS[sf]).filter((e) => e.item).map((e) => e.item);
 
 const FI = {
   payroll: { id: 'firm:payroll', label: 'Payroll', icon: 'money-check', action: { type: 'url', href: 'https://payroll.example.com/', present: 'window' } },
@@ -75,7 +77,8 @@ const FI = {
   leads: { id: 'firm:leads', label: 'Lead Follow-ups', icon: 'table-list', action: { type: 'view', key: 'lead_followups', present: 'modal' } },
   bad: { id: 'firm:bad', label: 'Bad', icon: 'bug', action: { type: 'url', href: 'javascript:alert(1)', present: 'window' } },
 };
-const ui = (ro) => ({ firm: { registry_overrides: ro }, user: {} });
+// the firm's documents: ro, plus More Features and Admin as the firm's pages (launcher-nits C4)
+const ui = (ro) => ({ firm: hubFirm({ items: ro.items || [], ro, visibleTo: { 'firm:admin': ['it', 'admin'], ...(ro.visible_to || {}) } }), user: {} });
 const ids = (eff) => eff.map((e) => e.id);
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -106,24 +109,28 @@ describe('the firm overlay in the effective registry (pure)', () => {
     expect(L.rank('invoices', eff)[0].id).toBe('bills');
   });
 
-  test('firm items: group "Firm" after More, before Admin, in array order; bad / duplicate dropped with a warning', () => {
+  test('firm items: group "Firm" after the firm\'s pages, in array order; bad / duplicate dropped with a warning', () => {
     const v = vmLauncher();
     const eff = v.L.computeEffective({ isAdmin: true, ui: ui({ items: [FI.leads, FI.bad, FI.payroll, { ...FI.payroll, label: 'Dup' }, FI.appt] }) });
-    // the order rides on the list (computeEffective is pure since S4a)
-    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More', 'Firm', 'Admin']);   // More actions: S6b
+    // the order rides on the list (computeEffective is pure since S4a); More Features and Admin are
+    // the firm's pages since launcher-nits C4, each a group of its own, ahead of Firm
+    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin', 'Firm']);   // More actions: S6b
     const firm = eff.filter((e) => e.group === 'Firm');
-    expect(firm.map((e) => [e.id, e.label, e.icon])).toEqual([
+    // (the two page items themselves group wherever Home and the sidebar place them)
+    expect(firm.filter((e) => !['firm:more', 'firm:admin'].includes(e.id)).map((e) => [e.id, e.label, e.icon])).toEqual([
       ['firm:leads', 'Lead Follow-ups', 'table-list'], ['firm:payroll', 'Payroll', 'money-check'], ['firm:appt', 'Appointment Form', 'calendar-plus']]);
     const gi = (g) => eff.findIndex((e) => e.group === g);
-    expect(gi('More') < gi('Firm') && gi('Firm') < gi('Admin')).toBe(true);
+    const last = (g) => eff.map((e) => e.group).lastIndexOf(g);
+    expect(last('More Features') < gi('Admin') && last('Admin') < gi('Firm')).toBe(true);
     expect(v.warnings.filter((w) => /firm item \d+ dropped/.test(w))).toHaveLength(2);
-    // no items → no Firm group at all
-    expect(v.L.computeEffective({ isAdmin: true }).groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);
+    // no firm items at all (no pages either) → no Firm group, no page groups
+    expect(v.L.computeEffective({ isAdmin: true }).groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions']);
   });
 
   test('firm items are hidden / denied like any id; effectiveRegistry() never hands out the action', () => {
     const eff = ids(L.computeEffective({ denied: ['firm:appt'], ui: ui({ hidden: ['firm:payroll'], items: [FI.payroll, FI.appt, FI.leads] }) }));
-    expect(eff.filter((i) => i.startsWith('firm:'))).toEqual(['firm:leads']);
+    // (+ More Features, a firm page; Admin's page is visible_to it / admin only — launcher-nits C4)
+    expect(eff.filter((i) => i.startsWith('firm:'))).toEqual(['firm:leads', 'firm:more']);
     const t = boot();
     t.L.applyAccess({ ui: ui({ items: [FI.payroll] }) });
     expect(JSON.parse(JSON.stringify(t.L.effectiveRegistry().find((e) => e.id === 'firm:payroll')))).toEqual(
@@ -134,11 +141,9 @@ describe('the firm overlay in the effective registry (pure)', () => {
 
 // ─────────────────────────────────────────────────────────────────────────
 function boot({ registrySrc = REGISTRY_SRC } = {}) {
-  const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
-    .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
+  const tabs = new Set(['tabHome']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${registrySrc}</script><script id="ycLauncher">${RENDERER_SRC}</script>${DENIED_CSS}${DIALOG_BLOCK}</head><body>
@@ -147,9 +152,8 @@ function boot({ registrySrc = REGISTRY_SRC } = {}) {
     <div id="tabHome" class="tab-main"><script>ycLauncher.mount('home')</script></div>
     <div id="tabAll" class="tab-main"></div>
     ${plainTabs}
-    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
-    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
+    <div id="ycPages"></div>
+    <div id="ycPanels" style="display:none">${stageHtml(REG)}</div>
     <textarea id="elsewhere"></textarea><b id="myNameIs"></b><div id="hdrUserArea"></div>
   </body></html>`;
   const errors = [], warnings = [];
@@ -174,11 +178,14 @@ function boot({ registrySrc = REGISTRY_SRC } = {}) {
   const pills = (tab) => [...d.querySelectorAll(`#${tab} > .feature-strip .pill-button`)].slice(1).map((p) => p.textContent.trim());
   const dlg = () => d.getElementById('ycToolDialog');
   const dlgOpen = () => !!dlg() && !dlg().hidden;
-  return { w, d, L: w.ycLauncher, calls, opened, errors, warnings, shown, pills, dlg, dlgOpen, close: () => w.close() };
+  // a firm page's div (More Features: firm:more) and one tile on it
+  const hubPage = (pid = 'firm:more') => d.querySelector(`#ycPages > [data-yc-page="${pid}"]`);
+  const tile = (id, pid = 'firm:more') => hubPage(pid).querySelector(`:scope > [data-yc-shortcut="${id}"]`);
+  return { w, d, L: w.ycLauncher, calls, opened, errors, warnings, shown, pills, dlg, dlgOpen, hubPage, tile, close: () => w.close() };
 }
-// Every launcher element's markup.
-const launcherHtml = (t) => ['sidebar', 'home', 'more', 'admin'].map((sf) =>
-  placed(sf).map((id) => t.L.elementsOf(id)[sf].outerHTML).join('\n')).join('\n');
+// Every launcher element's markup: the mounted surfaces, then the firm's pages.
+const launcherHtml = (t) => ['sidebar', 'home'].map((sf) =>
+  placed(sf).map((id) => t.L.elementsOf(id)[sf].outerHTML).join('\n')).join('\n') + '\n' + t.d.getElementById('ycPages').innerHTML;
 
 describe('the hide pass + relabel (for real)', () => {
   let t;
@@ -188,12 +195,13 @@ describe('the hide pass + relabel (for real)', () => {
   test('firm-hidden items are hidden on every surface they render on, and get no pill', () => {
     t.L.applyAccess({ ui: ui({ hidden: ['cases', 'moreCampaigns', 'moreSettings'] }) });
     const c = t.L.elementsOf('cases');
-    expect([t.shown(c.sidebar), t.shown(c.home), t.shown(t.L.elementsOf('moreCampaigns').more)]).toEqual([false, false, false]);
-    expect(t.shown(t.L.elementsOf('moreSettings').more)).toBe(true);
+    // a firm page (More Features, launcher-nits C4) lays out only what is left: a hidden id has no tile there
+    expect([t.shown(c.sidebar), t.shown(c.home), t.tile('moreCampaigns')]).toEqual([false, false, null]);
+    expect(t.shown(t.tile('moreSettings'))).toBe(true);
     expect(c.sidebar.style.display).toBe('');                                  // by attribute, not style.display
-    t.L.elementsOf('moreManuals').more.click();
-    expect(t.pills('tabMore')).not.toContain('Campaigns');
-    expect(t.pills('tabMore')).toHaveLength(placed('more').length - 1);
+    t.tile('moreManuals').click();
+    expect(t.pills(t.hubPage().id)).not.toContain('Campaigns');
+    expect(t.pills(t.hubPage().id)).toHaveLength(placed('more').length - 1);
   });
 
   test('denied ∪ firm-hidden: one attribute, both honoured, and lifting one keeps the other', () => {
@@ -214,8 +222,8 @@ describe('the hide pass + relabel (for real)', () => {
     expect(b.sidebar.querySelector('span').textContent).toBe('Invoices');
     const badge = k.sidebar.querySelector('.sb-badge#sbTasksBadge');
     expect([badge.textContent, k.sidebar.querySelector('span').textContent]).toEqual(['0', 'To-dos']);
-    expect(t.L.elementsOf('moreTheme').more.textContent).toBe('Colours');
-    expect(t.L.elementsOf('moreTheme').more.querySelectorAll('i, br')).toHaveLength(3);
+    expect(t.tile('moreTheme').textContent).toBe('Colours');                    // on More Features, a firm page (C4)
+    expect(t.tile('moreTheme').querySelectorAll('i, br')).toHaveLength(3);
     expect([...c.home.childNodes].map((x) => x.nodeName)).toEqual(['#text', 'I', 'BR', 'BR', '#text']);   // S1's structure
     expect([...c.sidebar.childNodes].map((x) => x.nodeName)).toEqual(['#text', 'I', 'SPAN', '#text']);
   });
@@ -230,13 +238,17 @@ describe('the hide pass + relabel (for real)', () => {
 
   test('idempotent across full and partial applyAccess re-runs; removing the rename restores the markup exactly', () => {
     const before = launcherHtml(t);
-    const doc = ui({ hidden: ['moreViews'], renames: { cases: { label: 'Matters' }, bills: { label: 'Invoices' }, admin: { label: 'Back Office' } } });
+    // Admin: a firm page (C4) — renamed by its item's label (a firm item is no registry id), and
+    // here with no visible_to, so roles: [] below changes nothing
+    const doc = { firm: hubFirm({ visibleTo: null, ro: { hidden: ['moreViews'], renames: { cases: { label: 'Matters' }, bills: { label: 'Invoices' } } } }), user: {} };
+    doc.firm.registry_overrides.items.find((e) => e.id === 'firm:admin').label = 'Back Office';
     t.L.applyAccess({ isAdmin: true, ui: doc });
     const once = launcherHtml(t);
     t.L.applyAccess({ ui: doc });
     t.L.applyAccess({ roles: [] });
     expect(launcherHtml(t)).toBe(once);
     expect(t.L.elementsOf('cases').home.textContent.trim()).toBe('Matters');
+    expect(t.hubPage('firm:admin').querySelector('h1').textContent.trim()).toBe('Back Office');
     t.L.applyAccess({ ui: { firm: {}, user: {} } });
     expect(launcherHtml(t)).toBe(before);
   });
@@ -253,14 +265,15 @@ describe('the hide pass + relabel (for real)', () => {
 
   test('a drilled-in pill strip follows a rename (and its reversal)', () => {
     t.L.applyAccess({ ui: ui({}) });
-    t.L.elementsOf('moreManuals').more.click();
-    expect(t.pills('tabMore')).toContain('Theme');
+    t.tile('moreManuals').click();
+    const more = t.hubPage().id;                                                  // More Features: a firm page (C4)
+    expect(t.pills(more)).toContain('Theme');
     t.L.applyAccess({ ui: ui({ renames: { moreTheme: { label: 'Colours' } } }) });
-    expect(t.pills('tabMore')).toContain('Colours');
-    expect(t.pills('tabMore')).not.toContain('Theme');
-    expect(t.d.querySelectorAll('#tabMore > .feature-strip')).toHaveLength(1);
+    expect(t.pills(more)).toContain('Colours');
+    expect(t.pills(more)).not.toContain('Theme');
+    expect(t.d.querySelectorAll(`#${more} > .feature-strip`)).toHaveLength(1);
     t.L.applyAccess({ ui: ui({}) });
-    expect(t.pills('tabMore')).toContain('Theme');
+    expect(t.pills(more)).toContain('Theme');
   });
 });
 

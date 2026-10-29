@@ -30,6 +30,7 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const { rawShellHtml } = require('./shellHtml');
+const { stageHtml } = require('./hubPages');   // More's and Admin's panels: firm pages since launcher-nits C4
 
 const ROOT = path.join(__dirname, '..', '..');
 const RAW = rawShellHtml();
@@ -64,12 +65,10 @@ function boot({ routes = {}, token = jwt(3600) } = {}) {
     new Function('window', REGISTRY_SRC)(w);
     return w;
   })();
-  const placed = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
-  const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
-    .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
+  void LAY;
+  const tabs = new Set(['tabHome']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${DENIED_CSS}${DIALOG_BLOCK}</head><body>
@@ -79,9 +78,8 @@ function boot({ routes = {}, token = jwt(3600) } = {}) {
     <div id="tabAll" class="tab-main"></div>
     <div id="tabOther" class="tab-main"><iframe id="tabOtherFrame"></iframe></div>
     ${plainTabs}
-    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script><div class="more-egg-row"></div></div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
-    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
+    <div id="ycPages"></div>
+    <div id="ycPanels" style="display:none">${stageHtml(REG)}</div>
     <iframe id="paneFrame"></iframe>
   </body></html>`;
   const dom = new JSDOM(page, { runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://app.test/' });

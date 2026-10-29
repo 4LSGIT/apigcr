@@ -45,6 +45,8 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const { rawShellHtml, expandedShellHtml, loadLauncher } = require('./helpers/shellHtml');
+// More Features and Admin: the firm's pages since launcher-nits C4 (tests/helpers/hubPages.js)
+const { hubFirm, stageHtml, HISTORIC_LAYOUTS } = require('./helpers/hubPages');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
@@ -65,7 +67,8 @@ const TABS_SRC = slice('    function openMainTab(tabName) {', '    // ---- Globa
 const CURRENT_SRC = slice('    function currentMainTabId() {', '\n    }\n') + '\n    }\n';
 const HIDE_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 
-const placed = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
+// (more / admin: the pre-C4 hub lists, now the firm pages' tiles — tests/helpers/hubPages.js)
+const placed = (sf) => (LAY[sf] || HISTORIC_LAYOUTS[sf]).filter((e) => e.item).map((e) => e.item);
 const ALL = [...new Set(['sidebar', 'home', 'more', 'admin'].flatMap(placed))];
 const R = (surface, o) => VL.resolveLayout(surface, { base: LAY[surface], effective: ALL, ...o });
 const items = (out) => out.filter((e) => e.kind === 'item').map((e) => e.id);
@@ -109,9 +112,10 @@ describe('resolveLayout (pure)', () => {
 
   test('a placed list IS the order; base items neither placed nor removed slot in after their nearest preceding base item', () => {
     const user = { placed: { home: [{ item: 'comms' }, { item: 'cases' }, { break: true }, { item: 'moreAutomations' }] }, removed: { home: ['tasks'] } };
-    // base home: cases contacts appts | bills pipeline events | tasks newClient log | calendar moreFeatures comms
+    // base home: cases contacts appts | bills pipeline events | tasks newClient log | calendar comms
+    // (More Features left the base with launcher-nits C4: it is the firm's page, placed by the firm)
     expect(shape(R('home', { user }))).toEqual([
-      'comms', 'cases', 'contacts', 'appts', 'bills', 'pipeline', 'events', 'newClient', 'log', 'calendar', 'moreFeatures',
+      'comms', 'cases', 'contacts', 'appts', 'bills', 'pipeline', 'events', 'newClient', 'log', 'calendar',
       '|', 'moreAutomations']);
     const out = R('home', { user });
     expect(out.filter((e) => e.origin === 'user').map((e) => e.id || '|')).toEqual(['comms', 'cases', '|', 'moreAutomations']);
@@ -245,11 +249,9 @@ describe('resolveLayout (pure)', () => {
 // whitespace, so the nodes from there to the nav's end ARE what the mount
 // inserted (#sbAll is the mounted `all` item since ui-custom S6c).
 function boot({ extra = '' } = {}) {
-  const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
-    .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
+  const tabs = new Set(['tabHome']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script>${extra}<script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
@@ -260,9 +262,8 @@ function boot({ extra = '' } = {}) {
       <button id="homeAll" class="home-btn"></button></div>
     <div id="tabAll" class="tab-main"></div>
     ${plainTabs}
-    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
-    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
+    <div id="ycPages"></div>
+    <div id="ycPanels" style="display:none">${stageHtml(REG)}</div>
   </body></html>`;
   const errors = [];
   const dom = new JSDOM(page, { runScripts: 'dangerously', pretendToBeVisual: true });
@@ -316,9 +317,12 @@ function boot({ extra = '' } = {}) {
 const FIRM_ITEM = { id: 'firm:payroll', label: 'Pay <img src=x onerror=alert(1)>', icon: 'money-check',
   action: { type: 'url', href: 'https://payroll.example.com/', present: 'window' } };
 const ui = ({ layout, ro } = {}) => ({ firm: ro ? { registry_overrides: ro } : {}, user: layout ? { layout } : {} });
+// …and a firm WITH More Features and Admin as its pages (launcher-nits C4: the hubs are firm pages, which the
+// firm places on Home / the sidebar as the hubs were), Admin unrestricted unless ro names a visible_to
+const uiP = ({ layout, ro = {} } = {}) => ({ firm: hubFirm({ items: ro.items || [], ro, visibleTo: ro.visible_to || null }), user: layout ? { layout } : {} });
 const LAYOUT = {
   placed: {
-    home: [{ item: 'comms' }, { item: 'moreAutomations' }, { item: 'firm:payroll' }, { break: true }, { item: 'admin' }, { item: 'cases' }],
+    home: [{ item: 'comms' }, { item: 'moreAutomations' }, { item: 'firm:payroll' }, { break: true }, { item: 'firm:admin' }, { item: 'cases' }],
     sidebar: [{ label: 'Mine <b>' }, { item: 'tasks' }, { item: 'moreAutomations' }, { item: 'firm:payroll' }, { label: 'Rest' }],
   },
   removed: { home: ['bills', 'log'], sidebar: ['bills', 'log'] },
@@ -376,15 +380,15 @@ describe('the renderer (for real): default DOM, reversibility, idempotence', () 
   });
 
   test('what the user sees follows the resolved layout on both surfaces', () => {
-    t.L.applyAccess({ ...ADMIN, ui: ui({ layout: LAYOUT, ro: { items: [FIRM_ITEM] } }) });
-    t.d.getElementById('sbAdmin').style.display = '';     // loadUserContext's reveal for an SU
+    const doc = uiP({ layout: LAYOUT, ro: { items: [FIRM_ITEM] } });
+    t.L.applyAccess({ ...ADMIN, ui: doc });
     const eff = t.L.effectiveRegistry();
     for (const sf of ['home', 'sidebar']) {
-      const want = t.L.resolveLayout(sf, { base: LAY[sf], user: LAYOUT, effective: eff, locked: [] })
+      const want = t.L.resolveLayout(sf, { base: LAY[sf], firm: doc.firm.layout, user: LAYOUT, effective: eff, locked: [] })
         .map((e) => (e.kind === 'break' ? '|' : e.kind === 'label' ? '#' + e.text : (t.L.elementsOf(e.id)[sf] ? e.id : '+' + e.id)));
       expect([sf, t.seen(sf)]).toEqual([sf, want]);
     }
-    expect(t.seen('home').slice(0, 6)).toEqual(['comms', '+moreAutomations', '+firm:payroll', '|', '+admin', 'cases']);
+    expect(t.seen('home').slice(0, 6)).toEqual(['comms', '+moreAutomations', '+firm:payroll', '|', '+firm:admin', 'cases']);
     // the user's own entries, in the user's order (base items slot in around them)
     const mine = ['#Mine <b>', 'tasks', '+moreAutomations', '+firm:payroll', '#Rest'];
     expect(t.seen('sidebar').filter((x) => mine.includes(x))).toEqual(mine);
@@ -409,7 +413,7 @@ describe('the renderer (for real): moved elements keep what other code holds', (
     expect(badge.textContent).toBe('7');
     expect(t.L.elementsOf('tasks').sidebar).toBe(tasks);
     expect(tasks.isConnected).toBe(true);
-    for (const id of ['sbAdmin', 'sbComms', 'homeComms', 'sbCommsBadge']) {
+    for (const id of ['sbComms', 'homeComms', 'sbCommsBadge']) {   // (no #sbAdmin since C4: Admin is a firm page)
       expect([id, t.d.querySelectorAll('#' + id).length]).toEqual([id, 1]);
     }
     tasks.click();
@@ -473,9 +477,10 @@ describe('the renderer (for real): neutral shortcuts', () => {
   let t;
   beforeEach(() => {
     t = boot();
-    t.L.applyAccess({ ...ADMIN, ui: ui({ layout: LAYOUT, ro: { items: [FIRM_ITEM] } }) });
+    t.L.applyAccess({ ...ADMIN, ui: uiP({ layout: LAYOUT, ro: { items: [FIRM_ITEM] } }) });
   });
   afterEach(() => t.close());
+  const pageTab = (pid) => t.d.querySelector(`#ycPages > [data-yc-page="${pid}"]`).id;
   const neutral = (sf, id) => t.d.querySelector(`${sf === 'home' ? '#tabHome .home-grid > .home-btn' : '#appSidebar > .sb-item'}[data-yc-shortcut="${id}"]`);
 
   test('the surface\'s grammar; no id, no data-target, no data-exclusive-group; label as text; icon from the entry', () => {
@@ -490,28 +495,35 @@ describe('the renderer (for real): neutral shortcuts', () => {
     expect(s.querySelector('i').className).toBe('fa-solid fa-robot');
     expect(s.querySelector('span').textContent).toBe('Automations');
     expect(s.getAttribute('title')).toBe('Automations');            // skinny mode's tooltip
-    for (const el of t.d.querySelectorAll('[data-yc-shortcut]')) {
-      for (const a of ['id', 'data-target', 'data-exclusive-group', 'onclick', 'data-tab']) expect([el.getAttribute('data-yc-shortcut'), a, el.hasAttribute(a)]).toEqual([el.getAttribute('data-yc-shortcut'), a, false]);
+    // (Home and the sidebar: a page's tiles are its own grammar. A PAGE's sidebar row — firm:more,
+    // firm:admin — carries its page's tab id as data-tab, for the sidebar highlight; nothing else does)
+    for (const el of t.d.querySelectorAll('#tabHome [data-yc-shortcut], #appSidebar [data-yc-shortcut]')) {
+      const sid = el.getAttribute('data-yc-shortcut');
+      const isPage = (sid === 'firm:more' || sid === 'firm:admin') && !!el.closest('#appSidebar');
+      for (const a of ['id', 'data-target', 'data-exclusive-group', 'onclick', 'data-tab']) expect([sid, a, el.hasAttribute(a)]).toEqual([sid, a, isPage && a === 'data-tab']);
+      if (isPage) expect(el.getAttribute('data-tab')).toBe(pageTab(sid));
     }
+    expect(t.d.querySelector('#appSidebar [data-yc-shortcut="firm:admin"]').getAttribute('data-tab')).toBe(pageTab('firm:admin'));
     // a firm label with markup is TEXT; the icon class comes from the validated slug
     const f = neutral('home', 'firm:payroll');
     expect(f.lastChild.nodeValue).toBe(FIRM_ITEM.label);
     expect(t.d.querySelector('img')).toBe(null);
     expect(f.querySelector('i').className).toBe('fa-solid fa-money-check fa-2xl');
-    // the page's data-target count is the grids' own, and no id repeats
+    // the page's data-target count is the grids' own (the firm pages' panel tiles), and no id repeats
     expect(t.d.querySelectorAll('[data-target]').length).toBe(['more', 'admin'].flatMap(placed).filter((k) => REG[k].target).length);
     const ids = [...t.d.querySelectorAll('[id]')].map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  test('a click runs exec(id): a More panel drills in, a sidebar-only item opens its tab, a firm item dispatches', () => {
+  test('a click runs exec(id): a More panel drills in, a page opens, a firm item dispatches', () => {
     neutral('home', 'moreAutomations').click();
-    expect(t.w.currentMainTabId()).toBe('tabMore');
+    const more = pageTab('firm:more'), admin = pageTab('firm:admin');   // More Features / Admin: firm pages (C4)
+    expect(t.w.currentMainTabId()).toBe(more);
     expect(t.shown(t.d.getElementById('automationsDiv'))).toBe(true);
-    expect(t.d.getElementById('tabMore').classList.contains('drill-active')).toBe(true);
-    neutral('home', 'admin').click();
-    expect(t.w.currentMainTabId()).toBe('tabAdmin');
-    expect(t.active()).toEqual(['tabAdmin']);
+    expect(t.d.getElementById(more).classList.contains('drill-active')).toBe(true);
+    neutral('home', 'firm:admin').click();
+    expect(t.w.currentMainTabId()).toBe(admin);
+    expect(t.active()).toEqual([admin]);
     neutral('sidebar', 'firm:payroll').click();
     expect(t.calls.find((c) => Array.isArray(c) && c[0] === 'open')).toEqual(['open', 'https://payroll.example.com/', '_blank', 'noopener']);
   });
@@ -524,9 +536,11 @@ describe('the renderer (for real): neutral shortcuts', () => {
   });
 
   test('neutral shortcuts are not launcher elements: elementsOf / exec never reach them', () => {
-    expect(t.L.elementsOf('moreAutomations')).toEqual({ more: expect.anything() });
-    expect(Object.keys(t.L.elementsOf('admin'))).toEqual(['sidebar']);
+    // (since C4 a page's tiles are not either: More's items have no default element left)
+    expect(t.L.elementsOf('moreAutomations')).toEqual({});
+    expect(t.L.elementsOf('firm:admin')).toEqual({});
     expect(t.L.elementsOf('firm:payroll')).toEqual({});
+    expect(Object.keys(t.L.elementsOf('tasks')).sort()).toEqual(['home', 'sidebar']);   // a placed default: still its own
   });
 });
 
@@ -590,18 +604,22 @@ describe('the renderer (for real): composition with denies, firm hides, renames,
   });
 
   test('a gated tile never shows wherever the user placed it; the Admin page follows the firm\'s visible_to (S6c)', () => {
-    const layout = { placed: { home: [{ item: 'admin' }, { item: 'adminDbConsole' }], sidebar: [{ item: 'admin' }] } };
-    const ro = { visible_to: { admin: ['it', 'admin'] } };   // the live firm's rule
-    // staff: neither the su tile nor the restricted Admin page, on either surface
-    t.L.applyAccess({ isAdmin: false, roles: ['staff'], ui: ui({ layout, ro }) });
-    expect(t.d.querySelectorAll('[data-yc-shortcut]')).toHaveLength(0);
-    expect(t.seen('sidebar')).not.toContain('admin');
-    // it/admin: the Admin PAGE where they put it (its sidebar element moved first, a neutral tile on Home); the su tile never
+    // Admin: a firm page (C4), which the firm also places in the sidebar (where #sbAdmin was)
+    const layout = { placed: { home: [{ item: 'firm:admin' }, { item: 'adminDbConsole' }], sidebar: [{ item: 'firm:admin' }] } };
+    const ro = { visible_to: { 'firm:admin': ['it', 'admin'] } };   // the live firm's rule
+    const onSurfaces = () => [...t.d.querySelectorAll('#tabHome [data-yc-shortcut], #appSidebar [data-yc-shortcut]')].map((e) => e.getAttribute('data-yc-shortcut'));
+    // staff: neither the su tile nor the restricted Admin page, on either surface (the page itself not built)
+    t.L.applyAccess({ isAdmin: false, roles: ['staff'], ui: uiP({ layout, ro }) });
+    expect(onSurfaces().filter((id) => id !== 'firm:more')).toEqual([]);
+    expect(t.d.querySelector('#ycPages > [data-yc-page="firm:admin"]')).toBe(null);
+    expect(t.seen('sidebar')).not.toContain('+firm:admin');
+    // it/admin: the Admin PAGE where they put it (first in the sidebar, a neutral tile on Home); the su tile never
     t.L.applyAccess({ roles: ['it', 'admin'] });
-    t.w.E('sbAdmin').style.display = '';          // loadUserContext's reveal once the item is effective
-    expect([...t.d.querySelectorAll('[data-yc-shortcut]')].map((e) => e.getAttribute('data-yc-shortcut'))).toEqual(['admin']);
-    expect(t.seen('sidebar')).toContain('admin');   // the base items slot in around it (the merge rule), so not first
+    expect(onSurfaces().filter((id) => id !== 'firm:more')).toEqual(['firm:admin', 'firm:admin']);   // sidebar, Home
+    expect(t.seen('sidebar')).toContain('+firm:admin');
+    expect(t.seen('home')).toContain('+firm:admin');
     expect(t.seen('home')).not.toContain('+adminDbConsole');
+    expect(t.d.querySelector('#tabHome [data-yc-shortcut="adminDbConsole"]')).toBe(null);
   });
 });
 
@@ -646,8 +664,9 @@ describe('computeEffective is pure (S3.2 review carry-over)', () => {
     t.L.applyAccess({ ...ADMIN, ui: ui({}) });
     const groups = t.L.groups(), eff = JSON.stringify(t.L.effectiveRegistry());
     expect(groups).not.toContain('Firm');
-    const list = t.L.computeEffective({ isAdmin: true, ui: ui({ ro: { items: [FIRM_ITEM] } }) });
-    expect(list.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More', 'Firm', 'Admin']);   // More actions: S6b
+    const list = t.L.computeEffective({ isAdmin: true, ui: uiP({ ro: { items: [FIRM_ITEM] } }) });
+    // the firm's pages (C4) group under their labels, ahead of Firm
+    expect(list.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin', 'Firm']);   // More actions: S6b
     expect(Object.keys(list)).not.toContain('groups');
     expect(t.L.groups()).toEqual(groups);
     expect(JSON.stringify(t.L.effectiveRegistry())).toBe(eff);

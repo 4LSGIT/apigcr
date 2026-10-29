@@ -1,7 +1,9 @@
 /**
  * ui-custom S5c-a — the manager panes under More remember their sub-tab in
- * the workspace URL:  ?open=tabMore~moreAutomations~triggers
- *                     ?open=tabMore~moreCaseConfig~pipelines
+ * the workspace URL:  ?open=firm:more~moreAutomations~triggers
+ *                     ?open=firm:more~moreCaseConfig~pipelines
+ * (More Features is the firm's page firm:more since launcher-nits C4; an old
+ * ?open=tabMore… is its alias, below.)
  *
  * automationManager.html and caseConfigManager.html are ycSubTab LEAVES in a
  * drill panel's direct iframe; the shell side (hold / take / noteReport, the
@@ -243,10 +245,11 @@ const DOM = `<!DOCTYPE html><html><body>
   <div id="tabOpenFiles"></div>
   <div id="tabHome" class="tab-main" style="display:block"></div>
   <div id="tabCases" class="tab-main" style="display:none"></div>
-  <div id="tabMore" class="tab-main" style="display:none">
-    <button class="big-button" id="tCfg" data-target="caseConfigDiv" data-exclusive-group="more">Config</button>
-    <button class="big-button" id="tAuto" data-target="automationsDiv" data-exclusive-group="more">Automations</button>
-  </div>
+  <!-- More Features: the firm's page firm:more (launcher-nits C4), its tiles neutrals -->
+  <div id="ycPages"><div id="ycPage-1" class="tab-main yc-hub" data-yc-page="firm:more" style="display:none"><h1>More Features</h1>
+    <button class="big-button" id="tCfg" data-yc-shortcut="moreCaseConfig" data-target="caseConfigDiv">Config</button>
+    <button class="big-button" id="tAuto" data-yc-shortcut="moreAutomations" data-target="automationsDiv">Automations</button>
+  </div></div>
   <!-- the panel stage (ui-custom S6c-4): the panels live here, after the pages -->
   <div id="ycPanels" style="display:none">
     <div id="caseConfigDiv" style="display:none"><iframe id="cfgFrame"></iframe></div>
@@ -294,13 +297,14 @@ function realShell() {
     }
   `);
   const $ = (id) => d.getElementById(id);
-  const EL = { moreAutomations: { more: $('tAuto') }, moreCaseConfig: { more: $('tCfg') }, moreFeatures: { sidebar: d.createElement('a') } };   // moreFeatures: the More PAGE item — the URL door to tabMore (ui-custom S6c)
+  const EL = { moreAutomations: {}, moreCaseConfig: {} };   // page tiles are neutrals: no default element (launcher-nits C4)
+  const TILE = { moreAutomations: $('tAuto'), moreCaseConfig: $('tCfg') };
   const FRAME = { automationsDiv: ['automations', 'autoFrame'], caseConfigDiv: ['caseConfig', 'cfgFrame'] };
   const booted = {};
   /** What a tile click does: the page opens the panel on the stage (the real
    *  drillOpen); its iframe boots ONCE (the lazy load). */
   const showPanel = (target) => {
-    w.drillOpen($('tabMore'), target);
+    w.drillOpen($(MORE), target);
     const [page, fid] = FRAME[target];
     if (!booted[fid]) booted[fid] = bootPage(page, $(fid));
   };
@@ -309,9 +313,9 @@ function realShell() {
     effectiveRegistry: () => Object.keys(EL).map((id) => ({ id })),
     elementsOf: (id) => Object.assign({}, EL[id] || {}),
     exec: (id) => {
-      if (!EL[id]) return false;
-      w.openMainTab('tabMore');
-      showPanel(EL[id].more.getAttribute('data-target'));
+      if (!TILE[id]) return false;
+      w.openMainTab(MORE);
+      showPanel(TILE[id].getAttribute('data-target'));
       return true;
     },
   };
@@ -320,48 +324,50 @@ function realShell() {
   return { w, $, showPanel, lastOpen, pane, flush: () => flush(w) };
 }
 
+const MORE = 'ycPage-1';
+
 describe('the real shell + the real panes: drill → sub-tab → URL → restore', () => {
-  test('a cold boot of ?open=tabMore~moreAutomations~triggers: the pane takes the held rest and shows Triggers', async () => {
+  test.each(['firm:more', 'tabMore'])('a cold boot of ?open=%s~moreAutomations~triggers: the pane takes the held rest and shows Triggers', async (head) => {
     const s = realShell();
     s.w.enableWorkspaceUrlSync();
-    const t = s.w.wsOpenTarget('tabMore~moreAutomations~triggers');
-    expect({ ...t }).toEqual({ tab: 'tabMore', rest: 'moreAutomations~triggers' });
+    const t = s.w.wsOpenTarget(head + '~moreAutomations~triggers');   // tabMore: the old hub's URL, now firm:more's alias
+    expect({ ...t }).toEqual({ tab: MORE, rest: 'moreAutomations~triggers' });
     s.w.openMainTabOnBoot(t.tab, t.rest);
     await s.flush();
     expect(activeOf(s.pane('autoFrame'))).toBe('triggers');
-    expect(s.lastOpen()).toBe('tabMore~moreAutomations~triggers');
+    expect(s.lastOpen()).toBe('firm:more~moreAutomations~triggers');
     expect(s.w.ycTakeSubTab(s.$('autoFrame'))).toBeNull();   // taken once, by the pane
   });
 
   test('clicking a sub-tab moves the URL; the default drops the segment', async () => {
     const s = realShell();
     s.w.enableWorkspaceUrlSync();
-    s.w.openMainTab('tabMore');
+    s.w.openMainTab(MORE);
     s.showPanel('automationsDiv');
     await s.flush();
-    expect(s.lastOpen()).toBe('tabMore~moreAutomations');
+    expect(s.lastOpen()).toBe('firm:more~moreAutomations');
     const p = s.pane('autoFrame');
     tabBtn(p, 'hooks').dispatchEvent(new p.MouseEvent('click', { bubbles: true }));
     await s.flush();
-    expect(s.lastOpen()).toBe('tabMore~moreAutomations~hooks');
+    expect(s.lastOpen()).toBe('firm:more~moreAutomations~hooks');
     tabBtn(p, 'workflows').dispatchEvent(new p.MouseEvent('click', { bubbles: true }));
     await s.flush();
-    expect(s.lastOpen()).toBe('tabMore~moreAutomations');
+    expect(s.lastOpen()).toBe('firm:more~moreAutomations');
   });
 
   test('an invalid sub-tab token: the default, and the URL settles without it', async () => {
     const s = realShell();
     s.w.enableWorkspaceUrlSync();
-    s.w.openMainTabOnBoot('tabMore', 'moreAutomations~bogus');
+    s.w.openMainTabOnBoot(MORE, 'moreAutomations~bogus');
     await s.flush();
     expect(activeOf(s.pane('autoFrame'))).toBe('workflows');
-    expect(s.lastOpen()).toBe('tabMore~moreAutomations');
+    expect(s.lastOpen()).toBe('firm:more~moreAutomations');
   });
 
   test('switching panels and back keeps each pane\'s sub-tab, and the URL follows the open one', async () => {
     const s = realShell();
     s.w.enableWorkspaceUrlSync();
-    s.w.openMainTab('tabMore');
+    s.w.openMainTab(MORE);
     s.showPanel('automationsDiv');
     const a = s.pane('autoFrame');
     tabBtn(a, 'activity').dispatchEvent(new a.MouseEvent('click', { bubbles: true }));
@@ -369,28 +375,28 @@ describe('the real shell + the real panes: drill → sub-tab → URL → restore
     const c = s.pane('cfgFrame');
     tabBtn(c, 'pipelines').dispatchEvent(new c.MouseEvent('click', { bubbles: true }));
     await s.flush();
-    expect(s.lastOpen()).toBe('tabMore~moreCaseConfig~pipelines');
+    expect(s.lastOpen()).toBe('firm:more~moreCaseConfig~pipelines');
     s.showPanel('automationsDiv');
     await s.flush();
-    expect(s.lastOpen()).toBe('tabMore~moreAutomations~activity');
+    expect(s.lastOpen()).toBe('firm:more~moreAutomations~activity');
     expect(activeOf(a)).toBe('activity');
     // another main tab and back
     s.w.openMainTab('tabCases');
     await s.flush();
     expect(s.lastOpen()).toBe('tabCases');
-    s.w.openMainTab('tabMore');
+    s.w.openMainTab(MORE);
     await s.flush();
-    expect(s.lastOpen()).toBe('tabMore~moreAutomations~activity');
+    expect(s.lastOpen()).toBe('firm:more~moreAutomations~activity');
   });
 
-  test.each(['firm', 'system'])('caseConfig: ?open=tabMore~moreCaseConfig~%s restores the gated tab after its reveal', async (gated) => {
+  test.each(['firm', 'system'])('caseConfig: ?open=firm:more~moreCaseConfig~%s restores the gated tab after its reveal', async (gated) => {
     const s = realShell();
     s.w.enableWorkspaceUrlSync();
-    s.w.openMainTabOnBoot('tabMore', `moreCaseConfig~${gated}`);
+    s.w.openMainTabOnBoot(MORE, `moreCaseConfig~${gated}`);
     const c = s.pane('cfgFrame');
     expect(activeOf(c)).toBe('types');                     // gated: waits for the reveal
     await flush(c); await flush(c); await s.flush();
     expect(activeOf(c)).toBe(gated);
-    expect(s.lastOpen()).toBe(`tabMore~moreCaseConfig~${gated}`);
+    expect(s.lastOpen()).toBe(`firm:more~moreCaseConfig~${gated}`);
   });
 });
