@@ -9,7 +9,9 @@
  *     npx jest tests/intakeNameReview.mysql.test.js --runInBand
  * The database name must end in _test (never point it at 3306 — on a dev
  * machine that IS production). The suite DROPs and recreates its tables FROM
- * ref/database.sql — live types, the real contacts / tasks triggers — and runs
+ * ref/database.sql — live types, the real contacts / tasks triggers — plus the
+ * YisraMail P1 consent tables from their migration file (a new phone / email
+ * row takes its opt-out from the destination's state), and runs
  * the real intakeContact, contactService, taskService and settings reads, the
  * internal function and the HTTP route on that engine. Stubbed: only the
  * outbound edges (alert, email, SMS, Google Contacts push, the domain-event
@@ -124,6 +126,7 @@ d('intake name review (real engine)', () => {
       if (!trg.length) throw new Error(`no triggers for ${t}`);
       for (const b of trg) await q(b);
     }
+    await require('./helpers/consentSchema').buildConsentTables(q);
 
     intakeService = require('../services/intakeService');
     intakeFns = require('../lib/internal_functions/intake');

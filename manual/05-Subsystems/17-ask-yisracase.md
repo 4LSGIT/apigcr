@@ -232,10 +232,11 @@ the firm line or sender it comes from, and the email subject; what you see is
 what is sent, except the client's manage link, shown as
 *[secure manage link …]* and filled in when the message goes out. It goes to
 the client as soon as the appointment saves and cannot be recalled. A client
-who opted out of texts or email cannot get a confirmation on that channel: the
-card is refused, because confirmations are automatic messages. To message an
-opted-out client anyway, ask for a separate text or email card (see
-*Sending a text or email*), which lets you confirm past the opt-out.
+whose number opted out of texts cannot get a text confirmation: the card is
+refused, because confirmations are automatic messages. To text an opted-out
+client anyway, ask for a separate text card (see *Sending a text or email*),
+which lets you confirm past the opt-out. An email opt-out ("No marketing
+email") covers marketing only and never stops an email confirmation.
 
 Creating an Appointment attempts to create both a firm Google Calendar entry
 and a provider-calendar entry when that provider has a separate calendar. The
@@ -525,14 +526,14 @@ It cannot be recalled.*
   typed into the chat. The card names the person, the exact number or
   address, and its label.
 - **Opted-out recipients.** Casey works like you do in Comms: it can still
-  prepare a send to a number or address that has opted out (the SMS / email
-  opt-out on that phone or email row), and says so. The card shows *This
-  recipient opted out of SMS* (or *email*) in red at the top, before anything
-  else. When you confirm the send, you get the same "Send anyway?" question
-  Comms asks; **OK** sends it and the send is recorded as an acknowledged
-  opt-out, **Cancel** sends nothing. Send anyway only when the client asked
-  for the message. Automations (workflows, sequences) still never message an
-  opted-out recipient.
+  prepare a text to a number that has opted out of texts, and says so. The
+  card shows *This recipient opted out of SMS* in red at the top, before
+  anything else. When you confirm the send, you get the same "Send anyway?"
+  question Comms asks; **OK** sends it and the send is recorded as an
+  acknowledged opt-out, **Cancel** sends nothing. Send anyway only when the
+  client asked for the message. Automations (workflows, sequences) still never
+  text an opted-out number. An email card is never held up by an email
+  opt-out — that one ("No marketing email") covers marketing mail only.
 - **Who it comes from.** A phone line or mailbox you can send from (your own
   send access in Comms). When you don't name one and you have exactly one,
   Casey uses it; otherwise it asks which.
@@ -549,8 +550,9 @@ It cannot be recalled.*
   case placeholders). An appointment's own confirmation rides on its
   appointment card instead (see *Appointment actions*).
 - **When you click.** Casey re-checks the number or address first; if it ended,
-  changed, or its opt-out changed since the card was prepared, nothing is sent
-  and the card says why (ask again — the new card shows the current opt-out). The send then goes through the same Comms send that a person
+  changed, or its consent changed since the card was prepared (an opt-out or
+  opt-in recorded anywhere), nothing is sent and the card says why (ask again —
+  the new card shows the current opt-out). The send then goes through the same Comms send that a person
   uses — your send access, superuser password step-up, and the per-person send
   limit all apply.
 - **The result.** A sent card says *Sent* and **Open conversation** opens the
@@ -643,7 +645,7 @@ receives it), and **forwarding** every matching message by email or text to an
 address or number you name. A forward's card says "forwards every matching
 message to …", marks a destination outside the firm in capitals, and is styled
 as a warning; Casey never forwards to an address taken from the message, and
-refuses a destination that has opted out. Forwards need the rule's transform to
+refuses a number that has opted out of texts (an email opt-out is marketing-only and does not stop a forward). Forwards need the rule's transform to
 stay "passthrough" (the whole message). Casey does not write new regular expressions (they run on every
 message), a rule that matches every message, or actions that send the message
 to an outside web address; it tells you to add those by hand. A rule whose

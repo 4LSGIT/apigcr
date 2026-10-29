@@ -1,12 +1,21 @@
 // tests/optout.mysql.test.js
 //
 /**
- * Recipient opt-out (ruling 2026-10-27) on REAL MySQL 8.4: the one consent
- * reader (services/optoutService.js) and every automation path that leans on
- * it — the send_* / forward_as_* internal functions, request_decision, the
+ * Recipient opt-out on REAL MySQL: the one consent reader
+ * (services/optoutService.js) and every automation path that leans on it —
+ * the send_* / forward_as_* internal functions, request_decision, the
  * workflow engine (advanceWorkflow end to end), the sequence engine
  * (executeStep), and campaigns (preview filter + per-contact send). Nothing
  * under test is mocked; only lib/taskQueue's Cloud Tasks doorbell is.
+ *
+ * The rules (ruling 2026-10-27, revised by YisraMail D18/D19 2026-10-29): an
+ * SMS opt-out (scope 'all') makes automation refuse and staff warn, as
+ * before; an email opt-out is MARKETING-only — every operational email here
+ * (send_email, forward_as_email, request_decision, appointment and booking
+ * confirmations) SENDS to it, while a campaign email (klass 'marketing')
+ * still skips it. The flags here are the row cache with no consent state
+ * yet — exactly the live data before the P1 migration runs (dual-read);
+ * tests/consentCore.mysql.test.js holds the state-table half.
  *
  * NOTHING CAN SEND. The provider seams (phoneService.sendSms / sendMms,
  * emailService.sendEmail) are spied to record and resolve, and BELOW them
@@ -16,8 +25,10 @@
  * ── GATED ON YC_TEST_MYSQL_URL — SKIPPED OTHERWISE ──────────────────────────
  *   YC_TEST_MYSQL_URL=mysql://root@127.0.0.1:3377/yc_optout_test npx jest tests/optout.mysql.test.js --runInBand
  * The database name must end in _test; this suite DROPS and recreates the
- * tables below in it, cloned line-by-line from ref/database.sql. Never point
- * it at port 3306 (the production proxy).
+ * tables below in it, cloned line-by-line from ref/database.sql, plus the
+ * three comm_* consent tables from
+ * ref/migrations/2026-10-29_yisramail_p1_consent_core.sql. Never point it at
+ * port 3306 (the production proxy).
  */
 'use strict';
 
@@ -84,6 +95,8 @@ function schemaFor(tables) {
   alters.sort((a, b) => /FOREIGN KEY/.test(a) - /FOREIGN KEY/.test(b));
   return { creates, alters };
 }
+// The consent tables, from the P1 migration file (tests/helpers/consentSchema.js).
+const { CONSENT_TABLES, consentStatements } = require('./helpers/consentSchema');
 
 // Contacts: 1 Pat (opted-out mobile + opted-out mixed-case email), 2 Sam
 // (consenting phone/email), 3 Old
@@ -109,11 +122,12 @@ d('opt-out on real MySQL', () => {
     // caseyWorkflowStart's twin also creates workflow_versions (FK into
     // workflows) on a shared _test DB — drop it first, as the re-CREATE of
     // workflows is refused while a child FK still points at it.
-    for (const t of ['workflow_versions', ...[...TABLES].reverse()]) await q(`DROP TABLE IF EXISTS \`${t}\``);
+    for (const t of ['workflow_versions', ...CONSENT_TABLES, ...[...TABLES].reverse()]) await q(`DROP TABLE IF EXISTS \`${t}\``);
     await q('SET FOREIGN_KEY_CHECKS = 1');
     const { creates, alters } = schemaFor(TABLES);
     for (const sql of creates) await q(sql);
     for (const sql of alters) await q(sql);
+    for (const sql of consentStatements()) await q(sql);
 
     await q(`INSERT INTO contacts (contact_id, contact_name, contact_fname, contact_lname, contact_phone, contact_email) VALUES
       (1, 'Pat One', 'Pat', 'One', '${PAT_PHONE}', 'pat@example.com'),
@@ -166,29 +180,33 @@ d('opt-out on real MySQL', () => {
 
     test('an ENDED opted-out row is history: the number\'s current (active, consenting) owner rules', async () => {
       expect(await optout.findOptedOut(pool, 'sms', SHARED_PHONE)).toEqual([]);
-      expect(await optout.findOptedOut(pool, 'email', 'shared@example.com')).toEqual([]);
+      expect(await optout.findOptedOut(pool, 'email', 'shared@example.com', { klass: 'marketing' })).toEqual([]);
     });
 
-    test('email: case-insensitive on the column\'s collation; every address in a list / "Name <a>" form / array / {email}', async () => {
+    test('email (as a MARKETING send reads it): case-insensitive; every address in a list / "Name <a>" form / array / {email}', async () => {
       const pat = [{ channel: 'email', destination: 'pat@example.com', contact_id: 1, contact_name: 'Pat One', row_id: 21 }];
+      const M = { klass: 'marketing' };
       for (const dest of ['pat@example.com', 'PAT@EXAMPLE.COM', ' Pat <pat@example.com> ', 'sam@example.com, pat@example.com',
         'sam@example.com;pat@example.com', ['sam@example.com', 'pat@example.com'], [{ email: 'pat@example.com', name: 'P' }]]) {
-        expect(await optout.findOptedOut(pool, 'email', dest)).toEqual(pat);
+        expect(await optout.findOptedOut(pool, 'email', dest, M)).toEqual(pat);
+        // D18: the same address is NOT opted out for an operational send
+        expect(await optout.findOptedOut(pool, 'email', dest)).toEqual([]);
       }
-      expect(await optout.findOptedOut(pool, 'email', 'sam@example.com')).toEqual([]);
-      expect(await optout.findOptedOut(pool, 'email', 'not-an-address')).toEqual([]);
+      expect(await optout.findOptedOut(pool, 'email', 'sam@example.com', M)).toEqual([]);
+      expect(await optout.findOptedOut(pool, 'email', 'not-an-address', M)).toEqual([]);
     });
 
     test('the SQL-predicate twins agree with findOptedOut on the engine', async () => {
       const rows = await q(`SELECT c.contact_id,
-          ${optout.smsOptedOutSql('c.contact_phone')} AS s, ${optout.emailOptedOutSql('c.contact_email')} AS e
+          ${optout.smsOptedOutSql('c.contact_phone')} AS s, ${optout.emailOptedOutSql('c.contact_email', { klass: 'marketing' })} AS e,
+          ${optout.emailOptedOutSql('c.contact_email')} AS op
         FROM contacts c ORDER BY c.contact_id`);
-      expect(rows.map((r) => [r.contact_id, Number(r.s), Number(r.e)])).toEqual([[1, 1, 1], [2, 0, 0], [3, 0, 0], [4, 0, 0]]);
+      expect(rows.map((r) => [r.contact_id, Number(r.s), Number(r.e), Number(r.op)])).toEqual([[1, 1, 1, 0], [2, 0, 0, 0], [3, 0, 0, 0], [4, 0, 0, 0]]);
     });
   });
 
   // ───────────────────────────────────────────────────────────────────────
-  describe('automation senders refuse (internal functions)', () => {
+  describe('automation senders: an SMS opt-out refuses; an email opt-out is marketing-only and never does (D18)', () => {
     const SMS = { from: '2485550000', message: 'hi' };
     const MAIL = { from: 'firm@firm.test', subject: 's', text: 't' };
     const EV = { type: 'sms', from: '2485551111', to: '2485550000', message: 'fwd me', direction: 'incoming' };
@@ -196,15 +214,21 @@ d('opt-out on real MySQL', () => {
     test.each([
       ['send_sms', { ...SMS, to: '+13135550001' }, 'sms'],
       ['send_mms', { ...SMS, to: PAT_PHONE, attachment_url: 'https://x.test/a.png' }, 'sms'],
-      ['send_email', { ...MAIL, to: 'Sam <sam@example.com>, PAT@example.com' }, 'email'],
       ['forward_as_sms', { from: '2485550000', to: PAT_PHONE, event: EV }, 'sms'],
-      ['forward_as_email', { from: 'firm@firm.test', to: 'pat@example.com', event: EV }, 'email'],
-    ])('%s to an opted-out recipient throws an OptOutRefusal and sends nothing', async (name, params, channel) => {
+    ])('%s to an opted-out number throws an OptOutRefusal and sends nothing', async (name, params, channel) => {
       const err = await fns[name](params, pool).then(() => null, (e) => e);
       expect(err).toBeInstanceOf(optout.OptOutRefusal);
       expect(err).toMatchObject({ code: 'RECIPIENT_OPTED_OUT', channel, recipients: [expect.objectContaining({ contact_id: 1 })] });
-      expect(err.message).toMatch(/^Not sent — Pat One .*\(contact #1\) has opted out of (texts|email)\./);
+      expect(err.message).toMatch(/^Not sent — Pat One .*\(contact #1\) has opted out of texts\./);
       expect(sent).toEqual([]);
+    });
+
+    test.each([
+      ['send_email', { ...MAIL, to: 'Sam <sam@example.com>, PAT@example.com' }],
+      ['forward_as_email', { from: 'firm@firm.test', to: 'pat@example.com', event: EV }],
+    ])('D18: %s to an address carrying the (marketing) email opt-out SENDS — operational mail is never gated', async (name, params) => {
+      await expect(fns[name](params, pool)).resolves.toMatchObject({ success: true });
+      expect(sent.map((x) => x.kind)).toEqual(['email']);
     });
 
     test.each([
@@ -218,16 +242,16 @@ d('opt-out on real MySQL', () => {
       expect(sent.map((s) => s.kind)).toEqual([kind]);
     });
 
-    test('request_decision: an opted-out channel is undeliverable (a failure note), the other channel still goes', async () => {
+    test('request_decision: an opted-out NUMBER is undeliverable (a failure note); an email opt-out is not (D18) — the email goes', async () => {
       const out = await fns.request_decision({
         _execution_id: 77, _step_number: 2, question: 'Pick one', options: [{ label: 'A', value: 'a' }],
         result_var: 'pick', timeout: '1h', timeout_value: 'none', recipient_kind: 'raw',
-        recipient_email: 'pat@example.com', recipient_phone: SAM_PHONE, send_email: true, send_sms: true,
+        recipient_email: 'pat@example.com', recipient_phone: PAT_PHONE, send_email: true, send_sms: true,
         email_from: 'firm@firm.test', sms_from: '2485550000',
       }, pool);
-      expect(out.output.delivered).toEqual(['sms']);
-      expect(out.output.failures).toEqual([expect.stringMatching(/^email: Not sent — Pat One .*opted out of email/)]);
-      expect(sent).toEqual([{ kind: 'sms', to: SAM_PHONE }]);
+      expect(out.output.delivered).toEqual(['email']);
+      expect(out.output.failures).toEqual([expect.stringMatching(/^sms: Not sent — Pat One .*opted out of texts/)]);
+      expect(sent).toEqual([{ kind: 'email', to: 'pat@example.com' }]);
     });
   });
 
@@ -326,7 +350,7 @@ d('opt-out on real MySQL', () => {
   });
 
   // ───────────────────────────────────────────────────────────────────────
-  describe('campaigns read the row flag', () => {
+  describe('campaigns: SMS reads scope all, EMAIL reads as marketing (no behaviour change)', () => {
     test('preview: Pat (row opt-out) is excluded; Sam (consenting rows) is NOT', async () => {
       const sms = await campaignService.getFilteredContacts(pool, { channel: 'sms' });
       expect(sms.contacts.map((c) => c.contact_id).sort()).toEqual([2, 4]);
@@ -354,23 +378,27 @@ d('opt-out on real MySQL', () => {
   });
 
   // ───────────────────────────────────────────────────────────────────────
-  describe('automated confirmations skip an opted-out channel (logged, never alerted)', () => {
-    const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+  describe('automated confirmations skip an opted-out NUMBER (logged, never alerted); the email always goes (D18)', () => {
+    // Fire-and-forget pipelines doing real MySQL round trips: wait real time,
+    // not a count of event-loop turns (I/O is not bounded by setImmediate).
+    const settle = () => new Promise((r) => setTimeout(r, 400));
 
-    test('appointment confirmation: Pat\'s opted-out SMS and email are skipped; Sam (consenting rows) gets both', async () => {
+    test('appointment confirmation: Pat\'s opted-out SMS is skipped, the email goes; Sam (consenting rows) gets both', async () => {
       await apptService._sendApptConfirmation(pool, { contactId: 1, apptId: 5, sms: true, email: true, message: 'See you soon' });
       await settle();
-      expect(sent).toEqual([]);
+      expect(sent).toEqual([{ kind: 'email', to: 'pat@example.com' }]);
+      sent.length = 0;
       await apptService._sendApptConfirmation(pool, { contactId: 2, apptId: 6, sms: true, email: true, message: 'See you soon' });
       await settle();
       expect(sent).toEqual([{ kind: 'sms', to: SAM_PHONE }, { kind: 'email', to: 'sam@example.com' }]);
     });
 
-    test('booking-page confirmation: the same skip per channel', async () => {
+    test('booking-page confirmation: the same — the number is skipped, the email goes', async () => {
       const view = { slug: 'v', title: 'Book', confirm_template: 'Booked', confirm_sms: 1, confirm_email: 1 };
       booking._test.fireSideEffects(pool, view, { apptId: 5, contactId: 1, providerId: 0, start: '10:00' });
       await settle();
-      expect(sent).toEqual([]);
+      expect(sent).toEqual([{ kind: 'email', to: 'pat@example.com' }]);
+      sent.length = 0;
       booking._test.fireSideEffects(pool, view, { apptId: 6, contactId: 4, providerId: 0, start: '10:00' });
       await settle();
       expect(sent).toEqual([{ kind: 'sms', to: SHARED_PHONE }, { kind: 'email', to: 'shared@example.com' }]);

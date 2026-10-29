@@ -14,7 +14,9 @@
  * zoneinfo tables, --runInBand. Run 2026-10-27 on MySQL 8.4.11:
  *   YC_TEST_MYSQL_URL=mysql://root@127.0.0.1:3378/yc_a20s2_e2e_test npx jest tests/caseyIngestRule.mysql.test.js --runInBand
  * beforeAll applies scripts/ingestRuleEditStampAndChangeLog.js (A20 slice 1;
- * a no-op once ref/database.sql carries it). The suite DELETEs and re-seeds
+ * a no-op once ref/database.sql carries it) and builds the YisraMail P1 consent
+ * tables from their migration file (tests/helpers/consentSchema.js — the
+ * destination opt-out lookup reads them). The suite DELETEs and re-seeds
  * the ingest rule / action / change tables, request_idempotency, and the
  * workflow / sequence / hook / sender rows it targets. Refuses port 3306.
  *
@@ -63,6 +65,7 @@ maybe('Casey ingest-rule authoring end to end on real MySQL', () => {
   const hookService = require('../services/hookService');
   const automation = require('../services/automationReadService');
   const svc = require('../services/assistantService');
+  const { buildConsentTables } = require('./helpers/consentSchema');
   const T = changeLog.CHANNELS;
   const ROUTER = { email: () => require('../routes/api.emailIngest'), phone: () => require('../routes/api.phoneIngest') };
 
@@ -130,6 +133,7 @@ maybe('Casey ingest-rule authoring end to end on real MySQL', () => {
       const r = await migration.run(conn, { apply: true, log: () => {} });
       if (!r.ok) throw new Error(`migration did not apply: ${r.line}`);
     } finally { conn.release(); }
+    await buildConsentTables(q);
 
     jest.spyOn(console, 'warn').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -331,11 +335,13 @@ maybe('Casey ingest-rule authoring end to end on real MySQL', () => {
       expect(kinds.slice(-3)).toEqual(['activate', 'update', 'deactivate']);
     });
 
-    test('forwards: the live shape applies end to end; staff vs outside classified on real rows; an opted-out destination refused', async () => {
+    test('forwards: the live shape applies end to end; staff vs outside classified on real rows; an opted-out NUMBER refused, an email opt-out not (D18)', async () => {
       await q("UPDATE users SET email = 'staff@4lsg.example', phone = '2485550142' WHERE user = 2");
       await q("INSERT INTO contacts (contact_id, contact_fname, contact_lname) VALUES (4401, 'Pat', 'Client') ON DUPLICATE KEY UPDATE contact_fname = VALUES(contact_fname)");
       await q("DELETE FROM contact_emails WHERE contact_id = 4401");
       await q("INSERT INTO contact_emails (contact_id, email, email_optout) VALUES (4401, 'pat.optout@example.com', 1)");
+      await q("DELETE FROM contact_phones WHERE contact_id = 4401");
+      await q("INSERT INTO contact_phones (contact_id, phone, sms_optout) VALUES (4401, '3135550199', 1)");
       const value = (to, fn = 'forward_as_email') => ({ kind: 'ingest_rule.create.v1', channel: ch, name: `${ch} forward ${to}`,
         match_mode: 'conditions', match_config: cond, transform_mode: 'passthrough', evidence: [],
         actions: [{ action_type: 'internal_function', config: { function_name: fn, params_mapping: fn === 'forward_as_email'
@@ -347,7 +353,10 @@ maybe('Casey ingest-rule authoring end to end on real MySQL', () => {
       expect(staffSms.actions[0].summary).toMatch(/to 2485550142 \(firm \/ staff\)/);
       const outside = await svc.normalizeActionDraft(pool, value('someone@example.org'), []);
       expect(outside.actions[0].summary).toMatch(/someone@example\.org — OUTSIDE THE FIRM/);
-      await expect(svc.normalizeActionDraft(pool, value('pat.optout@example.com'), [])).rejects.toThrow(/has opted out of email/);
+      // D18: an email opt-out is marketing-only and the forward is operational — not refused.
+      expect((await svc.normalizeActionDraft(pool, value('pat.optout@example.com'), [])).actions[0].summary).toMatch(/pat\.optout@example\.com — OUTSIDE THE FIRM/);
+      // D19: an SMS STOP still stops automated texts — the opted-out number is refused.
+      await expect(svc.normalizeActionDraft(pool, value('313-555-0199', 'forward_as_sms'), [])).rejects.toThrow(/destination 3135550199 has opted out of texts/);
       // send_email / send_sms to a LITERAL destination: the same classifier and
       // opt-out lookup on the same real rows (Fable review #3).
       const sendValue = (to, fn = 'send_email') => ({ ...value(to), name: `${ch} send ${to}`,
@@ -357,7 +366,8 @@ maybe('Casey ingest-rule authoring end to end on real MySQL', () => {
       expect((await svc.normalizeActionDraft(pool, sendValue('staff@4lsg.example'), [])).actions[0].summary).toMatch(/^calls send_email to staff@4lsg\.example \(firm \/ staff\)/);
       expect((await svc.normalizeActionDraft(pool, sendValue('248-555-0142', 'send_sms'), [])).actions[0].summary).toMatch(/^calls send_sms to 2485550142 \(firm \/ staff\)/);
       expect((await svc.normalizeActionDraft(pool, sendValue('someone@example.org'), [])).actions[0].summary).toMatch(/^calls send_email to someone@example\.org — OUTSIDE THE FIRM/);
-      await expect(svc.normalizeActionDraft(pool, sendValue('pat.optout@example.com'), [])).rejects.toThrow(/send destination pat\.optout@example\.com has opted out of email/);
+      expect((await svc.normalizeActionDraft(pool, sendValue('pat.optout@example.com'), [])).actions[0].summary).toMatch(/^calls send_email to pat\.optout@example\.com — OUTSIDE THE FIRM/);
+      await expect(svc.normalizeActionDraft(pool, sendValue('313-555-0199', 'send_sms'), [])).rejects.toThrow(/send destination 3135550199 has opted out of texts/);
       const res = await apply(ch, staff);
       expect(res.status).toBe(201);
       const [a] = await actionRows(ch, res.body.rule.id);

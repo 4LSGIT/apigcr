@@ -55,15 +55,16 @@ body. Governing migrations in `ref/migrations/`.*
   `sms.send.v1` / `email.send.v1` drive `POST /api/phone-lines/:id/sms` and
   `POST /api/mail/send` from the card. Invariants: the recipient is one
   `contact_phones` / `contact_emails` row named by an evidence row
-  (contact_id + phone_id/email_id), active; an opted-out row
-  (`sms_optout`/`email_optout`) is NOT refused (ruling 17, "casey is like the
-  user"): the draft carries `recipient.opted_out`, the card shows it up front,
-  and the send rides `public/js/optoutAck.js` like Comms — the route's 409
-  `opted_out`, the user's explicit confirm, ONE resend with
+  (contact_id + phone_id/email_id), active; an opted-out recipient is NOT
+  refused (ruling 17, "casey is like the user"): the draft carries
+  `recipient.opted_out` (optoutService's operational read — an SMS opt-out;
+  never an email one, D18) and `recipient.consent_version`, the card shows it
+  up front, and the send rides `public/js/optoutAck.js` like Comms — the
+  route's 409 `opted_out`, the user's explicit confirm, ONE resend with
   `acknowledge_optout:true` (never set by the builder), audited
-  `acknowledged_optout`; the browser re-reads the row at click time and
-  refuses if its opt-out state differs from the reviewed one; automation
-  sends still refuse;
+  `acknowledged_optout`; at click time the browser re-reads the list route's
+  `row.consent` (the server's read) and refuses if `opted_out` or the
+  version moved since review; automation sends still refuse;
   the body is resolved by `resolverService` (strict) at proposal time and the
   card sends exactly that
   text (neither route resolves placeholders); senders are a line/mailbox the
@@ -174,7 +175,8 @@ body. Governing migrations in `ref/migrations/`.*
   `casey_report_authoring_enabled`. Plan: ref/ASK_CASEY_ACTIONS_PLAN.md A16.
 - **Opt-out follow-up (10-27): CTA send warns; the contact-level pair is
   dropped.** `POST /api/cta/:id/send` (SU manual send) takes the staff rule
-  via `optoutGate`: a real send whose `to` has an opted-out ACTIVE row → 409
+  via `optoutGate`: a real SMS send to an opted-out number (an email opt-out
+  never gates it since YisraMail D18) → 409
   `opted_out` (nothing sent or logged; refusal audited, tool `cta`) until
   `acknowledge_optout:true` (a boolean — anything else is 400; the override's
   contact ids land in the send audit); `dry_run` is never gated.
@@ -188,31 +190,38 @@ body. Governing migrations in `ref/migrations/`.*
   8.4.11): a DROP does not fail on `yc_report`'s per-column grant — the grant
   stays ORPHANED in `mysql.columns_priv` (inert; it re-attaches to a later
   column of the same name) until a re-provision or targeted REVOKE clears it.
-- **Recipient opt-out (ruling 2026-10-27):** consent is the destination's
-  ACTIVE row flag — `contact_phones.sms_optout` / `contact_emails.email_optout`
-  (at most one active row per number/address: `uk_phone_active` /
-  `uk_email_active`) — read ONLY through `services/optoutService.js`
-  (number → 10 digits as stored; every address-shaped token in an email
-  destination). These row flags are the only consent flags — the contact
-  row carries none (next entry). AUTOMATION
-  REFUSES: `send_sms` / `send_mms` / `send_email` / `forward_as_*` throw
-  `OptOutRefusal` (code `RECIPIENT_OPTED_OUT`); the workflow engine records
-  the step `skipped` (reason in `error_message`, no retry, policy not
-  consulted, run continues), the sequence engine logs `skipped` /
-  `recipient_opted_out` and advances — never `failed`, so the error sweep
-  stays quiet. `request_decision` counts an opted-out channel undeliverable;
-  campaigns skip (`sms_optout` / `email_optout`); appt / booking / manage-page
-  confirmations skip the channel (logged). STAFF ARE WARNED: `POST
-  /api/phone-lines/:id/sms`, `POST /api/mail/send` (To+Cc+Bcc) and JWT
-  callers of `/internal/{sms,mms,email}/send` and the SU `POST
-  /api/cta/:id/send` answer 409 `code:'opted_out'`
-  (gate before the rate limiter and the idempotency claim) until the body
-  carries `acknowledge_optout:true` (literal true; audited / logged as an
-  override); API-key callers of `/internal/*` get 422 and cannot acknowledge.
-  `public/js/optoutAck.js` turns the 409 into a confirm + one resend on every
-  staff compose surface; a caller that ignores it simply does not send.
-  Exempt by design: the portal login PIN (client-requested, refusing locks
-  them out). Manual: 03-YisraFlow/08-error-policies.md, 08-Admin-Tools/08-mailboxes.md.
+- **Recipient consent (YisraMail P1, 2026-10-29 — ref/YISRAMAIL_DESIGN.md
+  §4.1–§4.4, "As built"):** consent belongs to a DESTINATION (10-digit number
+  / lowercased address), per channel and SCOPE, in `comm_consent_state` (THE
+  truth) with an append-only ledger `comm_consent_events` (the proof) and
+  `comm_topics`. ONE reader and ONE writer: `services/optoutService.js`
+  (`findOptedOut` / `assertNotOptedOut` / `optoutGate` / `*OptedOutSql` /
+  `consentVersions`; `recordConsent(conn, …)` on the CALLER's connection —
+  event (UNIQUE source+provider_event_id → no-op), guarded upsert (newest
+  `(occurred_at, id)` wins), sync of the active row's cache flag). The row
+  flags are a CACHE for one release, dual-read (state OR flag) and dual-written:
+  `contact_phones.sms_optout` = SMS scope `all`, `contact_emails.email_optout`
+  = email scope `marketing`. WHAT A SEND CHECKS: operational (the default)
+  SMS → `all`; operational EMAIL → nothing (D18: an email opt-out is
+  marketing-only — send_email, forwards, request_decision, the mail hub, CTA
+  and `/internal/email` sends and the appt/booking confirmations all send);
+  `klass:'marketing'` → `marketing`/`all` + topic (campaign email asks as
+  marketing until C1). For SMS the 2026-10-27 rule stands (D19): AUTOMATION
+  REFUSES (`OptOutRefusal`, code `RECIPIENT_OPTED_OUT` → workflow step
+  `skipped`, sequence `skipped`/`recipient_opted_out`, never `failed`; appt /
+  booking / manage confirmations skip the channel, logged); STAFF ARE WARNED
+  (`POST /api/phone-lines/:id/sms`, JWT callers of `/internal/{sms,mms}`, the
+  SU CTA send → 409 `opted_out` until `acknowledge_optout:true`, gate before
+  the limiter and the idempotency claim; `public/js/optoutAck.js`); API-key
+  callers get 422. Every row writer (contactPhone/EmailService create/update,
+  contactService aggregate + scalar + createContact) goes through
+  `applyRowConsent` / `cachedStateFlag` on its own transaction: a new row is
+  born from the state and never opts in (a transfer keeps the opt-out), a
+  flag change on an active row is one `staff` event, end-and-replace carries
+  as `row_replace`. A hit for a destination no row holds has null
+  `contact_id` / `row_id`. Exempt by design: the portal login PIN. Migration:
+  `scripts/yisramailP1MigrateConsent.js`. Manual: 01-YisraCase-overview/02-contacts.md,
+  03-YisraFlow/08-error-policies.md.
 - **Casey reads email/phone ingest rules (A20.0/A20.1, 10-26):** the P12
   kinds take `email_ingest_rule_id` / `phone_ingest_rule_id` (definition,
   references), `email_ingest_execution_id` / `phone_ingest_execution_id` or a

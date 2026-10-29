@@ -426,14 +426,24 @@ describe('A14 direct sends across the stages', () => {
     }
   });
 
-  test('ruling 17: every stage lets Casey propose a send to an opted-out recipient (the card warns, the user confirms); none forbids it', () => {
-    expect(answerPrompt).toContain('A recipient who OPTED OUT (sms_optout / email_optout on the row — the only');
-    expect(answerPrompt).toContain('card shows the opt-out up front and sends only after the user explicitly confirms past it');
-    expect(planPrompt).toContain('An opted-out recipient is still proposable');
+  test('ruling 17: every stage lets Casey propose a send to an opted-out NUMBER (the card warns, the user confirms); none forbids it', () => {
+    expect(answerPrompt).toContain('A number that OPTED OUT of texts may still be proposed when the user');
+    expect(answerPrompt).toContain('the card shows the opt-out up front and sends only after');
+    expect(planPrompt).toContain('A number opted out of texts');
     expect(repairPrompt).toContain('an opted-out number is allowed (the card shows it and the user confirms past it)');
-    expect(repairPrompt).toContain('an opted-out address is allowed (the card shows it and the user');
     for (const [stage, src] of Object.entries({ answer: answerPrompt, plan: planPrompt, repair: repairPrompt })) {
       expect({ stage, old: /never propose a send to an opted-out|never to an opted-out/.test(src) }).toEqual({ stage, old: false });
+    }
+  });
+
+  test('YisraMail D18: every stage teaches that an email opt-out covers marketing only, and none calls the row flag the only consent field', () => {
+    expect(answerPrompt).toContain('An email opt-out covers marketing only: it never blocks or warns on a direct email.');
+    expect(answerPrompt).toContain('an email opt-out covers marketing only and never blocks the email one');
+    expect(planPrompt).toContain('An email opt-out covers marketing only: a direct email is never blocked or warned by it.');
+    expect(planPrompt).toContain('an email opt-out covers marketing only and never blocks it');
+    expect(repairPrompt).toContain('an email opt-out covers marketing only and never stops this');
+    for (const [stage, src] of Object.entries({ answer: answerPrompt, plan: planPrompt, repair: repairPrompt })) {
+      expect({ stage, old: /the only consent (field|flag)|the row's flag is the only/.test(src) }).toEqual({ stage, old: false });
     }
   });
 

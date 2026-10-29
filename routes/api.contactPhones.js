@@ -20,6 +20,8 @@ const express      = require('express');
 const router       = express.Router();
 const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
 const phoneSvc     = require('../services/contactPhoneService');
+const optout       = require('../services/optoutService');
+const ledger       = require('../services/assistantActionLedger');
 const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency');
 
 
@@ -73,6 +75,16 @@ function parseBool(v) {
   return false;
 }
 
+/**
+ * Consent evidence for a write a Casey card is applying (YisraMail P1): the
+ * card sends its draft_id as `casey_draft_id`; it counts only while it is
+ * this user's in-flight claim of a contact.phone kind. Attribution, never a
+ * permission — anything else is a plain staff write.
+ */
+async function caseyEvidence(req, draftId, kinds) {
+  return ledger.attribution(req.db, req.auth && req.auth.userId, draftId, kinds);
+}
+
 
 // ─── GET /api/contacts/:id/phones ───
 router.get('/api/contacts/:id/phones', jwtOrApiKey, async (req, res) => {
@@ -81,6 +93,14 @@ router.get('/api/contacts/:id/phones', jwtOrApiKey, async (req, res) => {
     const result = await phoneSvc.listContactPhones(req.db, req.params.id, { include_inactive });
     if (!result) {
       return res.status(404).json({ status: 'error', message: 'Contact not found' });
+    }
+    // Consent as a send reads it (YisraMail P1): each ACTIVE row gets
+    // consent = { opted_out, version } from optoutService — what Casey's
+    // click-time re-check compares; an ended row gets null.
+    const rows = result.phones || [];
+    const consent = await optout.consentVersions(req.db, 'sms', rows.filter((r) => r.end_date == null).map((r) => r.phone));
+    for (const r of rows) {
+      r.consent = r.end_date == null ? (consent.get(optout.normalizeDestination('sms', r.phone)) || { opted_out: false, version: '0' }) : null;
     }
     res.json({ status: 'success', ...result });
   } catch (err) {
@@ -95,17 +115,19 @@ router.post('/api/contact-phones', jwtOrApiKey, async (req, res) => {
   try {
     const createdBy = resolveCreatedBy(req);
     const force     = parseBool(req.query.force);
-    const { contact_id, expected_primary_id, ...fields } = req.body || {};
+    const { contact_id, expected_primary_id, casey_draft_id, ...fields } = req.body || {};
 
     if (!contact_id) {
       return res.status(400).json({ status: 'error', message: 'contact_id is required' });
     }
 
+    const consentEvidence = await caseyEvidence(req, casey_draft_id, ['contact.phone.create.v1']);
+
     // Optional `Idempotency-Key` header: a repeat of the same key replays the
     // first create's response instead of inserting a second row. Header only —
     // nothing in the body can set it (lib/requestIdempotency.js).
     const { value: result, replayed } = await idempotentRequest(req, 'contact_phones.create', () =>
-      phoneSvc.createContactPhone(req.db, contact_id, fields, { force, createdBy, expectedPrimaryId: expected_primary_id })
+      phoneSvc.createContactPhone(req.db, contact_id, fields, { force, createdBy, expectedPrimaryId: expected_primary_id, consentEvidence })
     );
     res.status(201).json({ status: 'success', ...result, ...(replayed ? { replayed: true } : {}) });
   } catch (err) {
@@ -124,8 +146,9 @@ router.post('/api/contact-phones', jwtOrApiKey, async (req, res) => {
 router.patch('/api/contact-phones/:id', jwtOrApiKey, async (req, res) => {
   try {
     const updatedBy = resolveCreatedBy(req);
-    const { expected_updated_at, expected_primary_id, ...fields } = req.body || {};
-    const result = await phoneSvc.updateContactPhone(req.db, req.params.id, fields, { updatedBy, expectedUpdatedAt: expected_updated_at, expectedPrimaryId: expected_primary_id });
+    const { expected_updated_at, expected_primary_id, casey_draft_id, ...fields } = req.body || {};
+    const consentEvidence = await caseyEvidence(req, casey_draft_id, ['contact.phone.update.v1', 'contact.phone.end.v1']);
+    const result = await phoneSvc.updateContactPhone(req.db, req.params.id, fields, { updatedBy, expectedUpdatedAt: expected_updated_at, expectedPrimaryId: expected_primary_id, consentEvidence });
     res.json({ status: 'success', ...result });
   } catch (err) {
     console.error('PATCH /api/contact-phones/:id error:', err);

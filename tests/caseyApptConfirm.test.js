@@ -11,7 +11,9 @@
  *     db and the two provider calls stubbed) changes nothing in it but the
  *     manage-link placeholder;
  *   - the recipient/sender/subject on the card are the ones the route uses;
- *   - an opted-out channel refuses (automation sends never acknowledge);
+ *   - an opted-out NUMBER refuses (automation sends never acknowledge); an
+ *     email opt-out is marketing-only (YisraMail D18) and never refuses the
+ *     operational email confirmation;
  *   - off stays the shipped shape.
  */
 
@@ -21,7 +23,7 @@ const svc = require('../services/assistantService');
 const apptService = require('../services/apptService');
 const phoneService = require('../services/phoneService');
 const emailService = require('../services/emailService');
-const optoutService = require('../services/optoutService');
+const { answerOptout } = require('./helpers/optoutFake');
 const calendarTypeService = require('../services/calendarTypeService');
 const { Settings: LuxonSettings } = require('luxon');
 
@@ -32,7 +34,7 @@ beforeAll(() => { LuxonSettings.now = () => Date.parse('2026-10-21T16:00:00.000Z
 afterAll(() => { LuxonSettings.now = realLuxonNow; });
 
 // One in-memory world answering each statement the card and the route issue.
-function world({ phone = '3135550100', email = 'jane@example.com', smsOpt = false, emailOpt = false,
+function world({ phone = '3135550100', email = 'jane@example.com', smsOpt = false, emailOpt = false, states = [],
   settings = { sms_default_from: '2485550000', email_default_from: 'office@firm.example' }, hasLink = 1, client = 1309 } = {}) {
   const calls = [];
   const target = { appt_id: 55, appt_client_id: client, appt_case_id: '', appt_type: 'Consultation', appt_length: 60,
@@ -40,8 +42,11 @@ function world({ phone = '3135550100', email = 'jane@example.com', smsOpt = fals
     appt_note: 'Existing note', appt_gcal: '', appt_gcal_user: null, contact_name: 'Jane Client', case_number_display: null, user_name: 'Fred' };
   const db = { query: jest.fn(async (sql, params) => {
     calls.push(sql);
-    if (sql === optoutService.FIND_SQL.sms) return [smsOpt ? [{ row_id: 1, contact_id: 1309, destination: phone, contact_name: 'Jane Client' }] : []];
-    if (sql === optoutService.FIND_SQL.email) return [emailOpt ? [{ row_id: 1, contact_id: 1309, destination: email, contact_name: 'Jane Client' }] : []];
+    const consent = answerOptout(sql, params, {
+      phones: phone ? [{ id: 1, contact_id: 1309, phone, sms_optout: smsOpt ? 1 : 0 }] : [],
+      emails: email ? [{ id: 2, contact_id: 1309, email, email_optout: emailOpt ? 1 : 0 }] : [],
+      contacts: [{ contact_id: 1309, contact_name: 'Jane Client' }], states });
+    if (consent) return consent;
     if (/^SELECT contact_id, contact_name FROM contacts/.test(sql)) return [[{ contact_id: 1309, contact_name: 'Jane Client' }]];
     if (/^SELECT contact_phone, contact_email FROM contacts/.test(sql)) return [[{ contact_phone: phone, contact_email: email }]];
     if (/FROM app_settings/.test(sql)) return [Object.entries(settings).map(([key, value]) => ({ key, value }))];
@@ -121,7 +126,13 @@ describe('Ask Casey appointment confirmations', () => {
   test('an opted-out channel refuses — automation never acknowledges — as do a missing number, address or sender', async () => {
     const on = (w, extra) => svc.normalizeActionDraft(w.db, createValue({ confirm_message: 'See you then.', ...extra }), contactEvidence);
     await expect(on(world({ smsOpt: true }), { confirm_sms: true })).rejects.toThrow(/opted out of texts/);
-    await expect(on(world({ emailOpt: true }), { confirm_email: true })).rejects.toThrow(/opted out of email/);
+    // D18: an email opt-out is marketing-only — the confirmation email still goes.
+    await expect(on(world({ emailOpt: true }), { confirm_email: true })).resolves.toMatchObject({ confirm_email: true });
+    await expect(on(world({ states: [{ channel: 'email', destination: 'jane@example.com', scope: 'marketing', state: 'opted_out' }] }),
+      { confirm_email: true })).resolves.toMatchObject({ confirm_email: true });
+    // The number's consent STATE refuses even with the row flag clear (YisraMail P1).
+    await expect(on(world({ states: [{ channel: 'sms', destination: '3135550100', scope: 'all', state: 'opted_out' }] }),
+      { confirm_sms: true })).rejects.toThrow(/opted out of texts/);
     await expect(on(world({ smsOpt: true }), { confirm_email: true })).resolves.toMatchObject({ confirm_email: true, confirm_sms: false });
     await expect(on(world({ phone: '' }), { confirm_sms: true })).rejects.toThrow(/no phone number on the contact/);
     await expect(on(world({ email: '' }), { confirm_email: true })).rejects.toThrow(/no email address on the contact/);

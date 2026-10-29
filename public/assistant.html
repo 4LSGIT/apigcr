@@ -662,6 +662,10 @@ function apptConfirmText(draft) {
 // Click-time freshness for the confirmation only (correction 1): the client's
 // number/address on the contact, and its opt-out, re-read through the canonical
 // contact routes. A change refuses before the claim — nothing written or sent.
+// Consent is the list route's row.consent — the server's own read
+// (services/optoutService.js, as an automated confirmation reads it: an SMS
+// STOP blocks, an email opt-out is marketing-only and never does), never the
+// row flag.
 async function apptPrecheck(draft) {
   const c = apptConfirmation(draft);
   if (!c) return '';
@@ -674,7 +678,7 @@ async function apptPrecheck(draft) {
   if (c.sms) {
     if (String(contact.contact_phone || '').trim() !== String(conf.sms.to)) return 'The client\'s phone number changed since this card was prepared. Nothing was changed or sent. Ask Casey to prepare it again.';
     const list = await api(`/api/contacts/${id}/phones`, null, 'GET');
-    if (((list && list.phones) || []).some((r) => !r.end_date && digits(r.phone) === digits(conf.sms.to) && Number(r.sms_optout) === 1)) {
+    if (((list && list.phones) || []).some((r) => !r.end_date && digits(r.phone) === digits(conf.sms.to) && !!(r.consent && r.consent.opted_out === true))) {
       return 'The client\'s number has opted out of texts since this card was prepared, and a confirmation never goes to an opted-out recipient. Nothing was changed or sent. Ask Casey to prepare it again.';
     }
   }
@@ -682,7 +686,7 @@ async function apptPrecheck(draft) {
     if (String(contact.contact_email || '').trim() !== String(conf.email.to)) return 'The client\'s email address changed since this card was prepared. Nothing was changed or sent. Ask Casey to prepare it again.';
     const list = await api(`/api/contacts/${id}/emails`, null, 'GET');
     const to = String(conf.email.to).toLowerCase();
-    if (((list && list.emails) || []).some((r) => !r.end_date && String(r.email || '').toLowerCase() === to && Number(r.email_optout) === 1)) {
+    if (((list && list.emails) || []).some((r) => !r.end_date && String(r.email || '').toLowerCase() === to && !!(r.consent && r.consent.opted_out === true))) {
       return 'The client\'s email address has opted out since this card was prepared, and a confirmation never goes to an opted-out recipient. Nothing was changed or sent. Ask Casey to prepare it again.';
     }
   }
@@ -755,7 +759,7 @@ function contactSubrecordDraftText(draft) {
       `Label: ${f.label}`, `Primary: ${f.is_primary ? 'Yes' : 'No'}`, `Start date: ${f.start_date || 'Since forever (no prior ownership)'}`,
       `Notes: ${f.notes || 'Empty'}`);
     if (draft.family === 'phone') lines.push(`SMS opt-out: ${f.sms_optout ? 'Yes' : 'No'}`, `MMS capable: ${f.mms_capable ? 'Yes' : 'No'}`);
-    if (draft.family === 'email') lines.push(`Email opt-out: ${f.email_optout ? 'Yes' : 'No'}`);
+    if (draft.family === 'email') lines.push(`No marketing email: ${f.email_optout ? 'Yes' : 'No'}`);
     lines.push(`Primary side effect: ${draft.demoted_primary ? `demote current ${draft.demoted_primary.label} primary ${draft.demoted_primary.value}` : 'no current primary will be demoted'}.`,
       'Contact mirror / sync: the contact summary and open contact views refresh through the canonical route response.',
       'Transfer / notification: no ownership transfer, message, email, or SMS is sent.');
@@ -767,7 +771,7 @@ function contactSubrecordDraftText(draft) {
     `Current label: ${t.label}`, `Current primary: ${t.is_primary ? 'Yes' : 'No'}`,
     `Current start date: ${t.start_date || 'Unknown'}`, `Current notes: ${t.notes || 'Empty'}`);
   if (draft.family === 'phone') lines.push(`Current SMS opt-out: ${t.sms_optout ? 'Yes' : 'No'}`, `Current MMS capable: ${t.mms_capable ? 'Yes' : 'No'}`);
-  if (draft.family === 'email') lines.push(`Current email opt-out: ${t.email_optout ? 'Yes' : 'No'}`);
+  if (draft.family === 'email') lines.push(`Current no-marketing-email: ${t.email_optout ? 'Yes' : 'No'}`);
   if (String(draft.kind).includes('.end.')) {
     lines.push(`End date: ${draft.changes.end_date}`, `End reason: ${draft.changes.end_reason}`,
       `Primary side effect: ${t.is_primary ? 'this row loses primary status and the contact mirror is recomputed' : 'no primary row is demoted'}.`,
@@ -775,7 +779,7 @@ function contactSubrecordDraftText(draft) {
   } else {
     Object.entries(draft.changes || {}).forEach(([key, value]) => {
       const label = ({ address1: 'New address line 1', address2: 'New address line 2', city: 'New city', state: 'New state', zip: 'New ZIP', country: 'New country',
-        label: 'New label', is_primary: 'Make primary', sms_optout: 'New SMS opt-out', mms_capable: 'New MMS capability', email_optout: 'New email opt-out', notes: 'New complete notes' })[key] || key;
+        label: 'New label', is_primary: 'Make primary', sms_optout: 'New SMS opt-out', mms_capable: 'New MMS capability', email_optout: 'New no-marketing-email', notes: 'New complete notes' })[key] || key;
       lines.push(`${label}: ${typeof value === 'boolean' ? (value ? 'Yes' : 'No') : (value || 'Clear')}`);
     });
     lines.push(`Primary side effect: ${draft.changes.is_primary && !t.is_primary
@@ -800,6 +804,10 @@ function contactSubrecordCreateBody(draft) {
     state: f.state, zip: f.zip, country: f.country, label: f.label, is_primary: f.is_primary === true,
     start_date: f.start_date || null, notes: f.notes || '' };
   if (f.is_primary === true) body.expected_primary_id = draft.demoted_primary ? draft.demoted_primary.id : null;
+  // Phone / email writes are consent writes: the route stamps the ledger
+  // event { via: 'casey', draft_id } while this card's claim is in flight
+  // (YisraMail P1). Attribution only — the route checks it against the claim.
+  if (draft.family === 'phone' || draft.family === 'email') body.casey_draft_id = draft.draft_id;
   return body;
 }
 
@@ -820,6 +828,7 @@ function contactSubrecordActionRequest(draft) {
     allowed.forEach((key) => { if (Object.prototype.hasOwnProperty.call(draft.changes || {}, key)) body[key] = draft.changes[key]; });
     if (draft.changes && draft.changes.is_primary === true) body.expected_primary_id = draft.demoted_primary ? draft.demoted_primary.id : null;
   }
+  if (draft.family === 'phone' || draft.family === 'email') body.casey_draft_id = draft.draft_id; // consent evidence — see contactSubrecordCreateBody
   return { path: `${base}/${draft.target.id}`, method: 'PATCH', body };
 }
 
@@ -2606,7 +2615,8 @@ function sendFactLines(draft) {
   lines.push(`Audience: one recipient. No attachments, cc/bcc, ${sms ? 'media' : 'reply threading'} or scheduling.`);
   lines.push(optedOut
     ? `Consent: OPTED OUT — ${sendOptoutText(draft).replace(/^This/, 'this')}. Sending asks you to confirm past the opt-out (as Comms does), and the send is recorded as an acknowledged opt-out.`
-    : 'Consent: checked — the recipient has not opted out; re-checked when you click.');
+    : sms ? 'Consent: checked — the recipient has not opted out; re-checked when you click.'
+      : 'Consent: a direct email is operational — an email opt-out covers marketing only and never stops it.');
   lines.push(`Effect: sends NOW from your signed-in account under your own ${sms ? 'line' : 'mailbox'} access. It cannot be recalled.`);
   return lines;
 }
@@ -2657,12 +2667,14 @@ function sendActionRequest(draft) {
 }
 
 // Click-time freshness through the canonical reads: the contact and its
-// active rows (consent is the row's opt-out flag, ruling 2026-10-27). Returns
-// a refusal sentence, or '' when the reviewed row still stands exactly as
-// reviewed — its opt-out state included: a card reviewed as "not opted out"
-// never sends to a row that opted out since (and the reverse), it refuses and
-// is prepared again with the current state up front. The send route re-checks
-// consent itself; a race past this read meets its 409 and the user's confirm.
+// active rows. Consent is the list route's row.consent — the server's own
+// read (services/optoutService.js, YisraMail P1), never the row flag — and its
+// version moves on ANY consent change for the destination. Returns a refusal
+// sentence, or '' when the reviewed row still stands exactly as reviewed — its
+// consent included: a card reviewed as "not opted out" never sends to a row
+// that opted out since (and the reverse), it refuses and is prepared again
+// with the current state up front. The send route re-checks consent itself; a
+// race past this read meets its 409 and the user's confirm.
 async function sendPrecheck(draft) {
   const sms = sendIsSms(draft);
   const r = draft.recipient || {};
@@ -2676,11 +2688,17 @@ async function sendPrecheck(draft) {
   const row = rows.find((x) => Number(x.id) === rowId);
   const stamp = row && row.updated_at ? new Date(row.updated_at).toISOString() : '';
   if (!row || row.end_date) return `That ${sms ? 'number' : 'address'} is no longer active on the contact. Nothing was sent.`;
-  const optedNow = Number(sms ? row.sms_optout : row.email_optout) === 1;
+  if (!row.consent || typeof row.consent.opted_out !== 'boolean') {
+    return `Could not re-check the ${sms ? 'number' : 'address'}'s consent. Nothing was sent. Ask Casey to prepare it again.`;
+  }
+  const optedNow = row.consent.opted_out === true;
   if (optedNow !== (r.opted_out === true)) {
     return optedNow
       ? `That ${sms ? 'number' : 'address'} has opted out since this card was prepared. Nothing was sent. Ask Casey to prepare it again — the new card shows the opt-out.`
       : `That ${sms ? 'number' : 'address'} is no longer opted out — its consent changed since this card was prepared. Nothing was sent. Ask Casey to prepare it again.`;
+  }
+  if (String(row.consent.version) !== String(r.consent_version)) {
+    return `That ${sms ? 'number' : 'address'}'s consent changed since this card was prepared. Nothing was sent. Ask Casey to prepare it again.`;
   }
   if (String(sms ? row.phone : row.email) !== String(sms ? r.phone : r.email) || stamp !== r.expected_updated_at) {
     return `That ${sms ? 'number' : 'address'} changed since this card was prepared. Nothing was sent. Ask Casey to prepare it again.`;

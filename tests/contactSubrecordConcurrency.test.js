@@ -33,8 +33,10 @@ describe('contact subrecord optimistic concurrency', () => {
 
   test.each(['Phones', 'Emails', 'Addresses'])('%s route strips the server-owned version precondition before service validation', (suffix) => {
     const source = fs.readFileSync(path.join(ROOT, `routes/api.contact${suffix}.js`), 'utf8');
-    expect(source).toMatch(/const \{ expected_updated_at, expected_primary_id, \.\.\.fields \} = req\.body \|\| \{\}/);
-    expect(source).toMatch(/fields, \{ updatedBy, expectedUpdatedAt: expected_updated_at, expectedPrimaryId: expected_primary_id \}/);
+    // Phones / emails also strip Casey's consent-evidence marker (YisraMail P1).
+    const marker = suffix === 'Addresses' ? '' : 'casey_draft_id, ';
+    expect(source).toContain(`const { expected_updated_at, expected_primary_id, ${marker}...fields } = req.body || {};`);
+    expect(source).toMatch(/fields, \{ updatedBy, expectedUpdatedAt: expected_updated_at, expectedPrimaryId: expected_primary_id(, consentEvidence)? \}/);
   });
 
   test('primary promotion rejects a changed current-primary set before demotion', async () => {

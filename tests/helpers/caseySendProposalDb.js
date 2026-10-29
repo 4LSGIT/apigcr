@@ -4,12 +4,16 @@
  * The scripted fake database the A14 send NORMALIZER reads in the unit and
  * end-to-end suites (tests/caseySendAction.test.js, tests/caseySend.routes.test.js):
  * contacts, one contact_phones / contact_emails row, cases + case_relate,
- * channel_grants, and resolverService's single JOIN SELECT evaluated from the
- * seed. Unknown statements THROW. The same SQL runs on MySQL in
+ * channel_grants, resolverService's single JOIN SELECT evaluated from the
+ * seed, and optoutService's consent reads (tests/helpers/optoutFake.js — the
+ * row flags plus T.consent_states, comm_consent_state rows). Unknown
+ * statements THROW. The same SQL runs on MySQL in
  * tests/caseySendAction.mysql.test.js (gated).
  */
 
 'use strict';
+
+const { answerOptout } = require('./optoutFake');
 
 const USER = 22;
 
@@ -26,6 +30,7 @@ function makeDb(over = {}) {
     cases: [{ case_id: 'CASE1', case_number: '26-40001', case_number_full: '2:26-bk-40001', case_type: 'Chapter 7' }],
     case_relate: [{ case_relate_case_id: 'CASE1', case_relate_client_id: 1309 }],
     channel_grants: [{ user: USER, channel_type: 'phone_line', channel_id: 3, can_send: 1 }, { user: USER, channel_type: 'mailbox', channel_id: 5, can_send: 1 }],
+    consent_states: [],
     ...over,
   };
   const seen = [];
@@ -34,6 +39,8 @@ function makeDb(over = {}) {
     async query(sql, p = []) {
       const s = String(sql).replace(/\s+/g, ' ').trim();
       seen.push(s);
+      const consent = answerOptout(s, p, { phones: T.contact_phones, emails: T.contact_emails, contacts: T.contacts, states: T.consent_states });
+      if (consent) return consent;
       if (s === 'SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1') {
         return [T.contacts.filter((c) => c.contact_id === Number(p[0]))];
       }

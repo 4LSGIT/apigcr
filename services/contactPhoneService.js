@@ -36,6 +36,13 @@
  * mirror helper updates contact_phone; per-row audit on contact_phones
  * itself is TBD.
  *
+ * CONSENT (YisraMail P1, ref/YISRAMAIL_DESIGN.md §4.4): sms_optout is a CACHE
+ * of the number's SMS scope-'all' consent state (comm_consent_state) for one
+ * release. Every flag write here goes through optoutService.applyRowConsent on
+ * the SAME transaction connection: a new active row is born with
+ * max(sent flag, state) and never opts in; an existing row's flag change is
+ * one ledger event, no change no event.
+ *
  * Usage:
  *   const phoneSvc = require('../services/contactPhoneService');
  *   const { phones } = await phoneSvc.listContactPhones(db, contactId);
@@ -453,7 +460,7 @@ async function getContactPhone(db, phoneId) {
  * @param {number}  [opts.createdBy=0]      - users.user value, or 0 for system
  * @returns {Promise<{phone: object, auto_promoted: boolean, transferred_from?: object}>}
  */
-async function createContactPhone(db, contactId, fields = {}, { force = false, createdBy = 0, expectedPrimaryId } = {}) {
+async function createContactPhone(db, contactId, fields = {}, { force = false, createdBy = 0, expectedPrimaryId, consentEvidence = null } = {}) {
   // ─── Validation (pre-transaction) ───
   // validatePhoneRow throws on bad phone/label; preserves is_primary as
   // undefined when caller didn't set it, so auto-promote works below.
@@ -571,6 +578,11 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
     // participates in the default (yesterday → new row starts today).
     const startDate = await resolveStartDate(conn, validated.phone, validated.start_date);
 
+    // Consent (P1): the number's state decides the cache; a 0 / omitted flag
+    // never clears an opt-out the number already carries (a transfer keeps it).
+    const optout = require('./optoutService'); // lazy: optoutService requires this module
+    const stateFlag = await optout.cachedStateFlag(conn, 'sms', validated.phone);
+
     let newId;
     try {
       const [insertResult] = await conn.query(
@@ -581,7 +593,7 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           cid, validated.phone, validated.label, isPrimary,
-          validated.sms_optout,
+          validated.sms_optout || stateFlag ? 1 : 0,
           validated.mms_capable,
           validated.verified,
           startDate,
@@ -607,6 +619,13 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
       }
       throw err;
     }
+
+    // A ticked flag over a number not yet opted out is one opt_out event.
+    await optout.applyRowConsent(conn, {
+      channel: 'sms', kind: 'create', destination: validated.phone,
+      intent: validated.sms_optout, stateFlag, contactId: cid, actorUserId: createdBy,
+      evidence: { row_id: newId, via: 'row_create', ...(consentEvidence || {}) },
+    });
 
     // 5. Recompute target contact's mirror
     await recomputePrimaryPhone(conn, cid);
@@ -660,7 +679,7 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
  * @param {number} [opts.updatedBy=0]
  * @returns {Promise<{ phone: object }>}
  */
-async function updateContactPhone(db, phoneId, fields, { updatedBy = 0, expectedUpdatedAt, expectedPrimaryId } = {}) {
+async function updateContactPhone(db, phoneId, fields, { updatedBy = 0, expectedUpdatedAt, expectedPrimaryId, consentEvidence = null } = {}) {
   if (!fields || !Object.keys(fields).length) {
     throw new Error('updateContactPhone requires at least one field');
   }
@@ -751,6 +770,26 @@ async function updateContactPhone(db, phoneId, fields, { updatedBy = 0, expected
         );
       }
       throw err;
+    }
+
+    // Consent (P1). Reactivation (end_date → NULL) is a new active row for
+    // the number: born with max(its flag, the state), never opting in. A
+    // flag change on a row active before or after the write is one event;
+    // an ended row's flag is history and records nothing.
+    const optout = require('./optoutService'); // lazy: optoutService requires this module
+    const activeBefore = current.end_date === null;
+    const activeAfter  = 'end_date' in incoming ? incoming.end_date === null : activeBefore;
+    const flagAfter    = 'sms_optout' in incoming ? incoming.sms_optout : current.sms_optout;
+    const consentCtx   = { channel: 'sms', destination: current.phone, contactId: current.contact_id,
+                           actorUserId: updatedBy, evidence: { row_id: current.id, via: 'row_patch', ...(consentEvidence || {}) } };
+    if (!activeBefore && activeAfter) {
+      const stateFlag = await optout.cachedStateFlag(conn, 'sms', current.phone);
+      if (stateFlag && !flagAfter) {
+        await conn.query('UPDATE contact_phones SET sms_optout = 1 WHERE id = ?', [current.id]);
+      }
+      await optout.applyRowConsent(conn, { ...consentCtx, kind: 'create', intent: flagAfter, stateFlag });
+    } else if ((activeBefore || activeAfter) && 'sms_optout' in incoming) {
+      await optout.applyRowConsent(conn, { ...consentCtx, kind: 'update', intent: incoming.sms_optout, before: current.sms_optout });
     }
 
     // Mirror recompute if anything touching primary-active changed

@@ -1,6 +1,7 @@
 # YisraMail — consent, bulk email & campaigns v2 (DESIGN)
 
-Status: **DRAFT v0.5 — 2026-10-29. Nothing built.** Ruled 2026-10-29 (Fred):
+Status: **DRAFT v0.5 — 2026-10-29. P1 (consent core) built — §4.4 "As built";
+nothing else built.** Ruled 2026-10-29 (Fred):
 D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
 Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
 later; D15 no RC push in v1, D16 over-cap operational sends with
@@ -313,6 +314,57 @@ contact form shows (a) exactly as (c) would: a checkbox per scope per
 address/number.
 This revises the STORAGE half of the 2026-10-27 ruling (row → destination);
 its read rule (one service, automation refuses, staff warn) stands.
+
+**As built (P1).** Where the build chose within this section, or diverged:
+- **The writer** (`optoutService.recordConsent`) inserts the event with a plain
+  INSERT and treats only an `ER_DUP_ENTRY` on `uk_source_event` as the no-op —
+  not `INSERT IGNORE`, which under the relaxed sql_mode also turns a bad enum,
+  a NULL or a truncation into a warning and a stored row. The guarded upsert
+  is two statements under the row lock: a seed (`INSERT … ON DUPLICATE KEY
+  UPDATE scope = scope`, which also takes the lock) then
+  `UPDATE … WHERE (occurred_at, last_event_id) < (new pair)` — one
+  ODKU would depend on MySQL's left-to-right assignment order. Values are
+  validated in JS first (channel, scope per channel — `all` is SMS-only,
+  `marketing` email-only, a topic must exist on that channel — action, source,
+  a normalizable destination).
+- **The cache** a row flag holds is the flag's scope: `sms_optout` = SMS
+  `all`, `email_optout` = email `marketing` (D18) — recordConsent syncs the
+  ACTIVE row's flag when it writes that scope, never for a topic.
+- **The reader** (`findOptedOut`) issues two statements — the destinations'
+  active rows with their cache flag, and their state rows for the checked
+  scopes — plus the topic row when a topic is named, and decides in JS.
+  Operational email returns `[]` without a query. An unknown, inactive or
+  other-channel topic blocks every destination (fail closed) in
+  `findOptedOut` and `*OptedOutSql` alike. Built to D19 as recommended
+  (operational SMS = scope `all`, unchanged); ruling D19 the other way is one
+  line in `blockingScopes`.
+- **Casey's consent read** goes through `optoutService.consentVersions`
+  (operational read + the newest event id per destination, any scope): the
+  send proposal carries `recipient.consent_version`, the phone/email LIST
+  routes annotate each active row with `consent: { opted_out, version }`, and
+  the card's click-time re-check compares those instead of the row flag. The
+  contact-subrecord kinds still diff the row flag (the cache) — moves with the
+  column drop.
+- **Writers** call `optoutService.applyRowConsent` (+ `cachedStateFlag` before
+  an insert) on their own connection. A row whose `end_date` goes back to NULL
+  (reactivation) is treated as a create; a flag edit on a row that is ended
+  before and after the write records nothing (history). Casey's writes are
+  attributed by the card sending `casey_draft_id`, which the phone/email routes
+  accept only while it is the user's in-flight ledger claim of a matching kind
+  (`assistantActionLedger.attribution`) → evidence `{ via: 'casey', draft_id }`.
+- **Sync bus:** the per-row routes already announce the parent contact
+  (`contactSubrecordGetter`, a refetch); the contact form's aggregate save does
+  not ride the bus by the bus's own rule ("SCALARS only", yc-sync header) —
+  unchanged, consent is no different from any other row field there.
+- **Migration:** `scripts/yisramailP1MigrateConsent.js` verifies the end state
+  (every active flag = its destination's state) and is NO-GO on a flag that was
+  cleared or set outside the ledger — an opt_in is a decision, not a migration.
+  A flag the old code writes on a row that a transfer then ends, in the
+  minutes between the first run and the deploy, is not picked up by the second
+  run (it reads active rows) — accepted.
+- **Not done in P1:** the two flag columns' COMMENTs still describe the
+  2026-10-27 rule (changing a COMMENT is a live-table ALTER — the drop slice,
+  `ref/plans.md`).
 
 ### 4.5 Email unsubscribe
 

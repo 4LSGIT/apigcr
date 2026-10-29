@@ -29,12 +29,14 @@
  *              is 409 (in_flight → unknown), never a second provider call.
  *   refusal    a pre-dispatch refusal (inactive line) releases the claim.
  *   native     no key = the old behaviour: two posts, two sends.
- *   opt-out    ruling 17: an opted-out recipient is proposed (recipient.
+ *   opt-out    ruling 17: an opted-out NUMBER is proposed (recipient.
  *              opted_out), the builder never acknowledges, and the page's own
  *              dispatch through the REAL public/js/optoutAck.js turns the
  *              route's 409 into the user's confirm and ONE acknowledged
  *              resend under the same key — one provider call, audited
- *              acknowledged_optout; Cancel sends nothing.
+ *              acknowledged_optout; Cancel sends nothing. An email opt-out is
+ *              marketing-only (YisraMail D18): a direct email is never marked,
+ *              warned or acknowledged.
  */
 
 'use strict';
@@ -372,7 +374,7 @@ describe('email: card → POST /api/mail/send → SMTP', () => {
     return { W, db: withSendStatements(W) };
   }
 
-  test('an opt-out landing after the card was prepared: 409 opted_out BEFORE the claim, nothing reaches SMTP', async () => {
+  test('D18: a (marketing) email opt-out landing after the card was prepared does not stop it — sent once, nothing acknowledged', async () => {
     const world = mailWorld();
     const draft = await assistant.normalizeActionDraft(proposalDb(world.W),
       { kind: 'email.send.v1', contact_id: 1309, email_id: 13, mailbox_id: 1, subject: 'Hi', body: 'Hello', evidence: CITE },
@@ -381,20 +383,20 @@ describe('email: card → POST /api/mail/send → SMTP', () => {
     current = world;
     const request = sendActionRequest(draft);
     const r = await post(request.path, request.body, tok(SENDER), { 'Idempotency-Key': draft.draft_id });
-    expect(r.status).toBe(409);
-    expect(r.json).toMatchObject({ code: 'opted_out', opted_out: [{ contact_id: 1309, destination: 'pat@example.com' }] });
-    expect(r.json.idempotency).toBeUndefined();
-    expect(mockSendMail).not.toHaveBeenCalled();
-    expect(world.db.rows).toEqual([]);
+    expect(r.status).toBe(200);
+    expect(mockSendMail).toHaveBeenCalledTimes(1);
+    const audit = world.W.T.admin_audit_log.filter((a) => a.tool === 'mail_send');
+    expect(audit.map((a) => a.status)).toEqual(['sent']);
+    expect(JSON.stringify(audit[0].details)).not.toContain('acknowledged_optout');
   });
 
-  test('ruling 17: an opted-out address is proposed; the confirm → ONE acknowledged resend, one sendMail, audited', async () => {
+  test('D18: an address with the (marketing) email opt-out is proposed NOT opted out; the page never confirms; one sendMail', async () => {
     const world = mailWorld();
     const optedRow = { id: 13, contact_id: 1309, email: 'pat@example.com', label: 'Personal', is_primary: 1, email_optout: 1, end_date: null, updated_at: new Date('2026-10-26T10:00:00Z') };
     const draft = await assistant.normalizeActionDraft(proposalDb(world.W, { contact_emails: [optedRow] }),
       { kind: 'email.send.v1', contact_id: 1309, email_id: 13, mailbox_id: 1, subject: 'Hi', body: 'Hello', evidence: CITE },
       EVID, { currentUserId: SENDER });
-    expect(draft.recipient.opted_out).toBe(true);
+    expect(draft.recipient.opted_out).toBe(false);
     world.W.T.contact_emails.push({ id: 13, contact_id: 1309, email: 'pat@example.com', end_date: null, email_optout: 1 });
     current = world;
     const request = sendActionRequest(draft);
@@ -403,12 +405,11 @@ describe('email: card → POST /api/mail/send → SMTP', () => {
     const { ycOptoutAck, asked } = optoutHelper(true);
     const out = await makeDispatch(pageApi(tok(SENDER), seen), ycOptoutAck)(request, { 'Idempotency-Key': draft.draft_id });
     expect(out).toMatchObject({ status: 'success', mailbox_id: 1 });
-    expect(asked).toHaveLength(1);
-    expect(seen.map((c) => c.body.acknowledge_optout === true)).toEqual([false, true]);
+    expect(asked).toHaveLength(0);
+    expect(seen.map((c) => c.body.acknowledge_optout === true)).toEqual([false]);
     expect(mockSendMail).toHaveBeenCalledTimes(1);
     const audit = world.W.T.admin_audit_log.filter((a) => a.tool === 'mail_send');
-    expect(audit.map((a) => a.status)).toEqual(['refused_opted_out', 'sent']);
-    expect(JSON.stringify(audit[1].details)).toContain('"acknowledged_optout":[1309]');
+    expect(audit.map((a) => a.status)).toEqual(['sent']);
   });
 
   test('SMTP receives exactly the subject and body the card showed; the key replays, one sendMail', async () => {

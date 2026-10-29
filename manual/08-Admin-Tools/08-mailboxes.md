@@ -453,15 +453,10 @@ anyone who may send from at least one box.
   sent — anything under **Sent**, automation emails included — goes to that
   email's recipients. Switching between Reply and Reply all keeps what you
   wrote.
-- **Opted-out recipients.** If a recipient's address is marked
-  *opted out* on the contact (the SMS / email opt-out on that phone or email
-  row), Send stops and asks first: the message names who opted out, and **OK**
-  sends anyway, **Cancel** sends nothing and keeps what you wrote. Send anyway
-  only when they asked for this message — a client who opted out can still get
-  a reply they requested. The override is recorded (IT can see who confirmed
-  it). Automations never get this choice: they skip an opted-out recipient
-  ([error policies](../03-YisraFlow/08-error-policies.md)), and so does Ask
-  YisraCase.
+- **Opted-out recipients.** Email sent here is never held up by an opt-out:
+  an email opt-out ("No marketing email" on the contact) covers marketing mail
+  only, and mail from Comms is not marketing (YisraMail, Oct 2026). Texts are
+  different — see the Phone section below.
 - **Subject** is "Re: …" on a reply. Changing it is allowed; YisraCase still
   keeps the reply in the original conversation (Gmail may show it as a new
   one).
@@ -664,14 +659,13 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   reason in plain words — see [The Communications tab → Texts that didn't
   arrive](../01-YisraCase-overview/16-communications-tab.md#texts-that-didnt-arrive).
 - **Opted-out recipients.** If a recipient's number is marked
-  *opted out* on the contact (the SMS / email opt-out on that phone or email
-  row), Send stops and asks first: the message names who opted out, and **OK**
+  *SMS opted out* on the contact, Send stops and asks first: the message names who opted out, and **OK**
   sends anyway, **Cancel** sends nothing and keeps what you wrote. Send anyway
   only when they asked for this message — a client who opted out can still get
   a reply they requested. The override is recorded (IT can see who confirmed
-  it). Automations never get this choice: they skip an opted-out recipient
-  ([error policies](../03-YisraFlow/08-error-policies.md)), and so does Ask
-  YisraCase.
+  it). Automations never get this choice: they skip an opted-out number
+  ([error policies](../03-YisraFlow/08-error-policies.md)). Ask YisraCase's
+  text card asks you the same question ([Ask YisraCase](../05-Subsystems/17-ask-yisracase.md)).
 - **Recordings, voicemails, pictures and files** come from the comms
   archive: a call has **Listen** (and **Transcript** once transcribed), a
   voicemail shows on the call it was left on, and a text shows its pictures

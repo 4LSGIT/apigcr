@@ -25,7 +25,7 @@ POST /api/campaigns
         job_executor.js → campaignService.executeSend()
                 │
                 ├─ Check campaign status (bail if canceled)
-                ├─ Check the destination's opt-out (its phone / email row)
+                ├─ Check the destination's consent (SMS: opted out of texts; email: of marketing)
                 ├─ Resolve {{placeholders}} via resolverService
                 ├─ Send via phoneService or emailService
                 ├─ Record result in campaign_results
@@ -96,12 +96,15 @@ Reusable uploaded images for email campaigns.
 | `uploaded_by` | tinyint | FK → users |
 | `created_at` | datetime | |
 
-### Opt-out — the destination row's flag
+### Opt-out — the destination's consent
 
-Consent is `contact_phones.sms_optout` / `contact_emails.email_optout` on the
-ACTIVE row holding the number or address the campaign sends to
-(`services/optoutService.js`). It is the only consent flag: the contact record
-itself carries none.
+Consent belongs to the number or address the campaign sends to, read through
+`services/optoutService.js` (the destination's consent state, plus the
+`sms_optout` / `email_optout` flag on its ACTIVE row while that flag is still
+kept in step). An SMS campaign skips a number opted out of texts; an email
+campaign skips an address opted out of marketing email ("No marketing email"
+on the contact) — campaigns are treated as marketing until they gain a send
+class (YisraMail C1).
 
 ---
 
@@ -209,7 +212,7 @@ When `/process-jobs` picks up a `campaign_send` job, `job_executor.js` delegates
 1. **Load campaign** — get type, sender, subject, body
 2. **Check status** — if `canceled`, record as `skipped`, return
 3. **Load contact** — get phone/email
-4. **Check opt-out** — the destination's active phone / email row opted out → record as `skipped` (`sms_optout` / `email_optout`)
+4. **Check opt-out** — `optoutService.findOptedOut` (SMS: scope `all`; email: `klass: 'marketing'`) → record as `skipped` (`sms_optout` / `email_optout`)
 5. **Check channel info** — missing phone for SMS or email for email → record as `failed`
 6. **Resolve placeholders** — `resolverService.resolve()` with `refs: { contacts: { contact_id } }`
 7. **Send** — `phoneService.sendSms()` or `emailService.sendEmail()` (handles text↔html auto-conversion)

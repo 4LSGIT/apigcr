@@ -32,6 +32,7 @@ const path = require('path');
 
 const REPO = path.join(__dirname, '..');
 const { normalizeActionDraft } = require(path.join(REPO, 'services', 'assistantService'));
+const { answerOptout } = require('./helpers/optoutFake');
 const html = fs.readFileSync(path.join(REPO, 'public', 'assistant.html'), 'utf8');
 
 function fnSrc(src, name) {
@@ -103,8 +104,14 @@ function fakeDb(over = {}) {
       // Forward destination classification + the opt-out lookup.
       if (/FROM phone_lines WHERE phone_number = \? AND active = 1\)/.test(s)) return [[{ n: ['2485592400', '2486213656'].includes(params[0]) ? 1 : 0 }]];
       if (/FROM email_credentials WHERE email = \?\)/.test(s)) return [[{ n: params[1] === 'shoshana@staff.example' ? 1 : 0 }]];
-      if (/FROM contact_phones r LEFT JOIN contacts/.test(s)) return [(over.optedOut || []).includes(params[0][0]) ? [{ row_id: 1, contact_id: 9, destination: params[0][0], contact_name: 'Pat' }] : []];
-      if (/FROM contact_emails r LEFT JOIN contacts/.test(s)) return [(over.optedOut || []).includes(params[0][0]) ? [{ row_id: 1, contact_id: 9, destination: params[0][0], contact_name: 'Pat' }] : []];
+      // optoutService's reads (tests/helpers/optoutFake.js): each over.optedOut
+      // value is an active row of contact 9 carrying the opt-out flag.
+      const opted = over.optedOut || [];
+      const consent = answerOptout(s, params, {
+        phones: opted.filter((v) => /^\d{10}$/.test(v)).map((phone, i) => ({ id: i + 1, contact_id: 9, phone, sms_optout: 1 })),
+        emails: opted.filter((v) => v.includes('@')).map((email, i) => ({ id: i + 1, contact_id: 9, email, email_optout: 1 })),
+        contacts: [{ contact_id: 9, contact_name: 'Pat' }] });
+      if (consent) return consent;
       if (/FROM email_credentials WHERE email = \?/.test(s)) return [params[0] === 'automations@4lsg.com' ? [{ email: 'automations@4lsg.com', from_name: 'Automations' }] : []];
       if (/FROM phone_lines WHERE phone_number = \?/.test(s)) return [params[0] === '2486213656' ? [{ phone_number: '2486213656', display_name: 'Main' }] : []];
       if (/SELECT id, name FROM credentials/.test(s)) return [[{ id: 3, name: 'Clio OAuth' }]];
@@ -253,12 +260,13 @@ describe('forwards (Fred, 2026-10-27): forward_as_email / forward_as_sms as inge
     expect(sms.actions[0].summary).toMatch(/to 2485592400 \(firm \/ staff\) \(forward_as_sms, from Main \(2486213656\)\)/);
   });
 
-  test('an outside destination is allowed but called out; an opted-out one is refused (the function refuses it at send time)', async () => {
+  test('an outside destination is allowed but called out; an opted-out NUMBER is refused (the function refuses it at send time); an email opt-out is marketing-only (D18)', async () => {
     const out = await normalizeActionDraft(fakeDb(), create(fwd('forward_as_email', { ...EMAIL, to: "'pat@gmail.com'" })), []);
     expect(out.actions[0].summary).toMatch(/pat@gmail\.com — OUTSIDE THE FIRM/);
     expect(out.actions[0].notes.join(' ')).toMatch(/every matching client message will be sent to someone outside the firm/);
+    // D18: the forward function never refuses an email opt-out, so authoring doesn't either.
     await expect(normalizeActionDraft(fakeDb({ optedOut: ['pat@gmail.com'] }), create(fwd('forward_as_email', { ...EMAIL, to: "'pat@gmail.com'" })), []))
-      .rejects.toThrow(/has opted out of email/);
+      .resolves.toMatchObject({ actions: [{ config: { function_name: 'forward_as_email' } }] });
     await expect(normalizeActionDraft(fakeDb({ optedOut: ['3135550100'] }), create(fwd('forward_as_sms', { ...SMS, to: "'313-555-0100'" })), []))
       .rejects.toThrow(/has opted out of texts/);
   });
@@ -314,9 +322,9 @@ describe('forwards (Fred, 2026-10-27): forward_as_email / forward_as_sms as inge
       expect(text.notes).toHaveLength(1);
     });
 
-    test('an opted-out literal destination is refused at authoring, shaped like the forward refusal', async () => {
+    test('an opted-out literal NUMBER is refused at authoring, shaped like the forward refusal; an email opt-out is not (D18)', async () => {
       await expect(normalizeActionDraft(fakeDb({ optedOut: ['pat@gmail.com'] }), create(send('send_email', { to: "'pat@gmail.com'" })), []))
-        .rejects.toThrow(/send destination pat@gmail\.com has opted out of email — automation sends refuse it, so this send could never be delivered/);
+        .resolves.toMatchObject({ actions: [{ config: { function_name: 'send_email' } }] });
       await expect(normalizeActionDraft(fakeDb({ optedOut: ['3135550100'] }), create(send('send_sms', { to: "'313-555-0100'" })), []))
         .rejects.toThrow(/send destination 3135550100 has opted out of texts/);
     });

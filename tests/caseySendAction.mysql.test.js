@@ -2,8 +2,8 @@
 //
 /**
  * Ask Casey A14 on REAL MySQL: every statement the direct-send normalizer
- * issues — the row consent read (contact_*s.*_optout, tinyint), the
- * subrecord reloads, resolverService's contacts⋈cases JOIN for placeholders,
+ * issues — the consent read (optoutService, YisraMail P1: the row's tinyint
+ * cache flag OR comm_consent_state, plus the version), the subrecord reloads, resolverService's contacts⋈cases JOIN for placeholders,
  * the case-link predicate, the explicit-grant read, and the channel-access
  * SQL it reaches through mailboxService / phoneCommsService /
  * mailboxSendService. Nothing is mocked; nothing can send (the normalizer
@@ -12,8 +12,9 @@
  * ── GATED ON YC_TEST_MYSQL_URL — SKIPPED OTHERWISE ──────────────────────────
  *   YC_TEST_MYSQL_URL=mysql://root@127.0.0.1:3361/yc_a14send_test npx jest tests/caseySendAction.mysql.test.js --runInBand
  * The database name must end in _test; this suite DROPS and recreates the
- * tables below in it, cloned line-by-line from ref/database.sql. Never point
- * it at port 3306 (the production proxy).
+ * tables below in it, cloned line-by-line from ref/database.sql, plus the P1
+ * consent tables from their migration file (tests/helpers/consentSchema.js).
+ * Never point it at port 3306 (the production proxy).
  */
 'use strict';
 
@@ -22,6 +23,7 @@ const path = require('path');
 const mysql = require('mysql2/promise');
 
 const { normalizeActionDraft } = require('../services/assistantService');
+const { buildConsentTables } = require('./helpers/consentSchema');
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const d = URL_ ? describe : describe.skip;
@@ -80,6 +82,7 @@ d('A14 direct sends: the normalizer\'s SQL on real MySQL', () => {
     const { creates, alters } = schemaFor(TABLES);
     for (const sql of creates) await q(sql);
     for (const sql of alters) await q(sql);
+    await buildConsentTables(q);
 
     await q(`INSERT INTO users (user, username, user_name, user_fname, user_lname, user_initials, user_auth, user_type, roles)
              VALUES (22, 'rena', 'Rena', 'R', 'G', 'RG', 'authorized', 1, 'staff'), (6, 'it', 'Fred', 'F', 'R', 'FR', 'authorized', 1, 'it,admin,su')`);
@@ -113,16 +116,31 @@ d('A14 direct sends: the normalizer\'s SQL on real MySQL', () => {
     expect((await norm(sms({ message: 'SSN {{contacts.contact_ssn}}' }))).ssn_warning).toBe(true);
   });
 
-  test('consent: the row\'s tinyint opt-out is read on the engine, per channel, into recipient.opted_out (ruling 17)', async () => {
-    await expect(norm(sms())).resolves.toMatchObject({ recipient: { opted_out: false } });
+  test('consent: the row\'s tinyint cache flag is read on the engine, per channel, into recipient.opted_out (ruling 17); email is marketing-only (D18)', async () => {
+    await expect(norm(sms())).resolves.toMatchObject({ recipient: { opted_out: false, consent_version: '0' } });
     await q('UPDATE contact_phones SET sms_optout = 1 WHERE id = 12');
     await expect(norm(sms())).resolves.toMatchObject({ kind: 'sms.send.v1', recipient: { opted_out: true } });
     await expect(norm(email())).resolves.toMatchObject({ recipient: { opted_out: false } });
     await q('UPDATE contact_phones SET sms_optout = 0 WHERE id = 12');
     await q('UPDATE contact_emails SET email_optout = 1 WHERE id = 13');
-    await expect(norm(email())).resolves.toMatchObject({ kind: 'email.send.v1', recipient: { opted_out: true } });
+    // D18: an email opt-out covers marketing only — a direct email is operational.
+    await expect(norm(email())).resolves.toMatchObject({ kind: 'email.send.v1', recipient: { opted_out: false } });
     await expect(norm(sms())).resolves.toMatchObject({ kind: 'sms.send.v1', recipient: { opted_out: false } });
     await q('UPDATE contact_emails SET email_optout = 0 WHERE id = 13');
+  });
+
+  test('consent (YisraMail P1): the number\'s comm_consent_state row alone marks the draft and stamps consent_version; an email state moves only the version', async () => {
+    await q(`INSERT INTO comm_consent_state (channel, destination, scope, state, occurred_at, last_event_id, updated_at) VALUES
+             ('sms', '3135550001', 'all', 'opted_out', '2026-10-01 10:00:00.000', 41, NOW(3)),
+             ('email', 'pat@example.com', 'marketing', 'opted_out', '2026-10-01 10:00:00.000', 7, NOW(3))`);
+    try {
+      await expect(norm(sms())).resolves.toMatchObject({ recipient: { phone_id: 12, opted_out: true, consent_version: '41' } });
+      await expect(norm(email())).resolves.toMatchObject({ recipient: { email_id: 13, opted_out: false, consent_version: '7' } });
+      await q("UPDATE comm_consent_state SET state = 'opted_in', last_event_id = 42 WHERE channel = 'sms'");
+      await expect(norm(sms())).resolves.toMatchObject({ recipient: { opted_out: false, consent_version: '42' } });
+    } finally {
+      await q('DELETE FROM comm_consent_state');
+    }
   });
 
   test('an ended row and an unlinked case refuse', async () => {

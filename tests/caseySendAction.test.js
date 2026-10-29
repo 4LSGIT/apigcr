@@ -18,10 +18,13 @@
  * WHAT IS PINNED (mutation-checked — the A14 report lists each mutation):
  *   recipient  only a row an evidence row names by BOTH contact_id and
  *              phone_id/email_id; reloaded; on that contact; active.
- *   consent    the row's sms_optout/email_optout is RECORDED, per channel, as
- *              recipient.opted_out (the only consent flag — ruling
- *              2026-10-27); an opted-out recipient is proposed, not refused
- *              (ruling 17: "casey is like the user").
+ *   consent    read through optoutService as the send route reads it
+ *              (YisraMail P1): an SMS opt-out — the row's cache flag OR the
+ *              number's consent state — is RECORDED as recipient.opted_out;
+ *              an email opt-out is marketing-only (D18) and never marks a
+ *              direct email. recipient.consent_version moves with ANY consent
+ *              change for the destination. An opted-out recipient is
+ *              proposed, not refused (ruling 17: "casey is like the user").
  *   body       placeholders resolve strictly against the recipient (+ a cited,
  *              linked case); an unresolved one refuses; braces never survive;
  *              the card carries the RESOLVED text, trimmed exactly as the
@@ -115,6 +118,15 @@ describe('sms.send.v1', () => {
     await expect(norm(sms(), emailOpt)).resolves.toMatchObject({ kind: 'sms.send.v1', recipient: { opted_out: false } });
   });
 
+  test('YisraMail P1: the number\'s consent STATE marks the draft even when the row flag is 0, and stamps consent_version', async () => {
+    expect(await norm(sms())).toMatchObject({ recipient: { opted_out: false, consent_version: '0' } });
+    const stateOpt = makeDb({ consent_states: [{ channel: 'sms', destination: '3135550001', scope: 'all', state: 'opted_out', last_event_id: 41 }] });
+    expect(await norm(sms(), stateOpt)).toMatchObject({ recipient: { phone_id: 12, opted_out: true, consent_version: '41' } });
+    // An opt-IN state still moves the version (a re-consent invalidates a stale card) but marks nothing.
+    const optIn = makeDb({ consent_states: [{ channel: 'sms', destination: '3135550001', scope: 'all', state: 'opted_in', last_event_id: 42 }] });
+    expect(await norm(sms(), optIn)).toMatchObject({ recipient: { opted_out: false, consent_version: '42' } });
+  });
+
   test('the model cannot pre-acknowledge: acknowledge_optout / opted_out in the proposal are unsupported fields', async () => {
     const rowOpt = makeDb(); rowOpt.T.contact_phones[0].sms_optout = 1;
     await expect(norm(sms({ acknowledge_optout: true }), rowOpt)).rejects.toThrow(/unsupported fields: acknowledge_optout/);
@@ -196,9 +208,11 @@ describe('email.send.v1', () => {
     await expect(norm(email({ case_id: 'bad id!' }))).rejects.toThrow(/case_id is invalid/);
   });
 
-  test('consent: the row\'s email_optout is recorded on the draft; an SMS opt-out does not mark an email', async () => {
+  test('consent (D18): an email opt-out is marketing-only — neither the row flag nor the state marks a direct email; the version still moves', async () => {
     const rowOpt = makeDb(); rowOpt.T.contact_emails[0].email_optout = 1;
-    await expect(norm(email(), rowOpt)).resolves.toMatchObject({ kind: 'email.send.v1', recipient: { email_id: 13, opted_out: true } });
+    await expect(norm(email(), rowOpt)).resolves.toMatchObject({ kind: 'email.send.v1', recipient: { email_id: 13, opted_out: false, consent_version: '0' } });
+    const stateOpt = makeDb({ consent_states: [{ channel: 'email', destination: 'pat@example.com', scope: 'marketing', state: 'opted_out', last_event_id: 7 }] });
+    await expect(norm(email(), stateOpt)).resolves.toMatchObject({ recipient: { opted_out: false, consent_version: '7' } });
     const smsOpt = makeDb(); smsOpt.T.contact_phones[0].sms_optout = 1;
     await expect(norm(email(), smsOpt)).resolves.toMatchObject({ kind: 'email.send.v1', recipient: { opted_out: false } });
   });

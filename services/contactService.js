@@ -48,6 +48,13 @@
  *     the UI can offer a transfer-confirmation modal. Same opt-in via
  *     ?force=true; one flag covers all conflicts in the payload.
  *
+ * CONSENT (YisraMail P1, ref/YISRAMAIL_DESIGN.md §4.4): sms_optout /
+ * email_optout are a CACHE of the destination's consent state
+ * (comm_consent_state) for one release. Every row these paths create takes its
+ * flag FROM that state (a transfer or a re-added number keeps its opt-out);
+ * the aggregate reconciler's flag changes and end-and-replace carries go
+ * through optoutService.applyRowConsent on the SAME transaction connection.
+ *
  * Address propagation shape diverges from phone/email: the legacy form
  * sends partial updates (e.g. {contact_city: 'Detroit'} alone), and
  * addresses are EDITED IN PLACE on the primary-active row rather than
@@ -322,12 +329,15 @@ async function _propagatePhone(conn, contactId, newPhone, updatedBy, { force = f
     // number, else last holder's end_date + 1 day (donor just ended
     // yesterday on the collision path above → starts today).
     const startDate = await phoneSvc.resolveStartDate(conn, newPhone);
+    // Consent (P1): the new row's flag is the number's state — a transfer or a
+    // re-added number keeps its opt-out; the scalar path never records one.
+    const smsFlag = await require('./optoutService').cachedStateFlag(conn, 'sms', newPhone);
     try {
       await conn.query(
         `INSERT INTO contact_phones
-           (contact_id, phone, is_primary, start_date, created_by, updated_by)
-         VALUES (?, ?, 1, ?, ?, ?)`,
-        [cid, newPhone, startDate, updatedBy, updatedBy]
+           (contact_id, phone, is_primary, sms_optout, start_date, created_by, updated_by)
+         VALUES (?, ?, 1, ?, ?, ?, ?)`,
+        [cid, newPhone, smsFlag, startDate, updatedBy, updatedBy]
       );
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
@@ -474,12 +484,15 @@ async function _propagateEmail(conn, contactId, newEmail, updatedBy, { force = f
 
     // start_date resolved by the shared helper (see _propagatePhone).
     const startDate = await emailSvc.resolveStartDate(conn, newEmail);
+    // Consent (P1): the new row's flag is the address's marketing state — see
+    // _propagatePhone.
+    const emailFlag = await require('./optoutService').cachedStateFlag(conn, 'email', newEmail);
     try {
       await conn.query(
         `INSERT INTO contact_emails
-           (contact_id, email, is_primary, start_date, created_by, updated_by)
-         VALUES (?, ?, 1, ?, ?, ?)`,
-        [cid, newEmail, startDate, updatedBy, updatedBy]
+           (contact_id, email, is_primary, email_optout, start_date, created_by, updated_by)
+         VALUES (?, ?, 1, ?, ?, ?, ?)`,
+        [cid, newEmail, emailFlag, startDate, updatedBy, updatedBy]
       );
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
@@ -1000,6 +1013,7 @@ async function _planPhones(conn, contactId, incoming, force) {
  */
 async function _applyPhonePlan(conn, contactId, plan, userId) {
   const cid = parseInt(contactId, 10);
+  const optout = require('./optoutService'); // lazy (convention): optoutService loads the row services
 
   // ── Step A: donor-ends ──
   // Slice 3.5: cross-contact transfer — donor ends YESTERDAY to guarantee
@@ -1070,11 +1084,16 @@ async function _applyPhonePlan(conn, contactId, plan, userId) {
       rowIsPrimary = old.is_primary;
     }
     const newPhoneValue = 'phone' in inc ? inc.phone : old.phone;
+    // Consent (P1): the correction carries the old row's opt-out as today
+    // (recorded below as a row_replace event for the NEW number); a 0 never
+    // clears the new number's own opted-out state. The old number keeps its own.
+    const smsIntent  = 'sms_optout' in inc ? inc.sms_optout : old.sms_optout;
+    const smsState   = await optout.cachedStateFlag(conn, 'sms', newPhoneValue);
     const row = {
       phone:       newPhoneValue,
       label:       'label'       in inc ? inc.label       : old.label,
       is_primary:  rowIsPrimary,
-      sms_optout:  'sms_optout'  in inc ? inc.sms_optout  : old.sms_optout,
+      sms_optout:  smsIntent || smsState ? 1 : 0,
       mms_capable: 'mms_capable' in inc ? inc.mms_capable : old.mms_capable,
       verified:    'verified'    in inc ? inc.verified    : old.verified,
       // Fresh window for the new value: NULL for a never-held number,
@@ -1085,8 +1104,9 @@ async function _applyPhonePlan(conn, contactId, plan, userId) {
                      inc.start_date != null ? inc.start_date : null),
       notes:       'notes'       in inc ? inc.notes       : old.notes,
     };
+    let newRowId;
     try {
-      await conn.query(
+      const [ins] = await conn.query(
         `INSERT INTO contact_phones
            (contact_id, phone, label, is_primary,
             sms_optout, mms_capable, verified,
@@ -1096,6 +1116,7 @@ async function _applyPhonePlan(conn, contactId, plan, userId) {
          row.sms_optout, row.mms_capable, row.verified,
          row.start_date, row.notes, userId, userId]
       );
+      newRowId = ins.insertId;
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
         throw new Error(
@@ -1105,6 +1126,16 @@ async function _applyPhonePlan(conn, contactId, plan, userId) {
       }
       throw err;
     }
+    // Carried = the old row's opt-out reached the new row without the caller
+    // changing it (omitted, or echoed back as 1); a 0→1 tick is staff's own.
+    const smsCarried = Number(old.sms_optout) === 1 && (!('sms_optout' in inc) || inc.sms_optout === 1);
+    await optout.applyRowConsent(conn, {
+      channel: 'sms', kind: 'create', destination: newPhoneValue, intent: smsIntent, stateFlag: smsState,
+      source: smsCarried ? 'row_replace' : 'staff', contactId: cid, actorUserId: userId,
+      evidence: smsCarried
+        ? { from_destination: old.phone, from_row_id: er.oldId, row_id: newRowId, via: 'aggregate' }
+        : { row_id: newRowId, via: 'aggregate' },
+    });
   }
 
   // ── Step F: new inserts ──
@@ -1115,17 +1146,20 @@ async function _applyPhonePlan(conn, contactId, plan, userId) {
     // create route's behavior).
     const isPrimary = v.is_primary === undefined ? 0 : v.is_primary;
     const startDate = await phoneSvc.resolveStartDate(conn, v.phone, v.start_date);
+    const smsState = await optout.cachedStateFlag(conn, 'sms', v.phone); // consent (P1): born from the state
+    let newRowId;
     try {
-      await conn.query(
+      const [ins] = await conn.query(
         `INSERT INTO contact_phones
            (contact_id, phone, label, is_primary,
             sms_optout, mms_capable, verified,
             start_date, notes, created_by, updated_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [cid, v.phone, v.label, isPrimary,
-         v.sms_optout, v.mms_capable, v.verified,
+         v.sms_optout || smsState ? 1 : 0, v.mms_capable, v.verified,
          startDate, v.notes, userId, userId]
       );
+      newRowId = ins.insertId;
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
         throw new Error(
@@ -1135,6 +1169,10 @@ async function _applyPhonePlan(conn, contactId, plan, userId) {
       }
       throw err;
     }
+    await optout.applyRowConsent(conn, {
+      channel: 'sms', kind: 'create', destination: v.phone, intent: v.sms_optout, stateFlag: smsState,
+      contactId: cid, actorUserId: userId, evidence: { row_id: newRowId, via: 'aggregate' },
+    });
   }
 
   // ── Step G: updates of kept rows ──
@@ -1180,6 +1218,13 @@ async function _applyPhonePlan(conn, contactId, plan, userId) {
         );
       }
       throw err;
+    }
+    // Consent (P1): a kept (active) row's flag change is one event; no change, none.
+    if ('sms_optout' in v) {
+      await optout.applyRowConsent(conn, {
+        channel: 'sms', kind: 'update', destination: upd.current.phone, intent: v.sms_optout, before: upd.current.sms_optout,
+        contactId: cid, actorUserId: userId, evidence: { row_id: upd.id, via: 'aggregate' },
+      });
     }
   }
 
@@ -1409,6 +1454,7 @@ async function _planEmails(conn, contactId, incoming, force) {
  */
 async function _applyEmailPlan(conn, contactId, plan, userId) {
   const cid = parseInt(contactId, 10);
+  const optout = require('./optoutService'); // lazy (convention): optoutService loads the row services
 
   // A: donor-ends
   // Slice 3.5: cross-contact transfer — donor ends YESTERDAY to guarantee
@@ -1475,11 +1521,14 @@ async function _applyEmailPlan(conn, contactId, plan, userId) {
       rowIsPrimary = old.is_primary;
     }
     const newEmailValue = 'email' in inc ? inc.email : old.email;
+    // Consent (P1) — see the phone step E note.
+    const emailIntent = 'email_optout' in inc ? inc.email_optout : old.email_optout;
+    const emailState  = await optout.cachedStateFlag(conn, 'email', newEmailValue);
     const row = {
       email:        newEmailValue,
       label:        'label'        in inc ? inc.label        : old.label,
       is_primary:   rowIsPrimary,
-      email_optout: 'email_optout' in inc ? inc.email_optout : old.email_optout,
+      email_optout: emailIntent || emailState ? 1 : 0,
       verified:     'verified'     in inc ? inc.verified     : old.verified,
       // Fresh window for the new value (see phone step E note).
       start_date:   await emailSvc.resolveStartDate(
@@ -1487,8 +1536,9 @@ async function _applyEmailPlan(conn, contactId, plan, userId) {
                       inc.start_date != null ? inc.start_date : null),
       notes:        'notes'        in inc ? inc.notes        : old.notes,
     };
+    let newRowId;
     try {
-      await conn.query(
+      const [ins] = await conn.query(
         `INSERT INTO contact_emails
            (contact_id, email, label, is_primary,
             email_optout, verified,
@@ -1498,6 +1548,7 @@ async function _applyEmailPlan(conn, contactId, plan, userId) {
          row.email_optout, row.verified,
          row.start_date, row.notes, userId, userId]
       );
+      newRowId = ins.insertId;
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
         throw new Error(
@@ -1507,6 +1558,14 @@ async function _applyEmailPlan(conn, contactId, plan, userId) {
       }
       throw err;
     }
+    const emailCarried = Number(old.email_optout) === 1 && (!('email_optout' in inc) || inc.email_optout === 1);
+    await optout.applyRowConsent(conn, {
+      channel: 'email', kind: 'create', destination: newEmailValue, intent: emailIntent, stateFlag: emailState,
+      source: emailCarried ? 'row_replace' : 'staff', contactId: cid, actorUserId: userId,
+      evidence: emailCarried
+        ? { from_destination: old.email, from_row_id: er.oldId, row_id: newRowId, via: 'aggregate' }
+        : { row_id: newRowId, via: 'aggregate' },
+    });
   }
 
   // F: inserts
@@ -1514,17 +1573,20 @@ async function _applyEmailPlan(conn, contactId, plan, userId) {
     const v = ins.validated;
     const isPrimary = v.is_primary === undefined ? 0 : v.is_primary;
     const startDate = await emailSvc.resolveStartDate(conn, v.email, v.start_date);
+    const emailState = await optout.cachedStateFlag(conn, 'email', v.email); // consent (P1): born from the state
+    let newRowId;
     try {
-      await conn.query(
+      const [ins] = await conn.query(
         `INSERT INTO contact_emails
            (contact_id, email, label, is_primary,
             email_optout, verified,
             start_date, notes, created_by, updated_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [cid, v.email, v.label, isPrimary,
-         v.email_optout, v.verified,
+         v.email_optout || emailState ? 1 : 0, v.verified,
          startDate, v.notes, userId, userId]
       );
+      newRowId = ins.insertId;
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
         throw new Error(
@@ -1534,6 +1596,10 @@ async function _applyEmailPlan(conn, contactId, plan, userId) {
       }
       throw err;
     }
+    await optout.applyRowConsent(conn, {
+      channel: 'email', kind: 'create', destination: v.email, intent: v.email_optout, stateFlag: emailState,
+      contactId: cid, actorUserId: userId, evidence: { row_id: newRowId, via: 'aggregate' },
+    });
   }
 
   // G: updates
@@ -1578,6 +1644,13 @@ async function _applyEmailPlan(conn, contactId, plan, userId) {
         );
       }
       throw err;
+    }
+    // Consent (P1): a kept (active) row's flag change is one event; no change, none.
+    if ('email_optout' in v) {
+      await optout.applyRowConsent(conn, {
+        channel: 'email', kind: 'update', destination: upd.current.email, intent: v.email_optout, before: upd.current.email_optout,
+        contactId: cid, actorUserId: userId, evidence: { row_id: upd.id, via: 'aggregate' },
+      });
     }
   }
 
@@ -2421,11 +2494,13 @@ async function createContact(db, {
       // overlap-validated) or auto-resolved (NULL for a never-held
       // number, else last holder's end + 1 day).
       const phoneStart = await phoneSvc.resolveStartDate(conn, normalizedPhone, phone_start_date);
+      // Consent (P1): born from the number's state — the intake transfer keeps an opt-out.
+      const smsFlag = await require('./optoutService').cachedStateFlag(conn, 'sms', normalizedPhone);
       await conn.query(
         `INSERT INTO contact_phones
-           (contact_id, phone, is_primary, start_date, created_by, updated_by)
-         VALUES (?, ?, 1, ?, ?, ?)`,
-        [newId, normalizedPhone, phoneStart, userId, userId]
+           (contact_id, phone, is_primary, sms_optout, start_date, created_by, updated_by)
+         VALUES (?, ?, 1, ?, ?, ?, ?)`,
+        [newId, normalizedPhone, smsFlag, phoneStart, userId, userId]
       );
       await recomputePrimaryPhone(conn, newId);
     }
@@ -2454,11 +2529,13 @@ async function createContact(db, {
 
       // start_date: see the phone block above.
       const emailStart = await emailSvc.resolveStartDate(conn, normalizedEmail, email_start_date);
+      // Consent (P1): born from the address's marketing state.
+      const emailFlag = await require('./optoutService').cachedStateFlag(conn, 'email', normalizedEmail);
       await conn.query(
         `INSERT INTO contact_emails
-           (contact_id, email, is_primary, start_date, created_by, updated_by)
-         VALUES (?, ?, 1, ?, ?, ?)`,
-        [newId, normalizedEmail, emailStart, userId, userId]
+           (contact_id, email, is_primary, email_optout, start_date, created_by, updated_by)
+         VALUES (?, ?, 1, ?, ?, ?, ?)`,
+        [newId, normalizedEmail, emailFlag, emailStart, userId, userId]
       );
       await recomputePrimaryEmail(conn, newId);
     }

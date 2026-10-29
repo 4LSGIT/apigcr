@@ -927,14 +927,17 @@ describe('Send dialog', () => {
     expect(doc.getElementById('send-backdrop').classList.contains('open')).toBe(true);
   });
 
-  // Ruling 2026-10-27: a real send to an opted-out recipient is WARNED — the
+  // Ruling 2026-10-27: a real send to an opted-out NUMBER is WARNED — the
   // route's 409 opted_out becomes a confirm (public/js/optoutAck.js) and, on
   // OK, ONE resend carrying acknowledge_optout:true; Cancel sends nothing more.
   // The 409 body is the REAL optoutService.optoutGate's, over a world where
-  // pat@example.com's active row is opted out — not a shape from memory.
+  // (313) 555-0199's active row is opted out — not a shape from memory. (An
+  // email opt-out is marketing-only since YisraMail D18 and never gates this
+  // send: the same world's opted-out address goes straight through.)
   const optoutWorld = {
     async query(sql, p) {
-      const r = answerOptout(sql, p, { emails: [{ id: 3, contact_id: 900, email: 'pat@example.com', end_date: null, email_optout: 1 }], contacts: [{ contact_id: 900, contact_name: 'Pat One' }] });
+      const r = answerOptout(sql, p, { phones: [{ id: 4, contact_id: 900, phone: '3135550199', end_date: null, sms_optout: 1 }],
+        emails: [{ id: 3, contact_id: 900, email: 'pat@example.com', end_date: null, email_optout: 1 }], contacts: [{ contact_id: 900, contact_name: 'Pat One' }] });
       if (r) return r;
       throw new Error(`unscripted: ${sql}`);
     },
@@ -952,24 +955,38 @@ describe('Send dialog', () => {
       const asked = [];
       window.confirm = (t) => { asked.push(t); return answer; };
       doc.querySelector('#detail-region [data-act="send"]').click();
-      setValue(window, doc.getElementById('s-to'), 'pat@example.com');
+      pickSms(window, doc);
+      setValue(window, doc.getElementById('s-to'), '3135550199');
       doc.getElementById('send-preview').click();               // a dry run is never gated
       await tick(window);
       expect(asked).toEqual([]);
       doc.getElementById('send-go').click();
       await tick(window);
-      expect(asked).toEqual([expect.stringMatching(/^Pat One pat@example\.com \(contact #900\) has opted out of email\..*\n\nSend anyway\?$/s)]);
+      expect(asked).toEqual([expect.stringMatching(/^Pat One \(313\) 555-0199 \(contact #900\) has opted out of texts\..*\n\nSend anyway\?$/s)]);
       if (answer) {
-        expect(sendCalls).toEqual([{ channel: 'email', to: 'pat@example.com', dry_run: true }, { channel: 'email', to: 'pat@example.com' }, { channel: 'email', to: 'pat@example.com', acknowledge_optout: true }]);
+        expect(sendCalls).toEqual([{ channel: 'sms', to: '3135550199', dry_run: true }, { channel: 'sms', to: '3135550199' }, { channel: 'sms', to: '3135550199', acknowledge_optout: true }]);
         expect(doc.getElementById('send-backdrop').classList.contains('open')).toBe(false);
-        expect(doc.getElementById('toast').textContent).toBe('Sent by email to pat@example.com — logged on the link');
+        expect(doc.getElementById('toast').textContent).toBe('Sent by SMS to 3135550199 — logged on the link');
       } else {
-        expect(sendCalls).toEqual([{ channel: 'email', to: 'pat@example.com', dry_run: true }, { channel: 'email', to: 'pat@example.com' }]);
+        expect(sendCalls).toEqual([{ channel: 'sms', to: '3135550199', dry_run: true }, { channel: 'sms', to: '3135550199' }]);
         expect(doc.getElementById('send-err').textContent).toBe('Cancelled — nothing was sent (the recipient has opted out).');
         expect(doc.getElementById('send-backdrop').classList.contains('open')).toBe(true);
       }
     });
   }
+
+  test('D18: the same world\'s marketing-opted-out ADDRESS is never gated — one send, no confirm', async () => {
+    const { window, doc, sendCalls } = await boot2({ cta: fullRow({ id: 1 }), sendImpl: GATED });
+    const asked = [];
+    window.confirm = (t) => { asked.push(t); return true; };
+    doc.querySelector('#detail-region [data-act="send"]').click();
+    setValue(window, doc.getElementById('s-to'), 'pat@example.com');
+    doc.getElementById('send-go').click();
+    await tick(window);
+    expect(asked).toEqual([]);
+    expect(sendCalls).toEqual([{ channel: 'email', to: 'pat@example.com' }]);
+    expect(doc.getElementById('toast').textContent).toBe('Sent by email to pat@example.com — logged on the link');
+  });
 
   test('from the receipt: Send… offers the custom template used at mint (it is stored nowhere else)', async () => {
     const sent = [];

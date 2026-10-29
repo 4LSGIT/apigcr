@@ -301,8 +301,10 @@ router.post('/api/mail/send', ...guard, async function sendMail(req, res) {
       });
     }
     // Opt-out WARNS a staff sender (ruling 2026-10-27): 409 code 'opted_out'
-    // when any To/Cc/Bcc address's active row is opted out, until the body
-    // carries acknowledge_optout:true. Before the limiter and the idempotency
+    // when any To/Cc/Bcc address is opted out, until the body carries
+    // acknowledge_optout:true. Mail-hub mail is operational and an email
+    // opt-out is marketing-only (YisraMail D18), so today this never refuses;
+    // the gate stays for C7. Before the limiter and the idempotency
     // claim, so the confirm-and-resend is one send under the same key. The
     // body is validated here too (pure — a bad body is the same 400 it would
     // be below). Ask Casey's send card goes through the same confirm

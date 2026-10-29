@@ -138,4 +138,18 @@ async function record(db, userId, draftId, token, result) {
   }
   return { outcome: 'applied', replayed: false };
 }
-module.exports = { issue, claim, record, read, KINDS, STRING_RECEIPT_FIELDS };
+// Attribution only, never a permission: is `draftId` one of this user's
+// IN-FLIGHT claims of one of `kinds`? A canonical route the card is calling
+// uses it to stamp its write as Casey's (consent evidence, YisraMail P1:
+// { via: 'casey', draft_id }). Anything that does not check out — no marker,
+// a bad id, another user's or a settled claim, another kind — is null and the
+// write is attributed to the staff user alone, exactly as without a marker.
+async function attribution(db, userId, draftId, kinds) {
+  if (draftId == null || draftId === '') return null;
+  let uid;
+  try { pool(db); uid = actor(userId); id(draftId); } catch (_) { return null; }
+  const [[row]] = await db.query(`SELECT kind FROM assistant_action_ledger
+    WHERE user_id = ? AND draft_id = ? AND status = 'in_flight'`, [uid, draftId]);
+  return row && kinds.includes(row.kind) ? { via: 'casey', draft_id: draftId } : null;
+}
+module.exports = { issue, claim, record, read, attribution, KINDS, STRING_RECEIPT_FIELDS };

@@ -32,9 +32,13 @@ const { resolve }    = require('./resolverService');
 const phoneService = require('./phoneService');
 const emailService = require('./emailService');
 const { localToUTC } = require('./timezoneService');
-// Consent is the destination ROW's flag (contact_phones.sms_optout /
-// contact_emails.email_optout) — the only consent flag (ruling 2026-10-27).
+// Consent is read ONLY through optoutService (YisraMail P1: the destination's
+// consent state, dual-read with the row's cache flag). Campaign EMAIL asks as
+// klass 'marketing' (scope 'marketing') until C1 gives campaigns a class, so a
+// campaign still skips an email opt-out exactly as before; campaign SMS stays
+// operational (scope 'all' — every STOP), D19.
 const optout = require('./optoutService');
+const EMAIL_CONSENT = Object.freeze({ klass: 'marketing' });
 
 // ─────────────────────────────────────────────────────────────
 // CONTACT SELECTION
@@ -65,13 +69,13 @@ async function getFilteredContacts(db, filters = {}) {
 
   // ── Build query ──
 
-  // The opt-out flags are the destination row's (optoutService's predicate,
-  // the same one executeSend re-checks per contact at send time).
+  // optoutService's predicates — the same scopes executeSend re-checks per
+  // contact at send time (email as marketing, SMS operational).
   const selects = [
     'c.contact_id', 'c.contact_name', 'c.contact_phone', 'c.contact_email',
     'c.contact_tags',
     `${optout.smsOptedOutSql('c.contact_phone')} AS sms_opted_out`,
-    `${optout.emailOptedOutSql('c.contact_email')} AS email_opted_out`
+    `${optout.emailOptedOutSql('c.contact_email', EMAIL_CONSENT)} AS email_opted_out`
   ];
   const joins  = [];
   const wheres = [];
@@ -591,7 +595,7 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
       return { failed: true, reason: 'contact_not_found' };
     }
 
-    // ── 4. Check opt-out — the destination row's flag, re-read at send time ──
+    // ── 4. Check opt-out — optoutService, re-read at send time (email as marketing) ──
 
     if (campaign.type === 'sms' && (await optout.findOptedOut(db, 'sms', contact.contact_phone)).length) {
       await recordResult(db, campaignId, contactId, 'skipped', null, { reason: 'sms_optout' });
@@ -599,7 +603,7 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
       return { skipped: true, reason: 'sms_optout' };
     }
 
-    if (campaign.type === 'email' && (await optout.findOptedOut(db, 'email', contact.contact_email)).length) {
+    if (campaign.type === 'email' && (await optout.findOptedOut(db, 'email', contact.contact_email, EMAIL_CONSENT)).length) {
       await recordResult(db, campaignId, contactId, 'skipped', null, { reason: 'email_optout' });
       await checkCompletion(db, campaignId);
       return { skipped: true, reason: 'email_optout' };

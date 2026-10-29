@@ -1,48 +1,89 @@
 // services/optoutService.js
 //
 /**
- * Recipient opt-out — the ONE reader of messaging consent (ruling 2026-10-27).
+ * Recipient consent — the ONE reader of messaging consent, and its ONE writer
+ * (YisraMail P1, ref/YISRAMAIL_DESIGN.md §4.1–§4.4; ruling 2026-10-27 for the
+ * read rule, D2 (a) for storage, D18/D19 for what an opt-out stops).
  *
- * Consent lives on the ROW staff edit: contact_phones.sms_optout and
- * contact_emails.email_optout — the only consent flags. The contact row has
- * none (its old pair was dropped: scripts/optoutContactColumnsDrop.js).
+ * STORAGE (D2 (a)). Consent belongs to a DESTINATION — a normalized address or
+ * 10-digit number, per channel — not to a contact or a contact row:
+ *   comm_consent_events  the ledger: every change, with who/when/how. Never
+ *                        updated or deleted. UNIQUE (source, provider_event_id)
+ *                        makes a redelivery / re-run a no-op.
+ *   comm_consent_state   what sends read: one row per (channel, destination,
+ *                        scope) ever touched, pointing at the event that set it.
+ *   comm_topics          the marketing topics (config-as-data).
+ * The row flags contact_phones.sms_optout / contact_emails.email_optout are a
+ * CACHE of the destination's state for one release (dual-read, dual-write),
+ * then drop. Each caches ONE scope — CACHE_SCOPE below.
  *
- * A send knows a destination, not a contact, so the destination maps to rows:
- *   - SMS / MMS: the number normalized the way contactPhoneService stores it
- *     (digits only, a leading US 1 dropped, exactly 10 digits — anything else
- *     cannot match a char(10) row and is never opted out).
+ * SCOPES. SMS: 'all' (STOP / staff / provider). Email: 'marketing' (every
+ * marketing topic) — there is NO email 'all'. A topic_key is a narrower scope.
+ *
+ * WHAT A SEND CHECKS (D18 — opt-outs gate promotion, not operational mail;
+ * D19 — an SMS STOP still stops every automated text):
+ *   klass 'operational' (default)  sms → scope 'all'      email → NOTHING
+ *   klass 'marketing'              sms → 'all' + topic    email → 'marketing' + topic
+ * An opt_in topic additionally needs state(topic) = 'opted_in'; an unknown,
+ * inactive or other-channel topic blocks every destination (fail closed).
+ * Dual-read during the cache release: a destination is opted out when the
+ * state says so for a checked scope OR its ACTIVE row's cache flag is 1 and
+ * the flag's scope is checked (fail closed).
+ *
+ * A send knows a destination, not a contact:
+ *   - SMS / MMS: normalized as contactPhoneService stores it (digits only, a
+ *     leading US 1 dropped, exactly 10 digits — anything else is never opted
+ *     out).
  *   - Email: every address-shaped token in the destination (a comma list,
- *     "Name <a@b>" forms, an array), trimmed + lowercased; the column's
- *     general_ci collation makes the compare case-insensitive anyway.
- * The rule: the destination is opted out when its ACTIVE row
- * (end_date IS NULL) carries the flag. uk_phone_active / uk_email_active make
- * that at most one row per number/address across all contacts, so there is
- * no "shared number" ambiguity to resolve; ended rows are history (the
- * number's current row is staff's current knowledge of consent).
+ *     "Name <a@b>" forms, an array), trimmed + lowercased.
  *
- * Who refuses and who warns (the ruling):
- *   - AUTOMATION refuses — assertNotOptedOut throws an OptOutRefusal
- *     (code RECIPIENT_OPTED_OUT). The workflow engine records the step
- *     'skipped' and the sequence engine logs 'skipped'/recipient_opted_out;
- *     neither is 'failed', so the error sweep never pages for expected
- *     behaviour (CLAUDE.md alert convention). Any other caller sees a throw —
- *     fail closed.
+ * Who refuses and who warns (the 2026-10-27 read rule, now reached only by
+ * SMS and by marketing sends):
+ *   - AUTOMATION refuses — assertNotOptedOut throws an OptOutRefusal (code
+ *     RECIPIENT_OPTED_OUT). The workflow engine records the step 'skipped',
+ *     the sequence engine logs 'skipped' / recipient_opted_out; never
+ *     'failed', so the error sweep stays quiet. Any other caller sees a
+ *     throw — fail closed.
  *   - STAFF sends warn — the send routes answer 409 code 'opted_out' unless
- *     the body carries acknowledge_optout:true (public/js/optoutAck.js turns
- *     the 409 into a confirm and the resend). A caller that does not handle
- *     the 409 simply does not send.
+ *     the body carries acknowledge_optout:true (public/js/optoutAck.js). An
+ *     API-key caller is automation: 422, no acknowledgement.
+ * Operational email is never blocked, so its gates (send_email, forwards,
+ * request_decision, the mail hub, CTA sends, /internal/email) are no-ops that
+ * stay in place for C7 to pass klass:'marketing' through.
+ *
+ * WRITES go through recordConsent(conn, …) ONLY, on the caller's connection
+ * (never its own transaction). Callers without one wrap it in
+ * withTransaction(fn, { retries: 1 }) (pure DB).
  */
 
 'use strict';
 
+// contactPhoneService / contactEmailService require THIS module lazily (inside
+// their writers), so these module-scope requires form no load cycle.
 const { normalizePhone } = require('./contactPhoneService');
+const { normalizeEmail } = require('./contactEmailService');
 
 const OPTED_OUT_CODE = 'RECIPIENT_OPTED_OUT';
 const CHANNELS = Object.freeze({ sms: 'sms', mms: 'sms', email: 'email' });
+const KLASSES = Object.freeze(['operational', 'marketing']);
+
+/** The scope each row flag caches: sms_optout = SMS 'all', email_optout = email 'marketing' (D18). */
+const CACHE_SCOPE = Object.freeze({ sms: 'all', email: 'marketing' });
+const CACHE = Object.freeze({
+  sms:   Object.freeze({ table: 'contact_phones', col: 'phone', flag: 'sms_optout' }),
+  email: Object.freeze({ table: 'contact_emails', col: 'email', flag: 'email_optout' }),
+});
+
+/** comm_consent_events.source vocabulary (design §4.2). */
+const SOURCES = Object.freeze(['staff', 'unsub_page', 'one_click', 'pref_page', 'sms_keyword', 'sms_review',
+  'provider_optout', 'provider_bounce', 'provider_complaint', 'import', 'web_form', 'migration', 'row_replace']);
+const ACTIONS = Object.freeze(['opt_out', 'opt_in']);
+/** A topic key is interpolated into SQL (*OptedOutSql) — this shape is what keeps that safe. */
+const TOPIC_RE = /^[a-z0-9_]{1,40}$/;
 
 class OptOutRefusal extends Error {
-  constructor(channel, recipients) {
-    super(refusalMessage(channel, recipients));
+  constructor(channel, recipients, klass = 'operational') {
+    super(refusalMessage(channel, recipients, klass));
     this.name = 'OptOutRefusal';
     this.code = OPTED_OUT_CODE;
     this.channel = channel;
@@ -67,7 +108,7 @@ function flat(dest) {
   return [String(dest)];
 }
 
-/** Destination → the 10-digit keys a contact_phones row can hold. */
+/** Destination → the 10-digit keys a contact_phones row / consent row can hold. */
 function phoneKeys(dest) {
   const out = new Set();
   for (const s of flat(dest)) {
@@ -75,6 +116,12 @@ function phoneKeys(dest) {
     if (/^\d{10}$/.test(ten)) out.add(ten);
   }
   return [...out];
+}
+
+/** One address → its stored form (contactEmailService.normalizeEmail), or '' when it is not address-shaped. */
+function emailKey(s) {
+  const t = normalizeEmail(s);
+  return t.length >= 3 && t.length <= 254 && t.indexOf('@') > 0 && t.indexOf('@') < t.length - 1 && !/\s/.test(t) ? t : '';
 }
 
 /**
@@ -86,8 +133,8 @@ function emailKeys(dest) {
   const out = new Set();
   for (const s of flat(dest)) {
     for (const tok of s.split(/[\s,;<>"'()[\]]+/)) {
-      const t = tok.trim().toLowerCase();
-      if (t.length >= 3 && t.length <= 254 && t.indexOf('@') > 0 && t.indexOf('@') < t.length - 1) out.add(t);
+      const t = emailKey(tok);
+      if (t) out.add(t);
     }
   }
   return [...out];
@@ -97,6 +144,17 @@ function keysFor(channel, dest) {
   return channelOf(channel) === 'sms' ? phoneKeys(dest) : emailKeys(dest);
 }
 
+/** ONE destination → its stored key, or '' when it cannot be one (never opted out, never recorded). */
+function normalizeDestination(channel, dest) {
+  const c = channelOf(channel);
+  if (dest == null || typeof dest === 'object') return '';
+  if (c === 'sms') {
+    const ten = normalizePhone(dest);
+    return /^\d{10}$/.test(ten) ? ten : '';
+  }
+  return emailKey(dest);
+}
+
 function fmtPhone(ten) {
   return /^\d{10}$/.test(ten) ? `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}` : ten;
 }
@@ -104,63 +162,160 @@ function fmtPhone(ten) {
 function who(r) {
   const name = r.contact_name ? `${r.contact_name} ` : '';
   const dest = r.channel === 'sms' ? fmtPhone(r.destination) : r.destination;
-  return `${name}${dest} (contact #${r.contact_id})`;
+  // A destination no row holds (consent survives its row) has no contact to name.
+  return r.contact_id == null ? `${name}${dest}` : `${name}${dest} (contact #${r.contact_id})`;
 }
 
-function refusalMessage(channel, recipients) {
+function noun(c, klass) {
+  return c === 'sms' ? 'texts' : (klass === 'marketing' ? 'marketing email' : 'email');
+}
+
+function refusalMessage(channel, recipients, klass = 'operational') {
   const c = channelOf(channel);
   const list = (recipients || []).map(who).join(', ');
-  return `Not sent — ${list} ${recipients && recipients.length > 1 ? 'have' : 'has'} opted out of ${c === 'sms' ? 'texts' : 'email'}. ` +
+  return `Not sent — ${list} ${recipients && recipients.length > 1 ? 'have' : 'has'} opted out of ${noun(c, klass)}. ` +
     'Automation never messages an opted-out recipient; clear the opt-out on the contact\'s ' +
     `${c === 'sms' ? 'phone' : 'email'} row if they opt back in.`;
 }
 
 /**
- * The SQL predicate, for callers that filter in SQL (campaign preview). `col`
- * is a trusted column expression naming the destination (never user input).
+ * The send's options → { klass, topic }. Throws on anything else — a typo'd
+ * klass must not read as 'operational' (which, for email, checks nothing).
  */
-function smsOptedOutSql(col) {
-  return `EXISTS (SELECT 1 FROM contact_phones oo_p WHERE oo_p.phone = ${col} AND oo_p.end_date IS NULL AND oo_p.sms_optout = 1)`;
-}
-function emailOptedOutSql(col) {
-  return `EXISTS (SELECT 1 FROM contact_emails oo_e WHERE oo_e.email = ${col} AND oo_e.end_date IS NULL AND oo_e.email_optout = 1)`;
+function readOpts(c, opts) {
+  const o = opts == null ? {} : opts;
+  if (typeof o !== 'object') throw new Error('optoutService: options must be an object');
+  const klass = o.klass == null ? 'operational' : o.klass;
+  if (!KLASSES.includes(klass)) throw new Error(`optoutService: unknown klass "${klass}"`);
+  const topic = o.topic == null || o.topic === '' ? null : o.topic;
+  if (topic !== null) {
+    if (typeof topic !== 'string' || !TOPIC_RE.test(topic)) throw new Error(`optoutService: invalid topic "${topic}"`);
+    if (klass !== 'marketing') throw new Error('optoutService: a topic applies to marketing sends only');
+  }
+  return { klass, topic };
 }
 
-// The two statements findOptedOut issues — exported so in-memory test worlds
-// can answer them by identity (their predicates are held to real MySQL in
-// tests/optout.mysql.test.js).
+/** The scopes whose 'opted_out' blocks this send, or null when nothing can (operational email, D18). */
+function blockingScopes(c, klass, topic) {
+  if (klass === 'operational') return c === 'sms' ? ['all'] : null;
+  const scopes = c === 'sms' ? ['all'] : ['marketing'];
+  if (topic) scopes.push(topic);
+  return scopes;
+}
+
+function sqlStr(s) {
+  // Only ever called on values this module validated (channel, scope names, TOPIC_RE).
+  if (!/^[a-z0-9_]+$/.test(s)) throw new Error(`optoutService: refusing to interpolate "${s}"`);
+  return `'${s}'`;
+}
+
+/**
+ * The SQL predicate, for callers that filter in SQL (campaign preview). `col`
+ * is a trusted column expression naming the destination (never user input).
+ * Same scope rules and dual-read as findOptedOut — tests/consentCore.mysql
+ * holds the two to agreement on the engine.
+ */
+function optedOutSql(channel, col, opts) {
+  const c = channelOf(channel);
+  const { klass, topic } = readOpts(c, opts);
+  const scopes = blockingScopes(c, klass, topic);
+  if (!scopes) return '(0 = 1)';
+  const t = CACHE[c];
+  const parts = [];
+  if (scopes.includes(CACHE_SCOPE[c])) {
+    parts.push(`EXISTS (SELECT 1 FROM ${t.table} oo_r WHERE oo_r.${t.col} = ${col} AND oo_r.end_date IS NULL AND oo_r.${t.flag} = 1)`);
+  }
+  parts.push(`EXISTS (SELECT 1 FROM comm_consent_state oo_s WHERE oo_s.channel = ${sqlStr(c)} AND oo_s.destination = ${col}` +
+    ` AND oo_s.scope IN (${scopes.map(sqlStr).join(', ')}) AND oo_s.state = 'opted_out')`);
+  if (topic) {
+    parts.push(`NOT EXISTS (SELECT 1 FROM comm_topics oo_t WHERE oo_t.topic_key = ${sqlStr(topic)} AND oo_t.channel = ${sqlStr(c)} AND oo_t.active = 1)`);
+    parts.push(`(EXISTS (SELECT 1 FROM comm_topics oo_t2 WHERE oo_t2.topic_key = ${sqlStr(topic)} AND oo_t2.consent_model = 'opt_in')` +
+      ` AND NOT EXISTS (SELECT 1 FROM comm_consent_state oo_i WHERE oo_i.channel = ${sqlStr(c)} AND oo_i.destination = ${col}` +
+      ` AND oo_i.scope = ${sqlStr(topic)} AND oo_i.state = 'opted_in'))`);
+  }
+  return `(${parts.join(' OR ')})`;
+}
+function smsOptedOutSql(col, opts) { return optedOutSql('sms', col, opts); }
+function emailOptedOutSql(col, opts) { return optedOutSql('email', col, opts); }
+
+// The statements findOptedOut / consentVersions issue — exported so in-memory
+// test worlds can answer them by identity (tests/helpers/optoutFake.js; their
+// predicates are held to real MySQL in tests/consentCore.mysql.test.js).
 const FIND_SQL = Object.freeze({
-  sms: 'SELECT r.id AS row_id, r.contact_id, r.phone AS destination, ct.contact_name'
+  // The destination's ACTIVE row (at most one: uk_phone_active / uk_email_active) and its cache flag.
+  sms: 'SELECT r.id AS row_id, r.contact_id, r.phone AS destination, ct.contact_name, r.sms_optout AS cache_optout'
     + ' FROM contact_phones r LEFT JOIN contacts ct ON ct.contact_id = r.contact_id'
-    + ' WHERE r.phone IN (?) AND r.end_date IS NULL AND r.sms_optout = 1 ORDER BY r.id',
-  email: 'SELECT r.id AS row_id, r.contact_id, r.email AS destination, ct.contact_name'
+    + ' WHERE r.phone IN (?) AND r.end_date IS NULL ORDER BY r.id',
+  email: 'SELECT r.id AS row_id, r.contact_id, r.email AS destination, ct.contact_name, r.email_optout AS cache_optout'
     + ' FROM contact_emails r LEFT JOIN contacts ct ON ct.contact_id = r.contact_id'
-    + ' WHERE r.email IN (?) AND r.end_date IS NULL AND r.email_optout = 1 ORDER BY r.id',
+    + ' WHERE r.email IN (?) AND r.end_date IS NULL ORDER BY r.id',
+  state: 'SELECT destination, scope, state FROM comm_consent_state'
+    + ' WHERE channel = ? AND destination IN (?) AND scope IN (?)',
+  topic: 'SELECT channel, consent_model, active FROM comm_topics WHERE topic_key = ?',
+  version: 'SELECT destination, MAX(last_event_id) AS version FROM comm_consent_state'
+    + ' WHERE channel = ? AND destination IN (?) GROUP BY destination',
 });
 
 /**
- * The opted-out recipients among `dest` — [] when none (or when nothing in
- * `dest` can map to a row). Each: { channel, destination, contact_id,
- * contact_name, row_id }.
+ * The opted-out recipients among `dest` for this send — [] when none, when
+ * nothing in `dest` can be a destination, or for an operational email (D18).
+ * Each: { channel, destination, contact_id, contact_name, row_id } —
+ * contact_id / row_id / contact_name from the destination's ACTIVE row, null
+ * when no row holds it. Rows first (by row id), then row-less destinations.
  */
-async function findOptedOut(db, channel, dest) {
+async function findOptedOut(db, channel, dest, opts = {}) {
   const c = channelOf(channel);
+  const { klass, topic } = readOpts(c, opts);
+  const scopes = blockingScopes(c, klass, topic);
+  if (!scopes) return [];
   const keys = keysFor(c, dest);
   if (!keys.length) return [];
-  const [rows] = await db.query(c === 'sms' ? FIND_SQL.sms : FIND_SQL.email, [keys]);
-  return rows.map((r) => ({
-    channel: c,
-    destination: c === 'sms' ? String(r.destination) : String(r.destination).toLowerCase(),
-    contact_id: Number(r.contact_id),
-    contact_name: r.contact_name == null ? null : String(r.contact_name),
-    row_id: Number(r.row_id),
-  }));
+
+  let blockAll = false;
+  let needOptIn = false;
+  if (topic) {
+    const [[t]] = await db.query(FIND_SQL.topic, [topic]);
+    if (!t || Number(t.active) !== 1 || String(t.channel) !== c) blockAll = true;
+    else needOptIn = String(t.consent_model) === 'opt_in';
+  }
+
+  const [rows] = await db.query(FIND_SQL[c], [keys]);
+  const [states] = await db.query(FIND_SQL.state, [c, keys, scopes]);
+
+  const entries = new Map(keys.map((k, i) => [k, { i, row: null, out: blockAll, optedIn: false }]));
+  const keyOf = (v) => (c === 'sms' ? String(v) : String(v).toLowerCase());
+  for (const r of rows || []) {
+    const e = entries.get(keyOf(r.destination));
+    if (e && !e.row) e.row = r;
+  }
+  for (const s of states || []) {
+    const e = entries.get(keyOf(s.destination));
+    if (!e) continue;
+    if (s.state === 'opted_out' && scopes.includes(String(s.scope))) e.out = true;
+    if (topic && String(s.scope) === topic && s.state === 'opted_in') e.optedIn = true;
+  }
+  const hits = [];
+  for (const [k, e] of entries) {
+    if (e.row && Number(e.row.cache_optout) === 1 && scopes.includes(CACHE_SCOPE[c])) e.out = true;
+    if (needOptIn && !e.optedIn) e.out = true;
+    if (!e.out) continue;
+    hits.push({
+      i: e.i,
+      channel: c,
+      destination: e.row ? keyOf(e.row.destination) : k,
+      contact_id: e.row ? Number(e.row.contact_id) : null,
+      contact_name: e.row && e.row.contact_name != null ? String(e.row.contact_name) : null,
+      row_id: e.row ? Number(e.row.row_id) : null,
+    });
+  }
+  hits.sort((a, b) => (a.row_id == null) - (b.row_id == null) || (a.row_id || 0) - (b.row_id || 0) || a.i - b.i);
+  return hits.map(({ i, ...h }) => h);
 }
 
 /** Automation's gate: throws an OptOutRefusal when any recipient opted out. */
-async function assertNotOptedOut(db, channel, dest) {
-  const hits = await findOptedOut(db, channel, dest);
-  if (hits.length) throw new OptOutRefusal(channelOf(channel), hits);
+async function assertNotOptedOut(db, channel, dest, opts = {}) {
+  const hits = await findOptedOut(db, channel, dest, opts);
+  if (hits.length) throw new OptOutRefusal(channelOf(channel), hits, readOpts(channelOf(channel), opts).klass);
 }
 
 /**
@@ -173,12 +328,14 @@ async function assertNotOptedOut(db, channel, dest) {
  * merely truthy): 409 code 'opted_out' otherwise. An API-key caller is
  * automation: it may never acknowledge, and gets 422.
  */
-async function optoutGate(db, { channel, dest, acknowledged, automation = false }) {
-  const hits = await findOptedOut(db, channel, dest);
+async function optoutGate(db, { channel, dest, acknowledged, automation = false, klass, topic }) {
+  const opts = { klass, topic };
+  const hits = await findOptedOut(db, channel, dest, opts);
   if (!hits.length) return { refusal: null, overridden: [] };
   const c = channelOf(channel);
+  const k = readOpts(c, opts).klass;
   if (automation) {
-    return { overridden: [], refusal: { status: 422, body: { status: 'error', code: 'opted_out', message: refusalMessage(c, hits), opted_out: hits } } };
+    return { overridden: [], refusal: { status: 422, body: { status: 'error', code: 'opted_out', message: refusalMessage(c, hits, k), opted_out: hits } } };
   }
   if (acknowledged === true) return { refusal: null, overridden: hits };
   const list = hits.map(who).join(', ');
@@ -187,7 +344,7 @@ async function optoutGate(db, { channel, dest, acknowledged, automation = false 
     body: {
       status: 'error',
       code: 'opted_out',
-      message: `${list} ${hits.length > 1 ? 'have' : 'has'} opted out of ${c === 'sms' ? 'texts' : 'email'}. ` +
+      message: `${list} ${hits.length > 1 ? 'have' : 'has'} opted out of ${noun(c, k)}. ` +
         'Send anyway only if they asked for this message (an opted-out client can still get a reply they requested).',
       opted_out: hits,
       acknowledge_with: 'acknowledge_optout',
@@ -195,9 +352,200 @@ async function optoutGate(db, { channel, dest, acknowledged, automation = false 
   } };
 }
 
+/**
+ * Each destination's consent as an OPERATIONAL send reads it, plus a version
+ * stamp that moves on every consent change for it (any scope) →
+ * Map(key → { opted_out, version }). The contact phone/email list routes and
+ * Casey's send proposal both read this, so the card's click-time re-check
+ * compares the server's own answer, not a row flag.
+ */
+async function consentVersions(db, channel, dests) {
+  const c = channelOf(channel);
+  const keys = keysFor(c, dests);
+  const out = new Map(keys.map((k) => [k, { opted_out: false, version: '0' }]));
+  if (!keys.length) return out;
+  for (const h of await findOptedOut(db, c, keys)) {
+    const e = out.get(h.destination);
+    if (e) e.opted_out = true;
+  }
+  const [rows] = await db.query(FIND_SQL.version, [c, keys]);
+  for (const r of rows || []) {
+    const e = out.get(c === 'sms' ? String(r.destination) : String(r.destination).toLowerCase());
+    if (e && r.version != null) e.version = String(r.version);
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Writes
+// ─────────────────────────────────────────────────────────────
+
+const EVENT_INSERT_SQL = 'INSERT INTO comm_consent_events'
+  + ' (channel, destination, scope, action, source, provider_event_id, occurred_at, contact_id, line_number, send_ref, evidence, actor_user_id)'
+  + ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+// Seed the state row; on an existing one, a no-op that takes its row lock.
+const STATE_SEED_SQL = 'INSERT INTO comm_consent_state (channel, destination, scope, state, occurred_at, last_event_id, updated_at)'
+  + ' VALUES (?, ?, ?, ?, ?, ?, NOW(3)) ON DUPLICATE KEY UPDATE scope = scope';
+// The guard: the event wins only when (occurred_at, id) is newer than the stored pair.
+const STATE_GUARD_SQL = 'UPDATE comm_consent_state SET state = ?, occurred_at = ?, last_event_id = ?, updated_at = NOW(3)'
+  + ' WHERE channel = ? AND destination = ? AND scope = ?'
+  + ' AND (occurred_at < ? OR (occurred_at = ? AND last_event_id < ?))';
+const STATE_READ_SQL = 'SELECT state, last_event_id FROM comm_consent_state WHERE channel = ? AND destination = ? AND scope = ?';
+// Align the destination's ACTIVE row's cache flag with a state value (only when it differs).
+const CACHE_SYNC_SQL = Object.freeze({
+  sms:   'UPDATE contact_phones SET sms_optout = ? WHERE phone = ? AND end_date IS NULL AND sms_optout <> ?',
+  email: 'UPDATE contact_emails SET email_optout = ? WHERE email = ? AND end_date IS NULL AND email_optout <> ?',
+});
+// Exported, like FIND_SQL, so an in-memory world can answer the writer by identity.
+const WRITE_SQL = Object.freeze({
+  event: EVENT_INSERT_SQL, seed: STATE_SEED_SQL, guard: STATE_GUARD_SQL, read: STATE_READ_SQL, cache: CACHE_SYNC_SQL,
+});
+
+function badArg(msg) { return new Error(`recordConsent: ${msg}`); }
+
+function optId(v, what) {
+  if (v == null || v === '' || v === 0 || v === '0') return null;
+  const n = Number(v);
+  if (!Number.isSafeInteger(n) || n < 1) throw badArg(`${what} must be a positive integer`);
+  return n;
+}
+
+function optText(v, max, what) {
+  if (v == null || v === '') return null;
+  const s = String(v);
+  if (s.length > max) throw badArg(`${what} exceeds ${max} characters`);
+  return s;
+}
+
+async function assertScope(conn, c, scope) {
+  if (scope === 'all') { if (c !== 'sms') throw badArg('scope "all" exists for SMS only (D18: an email opt-out is marketing-only)'); return; }
+  if (scope === 'marketing') { if (c !== 'email') throw badArg('scope "marketing" is an email scope (SMS marketing is the sms_marketing topic)'); return; }
+  if (typeof scope !== 'string' || !TOPIC_RE.test(scope)) throw badArg(`invalid scope "${scope}"`);
+  const [[t]] = await conn.query(FIND_SQL.topic, [scope]);
+  if (!t || String(t.channel) !== c) throw badArg(`scope "${scope}" is not a ${c} topic`);
+}
+
+/**
+ * Record one consent change — the ONLY writer of comm_consent_events /
+ * comm_consent_state. Runs on the CALLER's connection, inside the caller's
+ * transaction (it never opens its own: a consent write inside a contact save
+ * must commit or roll back with it).
+ *   1. INSERT the event; a duplicate (source, provider_event_id) is a no-op
+ *      ({ duplicate: true } — nothing else is touched).
+ *   2. Guarded upsert of the state row: this event wins only when
+ *      (occurred_at, id) is newer than the stored (occurred_at, last_event_id),
+ *      so racing writers or a replayed old event can't leave the state on the
+ *      older one.
+ *   3. When `scope` is the scope a row flag caches (SMS 'all', email
+ *      'marketing'), align the destination's ACTIVE row's flag with the
+ *      resulting state. A cache sync is never itself an event.
+ * → { event_id, duplicate, applied, state }
+ */
+async function recordConsent(conn, {
+  channel, destination, scope, action, source,
+  occurredAt = null, providerEventId = null, contactId = null, lineNumber = null,
+  sendRef = null, evidence = null, actorUserId = null,
+} = {}) {
+  if (!conn || typeof conn.query !== 'function') throw badArg('needs the caller\'s connection');
+  const c = channelOf(channel);
+  const dest = normalizeDestination(c, destination);
+  if (!dest) throw badArg(`"${destination}" is not a ${c === 'sms' ? '10-digit number' : 'valid address'}`);
+  if (!ACTIONS.includes(action)) throw badArg(`unknown action "${action}"`);
+  if (!SOURCES.includes(source)) throw badArg(`unknown source "${source}"`);
+  await assertScope(conn, c, scope);
+  const at = occurredAt == null ? new Date() : (occurredAt instanceof Date ? occurredAt : new Date(occurredAt));
+  if (Number.isNaN(at.getTime())) throw badArg(`invalid occurredAt "${occurredAt}"`);
+  const pid = optText(providerEventId, 128, 'providerEventId');
+  const line = lineNumber == null || lineNumber === '' ? null : normalizePhone(lineNumber);
+  if (line !== null && !/^\d{10}$/.test(line)) throw badArg('lineNumber must be a 10-digit number');
+  if (evidence != null && (typeof evidence !== 'object' || Array.isArray(evidence))) throw badArg('evidence must be an object');
+
+  let eventId;
+  try {
+    const [ins] = await conn.query(EVENT_INSERT_SQL, [
+      c, dest, scope, action, source, pid, at,
+      optId(contactId, 'contactId'), line, optText(sendRef, 64, 'sendRef'),
+      evidence == null ? null : JSON.stringify(evidence), optId(actorUserId, 'actorUserId'),
+    ]);
+    eventId = Number(ins.insertId);
+  } catch (err) {
+    // InnoDB rolls back only the failed statement; the caller's transaction lives on.
+    if (err && err.code === 'ER_DUP_ENTRY' && /uk_source_event/.test(String(err.sqlMessage || err.message))) {
+      return { event_id: null, duplicate: true, applied: false, state: null };
+    }
+    throw err;
+  }
+  if (!Number.isSafeInteger(eventId) || eventId < 1) throw badArg('the event insert returned no id');
+
+  const st = action === 'opt_out' ? 'opted_out' : 'opted_in';
+  await conn.query(STATE_SEED_SQL, [c, dest, scope, st, at, eventId]);
+  await conn.query(STATE_GUARD_SQL, [st, at, eventId, c, dest, scope, at, at, eventId]);
+  const [[now]] = await conn.query(STATE_READ_SQL, [c, dest, scope]);
+  if (!now) throw badArg('the state row is missing after its upsert');
+
+  if (scope === CACHE_SCOPE[c]) {
+    const val = now.state === 'opted_out' ? 1 : 0;
+    await conn.query(CACHE_SYNC_SQL[c], [val, dest, val]);
+  }
+  return { event_id: eventId, duplicate: false, applied: Number(now.last_event_id) === eventId, state: now.state };
+}
+
+/**
+ * The cache value a NEW active row for `destination` must carry: 1 when the
+ * destination's state for the flag's scope is 'opted_out', else 0. The
+ * re-consent guard reads this — a row is never born opted IN past the state.
+ */
+async function cachedStateFlag(conn, channel, destination) {
+  const c = channelOf(channel);
+  const dest = normalizeDestination(c, destination);
+  if (!dest) return 0;
+  const [[s]] = await conn.query(STATE_READ_SQL, [c, dest, CACHE_SCOPE[c]]);
+  return s && s.state === 'opted_out' ? 1 : 0;
+}
+
+/**
+ * Writer hook for a contact row's consent flag — every row writer calls this,
+ * on its own connection, AFTER its row write. Encodes the re-consent guard
+ * (design §4.4):
+ *   kind 'create'  — a new ACTIVE row (insert, transfer, replace, reactivation).
+ *                    `intent` is the flag the caller sent or the row carried
+ *                    over; `stateFlag` is cachedStateFlag() read BEFORE the
+ *                    insert (the cache the row was born with is
+ *                    max(intent, stateFlag)). intent 1 over a not-opted-out
+ *                    state is ONE opt_out event; nothing else records — a
+ *                    create never opts in.
+ *   kind 'update'  — an existing row's flag changed (`before` → `intent`)
+ *                    while the row was active before or after the write: ONE
+ *                    event in the direction of the change. No change, no event.
+ * → the recordConsent result, or null when nothing was recorded.
+ */
+async function applyRowConsent(conn, {
+  channel, kind, destination, intent, before = null, stateFlag = 0,
+  source = 'staff', contactId = null, actorUserId = null, evidence = null,
+}) {
+  const c = channelOf(channel);
+  const want = intent ? 1 : 0;
+  let action = null;
+  if (kind === 'create') {
+    if (want === 1 && !stateFlag) action = 'opt_out';
+  } else if (kind === 'update') {
+    if (before != null && want !== (before ? 1 : 0)) action = want === 1 ? 'opt_out' : 'opt_in';
+  } else {
+    throw new Error(`applyRowConsent: unknown kind "${kind}"`);
+  }
+  if (!action) return null;
+  return recordConsent(conn, {
+    channel: c, destination, scope: CACHE_SCOPE[c], action, source,
+    contactId, actorUserId, evidence,
+  });
+}
+
 module.exports = {
   OPTED_OUT_CODE,
   FIND_SQL,
+  WRITE_SQL,
+  CACHE_SCOPE,
+  SOURCES,
   OptOutRefusal,
   isOptOutRefusal,
   findOptedOut,
@@ -205,8 +553,13 @@ module.exports = {
   optoutGate,
   smsOptedOutSql,
   emailOptedOutSql,
+  consentVersions,
+  recordConsent,
+  cachedStateFlag,
+  applyRowConsent,
   // helpers (tests)
   phoneKeys,
   emailKeys,
+  normalizeDestination,
   refusalMessage,
 };

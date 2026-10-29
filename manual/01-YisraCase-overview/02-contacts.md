@@ -38,13 +38,21 @@ any number of rows in each. Every row carries:
   uses is *ended*, not deleted. History is preserved and an old message still
   links to the right person.
 
-Phones additionally carry their own `sms_optout` and `mms_capable`; emails their
-own `email_optout`. Those row flags ARE the contact's messaging consent: an
-opted-out number or address is skipped by every automation (workflows,
-sequences, campaigns, appointment / booking confirmations) and by Ask
-YisraCase, and a person sending to it from Comms, the Communications tab or
-the sending forms is asked to confirm first. Only the ACTIVE row counts — an
-ended row's flag is history.
+Phones additionally carry their own `sms_optout` ("SMS opted out") and
+`mms_capable`; emails their own `email_optout` ("No marketing email"). Consent
+belongs to the number or address itself, not to the row (YisraMail, Oct 2026):
+ticking or clearing the box records a dated, attributed consent change, and a
+number that moves to another contact — or comes back after being ended —
+keeps its opt-out. What each one stops:
+
+- **SMS opted out** stops every automated text (workflows, sequences,
+  campaigns, appointment / booking / manage-page confirmations); a person
+  texting it from Comms, the Communications tab, the sending forms or Ask
+  YisraCase is asked to confirm first.
+- **No marketing email** stops marketing email only (newsletters, marketing
+  campaigns). Case, appointment and other operational email still goes, with
+  no warning — the law that requires the opt-out (CAN-SPAM) covers commercial
+  mail only.
 
 Search reaches into these tables, so looking up an old number still finds the
 contact — including numbers that have been ended.

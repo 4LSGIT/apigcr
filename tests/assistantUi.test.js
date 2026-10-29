@@ -773,10 +773,16 @@ describe('Ask Casey UI wiring', () => {
     const { create } = apptFixture();
     const card = () => ({ action_draft: { draft_id: 'appt-conf', status: 'draft', ...create, confirm_sms: true, confirm_email: true,
       confirm_message: resolvedMsg, confirmation } });
-    const contactApi = ({ phone = '3135550100', smsOpt = 0, emailOpt = 0 } = {}) => jest.fn(async (path) => {
+    // The list routes' shape (routes/api.contactPhones.js / api.contactEmails.js):
+    // each active row carries consent = the server's read (YisraMail P1). An
+    // email opt-out is marketing-only (D18), so an email row's consent is never
+    // opted_out whatever its flag; a number can be opted out by its STATE alone.
+    const contactApi = ({ phone = '3135550100', smsOpt = 0, smsState = 0, emailOpt = 0 } = {}) => jest.fn(async (path) => {
       if (path === '/api/contacts/1309') return { contact: { contact_id: 1309, contact_phone: phone, contact_email: 'jane@example.com' } };
-      if (path === '/api/contacts/1309/phones') return { phones: [{ id: 1, phone, end_date: null, sms_optout: smsOpt }] };
-      if (path === '/api/contacts/1309/emails') return { emails: [{ id: 1, email: 'jane@example.com', end_date: null, email_optout: emailOpt }] };
+      if (path === '/api/contacts/1309/phones') return { phones: [{ id: 1, phone, end_date: null, sms_optout: smsOpt,
+        consent: { opted_out: !!(smsOpt || smsState), version: smsState ? '9' : '0' } }] };
+      if (path === '/api/contacts/1309/emails') return { emails: [{ id: 1, email: 'jane@example.com', end_date: null, email_optout: emailOpt,
+        consent: { opted_out: false, version: '0' } }] };
       if (path === '/api/appts') return { status: 'success', data: { appt_id: 90 } };
       throw new Error(`unexpected ${path}`);
     });
@@ -791,6 +797,17 @@ describe('Ask Casey UI wiring', () => {
     await actionSandbox({ P: P(), api: opted, render: jest.fn() }).executeActionDraft(m2);
     expect(m2.action_draft.refusal_error).toMatch(/opted out of texts since this card was prepared/);
     expect(opted.mock.calls.map((c) => c[0])).not.toContain('/api/appts');
+
+    // The re-check reads the server's consent, never the row flag: a number
+    // opted out by its consent STATE (flag still 0) refuses …
+    const stateOpted = contactApi({ smsState: 1 }); const m2b = card();
+    await actionSandbox({ P: P(), api: stateOpted, render: jest.fn() }).executeActionDraft(m2b);
+    expect(m2b.action_draft.refusal_error).toMatch(/opted out of texts since this card was prepared/);
+    expect(stateOpted.mock.calls.map((c) => c[0])).not.toContain('/api/appts');
+    // … and an address carrying the (marketing-only) email flag does not (D18).
+    const emailFlag = contactApi({ emailOpt: 1 }); const m2c = card();
+    await actionSandbox({ P: P(), api: emailFlag, render: jest.fn() }).executeActionDraft(m2c);
+    expect(m2c.action_draft).toMatchObject({ status: 'applied', result_appt_id: 90 });
 
     const ok = contactApi(); const p3 = P(); const m3 = card();
     await actionSandbox({ P: p3, api: ok, render: jest.fn() }).executeActionDraft(m3);
@@ -808,26 +825,30 @@ describe('Ask Casey UI wiring', () => {
   test('maps every contact subrecord action to one canonical route and exact allowlisted body', () => {
     const request = new Function(`${fnSrc(html, 'contactSubrecordCreateBody')};${fnSrc(html, 'contactSubrecordActionRequest')};return contactSubrecordActionRequest;`)(); // eslint-disable-line no-new-func
     const contact = { contact_id: 1309, label: 'Client' };
-    expect(request({ kind: 'contact.phone.create.v1', family: 'phone', contact, fields: { phone: '2485550100', label: 'Mobile', is_primary: true,
-      sms_optout: false, mms_capable: true, start_date: null, notes: '', verified: 1 } })).toEqual({ idempotent: true, path: '/api/contact-phones', method: 'POST', body: {
-      contact_id: 1309, phone: '2485550100', label: 'Mobile', is_primary: true, sms_optout: false, mms_capable: true, start_date: null, notes: '', expected_primary_id: null } });
-    expect(request({ kind: 'contact.email.create.v1', family: 'email', contact, fields: { email: 'client@example.com', label: 'Personal', is_primary: false,
-      email_optout: true, start_date: '2026-01-01', notes: 'n' } })).toEqual({ idempotent: true, path: '/api/contact-emails', method: 'POST', body: {
-      contact_id: 1309, email: 'client@example.com', label: 'Personal', is_primary: false, email_optout: true, start_date: '2026-01-01', notes: 'n' } });
-    expect(request({ kind: 'contact.address.create.v1', family: 'address', contact, fields: { address1: '1 Main', address2: '', city: 'Detroit', state: 'MI', zip: '48201',
-      country: 'US', label: 'Home', is_primary: true, start_date: null, notes: '' } })).toEqual({ idempotent: true, path: '/api/contact-addresses', method: 'POST', body: {
+    // Phone / email writes carry the card's draft_id as casey_draft_id — the
+    // route stamps the consent event { via: 'casey', draft_id } against the
+    // in-flight claim (YisraMail P1); an address write never carries it.
+    const D = '0e0e0e0e-0e0e-4e0e-8e0e-0e0e0e0e0e0e';
+    expect(request({ draft_id: D, kind: 'contact.phone.create.v1', family: 'phone', contact, fields: { phone: '2485550100', label: 'Mobile', is_primary: true,
+      sms_optout: false, mms_capable: true, start_date: null, notes: '', verified: 1 } })).toStrictEqual({ idempotent: true, path: '/api/contact-phones', method: 'POST', body: {
+      contact_id: 1309, phone: '2485550100', label: 'Mobile', is_primary: true, sms_optout: false, mms_capable: true, start_date: null, notes: '', expected_primary_id: null, casey_draft_id: D } });
+    expect(request({ draft_id: D, kind: 'contact.email.create.v1', family: 'email', contact, fields: { email: 'client@example.com', label: 'Personal', is_primary: false,
+      email_optout: true, start_date: '2026-01-01', notes: 'n' } })).toStrictEqual({ idempotent: true, path: '/api/contact-emails', method: 'POST', body: {
+      contact_id: 1309, email: 'client@example.com', label: 'Personal', is_primary: false, email_optout: true, start_date: '2026-01-01', notes: 'n', casey_draft_id: D } });
+    expect(request({ draft_id: D, kind: 'contact.address.create.v1', family: 'address', contact, fields: { address1: '1 Main', address2: '', city: 'Detroit', state: 'MI', zip: '48201',
+      country: 'US', label: 'Home', is_primary: true, start_date: null, notes: '' } })).toStrictEqual({ idempotent: true, path: '/api/contact-addresses', method: 'POST', body: {
       contact_id: 1309, address1: '1 Main', address2: '', city: 'Detroit', state: 'MI', zip: '48201', country: 'US', label: 'Home', is_primary: true, start_date: null, notes: '', expected_primary_id: null } });
     const target = { id: 21, expected_updated_at: '2026-10-20T10:00:00.000Z' };
-    expect(request({ kind: 'contact.phone.update.v1', family: 'phone', target, changes: { label: 'Work', sms_optout: true, ignored: 'x' } })).toEqual({
-      path: '/api/contact-phones/21', method: 'PATCH', body: { expected_updated_at: target.expected_updated_at, label: 'Work', sms_optout: true } });
-    expect(request({ kind: 'contact.email.update.v1', family: 'email', target, changes: { email_optout: true, notes: 'Stop' } })).toEqual({
-      path: '/api/contact-emails/21', method: 'PATCH', body: { expected_updated_at: target.expected_updated_at, email_optout: true, notes: 'Stop' } });
-    expect(request({ kind: 'contact.address.update.v1', family: 'address', target, demoted_primary: { id: 19 },
-      changes: { address1: '2 Main', city: 'Detroit', is_primary: true } })).toEqual({ path: '/api/contact-addresses/21', method: 'PATCH',
+    expect(request({ draft_id: D, kind: 'contact.phone.update.v1', family: 'phone', target, changes: { label: 'Work', sms_optout: true, ignored: 'x' } })).toStrictEqual({
+      path: '/api/contact-phones/21', method: 'PATCH', body: { expected_updated_at: target.expected_updated_at, label: 'Work', sms_optout: true, casey_draft_id: D } });
+    expect(request({ draft_id: D, kind: 'contact.email.update.v1', family: 'email', target, changes: { email_optout: true, notes: 'Stop' } })).toStrictEqual({
+      path: '/api/contact-emails/21', method: 'PATCH', body: { expected_updated_at: target.expected_updated_at, email_optout: true, notes: 'Stop', casey_draft_id: D } });
+    expect(request({ draft_id: D, kind: 'contact.address.update.v1', family: 'address', target, demoted_primary: { id: 19 },
+      changes: { address1: '2 Main', city: 'Detroit', is_primary: true } })).toStrictEqual({ path: '/api/contact-addresses/21', method: 'PATCH',
       body: { expected_updated_at: target.expected_updated_at, address1: '2 Main', city: 'Detroit', is_primary: true, expected_primary_id: 19 } });
-    for (const family of ['phone', 'email', 'address']) expect(request({ kind: `contact.${family}.end.v1`, family, target,
-      changes: { end_date: '2026-10-20', end_reason: 'No longer used' } })).toEqual({ path: `/api/contact-${family}${family === 'address' ? 'es' : 's'}/21`, method: 'PATCH',
-      body: { expected_updated_at: target.expected_updated_at, end_date: '2026-10-20', end_reason: 'No longer used' } });
+    for (const family of ['phone', 'email', 'address']) expect(request({ draft_id: D, kind: `contact.${family}.end.v1`, family, target,
+      changes: { end_date: '2026-10-20', end_reason: 'No longer used' } })).toStrictEqual({ path: `/api/contact-${family}${family === 'address' ? 'es' : 's'}/21`, method: 'PATCH',
+      body: { expected_updated_at: target.expected_updated_at, end_date: '2026-10-20', end_reason: 'No longer used', ...(family === 'address' ? {} : { casey_draft_id: D }) } });
   });
 
   test('contact subrecord review is cancelable, single-flight, persisted, and opens the parent contact', async () => {
@@ -2040,20 +2061,27 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
   const STAMP = '2026-10-26T10:00:00.000Z';
   const smsDraft = (over = {}) => ({ action_draft: {
     draft_id: '347eb0a1-9f77-4de0-8f18-119665bcda0b', kind: 'sms.send.v1', status: 'draft', received_at: Date.now(),
-    recipient: { contact_id: 1309, contact_name: 'Pat One', phone_id: 12, phone: '3135550001', label: 'Mobile', is_primary: true, expected_updated_at: STAMP },
+    recipient: { contact_id: 1309, contact_name: 'Pat One', phone_id: 12, phone: '3135550001', label: 'Mobile', is_primary: true, expected_updated_at: STAMP, consent_version: '0' },
     sender: { line_id: 3, label: '#3 Rena (248) 965-5355', number: '2489655355', defaulted: false },
     message: 'Hi Pat, your hearing moved.', segments: { encoding: 'GSM-7', units: 27, segments: 1 },
     templated: true, ssn_warning: false, case: null, evidence: [], ...over } });
   const emailDraft = (over = {}) => ({ action_draft: {
     draft_id: '447eb0a1-9f77-4de0-8f18-119665bcda0b', kind: 'email.send.v1', status: 'draft', received_at: Date.now(),
-    recipient: { contact_id: 1309, contact_name: 'Pat One', email_id: 13, email: 'pat@example.com', label: 'Personal', is_primary: true, expected_updated_at: STAMP },
+    recipient: { contact_id: 1309, contact_name: 'Pat One', email_id: 13, email: 'pat@example.com', label: 'Personal', is_primary: true, expected_updated_at: STAMP, consent_version: '0' },
     sender: { mailbox_id: 5, label: '#5 Rena <rena@4lsg.com>', address: 'rena@4lsg.com', defaulted: false },
     subject: 'Your case', body: 'Dear Pat,\n\nSee you Tuesday.', templated: true, ssn_warning: false, case: null, evidence: [], ...over } });
-  // The canonical reads the precheck makes, answering "unchanged" unless told otherwise.
+  // The canonical reads the precheck makes, answering "unchanged" unless told
+  // otherwise — in the list routes' shape: each active row carries consent =
+  // the server's read (YisraMail P1). A number's consent follows its flag
+  // unless told otherwise; an email's is never opted out (D18).
   const reads = (over = {}) => {
     const contact = { contact_id: 1309, ...(over.contact || {}) };
     const phone = { id: 12, phone: '3135550001', sms_optout: 0, end_date: null, updated_at: STAMP, ...(over.phone || {}) };
     const email = { id: 13, email: 'pat@example.com', email_optout: 0, end_date: null, updated_at: STAMP, ...(over.email || {}) };
+    if (!('consent' in phone)) phone.consent = { opted_out: Number(phone.sms_optout) === 1, version: '0' };
+    if (!('consent' in email)) email.consent = { opted_out: false, version: '0' };
+    if (phone.consent === undefined) delete phone.consent;
+    if (email.consent === undefined) delete email.consent;
     return (path) => {
       if (path === '/api/contacts/1309') return { contact };
       if (path === '/api/contacts/1309/phones') return { status: 'success', phones: over.noRow ? [] : [phone] };
@@ -2193,9 +2221,30 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
       expect(m.action_draft.refusal_error).toMatch(why);
       expect(m.action_draft.status).toBe('draft');
     }
+    // D18: an address carrying the (marketing-only) email flag is NOT a
+    // refusal — the server's consent for a direct email is never opted out.
     const e = emailDraft();
-    const r = await run(e, { read: reads({ email: { email_optout: 1 } }) });
-    expect(r.writes).toEqual([]); expect(e.action_draft.refusal_error).toMatch(/opted out/);
+    const r = await run(e, { read: reads({ email: { email_optout: 1 } }), write: async () => ({ status: 'success', email_log_id: 9, warnings: [] }) });
+    expect(r.writes).toHaveLength(1); expect(e.action_draft.status).toBe('applied');
+    // YisraMail P1: a consent change no row write made (the number's STATE —
+    // flag unchanged, updated_at unchanged) moves the version and refuses …
+    for (const [draft, over, what] of [
+      [smsDraft(), { phone: { consent: { opted_out: false, version: '17' } } }, 'number'],
+      [emailDraft(), { email: { consent: { opted_out: false, version: '18' } } }, 'address'],
+    ]) {
+      const v = await run(draft, { read: reads(over) });
+      expect([v.writes.length, v.ledger.length]).toEqual([0, 0]);
+      expect(draft.action_draft.refusal_error).toBe(`That ${what}'s consent changed since this card was prepared. Nothing was sent. Ask Casey to prepare it again.`);
+    }
+    // … the server's opted_out wins over the row flag (state-only opt-out) …
+    const stateOnly = smsDraft();
+    await run(stateOnly, { read: reads({ phone: { sms_optout: 0, consent: { opted_out: true, version: '19' } } }) });
+    expect(stateOnly.action_draft.refusal_error).toMatch(/has opted out since this card was prepared/);
+    // … and a row without the server's consent read (an older server) is never trusted.
+    const noConsent = smsDraft();
+    const nc = await run(noConsent, { read: reads({ phone: { consent: undefined } }) });
+    expect([nc.writes.length, nc.ledger.length]).toEqual([0, 0]);
+    expect(noConsent.action_draft.refusal_error).toBe('Could not re-check the number\'s consent. Nothing was sent. Ask Casey to prepare it again.');
     // Ruling 17: the reviewed opt-out state is part of what was reviewed.
     const reviewedOpted = smsDraft({ recipient: { ...smsDraft().action_draft.recipient, opted_out: true } });
     const cleared = await run(reviewedOpted, { read: reads({ phone: { sms_optout: 0 } }) });

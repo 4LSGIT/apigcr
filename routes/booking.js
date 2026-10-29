@@ -823,8 +823,10 @@ function fireSideEffects(db, view, { apptId, contactId, providerId, start }) {
         [contactId]
       );
 
-      // Automated confirmations skip an opted-out recipient (ruling 2026-10-27)
-      // — logged, never alerted: expected behaviour, not a send failure.
+      // Automated confirmations skip an opted-out number (ruling 2026-10-27,
+      // D19) — logged, never alerted: expected behaviour, not a send failure.
+      // An email opt-out is marketing-only (YisraMail D18): the email check
+      // never skips today; it stays for C7.
       const optout = require('../services/optoutService');
       const smsOptedOut = !!(view.confirm_sms && contact?.contact_phone
         && (await optout.findOptedOut(db, 'sms', contact.contact_phone)).length);

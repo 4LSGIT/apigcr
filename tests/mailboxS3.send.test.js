@@ -900,51 +900,33 @@ describe('the read-state seed (carry #3)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('opt-out (ruling 2026-10-27): a staff send is WARNED, then goes on an explicit acknowledgement', () => {
+describe('opt-out (YisraMail D18): an email opt-out is marketing-only — mail-hub mail is never warned', () => {
   const optOut = (email, over = {}) => {
     W.T.contact_emails.push({ id: 40 + W.T.contact_emails.length, contact_id: 900, email, end_date: null, email_optout: 1, ...over });
   };
 
-  test('any To / Cc / Bcc address whose active row opted out → 409 opted_out; nothing dispatched; audited refused_opted_out', async () => {
+  test('a To / Cc / Bcc address whose active row carries the (marketing) opt-out sends — no 409, nothing acknowledged', async () => {
     optOut('Client@Outside.test');
     for (const body of [NEW_MSG(), NEW_MSG({ to: ['x@outside.test'], cc: ['client@outside.test'] }), NEW_MSG({ to: ['x@outside.test'], bcc: [{ email: 'CLIENT@outside.test', name: 'C' }] })]) {
       const r = await call('POST', '/api/mail/send', { t: tok(SENDER), body });
-      expect(r.status).toBe(409);
-      expect(r.json).toMatchObject({ status: 'error', code: 'opted_out', acknowledge_with: 'acknowledge_optout',
-        opted_out: [{ channel: 'email', destination: 'client@outside.test', contact_id: 900 }] });
-      expect(r.json.message).toMatch(/client@outside\.test \(contact #900\) has opted out of email\. Send anyway only if they asked/);
+      expect(r.status).toBe(200);
     }
-    expect(mockSendMail).not.toHaveBeenCalled();
-    expect(W.T.admin_audit_log.map((a) => a.status)).toEqual(['refused_opted_out', 'refused_opted_out', 'refused_opted_out']);
+    expect(mockSendMail).toHaveBeenCalledTimes(3);
+    expect(W.T.admin_audit_log.map((a) => a.status)).toEqual(['sent', 'sent', 'sent']);
+    expect(W.T.admin_audit_log.every((a) => !('acknowledged_optout' in a.details))).toBe(true);
   });
 
-  test('acknowledge_optout: true sends and audits the override; false stays 409; anything else is a 400', async () => {
+  test('acknowledge_optout is still a validated boolean (anything else is a 400); true or false both simply send', async () => {
     optOut('client@outside.test');
-    expect((await call('POST', '/api/mail/send', { t: tok(SENDER), body: NEW_MSG({ acknowledge_optout: false }) })).status).toBe(409);
     for (const bad of ['true', 'yes', null]) {
       const r = await call('POST', '/api/mail/send', { t: tok(SENDER), body: NEW_MSG({ acknowledge_optout: bad }) });
       expect([bad, r.status]).toEqual([bad, 400]);
     }
     expect(mockSendMail).not.toHaveBeenCalled();
-    const r = await call('POST', '/api/mail/send', { t: tok(SENDER), body: NEW_MSG({ acknowledge_optout: true }) });
-    expect(r.status).toBe(200);
-    expect(mockSendMail).toHaveBeenCalledTimes(1);
-    const audit = W.T.admin_audit_log.find((a) => a.status === 'sent');
-    expect(audit.details.acknowledged_optout).toEqual([900]);
-  });
-
-  test('an ENDED opted-out row, or nobody opted out: no warning, no acknowledgement recorded', async () => {
-    optOut('client@outside.test', { end_date: '2026-01-01' });
-    const r = await call('POST', '/api/mail/send', { t: tok(SENDER), body: NEW_MSG() });
-    expect(r.status).toBe(200);
-    expect(W.T.admin_audit_log.find((a) => a.status === 'sent').details).not.toHaveProperty('acknowledged_optout');
-  });
-
-  test('the warning never uses up the send window', async () => {
-    optOut('client@outside.test');
-    for (let i = 0; i < mailRouter.SEND_RATE_MAX + 2; i++) {
-      expect((await call('POST', '/api/mail/send', { t: tok(SENDER), body: NEW_MSG() })).status).toBe(409);
+    for (const ack of [false, true]) {
+      expect((await call('POST', '/api/mail/send', { t: tok(SENDER), body: NEW_MSG({ acknowledge_optout: ack }) })).status).toBe(200);
     }
-    expect((await call('POST', '/api/mail/send', { t: tok(SENDER), body: NEW_MSG({ acknowledge_optout: true }) })).status).toBe(200);
+    expect(mockSendMail).toHaveBeenCalledTimes(2);
+    expect(W.T.admin_audit_log.filter((a) => a.status === 'sent').every((a) => !('acknowledged_optout' in a.details))).toBe(true);
   });
 });

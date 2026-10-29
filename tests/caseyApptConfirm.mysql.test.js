@@ -22,8 +22,11 @@
  *     own values stand in for it, and this proves they read exactly like the
  *     row mysql2 returns once it is stored (date, length, platform enum).
  *   - The recipient/sender/opt-out reads are the route's own predicates on the
- *     real tables: an opted-out channel REFUSES (automation sends never
- *     acknowledge), so does a missing phone/email/sender, a manage link on a
+ *     real tables (YisraMail P1: optoutService over the row cache flag AND
+ *     comm_consent_state, built here from the migration file): an opted-out
+ *     NUMBER refuses (automation sends never acknowledge) — an email opt-out
+ *     is marketing-only (D18) and never stops the operational confirmation —
+ *     and so does a missing phone/email/sender, a manage link on a
  *     row without a token, and a client-less appointment.
  *   - Off is byte-stable: no flags, no message, no confirmation object.
  */
@@ -36,6 +39,7 @@ const phoneService = require('../services/phoneService');
 const emailService = require('../services/emailService');
 const resolverService = require('../services/resolverService');
 const calendarTypeService = require('../services/calendarTypeService');
+const { buildConsentTables } = require('./helpers/consentSchema');
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const d = URL_ ? describe : describe.skip;
@@ -66,6 +70,7 @@ d('Ask Casey appointment confirmations on real MySQL', () => {
     pool = mysql.createPool({ uri: URL_, connectionLimit: 2, timezone: 'Z' });
     pool.on('connection', (conn) => conn.query(`SET SESSION sql_mode = '${PROD_SQL_MODE}'`));
     for (const t of ['users', 'contacts', 'contact_phones', 'contact_emails', 'appts', 'app_settings']) await q(`DELETE FROM ${t}`);
+    await buildConsentTables(q);
     await q(`INSERT INTO users (user, username, user_name, user_fname, user_lname, user_initials, user_auth, user_type, does_appts, ringcentral, default_phone)
       VALUES (7, 'fred', 'Fred', 'Fred', 'F', 'FF', 'authorized', 1, 1, 0, '2485550001')`);
     // contacts' name triggers derive contact_name from the parts.
@@ -183,12 +188,13 @@ d('Ask Casey appointment confirmations on real MySQL', () => {
     expect('confirmation' in off).toBe(false);
   });
 
-  test('opt-out, missing channel, missing sender: refused at proposal (automation never acknowledges)', async () => {
+  test('opt-out, missing channel, missing sender: refused at proposal (automation never acknowledges); an email opt-out is marketing-only (D18)', async () => {
     const msg = { confirm_message: 'See you then.' };
     await expect(svc.normalizeActionDraft(pool, { kind: 'appt.create.v1', contact_id: 1310, appt_type: 'Consultation', appt_length: 60,
       appt_platform: 'Zoom', appt_date: '2027-01-05 10:00', appt_with: 7, confirm_sms: true, ...msg, evidence: ref },
     [{ id: 'q1', kind: 'sql.read', purpose: 'Contact', rows: [{ contact_id: 1310 }] }])).rejects.toThrow(/opted out of texts/);
-    await expect(cancel(58, { email: true, ...msg })).rejects.toThrow(/opted out of email/);
+    // D18: the confirmation email is operational — the address's marketing opt-out does not stop it.
+    await expect(cancel(58, { email: true, ...msg })).resolves.toMatchObject({ email: true, confirmation: { email: { to: 'opt@example.com' } } });
     await expect(cancel(58, { sms: true, ...msg })).rejects.toThrow(/opted out of texts/);
     await expect(svc.normalizeActionDraft(pool, { kind: 'appt.create.v1', contact_id: 1311, appt_type: 'Consultation', appt_length: 60,
       appt_platform: 'Zoom', appt_date: '2027-01-05 10:00', appt_with: 7, confirm_email: true, ...msg, evidence: ref },
@@ -199,10 +205,18 @@ d('Ask Casey appointment confirmations on real MySQL', () => {
       await expect(create({ confirm_sms: true, ...msg })).rejects.toThrow(/sms_default_from/);
       await expect(create({ confirm_email: true, ...msg })).resolves.toMatchObject({ confirm_email: true });
     } finally { await q("UPDATE app_settings SET value = '2485550000' WHERE `key` = 'sms_default_from'"); }
-    // Opting back in clears it — the read is the live row, not a cache.
+    // Opting back in clears it — read live on every proposal.
     await q('UPDATE contact_phones SET sms_optout = 0 WHERE id = 2');
-    try { await expect(cancel(58, { sms: true, ...msg })).resolves.toMatchObject({ sms: true, confirmation: { sms: { to: '3135550199' } } }); }
-    finally { await q('UPDATE contact_phones SET sms_optout = 1 WHERE id = 2'); }
+    try {
+      await expect(cancel(58, { sms: true, ...msg })).resolves.toMatchObject({ sms: true, confirmation: { sms: { to: '3135550199' } } });
+      // YisraMail P1: the number's consent STATE refuses even with the row flag clear.
+      await q(`INSERT INTO comm_consent_state (channel, destination, scope, state, occurred_at, last_event_id, updated_at)
+               VALUES ('sms', '3135550199', 'all', 'opted_out', '2026-10-01 10:00:00.000', 1, NOW(3))`);
+      await expect(cancel(58, { sms: true, ...msg })).rejects.toThrow(/opted out of texts/);
+    } finally {
+      await q('UPDATE contact_phones SET sms_optout = 1 WHERE id = 2');
+      await q('DELETE FROM comm_consent_state');
+    }
   });
 
   test('a length past the old tinyint ceiling round-trips intact: 180 is shown, stored, and resolved by the route as 180', async () => {

@@ -360,7 +360,7 @@ Computes a Shabbos/Yom-Tov-aware deadline — at least `days` calendar days ahea
 
 ### Communication (both engines)
 
-Every send function (`send_sms`, `send_mms`, `send_email`, `forward_as_*`) refuses a recipient whose phone or email row is opted out — `RECIPIENT_OPTED_OUT`, nothing sent; see [error policies](08-error-policies.md).
+Every text-sending function (`send_sms`, `send_mms`, `forward_as_sms`) refuses a number marked SMS opted out — `RECIPIENT_OPTED_OUT`, nothing sent; see [error policies](08-error-policies.md). `send_email` / `forward_as_email` keep the check but an email opt-out is marketing-only (YisraMail D18), so an automation email is never refused for it.
 
 #### `send_sms`
 

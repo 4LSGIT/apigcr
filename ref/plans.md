@@ -1218,7 +1218,8 @@ COMMENTs.)
   the appointment form could show the opt-out next to the confirm boxes.
 - **Inbound STOP does not set the flag.** A carrier STOP surfaces as
   `phone_event_log.delivery_reason = 'opted_out'` on later sends, but nothing
-  sets `sms_optout`; an automation (or the STOP handler above) could.
+  records it; YisraMail P2 does (through `optoutService.recordConsent`, the
+  one writer since P1).
 - **Sequence preview** (`previewEnrollmentSteps`) does not flag a step that
   would skip for opt-out.
 - **Sending forms:** declining the opt-out confirm aborts the rest of that
@@ -1227,6 +1228,32 @@ COMMENTs.)
 - **Not gated on purpose:** e-sign reminders / requests (the provider sends),
   the legacy `/ringcentral/send-sms` trap, and every staff/IT-recipient send
   (alerts, digests, task notices, decision requests to a user).
+
+## YisraMail P1 (consent core, 2026-10-29) — the cache-column drop slice
+
+After one release on the destination-keyed state (ref/YISRAMAIL_DESIGN.md
+§4.4, "As built"), `contact_phones.sms_optout` / `contact_emails.email_optout`
+stop being a cache and drop (the column-drop sweep, CLAUDE.md — code, schema
+objects AND stored definitions). Readers and writers to move first:
+- **optoutService's dual-read** (the cache half of `findOptedOut` /
+  `*OptedOutSql`) and **recordConsent's cache sync** (`CACHE_SYNC_SQL`).
+- **The contact form** (`public/forms/contact-form.html`) renders and posts the
+  row flag as the "SMS opted out" / "No marketing email" checkboxes — it needs
+  the destination's state per scope instead (the list routes' `consent`, or
+  P4's consent control).
+- **Reports**: `lib/reportSchema/manifest.js` exposes both columns; reports
+  would read `comm_consent_state` (and the `yc_report` per-column grants on
+  the two columns go orphan on the drop — revoke or re-provision).
+- **Casey's contact-subrecord kinds** diff and send the row flag
+  (`contactActionTarget`, `CONTACT_*_KEYS`, the card bodies in
+  `public/assistant.html`) — they become consent actions with the
+  `consent_version` stamp the send cards already use.
+- **Every writer's `cachedStateFlag` / max(intent, state) insert value** goes
+  with the column; `applyRowConsent` stays.
+- **Until then, the two columns' COMMENTs** still state the 2026-10-27 rule
+  ("THE consent flag … automation refuses, staff sends warn") — false for
+  email since D18. Changing a COMMENT is a live-table ALTER: node-script
+  pattern with a low `lock_wait_timeout`, or fold into the drop.
 
 ## From the contact-intake safety slices (2026-10-27) — deferred
 

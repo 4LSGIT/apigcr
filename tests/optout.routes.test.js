@@ -1,14 +1,16 @@
 /**
- * tests/optout.routes.test.js — POST /internal/email/send under the opt-out
- * ruling (2026-10-27): a staff JWT (the contact Communicate tab, the sending
- * forms) is WARNED — 409 opted_out until acknowledge_optout:true; an API-key
- * caller is automation and is REFUSED 422 whatever it sends. (/internal/sms
- * and /internal/mms carry a grant gate and are pinned in
- * tests/phoneSPH.routes.test.js; the comms hub routes in phoneSPH.routes /
- * mailboxS3.send.)
+ * tests/optout.routes.test.js — POST /internal/email/send under YisraMail D18
+ * (2026-10-29): an email opt-out is MARKETING-only, so this operational send
+ * route is never refused or warned by one — not by the row flag
+ * (contact_emails.email_optout, the cache) nor by the address's consent state
+ * — for a staff JWT or an API key alike, and the gate issues no consent read
+ * at all. The call stays in place for C7 (promotional sends). (/internal/sms
+ * and /internal/mms keep the 2026-10-27 rule — warn staff, refuse automation —
+ * and are pinned in tests/phoneSPH.routes.test.js; the comms hub routes in
+ * phoneSPH.routes / mailboxS3.send.)
  *
  * HARNESS: the real router + lib/auth.jwtOrApiKey over an ephemeral express
- * app; the database answers ONLY optoutService's lookup (tests/helpers/
+ * app; the database answers ONLY optoutService's lookups (tests/helpers/
  * optoutFake.js) — any other statement throws, except the auth audit insert
  * the middleware fires and forgets. The send seam emailService.sendEmail is
  * spied; under it nodemailer.createTransport is a recorder that refuses, and
@@ -37,10 +39,14 @@ const EMAILS = [
   { id: 2, contact_id: 901, email: 'sam@example.com', end_date: null, email_optout: 0 },
 ];
 const CONTACTS = [{ contact_id: 900, contact_name: 'Pat One' }, { contact_id: 901, contact_name: 'Sam Two' }];
+// An address opted out both ways the reader knows: Pat by the row flag (the
+// cache), Lee by the consent state alone (marketing scope).
+const STATES = [{ channel: 'email', destination: 'lee@example.com', scope: 'marketing', state: 'opted_out', last_event_id: 5 }];
+const consentReads = [];
 const db = {
   async query(sql, p) {
-    const oo = answerOptout(sql, p, { emails: EMAILS, contacts: CONTACTS });
-    if (oo) return oo;
+    const oo = answerOptout(sql, p, { emails: EMAILS, contacts: CONTACTS, states: STATES });
+    if (oo) { consentReads.push(sql); return oo; }
     if (/^\s*INSERT INTO jwt_api_audit_log/.test(sql)) return [{ insertId: 1 }];
     throw new Error(`optout.routes fake db: unscripted statement: ${sql}`);
   },
@@ -87,26 +93,23 @@ async function post(body, { t, apiKey } = {}) {
 }
 const MAIL = (over = {}) => ({ from: 'firm@firm.test', to: 'pat@example.com', subject: 'S', text: 'T', ...over });
 
-test('staff JWT: 409 opted_out (any address in a list), nothing sent; acknowledge_optout:true sends; only a literal true counts', async () => {
-  for (const to of ['pat@example.com', 'Sam <sam@example.com>, PAT@EXAMPLE.COM']) {
+test('staff JWT (D18): an email opt-out — row flag or consent state — never warns this operational send; no consent read is made', async () => {
+  for (const to of ['pat@example.com', 'Sam <sam@example.com>, PAT@EXAMPLE.COM', 'lee@example.com']) {
     const r = await post(MAIL({ to }), { t: staff() });
-    expect([to, r.status, r.json.code]).toEqual([to, 409, 'opted_out']);
-    expect(r.json.opted_out).toEqual([{ channel: 'email', destination: 'pat@example.com', contact_id: 900, contact_name: 'Pat One', row_id: 1 }]);
+    expect([to, r.status, r.json.code]).toEqual([to, 200, undefined]);
   }
-  for (const ack of ['true', 1]) expect((await post(MAIL({ acknowledge_optout: ack }), { t: staff() })).status).toBe(409);
-  expect(sent).toEqual([]);
-  expect((await post(MAIL({ acknowledge_optout: true }), { t: staff() })).status).toBe(200);
-  expect(sent).toEqual(['pat@example.com']);
+  // acknowledge_optout is irrelevant when nobody can be opted out: any value sends.
+  for (const ack of ['true', 1, true]) expect((await post(MAIL({ acknowledge_optout: ack }), { t: staff() })).status).toBe(200);
+  expect(sent).toEqual(['pat@example.com', 'Sam <sam@example.com>, PAT@EXAMPLE.COM', 'lee@example.com',
+    'pat@example.com', 'pat@example.com', 'pat@example.com']);
+  expect(consentReads).toEqual([]);
 });
 
-test('API key (automation): REFUSED 422 even when it acknowledges; a consenting address sends without one', async () => {
-  for (const body of [MAIL(), MAIL({ acknowledge_optout: true })]) {
+test('API key (automation, D18): the email is operational — it SENDS to a marketing opt-out; nothing reads consent', async () => {
+  for (const body of [MAIL(), MAIL({ acknowledge_optout: true }), MAIL({ to: 'lee@example.com' }), MAIL({ to: 'sam@example.com' })]) {
     const r = await post(body, { apiKey: process.env.INTERNAL_API_KEY });
-    expect(r.status).toBe(422);
-    expect(r.json).toMatchObject({ code: 'opted_out', message: expect.stringMatching(/^Not sent — Pat One pat@example\.com \(contact #900\) has opted out of email\. Automation never/) });
+    expect(r.status).toBe(200);
   }
-  expect(sent).toEqual([]);
-  expect((await post(MAIL({ to: 'sam@example.com' }), { apiKey: process.env.INTERNAL_API_KEY })).status).toBe(200);
-  expect((await post(MAIL({ to: 'sam@example.com' }), { t: staff() })).status).toBe(200);
-  expect(sent).toEqual(['sam@example.com', 'sam@example.com']);
+  expect(sent).toEqual(['pat@example.com', 'pat@example.com', 'lee@example.com', 'sam@example.com']);
+  expect(consentReads).toEqual([]);
 });

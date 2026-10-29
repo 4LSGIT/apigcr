@@ -902,9 +902,10 @@ async function sendApptConfirmation(db, { contactId, apptId, sms, email, message
       [contactId]
     );
 
-    // An automated confirmation never goes to an opted-out recipient (ruling
-    // 2026-10-27): that channel is skipped, logged, not alerted — expected
-    // behaviour, not a fault.
+    // An automated confirmation never texts an opted-out number (ruling
+    // 2026-10-27, D19): that channel is skipped, logged, not alerted — expected
+    // behaviour, not a fault. An email opt-out is marketing-only (YisraMail
+    // D18), so the email check never skips today; it stays for C7.
     const optout = require('./optoutService');
     const smsOptedOut = !!(sms && contact?.contact_phone
       && (await optout.findOptedOut(db, 'sms', contact.contact_phone)).length);

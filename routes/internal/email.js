@@ -9,11 +9,12 @@
  * a live STAFF send path (public/communicate.html, public/sendingform*.html).
  *
  * OPT-OUT (ruling 2026-10-27, services/optoutService.js): an API-key caller is
- * automation and is REFUSED (422 code 'opted_out') when the active row of any
- * address in `to` is opted out; a staff-JWT caller is WARNED — 409 code
- * 'opted_out' until the body carries acknowledge_optout:true
- * (public/js/optoutAck.js turns that into a confirm). Checked before anything
- * is sent.
+ * automation and is REFUSED (422 code 'opted_out') when any address in `to` is
+ * opted out; a staff-JWT caller is WARNED — 409 code 'opted_out' until the
+ * body carries acknowledge_optout:true (public/js/optoutAck.js turns that into
+ * a confirm). Checked before anything is sent. This mail is operational and an
+ * email opt-out is marketing-only (YisraMail D18), so the gate never refuses
+ * today; it stays for C7's promotional sends.
  *
  * Body:
  *   from         string  - must match a row in email_credentials

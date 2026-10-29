@@ -358,8 +358,9 @@ router.patch('/api/cta/:id', guard, async (req, res) => {
 //     resolved from; `to` optional; nothing sent, logged or audited.
 //   Opt-out WARNS (ruling 2026-10-27, the staff-route rule — optoutService.
 //     optoutGate, as POST /api/phone-lines/:id/sms and POST /api/mail/send):
-//     a real send to a `to` whose active contact_phones / contact_emails row is
-//     opted out is a 409 code 'opted_out' — nothing sent or logged, the
+//     a real SMS send to an opted-out number (an email opt-out is
+//     marketing-only and never gates this operational send — YisraMail D18)
+//     is a 409 code 'opted_out' — nothing sent or logged, the
 //     refusal audited — until the body carries acknowledge_optout:true (a
 //     literal true; ctaManager.html's send rides public/js/optoutAck.js). The
 //     acknowledged send audits the overridden contact ids. dry_run is not

@@ -1584,7 +1584,7 @@ async function normalizeContactSubrecordAction(db, value, evidence) {
     if ('is_primary' in input) input.is_primary = contactActionBool(input.is_primary, 'primary value');
     if ('sms_optout' in input) input.sms_optout = contactActionBool(input.sms_optout, 'SMS opt-out');
     if ('mms_capable' in input) input.mms_capable = contactActionBool(input.mms_capable, 'MMS capability');
-    if ('email_optout' in input) input.email_optout = contactActionBool(input.email_optout, 'email opt-out');
+    if ('email_optout' in input) input.email_optout = contactActionBool(input.email_optout, 'marketing email opt-out');
     if ('start_date' in input) {
       input.start_date = contactActionDate(input.start_date, 'start date');
       if (input.start_date && input.start_date > nowLocal().toFormat('yyyy-MM-dd')) throw httpError(422, 'Contact subrecord action start date cannot be in the future');
@@ -4768,14 +4768,18 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
     throw httpError(422, `Send evidence must cite one row carrying both the exact contact_id and ${config.idField} (select ${config.table}.id AS ${config.idField} with contact_id)`);
   }
 
-  // The recipient row, reloaded: active, on this contact. Consent is the
-  // row's flag (contact_*s.*_optout) — the one every sender reads
-  // (services/optoutService.js; ruling 2026-10-27). An opted-out recipient is
-  // NOT refused (ruling 17, 2026-10-27: "casey is like the user"): the draft
-  // records it so the card shows it UP FRONT, and the send route still answers
-  // 409 opted_out until the user's explicit confirm adds acknowledge_optout —
-  // the same confirm Comms uses (public/js/optoutAck.js). Automation sends
-  // still refuse (optoutService.assertNotOptedOut).
+  // The recipient row, reloaded: active, on this contact. Consent is read
+  // the way the send route reads it — optoutService, operational (YisraMail
+  // P1: the destination's consent state, dual-read with the row's cache flag;
+  // D18: an email opt-out is marketing-only, so a direct email is never
+  // opted out; D19: an SMS STOP is). An opted-out recipient is NOT refused
+  // (ruling 17, 2026-10-27: "casey is like the user"): the draft records it
+  // so the card shows it UP FRONT, and the send route still answers 409
+  // opted_out until the user's explicit confirm adds acknowledge_optout — the
+  // same confirm Comms uses (public/js/optoutAck.js). Automation sends still
+  // refuse (optoutService.assertNotOptedOut). consent_version moves on ANY
+  // consent change for the destination, so the card's click-time re-check
+  // (the contact list route's row.consent) catches a change no row write made.
   const [[contact]] = await db.query(
     'SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1', [contactId]);
   if (!contact) throw httpError(422, 'Send recipient contact is unavailable');
@@ -4783,7 +4787,11 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
   if (!row || Number(row.contact_id) !== contactId) throw httpError(422, `Send recipient ${config.idField} ${recordId} is not on contact ${contactId}`);
   if (row.end_date != null) throw httpError(422, `Send recipient ${config.idField} ${recordId} has ended — only an active ${sms ? 'phone' : 'email'} can receive a send`);
   const bit = (v) => v === 1 || v === true || v === '1';
-  const optedOut = sms ? bit(row.sms_optout) : bit(row.email_optout);
+  const optout = require('./optoutService'); // lazy require (convention)
+  const consentChannel = sms ? 'sms' : 'email';
+  const consent = (await optout.consentVersions(db, consentChannel, [row[config.valueField]]))
+    .get(optout.normalizeDestination(consentChannel, row[config.valueField])) || { opted_out: false, version: '0' };
+  const optedOut = consent.opted_out === true;
   const expectedUpdatedAt = contactActionTimestamp(row.updated_at);
   if (!expectedUpdatedAt) throw httpError(422, 'Send recipient row has no usable concurrency version');
   const contactName = contactActionText(contact.contact_name, 'contact label', 200) || `Contact ${contactId}`;
@@ -4798,7 +4806,7 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
     contact_id: contactId, contact_name: contactName, [config.idField]: recordId,
     [config.valueField]: value10, label: String(row.label || 'Other'),
     is_primary: bit(row.is_primary), expected_updated_at: expectedUpdatedAt,
-    opted_out: optedOut,
+    opted_out: optedOut, consent_version: consent.version,
   };
 
   const caseRecord = await sendActionCase(db, value.case_id, refs, evidence, contactId);
