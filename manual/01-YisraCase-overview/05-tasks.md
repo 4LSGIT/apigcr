@@ -28,8 +28,7 @@ A task is an action item assigned to a staff member, linked to a contact, case, 
 | **Due Today** | Due date is today (firm time) |
 | **Overdue** | Due date has passed without completion |
 | **Completed** | Done |
-| **Canceled** | Called off rather than completed — off the queue, kept in history |
-| **Deleted** | Soft-deleted — no longer on anyone's queue, but still visible in history |
+| **Deleted** | Cancelled (✕ Cancel) — called off rather than completed: off everyone's queue, kept in history, can be reinstated. There is no separate Canceled status; Cancel sets Deleted |
 
 ## Start dates — deferring work
 
