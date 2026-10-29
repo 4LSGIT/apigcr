@@ -1,10 +1,12 @@
 # YisraMail — consent, bulk email & campaigns v2 (DESIGN)
 
-Status: **DRAFT v0.2 — 2026-10-29. Nothing built.** Ruled 2026-10-29 (Fred):
-D0 build, D1 no marketing SMS in v1, D6 Amazon SES, D9 GrapesJS + MJML (spike
-first), D11 no tracking in v1 / planned as C6. Still open: D2 (storage — §4.4
-option (c)), D5 (Fred + SS), D8 (SS); D3, D4, D7, D10, D12–D14 stand as
-recommendations until ruled.
+Status: **DRAFT v0.3 — 2026-10-29. Nothing built.** Ruled 2026-10-29 (Fred):
+D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
+Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
+later. Open: D5 (Fred + SS), D8 (SS), D15–D17 (new from review); D3, D4, D7,
+D10, D12–D14 stand as recommendations until ruled. v0.3 folds in an
+independent review against code `08f1737` + the live DB (2 blockers, 8 majors,
+11 minors — all addressed below).
 Supersedes the "YisraMail direction" entry in `ref/plans.md` (which now
 points here). Related: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.2 (`bulk_ok`, hub
 budget), `ref/EMAIL_PROVIDER_PLAN.md` (bulk rule, OQ6), `services/optoutService.js`
@@ -21,8 +23,9 @@ here because §4 is built on it.
    opt-out handling are live (§4).
 2. **Marketing ≠ operational.** Today's flags mean "automation sends nothing
    on this channel". A newsletter unsubscribe must never stop a 341 reminder,
-   so consent gets scopes (`all` / `marketing` / topic); the flags become
-   scope `all` (§4.1, D2).
+   so consent gets scopes (`all` / `marketing` / topic), stored by address
+   with a ledger; the flags become scope `all` (§4.1, D2 ruled). Marketing
+   sends stay off behind a kill switch until the consent gate is met (§6.1).
 3. **SMS:** the providers enforce STOP themselves — RingCentral per (number,
    recipient) pair, **Quo across every Quo number**. Marketing SMS is out of
    v1 (ruled) and, if ever done, runs on its own RingCentral number and 10DLC
@@ -68,17 +71,17 @@ Fred's planning numbers hold against the data: a monthly newsletter of
 `temp_contacts` unknown) ≈ **4.6k addresses**. Provider sizing therefore uses
 **≤ 5k per send, ≤ 10k/month**, and a single-day burst of the whole list.
 
-## 3. Current state (verified 2026-10-29 against main `1e64d4e` + live DB)
+## 3. Current state (verified 2026-10-29 against main `1e64d4e` + live DB; re-verified by the review against `08f1737`)
 
 | Area | As built | Gap for bulk/marketing |
 |---|---|---|
-| Consent | `contact_phones.sms_optout` / `contact_emails.email_optout` on the ACTIVE row; read ONLY via `services/optoutService.js`; automation refuses, staff sends warn (409 + acknowledge). Live: 1 SMS opt-out, 0 email. | One scope: "nothing on this channel". No topic/marketing scope, no ledger (who/when/how — the proof), lost when the row is ended or the address moves; addresses outside `contacts` (imports) can't be suppressed. |
+| Consent | `contact_phones.sms_optout` / `contact_emails.email_optout` on the ACTIVE row; sends read them through `services/optoutService.js`, but several writers and readers touch the row flags directly (§4.4); automation refuses, staff sends warn (409 + acknowledge). Live: 1 SMS opt-out, 0 email. | One scope: "nothing on this channel". No topic/marketing scope, no ledger (who/when/how — the proof), lost when the row is ended or the address moves; addresses outside `contacts` (imports) can't be suppressed. |
 | Inbound STOP | Not handled (`ref/plans.md` "Recipient opt-out" follow-ups). RC delivery codes `SMS-RC/UP/CAR-413` map to `delivery_reason='opted_out'` (`services/adapters/phone/ringcentral.js:367`); live `phone_event_log` has 0 `opted_out` rows and 0 exact STOP-keyword inbound bodies in 3,474 inbound texts since 2026-05-31. | Nothing sets consent from a keyword, a provider opt-out signal, or a free-text "stop texting me". |
 | Unsubscribe | None. No link, no `List-Unsubscribe` header, no page; `emailService` exposes no custom-header option outside the hub's threading headers. | CAN-SPAM opt-out mechanism + footer; RFC 8058 one-click. |
 | Campaigns | `campaignService` + `campaign.html`: filter audience → `campaign_contacts` frozen → one `campaign_send` scheduled_job per contact (bulk INSERT, **no doorbell**) → `executeSend` → `emailService.sendEmail(from=campaigns.sender)` / `phoneService`. Editors: Quill rich text / HTML code; placeholders via `resolverService` (contacts refs only). | No cap (ruled 50, unbuilt), no class, no bulk transport, no topics/lists, no designs library, no events (delivered/bounce/complaint), no rate control. |
 | Throughput | `process-jobs` cron claims `ORDER BY scheduled_time LIMIT 10` per minute. Campaign jobs ride only that claim. | 2,000 recipients ≈ 3.3 h, and every cron-only job due after the campaign's `scheduled_time` queues behind it (doorbelled workflow/sequence jobs are unaffected — they claim by id). |
 | Transports | `email_credentials`: 9 `gmail` (one Workspace account), 2 `smtp` (SiteGround). Adapter contract in `services/emailService.js` header; capabilities object exists. Hub budget per transport (1500 gmail / 300 smtp per 24 h, `mailboxSendService`). | No `bulk_ok`, no provider for bulk, no events webhook. |
-| Usage | 97 email + 21 SMS campaigns ever; max 12 recipients; last email campaign 2026-06-15. | Today's campaigns are mail-merge, not marketing. |
+| Usage | 97 email + 21 SMS campaigns ever; real sends max 12 recipients — campaign 85 (2026-01-12, an IT test) sent 125 (its `contact_count` is 0: rows created before that column carry 0, so count `campaign_results`, not `contact_count`); last email campaign 2026-06-15. | Today's campaigns are mail-merge, not marketing. |
 | Audience | 1,109 contacts; 1,080 with an active email, 1,085 with an active phone. `temp_contacts` 2,022 rows (all with email+phone, provenance unknown). Legacy FB/lead list 1,494 (outside YC). | Ceiling ≈ 4.6k addresses before de-dup. Provenance of the two outside lists is unknown. |
 | Public origin | Landing hosts `4lsg.com,www.4lsg.com`; sessionless; routes ENUMERATED in `routes/pageLanding.js` (`/t/`, `/d/`, `/c/`, `/m/`, `/v/`, `/p/`…). `/u/` is unused. | Unsubscribe page + one-click POST need two new enumerated routes. |
 | Firm data | `app_settings.firm_name` "Legal Solutions Group", `firm_address` "18481 W. 10 Mile Rd., #100, Southfield, MI 48075". | Footer source exists. |
@@ -97,7 +100,8 @@ Fred's planning numbers hold against the data: a monthly newsletter of
   `all` only; marketing sends check `all` + `marketing` + their topic.
 - **Every change is an event.** An append-only ledger (who/what/when/how,
   with evidence) is the proof; a current-state table is what sends read. One
-  writer keeps them in step in one transaction.
+  writer keeps them in step, on the caller's transaction, order-independent
+  (§4.3).
 - **Marketing class is fail-closed.** A marketing send that cannot prove an
   unsubscribe link + postal address in its rendered body, or whose recipient's
   state can't be read, does not go.
@@ -121,22 +125,25 @@ CREATE TABLE comm_topics (
 
 -- the proof. Never updated, never deleted (retention: forever, tiny rows).
 CREATE TABLE comm_consent_events (
-  id            bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  channel       enum('email','sms') NOT NULL,
-  destination   varchar(254) NOT NULL,          -- lowercased address | 10 digits
-  scope         varchar(40)  NOT NULL,          -- 'all' | 'marketing' | topic_key
-  action        enum('opt_out','opt_in') NOT NULL,
-  source        varchar(32)  NOT NULL,          -- staff | unsub_page | one_click | pref_page | sms_keyword |
-                                                -- sms_review | provider_optout | provider_bounce |
-                                                -- provider_complaint | import | web_form | migration
-  contact_id    int unsigned NULL,              -- best-effort attribution at the time
-  line_number   char(10) NULL,                  -- SMS: the firm line it arrived on / was sent from
-  send_ref      varchar(64)  NULL,              -- campaign_results id / provider message id
-  evidence      json NULL,                      -- ip, user_agent, keyword text, provider event id,
-                                                -- consent wording shown, form id …
-  actor_user_id int NULL,                       -- staff edits
-  created_at    datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  KEY ix_dest (channel, destination, created_at)
+  id                bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  channel           enum('email','sms') NOT NULL,
+  destination       varchar(254) NOT NULL,       -- lowercased address | 10 digits
+  scope             varchar(40)  NOT NULL,       -- 'all' | 'marketing' | topic_key
+  action            enum('opt_out','opt_in') NOT NULL,
+  source            varchar(32)  NOT NULL,       -- staff | unsub_page | one_click | pref_page | sms_keyword |
+                                                 -- sms_review | provider_optout | provider_bounce |
+                                                 -- provider_complaint | import | web_form | migration
+  provider_event_id varchar(128) NULL,           -- provider message/event id when the source is external
+  occurred_at       datetime(3)  NOT NULL,       -- when it happened (provider time when known)
+  contact_id        int unsigned NULL,           -- best-effort attribution at the time
+  line_number       char(10) NULL,               -- SMS: the firm line it arrived on / was sent from
+  send_ref          varchar(64)  NULL,           -- campaign_results id / provider message id
+  evidence          json NULL,                   -- ip, user_agent, keyword text, raw inbound body,
+                                                 -- consent wording shown, form id …
+  actor_user_id     int NULL,                    -- staff edits
+  created_at        datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  KEY ix_dest (channel, destination, occurred_at),
+  UNIQUE KEY uk_source_event (source, provider_event_id)   -- NULLs never collide
 );
 
 -- what sends read. One row per (channel, destination, scope) ever touched.
@@ -145,6 +152,7 @@ CREATE TABLE comm_consent_state (
   destination   varchar(254) NOT NULL,
   scope         varchar(40)  NOT NULL,
   state         enum('opted_out','opted_in') NOT NULL,
+  occurred_at   datetime(3) NOT NULL,            -- of the event that set it
   last_event_id bigint unsigned NOT NULL,
   updated_at    datetime(3) NOT NULL,
   PRIMARY KEY (channel, destination, scope)
@@ -163,103 +171,152 @@ CREATE TABLE comm_unsub_tokens (
 );
 ```
 
-Bounces are deliverability, not consent, but they suppress the same way: a
-hard bounce writes `opt_out` scope `marketing`, source `provider_bounce` (and
-opens a staff task "email for <contact> bounced — fix the address": the
-operational mail to that address is bouncing too).
+Provider signals map to scopes: a **complaint** → `opt_out` scope
+`marketing`; a **hard bounce** → `opt_out` scope `marketing`, source
+`provider_bounce` (deliverability, not consent, but it suppresses the same
+way). A hard bounce on a **client** (contact with a Primary/Secondary case)
+also opens one staff task — "case email to this address is bouncing too" —
+for the case's assigned staff member, else the firm default (D17); bounces on
+non-clients only count in the campaign's stats (a cold import would
+otherwise flood tasks). Re-opting-in an address the SES account suppression
+list holds needs the driver to remove it there too (`events`-side hook, T2).
 
 ### 4.3 Read/write API — `optoutService` stays the ONE reader
-
-Callers don't change for operational sends:
 
 ```
 findOptedOut(db, channel, dest, { klass = 'operational', topic } = {})
   operational → blocked by scope 'all'                  (today's behaviour)
   marketing   → blocked by 'all' | 'marketing' | topic, and, for an opt_in
                 topic, also blocked unless state(topic) = 'opted_in'
+  hit shape UNCHANGED: { channel, destination, contact_id, contact_name, row_id }
+  — contact_id/row_id via LEFT JOIN to the destination's ACTIVE row; a
+  destination with no row returns null ids and who() prints the address only
+  (never "contact #0"). Audit sites read hit.contact_id (api.cta.js,
+  api.mail.js, api.phoneComms.js, routes/internal/*).
 assertNotOptedOut / optoutGate / *OptedOutSql — same, new optional opts
-recordConsent(db, { channel, destination, scope, action, source,
-                    contactId, lineNumber, sendRef, evidence, actorUserId })
-  → INSERT event + UPSERT state in ONE withTransaction (pure DB, retries:1)
+recordConsent(conn, { channel, destination, scope, action, source, occurredAt,
+                      providerEventId, contactId, lineNumber, sendRef,
+                      evidence, actorUserId })
 ```
 
-`*OptedOutSql(col, opts)` grows the same scope logic so the campaign preview
-filters in SQL.
+`recordConsent` takes the **caller's connection** (never opens its own
+`withTransaction` — that always borrows a fresh connection, so a consent
+write inside `contactService`'s save would commit or roll back separately):
+1. `INSERT IGNORE` the event (`uk_source_event` makes a provider redelivery
+   or a nightly reconcile a no-op);
+2. guarded upsert of the state row — the new event wins only if
+   `(occurred_at, id)` is newer than the stored `(occurred_at, last_event_id)`.
+   Order-independent: two racing writers, or a reconcile replaying an old
+   opt-out after a newer START, can't leave state pointing at the older event.
+Callers without a transaction wrap it in `withTransaction(fn, { retries: 1 })`
+(pure DB). `FIND_SQL` changes, so `tests/helpers/optoutFake.js` and the test
+worlds that answer it by identity change in the same slice; the predicates
+stay held to real MySQL in `tests/optout.mysql.test.js`.
 
-### 4.4 Migration of today's flags — DECISION D2
+### 4.4 Migration of today's flags — D2 RULED (a)
 
-Recommended (a): the state table becomes THE truth for every scope. Migrate
-the live flags (1 SMS today) as `source='migration'` events, have the contact
-form's toggle call `recordConsent`, keep `sms_optout`/`email_optout` as a
-read-through cache for one release (written by `recordConsent`), then drop
-them with the column-drop sweep (CLAUDE.md). Callers are untouched — they
-already read through `optoutService`.
-(b): keep the row flags as the truth for `all`; the new tables hold only
-marketing scopes. Smaller, but two stores, and an `all` opt-out still dies
-with its row.
-(c) (raised by Fred 2026-10-29): replace each row's flag with a LIST of
-scopes on the row (`email_optout` → e.g. a JSON array `["all"]`,
-`["newsletter"]`). Agreed that a list is the right model — (a) *is* that
-list, one row per scope. What (c) changes is where the list lives, and the
-row is the wrong owner:
-- **It dies with the row.** Ending a row (address moved to another contact,
-  intake's "separate new contact" transfer, cleanup) drops the opt-out
-  unless every end/transfer/re-add path copies it. CAN-SPAM and TCPA
-  attach to the address/number, and the company DNC record must be kept
-  5 years (Appendix C §B).
-- **No row, no opt-out.** Addresses outside `contacts` — imported lists, a
-  bounce from an address no row holds any more — can't be suppressed.
-- **Opt-in topics need three states** (never asked / opted in with proof /
-  opted out). A list of outs can't say "opted in to marketing SMS on
-  2026-11-02 via form X".
-- **The ledger is needed either way** for proof, so (c) still adds a table.
-The contact form shows (a) exactly as (c) would: per address/number, a
-checkbox per scope, read from `comm_consent_state` by the row's address.
+The state table — the scope list stored by address — is THE truth for every
+scope; `sms_optout` / `email_optout` become a cache for one release, then drop
+with the column-drop sweep (CLAUDE.md). **It is not "callers untouched"**:
+every writer and every reader that bypasses `optoutService` moves in P1.
+
+Writers (all must call `recordConsent`, in the same deploy that switches reads):
+- `services/contactPhoneService.js` create/update (`sms_optout` in the
+  validated fields and the `ALLOWED` list) and `services/contactEmailService.js`
+  likewise — behind `routes/api.contactPhones.js` / `api.contactEmails.js`.
+- `services/contactService.js` aggregate save, including end-and-replace,
+  which today copies the flag onto the corrected row.
+- Casey's `contact.phone/email.create/update` kinds (`services/assistantService.js`
+  `CONTACT_*_CREATE_KEYS` and the update kinds).
+
+Readers that bypass `optoutService` today:
+- `services/assistantService.js` send-recipient check reads `row.sms_optout` /
+  `row.email_optout` and uses `row.updated_at` as its concurrency stamp — a
+  state-table change won't move it; it must read consent through the service
+  and version on the consent state too.
+- `public/assistant.html` re-checks the row flag at click time;
+  `public/forms/contact-form.html` renders it.
+- Reports expose the columns (`lib/reportSchema/manifest.js`); the AI prompts
+  (`lib/aiPrompts/assistantPlan.js`, `assistantAnswer.js`,
+  `assistantTaskDraftRepair.js`) tell the model "the row's flag is the only
+  consent field".
+
+Transition (fail closed): during the cache release a destination counts as
+opted out (scope `all`) if EITHER the state table or the active row's flag
+says so; writers write both. Run the migration (live flags →
+`source='migration'` events) before the backend deploy AND again after it,
+so a flag written in the gap isn't lost. Consent writes on contact rows are
+announced on the sync bus (`public/js/yc-sync.js` MATCHERS + the response's
+`changes`) like any other row write.
+
+Rejected alternatives: (b) row flags stay the truth for `all` — two stores,
+and an `all` opt-out still dies with its row. (c) a list of scopes on the row
+— dies with the row (end/transfer/re-add), can't suppress addresses no row
+holds, can't express opt-in-with-proof, and still needs the ledger. The
+contact form shows (a) exactly as (c) would: a checkbox per scope per
+address/number.
 This revises the STORAGE half of the 2026-10-27 ruling (row → destination);
 its read rule (one service, automation refuses, staff warn) stands.
 
 ### 4.5 Email unsubscribe
 
 - **Every marketing send** mints one `comm_unsub_tokens` row and gets:
-  - body: a **fixed compliance footer** the design cannot remove — unsubscribe
-    link + "manage preferences" (whose menu includes "stop all marketing
-    email", required of a CAN-SPAM preference menu), the firm's postal
-    address, the responsible attorney + contact (MRPC 7.2(d)), the 11 U.S.C.
-    §528 debt-relief-agency statement (bankruptcy ads, incl. electronic
-    messages — attorney to confirm wording), and an "advertisement"
-    identification unless the topic's consent is affirmative (CAN-SPAM
-    (a)(5)). Values come from new resolver pseudo-tables in the
-    `trigger_data` style (`{{send.unsubscribe_url}}`,
+  - **A fixed compliance footer** — unsubscribe link + "manage preferences"
+    (whose menu includes "stop all marketing email", required of a CAN-SPAM
+    preference menu), the firm's postal address, the responsible attorney +
+    contact (MRPC 7.2(d)), the 11 U.S.C. §528 debt-relief-agency statement
+    (bankruptcy ads, incl. electronic messages — attorney to confirm
+    wording), and an "advertisement" identification unless the topic's
+    consent is affirmative (CAN-SPAM (a)(5)). Values come from new resolver
+    pseudo-tables in the `trigger_data` style (`{{send.unsubscribe_url}}`,
     `{{send.preferences_url}}`, `{{firm.postal_address}}`,
-    `{{firm.compliance_footer}}` — in-memory, no SQL). If the design doesn't
-    place `{{firm.compliance_footer}}`, the send appends it. After render,
-    the send asserts the unsubscribe URL and address are in the HTML **and**
-    the text part, else it records `failed` (fail closed).
-  - headers: exactly one `List-Unsubscribe: <https://4lsg.com/u/<token>>`
+    `{{firm.compliance_footer}}` — in-memory, no SQL). In Designer content
+    the footer is a **locked block** the editor can't delete; in Rich Text /
+    HTML content it is injected **before `</body>`** (or appended when there
+    is no `</body>`) — never after `</html>`.
+  - **An explicit text part.** Today `executeSend` passes `html` only and
+    `htmlToText` (`services/emailService.js`) strips tags, so a URL that lives
+    only in an `href` vanishes from the text part. The marketing path builds
+    and stores the text part itself (`campaigns.body_text`), rendering links
+    as visible URLs. After render the send asserts the unsubscribe URL is in
+    the HTML (as an `href`) **and** visible in the text part, else it records
+    `failed` (fail closed).
+  - Headers: exactly one `List-Unsubscribe: <https://4lsg.com/u/<token>>`
     (HTTPS only in v1; a `mailto:` alternate needs an inbound handler — later)
     and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, plus `List-Id:
-    <newsletter.<domain>>` and the provider campaign tag for events. Both
+    <newsletter.<domain>>` and the driver's correlation headers (§5.2). Both
     List-Unsubscribe headers MUST be inside the DKIM signature's `h=` or
     receivers won't offer one-click (RFC 8058) — verified per provider in
     T1's acceptance test by reading a received message's DKIM-Signature.
-- **Retention:** every marketing campaign's rendered body and recipient
-  results are kept ≥ 2 years after last use (MRPC 7.2(b)). No campaign delete
-  route exists today (`routes/campaign.js`); keep it that way, and a design
-  edit never rewrites a sent campaign's stored body.
-- **Routes (landing origin, sessionless, added to `pageLanding`'s
-  enumerated list):**
+- **Retention:** each marketing campaign keeps ≥ 2 years after last use
+  (MRPC 7.2(b)) a **snapshot of what was sent** — the rendered template with
+  the footer as it stood at send start (footer values come from settings that
+  can change), plus recipient results. No campaign delete route exists today
+  (`routes/campaign.js`); keep it that way, and a design edit never rewrites
+  a sent campaign's stored body.
+- **Routes (landing origin, sessionless) — three:**
   - `GET /u/:token` → a page with one "Unsubscribe" button, topic
     checkboxes and "all marketing email". GET itself changes nothing (link
     scanners prefetch GETs); one page + one click satisfies CAN-SPAM
-    (Appendix C §C).
-  - `POST /u/:token` with body `List-Unsubscribe=One-Click` (RFC 8058, mail
-    clients) → `recordConsent(opt_out, scope=topic, source='one_click')`,
-    `200` empty body, no auth, no redirect.
+    (Appendix C §C). IP-rate-limited like `/c/` reads.
+  - `POST /u/:token` (RFC 8058, mail clients) → unsubscribe from the URI
+    alone: accept any content type and ignore the body (RFC 8058 says
+    multipart SHOULD be used and `server.js` parses multipart only under
+    `/hooks`), `recordConsent(opt_out, scope=topic, source='one_click')`,
+    `200` empty body, no auth, never a redirect. **No per-IP limit** — the
+    POSTs come from a few mail-provider IPs, and a 429 would silently drop
+    unsubscribes; the call is idempotent and token-bound (limit per token
+    if anything).
   - `POST /u/:token/prefs` (the page's form) → per-topic opt-out/opt-in,
-    `source='pref_page'`.
-  - Tokens never expire (CAN-SPAM: must work ≥30 days after send). Unknown
+    `source='pref_page'`, IP-limited like `/c/` posts.
+  - All three registered in **every** enumeration in `routes/pageLanding.js`
+    (`landingAllowed`, `isCredentialedPath` for noindex, `isMigratedPath` for
+    the GET only), each test-locked: a POST missing from the allow-list meets
+    `deadPage`'s 303, which breaks RFC 8058's no-redirect rule. Response
+    headers as `/c/`: `Cache-Control: no-store`, `X-Robots-Tag: noindex`,
+    plus `Referrer-Policy: no-referrer`.
+  - Tokens never expire (CAN-SPAM: must work ≥ 30 days after send). Unknown
     token → the same neutral page with "contact us" (no oracle).
-  - Rate-limited like the other public token routes.
 - **The page offers marketing scopes only.** "Stop ALL email from the firm"
   (scope `all`) is not offered to the public: it would silently stop
   case-critical mail. A free-text box ("anything else?") opens a staff task
@@ -276,43 +333,66 @@ Quo blocks the recipient on EVERY Quo number in the account** (9800, 4574,
 job is to know *before* sending ("may send") and keep the proof; the
 provider decides "can send".
 
-- **Keyword handler, built into `phoneIngestService`** (not an editable
-  ingest rule — compliance must not be deletable): inbound SMS body,
-  trimmed, case-folded, punctuation stripped, exact match against the union
-  of the FCC per-se words and both providers' lists — opt-out: `STOP`,
-  `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT`, `REVOKE`, `OPT OUT`,
-  `OPTOUT`; opt-in: `START`, `UNSTOP`, `SUBSCRIBE`, `RESUME`, `CONTINUE`.
-  Quo does not act on `REVOKE` / `OPT OUT`, so for those YC is the only
-  enforcement. Runs for every provider before Layer 2/3, idempotent on the
-  provider event id (the existing dedup precheck).
-- **No app-side confirmation text.** RC and Quo both send their own; a second
-  one breaks the one-confirmation rule (CTIA, FCC (a)(12)). For `REVOKE` /
-  `OPT OUT` on Quo (no provider confirmation) YC sends the single
-  non-marketing confirmation within 5 minutes.
-- **Scope — DECISION D3.** A STOP on any case line → scope `all` SMS (today's
+- **Where inbound arrives.** Inbound SMS reach `ingestPhoneEvent` only
+  through workflows `wf_rc_message_in` (17) and `wf_quo_message` (18), step 1
+  `phone_log`, fed by their hooks — editable rows, and for Quo YC's ONLY
+  opt-out signal. So: a test pins both workflows' `phone_log` step; a
+  liveness alert per provider fires when no inbound SMS has been ingested
+  for N business hours; the keyword handler also runs on the backfill path
+  (`services/phoneDeliveryService.js`) — idempotent, so double sight is safe.
+- **Keyword handler, built into `phoneIngestService`** after the dedup
+  precheck (step 1b, keyed on `provider_message_id` — present on every live
+  inbound row), before Layer 2/3. Body trimmed, case-folded, punctuation
+  stripped, exact single-message match:
+  - opt-out: `STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT`,
+    `REVOKE`, `OPT OUT`, `OPTOUT` → `opt_out`. Quo does not act on `REVOKE` /
+    `OPT OUT`, so for those YC is the only enforcement.
+  - opt-in: `START`, `UNSTOP` (both providers); `SUBSCRIBE`, `RESUME`,
+    `CONTINUE` only on RC lines. Recorded **only when the number is currently
+    opted out** — otherwise "continue" is an ordinary reply.
+  - Ledger idempotency: `source='sms_keyword'`, `provider_event_id` = the
+    provider message id.
+- **Confirmation texts.** RC and Quo send their own for the words they act
+  on; YC never sends a second (CTIA, FCC (a)(12)). For `REVOKE` / `OPT OUT` on
+  Quo, YC sends the one non-marketing confirmation within 5 minutes as an
+  idempotent scheduled job keyed by the provider event id, through an
+  explicit opt-out-gate exemption (like the portal PIN) — not a send inside
+  the workflow step.
+- **Scope — D3.** A STOP on any case line → scope `all` SMS (today's
   semantics). The provider block already makes this true for the whole Quo
-  account and for that RC pair; matching it in YC keeps automation from
-  burning sends into blocks. FCC 26-67's informational "category" scoping
-  (from 2026-11-25) can't help: the provider block is absolute.
-- **Provider sync.** RC: subscribe to the v2 consent events, reconcile
-  nightly against `GET /restapi/v2/accounts/~/sms/consents?optStatus=OptOut`,
-  and treat `SMS-RC/UP/CAR-413` delivery failures as opt-outs (already mapped
-  to `delivery_reason='opted_out'`). Push opt-outs YC captured elsewhere
-  (staff, free-text review, `REVOKE` on Quo) to RC with `PATCH …/sms/consents`
-  (`from:"*"` — every RC number, matching scope `all`) so RC blocks too. RC opt-back-in only with documented consent
-  (`opt_in`, `source='staff'`, evidence required). Quo: no list to sync — YC's
-  ledger is the list; a client who STOPped Quo must text START themselves.
+  account and for that RC pair; matching it keeps automation from sending
+  into blocks. FCC 26-67's informational "category" scoping (from
+  2026-11-25) can't help: the provider block is absolute.
+- **Provider sync (RC).** Subscribe to the v2 consent events and reconcile
+  nightly against `GET /restapi/v2/accounts/~/sms/consents?optStatus=OptOut`
+  (read-only, guarded by `occurred_at` so an old opt-out never overwrites a
+  newer START); treat `SMS-RC/UP/CAR-413` delivery failures as opt-outs
+  (already mapped to `delivery_reason='opted_out'`). **Pushing** YC-captured
+  opt-outs to RC (`PATCH …/sms/consents`) is **D15 — recommended: not in v1.**
+  A `from:"*"` push blocks every RC line, so a staff-acknowledged send ("a
+  reply they requested", the 2026-10-27 override) then fails with SMS-RC-413,
+  and a later START on one line lifts only that pair. YC already refuses
+  automation; the push would only add protection for texts staff send from
+  the RingCentral app directly. Whether the API can opt someone back IN is
+  unverified (RC's consent page says the block lifts "only if the customer
+  sends an opt-in keyword") — P2 step 0 settles it.
+- **P2 step 0 (before code):** confirm the RC app permission / admin role
+  and rate group for `/restapi/v2/accounts/~/sms/consents`; live STOP / START
+  test on one RC and one Quo line (does the inbound STOP even reach the
+  webhook? — 0 exact STOP keywords in 3,474 inbound texts since 2026-05-31).
 - **A STOP on a case line strands a client.** Every SMS `opt_out` with scope
   `all` on a client (contact with a Primary/Secondary case) opens a staff
-  task: "client opted out of texts — reach them by phone/email". Free-text
-  opt-outs are reachable by phone; the call is how re-consent is recorded.
+  task: "client opted out of texts — reach them by phone/email". The call is
+  how re-consent is recorded.
 - **Free-text revocation** ("please stop texting me", "remove me", "wrong
   number"): the FCC's "any reasonable means" standard applies until a sender
-  designates an exclusive method (allowed from 2026-11-25), and CTIA expects
-  plain-language opt-outs honored anyway. A phrase list (+ optional AI
-  classifier on the existing pipeline) opens a staff review task due well
-  inside 10 business days; staff confirm → `source='sms_review'`.
-- **Marketing SMS — DECISION D1: deferred.** If SS wants it: a dedicated
+  designates an exclusive method (allowed from 2026-11-25; D14 says don't),
+  and CTIA expects plain-language opt-outs honored anyway. A word-boundary
+  phrase list (+ optional AI classifier on the existing pipeline), on
+  10-digit senders only (live: 101 non-suppressed texts contain "stop" as a
+  substring), opens a staff review task due well inside 10 business days;
+  staff confirm → `source='sms_review'`.
+- **Marketing SMS — D1 RULED: not in v1.** If ever: a dedicated
   **RingCentral** number on a MARKETING or MIXED 10DLC campaign (sending
   promotional content from a customer-care campaign risks suspension), never
   Quo (one marketing STOP there blocks every Quo line), opt-in topic with
@@ -366,28 +446,48 @@ provisioning drivers (YC3), API send (SMTP covers v1 at this volume).
 capabilities: { html, attachments_inline, attachments_url,      // existing
                 bulk, headers, tags, batch, events }            // new
 sendEmail(db, { …existing…,
-                headers,   // allowlist: List-Unsubscribe, List-Unsubscribe-Post,
-                           //   List-Id, Feedback-ID — nothing else
+                headers,   // base allowlist: List-Unsubscribe, List-Unsubscribe-Post,
+                           //   List-Id — plus whatever the DRIVER adds (below)
                 replyTo,   // the monitored mailbox for replies
-                tags })    // { campaign_id, result_id } → provider metadata/headers
+                tags })    // { campaign_id, result_id } → the driver's correlation headers
 events: { verify(req, credential) → bool,
           parse(req) → [{ type: 'delivered'|'bounce_hard'|'bounce_soft'|
                           'complaint'|'unsubscribe'|'open'|'click',
                           provider_message_id, recipient, at, provider_event_id,
-                          raw }] }
+                          tags, raw }] }
 ```
 
-- `headers` / `replyTo` / `tags` reach adapters only from the campaign
-  marketing path (`sendEmailDirect` with a `bulk_ok` row); the public
-  `sendEmail` strips them like `HUB_ONLY_OPTIONS`, so no automation starts
-  setting headers by accident.
+- **Driver-owned headers.** The caller passes only the base allowlist; the
+  driver adds its own. SES over SMTP: `X-SES-CONFIGURATION-SET` (selects the
+  config set whose event destination publishes events) and
+  `X-SES-MESSAGE-TAGS` (`campaign_id`, `result_id`). Nothing else passes.
+- **Correlation by tags, not Message-ID.** `executeSend` stores nodemailer's
+  `info.messageId` today; SES events carry SES's own message id. The SES
+  driver parses that id from the SMTP reply (`info.response`) into
+  `campaign_results.provider_message_id`, and events join by the
+  `result_id` tag first, `provider_message_id` second.
+- **Code that changes in T1:** `sendEmailDirect` destructures a fixed option
+  set (`services/emailService.js`) and `smtp.js` builds `mailOptions` with no
+  `headers` / `replyTo` — both grow the new options. `headers` / `replyTo` /
+  `tags` reach adapters only from the campaign marketing path
+  (`sendEmailDirect` with a `bulk_ok` row); the public `sendEmail` strips them
+  like `HUB_ONLY_OPTIONS`.
 - `email_credentials.bulk_ok tinyint(1) NOT NULL DEFAULT 0` + an
-  `events_driver varchar(20) NULL` naming the parser (the send may be plain
-  SMTP while events come from the provider's webhook).
-- `smtp.js` sets `headers`/`replyTo` through nodemailer (supported natively);
-  `gmail.js` never gets `bulk_ok` (Workspace is not a bulk transport).
-- The bulk row is NOT a mailbox send identity, so the hub's per-transport
-  budget never counts it and a newsletter can't lock the hub.
+  `events_driver varchar(20) NULL` naming the parser (the send is plain SMTP;
+  events come from the provider).
+- **The bulk row is not a sender anywhere else.** `GET /api/firm-data` ships
+  every `email_credentials` row to every compose surface, and the public
+  `sendEmail` picks a row by `from` — unfenced, the SES row would appear in
+  Comms, workflow and campaign pickers and operational mail could leave
+  through the marketing subdomain without a footer. So: `bulk_ok` rows are
+  filtered out of `emailFrom`; the public `sendEmail` and operational
+  campaigns refuse a `bulk_ok` row; no mailbox `send_credential_id` and no
+  other row may share its SMTP login (else the hub's `checkBudget` would
+  count newsletters against the hub). `gmail.js` never gets `bulk_ok`.
+- Operational campaigns through Gmail/SMTP already count against the hub
+  budget (their sends land in `email_log` under that transport's source),
+  which covers the old `ref/plans.md` "count campaigns against the budget"
+  item; marketing volume never touches it.
 
 ### 5.3 Sending domain (P0, no code)
 
@@ -405,8 +505,9 @@ events: { verify(req, credential) → bool,
 Provider webhook → a YisraHook hook (ack-first, `dedup_path` on the
 provider's event id — both exist) → target internal function
 `mail_event_ingest` → by type: `bounce_hard`/`complaint`/`unsubscribe` →
-`recordConsent` (§4.2); all types → `campaign_results` delivery columns by
-`provider_message_id`. Signature verification: `hooks.auth_type` already has
+`recordConsent` (§4.2, idempotent on the provider event id); all types →
+`campaign_results` delivery columns, joined by the `result_id` message tag
+first and `provider_message_id` second (§5.2). Signature verification: `hooks.auth_type` already has
 `hmac` and a Calendly-style scheme; a provider whose scheme differs gets its
 verify in the adapter's `events.verify` (the "parsing into drivers" item in
 `ref/plans.md`).
@@ -469,19 +570,27 @@ those. What changes:
 
 | | `operational` (today's use: mail merge) | `marketing` (broadcast / newsletter) |
 |---|---|---|
-| Who/why | a note to a dozen clients, a hearing-change notice | newsletter, announcements, re-engagement |
+| Who/why | a note to a dozen clients, a hearing-change notice, an office-closure notice | newsletter, announcements, re-engagement |
 | Consent check | scope `all` (today) | `all` + `marketing` + topic (§4.3) |
-| Transport | any staff `email_credentials` row (Gmail/SMTP) | only a `bulk_ok` row (§5) |
-| Cap | **50 recipients** (ruled 2026-10-22), firm-configurable, enforced in `campaignService.createCampaign` (API keys reach it) | none beyond provider/plan limits; rate-controlled |
+| Transport | any staff `email_credentials` row except `bulk_ok` (Gmail/SMTP) | only a `bulk_ok` row (§5) |
+| Cap | **50 recipients** (ruled 2026-10-22), firm-configurable, enforced in `campaignService.createCampaign` (API keys reach it). Over the cap only with `campaigns.bulk` + a typed confirmation, audited (D16) | none beyond provider/plan limits; rate-controlled |
 | Unsubscribe | none | mandatory token, footer, headers (§4.5) |
 | Topic | — | required (`comm_topics`) |
-| SMS | allowed (≤ cap) | **refused** until D1 says otherwise |
+| SMS | allowed (≤ cap, or over it per D16 — informational texts to clients) | **refused** (D1) |
 
-Over-cap operational is refused with "use a marketing campaign". The class
-is stored (`campaigns.class`, `campaigns.topic_key`). The marketing class
-requires a new `campaigns.marketing` capability (D13, `lib/capabilities.js`
-vocabulary, admin role); operational stays open to staff as today (every
-campaign route is plain `jwtOrApiKey`).
+The class is stored (`campaigns.class`, `campaigns.topic_key`). The
+marketing class and any over-cap operational send require a new
+`campaigns.bulk` capability (D13, `lib/capabilities.js` vocabulary, admin
+role); operational ≤ cap stays open to staff as today (every campaign route
+is plain `jwtOrApiKey`).
+
+**Kill switch (fail closed).** `marketing_send_enabled` (settings registry,
+system kind, default `'0'`, SU console) is checked in BOTH
+`createCampaign` (refuse class `marketing` with 422) and `executeSend`
+(record `skipped`, reason `marketing_disabled`). It ships `'0'` in C1 and is
+flipped by an SU only after the G1 checklist (§9) passes. Without it, C1
+would let staff create marketing campaigns that today's `executeSend` sends
+with no token, footer or headers.
 
 ### 6.2 Audiences and lists
 
@@ -502,37 +611,76 @@ campaign route is plain `jwtOrApiKey`).
 
 - New `email_designs` (id, name, builder, design_json, html, text, thumbnail
   asset, created_by, updated_at, archived) — reusable newsletter templates.
-  A campaign stores the rendered HTML it sent (as today) plus `design_id`
-  for "duplicate last month's".
+  A campaign stores the rendered HTML + text it sent plus `design_id` for
+  "duplicate last month's".
 - `campaign.html` editor mode gets a third option, **Designer**, beside Rich
   Text / HTML Code. The builder edits the design JSON; save exports HTML;
   the existing placeholder dropdown feeds the builder's merge-tag list
   (`{{contacts.contact_fname}}` etc. pass through untouched); images upload
-  through `POST /api/assets` (the asset store) via the builder's upload hook.
-- Sending never trusts the builder: the server renders placeholders (strict),
-  injects/asserts the footer, and the preview renders in a sandboxed iframe
-  (authored bytes never execute on the app origin — CLAUDE.md).
+  through the AssetPicker / `apiSend` base64 path to `POST /api/assets`
+  (panes never hold the JWT, so the builder's upload hook can't call fetch
+  itself). The compliance footer is a locked block (§4.5).
+- **The editor is part of the attack surface, not just the preview.**
+  GrapesJS's canvas is a same-origin iframe inside a pane that can reach
+  `parent.apiSend`. Its import parser drops `<script>` / `on*` /
+  `javascript:` from HTML, but a stored `design_json` loaded as project data
+  may bypass that parser. So: the server validates `design_json` and `html`
+  on save (no script components, no `on*` attributes, no `javascript:` URLs —
+  reject, don't silently strip), and the C3 spike includes a malicious
+  `design_json` (a component with an `onerror` attribute / a script property)
+  that must not execute.
+- **Merge values are escaped in HTML bodies.** `resolverService` has no HTML
+  escape mode (only `escape: 'json'`), so a contact name containing markup is
+  inserted raw. Pre-existing: today's campaign preview injects the resolved
+  body through Swal's `html` option (`public/campaign.html` preview), i.e.
+  markup in a contact field would run in a pane that can reach
+  `parent.apiSend` (live: 0 contacts carry `<`/`>` in a name field today;
+  web-form intake and C5 imports widen it). C2 adds `escape: 'html'` and uses
+  it for every HTML body the campaign path renders, and the preview moves
+  into a sandboxed iframe (`srcdoc`, `sandbox` without `allow-scripts` /
+  `allow-same-origin`) in C2, not C3.
 - Signature append (`include_signature`) is disabled for Designer content (a
   full HTML document can't take a `<br><br>` + signature after `</html>`).
 - Builder pick: §7.
 
 ### 6.4 Send pipeline changes
 
-- **Rate control without starving the queue:** at create, a marketing
-  campaign staggers its jobs' `scheduled_time` at the campaign's rate
-  (default from a firm setting, e.g. 60/min) and rings a Cloud Tasks doorbell
-  per job at that time (`lib/taskQueue.enqueueJobDispatch(jobId, when)` —
-  exists). Jobs then claim by id like workflow/sequence jobs; the cron claim
-  only mops up missed doorbells, and other jobs never wait behind a 2k
-  campaign. 2,000 at 60/min ≈ 33 min.
-- Provider 429/5xx keep their transient classification (retry with backoff);
-  a provider "account paused / sending disabled" response stops the
-  campaign (new status `paused` — an enum expansion) and alerts — never
-  burn the remaining jobs.
+- **Rate control without starving the queue — a per-campaign pump.** At
+  create, a marketing (or over-cap) campaign inserts its per-recipient jobs
+  with `scheduled_time` staggered at the campaign's rate (D12) and ONE
+  `campaign_pump` job due now. Each pump run rings Cloud Tasks doorbells
+  (`lib/taskQueue.enqueueJobDispatch`) only for that campaign's jobs due
+  within `ACCEL_WINDOW_MS` (90 s), then reschedules itself ~60 s later until
+  no pending jobs remain. This keeps `lib/taskQueue.js` invariant 3 ("a
+  DOORBELL, not a CALENDAR" — no far-future tasks) and keeps
+  `POST /api/campaigns` fast (thousands of awaited `createTask` calls in the
+  request would take minutes; detached ones starve under Cloud Run's
+  post-response CPU throttle). 2,000 at 60/min ≈ 33 min.
+- **Cron fallback can't starve other jobs.** If Cloud Tasks is off, the
+  `process-jobs` batch claim (`ORDER BY scheduled_time LIMIT 10`) would fill
+  with campaign rows due at 60/min — the very starvation §3 describes. The
+  batch claim takes at most N `campaign_send` rows per tick (N < 10, e.g. 5);
+  other due jobs claim first.
+- **Volume per send.** Per recipient: one `scheduled_jobs` row, one
+  `campaign_results` row, one `comm_unsub_tokens` row, one `email_log` row.
+  The marketing path writes `email_log` WITHOUT the body (the campaign's
+  snapshot is the copy — §4.5), so a 5k send adds rows, not megabytes.
+- **Account pause.** SMTP 5xx is classified permanent today
+  (`campaignService` error classification), so an SES "sending paused"
+  response would mark every remaining recipient failed. The marketing path
+  detects the provider's account-level refusal explicitly BEFORE
+  classification: the campaign goes to a new `paused` status (enum
+  expansion), its pending jobs are deactivated (`active=0`), the pump stops,
+  and an `error` alert fires. `paused` may be resumed (re-activate + restart
+  the pump) or canceled (`cancelCampaign` accepts `paused`); `executeSend`
+  treats a non-`sending` campaign as it treats `canceled` today (record
+  `skipped`).
+- Provider 429/4xx-transient keep their transient classification (retry with
+  backoff).
 - Per-recipient event columns on `campaign_results`: `provider_message_id`
-  (indexed), `delivery_state` (sent / delivered / bounced / complained),
-  `delivery_at`, `bounce_type`, `opened_at`/`clicked_at` only if D11 turns
-  tracking on. Fed by §5.4.
+  (indexed), `delivery_state` (precedence: complained > bounced > delivered >
+  sent — a later lower-ranked event never overwrites), `delivery_at`,
+  `bounce_type`; `opened_at` / `clicked_at` arrive with C6. Fed by §5.4.
 - Test send: "send a test to me" renders against a chosen contact and goes
   through the same transport (no token write, `[TEST]` subject prefix).
 
@@ -575,7 +723,10 @@ runtime CDN dependency).
 throwaway page; verify (1) `{{…}}` survives MJML compile in text AND in
 `href`/`src`, (2) the HTML renders acceptably in Gmail web/app, Outlook
 desktop + outlook.com, Apple Mail (send real tests), (3) a non-developer can
-build a newsletter in < 30 min. Fail → fallback below.
+build a newsletter in < 30 min, (4) a malicious stored `design_json` (a
+component carrying an `onerror` attribute / a script property) does not
+execute when loaded (§6.3), (5) a locked footer block can't be deleted.
+Fail → fallback below.
 
 **Fallback: Unlayer, Launch tier ($250/mo)** — best editor UX, any merge-tag
 syntax, HTML export in the browser and unmetered; but the editor runs in a
@@ -616,55 +767,68 @@ Full table: `ref/archive/YISRAMAIL_SURVEY_2026-10-29.md`.
 
 ## 9. Slices and order
 
-Each slice independently deployable; SQL → backend → frontend per slice.
-**Gate G1 (Fred, 2026-10-29: unsubscribe for both channels before anything):
-no marketing send until P1–P3 are live, plus T1, T2, verified DNS (§5.3) and
-SES production access. Gate G2: no import/send to an outside list until D5
-is ruled.**
+Each slice independently deployable; SQL → backend → frontend per slice; an
+ALTER on a live table ships as the node-script pattern with a low
+`lock_wait_timeout` (CLAUDE.md "A migration that needs a session").
+
+**Gate G1 (Fred, 2026-10-29: unsubscribe for both channels before
+anything).** No marketing send until P1, P2 and P3 are live, plus T1, T2,
+verified DNS (§5.3) and SES production access. Enforced in code, not just
+procedure: `marketing_send_enabled` ships `'0'` (C1) and an SU flips it only
+after this checklist. **Gate G2:** no import/send to an outside list until D5
+is ruled.
 
 | # | Slice | Contents | Depends |
 |---|---|---|---|
-| P0 | Decisions + accounts (no code) | D0–D14 ruled; SES account + production-access request (marketing use); sending subdomain DNS (DKIM, custom MAIL FROM, DMARC p=none); Google Postmaster Tools for the domain; SS legal review of the footer (§528 wording, responsible attorney, ad label) and of D1/D5; brand/from/reply-to chosen | — |
-| P1 | Consent core | `comm_topics` / `comm_consent_events` / `comm_consent_state`; `optoutService` scopes + `recordConsent`; migration of live flags; contact-form toggle → `recordConsent`; real-MySQL twin tests for the scope predicates | — |
-| P2 | Inbound SMS opt-out | keyword handler in `phoneIngestService` (both providers; REVOKE/OPT OUT confirmation on Quo only); RC 413 failures → ledger; RC consent API: nightly reconcile + push YC-captured opt-outs (`PATCH …/sms/consents`); client-stranded staff task; free-text review task | P1 |
-| P3 | Email unsubscribe surface | `comm_unsub_tokens`; `/u/:token` GET page + one-click POST + prefs POST on the landing origin; `{{send.*}}` / `{{firm.postal_address}}` resolver pseudo-tables; footer inject + post-render assert | P1 |
+| P0 | Decisions + accounts (no code) | open decisions ruled; SES account + production-access request (marketing use); sending subdomain DNS (DKIM, custom MAIL FROM, DMARC p=none); Google Postmaster Tools for the domain; SS legal review of the footer (§528 wording, responsible attorney, ad label) and of D5; brand/from/reply-to chosen (D8) | — |
+| P1 | Consent core | `comm_topics` / `comm_consent_events` / `comm_consent_state`; `optoutService` scopes + `recordConsent(conn, …)` (guarded upsert); hit shape kept; EVERY writer and bypassing reader of the row flags moved (§4.4 list); dual-read/dual-write transition; migration run before AND after the backend deploy; yc-sync MATCHERS for consent writes; `optoutFake` + test worlds; real-MySQL twin tests for the scope predicates and the race guard | — |
+| P2 | Inbound SMS opt-out | **step 0:** RC consent-API permission/role/rate-group check + live STOP/START test on one RC and one Quo line; keyword handler after the dedup precheck (also on the backfill path); RC 413 failures + read-only nightly consent reconcile → ledger; Quo REVOKE/OPT OUT confirmation job (gate exemption); client-stranded staff task; free-text review task; wf17/wf18 `phone_log` pin test + per-provider inbound liveness alert | P1 |
+| P3 | Email unsubscribe surface | `comm_unsub_tokens`; `/u/:token` GET page + one-click POST + prefs POST on the landing origin (all three `pageLanding` enumerations, test-locked; no-store / noindex / no-referrer; no per-IP limit on the one-click POST); `{{send.*}}` / `{{firm.*}}` resolver pseudo-tables | P1 |
 | P4 | Staff consent UI | badges + history on contact rows; compose counts; SU suppression import/export | P1 |
-| T1 | Transport contract | adapter capabilities (`bulk`, `headers`, `events`, `batch`); `headers` / `replyTo` / `tags` options (marketing-path only, stripped from the public `sendEmail` like `HUB_ONLY_OPTIONS`); `email_credentials.bulk_ok`; provider driver config row | — |
-| T2 | Events | provider webhook via YisraHook (ack-first, dedup on provider event id) → `mail_event_ingest` internal function → ledger (bounce/complaint/unsub) + `campaign_results` delivery columns; signature verify per provider | T1, P1 |
-| C1 | Campaign hardening | `campaigns.class` / `topic_key`; 50 cap (operational) in `createCampaign`; marketing requires `bulk_ok` + topic; capabilities; staggered schedule + doorbells; pause on provider block | P1, T1 |
-| C2 | Marketing send path | executeSend marketing branch: scope check, token mint, headers, footer assert, transport; test send | P3, C1, T2 |
-| C3 | Designs + builder | spike first (§7); then `email_designs`; Designer editor mode (GrapesJS + MJML); merge-tag picker; asset upload hook; sandboxed preview | C2 (can build in parallel, lands after) |
-| C4 | Segments + reporting | saved segments; campaign stats; complaint-rate alerts | C2 |
+| T1 | Transport contract | adapter capabilities (`bulk`, `headers`, `tags`, `events`, `batch`); `headers` / `replyTo` / `tags` options through `sendEmailDirect` + `smtp.js` (marketing path only; public `sendEmail` strips them); driver-owned headers (SES `X-SES-*`); SES message id from the SMTP reply; `email_credentials.bulk_ok` + `events_driver`; bulk rows fenced out of `emailFrom`, public `sendEmail` and operational campaigns; DKIM `h=` acceptance test | — |
+| T2 | Events | SES → EventBridge API destination → YisraHook hook (`api_key` auth, `dedup_path` on the event id) → `mail_event_ingest` internal function (added to `CTA_FN_DENYLIST` — engine plumbing) → ledger (bounce/complaint/unsub) + `campaign_results` delivery columns by `result_id` tag; SES suppression-list removal on re-opt-in | T1, P1 |
+| C1 | Campaign hardening | `campaigns.class` / `topic_key`; 50 cap in `createCampaign` + D16 over-cap path; `campaigns.bulk` capability; `bulk_ok` refused for operational; **`marketing_send_enabled` kill switch (`'0'`): marketing refused 422 at create and skipped at send**; per-campaign pump + doorbells; cron per-tick `campaign_send` quota; `paused` status | P1, T1 |
+| C2 | Marketing send path | executeSend marketing branch: scope check, token mint, explicit text part, footer inject/lock + post-render assert, headers/tags, transport, send-start snapshot (MRPC 7.2(b)), `email_log` without body; resolver `escape:'html'` for HTML bodies; sandboxed preview; test send | P1, **P2**, P3, C1, T2 |
+| C3 | Designs + builder | spike first (§7, incl. a malicious `design_json`); then `email_designs` with server-side validation on save; Designer editor mode (GrapesJS + MJML); merge-tag picker; locked footer block; asset upload via AssetPicker/`apiSend` | C2 (can build in parallel, lands after) |
+| C4 | Segments + reporting | saved segments; campaign stats; complaint-rate alerts; bounce digest | C2 |
 | C5 | Outside-list import | provenance-recording import; hygiene check; first-send warm-up order | G2, C2 |
 | C6 | Open/click tracking (v2, D11) | SES config-set open + click events on a **custom tracking domain** under the sending subdomain (not the provider's shared one); `campaign_results.opened_at` / `clicked_at` + per-link click counts; campaign stats; clicks are the primary metric, opens shown as approximate (Apple Mail Privacy Protection pre-fetches images); a per-campaign toggle; one line on the preference page that marketing mail is tracked | C2, C4 |
 | — | Deferred | marketing SMS (D1), drips via sequences, provider domain provisioning (YC3) | — |
 
-Docs per slice (living-docs rule): this file's "As built" blocks, AI_CONTEXT
-§17 (campaigns) + the opt-out entry, manual 11-campaign-manager.md + a new
-consent chapter, schema COMMENTs on every new column.
+Per-slice obligations (CLAUDE.md): settings-registry entries for every new
+key (`campaign_operational_cap`, `campaign_marketing_rate`,
+`marketing_send_enabled`, footer text keys), one editor home each; schema
+COMMENTs on every new column; this file's "As built" blocks; AI_CONTEXT §17
+(campaigns) + the opt-out entry; manual `11-campaign-manager.md` + a new
+consent chapter, with the section README TOC; `ref/plans.md` for anything
+deferred.
 
-Estimated size (rough, for planning): P1 M, P2 M, P3 M, P4 S, T1 S, T2 M,
-C1 M, C2 M, C3 L, C4 S, C5 S, C6 M.
+Estimated size (rough, for planning): P1 L (the writer/reader inventory makes
+it bigger than it looked), P2 M, P3 M, P4 S, T1 M, T2 M, C1 M, C2 M, C3 L,
+C4 S, C5 S, C6 M.
 
 ## 10. Decisions for Fred (and SS where marked)
 
-| # | Decision | Recommendation | Why / trade-off |
+| # | Decision | Status / recommendation | Why / trade-off |
 |---|---|---|---|
 | D0 | Build (YisraMail) or buy (Brevo/MailerLite + sync)? | **RULED: build.** Buy only as a bridge if SS needs a send before C2. | §5.5 last paragraph. Build is a YC3 feature and the consent work is needed for SMS anyway; buy ships in days but splits consent across two systems. |
-| D1 | Marketing SMS in v1? | **RULED: no.** Email newsletter only; SMS campaigns stay operational ≤ cap. | Needs a dedicated RC number on a MARKETING/MIXED 10DLC campaign, written-consent capture, DNC scrub, quiet hours (Appendix C). Never Quo: one STOP there blocks every Quo line. Revisit as its own slice. |
-| D2 | Consent storage | **OPEN.** Recommended (a): destination-keyed state table — the scope list stored by address — is THE truth; row flags become a cache, then drop. Fred raised (c), a list of scopes on the row (§4.4). | Survives row end/transfer/import; one store. Revises the storage half of 2026-10-27; callers unchanged. |
-| D3 | Scope of an SMS STOP on a case line | **`all` SMS** (today's semantics) + a staff task to reach the client another way. | Quo already blocks the whole Quo account and RC the pair; YC matching that stops automation from sending into blocks. |
-| D4 | One-click scope | **The send's topic**; the page offers "all marketing". | Matches RFC 8058 intent (this list); with one topic today they're the same. |
-| D5 | Outside lists (legacy 1,494, `temp_contacts` 2,022) **(SS)** | **Fred owns (with SS).** Import only with a stated basis per list (who are they, how did they reach the firm); send to them last, after hygiene; or leave them out. | Cold lists drive bounces/complaints, the only real threat to a new sending domain; MRPC solicitation rules may apply (Appendix C §D). |
-| D6 | Provider | **RULED: Amazon SES** (SMTP send + EventBridge events); runner-up Resend Pro $20. | §5.5. ≈ $1/mo, own headers, tenants for YC3; costs an AWS setup + production-access review. MailerSend rejected. |
-| D7 | Driver vs lock-in | **Driver**, one default provider, SMTP send + provider events parser. | §5.1. |
-| D8 | Brand, From, subdomain, Reply-To **(SS)** | **OPEN** — not blocking P1–P4/T1; needed before P0's DNS. Default if SS has no view: `Legal Solutions Group <news@news.4lsg.com>`, Reply-To `office@4lsg.com`. | Which brand speaks (LSG vs MDBL) is SS's call. The default matches `firm_name` and puts unsubscribe links (`4lsg.com/u/…`) on the sender's own domain; an MDBL sender would want MDBL as a landing host too. One subdomain per brand. |
-| D9 | Builder | **RULED: GrapesJS + grapesjs-mjml** (BSD, self-hosted), after a ½–1 day spike; fallback Unlayer Launch $250/mo. | §7. Free, no vendor round-trip, no per-tenant cost; we build the merge-tag picker. |
-| D10 | Campaigns | **Enhance** with send classes (§6.1); keep Rich Text / HTML modes for operational mail merge. | The engine is sound; the gaps are consent, transport, content, rate. |
-| D11 | Open/click tracking | **RULED: off in v1, built in v2 as slice C6** (Fred: a good feature). | v1 ships delivered/bounce/complaint/unsubscribe. Opens are approximate (Apple MPP); click tracking needs a custom tracking domain so links aren't rewritten through a shared provider domain. |
-| D12 | Default marketing send rate | **60/min** (2k ≈ 33 min), firm setting. | Gentle on a new domain; doorbells keep the job queue clear. |
-| D13 | Who may send marketing | New capability `campaigns.marketing` (admin role). | Today any staff login can send as any firm address. |
-| D14 | Designate an exclusive SMS revocation method (FCC 26-67, from 2026-11-25)? | **No, not in v1.** Keep "any reasonable means" + the free-text review queue. | Designating requires the disclosure in every text, case texts included; the review queue already covers plain-language opt-outs. Revisit with marketing SMS. |
+| D1 | Marketing SMS in v1? | **RULED: no.** Email newsletter only. | Needs a dedicated RC number on a MARKETING/MIXED 10DLC campaign, written-consent capture, DNC scrub, quiet hours (Appendix C). Never Quo: one STOP there blocks every Quo line. |
+| D2 | Consent storage | **RULED: (a)** destination-keyed state table + ledger is THE truth; row flags a cache for one release, then drop (§4.4). | Survives row end/transfer/import; one store; opt-in-with-proof expressible. |
+| D3 | Scope of an SMS STOP on a case line | Rec: **`all` SMS** + a staff task to reach the client another way. | Quo already blocks the whole Quo account and RC the pair. |
+| D4 | One-click scope | Rec: **the send's topic**; the page offers "all marketing". | RFC 8058 intent (this list); one topic today. |
+| D5 | Outside lists (legacy 1,494, `temp_contacts` 2,022) **(SS)** | **Fred owns (with SS).** Import only with a stated basis per list; send to them last, after hygiene; or leave them out. | Cold lists drive bounces/complaints; MRPC solicitation rules may apply (Appendix C §D). |
+| D6 | Provider | **RULED: Amazon SES** (SMTP send + EventBridge events); runner-up Resend Pro $20. | §5.5. Pay per use, ≈ $1/mo, own headers, tenants for YC3. |
+| D7 | Driver vs lock-in | Rec: **driver**, one default provider. | §5.1. |
+| D8 | Brand, From, subdomain, Reply-To **(SS)** | **OPEN** — not blocking P1–P4/T1; needed before P0's DNS. Default: `Legal Solutions Group <news@news.4lsg.com>`, Reply-To `office@4lsg.com`. | Matches `firm_name`; unsubscribe links (`4lsg.com/u/…`) on the sender's own domain. An MDBL sender would want MDBL as a landing host too. |
+| D9 | Builder | **RULED: GrapesJS + grapesjs-mjml**, spike first; fallback Unlayer Launch $250/mo. | §7. |
+| D10 | Campaigns | Rec: **enhance** with send classes (§6.1). | The engine is sound; the gaps are consent, transport, content, rate. |
+| D11 | Open/click tracking | **RULED: off in v1, built in v2 as C6.** | v1 ships delivered/bounce/complaint/unsubscribe. |
+| D12 | Default marketing send rate | Rec: **60/min** (2k ≈ 33 min), firm setting. | Gentle on a new domain; the pump keeps the queue clear. |
+| D13 | Who may send marketing / over-cap | Rec: new capability **`campaigns.bulk`** (admin role) covering the marketing class AND over-cap operational sends. | Today any staff login can send as any firm address. |
+| D14 | Designate an exclusive SMS revocation method (FCC 26-67, from 2026-11-25)? | Rec: **no, not in v1.** | Requires the disclosure in every text, case texts included; the review queue covers plain-language opt-outs. |
+| D15 | Push YC-captured SMS opt-outs to RingCentral? | Rec: **no push in v1**; read-only reconcile. | A `from:"*"` push blocks every RC line, so staff-acknowledged replies (2026-10-27 override) would fail with 413, and a later START lifts only one pair. YC already refuses automation; the push only protects texts staff send from the RC app directly. Revisit after P2 step 0. |
+| D16 | Operational sends over the 50 cap (e.g. office-closure notice to all active clients, email or SMS)? | Rec: allowed with `campaigns.bulk` + a typed confirmation of the count, audited; still operational (no footer), still consent-checked. | Informational notices to clients are legitimate; the cap exists to stop accidental blasts, not these. |
+| D17 | Who gets the "case email is bouncing" task? | Rec: clients only, to the case's assigned staff member, else the firm default; non-client bounces → campaign stats only. | One task per bounce would flood on a cold import. |
 
 ## Appendix C — Compliance & provider opt-out facts (fetched 2026-10-29; engineering input, not legal advice)
 

@@ -1417,9 +1417,10 @@ Active surfaces with known next steps.
   hub for humans), non-`bulk_ok` credentials refused above the cap, a
   campaign-send capability (every campaign route is plain `jwtOrApiKey`: any
   staff login sends as any firm address). **Cap RULED (Fred, 2026-10-22): 50
-  default, firm-configurable** — live `campaigns.contact_count` was checked
-  first: the largest campaign ever sent is 12 contacts, so 50 touches no real
-  use today.
+  default, firm-configurable** — live data was checked first: real sends max
+  12 recipients, so 50 touches no real use today. (Campaign 85, 2026-01-12, an
+  IT test, sent 125; `campaigns.contact_count` is 0 on rows created before
+  that column existed — count `campaign_results`, not `contact_count`.)
 
 - **Opt-out system.** The row toggles (contact form) and the staff warn-but-don't-block on direct sends are live (ruling 2026-10-27 — see "Recipient opt-out" above). Left: opted-out badges on the contact / compose surfaces, and an inbound STOP handler via YisraHook.
 
