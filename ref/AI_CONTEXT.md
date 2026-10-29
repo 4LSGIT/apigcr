@@ -483,6 +483,49 @@ body. Governing migrations in `ref/migrations/`.*
   `casey_case_contacts_enabled` (on unless '0'). Tests:
   `tests/caseyCaseContacts.test.js`, gated `tests/caseyCaseContacts.mysql.test.js`;
   plan: ASK_CASEY_ACTIONS_PLAN A8.
+- **Casey pipeline-transition cards (A9, 10-29):** kinds
+  `case.pipeline.advance.v1` (the case's next main-lane stage — `upcoming[0]`)
+  and `case.pipeline.move.v1` ({stage}: a key or label of a stage of the case's
+  RESOLVED pipeline, both lanes), both POST `/api/cases/:id/pipeline/advance`
+  {stage: <stage_key>, note?} — `pipelineService.advanceStage`, the only
+  `case_stage_log` writer and the only automatic `pipeline_phase` writer. Never
+  the cases PATCH, never `/pipeline/move` (cross-pipeline membership: refused
+  by name — template_id / pipeline / case_type / case_subtype). The one
+  cross-template destination is the RETENTION crossing: an intake case into
+  its chapter pipeline's first active stage (main lane), via the route's
+  cross-phase key search, only when getPipeline's R2.5 projection is source
+  'subtype' on the same template `resolveMatterTemplate` picks — a blank /
+  unmatched subtype under an is_default template is refused (the route WOULD
+  file it there; twin-pinned). THE ROUTE HAS NO REQUIREMENT GATE, so the
+  normalizer is one, fail closed: a REQUIRED requirement in status
+  active/upcoming that the move turns 'skipped' (resolver rule 3: stage_number
+  below the destination in its template, or every intake step on the
+  crossing) refuses the card and is listed verbatim; optional ones are
+  disclosed; a step back passes none. NO override pathway: a draft key
+  matching override/skip/force/requirement/… refuses by name before any read
+  (the override sub-slice is deferred, ref/plans.md). Refused too: a
+  case-phase case resolving to Intake (would flip it back to intake), advance
+  from an off-ramp / past the last stage, a later stage of a chapter pipeline
+  not yet entered, an all-digit stage key (the route reads it as a numeric
+  id). Downstream automation: the exact `case.stage_advanced` envelope
+  (`domainEvents.buildEnvelope`; extra.from_template_id from the latest log
+  row — the family's one SQL) is dry-run per active rule
+  (`triggerService.listActiveRulesForEvent` + `evaluateDraft`, preview lane,
+  nothing dispatched); a rule that cannot be evaluated is "MAY run" and
+  danger-styles the card. Freshness: `expected` = template id + current
+  stage_key + history length + phase/type/subtype + the passed-over
+  requirement signature; the click re-reads GET `…/pipeline?requirements=1`
+  (recomputing the blockers — a newly unmet step refuses by name) and GET
+  `/api/cases/:id`. Idempotency: none added — advanceStage is idempotent per
+  destination (same key + template as the latest row → noop, no row, no
+  event, under its per-case GET_LOCK; twin-pinned), and the ledger allows one
+  claim per draft; the noop and the lock's 409 read as refusals
+  (`knownOutcome`). Receipt: the STRING case_id (the route never returns the
+  case_stage_log id). Sync: the advance matcher carries `changes` (the four
+  overwritten columns) — case pages and the board repaint; nothing added. Off
+  switch `casey_case_pipeline_enabled` (on unless '0'). Tests:
+  `tests/caseyPipeline.test.js`, gated `tests/caseyPipeline.mysql.test.js`;
+  plan: ASK_CASEY_ACTIONS_PLAN A9.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL

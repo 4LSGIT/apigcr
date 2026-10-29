@@ -259,9 +259,37 @@ describe('A8 — every stage teaches case contact membership and its refusals', 
     expect(answerPrompt).toContain('any other contact may be demoted or removed and the card warns that\n    they lose portal sight of the case once the portal is live');
     expect(answerPrompt).toContain('demoting or removing the case\'s ONLY Primary');
     expect(answerPrompt).toContain('removing the case\'s last contact');
-    expect(answerPrompt).toContain('case-and-contact-notes/case-contact/direct-send');
+    expect(answerPrompt).toContain('case-and-contact-notes/case-contact/case-pipeline/direct-send');
     expect(repairPrompt).toContain('evidence is the\n  case_relate row carrying the exact case_relate_id');
     expect(repairPrompt).toContain('refuse a contact who has used the client portal leaving\n  Primary/Secondary');
+  });
+});
+
+// A9: the 'case' prefix a third time (case.pipeline), so this block pins A9's
+// own bullet and that every stage teaches the refusals — above all that there
+// is NO override pathway and an unmet requirement is repeated, never
+// summarized (a stage that does not know it proposes an override key the
+// server then refuses, every time).
+describe('A9 — every stage teaches the pipeline cards, the unmet-requirement refusal and the absent override', () => {
+  test('the plan carries its own bullet and no longer lists stage as a field edit', () => {
+    expect(planPrompt).toContain('Reviewed case pipeline actions are available');
+    expect(planPrompt).toContain('refuses — and the answer says why — any move that would pass over a REQUIRED step not done or N/A (Casey cannot\n  override a requirement');
+    expect(planPrompt).toContain('No other case or contact field is editable by Casey (status, dates,');
+    expect(planPrompt).toContain("a case's pipeline STAGE moves only through the pipeline actions below, never as a field edit");
+  });
+  test('the investigate stage names the proposal family', () => {
+    expect(investigatePrompt).toContain('and case pipeline proposals, which need only a\n  row carrying the exact case_id');
+  });
+  test('the answer and repair stages teach the destination, the evidence and every refusal', () => {
+    expect(answerPrompt).toContain('Case pipeline rules (A9');
+    expect(answerPrompt).toContain('the server picks it; never name one');
+    expect(answerPrompt).toContain('a move that would pass over a REQUIRED step\n    that is not done or N/A (the refusal lists every such step word for word — repeat them all, never summarize them\n    away)');
+    expect(answerPrompt).toContain('Casey has NO override pathway');
+    expect(answerPrompt).toContain('moving a case onto ANOTHER pipeline');
+    expect(answerPrompt).toContain('A case\'s pipeline STAGE moves only through the pipeline kinds below.');
+    expect(answerPrompt).not.toContain('(status, stage, dates');
+    expect(repairPrompt).toContain('the destination is the case\'s NEXT stage (never named)');
+    expect(repairPrompt).toContain('never template_id, stage_id or any override / skip / force / requirement key (each\n  is refused by name)');
   });
 });
 

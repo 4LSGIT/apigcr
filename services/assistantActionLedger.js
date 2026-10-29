@@ -24,6 +24,11 @@ const KINDS = new Map([
   // case_id string path: the new row for an add, the reviewed row for a role
   // change (UPDATE keeps it), the removed row for a remove (DELETE echoes none).
   ...['add', 'update', 'remove'].map(k => [`case.contact.${k}.v1`, 'case_relate_id']),
+  // A9: the receipt is the case whose pipeline position moved — the STRING
+  // case_id path. The transition's own row (case_stage_log.id) is an integer,
+  // but the advance route never returns it (getPipeline's history projection
+  // omits the id), so there is no integer to receipt without a route change.
+  ...['advance', 'move'].map(k => [`case.pipeline.${k}.v1`, 'case_id']),
   ['job.code_safe.create.v1', 'job_id'],
   ['workflow.draft.v1', 'workflow_id'],
   ['workflow.step_insert.v1', 'workflow_id'],
@@ -52,7 +57,8 @@ const KINDS = new Map([
 // since Aug 2026, mixed-case base64url before it, never renumbered — see
 // lib/caseId.js), so a case has no integer id to receipt. Every other field
 // stays a positive safe integer; a new family whose record HAS an integer id
-// must use it, not this path.
+// its route returns must use it, not this path (A9's transition row has one
+// that no route returns — see its KINDS entry).
 const STRING_RECEIPT_FIELDS = new Map([['case_id', /^[A-Za-z0-9_-]{1,20}$/]]);
 function fail(status, message) { const e = new Error(message); e.status = status; throw e; }
 function actor(userId) {

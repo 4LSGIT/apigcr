@@ -410,6 +410,60 @@ const CASE_RELATE_CASE_ID_MAX = 8;
 const CASE_CONTACT_MEMBERS_MAX = 50;
 // Names listed on the card's "Contacts after" line.
 const CASE_CONTACT_CARD_NAMES = 12;
+// A9: case pipeline transitions — advance a case to its NATURAL next stage
+// (case.pipeline.advance.v1) or move it to ONE named stage
+// (case.pipeline.move.v1), both through POST /api/cases/:id/pipeline/advance
+// {stage: <stage_key>, note?} — the route the case page's Advance and the
+// board's drag use, whose service (pipelineService.advanceStage) is the only
+// case_stage_log writer. NEVER the cases PATCH (it can set case_stage /
+// pipeline_phase by hand and bypasses the log, the event and the requirement
+// model) and not POST /pipeline/move (cross-pipeline membership; deferred).
+//   * The destination comes from the case's RESOLVED pipeline (getPipeline's
+//     stages, both lanes) — the model names a stage by key or label and the
+//     server resolves it; an unknown name refuses and lists the live ones.
+//     The ONE cross-template destination is the retention crossing: an intake
+//     case entering its chapter pipeline at that pipeline's FIRST stage, and
+//     only when the case's subtype names that pipeline exactly (the R2.5
+//     projection agrees with the advance's matter resolution — never a
+//     type-default pipeline, the "files a Chapter 11 on a Chapter 7 pipeline"
+//     footgun pipelineService warns about).
+//   * UNMET REQUIREMENTS. The route has NO requirement gate (skipping is legal
+//     by design), so the normalizer is the gate, fail closed: every REQUIRED
+//     requirement not done / N/A that the move would turn 'skipped' — the
+//     resolver's own rule 3: a stage numbered below the destination in its
+//     template, or (the crossing) any intake-template step — refuses the card
+//     and is listed verbatim. Optional ones are disclosed on the card. There
+//     is NO override pathway: a draft key naming an override refuses by name,
+//     and overrides stay the user's own act on the Steps panel (a later
+//     sub-slice with its own reason and permission contract).
+//   * pipeline_phase is written by advanceStage from the entered stage's
+//     template role, never directly. A crossing (intake → case) is
+//     danger-styled; a case-phase case displaying the Intake pipeline (no
+//     chapter pipeline matches it) is refused — advancing it there would flip
+//     a retained case back to intake.
+//   * Downstream automation: the case.stage_advanced event the advance emits
+//     is dry-run against every active trigger rule (the native rule test's
+//     match + transform, preview lane, nothing dispatched) and every rule
+//     that would run, could not be evaluated, or would fail is on the card.
+// Freshness: the pipeline position (template, current stage, history length),
+// phase / type / subtype, and the requirement statuses the move passes over
+// are baked into `expected`; the click re-reads GET /api/cases/:id/pipeline
+// ?requirements=1 and GET /api/cases/:id and refuses on any difference.
+// Receipt: the STRING case_id (A7's path) — the advance response does not
+// echo the case_stage_log row id (getPipeline's projection omits it).
+// One per-family switch, casey_case_pipeline_enabled (on unless '0').
+const CASE_PIPELINE_ACTION_KINDS = new Set(['case.pipeline.advance.v1', 'case.pipeline.move.v1']);
+const CASE_PIPELINE_KEYS = {
+  'case.pipeline.advance.v1': new Set(['kind', 'case_id', 'note', 'evidence']),
+  'case.pipeline.move.v1': new Set(['kind', 'case_id', 'stage', 'note', 'evidence']),
+};
+// A key that reads as a requirement override / bypass is refused BY NAME
+// before anything else: the cards have no override pathway at all.
+const CASE_PIPELINE_OVERRIDE_KEY = /overrid|waive|bypass|skip|ignore|force|requirement|mark_?(?:done|na)|not_?applicable|unblock|exempt/i;
+// Keys that would choose another pipeline (POST /pipeline/move territory).
+const CASE_PIPELINE_CROSS_KEYS = new Set(['template_id', 'template', 'pipeline', 'pipeline_id', 'pipeline_template_id', 'case_type', 'case_subtype']);
+// case_stage_log.note is varchar(255); the service clips silently.
+const CASE_PIPELINE_NOTE_MAX = 255;
 const CONTACT_PHONE_UPDATE_KEYS = new Set(['label', 'is_primary', 'sms_optout', 'mms_capable', 'notes']);
 const CONTACT_EMAIL_UPDATE_KEYS = new Set(['label', 'is_primary', 'email_optout', 'notes']);
 const CONTACT_ADDRESS_UPDATE_KEYS = new Set(['address1', 'address2', 'city', 'state', 'zip', 'country', 'label', 'is_primary', 'notes']);
@@ -2311,6 +2365,354 @@ async function normalizeCaseContactAction(db, value, evidence) {
       portal_enabled: contact.portal_enabled,
       // The target's portal use (change / remove); an add's contact is not a member yet.
       portal_used: kind === 'case.contact.add.v1' ? null : !!mine[0].portal_used,
+    },
+    evidence: refs,
+  };
+}
+
+// ── A9: case pipeline transitions ─────────────────────────────────────────
+// Everything is read through the services behind the case page's own GETs:
+// caseService.getCase (GET /api/cases/:id), pipelineService.getPipeline with
+// requirements (GET /api/cases/:id/pipeline?requirements=1 — the read the
+// click re-runs), the advance's own matter resolution
+// (pipelineService.resolveMatterTemplate) and the move picker's stage list
+// (pipelineAdminService.listStages / listRequirements). The one SQL of this
+// family's own is the latest log row's template (the event's
+// extra.from_template_id) — real-engine twin: tests/caseyPipeline.mysql.test.js.
+
+function casePipelineError(message) { return httpError(422, message); }
+
+function casePipelineOfframp(stage) {
+  return String(stage && stage.lane != null ? stage.lane : '').trim().toLowerCase() === 'offramp';
+}
+
+function casePipelineStageText(stage) {
+  return `${String(stage.internal_label || stage.stage_key)} (${stage.stage_key})`;
+}
+
+// Requirement statuses that are not satisfied: the resolver's 'active' (the
+// current stage's work) and 'upcoming' (ahead). 'done' / 'na' are satisfied,
+// 'skipped' was already passed over before this card.
+const CASE_PIPELINE_OPEN = new Set(['active', 'upcoming']);
+
+function casePipelineRequirementRow(r, stageLabel) {
+  return {
+    requirement_key: String(r.requirement_key), stage_id: Number(r.stage_id), stage_key: String(r.stage_key),
+    stage_label: stageLabel, internal_label: String(r.internal_label || r.requirement_key),
+    required: r.required ? 1 : 0, status: String(r.status || ''), owner: String(r.owner || ''),
+  };
+}
+
+// The stable fingerprint of the requirements a move passes over — the click
+// recomputes it from the same GET and refuses on any difference.
+function casePipelineRequirementSignature(rows) {
+  return rows.map((r) => `${r.requirement_key}@${Number(r.stage_id)}:${r.status}:${r.required ? 1 : 0}`).sort();
+}
+
+// The retention crossing's destination: the first active stage of the
+// pipeline the ADVANCE would resolve for this case's type/subtype — accepted
+// only when the case's subtype names that pipeline exactly (getPipeline's
+// projection says source 'subtype' with the same template) and that first
+// stage is a main-lane stage whose key is not active on the case's current
+// pipeline (the route resolves a key there first).
+async function casePipelineEntry(db, caseRow, pipe, stagesNow) {
+  const pipeline = require('./pipelineService');
+  const matter = await pipeline.resolveMatterTemplate(db, caseRow);
+  if (!matter) return { refusal: `no chapter pipeline matches its type/subtype (${caseRow.case_type || 'no type'} / ${caseRow.case_subtype || 'no subtype'})` };
+  const projected = pipe && pipe.projected;
+  if (!projected || projected.source !== 'subtype' || !projected.template || Number(projected.template.id) !== Number(matter.id)) {
+    return { refusal: `its subtype (${String(caseRow.case_subtype || '').trim() || 'blank'}) does not name the ${matter.name} pipeline exactly — entering it would rest on the case type's default pipeline. Set the case's subtype first, or the user moves it on the case page` };
+  }
+  const listed = await require('./pipelineAdminService').listStages(db, matter.id);
+  const active = (listed && Array.isArray(listed.stages) ? listed.stages : []).filter((s) => !!Number(s.active))
+    .sort((a, b) => Number(a.stage_number) - Number(b.stage_number) || Number(a.id) - Number(b.id));
+  const first = active[0];
+  if (!first) return { refusal: `the ${matter.name} pipeline has no active stages` };
+  if (casePipelineOfframp(first)) return { refusal: `the ${matter.name} pipeline's first stage (${casePipelineStageText(first)}) is an off-ramp` };
+  if (stagesNow.some((s) => s.stage_key === first.stage_key)) {
+    return { refusal: `its first stage key "${first.stage_key}" is also active on the case's current pipeline, so the route would resolve it there` };
+  }
+  const projFirst = Array.isArray(projected.stages) ? projected.stages[0] : null;
+  if (!projFirst || projFirst.stage_key !== first.stage_key) return { refusal: `the ${matter.name} pipeline's stages changed while Casey read them` };
+  const { requirements } = await require('./pipelineAdminService').listRequirements(db, first.id);
+  return {
+    template: { id: Number(matter.id), name: String(matter.name || `Pipeline ${matter.id}`), role: String(matter.role || 'case') },
+    stage: {
+      stage_id: Number(first.id), stage_key: String(first.stage_key), stage_number: Number(first.stage_number),
+      internal_label: String(first.internal_label || first.stage_key), client_label: first.client_label == null ? null : String(first.client_label),
+      client_visible: first.client_visible ? 1 : 0, lane: String(first.lane || 'main'), case_stage: first.case_stage == null ? null : String(first.case_stage),
+      default_rec: first.default_rec == null ? '' : String(first.default_rec),
+    },
+    // Definitions only: their status is decided once the case is on the pipeline.
+    entering: (Array.isArray(requirements) ? requirements : []).filter((r) => !!Number(r.active))
+      .map((r) => ({ internal_label: String(r.internal_label || r.requirement_key), required: r.required ? 1 : 0, status: null })),
+  };
+}
+
+// One card line per active case.stage_advanced trigger rule that would run,
+// could not be evaluated, or would fail on this exact event (the native rule
+// test's match + transform on the preview lane; nothing is dispatched).
+function casePipelineActionLine(action) {
+  let cfg = action.config;
+  if (typeof cfg === 'string') { try { cfg = JSON.parse(cfg); } catch (_) { cfg = {}; } }
+  cfg = cfg && typeof cfg === 'object' ? cfg : {};
+  const named = action.name ? ` ("${String(action.name).slice(0, 100)}")` : '';
+  if (action.action_type === 'workflow') return `starts workflow #${Number(cfg.workflow_id) || '?'}${named}`;
+  if (action.action_type === 'sequence') return `enrolls in sequence ${Number(cfg.template_id) > 0 ? `template #${Number(cfg.template_id)}` : `type "${String(cfg.template_type || '?').slice(0, 60)}"`}${named}`;
+  if (action.action_type === 'internal_function') return `calls ${String(cfg.function_name || '?').slice(0, 60)}${named}`;
+  if (action.action_type === 'hook') return `runs hook "${String(cfg.slug || '?').slice(0, 60)}"${named}`;
+  if (action.action_type === 'http') {
+    let host = 'an HTTP endpoint';
+    try { host = new URL(String(cfg.url || '')).host || host; } catch (_) { /* unparseable: say so generically */ }
+    return `calls ${host} over HTTP${named}`;
+  }
+  return `${String(action.action_type || 'unknown')} action${named}`;
+}
+
+async function casePipelineAutomation(db, envelope) {
+  const triggers = require('./triggerService');
+  const rules = await triggers.listActiveRulesForEvent(db, 'case.stage_advanced');
+  const lines = []; let quiet = 0;
+  for (const rule of rules) {
+    const label = `Trigger rule #${Number(rule.id)} "${String(rule.name || '').slice(0, 120)}"`;
+    let out;
+    try { out = await triggers.evaluateDraft(rule, envelope); }
+    catch (e) { out = { matched: false, match_error: e && e.message || 'evaluation failed' }; }
+    if (out.match_error) {
+      lines.push({ rule_id: Number(rule.id), outcome: 'unknown', text: `${label} could not be evaluated for this move (${String(out.match_error).slice(0, 160)}) — it MAY run: ${(rule.actions || []).map(casePipelineActionLine).join('; ') || 'no active actions'}` });
+    } else if (!out.matched) {
+      quiet += 1;
+    } else if (out.transform_ok === false) {
+      lines.push({ rule_id: Number(rule.id), outcome: 'transform_fails', text: `${label} matches, but its transform fails on this event (${String(out.transform_error || '').slice(0, 160)}) — its actions would not run and the rule records a failure` });
+    } else {
+      const acts = (rule.actions || []).map(casePipelineActionLine).join('; ') || 'no active actions';
+      const cooling = !!Number(rule.cooling_down);
+      lines.push({ rule_id: Number(rule.id), outcome: cooling ? 'cooling_down' : 'fires',
+        text: cooling
+          ? `${label} matches but is cooling down (it ran within its ${Number(rule.min_interval_s)}s minimum interval) — it is skipped if applied now, otherwise it runs: ${acts}`
+          : `${label} runs: ${acts}` });
+    }
+  }
+  return { lines, rules_checked: rules.length, quiet };
+}
+
+async function normalizeCasePipelineAction(db, value, evidence, { currentUserId = null } = {}) {
+  // The per-family switch: '0' and the A9 kinds do not exist.
+  if (require('../lib/firmConfig').cfg('casey_case_pipeline_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const kind = value.kind;
+  const verb = kind === 'case.pipeline.advance.v1' ? 'advance' : 'move';
+  // NO override pathway: refused by name before anything is read.
+  const overrideKeys = Object.keys(value).filter((k) => k !== 'kind' && CASE_PIPELINE_OVERRIDE_KEY.test(k));
+  if (overrideKeys.length) {
+    throw casePipelineError(`REQUIREMENT OVERRIDE refused (${overrideKeys.join(', ')}): a pipeline card never marks a requirement done or N/A, never skips one and never moves a case past an unmet one — Casey has no override pathway. The user records an override on the case's Steps panel; then ask Casey again`);
+  }
+  const crossKeys = Object.keys(value).filter((k) => CASE_PIPELINE_CROSS_KEYS.has(k));
+  if (crossKeys.length) {
+    throw casePipelineError(`Moving a case onto ANOTHER pipeline (${crossKeys.join(', ')}) is not available to Casey — it rewrites the case's type/subtype. The user does it with "Move to another pipeline…" on the case page. Casey moves a case within its own pipeline, or into its chapter pipeline's first stage`);
+  }
+  const allowed = CASE_PIPELINE_KEYS[kind];
+  const unknown = Object.keys(value).filter((k) => !allowed.has(k));
+  if (unknown.length) {
+    throw casePipelineError(`A pipeline ${verb} carries unsupported fields: ${unknown.join(', ')} — it takes ${[...allowed].filter((k) => k !== 'kind').join(', ')} only${verb === 'move' ? ' (name the destination in "stage": its key or label)' : ' (the destination is the case\'s next stage; to name one, propose case.pipeline.move.v1)'}`);
+  }
+  const caseId = String(value.case_id == null ? '' : value.case_id).trim();
+  if (!caseId || caseId.length > 20 || !/^[A-Za-z0-9_-]+$/.test(caseId)) throw casePipelineError(`A pipeline ${verb} needs the case's exact case_id`);
+  let note = null;
+  if (value.note != null) {
+    if (typeof value.note !== 'string') throw casePipelineError('The pipeline note must be text');
+    note = value.note.trim() || null;
+    if (note && note.length > CASE_PIPELINE_NOTE_MAX) throw casePipelineError(`The pipeline note is ${note.length} characters — the stage log keeps ${CASE_PIPELINE_NOTE_MAX}`);
+  }
+  let stageText = '';
+  if (verb === 'move') {
+    stageText = typeof value.stage === 'string' ? value.stage.trim() : '';
+    if (!stageText || stageText.length > 120) throw casePipelineError('A pipeline move needs "stage": the destination stage\'s key or label, as the case\'s pipeline names it');
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  const cited = refs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return row && String(row.case_id) === caseId;
+  });
+  if (!cited) throw casePipelineError(`The pipeline ${verb} evidence does not identify case ${caseId} — cite a row carrying its exact case_id (read the case first)`);
+
+  const found = await require('./caseService').getCase(db, caseId, 'contacts');
+  if (!found || !found.case) throw casePipelineError(`Case ${caseId} no longer exists`);
+  const row = found.case;
+  const id = String(row.case_id);
+  const number = String(row.case_number_full || row.case_number || '').trim().slice(0, 40);
+  const caseLabel = number || id;
+  const pipe = await require('./pipelineService').getPipeline(db, id, { requirements: true });
+  const tpl = pipe && pipe.template;
+  if (!tpl) throw casePipelineError(`No pipeline resolves for case ${caseLabel} — there is nothing to ${verb} along`);
+  // pipelineService.isCasePhase: anything not exactly 'case' reads as intake.
+  const phase = String(row.pipeline_phase == null ? '' : row.pipeline_phase).trim().toLowerCase() === 'case' ? 'case' : 'intake';
+  if (phase === 'case' && tpl.role === 'intake') {
+    throw casePipelineError(`Case ${caseLabel} is retained (pipeline phase "case") but no chapter pipeline matches its type/subtype (${row.case_type || 'no type'} / ${row.case_subtype || 'no subtype'}), so it shows the ${tpl.name} pipeline. Moving it there would put a retained case back into intake — Casey does not do that. Fix the case's type/subtype, or the user moves it on the case page`);
+  }
+  const stages = Array.isArray(pipe.stages) ? pipe.stages : [];
+  const current = pipe.current || null;
+  const curStage = current ? stages.find((s) => s.stage_key === current.stage_key) || null : null;
+  const fromText = current
+    ? `${curStage ? casePipelineStageText(curStage) : `${current.status_label || current.stage_key} (${current.stage_key})`}${curStage ? '' : `, not a stage of ${tpl.name}`}`
+    : `no stage yet on ${tpl.name}`;
+
+  // ── The destination ─────────────────────────────────────────────────────
+  let dest = null; let destTemplate = { id: Number(tpl.id), name: String(tpl.name), role: String(tpl.role) };
+  let entering = null; let crossing = false;
+  if (verb === 'advance') {
+    if (curStage && casePipelineOfframp(curStage)) {
+      throw casePipelineError(`Case ${caseLabel} is on the off-ramp ${casePipelineStageText(curStage)}, which has no natural next stage. Name the stage it should go to — propose case.pipeline.move.v1`);
+    }
+    const next = Array.isArray(pipe.upcoming) ? pipe.upcoming[0] : null;
+    if (next) {
+      dest = next;
+    } else if (tpl.role === 'intake') {
+      const entry = await casePipelineEntry(db, row, pipe, stages);
+      if (entry.refusal) throw casePipelineError(`Case ${caseLabel} is at the last stage of the ${tpl.name} pipeline (${fromText}); its next step is its chapter pipeline, but ${entry.refusal}`);
+      dest = entry.stage; destTemplate = entry.template; entering = entry.entering; crossing = true;
+    } else {
+      throw casePipelineError(`Case ${caseLabel} is at the last stage of the ${tpl.name} pipeline (${fromText}) — there is no next stage. To put it on an off-ramp or move it back, propose case.pipeline.move.v1 naming the stage`);
+    }
+  } else {
+    const want = stageText.toLowerCase();
+    const byKey = stages.filter((s) => String(s.stage_key).toLowerCase() === want);
+    const byLabel = stages.filter((s) => String(s.internal_label || '').trim().toLowerCase() === want);
+    const hits = byKey.length ? byKey : byLabel;
+    if (hits.length > 1) {
+      throw casePipelineError(`"${stageText}" names ${hits.length} stages of the ${tpl.name} pipeline: ${hits.map(casePipelineStageText).join(', ')} — name it by its key`);
+    }
+    if (hits.length === 1) {
+      dest = hits[0];
+    } else {
+      const list = stages.map(casePipelineStageText).join(', ') || 'none';
+      if (tpl.role !== 'intake') {
+        throw casePipelineError(`"${stageText}" is not a stage of case ${caseLabel}'s ${tpl.name} pipeline — its stages are: ${list}`);
+      }
+      const entry = await casePipelineEntry(db, row, pipe, stages);
+      const matchesEntry = !entry.refusal && (entry.stage.stage_key.toLowerCase() === want || entry.stage.internal_label.trim().toLowerCase() === want);
+      if (!matchesEntry) {
+        throw casePipelineError(`"${stageText}" is not a stage of case ${caseLabel}'s ${tpl.name} pipeline (its stages are: ${list}). ` +
+          (entry.refusal ? `Its chapter pipeline cannot be entered either: ${entry.refusal}` :
+            `The one other destination Casey can offer is its chapter pipeline's FIRST stage, ${casePipelineStageText(entry.stage)} on ${entry.template.name}: the requirements of any later stage cannot be checked before the case is on that pipeline`));
+      }
+      dest = entry.stage; destTemplate = entry.template; entering = entry.entering; crossing = true;
+    }
+    if (!crossing && current && dest.stage_key === current.stage_key) {
+      throw casePipelineError(`Case ${caseLabel} is already at ${casePipelineStageText(dest)} — that changes nothing`);
+    }
+  }
+
+  // The advance route reads an all-digit target as a numeric stage id
+  // (pipelineService._resolveTarget), so such a key could land elsewhere.
+  if (/^\d+$/.test(String(dest.stage_key))) {
+    throw casePipelineError(`The stage ${casePipelineStageText(dest)} has a key of digits only, which the advance route reads as a stage id — Casey does not send it; the user moves the case on the case page`);
+  }
+
+  // ── Requirements the move passes over (resolver rule 3) ─────────────────
+  const stageLabel = new Map(stages.map((s) => [Number(s.stage_id), String(s.internal_label || s.stage_key)]));
+  const passedStages = crossing ? stages : stages.filter((s) => Number(s.stage_number) < Number(dest.stage_number));
+  const passed = [];
+  for (const s of passedStages) {
+    for (const r of Array.isArray(s.requirements) ? s.requirements : []) passed.push(casePipelineRequirementRow(r, stageLabel.get(Number(s.stage_id)) || s.stage_key));
+  }
+  const blockers = passed.filter((r) => r.required && CASE_PIPELINE_OPEN.has(r.status));
+  if (blockers.length) {
+    throw casePipelineError(`UNMET REQUIREMENTS: moving case ${caseLabel} from ${fromText} to ${casePipelineStageText(dest)}${crossing ? ` on ${destTemplate.name}` : ''} would pass over ${blockers.length} required step${blockers.length > 1 ? 's' : ''} that ${blockers.length > 1 ? 'are' : 'is'} not done: ` +
+      blockers.map((r) => `"${r.internal_label}" (stage ${r.stage_label}, ${r.status}${r.owner ? `, ${r.owner}` : ''})`).join('; ') +
+      '. Casey never moves a case past an unmet requirement and cannot override one. Complete them, or the user marks them done / N/A on the case\'s Steps panel, then ask again');
+  }
+  const optionalSkipped = passed.filter((r) => !r.required && CASE_PIPELINE_OPEN.has(r.status));
+  const satisfied = passed.filter((r) => r.status === 'done' || r.status === 'na');
+  const destRequirements = crossing ? entering
+    : (Array.isArray(dest.requirements) ? dest.requirements : []).map((r) => ({ internal_label: String(r.internal_label || r.requirement_key), required: r.required ? 1 : 0, status: String(r.status || '') }));
+
+  // ── The four columns advanceStage overwrites (its own clipping) ─────────
+  const toStatus = String(dest.internal_label || '').slice(0, 50);
+  const toRec = String(dest.default_rec == null ? '' : dest.default_rec).slice(0, 128);
+  const writes = {
+    case_stage: { from: row.case_stage == null ? null : String(row.case_stage), to: dest.case_stage == null ? null : String(dest.case_stage) },
+    case_status: { from: row.case_status == null ? null : String(row.case_status), to: toStatus },
+    case_rec: { from: row.case_rec == null ? null : String(row.case_rec), to: toRec },
+    pipeline_phase: { from: phase, to: destTemplate.role === 'case' ? 'case' : 'intake' },
+  };
+
+  // ── Direction, lane and lifecycle — the danger lines ────────────────────
+  const warnings = []; const effects = [];
+  if (crossing) {
+    warnings.push(`LIFECYCLE — THIS RETAINS THE CASE: pipeline phase intake → case. The case leaves the ${tpl.name} pipeline for ${destTemplate.name} and is treated as a retained case everywhere from now on (the board it sits on, the client portal's timeline, reports, every rule that reads the phase); its intake steps become history.`);
+  } else if (casePipelineOfframp(dest)) {
+    warnings.push(`OFF-RAMP: ${casePipelineStageText(dest)} takes the case off the ${tpl.name} pipeline's main path.`);
+  } else if (curStage && casePipelineOfframp(curStage)) {
+    warnings.push(`RECOVERY: the case comes back from the off-ramp ${casePipelineStageText(curStage)} onto the main path.`);
+  } else if (curStage && Number(dest.stage_number) < Number(curStage.stage_number)) {
+    warnings.push(`BACKWARD: the case moves back from ${casePipelineStageText(curStage)} to ${casePipelineStageText(dest)}; the steps of the stages in between read as upcoming again.`);
+  }
+  const skippedStages = crossing ? [] : stages.filter((s) => !casePipelineOfframp(s) && !casePipelineOfframp(dest)
+    && Number(s.stage_number) < Number(dest.stage_number) && (!curStage || Number(s.stage_number) > Number(curStage.stage_number)));
+  if (skippedStages.length) effects.push(`Skips ${skippedStages.length} stage${skippedStages.length > 1 ? 's' : ''}: ${skippedStages.map(casePipelineStageText).join(', ')} — skipping is legal; the log records only the destination.`);
+  effects.push(dest.client_visible
+    ? `Client portal: the client's timeline shows "${String(dest.client_label || dest.internal_label)}" as the case's current stage.`
+    : 'Client portal: this stage is staff-only — the client\'s timeline does not show it.');
+  effects.push(`Stage log: one new entry, entered by you${note ? `, with the note "${note}"` : ' (no note)'}; stage-age reminders restart from this entry.`);
+  if (writes.case_rec.from && writes.case_rec.from !== writes.case_rec.to) {
+    effects.push(`Next step (case_rec) is REPLACED: "${writes.case_rec.from.slice(0, 128)}" → "${writes.case_rec.to}" — the stage's default; any hand-written next step is lost.`);
+  }
+
+  // ── Downstream automation: dry-run the event advanceStage will emit ─────
+  const [latestRows] = await db.query(
+    'SELECT template_id, stage_key FROM case_stage_log WHERE case_id = ? ORDER BY entered_at DESC, id DESC LIMIT 1', [id]);
+  const latest = Array.isArray(latestRows) ? latestRows[0] : null;
+  const envelope = require('../lib/domainEvents').buildEnvelope('case.stage_advanced', {
+    case_id: id, source: 'manual', actor: { user_id: currentUserId == null ? 0 : currentUserId },
+    data: {
+      stage_key: dest.stage_key, stage_id: Number(dest.stage_id), template_id: Number(destTemplate.id),
+      case_stage: dest.case_stage == null ? null : dest.case_stage, status_label: dest.internal_label,
+      case_type: row.case_type == null ? null : row.case_type, case_subtype: row.case_subtype == null ? null : row.case_subtype,
+    },
+    extra: { from_stage: latest ? latest.stage_key : null, from_template_id: latest ? latest.template_id : null, note },
+  });
+  const automation = await casePipelineAutomation(db, envelope);
+  if (automation.lines.some((l) => l.outcome === 'unknown')) {
+    warnings.push('AUTOMATION: at least one trigger rule could not be evaluated for this move — read its line; it may run.');
+  }
+
+  const clients = (Array.isArray(found.clients) ? found.clients : [])
+    .filter((c) => c && (c.relate_type === 'Primary' || c.relate_type === 'Secondary'))
+    .map((c) => String(c.contact_name || '').trim().slice(0, 200)).filter(Boolean).slice(0, 4);
+  return {
+    draft_id: crypto.randomUUID(), kind, status: 'draft',
+    case: { case_id: id, case_number: number, case_type: String(row.case_type || '').slice(0, 40), case_subtype: String(row.case_subtype || '').slice(0, 40), clients },
+    pipeline: { template_id: Number(tpl.id), name: String(tpl.name), role: String(tpl.role) },
+    from: current ? {
+      stage_key: String(current.stage_key), stage_id: current.stage_id == null ? null : Number(current.stage_id),
+      label: String(curStage ? curStage.internal_label : current.status_label || current.stage_key),
+      lane: curStage ? String(curStage.lane || 'main') : null, on_pipeline: !!curStage,
+    } : null,
+    to: {
+      template_id: Number(destTemplate.id), template_name: destTemplate.name, template_role: destTemplate.role,
+      stage_id: Number(dest.stage_id), stage_key: String(dest.stage_key), stage_number: Number(dest.stage_number),
+      internal_label: String(dest.internal_label || dest.stage_key), client_label: dest.client_label == null ? null : String(dest.client_label),
+      client_visible: dest.client_visible ? 1 : 0, lane: String(dest.lane || 'main'),
+    },
+    crossing, note, writes,
+    requirements: {
+      satisfied: satisfied.map((r) => ({ internal_label: r.internal_label, stage_label: r.stage_label, status: r.status })),
+      optional_skipped: optionalSkipped.map((r) => ({ internal_label: r.internal_label, stage_label: r.stage_label, status: r.status })),
+      destination: destRequirements,
+    },
+    automation: { lines: automation.lines.map((l) => l.text), rules_checked: automation.rules_checked, quiet: automation.quiet },
+    effects, warnings,
+    expected: {
+      template_id: Number(tpl.id),
+      stage_key: current ? String(current.stage_key) : null,
+      history_count: Array.isArray(pipe.history) ? pipe.history.length : 0,
+      pipeline_phase: phase,
+      case_type: row.case_type == null ? '' : String(row.case_type),
+      case_subtype: row.case_subtype == null ? '' : String(row.case_subtype),
+      requirements: casePipelineRequirementSignature(passed),
     },
     evidence: refs,
   };
@@ -5234,6 +5636,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && CONTACT_RELATION_ACTION_KINDS.has(value.kind)) return normalizeContactRelationAction(db, value, evidence);
   if (value && RECORD_TEXT_ACTION_KINDS.has(value.kind)) return normalizeRecordTextAction(db, value, evidence);
   if (value && CASE_CONTACT_ACTION_KINDS.has(value.kind)) return normalizeCaseContactAction(db, value, evidence);
+  if (value && CASE_PIPELINE_ACTION_KINDS.has(value.kind)) return normalizeCasePipelineAction(db, value, evidence, { currentUserId });
   if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Action kind is unavailable');
   if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
   if (!onlyKeys(value, TASK_CREATE_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
@@ -5394,7 +5797,13 @@ function taskDraftRequested(question, history = []) {
       /\b(?:case|file|matter)s?\b/i.test(text) &&
       /\b(?:add|link|attach|put|remove|unlink|detach|drop|take off|make|change|switch|swap|set|demote|promote)\b/i.test(request)) ||
     /\b(?:add|link|attach|put|remove|unlink|detach|drop|take)\b[^.?!\n]{0,60}\b(?:to|from|on|off)\s+(?:the|this|that|his|her|their)?\s*(?:case|file|matter)\b/i.test(request);
-  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || job || workflow || hook || sequence || send || ingestRule ||
+  // A9: a case's pipeline stage moving — a stage/pipeline noun with a move
+  // verb, "advance the case", or a move straight to a named milestone.
+  const pipelineMove = (/\b(?:stages?|pipelines?)\b/i.test(text) &&
+      /\b(?:advance|move|push|bump|put|set|change|send|progress|take|mark|retain)\b/i.test(request)) ||
+    /\b(?:advance|progress)\b[^.?!\n]{0,40}\b(?:case|file|matter|lead)s?\b/i.test(request) ||
+    /\b(?:move|put|mark|set|send|bump|push)\b[^.?!\n]{0,40}\b(?:to|as|on|into)\s+(?:the\s+)?(?:next stage|retained|dead lead|dismissed|filed|closed|discharged)\b/i.test(request);
+  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 

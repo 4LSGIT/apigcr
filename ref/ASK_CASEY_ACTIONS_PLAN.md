@@ -750,13 +750,97 @@ unless '0'). Tests: `tests/caseyCaseContacts.test.js`, gated
 **Deferred.** A swap of two Primaries in one card, fixing two-row pairs, and
 any native guard on the case page (`ref/plans.md`).
 
-#### A9: Case pipeline transitions and requirement overrides
+#### A9: Case pipeline transitions — advance and move shipped 2026-10-29
 
 Add advance and explicit move as different proposal kinds. The proposal must
 show the current and destination stages, unmet requirements, downstream
 automation, and any note or notification effect. Requirement override and
 override removal are a later sub-slice with their own reason and permission
 contract; Casey must never manufacture or conceal a blocker.
+
+**What the route guards.** `POST /api/cases/:id/pipeline/advance` →
+`pipelineService.advanceStage` (the only `case_stage_log` writer; it writes
+case_stage / case_status / case_rec and `pipeline_phase` from the entered
+stage's template role) checks NO requirement — skipping is legal by design —
+and is idempotent per destination: a repeat of the latest row's key and
+template is a noop under a per-case GET_LOCK that writes nothing and emits no
+`case.stage_advanced`. Both are pinned on a real engine
+(`tests/caseyPipeline.mysql.test.js`).
+
+**Shipped contract.** Two kinds, both through that route with body
+{stage: <stage_key>, note?}: `case.pipeline.advance.v1` (the next main-lane
+stage, server-picked — the model names none) and `case.pipeline.move.v1`
+({stage}: a key or label of a stage of the case's RESOLVED pipeline, either
+lane — off-ramp, skip ahead, step back, recovery). The one cross-template
+destination is the retention crossing (intake → case): an intake case into its
+chapter pipeline's FIRST active main-lane stage, reached by the route's own
+cross-phase key search, and only when the R2.5 projection names that pipeline
+by subtype (a blank or unmatched subtype under an is_default template is
+refused — the route would file it there). The cases PATCH is never used;
+`/pipeline/move` (cross-pipeline membership) is refused by name.
+- **Unmet requirements** are the normalizer's gate, fail closed: every
+  REQUIRED step in status active / upcoming that the move would turn
+  'skipped' — the resolver's rule 3 (a stage numbered below the destination
+  in its template; on the crossing, every intake step) — refuses the card,
+  each listed word for word with its stage and owner. Optional steps left
+  open are disclosed (they will read skipped); done / N/A ones are listed. A
+  step back passes none. There is NO override pathway: a draft key naming an
+  override / skip / force / waive / requirement refuses by name before
+  anything is read.
+- **Refused by name, besides:** a case-phase case that resolves to Intake (no
+  chapter pipeline matches — advancing it there would flip a retained case
+  back to intake); advance from an off-ramp or past the last stage; a later
+  stage of a chapter pipeline not yet entered (its requirements cannot be
+  computed before the case is on it); an all-digit stage key (the route reads
+  it as a numeric stage id); a note over 255 characters (the log width).
+- **The card** names the case, the pipeline, both stages, the phase
+  (danger-styled RETAINED on the crossing; off-ramp, recovery and backward
+  moves warn too), the four overwritten columns before → after (a
+  hand-written next step is replaced), the client-portal visibility of the
+  new stage, the passed-over and destination steps, and every active
+  `case.stage_advanced` trigger rule that would run, fail, or could not be
+  evaluated ("MAY run", danger) — the exact envelope advanceStage emits,
+  dry-run through `triggerService.listActiveRulesForEvent` + `evaluateDraft`
+  on the preview lane, nothing dispatched; transitive effects are not chased.
+- **Evidence:** a row carrying the exact case_id; the destination comes from
+  the server-resolved stage registry (getPipeline's stages, or the matter
+  pipeline's list), never free text.
+- **Freshness:** `expected` = template id, current stage_key, history length
+  (catches A → B → A), phase / type / subtype, and the passed-over requirement
+  signature; the click re-reads GET `…/pipeline?requirements=1` and GET
+  `/api/cases/:id`, recomputes the blockers (a newly unmet step refuses by
+  name) and refuses on any other difference before the claim.
+- **Idempotency (the double-fire question):** no Idempotency-Key and no route
+  change. Stage-entry automation fans out per transition, but the route itself
+  dedups a repeat (noop: no row, no event), the ledger allows one claim per
+  draft, a second card's precheck refuses "already there", and the route's
+  noop answers a race as a refusal ("nothing written, no automation ran"). The
+  residual is a DIFFERENT destination applied between two cards — a real
+  second transition, which the second card's precheck refuses (position
+  changed). The A18.4a idempotentRequest pattern is not needed here.
+- **Outcomes:** the noop and the per-case lock's 409 ("already in progress")
+  are before-write refusals (`knownOutcome`); a 400 (stage deactivated since)
+  is a refusal; other 409s and 5xx stay ambiguous.
+- **Receipt:** the STRING case_id (A7's `STRING_RECEIPT_FIELDS` path). The
+  transition's own row has an integer id, but the route never returns it
+  (getPipeline's history projection omits it, a byte-identical C1 contract).
+- **Sync:** the advance route's yc-sync matcher carries `changes` (the four
+  overwritten columns); case pages repaint and reload the widget
+  (`pipeline_phase` is the advance signature), the board refetches. Nothing
+  added.
+- Off switch `casey_case_pipeline_enabled` (on unless '0'). Tests:
+  `tests/caseyPipeline.test.js`, gated `tests/caseyPipeline.mysql.test.js`,
+  `tests/assistantUi.test.js`.
+
+**Deferred.** The requirement-override sub-slice (set / clear an override, its
+reason and permission contract — `POST/DELETE
+…/pipeline/requirements/:key/override`); cross-pipeline moves (`/pipeline/move`,
+a matter-type change — non-atomic, writes case_type / case_subtype, fires
+case.updated too, and its passed-over requirements cannot be computed before
+the membership write); entering a chapter pipeline past its first stage; a
+typed `case.pipeline` read so Casey can SHOW a case's stages and steps before
+proposing (today it reads cases.case_stage / case_status and learns stage
+names from a refusal). `ref/plans.md`.
 
 #### A10: Checklists and checklist items
 

@@ -71,6 +71,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'caseTextResult', 'contactTextResult', 'recordTextOpenTarget',
   'caseContactLabel', 'caseContactCaseLabel', 'caseContactText', 'caseContactIds', 'caseContactRequest',
   'caseContactSignature', 'caseContactPrecheck', 'caseContactResult', 'caseContactKnownOutcome',
+  'casePipelineLabel', 'casePipelineCaseLabel', 'casePipelineStageName', 'casePipelineText', 'casePipelineRequest',
+  'casePipelinePassed', 'casePipelinePrecheck', 'casePipelineResult', 'casePipelineKnownOutcome',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
   'workflowDraftLabel', 'workflowSendLines', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
   'workflowStepActionLabel', 'workflowStepWorkflowLine', 'workflowStepInsertText', 'workflowStepEditValue',
@@ -106,6 +108,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CASE_TEXT_ACTION_KINDS'), constSrc(html, 'CONTACT_TEXT_ACTION_KINDS'), constSrc(html, 'RECORD_TEXT_SPECS'),
     constSrc(html, 'RECORD_TEXT_CONTEXT'), constSrc(html, 'RECORD_TEXT_PART_MAX'), constSrc(html, 'RECORD_TEXT_WORD_MAX'),
     constSrc(html, 'CASE_CONTACT_ACTION_KINDS'), constSrc(html, 'CASE_CONTACT_TYPES'),
+    constSrc(html, 'CASE_PIPELINE_ACTION_KINDS'), constSrc(html, 'CASE_PIPELINE_STAGE_KEY'), constSrc(html, 'CASE_PIPELINE_OPEN'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
     constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEQUENCE_ENROLL_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
@@ -2798,6 +2801,234 @@ describe('A8 case contact cards (case.contact.add / update / remove)', () => {
     expect([[...fam.kinds], fam.idField, fam.appliedKey, !!fam.stringReceipt])
       .toEqual([['case.contact.add.v1', 'case.contact.update.v1', 'case.contact.remove.v1'], 'case_relate_id', 'result_case_relate_id', false]);
     for (const kind of ['case.contact.set.v1', 'case.contacts.update.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    dom.window.close();
+  });
+});
+
+// A9: case pipeline transitions through the SHARED engine. Pinned: the builder
+// sends POST /api/cases/:id/pipeline/advance {stage: <the card's stage_key>,
+// note?} — never the cases PATCH, never /pipeline/move, no Idempotency-Key,
+// model junk never reaches the body; the click-time re-read compares the
+// template, current stage and history length, the destination, the phase /
+// type / subtype, and RECOMPUTES the passed-over requirements (an unmet
+// required step refuses by name, any other change refuses as stale) BEFORE the
+// claim; the receipt is the STRING case_id; the route's noop (already there —
+// no log row, no event) and its lock 409 read as refusals, not as "may have
+// been applied".
+describe('A9 case pipeline cards (case.pipeline.advance / move)', () => {
+  const CASE_ID = '7KQ2M9XA';
+  const STAGES = [
+    { stage_id: 11, stage_key: 'consult_booked', stage_number: 1, internal_label: 'Consult booked', lane: 'main', requirements: [] },
+    { stage_id: 12, stage_key: 'consult_done', stage_number: 2, internal_label: 'Consult done', lane: 'main', requirements: [] },
+    { stage_id: 13, stage_key: 'contract_sent', stage_number: 3, internal_label: 'Contract sent', lane: 'main', requirements: [] },
+    { stage_id: 19, stage_key: 'dead_lead', stage_number: 91, internal_label: 'Dead lead', lane: 'offramp', requirements: [] },
+  ];
+  const draft = (over = {}) => ({ action_draft: {
+    draft_id: '9a9a9a9a-1b2c-4d3e-8f40-123456789abc', kind: 'case.pipeline.advance.v1', status: 'draft', received_at: Date.now(),
+    case: { case_id: CASE_ID, case_number: '25-12345-abc', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', clients: ['Dana Debtor'] },
+    pipeline: { template_id: 1, name: 'Intake', role: 'intake' },
+    from: { stage_key: 'consult_booked', stage_id: 11, label: 'Consult booked', lane: 'main', on_pipeline: true },
+    to: { template_id: 1, template_name: 'Intake', template_role: 'intake', stage_id: 12, stage_key: 'consult_done', stage_number: 2,
+      internal_label: 'Consult done', client_label: 'Consult done', client_visible: 1, lane: 'main' },
+    crossing: false, note: null,
+    writes: { case_stage: { from: 'Open', to: 'Open' }, case_status: { from: 'Consult booked', to: 'Consult done' },
+      case_rec: { from: 'Call back', to: 'Next' }, pipeline_phase: { from: 'intake', to: 'intake' } },
+    requirements: { satisfied: [{ internal_label: 'Photo ID', stage_label: 'Consult booked', status: 'na' }],
+      optional_skipped: [{ internal_label: 'Courtesy call', stage_label: 'Consult booked', status: 'active' }],
+      destination: [{ internal_label: 'Fee quoted', required: 1, status: 'upcoming' }] },
+    automation: { lines: ['Trigger rule #12 "Stage change → case log" runs: calls create_log ("Log it")'], rules_checked: 3, quiet: 2 },
+    effects: ['Stage log: one new entry, entered by you (no note); stage-age reminders restart from this entry.'], warnings: [],
+    expected: { template_id: 1, stage_key: 'consult_booked', history_count: 2, pipeline_phase: 'intake', case_type: 'Bankruptcy', case_subtype: 'Chapter 7',
+      requirements: ['id_copy@11:na:1', 'optional_call@11:active:0'] },
+    evidence: [],
+    // Model-shaped junk that must never reach a request.
+    stage: 'filed', stage_id: 23, template_id: 2, override: true, case_stage: 'Closed',
+    ...over } });
+  const movement = (over = {}) => draft({ draft_id: '8b8b8b8b-1b2c-4d3e-8f40-123456789abc', kind: 'case.pipeline.move.v1', note: 'gone quiet',
+    to: { template_id: 1, template_name: 'Intake', template_role: 'intake', stage_id: 19, stage_key: 'dead_lead', stage_number: 91,
+      internal_label: 'Dead lead', client_label: null, client_visible: 0, lane: 'offramp' },
+    warnings: ['OFF-RAMP: Dead lead (dead_lead) takes the case off the Intake pipeline\'s main path.'],
+    expected: { template_id: 1, stage_key: 'consult_booked', history_count: 2, pipeline_phase: 'intake', case_type: 'Bankruptcy', case_subtype: 'Chapter 7',
+      requirements: ['contract@13:done:1', 'fee@12:done:1', 'id_copy@11:na:1', 'optional_call@11:active:0'] }, ...over });
+  const crossing = (over = {}) => draft({ draft_id: '7c7c7c7c-1b2c-4d3e-8f40-123456789abc', crossing: true,
+    from: { stage_key: 'contract_sent', stage_id: 13, label: 'Contract sent', lane: 'main', on_pipeline: true },
+    to: { template_id: 2, template_name: 'Chapter 7', template_role: 'case', stage_id: 21, stage_key: 'retained', stage_number: 1,
+      internal_label: 'Retained', client_label: 'Retained', client_visible: 1, lane: 'main' },
+    writes: { case_stage: { from: 'Open', to: 'Open' }, case_status: { from: 'Contract sent', to: 'Retained' }, case_rec: { from: '', to: '' }, pipeline_phase: { from: 'intake', to: 'case' } },
+    warnings: ['LIFECYCLE — THIS RETAINS THE CASE: pipeline phase intake → case.'],
+    expected: { template_id: 1, stage_key: 'contract_sent', history_count: 3, pipeline_phase: 'intake', case_type: 'Bankruptcy', case_subtype: 'Chapter 7',
+      requirements: ['contract@13:done:1', 'fee@12:done:1', 'id_copy@11:na:1', 'optional_call@11:active:0'] }, ...over });
+  const REQS = {
+    consult_booked: [{ requirement_key: 'id_copy', stage_id: 11, internal_label: 'Photo ID', required: 1, status: 'na' },
+      { requirement_key: 'optional_call', stage_id: 11, internal_label: 'Courtesy call', required: 0, status: 'active' }],
+    consult_done: [{ requirement_key: 'fee', stage_id: 12, internal_label: 'Fee quoted', required: 1, status: 'done' }],
+    contract_sent: [{ requirement_key: 'contract', stage_id: 13, internal_label: 'Contract signed', required: 1, status: 'done' }],
+  };
+  const pipeline = ({ at = 'consult_booked', history = 2, template = { id: 1, name: 'Intake', role: 'intake' }, reqs = REQS, stages = STAGES, projected } = {}) => ({
+    status: 'success', template, current: at ? { stage_key: at } : null, history: Array.from({ length: history }, () => ({})),
+    stages: stages.map((s) => ({ ...s, requirements: (reqs[s.stage_key] || []).map((r) => ({ ...r })) })),
+    projected: projected !== undefined ? projected : { source: 'subtype', template: { id: 2, name: 'Chapter 7' }, stages: [{ stage_key: 'retained' }, { stage_key: 'docs' }] },
+  });
+  const reads = (over = {}) => (path, body) => {
+    if (path === `/api/cases/${CASE_ID}/pipeline`) {
+      expect(body).toEqual({ requirements: 1 });
+      if (over.caseGone) throw Object.assign(new Error('Case not found'), { status: 404 });
+      return over.pipe || pipeline(over.pipeOpts);
+    }
+    if (path === `/api/cases/${CASE_ID}`) return over.caseRead || { case: { case_id: CASE_ID, pipeline_phase: 'intake', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', ...(over.caseRow || {}) } };
+    throw new Error(`unexpected read ${path}`);
+  };
+  const ok = async () => ({ status: 'success', noop: false, skipped: false, template: { id: 1 }, current: { stage_key: 'consult_done' }, changes: { case_stage: 'Open' } });
+  function runStage(message, { read = reads(), write = ok, confirm = true } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); return read(path, body); }
+      writes.push({ path, body, method, headers }); return write(path, body, method);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a9' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) } };
+    const history = []; const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, openEntity, sandbox }));
+  }
+
+  test('advance: re-reads the pipeline (with requirements) and the case; ONE POST of {stage}; string receipt; opens the case', async () => {
+    const m = draft();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runStage(m);
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('case_pipeline');
+    expect(gets).toEqual([`/api/cases/${CASE_ID}/pipeline`, `/api/cases/${CASE_ID}`]);
+    expect(writes).toEqual([{ path: `/api/cases/${CASE_ID}/pipeline/advance`, method: 'POST', headers: undefined, body: { stage: 'consult_done' } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a9', result: { case_id: CASE_ID } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_pipeline_case_id: CASE_ID });
+    expect(history[0].text).toBe('Advance pipeline stage applied to case 7KQ2M9XA.');
+    expect(history[0].entities).toEqual([{ kind: 'case', id: CASE_ID, label: '25-12345-abc' }]);
+    expect(openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345-abc');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    // A forward main-lane move with no warning is not danger-styled.
+    expect(dialog).toMatchObject({ icon: 'question', confirmButtonText: 'Advance pipeline stage' });
+    for (const line of ['Case: 25-12345-abc (case 7KQ2M9XA, Bankruptcy / Chapter 7) — Dana Debtor', 'Pipeline: Intake',
+      'From: Consult booked (consult_booked)', 'To: Consult done (consult_done)', 'Pipeline phase: stays intake',
+      'Required steps it passes over: none left unmet — done or N/A: "Photo ID" (Consult booked, na)',
+      'Optional step passed over unfinished (it will read skipped): "Courtesy call" (Consult booked, active)',
+      'Steps at Consult done: "Fee quoted" (required, upcoming)',
+      'Case fields overwritten: stage "Open" → "Open"; status "Consult booked" → "Consult done"; next step "Call back" → "Next"',
+      'Automation: 3 active trigger rule(s) for a stage change checked; 1 would act:',
+      'Automation: Trigger rule #12 "Stage change → case log" runs: calls create_log ("Log it")',
+      'Overrides: none — this card cannot mark a step done or N/A.', 'Note: none']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+  });
+
+  test('move: the note rides along; an off-ramp is danger-styled; the crossing too, through the SAME advance route by key', async () => {
+    const m = movement();
+    const r = await runStage(m);
+    expect(r.writes).toEqual([{ path: `/api/cases/${CASE_ID}/pipeline/advance`, method: 'POST', headers: undefined, body: { stage: 'dead_lead', note: 'gone quiet' } }]);
+    expect(r.P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Move pipeline stage' });
+    expect(r.P.Swal.fire.mock.calls[0][0].text).toContain('Warning: OFF-RAMP: Dead lead (dead_lead)');
+    const x = crossing();
+    const rx = await runStage(x, { read: reads({ pipeOpts: { at: 'contract_sent', history: 3 } }) });
+    expect(rx.writes).toEqual([{ path: `/api/cases/${CASE_ID}/pipeline/advance`, method: 'POST', headers: undefined, body: { stage: 'retained' } }]);
+    const dialog = rx.P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Retain case — enter chapter pipeline' });
+    expect(dialog.text).toContain('To: Retained (retained) — first stage of the Chapter 7 pipeline');
+    expect(dialog.text).toContain('Pipeline phase: intake → case (RETAINED)');
+    expect(x.action_draft.status).toBe('applied');
+  });
+
+  test('the builder fixes route, method and body; a bad card never reaches a read, the claim or the route', async () => {
+    for (const [message, why] of [
+      [draft({ case: { case_id: 'bad id', case_number: 'x' } }), 'This card has no usable case id.'],
+      [draft({ to: { stage_key: 'Filed', stage_id: 1, stage_number: 1 } }), 'This card has no usable destination stage.'],
+      [draft({ to: { stage_key: '23', stage_id: 1, stage_number: 1 } }), 'This card has no usable destination stage.'],
+      [draft({ to: {} }), 'This card has no usable destination stage.'],
+      [draft({ note: 'x'.repeat(256) }), 'longer than the stage log keeps'],
+    ]) {
+      const x = await runStage(message);
+      expect({ why, gets: x.gets, ledger: x.ledger, writes: x.writes }).toEqual({ why, gets: [], ledger: [], writes: [] });
+      expect(message.action_draft.action_error).toContain(why);
+    }
+  });
+
+  test('click-time freshness and the requirement recompute refuse BEFORE the claim', async () => {
+    const unmet = { ...REQS, consult_booked: [...REQS.consult_booked.slice(0, 1), { requirement_key: 'optional_call', stage_id: 11, internal_label: 'Courtesy call', required: 1, status: 'active' }] };
+    for (const [message, read, why] of [
+      [draft(), reads({ pipeOpts: { at: 'consult_done' } }), 'case 25-12345-abc is already at Consult done (consult_done). Nothing was written and no automation ran.'],
+      [draft(), reads({ pipeOpts: { at: 'contract_sent' } }), 'The pipeline stage of case 25-12345-abc changed since this card was prepared. Nothing was written.'],
+      // A → B → A: same stage, one more history row.
+      [draft(), reads({ pipeOpts: { history: 3 } }), 'The pipeline stage of case 25-12345-abc changed since this card was prepared'],
+      [draft(), reads({ pipeOpts: { template: { id: 2, name: 'Chapter 7', role: 'case' } } }), 'The pipeline stage of case 25-12345-abc changed'],
+      [draft(), reads({ pipeOpts: { stages: STAGES.filter((s) => s.stage_key !== 'consult_done') } }), 'The destination stage Consult done (consult_done) changed or is no longer active'],
+      [draft(), reads({ pipeOpts: { stages: STAGES.map((s) => (s.stage_key === 'consult_done' ? { ...s, stage_number: 5 } : s)) } }), 'The destination stage Consult done (consult_done) changed'],
+      // An optional step made REQUIRED since the review is now a blocker — named, never summarized.
+      [draft(), reads({ pipeOpts: { reqs: unmet } }), 'UNMET REQUIREMENTS since this card was prepared — the move would now pass over: "Courtesy call" (stage Consult booked, active). Nothing was written. Casey cannot override a requirement.'],
+      // A step on the passed-over stages finished / added since the review: stale.
+      [draft(), reads({ pipeOpts: { reqs: { ...REQS, consult_booked: [REQS.consult_booked[0], { ...REQS.consult_booked[1], status: 'done' }] } } }), 'The steps case 25-12345-abc would pass over changed since this card was prepared'],
+      [movement(), reads({ pipeOpts: { reqs: { ...REQS, consult_done: [] } } }), 'The steps case 25-12345-abc would pass over changed'],
+      // The move passes consult_done's step too: an override CLEARED since the review re-opens it.
+      [movement(), reads({ pipeOpts: { reqs: { ...REQS, consult_done: [{ ...REQS.consult_done[0], status: 'upcoming' }] } } }), 'UNMET REQUIREMENTS since this card was prepared — the move would now pass over: "Fee quoted" (stage Consult done, upcoming)'],
+      [draft(), reads({ caseRow: { pipeline_phase: 'case' } }), 'The phase, type or subtype of case 25-12345-abc changed since this card was prepared'],
+      [draft(), reads({ caseRow: { case_subtype: 'Chapter 13' } }), 'The phase, type or subtype of case 25-12345-abc changed'],
+      [draft(), reads({ caseGone: true }), 'Case 25-12345-abc no longer exists. Nothing was written.'],
+      // The crossing re-checks the chapter pipeline it enters.
+      [crossing(), reads({ pipeOpts: { at: 'contract_sent', history: 3, projected: { source: 'generic', template: null, stages: [] } } }), 'is no longer its chapter pipeline\'s first stage Retained (retained)'],
+      [crossing(), reads({ pipeOpts: { at: 'contract_sent', history: 3, projected: { source: 'subtype', template: { id: 2 }, stages: [{ stage_key: 'onboarded' }] } } }), 'is no longer its chapter pipeline\'s first stage'],
+      [crossing(), reads({ pipeOpts: { at: 'contract_sent', history: 3, reqs: { ...REQS, contract_sent: [{ ...REQS.contract_sent[0], status: 'active' }] } } }), 'UNMET REQUIREMENTS since this card was prepared — the move would now pass over: "Contract signed" (stage Contract sent, active)'],
+      // Someone retained it first: the case now sits on Chapter 7's retained.
+      [crossing(), reads({ pipeOpts: { at: 'retained', history: 4, template: { id: 2, name: 'Chapter 7', role: 'case' } } }), 'is already at Retained (retained). Nothing was written and no automation ran.'],
+    ]) {
+      const x = await runStage(message, { read });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(message.action_draft.refusal_error).toContain(why);
+    }
+    // An unreadable pipeline or case leaves the card retryable (nothing claimed).
+    for (const [read, why] of [[reads({ pipe: { status: 'success' } }), "the case's pipeline could not be read"], [reads({ caseRead: { status: 'success' } }), 'the case could not be read']]) {
+      const u = draft();
+      const ur = await runStage(u, { read });
+      expect([ur.writes, ur.ledger]).toEqual([[], []]);
+      expect(u.action_draft.action_error).toMatch(new RegExp(`^Could not re-check the record before applying \\(${why.replace(/[()']/g, '.')}\\)`));
+    }
+  });
+
+  test('outcomes: the route\'s noop and its lock 409 are refusals that wrote nothing; other 409s and 500s stay ambiguous', async () => {
+    const noop = draft();
+    await runStage(noop, { write: async () => ({ status: 'success', noop: true, skipped: false }) });
+    expect(noop.action_draft.refusal_error).toBe('Refused — nothing written: the case was already at that stage when this was applied (someone moved it there first), so no stage-log entry was made and no automation ran. Ask Casey to read the case again.');
+    expect(noop.action_draft.ambiguous_error).toBeUndefined();
+    expect(noop.action_draft.status).toBe('draft');
+    const busy = draft();
+    await runStage(busy, { write: async () => { throw Object.assign(new Error('Pipeline advance already in progress for case 7KQ2M9XA — retry'), { status: 409 }); } });
+    expect(busy.action_draft.refusal_error).toMatch(/^Refused — nothing written: another stage change for this case was running at the same moment/);
+    const other409 = draft();
+    await runStage(other409, { write: async () => { throw Object.assign(new Error('conflict'), { status: 409 }); } });
+    expect(other409.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    const lost = draft();
+    await runStage(lost, { write: async () => { throw Object.assign(new Error('Internal'), { status: 500 }); } });
+    expect(lost.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    // A 400 (the stage was deactivated since) is the route refusing: nothing written.
+    const gone = draft();
+    await runStage(gone, { write: async () => { throw Object.assign(new Error('Unknown stage_key "consult_done" in template "Intake"'), { status: 400 }); } });
+    expect(gone.action_draft.refusal_error).toBe('Refused — nothing written (Unknown stage_key "consult_done" in template "Intake"). Ask Casey to prepare it again.');
+    const unconfirmed = draft();
+    await runStage(unconfirmed, { write: async () => ({ noop: false }) });
+    expect(unconfirmed.action_draft.ambiguous_error).toMatch(/did not confirm the stage change/);
+  });
+
+  test('reopened cards restore from the ledger with the STRING receipt; the two kinds are one family', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    for (const [m, chip] of [[draft(), 'Applied — now at Consult done'], [movement(), 'Applied — now at Dead lead']]) {
+      box.applyActionResults([m], [{ draft_id: m.action_draft.draft_id, kind: m.action_draft.kind, outcome: 'applied', result: { case_id: CASE_ID } }]);
+      expect([m.action_draft.status, m.action_draft.result_pipeline_case_id]).toEqual(['applied', CASE_ID]);
+      const host = dom.window.document.createElement('div');
+      box.hydrateActionDraft(box.actionFamily(m.action_draft), host, m, m.action_draft);
+      expect(host.querySelector('.action-draft-status').textContent).toBe(chip);
+      expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open 25-12345-abc', 'Copy details']);
+    }
+    const fam = box.actionFamily({ kind: 'case.pipeline.move.v1' });
+    expect([[...fam.kinds], fam.idField, fam.appliedKey, !!fam.stringReceipt])
+      .toEqual([['case.pipeline.advance.v1', 'case.pipeline.move.v1'], 'case_id', 'result_pipeline_case_id', true]);
+    for (const kind of ['case.pipeline.override.v1', 'case.stage.advance.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
   });
 });

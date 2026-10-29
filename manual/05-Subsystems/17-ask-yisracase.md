@@ -384,8 +384,9 @@ Casey can edit three text fields, one per card: a case's **notes**, a case's
 **alerts** (the banner at the top of the case), and a contact's **notes**.
 Ask it to add a line ("add a note to the case that the client is sending pay
 stubs Friday") or to rewrite, replace or clear the field. Nothing else on a
-case or contact — status, stage, dates, names, docket, trustee, judge, source,
-tags — is available to Casey; edit those on the case or contact page.
+case or contact — status, dates, names, docket, trustee, judge, source,
+tags — is available to Casey; edit those on the case or contact page. A case's
+pipeline stage moves only through the pipeline cards below.
 
 - **Adding keeps what is there.** An added line goes at the end, on its own
   line; the existing text is kept exactly as it is. A rewrite replaces the
@@ -456,6 +457,59 @@ page uses. Ask it in plain words ("add Sam to the Debtor case as Secondary",
   after a reload, as it does for a change made on the case page.
 
 The off switch for these cards is the `casey_case_contacts_enabled` setting
+(on unless set to 0).
+
+### A case's pipeline stage
+
+Casey can advance a case to its **next stage**, or move it to **one named
+stage** of its own pipeline — an off-ramp such as Dead lead or Dismissed, a
+skip ahead, or a step back — one change per card, through the same Advance the
+case page's pipeline widget and the pipeline board use. For an intake lead it
+can also **retain** the case: enter it into its chapter pipeline at that
+pipeline's first stage. Ask in plain words ("advance the Smith case", "mark
+this lead dead", "move the case back to Docs requested").
+
+- **The card names both stages** — where the case is and where it goes — and
+  the pipeline. It lists the case fields the advance overwrites (stage,
+  status and **next step**: a hand-written next step is replaced by the new
+  stage's default), whether the client's portal timeline shows the new stage,
+  and the note, if any, that goes on the stage log.
+- **Requirements.** The card lists every step the move passes over: required
+  steps that are done or marked N/A, and **optional** steps left unfinished
+  (they will read "skipped"). It also lists the steps waiting at the new stage.
+- **Automation.** The card dry-runs the stage change against every active
+  trigger rule and lists each rule that would run, with what it does (start a
+  workflow, enrol a sequence, call a function, run a hook), each that would
+  fail, and any whose test could not run — that one **may** run. What those
+  actions cause in turn is not followed.
+- **Warning style** marks a card that retains the case (intake → case: the
+  case leaves the Intake pipeline and is treated as retained everywhere from
+  then on), puts it on an off-ramp, brings it back from one, moves it
+  backward, or has a rule whose test could not run.
+- **What Casey will not do, and says so:**
+  - move a case past a **required step that is not done or N/A**. The answer
+    names every such step, word for word. Casey **cannot override a
+    requirement** — mark the step done or N/A on the case's Steps panel
+    yourself, then ask again. (The case page's own Advance does not check
+    requirements; Casey does.)
+  - move a case onto **another pipeline** (another chapter, or back to
+    intake) — use "Move to another pipeline…" on the case page;
+  - enter a chapter pipeline at any stage but its first, or enter one the
+    case's subtype does not name exactly (set the subtype first);
+  - advance a case sitting on an off-ramp (name the stage instead), or past
+    its pipeline's last stage;
+  - move a retained case along the Intake pipeline (this happens when no
+    chapter pipeline matches its type and subtype — fix those on the case
+    page).
+- **Freshness.** When you confirm, the card re-reads the case's pipeline, its
+  steps, and its phase, type and subtype. If any of them changed since the
+  card was prepared — including a step that is now unmet — nothing is
+  written; ask Casey to prepare it again. If someone moved the case to the
+  same stage first, nothing is written and no automation runs twice.
+- Once applied, the card opens the case. Open case pages and the pipeline
+  board refresh on their own.
+
+The off switch for these cards is the `casey_case_pipeline_enabled` setting
 (on unless set to 0).
 
 ### Sending a text or email

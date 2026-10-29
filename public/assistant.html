@@ -1361,6 +1361,179 @@ function caseContactKnownOutcome(e) {
   return null;
 }
 
+// Case pipeline transitions (A9). Advance ONE case to its next stage, or move
+// it to ONE named stage, through the case page's and the board's own route:
+// POST /api/cases/:id/pipeline/advance {stage: <stage_key>, note?} — never the
+// cases PATCH, never /pipeline/move. The server resolved the destination in
+// the case's pipeline (or, for an intake case, its chapter pipeline's first
+// stage), refused any move that passes over a REQUIRED step not done / N/A
+// (there is no override pathway on these cards), dry-ran the
+// case.stage_advanced trigger rules, and baked the position, phase, type,
+// subtype and the passed-over requirement statuses into `expected`. The
+// click-time re-read (GET /api/cases/:id/pipeline?requirements=1 and GET
+// /api/cases/:id) refuses on any difference BEFORE the claim, recomputing the
+// unmet requirements the same way. No Idempotency-Key: the ledger allows one
+// claim per draft, and the route itself is idempotent per destination — a
+// repeat of the current stage is a noop under its per-case lock that writes
+// nothing and emits no event, so no stage-entry automation fires twice (the
+// noop reads here as a refusal). The advance route is on the yc-sync bus (its
+// `changes` carry the four overwritten columns), so open case pages and the
+// pipeline board refresh. Receipt: the STRING case_id (stringReceipt).
+const CASE_PIPELINE_ACTION_KINDS = new Set(['case.pipeline.advance.v1', 'case.pipeline.move.v1']);
+// pipelineAdminService's STAGE_KEY_RE. A key of digits only would read as a
+// numeric stage id on the advance route, so the builder refuses one.
+const CASE_PIPELINE_STAGE_KEY = /^[a-z0-9_]{1,50}$/;
+const CASE_PIPELINE_OPEN = ['active', 'upcoming'];
+
+function casePipelineLabel(draft) {
+  if (draft && draft.crossing) return 'Retain case — enter chapter pipeline';
+  return ({ 'case.pipeline.advance.v1': 'Advance pipeline stage', 'case.pipeline.move.v1': 'Move pipeline stage' })[draft && draft.kind] || 'Pipeline stage change';
+}
+
+function casePipelineCaseLabel(draft) {
+  const c = draft.case || {};
+  return String(c.case_number || c.case_id || 'Case');
+}
+
+function casePipelineStageName(s) {
+  return s ? `${s.internal_label || s.label || s.stage_key} (${s.stage_key})` : 'no stage yet';
+}
+
+function casePipelineText(draft) {
+  const c = draft.case || {}; const p = draft.pipeline || {}; const f = draft.from; const t = draft.to || {};
+  const w = draft.writes || {}; const r = draft.requirements || {}; const a = draft.automation || {};
+  const quote = (v) => (v == null || v === '' ? 'blank' : `"${v}"`);
+  const lines = ['Pipeline stage proposal — not applied', `Action: ${casePipelineLabel(draft)}`,
+    `Case: ${casePipelineCaseLabel(draft)} (case ${c.case_id}${c.case_type ? `, ${c.case_type}` : ''}${c.case_subtype ? ` / ${c.case_subtype}` : ''})${(c.clients || []).length ? ` — ${c.clients.join(', ')}` : ''}`,
+    `Pipeline: ${p.name}`,
+    `From: ${f ? `${casePipelineStageName(f)}${f.on_pipeline === false ? ' — not a stage of this pipeline' : ''}` : 'no stage yet'}`,
+    `To: ${casePipelineStageName(t)}${t.lane === 'offramp' ? ' — off-ramp' : ''}${draft.crossing ? ` — first stage of the ${t.template_name} pipeline` : ''}`,
+    `Pipeline phase: ${w.pipeline_phase && w.pipeline_phase.from !== w.pipeline_phase.to ? `${w.pipeline_phase.from} → ${w.pipeline_phase.to} (RETAINED)` : `stays ${w.pipeline_phase ? w.pipeline_phase.to : 'unchanged'}`}`];
+  (draft.warnings || []).forEach((x) => lines.push(`Warning: ${x}`));
+  const done = (r.satisfied || []).map((x) => `"${x.internal_label}" (${x.stage_label}, ${x.status})`);
+  lines.push(`Required steps it passes over: none left unmet${done.length ? ` — done or N/A: ${done.join('; ')}` : ''}`);
+  (r.optional_skipped || []).forEach((x) => lines.push(`Optional step passed over unfinished (it will read skipped): "${x.internal_label}" (${x.stage_label}, ${x.status})`));
+  const dest = (r.destination || []).map((x) => `"${x.internal_label}" (${x.required ? 'required' : 'optional'}${x.status ? `, ${x.status}` : ''})`);
+  lines.push(`Steps at ${t.internal_label || 'the destination'}: ${dest.join('; ') || 'none'}`);
+  lines.push(`Case fields overwritten: stage ${quote(w.case_stage && w.case_stage.from)} → ${quote(w.case_stage && w.case_stage.to)}; status ${quote(w.case_status && w.case_status.from)} → ${quote(w.case_status && w.case_status.to)}; next step ${quote(w.case_rec && w.case_rec.from)} → ${quote(w.case_rec && w.case_rec.to)}`);
+  (draft.effects || []).forEach((x) => lines.push(`Effect: ${x}`));
+  const acting = a.lines || [];
+  lines.push(acting.length
+    ? `Automation: ${Number(a.rules_checked) || 0} active trigger rule(s) for a stage change checked; ${acting.length} would act:`
+    : `Automation: no active trigger rule acts on this stage change (${Number(a.rules_checked) || 0} checked).`);
+  acting.forEach((x) => lines.push(`Automation: ${x}`));
+  if (acting.length) lines.push('Automation: what those actions cause in turn (another rule, a workflow\'s own steps) is not followed here.');
+  lines.push(`Note: ${draft.note ? `"${draft.note}"` : 'none'}`,
+    'Writes: one stage-log entry and the case\'s stage, status, next step and phase, through the case page\'s own advance — nothing else.',
+    'Overrides: none — this card cannot mark a step done or N/A.',
+    'Stale check: if the case\'s stage, pipeline, phase, type or subtype, or any step it passes over, changes before you apply, nothing is written.',
+    'Other open pages: the case page and the pipeline board refresh on their own.',
+    'Notification: Casey sends nothing itself; the trigger rules above are the only follow-on effects.');
+  return lines.join('\n');
+}
+
+function casePipelineRequest(draft) {
+  const c = draft.case || {}; const t = draft.to || {};
+  const caseId = actionStringReceipt(typeof c.case_id === 'string' ? c.case_id : '');
+  if (!caseId) throw new Error('This card has no usable case id.');
+  const key = typeof t.stage_key === 'string' ? t.stage_key : '';
+  if (!CASE_PIPELINE_STAGE_KEY.test(key) || /^\d+$/.test(key)) throw new Error('This card has no usable destination stage.');
+  const note = typeof draft.note === 'string' ? draft.note.trim() : '';
+  if (note.length > 255) throw new Error('This card\'s note is longer than the stage log keeps.');
+  return { path: `/api/cases/${encodeURIComponent(caseId)}/pipeline/advance`, method: 'POST', body: note ? { stage: key, note } : { stage: key } };
+}
+
+// The requirement rows the move passes over, from a GET /pipeline
+// ?requirements=1 payload — the server's rule, recomputed: the crossing passes
+// every intake step; any other move passes the stages numbered below the
+// destination.
+function casePipelinePassed(draft, pipe) {
+  const t = draft.to || {};
+  const stages = Array.isArray(pipe.stages) ? pipe.stages : [];
+  const passedStages = draft.crossing ? stages : stages.filter((s) => Number(s.stage_number) < Number(t.stage_number));
+  const out = [];
+  passedStages.forEach((s) => (Array.isArray(s.requirements) ? s.requirements : []).forEach((r) => out.push({
+    requirement_key: String(r.requirement_key), stage_id: Number(r.stage_id), stage_label: String(s.internal_label || s.stage_key),
+    internal_label: String(r.internal_label || r.requirement_key), required: r.required ? 1 : 0, status: String(r.status || ''),
+  })));
+  return out;
+}
+
+async function casePipelinePrecheck(draft) {
+  const req = casePipelineRequest(draft); // a card that cannot be written is never read
+  const caseId = actionStringReceipt(draft.case.case_id);
+  const t = draft.to || {}; const x = draft.expected || {};
+  const name = `case ${casePipelineCaseLabel(draft)}`;
+  let pipe;
+  try { pipe = await api(`/api/cases/${encodeURIComponent(caseId)}/pipeline`, { requirements: 1 }, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `Case ${casePipelineCaseLabel(draft)} no longer exists. Nothing was written.`; throw e; }
+  if (!pipe || !Array.isArray(pipe.stages) || !Array.isArray(pipe.history)) throw new Error('the case\'s pipeline could not be read');
+  const cur = pipe.current ? String(pipe.current.stage_key) : null;
+  if (cur === req.body.stage && (!draft.crossing || Number(pipe.template && pipe.template.id) === Number(t.template_id))) {
+    return `${name} is already at ${casePipelineStageName(t)}. Nothing was written and no automation ran.`;
+  }
+  if (!pipe.template || Number(pipe.template.id) !== Number(x.template_id) || cur !== (x.stage_key == null ? null : String(x.stage_key))
+    || pipe.history.length !== Number(x.history_count)) {
+    return `The pipeline stage of ${name} changed since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  if (draft.crossing) {
+    const pr = pipe.projected;
+    if (!pr || pr.source !== 'subtype' || !pr.template || Number(pr.template.id) !== Number(t.template_id)
+      || !Array.isArray(pr.stages) || !pr.stages[0] || pr.stages[0].stage_key !== t.stage_key) {
+      return `The ${t.template_name} pipeline ${name} would enter is no longer its chapter pipeline's first stage ${casePipelineStageName(t)}. Nothing was written. Ask Casey to prepare it again.`;
+    }
+  } else {
+    const s = pipe.stages.find((row) => row.stage_key === t.stage_key);
+    if (!s || Number(s.stage_id) !== Number(t.stage_id) || Number(s.stage_number) !== Number(t.stage_number)) {
+      return `The destination stage ${casePipelineStageName(t)} changed or is no longer active on ${name}'s pipeline. Nothing was written. Ask Casey to prepare it again.`;
+    }
+  }
+  const passed = casePipelinePassed(draft, pipe);
+  const unmet = passed.filter((r) => r.required && CASE_PIPELINE_OPEN.includes(r.status));
+  if (unmet.length) {
+    return `UNMET REQUIREMENTS since this card was prepared — the move would now pass over: ${unmet.map((r) => `"${r.internal_label}" (stage ${r.stage_label}, ${r.status})`).join('; ')}. Nothing was written. Casey cannot override a requirement.`;
+  }
+  const sig = passed.map((r) => `${r.requirement_key}@${r.stage_id}:${r.status}:${r.required}`).sort();
+  if (JSON.stringify(sig) !== JSON.stringify((x.requirements || []).slice().sort())) {
+    return `The steps ${name} would pass over changed since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  let got;
+  try { got = await api(`/api/cases/${encodeURIComponent(caseId)}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `Case ${casePipelineCaseLabel(draft)} no longer exists. Nothing was written.`; throw e; }
+  const row = got && got.case;
+  if (!row || typeof row !== 'object' || !('pipeline_phase' in row)) throw new Error('the case could not be read');
+  const phase = String(row.pipeline_phase == null ? '' : row.pipeline_phase).trim().toLowerCase() === 'case' ? 'case' : 'intake';
+  if (phase !== x.pipeline_phase || String(row.case_type == null ? '' : row.case_type) !== String(x.case_type)
+    || String(row.case_subtype == null ? '' : row.case_subtype) !== String(x.case_subtype)) {
+    return `The phase, type or subtype of ${name} changed since this card was prepared, which can change its pipeline. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function casePipelineResult(draft, result) {
+  if (!result || result.status !== 'success') throw new Error('The pipeline route did not confirm the stage change');
+  // A noop wrote nothing and emitted no event: someone put the case there first.
+  if (result.noop === true) throw Object.assign(new Error('already at that stage'), { casePipelineNoop: true });
+  return { case_id: actionStringReceipt(draft.case.case_id) };
+}
+
+// The route's two answers that wrote nothing, worded for staff: its noop (the
+// case was already at the destination — no log row, no event) and the
+// per-case lock's 409 (another stage change for this case was running; the
+// lock is taken before any read or write). Anything else falls through.
+function casePipelineKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const refused = 'Refused — nothing written';
+  if (e && e.casePipelineNoop === true) {
+    return { status: refused, text: 'Refused — nothing written: the case was already at that stage when this was applied (someone moved it there first), so no stage-log entry was made and no automation ran. Ask Casey to read the case again.' };
+  }
+  const message = String((e && e.message) || (e && e.body && e.body.message) || '');
+  if (e && e.status === 409 && /already in progress/.test(message)) {
+    return { status: refused, text: 'Refused — nothing written: another stage change for this case was running at the same moment. Ask Casey to read the case again before preparing it again.' };
+  }
+  return null;
+}
+
 // Safe code jobs (safe-mode S3). The body runs ONCE in the QuickJS guest
 // engine (no network, no DB, no host realm), so the reviewed card schedules a
 // computation, not server-side execution capability. code_mode is pinned
@@ -2658,7 +2831,7 @@ const ACTION_FAMILIES = [
     open: (draft) => { const t = contactRelationOpenTarget(draft); openEntity('contact', t.id, t.label); },
   },
   {
-    // The one string-receipt family: a case's id is its varchar case_id.
+    // A string-receipt family (with case_pipeline): a case's id is its varchar case_id.
     id: 'case_text', kinds: CASE_TEXT_ACTION_KINDS, title: 'Case notes / alerts', noun: 'case', errorNoun: 'case edit',
     label: recordTextLabel, text: recordTextText, request: recordTextRequest, result: caseTextResult,
     idField: 'case_id', appliedKey: 'result_text_case_id', stringReceipt: true,
@@ -2714,6 +2887,28 @@ const ACTION_FAMILIES = [
     }),
     reviewWarning: 'Review the case, the contact, the old and new role, and every Primary-contact and client-portal line — the portal and the case\'s own readers follow the role the moment it is saved. Nothing is sent. Canceling writes nothing.',
     open: (draft) => openEntity('case', String(draft.case && draft.case.case_id), caseContactCaseLabel(draft)),
+  },
+  {
+    // A9: the receipt is the STRING case_id — the advance route never echoes
+    // the transition's own stage-log row id.
+    id: 'case_pipeline', kinds: CASE_PIPELINE_ACTION_KINDS, title: 'Pipeline stage', noun: 'case', errorNoun: 'pipeline stage change',
+    label: casePipelineLabel, text: casePipelineText, request: casePipelineRequest, result: casePipelineResult,
+    idField: 'case_id', appliedKey: 'result_pipeline_case_id', stringReceipt: true,
+    // Retention, an off-ramp, a recovery, a step back, or an automation rule that could not be evaluated.
+    danger: (draft) => !!draft.crossing || (draft.warnings || []).length > 0,
+    precheck: casePipelinePrecheck,
+    knownOutcome: casePipelineKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `case ${payload.case_id}`,
+    entity: (draft) => ({ kind: 'case', id: String(draft.case && draft.case.case_id), label: casePipelineCaseLabel(draft) }),
+    failure: 'The pipeline stage change could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — now at ${draft.to ? draft.to.internal_label : 'the new stage'}`,
+      warning: `Case ${casePipelineCaseLabel(draft)} was moved to ${casePipelineStageName(draft.to)} using your signed-in account. The trigger rules listed above run from this stage change.`,
+      button: `Open ${casePipelineCaseLabel(draft)}`,
+    }),
+    reviewWarning: 'Review the from and to stages, every step it passes over, the case fields it overwrites and every trigger rule it runs — they start the moment it is saved. Nothing is sent by Casey itself. Canceling writes nothing.',
+    open: (draft) => openEntity('case', String(draft.case && draft.case.case_id), casePipelineCaseLabel(draft)),
   },
   {
     id: 'job', kinds: JOB_ACTION_KINDS, title: 'Safe code job', noun: 'scheduled job', errorNoun: 'job action',
@@ -2933,7 +3128,7 @@ const ACTION_FAMILIES = [
 ];
 
 // Receipts are positive integers, except for a family declaring stringReceipt:
-// the two case families, whose record id is cases.case_id — a varchar(20)
+// the case families (A7's case text, A9's pipeline), whose record id is cases.case_id — a varchar(20)
 // PRIMARY KEY (services/assistantActionLedger.js STRING_RECEIPT_FIELDS). Its
 // receipt stays the exact string (never Number(), which would make it NaN and
 // read as "not applied"); anything else reads as no receipt.
