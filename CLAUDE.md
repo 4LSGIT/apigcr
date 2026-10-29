@@ -131,6 +131,17 @@ picks per task:
      disposition from the diff alone. Keep it that way: no state that
      exists only in a session's context.
 
+**Local sessions never work in the main checkout** (`/Users/FRED/apigcr`)
+unless Fred explicitly says to, whatever the model. Several sessions share it,
+and one session's commit sweeps in whatever another left loose: 2026-10-29 a
+tasks-list slice, uncommitted and mid-verification, rode out inside another
+session's YisraMail docs commit, deployed unreviewed under a message that never
+named it, with main's CI red. Before the FIRST edit, `git fetch` and
+`git worktree add ../apigcr-<slug> -b <slug> origin/main` (symlink
+node_modules and .env), edit only there, and land with `land.sh`. Reading and
+read-only scripts in the main checkout are fine. Edited it by mistake? Back the
+files up, move them to a worktree, and restore the main copies at once.
+
 Gates beyond Commands & gates below, every model:
 - Verification-first: ground claims about schema, rows, or behavior in the
   live DB and actual source before writing code or prompts.
