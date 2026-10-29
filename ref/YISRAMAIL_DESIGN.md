@@ -7,7 +7,8 @@ Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
 later; D15 no RC push in v1, D16 over-cap operational sends with
 `campaigns.bulk`, D17 bounce tasks for clients only; D18 opt-outs gate
 PROMOTION, not operational automation; D19 an SMS STOP still stops automated
-texts. Open: D5 (Fred + SS), D8 (SS); D3, D4, D7, D10, D12–D14 stand as
+texts. D5 ruled 2026-10-30 for SS's own lead lists; still open for the
+Criminal Law list and `temp_contacts` (Fred + SS). Open: D8 (SS); D3, D4, D7, D10, D12–D14 stand as
 recommendations until ruled. v0.5 also folds in a second,
 unaffiliated review (send reservation / at-most-once, transport rate limit,
 pause semantics, complaint hold before the first send, re-consent guard,
@@ -797,6 +798,12 @@ with no token, footer or headers.
 - Outside lists (legacy 1,494, `temp_contacts` 2,022): import as contacts (or
   as suppression-only rows) through an SU import that records provenance
   (`source='import'`, evidence = file name + SS's stated basis). Gated on D5.
+  SS's own lead lists (Clio Grow, Active Campaign, Phil Tirone) are imported by
+  `scripts/leadListImport.js` (D5, 2026-10-30) with no `import` consent event —
+  an inquiry grants no opt-in, and an opt_out topic needs none — so their
+  provenance is the source tag plus the `[lead:<cluster>]` marker in
+  `contact_notes`; the lists' known Active Campaign bounces are recorded as
+  `provider_bounce` opt-outs (scope `marketing`).
 - Address hygiene before the first send to an imported/cold slice: syntax +
   MX check in-app (free); optional paid list verification for cold slices
   (vendor not surveyed). Hard bounces suppress automatically afterwards (§4.2).
@@ -1027,7 +1034,7 @@ anything).** No marketing send until P1, P2 and P3 are live, plus T1, T2
 SES production access. Enforced in code, not just
 procedure: `marketing_send_enabled` ships `'0'` (C1) and an SU flips it only
 after this checklist. **Gate G2:** no import/send to an outside list until D5
-is ruled.
+is ruled for that list (ruled 2026-10-30 for SS's own lead lists).
 
 | # | Slice | Contents | Depends |
 |---|---|---|---|
@@ -1068,7 +1075,7 @@ C4 S, C5 S, C6 M, C7 S.
 | D2 | Consent storage | **RULED: (a)** destination-keyed state table + ledger is THE truth; row flags a cache for one release, then drop (§4.4). | Survives row end/transfer/import; one store; opt-in-with-proof expressible. |
 | D3 | Scope of an SMS STOP on a case line | Rec: **`all` SMS** + a staff task to reach the client another way. | Quo already blocks the whole Quo account and RC the pair. |
 | D4 | One-click scope | Rec: **the send's topic**; the page offers "all marketing". | RFC 8058 intent (this list); one topic today. |
-| D5 | Outside lists (legacy 1,494, `temp_contacts` 2,022) **(SS)** | **Fred owns (with SS).** Import only with a stated basis per list; send to them last, after hygiene; or leave them out. | Cold lists drive bounces/complaints; MRPC solicitation rules may apply (Appendix C §D). |
+| D5 | Outside lists (legacy 1,494, `temp_contacts` 2,022) **(SS)** | **RULED in part (Fred, 2026-10-30):** SS's lead lists — Clio Grow, Active Campaign and Phil Tirone (the firm's ad lead form) — are people who contacted the firm; they are imported as contacts by `scripts/leadListImport.js` (provenance: source tags + `[lead:<cluster>]` notes markers; known Active Campaign bounces recorded as `provider_bounce` opt-outs). Still open (Fred + SS): the Criminal Law (MailChimp) list and `temp_contacts`; whether the 1,494-row legacy list is one of the imported lists is unverified. Every list: send to it last, after hygiene. | Cold lists drive bounces/complaints; MRPC solicitation rules may apply (Appendix C §D). |
 | D6 | Provider | **RULED: Amazon SES** (SMTP send + EventBridge events); runner-up Resend Pro $20. | §5.5. Pay per use, ≈ $1/mo, own headers, tenants for YC3. |
 | D7 | Driver vs lock-in | Rec: **driver**, one default provider. | §5.1. |
 | D8 | Brand, From, subdomain, Reply-To **(SS)** | **OPEN** — not blocking P1–P4/T1; needed before P0's DNS. Default: `Legal Solutions Group <news@news.4lsg.com>`, Reply-To `office@4lsg.com`. | Matches `firm_name`; unsubscribe links (`4lsg.com/u/…`) on the sender's own domain. An MDBL sender would want MDBL as a landing host too. |
