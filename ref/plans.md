@@ -1712,6 +1712,30 @@ Active surfaces with known next steps.
   `--local-suite` NO-GO for a refused push names that break-glass. Flaky
   suites cost a rerun under the rule, not a blocked deploy.
 
+- **Twins red on main (found by the YisraMail P1 worker, 2026-10-29; MySQL
+  8.0.46, each twin on its own fresh DB; identical on `f838db7` and the slice).**
+  `assistantActionLedger.mysql` 2/7 fail: "all 42 kinds" counts 57 now (the
+  hard-coded count drifted with the kind registry), and the concurrent-
+  acknowledgement test is refused "Invalid action receipt". `keyTasks.mysql`
+  2/15 fail: the PRE-D3 tests expect no `task_session_key_id`, but the tables
+  they build now carry it (D3 applied, dump regenerated) — a 200 where they
+  expect 500, and the migration CHECK says "already applied". Test drift, not
+  code; nothing runs twins on a schedule, so nothing caught it.
+
+- **`commsEval.mysql` G4 is flaky (2026-10-29).** The audit statuses come back
+  out of call order (`rejected_not_su` / `rejected_no_elevation` swap) though
+  `audits()` already orders by id — so the audit INSERTs land in a different
+  order than the calls. Failed 2/2 on `f838db7` and 3/4 on the P1 slice, which
+  does not touch it. Await the audit write in the route, or assert the
+  statuses as a multiset.
+
+- **`safeCodeMode` "an allocation bomb is refused" times out under load
+  (2026-10-29).** On a loaded 2-cpu box the bomb hit the 10s script timeout
+  before the memory cap ("Script execution timed out", expected /memory/) —
+  one full-suite run on `f838db7`; it passed in the next run. A timing guard:
+  redesign it to reach the cap faster (bigger chunks) rather than lengthen
+  the timeout.
+
 - **Mid-width table exposure beyond the fixtures (ui-custom H3, 2026-10-15).** H3 gave
   Events / Calendar list (shell) and case People / Appointments their own scroll box at
   769–1299px (pane 769–1079px in case.html); the survey is clean at 320–1200 on its
