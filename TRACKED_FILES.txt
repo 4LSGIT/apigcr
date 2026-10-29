@@ -819,6 +819,7 @@ scripts/caseyP4Idempotency.js
 scripts/caseyP5Ledger.js
 scripts/checkThemePresets.js
 scripts/cleanup_court_event_dupes_2026_07.js
+scripts/clioBackfill.js
 scripts/commsArchive/eval/review-tool.html
 scripts/commsArchive/s0_harness/README.md
 scripts/commsArchive/s0_harness/bin/timeout.c
