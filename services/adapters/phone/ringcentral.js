@@ -463,10 +463,84 @@ async function listOutbound(db, { credentialId, sinceISO, untilISO, page = 1, pe
   };
 }
 
+// ─── SMS CONSENT LIST (YisraMail P2 — ref/YISRAMAIL_DESIGN.md §4.6) ──────────
+//
+// Read side for phoneConsentService.syncRcConsents: the account's SMS consent
+// records. READ ONLY — YC never pushes consent to RingCentral (D15). RC's
+// vocabulary (OptOut/OptIn, E.164, pageToken paging) is translated HERE; the
+// core sees { from, to, status: 'opt_out'|'opt_in', source, at }.
+//
+// Endpoint per RC's API spec (its generated SDK, ringcentral-extensible
+// 1.8.6, 2026-10): POST /restapi/v2/accounts/~/sms/consents/search, body
+// { optStatus, coverage[], perPage ≤ 1000, pageToken }, App Permission SMS,
+// rate group Light; the authenticated user needs the Account Administration
+// permission (CMN-408 otherwise). Records { from (our number), to (the
+// recipient), optStatus, source, lastModifiedTime } — no record id; paging
+// { nextPageToken }. coverage is limited to PhoneNumber + Account: a
+// CampaignType record (an opt-out of one campaign type only) is not an opt-out
+// of every text, so it never reaches the core.
+
+const CONSENT_SEARCH_URL = `${RC_PLATFORM}/restapi/v2/accounts/~/sms/consents/search`;
+const CONSENT_STATUS = Object.freeze({ OptOut: 'opt_out', OptIn: 'opt_in' });
+const CONSENT_STATUS_RC = Object.freeze({ opt_out: 'OptOut', opt_in: 'OptIn' });
+
+/** One RC consent record → { from, to, status, source, at }, or null without a recipient. */
+function _mapConsentRecord(rec) {
+  if (!rec || rec.to == null || rec.to === '') return null;
+  return {
+    from: rec.from != null ? _norm10(rec.from) : '',
+    to: _norm10(rec.to),
+    status: CONSENT_STATUS[rec.optStatus] || null,
+    source: rec.source != null ? String(rec.source) : null,
+    at: rec.lastModifiedTime != null ? String(rec.lastModifiedTime) : null,
+  };
+}
+
+/**
+ * One page of the account's consent records with `status` ('opt_out' |
+ * 'opt_in'). Returns { status, records, nextPageToken, rate, errorText };
+ * never throws on an HTTP status (NO_AUTH before sending).
+ */
+async function listConsents(db, { credentialId, status = 'opt_out', pageToken = null, perPage = 1000, timeoutMs }) {
+  const optStatus = CONSENT_STATUS_RC[status];
+  if (!optStatus) throw new Error(`listConsents: unknown status "${status}"`);
+  const body = { optStatus, coverage: ['PhoneNumber', 'Account'], perPage: Math.min(Math.max(1, Number(perPage) || 1000), 1000) };
+  if (pageToken) body.pageToken = String(pageToken);
+  const headers = await _authHeaders(db, credentialId, CONSENT_SEARCH_URL);
+  const res = await fetch(CONSENT_SEARCH_URL, {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(_ms(timeoutMs, CALL_LOG_TIMEOUT_MS)),
+  });
+  const rate = _rateInfo(res);
+  let text = '';
+  try { text = await res.text(); } catch (_) { /* body gone */ }
+  if (res.status !== 200) {
+    return { status: res.status, records: [], nextPageToken: null, rate, errorText: text.slice(0, 300) };
+  }
+  let json = null;
+  try { json = JSON.parse(text); } catch (_) {
+    return { status: 502, records: [], nextPageToken: null, rate, errorText: 'unparseable 200 body' };
+  }
+  if (!json || !Array.isArray(json.records)) {
+    return { status: 502, records: [], nextPageToken: null, rate, errorText: '200 body without a records array (shape drift)' };
+  }
+  const paging = json.paging || {};
+  return {
+    status: 200,
+    records: json.records.map(_mapConsentRecord).filter(Boolean),
+    nextPageToken: paging.nextPageToken ? String(paging.nextPageToken) : null,
+    rate,
+    errorText: null,
+  };
+}
+
 module.exports = {
   displayName: 'RingCentral',
   // archiveFetch (comms archive sweeps): checkArchiveAuth, findSessionRecordings, fetchRecordingContent, fetchMessageAttachment, listVoicemails.
-  capabilities: { sms: true, mms: true, outboundSync: true, archiveFetch: true },
+  // consentList (YisraMail P2 reconcile): listConsents.
+  capabilities: { sms: true, mms: true, outboundSync: true, archiveFetch: true, consentList: true },
   credentialRequirements: { type: 'oauth2', oauth_status: 'connected' },
   formHints: {
     provider_id: {
@@ -481,8 +555,10 @@ module.exports = {
   findSessionRecordings,
   listVoicemails,
   listOutbound,
+  listConsents,
   // Exported for testing — the RC→normalized translation tables
   _mapDelivery,
+  _mapConsentRecord,
   _mapOutboundRecord,
   _norm10,
 };

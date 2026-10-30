@@ -132,6 +132,9 @@ const CTA_FN_DENYLIST = Object.freeze([
   // Comms archive S3: spends the shared AI budget and sends call transcripts
   // to the model — no public link may start it.
   'comms_summarize_sweep',
+  // YisraMail P2 (ref/YISRAMAIL_DESIGN.md §4.6): spends the RingCentral rate
+  // group and writes the consent ledger — engine plumbing, no public link.
+  'sms_consent_sync',
 ]);
 
 /** Chromium-backed functions: eligible, but a public repeatable link fans out load. */

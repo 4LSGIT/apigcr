@@ -505,6 +505,8 @@ module.exports = {
   lookupToken,
   oneClick,
   applyPage,
+  // The consent follow-up assignee rule — also phoneConsentService's (YisraMail P2).
+  resolveAssignee,
   // helpers (tests)
   receives,
 };

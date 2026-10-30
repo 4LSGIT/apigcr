@@ -1216,10 +1216,6 @@ COMMENTs.)
 - **Appointment confirmations skip silently-ish.** A staff-ticked
   confirm SMS/email to an opted-out recipient is skipped with a log line only;
   the appointment form could show the opt-out next to the confirm boxes.
-- **Inbound STOP does not set the flag.** A carrier STOP surfaces as
-  `phone_event_log.delivery_reason = 'opted_out'` on later sends, but nothing
-  records it; YisraMail P2 does (through `optoutService.recordConsent`, the
-  one writer since P1).
 - **Sequence preview** (`previewEnrollmentSteps`) does not flag a step that
   would skip for opt-out.
 - **Sending forms:** declining the opt-out confirm aborts the rest of that
@@ -1228,6 +1224,56 @@ COMMENTs.)
 - **Not gated on purpose:** e-sign reminders / requests (the provider sends),
   the legacy `/ringcentral/send-sms` trap, and every staff/IT-recipient send
   (alerts, digests, task notices, decision requests to a user).
+
+## YisraMail P2 (inbound SMS opt-out, 2026-10) — deferred
+
+ref/YISRAMAIL_DESIGN.md §4.6 "As built" says what shipped.
+- **Push opt-outs to RingCentral** (`PATCH /restapi/v2/accounts/~/sms/consents`)
+  — D15 ruled no for v1. Still open: whether the app may opt someone back IN,
+  and what a `from:"*"` push does to staff-acknowledged replies — step 0 could
+  not answer (the consent API is `403 CMN-408` for the connected user).
+- **The RC reconcile is dark.** `sms_consent_sync` runs nightly with
+  `sms_rc_consent_sync_enabled` unset (step 0: `403 CMN-408` on both list
+  forms). Turning it on needs the Account Administration permission on the
+  OAuth user — a wider stored token, for opt-outs the webhook (step 0 GO) and
+  the 413 path already catch — and one real list response captured as
+  `tests/rcConsentSync.test.js`'s fixture.
+- **A text from an opted-out number on an RC line.** RingCentral re-opts the
+  pair in on ANY later text ("hi", live 2026-10-29); YC stays opted out until
+  START / UNSTOP or a staff untick, so automation stays off and staff replies
+  ask to confirm. Nothing tells staff "they texted again after opting out"
+  beyond the message itself in the comms log; a review task for it is not
+  built.
+- **RingCentral consent-change events.** The design's "subscribe to the v2
+  consent events" is not built: the nightly read-only reconcile
+  (`sms_consent_sync`) covers the same ground a day late. A subscription
+  would need its filter string verified (Appendix C: UNVERIFIED) and a hook.
+- **AI classifier on the review path.** Plain-language revocations are caught
+  by a word-bounded phrase list (`phoneConsentService.REVIEW_PHRASES`) plus
+  the "STOP PLEASE" courtesy rule; a model pass over non-matching inbound
+  texts could catch more, at a cost per text.
+- **`sms_review` as a ledger source** — waits for P4's consent toggle with a
+  note; until then a staff tick after a review task is recorded as `staff`.
+- **Business-hours liveness.** The inbound-silence alert counts plain hours
+  (`sms_inbound_liveness_hours`, default 72 — spans a weekend). A business-
+  hours count would page sooner on a weekday.
+- **Quo has no consent API** — nothing to reconcile there; a Quo STOP that
+  never reaches the webhook is invisible until a send fails (and Quo's
+  failures are invisible too until its delivery read side exists —
+  ref/PHONE_DELIVERY_DESIGN.md).
+- **Twin order dependence (found by P2, pre-existing):** on ONE shared
+  `_test` DB, `optout.mysql` then `consentCore.mysql` fails 34/34 —
+  `optout.mysql` leaves tables (sequence_enrollments, campaign_contacts …)
+  holding FKs into `contacts`, and consentCore's re-create of `contacts` is
+  refused. `phoneConsent.mysql` drops every FK holder it finds in
+  information_schema first, and its own tables at the end; the P1 twins
+  could do the same. Wider: the twins follow two protocols that cannot share
+  one DB — self-building (build their tables from `ref/database.sql`) vs
+  full-schema (caseyApptConfirm, caseyIngestRule, phoneSPH: the whole dump
+  loaded first; they fail after any self-building twin), and consentCore /
+  optout fail outright on a full-schema DB. Twins whose tables carry the real
+  contacts / tasks triggers (intakeNameReview) also need the server's named
+  time zones loaded (`mysql_tzinfo_to_sql`), or `CONVERT_TZ` returns NULL.
 
 ## YisraMail P1 (consent core, 2026-10-29) — the cache-column drop slice
 
@@ -1264,7 +1310,8 @@ objects AND stored definitions). Readers and writers to move first:
   or retire the script (its one-off job ran before P1).
 - **`comm_consent_events` is in the `lib/sqlGuard` SENSITIVE tier** since P3
   (2026-10-30) started storing a recipient's IP / user agent / note in
-  `evidence` (`comm_consent_state` stays readable).
+  `evidence`, and P2 the inbound text itself (`sms_keyword` evidence.body,
+  ≤ 500 chars) — `comm_consent_state` stays readable.
 
 ## YisraMail P3 (email unsubscribe surface, 2026-10-30) — deferred
 
@@ -1483,7 +1530,7 @@ Active surfaces with known next steps.
   IT test, sent 125; `campaigns.contact_count` is 0 on rows created before
   that column existed — count `campaign_results`, not `contact_count`.)
 
-- **Opt-out system.** The row toggles (contact form) and the staff warn-but-don't-block on direct sends are live (ruling 2026-10-27 — see "Recipient opt-out" above). Left: opted-out badges on the contact / compose surfaces, and an inbound STOP handler via YisraHook.
+- **Opt-out system.** The row toggles (contact form) and the staff warn-but-don't-block on direct sends are live (ruling 2026-10-27 — see "Recipient opt-out" above), and inbound STOP / START is handled (YisraMail P2). Left: opted-out badges on the contact / compose surfaces (YisraMail P4).
 
 - **Image library refactor.** Picker, upload dialog, delete, and the "Save to library" checkbox are duplicated across `campaign.html`, `communicate.html`, `sendingform.html` (some with `sf` prefix to avoid collision). Extract to a standalone iframe-loadable module — e.g. `/js/imageLibrary.js` exposing `imageLibrary.pickImage()`, `imageLibrary.uploadDialog({ accept, maxMB })`, `imageLibrary.deleteImage(id)`. Each consumer drops in a `<script>` tag and gets consistent behavior. Bundle these into the refactor:
   - **File-type gating.** Email-attachment dialog (`campaign.html` ~line 1030) accepts PDFs/docs and offers "Save to library" — currently inserts the row but renders as a broken `<img>` in the picker. Either gate the checkbox to `image/*` MIME types, or rename the column/feature and teach the picker to render non-images with a file-type icon.

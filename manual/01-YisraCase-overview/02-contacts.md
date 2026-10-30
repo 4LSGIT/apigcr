@@ -48,7 +48,8 @@ keeps its opt-out. What each one stops:
 - **SMS opted out** stops every automated text (workflows, sequences,
   campaigns, appointment / booking / manage-page confirmations); a person
   texting it from Comms, the Communications tab, the sending forms or Ask
-  YisraCase is asked to confirm first.
+  YisraCase is asked to confirm first. A client's own STOP / START text sets and
+  clears it by itself — see [Text opt-outs](17-text-opt-outs.md).
 - **No marketing email** stops marketing email only (newsletters, marketing
   campaigns). Case, appointment and other operational email still goes, with
   no warning — the law that requires the opt-out (CAN-SPAM) covers commercial

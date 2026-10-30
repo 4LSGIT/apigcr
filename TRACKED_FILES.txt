@@ -74,6 +74,7 @@ lib/internal_functions/commsTranscribe.js
 lib/internal_functions/communication.js
 lib/internal_functions/composition.js
 lib/internal_functions/connections.js
+lib/internal_functions/consent.js
 lib/internal_functions/contacts.js
 lib/internal_functions/control.js
 lib/internal_functions/court.js
@@ -156,6 +157,7 @@ manual/01-YisraCase-overview/13-pipelines.md
 manual/01-YisraCase-overview/14-workspace-url.md
 manual/01-YisraCase-overview/15-your-launcher.md
 manual/01-YisraCase-overview/16-communications-tab.md
+manual/01-YisraCase-overview/17-text-opt-outs.md
 manual/01-YisraCase-overview/README.md
 manual/02-YisraForms/01-overview.md
 manual/02-YisraForms/02-creating-a-form.md
@@ -972,6 +974,7 @@ scripts/updateRoutes.js
 scripts/verifyTrusteeReadthrough.js
 scripts/verify_strictstring_live.js
 scripts/yisramailP1MigrateConsent.js
+scripts/yisramailP2CheckInbound.js
 scripts/yisramailP3Migrate.js
 server.js
 services/adapters/email/gmail.js
@@ -1086,6 +1089,7 @@ services/pageService.js
 services/pdfRenderService.js
 services/pdfService.js
 services/phoneCommsService.js
+services/phoneConsentService.js
 services/phoneDeliveryService.js
 services/phoneIngestExecutionsService.js
 services/phoneIngestMetaService.js
@@ -1449,6 +1453,7 @@ tests/helpers/mailboxS1World.js
 tests/helpers/mailboxS2World.js
 tests/helpers/mailboxS3World.js
 tests/helpers/optoutFake.js
+tests/helpers/phoneConsentWorld.js
 tests/helpers/phoneSPHWorld.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
@@ -1495,6 +1500,7 @@ tests/internalFn.enrollSkipIfEnrolled.test.js
 tests/internal_functions.meta.test.js
 tests/issnCodebtor.test.js
 tests/jest.setup.js
+tests/jobExecutor.consentConfirm.test.js
 tests/jsonFieldStream.test.js
 tests/keyDelegation.mysql.test.js
 tests/keyDelegation.test.js
@@ -1602,9 +1608,15 @@ tests/paramsMappingBareScalar.test.js
 tests/paramsMappingCsvList.test.js
 tests/pdfRender.test.js
 tests/pdfRenderIntegration.test.js
+tests/phoneConsent.classify.test.js
+tests/phoneConsent.liveness.test.js
+tests/phoneConsent.mysql.test.js
+tests/phoneConsent.tasks.test.js
+tests/phoneDelivery.consent.test.js
 tests/phoneDelivery.mysql.test.js
 tests/phoneDelivery.test.js
 tests/phoneDeliveryS1DeliveryColumns.test.js
+tests/phoneIngest.consent.test.js
 tests/phoneIngestSkipAutomation.test.js
 tests/phoneSPH.mysql.test.js
 tests/phoneSPH.pane.test.js
@@ -1637,6 +1649,7 @@ tests/processJobs.longJobConnection.test.js
 tests/processJobs.targeted.test.js
 tests/queryAiLoadOrder.test.js
 tests/quoMessageTransform.test.js
+tests/rcConsentSync.test.js
 tests/rcRenewSubscriptions.test.js
 tests/readonlySettings.test.js
 tests/refererRedaction.test.js

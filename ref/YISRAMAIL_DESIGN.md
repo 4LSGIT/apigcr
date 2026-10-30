@@ -1,8 +1,8 @@
 # YisraMail — consent, bulk email & campaigns v2 (DESIGN)
 
 Status: **DRAFT v0.5 — 2026-10-29. P1 (consent core) built — §4.4 "As built";
-P3 (email unsubscribe surface) built — §4.5 "As built"; nothing else built.**
-Ruled 2026-10-29 (Fred):
+P2 (inbound SMS opt-out) built — §4.6 "As built"; P3 (email unsubscribe
+surface) built — §4.5 "As built"; nothing else built.** Ruled 2026-10-29 (Fred):
 D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
 Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
 later; D15 no RC push in v1, D16 over-cap operational sends with
@@ -208,7 +208,8 @@ Provider signals map to scopes: a **complaint** → `opt_out` scope
 `provider_bounce` (deliverability, not consent, but it suppresses the same
 way). A hard bounce on a **client** (contact with a Primary/Secondary case)
 also opens one staff task — "case email to this address is bouncing too" —
-for the case's assigned staff member, else the firm default (D17); bounces on
+for the firm's consent follow-up assignee, `consent_task_user_id` (D17; `cases`
+has no assigned-staff column); bounces on
 non-clients only count in the campaign's stats (a cold import would
 otherwise flood tasks). Re-opting-in an address the SES account suppression
 list holds needs the driver to remove it there too (`events`-side hook, T2).
@@ -536,8 +537,8 @@ surface is live and smoke-tested ahead of it (gate G1).
   ONE staff task after the commit — from 0, `source 'consent'`, linked to the
   token's contact, the full text also in the task's created-log
   `consent_note` — for the firm setting `consent_task_user_id` (an active
-  user; Config → Firm → Marketing email & consent; P2's stranded-client task
-  reads it too). Unset → an IT warning once per UTC day
+  user; Config → Firm → Marketing email & consent; P2's stranded-client and
+  text-review tasks read it too). Unset → an IT warning once per UTC day
   (`consent_task_unassigned`), the event flagged `evidence.note_unassigned`; a
   note that changed nothing has no event, so it gets a warning of its own
   carrying the text.
@@ -575,23 +576,29 @@ provider decides "can send".
 
 - **Where inbound arrives.** Inbound SMS reach `ingestPhoneEvent` only
   through workflows `wf_rc_message_in` (17) and `wf_quo_message` (18), step 1
-  `phone_log`, fed by their hooks — editable rows, and for Quo YC's ONLY
-  opt-out signal. So: a test pins both workflows' `phone_log` step; a
-  liveness alert per provider fires when no inbound SMS has been ingested
-  for N business hours; the keyword handler also runs on the backfill path
-  (`services/phoneDeliveryService.js`) — idempotent, so double sight is safe.
-- **Keyword handler, built into `phoneIngestService`** after the dedup
-  precheck (step 1b, keyed on `provider_message_id` — present on every live
-  inbound row), before Layer 2/3. Body trimmed, case-folded, punctuation
-  stripped, exact single-message match:
-  - opt-out: `STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT`,
-    `REVOKE`, `OPT OUT`, `OPTOUT` → `opt_out`. Quo does not act on `REVOKE` /
-    `OPT OUT`, so for those YC is the only enforcement.
+  `phone_log`, fed by hooks 21 / 16 — editable DB rows, and for Quo YC's ONLY
+  opt-out signal. The delivery sync (`services/phoneDeliveryService.js`)
+  lists OUTBOUND texts only, so the keyword handler has exactly one path: the
+  ingest of an incoming text. Because the wiring lives in the DB, no jest test
+  can pin it: `scripts/yisramailP2CheckInbound.js` (read only, `.env` or a
+  `ycro_` key) asserts that step 1 of each workflow's published version is
+  `phone_log` with `from`, `message`, `direction`, `extra.provider`,
+  `extra.provider_message_id` and `extra.ts` wired, that both are active and
+  fed by an active hook — one GO / NO-GO line, a deploy step. A liveness
+  alert per provider covers "the hook went quiet" (below).
+- **Keyword handler, called from `phoneIngestService`** (step 2b) after the
+  dedup precheck (step 1b, keyed on `provider_message_id` — present on every
+  live inbound row) and the catch-all write, before Layer 2/3. Body trimmed,
+  case-folded, punctuation stripped, exact single-message match:
+  - opt-out: `STOP`, `STOPALL`, `STOP ALL`, `UNSUBSCRIBE`, `CANCEL`, `END`,
+    `QUIT`, `REVOKE`, `OPT OUT`, `OPTOUT` → `opt_out`. Quo does not act on
+    `REVOKE` / `OPT OUT`, so for those YC is the only enforcement.
   - opt-in: `START`, `UNSTOP` (both providers); `SUBSCRIBE`, `RESUME`,
     `CONTINUE` only on RC lines. Recorded **only when the number is currently
     opted out** — otherwise "continue" is an ordinary reply.
-  - Ledger idempotency: `source='sms_keyword'`, `provider_event_id` = the
-    provider message id.
+  - Ledger idempotency: `source='sms_keyword'`, `provider_event_id` =
+    `'<provider>:<provider message id>'`; `occurred_at` = the provider's
+    timestamp (`extra.ts`), never ingest time.
 - **Confirmation texts.** RC and Quo send their own for the words they act
   on; YC never sends a second (CTIA, FCC (a)(12)). For `REVOKE` / `OPT OUT` on
   Quo, YC sends the one non-marketing confirmation within 5 minutes as an
@@ -603,24 +610,30 @@ provider decides "can send".
   account and for that RC pair; matching it keeps automation from sending
   into blocks. FCC 26-67's informational "category" scoping (from
   2026-11-25) can't help: the provider block is absolute.
-- **Provider sync (RC).** Subscribe to the v2 consent events and reconcile
-  nightly against `GET /restapi/v2/accounts/~/sms/consents?optStatus=OptOut`
-  (read-only, guarded by `occurred_at` so an old opt-out never overwrites a
-  newer START); treat `SMS-RC/UP/CAR-413` delivery failures as opt-outs
-  (already mapped to `delivery_reason='opted_out'`). **Pushing** YC-captured
-  opt-outs to RC (`PATCH …/sms/consents`) is **D15 — recommended: not in v1.**
-  A `from:"*"` push blocks every RC line, so a staff-acknowledged send ("a
-  reply they requested", the 2026-10-27 override) then fails with SMS-RC-413,
-  and a later START on one line lifts only that pair. YC already refuses
-  automation; the push would only add protection for texts staff send from
-  the RingCentral app directly. Whether the API can opt someone back IN is
-  unverified (RC's consent page says the block lifts "only if the customer
-  sends an opt-in keyword") — P2 step 0 settles it.
-- **P2 step 0 (before code):** confirm the RC app permission / admin role
-  and rate group for `/restapi/v2/accounts/~/sms/consents`; live STOP / START
-  test on one RC and one Quo line (does the inbound STOP even reach the
-  webhook? — 0 exact STOP keywords in 3,474 inbound texts since 2026-05-31).
-- **A STOP on a case line strands a client.** Every SMS `opt_out` with scope
+- **Provider signals (RC).** Read-only, nightly: the account's opted-out
+  pairs from RC's consent list, guarded by `occurred_at` so an old opt-out
+  never overwrites a newer START; and `SMS-RC/UP/CAR-413` delivery failures
+  (already mapped to `delivery_reason='opted_out'`) as opt-outs. **Pushing**
+  YC-captured opt-outs to RC (`PATCH …/sms/consents`) is **D15 — ruled: not
+  in v1.** A `from:"*"` push blocks every RC line, so a staff-acknowledged
+  send ("a reply they requested", the 2026-10-27 override) then fails with
+  SMS-RC-413, and a later START on one line lifts only that pair. YC already
+  refuses automation; the push would only add protection for texts staff
+  send from the RingCentral app directly. Whether the API can opt someone
+  back IN is unverified: step 0 got no answer (403 below). RC's consent page
+  says the block lifts "only if the customer sends an opt-in keyword"; live,
+  ANY later text from the recipient lifts it (Appendix C §A).
+- **P2 step 0 (run 2026-10-29).** Live STOP / START on RC line 2486213656
+  and Quo line 2484179800 (0 exact STOP keywords in 3,474 inbound texts
+  before it): **GO** — every text reached `phone_event_log` within ~4 s,
+  with `provider_ref` and `ts`; the providers' own auto-replies are not
+  logged. The consent list: **NO-GO** — both the POST `…/search` and the GET
+  form answered `403 CMN-408` ("Unauthorized access") for the user behind
+  credential 9, rate group Light: the endpoints exist, the permission is
+  missing. The reconcile therefore ships dark (`sms_rc_consent_sync_enabled`
+  unset); turning it on needs that permission on the OAuth user (a wider
+  token) and one real list response captured as the fixture.
+- **A STOP on a case line strands a client.** An SMS `opt_out` with scope
   `all` on a client (contact with a Primary/Secondary case) opens a staff
   task: "client opted out of texts — reach them by phone/email". The call is
   how re-consent is recorded.
@@ -628,10 +641,9 @@ provider decides "can send".
   number"): the FCC's "any reasonable means" standard applies until a sender
   designates an exclusive method (allowed from 2026-11-25; D14 says don't),
   and CTIA expects plain-language opt-outs honored anyway. A word-boundary
-  phrase list (+ optional AI classifier on the existing pipeline), on
-  10-digit senders only (live: 101 non-suppressed texts contain "stop" as a
-  substring), opens a staff review task due well inside 10 business days;
-  staff confirm → `source='sms_review'`.
+  phrase list, on 10-digit senders only (live: 166 inbound texts contain
+  "stop" as a substring), opens a staff review task due well inside 10
+  business days; staff confirm by ticking the number's opt-out.
 - **Marketing SMS — D1 RULED: not in v1.** If ever: a dedicated
   **RingCentral** number on a MARKETING or MIXED 10DLC campaign (sending
   promotional content from a customer-care campaign risks suspension), never
@@ -640,6 +652,104 @@ provider decides "can send".
   and form version), national-DNC scrub unless an established business
   relationship applies (attorney call), 8 am–9 pm recipient-local send
   window, brand + "Reply STOP to opt out" in every message.
+
+**As built (P2).** `services/phoneConsentService.js` decides; every write is
+`optoutService.recordConsent` (the one writer). Where the build chose within
+this section, or diverged:
+- **One transaction per consent write**, pure DB (`retries:1`, plus one retry
+  on `ER_LOCK_DEADLOCK` — the victim's span rolled back whole). A direct
+  caller in P1's lock order: the destination's ACTIVE `contact_phones` row
+  locked first through `phone_active_uniq` (the statement `recordConsent`
+  runs for a direct caller, also reading `contact_id` and the cache flag),
+  handed to `recordConsent` as `rowId`, so nothing is locked twice. An opt-in
+  decides "currently opted out" with `optoutService.stateFlag` (FOR SHARE,
+  after the row) — the state, or the active row's cache flag where no state
+  exists (the reader's dual-read).
+- **The keyword handler** runs in `ingestPhoneEvent` only for
+  `type='sms' AND direction='incoming'`, after step 1b and the catch-all
+  write, before Layer 2. A throw is logged + alerted at `error`
+  (`phone_consent_inbound`, deduped per provider message) and the pipeline
+  carries on — suppression, rules and the log write still run. The outcome
+  lands in `phone_ingest_executions.metadata.consent` (`{ kind, recorded }`,
+  or `{ …, error }`) only when something matched or failed; an ordinary text
+  keeps the NULL baseline. A firm line texting a keyword is recorded like any
+  sender (the provider blocks that pair too); a non-10-digit sender (a short
+  code) records nothing.
+- **Review**, beyond the phrase list: an opt-out word with nothing but
+  courtesy words around it ("STOP PLEASE" — the documented Quo miss; never
+  CANCEL / END, which name appointments) is a review too, and so is
+  `SUBSCRIBE` / `RESUME` / `CONTINUE` on a Quo line while the number is opted
+  out ("Possible text opt-in — review": Quo keeps blocking until START). No
+  review for a number already opted out, nor for a firm line. One OPEN review
+  task per number (`tasks.task_dedupe_key = 'consent_review:<number>'`, the
+  `create_task` FIL-3 pattern; source `consent_review`), due on the third
+  firm business day (`calendarService.nextBusinessDay`; calendar +3 when the
+  holiday calendar is unreachable). `sms_review` stays unused until P4's
+  toggle-with-note — the staff tick is recorded as `staff` (P1's path).
+- **The stranded-client task** opens only on a TRANSITION into opted out
+  (was not, is now — read under the row lock): the same opt-out seen again
+  by the 413 path or the reconcile opens nothing. Client = the number's
+  ACTIVE row's contact with a `case_relate_type IN ('Primary','Secondary')`
+  link (the portal predicate) to a case whose `case_stage` is open
+  (`Open` / `Pending` / `Filed` — `case_status` is free text). Title
+  "Client opted out of texts — reach by phone/email", source `consent`,
+  linked to the contact; created after the commit, never thrown.
+- **Assignee** for both tasks: `consent_task_user_id` (P3's key — the firm
+  default; `cases` has no assigned-staff column), read through P3's own
+  rule, `unsubService.resolveAssignee`: it must name an ACTIVE user. Unset or
+  inactive → no task, the `warning` alert P3 raises
+  (`consent_task_unassigned`, one shared dedup key per UTC day), the event
+  still recorded.
+- **The Quo confirmation** is a `scheduled_jobs` row `type='one_time'`,
+  `data.type='consent_sms_confirm'` (the row's `type` column is an enum the
+  job's kind is not in — the `mail_sent_*` pattern), `max_attempts` 1,
+  `idempotency_key 'consent_confirm:quo:<message id>'` (any existing row
+  blocks a second, whatever its status — one attempt, never a resend), due
+  now and rung through the Cloud Tasks doorbell. `lib/job_executor` sends it
+  with `phoneService.sendSms` directly — the documented gate exemption — in
+  the words of `sms_optout_confirmation_text` (blank → "You've been
+  unsubscribed from texts from <firm_name>. Reply START to resume.").
+  One confirmation per opt-out: scheduled only when THIS message moved the
+  number into opted out. A REVOKE on a number already out (after a Quo STOP
+  Quo blocks our send anyway; after an RC opt-out the person already has
+  RC's reply) or one older than a newer START schedules nothing — the
+  confirmation is permitted, never required (Appendix C §B).
+- **413 verdicts** (`phoneDeliveryService`): checked on EVERY listing of a
+  record whose verdict reason is `opted_out`, not only on the stamp's
+  transition — a ledger lookup (`source='provider_optout'`,
+  `'<provider>:<provider_ref>'`) makes a re-sighting free, and a write that
+  failed once heals on the next run instead of hiding behind an unchanged
+  stamp. `occurred_at` = the text's send time (the adapter has no verdict
+  time); evidence carries the code. A backfill records but opens no task.
+- **The reconcile** (`syncRcConsents`, nightly in `fns.sms_consent_sync`,
+  fail-closed on `sms_rc_consent_sync_enabled`, `GET_LOCK`, ≤ 20 pages of
+  1,000): through `ringcentral.listConsents` (`capabilities.consentList`),
+  which owns RC's vocabulary. Per RC's API spec (its generated SDK,
+  ringcentral-extensible 1.8.6) the list is `POST
+  /restapi/v2/accounts/~/sms/consents/search` (`optStatus`, `coverage`,
+  `perPage` ≤ 1000, `pageToken`; App Permission SMS, rate group Light; the
+  authenticated user needs Account Administration) — the guide page's GET
+  form answered the same 403 at step 0. Coverage is limited to `PhoneNumber` +
+  `Account`: a `CampaignType` record is an opt-out of one campaign type, not
+  of every text. Records carry no id, so the ledger key is
+  `'<provider>:consent:<from>:<to>:<lastModifiedTime>'` — a later re-opt-out
+  of the same pair is a new event, a re-listing is not. `dry_run` counts
+  what it would record and writes nothing (runs with the setting off).
+  Provider trouble: `warning` first, `error` when the group alerted in the
+  last 36 h; a 429 parks the run. Step 0 got a 403, not a list, so the
+  record fixture in `tests/rcConsentSync.test.js` is still SDK-shaped (its
+  403 body is the real capture) — replaced before the setting is ever `1`.
+- **Re-opt-in is not mirrored.** RingCentral lifts a pair's block on any
+  later text from the recipient ("hi" → "Thanks for opting in", live
+  2026-10-29); Quo only on START. YC records an opt-in only for an opt-in
+  keyword (or a staff untick): a "hi" is not re-consent. So after a STOP and
+  a "hi" on an RC line, RC would deliver and YC still refuses automation —
+  the stricter side, by design; staff replies ask to confirm (P1's
+  override).
+- **Inbound liveness** (`inboundLivenessCheck`, same nightly run): per
+  provider with an active line, the newest ingested inbound SMS older than
+  `sms_inbound_liveness_hours` (default 72, plain hours) → alert
+  `sms_inbound_liveness:<provider>`, warning then error.
 
 ### 4.7 Staff surfaces
 
@@ -1124,7 +1234,7 @@ is ruled for that list (ruled 2026-10-30 for SS's own lead lists).
 |---|---|---|---|
 | P0 | Decisions + accounts (no code) | open decisions ruled; SES account + production-access request (marketing use); sending subdomain DNS (DKIM, custom MAIL FROM, DMARC p=none); Google Postmaster Tools for the domain; SS legal review of the footer (§528 wording, responsible attorney, ad label) and of D5; brand/from/reply-to chosen (D8) | — |
 | P1 | Consent core | `comm_topics` / `comm_consent_events` / `comm_consent_state`; `optoutService` scopes + `recordConsent(conn, …)` (guarded upsert); hit shape kept; EVERY writer and bypassing reader of the row flags moved (§4.4 list); dual-read/dual-write transition; migration run before AND after the backend deploy; yc-sync MATCHERS for consent writes; `optoutFake` + test worlds; real-MySQL twin tests for the scope predicates and the race guard | — |
-| P2 | Inbound SMS opt-out | **step 0:** RC consent-API permission/role/rate-group check + live STOP/START test on one RC and one Quo line; keyword handler after the dedup precheck (also on the backfill path); RC 413 failures + read-only nightly consent reconcile → ledger; Quo REVOKE/OPT OUT confirmation job (gate exemption); client-stranded staff task; free-text review task; wf17/wf18 `phone_log` pin test + per-provider inbound liveness alert | P1 |
+| P2 | Inbound SMS opt-out — **built** (§4.6 "As built"; the reconcile ships dark) | **step 0:** RC consent-API permission/role/rate-group check + live STOP/START test on one RC and one Quo line + one captured consent-list response; keyword handler in the ingest of INCOMING texts, after the dedup precheck; RC 413 failures + read-only nightly consent reconcile (`sms_consent_sync`, behind `sms_rc_consent_sync_enabled`) → ledger; Quo REVOKE/OPT OUT confirmation job (gate exemption); client-stranded staff task; free-text review task; `scripts/yisramailP2CheckInbound.js` (the wf17/wf18 `phone_log` wiring check, a deploy step) + per-provider inbound liveness alert | P1 |
 | P3 | Email unsubscribe surface — **built** (§4.5 "As built") | `comm_unsub_tokens` (+ `send_ref`) via `scripts/yisramailP3Migrate.js`; `services/unsubService.js` (mint for C2, lookup, one-click, page form); `/u/:token` GET page + one-click POST + prefs POST on the landing origin (all three `pageLanding` enumerations, test-locked; no-store / noindex / no-referrer; no per-IP limit on the one-click POST); `{{send.*}}` / `{{firm.*}}` resolver pseudo-tables; `lib/complianceFooter.js` (the footer block C2 injects); settings `consent_task_user_id`, `marketing_ad_label`, `marketing_debt_relief_statement` | P1 |
 | P4 | Staff consent UI | badges + history on contact rows; compose counts; SU suppression import/export | P1 |
 | T1 | Transport contract | adapter capabilities (`bulk`, `headers`, `tags`, `events`, `batch`); `headers` / `replyTo` / `tags` options through `sendEmailDirect` + `smtp.js` (marketing path only; public `sendEmail` strips them); driver-owned headers (SES `X-SES-*`); SES message id from the SMTP reply; `email_credentials.bulk_ok` + `events_driver`; bulk rows fenced out of `emailFrom`, public `sendEmail` and operational campaigns; DKIM `h=` acceptance test | — |
@@ -1169,9 +1279,9 @@ C4 S, C5 S, C6 M, C7 S.
 | D12 | Default marketing send rate | Rec: **60/min** (2k ≈ 33 min), firm setting. | Gentle on a new domain; the pump keeps the queue clear. |
 | D13 | Who may send marketing / over-cap | Rec: new capability **`campaigns.bulk`** (admin role) covering the marketing class AND over-cap operational sends. | Today any staff login can send as any firm address. |
 | D14 | Designate an exclusive SMS revocation method (FCC 26-67, from 2026-11-25)? | Rec: **no, not in v1.** | Requires the disclosure in every text, case texts included; the review queue covers plain-language opt-outs. |
-| D15 | Push YC-captured SMS opt-outs to RingCentral? | **RULED: no push in v1**; read-only reconcile. | A `from:"*"` push blocks every RC line, so staff-acknowledged replies (2026-10-27 override) would fail with 413, and a later START lifts only one pair. YC already refuses automation; the push only protects texts staff send from the RC app directly. Revisit after P2 step 0. |
+| D15 | Push YC-captured SMS opt-outs to RingCentral? | **RULED: no push in v1**; read-only reconcile. | A `from:"*"` push blocks every RC line, so staff-acknowledged replies (2026-10-27 override) would fail with 413, and a later START lifts only one pair. YC already refuses automation; the push only protects texts staff send from the RC app directly. Revisit once the consent API answers (P2 step 0: 403 CMN-408). |
 | D16 | Operational sends over the 50 cap (e.g. office-closure notice to all active clients, email or SMS)? | **RULED:** allowed with `campaigns.bulk` + a typed confirmation of the count, audited; still operational (no footer), still consent-checked. | Informational notices to clients are legitimate; the cap exists to stop accidental blasts, not these. |
-| D17 | Who gets the "case email is bouncing" task? | **RULED:** clients only, to the case's assigned staff member, else the firm default; non-client bounces → campaign stats only. | One task per bounce would flood on a cold import. |
+| D17 | Who gets the "case email is bouncing" task? | **RULED:** clients only, to the firm's consent follow-up assignee (`consent_task_user_id` — `cases` has no assigned-staff column); non-client bounces → campaign stats only. | One task per bounce would flood on a cold import. |
 | D18 | Do opt-outs stop automations? | **RULED (Fred, 2026-10-29): no — opt-outs gate promotion.** Automations are operational (a stand-in for a person); a later `promotional` checkbox (C7) makes an automation send obey marketing consent. Email opt-outs are marketing-only; no "send to opt-outs" switch on marketing campaigns — the operational class is the honest path. | CAN-SPAM covers commercial mail only; the 10-27 "automation refuses" rule was broader than the law and blocked the reminders clients need. |
 | D19 | Does an SMS STOP still stop automated (operational) texts? | **RULED (Fred, 2026-10-29): yes** — the one exception to D18. | A STOP revokes consent for texts (FCC "any reasonable means"; FCC 26-67 only lets informational revocations be scoped by category from 2026-11-25), and the providers block anyway — RC the pair, Quo every Quo line — so the send would fail. The client gets a staff task to be reached by phone/email (§4.6). |
 
@@ -1189,6 +1299,21 @@ C4 S, C5 S, C6 M, C7 S.
   (paged), CSV export, `PATCH …/sms/consents` `records:[{from,to,optStatus,
   source:"Api"}]` (`from:"*"` = every number in the account) — the app CAN
   opt someone back in. Consent-change events exist (filter string UNVERIFIED).
+  RC's API spec as its generated SDK carries it (ringcentral-extensible
+  1.8.6, read 2026-10-29) has no GET list: the read is `POST
+  …/sms/consents/search` (body `optStatus`, `from[]`, `to[]`, `coverage[]`,
+  `campaignType[]`, `pageToken`, `perPage` ≤ 1000; records `{from, to,
+  optStatus, source, lastModifiedTime}`, no id; paging `nextPageToken`),
+  plus `GET …/consents/export` (CSV) and `GET …/consents/history`; all App
+  Permission SMS, rate group Light. The authenticated user needs the Account
+  Administration permission, else `CMN-408` (RC community answer; seen
+  live at P2 step 0, 2026-10-29, on both the POST and the GET form).
+  Observed live (rc2 2486213656, 2026-10-29): STOP → "Thanks for opting out
+  of our messaging services. You have been opted out."; a later "hi" → "Thanks
+  for opting in for our messaging service." — any text re-opts the pair in,
+  whatever the consent page says; START → the same opt-in reply.
+  [SDK paths](https://github.com/ringcentral/ringcentral-extensible/tree/master/packages/core/src/paths/Restapi/V2/Accounts/Sms/Consents),
+  [CMN-408](https://community.ringcentral.com/developer-platform-apis-integrations-5/sms-consent-cmn-408-error-11399),
   [consent mgmt](https://developers.ringcentral.com/guide/messaging/sms/messaging-consent-management),
   [SMS errors](https://developers.ringcentral.com/guide/messaging/sms/sms-errors),
   [HV opt-out](https://developers.ringcentral.com/guide/messaging/sms/high-volume/opt-out)
@@ -1196,7 +1321,12 @@ C4 S, C5 S, C6 M, C7 S.
   ("STOP PLEASE" doesn't trigger; REVOKE / OPT OUT not listed); opt-in START,
   UNSTOP; auto-confirmation. Scope: **all Quo numbers in the account**. No
   master opt-out list, no opt-out API or event; contacts must opt back in
-  themselves. [Quo opt-out](https://support.quo.com/core-concepts/messaging/opt-out.md)
+  themselves. Observed live (2484179800, 2026-10-29): STOP → "You have
+  successfully been unsubscribed. You will not receive any more messages from
+  this number. Reply START to resubscribe."; a later "hi" → nothing (still
+  blocked); START → "You have successfully been re-subscribed…". (The reply
+  says "this number"; the support article says every Quo number — not tested
+  across lines.) [Quo opt-out](https://support.quo.com/core-concepts/messaging/opt-out.md)
 - **10DLC:** use cases include CUSTOMER_CARE, ACCOUNT_NOTIFICATION, MARKETING,
   MIXED. Sending marketing from a customer-care campaign is a carrier/TCR
   policy breach (suspension risk). Separate numbers per purpose are the norm

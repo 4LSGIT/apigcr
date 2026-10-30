@@ -145,12 +145,12 @@ describe('eligibility — layered filter (§4)', () => {
     expect(registry.start_workflow.__meta.workflowOnly).toBe(true);
     expect(cta.isCtaEligible('start_workflow')).toBe(true);
     // the seeded denylist (+ the S2 ruling's three)
-    expect(cta.CTA_FN_DENYLIST).toEqual(['wait_until_time', 'cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'create_cta', 'comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify', 'phone_outbound_sync', 'comms_transcribe_sweep', 'comms_summarize_sweep']);
+    expect(cta.CTA_FN_DENYLIST).toEqual(['wait_until_time', 'cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'create_cta', 'comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify', 'phone_outbound_sync', 'comms_transcribe_sweep', 'comms_summarize_sweep', 'sms_consent_sync']);
     expect(registry.wait_until_time.__meta.controlFlow).toBeUndefined(); // flagless by design
     expect(cta.isCtaEligible('wait_until_time')).toBe(false);
     // S2 ruling: each is a real meta-bearing registry function that ONLY the
     // denylist keeps out (so dropping one from the list re-exposes it).
-    for (const f of ['cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify', 'comms_transcribe_sweep', 'comms_summarize_sweep']) {
+    for (const f of ['cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify', 'comms_transcribe_sweep', 'comms_summarize_sweep', 'sms_consent_sync']) {
       expect(typeof registry[f]).toBe('function');
       expect(registry[f].__meta).toBeTruthy();
       expect(registry[f].__meta.controlFlow).not.toBe(true);

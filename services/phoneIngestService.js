@@ -211,7 +211,7 @@ async function _writeExecution(db, fields) {
  * All three carry status:'failed' when failed, so all three are counted by
  * the action_failure_count generated column and alerted on by lib/alerting.js.
  */
-function _buildMetadata(suppression, automation) {
+function _buildMetadata(suppression, automation, consent = null) {
   const m = {};
   if (suppression && suppression.matchedRuleIds && suppression.matchedRuleIds.length) {
     m.suppressed_by = suppression.matchedRuleIds;
@@ -243,6 +243,11 @@ function _buildMetadata(suppression, automation) {
     // Recorded so the executions trail distinguishes "no rules matched" from
     // "rules were not consulted" (ref/PHONE_DELIVERY_DESIGN.md §6).
     m.automation = { skipped: automation.skipped };
+  }
+  if (consent) {
+    // Step 2b (YisraMail P2): a consent keyword / review match, or the
+    // handler's failure. Absent for an ordinary text — the NULL baseline holds.
+    m.consent = consent;
   }
   return Object.keys(m).length ? m : null;
 }
@@ -421,6 +426,46 @@ async function ingestPhoneEvent(db, event, opts = {}) {
     console.warn(`[phone_log] phone_event_log write failed: ${err.message}`);
   }
 
+  // ---- 2b. SMS consent keywords (YisraMail P2, ref/YISRAMAIL_DESIGN.md §4.6)
+  //   INCOMING texts only — the one path a STOP reaches YC (hooks 21/16 →
+  //   wf 17/18 → phone_log; the delivery sync lists outbound texts only).
+  //   After the dedup precheck (a true redelivery never gets here) and the
+  //   catch-all write; before Layer 2, so a STOP is recorded whatever the
+  //   suppression and the rules decide. A failure here is LOGGED + ALERTED
+  //   and the pipeline carries on: the layer-independence invariant holds —
+  //   suppression, rules and the log write all still run.
+  let consent = null;
+  if (eventType === 'sms' && p.direction === 'incoming') {
+    try {
+      const phoneConsentService = require('./phoneConsentService');   // lazy require (convention)
+      const r = await phoneConsentService.handleInbound(db, {
+        provider,
+        providerRef,
+        line: _phoneLogNorm10(ex.line || p.to),
+        from10: _phoneLogNorm10(p.from),
+        body: p.message,
+        ts: ex.ts,
+        firmToFirm,
+      });
+      if (r && r.kind) consent = { kind: r.kind, recorded: !!r.recorded };
+    } catch (err) {
+      console.error(`[phone_log] consent handler failed: ${err.message}`);
+      consent = { kind: null, recorded: false, error: String(err.message || err).slice(0, 500) };
+      try {
+        const { alert } = require('../lib/alerting');   // lazy require (convention)
+        Promise.resolve(alert(db, {
+          source: 'app', kind: 'sms_consent_failed', group_key: 'phone_consent_inbound', severity: 'error',
+          title: 'An inbound text\'s opt-out keyword may not have been recorded',
+          message: `The SMS consent handler failed on ${provider || '?'} message ${providerRef || '(no ref)'} ` +
+            `from ${_phoneLogNorm10(p.from) || '?'}: ${err.message}. The text itself was still logged; ` +
+            'if it was a STOP, record the opt-out on the contact.',
+          context: { provider, provider_ref: providerRef, event_log_id: eventLogId },
+          dedup_key: `phone_consent_inbound:${provider || '-'}:${providerRef || eventLogId || Date.now()}`,
+        })).catch(() => {});
+      } catch (_) { /* the console line is the record */ }
+    }
+  }
+
   // ---- 3. suppression (Layer 2) -----------------------------------------
   let suppressed = false;
   let matchedRuleIds = [];
@@ -504,7 +549,7 @@ async function ingestPhoneEvent(db, event, opts = {}) {
       event_log_id: eventLogId,
       status:       'suppressed',
       log_id:       null,
-      metadata:     _buildMetadata(suppression, automation),
+      metadata:     _buildMetadata(suppression, automation, consent),
       raw_input:    rawInputForLog,
     });
 
@@ -532,7 +577,7 @@ async function ingestPhoneEvent(db, event, opts = {}) {
         status:       'error',
         log_id:       null,
         error:        `createLogEntry ${logErr.code}: ${logErr.message}`,
-        metadata:     _buildMetadata(suppression, automation),
+        metadata:     _buildMetadata(suppression, automation, consent),
         raw_input:    rawInputForLog,
       });
       return { log_id: null, suppressed: false, error: logErr.message, firmToFirm };
@@ -560,7 +605,7 @@ async function ingestPhoneEvent(db, event, opts = {}) {
     event_log_id: eventLogId,
     status:       'logged',
     log_id:       result && result.log_id != null ? result.log_id : null,
-    metadata:     _buildMetadata(suppression, automation),
+    metadata:     _buildMetadata(suppression, automation, consent),
     raw_input:    rawInputForLog,
   });
 

@@ -237,7 +237,8 @@ body. Governing migrations in `ref/migrations/`.*
   `scripts/reviveScalarReplacedValues.js` revives rows outside that rule (its
   header). Override audits record `acknowledged_optout` (contact ids) AND
   `acknowledged_optout_destinations`. A hit for a destination no row holds
-  has null `contact_id` / `row_id`. Exempt by design: the portal login PIN. Migration:
+  has null `contact_id` / `row_id`. Exempt by design: the portal login PIN and
+  the Quo opt-out confirmation (P2, below). Migration:
   `scripts/yisramailP1MigrateConsent.js`. Manual: 01-YisraCase-overview/02-contacts.md,
   03-YisraFlow/08-error-policies.md.
   **Email unsubscribe (P3, 10-30 — design §4.5 "As built"):** one
@@ -262,6 +263,31 @@ body. Governing migrations in `ref/migrations/`.*
   BLOCK (`lib/complianceFooter.js`, throws on a hole), not a placeholder;
   its scalars are resolver pseudo-tables (§8). Migration:
   `scripts/yisramailP3Migrate.js`. Manual: 06-Client-Facing/07-email-unsubscribe.md.
+  **Inbound SMS opt-out (P2, 10-30 — design §4.6 "As built"):**
+  `services/phoneConsentService.js` decides, `recordConsent` writes — inbound
+  keywords (ingest step 2b, incoming SMS only; `sms_keyword`, key
+  `'<provider>:<message id>'`, occurred_at = the provider's `ts`; START & co.
+  only while opted out; the raw body rides in `evidence`, hence the sensitive
+  tier), RingCentral 413 verdicts (`phoneDeliveryService`, every sighting,
+  ledger lookup first) and the read-only RC reconcile (`provider_optout`;
+  never a push — D15; dark: `sms_rc_consent_sync_enabled` unset, the consent
+  API is 403 CMN-408 for the connected user). Each is one pure-DB transaction
+  in the direct-caller lock order (the active row through
+  `phone_active_uniq`, passed on as `rowId`) with one `ER_LOCK_DEADLOCK`
+  retry. Post-commit, never thrown: a stranded-client task (a TRANSITION into
+  opted out on a contact with an open Primary/Secondary case) and a review
+  task for plain-language revocations (one open per number,
+  `task_dedupe_key 'consent_review:<number>'`), both to
+  `consent_task_user_id` through P3's `unsubService.resolveAssignee` (an
+  ACTIVE user, else the same daily `consent_task_unassigned` warning, no
+  task). A Quo REVOKE / OPT OUT that moves the number into opted out → one
+  `scheduled_jobs` row (`data.type 'consent_sms_confirm'`, max_attempts 1,
+  idempotency key per message) that `lib/job_executor` sends through
+  `phoneService.sendSms` with no consent read — the exemption. The nightly
+  `sms_consent_sync` (CTA-denied) runs the reconcile and the inbound liveness
+  alert (`sms_inbound_liveness_hours`); `scripts/yisramailP2CheckInbound.js`
+  checks wf 17/18's `phone_log` wiring. Manual:
+  01-YisraCase-overview/17-text-opt-outs.md.
 - **Casey reads email/phone ingest rules (A20.0/A20.1, 10-26):** the P12
   kinds take `email_ingest_rule_id` / `phone_ingest_rule_id` (definition,
   references), `email_ingest_execution_id` / `phone_ingest_execution_id` or a
@@ -2412,6 +2438,13 @@ enough: add it to the provider's map too.**
    never re-fire automation. `log_id` alone is NOT the terminal test (the
    suppressed path never writes a log). Skipped when either key half NULL.
 3. **`phone_event_log` forensic catch-all** — ALWAYS, idempotent upsert.
+   Then, for an INCOMING SMS only, the **consent keyword handler**
+   (`phoneConsentService.handleInbound`, YisraMail P2) — after the dedup
+   pre-check (a redelivery never reaches it) and before Layers 2/3, so a
+   STOP is recorded whatever suppression and rules decide; a throw is logged,
+   alerted at error and contained (the layers below still run); a match or a
+   failure lands in `metadata.consent`. The one path a STOP reaches YC: the
+   delivery sync lists outbound texts only.
 4. **Layer 2 suppression** — LOG WRITE only (design call 1A); never halts
    the surrounding workflow. `output.suppressed` surfaced for branching.
 5. **Layer 3 rules** — ALWAYS, independent of suppression and log outcome —
@@ -2455,6 +2488,11 @@ only via `phoneService.getAdapter()` — ingests whatever the webhooks dropped
   of the firm's own lines (any `phone_lines` row, active or not; counted as
   `dispatch_skipped_firm`): a notice that texts a staff line and fails
   would dispatch another — a loop.
+- **Opt-out verdicts → consent** (YisraMail P2): every listed record whose
+  verdict reason is `opted_out` (the RC 413 family) is recorded as a
+  `provider_optout` SMS opt-out (`phoneConsentService.recordProviderOptOut`),
+  checked on every sighting — a ledger lookup makes the re-sighting free and
+  heals a failed write; a backfill records without staff tasks.
 - Display: `threadItem.delivery` (Comms → Phone bubbles) and
   `entityComms` `phone.delivery` (case/contact feeds) — raw provider code is
   tooltip-only; only the adapter may interpret it.

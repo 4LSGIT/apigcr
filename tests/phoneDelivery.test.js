@@ -24,6 +24,9 @@
 jest.mock('../services/settingsService', () => ({ getSetting: jest.fn() }));
 jest.mock('../services/phoneIngestService', () => ({ ingestPhoneEvent: jest.fn() }));
 jest.mock('../lib/actionDispatchers', () => ({ dispatchWorkflow: jest.fn() }));
+// YisraMail P2: an opted_out verdict also goes to the consent ledger —
+// pinned in tests/phoneDelivery.consent.test.js; here only the delivery side.
+jest.mock('../services/phoneConsentService', () => ({ recordProviderOptOut: jest.fn(async () => ({ recorded: true })) }));
 
 const settingsService = require('../services/settingsService');
 const phoneIngestService = require('../services/phoneIngestService');

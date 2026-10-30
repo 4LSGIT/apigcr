@@ -44,6 +44,17 @@
  * (transient / first per convention; the alerting lib's dedup and cooldown
  * do the rest), and a run never throws out of one group into another.
  *
+ * Opt-out verdicts (YisraMail P2, ref/YISRAMAIL_DESIGN.md §4.6): every
+ * listed record whose verdict reason is 'opted_out' (RingCentral's
+ * SMS-RC/UP/CAR-413 — the provider refused the send because the recipient
+ * opted out) is consent evidence: phoneConsentService.recordProviderOptOut
+ * records it in the ledger (source provider_optout, '<provider>:<ref>',
+ * occurred_at = the text's send time — the adapter gives no verdict time).
+ * Checked on EVERY sighting, not only on the stamp's transition: a ledger
+ * lookup makes a re-sighting a no-op, and an earlier failed write heals on
+ * the next run instead of being lost behind an unchanged stamp. A backfill
+ * records but opens no staff task.
+ *
  * Driven by the "Phone Outbound Delivery Sync" recurring job and poked by
  * hook 22 after the S2 cutover; fns.phone_outbound_sync is the skin.
  */
@@ -141,6 +152,7 @@ async function runSync(db, opts = {}) {
     since: null, until: null, backfill: !!opts.backfill,
     groups: 0, pages: 0, listed: 0, ingested: 0, stamped: 0, unchanged: 0,
     ingest_errors: 0, fetch_errors: 0, errors: [],
+    consent_recorded: 0, consent_errors: 0,
   };
 
   out.enabled = (await getSetting(db, ENABLED_KEY)) === '1';
@@ -256,6 +268,9 @@ async function _syncGroup(db, adapter, g, out, { maxPages, failedWfId, firmLines
             continue;   // one bad record never stops the window
           }
         }
+        if (r.delivery && r.delivery.state === 'failed' && r.delivery.reason === 'opted_out') {
+          await _recordOptOutVerdict(db, g, r, out);
+        }
         // Stamp by the unique key — covers the row just ingested too.
         const cur = row || { delivery_state: null, delivery_reason: null, delivery_code: null };
         const next = stampDecision(cur, r.delivery);
@@ -302,6 +317,40 @@ async function _syncGroup(db, adapter, g, out, { maxPages, failedWfId, firmLines
 
     if (res.totalPages != null && page >= res.totalPages) return;
     if (res.records.length < PER_PAGE && res.totalPages == null) return;
+  }
+}
+
+/**
+ * A provider 'opted_out' verdict → the consent ledger (YisraMail P2). Never
+ * throws: a failure is counted, alerted at error (a dropped opt-out is not a
+ * blip) and retried by the next run (the ledger lookup sees nothing yet).
+ */
+async function _recordOptOutVerdict(db, g, r, out) {
+  try {
+    const phoneConsentService = require('./phoneConsentService');   // lazy require (convention)
+    const res = await phoneConsentService.recordProviderOptOut(db, {
+      destination: r.to,
+      providerEventId: `${g.provider}:${r.provider_ref}`,
+      occurredAt: r.ts || null,
+      lineNumber: r.from,
+      evidence: {
+        via: 'delivery_verdict', provider: g.provider, provider_ref: r.provider_ref,
+        delivery_code: r.delivery.provider_code || null, delivery_reason: r.delivery.reason,
+      },
+      how: `a text to them was refused as opted out (${r.delivery.provider_code || 'opted_out'})`,
+      notify: !out.backfill,
+    });
+    if (res && res.recorded) out.consent_recorded += 1;
+  } catch (err) {
+    out.consent_errors += 1;
+    out.errors.push(`consent ${g.provider}/${r.provider_ref}: ${err.message}`);
+    alert(db, {
+      kind: 'sms_consent_failed', group_key: 'phone_delivery_consent', severity: 'error',
+      title: 'Phone delivery sync: an opt-out verdict was not recorded',
+      message: `${g.provider} refused text ${r.provider_ref} to ${r.to} as opted out, and recording that opt-out failed: ${err.message}. The next sync run retries.`,
+      context: { provider: g.provider, provider_ref: r.provider_ref },
+      dedup_key: `phone_delivery_consent:${g.provider}:${new Date().toISOString().slice(0, 10)}`,
+    });
   }
 }
 

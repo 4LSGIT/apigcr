@@ -182,9 +182,10 @@ persisting.
    links), and the provider-budget sweepers — `comms_archive_sweep`,
    `comms_archive_media_sweep`, `comms_archive_verify`,
    `phone_outbound_sync`, `comms_transcribe_sweep`,
-   `comms_summarize_sweep` (they spend shared provider/STT/AI budgets and
-   write the private archive or logs; no public link may start them — a
-   deliberate divergence from the other, eligible, sweepers).
+   `comms_summarize_sweep`, `sms_consent_sync` (they spend shared
+   provider/STT/AI budgets and write the private archive, logs or the
+   consent ledger; no public link may start them — a deliberate divergence
+   from the other, eligible, sweepers).
 3. **Runtime guard:** the plan runner **fails any step whose result carries
    `delayed_until` or `next_step`** — filter completeness is not load-bearing
    against future flagless timing functions.
