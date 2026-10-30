@@ -21,13 +21,10 @@ when — so the firm can show who opted out and how.
 
 **The phone companies block too.** RingCentral blocks texts from the line that
 received the STOP to that number; Quo blocks the number on **every** Quo line.
-Each sends its own "you've been unsubscribed" reply — Quo for REVOKE too
-(seen live 2026-10-30). The one exception: Quo's documentation does not list
-OPT OUT, so for that word YisraCase sends the single confirmation text itself
-(its wording is the **Text opt-out confirmation** setting, Config → Firm →
-Marketing email & consent) — once per opt-out, never to a number that had
-already opted out, and never when Quo reports it has already blocked the
-number (then Quo's own reply was the confirmation).
+Each sends its own "you've been unsubscribed" reply for every word in the
+table above — Quo for REVOKE and OPT OUT too, although its documentation
+doesn't list them (seen live 2026-10-30). YisraCase never sends a second
+confirmation.
 
 They lift their blocks differently. Quo lifts its block only when the person
 texts **START**. RingCentral lifts it as soon as the person texts that line

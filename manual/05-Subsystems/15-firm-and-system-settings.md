@@ -46,7 +46,7 @@ first.
 | **Client self-service & booking** | What a client may do from their manage link (cancel, reschedule, rebook), the cutoff and horizon, the texts sent, and the Shabbos booking window |
 | **Dropbox filing** | The case folder templates and the "unsorted" folders for uploads, forms, generated and signed documents |
 | **E-Sign** | Test mode, the default reminder sequence, and the credit balance and its low-credit alert |
-| **Marketing email & consent** | Who gets consent follow-up tasks (unsubscribe-page notes, clients who opted out of texts, possible text opt-outs), the marketing footer's advertisement label and debt-relief-agency statement, and the text opt-out confirmation — see [Email unsubscribe](../06-Client-Facing/07-email-unsubscribe.md) and [Text opt-outs](../01-YisraCase-overview/17-text-opt-outs.md) |
+| **Marketing email & consent** | Who gets consent follow-up tasks (unsubscribe-page notes, clients who opted out of texts, possible text opt-outs) and the marketing footer's advertisement label and debt-relief-agency statement — see [Email unsubscribe](../06-Client-Facing/07-email-unsubscribe.md) and [Text opt-outs](../01-YisraCase-overview/17-text-opt-outs.md) |
 | **Automation variables** | Settings the firm made for its own workflows (below) |
 
 **Marketing email & consent** holds four settings: *Consent follow-up
@@ -54,9 +54,7 @@ assignee* (a staff picker — unset, or a user who is no longer active, means
 no task is created and IT is warned once a day), *Advertisement label*
 (blank = "Advertisement"), *Debt-relief agency statement* (blank = the
 statutory wording; the firm's attorney confirms it before the first
-marketing send) and *Text opt-out confirmation* (the one text sent when a
-client opts out with REVOKE or OPT OUT on a Quo line; blank = "You've been
-unsubscribed from texts from <firm name>. Reply START to resume."). The
+marketing send). The
 marketing footer also reads the firm's name, mailing address, phone and
 signing attorney from **Firm identity**.
 

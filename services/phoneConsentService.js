@@ -55,15 +55,12 @@
  *   - review: one open task per number (tasks.task_dedupe_key).
  *   Both go to consent_task_user_id; unset → no task, one warning alert a day.
  *
- * QUO CONFIRMATION. RingCentral and Quo send their own confirmation for the
- * words they act on; YC never sends a second. OPT OUT / OPTOUT on a Quo line
- * are words Quo's docs don't list, so YC schedules ONE confirmation text
- * (scheduled_jobs data.type 'consent_sms_confirm', lib/job_executor) — never a
- * send inside the ingest. REVOKE is NOT one of them: live 2026-10-30 Quo
- * blocked the number and sent its own confirmation on REVOKE (job 12787 then
- * failed with Quo 400 0201400 "User has opted out"). OPT OUT is unverified;
- * if Quo acts on it too, the executor treats that 400 as "the provider
- * confirmed it" and the job succeeds without a text.
+ * CONFIRMATION TEXTS: none from YC. RingCentral and Quo each send their own
+ * for every word they act on, and live tests (2026-10-30, 2484179800) showed
+ * Quo acts on REVOKE and OPT OUT too — block + auto-reply — so the word list
+ * that was "Quo ignores these" is empty. The consent_sms_confirm job was
+ * removed; a second confirmation would be the CTIA/FCC (a)(12) violation,
+ * and Quo refuses the send anyway (400 0201400 "User Opted Out").
  */
 'use strict';
 
@@ -73,7 +70,6 @@ const { withTransaction } = require('../lib/withTransaction');
 // ─── Settings (lib/settingsRegistry.js) ──────────────────────────────────────
 const RC_SYNC_ENABLED_KEY = 'sms_rc_consent_sync_enabled';
 const LIVENESS_HOURS_KEY = 'sms_inbound_liveness_hours';
-const CONFIRM_TEXT_KEY = 'sms_optout_confirmation_text';
 const ASSIGNEE_KEY = 'consent_task_user_id';   // owned by P3 (email unsubscribe); shared
 
 const DEFAULT_LIVENESS_HOURS = 72;              // spans a weekend; Quo averages ~5 inbound/day
@@ -89,25 +85,6 @@ const OPT_OUT_WORDS = Object.freeze(['stop', 'stopall', 'stop all', 'unsubscribe
 const OPT_IN_WORDS = Object.freeze(['start', 'unstop']);
 /** Opt-in keywords RingCentral acts on and Quo does not. On Quo: review (Quo keeps blocking until START). */
 const OPT_IN_RC_ONLY_WORDS = Object.freeze(['subscribe', 'resume', 'continue']);
-/**
- * Opt-out words Quo's docs don't list (Appendix C §A): YC sends the one
- * confirmation. REVOKE was removed 2026-10-30 — Quo acts on it (block + its
- * own confirmation, observed live on 2484179800). OPT OUT / OPTOUT stay
- * until a live test says otherwise; lib/job_executor treats Quo's
- * "User Opted Out" refusal as provider-confirmed (quoRefusedOptedOut).
- */
-const QUO_CONFIRM_WORDS = Object.freeze(['opt out', 'optout']);
-
-/**
- * True when a Quo send was refused because the recipient is opted out at Quo
- * (HTTP 400, code 0201400 "User Opted Out" — the shape quo.js throws:
- * `Quo API 400: {json}`). For the confirmation job that is success by another
- * route: Quo acted on the word itself, so it already sent its own reply.
- */
-function quoRefusedOptedOut(err) {
-  const m = String((err && err.message) || '');
-  return /^Quo API 400\b/.test(m) && (/"code":"0201400"/.test(m) || /User Opted Out/i.test(m));
-}
 /**
  * Plain-language revocations → a staff review task. Word-bounded on the
  * normalized body (apostrophes vanish: "don't" → "dont"). Live 2026-10-29:
@@ -142,7 +119,6 @@ function normalizeBody(body) {
 const OUT_SET = new Set(OPT_OUT_WORDS);
 const IN_SET = new Set(OPT_IN_WORDS);
 const IN_RC_SET = new Set(OPT_IN_RC_ONLY_WORDS);
-const QUO_CONFIRM_SET = new Set(QUO_CONFIRM_WORDS);
 const PHRASES_NORM = Object.freeze(REVIEW_PHRASES.map(normalizeBody));
 const COURTESY_KW_SET = new Set(COURTESY_KEYWORDS);
 const COURTESY_SET = new Set(COURTESY_WORDS);
@@ -397,43 +373,6 @@ async function activeContactId(db, destination) {
   return r && r.contact_id != null ? Number(r.contact_id) : null;
 }
 
-// ─── Quo confirmation job ───────────────────────────────────────────────────
-const CONFIRM_JOB_TYPE = 'consent_sms_confirm';
-
-/**
- * ONE scheduled_jobs row per provider message (idempotency_key — any existing
- * row, whatever its status, means it was scheduled: one attempt, never a
- * resend). Due now; rung through the Cloud Tasks doorbell (never rejects).
- * → job id | null
- */
-async function scheduleQuoConfirmation(db, { line, to, providerMessageId }) {
-  const key = `consent_confirm:quo:${providerMessageId}`;
-  if (key.length > 100) throw new Error('scheduleQuoConfirmation: idempotency key exceeds 100 characters');
-  const [existing] = await db.query('SELECT id FROM scheduled_jobs WHERE idempotency_key = ? LIMIT 1', [key]);
-  if (existing && existing[0]) return null;
-  const [ins] = await db.query(
-    `INSERT INTO scheduled_jobs (type, scheduled_time, status, name, data, max_attempts, backoff_seconds, idempotency_key)
-     VALUES ('one_time', NOW(), 'pending', ?, ?, 1, 0, ?)`,
-    [`SMS opt-out confirmation to ${fmtPhone(to)} (Quo)`,
-      JSON.stringify({ type: CONFIRM_JOB_TYPE, line, to, provider_message_id: providerMessageId }), key]);
-  const jobId = ins && ins.insertId ? ins.insertId : null;
-  if (jobId) {
-    const { enqueueJobDispatch } = require('../lib/taskQueue');   // lazy require (convention)
-    await enqueueJobDispatch(jobId, Date.now());
-  }
-  return jobId;
-}
-
-/** The confirmation's words: the setting verbatim, else the default naming the firm. */
-async function confirmationText(db) {
-  const { getSettings } = require('./settingsService');   // lazy require (convention)
-  const s = await getSettings(db, [CONFIRM_TEXT_KEY, 'firm_name']);
-  const custom = s[CONFIRM_TEXT_KEY] != null ? String(s[CONFIRM_TEXT_KEY]).trim() : '';
-  if (custom) return custom;
-  const firm = s.firm_name != null && String(s.firm_name).trim() ? String(s.firm_name).trim() : 'this firm';
-  return `You've been unsubscribed from texts from ${firm}. Reply START to resume.`;
-}
-
 // ─── 1. Inbound keywords ────────────────────────────────────────────────────
 /**
  * One incoming SMS. Never called for outgoing texts or calls.
@@ -481,23 +420,6 @@ async function handleInbound(db, { provider, providerRef, line, from10, body, ts
       out.task_id = await strandedTask(db, { result, destination, lineNumber, how: `texted "${detail.keyword.toUpperCase()}"` });
     } catch (err) {
       console.error(`[phone_consent] stranded-client task failed for ${destination}: ${err.message}`);
-    }
-    // One confirmation per opt-out: only when THIS message moved the number
-    // into opted out. Already out (an earlier STOP — Quo then blocks our send
-    // anyway — or an RC opt-out) or a REVOKE older than a newer START → none.
-    if (provider === 'quo' && QUO_CONFIRM_SET.has(detail.keyword) && result.recorded && result.state === 'opted_out'
-        && !result.was_opted_out && providerRef && lineNumber) {
-      try {
-        out.job_id = await scheduleQuoConfirmation(db, { line: lineNumber, to: destination, providerMessageId: providerRef });
-      } catch (err) {
-        console.error(`[phone_consent] Quo confirmation not scheduled for ${destination}: ${err.message}`);
-        alertLater(db, {
-          kind: 'consent_confirm_unscheduled', group_key: 'phone_consent_confirm', severity: 'error',
-          title: 'SMS opt-out confirmation could not be scheduled',
-          message: `${fmtPhone(destination)} texted ${detail.keyword.toUpperCase()} on Quo line ${fmtPhone(lineNumber)}; the opt-out is recorded but the one confirmation text was not scheduled: ${err.message}`,
-          dedup_key: `phone_consent_confirm:${providerRef}`,
-        });
-      }
     }
   }
   return out;
@@ -680,22 +602,15 @@ module.exports = {
   syncRcConsents,
   // liveness
   inboundLivenessCheck,
-  // Quo confirmation (lib/job_executor)
-  confirmationText,
-  scheduleQuoConfirmation,
-  CONFIRM_JOB_TYPE,
   // vocabulary + keys (tests, docs)
   OPT_OUT_WORDS,
   OPT_IN_WORDS,
   OPT_IN_RC_ONLY_WORDS,
-  QUO_CONFIRM_WORDS,
-  quoRefusedOptedOut,
   REVIEW_PHRASES,
   COURTESY_KEYWORDS,
   COURTESY_WORDS,
   RC_SYNC_ENABLED_KEY,
   LIVENESS_HOURS_KEY,
-  CONFIRM_TEXT_KEY,
   ASSIGNEE_KEY,
   DEFAULT_LIVENESS_HOURS,
   LOCK_EXPR,

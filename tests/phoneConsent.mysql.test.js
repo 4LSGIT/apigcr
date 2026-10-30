@@ -216,16 +216,12 @@ d('inbound SMS opt-out on real MySQL', () => {
     expect(await svc.recordProviderOptOut(pool, { destination: PAT, providerEventId: 'ringcentral:out-1' })).toEqual({ recorded: false, duplicate: true });
   });
 
-  test('Quo OPT OUT → exactly one confirmation job; the redelivery → still one; STOP on Quo → none', async () => {
+  test('Quo OPT OUT / REVOKE → the opt-out records on the engine and NO scheduled_jobs row (the provider confirms itself)', async () => {
     const r = await inbound({ provider: 'quo', line: LINE_QUO, body: 'OPT OUT', providerRef: 'ACx' });
-    expect(r.job_id).toBeTruthy();
-    await inbound({ provider: 'quo', line: LINE_QUO, body: 'OPT OUT', providerRef: 'ACx' });
-    await inbound({ provider: 'quo', line: LINE_QUO, body: 'STOP', from10: SAM, providerRef: 'ACy' });
-    const jobs = await q('SELECT type, status, max_attempts, backoff_seconds, idempotency_key, data, scheduled_time <= NOW() AS due FROM scheduled_jobs');
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0]).toMatchObject({ type: 'one_time', status: 'pending', max_attempts: 1, backoff_seconds: 0, idempotency_key: 'consent_confirm:quo:ACx', due: 1 });
-    const data = typeof jobs[0].data === 'string' ? JSON.parse(jobs[0].data) : jobs[0].data;
-    expect(data).toEqual({ type: 'consent_sms_confirm', line: LINE_QUO, to: PAT, provider_message_id: 'ACx' });
+    expect(r).toMatchObject({ kind: 'opt_out', recorded: true, state: 'opted_out' });
+    await inbound({ provider: 'quo', line: LINE_QUO, body: 'REVOKE', from10: SAM, providerRef: 'ACy' });
+    const jobs = await q('SELECT id FROM scheduled_jobs');
+    expect(jobs).toEqual([]);
   });
 
   test('review: one open task per number on the engine (task_dedupe_key + open statuses)', async () => {

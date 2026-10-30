@@ -598,26 +598,25 @@ provider decides "can send".
   live inbound row) and the catch-all write, before Layer 2/3. Body trimmed,
   case-folded, punctuation stripped, exact single-message match:
   - opt-out: `STOP`, `STOPALL`, `STOP ALL`, `UNSUBSCRIBE`, `CANCEL`, `END`,
-    `QUIT`, `REVOKE`, `OPT OUT`, `OPTOUT` → `opt_out`. Quo's docs don't list
-    `REVOKE` / `OPT OUT`, but live (2026-10-30) Quo acted on `REVOKE` —
-    blocked the number and sent its own confirmation; `OPT OUT` is
-    unverified. YC is the only enforcement only where the provider does
-    nothing.
+    `QUIT`, `REVOKE`, `OPT OUT`, `OPTOUT` → `opt_out`. Quo's docs list only
+    the first seven, but live (2026-10-30) Quo acted on `REVOKE` and
+    `OPT OUT` too — blocked the number and sent its own confirmation. Every
+    word YC honors, the providers honor as well.
   - opt-in: `START`, `UNSTOP` (both providers); `SUBSCRIBE`, `RESUME`,
     `CONTINUE` only on RC lines. Recorded **only when the number is currently
     opted out** — otherwise "continue" is an ordinary reply.
   - Ledger idempotency: `source='sms_keyword'`, `provider_event_id` =
     `'<provider>:<provider message id>'`; `occurred_at` = the provider's
     timestamp (`extra.ts`), never ingest time.
-- **Confirmation texts.** RC and Quo send their own for the words they act
-  on; YC never sends a second (CTIA, FCC (a)(12)). For `OPT OUT` / `OPTOUT`
-  on Quo (not `REVOKE` — Quo confirms that itself, live 2026-10-30), YC
-  sends the one non-marketing confirmation within 5 minutes as an
-  idempotent scheduled job keyed by the provider event id, through an
-  explicit opt-out-gate exemption (like the portal PIN) — not a send inside
-  the workflow step. If Quo refuses that send with its own "User Opted Out"
-  (400 `0201400`), Quo acted on the word and already confirmed: the job
-  succeeds with `sent:false` and nothing is resent.
+- **Confirmation texts.** RC and Quo send their own for every word they act
+  on, which the live tests showed is every word YC honors; YC never sends a
+  second (CTIA, FCC (a)(12)). The `consent_sms_confirm` job P2 shipped for
+  "words Quo ignores" was removed on 2026-10-30 once REVOKE and OPT OUT both
+  proved to be acted on (and Quo refuses the send anyway, 400 `0201400`
+  "User Opted Out" — job 12787). If a provider ever stops confirming a
+  word, the job comes back as a one-attempt scheduled job through the
+  documented gate exemption (`phoneService.sendSms` directly, like the
+  portal PIN) — never a send inside the ingest.
 - **Scope — D3.** A STOP on any case line → scope `all` SMS (today's
   semantics). The provider block already makes this true for the whole Quo
   account and for that RC pair; matching it keeps automation from sending
@@ -713,25 +712,13 @@ this section, or diverged:
   inactive → no task, the `warning` alert P3 raises
   (`consent_task_unassigned`, one shared dedup key per UTC day), the event
   still recorded.
-- **The Quo confirmation** is a `scheduled_jobs` row `type='one_time'`,
-  `data.type='consent_sms_confirm'` (the row's `type` column is an enum the
-  job's kind is not in — the `mail_sent_*` pattern), `max_attempts` 1,
-  `idempotency_key 'consent_confirm:quo:<message id>'` (any existing row
-  blocks a second, whatever its status — one attempt, never a resend), due
-  now and rung through the Cloud Tasks doorbell. `lib/job_executor` sends it
-  with `phoneService.sendSms` directly — the documented gate exemption — in
-  the words of `sms_optout_confirmation_text` (blank → "You've been
-  unsubscribed from texts from <firm_name>. Reply START to resume.").
-  One confirmation per opt-out: scheduled only when THIS message moved the
-  number into opted out, and only for `OPT OUT` / `OPTOUT` — `REVOKE` was
-  dropped from the job's words after the live test (job 12787, 2026-10-30:
-  Quo blocked the number on REVOKE, auto-replied "You have successfully been
-  unsubscribed…", and refused our send with 400 `0201400`; the executor now
-  treats that refusal as provider-confirmed, `sent:false`, job succeeded).
-  An OPT OUT on a number already out (after a Quo STOP Quo blocks our send
-  anyway; after an RC opt-out the person already has RC's reply) or one
-  older than a newer START schedules nothing — the confirmation is
-  permitted, never required (Appendix C §B).
+- **No confirmation job.** `consent_sms_confirm` existed from P2's landing
+  (72ddf3d) until 2026-10-30: the live REVOKE test (job 12787 — Quo had
+  already blocked the number and auto-replied; our send got 400 `0201400`)
+  and then OPT OUT showed Quo acts on every word YC honors, so the job, its
+  scheduler, `lib/job_executor`'s branch and the `sms_optout_confirmation_text`
+  setting were removed rather than kept as dead code. `phone_ingest_executions.metadata.consent`
+  no longer carries a `job_id`.
 - **413 verdicts** (`phoneDeliveryService`): checked on EVERY listing of a
   record whose verdict reason is `opted_out`, not only on the stamp's
   transition — a ledger lookup (`source='provider_optout'`,
@@ -1252,7 +1239,7 @@ is ruled for that list (ruled 2026-10-30 for SS's own lead lists).
 |---|---|---|---|
 | P0 | Decisions + accounts (no code) | open decisions ruled; SES account + production-access request (marketing use); sending subdomain DNS (DKIM, custom MAIL FROM, DMARC p=none); Google Postmaster Tools for the domain; SS legal review of the footer (§528 wording, responsible attorney, ad label) and of D5; brand/from/reply-to chosen (D8) | — |
 | P1 | Consent core | `comm_topics` / `comm_consent_events` / `comm_consent_state`; `optoutService` scopes + `recordConsent(conn, …)` (guarded upsert); hit shape kept; EVERY writer and bypassing reader of the row flags moved (§4.4 list); dual-read/dual-write transition; migration run before AND after the backend deploy; yc-sync MATCHERS for consent writes; `optoutFake` + test worlds; real-MySQL twin tests for the scope predicates and the race guard | — |
-| P2 | Inbound SMS opt-out — **built** (§4.6 "As built"; the reconcile ships dark) | **step 0:** RC consent-API permission/role/rate-group check + live STOP/START test on one RC and one Quo line + one captured consent-list response; keyword handler in the ingest of INCOMING texts, after the dedup precheck; RC 413 failures + read-only nightly consent reconcile (`sms_consent_sync`, behind `sms_rc_consent_sync_enabled`) → ledger; Quo REVOKE/OPT OUT confirmation job (gate exemption); client-stranded staff task; free-text review task; `scripts/yisramailP2CheckInbound.js` (the wf17/wf18 `phone_log` wiring check, a deploy step) + per-provider inbound liveness alert | P1 |
+| P2 | Inbound SMS opt-out — **built** (§4.6 "As built"; the reconcile ships dark) | **step 0:** RC consent-API permission/role/rate-group check + live STOP/START test on one RC and one Quo line + one captured consent-list response; keyword handler in the ingest of INCOMING texts, after the dedup precheck; RC 413 failures + read-only nightly consent reconcile (`sms_consent_sync`, behind `sms_rc_consent_sync_enabled`) → ledger; (the Quo confirmation job was built, then removed 2026-10-30 — Quo confirms REVOKE / OPT OUT itself); client-stranded staff task; free-text review task; `scripts/yisramailP2CheckInbound.js` (the wf17/wf18 `phone_log` wiring check, a deploy step) + per-provider inbound liveness alert | P1 |
 | P3 | Email unsubscribe surface — **built** (§4.5 "As built") | `comm_unsub_tokens` (+ `send_ref`) via `scripts/yisramailP3Migrate.js`; `services/unsubService.js` (mint for C2, lookup, one-click, page form); `/u/:token` GET page + one-click POST + prefs POST on the landing origin (all three `pageLanding` enumerations, test-locked; no-store / noindex / no-referrer; no per-IP limit on the one-click POST); `{{send.*}}` / `{{firm.*}}` resolver pseudo-tables; `lib/complianceFooter.js` (the footer block C2 injects); settings `consent_task_user_id`, `marketing_ad_label`, `marketing_debt_relief_statement` | P1 |
 | P4 | Staff consent UI | badges + history on contact rows; compose counts; SU suppression import/export | P1 |
 | T1 | Transport contract | adapter capabilities (`bulk`, `headers`, `tags`, `events`, `batch`); `headers` / `replyTo` / `tags` options through `sendEmailDirect` + `smtp.js` (marketing path only; public `sendEmail` strips them); driver-owned headers (SES `X-SES-*`); SES message id from the SMTP reply; `email_credentials.bulk_ok` + `events_driver`; bulk rows fenced out of `emailFrom`, public `sendEmail` and operational campaigns; DKIM `h=` acceptance test | — |
@@ -1336,9 +1323,9 @@ C4 S, C5 S, C6 M, C7 S.
   [SMS errors](https://developers.ringcentral.com/guide/messaging/sms/sms-errors),
   [HV opt-out](https://developers.ringcentral.com/guide/messaging/sms/high-volume/opt-out)
 - **Quo:** single-word STOP, STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT only
-  ("STOP PLEASE" doesn't trigger; REVOKE / OPT OUT not listed — but REVOKE
-  DOES act, observed live 2026-10-30: block + auto-reply; OPT OUT
-  unverified); opt-in START,
+  ("STOP PLEASE" doesn't trigger; REVOKE / OPT OUT not listed — but BOTH
+  act, observed live 2026-10-30: block + auto-reply, and a send to the
+  number is refused 400 `0201400` "User Opted Out"); opt-in START,
   UNSTOP; auto-confirmation. Scope: **all Quo numbers in the account**. No
   master opt-out list, no opt-out API or event; contacts must opt back in
   themselves. Observed live (2484179800, 2026-10-29): STOP → "You have

@@ -12,7 +12,7 @@
  *     third business day,
  *   - consent_task_user_id unset → no task, a warning alert, the event still
  *     recorded,
- *   - the Quo confirmation job: OPT OUT / OPTOUT on Quo only, once per message (REVOKE: Quo acts on it, live 2026-10-30).
+ *   - no confirmation job, ever: RC and Quo confirm every word themselves (Quo REVOKE + OPT OUT proven live 2026-10-30).
  * The real-engine twin (tests/phoneConsent.mysql.test.js) holds the SQL itself.
  * Collaborators mocked: settingsService, taskService.createTask,
  * calendarService.nextBusinessDay, lib/taskQueue, lib/alerting.
@@ -284,60 +284,21 @@ describe('review task', () => {
   });
 });
 
-describe('Quo confirmation job', () => {
-  test('OPT OUT on Quo → one job (one attempt, due now, doorbell rung); the redelivery → nothing more', async () => {
+describe('no confirmation text from YC (the providers confirm every word themselves)', () => {
+  test('OPT OUT, REVOKE and STOP on Quo all record the opt-out and schedule NOTHING', async () => {
     const W = setup();
-    const r = await inbound(W, { provider: 'quo', line: LINE_QUO, body: 'Opt out', providerRef: 'ACx' });
-    expect(r.job_id).toBe(900);
-    expect(W.jobs).toHaveLength(1);
-    expect(W.jobs[0]).toMatchObject({ idempotency_key: 'consent_confirm:quo:ACx', data: { type: 'consent_sms_confirm', line: LINE_QUO, to: PAT, provider_message_id: 'ACx' } });
-    expect(W.jobs[0].sql).toMatch(/VALUES \('one_time', NOW\(\), 'pending', \?, \?, 1, 0, \?\)/);
-    expect(taskQueue.enqueueJobDispatch).toHaveBeenCalledWith(900, expect.any(Number));
-    await inbound(W, { provider: 'quo', line: LINE_QUO, body: 'Opt out', providerRef: 'ACx' });
-    expect(W.jobs).toHaveLength(1);
-  });
-
-  test('REVOKE on Quo → the opt-out records, NO job: Quo blocks and confirms REVOKE itself (job 12787, 2026-10-30)', async () => {
-    const W = setup();
-    const r = await inbound(W, { provider: 'quo', line: LINE_QUO, body: 'REVOKE', providerRef: 'ACr' });
-    expect(r).toMatchObject({ kind: 'opt_out', recorded: true, state: 'opted_out' });
-    expect(r.job_id).toBeUndefined();
+    const quo = (body, providerRef, from10) => inbound(W, { provider: 'quo', line: LINE_QUO, body, providerRef, ...(from10 ? { from10 } : {}) });
+    expect(await quo('Opt out', 'A1')).toMatchObject({ kind: 'opt_out', recorded: true, state: 'opted_out' });
+    expect(await quo('REVOKE', 'A2', SAM)).toMatchObject({ kind: 'opt_out', recorded: true, state: 'opted_out' });
+    expect(await quo('STOP', 'A3', ANN)).toMatchObject({ kind: 'opt_out', recorded: true, state: 'opted_out' });
     expect(W.jobs).toEqual([]);
+    expect(taskQueue.enqueueJobDispatch).not.toHaveBeenCalled();
+    expect(W.unhandled2.filter((q) => /scheduled_jobs/i.test(q.sql))).toEqual([]);
   });
 
-  test('a job already on file for the message (any status) is never re-created', async () => {
-    const W = setup();
-    W.jobs.push({ id: 1, idempotency_key: 'consent_confirm:quo:ACy', status: 'completed' });
-    expect(await svc.scheduleQuoConfirmation(W.pdb, { line: LINE_QUO, to: PAT, providerMessageId: 'ACy' })).toBeNull();
-    expect(W.jobs).toHaveLength(1);
-  });
-
-  test('OPTOUT on Quo schedules; STOP on Quo, OPT OUT on RingCentral do not (the provider confirms itself)', async () => {
-    const W = setup();
-    await inbound(W, { provider: 'quo', line: LINE_QUO, body: 'optout', providerRef: 'A1' });
-    await inbound(W, { provider: 'quo', line: LINE_QUO, body: 'STOP', from10: SAM, providerRef: 'A2' });
-    await inbound(W, { provider: 'ringcentral', body: 'OPT OUT', from10: ANN, providerRef: 'A3' });
-    expect(W.jobs.map((j) => j.idempotency_key)).toEqual(['consent_confirm:quo:A1']);
-  });
-
-  test('one confirmation per opt-out: none for an OPT OUT on a number already out, none for an OPT OUT older than a newer START', async () => {
-    const W = setup();
-    const quo = (body, providerRef, ts) => inbound(W, { provider: 'quo', line: LINE_QUO, body, providerRef, ts });
-    await quo('STOP', 'Q1', '2026-10-29T10:00:00Z');                 // Quo confirms STOP itself and blocks the number
-    expect((await quo('OPT OUT', 'Q2', '2026-10-29T10:01:00Z')).recorded).toBe(true);
-    expect(W.jobs).toEqual([]);                                      // already out: our send would only hit Quo's block
-    await quo('START', 'Q3', '2026-10-29T12:00:00Z');
-    const late = await quo('OPT OUT', 'Q4', '2026-10-29T11:00:00Z');  // arrives late, older than the START
-    expect(late).toMatchObject({ recorded: true, state: 'opted_in' });
-    expect(W.jobs).toEqual([]);
-    expect((await quo('opt out', 'Q5', '2026-10-29T13:00:00Z')).job_id).toBe(900);   // a real transition → the one
-    expect(W.jobs.map((j) => j.idempotency_key)).toEqual(['consent_confirm:quo:Q5']);
-  });
-
-  test('confirmationText: the setting verbatim, else the default naming the firm', async () => {
-    settingsService.getSettings.mockResolvedValue({ [svc.CONFIRM_TEXT_KEY]: null, firm_name: 'Legal Solutions Group' });
-    expect(await svc.confirmationText({})).toBe("You've been unsubscribed from texts from Legal Solutions Group. Reply START to resume.");
-    settingsService.getSettings.mockResolvedValue({ [svc.CONFIRM_TEXT_KEY]: ' Custom words. ', firm_name: 'X' });
-    expect(await svc.confirmationText({})).toBe('Custom words.');
+  test('the service exports no confirmation surface (retired 2026-10-30)', () => {
+    for (const k of ['scheduleQuoConfirmation', 'confirmationText', 'CONFIRM_JOB_TYPE', 'CONFIRM_TEXT_KEY', 'QUO_CONFIRM_WORDS']) {
+      expect(svc[k]).toBeUndefined();
+    }
   });
 });
