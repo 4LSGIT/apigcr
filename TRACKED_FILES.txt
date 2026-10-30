@@ -631,6 +631,7 @@ ref/migrations/2026-10-28_shared_values.sql
 ref/migrations/2026-10-28_shared_values_history.sql
 ref/migrations/2026-10-29_lead_list_drop_pt_raw_table.sql
 ref/migrations/2026-10-29_yisramail_p1_consent_core.sql
+ref/migrations/2026-10-30_yisramail_p2_sms_consent_sync_job.sql
 ref/migrations/2026-10-30_yisramail_p3_unsub_tokens.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql

@@ -76,7 +76,10 @@ day.
 - Inbound texts reach YisraCase only through the RingCentral and Quo webhooks
   (workflows 17 and 18). `node scripts/yisramailP2CheckInbound.js` checks that
   wiring and prints GO / NO-GO (it reads only).
-- The nightly **SMS consent sync** job runs `sms_consent_sync`: the
+- The nightly **SMS Consent Sync** recurring job (08:20 UTC; Scheduled Jobs)
+  runs `sms_consent_sync`. The function is hidden from the job editor's
+  picker, so the row was created from the SU console
+  (`ref/migrations/2026-10-30_yisramail_p2_sms_consent_sync_job.sql`). It runs the
   RingCentral opt-out reconcile (off unless `sms_rc_consent_sync_enabled` is
   `1`; `dry_run: true` shows what it would record) and an alert when a phone
   provider has sent no inbound text for `sms_inbound_liveness_hours` (default
