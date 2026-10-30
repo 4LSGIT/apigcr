@@ -56,6 +56,18 @@ test('the setting\'s words win', async () => {
   expect(phoneService.sendSms.mock.calls[0][3]).toBe('You are unsubscribed. Reply START to come back.');
 });
 
+test("Quo's own opted-out refusal (400 0201400) is provider-confirmed: the job succeeds, nothing is resent (job 12787, 2026-10-30)", async () => {
+  phoneService.sendSms.mockRejectedValue(new Error('Quo API 400: {"message":"User has opted out of receiving messages","code":"0201400","status":400,"title":"User Opted Out"}'));
+  const out = await executeJob(job({ line: '2484179800', to: '3135550001' }), strictDb());
+  expect(out).toEqual({ sent: false, provider_confirmed: true, line: '2484179800', to: '3135550001' });
+  expect(phoneService.sendSms).toHaveBeenCalledTimes(1);
+});
+
+test('any other Quo 400 still fails the job', async () => {
+  phoneService.sendSms.mockRejectedValue(new Error('Quo API 400: {"message":"Invalid phone number","code":"0101400"}'));
+  await expect(executeJob(job({ line: '2484179800', to: '3135550001' }), strictDb())).rejects.toThrow('Quo API 400');
+});
+
 test('a send failure fails the job (one attempt — the caller records it failed)', async () => {
   phoneService.sendSms.mockRejectedValue(new Error('Quo API 500'));
   await expect(executeJob(job({ line: '2484179800', to: '3135550001' }), strictDb())).rejects.toThrow('Quo API 500');

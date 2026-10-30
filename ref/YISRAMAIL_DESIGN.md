@@ -598,8 +598,11 @@ provider decides "can send".
   live inbound row) and the catch-all write, before Layer 2/3. Body trimmed,
   case-folded, punctuation stripped, exact single-message match:
   - opt-out: `STOP`, `STOPALL`, `STOP ALL`, `UNSUBSCRIBE`, `CANCEL`, `END`,
-    `QUIT`, `REVOKE`, `OPT OUT`, `OPTOUT` → `opt_out`. Quo does not act on
-    `REVOKE` / `OPT OUT`, so for those YC is the only enforcement.
+    `QUIT`, `REVOKE`, `OPT OUT`, `OPTOUT` → `opt_out`. Quo's docs don't list
+    `REVOKE` / `OPT OUT`, but live (2026-10-30) Quo acted on `REVOKE` —
+    blocked the number and sent its own confirmation; `OPT OUT` is
+    unverified. YC is the only enforcement only where the provider does
+    nothing.
   - opt-in: `START`, `UNSTOP` (both providers); `SUBSCRIBE`, `RESUME`,
     `CONTINUE` only on RC lines. Recorded **only when the number is currently
     opted out** — otherwise "continue" is an ordinary reply.
@@ -607,11 +610,14 @@ provider decides "can send".
     `'<provider>:<provider message id>'`; `occurred_at` = the provider's
     timestamp (`extra.ts`), never ingest time.
 - **Confirmation texts.** RC and Quo send their own for the words they act
-  on; YC never sends a second (CTIA, FCC (a)(12)). For `REVOKE` / `OPT OUT` on
-  Quo, YC sends the one non-marketing confirmation within 5 minutes as an
+  on; YC never sends a second (CTIA, FCC (a)(12)). For `OPT OUT` / `OPTOUT`
+  on Quo (not `REVOKE` — Quo confirms that itself, live 2026-10-30), YC
+  sends the one non-marketing confirmation within 5 minutes as an
   idempotent scheduled job keyed by the provider event id, through an
   explicit opt-out-gate exemption (like the portal PIN) — not a send inside
-  the workflow step.
+  the workflow step. If Quo refuses that send with its own "User Opted Out"
+  (400 `0201400`), Quo acted on the word and already confirmed: the job
+  succeeds with `sent:false` and nothing is resent.
 - **Scope — D3.** A STOP on any case line → scope `all` SMS (today's
   semantics). The provider block already makes this true for the whole Quo
   account and for that RC pair; matching it keeps automation from sending
@@ -717,10 +723,15 @@ this section, or diverged:
   the words of `sms_optout_confirmation_text` (blank → "You've been
   unsubscribed from texts from <firm_name>. Reply START to resume.").
   One confirmation per opt-out: scheduled only when THIS message moved the
-  number into opted out. A REVOKE on a number already out (after a Quo STOP
-  Quo blocks our send anyway; after an RC opt-out the person already has
-  RC's reply) or one older than a newer START schedules nothing — the
-  confirmation is permitted, never required (Appendix C §B).
+  number into opted out, and only for `OPT OUT` / `OPTOUT` — `REVOKE` was
+  dropped from the job's words after the live test (job 12787, 2026-10-30:
+  Quo blocked the number on REVOKE, auto-replied "You have successfully been
+  unsubscribed…", and refused our send with 400 `0201400`; the executor now
+  treats that refusal as provider-confirmed, `sent:false`, job succeeded).
+  An OPT OUT on a number already out (after a Quo STOP Quo blocks our send
+  anyway; after an RC opt-out the person already has RC's reply) or one
+  older than a newer START schedules nothing — the confirmation is
+  permitted, never required (Appendix C §B).
 - **413 verdicts** (`phoneDeliveryService`): checked on EVERY listing of a
   record whose verdict reason is `opted_out`, not only on the stamp's
   transition — a ledger lookup (`source='provider_optout'`,
@@ -1325,7 +1336,9 @@ C4 S, C5 S, C6 M, C7 S.
   [SMS errors](https://developers.ringcentral.com/guide/messaging/sms/sms-errors),
   [HV opt-out](https://developers.ringcentral.com/guide/messaging/sms/high-volume/opt-out)
 - **Quo:** single-word STOP, STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT only
-  ("STOP PLEASE" doesn't trigger; REVOKE / OPT OUT not listed); opt-in START,
+  ("STOP PLEASE" doesn't trigger; REVOKE / OPT OUT not listed — but REVOKE
+  DOES act, observed live 2026-10-30: block + auto-reply; OPT OUT
+  unverified); opt-in START,
   UNSTOP; auto-confirmation. Scope: **all Quo numbers in the account**. No
   master opt-out list, no opt-out API or event; contacts must opt back in
   themselves. Observed live (2484179800, 2026-10-29): STOP → "You have

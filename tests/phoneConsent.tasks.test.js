@@ -12,7 +12,7 @@
  *     third business day,
  *   - consent_task_user_id unset → no task, a warning alert, the event still
  *     recorded,
- *   - the Quo confirmation job: REVOKE / OPT OUT on Quo only, once per message.
+ *   - the Quo confirmation job: OPT OUT / OPTOUT on Quo only, once per message (REVOKE: Quo acts on it, live 2026-10-30).
  * The real-engine twin (tests/phoneConsent.mysql.test.js) holds the SQL itself.
  * Collaborators mocked: settingsService, taskService.createTask,
  * calendarService.nextBusinessDay, lib/taskQueue, lib/alerting.
@@ -285,16 +285,24 @@ describe('review task', () => {
 });
 
 describe('Quo confirmation job', () => {
-  test('REVOKE on Quo → one job (one attempt, due now, doorbell rung); the redelivery → nothing more', async () => {
+  test('OPT OUT on Quo → one job (one attempt, due now, doorbell rung); the redelivery → nothing more', async () => {
     const W = setup();
-    const r = await inbound(W, { provider: 'quo', line: LINE_QUO, body: 'Revoke', providerRef: 'ACx' });
+    const r = await inbound(W, { provider: 'quo', line: LINE_QUO, body: 'Opt out', providerRef: 'ACx' });
     expect(r.job_id).toBe(900);
     expect(W.jobs).toHaveLength(1);
     expect(W.jobs[0]).toMatchObject({ idempotency_key: 'consent_confirm:quo:ACx', data: { type: 'consent_sms_confirm', line: LINE_QUO, to: PAT, provider_message_id: 'ACx' } });
     expect(W.jobs[0].sql).toMatch(/VALUES \('one_time', NOW\(\), 'pending', \?, \?, 1, 0, \?\)/);
     expect(taskQueue.enqueueJobDispatch).toHaveBeenCalledWith(900, expect.any(Number));
-    await inbound(W, { provider: 'quo', line: LINE_QUO, body: 'Revoke', providerRef: 'ACx' });
+    await inbound(W, { provider: 'quo', line: LINE_QUO, body: 'Opt out', providerRef: 'ACx' });
     expect(W.jobs).toHaveLength(1);
+  });
+
+  test('REVOKE on Quo → the opt-out records, NO job: Quo blocks and confirms REVOKE itself (job 12787, 2026-10-30)', async () => {
+    const W = setup();
+    const r = await inbound(W, { provider: 'quo', line: LINE_QUO, body: 'REVOKE', providerRef: 'ACr' });
+    expect(r).toMatchObject({ kind: 'opt_out', recorded: true, state: 'opted_out' });
+    expect(r.job_id).toBeUndefined();
+    expect(W.jobs).toEqual([]);
   });
 
   test('a job already on file for the message (any status) is never re-created', async () => {
@@ -304,22 +312,22 @@ describe('Quo confirmation job', () => {
     expect(W.jobs).toHaveLength(1);
   });
 
-  test('OPT OUT on Quo schedules; STOP on Quo, REVOKE on RingCentral do not (the provider confirms itself)', async () => {
+  test('OPTOUT on Quo schedules; STOP on Quo, OPT OUT on RingCentral do not (the provider confirms itself)', async () => {
     const W = setup();
-    await inbound(W, { provider: 'quo', line: LINE_QUO, body: 'opt-out', providerRef: 'A1' });
+    await inbound(W, { provider: 'quo', line: LINE_QUO, body: 'optout', providerRef: 'A1' });
     await inbound(W, { provider: 'quo', line: LINE_QUO, body: 'STOP', from10: SAM, providerRef: 'A2' });
-    await inbound(W, { provider: 'ringcentral', body: 'REVOKE', from10: ANN, providerRef: 'A3' });
+    await inbound(W, { provider: 'ringcentral', body: 'OPT OUT', from10: ANN, providerRef: 'A3' });
     expect(W.jobs.map((j) => j.idempotency_key)).toEqual(['consent_confirm:quo:A1']);
   });
 
-  test('one confirmation per opt-out: none for a REVOKE on a number already out, none for a REVOKE older than a newer START', async () => {
+  test('one confirmation per opt-out: none for an OPT OUT on a number already out, none for an OPT OUT older than a newer START', async () => {
     const W = setup();
     const quo = (body, providerRef, ts) => inbound(W, { provider: 'quo', line: LINE_QUO, body, providerRef, ts });
     await quo('STOP', 'Q1', '2026-10-29T10:00:00Z');                 // Quo confirms STOP itself and blocks the number
-    expect((await quo('REVOKE', 'Q2', '2026-10-29T10:01:00Z')).recorded).toBe(true);
+    expect((await quo('OPT OUT', 'Q2', '2026-10-29T10:01:00Z')).recorded).toBe(true);
     expect(W.jobs).toEqual([]);                                      // already out: our send would only hit Quo's block
     await quo('START', 'Q3', '2026-10-29T12:00:00Z');
-    const late = await quo('REVOKE', 'Q4', '2026-10-29T11:00:00Z');  // arrives late, older than the START
+    const late = await quo('OPT OUT', 'Q4', '2026-10-29T11:00:00Z');  // arrives late, older than the START
     expect(late).toMatchObject({ recorded: true, state: 'opted_in' });
     expect(W.jobs).toEqual([]);
     expect((await quo('opt out', 'Q5', '2026-10-29T13:00:00Z')).job_id).toBe(900);   // a real transition → the one

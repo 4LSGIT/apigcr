@@ -56,10 +56,14 @@
  *   Both go to consent_task_user_id; unset → no task, one warning alert a day.
  *
  * QUO CONFIRMATION. RingCentral and Quo send their own confirmation for the
- * words they act on; YC never sends a second. REVOKE / OPT OUT / OPTOUT on a
- * Quo line are words Quo ignores, so YC schedules ONE confirmation text
+ * words they act on; YC never sends a second. OPT OUT / OPTOUT on a Quo line
+ * are words Quo's docs don't list, so YC schedules ONE confirmation text
  * (scheduled_jobs data.type 'consent_sms_confirm', lib/job_executor) — never a
- * send inside the ingest.
+ * send inside the ingest. REVOKE is NOT one of them: live 2026-10-30 Quo
+ * blocked the number and sent its own confirmation on REVOKE (job 12787 then
+ * failed with Quo 400 0201400 "User has opted out"). OPT OUT is unverified;
+ * if Quo acts on it too, the executor treats that 400 as "the provider
+ * confirmed it" and the job succeeds without a text.
  */
 'use strict';
 
@@ -85,8 +89,25 @@ const OPT_OUT_WORDS = Object.freeze(['stop', 'stopall', 'stop all', 'unsubscribe
 const OPT_IN_WORDS = Object.freeze(['start', 'unstop']);
 /** Opt-in keywords RingCentral acts on and Quo does not. On Quo: review (Quo keeps blocking until START). */
 const OPT_IN_RC_ONLY_WORDS = Object.freeze(['subscribe', 'resume', 'continue']);
-/** Opt-out words Quo does not act on (Appendix C §A): YC sends the one confirmation. */
-const QUO_CONFIRM_WORDS = Object.freeze(['revoke', 'opt out', 'optout']);
+/**
+ * Opt-out words Quo's docs don't list (Appendix C §A): YC sends the one
+ * confirmation. REVOKE was removed 2026-10-30 — Quo acts on it (block + its
+ * own confirmation, observed live on 2484179800). OPT OUT / OPTOUT stay
+ * until a live test says otherwise; lib/job_executor treats Quo's
+ * "User Opted Out" refusal as provider-confirmed (quoRefusedOptedOut).
+ */
+const QUO_CONFIRM_WORDS = Object.freeze(['opt out', 'optout']);
+
+/**
+ * True when a Quo send was refused because the recipient is opted out at Quo
+ * (HTTP 400, code 0201400 "User Opted Out" — the shape quo.js throws:
+ * `Quo API 400: {json}`). For the confirmation job that is success by another
+ * route: Quo acted on the word itself, so it already sent its own reply.
+ */
+function quoRefusedOptedOut(err) {
+  const m = String((err && err.message) || '');
+  return /^Quo API 400\b/.test(m) && (/"code":"0201400"/.test(m) || /User Opted Out/i.test(m));
+}
 /**
  * Plain-language revocations → a staff review task. Word-bounded on the
  * normalized body (apostrophes vanish: "don't" → "dont"). Live 2026-10-29:
@@ -668,6 +689,7 @@ module.exports = {
   OPT_IN_WORDS,
   OPT_IN_RC_ONLY_WORDS,
   QUO_CONFIRM_WORDS,
+  quoRefusedOptedOut,
   REVIEW_PHRASES,
   COURTESY_KEYWORDS,
   COURTESY_WORDS,

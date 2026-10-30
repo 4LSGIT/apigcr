@@ -280,10 +280,12 @@ body. Governing migrations in `ref/migrations/`.*
   `task_dedupe_key 'consent_review:<number>'`), both to
   `consent_task_user_id` through P3's `unsubService.resolveAssignee` (an
   ACTIVE user, else the same daily `consent_task_unassigned` warning, no
-  task). A Quo REVOKE / OPT OUT that moves the number into opted out → one
+  task). A Quo OPT OUT / OPTOUT that moves the number into opted out → one
   `scheduled_jobs` row (`data.type 'consent_sms_confirm'`, max_attempts 1,
   idempotency key per message) that `lib/job_executor` sends through
-  `phoneService.sendSms` with no consent read — the exemption. The nightly
+  `phoneService.sendSms` with no consent read — the exemption; Quo's own
+  "User Opted Out" refusal (400 `0201400`) = provider-confirmed, job
+  succeeds `sent:false`. Not REVOKE: Quo acts on it (live 2026-10-30). The nightly
   `sms_consent_sync` (CTA-denied) runs the reconcile and the inbound liveness
   alert (`sms_inbound_liveness_hours`); `scripts/yisramailP2CheckInbound.js`
   checks wf 17/18's `phone_log` wiring. Manual:

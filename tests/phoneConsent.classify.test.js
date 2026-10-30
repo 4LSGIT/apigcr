@@ -43,7 +43,7 @@ describe('keywords — exact single-message match', () => {
     expect([...svc.OPT_OUT_WORDS].sort()).toEqual(['cancel', 'end', 'opt out', 'optout', 'quit', 'revoke', 'stop', 'stop all', 'stopall', 'unsubscribe']);
     expect([...svc.OPT_IN_WORDS].sort()).toEqual(['start', 'unstop']);
     expect([...svc.OPT_IN_RC_ONLY_WORDS].sort()).toEqual(['continue', 'resume', 'subscribe']);
-    expect([...svc.QUO_CONFIRM_WORDS].sort()).toEqual(['opt out', 'optout', 'revoke']);
+    expect([...svc.QUO_CONFIRM_WORDS].sort()).toEqual(['opt out', 'optout']);   // REVOKE: Quo acts on it (live 2026-10-30)
   });
 
   test.each([['STOP ALL'], ['stop-all'], ['Opt out'], ['OPT-OUT'], ['optout'], ['Stop.'], ['STOP!!'], ['  stop  ']])('variant %j → opt_out', (b) => {

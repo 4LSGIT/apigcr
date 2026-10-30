@@ -216,10 +216,10 @@ d('inbound SMS opt-out on real MySQL', () => {
     expect(await svc.recordProviderOptOut(pool, { destination: PAT, providerEventId: 'ringcentral:out-1' })).toEqual({ recorded: false, duplicate: true });
   });
 
-  test('Quo REVOKE → exactly one confirmation job; the redelivery → still one; STOP on Quo → none', async () => {
-    const r = await inbound({ provider: 'quo', line: LINE_QUO, body: 'REVOKE', providerRef: 'ACx' });
+  test('Quo OPT OUT → exactly one confirmation job; the redelivery → still one; STOP on Quo → none', async () => {
+    const r = await inbound({ provider: 'quo', line: LINE_QUO, body: 'OPT OUT', providerRef: 'ACx' });
     expect(r.job_id).toBeTruthy();
-    await inbound({ provider: 'quo', line: LINE_QUO, body: 'REVOKE', providerRef: 'ACx' });
+    await inbound({ provider: 'quo', line: LINE_QUO, body: 'OPT OUT', providerRef: 'ACx' });
     await inbound({ provider: 'quo', line: LINE_QUO, body: 'STOP', from10: SAM, providerRef: 'ACy' });
     const jobs = await q('SELECT type, status, max_attempts, backoff_seconds, idempotency_key, data, scheduled_time <= NOW() AS due FROM scheduled_jobs');
     expect(jobs).toHaveLength(1);
