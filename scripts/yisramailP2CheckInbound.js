@@ -81,13 +81,17 @@ async function checkInbound(q) {
     if (p.type !== 'sms') bad(`step 1 params.type is ${JSON.stringify(p.type)}, not "sms"`);
     if (!filled(p.from)) bad('step 1 params.from is not wired (the sender — the number that opts out)');
     if (!filled(p.message)) bad('step 1 params.message is not wired (the body the keyword is read from)');
+    // link_id is what ingestPhoneEvent's firmToFirm reads first (link_id || to || from): without it an
+    // inbound text's "other party" is the FIRM line, every inbound reads firm-to-firm, and the
+    // plain-language review path (phoneConsentService: firm_line → no task) never opens a task.
+    if (!filled(p.link_id)) bad('step 1 params.link_id is not wired (the client number — firmToFirm reads it; without it no review task ever opens)');
     if (!(p.direction === 'incoming' || (typeof p.direction === 'string' && PLACEHOLDER_RE.test(p.direction.trim())))) {
       bad(`step 1 params.direction is ${JSON.stringify(p.direction)} — must be "incoming" or a placeholder`);
     }
     if (ex.provider !== e.provider) bad(`step 1 extra.provider is ${JSON.stringify(ex.provider)}, not "${e.provider}"`);
     if (!filled(ex.provider_message_id)) bad('step 1 extra.provider_message_id is not wired (the dedup key and the ledger id)');
     if (!filled(ex.ts)) bad('step 1 extra.ts is not wired (the opt-out\'s time)');
-    if (problems.length === before) ok('from, message, direction, extra.provider, extra.provider_message_id, extra.ts wired');
+    if (problems.length === before) ok('from, message, link_id, direction, extra.provider, extra.provider_message_id, extra.ts wired');
 
     const hooks = await q(SQL.hooks, [e.id]);
     const live = hooks.filter((h) => Number(h.hook_active) === 1 && Number(h.target_active) === 1);

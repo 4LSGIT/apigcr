@@ -17,8 +17,17 @@
  *   applyPage(db, token, …)   the page's form: unsubscribe | all | prefs
  *
  * WRITES go through optoutService.recordConsent only (the one writer), inside
- * withTransaction(retries: 1) — pure DB; the staff task for a free-text note
- * is created AFTER the commit and its failure never fails the request.
+ * withTransaction(retries: 1) + ONE retry on ER_LOCK_DEADLOCK (consentTx —
+ * pure DB, so the victim's span re-runs whole). The retry matters: this
+ * module is a DIRECT caller in P1's terms (it locks the token row, then
+ * recordConsent locks contact_emails through uk_email_active), and a
+ * concurrent contact-form end-and-replace of that very address holds the
+ * clustered record first and then needs the secondary index record (the
+ * generated email_active_uniq changes with end_date) — InnoDB picks a
+ * victim, and without the retry a mail client's one-click would get a 500
+ * and be lost. Same pattern as phoneConsentService.consentTx. The staff
+ * task for a free-text note is created AFTER the commit and its failure
+ * never fails the request.
  *
  * IDEMPOTENCY IS ON STATE, not on the token: a request records an event only
  * for a scope whose requested state differs from the current one, so a second
@@ -45,6 +54,18 @@ const crypto = require('crypto');
 const optout = require('./optoutService');
 const { generateToken, PUBLIC_TOKEN_RE } = require('../lib/token');
 const { withTransaction } = require('../lib/withTransaction');
+
+/** withTransaction(retries:1) + one retry on a deadlock (pure DB: the victim's span rolled back whole). */
+async function consentTx(db, fn) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await withTransaction(db, fn, { retries: 1 });
+    } catch (err) {
+      if (err && err.code === 'ER_LOCK_DEADLOCK' && attempt === 0) continue;
+      throw err;
+    }
+  }
+}
 
 const CHANNEL = 'email';
 const MARKETING = 'marketing';
@@ -252,7 +273,7 @@ function baseEvidence(t, { ip, userAgent, via }) {
  */
 async function oneClick(db, token, { ip = null, userAgent = null } = {}) {
   if (typeof token !== 'string' || !PUBLIC_TOKEN_RE.test(token)) return { ok: true, applied: false };
-  return withTransaction(db, async (conn) => {
+  return consentTx(db, async (conn) => {
     const [[t]] = await conn.query(UNSUB_SQL.lock, [token]);
     if (!t) return { ok: true, applied: false };
     const dest = String(t.destination);
@@ -343,7 +364,7 @@ async function applyPage(db, token, { action, topics = null, note = null, ip = n
   }
   if (typeof token !== 'string' || !PUBLIC_TOKEN_RE.test(token)) return { ok: false, code: 'not_found' };
 
-  const out = await withTransaction(db, async (conn) => {
+  const out = await consentTx(db, async (conn) => {
     const [[t]] = await conn.query(UNSUB_SQL.lock, [token]);
     if (!t) return { ok: false, code: 'not_found' };
     const dest = String(t.destination);

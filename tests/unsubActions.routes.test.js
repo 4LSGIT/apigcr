@@ -299,6 +299,15 @@ describe('POST /u/:token — RFC 8058 one-click', () => {
     expect(consentEvents()).toHaveLength(1);
   });
 
+  test('a deleted topic: the page button names what the click does (all marketing email), never the dead key', async () => {
+    W = world({ tokens: [{ token: TOK, destination: ADDR, topic_key: 'gone_topic', contact_id: 1001 }] });
+    const res = await get(`/u/${TOK}`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Unsubscribe from all marketing email</button>');
+    expect(html).not.toContain('gone_topic');
+  });
+
   test('a topic deleted since the mint falls back to all marketing (the unsubscribe is never thrown away)', async () => {
     W = world({ tokens: [{ token: TOK, destination: ADDR, topic_key: 'gone_topic', contact_id: 1001 }] });
     const res = await post(`/u/${TOK}`, RFC_BODY);

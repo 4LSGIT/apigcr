@@ -195,16 +195,20 @@ function preferencesPage(info, { notice = null } = {}) {
   const f = firmInfo();
   const base = `/u/${info.token}`;   // relative: follows the serving host
   const allOut = info.states.marketing === 'opted_out';
+  // A token whose topic was deleted after the mint opts out of ALL marketing
+  // email (unsubService.tokenScope's fallback) — the button says so, rather
+  // than naming a topic key the click doesn't act on.
+  const topLabel = info.topic_exists ? info.topic_label : 'all marketing email';
 
   const top = info.topic_receives && !allOut
     ? `
       <form method="POST" action="${base}/prefs" style="margin:0 0 6px">
         <input type="hidden" name="action" value="unsubscribe">
-        <button type="submit" class="u-btn" style="background:${INDIGO};color:#fff">Unsubscribe from ${htmlEscape(info.topic_label)}</button>
+        <button type="submit" class="u-btn" style="background:${INDIGO};color:#fff">Unsubscribe from ${htmlEscape(topLabel)}</button>
       </form>`
     : `
       <p style="margin:0 0 6px;font-size:15px;color:${GREEN};font-weight:600">
-        You're unsubscribed from ${htmlEscape(allOut ? 'all our marketing email' : info.topic_label)}.
+        You're unsubscribed from ${htmlEscape(allOut ? 'all our marketing email' : topLabel)}.
       </p>`;
 
   const boxes = info.topics.map((t) => {

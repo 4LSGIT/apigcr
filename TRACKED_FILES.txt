@@ -1770,6 +1770,7 @@ tests/unifiedEventsU9.eventform.test.js
 tests/unifiedEventsU9.range.test.js
 tests/unifiedEventsU9.shell.test.js
 tests/unsubActions.routes.test.js
+tests/unsubService.deadlockRetry.test.js
 tests/unsubService.mysql.test.js
 tests/updateContactFnDelegation.test.js
 tests/usersFreebusyOwnership.test.js
@@ -1803,4 +1804,5 @@ tests/ycIconS6a.test.js
 tests/ycPager.test.js
 tests/ycSettingRows.test.js
 tests/ycSync.test.js
+tests/yisramailP2CheckInbound.test.js
 views/v.html

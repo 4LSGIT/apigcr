@@ -503,7 +503,12 @@ surface is live and smoke-tested ahead of it (gate G1).
   origin, `firmConfig.publicUrl()`; preferences = the same page's `#prefs`),
   `lookupToken` (read only, `lib/token.PUBLIC_TOKEN_RE` gate first),
   `oneClick`, `applyPage`. Every write goes through `recordConsent` inside
-  `withTransaction(retries: 1)`.
+  `withTransaction(retries: 1)` plus one retry on `ER_LOCK_DEADLOCK`
+  (`consentTx`, as in `phoneConsentService`): the page is a direct caller
+  that locks the token row and then, through `recordConsent`, the address's
+  active row by `uk_email_active`, so a contact-form end-and-replace of that
+  same address racing it can deadlock — the retry re-runs the pure-DB span
+  instead of answering a mail client's one-click with a 500.
 - **Sources:** `one_click` (`POST /u/:token`, scope = the token's topic,
   D4), `unsub_page` (the page's "Unsubscribe from <topic>" → the topic;
   "Stop all marketing email" → `marketing`), `pref_page` (the checkboxes).
@@ -582,7 +587,9 @@ provider decides "can send".
   ingest of an incoming text. Because the wiring lives in the DB, no jest test
   can pin it: `scripts/yisramailP2CheckInbound.js` (read only, `.env` or a
   `ycro_` key) asserts that step 1 of each workflow's published version is
-  `phone_log` with `from`, `message`, `direction`, `extra.provider`,
+  `phone_log` with `from`, `message`, `link_id` (what `firmToFirm` reads —
+  without it every inbound reads as firm-to-firm and the plain-language
+  review task never opens), `direction`, `extra.provider`,
   `extra.provider_message_id` and `extra.ts` wired, that both are active and
   fed by an active hook — one GO / NO-GO line, a deploy step. A liveness
   alert per provider covers "the hook went quiet" (below).
