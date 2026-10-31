@@ -67,6 +67,12 @@ const EXEMPT = {
     'answer stage only (an exhausted queue throws "unscripted answer call" — ' +
     'fail-loud by construction); investigate calls are fixed, not scripted. ' +
     'Its DB is the shared capDb() mock keyed on SQL text, with no script array.',
+  'unsubService.deadlockRetry.test.js':
+    'db.__fail.shift() is a FAILURE-INJECTION queue for the mocked ' +
+    'withTransaction — the error each attempt throws, not DB rows: an empty ' +
+    'queue means "this attempt succeeds" by design. Every test asserts the ' +
+    'attempt count (calls), so a drifted queue fails it either way. The span ' +
+    'runs on a connection stub that answers every query with no rows.',
 };
 
 /** `.shift()` called on something that looks like a script array. */
