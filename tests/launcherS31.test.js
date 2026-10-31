@@ -129,8 +129,9 @@ describe('the firm overlay in the effective registry (pure)', () => {
 
   test('firm items are hidden / denied like any id; effectiveRegistry() never hands out the action', () => {
     const eff = ids(L.computeEffective({ denied: ['firm:appt'], ui: ui({ hidden: ['firm:payroll'], items: [FI.payroll, FI.appt, FI.leads] }) }));
-    // (+ More Features, a firm page; Admin's page is visible_to it / admin only — launcher-nits C4)
-    expect(eff.filter((i) => i.startsWith('firm:'))).toEqual(['firm:leads', 'firm:more']);
+    // (+ More Features, a firm page — grouped in Settings, where the firm places it, so ahead of the
+    // Firm group (L3); Admin's page is visible_to it / admin only — launcher-nits C4)
+    expect(eff.filter((i) => i.startsWith('firm:'))).toEqual(['firm:more', 'firm:leads']);
     const t = boot();
     t.L.applyAccess({ ui: ui({ items: [FI.payroll] }) });
     expect(JSON.parse(JSON.stringify(t.L.effectiveRegistry().find((e) => e.id === 'firm:payroll')))).toEqual(

@@ -103,8 +103,8 @@ textarea that files a report with the technical state attached automatically.
 ### Finding any feature
 
 **All** — the last item in the sidebar, and the small grid icon under the
-Home tiles — lists every feature your account has, grouped the way the sidebar and the More
-menu are, with a search box on top. Type part of a name (or its initials:
+Home tiles — lists every feature your account has, grouped the way your firm sets out the
+sidebar and its pages (More Features, Admin…), with a search box on top. Type part of a name (or its initials:
 "fb" finds Form Builder) and press **Enter** to open the top match.
 
 The same search opens from anywhere with **Ctrl+K** (**⌘K** on a Mac), even

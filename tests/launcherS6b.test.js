@@ -327,7 +327,7 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
 
   test('the effective registry: group More actions, after the sidebar sections, before the firm\'s pages, in registry order', () => {
     const eff = VL.computeEffective(HUBS);
-    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin', 'Firm']);
+    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin']);   // no Firm: both page items sit in Settings (L3)
     expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(EXTRAS);
     const nonAdmin = VL.computeEffective({ isAdmin: false, roles: ['staff'], ui: HUBS.ui });
     expect(ids(nonAdmin.filter((e) => e.group === 'More actions'))).toEqual(EXTRAS);   // not admin-gated

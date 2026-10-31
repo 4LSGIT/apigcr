@@ -21,7 +21,7 @@ Launcher section changes it for **everyone at the firm** in three ways:
 |---|---|
 | **Hide** | Takes a feature off every launcher surface — sidebar, Home, the pages, All and the Ctrl-K search. |
 | **Rename** | Gives a feature a firm name, shown everywhere that feature appears (for example *Cases* → *Matters*). |
-| **Firm items** | Adds the firm's own entries — a link, a tool, a saved view or a **page** — under **Firm** in All, in Ctrl-K, and wherever the arrangement places them. |
+| **Firm items** | Adds the firm's own entries — a link, a tool, a saved view or a **page** — in All, in Ctrl-K, and wherever the arrangement places them. In All an item sits under the sidebar section or page you place it in, or under **Firm** if you place it nowhere. |
 | **Arrange** | Sets out the **Home** and **sidebar** everyone starts from and the tiles of the firm's pages, More Features and Admin among them (see [Arranging pages and defaults](#arranging-pages-and-defaults)). |
 
 The Firm tab is a page of sections: the firm's settings first (see
@@ -43,10 +43,12 @@ Ctrl-K), so nobody can lose their way back.
 
 ## Hide and rename
 
-One row per feature, grouped the way the **All** tab groups them: the
-sidebar's sections (Records, Actions, Settings), **More actions** (features
+One row per feature, grouped the way the **All** tab groups them: your
+firm's sidebar sections, with the names you give them and the features you
+put in them (Records, Actions, Settings to start), **More actions** (features
 placed nowhere), then one group per firm page, named after it (More Features,
-Admin).
+Admin). Everyone's All tab groups this way, whatever they arrange for
+themselves.
 
 - **Hide** — tick it to take that feature off everyone's launcher.
 - **Rename to** — type the firm's name for it. Leave it empty to keep the usual
@@ -68,9 +70,9 @@ Each firm item has a **label**, an **icon** and what it **opens**:
   logo. Search by name or a related word; the families filter the list. The
   icon and its name show beside the button. See
   [Choosing an icon](../01-YisraCase-overview/15-your-launcher.md#choosing-an-icon).
-- **Order** — the arrow buttons move an item up or down. Firm items show in this
-  order under **Firm** in the All tab; pages also take their All groups in
-  this order.
+- **Order** — the arrow buttons move an item up or down. Firm items you place
+  nowhere show in this order under **Firm** in the All tab; pages take their
+  All groups, and their tabs, in this order.
 - **Delete** — the bin button.
 - **Dialog size** (tools and saved views): **Large**, the big working dialog
   (full screen on a phone), or **Compact**, a small card for something short

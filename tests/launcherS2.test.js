@@ -133,13 +133,13 @@ describe('the effective registry (pure)', () => {
   test('groups: by origin — sidebar section, else Home, else More actions, else the firm page — in the shipped order', () => {
     const eff = L.computeEffective({ isAdmin: true, ui: FUI() });
     // the order rides on the list (computeEffective is pure since S4a); the firm's pages (C4) group
-    // under their own labels, then Firm (the firm's items, the page items themselves among them)
-    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin', 'Firm']);
+    // under their own labels; no Firm group: the firm places both page items in Settings (L3)
+    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin']);
     // S6b: the items no default layout places, in registry order
     expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(EXTRAS);
     const g = Object.fromEntries(eff.map((e) => [e.id, e.group]));
     expect([g.cases, g.calendar, g.pipeline, g.newClient, g['firm:admin'], g.helpSupport, g.moreManuals, g.adminMailboxes])
-      .toEqual(['Records', 'Records', 'Actions', 'Actions', 'Firm', 'Settings', 'More Features', 'Admin']);
+      .toEqual(['Records', 'Records', 'Actions', 'Actions', 'Settings', 'Settings', 'More Features', 'Admin']);
     // no firm pages at all: what they held is unplaced, so More actions (S6b)
     const bare = L.computeEffective({ isAdmin: true });
     expect(bare.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions']);
@@ -150,6 +150,44 @@ describe('the effective registry (pure)', () => {
     expect(ids(eff.filter((e) => e.group === 'More Features'))).toEqual([...placed('more'), ...placed('moreIcons')]);   // the icon row is the grid's group (S6c)
     // surfaceLabels feed the matcher
     expect(eff.find((e) => e.id === 'bills').labels).toEqual(['Bills', 'Billing']);
+  });
+
+  test('launcher-nits L3: groups follow the FIRM\'s layout — its sections, its moves, its items — never a user\'s', () => {
+    // tool / view items: this bare vm has no URL, which a link item's check needs
+    const PAY = { id: 'firm:payroll', label: 'Payroll', icon: 'money-check', action: { type: 'tool', key: 'pay-run', present: 'modal' } };
+    const MEMO = { id: 'firm:memo', label: 'Memo', icon: 'note-sticky', action: { type: 'view', key: 'memo_list', present: 'modal' } };
+    const LOOSE = { id: 'firm:loose', label: 'Loose', icon: 'circle', action: { type: 'tool', key: 'loose', present: 'modal' } };
+    const sb = hubFirm().layout.placed.sidebar;
+    // the firm: Records renamed Clients, Billing moved to Actions, Payroll placed in Actions after it,
+    // Log and Help taken off the sidebar; Memo on More Features' tiles; Loose placed nowhere
+    const sidebar = sb.filter((e) => !['bills', 'log', 'helpSupport'].includes(e.item)).map((e) => (e.label === 'Records' ? { label: 'Clients' } : e));
+    sidebar.splice(sidebar.findIndex((e) => e.item === 'newClient') + 1, 0, { item: 'bills' }, { item: 'firm:payroll' });
+    const pages = hubFirm().layout.pages;
+    const firm = hubFirm({ items: [PAY, MEMO, LOOSE], layout: {
+      placed: { sidebar },
+      removed: { sidebar: ['log', 'helpSupport'] },
+      pages: { 'firm:more': { ...pages['firm:more'], tiles: [...pages['firm:more'].tiles, { item: 'firm:memo' }] } },
+    } });
+    const eff = L.computeEffective({ isAdmin: true, ui: { firm, user: {} } });
+    const g = Object.fromEntries(eff.map((e) => [e.id, e.group]));
+    expect(eff.groups).toEqual(['Home', 'Clients', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin', 'Firm']);
+    // off the sidebar, an item groups by its next firm placement: Log by its Home tile, Help (on no
+    // other surface) under More actions
+    expect([g.cases, g.bills, g['firm:payroll'], g['firm:memo'], g['firm:loose'], g['firm:more'], g.log, g.helpSupport])
+      .toEqual(['Clients', 'Actions', 'Actions', 'More Features', 'Firm', 'Settings', 'Home', 'More actions']);
+    // in the firm's order within a section: Billing, then Payroll, after the shipped Actions items
+    expect(ids(eff.filter((e) => e.group === 'Actions'))).toEqual(['pipeline', 'newClient', 'bills', 'firm:payroll']);
+    // a firm item keeps its action wherever it groups
+    expect(eff.find((e) => e.id === 'firm:payroll').action).toEqual(PAY.action);
+    // a USER's layout changes nothing: All reads the same for everyone
+    const user = { layout: { placed: { sidebar: [{ label: 'Mine first' }, { item: 'calendar' }, { item: 'cases' }] }, removed: { sidebar: ['bills'] } } };
+    const asUser = L.computeEffective({ isAdmin: true, ui: { firm, user } });
+    expect(asUser.groups).toEqual(eff.groups);
+    expect(asUser.map((e) => [e.id, e.group])).toEqual(eff.map((e) => [e.id, e.group]));
+    // nor does who is looking: a staff user's entries keep the groups an admin's have
+    const staff = L.computeEffective({ isAdmin: false, roles: ['staff'], ui: { firm, user: {} } });
+    for (const e of staff) expect(e.group).toBe(g[e.id]);
+    expect(staff.find((e) => e.id === 'firm:payroll').group).toBe('Actions');
   });
 });
 
@@ -405,15 +443,15 @@ describe('the All tab (public/js/ycAll.js, for real)', () => {
     expect(entries()).toEqual([]);
     t.L.applyAccess({ isAdmin: false, denied: ['moreAutomations'], ui: FUI() });
     // Admin holds what this user can use: Etch is open to staff (S6c gates), the su tools are not;
-    // More Features and Admin are the firm's pages (C4), Firm the firm's items (the page items among them)
-    expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin', 'Firm']);
+    // More Features and Admin are the firm's pages (C4); their page items sit in Settings, where the firm places them (L3)
+    expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin']);
     expect(t.L.effectiveRegistry().filter((e) => e.group === 'Admin').map((e) => e.id)).toEqual(['adminEtch']);
     // every effective item but All itself (S6c ruling: the All tab doesn't list All; Ctrl-K does)
     expect(t.L.effectiveRegistry().map((e) => e.id)).toContain('all');
     expect(entries()).toEqual(t.L.effectiveRegistry().map((e) => e.id).filter((id) => id !== 'all'));
     expect(entries()).not.toContain('moreAutomations');
     t.L.applyAccess({ isAdmin: true });
-    expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin', 'Firm']);
+    expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin']);
     expect(new Set(entries()).size).toBe(entries().length);
   });
 

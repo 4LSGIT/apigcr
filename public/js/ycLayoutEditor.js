@@ -1418,7 +1418,11 @@
         return o;
       }),
       groups: (list.groups || []).filter(function (g) { return mine.some(function (e) { return e.group === g; }); }),
-      pages: mine.filter(isPg).map(function (e) { return e.id; }),   // the firm's pages (S6c-5), in order
+      // the firm's pages (S6c-5), in the firm's item order — not the list's:
+      // All groups a page the firm places in the sidebar there (launcher-nits L3)
+      pages: (Object.prototype.toString.call(ro.items) === '[object Array]' ? ro.items : [])
+        .map(function (fi) { return isObj(fi) ? fi.id : null; })
+        .filter(function (id) { return mine.some(function (e) { return e.id === id && isPg(e); }); }),
     };
   }
 
@@ -1512,9 +1516,12 @@
     var pg = pageOf(sf) || overOf(sf);
     return pg ? PAGE_PART_NAME[pg.part] : NAME[sf];
   }
-  /** The firm pages this user sees (L4b1): [{ id, label, icon }], All's order. */
+  /** The firm pages this user sees (L4b1): [{ id, label, icon }], in the
+   *  page tabs' order (L.pages — the firm's item order, not All's). */
   function firmPagesNow() {
+    var order = L.pages();
     return L.effectiveRegistry().filter(function (e) { return e.page && /^firm:/.test(e.id); })
+      .sort(function (a, b) { return order.indexOf(a.id) - order.indexOf(b.id); })
       .map(function (e) { return { id: e.id, label: String(e.label), icon: e.icon }; });
   }
   var overLabels = {};   // firm page id → its label, for this opening (onName, the reset question)

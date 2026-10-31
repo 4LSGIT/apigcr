@@ -301,9 +301,11 @@ describe('Launcher form: grouping and catalog', () => {
     expect(inGroup('More Features')).toEqual(expect.arrayContaining(['moreReports', 'casey']));
     const all = Object.keys(top.FEATURE_REGISTRY).filter((id) => !top.FEATURE_REGISTRY[id].placeholder);
     expect($$('[data-row-id]').map((e) => e.dataset.rowId).sort()).toEqual(all.sort());
-    // Who sees what: the same groups, the firm's items (the two pages among them) last
+    // Who sees what: the same groups, then the firm's items it places nowhere; the two page items sit
+    // in Settings, where the firm's sidebar places them (L3)
     expect($$('#fm-sec-who .fm-group-title').map((e) => e.textContent)).toEqual([...titles, 'Firm']);
-    expect(F.WhoSection.st.catalog.entries.filter((e) => e.group === 'Firm').map((e) => e.id)).toEqual(['firm:payroll', 'firm:more', 'firm:admin']);
+    expect(F.WhoSection.st.catalog.entries.filter((e) => e.group === 'Firm').map((e) => e.id)).toEqual(['firm:payroll']);
+    expect(F.WhoSection.st.catalog.entries.filter((e) => e.group === 'Settings').map((e) => e.id)).toEqual(expect.arrayContaining(['firm:admin', 'firm:more']));
     // a renamed page renames its group once saved: both catalogs are rebuilt from the stored items
     expect($('#fi1-label').value).toBe('More Features');
     setVal($('#fi1-label'), 'Toolbox');

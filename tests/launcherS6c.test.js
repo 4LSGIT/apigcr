@@ -229,7 +229,7 @@ describe('2. icon rows: the surfaces and their markup', () => {
     expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(['myTasks', 'logout', 'code']);
     expect(ids(eff.filter((e) => e.group === 'More Features'))).toEqual([...hubTiles('firm:more'), 'casey']);
     expect(eff.find((e) => e.id === 'all').group).toBe('Settings');
-    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin', 'Firm']);
+    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More Features', 'Admin']);   // no Firm: both page items sit in Settings (L3)
     // an item placed only in an icon row is placed by it: Admin's page → group Admin; the shipped Home row's → group Home (not an extra)
     const pages = hubPages();
     const lay = { ...J(LAY), homeIcons: [{ item: 'all' }, { item: 'logout' }] };

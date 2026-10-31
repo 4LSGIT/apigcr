@@ -2745,12 +2745,18 @@ the page heading and ONE neutral tile for the hosted panel, so the drill
 script, pill strip and URL — `?open=tabPanel~<id>`, restored through exec —
 treat it as a page); the items the old hubs drew themselves (moreSettings,
 adminEtch, casey, moreAssistant) have no element — a page tile is a neutral —
-and run their `NO_ELEMENT` call. All's groups follow the firm's sidebar and
-pages: the sidebar's sections, More actions (effective items placed nowhere),
-one group per firm page in item order, named by its item's label (an item
-in the first that places it), Firm, Mine — and the firm editor's lists group
-the same way (firm.html `catalogUi` hands computeEffective the firm's items
-and layout). The All tab +
+and run their `NO_ELEMENT` call. All's groups follow the FIRM's surfaces —
+the shipped layout under the firm's layout document, never a user's, and with
+every id counted, so All groups the same for everyone (L3): Home, the firm's
+sidebar sections in its order and under its labels, More actions (registry
+items no firm surface places), one group per firm page in item order, named
+by its item's label (an item in the first that places it), Firm (firm items
+the firm places nowhere — a placed one groups like a registry item), Mine —
+and the firm editor's lists group the same way (firm.html `catalogUi` hands
+computeEffective the firm's items and layout). So the All list's ORDER is
+not the pages' order: a page item the firm puts in a sidebar section sorts
+there. Page order (the page tabs, exec's routing, the editors' Firm pages)
+is the firm's item order, then the user's — `ycLauncher.pages()`. The All tab +
 palette live in `public/js/ycAll.js`, whose single keydown dispatcher also
 runs user shortcuts (the All tab never lists `all` itself; the palette does);
 the personal editor is `public/js/ycLayoutEditor.js` (All > Customize my

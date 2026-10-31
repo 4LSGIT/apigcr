@@ -275,16 +275,17 @@
       //   − denied ids (firmData.denied, access-control A5). The server
       //     already strips the undeniable set; the client strips it again
       //     rather than trust its input, and ignores anything not a string.
-      //   − firm-hidden ids, + firm-added items (group "Firm", after More,
-      //     before Admin, in their array order), with firm renames applied to
-      //     label AND surfaceLabels. See the firm overlay below.
+      //   − firm-hidden ids, + firm-added items (grouped where the firm places
+      //     them, else group "Firm" — after the pages, before Mine — in their
+      //     array order), with firm renames applied to label AND
+      //     surfaceLabels. See the firm overlay below.
       //   − role-restricted ids (the firm's visible_to, ui-custom S3.4): an
       //     item with an entry is dropped unless the user holds one of its
       //     roles (opts.roles, the users.roles members) or is su. Registry
       //     and firm items alike; per-user denies still apply on top.
-      //   + registry items placed in NO default layout (ui-custom S6b: myTasks,
+      //   + registry items placed on NO firm surface (ui-custom S6b: myTasks,
       //     logout, casey), group "More actions" — after the sidebar's
-      //     sections, before More — in registry order. Hidden / renamed /
+      //     sections, before the pages — in registry order. Hidden / renamed /
       //     denied / role-restricted like any registry item. No element draws
       //     them by default; a user may place them (a neutral shortcut), and
       //     exec runs them through NO_ELEMENT (below) either way.
@@ -298,12 +299,14 @@
       //     user's button may be a PAGE (S6c-5, { type:'page' }): exec opens
       //     its tab (Pages below); its tiles live in that tier's layout.pages.
       // Each entry: { id, group, label, labels, icon } — labels = label +
-      // surfaceLabels, what the matcher reads. group = the item's origin:
-      // its sidebar section, else Home, else the first FIRM PAGE whose tiles or
-      // small buttons hold it (the page's name — More Features, Admin… are
-      // firm pages since launcher-nits C3 / C4), else More actions; groups run
-      // Home, the sidebar's sections in order (Records / Actions / Settings),
-      // More actions, the firm's pages in the firm's item order, Firm, Mine.
+      // surfaceLabels, what the matcher reads. group = the item's origin on
+      // the FIRM's surfaces (the shipped layout under the firm's layout — no
+      // user's, launcher-nits L3): its sidebar section, else Home, else the
+      // first FIRM PAGE whose tiles or small buttons hold it (the page's name
+      // — More Features, Admin… are firm pages since launcher-nits C3 / C4),
+      // else More actions (a registry item) or Firm (a firm item); groups run
+      // Home, the firm's sidebar sections in its order, More actions, the
+      // firm's pages in the firm's item order, Firm, Mine.
       // Visibility only: hiding secures nothing.
       // computeEffective is PURE (ui-custom S4a): it returns the list with
       // the group order it computed alongside it — list.groups, a
@@ -603,23 +606,31 @@
         var restricted = roleHidden(firm.visibleTo, opts.roles);
 
         // origin group per id, first placement wins: sidebar, home (+ its icon
-        // row), each grid (+ its icon row)
+        // row), each firm page (+ its small buttons). The surfaces are the
+        // FIRM's — the shipped layout under the firm's layout document, never
+        // a user's (launcher-nits L3) — so the firm's sidebar sections are
+        // All's categories, and a firm item the firm places groups there too.
+        // Every id counts as effective here: a group does not depend on who
+        // is looking.
+        var flayout = isObj(opts.ui) && isObj(opts.ui.firm) && isObj(opts.ui.firm.layout) ? opts.ui.firm.layout : null;
+        var firmIds = Object.create(null);
+        firm.items.forEach(function (fi) { firmIds[fi.id] = true; });
+        var allIds = Object.keys(registry).concat(Object.keys(firmIds));
+        var firmSurface = function (sf) { return resolve(sf, { base: layouts[sf], firm: flayout, effective: allIds }); };
         var order = ['Home'], origin = {}, seq = [];
         function place(id, g) {
-          if (id == null || !own(id) || Object.prototype.hasOwnProperty.call(origin, id)) return;
+          if (id == null || !(own(id) || firmIds[id] === true) || Object.prototype.hasOwnProperty.call(origin, id)) return;
           origin[id] = g; seq.push(id);
         }
         var section = 'Home';
-        (layouts.sidebar || []).forEach(function (e) {
-          if (!e) return;
-          if (e.label != null) { section = String(e.label); if (order.indexOf(section) < 0) order.push(section); }
-          else place(e.item, section);
+        firmSurface('sidebar').forEach(function (e) {
+          if (e.kind === 'label') { section = e.text; if (order.indexOf(section) < 0) order.push(section); }
+          else if (e.kind === 'item') place(e.id, section);
         });
-        (layouts.home || []).forEach(function (e) { if (e) place(e.item, 'Home'); });
-        (layouts.homeIcons || []).forEach(function (e) { if (e) place(e.item, 'Home'); });
+        firmSurface('home').concat(firmSurface('homeIcons')).forEach(function (e) { if (e.kind === 'item') place(e.id, 'Home'); });
         // the firm's pages, in the firm's item order: a page's name is the
         // group of what its tiles and small buttons hold (launcher-nits C4)
-        var fpages = isObj(opts.ui) && isObj(opts.ui.firm) && isObj(opts.ui.firm.layout) && isObj(opts.ui.firm.layout.pages) ? opts.ui.firm.layout.pages : {};
+        var fpages = flayout && isObj(flayout.pages) ? flayout.pages : {};
         var pageGroups = [];
         firm.items.forEach(function (fi) {
           if (!fi.action || fi.action.type !== 'page' || !hasOwn(fpages, fi.id) || !isObj(fpages[fi.id])) return;
@@ -635,12 +646,13 @@
         Object.keys(registry).forEach(function (id) { place(id, EXTRA_GROUP); });
         if (seq.length > placedN) order.push(EXTRA_GROUP);
         order = order.concat(pageGroups);
-        if (firm.items.length) order.push(FIRM_GROUP);
+        if (firm.items.some(function (fi) { return !hasOwn(origin, fi.id); })) order.push(FIRM_GROUP);
         var mine = userItems(opts.ui);
         if (mine.length) order.push(USER_GROUP);
 
         var out = [];
         seq.forEach(function (id) {
+          if (!own(id)) return;         // a firm item: listed below
           var it = registry[id];
           if (it.placeholder) return;   // a grid square that opens nothing
           if (!gatePasses(it.gate, opts)) return;
@@ -660,11 +672,12 @@
         // Firm-added items: listed in All + the palette, and placed where the
         // firm's layout and pages put them (the More grid's firm row is gone
         // with the hub, launcher-nits C4); exec() dispatches their action.
-        // Hidden / denied like any other id.
+        // Grouped where the firm places them, else Firm (L3). Hidden / denied
+        // like any other id.
         firm.items.forEach(function (fi) {
           if (denied[fi.id] || firm.hidden[fi.id] || restricted[fi.id]) return;
-          seq.push(fi.id);
-          out.push({ id: fi.id, group: FIRM_GROUP, label: fi.label, labels: [fi.label], icon: fi.icon, action: fi.action });
+          if (!hasOwn(origin, fi.id)) seq.push(fi.id);
+          out.push({ id: fi.id, group: hasOwn(origin, fi.id) ? origin[fi.id] : FIRM_GROUP, label: fi.label, labels: [fi.label], icon: fi.icon, action: fi.action });
         });
         // The user's own buttons (S5a): no firm hide / rename / visible_to,
         // no deny (a user: id can't be denied) — they are the user's. Listed
@@ -1235,16 +1248,18 @@
       }
       /** The page tab id for a page item: assigned on first sight, kept for the session. */
       function pageTabId(id) { return PAGE_TAB_ID[id] || (PAGE_TAB_ID[id] = 'ycPage-' + (++pageTabN)); }
-      /** The effective page items, firm pages first (EFFECTIVE's order), each tier capped. */
+      /** The effective page items, firm pages first, each tier in its ITEM
+       *  order (not EFFECTIVE's: All groups a page the firm places in a
+       *  sidebar section under that section, launcher-nits L3), each capped. */
       function pageEntries() {
-        var firm = [], mine = [];
-        EFFECTIVE.forEach(function (e) {
-          if (!isPage(e)) return;
-          var list = e.action ? firm : mine;
-          if (list.length < PAGE_TABS_MAX) list.push(e);
-          else warn('page "' + e.id + '" has no tab: at most ' + PAGE_TABS_MAX + ' pages per tier');
-        });
-        return firm.concat(mine);
+        var firm = [], mine = [], rank = Object.create(null);
+        firmOverlay(STATE && STATE.ui, true).items.forEach(function (fi, i) { rank[fi.id] = i; });
+        EFFECTIVE.forEach(function (e) { if (isPage(e)) (e.action ? firm : mine).push(e); });
+        firm.sort(function (a, b) { return rank[a.id] - rank[b.id]; });
+        return [firm, mine].reduce(function (acc, list) {
+          list.slice(PAGE_TABS_MAX).forEach(function (e) { warn('page "' + e.id + '" has no tab: at most ' + PAGE_TABS_MAX + ' pages per tier'); });
+          return acc.concat(list.slice(0, PAGE_TABS_MAX));
+        }, []);
       }
       /** The built page tabs' ids, in pageEntries() order (exec's routing). */
       function pageTabIds() {
@@ -1954,6 +1969,7 @@
         applyAccess: applyAccess, isReady: isReady, effectiveRegistry: effectiveRegistry,
         elementsOf: elementsOf, exec: exec, cleanFirmItem: cleanFirmItem, cleanUserItem: cleanUserItem, resolveLayout: resolveLayout,
         UNDENIABLE: UNDENIABLE, groups: function () { return GROUPS.slice(); },
+        pages: function () { return pageEntries().map(function (e) { return e.id; }); },
       };
     })();
   </script>
