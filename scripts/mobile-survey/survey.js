@@ -264,6 +264,18 @@ async function walk(page, W, record) {
       await record(`tab:${t}`, await measure(page, await frameOf(page, VISIBLE_TAB_FRAME)), await shot('tab_' + t));
     }
 
+    // The loop above opens a tab bare, so the Cases table drew no rows. Every
+    // caption mode, on rows holding the longest caption a court has sent
+    // (fixtures/api/cases.json).
+    if (tabs.includes('tabCases')) {
+      for (const mode of ['column', 'name', 'off']) {
+        await page.evaluate(async (m) => { openMainTab('tabCases'); casesCaptionSet(m); await tabCasesGet(0); }, mode);
+        await sleep(600);
+        await record(`tab:tabCases:rows:${mode}`, await measure(page, null), await shot('cases_rows_' + mode));
+      }
+      await page.evaluate(() => casesCaptionSet('column'));
+    }
+
     // Settings (settings arc): My access and Manage access as a staff member
     // (fixtures/api/mailboxes.staff.json, phone-lines/readable.staff.json — a
     // grant with Manage, an attorney "via role" row, an inactive box; the card's

@@ -135,6 +135,7 @@ const { checkCitations } = require('../lib/courtCitation');
 // Module-scope require is cycle-safe: eventService's dependency tree
 // (gcal/task/log/email/timezone) never reaches courtExecutor.
 const eventService = require('./eventService');
+const { captionFromCourtName, courtNameFromCaption } = require('../lib/caseCaption');
 const {
   findDuplicateEvent,
   buildIdentityTokens,
@@ -422,11 +423,25 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
     resolved.case_number_full = rawDocket; // in-memory: identity tokens, role twins, emit
   }
 
-  // Name preference: email's own case_name → case_caption (adversary captions /
-  // creditor-side cases where the debtor isn't our client) → Primary client.
+  // Caption stamp: the first court email to name a case with no caption sets
+  // it (rules: lib/caseCaption.js). Same grounding gate as the docket fill,
+  // because case_name is AI-extracted too. Additive: a caption already there,
+  // court-set or hand-typed, stays when the court renames the case.
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const fillCaption =
+    resolved.found &&
+    !String(resolved.case_caption || '').trim() &&
+    payload.case_name &&
+    norm(`${subject || ''}\n${body || ''}`).includes(norm(payload.case_name))
+      ? captionFromCourtName(resolved, payload.case_name)
+      : null;
+
+  // Name preference: email's own case_name → case_caption without its "In re"
+  // (adversary captions / creditor-side cases where the debtor isn't our
+  // client) → Primary client.
   const caseName =
     payload.case_name ||
-    (resolved.found ? (resolved.case_caption || resolved.primary_contact_name) : null) ||
+    (resolved.found ? (courtNameFromCaption(resolved.case_caption) || resolved.primary_contact_name) : null) ||
     null;
 
   // Identity tokens for this case, built ONCE from what resolveCase already
@@ -940,6 +955,20 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
     }
   } else if (fillFull && effectiveDryRun) {
     pushChange('case', resolved.case_id, 'case_number_full', null, fillFull); // plan row, dry_run=1
+  }
+
+  // The caption fill rides the same paths as the docket fill above.
+  if (fillCaption && !effectiveDryRun) {
+    const [r] = await db.query(
+      `UPDATE cases SET case_caption=?
+        WHERE case_id=? AND (case_caption IS NULL OR case_caption='')`,
+      [fillCaption, resolved.case_id]
+    );
+    if (r.affectedRows === 1) {
+      pushChange('case', resolved.case_id, 'case_caption', null, fillCaption);
+    }
+  } else if (fillCaption && effectiveDryRun) {
+    pushChange('case', resolved.case_id, 'case_caption', null, fillCaption); // plan row, dry_run=1
   }
 
   for (const i of dispatchOrder) {

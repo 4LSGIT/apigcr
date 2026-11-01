@@ -1988,6 +1988,7 @@ function ContactPicker(hostEl, options = {}) {
      L1 (prominent): case_number_full || case_number || '(no case#)'
      L2 (muted):     case_id · case_type · case_stage
      L3 (muted):     [case_caption — ] primary_contact_name || '(no primary contact)'
+                     (the caption only when it says more than the client's name)
 
    All text rendered via textContent (no innerHTML) → no escaping needed.
    ────────────────────────────────────────────────────────────────────────── */
@@ -2052,11 +2053,11 @@ function CasePicker(hostEl, options = {}) {
       line2.textContent = meta;
       row.appendChild(line2);
 
-      // L3 — caption (when set) + primary contact
+      // L3 — caption (when it adds something) + primary contact
       const line3 = document.createElement('div');
       line3.className = 'cp-sub';
       const cpWho = r.primary_contact_name || '(no primary contact)';
-      line3.textContent = r.case_caption ? `${r.case_caption} \u2014 ${cpWho}` : cpWho;
+      line3.textContent = r.caption_adds_info ? `${r.case_caption} \u2014 ${cpWho}` : cpWho;
       row.appendChild(line3);
 
       row.addEventListener('click', () => {

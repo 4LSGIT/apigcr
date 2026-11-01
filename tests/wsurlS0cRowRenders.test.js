@@ -134,14 +134,14 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
     }, `${PAGER} var offsets = {}, cases; function populateCaseTypeFilter() {}
         ${fnSrc(INDEX, 'tabCasesGet')}`,
     async () => ({ total: 1, cases: [{
-      case_id: 'ABCD2345', case_number: V, case_type: V, case_subtype: V, case_stage: V,
-      case_status: V, open: V, file: V, close: V,
+      case_id: 'ABCD2345', case_number: V, case_caption: V, caption_adds_info: true, case_type: V,
+      case_subtype: V, case_stage: V, case_status: V, open: V, file: V, close: V,
       contacts: [{ contact_id: 1405, contact_name: V, contact_relate: V }],
     }] }));
     await w.tabCasesGet(0);
     expectClean(w);
     expect(cellText(dataRow(w, 'casesTable'))).toEqual(
-      ['ABCD2345', `${V} (${V})`, V, `${V}: ${V}`, V, V, V, V, V]);
+      ['ABCD2345', `${V} (${V})${V}`, V, V, `${V}: ${V}`, V, V, V, V, V]);
   });
 
   test('tabContactsGet', async () => {

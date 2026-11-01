@@ -28,10 +28,10 @@
  *             cleanly rather than "and undefined".
  *   case.case_number / case.case_number_full are OPAQUE STRINGS — repo rule,
  *             never parsed or validated server-side. Passed through verbatim.
- *   case.case_name — the cases table has NO name column; the repo-wide display
- *             convention for "the case's name" is the primary debtor's name
- *             (courtExecutor/eventService title convention), so that is what
- *             this resolver returns.
+ *   case.case_name — the primary debtor's name, the repo-wide display
+ *             convention (courtExecutor/eventService title convention). Not
+ *             case_caption: that is blank until a docket exists, and these
+ *             documents go out before one does.
  *   firm.*  — lib/firmConfig cfg() over app_settings: fe-firm_phone (digits,
  *             formatted here), firm_email, fe-firm_site_url, firm_name,
  *             firm_attorney_name, and firm_address (type json_array, read via

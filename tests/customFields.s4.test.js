@@ -990,6 +990,14 @@ describe('Case Details mounts (both variants)', () => {
       expect($('#ycfStatus').textContent).toBe('');         // no "No changes" noise
     });
 
+    test('the caption is editable here, and saves as case_caption', async () => {
+      const { $, click, type, patches } = await boot(file, { defs: [] });
+      type($('[name="case_caption"]'), 'In re Jane Smith');
+      click($('#saveBtn'));
+      await sleep(30);
+      expect(patches()).toEqual([{ case_caption: 'In re Jane Smith' }]);
+    });
+
     test("case.html's push (form.refresh → onLoad) repaints the section with the new value", async () => {
       const { $, w } = await boot(file, { defs: [MATTER()], row: caseRow({ custom: { cf_clio_matter: '1' } }) });
       const fresh = caseRow({ cf_clio_matter: '9', custom: { cf_clio_matter: '9' } });

@@ -368,6 +368,19 @@ input:where(:not([type=radio]):not([type=checkbox])), select, textarea, button {
 .logTable tr:nth-child(even) {
   background-color: var(--surface-2);
 }
+/* The Cases table's caption modes: casesCaptionApply in index.html. */
+#casesTable .caption-in-name { display: none; font-size: 0.8rem; color: var(--text-muted); }
+#casesTable[data-caption="name"] .caption-in-name { display: block; }
+#casesTable[data-caption="name"] .col-caption,
+#casesTable[data-caption="off"] .col-caption { display: none; }
+/* index.html's scroll box stops at the phone rules, and this table with rows
+   is wider than the page up to a full desktop (978px at an 800 window, before
+   the caption column ever existed). Unseen while the table fits. Screen only:
+   a scroll box would clip a printout. */
+@media screen {
+  .tab-main > #casesTable { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tab-main > #casesTable > tbody { display: table; width: 100%; }
+}
 .logTable tr:hover {
   background-color: var(--hover);
 }

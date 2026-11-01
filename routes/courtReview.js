@@ -39,6 +39,7 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 
 const caseService          = require('../services/caseService');
 const { resolveCase }      = require('../lib/courtResolve');
+const { captionFromCourtName } = require('../lib/caseCaption');
 const courtRerun           = require('../services/courtRerun');
 
 const DEFAULT_LIMIT = 200;
@@ -380,7 +381,7 @@ router.post('/api/court-review/adopt-rerun', jwtOrApiKey, async (req, res) => {
 
     // Target must exist; fetch current docket for the same-vs-different guard.
     const [targetRows] = await req.db.query(
-      `SELECT case_id, case_number, case_number_full, case_type, case_caption
+      `SELECT case_id, case_number, case_number_full, case_type, case_subtype, case_caption
          FROM cases WHERE case_id = ? LIMIT 1`,
       [caseId]
     );
@@ -435,9 +436,9 @@ router.post('/api/court-review/adopt-rerun', jwtOrApiKey, async (req, res) => {
     // verbatim case name (debtor or adversary caption). Fill case_caption only
     // when the target has none; a DIFFERENT existing caption is NOT a conflict
     // (unlike dockets) — skip silently and leave the human's value alone.
-    const rowCaption = (row.case_name || '').trim();
+    const rowCaption = captionFromCourtName(target, row.case_name);
     if (rowCaption && !((target.case_caption || '').trim())) {
-      fields.case_caption = rowCaption.slice(0, 150);
+      fields.case_caption = rowCaption;
     }
     if (Object.keys(fields).length) {
       // R4/S5: attribute the write. Court-review adopts are staff actions on a

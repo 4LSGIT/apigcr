@@ -74,6 +74,14 @@
   </div>
 
   <div class="yc-row">
+    <div class="yc-field">
+      <label class="yc-label">Case Caption</label>
+      <input type="text" name="case_caption" maxlength="150" placeholder="e.g. In re Jane Smith">
+      <div class="yc-hint">Set from the first court email. Edit it to correct it; the court will not overwrite your change.</div>
+    </div>
+  </div>
+
+  <div class="yc-row">
     <div class="yc-field yc-2x">
       <label class="yc-label">Case Number</label>
       <input type="text" name="case_number" placeholder="25-44545 or 25-44545-mar">
@@ -399,6 +407,7 @@
         case_id:          { el: '[name="case_id"]',        type: 'text', readonly: true },
 
         // Case details
+        case_caption:     { el: '[name="case_caption"]',   type: 'text' },
         case_number:      { el: '[name="case_number"]',    type: 'text' },
         case_chapter:     { el: '[name="case_chapter"]',   type: 'text' },
         case_trustee:     { el: '[name="case_trustee"]',   type: 'select' },

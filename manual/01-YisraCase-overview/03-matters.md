@@ -70,6 +70,22 @@ A few things to know about Leads:
 
 ---
 
+## Case Captions
+
+A caption is the court's name for a case, so a case has one only once it has a docket number. Leads and unfiled matters are blank, and the client's name stands in for them.
+
+| Case | Caption | Where it comes from |
+|---|---|---|
+| Bankruptcy (Chapter 7, 11, 13), either side | `In re` + the debtors as the court names them: *In re Dennis Gardin and Alicia Gardin* | First court email |
+| Adversary proceeding | The court's name, unchanged: *Schneyer v. Childs* | First court email |
+| Other federal case on ECF | The court's name, unchanged | First court email |
+| State court, or any docketed case with no ECF email | *Plaintiff v. Defendant* | Typed in Case Details |
+| Not a court matter | Blank | |
+
+The first court email to name a case fills an empty caption. After that nothing overwrites it, so when the court renames a case, or staff have typed a fuller version, the existing caption stays. Staff can correct a caption in Case Details at any time.
+
+---
+
 ## Contacts on a Case
 
 Every case has at least one contact linked as **Primary**. Additional contacts can be added with the following relationship types:
@@ -140,6 +156,8 @@ From the Cases tab, you can filter by:
 
 - Type
 - Stage / Status (text search on the status field)
-- Search text (matches case ID, court case number, or primary contact name)
+- Search text (matches case ID, court case number, caption, notes, or the name of any contact on the case)
+
+The **Caption** control in the filter bar sets how the table shows captions: **Column** gives them their own column, **In name** adds a line under the client only when the caption says something the client's name does not, and **Off** leaves them out. The choice is saved in your browser, so each device keeps its own.
 
 The Leads tab has its own separate filter set tailored to the intake process. Results in both tabs sort by open date descending by default.

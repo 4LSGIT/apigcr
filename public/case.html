@@ -221,8 +221,8 @@
         <i class="fa-solid fa-landmark"></i> Case Details
       </button>
     </div>
-    <!-- Caption line — hidden unless cases.case_caption is set (adversary
-         proceedings, creditor-side cases, litigation). updateHeader toggles. -->
+    <!-- Caption line — hidden unless cases.case_caption is set, which it is on
+         any docketed case (rules: lib/caseCaption.js). updateHeader toggles. -->
     <h4 id="captionLine" style="color: var(--text); display: none">
       Caption:
       <span id="caption" onclick="copy(this.innerText)" style="color: var(--accent-2)"></span>

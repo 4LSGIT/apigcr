@@ -1,0 +1,9 @@
+{
+  "total": 4,
+  "cases": [
+    { "case_id": "TESTCASE1", "case_number": "26-04202-mar", "case_caption": "EYM Realty of Michigan LLC v. Mt. Hawley Insurance Company", "caption_adds_info": true, "case_type": "Bankruptcy", "case_subtype": "Adversary Proceeding", "case_stage": "Open", "case_status": "Awaiting Answer", "case_chapter": "", "open": "Sep. 12, 2026", "file": "Sep. 30, 2026", "close": "", "contacts": [{ "contact_id": 1, "contact_name": "Salwan N. Savaya", "contact_relate": "Primary" }] },
+    { "case_id": "TESTCASE2", "case_number": "26-49875-lsg", "case_caption": "In re Kyron Williams and Shaneika Monay Smith-Williams", "caption_adds_info": false, "case_type": "Bankruptcy", "case_subtype": "Chapter 13", "case_stage": "Filed", "case_status": "Plan Confirmed", "case_chapter": "13", "open": "Jan. 4, 2026", "file": "Feb. 17, 2026", "close": "", "contacts": [{ "contact_id": 2, "contact_name": "Shaneika Monay Smith-Williams", "contact_relate": "Primary" }, { "contact_id": 3, "contact_name": "Kyron Williams", "contact_relate": "Secondary" }] },
+    { "case_id": "TESTCASE3", "case_number": "26-41066-tjt", "case_caption": "In re 584 Starkweather LLC", "caption_adds_info": true, "case_type": "Bankruptcy", "case_subtype": "Chapter 11", "case_stage": "Closed", "case_status": "Dismissed", "case_chapter": "11", "open": "Mar. 2, 2026", "file": "Mar. 9, 2026", "close": "Oct. 1, 2026", "contacts": [{ "contact_id": 4, "contact_name": "David Merlo", "contact_relate": "Primary" }] },
+    { "case_id": "TESTCASE4", "case_number": "TESTCASE4", "case_caption": null, "caption_adds_info": false, "case_type": "Bankruptcy", "case_subtype": "", "case_stage": "Open", "case_status": "Lead", "case_chapter": "", "open": "Oct. 25, 2026", "file": "", "close": "", "contacts": [{ "contact_id": 5, "contact_name": "Jane Quincy Smith", "contact_relate": "Primary" }] }
+  ]
+}

@@ -37,6 +37,7 @@ lib/auth.requireAuth.js
 lib/auth.superuser.js
 lib/blankDateToNull.js
 lib/capabilities.js
+lib/caseCaption.js
 lib/caseId.js
 lib/caseRoleResolver.js
 lib/caseyAutomationAllowlist.js
@@ -828,6 +829,7 @@ scripts/backfill_court_event_calendars_2026_08.js
 scripts/buildFaIconCatalog.js
 scripts/calendarTypeOptionsSeed.js
 scripts/calendarTypeSeed.js
+scripts/caseCaptionBackfill.js
 scripts/caseyP4Idempotency.js
 scripts/caseyP5Ledger.js
 scripts/checkThemePresets.js
@@ -889,6 +891,7 @@ scripts/mobile-survey/fixtures/api/app-settings.json
 scripts/mobile-survey/fixtures/api/app-settings/firm_name/history.json
 scripts/mobile-survey/fixtures/api/calendar-feed.json
 scripts/mobile-survey/fixtures/api/calendar-range.json
+scripts/mobile-survey/fixtures/api/cases.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1/communications.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1/pipeline.json
@@ -1205,6 +1208,13 @@ tests/campaignCaseTypeFilter.test.js
 tests/campaignPreviewEscape.test.js
 tests/capabilities.test.js
 tests/captureBeforePublish.test.js
+tests/caseCaption.adopt.test.js
+tests/caseCaption.casesTab.test.js
+tests/caseCaption.mysql.test.js
+tests/caseCaption.readers.test.js
+tests/caseCaption.stamp.test.js
+tests/caseCaption.test.js
+tests/caseCaptionBackfill.test.js
 tests/caseEventService.test.js
 tests/caseId.test.js
 tests/caseMergeShapes.test.js

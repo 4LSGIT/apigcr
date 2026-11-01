@@ -1026,6 +1026,13 @@ contact row, §26), the external-forms prefill ceiling
 Casey's conversational reads (§33). `listContacts` omits it — payload size,
 not secrecy.
 
+**Captions:** `case_caption` is the court's name for a case, so it is blank
+until a docket exists. Rules: `lib/caseCaption.js`; staff table: manual
+`01-YisraCase-overview/03-matters.md`. `courtExecutor` and the court-review
+adopt fill an EMPTY caption from the first court name; nothing overwrites one.
+A set caption no longer marks a special case: to ask "does this say more than
+the client's name", read `caption_adds_info` from `listCases` / `searchCases`.
+
 **Cases:** `case_number`/`case_number_full` opaque free text (docket parsing
 client-only). `case_judge`/`case_trustee` free text AUTHORITATIVE with
 `*_contact_id` twins (fill on match, NULL on miss, never block a write).

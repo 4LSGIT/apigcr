@@ -2316,7 +2316,7 @@ async function searchCases() {
     },
       h('div', { className: 'l1' }, c.case_number_full || c.case_number || '(no case number)'),
       h('div', { className: 'l2' }, [c.case_id, c.case_type, c.case_stage].filter(Boolean).join(' · ')),
-      h('div', { className: 'l2' }, [c.case_caption, c.primary_contact_name].filter(Boolean).join(' — ') || '(no primary contact)'),
+      h('div', { className: 'l2' }, [c.caption_adds_info ? c.case_caption : '', c.primary_contact_name].filter(Boolean).join(' — ') || '(no primary contact)'),
     )) : [h('li', { className: 'empty' }, 'No matches')]));
   } catch (err) {
     if (seq !== caseSeq) return;

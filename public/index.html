@@ -3610,10 +3610,17 @@
       </select></label>
       <label class="yc-f"><span class="yc-f-l">Case Status</span>
       <input id="tabCasesStatus" style="width: auto" onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}" /></label>
+      <label class="yc-f" data-nocount><span class="yc-f-l">Caption</span>
+      <select id="tabCasesCaption" style="width: auto" onchange="casesCaptionSet(this.value)">
+        <option value="column">Column</option>
+        <option value="name">In name</option>
+        <option value="off">Off</option>
+      </select></label>
       <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
       <select id="tabCasesOrder" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
         <option value="co.contact_lname">Client Last Name</option>
         <option value="co.contact_name">Client First Name</option>
+        <option value="c.case_caption">Caption</option>
         <option value="c.case_number">Case Number</option>
         <option value="c.case_id">Lead ID</option>
         <option value="c.case_open_date">Open Date</option>
@@ -3631,10 +3638,11 @@
       <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
       <button class="yc-f-go" onclick="tabCasesGet(0)" data-type="goButton">Search</button>
     </div>
-    <table id="casesTable" class="logTable">
+    <table id="casesTable" class="logTable" data-caption="column">
       <tr>
         <th onclick="sort(this, 'c.case_id')">Lead ID</th>
         <th onclick="sort(this, 'co.contact_lname')">Client Name</th>
+        <th class="col-caption" onclick="sort(this, 'c.case_caption')">Caption</th>
         <th onclick="sort(this, 'c.case_number')">Case Number</th>
         <th onclick="sort(this, 'c.case_type')">Case Type</th>
         <th onclick="sort(this, 'c.case_stage')">Case Stage</th>
@@ -3716,7 +3724,8 @@
             });
             row.innerHTML = `
         <td>${fileLinkHtml(C.case_id, 'case', C.case_id, C.case_number || C.case_id)}</td>
-        <td>${clientsHTML}</td>
+        <td>${clientsHTML}${C.caption_adds_info ? `<div class="caption-in-name">${escText(C.case_caption)}</div>` : ''}</td>
+        <td class="col-caption">${escText(C.case_caption || '')}</td>
         <td>${escText(C.case_number)}</td>
         <td>${escText(fmtCaseType(C))}</td>
         <td>${escText(C.case_stage)}</td>
@@ -3787,8 +3796,27 @@
       casesDeb = setTimeout(() => tabCasesGet(offsets.cases, true), 250);
     });
 
+    /* How the Cases table shows a caption: its own 'column', under the client
+       'name' when it says more than the name does, or 'off', which is the
+       table as it was before the column. Every row carries both, so a change
+       needs no refetch. Saved per browser and per user. */
+    const CASES_CAPTION_MODES = ['column', 'name', 'off'];
+    const casesCaptionKey = () => `caption.${(user && user.user) || 0}`;
+
+    function casesCaptionApply(mode) {
+      const m = CASES_CAPTION_MODES.includes(mode) ? mode : 'column';
+      E('casesTable').dataset.caption = m;
+      E('tabCasesCaption').value = m;
+    }
+
+    function casesCaptionSet(mode) {
+      setTabPref('cases', casesCaptionKey(), mode);
+      casesCaptionApply(mode);
+    }
+
     /** Sole opener for the Cases tab — sidebar item AND home button. */
     function openCasesTab() {
+      casesCaptionApply(getTabPref('cases', casesCaptionKey(), 'column'));
       if (!cases) tabCasesGet(0);                      // first open: unchanged
       else if (casesStale) { casesStale = false; tabCasesGet(offsets.cases, true); }
       openMainTab('tabCases');

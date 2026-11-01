@@ -46,6 +46,7 @@ const fieldDefs = require('./fieldDefService'); // custom fields S2 — cf_ writ
 const { computeAndSaveStatus } = require('../lib/checklistStatus');
 const { generateCaseId } = require('../lib/caseId'); // custom-fields S6-B — createCase mints the id
 const { escapeLike } = require('../lib/escapeLike');
+const { captionAddsInfo } = require('../lib/caseCaption');
 
 
 // ─────────────────────────────────────────────────────────────
@@ -100,10 +101,11 @@ async function listCases(db, {
       OR c.case_id LIKE ?
       OR c.case_number LIKE ?
       OR c.case_number_full LIKE ?
+      OR c.case_caption LIKE ?
       OR c.case_notes LIKE ?
     )`);
     const q = `%${escapeLike(query)}%`;
-    params.push(q, q, q, q, q);
+    params.push(q, q, q, q, q, q);
   }
 
   // Type/stage/status use LIKE so '%' means "all"
@@ -131,6 +133,8 @@ async function listCases(db, {
     "co.contact_lname": "COALESCE(MIN(CASE WHEN cr.case_relate_type = 'Primary' THEN co.contact_lname END), MIN(co.contact_lname))",
     "co.contact_name": "COALESCE(MIN(CASE WHEN cr.case_relate_type = 'Primary' THEN co.contact_name END), MIN(co.contact_name))",
     "c.case_number": "c.case_number",
+    // Blanks last both ways: most cases have no docket, so no caption.
+    "c.case_caption": "(NULLIF(c.case_caption, '') IS NULL), c.case_caption",
     "c.case_open_date": "c.case_open_date",
     "c.case_file_date": "c.case_file_date",
     "c.case_close_date": "c.case_close_date",
@@ -165,6 +169,12 @@ async function listCases(db, {
    LIMIT ? OFFSET ?`,
     [...params, parseInt(limit), parseInt(offset)],
   );
+
+  for (const c of cases) {
+    const contacts = typeof c.contacts === 'string' ? JSON.parse(c.contacts) : c.contacts;
+    const primary = (contacts || []).find((x) => x.contact_relate === 'Primary');
+    c.caption_adds_info = captionAddsInfo(c.case_caption, primary && primary.contact_name);
+  }
 
   const [[{ total }]] = await db.query(
     `SELECT COUNT(*) AS total
@@ -1031,6 +1041,10 @@ async function searchCases(db, { q = '', limit = 20 } = {}) {
      LIMIT ?`,
     [q, like, like, like, like, lim]
   );
+
+  for (const c of cases) {
+    c.caption_adds_info = captionAddsInfo(c.case_caption, c.primary_contact_name);
+  }
 
   return { cases, total: cases.length };
 }

@@ -248,6 +248,32 @@ d('list sorts on a real engine', () => {
       expect(ids(desc.cases, 'case_id')).toEqual(['CASEDDDD', 'CASECCCC', 'CASEBBBB', 'CASEAAAA']);
     });
 
+    test('caption sorts with blanks last, both ways', async () => {
+      await q(`UPDATE cases SET case_caption = 'In re Zed' WHERE case_id = 'CASEAAAA'`);
+      await q(`UPDATE cases SET case_caption = 'Able v. Baker' WHERE case_id = 'CASEBBBB'`);
+      await q(`UPDATE cases SET case_caption = '' WHERE case_id = 'CASECCCC'`);
+      try {
+        const asc = await caseService.listCases(pool, { sort_by: 'c.case_caption', sort_dir: 'ASC' });
+        expect(ids(asc.cases, 'case_id').slice(0, 2)).toEqual(['CASEBBBB', 'CASEAAAA']);
+        const desc = await caseService.listCases(pool, { sort_by: 'c.case_caption', sort_dir: 'DESC' });
+        expect(ids(desc.cases, 'case_id').slice(0, 2)).toEqual(['CASEAAAA', 'CASEBBBB']);
+      } finally {
+        await q(`UPDATE cases SET case_caption = NULL`);
+      }
+    });
+
+    test('each row says whether its caption adds to the Primary client', async () => {
+      await q(`UPDATE cases SET case_caption = 'In re Ann Able' WHERE case_id = 'CASEAAAA'`);
+      await q(`UPDATE cases SET case_caption = 'Cohen v. Moe' WHERE case_id = 'CASEBBBB'`);
+      try {
+        const r = await caseService.listCases(pool, { sort_by: 'c.case_id', sort_dir: 'ASC' });
+        const flags = Object.fromEntries(r.cases.map((c) => [c.case_id, c.caption_adds_info]));
+        expect(flags).toEqual({ CASEAAAA: false, CASEBBBB: true, CASECCCC: false, CASEDDDD: false });
+      } finally {
+        await q(`UPDATE cases SET case_caption = NULL`);
+      }
+    });
+
     test('a name search finds a Secondary-only client, and the total agrees', async () => {
       const r = await caseService.listCases(pool, { query: 'Kim Zed' });
       expect(ids(r.cases, 'case_id')).toEqual(['CASEAAAA']);
