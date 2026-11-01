@@ -1064,6 +1064,7 @@ function renderAnalyticsHtml() {
     + '<div class="analytics-row">'
     +   '<span class="a-label">Avg watch</span>'
     +   '<span class="a-value">' + ac + '%</span>'
+    +   '<span class="a-detail">(across plays)</span>'
     + '</div>'
     + ctaSection;
 }
@@ -1845,7 +1846,7 @@ function onCancel() {
 async function onDelete() {
   const r = await Swal.fire({
     title: 'Delete this video?',
-    text:  'The DB row will be removed. The MP4/poster/GIF in cloud storage will be left in place.',
+    text:  'The video and its entire view history (who watched, completion, button clicks) will be permanently deleted, and links already sent will stop working. The MP4/poster/GIF in cloud storage will be left in place.',
     icon:  'warning',
     showCancelButton: true,
     confirmButtonText: 'Delete',

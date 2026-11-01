@@ -2090,7 +2090,8 @@ losslessly (`-c copy -movflags +faststart`) — don't re-encode. Poster
 1280×720 JPG (doubles as link preview — pick a clean frame). GIF 480×270
 ~12fps ~3.5s two-pass palette; Outlook freezes GIFs to frame 1, so start
 on a camera-facing frame. Uploader gates: mp4 ≤500MB; insertion variants
-auto-drop when poster/GIF absent. Depth: manual 11-YisraVideo.
+auto-drop when poster/GIF absent. Depth: manual
+05-Subsystems/01-YisraVideo.
 
 ## 25. SCHEMA REF AUTO-GENERATION
 

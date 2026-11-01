@@ -23,10 +23,13 @@
  *   - cases.case_id is varchar(20) — 8 opaque chars, new ids uppercase
  *     Base32 / legacy ids mixed-case base64url (minted only by lib/caseId.js).
  *   - video_views.case_id was migrated from int → varchar(20) for Slice 2.
- *   - Resolution rule: most recent OPEN case where contact is the PRIMARY
- *     party (case_relate.case_relate_type = 'Primary').
+ *   - Resolution rule: the contact's best PRIMARY case
+ *     (case_relate.case_relate_type = 'Primary'), any stage. Active stages
+ *     (Open, Filed, Pending) rank first, then Concluded, then Closed; newest
+ *     case_open_date within a rank. Open alone missed every Filed client —
+ *     the 341 videos' whole audience.
  *   - Anonymous views (no contactId) → case_id NULL.
- *   - Contact with no Primary open case → case_id NULL.
+ *   - Contact with no Primary case → case_id NULL.
  */
 
 const crypto = require('crypto');
@@ -246,13 +249,14 @@ function hashIp(ip) {
 }
 
 /**
- * Most-recent OPEN case where the given contact is the PRIMARY party.
- * Returns the case_id (varchar) or null. NULL on anonymous (contactId == null)
- * and on contacts with no open primary case.
+ * The case a contact's view belongs to: their best PRIMARY case, any stage
+ * (ranking in the file header). Returns the case_id (varchar) or null. NULL on
+ * anonymous (contactId == null) and on contacts with no primary case.
  *
  * Verified column names against actual schema:
  *   - cases.case_id          (varchar(20))
- *   - cases.case_stage       (enum incl. 'Open')   — NOT case_status (free-form varchar)
+ *   - cases.case_stage       (enum Open/Pending/Filed/Concluded/Closed)
+ *                                                   — NOT case_status (free-form varchar)
  *   - cases.case_open_date   (date)
  *   - case_relate.case_relate_case_id    (FK to cases)
  *   - case_relate.case_relate_client_id  (FK to contacts)
@@ -266,8 +270,10 @@ async function resolveCaseIdForContact(db, contactId) {
        JOIN case_relate cr ON cr.case_relate_case_id = c.case_id
       WHERE cr.case_relate_client_id = ?
         AND cr.case_relate_type = 'Primary'
-        AND c.case_stage = 'Open'
-      ORDER BY c.case_open_date DESC, c.case_id DESC
+      ORDER BY CASE WHEN c.case_stage IN ('Open','Filed','Pending') THEN 0
+                    WHEN c.case_stage = 'Concluded' THEN 1
+                    ELSE 2 END,
+               c.case_open_date DESC, c.case_id DESC
       LIMIT 1`,
     [contactId]
   );
@@ -566,7 +572,9 @@ async function updateVideo(db, id, partial) {
 }
 
 /**
- * DB delete only. GCS objects intentionally orphaned. Aliases cascade.
+ * DB delete only. GCS objects intentionally orphaned. Aliases AND every
+ * video_views row cascade (FK ON DELETE CASCADE) — the view history goes too,
+ * which the manager's confirmation says.
  */
 async function deleteVideo(db, id) {
   const [result] = await db.query('DELETE FROM videos WHERE id = ?', [id]);
@@ -579,8 +587,7 @@ async function deleteVideo(db, id) {
 
 /**
  * Record a page-open. Single transaction:
- *   1. Resolve case_id from contactId (if any) — most recent open case
- *      where contact is Primary.
+ *   1. Resolve case_id from contactId (if any) — resolveCaseIdForContact.
  *   2. INSERT video_views row.
  *   3. UPDATE videos.view_count += 1.
  *
@@ -599,21 +606,7 @@ async function deleteVideo(db, id) {
 async function recordView(pool, { videoId, contactId, ipHash, userAgent }) {
   const viewId = await pool.withTransaction(async (conn) => {
 
-    let caseId = null;
-    if (contactId != null) {
-      const [rows] = await conn.query(
-        `SELECT c.case_id
-           FROM cases c
-           JOIN case_relate cr ON cr.case_relate_case_id = c.case_id
-          WHERE cr.case_relate_client_id = ?
-            AND cr.case_relate_type = 'Primary'
-            AND c.case_stage = 'Open'
-          ORDER BY c.case_open_date DESC, c.case_id DESC
-          LIMIT 1`,
-        [contactId]
-      );
-      caseId = rows.length ? rows[0].case_id : null;
-    }
+    const caseId = await resolveCaseIdForContact(conn, contactId);
 
     const [result] = await conn.query(
       `INSERT INTO video_views (video_id, contact_id, case_id, ip_hash, user_agent)
@@ -714,6 +707,8 @@ async function recordCtaClick(db, { viewId, videoId, label }) {
  * aggregation if JSON_TABLE is unavailable on the running MySQL version.
  *
  * mysql2 returns Decimal/string for SUM and AVG; coerce with Number().
+ * avg_completion_pct averages PLAYED views only: an open nobody pressed play
+ * on (a link scanner, usually) is not a watch of 0%. NULL with no plays → 0.
  */
 async function getVideoAnalytics(db, videoId) {
   // Resolve the soft-reset cutoff for this video. A missing video returns
@@ -741,7 +736,7 @@ async function getVideoAnalytics(db, videoId) {
         SUM(CASE WHEN contact_id IS NULL     THEN 1 ELSE 0 END)   AS anonymous_views,
         SUM(CASE WHEN played_at  IS NOT NULL THEN 1 ELSE 0 END)   AS played_count,
         SUM(CASE WHEN completion_pct = 100   THEN 1 ELSE 0 END)   AS completed_count,
-        ROUND(AVG(completion_pct))                                AS avg_completion_pct
+        ROUND(AVG(CASE WHEN played_at IS NOT NULL THEN completion_pct END)) AS avg_completion_pct
        FROM video_views
       WHERE video_id = ?
         AND opened_at >= ?`,
@@ -876,16 +871,19 @@ async function resetVideoAnalytics(pool, videoId) {
  * @param {object} [opts]
  * @param {boolean} [opts.autoFill=true]  if false, returns only hand-picked
  * @param {number}  [opts.limit=3]        max items returned
+ * @param {boolean} [opts.publicOnly=false] skip contact_only videos — for a
+ *                                        viewer whose link can't open them
  * @returns {Promise<object[]>}  rows with id, slug, title, gcs_poster_url,
  *                               gcs_gif_url, tags (JSON-hydrated). Up to limit.
  */
-async function getRelatedVideos(db, videoId, { autoFill = true, limit = 3 } = {}) {
+async function getRelatedVideos(db, videoId, { autoFill = true, limit = 3, publicOnly = false } = {}) {
   const [vRows] = await db.query(
     'SELECT id, related_video_ids, tags FROM videos WHERE id = ? LIMIT 1',
     [videoId]
   );
   if (!vRows.length) return [];
 
+  const accessClause = publicOnly ? "AND access_level = 'public'" : '';
   const handPicked = parseJsonField(vRows[0].related_video_ids) || [];
   const tags       = parseJsonField(vRows[0].tags) || [];
 
@@ -904,6 +902,7 @@ async function getRelatedVideos(db, videoId, { autoFill = true, limit = 3 } = {}
            FROM videos
           WHERE id IN (${placeholders})
             AND is_published = 1
+            ${accessClause}
             AND id != ?`,
         [...validIds, videoId]
       );
@@ -932,6 +931,7 @@ async function getRelatedVideos(db, videoId, { autoFill = true, limit = 3 } = {}
              FROM videos
             WHERE id NOT IN (${excludePh})
               AND is_published = 1
+              ${accessClause}
               AND JSON_OVERLAPS(tags, CAST(? AS JSON))
             ORDER BY RAND()
             LIMIT ?`,
@@ -945,6 +945,7 @@ async function getRelatedVideos(db, videoId, { autoFill = true, limit = 3 } = {}
              FROM videos
             WHERE id NOT IN (${excludePh})
               AND is_published = 1
+              ${accessClause}
               AND EXISTS (
                 SELECT 1
                   FROM JSON_TABLE(tags, '$[*]' COLUMNS (tag VARCHAR(255) PATH '$')) jt

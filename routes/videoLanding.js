@@ -165,13 +165,18 @@ function renderActions(actions, contactToken) {
  * no related videos — the template's {{RELATED_HTML}} substitution then
  * becomes empty, and the page just doesn't show the section.
  *
- * Each card preserves ?c= so the contact context follows across navigations.
+ * Each card carries the viewer's identity in the form it arrived in, so it
+ * follows across navigations: ?ct= for a token viewer — a card that downgraded
+ * to ?c= stripped the next page's action buttons and contact_only access —
+ * and ?c= for a legacy arrival, which must never be handed the token.
  */
 function renderRelated(relatedVideos, contactId, contactToken) {
   if (!Array.isArray(relatedVideos) || !relatedVideos.length) return '';
-  const cParam = contactId != null
-    ? '?c=' + encodeURIComponent(String(contactId))
-    : '';
+  const cParam = contactToken != null
+    ? '?ct=' + encodeURIComponent(String(contactToken))
+    : contactId != null
+      ? '?c=' + encodeURIComponent(String(contactId))
+      : '';
 
   const cards = relatedVideos.map(v => {
     const href  = '/v/' + encodeURIComponent(v.slug) + cParam;
@@ -248,12 +253,15 @@ router.get('/v/:slug', async (req, res) => {
     // (latently) defeat contact_only entirely. It is now ACCEPTED FOR
     // ATTRIBUTION ONLY and never satisfies the gate.
     //
-    // Why accept it at all: ~17 links carrying ?c= were sent to ~12 contacts
-    // between 2026-05 and 2026-08 and are still in inboxes. Rejecting the
-    // param would 404 a client on a video the firm sent them. Ignoring it
-    // silently would work too, but keeping the attribution costs one lookup
-    // and loses nothing — the integer never granted access before this change
-    // either, since all 17 videos are access_level='public'.
+    // Why accept it at all: the 341 and strategy-session sequences minted ?c=
+    // links until 2026-11-01 (templates 19 + 20, on every step version up to
+    // v2 / v1), so they are in inboxes and an enrollment pinned to an older
+    // version can still send one; public/sendingform-bk.html still builds one
+    // for the IRS transcripts video. Rejecting the param would 404 a client on a
+    // video the firm sent them. Ignoring it silently would work too, but
+    // keeping the attribution costs one lookup and loses nothing — the integer
+    // never granted access before this change either, since all 17 videos are
+    // access_level='public'.
     //
     // Precedence: ?ct= wins outright. A request carrying both uses the token
     // and ignores ?c= — no "fall back to the integer if the token misses",
@@ -297,19 +305,23 @@ router.get('/v/:slug', async (req, res) => {
     // ── Record the view (post-access-check). Tracking failures must not
     //    break rendering — log and continue with an empty viewId so the
     //    inline script no-ops.
+    //    HEAD is a link checker asking whether the URL works: nobody saw the
+    //    page, so it records nothing (Express routes HEAD through this GET).
     let viewId = '';
-    try {
-      const ipHash    = videoService.hashIp(getClientIp(req));
-      const userAgent = (req.headers['user-agent'] || '').slice(0, 255);
-      const r = await videoService.recordView(req.db, {
-        videoId:   video.id,
-        contactId,
-        ipHash,
-        userAgent,
-      });
-      if (r && r.viewId != null) viewId = String(r.viewId);
-    } catch (err) {
-      console.error('[GET /v/:slug] recordView failed:', err);
+    if (req.method !== 'HEAD') {
+      try {
+        const ipHash    = videoService.hashIp(getClientIp(req));
+        const userAgent = (req.headers['user-agent'] || '').slice(0, 255);
+        const r = await videoService.recordView(req.db, {
+          videoId:   video.id,
+          contactId,
+          ipHash,
+          userAgent,
+        });
+        if (r && r.viewId != null) viewId = String(r.viewId);
+      } catch (err) {
+        console.error('[GET /v/:slug] recordView failed:', err);
+      }
     }
 
     // ── Resolve related videos (hand-picked + tag auto-fill). Failures
@@ -317,8 +329,9 @@ router.get('/v/:slug', async (req, res) => {
     let relatedHtml = '';
     try {
       const related = await videoService.getRelatedVideos(req.db, video.id, {
-        autoFill: true,
-        limit:    3,
+        autoFill:   true,
+        limit:      3,
+        publicOnly: contactToken == null,
       });
       relatedHtml = renderRelated(related, contactId, contactToken);
     } catch (err) {

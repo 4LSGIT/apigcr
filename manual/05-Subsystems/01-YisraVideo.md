@@ -32,10 +32,10 @@ A "+ New Video" button in the top of the list pane creates a new video. A refres
 6. Add **Tags** — comma-separated. Tags drive related-video matching (see below).
 7. Pick an **Access Level**:
    - **Public** (default) — anyone with the URL can watch it.
-   - **Contact-only** — the URL only works when it carries a `?c=<contact_id>` parameter pointing to a real contact. Without it, the page returns 404. Useful for testimonials or gated content.
+   - **Contact-only** — the URL only works when it carries a `?ct=<contact_token>` parameter belonging to a real contact. Without it, the page returns 404. Useful for testimonials or gated content.
 8. Add **Action Buttons** — the row of clickable buttons that appears below the video on the landing page. For each button:
    - **Label** — what the button says ("Book My 341 Prep Call")
-   - **URL** — where it goes. Use `{{c}}` anywhere in the URL to insert the viewer's contact ID — e.g. `https://app.4lsg.com/book?c={{c}}`. When an anonymous viewer (no contact) opens the page, `{{c}}` becomes empty.
+   - **URL** — where it goes. Use `{{c}}` anywhere in the URL to insert the viewer's contact token — e.g. `https://app.4lsg.com/book?c={{c}}`. When a viewer arrives without a token (anonymous, or on an old `?c=` link), `{{c}}` becomes empty.
    - **Style** — Primary (filled), Secondary (outlined), or Ghost (text-only)
    - The ↑ ↓ buttons reorder them; ✕ removes one.
 9. **Related Videos** — pick up to 3 videos that should appear at the bottom of this video's landing page. The picker searches your published videos. If you pick fewer than 3, the system fills the rest by matching tags.
@@ -55,8 +55,10 @@ You can rewrite a slug at any time. The old slug becomes an **alias** — anyone
 There are three buttons on each video in the list:
 
 - **Copy landing URL** — `/v/<slug>` with no parameters. Use for posting publicly, QR codes, or anywhere you don't have a specific contact in mind.
-- **Copy URL for contact…** — opens a contact picker, then copies a URL with `?c=<contact_id>` appended. The action buttons on the page will then know who's watching.
-- **Copy embed snippet** — produces a clickable HTML block (poster image wrapped in a link to the landing page). When you have both a poster and a GIF, you'll see two snippets — one of each. The contact placeholder in the snippet is `{{contacts.contact_id}}`, which the campaign manager fills in automatically when sending; for one-off emails just paste it through Insert Video instead.
+- **Copy URL for contact…** — opens a contact picker, then copies a URL with `?ct=<contact_token>` appended. The action buttons on the page will then know who's watching.
+- **Copy embed snippet** — produces a clickable HTML block (poster image wrapped in a link to the landing page). When you have both a poster and a GIF, you'll see two snippets — one of each. The contact placeholder in the snippet is `{{contacts.contact_token}}`, which the campaign manager fills in automatically when sending; for one-off emails just paste it through Insert Video instead.
+
+A video link written into a sequence, workflow or template uses the same form: `https://4lsg.com/v/<slug>?ct={{contacts.contact_token|default:}}`. Keep the `|default:` — a few older contacts have no token, and without it they would be sent the placeholder itself. The older `?c=<contact_id>` form still opens the page and attributes the view, but it proves nothing about who clicked: it can't open a contact-only video, and action buttons on that page lose the viewer's identity.
 
 ### Insert Video buttons in the message editors
 
@@ -72,7 +74,7 @@ Click Insert Video, search and select the video, then choose the format:
 - **SMS with non-RingCentral sender** — inserts the URL as plain text at the cursor.
 - **SMS with RingCentral sender (MMS-capable)** — three options: plain SMS, MMS with poster, MMS with GIF. The MMS options write the URL to the SMS body AND attach the image to the message in one click.
 
-Insertion in single-contact contexts (the Communications composer, Sending Form) substitutes the real contact ID into the URL right away — what you see in the editor is what you'll send. In the Campaign Manager, the URL contains a placeholder that gets filled in per recipient at send time.
+Insertion in single-contact contexts (the Communications composer, Sending Form) substitutes the contact's real token into the URL right away — what you see in the editor is what you'll send. In the Campaign Manager, the URL contains a placeholder that gets filled in per recipient at send time.
 
 ---
 
@@ -80,17 +82,17 @@ Insertion in single-contact contexts (the Communications composer, Sending Form)
 
 The Analytics panel on each video shows:
 
-- **Total views** — every time someone opens the landing page, broken down into "identified" (a contact ID was on the URL) vs "anonymous" (no contact ID).
+- **Total views** — every time someone opens the landing page, broken down into "identified" (a contact token or ID was on the URL) vs "anonymous" (neither).
 - **Played** — how many of those viewers actually pressed play, with the percentage.
 - **Completed** — how many watched to the end (100% completion), with the percentage of plays.
-- **Avg watch** — the average completion percentage across all views.
+- **Avg watch** — the average completion percentage across views that were played. Opens nobody pressed play on don't pull it down.
 - **CTA clicks** — a list of action button clicks, by label, with counts.
 
-Views are recorded the moment the page opens, even before play. The contact ID and (when available) the contact's most recent open primary case are attached to each view in the database.
+Views are recorded the moment the page opens, even before play, so link scanners count: phone carriers and messaging apps fetch a texted link within seconds of sending it, usually twice, and nobody has seen the page. Trust **Played** over **Total views**. The contact and their primary case are attached to each view in the database — an active case (Open, Filed or Pending) first, then Concluded, then Closed, newest first within each.
 
 ### Resetting analytics
 
-The **Reset Analytics** button (in the analytics panel, only visible after you have views) zeros out the visible counters and stamps a "Stats since" timestamp on the video. Past view records are preserved in the database — they just stop counting toward the displayed stats.
+The **Reset** button (at the top of the analytics panel) zeros out the visible counters and stamps a "Stats since" timestamp on the video. Past view records are preserved in the database — they just stop counting toward the displayed stats.
 
 Use it when:
 
@@ -122,4 +124,4 @@ If a contact opens the same video twice, that's two views. If they open it once,
 
 ### Anonymous viewing is supported by design
 
-Sharing a public-access video without a `?c=` parameter is fine and counts as an anonymous view. Contact-only videos require a valid contact ID to render.
+Sharing a public-access video without a contact parameter is fine and counts as an anonymous view. Contact-only videos require a valid contact token (`?ct=`) to render.

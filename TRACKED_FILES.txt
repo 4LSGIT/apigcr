@@ -981,6 +981,7 @@ scripts/verify_strictstring_live.js
 scripts/yisramailP1MigrateConsent.js
 scripts/yisramailP2CheckInbound.js
 scripts/yisramailP3Migrate.js
+scripts/yisravidS1Data.js
 server.js
 services/adapters/email/gmail.js
 services/adapters/email/pabbly.js
@@ -1787,6 +1788,8 @@ tests/versionDiff.test.js
 tests/versionPredicateCoverage.test.js
 tests/videoLanding.actionUrl.test.js
 tests/videoLanding.rateLimit.test.js
+tests/videoLanding.related.test.js
+tests/videoService.mysql.test.js
 tests/vocabWriteGates.test.js
 tests/workflowCancel.test.js
 tests/workflowEngine.cancelAndLoopGuard.test.js
