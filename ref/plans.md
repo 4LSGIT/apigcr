@@ -1877,6 +1877,14 @@ Active surfaces with known next steps.
 
 - **zod advisory via puppeteer-core (Dependabot #29, 2026-10-27).** `puppeteer-core` is pinned at 25.3.0 → `chromium-bidi` → zod 3.25.76; the fix is zod 4.6.6, with no 3.x backport. Only reachable by messages from our own headless Chromium (`pdfRenderService`), not user input — so it's deferred, not dismissed. Fix = bump puppeteer-core (25.16.0 pulls a zod-4 chromium-bidi) and re-verify PDF rendering.
 
+- **`land.sh` could poll instead of watching** (launcher-nits, 2026-10-29):
+  `gh run watch` died repeatedly on a broken pipe to api.github.com on this
+  network. `land.sh` now reads the run's status and
+  conclusion rather than the watch's exit code, watches once more, and otherwise
+  ends on an inspect NO-GO; `--local-suite` is the way through. Polling `gh run
+  view` until the run completes would remove the failure. `local/` is
+  unversioned, so the change leaves no trace in a diff: say so when it ships.
+
 ## Carried from AI_CONTEXT §14 retirement (2026-09-14)
 
 Still-live items from the old PENDING/TODO section; verified against code/prod
