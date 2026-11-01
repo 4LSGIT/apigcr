@@ -630,7 +630,7 @@ body.swal2-shown > [aria-hidden="true"] {
        would only re-open the hole.
 
    .tab and .campaign-tab-button are excluded from the button rule below.
-   Without that, html[data-theme="dark"] button:not(...) (0,4,1) would
+   Without that, html[data-theme="dark"] button:not(...) (0,10,2) would
    outrank .tab (0,1,0) and undo their tokens.
 
    .swal2-styled is excluded for the same reason, and it is the reason this
@@ -651,18 +651,36 @@ body.swal2-shown > [aria-hidden="true"] {
    checklistView.html: rgb(26,30,42) where --danger-fill is #a52f23.
 
    The exclusion, not a specificity bump, is the fix: swal2's own rules are
-   already correct in both modes once nothing outranks them. */
+   already correct in both modes once nothing outranks them.
 
-html[data-theme="dark"] button:not(.big-button):not(.pop-button):not(.switch-button):not(.tab):not(.campaign-tab-button):not(.swal2-styled) {
+   The last :not() is that same fix for controls that show a selected state.
+   A class rule cannot paint past this one, so .na-slot-sel, .active and .on
+   were applied and invisible in dark: the appointment slot picker, the
+   contact, automations and checklist scope toggles, the e-sign dashboard
+   toggle, the pager's current page, the feature-strip pills. A whole class
+   is excluded where its own rules are tokenised. .pill-button (hardcoded
+   border) and .yc-f-toggle (no paint of its own) exclude only the selected
+   state, so at rest they keep this rule's look. A new button with a selected
+   state joins this list and tests/darkButtonStates.test.js in the same slice.
+   The current page is a disabled button, so button:disabled below skips it:
+   .yc-page-current:disabled (0,2,0) loses to that rule's dimming too. */
+
+html[data-theme="dark"] button:not(.big-button):not(.pop-button):not(.switch-button):not(.tab):not(.campaign-tab-button):not(.swal2-styled):not(.na-slot, .yc-page, .cseq-scope-btn, .crel-scope-btn, .ck-kinds button, .cx-scope button, .db-toggle button, .pill-button.active, .yc-filters.open > .yc-f-toggle) {
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 4px;
 }
-html[data-theme="dark"] button:not(.big-button):not(.pop-button):not(.switch-button):not(.tab):not(.campaign-tab-button):not(.swal2-styled):hover:not(:disabled) {
+html[data-theme="dark"] button:not(.big-button):not(.pop-button):not(.switch-button):not(.tab):not(.campaign-tab-button):not(.swal2-styled):not(.na-slot, .yc-page, .cseq-scope-btn, .crel-scope-btn, .ck-kinds button, .cx-scope button, .db-toggle button, .pill-button.active, .yc-filters.open > .yc-f-toggle):hover:not(:disabled) {
   background: var(--hover);
 }
-html[data-theme="dark"] button:disabled {
+/* .yc-f-toggle has no border of its own: excluded while open, it would drop
+   to the browser default (black, 2px) beside the toggle it just was. */
+html[data-theme="dark"] .yc-filters.open > .yc-f-toggle {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+html[data-theme="dark"] button:disabled:not(.yc-page-current) {
   opacity: 0.5;
 }
 html[data-theme="dark"] input,

@@ -1335,6 +1335,7 @@ tests/customFields.s5.test.js
 tests/customFields.s5b.test.js
 tests/customFields.s6.test.js
 tests/customView.rowExpand.test.js
+tests/darkButtonStates.test.js
 tests/dbConsoleSplitSql.test.js
 tests/dbPoolIdleRecycling.test.js
 tests/dbReportPool.test.js

@@ -644,6 +644,10 @@ showed and the slice left alone:
   Appts and Logs have no scroll box above 768px, so the survey at 1000 and 1200 has
   to run with every column on.
 
+## From the dark-button-state fix (2026-11-01) — deferred
+
+- **Retire style.css's global dark `button` rule.** It flattens every button it doesn't exclude to `--surface`/`--text`, on all 15 pages that load the sheet. The 2026-11-01 fix excluded the controls that lost a selected state; the rule still erases non-state paint: `.ck-btn-alt` (checklist's amber note button) and the e-sign placement editor's `.pe-btn.pe-primary`, whose fill never shows in dark. Demoting it with `:where()` is not a one-line fix: `.pe-*` is a hardcoded light palette, so its buttons would turn bright in dark until the editor is tokenised. Selected states the sweep left alone because they still read: `.cat-form-card.active` and `.pe-tt.on` (box-shadow), `.pe-li.on` (bold), `.pe-bind.on` (its text changes).
+
 ## custom_code containment — what the child process does NOT close (2026-10-22)
 
 Execution moved into a forked, scrubbed child (CLAUDE.md's invariant list has
