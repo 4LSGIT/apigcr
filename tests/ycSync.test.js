@@ -2606,3 +2606,82 @@ describe('auto-emit circuit breaker', () => {
     expect(seenB.filter(x => x === 'case:BBBB').length).toBe(8);
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// _sniff — checklists (A10)
+//
+// The doclink split again: a list belongs to its RECORD'S Notes & Lists
+// board, so a checklist write announces `checklist:<link_type>:<link>` —
+// never `case:<id>`, which would cost every open case file a full refetch
+// for a table it does not read. The routes live at the ROOT (/checklists).
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — checklist matchers (A10)', () => {
+  function spy(w) {
+    const seen = [];
+    ['checklist:*', 'case:*', 'contact:*'].forEach((a) => w.YC.on(a, '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin })));
+    return seen;
+  }
+
+  test('the three writes announce the RECORD whose notes-and-lists set changed, with a marker', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST',  '/checklists',          { id: 12, title: 'T', kind: 'checklist', link_type: 'case', link: 'AAAA', items: [] });
+    w.YC._sniff('POST',  '/checklists/12/items', { id: 12, title: 'T', kind: 'checklist', link_type: 'contact', link: '77', items: [{ id: 5 }] });
+    w.YC._sniff('PATCH', '/checkitems/5',        { id: 5, checklist_id: 12, name: 'x', status: 'complete', checklist: { id: 12, link_type: 'user', link: '6' } });
+    expect(seen).toEqual([
+      { addr: 'checklist:case:AAAA', fields: { yc_refetch: 1 }, origin: 'auto:POST /checklists' },
+      { addr: 'checklist:contact:77', fields: { yc_refetch: 1 }, origin: 'auto:POST /checklists/12/items' },
+      { addr: 'checklist:user:6', fields: { yc_refetch: 1 }, origin: 'auto:PATCH /checkitems/5' },
+    ]);
+  });
+
+  test('FAILS CLOSED: an unlinked list, a missing echo, an item row with no parent echo', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST',  '/checklists',          { id: 13, link_type: null, link: null });
+    w.YC._sniff('POST',  '/checklists',          { id: 13, link_type: 'case', link: '' });
+    w.YC._sniff('POST',  '/checklists/13/items', { status: 'error' });
+    // The item row ALONE (the pre-A10 PATCH answer) names no record.
+    w.YC._sniff('PATCH', '/checkitems/5',        { id: 5, checklist_id: 12, name: 'x', status: 'complete', link_type: 'case', link: 'AAAA' });
+    w.YC._sniff('PATCH', '/checkitems/5',        { id: 5, checklist: { id: 12, link_type: '', link: 'AAAA' } });
+    expect(seen).toEqual([]);
+  });
+
+  test('only the three writes: GET, the other list writes, upsert-items and an /api prefix are silent', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    const row = { id: 12, link_type: 'case', link: 'AAAA', checklist: { id: 12, link_type: 'case', link: 'AAAA' } };
+    w.YC._sniff('GET',    '/checklists', row);
+    w.YC._sniff('GET',    '/checklists/12', row);
+    w.YC._sniff('PATCH',  '/checklists/12', row);
+    w.YC._sniff('DELETE', '/checklists/12', row);
+    w.YC._sniff('DELETE', '/checkitems/5', row);
+    w.YC._sniff('POST',   '/checkitems/5', row);
+    w.YC._sniff('PATCH',  '/checklists', row);
+    w.YC._sniff('POST',   '/checklists/upsert-items', row);
+    w.YC._sniff('POST',   '/checklists/abc/items', row);
+    w.YC._sniff('POST',   '/api/checklists', row);
+    w.YC._sniff('PATCH',  '/api/checkitems/5', row);
+    expect(seen).toEqual([]);
+  });
+
+  test('it never wakes a case or contact page — the record row did not change', () => {
+    const w = mkWindow();
+    const seen = [];
+    ['case:*', 'contact:*'].forEach((a) => w.YC.on(a, '*', (f, m) => seen.push(m.addr)));
+    w.YC._sniff('POST', '/checklists/12/items', { id: 12, link_type: 'case', link: 'AAAA' });
+    w.YC._sniff('POST', '/checklists', { id: 14, link_type: 'contact', link: '77' });
+    expect(seen).toEqual([]);
+  });
+
+  test('a query string is stripped; a checklist write crosses windows — the board open elsewhere hears it', async () => {
+    const a = mkWindow();
+    const b = mkWindow();
+    const seenB = [];
+    b.YC.on('checklist:case:AAAA', '*', (f, m) => seenB.push({ addr: m.addr, fields: f }));
+    a.YC._sniff('PATCH', '/checkitems/5?x=1', { id: 5, checklist: { id: 12, link_type: 'case', link: 'AAAA' } });
+    await settle();
+    expect(seenB).toEqual([{ addr: 'checklist:case:AAAA', fields: { yc_refetch: 1 } }]);
+  });
+});

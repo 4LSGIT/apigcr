@@ -861,7 +861,13 @@ router.patch('/checkitems/:id', jwtOrApiKey, async (req, res) => {
       await computeAndSaveStatus(req.db, parent.checklist_id);
 
     const [[updated]] = await req.db.query('SELECT * FROM checkitems WHERE id = ?', [req.params.id]);
-    res.json(updated);
+    // The item row, byte-identical, PLUS its parent's address (A10, additive):
+    // the yc-sync matcher announces `checklist:<link_type>:<link>` from it, so
+    // an open Notes & Lists board for that record hears the change. The item
+    // row itself carries no link.
+    res.json(updated
+      ? { ...updated, checklist: { id: parent.checklist_id, link_type: parent.link_type, link: parent.link } }
+      : updated);
 
     // Triggers (fire-and-forget, post-response). Transition-gated: idempotent
     // re-saves of an already-complete item fire nothing. Own try: the route's

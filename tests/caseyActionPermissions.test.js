@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 57 shipped kinds:
+ * These tests ask that claim two questions for all 60 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 57 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 60 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -119,6 +119,10 @@ const KINDS = [
   // A9: both pipeline kinds POST the case page's own advance (routes/api.pipeline.js).
   { kind: 'case.pipeline.advance.v1', method: 'POST', path: '/api/cases/1/pipeline/advance' },
   { kind: 'case.pipeline.move.v1', method: 'POST', path: '/api/cases/1/pipeline/advance' },
+  // A10: the Notes & Lists routes, mounted at the ROOT (routes/api.checklists.js).
+  { kind: 'checklist.create.v1', method: 'POST', path: '/checklists' },
+  { kind: 'checklist.item.add.v1', method: 'POST', path: '/checklists/1/items' },
+  { kind: 'checklist.item.update.v1', method: 'PATCH', path: '/checkitems/1' },
   { kind: 'job.code_safe.create.v1', method: 'POST', path: '/scheduled-jobs' },
   { kind: 'workflow.draft.v1', method: 'POST', path: '/workflows/bulk' },
   { kind: 'workflow.step_insert.v1', method: 'POST', path: '/workflows/1/steps' },
@@ -169,7 +173,11 @@ const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/api.contactRelation
   'routes/api.reports.js',
   // A20.2 / A20.3: the ingest rule routes — jwtOrApiKey, plus the ingest code
   // gate (automations.manage) on requests that carry a code body only.
-  'routes/api.emailIngest.js', 'routes/api.phoneIngest.js'];
+  'routes/api.emailIngest.js', 'routes/api.phoneIngest.js',
+  // A10: the checklist routes — jwtOrApiKey only; isSuperuser gates the tag
+  // write and the personal-list detach, neither of which a card sends (pinned
+  // below).
+  'routes/api.checklists.js'];
 
 // ── Shared HTTP harness: the real routers behind the real jwtOrApiKey ──────
 // Both sections drive the SAME routers. Section 1 hands them a stub req.db
@@ -220,19 +228,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 57 kinds (no database)
+// SECTION 1 — the route-level gate, for all 60 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 57 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 60 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 57 kinds cover 50 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(57);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(50);
+  test('the 60 kinds cover 53 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(60);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(53);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -240,7 +248,7 @@ describe('P2 — what the canonical write route gates on (all 57 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 57', async () => {
+  test('no token: every kind is 401 — authentication is required for all 60', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -344,6 +352,28 @@ describe('P2 — what the canonical write route gates on (all 57 shipped kinds)'
       expect({ f, superuser: /isSuperuser|superuserOnly/.test(src) }).toEqual({ f, superuser: false });
       expect({ f, jwtOrApiKey: /require\('\.\.\/lib\/auth\.jwtOrApiKey'\)/.test(src) })
         .toEqual({ f, jwtOrApiKey: true });
+    }
+  });
+
+  // A10: the checklist routes are jwtOrApiKey only. Their two isSuperuser
+  // reads are mayWriteTag (a tag on a list or item — refused by name before a
+  // card exists, never in a card's body) and mayDetachPersonal (DELETE, or a
+  // PATCH re-homing a list — no card sends either). A roleless staff token
+  // reaches all three handlers: past the gate, the stub db's empty rows read
+  // as 'not found' (404) or a created row (201), never 401/403.
+  test('A10 route file: no capability gate; isSuperuser only behind the tag and detach checks', async () => {
+    const src = read('routes/api.checklists.js');
+    expect(/requireAuth/.test(src)).toBe(false);
+    expect(/\bcan\(\s*req\.auth/.test(src)).toBe(false);
+    expect([...src.matchAll(/isSuperuser\(auth\)/g)].length).toBe(2);
+    expect(src).toContain("return auth?.type === 'api_key' || isSuperuser(auth);");
+    for (const mount of ["router.post('/checklists', jwtOrApiKey", "router.post('/checklists/:id/items', jwtOrApiKey", "router.patch('/checkitems/:id', jwtOrApiKey"]) {
+      expect(src).toContain(mount);
+    }
+    const a = app();
+    for (const k of KINDS.filter((x) => x.kind.startsWith('checklist.'))) {
+      const res = await call(a, k, bearer(token({ roles: ['staff'] })), k.method === 'PATCH' ? { status: 'complete' } : { title: 'T', name: 'N' });
+      expect({ kind: k.kind, gated: [401, 403].includes(res.status) }).toEqual({ kind: k.kind, gated: false });
     }
   });
 

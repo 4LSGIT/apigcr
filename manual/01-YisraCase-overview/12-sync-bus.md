@@ -21,7 +21,7 @@ Core doctrine: **the bus carries values, not "something changed" pings** — a m
   - `YC.on(addr, field, fn)` — `field '*'` = any; `addr 'case:*'` = wildcard over one type (cannot cross types). Returns unsubscribe.
   - `YC.bindValue(addr, field, el)` — guarded input binding (skips focused / `ycDirty` elements).
   - `YC._log` — ring buffer of the last 50 messages, for debugging.
-- **Addresses:** `case:<id>` · `contact:<id>` · `appt:<id>` · `event:<id>` · `setting:<key>`.
+- **Addresses:** `case:<id>` · `contact:<id>` · `appt:<id>` · `event:<id>` · `setting:<key>` · `checklist:<link_type>:<link>` (the set of notes & lists on one record).
 - **Message:** `{addr, fields, origin, ts}`. `origin` is a trace string (`auto:PATCH /api/cases/AAAA`, `checklistView:saveBody`).
 
 ## How announcements happen — the sniff
@@ -42,6 +42,7 @@ Matched endpoints (read `MATCHERS` in yc-sync.js for the always-current list —
 | `/api/app-settings/:key` (PUT) · `/api/app-settings` (POST create) · `/api/app-settings/:key/restore` (POST) | | `setting:<key>` with `{value}` |
 | `/api/intake/contact` · `/api/intake/case` | POST | `yc_refetch` for `created`/`updated`; `found` is silent (writes nothing) |
 | `/api/appts…` (PATCH, attended/no-show, create, cancel, reschedule — reschedule emits **both** old and new ids) · `/api/events…` (PATCH, complete/cancel, create) | | `yc_refetch` markers |
+| `/checklists` (POST) · `/checklists/:id/items` (POST) · `/checkitems/:id` (PATCH) — root routes, no `/api` | | `yc_refetch` to `checklist:<link_type>:<link>`, the list's record (from the list row; the item PATCH echoes `checklist: {id, link_type, link}` for it); an unlinked list is silent. Other list writes (PATCH/DELETE a list, DELETE an item, upsert-items) are not matched |
 
 **`yc_refetch` is a reserved field**: "refetch this entity." It exists for the two shapes values can't express — an *absence* (a row left: transfers, relate removals) and a *response that carries no values* (appts/events). Handlers must never merge it into entity state. It is the only sanctioned invalidation on the bus.
 
@@ -57,7 +58,7 @@ Matched endpoints (read `MATCHERS` in yc-sync.js for the always-current list —
 | Shell | `setting:*` | writes `firmData.settings` in place (`applyFeSetting`) |
 | case.html | `case:<own>`, `setting:fe-*`, `appt:*`, `event:*` | merge into `entityData` → fenced paints (Overview inputs, notes, header, caption, alerts) → pipeline refetch on `pipeline_phase` → serialized form push; `yc_refetch` → queued full refetch |
 | contact.html | `contact:<own>`, `appt:*`, `event:*` | same shape, no pipeline |
-| checklistView | per native card | updates the card body behind dirty/inflight/value-equality fences |
+| checklistView | per native card; `checklist:*` | updates the card body behind dirty/inflight/value-equality fences; a `checklist:` marker for its own record or (case board) a contact group reloads the board — skipped on its own echo (api() stamps writes, 1.5s), parked while hidden or typed in and reloaded on refocus / visibility / tab re-entry |
 | pipelineBoard | `case:*` | full board refetch (query view — membership is server-computed), scroll preserved |
 | calendar | `appt:*`, `event:*` | FullCalendar `refetchEvents()` |
 

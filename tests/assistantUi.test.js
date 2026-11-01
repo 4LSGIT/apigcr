@@ -73,6 +73,9 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'caseContactSignature', 'caseContactPrecheck', 'caseContactResult', 'caseContactKnownOutcome',
   'casePipelineLabel', 'casePipelineCaseLabel', 'casePipelineStageName', 'casePipelineText', 'casePipelineRequest',
   'casePipelinePassed', 'casePipelinePrecheck', 'casePipelineResult', 'casePipelineKnownOutcome',
+  'checklistFoldTitle', 'checklistLabel', 'checklistParentLabel', 'checklistListLine', 'checklistText', 'checklistCreateBody',
+  'checklistRequest', 'checkitemRequest', 'checklistCreatePrecheck', 'checklistListPrecheck', 'checklistPrecheck', 'checkitemPrecheck',
+  'checklistResult', 'checkitemResult', 'checklistKnownOutcome', 'checklistOpenPersonal', 'checklistEntity', 'checklistOpen',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
   'workflowDraftLabel', 'workflowSendLines', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
   'workflowStepActionLabel', 'workflowStepWorkflowLine', 'workflowStepInsertText', 'workflowStepEditValue',
@@ -109,6 +112,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'RECORD_TEXT_CONTEXT'), constSrc(html, 'RECORD_TEXT_PART_MAX'), constSrc(html, 'RECORD_TEXT_WORD_MAX'),
     constSrc(html, 'CASE_CONTACT_ACTION_KINDS'), constSrc(html, 'CASE_CONTACT_TYPES'),
     constSrc(html, 'CASE_PIPELINE_ACTION_KINDS'), constSrc(html, 'CASE_PIPELINE_STAGE_KEY'), constSrc(html, 'CASE_PIPELINE_OPEN'),
+    constSrc(html, 'CHECKLIST_ACTION_KINDS'), constSrc(html, 'CHECKITEM_ACTION_KINDS'), constSrc(html, 'CHECKLIST_LINK_TYPES'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
     constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEQUENCE_ENROLL_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
@@ -3088,6 +3092,247 @@ describe('A9 case pipeline cards (case.pipeline.advance / move)', () => {
     expect([[...fam.kinds], fam.idField, fam.appliedKey, !!fam.stringReceipt])
       .toEqual([['case.pipeline.advance.v1', 'case.pipeline.move.v1'], 'case_id', 'result_pipeline_case_id', true]);
     for (const kind of ['case.pipeline.override.v1', 'case.stage.advance.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    dom.window.close();
+  });
+});
+
+describe('A10 checklist cards (checklist.create / item.add / item.update)', () => {
+  const CASE_ID = '7KQ2M9XA';
+  const parentCase = { link_type: 'case', link: CASE_ID, case_id: CASE_ID, case_number: '25-12345-abc', case_type: 'Chapter 7', label: 'case 25-12345-abc' };
+  const LIST = { checklist_id: 412, title: 'Pre-filing to-dos', kind: 'checklist', status: 'incomplete', link_type: 'case', link: CASE_ID, tag: null, docs_list: false };
+  const ITEMS = [{ id: 5120, checklist_id: 412, name: 'Pull credit report', status: 'incomplete', position: 1 },
+    { id: 5121, checklist_id: 412, name: 'Order transcripts', status: 'complete', position: 2 }];
+  const SIG = ['5120:incomplete:Pull credit report', '5121:complete:Order transcripts'];
+  // Model-shaped junk that must never reach a request.
+  const JUNK = { tag: 'docs_needed', position: 0, created_by: 1, status_override: 'complete' };
+  const create = (over = {}) => ({ action_draft: {
+    draft_id: '1a1a1a1a-1b2c-4d3e-8f40-123456789abc', kind: 'checklist.create.v1', status: 'draft', received_at: Date.now(),
+    list: { title: 'Pre-filing to-dos 2', list_kind: 'checklist', body: null, link_type: 'case', link: CASE_ID, tag: 'docs_needed' },
+    parent: parentCase, items: ['Pull credit report', 'Order transcripts'], existing_total: 2,
+    effects: ['Trigger event: none — creating a list emits no event, so no trigger rule runs.'], warnings: [],
+    expected: { link_type: 'case', link: CASE_ID, list_ids: [412, 413] }, evidence: [], ...JUNK, ...over } });
+  const add = (over = {}) => ({ action_draft: {
+    draft_id: '2b2b2b2b-1b2c-4d3e-8f40-123456789abc', kind: 'checklist.item.add.v1', status: 'draft', received_at: Date.now(),
+    list: { ...LIST }, parent: parentCase, item: { name: '2024 W-2', status: 'complete', position: 1 },
+    items_before: [{ name: 'Pull credit report', status: 'incomplete' }, { name: 'Order transcripts', status: 'complete' }], items_total: 2,
+    list_status: { from: 'incomplete', to: 'incomplete' }, effects: [], warnings: [],
+    expected: { title: LIST.title, kind: 'checklist', link_type: 'case', link: CASE_ID, tag: null, status: 'incomplete', items: SIG },
+    evidence: [], ...JUNK, ...over } });
+  const update = (over = {}) => ({ action_draft: {
+    draft_id: '3c3c3c3c-1b2c-4d3e-8f40-123456789abc', kind: 'checklist.item.update.v1', status: 'draft', received_at: Date.now(),
+    list: { ...LIST }, parent: parentCase,
+    item: { checkitem_id: 5120, checklist_id: 412, from: { name: 'Pull credit report', status: 'incomplete' }, to: { name: 'Pull credit report', status: 'complete' } },
+    changes: { name: null, status: 'complete' }, list_status: { from: 'incomplete', to: 'complete' },
+    automation: { events: ['checkitem.completed', 'checklist.completed'], lines: ['Trigger rule #31 "Item done → log" runs: calls create_log'], rules_checked: 2, quiet: 1 },
+    effects: ['List status: "Pre-filing to-dos" becomes COMPLETE — this is its last open item.'], warnings: [],
+    expected: { title: LIST.title, kind: 'checklist', link_type: 'case', link: CASE_ID, tag: null, status: 'incomplete', items: SIG },
+    evidence: [], ...JUNK, ...over } });
+  const listGet = (over = {}) => ({ id: 412, title: LIST.title, kind: 'checklist', status: 'incomplete', link_type: 'case', link: CASE_ID, tag: null,
+    items: ITEMS.map((i) => ({ ...i })), ...over });
+  const reads = (over = {}) => (path, body) => {
+    if (path === `/api/cases/${CASE_ID}`) { if (over.caseGone) throw Object.assign(new Error('Case not found'), { status: 404 }); return { case: { case_id: CASE_ID } }; }
+    if (path === '/api/contacts/77') return { contact: { contact_id: 77 } };
+    if (path === '/checklists') {
+      expect(body).toEqual(over.listQuery || { link_type: 'case', link: CASE_ID, limit: 1000 });
+      const rows = over.lists || [{ id: 412 }, { id: 413 }];
+      return { checklists: rows, total: over.total != null ? over.total : rows.length };
+    }
+    if (path === '/checklists/412') { if (over.listGone) throw Object.assign(new Error('Checklist not found'), { status: 404 }); return over.list || listGet(); }
+    throw new Error(`unexpected read ${path}`);
+  };
+  function runList(message, { read = reads(), write, confirm = true } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); return read(path, body); }
+      writes.push({ path, body, method, headers }); return write(path, body, method);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a10' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) } };
+    const history = []; const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, openEntity, sandbox }));
+  }
+  const created = async (path, body) => ({ id: 777, title: body.title, kind: body.kind, status: 'incomplete', link_type: body.link_type, link: body.link, tag: null,
+    items: (body.items || []).map((i, n) => ({ id: 900 + n, name: i.name, status: 'incomplete', position: n + 1 })) });
+  const listed = async (path, body) => ({ ...listGet(), items: [...ITEMS, { id: 5122, checklist_id: 412, name: body.name, status: 'incomplete', position: 3 }] });
+  const patched = async () => ({ id: 5120, checklist_id: 412, name: 'Pull credit report', status: 'complete', position: 1, tag: null, checklist: { id: 412, link_type: 'case', link: CASE_ID } });
+
+  test('create: re-reads the record and its lists; ONE POST /checklists of the closed body (no tag, no position); integer list receipt', async () => {
+    const m = create();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runList(m, { write: created });
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('checklist');
+    expect(gets).toEqual([`/api/cases/${CASE_ID}`, '/checklists']);
+    expect(writes).toEqual([{ path: '/checklists', method: 'POST', headers: undefined,
+      body: { title: 'Pre-filing to-dos 2', kind: 'checklist', link_type: 'case', link: CASE_ID, items: [{ name: 'Pull credit report' }, { name: 'Order transcripts' }] } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a10', result: { checklist_id: 777 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_checklist_id: 777 });
+    expect(history[0].text).toBe('Create checklist applied to checklist #777.');
+    expect(history[0].entities).toEqual([{ kind: 'case', id: CASE_ID, label: '25-12345-abc' }]);
+    expect(openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345-abc');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'question', confirmButtonText: 'Create checklist' });
+    for (const line of ['On: case 25-12345-abc', 'Title: "Pre-filing to-dos 2"', 'Kind: checklist (items)',
+      'Items: 2 — "Pull credit report"; "Order transcripts"', 'Notes and lists already on this record: 2',
+      'Effect: Trigger event: none — creating a list emits no event, so no trigger rule runs.',
+      'Writes: one new checklist and its 2 item(s) — no tag, nothing else.',
+      'Stale check: if a note or list is added to or removed from this record before you apply, nothing is written.']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+  });
+
+  test('create: a note sends its body and no items; a personal list reads only its own lists; a contact list checks the contact', async () => {
+    const note = create({ list: { title: 'Call log 2', list_kind: 'note', body: 'First call', link_type: 'case', link: CASE_ID }, items: [] });
+    const rn = await runList(note, { write: created });
+    expect(rn.writes[0].body).toEqual({ title: 'Call log 2', kind: 'note', link_type: 'case', link: CASE_ID, body: 'First call' });
+    expect(rn.P.Swal.fire.mock.calls[0][0].text).toContain('Body: 10 characters — "First call"');
+    const mine = create({ list: { title: 'Errands', list_kind: 'checklist', body: null, link_type: 'user', link: '6' }, items: [],
+      parent: { link_type: 'user', link: '6', user_id: 6, label: 'your personal list' }, expected: { link_type: 'user', link: '6', list_ids: [23] } });
+    const rm = await runList(mine, { write: created, read: reads({ listQuery: { link_type: 'user', link: '6', limit: 1000 }, lists: [{ id: 23 }] }) });
+    expect([rm.gets, rm.writes[0].body]).toEqual([['/checklists'], { title: 'Errands', kind: 'checklist', link_type: 'user', link: '6' }]);
+    expect(rm.history[0].entities).toEqual([{ kind: 'checklist', id: '777', label: 'Errands' }]);
+    expect(rm.openEntity).toHaveBeenCalledWith('checklist', '777', 'Errands');
+    const contact = create({ list: { title: 'Intake', list_kind: 'checklist', body: null, link_type: 'contact', link: '77' }, items: [],
+      parent: { link_type: 'contact', link: '77', contact_id: 77, contact_name: 'Dana Client', label: 'Dana Client (contact #77)' }, expected: { link_type: 'contact', link: '77', list_ids: [] } });
+    const rc = await runList(contact, { write: created, read: reads({ listQuery: { link_type: 'contact', link: '77', limit: 1000 }, lists: [] }) });
+    expect([rc.gets, rc.history[0].entities]).toEqual([['/api/contacts/77', '/checklists'], [{ kind: 'contact', id: '77', label: 'Dana Client' }]]);
+  });
+
+  test('item add: re-reads the list; ONE POST /checklists/:id/items {name}; integer list receipt; danger when a warning', async () => {
+    const m = add({ warnings: ['CLIENT-VISIBLE: this is case 25-12345-abc\'s DOCS list — …'] });
+    const { writes, gets, ledger, P, history } = await runList(m, { write: listed });
+    expect(gets).toEqual(['/checklists/412']);
+    expect(writes).toEqual([{ path: '/checklists/412/items', method: 'POST', headers: undefined, body: { name: '2024 W-2' } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a10', result: { checklist_id: 412 } } }]);
+    expect(history[0].text).toBe('Add checklist item applied to checklist #412.');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Add checklist item' });
+    for (const line of ['List: "Pre-filing to-dos" (list #412, checklist, incomplete) on case 25-12345-abc', 'New item: "2024 W-2" (incomplete, at the end)',
+      'Items now (2): "Pull credit report" (incomplete); "Order transcripts" (complete)', 'List status: incomplete (unchanged)',
+      'Warning: CLIENT-VISIBLE: this is case 25-12345-abc\'s DOCS list']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+  });
+
+  test('item update: re-reads the list; ONE PATCH /checkitems/:id of only the changed field; the item receipt; the automation lines', async () => {
+    const m = update();
+    const { writes, gets, ledger, P, history, sandbox } = await runList(m, { write: patched });
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('checkitem');
+    expect(gets).toEqual(['/checklists/412']);
+    expect(writes).toEqual([{ path: '/checkitems/5120', method: 'PATCH', headers: undefined, body: { status: 'complete' } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a10', result: { checkitem_id: 5120 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_checkitem_id: 5120 });
+    expect(history[0].text).toBe('Check off item applied to checklist item #5120.');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    for (const line of ['Item: #5120 "Pull credit report"', 'Status: incomplete → complete', 'List status: incomplete → complete',
+      'Automation: 2 active trigger rule(s) on checkitem.completed / checklist.completed checked; 1 would act:',
+      'Automation: Trigger rule #31 "Item done → log" runs: calls create_log']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+    const rename = update({ changes: { name: 'Pull all three reports', status: null },
+      item: { checkitem_id: 5120, checklist_id: 412, from: { name: 'Pull credit report', status: 'incomplete' }, to: { name: 'Pull all three reports', status: 'incomplete' } } });
+    const rr = await runList(rename, { write: async () => ({ ...(await patched()), name: 'Pull all three reports', status: 'incomplete' }) });
+    expect([rr.writes[0].body, rr.P.Swal.fire.mock.calls[0][0].confirmButtonText]).toEqual([{ name: 'Pull all three reports' }, 'Rename item']);
+  });
+
+  test('the builders fix route, method and body; a bad card never reaches a read, the claim or the route', async () => {
+    for (const [message, why] of [
+      [create({ list: { title: 'Docs Needed', list_kind: 'checklist', body: null, link_type: 'case', link: CASE_ID } }), 'client-facing docs list'],
+      [create({ list: { title: 'docs NEEDED ', list_kind: 'checklist', body: null, link_type: 'case', link: CASE_ID } }), 'client-facing docs list'],
+      [create({ list: { title: 'Döcs Needed', list_kind: 'checklist', body: null, link_type: 'case', link: CASE_ID } }), 'client-facing docs list'],
+      [create({ list: { title: 'x'.repeat(256), list_kind: 'checklist', body: null, link_type: 'case', link: CASE_ID } }), 'no usable title'],
+      [create({ list: { title: 'T', list_kind: 'checklist', body: null, link_type: 'appt', link: '5' } }), 'no usable record'],
+      [create({ list: { title: 'T', list_kind: 'checklist', body: null, link_type: 'contact', link: 'abc' } }), 'no usable record id'],
+      [create({ list: { title: 'T', list_kind: 'note', body: null, link_type: 'case', link: CASE_ID } }), 'A note holds no items'],
+      [create({ list: { title: 'T', list_kind: 'checklist', body: 'x', link_type: 'case', link: CASE_ID } }), 'A checklist holds no body'],
+      [create({ items: Array.from({ length: 26 }, (_, i) => `i${i}`) }), 'items are unusable'],
+      [create({ items: [{ name: 'object item' }] }), 'items are unusable'],
+      [add({ list: { ...LIST, checklist_id: 0 } }), 'no usable list id'],
+      [add({ item: { name: ' ' } }), 'no usable item name'],
+      [update({ changes: { name: null, status: null } }), 'changes nothing'],
+      [update({ changes: { name: null, status: 'done' } }), 'no usable item status'],
+      [update({ item: { checkitem_id: 'x' } }), 'no usable item id'],
+    ]) {
+      const x = await runList(message, { write: created });
+      expect({ why, gets: x.gets, ledger: x.ledger, writes: x.writes }).toEqual({ why, gets: [], ledger: [], writes: [] });
+      expect(message.action_draft.action_error).toContain(why);
+    }
+  });
+
+  test('click-time freshness refuses BEFORE the claim, on ANY difference', async () => {
+    for (const [message, read, why] of [
+      [create(), reads({ lists: [{ id: 412 }, { id: 413 }, { id: 414 }] }), 'The notes and lists on case 25-12345-abc changed since this card was prepared (one was added or removed). Nothing was written.'],
+      [create(), reads({ lists: [{ id: 412 }] }), 'changed since this card was prepared'],
+      [create(), reads({ total: 1001 }), 'changed since this card was prepared'],
+      [create(), reads({ caseGone: true }), 'case 25-12345-abc no longer exists. Nothing was written.'],
+      [add(), reads({ listGone: true }), 'The list "Pre-filing to-dos" no longer exists. Nothing was written.'],
+      [add(), reads({ list: listGet({ title: 'Renamed' }) }), 'The list "Pre-filing to-dos" changed since this card was prepared (its title, kind, record, tag or status)'],
+      [add(), reads({ list: listGet({ tag: 'docs_needed' }) }), 'changed since this card was prepared (its title'],
+      [add(), reads({ list: listGet({ status: 'complete' }) }), 'changed since this card was prepared (its title'],
+      [add(), reads({ list: listGet({ link: 'OTHER123' }) }), 'changed since this card was prepared (its title'],
+      [add(), reads({ list: listGet({ items: [...ITEMS, { id: 5122, name: '2024 W-2', status: 'incomplete' }] }) }), 'The items on "Pre-filing to-dos" changed since this card was prepared'],
+      [add(), reads({ list: listGet({ items: [ITEMS[0], { ...ITEMS[1], status: 'incomplete' }] }) }), 'The items on "Pre-filing to-dos" changed'],
+      [update(), reads({ list: listGet({ items: [{ ...ITEMS[0], name: 'Pull reports' }, ITEMS[1]] }) }), 'The items on "Pre-filing to-dos" changed'],
+      [update(), reads({ list: listGet({ items: [ITEMS[1]] }) }), 'That item is no longer on "Pre-filing to-dos" — it was removed. Nothing was written.'],
+    ]) {
+      const x = await runList(message, { read, write: created });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(message.action_draft.refusal_error).toContain(why);
+    }
+    // An unreadable list leaves the card retryable (nothing claimed).
+    const u = add();
+    const ur = await runList(u, { read: reads({ list: { status: 'error-ish' } }), write: created });
+    expect([ur.writes, ur.ledger]).toEqual([[], []]);
+    expect(u.action_draft.action_error).toMatch(/^Could not re-check the record before applying \(the list could not be read\)/);
+  });
+
+  test('outcomes: a 404 is a refusal that wrote nothing; a 400 refuses; a 500 and an unconfirmed answer stay ambiguous', async () => {
+    const gone = add();
+    await runList(gone, { write: async () => { throw Object.assign(new Error('Checklist not found'), { status: 404 }); } });
+    expect(gone.action_draft.refusal_error).toBe('Refused — nothing written: that list no longer exists (someone removed it). Ask Casey to read the list again.');
+    const goneItem = update();
+    await runList(goneItem, { write: async () => { throw Object.assign(new Error('Item not found'), { status: 404 }); } });
+    expect(goneItem.action_draft.refusal_error).toMatch(/^Refused — nothing written: that item no longer exists/);
+    const note = add();
+    await runList(note, { write: async () => { throw Object.assign(new Error('That is a note, not a checklist'), { status: 400 }); } });
+    expect(note.action_draft.refusal_error).toBe('Refused — nothing written (That is a note, not a checklist). Ask Casey to prepare it again.');
+    const lost = create();
+    await runList(lost, { write: async () => { throw Object.assign(new Error('Failed to create checklist'), { status: 500 }); } });
+    expect(lost.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    const wrongList = add();
+    await runList(wrongList, { write: async () => ({ ...listGet(), id: 999 }) });
+    expect(wrongList.action_draft.ambiguous_error).toMatch(/answered for another list/);
+    const noItem = add();
+    await runList(noItem, { write: async () => listGet() });
+    expect(noItem.action_draft.ambiguous_error).toMatch(/did not return the new item/);
+    const otherRecord = create();
+    await runList(otherRecord, { write: async (p, body) => ({ ...(await created(p, body)), link: 'OTHER123' }) });
+    expect(otherRecord.action_draft.ambiguous_error).toMatch(/saved the list on another record/);
+    const otherItem = update();
+    await runList(otherItem, { write: async () => ({ ...(await patched()), id: 5121 }) });
+    expect(otherItem.action_draft.ambiguous_error).toMatch(/did not confirm the item/);
+  });
+
+  test('reopened cards restore from the ledger with the integer receipts; two families, three kinds', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    for (const [m, result, key, chip] of [
+      [create(), { checklist_id: 777 }, 'result_checklist_id', 'Applied — list #777'],
+      [add(), { checklist_id: 412 }, 'result_checklist_id', 'Applied — item added to list #412'],
+      [update(), { checkitem_id: 5120 }, 'result_checkitem_id', 'Applied — item #5120 checked off']]) {
+      box.applyActionResults([m], [{ draft_id: m.action_draft.draft_id, kind: m.action_draft.kind, outcome: 'applied', result }]);
+      expect(m.action_draft.status).toBe('applied');
+      expect(m.action_draft[key]).toBe(Object.values(result)[0]);
+      const host = dom.window.document.createElement('div');
+      box.hydrateActionDraft(box.actionFamily(m.action_draft), host, m, m.action_draft);
+      expect(host.querySelector('.action-draft-status').textContent).toBe(chip);
+      expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open 25-12345-abc', 'Copy details']);
+    }
+    const lists = box.actionFamily({ kind: 'checklist.item.add.v1' });
+    const items = box.actionFamily({ kind: 'checklist.item.update.v1' });
+    expect([[...lists.kinds], lists.idField, lists.appliedKey, !!lists.stringReceipt]).toEqual([['checklist.create.v1', 'checklist.item.add.v1'], 'checklist_id', 'result_checklist_id', false]);
+    expect([[...items.kinds], items.idField, items.appliedKey, !!items.stringReceipt]).toEqual([['checklist.item.update.v1'], 'checkitem_id', 'result_checkitem_id', false]);
+    for (const kind of ['checklist.delete.v1', 'checklist.item.delete.v1', 'checklist.upsert.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
   });
 });

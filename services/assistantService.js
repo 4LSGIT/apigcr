@@ -464,6 +464,57 @@ const CASE_PIPELINE_OVERRIDE_KEY = /overrid|waive|bypass|skip|ignore|force|requi
 const CASE_PIPELINE_CROSS_KEYS = new Set(['template_id', 'template', 'pipeline', 'pipeline_id', 'pipeline_template_id', 'case_type', 'case_subtype']);
 // case_stage_log.note is varchar(255); the service clips silently.
 const CASE_PIPELINE_NOTE_MAX = 255;
+// A10: checklists and checklist items — create ONE list or note
+// (checklist.create.v1 → POST /checklists {title, kind, body?, link_type, link,
+// items?}), add ONE item (checklist.item.add.v1 → POST /checklists/:id/items
+// {name}), or rename / complete / reopen ONE item (checklist.item.update.v1 →
+// PATCH /checkitems/:id {name?, status?}) — the Notes & Lists tab's own routes.
+// The routes guard little: no title width (varchar(255), clipped silently under
+// the relaxed sql_mode), no item name width or duplicate check, no parent
+// existence check, and `tag` is gated only for staff (mayWriteTag). So:
+//   * `tag` and `position` are refused BY NAME before anything is read —
+//     tag is the machine key (tag='docs_needed' drives the client portal),
+//     position is server-assigned.
+//   * A CASE list titled "Docs Needed" (any case, any kind, the title folded
+//     the way the column's general_ci collation compares) is refused: the
+//     portal's docs predicate is `tag='docs_needed' OR title='Docs Needed'`,
+//     so such a list would become the client-facing docs list. That list is
+//     made by automation (upsert-items), never by Casey.
+//   * A list hangs off a case or a contact (cited by an evidence row carrying
+//     the exact id), or is the ASKING user's own personal list. A list for
+//     another user, and bill / appt / task / event / unlinked lists, are not
+//     available (refused by name; item cards refuse lists of those kinds too).
+//   * Item names are 1-255 characters and never duplicate another item on the
+//     list (trimmed, case-insensitive) — stricter than the route.
+//   * An item on a case's docs list is CLIENT-VISIBLE (the portal and the
+//     unauthenticated GET /api/public/docs/:caseId list its incomplete
+//     items): disclosed as a warning, computed by the portal's own predicate.
+//   * The item update's effects mirror the route: completing an incomplete
+//     item emits checkitem.completed; the derived list status
+//     (lib/checklistStatus.js) turning complete emits checklist.completed —
+//     both dry-run against the active trigger rules (preview lane, nothing
+//     dispatched). Adding an item to a complete list reopens it.
+// Freshness: the parent's lists (create), the list and its items (item add /
+// update) are baked into `expected`; the click re-reads GET /checklists or GET
+// /checklists/:id and refuses on any difference. Receipt: the integer
+// checklist_id (create / item add — both routes return the whole list) or
+// checkitem_id (update — the route returns the item row). One per-family
+// switch, casey_checklists_enabled (on unless '0').
+const CHECKLIST_ACTION_KINDS = new Set(['checklist.create.v1', 'checklist.item.add.v1', 'checklist.item.update.v1']);
+const CHECKLIST_KEYS = {
+  'checklist.create.v1': new Set(['kind', 'title', 'list_kind', 'body', 'link_type', 'link', 'items', 'evidence']),
+  'checklist.item.add.v1': new Set(['kind', 'checklist_id', 'name', 'evidence']),
+  'checklist.item.update.v1': new Set(['kind', 'checkitem_id', 'name', 'status', 'evidence']),
+};
+// Refused by name wherever they appear (the draft, or an initial item).
+const CHECKLIST_SYSTEM_KEYS = ['tag', 'position'];
+// checklists.title and checkitems.name are varchar(255).
+const CHECKLIST_TEXT_MAX = 255;
+const CHECKLIST_INITIAL_ITEMS_MAX = 25;
+// The link types a Casey list may hang off (the route's other four are deferred).
+const CHECKLIST_LINK_TYPES = ['case', 'contact', 'user'];
+// Items listed on a card.
+const CHECKLIST_CARD_ITEMS = 30;
 const CONTACT_PHONE_UPDATE_KEYS = new Set(['label', 'is_primary', 'sms_optout', 'mms_capable', 'notes']);
 const CONTACT_EMAIL_UPDATE_KEYS = new Set(['label', 'is_primary', 'email_optout', 'notes']);
 const CONTACT_ADDRESS_UPDATE_KEYS = new Set(['address1', 'address2', 'city', 'state', 'zip', 'country', 'label', 'is_primary', 'notes']);
@@ -2483,9 +2534,10 @@ function casePipelineActionLine(action) {
   return `${String(action.action_type || 'unknown')} action${named}`;
 }
 
-async function casePipelineAutomation(db, envelope) {
+// A10 reuses it for the checklist events (eventType / what); A9's defaults.
+async function casePipelineAutomation(db, envelope, eventType = 'case.stage_advanced', what = 'this move') {
   const triggers = require('./triggerService');
-  const rules = await triggers.listActiveRulesForEvent(db, 'case.stage_advanced');
+  const rules = await triggers.listActiveRulesForEvent(db, eventType);
   const lines = []; let quiet = 0;
   for (const rule of rules) {
     const label = `Trigger rule #${Number(rule.id)} "${String(rule.name || '').slice(0, 120)}"`;
@@ -2493,7 +2545,7 @@ async function casePipelineAutomation(db, envelope) {
     try { out = await triggers.evaluateDraft(rule, envelope); }
     catch (e) { out = { matched: false, match_error: e && e.message || 'evaluation failed' }; }
     if (out.match_error) {
-      lines.push({ rule_id: Number(rule.id), outcome: 'unknown', text: `${label} could not be evaluated for this move (${String(out.match_error).slice(0, 160)}) — it MAY run: ${(rule.actions || []).map(casePipelineActionLine).join('; ') || 'no active actions'}` });
+      lines.push({ rule_id: Number(rule.id), outcome: 'unknown', text: `${label} could not be evaluated for ${what} (${String(out.match_error).slice(0, 160)}) — it MAY run: ${(rule.actions || []).map(casePipelineActionLine).join('; ') || 'no active actions'}` });
     } else if (!out.matched) {
       quiet += 1;
     } else if (out.transform_ok === false) {
@@ -2730,6 +2782,395 @@ async function normalizeCasePipelineAction(db, value, evidence, { currentUserId 
     },
     evidence: refs,
   };
+}
+
+// ── A10: checklists and checklist items ───────────────────────────────────
+// The checklist routes are SQL in routes/api.checklists.js (there is no
+// service), so the reads below are this family's own — the parent record,
+// the lists on it, one list with its items — each in the route's own shape
+// and order. Real-engine twin: tests/caseyChecklists.mysql.test.js.
+
+function checklistError(message) { return httpError(422, message); }
+
+// A title as checklists.title's utf8mb4_general_ci collation compares it —
+// case- and accent-insensitive, trailing spaces ignored (PAD SPACE) — so the
+// "Docs Needed" refusal matches every title the portal's `title = 'Docs
+// Needed'` would.
+function checklistFoldTitle(value) {
+  return String(value == null ? '' : value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+const CHECKLIST_DOCS_TITLE = 'docs needed';
+// Lists on one record / items on one list that one card can review.
+const CHECKLIST_PARENT_LISTS_MAX = 200;
+const CHECKLIST_ITEMS_MAX = 200;
+
+function checklistSystemKeys(obj, where) {
+  const hit = CHECKLIST_SYSTEM_KEYS.filter((k) => obj && Object.prototype.hasOwnProperty.call(obj, k));
+  if (!hit.length) return;
+  const why = hit.map((k) => (k === 'tag'
+    ? 'TAG refused: `tag` is a system field — only automation and superusers set it (tag \'docs_needed\' is how the client portal finds a case\'s docs list), and Casey never writes it'
+    : 'POSITION refused: an item\'s position is assigned by the server — Casey never orders items')).join('; ');
+  throw checklistError(`${why} (${where})`);
+}
+
+function checklistText(value, at, { allowEmpty = false } = {}) {
+  if (typeof value !== 'string') throw checklistError(`${at} must be text`);
+  const text = value.trim();
+  if (!text && !allowEmpty) throw checklistError(`${at} is empty`);
+  if (text.length > CHECKLIST_TEXT_MAX) throw checklistError(`${at} is ${text.length} characters — the column keeps ${CHECKLIST_TEXT_MAX}`);
+  return text;
+}
+
+function checklistRowCited(refs, evidence, test) {
+  return refs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return !!row && test(row);
+  });
+}
+
+function checklistLinkName(linkType) {
+  return linkType == null || linkType === '' ? 'no record (an unlinked list)' : `a ${linkType}`;
+}
+
+// The record a list hangs off, for the card: a case or a contact that exists,
+// or the asking user (a personal list). null = the record is gone.
+async function checklistParent(db, linkType, link, currentUserId) {
+  if (linkType === 'case') {
+    const [rows] = await db.query('SELECT case_id, case_number, case_number_full, case_type FROM cases WHERE case_id = ? LIMIT 1', [String(link)]);
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (!row) return null;
+    const number = String(row.case_number_full || row.case_number || '').trim().slice(0, 40);
+    return { link_type: 'case', link: String(row.case_id), case_id: String(row.case_id), case_number: number,
+      case_type: String(row.case_type || '').slice(0, 40), label: `case ${number || row.case_id}` };
+  }
+  if (linkType === 'contact') {
+    const [rows] = await db.query('SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1', [Number(link)]);
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (!row) return null;
+    const name = String(row.contact_name || '').trim().slice(0, 200) || `Contact ${row.contact_id}`;
+    return { link_type: 'contact', link: String(row.contact_id), contact_id: Number(row.contact_id), contact_name: name, label: `${name} (contact #${row.contact_id})` };
+  }
+  return { link_type: 'user', link: String(currentUserId), user_id: Number(currentUserId), label: 'your personal list' };
+}
+
+// One list and its items, in the GET /checklists/:id order. `docs_list` is the
+// client portal's own predicate (portalDocsService.listDocs and the public
+// docs GET), evaluated by the engine — 1 when the list's items reach clients.
+async function checklistState(db, checklistId) {
+  const [rows] = await db.query(
+    `SELECT cl.id, cl.title, cl.kind, cl.status, cl.link_type, cl.link, cl.tag,
+            COALESCE(cl.link_type = 'case' AND (cl.tag = 'docs_needed' OR cl.title = 'Docs Needed'), 0) AS docs_list
+       FROM checklists cl WHERE cl.id = ? LIMIT 1`, [checklistId]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) return null;
+  const [items] = await db.query('SELECT id, name, status, position FROM checkitems WHERE checklist_id = ? ORDER BY position ASC, id ASC', [checklistId]);
+  return {
+    list: {
+      checklist_id: Number(row.id), title: String(row.title == null ? '' : row.title), kind: String(row.kind || 'checklist'),
+      status: row.status == null ? null : String(row.status), link_type: row.link_type == null ? null : String(row.link_type),
+      link: row.link == null ? null : String(row.link), tag: row.tag == null ? null : String(row.tag),
+      docs_list: Number(row.docs_list) === 1,
+    },
+    items: (Array.isArray(items) ? items : []).map((i) => ({
+      checkitem_id: Number(i.id), name: String(i.name == null ? '' : i.name), status: i.status == null ? null : String(i.status),
+    })),
+  };
+}
+
+// The stable fingerprint of a list's items — the click recomputes it from GET
+// /checklists/:id and refuses on any difference.
+function checklistItemSignature(items) {
+  return items.map((i) => `${Number(i.checkitem_id)}:${i.status == null ? '' : i.status}:${i.name}`).sort();
+}
+
+// lib/checklistStatus.js's rule: zero items or any incomplete → incomplete.
+function checklistDerivedStatus(items) {
+  return items.length > 0 && items.every((i) => i.status === 'complete') ? 'complete' : 'incomplete';
+}
+
+// computeAndSaveStatus writes `WHERE status <> ?`, so only a stored status
+// that DIFFERS transitions (a NULL stored status never matches <> and never
+// transitions — the engine's three-valued compare, mirrored).
+function checklistTransition(stored, next) {
+  return stored != null && stored !== next;
+}
+
+const CHECKLIST_DOCS_WARNING = (parent) => `CLIENT-VISIBLE: this is ${parent.label}'s DOCS list — the client portal shows its items to the client, and the case's public documents link (no sign-in) lists every incomplete item by name.`;
+
+// An existing list an item card acts on: it must be a checklist on a case, a
+// contact or the asking user, and reviewable on one card.
+async function checklistTarget(db, checklistId, currentUserId, verb) {
+  const state = await checklistState(db, checklistId);
+  if (!state) throw checklistError(`Checklist #${checklistId} no longer exists`);
+  const { list } = state;
+  if (list.kind === 'note') {
+    throw checklistError(`"${list.title}" (#${list.checklist_id}) is a NOTE, not a checklist — notes hold freeform text, never items. Casey cannot ${verb} an item there; the user edits the note on the Notes & Lists tab`);
+  }
+  if (!CHECKLIST_LINK_TYPES.includes(list.link_type)) {
+    throw checklistError(`"${list.title}" (#${list.checklist_id}) hangs off ${checklistLinkName(list.link_type)} — Casey works on lists of a case, a contact or your own personal list only; the user changes this one on the Notes & Lists page`);
+  }
+  if (list.link_type === 'user' && String(list.link) !== String(currentUserId)) {
+    throw checklistError(`"${list.title}" (#${list.checklist_id}) is another user's personal list (user #${list.link}) — Casey works on your own personal lists only; the owner or you change it on the Notes & Lists page`);
+  }
+  if (state.items.length > CHECKLIST_ITEMS_MAX) {
+    throw checklistError(`"${list.title}" has ${state.items.length} items — more than one card can review (${CHECKLIST_ITEMS_MAX}). The user changes it on the Notes & Lists tab`);
+  }
+  const parent = await checklistParent(db, list.link_type, list.link, currentUserId);
+  if (!parent) throw checklistError(`The ${list.link_type} "${list.title}" hangs off (${list.link}) no longer exists`);
+  return { ...state, parent };
+}
+
+function checklistItemsCard(items) {
+  return items.slice(0, CHECKLIST_CARD_ITEMS).map((i) => ({ name: i.name, status: i.status }));
+}
+
+async function normalizeChecklistCreate(db, value, evidence, currentUserId) {
+  const title = checklistText(value.title, 'The list title');
+  const listKind = value.list_kind == null || value.list_kind === '' ? 'checklist' : value.list_kind;
+  if (listKind !== 'checklist' && listKind !== 'note') throw checklistError(`list_kind must be "checklist" or "note" (got "${String(listKind).slice(0, 40)}")`);
+  const linkType = String(value.link_type == null ? '' : value.link_type).trim().toLowerCase();
+  if (['bill', 'appt', 'task', 'event'].includes(linkType)) {
+    throw checklistError(`A list on ${linkType === 'appt' ? 'an appointment' : linkType === 'event' ? 'an event' : `a ${linkType}`} is not available to Casey — it makes lists on a case, a contact or your own personal list. The user adds this one on the ${linkType}'s Notes & Lists`);
+  }
+  if (!CHECKLIST_LINK_TYPES.includes(linkType)) {
+    throw checklistError('A new list needs link_type: "case" (with link = the exact case_id), "contact" (link = the exact contact_id) or "user" (your own personal list)');
+  }
+  // Shape exclusivity, before anything is read (the route's own rules).
+  const hasItems = value.items !== undefined && value.items !== null;
+  const hasBody = value.body !== undefined && value.body !== null;
+  if (listKind === 'note' && hasItems) throw checklistError('A note holds freeform text, not items — send "body", or make it a checklist (list_kind "checklist") to give it items');
+  if (listKind === 'checklist' && hasBody) throw checklistError('A checklist holds items, not a body — send "items", or make it a note (list_kind "note") to give it text');
+  let body = null;
+  if (hasBody) {
+    if (typeof value.body !== 'string') throw checklistError('The note body must be text');
+    const tooLong = require('../lib/noteLimits').checkNoteLengths({ body: value.body });
+    if (tooLong) throw checklistError(`The note ${tooLong}`);
+    body = value.body;
+  }
+  const items = [];
+  if (hasItems) {
+    if (!Array.isArray(value.items)) throw checklistError('items must be a list of item names');
+    if (value.items.length > CHECKLIST_INITIAL_ITEMS_MAX) {
+      throw checklistError(`A new list carries at most ${CHECKLIST_INITIAL_ITEMS_MAX} items on one card (${value.items.length} given) — make the list, then add the rest`);
+    }
+    const seen = new Set();
+    value.items.forEach((raw, i) => {
+      let name = raw;
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        checklistSystemKeys(raw, `item ${i + 1}`);
+        const extra = Object.keys(raw).filter((k) => k !== 'name');
+        if (extra.length) throw checklistError(`Item ${i + 1} carries ${extra.join(', ')} — a new item is its name only (every new item starts incomplete)`);
+        name = raw.name;
+      }
+      const text = checklistText(name, `Item ${i + 1}'s name`);
+      const fold = text.toLowerCase();
+      if (seen.has(fold)) throw checklistError(`Item "${text}" is listed twice — every item on a list has its own name`);
+      seen.add(fold);
+      items.push(text);
+    });
+  }
+  // A case list titled "Docs Needed" would BECOME the client-facing docs list.
+  if (linkType === 'case' && checklistFoldTitle(title) === CHECKLIST_DOCS_TITLE) {
+    throw checklistError(`DOCS LIST refused: a case ${listKind} titled "${title}" becomes the case's client-facing docs list (the client portal and the case's public documents link read any case list titled "Docs Needed"). That list is made by the documents automation, never by Casey — choose another title, or add items to the existing docs list`);
+  }
+
+  let link; let refs;
+  if (linkType === 'user') {
+    const me = Number(currentUserId);
+    if (!Number.isSafeInteger(me) || me < 1) throw checklistError('A personal list needs a signed-in staff user');
+    if (value.link != null && value.link !== '' && String(value.link).trim() !== String(me)) {
+      throw checklistError(`A personal list for another user (user #${String(value.link).slice(0, 20)}) is not available to Casey — it makes YOUR personal lists only. The user makes a list for a colleague on the Notes & Lists page`);
+    }
+    link = String(me);
+    refs = jobDraftEvidence(value.evidence, evidence);
+  } else {
+    refs = taskDraftEvidence(value.evidence, evidence);
+    if (linkType === 'case') {
+      link = String(value.link == null ? '' : value.link).trim();
+      if (!link || link.length > 20 || !/^[A-Za-z0-9_-]+$/.test(link)) throw checklistError('A case list needs link = the case\'s exact case_id');
+      if (!checklistRowCited(refs, evidence, (row) => String(row.case_id) === link)) {
+        throw checklistError(`The list evidence does not identify case ${link} — cite a row carrying its exact case_id (read the case first)`);
+      }
+    } else {
+      const contactId = Number(value.link);
+      if (!Number.isSafeInteger(contactId) || contactId < 1) throw checklistError('A contact list needs link = the contact\'s exact positive contact_id');
+      if (!checklistRowCited(refs, evidence, (row) => Number(row.contact_id) === contactId)) {
+        throw checklistError(`The list evidence does not identify contact ${contactId} — cite a row carrying its exact contact_id (read the contact first)`);
+      }
+      link = String(contactId);
+    }
+  }
+  const parent = await checklistParent(db, linkType, link, currentUserId);
+  if (!parent) throw checklistError(`${linkType === 'case' ? 'Case' : 'Contact'} ${link} no longer exists`);
+  const [existingRows] = await db.query(
+    'SELECT id, title, kind FROM checklists WHERE link_type = ? AND link = ? ORDER BY created_date ASC, id ASC', [linkType, parent.link]);
+  const existing = (Array.isArray(existingRows) ? existingRows : []).map((r) => ({ id: Number(r.id), title: String(r.title == null ? '' : r.title), kind: String(r.kind || 'checklist') }));
+  if (existing.length > CHECKLIST_PARENT_LISTS_MAX) {
+    throw checklistError(`${parent.label} already has ${existing.length} notes and lists — more than one card can review (${CHECKLIST_PARENT_LISTS_MAX}). The user adds this one on the Notes & Lists tab`);
+  }
+  const warnings = []; const effects = [];
+  const sameTitle = existing.filter((r) => checklistFoldTitle(r.title) === checklistFoldTitle(title));
+  if (sameTitle.length) {
+    warnings.push(`DUPLICATE TITLE: ${parent.label} already has ${sameTitle.length === 1 ? 'a' : sameTitle.length} ${sameTitle.length === 1 ? sameTitle[0].kind : 'lists'} titled "${sameTitle[0].title}" (#${sameTitle.map((r) => r.id).join(', #')}). This makes a SECOND one — duplicates are allowed; to add to the existing list instead, ask Casey to add items to it.`);
+  }
+  effects.push(linkType === 'case'
+    ? 'Staff only: the list shows on the case\'s Notes & Lists tab; it is not shown to the client (only the case\'s docs list is).'
+    : linkType === 'contact'
+      ? 'Staff only: the list shows on the contact\'s Notes & Lists tab and in the contact\'s group on each of their cases\' boards.'
+      : 'Personal: the list shows under your own lists on the Notes & Lists page.');
+  effects.push(listKind === 'note'
+    ? 'Status: a note\'s done / not-done is set by hand; it starts not done.'
+    : `Status: derived from its items — it starts incomplete${items.length ? ` (${items.length} incomplete item${items.length > 1 ? 's' : ''})` : ' (an empty checklist is never complete)'}.`);
+  effects.push('Trigger event: none — creating a list emits no event, so no trigger rule runs.');
+  return {
+    draft_id: crypto.randomUUID(), kind: 'checklist.create.v1', status: 'draft',
+    list: { title, list_kind: listKind, body, link_type: linkType, link: parent.link },
+    parent, items,
+    existing_total: existing.length,
+    effects, warnings,
+    expected: { link_type: linkType, link: parent.link, list_ids: existing.map((r) => r.id).sort((a, b) => a - b) },
+    evidence: refs,
+  };
+}
+
+async function normalizeChecklistItemAdd(db, value, evidence, currentUserId) {
+  const checklistId = Number(value.checklist_id);
+  if (!Number.isSafeInteger(checklistId) || checklistId < 1) throw checklistError('An item add needs the list\'s exact positive checklist_id');
+  const name = checklistText(value.name, 'The item name');
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!checklistRowCited(refs, evidence, (row) => Number(row.checklist_id) === checklistId)) {
+    throw checklistError(`The item evidence does not identify checklist #${checklistId} — cite a row carrying its exact checklist_id (read the list first: checklists.id AS checklist_id)`);
+  }
+  const target = await checklistTarget(db, checklistId, currentUserId, 'add');
+  const { list, items, parent } = target;
+  const dup = items.find((i) => i.name.trim().toLowerCase() === name.toLowerCase());
+  if (dup) {
+    throw checklistError(`"${list.title}" already has an item named "${dup.name}" (#${dup.checkitem_id}, ${dup.status || 'no status'}) — nothing is proposed. To change that item, propose checklist.item.update.v1`);
+  }
+  const after = [...items, { checkitem_id: 0, name, status: 'incomplete' }];
+  const statusAfter = checklistDerivedStatus(after);
+  const warnings = []; const effects = [];
+  if (list.docs_list) warnings.push(`${CHECKLIST_DOCS_WARNING(parent)} "${name}" appears there as soon as it is added.`);
+  if (checklistTransition(list.status, statusAfter)) {
+    warnings.push(`REOPENS THE LIST: "${list.title}" is complete; a new incomplete item makes it incomplete again (no event fires for that).`);
+  }
+  effects.push('Writes: one new item (incomplete) at the end of the list — nothing else on the list changes.');
+  effects.push('Trigger event: none — adding an item emits no event, so no trigger rule runs.');
+  return {
+    draft_id: crypto.randomUUID(), kind: 'checklist.item.add.v1', status: 'draft',
+    list, parent, item: { name },
+    items_before: checklistItemsCard(items), items_total: items.length,
+    list_status: { from: list.status, to: checklistTransition(list.status, statusAfter) ? statusAfter : list.status },
+    effects, warnings,
+    expected: { title: list.title, kind: list.kind, link_type: list.link_type, link: list.link, tag: list.tag, status: list.status, items: checklistItemSignature(items) },
+    evidence: refs,
+  };
+}
+
+async function normalizeChecklistItemUpdate(db, value, evidence, currentUserId) {
+  const itemId = Number(value.checkitem_id);
+  if (!Number.isSafeInteger(itemId) || itemId < 1) throw checklistError('An item update needs the item\'s exact positive checkitem_id');
+  const hasName = value.name !== undefined && value.name !== null;
+  const hasStatus = value.status !== undefined && value.status !== null;
+  if (!hasName && !hasStatus) throw checklistError('An item update needs "name" (the new name), "status" ("complete" or "incomplete"), or both');
+  const name = hasName ? checklistText(value.name, 'The item name') : null;
+  if (hasStatus && value.status !== 'complete' && value.status !== 'incomplete') {
+    throw checklistError(`status must be "complete" or "incomplete" (got "${String(value.status).slice(0, 40)}")`);
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!checklistRowCited(refs, evidence, (row) => Number(row.checkitem_id) === itemId)) {
+    throw checklistError(`The item evidence does not identify item #${itemId} — cite a row carrying its exact checkitem_id (read the items first: checkitems.id AS checkitem_id)`);
+  }
+  const [parentRows] = await db.query('SELECT checklist_id FROM checkitems WHERE id = ? LIMIT 1', [itemId]);
+  const parentRow = Array.isArray(parentRows) ? parentRows[0] : null;
+  if (!parentRow) throw checklistError(`Checklist item #${itemId} no longer exists`);
+  const target = await checklistTarget(db, Number(parentRow.checklist_id), currentUserId, 'change');
+  const { list, items, parent } = target;
+  const item = items.find((i) => i.checkitem_id === itemId);
+  if (!item) throw checklistError(`Checklist item #${itemId} moved while Casey read it`);
+  const toName = hasName ? name : item.name;
+  const toStatus = hasStatus ? value.status : item.status;
+  const renames = hasName && toName !== item.name;
+  const restatus = hasStatus && toStatus !== item.status;
+  if (!renames && !restatus) throw checklistError(`Item "${item.name}" is already ${item.status || 'without a status'}${hasName ? ' with that name' : ''} — that changes nothing`);
+  if (renames) {
+    const dup = items.find((i) => i.checkitem_id !== itemId && i.name.trim().toLowerCase() === toName.toLowerCase());
+    if (dup) throw checklistError(`"${list.title}" already has an item named "${dup.name}" (#${dup.checkitem_id}) — renaming "${item.name}" to that would make two. Nothing is proposed`);
+  }
+  const after = items.map((i) => (i.checkitem_id === itemId ? { ...i, name: toName, status: toStatus } : i));
+  const statusAfter = checklistDerivedStatus(after);
+  const transitions = checklistTransition(list.status, statusAfter);
+  // The route's two emits, mirrored exactly (routes/api.checklists.js PATCH /checkitems/:id).
+  const itemCompleted = restatus && toStatus === 'complete' && item.status !== 'complete';
+  const listCompleted = transitions && statusAfter === 'complete';
+  const warnings = []; const effects = [];
+  if (list.docs_list) {
+    if (restatus && toStatus === 'complete') warnings.push(`${CHECKLIST_DOCS_WARNING(parent)} Completing "${item.name}" takes it off the public documents link and shows it to the client as received.`);
+    else if (restatus) warnings.push(`${CHECKLIST_DOCS_WARNING(parent)} Reopening "${item.name}" puts it back on the public documents link and shows it to the client as needed.`);
+    else warnings.push(`${CHECKLIST_DOCS_WARNING(parent)} The client sees the new name "${toName}".`);
+  }
+  if (transitions) {
+    (statusAfter === 'complete' ? effects : warnings).push(statusAfter === 'complete'
+      ? `List status: "${list.title}" becomes COMPLETE — this is its last open item.`
+      : `REOPENS THE LIST: "${list.title}" is complete; reopening this item makes it incomplete again (no event fires for that).`);
+  } else {
+    effects.push(`List status: stays ${list.status || 'unset'}.`);
+  }
+  const contactId = list.link_type === 'contact' ? (parseInt(list.link, 10) || null) : null;
+  const caseId = list.link_type === 'case' ? String(list.link) : null;
+  const actor = { user_id: Number.isSafeInteger(Number(currentUserId)) && Number(currentUserId) > 0 ? Number(currentUserId) : 0 };
+  const events = []; const lines = []; let rulesChecked = 0; let quiet = 0;
+  const { buildEnvelope } = require('../lib/domainEvents');
+  if (itemCompleted) {
+    events.push('checkitem.completed');
+    const out = await casePipelineAutomation(db, buildEnvelope('checkitem.completed', {
+      contact_id: contactId, case_id: caseId, actor,
+      data: { item_id: itemId, name: toName, checklist_id: list.checklist_id, tag: list.tag, title: list.title, link_type: list.link_type, checklist_status: statusAfter },
+    }), 'checkitem.completed', 'this item');
+    lines.push(...out.lines); rulesChecked += out.rules_checked; quiet += out.quiet;
+  }
+  if (listCompleted) {
+    events.push('checklist.completed');
+    const out = await casePipelineAutomation(db, buildEnvelope('checklist.completed', {
+      contact_id: contactId, case_id: caseId, actor,
+      data: { checklist_id: list.checklist_id, title: list.title, tag: list.tag, link_type: list.link_type },
+    }), 'checklist.completed', 'this list');
+    lines.push(...out.lines); rulesChecked += out.rules_checked; quiet += out.quiet;
+  }
+  if (lines.some((l) => l.outcome === 'unknown')) warnings.push('AUTOMATION: at least one trigger rule could not be evaluated for this change — read its line; it may run.');
+  effects.push(events.length
+    ? `Trigger events: ${events.join(' and ')} fire${events.length > 1 ? '' : 's'} — every active rule on ${events.length > 1 ? 'them' : 'it'} is listed below.`
+    : `Trigger event: none — ${restatus ? 'reopening an item' : 'renaming an item'} emits no event.`);
+  return {
+    draft_id: crypto.randomUUID(), kind: 'checklist.item.update.v1', status: 'draft',
+    list, parent,
+    item: { checkitem_id: itemId, checklist_id: list.checklist_id, from: { name: item.name, status: item.status }, to: { name: toName, status: toStatus } },
+    changes: { name: renames ? toName : null, status: restatus ? toStatus : null },
+    list_status: { from: list.status, to: transitions ? statusAfter : list.status },
+    automation: { events, lines: lines.map((l) => l.text), rules_checked: rulesChecked, quiet },
+    effects, warnings,
+    expected: { title: list.title, kind: list.kind, link_type: list.link_type, link: list.link, tag: list.tag, status: list.status, items: checklistItemSignature(items) },
+    evidence: refs,
+  };
+}
+
+async function normalizeChecklistAction(db, value, evidence, { currentUserId = null } = {}) {
+  // The per-family switch: '0' and the A10 kinds do not exist.
+  if (require('../lib/firmConfig').cfg('casey_checklists_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const kind = value.kind;
+  // System fields first, by name, before anything is read.
+  checklistSystemKeys(value, kind);
+  const allowed = CHECKLIST_KEYS[kind];
+  const unknown = Object.keys(value).filter((k) => !allowed.has(k));
+  if (unknown.length) {
+    throw checklistError(`A ${kind} card carries unsupported fields: ${unknown.join(', ')} — it takes ${[...allowed].filter((k) => k !== 'kind').join(', ')} only`);
+  }
+  if (kind === 'checklist.create.v1') return normalizeChecklistCreate(db, value, evidence, currentUserId);
+  if (kind === 'checklist.item.add.v1') return normalizeChecklistItemAdd(db, value, evidence, currentUserId);
+  return normalizeChecklistItemUpdate(db, value, evidence, currentUserId);
 }
 
 async function taskDraftLink(db, value) {
@@ -5660,6 +6101,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && RECORD_TEXT_ACTION_KINDS.has(value.kind)) return normalizeRecordTextAction(db, value, evidence);
   if (value && CASE_CONTACT_ACTION_KINDS.has(value.kind)) return normalizeCaseContactAction(db, value, evidence);
   if (value && CASE_PIPELINE_ACTION_KINDS.has(value.kind)) return normalizeCasePipelineAction(db, value, evidence, { currentUserId });
+  if (value && CHECKLIST_ACTION_KINDS.has(value.kind)) return normalizeChecklistAction(db, value, evidence, { currentUserId });
   if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Action kind is unavailable');
   if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
   if (!onlyKeys(value, TASK_CREATE_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
@@ -5826,7 +6268,13 @@ function taskDraftRequested(question, history = []) {
       /\b(?:advance|move|push|bump|put|set|change|send|progress|take|mark|retain)\b/i.test(request)) ||
     /\b(?:advance|progress)\b[^.?!\n]{0,40}\b(?:case|file|matter|lead)s?\b/i.test(request) ||
     /\b(?:move|put|mark|set|send|bump|push)\b[^.?!\n]{0,40}\b(?:to|as|on|into)\s+(?:the\s+)?(?:next stage|retained|dead lead|dismissed|filed|closed|discharged)\b/i.test(request);
-  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || job || workflow || hook || sequence || send || ingestRule ||
+  // A10: a checklist, a note-and-list card or one item. The noun names a
+  // checklist (a bare "list" is too common — "list the cases"); "check off" /
+  // "tick off" carry their own noun.
+  const checklist = (/\b(?:check ?lists?|(?:list|checklist) items?|docs needed|personal list|to-?do list|notes? (?:and|&) lists?)\b/i.test(text) &&
+      /\b(?:draft|propose|prepare|create|make|start|add|put|append|check|tick|mark|complete|finish|uncheck|untick|reopen|rename|update|change)\b/i.test(request)) ||
+    /\b(?:check|tick|cross)\s+(?:it\s+|that\s+|them\s+|this\s+)?off\b/i.test(request);
+  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || checklist || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 

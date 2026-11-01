@@ -553,6 +553,9 @@ const MODE = P_ID ? 'single'
 
 let lists   = [];
 let busy    = false;   // suppresses re-entrant writes from double-Enter
+/* A10 — when this frame last wrote (api() stamps every non-GET call), so the
+   sync-bus subscriber below can tell its own echo from another frame's write. */
+let clLastLocalWrite = 0;
 
 /* W3 — related-contact groups on a CASE board, in the order they are rendered.
    `lists` holds their cards too (see sortLists / render); this holds only the
@@ -744,9 +747,17 @@ function nativeSpecs(linkType) {
 }
 
 function api(...args) {
+  // A10: stamp this frame's own writes, at the start AND when they settle — the
+  // bus announces a write when its response lands, which on a slow request is
+  // well after the start, and the board must not reload on its own echo.
+  const write = args[1] != null && !/^(GET|HEAD)$/i.test(String(args[1]));
   try {
     if (window.top && typeof window.top.apiSend === 'function') {
-      return window.top.apiSend.apply(window.top, args);
+      if (!write) return window.top.apiSend.apply(window.top, args);
+      clLastLocalWrite = Date.now();
+      const p = window.top.apiSend.apply(window.top, args);
+      Promise.resolve(p).then(() => { clLastLocalWrite = Date.now(); }, () => { clLastLocalWrite = Date.now(); });
+      return p;
     }
   } catch (_) { /* cross-origin — cannot happen same-origin, but don't throw */ }
   return Promise.reject(new Error('apiSend unavailable — open this page inside YisraCase.'));
@@ -852,6 +863,7 @@ async function load() {
   // which close over the OLD card objects — have to go first. Dropped before
   // flushBodies() so a PATCH it fires cannot echo back into a stale handler.
   clearBusSubs();
+  clBusStale = false;   // A10: this reload answers any parked bus message
   // Any unsaved note body goes to the server BEFORE the refetch, or the GET
   // races the PATCH and the response overwrites cl.body with the stale value.
   // Reached on tab re-entry (reloadChecklists) and on every filter change.
@@ -1210,6 +1222,69 @@ async function loadContactGroups() {
 
 // Called by case.html on tab re-entry (autoFrame idiom) so the cards are fresh.
 window.reloadChecklists = load;
+
+/* ── Sync bus: another frame changed a list on this board (A10) ─────────────
+   public/js/yc-sync.js announces POST /checklists, POST /checklists/:id/items
+   and PATCH /checkitems/:id as `checklist:<link_type>:<link>` — above all an
+   Ask Casey card applied from the assistant pane, which this board used to
+   stay blind to until its tab was re-entered. A message for this board's own
+   record, or (on a case board) one of its contact groups, reloads it.
+
+   §3.6: this handler never emits. load() is GETs plus flushBodies(), and
+   flushBodies() has nothing to save here: the busy fence below parks the
+   message while any note text is unsaved or in flight.
+
+   FENCES, in order:
+     · its own echo — this frame wrote within CL_ECHO_MS (api() stamps every
+       write), so the board already shows it;
+     · hidden (its tab, or the browser tab) or busy (a write in flight, unsaved
+       note text, or the caret in a text field — a reload rebuilds every card
+       and would eat what is being typed): PARKED in clBusStale, and reloaded
+       when the tab is re-entered (case.html / contact.html call
+       reloadChecklists), the page becomes visible, or the focus leaves the
+       field. */
+const CL_ECHO_MS = 1500;
+let clBusStale = false;
+
+function clBoardAddrs() {
+  if (MODE !== 'entity') return [];
+  const link = P_LINK === 'me' ? myUserId() : P_LINK;
+  const out = link == null || link === '' ? [] : [`checklist:${P_LINK_TYPE}:${link}`];
+  for (const g of contactGroups) out.push(`checklist:contact:${g.id}`);
+  return out;
+}
+
+function clBoardShown() {
+  if (document.visibilityState === 'hidden') return false;
+  try { const f = window.frameElement; return !f || f.getClientRects().length > 0; }
+  catch (_) { return true; }
+}
+
+function clBoardBusy() {
+  if (busy) return true;
+  for (const d of bodyDrafts.values()) if (d.dirty || d.inflight) return true;
+  const a = document.activeElement;
+  if (!a || a === document.body) return false;
+  if (a.isContentEditable || a.tagName === 'TEXTAREA') return true;
+  return a.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset)$/i.test(a.type || '');
+}
+
+function clBusReload() {
+  if (!clBusStale || !clBoardShown() || clBoardBusy()) return;
+  clBusStale = false;
+  load();
+}
+
+if (window.YC) {
+  YC.on('checklist:*', '*', (_fields, msg) => {
+    if (!msg || !clBoardAddrs().includes(msg.addr)) return;
+    if (Date.now() - clLastLocalWrite < CL_ECHO_MS) return;   // our own write, echoed
+    clBusStale = true;
+    clBusReload();
+  });
+  document.addEventListener('visibilitychange', clBusReload);
+  document.addEventListener('focusout', () => setTimeout(clBusReload, 0));
+}
 
 // ── Render ────────────────────────────────────────────────────────
 /* THE INVARIANT, restated because W3 is the change most likely to break it:

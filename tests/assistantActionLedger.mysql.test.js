@@ -20,7 +20,11 @@ suite('P5 ledger on real MySQL', () => {
     await q('CREATE TABLE users (`user` TINYINT NOT NULL PRIMARY KEY) ENGINE=InnoDB');
     await q('INSERT INTO users VALUES (0),(6),(7)');
   });
-  afterAll(async () => { if (db) await db.end(); });
+  // Drop the ledger on the way out: its FK onto `users` otherwise blocks every
+  // sibling twin that rebuilds `users` on the same *_test DB
+  // (assistantNormalizer.mysql: "Cannot drop table 'users' referenced by a
+  // foreign key constraint fk_assistant_action_ledger_user").
+  afterAll(async () => { if (db) { await q('DROP TABLE IF EXISTS assistant_action_ledger'); await db.end(); } });
   test('migration CHECK is read-only, apply resumes, shape and relaxed mode are enforced', async () => {
     const conn = await db.getConnection();
     try {
@@ -36,7 +40,9 @@ suite('P5 ledger on real MySQL', () => {
       expect((await migration.run(conn, { log: () => {} })).line).toMatch(/^NO-GO/);
     } finally { await conn.query("SET SESSION sql_mode='IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"); conn.release(); }
   });
-  test('all 42 kinds register without evidence; duplicate issuance, foreign actors and malformed inputs are refused', async () => {
+  // The pin is deliberate: every kind added to the registry is a conscious
+  // choice, so this count moves with it (A10: 57 + the three checklist kinds).
+  test('all 60 kinds register without evidence; duplicate issuance, foreign actors and malformed inputs are refused', async () => {
     const outcomes = [];
     for (const [kind] of ledger.KINDS) {
       const d = await issue(kind);
@@ -51,7 +57,7 @@ suite('P5 ledger on real MySQL', () => {
       try { await op(); errors.push('accepted'); } catch (e) { errors.push(e.status || e.code); }
     }
     expect({ count: ledger.KINDS.size, outcomes: [...new Set(outcomes)], errors,
-      foreignRead: await ledger.read(db, 7, [d.draft_id]) }).toEqual({ count: 42, outcomes: ['not-applied'],
+      foreignRead: await ledger.read(db, 7, [d.draft_id]) }).toEqual({ count: 60, outcomes: ['not-applied'],
       errors: ['ER_DUP_ENTRY', 'ER_NO_REFERENCED_ROW_2', 400, 403, 400, 400, 404], foreignRead: [] });
   });
   test('committed claim fences two tabs, a business rollback cannot release it, and fresh or old claims remain unknown', async () => {
@@ -80,11 +86,15 @@ suite('P5 ledger on real MySQL', () => {
     await expect(ledger.claim(db, 6, d.draft_id)).rejects.toMatchObject({ status: 409 });
     await expect(ledger.claim(db, 6, crypto.randomUUID())).rejects.toMatchObject({ status: 404 });
   });
+  // A receipt per kind's own field type: a STRING_RECEIPT_FIELDS field (A7's
+  // case_id path) takes a case-id string, every other field a positive
+  // integer — and 0 is invalid for both.
+  const receiptValue = (field, n) => (ledger.STRING_RECEIPT_FIELDS.has(field) ? `C${n}` : n);
   test('only the claim holder can record one immutable minimal receipt; concurrent and lost acknowledgements replay', async () => {
     const outcomes = [];
     for (const [kind, field] of ledger.KINDS) {
       const d = await issue(kind); const claim = await ledger.claim(db, 6, d.draft_id);
-      const result = { [field]: 71 };
+      const result = { [field]: receiptValue(field, 71) };
       const errors = [];
       for (const op of [() => ledger.record(db, 7, d.draft_id, claim.claim_token, result),
         () => ledger.record(db, 6, d.draft_id, crypto.randomUUID(), result),
@@ -94,13 +104,13 @@ suite('P5 ledger on real MySQL', () => {
       }
       const saved = await Promise.all([ledger.record(db, 6, d.draft_id, claim.claim_token, result), ledger.record(db, 6, d.draft_id, claim.claim_token, result)]);
       let replacement;
-      try { await ledger.record(db, 6, d.draft_id, claim.claim_token, { [field]: 72 }); } catch (e) { replacement = e.status; }
+      try { await ledger.record(db, 6, d.draft_id, claim.claim_token, { [field]: receiptValue(field, 72) }); } catch (e) { replacement = e.status; }
       const replay = await ledger.claim(db, 6, d.draft_id);
       const [row] = await ledger.read(db, 6, [d.draft_id]);
       outcomes.push({ errors, saved: saved.map(r => r.replayed).sort(), replacement, replayed: replay.replayed, result: row.result });
     }
     expect(outcomes).toEqual([...ledger.KINDS].map(([, field]) => ({ errors: [404, 404, 400, 400], saved: [false, true],
-      replacement: 409, replayed: true, result: { [field]: 71 } })));
+      replacement: 409, replayed: true, result: { [field]: receiptValue(field, 71) } })));
   });
   test('real JWT routes register server output, enforce ownership, and only record/reconcile receipts', async () => {
     process.env.JWT_SECRET = 'p5-local-test-secret';

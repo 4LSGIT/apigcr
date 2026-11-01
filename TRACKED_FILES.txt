@@ -1233,6 +1233,8 @@ tests/caseyApptConfirm.mysql.test.js
 tests/caseyApptConfirm.test.js
 tests/caseyCaseContacts.mysql.test.js
 tests/caseyCaseContacts.test.js
+tests/caseyChecklists.mysql.test.js
+tests/caseyChecklists.test.js
 tests/caseyContactRelations.mysql.test.js
 tests/caseyContactRelations.test.js
 tests/caseyHookCreate.test.js
@@ -1260,6 +1262,7 @@ tests/caseyWorkflowStart.mysql.test.js
 tests/caseyWorkflowStart.test.js
 tests/caseyWorkflowStep.test.js
 tests/checklistView.autoGrow.test.js
+tests/checklistView.sync.test.js
 tests/checklists.s1notes.test.js
 tests/clioTool.test.js
 tests/clioTool2.test.js

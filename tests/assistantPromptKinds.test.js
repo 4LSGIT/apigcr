@@ -54,6 +54,7 @@ const PLAN_FAMILY_MARKERS = {
   email: 'Reviewed direct-send actions are available',
   report: 'A reviewed report-draft action is available',
   ingest_rule: 'Reviewed ingest-rule actions are available',
+  checklist: 'Reviewed checklist actions are available',
 };
 
 describe('every shipped action kind is taught to every model stage', () => {
@@ -259,7 +260,7 @@ describe('A8 — every stage teaches case contact membership and its refusals', 
     expect(answerPrompt).toContain('any other contact may be demoted or removed and the card warns that\n    they lose portal sight of the case once the portal is live');
     expect(answerPrompt).toContain('demoting or removing the case\'s ONLY Primary');
     expect(answerPrompt).toContain('removing the case\'s last contact');
-    expect(answerPrompt).toContain('case-and-contact-notes/case-contact/case-pipeline/direct-send');
+    expect(answerPrompt).toContain('case-and-contact-notes/case-contact/case-pipeline/checklist/direct-send');
     expect(repairPrompt).toContain('evidence is the\n  case_relate row carrying the exact case_relate_id');
     expect(repairPrompt).toContain('refuse a contact who has used the client portal leaving\n  Primary/Secondary');
   });
@@ -290,6 +291,35 @@ describe('A9 — every stage teaches the pipeline cards, the unmet-requirement r
     expect(answerPrompt).not.toContain('(status, stage, dates');
     expect(repairPrompt).toContain('the destination is the case\'s NEXT stage (never named)');
     expect(repairPrompt).toContain('never template_id, stage_id or any override / skip / force / requirement key (each\n  is refused by name)');
+  });
+});
+
+// A10: a new family prefix (checklist). Pins that every stage teaches the
+// three refusals a stage that does not know them proposes anyway — a tag, a
+// case list titled "Docs Needed", another user's list — the evidence column
+// aliases the normalizer reads (checklist_id / checkitem_id), and the
+// client-visible docs-list disclosure.
+describe('A10 — every stage teaches the checklist cards, their evidence aliases and their refusals', () => {
+  test('the plan carries its own bullet with the reads the cards cite', () => {
+    expect(planPrompt).toContain('Reviewed checklist actions are available: make ONE checklist or note on a case, a contact or the signed-in user\'s\n  own personal list');
+    expect(planPrompt).toContain('checklists.id AS checklist_id');
+    expect(planPrompt).toContain('checkitems.id AS checkitem_id');
+    expect(planPrompt).toContain('The server refuses any tag or position, a case list titled "Docs\n  Needed"');
+  });
+  test('the investigate stage names the proposal family and its aliases', () => {
+    expect(investigatePrompt).toContain('and\n  checklist proposals, which need a row carrying the record\'s exact case_id or contact_id for a new list');
+    expect(investigatePrompt).toContain('checkitems.id AS checkitem_id for an item change');
+  });
+  test('the answer and repair stages teach the shapes, the refusals and the docs-list disclosure', () => {
+    expect(answerPrompt).toContain('Checklist rules (A10');
+    expect(answerPrompt).toContain('a "tag" or "position" field anywhere');
+    expect(answerPrompt).toContain('a case list titled "Docs Needed" (that title makes it the\n    client-facing docs list');
+    expect(answerPrompt).toContain('a list for ANOTHER user, or on a bill, appointment, task or event');
+    expect(answerPrompt).toContain('An item on a case\'s docs list is VISIBLE TO THE CLIENT');
+    expect(answerPrompt).toContain('case-pipeline/checklist/direct-send');
+    expect(repairPrompt).toContain('never objects with tag / position / status');
+    expect(repairPrompt).toContain('Never "tag", never\n  a case list titled "Docs Needed"');
+    expect(repairPrompt).toContain('evidence carries the exact checkitem_id; never position or tag');
   });
 });
 

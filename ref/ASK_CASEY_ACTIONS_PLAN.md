@@ -842,12 +842,107 @@ typed `case.pipeline` read so Casey can SHOW a case's stages and steps before
 proposing (today it reads cases.case_stage / case_status and learns stage
 names from a refusal). `ref/plans.md`.
 
-#### A10: Checklists and checklist items
+#### A10: Checklists and checklist items — create, item add and item update shipped 2026-11-01
 
-Start with creating a checklist or one item and updating/completing one item.
-Template expansion, upsert-many, reorder, and deletion remain separate because
-they can create or affect many records. Resolve the parent entity and template
-server-side, display generated item counts, and verify collection-level sync.
+Creating a checklist or note, adding one item, and updating / completing one
+item. Template expansion, upsert-many, reorder, and deletion remain separate
+because they can create or affect many records. The parent record is resolved
+server-side, the card shows the item counts, and the writes are on the sync
+bus.
+
+**What the routes guard.** Little. The Notes & Lists routes
+(`routes/api.checklists.js`, mounted at the ROOT — `/checklists`,
+`/checklists/:id/items`, `/checkitems/:id`, not under `/api`) are SQL in the
+route behind bare `jwtOrApiKey`. They enforce the note/checklist shape (a note
+rejects `items`, a checklist rejects a `body`; a note's parent rejects an item)
+and the note body length (lib/noteLimits), and they gate `tag` for staff
+(`mayWriteTag`: api_key / SU only) and the detach of another user's personal
+list. They do NOT check the parent record exists, the title or item name width
+(varchar(255), clipped silently under the relaxed sql_mode), or a duplicate
+item name; and the portal's docs predicate is `tag='docs_needed' OR
+title='Docs Needed'`, so an untagged case list with that title (any
+capitalisation or accent — general_ci) IS the client-facing docs list. All of
+this is pinned on a real engine (`tests/caseyChecklists.mysql.test.js`).
+
+**Shipped contract.** Three kinds behind one switch:
+`checklist.create.v1` (POST `/checklists` {title, kind, body?, link_type, link,
+items?}), `checklist.item.add.v1` (POST `/checklists/:id/items` {name}) and
+`checklist.item.update.v1` (PATCH `/checkitems/:id` {name?, status?}).
+- **Create.** One checklist (`list_kind` "checklist", up to 25 initial item
+  names — name only, each starts incomplete, the route numbers them) or one
+  note (`list_kind` "note", optional body) on a case (`link` = the exact
+  case_id, cited by an evidence row), a contact (the exact contact_id, cited)
+  or the ASKING user's own personal list (no evidence needed; the ledger claim
+  is per user, so only the asker can apply it). The draft key is `list_kind`;
+  the browser maps it to the route's `kind`.
+- **Refused by name**, before anything is read where it is a field: `tag` and
+  `position` anywhere (the draft or an initial item); a CASE list or note
+  titled "Docs Needed" (folded the way the column's collation compares —
+  case, accents, trailing spaces); a list for another user; a list on a bill,
+  appointment, task or event (item cards refuse lists of those kinds and
+  unlinked lists too); a title or item name over 255; a note body over
+  lib/noteLimits; a note with items; a checklist with a body; more than 25
+  initial items; an item name already on the list or twice in the initial
+  items (trimmed, case-insensitive — stricter than the route); an item card on
+  a NOTE; another user's personal list; a no-op update; a record with more
+  than 200 lists or a list with more than 200 items (not reviewable on one
+  card).
+- **Disclosed, not refused:** a list with the same title already on the
+  record (a DUPLICATE TITLE warning — duplicates are legal natively); an item
+  added to, completed on, reopened on or renamed on a case's DOCS list
+  (CLIENT-VISIBLE: the portal shows its items, and the unauthenticated GET
+  `/api/public/docs/:caseId` lists its incomplete items) — computed by the
+  portal's own predicate, evaluated by the engine; an item added to a complete
+  list, or an item reopened on one, REOPENS the list.
+- **The item update card** shows the list (title, record), the item before →
+  after, and the list status after (derived, lib/checklistStatus.js: the last
+  open item completes it; a NULL stored status never transitions, as the
+  route's `WHERE status <> ?` cannot match NULL). Its effects mirror the route
+  exactly: completing an incomplete item emits `checkitem.completed`; the list
+  transitioning to complete emits `checklist.completed` — each dry-run against
+  every active trigger rule on that event (`listActiveRulesForEvent` +
+  `evaluateDraft`, preview lane, nothing dispatched; "MAY run", danger, when a
+  rule cannot be evaluated). Create and item add emit no event and say so.
+  Live 2026-11-01 (manager-verified): no active rule on either event (rule 14
+  is `checklist.items_upserted`, which these routes never emit).
+- **Evidence:** create = a row with the exact case_id / contact_id; item add =
+  a row with the exact `checklist_id` (read as `checklists.id AS
+  checklist_id`); item update = a row with the exact `checkitem_id`
+  (`checkitems.id AS checkitem_id`). Both tables are in the curated report
+  manifest, so `sql.read` reads them — no typed read.
+- **Freshness:** `expected` = the record's list ids (create); the list's
+  title / kind / link / tag / status and every item's id:status:name (item
+  cards). The click re-reads GET `/checklists?link_type=&link=` (plus GET
+  `/api/cases/:id` or `/api/contacts/:id` for create) or GET `/checklists/:id`
+  and refuses on any difference before the claim.
+- **Idempotency:** none added. One claim per draft; a second create card makes
+  a second list (the warning says so); a second item card's re-read sees the
+  first card's item. **Outcomes:** 404 "Checklist not found" / "Item not
+  found" are before-write refusals (`knownOutcome`); a 400 is a refusal; a 5xx
+  or an answer that does not confirm the write stays ambiguous.
+- **Receipt:** the integer `checklist_id` for create and item add (both
+  routes return the whole list; the new item is one row of it) and
+  `checkitem_id` for the update (the route returns the item row). Two browser
+  families (`checklist`, `checkitem`) because a family has one receipt field.
+- **Sync (fixed in this slice):** yc-sync had no matcher for any of the three
+  routes, so a Casey write was silent to an open Notes & Lists board. Three
+  matchers now announce `checklist:<link_type>:<link>` (the doclink split —
+  the list belongs to its record's board, so `case:<id>` would cost every open
+  case file a full refetch); PATCH `/checkitems/:id` answers the item row
+  byte-identical PLUS an additive `checklist: {id, link_type, link}` echo for
+  it. checklistView.html subscribes to `checklist:*` and reloads for its own
+  record and, on a case board, its contact groups — fenced on its own echo
+  (api() stamps writes), and parked while hidden or while someone types
+  (reloaded on refocus, visibility, or tab re-entry).
+- Off switch `casey_checklists_enabled` (on unless '0'). Tests:
+  `tests/caseyChecklists.test.js`, gated `tests/caseyChecklists.mysql.test.js`,
+  `tests/assistantUi.test.js`, `tests/ycSync.test.js`,
+  `tests/checklistView.sync.test.js`.
+
+**Deferred** (`ref/plans.md`): lists for another user; lists on bills,
+appointments, tasks and events; reorder; list and item delete; upsert-many and
+template expansion; a note body edit and a list rename / status edit (PATCH
+`/checklists/:id`, also unmatched on the bus).
 
 #### A11: Documents
 

@@ -1091,6 +1091,39 @@ COMMENTs.)
   that step fails without sending — and the card does not warn.
   The card could read the contact's active phone/email rows and say so.
 
+## From the Ask Casey arc — A10 checklists (2026-11-01) — deferred
+
+- **Lists for another user.** The native route lets anyone make a personal
+  list FOR a colleague and add to it (delegation is its point); Casey makes
+  and changes only the asker's own. A card for someone else's list needs a
+  ruling on who may assign to whom and whether the owner is told.
+- **Lists on bills, appointments, tasks and events (and unlinked lists).**
+  Refused by name on create and on item cards; a card would have to name and
+  freshness-check those records. The board covers them natively.
+- **Reorder** (PATCH `/checkitems/:id` {position}) — a reorder moves many
+  rows' positions; `position` is refused by name today.
+- **Delete a list or an item** (DELETE `/checklists/:id` cascades its items;
+  DELETE `/checkitems/:id` can complete a list and emit `checklist.completed`)
+  — destructive, its own contract.
+- **Upsert-many and template expansion** (POST `/checklists/upsert-items`:
+  find-or-create the case's docs list, drop items matching the first 22
+  characters, insert fresh; emits `checklist.items_upserted`, which trigger
+  rule 14 listens to) — a fan-out onto the client-facing docs list.
+- **Rename a list, edit a note's body, set a note's done state** (PATCH
+  `/checklists/:id`).
+- **Sync gaps left on the native side.** Only the three routes Casey uses are
+  on the bus (`checklist:<link_type>:<link>`). PATCH / DELETE
+  `/checklists/:id`, DELETE `/checkitems/:id` and POST
+  `/checklists/upsert-items` still announce nothing, so another open board
+  stays stale until its tab is re-entered; the global board (More → Notes &
+  Lists, `checklistsView.html`) does not subscribe to `checklist:*` at all.
+- **The docs predicate's title fallback.** `portalDocsService.listDocs`,
+  `_caseItemMap` and the public docs GET still match `title = 'Docs Needed'`
+  (a transition fallback for untagged rows) and, unlike upsert-items, do not
+  filter `kind = 'checklist'`. Dropping the title arm once every case docs list
+  is tagged (the route comment's own condition) would let Casey's refusal
+  narrow to the tag.
+
 ## From the Ask Casey arc — A9 pipeline transitions (2026-10-29) — deferred
 
 - **The requirement-override sub-slice.** Casey setting or clearing a per-case
@@ -1822,12 +1855,9 @@ Active surfaces with known next steps.
   `--local-suite` NO-GO for a refused push names that break-glass. Flaky
   suites cost a rerun under the rule, not a blocked deploy.
 
-- **Twins red on main (found by the YisraMail P1 worker, 2026-10-29; MySQL
+- **Twin red on main (found by the YisraMail P1 worker, 2026-10-29; MySQL
   8.0.46, each twin on its own fresh DB; identical on `f838db7` and the slice).**
-  `assistantActionLedger.mysql` 2/7 fail: "all 42 kinds" counts 57 now (the
-  hard-coded count drifted with the kind registry), and the concurrent-
-  acknowledgement test is refused "Invalid action receipt". `keyTasks.mysql`
-  2/15 fail: the PRE-D3 tests expect no `task_session_key_id`, but the tables
+  `keyTasks.mysql` 2/15 fail: the PRE-D3 tests expect no `task_session_key_id`, but the tables
   they build now carry it (D3 applied, dump regenerated) — a 200 where they
   expect 500, and the migration CHECK says "already applied". Test drift, not
   code; nothing runs twins on a schedule, so nothing caught it.

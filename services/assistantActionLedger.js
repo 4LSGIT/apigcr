@@ -29,6 +29,12 @@ const KINDS = new Map([
   // but the advance route never returns it (getPipeline's history projection
   // omits the id), so there is no integer to receipt without a route change.
   ...['advance', 'move'].map(k => [`case.pipeline.${k}.v1`, 'case_id']),
+  // A10: create and item add receipt the LIST (both routes return the whole
+  // list, and the new item is one row of it); the item update receipts the
+  // ITEM (the PATCH returns that row).
+  ['checklist.create.v1', 'checklist_id'],
+  ['checklist.item.add.v1', 'checklist_id'],
+  ['checklist.item.update.v1', 'checkitem_id'],
   ['job.code_safe.create.v1', 'job_id'],
   ['workflow.draft.v1', 'workflow_id'],
   ['workflow.step_insert.v1', 'workflow_id'],

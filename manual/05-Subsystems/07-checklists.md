@@ -131,7 +131,7 @@ concurrent caller winning the insert race is not an error there.
 | `/checklists` | GET, POST | List with filters and item counts / create |
 | `/checklists/:id` | GET, PATCH, DELETE | One list (+items); DELETE cascades items |
 | `/checklists/:id/items` | POST | Add an item |
-| `/checkitems/:id` | PATCH, DELETE | Update name/status, or remove |
+| `/checkitems/:id` | PATCH, DELETE | Update name/status (answers the item row plus its list's `checklist` {id, link_type, link}, for the sync bus), or remove |
 | `/checklists/upsert-items` | POST | Find-or-create the `docs_needed` list and upsert items |
 
 **Public — unauthenticated, `case_id` is the only capability:**

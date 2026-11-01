@@ -77,6 +77,8 @@
  *   'setting:fe-case_types'   ← Slice 2: an app_settings row, not an entity
  *   'document:412'            ← Documents S3: one `documents` row
  *   'doclink:case:AAAAAAAA'   ← Documents S3: the SET of documents on a target
+ *   'checklist:case:AAAAAAAA' ← A10: the SET of notes & lists on a record
+ *                               (the doclink split again — see its matchers)
  *
  * Subscribe to a specific entity, or to `'case:*'` for every case (the Cases
  * tab's "something, somewhere, changed" subscription). The wildcard is a
@@ -1047,7 +1049,53 @@
     // spread by the route), so docLinkGetter plugs in unchanged and a global
     // generate with no target fails closed exactly as upload-commit does.
     [/^\/api\/documents\/generate$/, 'document', docLinkGetter, ['POST']],
+
+    /* CHECKLISTS (A10). The three writes Ask Casey's checklist cards make —
+       which are also the Notes & Lists board's own new-list, add-item and
+       rename / check writes — announce the RECORD whose notes-and-lists set
+       changed, as `checklist:<link_type>:<link>`: the doclink split again. A
+       list belongs to its record's board, not to the record's row, so
+       `case:<id>` would cost every open case file a full refetch (header,
+       tables, form push) for a table it does not read, and every Cases tab a
+       list reload. The board (checklistView.html) subscribes to `checklist:*`
+       and reloads for its own record and its case's contact groups.
+         POST  /checklists            201 — the new row (link_type, link)
+         POST  /checklists/:id/items  201 — the WHOLE list (link_type, link)
+         PATCH /checkitems/:id        the item row + `checklist` {id,
+                                      link_type, link}, which the route
+                                      echoes for this (the row has no link)
+       Fails closed on an unlinked list (link NULL — no record's board shows
+       it) and on a missing echo. Not matched: PATCH / DELETE /checklists/:id,
+       DELETE /checkitems/:id and POST /checklists/upsert-items — no Casey card
+       sends them (ref/plans.md). The items capture is digits-only, so
+       /checklists/upsert-items can never match the add-item matcher. These
+       routes live at the ROOT (/checklists, not /api/checklists). */
+    [/^\/checklists$/,               'checklist', checklistGetter(false), ['POST']],
+    [/^\/checklists\/(\d+)\/items$/, 'checklist', checklistGetter(false), ['POST']],
+    [/^\/checkitems\/(\d+)$/,        'checklist', checklistGetter(true),  ['PATCH']],
   ];
+
+  /**
+   * Checklist writes — announce the RECORD whose notes-and-lists set changed.
+   *
+   * Array return (getter contract v2): the address is the list's link, which
+   * no URL names. `nested` reads it from the PATCH /checkitems echo
+   * (`r.checklist`); the two POSTs return the list row itself.
+   *
+   * @param   {boolean} nested
+   * @returns {function(object): (Array|null)}
+   */
+  function checklistGetter(nested) {
+    return function (r) {
+      var row = nested ? (r && r.checklist) : r;
+      if (!row || typeof row !== 'object') return null;
+      var t = row.link_type;
+      var l = row.link;
+      if (typeof t !== 'string' || !t) return null;
+      if (l == null || l === '') return null;
+      return [{ addr: 'checklist:' + t + ':' + l, fields: { yc_refetch: 1 } }];
+    };
+  }
 
   /**
    * The id is in the URL — announce the need against it.

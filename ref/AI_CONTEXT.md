@@ -612,6 +612,45 @@ body. Governing migrations in `ref/migrations/`.*
   switch `casey_case_pipeline_enabled` (on unless '0'). Tests:
   `tests/caseyPipeline.test.js`, gated `tests/caseyPipeline.mysql.test.js`;
   plan: ASK_CASEY_ACTIONS_PLAN A9.
+- **Casey checklist cards (A10, 11-01):** kinds `checklist.create.v1` (POST
+  `/checklists` {title, kind, body?, link_type, link, items?}),
+  `checklist.item.add.v1` (POST `/checklists/:id/items` {name}),
+  `checklist.item.update.v1` (PATCH `/checkitems/:id` {name?, status?}) — the
+  Notes & Lists routes, mounted at the ROOT (not `/api`), SQL in
+  `routes/api.checklists.js`, bare `jwtOrApiKey`. The routes check shape (note
+  vs checklist), note body length and a staff `tag`, but not the parent's
+  existence, the varchar(255) title / item-name width (clipped silently) or a
+  duplicate item name — the normalizer does, fail closed. Refused by name:
+  `tag` / `position` anywhere (before any read); a CASE list titled "Docs
+  Needed" (folded like general_ci — the portal's docs predicate is
+  `tag='docs_needed' OR title='Docs Needed'`, so the title alone makes the
+  client-facing docs list; that list is upsert-items' alone); a list for
+  another user (personal lists = the asker's own) and bill / appt / task /
+  event lists; a note with items / a checklist with a body; > 25 initial items;
+  duplicate item names (trimmed, case-insensitive); item cards on a note or
+  on another user's list. Disclosed: a duplicate title (warning); an item on a
+  case's DOCS list is CLIENT-VISIBLE (portal + unauthenticated
+  `/api/public/docs/:caseId`) — the flag is the portal predicate run by the
+  engine in the normalizer's list read; a list it reopens. The update mirrors
+  the route's emits (completing an item → `checkitem.completed`; the derived
+  list status → complete → `checklist.completed`; a NULL stored status never
+  transitions) and dry-runs each against the active rules (A9's
+  `casePipelineAutomation`, now parameterized by event). Evidence: exact
+  case_id / contact_id (create; none for a personal list), `checklist_id`
+  (item add), `checkitem_id` (update) — sql.read, both tables are in the
+  manifest. Freshness: the record's list ids, or the list's
+  title/kind/link/tag/status + every item's id:status:name, re-read at the
+  click (GET `/checklists?link_type=&link=` / GET `/checklists/:id`). Receipts:
+  integer `checklist_id` (create, item add) / `checkitem_id` (update) — two
+  browser families. No Idempotency-Key. SYNC (new): yc-sync announces the
+  three writes as `checklist:<link_type>:<link>` (PATCH `/checkitems/:id`
+  answers the item row plus an additive `checklist` {id, link_type, link}
+  echo for it); checklistView.html subscribes to `checklist:*`, reloads for
+  its record and its case's contact groups, fenced on its own echo and parked
+  while hidden or typed in. Off switch `casey_checklists_enabled` (on unless
+  '0'). Tests: `tests/caseyChecklists.test.js`, gated
+  `tests/caseyChecklists.mysql.test.js`, `tests/checklistView.sync.test.js`;
+  plan: ASK_CASEY_ACTIONS_PLAN A10.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL
