@@ -1378,12 +1378,19 @@ function caseContactKnownOutcome(e) {
 // cases PATCH, never /pipeline/move. The server resolved the destination in
 // the case's pipeline (or, for an intake case, its chapter pipeline's first
 // stage), refused any move that passes over a REQUIRED step not done / N/A
-// (there is no override pathway on these cards), dry-ran the
+// (there is no override pathway on these cards) — except a same-template move
+// onto an off-ramp, which is an exit, not a continuation: it discloses the
+// required steps it leaves open in a danger warning — dry-ran the
 // case.stage_advanced trigger rules, and baked the position, phase, type,
-// subtype and the passed-over requirement statuses into `expected`. The
-// click-time re-read (GET /api/cases/:id/pipeline?requirements=1 and GET
-// /api/cases/:id) refuses on any difference BEFORE the claim, recomputing the
-// unmet requirements the same way. No Idempotency-Key: the ledger allows one
+// subtype, the passed-over requirement statuses and the off-ramp's open
+// required set into `expected`. The click-time re-read (GET
+// /api/cases/:id/pipeline?requirements=1 and GET /api/cases/:id) refuses on
+// any difference BEFORE the claim, recomputing the unmet requirements the
+// same way: off the off-ramp they refuse by name; onto one (the card AND the
+// live destination both off-ramp lane) they must be exactly the disclosed
+// set; on a RECOVERY (off-ramp → main lane, by the card or the live read) the
+// required steps still reading skipped below the destination must be exactly
+// the card's disclosed `required_skipped` set. No Idempotency-Key: the ledger allows one
 // claim per draft, and the route itself is idempotent per destination — a
 // repeat of the current stage is a noop under its per-case lock that writes
 // nothing and emits no event, so no stage-entry automation fires twice (the
@@ -1422,7 +1429,12 @@ function casePipelineText(draft) {
     `Pipeline phase: ${w.pipeline_phase && w.pipeline_phase.from !== w.pipeline_phase.to ? `${w.pipeline_phase.from} → ${w.pipeline_phase.to} (RETAINED)` : `stays ${w.pipeline_phase ? w.pipeline_phase.to : 'unchanged'}`}`];
   (draft.warnings || []).forEach((x) => lines.push(`Warning: ${x}`));
   const done = (r.satisfied || []).map((x) => `"${x.internal_label}" (${x.stage_label}, ${x.status})`);
-  lines.push(`Required steps it passes over: none left unmet${done.length ? ` — done or N/A: ${done.join('; ')}` : ''}`);
+  const open = (r.required_open || []).map((x) => `"${x.internal_label}" (${x.stage_label}, ${x.status}${x.owner ? `, ${x.owner}` : ''})`);
+  lines.push(open.length
+    ? `Required steps it passes over: ${open.length} left open on the off-ramp (they will read skipped): ${open.join('; ')}${done.length ? ` — done or N/A: ${done.join('; ')}` : ''}`
+    : `Required steps it passes over: none left unmet${done.length ? ` — done or N/A: ${done.join('; ')}` : ''}`);
+  const still = (r.required_skipped || []).map((x) => `"${x.internal_label}" (${x.stage_label}, ${x.status}${x.owner ? `, ${x.owner}` : ''})`);
+  if (still.length) lines.push(`Required steps it passes that were skipped, not done (they stay skipped): ${still.join('; ')}`);
   (r.optional_skipped || []).forEach((x) => lines.push(`Optional step passed over unfinished (it will read skipped): "${x.internal_label}" (${x.stage_label}, ${x.status})`));
   const dest = (r.destination || []).map((x) => `"${x.internal_label}" (${x.required ? 'required' : 'optional'}${x.status ? `, ${x.status}` : ''})`);
   lines.push(`Steps at ${t.internal_label || 'the destination'}: ${dest.join('; ') || 'none'}`);
@@ -1493,16 +1505,39 @@ async function casePipelinePrecheck(draft) {
       || !Array.isArray(pr.stages) || !pr.stages[0] || pr.stages[0].stage_key !== t.stage_key) {
       return `The ${t.template_name} pipeline ${name} would enter is no longer its chapter pipeline's first stage ${casePipelineStageName(t)}. Nothing was written. Ask Casey to prepare it again.`;
     }
-  } else {
+  }
+  // Off-ramp = exit: only when the card AND the live destination are both
+  // off-ramp lane (the server's casePipelineOfframp), never on the crossing.
+  const offLane = (stage) => String(stage && stage.lane != null ? stage.lane : '').trim().toLowerCase() === 'offramp';
+  let exit = false; let recovery = false;
+  if (!draft.crossing) {
     const s = pipe.stages.find((row) => row.stage_key === t.stage_key);
     if (!s || Number(s.stage_id) !== Number(t.stage_id) || Number(s.stage_number) !== Number(t.stage_number)) {
       return `The destination stage ${casePipelineStageName(t)} changed or is no longer active on ${name}'s pipeline. Nothing was written. Ask Casey to prepare it again.`;
     }
+    exit = offLane(t) && offLane(s);
+    // Recovery by the card OR the live read: either one means the still-skipped set is checked.
+    const curLive = pipe.stages.find((row) => row.stage_key === cur);
+    recovery = (offLane(draft.from) && !offLane(t)) || (offLane(curLive) && !offLane(s));
   }
   const passed = casePipelinePassed(draft, pipe);
   const unmet = passed.filter((r) => r.required && CASE_PIPELINE_OPEN.includes(r.status));
-  if (unmet.length) {
+  if (unmet.length && !exit) {
     return `UNMET REQUIREMENTS since this card was prepared — the move would now pass over: ${unmet.map((r) => `"${r.internal_label}" (stage ${r.stage_label}, ${r.status})`).join('; ')}. Nothing was written. Casey cannot override a requirement.`;
+  }
+  if (exit) {
+    // The disclosed set, exactly: a step newly open, or done since, is a change the user did not review.
+    const openSig = unmet.map((r) => `${r.requirement_key}@${r.stage_id}:${r.status}:${r.required}`).sort();
+    if (JSON.stringify(openSig) !== JSON.stringify((x.required_open || []).slice().sort())) {
+      return `The required steps ${name} would leave open on the off-ramp changed since this card was prepared — now open: ${unmet.map((r) => `"${r.internal_label}" (stage ${r.stage_label}, ${r.status})`).join('; ') || 'none'}. Nothing was written. Ask Casey to prepare it again.`;
+    }
+  }
+  if (recovery) {
+    const still = passed.filter((r) => r.required && r.status === 'skipped');
+    const stillSig = still.map((r) => `${r.requirement_key}@${r.stage_id}:${r.status}:${r.required}`).sort();
+    if (JSON.stringify(stillSig) !== JSON.stringify((x.required_skipped || []).slice().sort())) {
+      return `The required steps ${name} would pass while still skipped changed since this card was prepared — now: ${still.map((r) => `"${r.internal_label}" (stage ${r.stage_label}, ${r.status})`).join('; ') || 'none'}. Nothing was written. Ask Casey to prepare it again.`;
+    }
   }
   const sig = passed.map((r) => `${r.requirement_key}@${r.stage_id}:${r.status}:${r.required}`).sort();
   if (JSON.stringify(sig) !== JSON.stringify((x.requirements || []).slice().sort())) {

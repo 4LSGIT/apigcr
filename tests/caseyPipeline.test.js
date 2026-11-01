@@ -17,6 +17,14 @@
  *   3. UNMET REQUIREMENTS: every REQUIRED step not done / N/A that the move
  *      would turn 'skipped' (the resolver's rule 3) refuses the card and is
  *      listed verbatim; optional ones are disclosed; a step back passes none;
+ *      OFF-RAMP = EXIT (Fred, 2026-11-01): a same-template move onto an
+ *      off-ramp-lane stage passes over NO requirement — its open required
+ *      steps are listed verbatim in a REQUIRED STEPS LEFT OPEN warning after
+ *      OFF-RAMP and carried in expected.required_open; main-lane and crossing
+ *      destinations still refuse, unchanged; a RECOVERY (off-ramp → main
+ *      lane) discloses the required steps below the destination still
+ *      reading 'skipped' (REQUIRED STEPS STILL SKIPPED, after RECOVERY;
+ *      expected.required_skipped) — disclosed, never refused;
  *   4. the destination: advance = the next main-lane stage; move = a stage of
  *      the case's own pipeline named by key or label; the retention crossing
  *      = the chapter pipeline's first stage, only when the subtype names it;
@@ -291,10 +299,12 @@ describe('UNMET REQUIREMENTS — the normalizer is the gate the route does not h
     await refuse(advance(), /^UNMET REQUIREMENTS: moving case 25-12345-abc from Consult booked \(consult_booked\) to Consult done \(consult_done\) would pass over 2 required steps that are not done: "Intake questionnaire submitted" \(stage Consult booked, active, client\); "Six months of pay stubs" \(stage Consult booked, active, staff\)\. Casey never moves a case past an unmet requirement and cannot override one\. Complete them, or the user marks them done \/ N\/A on the case's Steps panel, then ask again$/, { pipe });
   });
 
-  test('a skip ahead passes the upcoming steps of every stage in between; an off-ramp passes everything numbered below it', async () => {
+  test('a skip ahead passes the upcoming steps of every stage in between; an off-ramp discloses everything numbered below it', async () => {
     const pipe = pipeOf({ at: 'consult_booked', reqs: { consult_done: [(s) => req('fee_quote', s, 'upcoming', { internal_label: 'Fee quoted' })] } });
     await refuse(move('contract_sent'), /would pass over 1 required step that is not done: "Fee quoted" \(stage Consult done, upcoming, client\)/, { pipe });
-    await refuse(move('Dead lead'), /to Dead lead \(dead_lead\) would pass over 1 required step that is not done: "Fee quoted"/, { pipe });
+    const off = await run(move('Dead lead'), { pipe });
+    expect(off.warnings[1]).toBe('REQUIRED STEPS LEFT OPEN: moving case 25-12345-abc from Consult booked (consult_booked) to the off-ramp Dead lead (dead_lead) leaves 1 required step not done: "Fee quoted" (stage Consult done, upcoming, client) — they will read as skipped once the case is on Dead lead (dead_lead); a move back onto the main path at or before their stage makes them upcoming again.');
+    expect(off.expected.required_open).toEqual(['fee_quote@12:upcoming:1']);
     // The destination's own steps are not passed over: they become its work list.
     await expect(run(advance(), { pipe })).resolves.toMatchObject({ to: { stage_key: 'consult_done' },
       requirements: { destination: [{ internal_label: 'Fee quoted', required: 1, status: 'upcoming' }] } });
@@ -314,6 +324,8 @@ describe('UNMET REQUIREMENTS — the normalizer is the gate the route does not h
     expect(card.requirements).toEqual({
       satisfied: [{ internal_label: 'Photo ID', stage_label: 'Consult booked', status: 'na' }],
       optional_skipped: [{ internal_label: 'Courtesy call', stage_label: 'Consult booked', status: 'active' }],
+      required_open: [],
+      required_skipped: [],
       destination: [],
     });
     expect(card.expected.requirements).toEqual(['id_copy@11:na:1', 'optional_call@11:active:0']);
@@ -322,6 +334,109 @@ describe('UNMET REQUIREMENTS — the normalizer is the gate the route does not h
   test('required is the resolver\'s 1/0 and an unknown status reads as not satisfied ONLY when active/upcoming', async () => {
     const pipe = pipeOf({ at: 'consult_booked', reqs: { consult_booked: [(s) => req('a', s, 'active', { required: true })] } });
     await refuse(advance(), /UNMET REQUIREMENTS/, { pipe });
+  });
+});
+
+describe('OFF-RAMP = EXIT — a move onto an off-ramp passes over no requirement; its open required steps are disclosed (Fred, 2026-11-01)', () => {
+  // Three required steps open (one with no owner), an optional one open, one done.
+  const openPipe = (over = {}) => pipeOf({ at: 'consult_booked', reqs: {
+    consult_booked: [
+      (s) => req('questionnaire', s, 'active', { internal_label: 'Intake questionnaire submitted' }),
+      (s) => req('paystubs', s, 'active', { internal_label: 'Six months of pay stubs', owner: '' }),
+      (s) => req('optional_call', s, 'active', { required: 0, internal_label: 'Courtesy call' }),
+    ],
+    consult_done: [(s) => req('fee_quote', s, 'upcoming', { internal_label: 'Fee quoted', owner: 'staff' })],
+    contract_sent: [(s) => req('id_copy', s, 'done', { internal_label: 'Photo ID' })],
+  }, ...over });
+  const LEFT_OPEN = 'REQUIRED STEPS LEFT OPEN: moving case 25-12345-abc from Consult booked (consult_booked) to the off-ramp Dead lead (dead_lead) leaves 3 required steps not done: '
+    + '"Intake questionnaire submitted" (stage Consult booked, active, client); "Six months of pay stubs" (stage Consult booked, active); "Fee quoted" (stage Consult done, upcoming, staff)'
+    + ' — they will read as skipped once the case is on Dead lead (dead_lead); a move back onto the main path at or before their stage makes them upcoming again.';
+
+  test('the off-ramp move RESOLVES: OFF-RAMP first, then ONE warning naming every open required step word for word; expected carries the set', async () => {
+    const card = await run(move('Dead lead'), { pipe: openPipe() });
+    expect(card.warnings).toEqual(['OFF-RAMP: Dead lead (dead_lead) takes the case off the Intake pipeline\'s main path.', LEFT_OPEN]);
+    expect(card.requirements).toEqual({
+      satisfied: [{ internal_label: 'Photo ID', stage_label: 'Contract sent', status: 'done' }],
+      optional_skipped: [{ internal_label: 'Courtesy call', stage_label: 'Consult booked', status: 'active' }],
+      required_open: [
+        { internal_label: 'Intake questionnaire submitted', stage_label: 'Consult booked', status: 'active', owner: 'client' },
+        { internal_label: 'Six months of pay stubs', stage_label: 'Consult booked', status: 'active', owner: '' },
+        { internal_label: 'Fee quoted', stage_label: 'Consult done', status: 'upcoming', owner: 'staff' },
+      ],
+      required_skipped: [],
+      destination: [],
+    });
+    expect(card.expected.required_open).toEqual(['fee_quote@12:upcoming:1', 'paystubs@11:active:1', 'questionnaire@11:active:1']);
+    // The whole passed-over signature is carried as before (the open steps included).
+    expect(card.expected.requirements).toEqual(['fee_quote@12:upcoming:1', 'id_copy@13:done:1', 'optional_call@11:active:0', 'paystubs@11:active:1', 'questionnaire@11:active:1']);
+    // An off-ramp with nothing open carries an empty set and the OFF-RAMP line alone.
+    const clean = await run(move('Dead lead'));
+    expect([clean.warnings, clean.requirements.required_open, clean.expected.required_open])
+      .toEqual([['OFF-RAMP: Dead lead (dead_lead) takes the case off the Intake pipeline\'s main path.'], [], []]);
+  });
+
+  test('a MAIN-lane move over the same open steps still REFUSES, with the unchanged message', async () => {
+    await refuse(move('contract_sent'), /^UNMET REQUIREMENTS: moving case 25-12345-abc from Consult booked \(consult_booked\) to Contract sent \(contract_sent\) would pass over 3 required steps that are not done: "Intake questionnaire submitted" \(stage Consult booked, active, client\); "Six months of pay stubs" \(stage Consult booked, active\); "Fee quoted" \(stage Consult done, upcoming, staff\)\. Casey never moves a case past an unmet requirement and cannot override one\. Complete them, or the user marks them done \/ N\/A on the case's Steps panel, then ask again$/, { pipe: openPipe() });
+    await refuse(advance(), /^UNMET REQUIREMENTS: moving case 25-12345-abc from Consult booked \(consult_booked\) to Consult done \(consult_done\) would pass over 2 required steps that are not done: "Intake questionnaire submitted" \(stage Consult booked, active, client\); "Six months of pay stubs" \(stage Consult booked, active\)\. Casey never moves/, { pipe: openPipe() });
+    // On the Chapter 7 pipeline too: Dismissed is an exit, Filed is not.
+    const ch7 = pipeOf({ template: CH7, at: 'retained', reqs: { retained: [(s) => req('fee', s, 'active', { internal_label: 'Retainer fee paid' })] } });
+    await refuse(move('filed'), /^UNMET REQUIREMENTS: moving case 25-12345-abc from Retained \(retained\) to Filed \(filed\) would pass over 1 required step that is not done: "Retainer fee paid" \(stage Retained, active, client\)\./, { caseRow: { pipeline_phase: 'case' }, pipe: ch7 });
+    const dismissed = await run(move('Dismissed'), { caseRow: { pipeline_phase: 'case' }, pipe: ch7 });
+    expect(dismissed.warnings).toEqual(['OFF-RAMP: Dismissed (dismissed) takes the case off the Chapter 7 pipeline\'s main path.',
+      'REQUIRED STEPS LEFT OPEN: moving case 25-12345-abc from Retained (retained) to the off-ramp Dismissed (dismissed) leaves 1 required step not done: "Retainer fee paid" (stage Retained, active, client) — they will read as skipped once the case is on Dismissed (dismissed); a move back onto the main path at or before their stage makes them upcoming again.']);
+  });
+
+  test('an off-ramp is not an override: an override key on an off-ramp move still refuses by name before anything is read', async () => {
+    const db = setup({ pipe: openPipe() });
+    await expect(normalizeActionDraft(db, move('Dead lead', { skip_requirements: true }), EVIDENCE, { currentUserId: 6 }))
+      .rejects.toThrow(/^REQUIREMENT OVERRIDE refused \(skip_requirements\)/);
+    expect(pipelineService.getPipeline).not.toHaveBeenCalled();
+  });
+});
+
+describe('RECOVERY — the required steps below the destination still skipped are disclosed, never refused', () => {
+  // On the no_show off-ramp every lower main step reads skipped unless done / N/A.
+  const recPipe = () => pipeOf({ at: 'no_show', reqs: {
+    consult_booked: [
+      (s) => req('questionnaire', s, 'skipped', { internal_label: 'Intake questionnaire submitted' }),
+      (s) => req('optional_call', s, 'skipped', { required: 0, internal_label: 'Courtesy call' }),
+      (s) => req('id_copy', s, 'done', { internal_label: 'Photo ID' }),
+    ],
+    consult_done: [(s) => req('fee_quote', s, 'skipped', { internal_label: 'Fee quoted', owner: 'staff' })],
+    // The destination's own step and the off-ramp's are not passed: never listed.
+    contract_sent: [(s) => req('contract_signed', s, 'skipped', { internal_label: 'Retainer contract signed' })],
+    no_show: [(s) => req('noshow_call', s, 'active', { internal_label: 'No-show call' })],
+  } });
+  const RECOVERY = 'RECOVERY: the case comes back from the off-ramp No show (no_show) onto the main path.';
+
+  test('RECOVERY first, then ONE warning naming every required skipped step below the destination; card rows and expected carry the set', async () => {
+    const card = await run(move('Contract sent'), { pipe: recPipe() });
+    expect(card.warnings).toEqual([RECOVERY,
+      'REQUIRED STEPS STILL SKIPPED: moving case 25-12345-abc from the off-ramp No show (no_show) to Contract sent (contract_sent) passes 2 required steps that were skipped, not done: '
+      + '"Intake questionnaire submitted" (stage Consult booked, skipped, client); "Fee quoted" (stage Consult done, skipped, staff)'
+      + ' — they stay skipped at Contract sent (contract_sent); a move to a stage at or before theirs makes them upcoming again.']);
+    expect(card.requirements.required_skipped).toEqual([
+      { internal_label: 'Intake questionnaire submitted', stage_label: 'Consult booked', status: 'skipped', owner: 'client' },
+      { internal_label: 'Fee quoted', stage_label: 'Consult done', status: 'skipped', owner: 'staff' },
+    ]);
+    expect([card.requirements.required_open, card.expected.required_open]).toEqual([[], []]);
+    expect(card.expected.required_skipped).toEqual(['fee_quote@12:skipped:1', 'questionnaire@11:skipped:1']);
+    // One step: singular; a recovery to the first stage passes none.
+    const one = await run(move('consult_done'), { pipe: recPipe() });
+    expect(one.warnings[1]).toBe('REQUIRED STEPS STILL SKIPPED: moving case 25-12345-abc from the off-ramp No show (no_show) to Consult done (consult_done) passes 1 required step that was skipped, not done: "Intake questionnaire submitted" (stage Consult booked, skipped, client) — they stay skipped at Consult done (consult_done); a move to a stage at or before theirs makes them upcoming again.');
+    const first = await run(move('consult_booked'), { pipe: recPipe() });
+    expect([first.warnings, first.requirements.required_skipped, first.expected.required_skipped]).toEqual([[RECOVERY], [], []]);
+  });
+
+  test('only a recovery discloses: off-ramp → off-ramp, a backward main move and the crossing carry an empty set', async () => {
+    const offToOff = await run(move('dead_lead'), { pipe: recPipe() });
+    expect([offToOff.requirements.required_skipped, offToOff.expected.required_skipped]).toEqual([[], []]);
+    expect(offToOff.warnings.some((w) => /STILL SKIPPED/.test(w))).toBe(false);
+    const back = await run(move('docs'), { caseRow: { pipeline_phase: 'case' },
+      pipe: pipeOf({ template: CH7, at: 'filed', reqs: { retained: [(s) => req('fee', s, 'skipped')] } }) });
+    expect([back.warnings.length, back.requirements.required_skipped, back.expected.required_skipped]).toEqual([1, [], []]);
+    const cross = await run(advance(), { pipe: pipeOf({ at: 'contract_sent', reqs: { consult_booked: [(s) => req('questionnaire', s, 'skipped')] } }) });
+    expect([cross.crossing, cross.requirements.required_skipped, cross.expected.required_skipped]).toEqual([true, [], []]);
   });
 });
 

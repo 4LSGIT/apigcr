@@ -2875,7 +2875,9 @@ describe('A8 case contact cards (case.contact.add / update / remove)', () => {
 // template, current stage and history length, the destination, the phase /
 // type / subtype, and RECOMPUTES the passed-over requirements (an unmet
 // required step refuses by name, any other change refuses as stale) BEFORE the
-// claim; the receipt is the STRING case_id; the route's noop (already there —
+// claim — onto an off-ramp (card AND live stage both off-ramp lane) the open
+// required steps must be exactly the card's disclosed set (off-ramp = exit);
+// on a recovery (card OR live read) the still-skipped required set too; the receipt is the STRING case_id; the route's noop (already there —
 // no log row, no event) and its lock 409 read as refusals, not as "may have
 // been applied".
 describe('A9 case pipeline cards (case.pipeline.advance / move)', () => {
@@ -3027,8 +3029,8 @@ describe('A9 case pipeline cards (case.pipeline.advance / move)', () => {
       // A step on the passed-over stages finished / added since the review: stale.
       [draft(), reads({ pipeOpts: { reqs: { ...REQS, consult_booked: [REQS.consult_booked[0], { ...REQS.consult_booked[1], status: 'done' }] } } }), 'The steps case 25-12345-abc would pass over changed since this card was prepared'],
       [movement(), reads({ pipeOpts: { reqs: { ...REQS, consult_done: [] } } }), 'The steps case 25-12345-abc would pass over changed'],
-      // The move passes consult_done's step too: an override CLEARED since the review re-opens it.
-      [movement(), reads({ pipeOpts: { reqs: { ...REQS, consult_done: [{ ...REQS.consult_done[0], status: 'upcoming' }] } } }), 'UNMET REQUIREMENTS since this card was prepared — the move would now pass over: "Fee quoted" (stage Consult done, upcoming)'],
+      // The off-ramp move passes consult_done's step too: an override CLEARED since the review re-opens it — not the disclosed set.
+      [movement(), reads({ pipeOpts: { reqs: { ...REQS, consult_done: [{ ...REQS.consult_done[0], status: 'upcoming' }] } } }), 'The required steps case 25-12345-abc would leave open on the off-ramp changed since this card was prepared — now open: "Fee quoted" (stage Consult done, upcoming). Nothing was written. Ask Casey to prepare it again.'],
       [draft(), reads({ caseRow: { pipeline_phase: 'case' } }), 'The phase, type or subtype of case 25-12345-abc changed since this card was prepared'],
       [draft(), reads({ caseRow: { case_subtype: 'Chapter 13' } }), 'The phase, type or subtype of case 25-12345-abc changed'],
       [draft(), reads({ caseGone: true }), 'Case 25-12345-abc no longer exists. Nothing was written.'],
@@ -3049,6 +3051,99 @@ describe('A9 case pipeline cards (case.pipeline.advance / move)', () => {
       const ur = await runStage(u, { read });
       expect([ur.writes, ur.ledger]).toEqual([[], []]);
       expect(u.action_draft.action_error).toMatch(new RegExp(`^Could not re-check the record before applying \\(${why.replace(/[()']/g, '.')}\\)`));
+    }
+  });
+
+  test('OFF-RAMP = EXIT: the card lists the required steps it leaves open and applies; the click refuses on ANY change to that set', async () => {
+    const OPEN = { ...REQS, consult_done: [{ ...REQS.consult_done[0], status: 'upcoming' }] };
+    const exitCard = (over = {}) => movement({
+      requirements: { satisfied: [{ internal_label: 'Photo ID', stage_label: 'Consult booked', status: 'na' }],
+        optional_skipped: [{ internal_label: 'Courtesy call', stage_label: 'Consult booked', status: 'active' }],
+        required_open: [{ internal_label: 'Fee quoted', stage_label: 'Consult done', status: 'upcoming', owner: 'staff' }], destination: [] },
+      warnings: ['OFF-RAMP: Dead lead (dead_lead) takes the case off the Intake pipeline\'s main path.',
+        'REQUIRED STEPS LEFT OPEN: moving case 25-12345-abc from Consult booked (consult_booked) to the off-ramp Dead lead (dead_lead) leaves 1 required step not done: "Fee quoted" (stage Consult done, upcoming, staff) — they will read as skipped once the case is on Dead lead (dead_lead); a move back onto the main path at or before their stage makes them upcoming again.'],
+      expected: { template_id: 1, stage_key: 'consult_booked', history_count: 2, pipeline_phase: 'intake', case_type: 'Bankruptcy', case_subtype: 'Chapter 7',
+        requirements: ['contract@13:done:1', 'fee@12:upcoming:1', 'id_copy@11:na:1', 'optional_call@11:active:0'], required_open: ['fee@12:upcoming:1'] }, ...over });
+    const m = exitCard();
+    const r = await runStage(m, { read: reads({ pipeOpts: { reqs: OPEN } }) });
+    expect(r.writes).toEqual([{ path: `/api/cases/${CASE_ID}/pipeline/advance`, method: 'POST', headers: undefined, body: { stage: 'dead_lead', note: 'gone quiet' } }]);
+    expect(m.action_draft.status).toBe('applied');
+    const dialog = r.P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true });
+    expect(dialog.text).toContain('Warning: OFF-RAMP: Dead lead (dead_lead) takes the case off the Intake pipeline\'s main path.\nWarning: REQUIRED STEPS LEFT OPEN: moving case 25-12345-abc');
+    expect(dialog.text).toContain('\nRequired steps it passes over: 1 left open on the off-ramp (they will read skipped): "Fee quoted" (Consult done, upcoming, staff) — done or N/A: "Photo ID" (Consult booked, na)\n');
+    expect(dialog.text).not.toContain('none left unmet');
+    for (const [message, read, why] of [
+      // A disclosed step done since the review: a change the user did not review.
+      [exitCard(), reads({ pipeOpts: { reqs: REQS } }), 'The required steps case 25-12345-abc would leave open on the off-ramp changed since this card was prepared — now open: none. Nothing was written. Ask Casey to prepare it again.'],
+      // A step made required since the review: a newly open one.
+      [exitCard(), reads({ pipeOpts: { reqs: { ...OPEN, consult_booked: [REQS.consult_booked[0], { ...REQS.consult_booked[1], required: 1 }] } } }),
+        'The required steps case 25-12345-abc would leave open on the off-ramp changed since this card was prepared — now open: "Courtesy call" (stage Consult booked, active); "Fee quoted" (stage Consult done, upcoming). Nothing was written.'],
+      // The destination moved to the main lane since: no longer an exit — the refusal by name.
+      [exitCard(), reads({ pipeOpts: { reqs: OPEN, stages: STAGES.map((st) => (st.stage_key === 'dead_lead' ? { ...st, lane: 'main' } : st)) } }),
+        'UNMET REQUIREMENTS since this card was prepared — the move would now pass over: "Fee quoted" (stage Consult done, upcoming). Nothing was written. Casey cannot override a requirement.'],
+      // A card that does not itself say off-ramp is never treated as one.
+      [exitCard({ to: { ...movement().action_draft.to, lane: 'main' } }), reads({ pipeOpts: { reqs: OPEN } }),
+        'UNMET REQUIREMENTS since this card was prepared — the move would now pass over: "Fee quoted" (stage Consult done, upcoming).'],
+      // A card without the carried set (prepared before off-ramp = exit) refuses rather than assume.
+      [exitCard({ expected: { ...exitCard().action_draft.expected, required_open: undefined } }), reads({ pipeOpts: { reqs: OPEN } }),
+        'would leave open on the off-ramp changed since this card was prepared — now open: "Fee quoted" (stage Consult done, upcoming).'],
+    ]) {
+      const x = await runStage(message, { read });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(message.action_draft.refusal_error).toContain(why);
+    }
+  });
+
+  test('RECOVERY: the card lists the required steps still skipped and applies; the click refuses on ANY change to that set', async () => {
+    // On dead_lead: lower steps read skipped unless done / N/A; contract_sent is the destination (its skipped step is not passed).
+    const SKIP = {
+      consult_booked: [REQS.consult_booked[0], { ...REQS.consult_booked[1], status: 'skipped' }],
+      consult_done: [{ ...REQS.consult_done[0], status: 'skipped' }],
+      contract_sent: [{ ...REQS.contract_sent[0], status: 'skipped' }],
+    };
+    const recCard = (over = {}) => draft({ draft_id: '6d6d6d6d-1b2c-4d3e-8f40-123456789abc', kind: 'case.pipeline.move.v1',
+      from: { stage_key: 'dead_lead', stage_id: 19, label: 'Dead lead', lane: 'offramp', on_pipeline: true },
+      to: { template_id: 1, template_name: 'Intake', template_role: 'intake', stage_id: 13, stage_key: 'contract_sent', stage_number: 3,
+        internal_label: 'Contract sent', client_label: 'Contract sent', client_visible: 1, lane: 'main' },
+      requirements: { satisfied: [{ internal_label: 'Photo ID', stage_label: 'Consult booked', status: 'na' }], optional_skipped: [], required_open: [],
+        required_skipped: [{ internal_label: 'Fee quoted', stage_label: 'Consult done', status: 'skipped', owner: 'staff' }], destination: [] },
+      warnings: ['RECOVERY: the case comes back from the off-ramp Dead lead (dead_lead) onto the main path.',
+        'REQUIRED STEPS STILL SKIPPED: moving case 25-12345-abc from the off-ramp Dead lead (dead_lead) to Contract sent (contract_sent) passes 1 required step that was skipped, not done: "Fee quoted" (stage Consult done, skipped, staff) — they stay skipped at Contract sent (contract_sent); a move to a stage at or before theirs makes them upcoming again.'],
+      expected: { template_id: 1, stage_key: 'dead_lead', history_count: 2, pipeline_phase: 'intake', case_type: 'Bankruptcy', case_subtype: 'Chapter 7',
+        requirements: ['fee@12:skipped:1', 'id_copy@11:na:1', 'optional_call@11:skipped:0'], required_open: [], required_skipped: ['fee@12:skipped:1'] }, ...over });
+    const m = recCard();
+    const r = await runStage(m, { read: reads({ pipeOpts: { at: 'dead_lead', reqs: SKIP } }) });
+    expect(r.writes).toEqual([{ path: `/api/cases/${CASE_ID}/pipeline/advance`, method: 'POST', headers: undefined, body: { stage: 'contract_sent' } }]);
+    expect(m.action_draft.status).toBe('applied');
+    const dialog = r.P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true });
+    expect(dialog.text).toContain('Warning: RECOVERY: the case comes back from the off-ramp Dead lead (dead_lead) onto the main path.\nWarning: REQUIRED STEPS STILL SKIPPED: moving case 25-12345-abc');
+    expect(dialog.text).toContain('\nRequired steps it passes that were skipped, not done (they stay skipped): "Fee quoted" (Consult done, skipped, staff)\n');
+    // A forward main move over a skipped required step is not a recovery: no still-skipped check, it applies.
+    const fwd = draft({ expected: { ...draft().action_draft.expected, requirements: ['id_copy@11:skipped:1', 'optional_call@11:active:0'] } });
+    const rf = await runStage(fwd, { read: reads({ pipeOpts: { reqs: { ...REQS, consult_booked: [{ ...REQS.consult_booked[0], status: 'skipped' }, REQS.consult_booked[1]] } } }) });
+    expect([rf.writes.length, fwd.action_draft.status]).toEqual([1, 'applied']);
+    // A card with nothing still skipped shows no such line.
+    expect(rf.P.Swal.fire.mock.calls[0][0].text).not.toContain('were skipped, not done');
+    for (const [message, read, why] of [
+      // The disclosed step done since the review.
+      [recCard(), reads({ pipeOpts: { at: 'dead_lead', reqs: { ...SKIP, consult_done: [REQS.consult_done[0]] } } }),
+        'The required steps case 25-12345-abc would pass while still skipped changed since this card was prepared — now: none. Nothing was written. Ask Casey to prepare it again.'],
+      // An N/A cleared since: one more step still skipped.
+      [recCard(), reads({ pipeOpts: { at: 'dead_lead', reqs: { ...SKIP, consult_booked: [{ ...REQS.consult_booked[0], status: 'skipped' }, SKIP.consult_booked[1]] } } }),
+        'The required steps case 25-12345-abc would pass while still skipped changed since this card was prepared — now: "Photo ID" (stage Consult booked, skipped); "Fee quoted" (stage Consult done, skipped). Nothing was written.'],
+      // The card does not say recovery, the live read does (its current stage is off-ramp lane): the set is checked.
+      [recCard({ from: { stage_key: 'dead_lead', stage_id: 19, label: 'Dead lead', lane: 'main', on_pipeline: true },
+        expected: { ...recCard().action_draft.expected, required_skipped: [] } }), reads({ pipeOpts: { at: 'dead_lead', reqs: SKIP } }),
+        'would pass while still skipped changed since this card was prepared — now: "Fee quoted" (stage Consult done, skipped).'],
+      // The card says recovery, the live read no longer does (dead_lead moved to the main lane): the set is still checked.
+      [recCard(), reads({ pipeOpts: { at: 'dead_lead', reqs: { ...SKIP, consult_done: [REQS.consult_done[0]] }, stages: STAGES.map((st) => (st.stage_key === 'dead_lead' ? { ...st, lane: 'main' } : st)) } }),
+        'would pass while still skipped changed since this card was prepared — now: none.'],
+    ]) {
+      const x = await runStage(message, { read });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(message.action_draft.refusal_error).toContain(why);
     }
   });
 

@@ -24,6 +24,15 @@
  *     normalizer is the gate. The normalizer refuses that same move and names
  *     the requirement verbatim; an 'na' override satisfies it; an optional
  *     one is disclosed; the resolver's `required` arrives as the number 1/0.
+ *   - OFF-RAMP = EXIT (Fred, 2026-11-01): a move onto an off-ramp over open
+ *     required steps is a card, not a refusal — it names them in a REQUIRED
+ *     STEPS LEFT OPEN warning and carries them in expected.required_open;
+ *     the route moves the case and the REAL resolver then reads exactly
+ *     those steps 'skipped'; a main-lane move over the same steps refuses.
+ *     A RECOVERY back to the main lane discloses the required steps below its
+ *     destination still skipped (expected.required_skipped); the resolver
+ *     keeps exactly those skipped there, and a recovery to a stage at or
+ *     before them makes them open again.
  *   - A REPEAT IS A NOOP: the same advance twice writes ONE log row and emits
  *     case.stage_advanced ONCE (the route's own dedup under its per-case
  *     lock) — no stage-entry automation double-fires on a double click.
@@ -244,9 +253,72 @@ d('the Casey pipeline cards on real MySQL (A9)', () => {
     // The dry run read the real active rules: the always-match rule fires, the
     // retained-only rule and the inactive / other-event rules are not listed.
     expect(c.automation).toEqual({ rules_checked: 2, quiet: 1, lines: ['Trigger rule #1 "Stage change → case log" runs: calls create_log ("Log it")'] });
-    // A same-template move to the off-ramp passes the same steps (and contract_sent's, still open → refused).
-    await expect(card({ kind: 'case.pipeline.move.v1', case_id: C1, stage: 'Dead lead', evidence: cite(1) })).rejects.toThrow(
-      /would pass over 1 required step that is not done: "Retainer contract signed" \(stage Contract sent, upcoming, client\)/);
+    // A same-template move to the off-ramp passes the same steps and contract_sent's, still open — an exit: disclosed, not refused.
+    const off = await card({ kind: 'case.pipeline.move.v1', case_id: C1, stage: 'Dead lead', evidence: cite(1) });
+    expect([off.requirements.required_open, off.expected.required_open]).toEqual([
+      [{ internal_label: 'Retainer contract signed', stage_label: 'Contract sent', status: 'upcoming', owner: 'client' }], ['contract_signed@13:upcoming:1']]);
+  });
+
+  test('OFF-RAMP = EXIT: the card discloses the open required steps, the route moves the case, and the resolver then reads exactly those skipped', async () => {
+    const OPEN = (r) => !!r.required && (r.status === 'active' || r.status === 'upcoming');
+    const sig = (rows) => rows.map((r) => `${r.requirement_key}@${r.stage_id}:${r.status}:${r.required}`).sort();
+    // C1 sits at consult_booked: its questionnaire (required) is active, contract_signed (required) upcoming, courtesy optional.
+    const c = await card({ kind: 'case.pipeline.move.v1', case_id: C1, stage: 'dead_lead', evidence: cite(1) });
+    expect(c.warnings).toEqual([
+      'OFF-RAMP: Dead lead (dead_lead) takes the case off the Intake pipeline\'s main path.',
+      'REQUIRED STEPS LEFT OPEN: moving case 25-50001 from Consult booked (consult_booked) to the off-ramp Dead lead (dead_lead) leaves 2 required steps not done: '
+        + '"Intake questionnaire submitted" (stage Consult booked, active, client); "Retainer contract signed" (stage Contract sent, upcoming, client)'
+        + ' — they will read as skipped once the case is on Dead lead (dead_lead); a move back onto the main path at or before their stage makes them upcoming again.',
+    ]);
+    expect(c.expected.required_open).toEqual(['contract_signed@13:upcoming:1', 'questionnaire@11:active:1']);
+    expect(c.requirements.optional_skipped).toEqual([{ internal_label: 'Courtesy call', stage_label: 'Consult booked', status: 'active' }]);
+    // The browser's click recompute over the REAL GET gives the same disclosed set.
+    const before = await call(app, 'GET', `/api/cases/${C1}/pipeline?requirements=1`);
+    expect(sig(browserPassed()(c, before.body).filter(OPEN))).toEqual(c.expected.required_open);
+    // A main-lane move over the same open step is still refused (contract_sent's own step is its work list, not passed).
+    await expect(card({ kind: 'case.pipeline.move.v1', case_id: C1, stage: 'contract_sent', evidence: cite(1) })).rejects.toThrow(
+      'UNMET REQUIREMENTS: moving case 25-50001 from Consult booked (consult_booked) to Contract sent (contract_sent) would pass over 1 required step that is not done: "Intake questionnaire submitted" (stage Consult booked, active, client). Casey never moves a case past an unmet requirement and cannot override one. Complete them, or the user marks them done / N/A on the case\'s Steps panel, then ask again');
+    // The route moves it; the real resolver now reads exactly the disclosed steps 'skipped' and leaves nothing open behind.
+    const res = await call(app, 'POST', `/api/cases/${C1}/pipeline/advance`, { stage: c.to.stage_key });
+    expect([res.status, res.body.noop, res.body.current.stage_key]).toEqual([200, false, 'dead_lead']);
+    expect((await logRows(C1)).map((r) => r.stage_key)).toEqual(['consult_booked', 'dead_lead']);
+    const after = await call(app, 'GET', `/api/cases/${C1}/pipeline?requirements=1`);
+    const rows = after.body.stages.filter((s) => s.stage_number < c.to.stage_number)
+      .flatMap((s) => s.requirements.map((r) => ({ ...r, stage_label: s.internal_label })));
+    expect(rows.filter((r) => r.required && r.status === 'skipped').map((r) => ({ internal_label: r.internal_label, stage_label: r.stage_label })))
+      .toEqual(c.requirements.required_open.map((r) => ({ internal_label: r.internal_label, stage_label: r.stage_label })));
+    expect(rows.filter(OPEN)).toEqual([]);
+  });
+
+  test('RECOVERY: the card discloses the required steps still skipped below its destination; the resolver keeps exactly those skipped there', async () => {
+    const sig = (rows) => rows.map((r) => `${r.requirement_key}@${r.stage_id}:${r.status}:${r.required}`).sort();
+    // Put C1 on the off-ramp through the route: its questionnaire and contract_signed now read skipped.
+    expect((await call(app, 'POST', `/api/cases/${C1}/pipeline/advance`, { stage: 'dead_lead' })).status).toBe(200);
+    const c = await card({ kind: 'case.pipeline.move.v1', case_id: C1, stage: 'contract_sent', evidence: cite(1) });
+    expect(c.warnings).toEqual([
+      'RECOVERY: the case comes back from the off-ramp Dead lead (dead_lead) onto the main path.',
+      'REQUIRED STEPS STILL SKIPPED: moving case 25-50001 from the off-ramp Dead lead (dead_lead) to Contract sent (contract_sent) passes 1 required step that was skipped, not done: '
+        + '"Intake questionnaire submitted" (stage Consult booked, skipped, client) — they stay skipped at Contract sent (contract_sent); a move to a stage at or before theirs makes them upcoming again.',
+    ]);
+    expect([c.requirements.required_skipped, c.expected.required_skipped]).toEqual([
+      [{ internal_label: 'Intake questionnaire submitted', stage_label: 'Consult booked', status: 'skipped', owner: 'client' }], ['questionnaire@11:skipped:1']]);
+    // The browser's click recompute over the REAL GET gives the same still-skipped set.
+    const before = await call(app, 'GET', `/api/cases/${C1}/pipeline?requirements=1`);
+    expect(sig(browserPassed()(c, before.body).filter((r) => r.required && r.status === 'skipped'))).toEqual(c.expected.required_skipped);
+    // A recovery to the first stage passes nothing.
+    const first = await card({ kind: 'case.pipeline.move.v1', case_id: C1, stage: 'consult_booked', evidence: cite(1) });
+    expect([first.warnings.length, first.expected.required_skipped]).toEqual([1, []]);
+    // The route moves it; the resolver keeps exactly the disclosed step skipped below the destination.
+    expect((await call(app, 'POST', `/api/cases/${C1}/pipeline/advance`, { stage: 'contract_sent' })).body.current.stage_key).toBe('contract_sent');
+    const after = await call(app, 'GET', `/api/cases/${C1}/pipeline?requirements=1`);
+    const below = after.body.stages.filter((s) => s.stage_number < c.to.stage_number)
+      .flatMap((s) => s.requirements.map((r) => ({ internal_label: r.internal_label, stage_label: s.internal_label, required: r.required, status: r.status })));
+    expect(below.filter((r) => r.required && r.status === 'skipped').map(({ internal_label, stage_label }) => ({ internal_label, stage_label })))
+      .toEqual(c.requirements.required_skipped.map(({ internal_label, stage_label }) => ({ internal_label, stage_label })));
+    // "A move to a stage at or before theirs makes them upcoming again": back to consult_booked, the questionnaire is open.
+    expect((await call(app, 'POST', `/api/cases/${C1}/pipeline/advance`, { stage: 'consult_booked' })).status).toBe(200);
+    const back = await call(app, 'GET', `/api/cases/${C1}/pipeline?requirements=1`);
+    expect(back.body.stages.find((s) => s.stage_key === 'consult_booked').requirements.find((r) => r.requirement_key === 'questionnaire').status).toBe('active');
   });
 
   test('A REPEAT IS A NOOP: the same advance twice writes one row and emits once (no double-fired automation)', async () => {

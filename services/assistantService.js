@@ -432,7 +432,14 @@ const CASE_CONTACT_CARD_NAMES = 12;
 //     requirement not done / N/A that the move would turn 'skipped' — the
 //     resolver's own rule 3: a stage numbered below the destination in its
 //     template, or (the crossing) any intake-template step — refuses the card
-//     and is listed verbatim. Optional ones are disclosed on the card. There
+//     and is listed verbatim. OFF-RAMP = EXIT: a same-template move onto an
+//     off-ramp-lane stage passes over no requirement (leaving the pipeline is
+//     not continuing it) — its open required steps are listed verbatim in a
+//     danger warning instead and carried in `expected.required_open`. A
+//     RECOVERY (off-ramp → main lane) discloses the required steps below the
+//     destination still reading 'skipped' the same way
+//     (`expected.required_skipped`) — they stay skipped there.
+//     Optional ones are disclosed on the card. There
 //     is NO override pathway: a draft key naming an override refuses by name,
 //     and overrides stay the user's own act on the Steps panel (a later
 //     sub-slice with its own reason and permission contract).
@@ -446,8 +453,10 @@ const CASE_CONTACT_CARD_NAMES = 12;
 //     match + transform, preview lane, nothing dispatched) and every rule
 //     that would run, could not be evaluated, or would fail is on the card.
 // Freshness: the pipeline position (template, current stage, history length),
-// phase / type / subtype, and the requirement statuses the move passes over
-// are baked into `expected`; the click re-reads GET /api/cases/:id/pipeline
+// phase / type / subtype, the requirement statuses the move passes over and
+// (off-ramp) the required steps it leaves open / (recovery) the required
+// steps still skipped are baked into `expected`;
+// the click re-reads GET /api/cases/:id/pipeline
 // ?requirements=1 and GET /api/cases/:id and refuses on any difference.
 // Receipt: the STRING case_id (A7's path) — the advance response does not
 // echo the case_stage_log row id (getPipeline's projection omits it).
@@ -2468,6 +2477,12 @@ function casePipelineRequirementRow(r, stageLabel) {
   };
 }
 
+// One passed-over step as the UNMET REQUIREMENTS refusal and the off-ramp's
+// REQUIRED STEPS LEFT OPEN warning both name it, word for word.
+function casePipelineStepText(r) {
+  return `"${r.internal_label}" (stage ${r.stage_label}, ${r.status}${r.owner ? `, ${r.owner}` : ''})`;
+}
+
 // The stable fingerprint of the requirements a move passes over — the click
 // recomputes it from the same GET and refuses on any difference.
 function casePipelineRequirementSignature(rows) {
@@ -2685,11 +2700,25 @@ async function normalizeCasePipelineAction(db, value, evidence, { currentUserId 
     for (const r of Array.isArray(s.requirements) ? s.requirements : []) passed.push(casePipelineRequirementRow(r, stageLabel.get(Number(s.stage_id)) || s.stage_key));
   }
   const blockers = passed.filter((r) => r.required && CASE_PIPELINE_OPEN.has(r.status));
-  if (blockers.length) {
+  // OFF-RAMP = EXIT (Fred, 2026-11-01): a required step is a prerequisite for
+  // CONTINUING the pipeline, and leaving it is not continuing — so a
+  // same-template move onto an off-ramp-lane stage passes over no
+  // requirement. Its open required steps are disclosed instead (the
+  // REQUIRED STEPS LEFT OPEN warning) and carried in `expected.required_open`
+  // for the click re-read. Main-lane and crossing destinations refuse.
+  const exit = !crossing && casePipelineOfframp(dest);
+  const leftOpen = exit ? blockers : [];
+  if (blockers.length && !exit) {
     throw casePipelineError(`UNMET REQUIREMENTS: moving case ${caseLabel} from ${fromText} to ${casePipelineStageText(dest)}${crossing ? ` on ${destTemplate.name}` : ''} would pass over ${blockers.length} required step${blockers.length > 1 ? 's' : ''} that ${blockers.length > 1 ? 'are' : 'is'} not done: ` +
-      blockers.map((r) => `"${r.internal_label}" (stage ${r.stage_label}, ${r.status}${r.owner ? `, ${r.owner}` : ''})`).join('; ') +
+      blockers.map(casePipelineStepText).join('; ') +
       '. Casey never moves a case past an unmet requirement and cannot override one. Complete them, or the user marks them done / N/A on the case\'s Steps panel, then ask again');
   }
+  // RECOVERY (off-ramp → a main-lane stage of the same template) discloses the
+  // REQUIRED steps below the destination that read 'skipped' — the off-ramp
+  // left them so, and the resolver keeps them skipped at the destination
+  // (rule 3a). Disclosed, not refused; carried in expected.required_skipped.
+  const recovery = !crossing && !casePipelineOfframp(dest) && !!curStage && casePipelineOfframp(curStage);
+  const stillSkipped = recovery ? passed.filter((r) => r.required && r.status === 'skipped') : [];
   const optionalSkipped = passed.filter((r) => !r.required && CASE_PIPELINE_OPEN.has(r.status));
   const satisfied = passed.filter((r) => r.status === 'done' || r.status === 'na');
   const destRequirements = crossing ? entering
@@ -2711,8 +2740,18 @@ async function normalizeCasePipelineAction(db, value, evidence, { currentUserId 
     warnings.push(`LIFECYCLE — THIS RETAINS THE CASE: pipeline phase intake → case. The case leaves the ${tpl.name} pipeline for ${destTemplate.name} and is treated as a retained case everywhere from now on (the board it sits on, the client portal's timeline, reports, every rule that reads the phase); its intake steps become history.`);
   } else if (casePipelineOfframp(dest)) {
     warnings.push(`OFF-RAMP: ${casePipelineStageText(dest)} takes the case off the ${tpl.name} pipeline's main path.`);
+    if (leftOpen.length) {
+      warnings.push(`REQUIRED STEPS LEFT OPEN: moving case ${caseLabel} from ${fromText} to the off-ramp ${casePipelineStageText(dest)} leaves ${leftOpen.length} required step${leftOpen.length > 1 ? 's' : ''} not done: ` +
+        leftOpen.map(casePipelineStepText).join('; ') +
+        ` — they will read as skipped once the case is on ${casePipelineStageText(dest)}; a move back onto the main path at or before their stage makes them upcoming again.`);
+    }
   } else if (curStage && casePipelineOfframp(curStage)) {
     warnings.push(`RECOVERY: the case comes back from the off-ramp ${casePipelineStageText(curStage)} onto the main path.`);
+    if (stillSkipped.length) {
+      warnings.push(`REQUIRED STEPS STILL SKIPPED: moving case ${caseLabel} from the off-ramp ${fromText} to ${casePipelineStageText(dest)} passes ${stillSkipped.length} required step${stillSkipped.length > 1 ? 's' : ''} that ${stillSkipped.length > 1 ? 'were' : 'was'} skipped, not done: ` +
+        stillSkipped.map(casePipelineStepText).join('; ') +
+        ` — they stay skipped at ${casePipelineStageText(dest)}; a move to a stage at or before theirs makes them upcoming again.`);
+    }
   } else if (curStage && Number(dest.stage_number) < Number(curStage.stage_number)) {
     warnings.push(`BACKWARD: the case moves back from ${casePipelineStageText(curStage)} to ${casePipelineStageText(dest)}; the steps of the stages in between read as upcoming again.`);
   }
@@ -2767,6 +2806,10 @@ async function normalizeCasePipelineAction(db, value, evidence, { currentUserId 
     requirements: {
       satisfied: satisfied.map((r) => ({ internal_label: r.internal_label, stage_label: r.stage_label, status: r.status })),
       optional_skipped: optionalSkipped.map((r) => ({ internal_label: r.internal_label, stage_label: r.stage_label, status: r.status })),
+      // Off-ramp only (empty otherwise): the required steps left open.
+      required_open: leftOpen.map((r) => ({ internal_label: r.internal_label, stage_label: r.stage_label, status: r.status, owner: r.owner })),
+      // Recovery only (empty otherwise): the required steps below the destination still skipped.
+      required_skipped: stillSkipped.map((r) => ({ internal_label: r.internal_label, stage_label: r.stage_label, status: r.status, owner: r.owner })),
       destination: destRequirements,
     },
     automation: { lines: automation.lines.map((l) => l.text), rules_checked: automation.rules_checked, quiet: automation.quiet },
@@ -2779,6 +2822,10 @@ async function normalizeCasePipelineAction(db, value, evidence, { currentUserId 
       case_type: row.case_type == null ? '' : String(row.case_type),
       case_subtype: row.case_subtype == null ? '' : String(row.case_subtype),
       requirements: casePipelineRequirementSignature(passed),
+      // The disclosed required-open set: the click refuses unless it is the same.
+      required_open: casePipelineRequirementSignature(leftOpen),
+      // Recovery: the disclosed still-skipped set, compared the same way.
+      required_skipped: casePipelineRequirementSignature(stillSkipped),
     },
     evidence: refs,
   };

@@ -781,12 +781,23 @@ refused — the route would file it there). The cases PATCH is never used;
 - **Unmet requirements** are the normalizer's gate, fail closed: every
   REQUIRED step in status active / upcoming that the move would turn
   'skipped' — the resolver's rule 3 (a stage numbered below the destination
-  in its template; on the crossing, every intake step) — refuses the card,
-  each listed word for word with its stage and owner. Optional steps left
-  open are disclosed (they will read skipped); done / N/A ones are listed. A
-  step back passes none. There is NO override pathway: a draft key naming an
-  override / skip / force / waive / requirement refuses by name before
-  anything is read.
+  in its template; on the crossing, every intake step) — refuses a move to a
+  main-lane stage and the crossing, each listed word for word with its stage
+  and owner. **Off-ramp = exit** (Fred, 2026-11-01): a required step is a
+  prerequisite for CONTINUING the pipeline, and leaving it is not
+  continuing, so a same-template move onto an off-ramp-lane stage passes
+  over no requirement. Its open required steps are disclosed instead — one
+  danger warning after the OFF-RAMP line names each word for word with its
+  stage and owner ("they will read as skipped once the case is on <off-ramp>")
+  — and carried in `expected.required_open`. Optional steps left open are
+  disclosed (they will read skipped); done / N/A ones are listed. A step back
+  passes none. A RECOVERY (off-ramp → a main-lane stage) is never refused for
+  them either: every REQUIRED step below its destination still reading
+  'skipped' gets a danger warning after the RECOVERY line ("they stay skipped
+  at <dest>") and rides `expected.required_skipped`, which the click compares
+  like `required_open`. There is NO override pathway (an
+  off-ramp is not one): a draft key naming an override / skip / force /
+  waive / requirement refuses by name before anything is read.
 - **Refused by name, besides:** a case-phase case that resolves to Intake (no
   chapter pipeline matches — advancing it there would flip a retained case
   back to intake); advance from an off-ramp or past the last stage; a later
@@ -807,9 +818,12 @@ refused — the route would file it there). The cases PATCH is never used;
   pipeline's list), never free text.
 - **Freshness:** `expected` = template id, current stage_key, history length
   (catches A → B → A), phase / type / subtype, and the passed-over requirement
-  signature; the click re-reads GET `…/pipeline?requirements=1` and GET
-  `/api/cases/:id`, recomputes the blockers (a newly unmet step refuses by
-  name) and refuses on any other difference before the claim.
+  signature (plus, onto an off-ramp, the disclosed required-open set); the
+  click re-reads GET `…/pipeline?requirements=1` and GET `/api/cases/:id`,
+  recomputes the blockers (a newly unmet step refuses by name; onto an
+  off-ramp — the card AND the live stage both off-ramp lane — the open
+  required steps must equal the disclosed set, so a step done or newly open
+  since refuses) and refuses on any other difference before the claim.
 - **Idempotency (the double-fire question):** no Idempotency-Key and no route
   change. Stage-entry automation fans out per transition, but the route itself
   dedups a repeat (noop: no row, no event), the ledger allows one claim per

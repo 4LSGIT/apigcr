@@ -277,6 +277,8 @@ describe('A9 — every stage teaches the pipeline cards, the unmet-requirement r
     expect(planPrompt).toContain('refuses — and the answer says why — any move that would pass over a REQUIRED step not done or N/A (Casey cannot\n  override a requirement');
     expect(planPrompt).toContain('No other case or contact field is editable by Casey (status, dates,');
     expect(planPrompt).toContain("a case's pipeline STAGE moves only through the pipeline actions below, never as a field edit");
+    // Off-ramp = exit (Fred, 2026-11-01): the planner must not refuse "mark this lead dead" over open steps.
+    expect(planPrompt).toContain('A move onto an OFF-RAMP stage is an exit, not a\n  continuation: open required steps do not refuse it');
   });
   test('the investigate stage names the proposal family', () => {
     expect(investigatePrompt).toContain('and case pipeline proposals, which need only a\n  row carrying the exact case_id');
@@ -286,6 +288,7 @@ describe('A9 — every stage teaches the pipeline cards, the unmet-requirement r
     expect(answerPrompt).toContain('the server picks it; never name one');
     expect(answerPrompt).toContain('a move that would pass over a REQUIRED step\n    that is not done or N/A (the refusal lists every such step word for word — repeat them all, never summarize them\n    away)');
     expect(answerPrompt).toContain('Casey has NO override pathway');
+    expect(answerPrompt).toContain('A move onto an OFF-RAMP stage (dead lead, no show, dismissed) is an exit, not a continuation: open required steps\n    do NOT refuse it — propose it');
     expect(answerPrompt).toContain('moving a case onto ANOTHER pipeline');
     expect(answerPrompt).toContain('A case\'s pipeline STAGE moves only through the pipeline kinds below.');
     expect(answerPrompt).not.toContain('(status, stage, dates');

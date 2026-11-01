@@ -1155,13 +1155,6 @@ COMMENTs.)
   requirements.** Only Casey's cards refuse them; the native confirm says
   "Move this case to X?" with no mention of open required steps. A warning
   (or a gate) in the native confirm is a product decision.
-- **Off-ramps under the fail-closed rule.** The resolver marks every lower
-  stage's open steps 'skipped' when a case enters an off-ramp, so Casey
-  refuses "mark this lead dead / no-show" while any required intake step is
-  open — the user overrides on the Steps panel or uses the board. If that
-  proves too strict in use, the ruling to revisit is whether an off-ramp
-  destination "passes over" requirements at all (it is an exit, not a
-  completion); A9 implements the resolver's literal answer.
 
 ## From the Ask Casey arc — A8 case-contact membership (2026-10-28) — deferred
 

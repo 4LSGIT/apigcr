@@ -592,8 +592,13 @@ body. Governing migrations in `ref/migrations/`.*
   normalizer is one, fail closed: a REQUIRED requirement in status
   active/upcoming that the move turns 'skipped' (resolver rule 3: stage_number
   below the destination in its template, or every intake step on the
-  crossing) refuses the card and is listed verbatim; optional ones are
-  disclosed; a step back passes none. NO override pathway: a draft key
+  crossing) refuses the card and is listed verbatim — EXCEPT onto an
+  off-ramp-lane stage of the same template (off-ramp = exit, Fred
+  2026-11-01): there the open required steps are a danger warning, carried in
+  `expected.required_open`; a RECOVERY (off-ramp → main lane) likewise warns
+  on the required steps below its destination still 'skipped'
+  (`expected.required_skipped`); optional ones are disclosed; a step back
+  passes none. NO override pathway: a draft key
   matching override/skip/force/requirement/… refuses by name before any read
   (the override sub-slice is deferred, ref/plans.md). Refused too: a
   case-phase case resolving to Intake (would flip it back to intake), advance
@@ -607,7 +612,8 @@ body. Governing migrations in `ref/migrations/`.*
   danger-styles the card. Freshness: `expected` = template id + current
   stage_key + history length + phase/type/subtype + the passed-over
   requirement signature; the click re-reads GET `…/pipeline?requirements=1`
-  (recomputing the blockers — a newly unmet step refuses by name) and GET
+  (recomputing the blockers — a newly unmet step refuses by name; onto an
+  off-ramp the open set must equal the disclosed one) and GET
   `/api/cases/:id`. Idempotency: none added — advanceStage is idempotent per
   destination (same key + template as the latest row → noop, no row, no
   event, under its per-case GET_LOCK; twin-pinned), and the ledger allows one

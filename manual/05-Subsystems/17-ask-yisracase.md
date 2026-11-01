@@ -478,6 +478,12 @@ this lead dead", "move the case back to Docs requested").
 - **Requirements.** The card lists every step the move passes over: required
   steps that are done or marked N/A, and **optional** steps left unfinished
   (they will read "skipped"). It also lists the steps waiting at the new stage.
+  A move to an **off-ramp** (Dead lead, Dismissed) is an exit, not progress,
+  so open required steps do not stop it: the card names each one in a
+  warning — they read "skipped" while the case sits on the off-ramp. Bringing
+  a case **back** from an off-ramp names, in a warning, every required step it
+  passes that is still "skipped" — they stay skipped unless the case goes to a
+  stage at or before theirs.
 - **Automation.** The card dry-runs the stage change against every active
   trigger rule and lists each rule that would run, with what it does (start a
   workflow, enrol a sequence, call a function, run a hook), each that would
@@ -488,7 +494,8 @@ this lead dead", "move the case back to Docs requested").
   then on), puts it on an off-ramp, brings it back from one, moves it
   backward, or has a rule whose test could not run.
 - **What Casey will not do, and says so:**
-  - move a case past a **required step that is not done or N/A**. The answer
+  - move a case past a **required step that is not done or N/A** (except onto
+    an off-ramp, above). The answer
     names every such step, word for word. Casey **cannot override a
     requirement** — mark the step done or N/A on the case's Steps panel
     yourself, then ask again. (The case page's own Advance does not check
@@ -504,8 +511,9 @@ this lead dead", "move the case back to Docs requested").
     page).
 - **Freshness.** When you confirm, the card re-reads the case's pipeline, its
   steps, and its phase, type and subtype. If any of them changed since the
-  card was prepared — including a step that is now unmet — nothing is
-  written; ask Casey to prepare it again. If someone moved the case to the
+  card was prepared — including a step that is now unmet, or, on an off-ramp
+  card, a listed step finished since — nothing is written; ask Casey to
+  prepare it again. If someone moved the case to the
   same stage first, nothing is written and no automation runs twice.
 - Once applied, the card opens the case. Open case pages and the pipeline
   board refresh on their own.
