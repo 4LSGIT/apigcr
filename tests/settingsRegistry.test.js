@@ -50,6 +50,7 @@ describe('classification snapshot', () => {
     "casey_checklists_enabled": "system system casey ui bool",
     "casey_code_actions_enabled": "system system casey ui bool",
     "casey_contact_relations_enabled": "system system casey ui bool",
+    "casey_documents_enabled": "system system casey ui bool",
     "casey_hook_authoring_enabled": "system system casey ui bool",
     "casey_ingest_authoring_enabled": "system system casey ui bool",
     "casey_record_edits_enabled": "system system casey ui bool",

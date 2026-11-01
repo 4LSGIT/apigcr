@@ -1,8 +1,8 @@
 # Ask Casey
 
 Ask Casey is the user-facing name for the firm's YisrAI assistant. Its searches
-are read-only; its reviewed Task, Event, Appointment, and contact-subrecord
-actions are performed by the signed-in user after explicit review. It can answer
+are read-only; its reviewed actions (each family is described below) are
+performed by the signed-in user after explicit review. It can answer
 questions about firm records, how YisraCase itself works, general knowledge,
 and current weather. Open it from the persistent **Ask Casey** button at the
 bottom of the left sidebar. **More → Ask Casey** opens the same assistant in a
@@ -567,6 +567,56 @@ that list", "check off the credit report").
   you click away.
 
 The off switch for these cards is the `casey_checklists_enabled` setting (on
+unless set to 0).
+
+### Documents: title, type, tags and links
+
+Casey can read the Documents registry (every file the Dropbox sync has seen,
+and which case or contact each is linked to), and it can **change one
+document's title, type or tags** or **link one document to one case or
+contact** — one change per card, through the same routes the Documents page's
+Edit and Links buttons use. Ask in plain words ("retitle the petition PDF on
+the Smith case to Chapter 7 petition (filed)", "tag it court, filed", "link
+this paystub to Dana's contact").
+
+- **An edit card** shows the document (file name, path, size, source), each
+  field before and after, and every case or contact it is linked to — the
+  places the new title shows. Tags are saved the way the Documents page saves
+  them (lowercase, spaces as hyphens, comma-separated); if that differs from
+  what you asked, the card shows the saved form. A type no other document has
+  yet is called out as new. Send an empty value to clear a field.
+- **A link card** shows the document, the record it joins, the links it
+  already has, the optional relation word, and **exactly where it will show**:
+  that record's Documents tab, and — under **Include related**, which is on by
+  default — the Documents tab of each contact on that case (a case link) or
+  each case that contact is on (a contact link), badged "via" the record. A
+  document's first case link also takes it off the Documents page's "no case"
+  list. A link you make is kept even if the file is later moved in Dropbox.
+- **Automation.** Editing a document can start rules on "document updated";
+  linking one, rules on "document linked". The card checks every active rule
+  and lists each that would run, and any whose test could not run — that one
+  **may** run.
+- **Staff only.** The client portal does not list registered documents.
+- **What Casey will not do, and says so:**
+  - delete, restore or mark a document missing;
+  - rename or move the file, or touch its public link — Dropbox owns the file;
+  - use the relation word **path** — that is the Dropbox sync's own mark;
+  - link a document that is deleted or missing, link it to anything but a
+    case or a contact, or add a link that already exists;
+  - work on a document already linked to more than 20 records (it warns from
+    5);
+  - save a value longer than the field holds, or an edit that changes nothing;
+  - unlink, upload, generate or share documents, or register a new file — do
+    those on the Documents page.
+- **Freshness.** When you confirm, the card re-reads the document (and, for a
+  link, the record). If the document was edited, renamed by the sync, deleted,
+  or gained or lost a link since the card was prepared, nothing is written; ask
+  Casey to prepare it again.
+- Once applied, the card opens the case or contact (an edit to a document with
+  no links points you to More → Documents). Open Documents pages and tabs
+  showing the document refresh on their own.
+
+The off switch for these cards is the `casey_documents_enabled` setting (on
 unless set to 0).
 
 ### Sending a text or email

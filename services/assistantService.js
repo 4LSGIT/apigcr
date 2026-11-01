@@ -524,6 +524,54 @@ const CHECKLIST_INITIAL_ITEMS_MAX = 25;
 const CHECKLIST_LINK_TYPES = ['case', 'contact', 'user'];
 // Items listed on a card.
 const CHECKLIST_CARD_ITEMS = 30;
+// A11: documents — edit ONE registered document's staff-owned metadata
+// (document.update.v1 → PATCH /api/documents/:id {title?, doc_type?, tags?})
+// or link ONE document to ONE case or contact (document.link.v1 → POST
+// /api/documents/:id/links {link_type, link_id, relation?}) — the Documents
+// page's own routes. They guard little: no permission beyond staff, the
+// service CLIPS an over-width value silently (documentService.COLUMN_LIMITS)
+// and answers a repeat link as success (`created:false`), and the link route
+// does not look at the document's status. So:
+//   * `status` (delete / restore / mark missing) and the provider-owned
+//     columns (name, path, external_id, shared_link) are refused BY NAME
+//     before anything is read.
+//   * A deleted or missing document refuses; an over-width value refuses
+//     (the width counted in characters, as the column counts, and for tags
+//     AFTER normalizeTags — the form the service stores); a no-op refuses
+//     (the service's own compare: trimmed, NULL = '').
+//   * A link that already exists refuses (folded the way the column's
+//     general_ci UNIQUE key compares) — stricter than the route's silent
+//     success; a document linked to more than DOCUMENT_LINKS_MAX records
+//     refuses, and DOCUMENT_LINKS_DISCLOSE or more is disclosed.
+//   * relation 'path' is the sync engine's own mark (its attribution sweep
+//     skips any document holding a case link with it), so Casey never writes
+//     it; any other short plain word is allowed and disclosed.
+//   * The link card states exactly where the document starts to show —
+//     documentService.resolveRelatedTargets, the predicate the Documents tabs'
+//     "Include related" view reads — and both cards dry-run the event the
+//     service emits (document.updated / document.linked) against the active
+//     trigger rules (preview lane, nothing dispatched).
+// Freshness: the document's title / doc_type / tags / status / updated_at
+// (update) or status and whole link set (link) are baked into `expected`;
+// the click re-reads GET /api/documents/:id and refuses on any difference.
+// Receipts: the integer document_id (update — the PATCH returns the row) and
+// document_link_id (link — the POST returns every link row). One per-family
+// switch, casey_documents_enabled (on unless '0').
+const DOCUMENT_ACTION_KINDS = new Set(['document.update.v1', 'document.link.v1']);
+const DOCUMENT_KEYS = {
+  'document.update.v1': new Set(['kind', 'document_id', 'title', 'doc_type', 'tags', 'evidence']),
+  'document.link.v1': new Set(['kind', 'document_id', 'link_type', 'link_id', 'relation', 'evidence']),
+};
+// Refused by name wherever they appear on a document card.
+const DOCUMENT_SYSTEM_KEYS = ['status', 'shared_link', 'name', 'path', 'external_id'];
+const DOCUMENT_FIELDS = ['title', 'doc_type', 'tags'];
+const DOCUMENT_LINK_TYPES = ['case', 'contact'];
+// A document already linked to more than this many records is not reviewable
+// on one card; this many or more is disclosed.
+const DOCUMENT_LINKS_MAX = 20;
+const DOCUMENT_LINKS_DISCLOSE = 5;
+// Linked records / related records listed on a card.
+const DOCUMENT_CARD_LINKS = 25;
 const CONTACT_PHONE_UPDATE_KEYS = new Set(['label', 'is_primary', 'sms_optout', 'mms_capable', 'notes']);
 const CONTACT_EMAIL_UPDATE_KEYS = new Set(['label', 'is_primary', 'email_optout', 'notes']);
 const CONTACT_ADDRESS_UPDATE_KEYS = new Set(['address1', 'address2', 'city', 'state', 'zip', 'country', 'label', 'is_primary', 'notes']);
@@ -3218,6 +3266,375 @@ async function normalizeChecklistAction(db, value, evidence, { currentUserId = n
   if (kind === 'checklist.create.v1') return normalizeChecklistCreate(db, value, evidence, currentUserId);
   if (kind === 'checklist.item.add.v1') return normalizeChecklistItemAdd(db, value, evidence, currentUserId);
   return normalizeChecklistItemUpdate(db, value, evidence, currentUserId);
+}
+
+// ── A11: documents ────────────────────────────────────────────────────────
+// The document reads below are this family's own, in the route's shapes:
+// the row (never shared_link — a capability no card shows), its link rows in
+// documentService.listLinks' order, labels for case / contact targets the way
+// the Documents tabs label them. Real-engine twin:
+// tests/caseyDocuments.mysql.test.js.
+
+function documentError(message) { return httpError(422, message); }
+
+// Characters as MySQL's VARCHAR counts them (and documentService._clamp
+// clips) — code points, not UTF-16 units.
+function documentChars(text) { return Array.from(String(text)).length; }
+
+// documentService.update compares through domainEvents' diff norm: trimmed,
+// NULL and '' equal. A change the service would drop is a no-op here too.
+function documentNorm(value) { return value == null ? '' : String(value).trim(); }
+
+// A case link_id / contact link_id as the general_ci UNIQUE key compares it.
+function documentFoldId(value) { return String(value == null ? '' : value).trim().toLowerCase(); }
+
+function documentSystemKeys(value, kind) {
+  const hit = DOCUMENT_SYSTEM_KEYS.filter((k) => value && Object.prototype.hasOwnProperty.call(value, k));
+  if (!hit.length) return;
+  const why = [];
+  if (hit.includes('status')) why.push('STATUS refused: deleting, restoring or marking a document missing is not available to Casey (a separate, higher-impact action) — the user does it on the Documents page');
+  if (hit.includes('shared_link')) why.push('SHARED LINK refused: a public link is a capability — Casey never creates, shows or writes one');
+  const provider = hit.filter((k) => k === 'name' || k === 'path' || k === 'external_id');
+  if (provider.length) why.push(`${provider.map((k) => k.toUpperCase()).join(' / ')} refused: a document's file name, path and Dropbox id belong to Dropbox (the sync writes them) — Casey edits only the staff title, type and tags; the file itself is renamed or moved in Dropbox`);
+  throw documentError(`${why.join('; ')} (${kind})`);
+}
+
+function documentIdFrom(value) {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id < 1) throw documentError('A document card needs the document\'s exact positive document_id (read it as documents.id AS document_id)');
+  return id;
+}
+
+function documentRowCited(refs, evidence, test) {
+  return refs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return !!row && test(row);
+  });
+}
+
+function documentIso(value) {
+  if (value == null) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? String(value) : d.toISOString();
+}
+
+// Labels for case / contact targets — the Documents tabs' own choice
+// (documentService._labelTargets): the docket, else the case id; the
+// contact's name, else #id. Anything else keeps its raw id.
+async function documentTargetLabels(db, targets) {
+  const labels = new Map();
+  const caseIds = [...new Set(targets.filter((t) => t.link_type === 'case').map((t) => String(t.link_id)))];
+  const contactIds = [...new Set(targets.filter((t) => t.link_type === 'contact').map((t) => parseInt(t.link_id, 10)).filter((n) => Number.isSafeInteger(n) && n > 0))];
+  if (caseIds.length) {
+    const [rows] = await db.query(
+      `SELECT case_id, COALESCE(NULLIF(case_number_full, ''), NULLIF(case_number, ''), case_id) AS label
+         FROM cases WHERE case_id IN (?)`, [caseIds]);
+    for (const r of (Array.isArray(rows) ? rows : [])) labels.set(`case\u0000${documentFoldId(r.case_id)}`, `case ${String(r.label).slice(0, 60)}`);
+  }
+  if (contactIds.length) {
+    const [rows] = await db.query(
+      `SELECT contact_id, COALESCE(NULLIF(contact_name, ''), CONCAT('#', contact_id)) AS label
+         FROM contacts WHERE contact_id IN (?)`, [contactIds]);
+    for (const r of (Array.isArray(rows) ? rows : [])) labels.set(`contact\u0000${String(r.contact_id)}`, `${String(r.label).slice(0, 120)} (contact #${r.contact_id})`);
+  }
+  return (t) => labels.get(`${t.link_type}\u0000${t.link_type === 'case' ? documentFoldId(t.link_id) : String(t.link_id).trim()}`)
+    || `${t.link_type} ${String(t.link_id).slice(0, 64)}${t.link_type === 'case' || t.link_type === 'contact' ? ' (not found)' : ''}`;
+}
+
+// One document and its links, for a card. null = no such row.
+async function documentState(db, documentId) {
+  const [rows] = await db.query(
+    `SELECT id, source, external_id, name, path, ext, size, server_modified, title, doc_type, tags, status, pending_delete_at, updated_at
+       FROM documents WHERE id = ? LIMIT 1`, [documentId]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) return null;
+  const [linkRows] = await db.query(
+    `SELECT id, link_type, link_id, relation, created_by, created_at
+       FROM document_links WHERE document_id = ? ORDER BY created_at DESC, id DESC`, [documentId]);
+  const links = (Array.isArray(linkRows) ? linkRows : []).map((l) => ({
+    document_link_id: Number(l.id), link_type: String(l.link_type), link_id: String(l.link_id),
+    relation: l.relation == null ? null : String(l.relation), created_by: l.created_by == null ? null : Number(l.created_by),
+  }));
+  const label = await documentTargetLabels(db, links.slice(0, DOCUMENT_CARD_LINKS));
+  return {
+    row,
+    document: {
+      document_id: Number(row.id), source: String(row.source || ''), name: String(row.name == null ? '' : row.name),
+      path: row.path == null ? null : String(row.path), ext: row.ext == null ? null : String(row.ext),
+      size: row.size == null ? null : Number(row.size), server_modified: documentIso(row.server_modified),
+      title: row.title == null ? null : String(row.title), doc_type: row.doc_type == null ? null : String(row.doc_type),
+      tags: row.tags == null ? null : String(row.tags), status: String(row.status || ''),
+      pending_delete_at: documentIso(row.pending_delete_at),
+    },
+    links,
+    linksCard: links.slice(0, DOCUMENT_CARD_LINKS).map((l) => ({ ...l, label: label(l) })),
+  };
+}
+
+// The click recomputes this from GET /api/documents/:id's `links` and refuses
+// on any difference.
+function documentLinkSignature(links) {
+  return links.map((l) => `${Number(l.document_link_id)}:${l.link_type}:${l.link_id}:${l.relation == null ? '' : l.relation}`).sort();
+}
+
+// The document a card acts on: it must exist and be active.
+async function documentTarget(db, documentId, verb) {
+  const state = await documentState(db, documentId);
+  if (!state) throw documentError(`Document #${documentId} no longer exists`);
+  const { document } = state;
+  if (document.status !== 'active') {
+    throw documentError(`Document #${documentId} ("${document.title || document.name}") is ${document.status || 'not active'} — Casey ${verb}s active documents only. Restoring a document is a separate action the user takes on the Documents page`);
+  }
+  return state;
+}
+
+function documentWarnings(document, links) {
+  const warnings = [];
+  if (document.pending_delete_at) {
+    warnings.push(`PENDING DELETE: Dropbox reported this file deleted (${document.pending_delete_at}). Unless it reappears within about 30 minutes of that, the registry marks it deleted and it leaves every Documents list.`);
+  }
+  if (links.length >= DOCUMENT_LINKS_DISCLOSE) {
+    warnings.push(`MANY LINKS: this document is already linked to ${links.length} records — it already shows on each of their Documents tabs.`);
+  }
+  return warnings;
+}
+
+// The envelope documentService emits, built by the real builder; each active
+// rule on the event dry-run (A9's helper, parameterized by event).
+async function documentAutomation(db, eventType, payload, what) {
+  const { buildEnvelope } = require('../lib/domainEvents');
+  const out = await casePipelineAutomation(db, buildEnvelope(eventType, payload), eventType, what);
+  return { events: [eventType], lines: out.lines, rules_checked: out.rules_checked, quiet: out.quiet };
+}
+
+// documentService._eventData over the row the event would carry.
+function documentEventData(row, next = {}) {
+  return {
+    id: Number(row.id), source: row.source, external_id: row.external_id, name: row.name, path: row.path,
+    doc_type: next.doc_type !== undefined ? next.doc_type : row.doc_type,
+    tags: next.tags !== undefined ? next.tags : row.tags,
+    status: row.status,
+  };
+}
+
+function documentActor(currentUserId) {
+  const n = Number(currentUserId);
+  return Number.isSafeInteger(n) && n > 0 ? { user_id: n } : null;
+}
+
+const DOCUMENT_FIELD_LABEL = { title: 'The title', doc_type: 'The type', tags: 'The tags' };
+
+async function normalizeDocumentUpdate(db, value, evidence, currentUserId) {
+  const documentId = documentIdFrom(value.document_id);
+  const { COLUMN_LIMITS } = require('./documentService');
+  const { normalizeTags } = require('./assetService');
+  const asked = DOCUMENT_FIELDS.filter((k) => value[k] !== undefined && value[k] !== null);
+  if (!asked.length) throw documentError('A document update needs "title", "doc_type" or "tags" (or several) — send "" to clear one');
+  const next = {}; const typed = {};
+  for (const k of asked) {
+    let raw = value[k];
+    if (k === 'tags' && Array.isArray(raw)) {
+      if (!raw.every((t) => typeof t === 'string')) throw documentError('The tags must be text (comma-separated) or a list of words');
+      raw = raw.join(',');
+    }
+    if (typeof raw !== 'string') throw documentError(`${DOCUMENT_FIELD_LABEL[k]} must be text`);
+    typed[k] = raw.trim();
+    // The service stores tags through normalizeTags (lowercase, spaces → '-',
+    // deduplicated, comma-joined; empty → NULL): the width rule and the card
+    // apply to that stored form.
+    const text = k === 'tags' ? (normalizeTags(typed[k]) || '') : typed[k];
+    const n = documentChars(text);
+    if (n > COLUMN_LIMITS[k]) {
+      throw documentError(`${DOCUMENT_FIELD_LABEL[k]} ${k === 'tags' ? 'are' : 'is'} ${n} characters${k === 'tags' ? ' as stored' : ''} — the column keeps ${COLUMN_LIMITS[k]}, and the Documents page would save it cut short. Nothing is proposed`);
+    }
+    next[k] = text;
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!documentRowCited(refs, evidence, (row) => Number(row.document_id) === documentId)) {
+    throw documentError(`The document evidence does not identify document #${documentId} — cite a row carrying its exact document_id (read it first: documents.id AS document_id)`);
+  }
+  const state = await documentTarget(db, documentId, 'edit');
+  const { document, row, links, linksCard } = state;
+  const changed = asked.filter((k) => documentNorm(document[k]) !== documentNorm(next[k]));
+  if (!changed.length) {
+    throw documentError(`Document #${documentId} ("${document.title || document.name}") already has ${asked.map((k) => `that ${k === 'doc_type' ? 'type' : k === 'tags' ? 'tag set' : 'title'}`).join(' and ')} — that changes nothing`);
+  }
+  const changes = {};
+  for (const k of changed) changes[k] = { from: document[k], to: next[k] };
+  const warnings = documentWarnings(document, links); const effects = [];
+  for (const k of asked.filter((x) => !changed.includes(x))) {
+    effects.push(`${k === 'doc_type' ? 'Type' : k === 'tags' ? 'Tags' : 'Title'}: already ${document[k] ? `"${document[k]}"` : 'empty'} — not sent.`);
+  }
+  if (changes.tags && typed.tags !== changes.tags.to) {
+    effects.push(`Tags are stored lowercase, spaces as hyphens, comma-separated and deduplicated: "${typed.tags.slice(0, 200)}" is saved as "${changes.tags.to}".`);
+  }
+  if (changes.doc_type && changes.doc_type.to) {
+    const [[cnt]] = await db.query('SELECT COUNT(*) AS n FROM documents WHERE doc_type = ? AND id <> ?', [changes.doc_type.to, documentId]);
+    const n = Number(cnt && cnt.n) || 0;
+    effects.push(n
+      ? `Type "${changes.doc_type.to}" is already on ${n} other document${n > 1 ? 's' : ''} — the Documents page's type filter groups them.`
+      : `Type "${changes.doc_type.to}" is NEW — no other document has it (the Documents page's type filter matches it exactly).`);
+  }
+  effects.push(links.length
+    ? `Shows on: the Documents page and the Documents tab of each record it is linked to (listed), and — under "Include related", on by default — on those records' related cases and contacts.`
+    : 'Shows on: the Documents page only — the document is linked to no case or contact.');
+  if (changes.title) effects.push('Search: the Documents page\'s search matches the new title (title, file name and tags are searched).');
+  effects.push('Staff only: the client portal does not list registered documents.');
+  // documentService.update emits document.updated for exactly the changed
+  // fields (domainEvents.buildChanges over the prior row).
+  const { buildChanges } = require('../lib/domainEvents');
+  // tags '' is stored NULL (normalizeTags), title / doc_type '' as ''.
+  const nextFields = {}; for (const k of changed) nextFields[k] = k === 'tags' && changes[k].to === '' ? null : changes[k].to;
+  const diff = buildChanges(row, nextFields, changed);
+  const after = { ...row, ...nextFields };
+  const automation = await documentAutomation(db, 'document.updated', {
+    source: 'manual', ...(documentActor(currentUserId) ? { actor: documentActor(currentUserId) } : {}),
+    data: documentEventData(after), changes: diff, extra: { updated_fields: Object.keys(diff), via: 'edit' },
+  }, 'this edit');
+  if (automation.lines.some((l) => l.outcome === 'unknown')) warnings.push('AUTOMATION: at least one trigger rule could not be evaluated for this edit — read its line; it may run.');
+  effects.push('Trigger event: document.updated fires — every active rule on it is listed below.');
+  return {
+    draft_id: crypto.randomUUID(), kind: 'document.update.v1', status: 'draft',
+    document, changes,
+    links: linksCard, links_total: links.length,
+    automation: { events: automation.events, lines: automation.lines.map((l) => l.text), rules_checked: automation.rules_checked, quiet: automation.quiet },
+    effects, warnings,
+    expected: { title: document.title, doc_type: document.doc_type, tags: document.tags, status: document.status, updated_at: documentIso(row.updated_at) },
+    evidence: refs,
+  };
+}
+
+// The record a link points at, as stored (the case id's own spelling).
+async function documentLinkRecord(db, linkType, linkId) {
+  if (linkType === 'case') {
+    const [rows] = await db.query('SELECT case_id, case_number, case_number_full, case_type FROM cases WHERE case_id = ? LIMIT 1', [linkId]);
+    const r = Array.isArray(rows) ? rows[0] : null;
+    if (!r) return null;
+    const number = String(r.case_number_full || r.case_number || '').trim().slice(0, 40);
+    return { link_type: 'case', link_id: String(r.case_id), case_id: String(r.case_id), case_number: number,
+      case_type: String(r.case_type || '').slice(0, 40), label: `case ${number || r.case_id}` };
+  }
+  const [rows] = await db.query('SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1', [Number(linkId)]);
+  const r = Array.isArray(rows) ? rows[0] : null;
+  if (!r) return null;
+  const name = String(r.contact_name || '').trim().slice(0, 200) || `Contact ${r.contact_id}`;
+  return { link_type: 'contact', link_id: String(r.contact_id), contact_id: Number(r.contact_id), contact_name: name, label: `${name} (contact #${r.contact_id})` };
+}
+
+async function normalizeDocumentLink(db, value, evidence, currentUserId) {
+  const documentId = documentIdFrom(value.document_id);
+  const { COLUMN_LIMITS, RELATION_PATH, resolveRelatedTargets } = require('./documentService');
+  const linkType = String(value.link_type == null ? '' : value.link_type).trim().toLowerCase();
+  if (!DOCUMENT_LINK_TYPES.includes(linkType)) {
+    throw documentError(`A document link to ${linkType ? `"${linkType.slice(0, 40)}"` : 'nothing'} is not available — Casey links a document to a case (link_type "case", link_id = the exact case_id) or a contact (link_type "contact", link_id = the exact contact_id)`);
+  }
+  let linkId;
+  if (linkType === 'case') {
+    linkId = String(value.link_id == null ? '' : value.link_id).trim();
+    if (!/^[A-Za-z0-9_-]{1,20}$/.test(linkId)) throw documentError('A case link needs link_id = the case\'s exact case_id');
+  } else {
+    const n = Number(value.link_id);
+    if (!Number.isSafeInteger(n) || n < 1) throw documentError('A contact link needs link_id = the contact\'s exact positive contact_id');
+    linkId = String(n);
+  }
+  let relation = null;
+  if (value.relation !== undefined && value.relation !== null && value.relation !== '') {
+    if (typeof value.relation !== 'string') throw documentError('relation must be one short word');
+    relation = value.relation.trim().toLowerCase();
+    if (relation === RELATION_PATH) {
+      throw documentError(`RELATION "path" refused: "path" is the Dropbox sync's own mark (it means "the file sits in this case's folder", and the sync's attribution sweep skips any document holding a case link with it) — Casey never writes it. Leave relation out, or use another word (for example "upload")`);
+    }
+    if (documentChars(relation) > COLUMN_LIMITS.relation || !/^[a-z][a-z0-9_-]*$/.test(relation)) {
+      throw documentError(`relation must be one short plain word (letters, digits, - or _, up to ${COLUMN_LIMITS.relation} characters) — got "${relation.slice(0, 40)}"`);
+    }
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!documentRowCited(refs, evidence, (row) => Number(row.document_id) === documentId)) {
+    throw documentError(`The link evidence does not identify document #${documentId} — cite a row carrying its exact document_id (read it first: documents.id AS document_id)`);
+  }
+  const targetCited = linkType === 'case'
+    ? documentRowCited(refs, evidence, (row) => row.case_id != null && String(row.case_id) === linkId)
+    : documentRowCited(refs, evidence, (row) => Number(row.contact_id) === Number(linkId));
+  if (!targetCited) {
+    throw documentError(`The link evidence does not identify ${linkType} ${linkId} — cite a row carrying its exact ${linkType === 'case' ? 'case_id' : 'contact_id'} (read the ${linkType} first)`);
+  }
+  const target = await documentLinkRecord(db, linkType, linkId);
+  if (!target) throw documentError(`${linkType === 'case' ? 'Case' : 'Contact'} ${linkId} no longer exists`);
+  const state = await documentTarget(db, documentId, 'link');
+  const { document, row, links, linksCard } = state;
+  // The UNIQUE key (document_id, link_type, link_id) compares under general_ci,
+  // so a link that differs only in case is the SAME link: the route would
+  // answer success and write nothing (created:false).
+  const same = links.find((l) => l.link_type.toLowerCase() === linkType && documentFoldId(l.link_id) === documentFoldId(target.link_id));
+  if (same) {
+    throw documentError(`Document #${documentId} ("${document.title || document.name}") is already linked to ${target.label} (link #${same.document_link_id}${same.relation ? `, relation "${same.relation}"` : ''}) — nothing is proposed`);
+  }
+  if (links.length > DOCUMENT_LINKS_MAX) {
+    throw documentError(`Document #${documentId} is already linked to ${links.length} records — more than one card can review (${DOCUMENT_LINKS_MAX}). The user links it on the Documents page`);
+  }
+  const warnings = documentWarnings(document, links); const effects = [];
+  let relationNote = 'none — the link carries no relation word';
+  if (relation) {
+    const [[cnt]] = await db.query('SELECT COUNT(*) AS n FROM document_links WHERE relation = ?', [relation]);
+    const n = Number(cnt && cnt.n) || 0;
+    relationNote = n ? `"${relation}" — already on ${n} link${n > 1 ? 's' : ''}` : `"${relation}" — a NEW relation word (no link carries it yet)`;
+  }
+  // Exactly where it starts to show: the Documents tab of the target (direct),
+  // and — through "Include related", on by default — each record ONE hop out
+  // through case_relate (resolveRelatedTargets is the predicate that view reads).
+  const related = await resolveRelatedTargets(db, linkType, target.link_id);
+  const hops = related.targets.filter((t) => !t.direct);
+  const hopLabel = await documentTargetLabels(db, hops.slice(0, DOCUMENT_CARD_LINKS));
+  const visibility = [`${target.label}'s Documents tab — listed directly.`];
+  if (hops.length) {
+    const named = hops.slice(0, DOCUMENT_CARD_LINKS).map((t) => `${hopLabel(t)}${t.relate_type ? ` (${t.relate_type} on the case)` : ''}`);
+    visibility.push(`Under "Include related" (on by default): the Documents tab of ${linkType === 'case' ? 'each contact on this case' : 'each case this contact is on'} — ${named.join('; ')}${hops.length > named.length ? ` (+${hops.length - named.length} more)` : ''}${related.truncated ? ' (and more — the related set is capped)' : ''} — badged "via ${target.label}".`);
+  } else {
+    visibility.push(`Under "Include related": ${linkType === 'case' ? 'this case has no contacts' : 'this contact is on no case'}, so no other Documents tab gains it.`);
+  }
+  visibility.push('Staff only: the client portal does not list registered documents.');
+  if (linkType === 'case' && !links.some((l) => l.link_type === 'case')) {
+    effects.push('Triage: the document has no case link yet, so it leaves the Documents page\'s "no case" list.');
+  }
+  effects.push('Kept: a link you make is a person\'s link — the Dropbox sync never removes it, even if the file is moved or renamed; only someone unlinking it does.');
+  const actor = documentActor(currentUserId);
+  const automation = await documentAutomation(db, 'document.linked', {
+    ...(linkType === 'case' ? { case_id: target.link_id } : { contact_id: Number(target.link_id) }),
+    source: 'manual', ...(actor ? { actor } : {}),
+    data: documentEventData(row), extra: { link_type: linkType, link_id: target.link_id, relation },
+  }, 'this link');
+  if (automation.lines.some((l) => l.outcome === 'unknown')) warnings.push('AUTOMATION: at least one trigger rule could not be evaluated for this link — read its line; it may run.');
+  effects.push('Trigger event: document.linked fires — every active rule on it is listed below.');
+  return {
+    draft_id: crypto.randomUUID(), kind: 'document.link.v1', status: 'draft',
+    document, target,
+    link: { link_type: linkType, link_id: target.link_id, relation },
+    relation_note: relationNote,
+    links_before: linksCard, links_total: links.length,
+    visibility,
+    automation: { events: automation.events, lines: automation.lines.map((l) => l.text), rules_checked: automation.rules_checked, quiet: automation.quiet },
+    effects, warnings,
+    expected: { status: document.status, links: documentLinkSignature(links) },
+    evidence: refs,
+  };
+}
+
+async function normalizeDocumentAction(db, value, evidence, { currentUserId = null } = {}) {
+  // The per-family switch: '0' and the A11 kinds do not exist.
+  if (require('../lib/firmConfig').cfg('casey_documents_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const kind = value.kind;
+  // Status and the provider-owned columns first, by name, before anything is read.
+  documentSystemKeys(value, kind);
+  const allowed = DOCUMENT_KEYS[kind];
+  const unknown = Object.keys(value).filter((k) => !allowed.has(k));
+  if (unknown.length) {
+    throw documentError(`A ${kind} card carries unsupported fields: ${unknown.join(', ')} — it takes ${[...allowed].filter((k) => k !== 'kind').join(', ')} only`);
+  }
+  if (kind === 'document.update.v1') return normalizeDocumentUpdate(db, value, evidence, currentUserId);
+  return normalizeDocumentLink(db, value, evidence, currentUserId);
 }
 
 async function taskDraftLink(db, value) {
@@ -6149,6 +6566,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && CASE_CONTACT_ACTION_KINDS.has(value.kind)) return normalizeCaseContactAction(db, value, evidence);
   if (value && CASE_PIPELINE_ACTION_KINDS.has(value.kind)) return normalizeCasePipelineAction(db, value, evidence, { currentUserId });
   if (value && CHECKLIST_ACTION_KINDS.has(value.kind)) return normalizeChecklistAction(db, value, evidence, { currentUserId });
+  if (value && DOCUMENT_ACTION_KINDS.has(value.kind)) return normalizeDocumentAction(db, value, evidence, { currentUserId });
   if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Action kind is unavailable');
   if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
   if (!onlyKeys(value, TASK_CREATE_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
@@ -6321,7 +6739,12 @@ function taskDraftRequested(question, history = []) {
   const checklist = (/\b(?:check ?lists?|(?:list|checklist) items?|docs needed|personal list|to-?do list|notes? (?:and|&) lists?)\b/i.test(text) &&
       /\b(?:draft|propose|prepare|create|make|start|add|put|append|check|tick|mark|complete|finish|uncheck|untick|reopen|rename|update|change)\b/i.test(request)) ||
     /\b(?:check|tick|cross)\s+(?:it\s+|that\s+|them\s+|this\s+)?off\b/i.test(request);
-  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || checklist || job || workflow || hook || sequence || send || ingestRule ||
+  // A11: a document's title / type / tags, or a link to a case or contact.
+  // The noun is a document (a bare "file" is too often the case file); the
+  // verb an edit or link in a request message.
+  const documentEdit = /\b(?:documents?|pdfs?|scans?|scanned)\b/i.test(text) &&
+    /\b(?:draft|propose|prepare|retitle|re-?title|rename|title|tag|re-?tag|untag|classify|categori[sz]e|label|link|attach|associate|connect|file\b[^.?!\n]{0,40}\b(?:to|under|on|with)|set (?:the|its) (?:title|type|tags?)|change (?:the|its) (?:title|type|tags?))\b/i.test(request);
+  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || checklist || documentEdit || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 

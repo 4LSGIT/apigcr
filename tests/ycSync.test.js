@@ -2020,6 +2020,28 @@ describe('_sniff — documents matchers', () => {
     expect(seen).toEqual([]);
   });
 
+  test('A11 — the Casey document cards\' two writes, with the routes\' exact answers, reach the existing matchers', () => {
+    // Ask Casey's cards call the shell's apiSend like any page, so the sniff
+    // sees them. PATCH answers {status, document: <the whole row>} (shared_link
+    // and sync columns included) and POST /links answers {status, created,
+    // links: <every row>, link_type, link_id}: the document row repaints by
+    // VALUE and the target's link set gets a refetch marker — nothing added.
+    const w = mkWindow();
+    const docSeen = spy(w, 'document:88412');
+    const linkSeen = spy(w, 'doclink:*');
+    w.YC._sniff('PATCH', '/api/documents/88412', { status: 'success', document: {
+      id: 88412, source: 'dropbox', external_id: 'id:abc', name: 'Petition.pdf', path: '/A/Petition.pdf', path_lower: '/a/petition.pdf',
+      shared_link: null, title: 'Chapter 7 petition (filed)', doc_type: null, tags: 'court,filed', ai_meta: null, status: 'active',
+      pending_delete_at: null, updated_at: '2026-11-02T09:00:00.000Z' } });
+    w.YC._sniff('POST', '/api/documents/88412/links', { status: 'success', created: true,
+      links: [{ id: 777, document_id: 88412, link_type: 'contact', link_id: '77', relation: 'upload', created_by: 6, created_at: '2026-11-02T09:00:00.000Z' },
+        { id: 501, document_id: 88412, link_type: 'case', link_id: '7KQ2M9XA', relation: 'path', created_by: null, created_at: '2026-01-02T10:00:00.000Z' }],
+      link_type: 'contact', link_id: '77' });
+    expect(docSeen.map((x) => [x.fields, x.origin])).toEqual([[{ title: 'Chapter 7 petition (filed)', doc_type: null, tags: 'court,filed', status: 'active' },
+      'auto:PATCH /api/documents/88412']]);
+    expect(linkSeen.map((x) => [x.addr, x.fields, x.origin])).toEqual([['doclink:contact:77', { yc_refetch: 1 }, 'auto:POST /api/documents/88412/links']]);
+  });
+
   // ── S4: the staff upload commit ────────────────────────────────────────────
 
   test('upload-commit announces the TARGET, not the brand-new row', () => {

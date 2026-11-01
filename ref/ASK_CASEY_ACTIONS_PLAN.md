@@ -958,14 +958,121 @@ appointments, tasks and events; reorder; list and item delete; upsert-many and
 template expansion; a note body edit and a list rename / status edit (PATCH
 `/checklists/:id`, also unmatched on the bus).
 
-#### A11: Documents
+#### A11: Documents — update and link shipped 2026-11-02
 
-Begin with metadata-only register/link/update operations whose file already
-exists in the browser-controlled upload flow. Upload bytes, signed upload URLs,
-and provider credentials never become model output. Generation, sharing,
-relinking, external-store sync, unlinking, replacement, and deletion are each
-separate higher-impact sub-slices with exact destination, filename/template,
-overwrite, link, recipient, and external-provider effects shown in review.
+Editing a registered document's staff metadata and linking a document to a
+case or contact come first. Upload bytes, signed upload URLs and provider
+credentials never become model output. Registering by external id,
+generation, sharing, relinking, external-store sync, unlinking, status
+changes (delete / restore), replacement and deletion are each separate
+higher-impact sub-slices with exact destination, filename/template,
+overwrite, link, recipient and external-provider effects shown in review.
+
+**What the routes guard.** Little. `PATCH /api/documents/:id` and `POST
+/api/documents/:id/links` (`routes/api.documents.js` → `documentService`) sit
+behind bare `jwtOrApiKey`. `documentService.update` CLIPS an over-width title
+(varchar 255), doc_type (64) or tags (512, after `normalizeTags`: lowercase,
+spaces → hyphens, deduplicated, comma-joined; empty → NULL) silently and
+answers success; it writes and emits nothing when every field is unchanged by
+domainEvents' compare (trimmed, NULL = ''). `documentService.link` answers a
+repeat as success (`created:false`, no row, no event) — also for a `link_id`
+that differs only in case, because the UNIQUE key (document_id, link_type,
+link_id) compares under general_ci — and the link route never looks at the
+document's status. All of this is pinned on a real engine
+(`tests/caseyDocuments.mysql.test.js`).
+
+**Read enablement.** `documents` and `document_links` joined the curated
+report manifest (`lib/reportSchema/manifest.js`), so `sql.read` reads a
+document (`documents.id AS document_id`) and its links — no typed read. The
+sync / provider internals (external_id, path_lower, path_hash, content_hash,
+rev, ai_meta) are unlisted; `shared_link` is on `DENIED_COLUMNS` (a permanent
+public link is a capability, never data). The `yc_report` grants follow the
+manifest: `scripts/reportGrantUserProvision.js --apply` must run against
+production BEFORE the backend deploy, or every Casey / report read of the two
+tables is `SELECT command denied`. The manifest's `checklists` entry gained
+`kind`, `body` and the `event` link type in the same commit.
+
+**Shipped contract.** Two kinds behind one switch:
+`document.update.v1` (PATCH `/api/documents/:id` {title?, doc_type?, tags?})
+and `document.link.v1` (POST `/api/documents/:id/links` {link_type, link_id,
+relation?}).
+- **Update.** At least one of title / doc_type / tags; "" clears one (the
+  native edit dialog sends "" too). The browser sends only the fields that
+  change, trimmed, tags in their stored form.
+- **Link.** `link_type` "case" (link_id = the exact case_id) or "contact"
+  (link_id = the exact integer contact_id); `relation` optional — one short
+  plain word (≤ 32), disclosed as an existing word (with its count) or a NEW
+  one; never required.
+- **Refused by name**, before anything is read: `status` (delete / restore /
+  missing — a separate, higher-impact sub-slice) and the provider-owned
+  `name`, `path`, `external_id`, `shared_link`; relation **"path"** — the
+  Dropbox sync's own mark: its reconciler retracts only path links without a
+  creator, but its attribution sweep skips any document holding a case link
+  with that relation, so a person's "path" link would silently stop the sync
+  attributing the file (a tightening of the boot prompt, which listed "path"
+  among the words the model may name).
+- **Refused, besides:** a deleted or missing document (stricter than the link
+  route); a value over its column width, counted in characters as the column
+  counts (code points) and, for tags, on the stored form; a no-op by the
+  service's own compare; a link to anything but a case or contact; a target
+  that no longer exists; a link that already exists — folded the way the
+  general_ci UNIQUE key compares (stricter than the route's silent success);
+  a document already linked to more than 20 records (5 or more is disclosed).
+- **Disclosed:** a pending delete (Dropbox reported the file deleted; the
+  registry marks it deleted after the ~30-minute grace unless it reappears);
+  the stored tag form when it differs from what was asked; a type already on N
+  other documents or NEW; a field already equal ("not sent"); where the
+  document shows.
+- **The update card** shows the document (file name, path, size, source,
+  modified), each changed field before → after, the records it is linked to
+  (so the user sees where the retitle shows), that the title is searchable,
+  and that documents are staff-only (the client portal lists none).
+- **The link card** shows the document, the target record, the existing
+  links, the relation, and exactly where it starts to show:
+  `documentService.resolveRelatedTargets` — the predicate the Documents tabs'
+  "Include related" view (on by default) reads — so a case link names each
+  contact on the case and a contact link each case the contact is on, ONE hop,
+  badged "via" the target; plus the triage effect (a document's first case
+  link takes it off the Documents page's "no case" list) and that a person's
+  link is kept when the file moves.
+- **Automation:** each card dry-runs the event the service emits —
+  `document.updated` (exactly the changed fields, `domainEvents.buildChanges`
+  over the prior row; a cleared tag set is NULL) or `document.linked` (the
+  target promoted to case_id / contact_id) — against every active rule
+  (`listActiveRulesForEvent` + `evaluateDraft`, preview lane, nothing
+  dispatched; "MAY run", danger, when a rule cannot be evaluated).
+- **Evidence:** a row carrying the exact `document_id` (update); the document
+  row AND a row carrying the exact case_id / contact_id (link — A8's two-row
+  pattern). The report pool returns BIGINT as a string, so the id is compared
+  numerically.
+- **Freshness:** `expected` = title / doc_type / tags / status / updated_at
+  (update; a sync rename bumps updated_at, so it refuses too) or status + the
+  whole link set (link: id:type:link_id:relation). The click re-reads GET
+  `/api/documents/:id` (plus the target's GET for a link) and refuses on any
+  difference before the claim.
+- **Idempotency:** none added. One claim per draft; a second link card's
+  re-read sees the first card's link; a link made between the re-read and the
+  write comes back `created:false`, read as a refusal ("nothing written, no
+  automation ran"). **Outcomes:** 404 "Document not found" is a before-write
+  refusal (`knownOutcome`); a 400 is a refusal; a 5xx or an answer that does
+  not confirm the write (another document, unsaved values, no matching link
+  row) stays ambiguous.
+- **Receipt:** the integer `document_id` (update — the PATCH returns the
+  row) and `document_link_id` (link — the POST returns every link row; the one
+  matching the reviewed target is the receipt). Two browser families
+  (`document`, `doclink`) because a family has one receipt field.
+- **Sync:** nothing added. The existing matchers carry both writes: PATCH →
+  `document:<id>` with the four human-owned values; POST links →
+  `doclink:<link_type>:<link_id>` refetch (pinned with the routes' exact
+  answers in `tests/ycSync.test.js`).
+- Off switch `casey_documents_enabled` (on unless '0'). Tests:
+  `tests/caseyDocuments.test.js`, gated `tests/caseyDocuments.mysql.test.js`,
+  `tests/assistantUi.test.js`, `tests/ycSync.test.js`,
+  `tests/reportSchemaDenylist.test.js`.
+
+**Deferred** (`ref/plans.md`): register by external id, generate, share,
+relink queue, sync roots, unlink, status changes, replacement, deletion,
+`shared_link`.
 
 #### A12: Forms and form templates
 

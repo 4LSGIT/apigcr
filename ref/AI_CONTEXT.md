@@ -675,6 +675,38 @@ body. Governing migrations in `ref/migrations/`.*
   '0'). Tests: `tests/caseyChecklists.test.js`, gated
   `tests/caseyChecklists.mysql.test.js`, `tests/checklistView.sync.test.js`;
   plan: ASK_CASEY_ACTIONS_PLAN A10.
+- **Casey document cards (A11, 11-02):** kinds `document.update.v1` (PATCH
+  `/api/documents/:id` {title?, doc_type?, tags?}) and `document.link.v1` (POST
+  `/api/documents/:id/links` {link_type, link_id, relation?}) — the Documents
+  page's routes, bare `jwtOrApiKey`. READ: `documents` + `document_links`
+  joined the report manifest (sql.read reads `documents.id AS document_id`);
+  `shared_link` is on `DENIED_COLUMNS` (a public link is a capability); the
+  `yc_report` grants follow the manifest, so `reportGrantUserProvision.js
+  --apply` runs BEFORE the deploy that ships a manifest table (header note in
+  the manifest). The service CLIPS over-width values silently (COLUMN_LIMITS;
+  tags after `normalizeTags`), no-ops an unchanged edit (trimmed, NULL = ''),
+  answers a repeat link `created:false` (general_ci UNIQUE — case-folded) and
+  the link route ignores status — the normalizer refuses each first. Refused by
+  name before any read: `status`, `name`, `path`, `external_id`,
+  `shared_link`; relation `path` (the sync's mark: its attribution sweep skips
+  a document holding a case link with it). Refused: non-active document,
+  width in code points, no-op, link type other than case/contact, a gone
+  target, an existing link, > 20 links (5+ disclosed). Disclosed: pending
+  delete, stored tag form, type new / on N documents, where a link shows
+  (`resolveRelatedTargets` — the Include-related predicate, one hop), the
+  first-case-link triage effect, a person's link surviving moves. Both dry-run
+  their service event (`document.updated` with `buildChanges` over the prior
+  row; `document.linked` with the target promoted) on the preview lane.
+  Evidence compares document_id NUMERICALLY (the report pool's
+  bigNumberStrings returns BIGINT as a string); a link cites the document row
+  AND the case_id / contact_id row. Freshness: title/doc_type/tags/status/
+  updated_at, or status + the whole link set, re-read via GET
+  `/api/documents/:id`. Receipts: integer `document_id` / `document_link_id`
+  (the POST's matching link row) — two browser families; `created:false` at
+  the write reads as a refusal. Sync: existing `document:` / `doclink:`
+  matchers, nothing added. Off switch `casey_documents_enabled` (on unless
+  '0'). Tests: `tests/caseyDocuments.test.js`, gated
+  `tests/caseyDocuments.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A11.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL

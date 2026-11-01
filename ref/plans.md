@@ -1091,6 +1091,35 @@ COMMENTs.)
   that step fails without sending — and the card does not warn.
   The card could read the contact's active phone/email rows and say so.
 
+## From the Ask Casey arc — A11 documents (2026-11-02) — deferred
+
+- **Register by external id** (POST `/api/documents/register` {external_id}).
+  The model has no way to learn a Dropbox id it has not read, and every synced
+  file is already a row; a card would register only what sync has missed.
+- **Generate** (POST `/api/documents/generate` — a contract template filed
+  into a case's Dropbox folder) — writes a file: destination, filename,
+  template and overwrite all need review.
+- **Share** (POST `/api/documents/:id/share` mints a PERMANENT public
+  Dropbox link) — a capability anyone holding the URL can use; `shared_link`
+  stays denied to sql.read and off every card until a share contract exists.
+- **The relink queue** (POST `/api/documents/relink`: rewrites a case's
+  Dropbox folder link and re-attributes its files) and **sync roots**
+  (POST / PATCH `/api/documents/sync-roots`) — engine configuration with
+  fan-out over thousands of rows.
+- **Unlink** (DELETE `/api/documents/:id/links`) — no event exists for it
+  (`document.unlinked` is unregistered), and a removed link silently drops the
+  document from that record's tab and its related tabs; its own sub-slice.
+- **Status changes, replacement and deletion** (PATCH {status} — delete /
+  restore / missing) — `status` is refused by name today.
+- **Native gaps found while tracing (not Casey's):** the link route links a
+  deleted or missing document; it accepts relation `path` from any caller —
+  and the attribution sweep (`documentSyncService.attributeUnlinked`, the
+  re-link `_attributeUnderFolder`) anti-joins on `relation = 'path'` without
+  `created_by IS NULL`, so a person's "path" link to the wrong case stops the
+  sync ever attributing the file (the reconciler, by contrast, checks
+  `created_by`); it answers a case-folded repeat as success. No native UI
+  sends a relation today, so only API callers reach the second.
+
 ## From the Ask Casey arc — A10 checklists (2026-11-01) — deferred
 
 - **Lists for another user.** The native route lets anyone make a personal

@@ -55,6 +55,7 @@ const PLAN_FAMILY_MARKERS = {
   report: 'A reviewed report-draft action is available',
   ingest_rule: 'Reviewed ingest-rule actions are available',
   checklist: 'Reviewed checklist actions are available',
+  document: 'Reviewed document actions are available',
 };
 
 describe('every shipped action kind is taught to every model stage', () => {
@@ -260,7 +261,7 @@ describe('A8 — every stage teaches case contact membership and its refusals', 
     expect(answerPrompt).toContain('any other contact may be demoted or removed and the card warns that\n    they lose portal sight of the case once the portal is live');
     expect(answerPrompt).toContain('demoting or removing the case\'s ONLY Primary');
     expect(answerPrompt).toContain('removing the case\'s last contact');
-    expect(answerPrompt).toContain('case-and-contact-notes/case-contact/case-pipeline/checklist/direct-send');
+    expect(answerPrompt).toContain('case-and-contact-notes/case-contact/case-pipeline/checklist/document/direct-send');
     expect(repairPrompt).toContain('evidence is the\n  case_relate row carrying the exact case_relate_id');
     expect(repairPrompt).toContain('refuse a contact who has used the client portal leaving\n  Primary/Secondary');
   });
@@ -319,10 +320,38 @@ describe('A10 — every stage teaches the checklist cards, their evidence aliase
     expect(answerPrompt).toContain('a case list titled "Docs Needed" (that title makes it the\n    client-facing docs list');
     expect(answerPrompt).toContain('a list for ANOTHER user, or on a bill, appointment, task or event');
     expect(answerPrompt).toContain('An item on a case\'s docs list is VISIBLE TO THE CLIENT');
-    expect(answerPrompt).toContain('case-pipeline/checklist/direct-send');
+    expect(answerPrompt).toContain('case-pipeline/checklist/document/direct-send');
     expect(repairPrompt).toContain('never objects with tag / position / status');
     expect(repairPrompt).toContain('Never "tag", never\n  a case list titled "Docs Needed"');
     expect(repairPrompt).toContain('evidence carries the exact checkitem_id; never position or tag');
+  });
+});
+
+// A11: a new family prefix (document). Pins that every stage teaches the
+// refusals a stage that does not know them proposes anyway — a status change
+// (delete / restore), the file's name / path / public link, the sync's "path"
+// relation, a link that already exists — the evidence alias the normalizer
+// reads (document_id) and the two-row citation a link needs.
+describe('A11 — every stage teaches the document cards, their evidence alias and their refusals', () => {
+  test('the plan carries its own bullet with the reads the cards cite', () => {
+    expect(planPrompt).toContain('Reviewed document actions are available: change ONE registered document\'s staff title, type or tags, or link ONE\n  document to ONE case or contact');
+    expect(planPrompt).toContain('documents.id AS document_id');
+    expect(planPrompt).toContain('The server refuses a status change (delete / restore), the file name or path, a public link, the\n  "path" relation');
+  });
+  test('the investigate stage names the proposal family and its alias', () => {
+    expect(investigatePrompt).toContain('and document proposals, which need the\n  document\'s row with documents.id AS document_id');
+    expect(investigatePrompt).toContain('and for a link the case\'s exact case_id or the contact\'s exact contact_id');
+  });
+  test('the answer and repair stages teach the shapes, the refusals and where a link shows', () => {
+    expect(answerPrompt).toContain('Document rules (A11');
+    expect(answerPrompt).toContain('cite a row carrying the document_id AND a row carrying\n    that case_id / contact_id');
+    expect(answerPrompt).toContain('"status" (deleting, restoring or marking a\n    document missing)');
+    expect(answerPrompt).toContain('relation "path" (the Dropbox sync\'s own mark)');
+    expect(answerPrompt).toContain('a link that\n    already exists');
+    expect(answerPrompt).toContain('under "Include related" each contact\n    on that case / each case of that contact');
+    expect(answerPrompt).toContain('case-pipeline/checklist/document/direct-send');
+    expect(repairPrompt).toContain('Never status, name, path, external_id or shared_link (each is refused by name)');
+    expect(repairPrompt).toContain('evidence carries the document_id AND the case_id /\n  contact_id; relation is one short plain word or omitted, never "path"');
   });
 });
 

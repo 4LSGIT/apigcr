@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-01T23:40:44.348Z
+-- Generated: 2026-11-02T00:11:04.581Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:92658fd14c5e5e202c9189daade53117
+-- Fingerprint: sha256:fbb1144a3baf10d23d7290af97ed1a3f
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -714,7 +714,8 @@ CREATE TABLE `cases` (
   `bk_followup_email` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `bk_7steps_course` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `custom` json NOT NULL DEFAULT (json_object()) COMMENT 'Custom-field values (ref/CUSTOM_FIELDS_DESIGN.md). Keys are field_defs.field_key (cf_*, entity=case). Written ONLY by caseService.updateCase: per-key JSON_SET/JSON_REMOVE in the same UPDATE as core columns, never read-modify-write. NEVER read or compare custom->>''$.k'' in SQL (the S3 virtual column is the only comparison surface). Never store JSON null (clear = JSON_REMOVE). Excluded by name from event envelopes, resolver and reports.',
-  `cf_clio_matter` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci GENERATED ALWAYS AS (json_value(`custom`, _utf8mb4'$.cf_clio_matter' returning char(255) character set utf8mb4)) VIRTUAL
+  `cf_clio_matter` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci GENERATED ALWAYS AS (json_value(`custom`, _utf8mb4'$.cf_clio_matter' returning char(255) character set utf8mb4)) VIRTUAL,
+  `cf_court` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci GENERATED ALWAYS AS (json_value(`custom`, _utf8mb4'$.cf_court' returning char(255) character set utf8mb4)) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --

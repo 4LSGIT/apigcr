@@ -76,6 +76,10 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'checklistFoldTitle', 'checklistLabel', 'checklistParentLabel', 'checklistListLine', 'checklistText', 'checklistCreateBody',
   'checklistRequest', 'checkitemRequest', 'checklistCreatePrecheck', 'checklistListPrecheck', 'checklistPrecheck', 'checkitemPrecheck',
   'checklistResult', 'checkitemResult', 'checklistKnownOutcome', 'checklistOpenPersonal', 'checklistEntity', 'checklistOpen',
+  'documentChars', 'documentNorm', 'documentFoldId', 'documentLabel', 'documentName', 'documentSize', 'documentShown', 'documentText',
+  'documentId', 'documentUpdateBody', 'documentUpdateRequest', 'documentLinkRequest', 'documentLinkSignature', 'documentRead',
+  'documentUpdatePrecheck', 'documentLinkPrecheck', 'documentUpdateResult', 'documentLinkResult', 'documentKnownOutcome',
+  'documentOpenInfo', 'documentEntity', 'documentOpen',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
   'workflowDraftLabel', 'workflowSendLines', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
   'workflowStepActionLabel', 'workflowStepWorkflowLine', 'workflowStepInsertText', 'workflowStepEditValue',
@@ -113,6 +117,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CASE_CONTACT_ACTION_KINDS'), constSrc(html, 'CASE_CONTACT_TYPES'),
     constSrc(html, 'CASE_PIPELINE_ACTION_KINDS'), constSrc(html, 'CASE_PIPELINE_STAGE_KEY'), constSrc(html, 'CASE_PIPELINE_OPEN'),
     constSrc(html, 'CHECKLIST_ACTION_KINDS'), constSrc(html, 'CHECKITEM_ACTION_KINDS'), constSrc(html, 'CHECKLIST_LINK_TYPES'),
+    constSrc(html, 'DOCUMENT_ACTION_KINDS'), constSrc(html, 'DOCLINK_ACTION_KINDS'), constSrc(html, 'DOCUMENT_FIELD_MAX'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
     constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEQUENCE_ENROLL_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
@@ -3428,6 +3433,215 @@ describe('A10 checklist cards (checklist.create / item.add / item.update)', () =
     expect([[...lists.kinds], lists.idField, lists.appliedKey, !!lists.stringReceipt]).toEqual([['checklist.create.v1', 'checklist.item.add.v1'], 'checklist_id', 'result_checklist_id', false]);
     expect([[...items.kinds], items.idField, items.appliedKey, !!items.stringReceipt]).toEqual([['checklist.item.update.v1'], 'checkitem_id', 'result_checkitem_id', false]);
     for (const kind of ['checklist.delete.v1', 'checklist.item.delete.v1', 'checklist.upsert.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    dom.window.close();
+  });
+});
+
+describe('A11 document cards (document.update / document.link)', () => {
+  const CASE_ID = '7KQ2M9XA';
+  const DOC = { document_id: 88412, source: 'dropbox', name: 'Petition.pdf', path: '/Active Cases/Debtor, Dana/Petition.pdf', ext: 'pdf', size: 1258291,
+    server_modified: '2026-01-02T10:00:00.000Z', title: null, doc_type: null, tags: null, status: 'active', pending_delete_at: null };
+  const LINKS = [{ id: 501, document_id: 88412, link_type: 'case', link_id: CASE_ID, relation: 'path', created_by: null, created_at: '2026-01-02T10:00:00.000Z' }];
+  const UPDATED = '2026-10-30T12:00:00.000Z';
+  // Model-shaped junk that must never reach a request.
+  const JUNK = { status_override: 'deleted', shared_link: 'https://www.dropbox.com/s/x', name: 'Renamed.pdf', path: '/elsewhere' };
+  const update = (over = {}) => ({ action_draft: {
+    draft_id: '4d4d4d4d-1b2c-4d3e-8f40-123456789abc', kind: 'document.update.v1', status: 'draft', received_at: Date.now(),
+    document: { ...DOC }, changes: { title: { from: null, to: 'Chapter 7 petition (filed)' }, tags: { from: null, to: 'court,filed' } },
+    links: [{ document_link_id: 501, link_type: 'case', link_id: CASE_ID, relation: 'path', label: 'case 25-12345-abc' }], links_total: 1,
+    automation: { events: ['document.updated'], lines: ['Trigger rule #41 "Petition typed → task" runs: starts workflow #7'], rules_checked: 2, quiet: 1 },
+    effects: ['Trigger event: document.updated fires — every active rule on it is listed below.'], warnings: [],
+    expected: { title: null, doc_type: null, tags: null, status: 'active', updated_at: UPDATED }, evidence: [], ...JUNK, ...over } });
+  const link = (over = {}) => ({ action_draft: {
+    draft_id: '5e5e5e5e-1b2c-4d3e-8f40-123456789abc', kind: 'document.link.v1', status: 'draft', received_at: Date.now(),
+    document: { ...DOC }, target: { link_type: 'contact', link_id: '77', contact_id: 77, contact_name: 'Dana Debtor', label: 'Dana Debtor (contact #77)' },
+    link: { link_type: 'contact', link_id: '77', relation: 'upload' }, relation_note: '"upload" — already on 4 links',
+    links_before: [{ document_link_id: 501, link_type: 'case', link_id: CASE_ID, relation: 'path', label: 'case 25-12345-abc' }], links_total: 1,
+    visibility: ['Dana Debtor (contact #77)\'s Documents tab — listed directly.',
+      'Under "Include related" (on by default): the Documents tab of each case this contact is on — case 25-12345-abc (Primary on the case) — badged "via Dana Debtor (contact #77)".'],
+    automation: { events: ['document.linked'], lines: [], rules_checked: 1, quiet: 1 },
+    effects: ['Kept: a link you make is a person\'s link — the Dropbox sync never removes it, even if the file is moved or renamed; only someone unlinking it does.'], warnings: [],
+    expected: { status: 'active', links: ['501:case:7KQ2M9XA:path'] }, evidence: [], ...JUNK, ...over } });
+  const docGet = (over = {}, links = LINKS) => ({ status: 'success',
+    document: { id: 88412, source: 'dropbox', external_id: 'id:abc', name: DOC.name, path: DOC.path, title: null, doc_type: null, tags: null, status: 'active',
+      shared_link: null, updated_at: UPDATED, ...over }, links: links.map((l) => ({ ...l })) });
+  const reads = (over = {}) => (path) => {
+    if (path === '/api/contacts/77') { if (over.contactGone) throw Object.assign(new Error('Contact not found'), { status: 404 }); return { contact: { contact_id: 77 } }; }
+    if (path === `/api/cases/${CASE_ID}`) return { case: { case_id: CASE_ID } };
+    if (path === '/api/documents/88412') { if (over.docGone) throw Object.assign(new Error('Document not found'), { status: 404 }); return over.got || docGet(); }
+    throw new Error(`unexpected read ${path}`);
+  };
+  function runDoc(message, { read = reads(), write, confirm = true } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); return read(path, body); }
+      writes.push({ path, body, method, headers }); return write(path, body, method);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a11' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) } };
+    const history = []; const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, openEntity, sandbox }));
+  }
+  const patched = async (p, body) => ({ status: 'success', document: { ...docGet().document, ...body, updated_at: '2026-11-02T09:00:00.000Z' } });
+  const linked = async (p, body) => ({ status: 'success', created: true, link_type: body.link_type, link_id: body.link_id,
+    links: [{ id: 777, document_id: 88412, link_type: body.link_type, link_id: body.link_id, relation: body.relation || null, created_by: 6 }, ...LINKS] });
+
+  test('update: re-reads the document; ONE PATCH of only the changed fields (no status, no name, no link); integer document receipt', async () => {
+    const m = update();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runDoc(m, { write: patched });
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('document');
+    expect(gets).toEqual(['/api/documents/88412']);
+    expect(writes).toEqual([{ path: '/api/documents/88412', method: 'PATCH', headers: undefined, body: { title: 'Chapter 7 petition (filed)', tags: 'court,filed' } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a11', result: { document_id: 88412 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_document_id: 88412 });
+    expect(history[0].text).toBe('Edit document applied to document #88412.');
+    expect(history[0].entities).toEqual([{ kind: 'case', id: CASE_ID, label: '25-12345-abc' }]);
+    expect(openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345-abc');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'question', confirmButtonText: 'Edit document' });
+    for (const line of ['Document: #88412 "Petition.pdf" (PDF, 1.2 MB, dropbox, modified 2026-01-02)', 'Path: /Active Cases/Debtor, Dana/Petition.pdf',
+      'Current title: (none)', 'Title: (none) → "Chapter 7 petition (filed)"', 'Tags: (none) → "court,filed"', 'Linked to (1): case 25-12345-abc (path)',
+      'Automation: 2 active trigger rule(s) on document.updated checked; 1 would act:', 'Automation: Trigger rule #41 "Petition typed → task" runs: starts workflow #7',
+      'Writes: only this document\'s title, tags — the file in Dropbox, its name and its links are untouched.',
+      'Stale check: if the document is edited, deleted or changed by the sync before you apply, nothing is written.']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+    // One field: its own button label; a clear reads "(cleared)"; an unlinked document opens the Documents page hint.
+    const one = update({ changes: { doc_type: { from: 'misc', to: '' } }, links: [], links_total: 0 });
+    const r1 = await runDoc(one, { write: patched, read: reads({ got: docGet() }) });
+    expect([r1.writes[0].body, r1.P.Swal.fire.mock.calls[0][0].confirmButtonText]).toEqual([{ doc_type: '' }, 'Set document type']);
+    expect(r1.P.Swal.fire.mock.calls[0][0].text).toContain('Type: "misc" → (cleared)');
+    expect(r1.history[0].entities).toEqual([{ kind: 'document', id: '88412', label: 'Petition.pdf' }]);
+    expect(r1.openEntity).toHaveBeenCalledWith('document', '88412', 'Petition.pdf');
+  });
+
+  test('link: re-reads the target and the document; ONE POST of the closed body; the new link row is the receipt', async () => {
+    const m = link();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runDoc(m, { write: linked });
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('doclink');
+    expect(gets).toEqual(['/api/contacts/77', '/api/documents/88412']);
+    expect(writes).toEqual([{ path: '/api/documents/88412/links', method: 'POST', headers: undefined, body: { link_type: 'contact', link_id: '77', relation: 'upload' } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a11', result: { document_link_id: 777 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_document_link_id: 777 });
+    expect(history[0].text).toBe('Link document to contact applied to document link #777.');
+    expect(history[0].entities).toEqual([{ kind: 'contact', id: '77', label: 'Dana Debtor' }]);
+    expect(openEntity).toHaveBeenCalledWith('contact', '77', 'Dana Debtor');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'question', confirmButtonText: 'Link document to contact' });
+    for (const line of ['Link to: Dana Debtor (contact #77)', 'Relation: "upload" — already on 4 links', 'Links now (1): case 25-12345-abc (path)',
+      'Shows on: Dana Debtor (contact #77)\'s Documents tab — listed directly.',
+      'Shows on: Under "Include related" (on by default): the Documents tab of each case this contact is on — case 25-12345-abc (Primary on the case)',
+      'Automation: no active trigger rule acts on document.linked (1 checked).',
+      'Writes: one link row (this document → that record) — the document, its file and its other links are untouched.',
+      'Stale check: if the document gains or loses a link, or is deleted, before you apply, nothing is written.']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+    // A case link with no relation sends none; danger styling when a warning rides.
+    const c = link({ target: { link_type: 'case', link_id: CASE_ID, case_id: CASE_ID, case_number: '25-12345-abc', case_type: 'Chapter 7', label: 'case 25-12345-abc' },
+      link: { link_type: 'case', link_id: CASE_ID, relation: null }, expected: { status: 'active', links: [] }, warnings: ['MANY LINKS: …'] });
+    const rc = await runDoc(c, { write: linked, read: reads({ got: docGet({}, []) }) });
+    expect([rc.gets, rc.writes[0].body]).toEqual([[`/api/cases/${CASE_ID}`, '/api/documents/88412'], { link_type: 'case', link_id: CASE_ID }]);
+    expect(rc.P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Link document to case' });
+    expect(rc.history[0].entities).toEqual([{ kind: 'case', id: CASE_ID, label: '25-12345-abc' }]);
+  });
+
+  test('the builders fix route, method and body; a bad card never reaches a read, the claim or the route', async () => {
+    for (const [message, why] of [
+      [update({ changes: {} }), 'changes nothing'],
+      [update({ changes: { status: { from: 'active', to: 'deleted' } } }), 'a field Casey never writes'],
+      [update({ changes: { name: { from: 'a', to: 'b' } } }), 'a field Casey never writes'],
+      [update({ changes: { title: { from: null, to: 'x'.repeat(256) } } }), 'title is unusable'],
+      [update({ changes: { title: { from: null, to: ' padded ' } } }), 'title is unusable'],
+      [update({ changes: { doc_type: { from: null, to: 7 } } }), 'type is unusable'],
+      [update({ changes: { tags: { from: null, to: 'Court Filed' } } }), 'tags are unusable'],
+      [update({ changes: { tags: { from: null, to: 'court,,filed' } } }), 'tags are unusable'],
+      [update({ document: { ...DOC, document_id: 0 } }), 'no usable document id'],
+      [link({ link: { link_type: 'appt', link_id: '5', relation: null } }), 'no usable record'],
+      [link({ link: { link_type: 'contact', link_id: 'abc', relation: null } }), 'no usable record id'],
+      [link({ link: { link_type: 'case', link_id: 'bad id!', relation: null } }), 'no usable record id'],
+      [link({ link: { link_type: 'contact', link_id: '77', relation: 'path' } }), 'relation is unusable'],
+      [link({ link: { link_type: 'contact', link_id: '77', relation: 'Two Words' } }), 'relation is unusable'],
+    ]) {
+      const x = await runDoc(message, { write: patched });
+      expect({ why, gets: x.gets, ledger: x.ledger, writes: x.writes }).toEqual({ why, gets: [], ledger: [], writes: [] });
+      expect(message.action_draft.action_error).toContain(why);
+    }
+  });
+
+  test('click-time freshness refuses BEFORE the claim, on ANY difference', async () => {
+    for (const [message, read, why] of [
+      [update(), reads({ docGone: true }), 'The document "Petition.pdf" no longer exists. Nothing was written.'],
+      [update(), reads({ got: docGet({ status: 'deleted' }) }), 'The document "Petition.pdf" is deleted now. Nothing was written.'],
+      [update(), reads({ got: docGet({ title: 'Someone else' }) }), 'The document "Petition.pdf" changed since this card was prepared (its title, type, tags or another field). Nothing was written.'],
+      [update(), reads({ got: docGet({ doc_type: 'misc' }) }), 'changed since this card was prepared (its title, type, tags'],
+      [update(), reads({ got: docGet({ tags: 'x' }) }), 'changed since this card was prepared (its title, type, tags'],
+      [update(), reads({ got: docGet({ updated_at: '2026-10-31T00:00:00.000Z' }) }), 'changed since this card was prepared (its title, type, tags'],
+      [link(), reads({ contactGone: true }), 'Dana Debtor (contact #77) no longer exists. Nothing was written.'],
+      [link(), reads({ docGone: true }), 'The document "Petition.pdf" no longer exists. Nothing was written.'],
+      [link(), reads({ got: docGet({ status: 'missing' }) }), 'The document "Petition.pdf" is missing now. Nothing was written.'],
+      [link(), reads({ got: docGet({}, [...LINKS, { id: 600, link_type: 'contact', link_id: '77', relation: null }]) }),
+        'The document "Petition.pdf" is already linked to Dana Debtor (contact #77) — someone linked it since this card was prepared. Nothing was written.'],
+      [link(), reads({ got: docGet({}, [...LINKS, { id: 601, link_type: 'contact', link_id: '91', relation: null }]) }),
+        'The links of "Petition.pdf" changed since this card was prepared (one was added or removed). Nothing was written.'],
+      [link(), reads({ got: docGet({}, []) }), 'The links of "Petition.pdf" changed since this card was prepared'],
+      [link(), reads({ got: docGet({}, [{ ...LINKS[0], relation: 'upload' }]) }), 'The links of "Petition.pdf" changed since this card was prepared'],
+    ]) {
+      const x = await runDoc(message, { read, write: patched });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(message.action_draft.refusal_error).toContain(why);
+    }
+    // An unreadable answer leaves the card retryable (nothing claimed).
+    const u = update();
+    const ur = await runDoc(u, { read: reads({ got: { status: 'success', document: { id: 99 }, links: [] } }), write: patched });
+    expect([ur.writes, ur.ledger]).toEqual([[], []]);
+    expect(u.action_draft.action_error).toMatch(/^Could not re-check the record before applying \(the document could not be read\)/);
+  });
+
+  test('outcomes: a 404 and a created:false are refusals that wrote nothing; a 400 refuses; a 500 and an unconfirmed answer stay ambiguous', async () => {
+    const gone = update();
+    await runDoc(gone, { write: async () => { throw Object.assign(new Error('Document not found'), { status: 404 }); } });
+    expect(gone.action_draft.refusal_error).toBe('Refused — nothing written: that document no longer exists in the registry. Ask Casey to read it again.');
+    const raced = link();
+    await runDoc(raced, { write: async (p, body) => ({ ...(await linked(p, body)), created: false }) });
+    expect(raced.action_draft.refusal_error).toMatch(/^Refused — nothing written: the document was already linked to that record when this was applied/);
+    const bad = link();
+    await runDoc(bad, { write: async () => { throw Object.assign(new Error('link_type and link_id are required'), { status: 400 }); } });
+    expect(bad.action_draft.refusal_error).toBe('Refused — nothing written (link_type and link_id are required). Ask Casey to prepare it again.');
+    const lost = update();
+    await runDoc(lost, { write: async () => { throw Object.assign(new Error('boom'), { status: 500 }); } });
+    expect(lost.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    const otherDoc = update();
+    await runDoc(otherDoc, { write: async (p, body) => ({ status: 'success', document: { ...(await patched(p, body)).document, id: 99 } }) });
+    expect(otherDoc.action_draft.ambiguous_error).toMatch(/did not confirm the document/);
+    const notSaved = update();
+    await runDoc(notSaved, { write: async () => ({ status: 'success', document: docGet().document }) });
+    expect(notSaved.action_draft.ambiguous_error).toMatch(/did not save the reviewed values/);
+    const noRow = link();
+    await runDoc(noRow, { write: async () => ({ status: 'success', created: true, links: LINKS }) });
+    expect(noRow.action_draft.ambiguous_error).toMatch(/did not return the new link/);
+  });
+
+  test('reopened cards restore from the ledger with the integer receipts; two families, two kinds', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    for (const [m, result, key, chip, open] of [
+      [update(), { document_id: 88412 }, 'result_document_id', 'Applied — document #88412 updated', 'Open 25-12345-abc'],
+      [link(), { document_link_id: 777 }, 'result_document_link_id', 'Applied — link #777 added', 'Open Dana Debtor']]) {
+      box.applyActionResults([m], [{ draft_id: m.action_draft.draft_id, kind: m.action_draft.kind, outcome: 'applied', result }]);
+      expect(m.action_draft.status).toBe('applied');
+      expect(m.action_draft[key]).toBe(Object.values(result)[0]);
+      const host = dom.window.document.createElement('div');
+      box.hydrateActionDraft(box.actionFamily(m.action_draft), host, m, m.action_draft);
+      expect(host.querySelector('.action-draft-status').textContent).toBe(chip);
+      expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual([open, 'Copy details']);
+    }
+    const docs = box.actionFamily({ kind: 'document.update.v1' });
+    const links = box.actionFamily({ kind: 'document.link.v1' });
+    expect([[...docs.kinds], docs.idField, docs.appliedKey, !!docs.stringReceipt]).toEqual([['document.update.v1'], 'document_id', 'result_document_id', false]);
+    expect([[...links.kinds], links.idField, links.appliedKey, !!links.stringReceipt]).toEqual([['document.link.v1'], 'document_link_id', 'result_document_link_id', false]);
+    for (const kind of ['document.unlink.v1', 'document.delete.v1', 'document.share.v1', 'document.register.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
   });
 });

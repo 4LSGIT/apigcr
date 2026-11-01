@@ -230,8 +230,8 @@ function messageContextHtml(label) {
 }
 
 function actionHtml(action) {
-  const icon = { case: 'fa-folder-open', contact: 'fa-user', appointment: 'fa-calendar-check', event: 'fa-calendar-day', task: 'fa-list-check', checklist: 'fa-list-check' }[action.kind] || 'fa-arrow-up-right-from-square';
-  const noun = { case: 'case', contact: 'contact', appointment: 'appointment', event: 'event', task: 'task', checklist: 'list' }[action.kind] || 'record';
+  const icon = { case: 'fa-folder-open', contact: 'fa-user', appointment: 'fa-calendar-check', event: 'fa-calendar-day', task: 'fa-list-check', checklist: 'fa-list-check', document: 'fa-file-lines' }[action.kind] || 'fa-arrow-up-right-from-square';
+  const noun = { case: 'case', contact: 'contact', appointment: 'appointment', event: 'event', task: 'task', checklist: 'list', document: 'document' }[action.kind] || 'record';
   return `<button data-open-kind="${esc(action.kind)}" data-open-id="${esc(action.id)}" data-open-label="${esc(action.label)}"><i class="fa-solid ${icon}"></i> Open ${noun}: ${esc(action.label)}</button>`;
 }
 
@@ -1837,6 +1837,253 @@ function checklistOpen(draft) {
   openEntity(e.kind, e.id, e.label);
 }
 
+// Documents (A11). Change ONE registered document's staff title / type / tags,
+// or link ONE document to ONE case or contact, through the Documents page's
+// own routes: PATCH /api/documents/:id {title?, doc_type?, tags?} and POST
+// /api/documents/:id/links {link_type, link_id, relation?}. The server refused
+// status, the provider-owned columns and the sync's "path" relation by name,
+// a deleted or missing document, an over-width value (the service clips
+// silently), a no-op, and a link that already exists (the route answers a
+// repeat as success); it named exactly where a new link makes the document
+// show (resolveRelatedTargets) and dry-ran document.updated / document.linked
+// against the active trigger rules; and it baked the document's fields +
+// status + updated_at (update) or status + whole link set (link) into
+// `expected`. The click re-reads GET /api/documents/:id and refuses on ANY
+// difference BEFORE the claim. No Idempotency-Key: one claim per draft; a
+// second link card's re-read sees the first card's link, and the route's
+// created:false (someone linked it between the re-read and the write) reads
+// as a refusal that wrote nothing. Both writes are on the yc-sync bus
+// (document:<id> values; doclink:<type>:<id>). Receipts: the integer
+// document_id (update — the PATCH returns the row) or document_link_id (link
+// — the POST returns every link row; the reviewed target's row is the one).
+const DOCUMENT_ACTION_KINDS = new Set(['document.update.v1']);
+const DOCLINK_ACTION_KINDS = new Set(['document.link.v1']);
+const DOCUMENT_FIELD_MAX = { title: 255, doc_type: 64, tags: 512 };
+
+function documentChars(text) { return Array.from(String(text)).length; }
+
+function documentNorm(value) { return value == null ? '' : String(value).trim(); }
+
+function documentFoldId(value) { return String(value == null ? '' : value).trim().toLowerCase(); }
+
+function documentLabel(draft) {
+  if (draft && draft.kind === 'document.link.v1') {
+    return (draft.link || {}).link_type === 'contact' ? 'Link document to contact' : 'Link document to case';
+  }
+  const keys = Object.keys((draft && draft.changes) || {});
+  if (keys.length === 1) return { title: 'Retitle document', doc_type: 'Set document type', tags: 'Tag document' }[keys[0]] || 'Edit document';
+  return 'Edit document';
+}
+
+function documentName(draft) {
+  const d = draft.document || {};
+  return String(d.title || d.name || `document #${d.document_id}`);
+}
+
+function documentSize(bytes) {
+  const n = Number(bytes);
+  if (bytes == null || !Number.isFinite(n) || n < 0) return 'size unknown';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function documentShown(value) { return value == null || String(value) === '' ? '(none)' : `"${value}"`; }
+
+function documentText(draft) {
+  const d = draft.document || {};
+  const lines = [`${draft.kind === 'document.link.v1' ? 'Document link' : 'Document'} proposal — not applied`, `Action: ${documentLabel(draft)}`,
+    `Document: #${d.document_id} "${d.name}" (${d.ext ? String(d.ext).toUpperCase() : 'no extension'}, ${documentSize(d.size)}, ${d.source || 'unknown source'}${d.server_modified ? `, modified ${String(d.server_modified).slice(0, 10)}` : ''})`,
+    `Path: ${d.path || '(unknown)'}`];
+  const linkLines = (rows, total) => {
+    const named = (rows || []).map((l) => `${l.label}${l.relation ? ` (${l.relation})` : ''}`);
+    const more = Number(total || 0) - named.length;
+    return `${named.join('; ') || 'none'}${more > 0 ? ` (+${more} more)` : ''}`;
+  };
+  if (draft.kind === 'document.update.v1') {
+    lines.push(`Current title: ${documentShown(d.title)}`);
+    const names = { title: 'Title', doc_type: 'Type', tags: 'Tags' };
+    for (const [k, c] of Object.entries(draft.changes || {})) {
+      lines.push(`${names[k] || k}: ${documentShown(c.from)} → ${c.to === '' ? '(cleared)' : `"${c.to}"`}`);
+    }
+    lines.push(`Linked to (${Number(draft.links_total) || 0}): ${linkLines(draft.links, draft.links_total)}`);
+  } else {
+    const t = draft.target || {}; const l = draft.link || {};
+    lines.push(`Current title: ${documentShown(d.title)}`, `Link to: ${t.label}${t.case_type ? ` (${t.case_type})` : ''}`,
+      `Relation: ${draft.relation_note || (l.relation ? `"${l.relation}"` : 'none')}`,
+      `Links now (${Number(draft.links_total) || 0}): ${linkLines(draft.links_before, draft.links_total)}`);
+    (draft.visibility || []).forEach((v) => lines.push(`Shows on: ${v}`));
+  }
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  const a = draft.automation || {}; const acting = a.lines || [];
+  if ((a.events || []).length) {
+    lines.push(acting.length
+      ? `Automation: ${Number(a.rules_checked) || 0} active trigger rule(s) on ${a.events.join(' / ')} checked; ${acting.length} would act:`
+      : `Automation: no active trigger rule acts on ${a.events.join(' / ')} (${Number(a.rules_checked) || 0} checked).`);
+    acting.forEach((x) => lines.push(`Automation: ${x}`));
+    if (acting.length) lines.push('Automation: what those actions cause in turn is not followed here.');
+  }
+  lines.push(`Writes: ${draft.kind === 'document.update.v1'
+    ? `only this document's ${Object.keys(draft.changes || {}).map((k) => (k === 'doc_type' ? 'type' : k)).join(', ')} — the file in Dropbox, its name and its links are untouched`
+    : 'one link row (this document → that record) — the document, its file and its other links are untouched'}.`,
+  `Stale check: ${draft.kind === 'document.update.v1'
+    ? 'if the document is edited, deleted or changed by the sync before you apply, nothing is written.'
+    : 'if the document gains or loses a link, or is deleted, before you apply, nothing is written.'}`,
+  `Other open pages: ${draft.kind === 'document.update.v1' ? 'the Documents page and every Documents tab showing it repaint on their own.' : 'that record\'s Documents tab refreshes on its own.'}`,
+  'Notification: Casey sends nothing itself; the trigger rules above are the only follow-on effects.');
+  return lines.join('\n');
+}
+
+function documentId(draft) {
+  const id = Number((draft.document || {}).document_id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('This card has no usable document id.');
+  return id;
+}
+
+function documentUpdateBody(draft) {
+  const changes = draft.changes || {};
+  const keys = Object.keys(changes);
+  if (!keys.length) throw new Error('This card changes nothing.');
+  const body = {};
+  for (const k of keys) {
+    if (!Object.prototype.hasOwnProperty.call(DOCUMENT_FIELD_MAX, k)) throw new Error('This card carries a field Casey never writes.');
+    const to = changes[k] && changes[k].to;
+    if (typeof to !== 'string' || to !== to.trim() || documentChars(to) > DOCUMENT_FIELD_MAX[k]) throw new Error(`This card's ${k === 'doc_type' ? 'type' : k} is unusable.`);
+    // The stored tag form (lowercase, no spaces, no empty entries) — the server sent exactly that.
+    if (k === 'tags' && to && (to !== to.toLowerCase() || /\s/.test(to) || to.split(',').some((t) => !t))) throw new Error('This card\'s tags are unusable.');
+    body[k] = to;
+  }
+  return body;
+}
+
+function documentUpdateRequest(draft) {
+  return { path: `/api/documents/${documentId(draft)}`, method: 'PATCH', body: documentUpdateBody(draft) };
+}
+
+function documentLinkRequest(draft) {
+  const id = documentId(draft);
+  const l = draft.link || {};
+  if (l.link_type !== 'case' && l.link_type !== 'contact') throw new Error('This card has no usable record.');
+  const linkId = typeof l.link_id === 'string' ? l.link_id : '';
+  if (!(l.link_type === 'case' ? /^[A-Za-z0-9_-]{1,20}$/ : /^[1-9]\d{0,19}$/).test(linkId)) throw new Error('This card has no usable record id.');
+  const body = { link_type: l.link_type, link_id: linkId };
+  if (l.relation != null) {
+    if (typeof l.relation !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/.test(l.relation) || l.relation === 'path') throw new Error('This card\'s relation is unusable.');
+    body.relation = l.relation;
+  }
+  return { path: `/api/documents/${id}/links`, method: 'POST', body };
+}
+
+function documentLinkSignature(links) {
+  return links.map((l) => `${Number(l.id)}:${l.link_type}:${l.link_id}:${l.relation == null ? '' : l.relation}`).sort();
+}
+
+// The document and its links, re-read and compared field by field.
+async function documentRead(draft) {
+  const id = documentId(draft);
+  let got;
+  try { got = await api(`/api/documents/${id}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return { gone: `The document "${documentName(draft)}" no longer exists. Nothing was written.` }; throw e; }
+  const doc = got && got.document;
+  if (!doc || Number(doc.id) !== id || !Array.isArray(got.links)) throw new Error('the document could not be read');
+  return { doc, links: got.links };
+}
+
+async function documentUpdatePrecheck(draft) {
+  documentUpdateBody(draft); // a card that cannot be written is never read
+  const x = draft.expected || {};
+  const r = await documentRead(draft);
+  if (r.gone) return r.gone;
+  const s = (v) => (v == null ? null : String(v));
+  const iso = (v) => { const t = new Date(v); return v == null || Number.isNaN(t.getTime()) ? s(v) : t.toISOString(); };
+  if (s(r.doc.status) !== 'active' || s(r.doc.status) !== s(x.status)) {
+    return `The document "${documentName(draft)}" is ${r.doc.status || 'no longer active'} now. Nothing was written.`;
+  }
+  if (s(r.doc.title) !== s(x.title) || s(r.doc.doc_type) !== s(x.doc_type) || s(r.doc.tags) !== s(x.tags) || iso(r.doc.updated_at) !== s(x.updated_at)) {
+    return `The document "${documentName(draft)}" changed since this card was prepared (its title, type, tags or another field). Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+async function documentLinkPrecheck(draft) {
+  const req = documentLinkRequest(draft); // a card that cannot be written is never read
+  const x = draft.expected || {};
+  const t = draft.target || {};
+  try { await api(`/api/${req.body.link_type === 'case' ? 'cases' : 'contacts'}/${encodeURIComponent(req.body.link_id)}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `${t.label || 'That record'} no longer exists. Nothing was written.`; throw e; }
+  const r = await documentRead(draft);
+  if (r.gone) return r.gone;
+  if (String(r.doc.status) !== 'active' || String(r.doc.status) !== String(x.status)) {
+    return `The document "${documentName(draft)}" is ${r.doc.status || 'no longer active'} now. Nothing was written.`;
+  }
+  if (r.links.some((l) => String(l.link_type).toLowerCase() === req.body.link_type && documentFoldId(l.link_id) === documentFoldId(req.body.link_id))) {
+    return `The document "${documentName(draft)}" is already linked to ${t.label || 'that record'} — someone linked it since this card was prepared. Nothing was written.`;
+  }
+  if (JSON.stringify(documentLinkSignature(r.links)) !== JSON.stringify((x.links || []).slice().sort())) {
+    return `The links of "${documentName(draft)}" changed since this card was prepared (one was added or removed). Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function documentUpdateResult(draft, result) {
+  const doc = result && result.document;
+  const id = documentId(draft);
+  if (!doc || Number(doc.id) !== id) throw new Error('The documents route did not confirm the document');
+  for (const [k, c] of Object.entries(draft.changes || {})) {
+    if (documentNorm(doc[k]) !== documentNorm(c.to)) throw new Error('The documents route did not save the reviewed values');
+  }
+  return { document_id: id };
+}
+
+function documentLinkResult(draft, result) {
+  const l = draft.link || {};
+  if (!result || !Array.isArray(result.links)) throw new Error('The documents route did not confirm the link');
+  // A repeat is answered as success with created:false — it wrote nothing.
+  if (result.created !== true) throw Object.assign(new Error('already linked'), { documentLinkNoop: true });
+  const row = result.links.find((r) => r && String(r.link_type).toLowerCase() === l.link_type && documentFoldId(r.link_id) === documentFoldId(l.link_id));
+  const id = Number(row && row.id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('The documents route did not return the new link');
+  return { document_link_id: id };
+}
+
+// The routes' answers written before any row, worded for staff: the document
+// is gone (404, before the write), or the link already existed (created:false
+// — no row, no event). A 400 is a refusal by the shared rule.
+function documentKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  if (e && e.documentLinkNoop === true) {
+    return { status: 'Refused — nothing written', text: 'Refused — nothing written: the document was already linked to that record when this was applied (someone linked it first), so no link was added and no automation ran. Ask Casey to read the document again.' };
+  }
+  const message = String((e && e.message) || (e && e.body && e.body.message) || '');
+  if (e && e.status === 404 && /Document not found/.test(message)) {
+    return { status: 'Refused — nothing written', text: 'Refused — nothing written: that document no longer exists in the registry. Ask Casey to read it again.' };
+  }
+  return null;
+}
+
+// A document has no record page of its own: point at the Documents page.
+function documentOpenInfo(label) {
+  try { P.Swal?.fire({ icon: 'info', title: label || 'Document', text: 'Find it under More → Documents (search its name).', heightAuto: false }); }
+  catch (_) { /* outside the shell the chat line already names the document */ }
+}
+
+function documentEntity(draft) {
+  if (draft.kind === 'document.link.v1') {
+    const t = draft.target || {};
+    if (t.link_type === 'case') return { kind: 'case', id: String(t.case_id || t.link_id), label: String(t.case_number || t.case_id || t.link_id) };
+    return { kind: 'contact', id: String(t.contact_id || t.link_id), label: String(t.contact_name || t.link_id) };
+  }
+  const first = (draft.links || []).find((l) => l.link_type === 'case') || (draft.links || []).find((l) => l.link_type === 'contact');
+  if (first) return { kind: first.link_type, id: String(first.link_id), label: String(first.label || first.link_id).replace(/^case /, '').replace(/ \(contact #\d+\)$/, '') };
+  return { kind: 'document', id: String((draft.document || {}).document_id || ''), label: documentName(draft) };
+}
+
+function documentOpen(draft) {
+  const e = documentEntity(draft);
+  openEntity(e.kind, e.id, e.label);
+}
+
 // Safe code jobs (safe-mode S3). The body runs ONCE in the QuickJS guest
 // engine (no network, no DB, no host realm), so the reviewed card schedules a
 // computation, not server-side execution capability. code_mode is pinned
@@ -3266,6 +3513,48 @@ const ACTION_FAMILIES = [
     open: checklistOpen,
   },
   {
+    // A11: the update receipts the integer document_id (the PATCH returns the row).
+    id: 'document', kinds: DOCUMENT_ACTION_KINDS, title: 'Document', noun: 'document', errorNoun: 'document edit',
+    label: documentLabel, text: documentText, request: documentUpdateRequest, result: documentUpdateResult,
+    idField: 'document_id', appliedKey: 'result_document_id',
+    // A pending delete, many links, or a rule that could not be evaluated.
+    danger: (draft) => (draft.warnings || []).length > 0,
+    precheck: documentUpdatePrecheck,
+    knownOutcome: documentKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `document #${payload.document_id}`,
+    entity: (draft) => documentEntity(draft),
+    failure: 'The document edit could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — document #${draft.result_document_id} updated`,
+      warning: `"${documentName(draft)}" (${(draft.document || {}).name}) was saved using your signed-in account.${(draft.automation || {}).lines && draft.automation.lines.length ? ' The trigger rules listed above run from this change.' : ''}`,
+      button: `Open ${documentEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review the document, each field before and after and every trigger rule it runs — they start the moment it is saved. Nothing is sent by Casey itself. Canceling writes nothing.',
+    open: documentOpen,
+  },
+  {
+    // A11: the link receipts the integer document_link_id (the POST returns every link row).
+    id: 'doclink', kinds: DOCLINK_ACTION_KINDS, title: 'Document link', noun: 'document link', errorNoun: 'document link',
+    label: documentLabel, text: documentText, request: documentLinkRequest, result: documentLinkResult,
+    idField: 'document_link_id', appliedKey: 'result_document_link_id',
+    // A pending delete, many links, or a rule that could not be evaluated.
+    danger: (draft) => (draft.warnings || []).length > 0,
+    precheck: documentLinkPrecheck,
+    knownOutcome: documentKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `document link #${payload.document_link_id}`,
+    entity: (draft) => documentEntity(draft),
+    failure: 'The document link could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — link #${draft.result_document_link_id} added`,
+      warning: `"${documentName(draft)}" was linked to ${(draft.target || {}).label} using your signed-in account; it now shows on that record's Documents tab.${(draft.automation || {}).lines && draft.automation.lines.length ? ' The trigger rules listed above run from this change.' : ''}`,
+      button: `Open ${documentEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review the document, the record it joins, where it will show and every trigger rule it runs — they start the moment it is saved. Nothing is sent by Casey itself. Canceling writes nothing.',
+    open: documentOpen,
+  },
+  {
     id: 'job', kinds: JOB_ACTION_KINDS, title: 'Safe code job', noun: 'scheduled job', errorNoun: 'job action',
     label: jobActionLabel, text: jobDraftText, request: jobActionRequest, result: jobActionResult,
     idField: 'job_id', appliedKey: 'result_job_id',
@@ -3959,6 +4248,7 @@ function openEntity(kind, id, label) {
     else if (kind === 'task') P.showTask(id);
     else if (kind === 'report') openAutomationRecord('reports.report', Number(id), `Report #${id}`, 'Find it under More → Reports.');
     else if (kind === 'checklist') checklistOpenPersonal(label);
+    else if (kind === 'document') documentOpenInfo(label);
   } catch (_) { /* The links are useful only inside the YisraCase shell. */ }
 }
 

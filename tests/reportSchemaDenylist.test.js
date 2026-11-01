@@ -111,3 +111,41 @@ describe('SELECT * stays banned', () => {
     )).toBe(true);
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// A11 (2026-11-02): the document registry joins the manifest — and its
+// public link does not
+// ─────────────────────────────────────────────────────────────
+
+describe('documents / document_links are readable; shared_link is a capability, never data', () => {
+  const { TABLES, isAllowedTable } = require('../lib/reportSchema/manifest');
+
+  test('both tables are on the allowlist, with document_id as the documented join', () => {
+    expect([isAllowedTable('documents'), isAllowedTable('document_links')]).toEqual([true, true]);
+    expect(ok(
+      "SELECT d.id AS document_id, d.name, d.path, d.title, d.doc_type, d.tags, d.status, dl.link_type, dl.link_id, dl.relation " +
+      "FROM documents d JOIN document_links dl ON dl.document_id = d.id WHERE d.status = 'active' AND dl.link_type = 'case' LIMIT 20"
+    )).toBe(true);
+    expect(TABLES.documents.columns.id.note).toMatch(/documents\.id AS document_id/);
+  });
+
+  test('shared_link is denied plain, aliased, backticked and in a subquery — and is not advertised', () => {
+    expect(DENIED_COLUMNS).toContain('shared_link');
+    for (const sql of ['SELECT shared_link FROM documents', 'SELECT d.shared_link AS u FROM documents d',
+      'SELECT `shared_link` FROM documents', 'SELECT x.u FROM (SELECT shared_link AS u FROM documents) x']) {
+      expect({ sql, ok: ok(sql) }).toEqual({ sql, ok: false });
+    }
+    expect(err('SELECT shared_link FROM documents')).toMatch(/shared_link/);
+    expect(Object.keys(TABLES.documents.columns)).not.toContain('shared_link');
+    // The other sync / provider internals stay selectable (columns are opt-out)
+    // but unlisted, so the AI author is not invited to build on them.
+    for (const col of ['external_id', 'path_hash', 'path_lower', 'content_hash', 'rev', 'ai_meta']) {
+      expect(Object.keys(TABLES.documents.columns)).not.toContain(col);
+    }
+  });
+
+  test('the checklists entry describes what it holds: kind, body, and every link_type', () => {
+    expect(Object.keys(TABLES.checklists.columns)).toEqual(expect.arrayContaining(['kind', 'body']));
+    expect(TABLES.checklists.columns.link_type.type).toBe("enum('contact','case','bill','appt','task','user','event')");
+  });
+});

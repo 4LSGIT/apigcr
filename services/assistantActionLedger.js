@@ -35,6 +35,11 @@ const KINDS = new Map([
   ['checklist.create.v1', 'checklist_id'],
   ['checklist.item.add.v1', 'checklist_id'],
   ['checklist.item.update.v1', 'checkitem_id'],
+  // A11: the update receipts the DOCUMENT (the PATCH returns the row); the
+  // link receipts the new document_links row (the POST returns every link
+  // row, ids included — the one matching the reviewed target is the receipt).
+  ['document.update.v1', 'document_id'],
+  ['document.link.v1', 'document_link_id'],
   ['job.code_safe.create.v1', 'job_id'],
   ['workflow.draft.v1', 'workflow_id'],
   ['workflow.step_insert.v1', 'workflow_id'],
