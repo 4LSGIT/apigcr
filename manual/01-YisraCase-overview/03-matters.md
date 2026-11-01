@@ -160,4 +160,4 @@ From the Cases tab, you can filter by:
 
 The **Caption** control in the filter bar sets how the table shows captions: **Column** gives them their own column, **In name** adds a line under the client only when the caption says something the client's name does not, and **Off** leaves them out. The choice is saved in your browser, so each device keeps its own.
 
-The Leads tab has its own separate filter set tailored to the intake process. Results in both tabs sort by open date descending by default.
+Results sort by open date descending by default.

@@ -628,19 +628,21 @@ showed and the slice left alone:
 
 ## From the case-caption arc (2026-11-01) — deferred
 
-- **Column picker on the list tabs.** The Cases tab's Caption control
-  (`casesCaptionApply`) is the first per-user column choice; the general version
-  was analysed and left until people ask for more than that. Settled: the
-  browser only shows or hides columns of a fixed server SELECT and never sends
-  a column name into SQL; saved in localStorage keyed by user, because a phone
-  and a desktop want different columns, and `ui_config` user scope stays open
-  later; no firm tier, since firm-wide lists are YisraView's job. Candidates
-  already in the responses: Cases (Judge, Trustee, Chapter), Contacts (Type,
-  Tags, City/State/Zip), Appts (Length, Platform, Note). Appts Case Type needs
-  one column added to the SELECT, `cases` is already joined. Not the Calendar
-  list (it mixes item kinds). Custom fields wait: the only two are Clio IDs.
-  Above 768px a list table has no scroll box, so the survey at 1000 and 1200
-  has to run with every column on.
+- **Column picker on the list tabs, custom fields included (chartered for YC 3.0).**
+  The Cases tab's Caption control (`casesCaptionApply`) is the first per-user
+  column choice. Fred chartered the general version on 2026-11-01: a YC 3.0
+  feature, not one this firm is waiting on, and it needs discovery before any
+  code. The charter, verified facts, discovery list, open questions and
+  provisional slices are in scratch `fred/custom_table_view_state`. Starting
+  points, all open to that discovery: the browser never sends a column name into
+  SQL; localStorage keyed by user, because a phone and a desktop want different
+  columns, with `ui_config` user scope as the alternative; firm-wide lists stay
+  YisraView's job unless a firm default earns its place. Candidates already in the
+  responses: Cases (Judge, Trustee, Chapter), Contacts (Type, Tags), Appts
+  (Length, Platform, Note). Appts Case Type needs one column added to the SELECT,
+  `cases` is already joined. Not the Calendar list (it mixes item kinds). Contacts,
+  Appts and Logs have no scroll box above 768px, so the survey at 1000 and 1200 has
+  to run with every column on.
 
 ## custom_code containment — what the child process does NOT close (2026-10-22)
 
