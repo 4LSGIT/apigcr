@@ -33,6 +33,9 @@
  *     verified contact, never for an excluded view, and first_for_contact
  *     ignores other people, other videos and excluded views.
  *   - video_watch_status counts what a person did, not scanners or exclusions.
+ *   - resolveViewCase: a case named on the link only counts for someone on it, a
+ *     guess is certain only without a tie, and the stored id comes back.
+ *   - first_for_case tells a second bankruptcy from the first.
  *   - setViewExcluded moves the stats and view_count once, however many times
  *     it runs, and leaves the counter alone for a view a reset already took off.
  */
@@ -76,7 +79,7 @@ d('videoService on real MySQL', () => {
       case_stage enum('Open','Pending','Filed','Concluded','Closed') NOT NULL DEFAULT 'Open',
       case_open_date date DEFAULT NULL)`);
     await q(`CREATE TABLE case_relate (
-      id int NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      case_relate_id int NOT NULL AUTO_INCREMENT PRIMARY KEY,
       case_relate_case_id varchar(20) NOT NULL,
       case_relate_client_id int NOT NULL,
       case_relate_type varchar(20) NOT NULL)`);
@@ -700,7 +703,7 @@ d('videoService on real MySQL', () => {
       expect(last()).toEqual({
         contact_id: 10, case_id: 'C1', source: 'video_page', actor: { user_id: 0 },
         data: { view_id: id, video_id: 1, video_slug: 'one', video_title: 'One', watch_seconds: 0, completion_pct: 0 },
-        extra: { first_for_contact: true },
+        extra: { first_for_contact: true, first_for_case: true },
       });
     });
 
@@ -811,6 +814,52 @@ d('videoService on real MySQL', () => {
       });
     });
 
+    describe('first_for_case', () => {
+      const flags = async (act, row) => {
+        const id = await view(row);
+        await act(id);
+        return [last().extra.first_for_contact, last().extra.first_for_case];
+      };
+
+      test('a second bankruptcy is not first for the contact, but is for the case', async () => {
+        await view({ case_id: 'OLD', played_at: '2026-07-01 12:00:00' });
+        expect(await flags((id) => played(id), { case_id: 'NEW' })).toEqual([false, true]);
+      });
+      test('the same case again is first for neither', async () => {
+        await view({ case_id: 'C1', played_at: '2026-07-01 12:00:00' });
+        expect(await flags((id) => played(id), { case_id: 'C1' })).toEqual([false, false]);
+      });
+      test('a joint debtor on the same case: first for them, not for the case', async () => {
+        await view({ contact_id: 11, case_id: 'C1', played_at: '2026-07-01 12:00:00' });
+        expect(await flags((id) => played(id), { case_id: 'C1' })).toEqual([true, false]);
+      });
+      test('a view with no case has no answer', async () => {
+        expect(await flags((id) => played(id), { case_id: null })).toEqual([true, null]);
+      });
+      test('an excluded view on the case does not count', async () => {
+        await view({ case_id: 'C1', played_at: '2026-07-01 12:00:00', excluded_at: '2026-07-02 00:00:00' });
+        expect(await flags((id) => played(id), { case_id: 'C1' })).toEqual([true, true]);
+      });
+      test('another video on the case does not count', async () => {
+        await view({ video_id: 2, case_id: 'C1', played_at: '2026-07-01 12:00:00' });
+        expect(await flags((id) => played(id), { case_id: 'C1' })).toEqual([true, true]);
+      });
+      test('a completion is compared with completions', async () => {
+        await view({ case_id: 'C1', played_at: '2026-07-01 12:00:00' });
+        expect(await flags((id) => progress(id, 95), { case_id: 'C1' })).toEqual([true, true]);
+      });
+      test('a click is compared with that button', async () => {
+        await view({ case_id: 'C1', cta_clicks: JSON.stringify([{ label: 'Book' }]) });
+        expect(await flags((id) => click(id, 'Book'), { case_id: 'C1' })).toEqual([false, false]);
+      });
+      test('later views never count', async () => {
+        const id = await view({ case_id: 'C1' });
+        await view({ case_id: 'C1', played_at: '2026-07-01 12:00:00' });
+        await played(id);
+        expect(last().extra.first_for_case).toBe(true);
+      });
+    });
+
     describe('first_for_contact', () => {
       const firstOn = async (act) => {
         const id = await view({});
@@ -848,6 +897,118 @@ d('videoService on real MySQL', () => {
         await view({ contact_verified: 0, played_at: '2026-07-01 12:00:00' });
         expect(await firstOn((id) => played(id))).toBe(false);
       });
+    });
+  });
+
+  describe('resolveViewCase and primaryOfCase', () => {
+    const give = async (contactId, rows) => {
+      for (const [caseId, stage, type = 'Primary', opened = '2026-01-01'] of rows) {
+        await q('INSERT IGNORE INTO cases (case_id, case_stage, case_open_date) VALUES (?, ?, ?)', [caseId, stage, opened]);
+        await q('INSERT INTO case_relate (case_relate_case_id, case_relate_client_id, case_relate_type) VALUES (?, ?, ?)',
+          [caseId, contactId, type]);
+      }
+    };
+    beforeEach(() => q(`INSERT INTO contacts (contact_id, contact_name) VALUES (10, 'Ann'), (11, 'Bob')`));
+    const resolve = (contact, ca) => videoService.resolveViewCase(pool, contact, ca);
+
+    test.each([['Primary'], ['Secondary']])('a case named by someone %s on it wins, whatever the ranking', async (type) => {
+      await give(10, [['ACTIVE', 'Open'], ['OLDCASE', 'Closed', type]]);
+      expect(await resolve(10, 'OLDCASE')).toEqual({ caseId: 'OLDCASE', certain: true, fromLink: true });
+    });
+
+    test('naming one of two active cases settles the tie', async () => {
+      await give(10, [['A', 'Open'], ['B', 'Filed']]);
+      expect(await resolve(10, 'A')).toEqual({ caseId: 'A', certain: true, fromLink: true });
+    });
+
+    test.each([['Other'], ['Bystander']])('%s is not on the case for this', async (type) => {
+      await give(10, [['MINE', 'Open'], ['THEIRS', 'Open', type]]);
+      expect(await resolve(10, 'THEIRS')).toEqual({ caseId: 'MINE', certain: true, fromLink: false });
+    });
+
+    test('a case_relate row with no case is nothing, named or alone', async () => {
+      await q(`INSERT INTO case_relate (case_relate_case_id, case_relate_client_id, case_relate_type) VALUES ('GHOST', 10, 'Primary')`);
+      expect(await resolve(10, 'GHOST')).toEqual({ caseId: null, certain: false, fromLink: false });
+      expect(await videoService.primaryOfCase(pool, 'GHOST')).toBeNull();
+    });
+
+    test('someone else\'s case is ignored, never reached', async () => {
+      await give(10, [['MINE', 'Open']]);
+      await give(11, [['THEIRS', 'Open']]);
+      expect(await resolve(10, 'THEIRS')).toEqual({ caseId: 'MINE', certain: true, fromLink: false });
+    });
+
+    test('a lowercased id comes back as stored: the column ignores case, JS does not', async () => {
+      await give(10, [['AB12CD34', 'Open']]);
+      expect((await resolve(10, 'ab12cd34')).caseId).toBe('AB12CD34');
+    });
+
+    test.each([
+      ['one case', [['A', 'Open']], 'A', true],
+      ['one active beside old ones', [['A', 'Filed'], ['B', 'Closed'], ['C', 'Concluded']], 'A', true],
+      ['Pending counts as active', [['A', 'Pending']], 'A', true],
+      ['two active tie', [['A', 'Open', 'Primary', '2026-02-01'], ['B', 'Filed', 'Primary', '2026-01-01']], 'A', false],
+      ['a closed-out client has nothing to act on', [['A', 'Closed']], 'A', false],
+      ['nor does a Concluded one', [['A', 'Concluded'], ['B', 'Closed']], 'A', false],
+      ['two Closed tie', [['A', 'Closed', 'Primary', '2026-02-01'], ['B', 'Closed', 'Primary', '2026-01-01']], 'A', false],
+      ['a live Secondary beside a Closed Primary: the guess is not the live case', [['OLD', 'Closed'], ['LIVE', 'Open', 'Secondary']], 'OLD', false],
+      ['a live Secondary beside a live Primary is a tie', [['A', 'Open'], ['B', 'Filed', 'Secondary']], 'A', false],
+      ['a closed Secondary beside a live Primary is no tie', [['A', 'Open'], ['B', 'Closed', 'Secondary']], 'A', true],
+      ['Primary and Secondary on one case is one case', [['A', 'Open'], ['A', 'Open', 'Secondary']], 'A', true],
+      ['Other and Bystander are not in the running', [['A', 'Open'], ['B', 'Open', 'Other'], ['C', 'Open', 'Bystander']], 'A', true],
+    ])('a guess: %s', async (_n, rows, caseId, certain) => {
+      await give(10, rows);
+      expect(await resolve(10, null)).toEqual({ caseId, certain, fromLink: false });
+    });
+
+    test('Secondary alone is no guess: the ranking is Primary only', async () => {
+      await give(10, [['A', 'Open', 'Secondary']]);
+      expect(await resolve(10, null)).toEqual({ caseId: null, certain: false, fromLink: false });
+    });
+
+    test('nobody, or no cases, is nothing', async () => {
+      expect(await resolve(null, 'A')).toEqual({ caseId: null, certain: false, fromLink: false });
+      expect(await resolve(10, null)).toEqual({ caseId: null, certain: false, fromLink: false });
+    });
+
+    test('resolveCaseIdForContact still answers with the guess', async () => {
+      await give(10, [['A', 'Open', 'Primary', '2026-02-01'], ['B', 'Filed', 'Primary', '2026-01-01']]);
+      expect(await videoService.resolveCaseIdForContact(pool, 10)).toBe('A');
+    });
+
+    test('a case\'s Primary, by stored id', async () => {
+      await give(11, [['AB12CD34', 'Open', 'Secondary']]);
+      await give(10, [['AB12CD34', 'Open']]);
+      expect(await videoService.primaryOfCase(pool, 'ab12cd34')).toEqual({ contactId: 10, caseId: 'AB12CD34' });
+    });
+
+    test('two Primaries: the lowest relation id, whatever the insert order', async () => {
+      await q(`INSERT INTO cases (case_id, case_stage) VALUES ('A', 'Open')`);
+      await q(`INSERT INTO case_relate (case_relate_id, case_relate_case_id, case_relate_client_id, case_relate_type)
+               VALUES (50, 'A', 10, 'Primary'), (40, 'A', 11, 'Primary')`);
+      expect((await videoService.primaryOfCase(pool, 'A')).contactId).toBe(11);
+    });
+
+    test.each([
+      ['no such case', 'NOPE', null],
+      ['a case with only a Secondary', 'SEC', null],
+      ['a Primary whose contact is gone', 'GONE', null],
+    ])('%s', async (_n, caseId) => {
+      await give(10, [['SEC', 'Open', 'Secondary']]);
+      await give(99, [['GONE', 'Open']]);
+      expect(await videoService.primaryOfCase(pool, caseId)).toBeNull();
+    });
+
+    test('recordView stores the case it is given, including none', async () => {
+      await q(`INSERT INTO videos (id, slug, title) VALUES (1, 'one', 'One')`);
+      await give(10, [['GUESS', 'Open']]);
+      const open = async (args) => {
+        const { viewId } = await videoService.recordView(pool, { videoId: 1, contactId: 10, ...args });
+        return (await q('SELECT case_id FROM video_views WHERE id = ?', [viewId]))[0].case_id;
+      };
+      expect(await open({ caseId: 'OTHER' })).toBe('OTHER');
+      expect(await open({ caseId: null })).toBeNull();
+      expect(await open({})).toBe('GUESS');
     });
   });
 
@@ -896,6 +1057,15 @@ d('videoService on real MySQL', () => {
     test('an id still works when no slug spells it', async () => {
       await q(`INSERT INTO videos (id, slug, title) VALUES (341, 'other', 'Other')`);
       expect(await status('341')).toMatchObject({ video_id: 341, video_slug: 'other' });
+    });
+
+    test('case_id: the first bankruptcy does not answer for the second', async () => {
+      await view({ case_id: 'OLD', played_at: '2026-07-01 12:00:00' });
+      const run = async (case_id) => (await videoFns.video_watch_status({ contact_id: '10', video: 'one', case_id }, pool)).output;
+      expect(await run('OLD')).toMatchObject({ played: true });
+      expect(await run('NEW')).toMatchObject({ opened: false, played: false });
+      expect(await run(undefined)).toMatchObject({ played: true });
+      expect(await run('')).toMatchObject({ played: true });
     });
 
     test('opened but not played is not watched', async () => {

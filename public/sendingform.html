@@ -838,6 +838,7 @@ async function otherInsertVideoSms() {
   const mmsCapable = senderOpt.dataset.mmsCapable === '1';
   const result = await YisraVideoInsert.openVideoPicker({
     contactId: null,        // multi-recipient → leave placeholder literal
+    caseId,
     context: 'sms',
     mmsCapable,
   });
@@ -861,6 +862,7 @@ async function otherInsertVideoEmail() {
   }
   const result = await YisraVideoInsert.openVideoPicker({
     contactId: null,        // multi-recipient → leave placeholder literal
+    caseId,
     context: 'email',
     mmsCapable: false,
   });

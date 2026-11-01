@@ -235,8 +235,8 @@ describe('write-path validation', () => {
 });
 
 
-// ── ?ct= token vs deprecated ?c= integer (2026-08-17) ──────────────────────
-describe('contact resolution: ?ct= token vs legacy ?c= integer', () => {
+// ── ?ct= token vs the retired ?c= integer ──────────────────────────────────
+describe('contact resolution: ?ct= token vs retired ?c= integer', () => {
   beforeEach(() => setActions([
     { type: 'url', label: 'Book', config: { url: '/book/consult?c={{c}}' } },
   ]));
@@ -262,12 +262,12 @@ describe('contact resolution: ?ct= token vs legacy ?c= integer', () => {
     expect(html).toContain('href="/book/consult?c="');
   });
 
-  test('LOCK: legacy ?c= still renders the page (links already in inboxes)', async () => {
+  test('LOCK: a retired ?c= link still renders the page (links already in inboxes)', async () => {
     const res = await fetch(`${base}/v/demo?c=42`);
     expect(res.status).toBe(200);
   });
 
-  test('LOCK: legacy ?c= is attribution-only — it never reaches an action URL', async () => {
+  test('LOCK: a retired ?c= never reaches an action URL', async () => {
     const html = await (await fetch(`${base}/v/demo?c=42`)).text();
     // The raw id must NOT be substituted as a credential.
     expect(html).toContain('href="/book/consult?c="');

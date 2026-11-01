@@ -2114,8 +2114,14 @@ view's `video_views.track_token`, rendered into the page that opened the view
 (ids are sequential). `watch_seconds` / `completion_pct` come from the
 browser's `video.played` ranges, and `completed_at` is claimed once by a
 conditional UPDATE at `COMPLETE_PCT` (90); the page's `ended` event proves
-nothing, dragging the bar fires it. `?ct=` identifies a viewer; `?c=` is
-attribution-only and must never reach a page as a token.
+nothing, dragging the bar fires it. `?ct=` identifies a viewer and is the only thing
+that opens `contact_only` or fires an event. `?ca=` names the case: beside a
+token it counts only for a Primary or Secondary on it (`resolveViewCase`), alone
+it means the case's Primary (a case id is 40 random bits and already the key to
+`/docReq`), and a token that misses never falls through to it. `{{ca}}` in an
+action URL prints only a certain case, and a button without one isn't drawn.
+`?c=` was retired 2026-11-01: links still play, anonymously, and nothing may
+bring it back as attribution.
 
 Views tab: `listViews` is one row per open and never selects `track_token` or
 `ip_hash`. `excluded_at` is a soft exclude (hard delete is SQL only): every
@@ -2129,8 +2135,8 @@ on a route reuses it. `recordView` UPDATEs `videos` before it INSERTs: the
 foreign key's shared lock otherwise deadlocks two opens of one video.
 
 Events: `video.played` / `video.completed` / `video.cta_clicked` fire only for
-`contact_verified` = 1 (a `?ct=` token resolved the contact; `?c=` is typeable),
-never for an excluded view, once per view (per button for a click) by
+`contact_verified` = 1 (a `?ct=` token resolved the contact), never for an
+excluded view, once per view (per button for a click) by
 conditional UPDATE. The emit is awaited inside the request. There is deliberately
 no `video.open`: scanners. `video_watch_status` reads the same table and is
 denied to CTA links.

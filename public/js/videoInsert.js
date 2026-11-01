@@ -10,6 +10,8 @@
 //   const result = await YisraVideoInsert.openVideoPicker({
 //     contactId: 42 | null,    // null = campaign template mode (leaves placeholder literal)
 //                              // resolved to contacts.contact_token internally
+//     caseId:    'AB12CD34' | null,  // the case in hand, carried as &ca= so the
+//                              // view lands on it and a {{ca}} button can show
 //     context:   'email' | 'sms',
 //     mmsCapable: true | false  // SMS only; consulted to offer MMS variants
 //   });
@@ -125,9 +127,8 @@
    *
    * 2026-08-17: emits ?ct=<contact_token>, replacing ?c=<contact_id>. The raw
    * id was forgeable (anyone could walk 1,2,3…) so it never was a credential;
-   * only the token can satisfy a contact_only video. The landing route still
-   * ACCEPTS ?c= for attribution so links already in inboxes keep working, but
-   * nothing mints it any more.
+   * only the token can satisfy a contact_only video. ?c= was retired 2026-11-01:
+   * links already in inboxes still play, anonymously.
    *
    * @param {string} slug
    * @param {string|null} contactToken
@@ -138,13 +139,14 @@
    *     would reach the client as text.
    *   Otherwise: produces ...?ct=<token> (already substituted).
    */
-  function buildUrl(slug, contactToken) {
+  function buildUrl(slug, contactToken, caseId) {
     const base = PUBLIC_VIDEO_ORIGIN + '/v/' + encodeURIComponent(slug);
-    if (contactToken === '') return base;
+    const ca = caseId ? 'ca=' + encodeURIComponent(caseId) : '';
+    if (contactToken === '') return ca ? base + '?' + ca : base;
     const c = (contactToken === null || contactToken === undefined)
       ? '{{contacts.contact_token|default:}}'
       : String(contactToken);
-    return base + '?ct=' + c;
+    return base + '?ct=' + c + (ca ? '&' + ca : '');
   }
 
   /**
@@ -375,8 +377,8 @@
 
   // ── Result builders ────────────────────────────────────────────────────────
 
-  function buildResult(variantKey, video, contactToken) {
-    const url = buildUrl(video.slug, contactToken);
+  function buildResult(variantKey, video, contactToken, caseId) {
+    const url = buildUrl(video.slug, contactToken, caseId);
     const title = video.title || 'Watch the video';
 
     switch (variantKey) {
@@ -409,6 +411,7 @@
 
     const ctx        = opts && opts.context;
     const contactId  = (opts && opts.contactId !== undefined) ? opts.contactId : null;
+    const caseId     = (opts && opts.caseId) || null;
     const mmsCapable = !!(opts && opts.mmsCapable);
 
     if (ctx !== 'email' && ctx !== 'sms') {
@@ -436,14 +439,14 @@
     const variantKey = await pickVariant(Swal, video, variants);
     if (!variantKey) return null;
 
-    return finishPick(variantKey, video, contactId);
+    return finishPick(variantKey, video, contactId, caseId);
   }
 
   // Stage 3 — resolve the contact's token (no-op in campaign-template mode,
   // where contactId is null and the placeholder stays literal).
-  async function finishPick(variantKey, video, contactId) {
+  async function finishPick(variantKey, video, contactId, caseId) {
     const contactToken = await resolveContactToken(contactId);
-    return buildResult(variantKey, video, contactToken);
+    return buildResult(variantKey, video, contactToken, caseId);
   }
 
   /**

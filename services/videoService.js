@@ -83,7 +83,7 @@ const COMPLETE_PCT = 90;
 const SAFE_ACTION_SCHEMES = new Set(['https:', 'http:', 'mailto:', 'tel:']);
 
 /**
- * @param {string} raw  candidate href (AFTER any {{c}}/{{ct}} substitution when
+ * @param {string} raw  candidate href (AFTER any {{c}}/{{ct}}/{{ca}} substitution when
  *                      called at render time; template form is fine on write
  *                      because callers substitute a digit first)
  * @returns {boolean}
@@ -119,9 +119,9 @@ function validateActions(actions) {
     const raw = String(a.config?.url || '');
     // Validate the representative substituted form. {{c}}/{{ct}} only ever
     // become a contacts.contact_token (base62/hex, PUBLIC_TOKEN_RE class) or
-    // empty — neither can introduce a URL scheme — so a fixed stand-in is a
-    // faithful probe.
-    if (!isSafeActionUrl(raw.replace(/\{\{ct\}\}/g, '1').replace(/\{\{c\}\}/g, '1'))) {
+    // empty, and {{ca}} a url-encoded case id — none can introduce a URL
+    // scheme — so a fixed stand-in is a faithful probe.
+    if (!isSafeActionUrl(raw.replace(/\{\{(?:ct|ca|c)\}\}/g, '1'))) {
       const e = new Error(
         `actions[${i}].config.url has a disallowed URL scheme — ` +
         'use https:, http:, mailto:, tel:, or a root-relative path ("/…")'
@@ -293,6 +293,74 @@ async function resolveCaseIdForContact(db, contactId) {
     [contactId]
   );
   return rows.length ? rows[0].case_id : null;
+}
+
+/**
+ * The case a viewer's page open belongs to.
+ *
+ * A case named on the link wins, but only if this contact is Primary or
+ * Secondary on it: that's the portal's rule, and a joint debtor is Secondary.
+ * Otherwise it's resolveCaseIdForContact's ranked guess.
+ *
+ * `certain` says whether the page may act on the case, and it's stricter than
+ * the guess. An unnamed case is certain only when it is this contact's one
+ * active case counting Secondary too: a wrong guess sends documents to the
+ * wrong case. The ranking is Primary only, so a contact Primary on a Closed case
+ * and Secondary on a live one would otherwise read as certain of the Closed one,
+ * and a closed-out client has nothing to upload.
+ *
+ * Both lookups join cases, because case_relate has no foreign key, and return
+ * the stored id, never the parameter: case_id is general_ci, so a lowercased id
+ * matches and would otherwise travel on as the wrong string.
+ *
+ * @returns {Promise<{caseId: string|null, certain: boolean, fromLink: boolean}>}
+ */
+async function resolveViewCase(db, contactId, requestedCaseId = null) {
+  if (contactId == null) return { caseId: null, certain: false, fromLink: false };
+  if (requestedCaseId) {
+    const [rows] = await db.query(
+      `SELECT c.case_id
+         FROM case_relate cr
+         JOIN cases c ON c.case_id = cr.case_relate_case_id
+        WHERE cr.case_relate_case_id = ? AND cr.case_relate_client_id = ?
+          AND cr.case_relate_type IN ('Primary','Secondary')
+        LIMIT 1`,
+      [requestedCaseId, contactId]
+    );
+    if (rows.length) return { caseId: rows[0].case_id, certain: true, fromLink: true };
+  }
+  const guess = await resolveCaseIdForContact(db, contactId);
+  if (!guess) return { caseId: null, certain: false, fromLink: false };
+  const [active] = await db.query(
+    `SELECT DISTINCT c.case_id
+       FROM cases c
+       JOIN case_relate cr ON cr.case_relate_case_id = c.case_id
+      WHERE cr.case_relate_client_id = ?
+        AND cr.case_relate_type IN ('Primary','Secondary')
+        AND c.case_stage IN ('Open','Filed','Pending')
+      LIMIT 2`,
+    [contactId]
+  );
+  return { caseId: guess, certain: active.length === 1 && active[0].case_id === guess, fromLink: false };
+}
+
+/**
+ * The Primary client of a case, for a ?ca= link with no token.
+ *
+ * @returns {Promise<{contactId: number, caseId: string}|null>}
+ */
+async function primaryOfCase(db, caseId) {
+  const [rows] = await db.query(
+    `SELECT cr.case_relate_client_id AS contact_id, c.case_id
+       FROM case_relate cr
+       JOIN contacts ct ON ct.contact_id = cr.case_relate_client_id
+       JOIN cases c ON c.case_id = cr.case_relate_case_id
+      WHERE cr.case_relate_case_id = ? AND cr.case_relate_type = 'Primary'
+      ORDER BY cr.case_relate_id
+      LIMIT 1`,
+    [caseId]
+  );
+  return rows.length ? { contactId: rows[0].contact_id, caseId: rows[0].case_id } : null;
 }
 
 // JSON_OVERLAPS requires MySQL 8.0.17+. Probe once at first use, cache.
@@ -624,14 +692,16 @@ async function deleteVideo(db, id) {
  * @param {string} args.ipHash      64-char hex (use hashIp())
  * @param {string} args.userAgent   capped at 255 chars
  * @param {boolean} [args.contactVerified]  contactId came from a ?ct= token.
- *   Only such a view may fire events: anyone can type a ?c= integer.
+ *   Only such a view may fire events.
+ * @param {string|null} [args.caseId]  the case, when the caller resolved it;
+ *   left undefined, the contact's ranked case.
  * @returns {Promise<{viewId: number, trackToken: string}>}
  */
-async function recordView(pool, { videoId, contactId, ipHash, userAgent, contactVerified = false }) {
+async function recordView(pool, { videoId, contactId, ipHash, userAgent, contactVerified = false, caseId }) {
   const trackToken = generateToken();
   const viewId = await pool.withTransaction(async (conn) => {
 
-    const caseId = await resolveCaseIdForContact(conn, contactId);
+    const viewCaseId = caseId !== undefined ? caseId : await resolveCaseIdForContact(conn, contactId);
 
     await conn.query(
       'UPDATE videos SET view_count = view_count + 1 WHERE id = ?',
@@ -641,7 +711,7 @@ async function recordView(pool, { videoId, contactId, ipHash, userAgent, contact
     const [result] = await conn.query(
       `INSERT INTO video_views (video_id, contact_id, case_id, ip_hash, user_agent, track_token, contact_verified)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [videoId, contactId, caseId, ipHash || null, (userAgent || '').slice(0, 255) || null, trackToken,
+      [videoId, contactId, viewCaseId, ipHash || null, (userAgent || '').slice(0, 255) || null, trackToken,
         contactVerified ? 1 : 0]
     );
 
@@ -774,12 +844,12 @@ async function recordCtaClick(db, { viewId, videoId, label, actions = [] }) {
 /** Does the page draw this action? Mirrors videoLanding's renderActions. */
 function rendersAsButton(action) {
   if (action?.type !== 'url') return false;
-  return isSafeActionUrl(String(action.config?.url || '').replace(/\{\{ct\}\}/g, '1').replace(/\{\{c\}\}/g, '1'));
+  return isSafeActionUrl(String(action.config?.url || '').replace(/\{\{(?:ct|ca|c)\}\}/g, '1'));
 }
 
 /**
  * The envelope for a video.* event, or null when this view may not announce
- * anything: an unverified contact (anyone can type a ?c= integer, and a rule
+ * anything: an unverified contact (a ?ca= link with no token, and a rule
  * might text a client), no contact, or an excluded view.
  *
  * `earlier` is the SQL test, on alias `o`, for this contact's earlier views of
@@ -789,8 +859,10 @@ function rendersAsButton(action) {
  * leave a once-per-client rule unfired.
  *
  * Unverified earlier views count, because they are real history: a client who
- * watched on an old ?c= link has watched. The price is that a typed ?c= view
- * can read as that history (Fred's ruling pending).
+ * watched on an old ?c= link has watched (Fred, 2026-11-01).
+ *
+ * extra.first_for_case is the same question for the view's case, so a client's
+ * second bankruptcy reads as first. It is null on a view with no case.
  *
  * The tracking write has already landed and the claim is spent, so a failed
  * lookup loses this event for good. It alerts rather than failing the page's
@@ -807,14 +879,19 @@ async function viewEventPayload(db, viewId, earlier, earlierParams = []) {
                 SELECT 1 FROM video_views o
                  WHERE o.video_id = vv.video_id AND o.contact_id = vv.contact_id
                    AND o.id < vv.id AND o.excluded_at IS NULL AND ${earlier}
-              ) AS first_for_contact
+              ) AS first_for_contact,
+              IF(vv.case_id IS NULL, NULL, NOT EXISTS (
+                SELECT 1 FROM video_views o
+                 WHERE o.video_id = vv.video_id AND o.case_id = vv.case_id
+                   AND o.id < vv.id AND o.excluded_at IS NULL AND ${earlier}
+              )) AS first_for_case
          FROM video_views vv
          JOIN videos v ON v.id = vv.video_id
         WHERE vv.id = ?
           AND vv.contact_verified = 1
           AND vv.contact_id IS NOT NULL
           AND vv.excluded_at IS NULL`,
-      [...earlierParams, viewId]
+      [...earlierParams, ...earlierParams, viewId]
     );
     eventLookupFailing = false;
     if (!rows.length) return null;
@@ -832,7 +909,10 @@ async function viewEventPayload(db, viewId, earlier, earlierParams = []) {
         watch_seconds:  r.watch_seconds,
         completion_pct: r.completion_pct,
       },
-      extra: { first_for_contact: !!r.first_for_contact },
+      extra: {
+        first_for_contact: !!r.first_for_contact,
+        first_for_case:    r.first_for_case == null ? null : !!r.first_for_case,
+      },
     };
   } catch (err) {
     console.error(`[videoService] event lookup failed for view ${viewId}:`, err.message);
@@ -1207,10 +1287,13 @@ async function listViews(db, {
  * Excluded views and automated opens don't count. Views before an analytics
  * reset do: the reset is about the dashboard, and they still watched.
  *
+ * With caseId, only views on that case count: a client's second bankruptcy
+ * hasn't been answered by a watch on the first.
+ *
  * @returns {Promise<{opened: boolean, played: boolean, completed: boolean, clicked: boolean,
  *   best_completion_pct: number, last_played_at: Date|null, last_completed_at: Date|null}>}
  */
-async function getWatchStatus(db, { contactId, videoId }) {
+async function getWatchStatus(db, { contactId, videoId, caseId = null }) {
   const [[r]] = await db.query(
     `SELECT COUNT(*) AS opens,
             SUM(CASE WHEN vv.played_at IS NOT NULL THEN 1 ELSE 0 END)                AS plays,
@@ -1222,8 +1305,9 @@ async function getWatchStatus(db, { contactId, videoId }) {
        FROM video_views vv
       WHERE vv.video_id = ? AND vv.contact_id = ?
         AND vv.excluded_at IS NULL
-        AND NOT ${AUTOMATED_SQL}`,
-    [videoId, contactId]
+        AND NOT ${AUTOMATED_SQL}
+        ${caseId ? 'AND vv.case_id = ?' : ''}`,
+    caseId ? [videoId, contactId, caseId] : [videoId, contactId]
   );
   return {
     opened:    Number(r.opens) > 0,
@@ -1429,6 +1513,8 @@ module.exports = {
   getWatchStatus,
   hashIp,
   resolveCaseIdForContact,
+  resolveViewCase,
+  primaryOfCase,
   getJsonOverlapsCachedStatus,
   checkTrackToken,
   COMPLETE_PCT,

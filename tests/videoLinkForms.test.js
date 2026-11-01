@@ -4,8 +4,8 @@
  * Every video link the app builds or stores in source uses ?ct=, and every
  * placeholder form keeps its |default:.
  *
- *   - ?c=<contact_id> is an integer anyone can type: attribution only, kept in
- *     routes/videoLanding.js for links already sent. Nothing may mint a new one.
+ *   - ?c=<contact_id> was an integer anyone can type, retired 2026-11-01. Links
+ *     already sent play anonymously. Nothing may mint a new one.
  *   - services/resolverService leaves a NULL value's placeholder IN THE TEXT
  *     when it has no default, so a contact with no token would be sent a
  *     literal {{contacts.contact_token}}.

@@ -1864,10 +1864,11 @@ Has this contact watched this video? Use it where a workflow branches, such as "
 |---|---|---|
 | `contact_id` | yes | |
 | `video` | yes | The video's slug or id. A slug is tried first, and an old slug still works. |
+| `case_id` | no | Only count views on this case, so a client's second bankruptcy isn't answered by a watch on the first. Blank means every case. |
 
 Output: `video_id`, `video_slug`, `opened`, `played`, `completed` and `clicked` (true or false), `best_completion_pct`, `last_played_at`, `last_completed_at`. `completed` means at least 90% really played.
 
-Excluded views and automated opens don't count. Views from before an analytics reset do. Views from a `?c=` link count too, because older views can't be told apart from `?ct=` ones. A video that doesn't exist fails the step, so a typo can't read as "they didn't watch". Denied to CTA links.
+Excluded views and automated opens don't count. Views from before an analytics reset do. Views from old `?c=` links count too, because they can't be told apart from `?ct=` ones. A video that doesn't exist fails the step, so a typo can't read as "they didn't watch". Denied to CTA links.
 
 To react the moment someone watches, use the [`video.*` trigger events](15-triggers.md#the-video-events) instead.
 

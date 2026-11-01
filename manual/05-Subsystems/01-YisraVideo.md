@@ -37,7 +37,7 @@ A "+ New Video" button in the top of the list pane creates a new video. A refres
    - **Contact-only** — the URL only works when it carries a `?ct=<contact_token>` parameter belonging to a real contact. Without it, the page returns 404. Useful for testimonials or gated content.
 8. Add **Action Buttons** — the row of clickable buttons that appears below the video on the landing page. For each button:
    - **Label** — what the button says ("Book My 341 Prep Call")
-   - **URL** — where it goes. Use `{{c}}` anywhere in the URL to insert the viewer's contact token — e.g. `https://app.4lsg.com/book?c={{c}}`. When a viewer arrives without a token (anonymous, or on an old `?c=` link), `{{c}}` becomes empty.
+   - **URL** — where it goes. Use `{{c}}` anywhere in the URL to insert the viewer's contact token — e.g. `https://app.4lsg.com/book?c={{c}}`. When a viewer arrives without a token, `{{c}}` becomes empty. Use `{{ca}}` to insert the case id — e.g. `https://app.4lsg.com/docReq?case={{ca}}` for a button that opens the client's document upload page.
    - **Style** — Primary (filled), Secondary (outlined), or Ghost (text-only)
    - The ↑ ↓ buttons reorder them; ✕ removes one.
 9. **Related Videos** — pick up to 3 videos that should appear at the bottom of this video's landing page. The picker searches your published videos. If you pick fewer than 3, the system fills the rest by matching tags.
@@ -60,7 +60,19 @@ There are three buttons on each video in the list:
 - **Copy URL for contact…** — opens a contact picker, then copies a URL with `?ct=<contact_token>` appended. The action buttons on the page will then know who's watching.
 - **Copy embed snippet** — produces a clickable HTML block (poster image wrapped in a link to the landing page). When you have both a poster and a GIF, you'll see two snippets — one of each. The contact placeholder in the snippet is `{{contacts.contact_token|default:}}`, which the campaign manager fills in automatically when sending. For one-off messages use Insert Video instead: a pasted snippet goes out with the placeholder still in it.
 
-A video link written into a sequence or template uses the same form: `https://4lsg.com/v/<slug>?ct={{contacts.contact_token|default:}}`. Keep the `|default:` — a few older contacts have no token, and without it they would be sent the placeholder itself. The older `?c=<contact_id>` form still opens the page and attributes the view, but it proves nothing about who clicked: it can't open a contact-only video, and action buttons on that page lose the viewer's identity.
+A video link written into a sequence or template uses the same form: `https://4lsg.com/v/<slug>?ct={{contacts.contact_token|default:}}`. Keep the `|default:` — a few older contacts have no token, and without it they would be sent the placeholder itself.
+
+### Linking a view to a case
+
+`?ct=` says who the viewer is. `?ca=` says which case, for a client with more than one. Add it when the sender knows the case: `https://4lsg.com/v/<slug>?ct={{contacts.contact_token|default:}}&ca={{cases.case_id|default:}}`. Insert Video adds it on its own in the sending forms and in Communicate when you're working from a case.
+
+- **With a token,** `?ca=` counts only if that contact is the Primary or Secondary on the case. Otherwise it's ignored and the page opens normally.
+- **With no `?ca=`,** the view goes to the contact's Primary case: an active one first, then Concluded, then Closed.
+- **`?ca=` on its own** means the case's Primary. The view is recorded and `{{ca}}` buttons work, because a case id is already what opens `/docReq`. It won't open a contact-only video and it fires no triggers, so automated sends should always include `?ct=` too.
+- **A `{{ca}}` button only appears when the case is certain.** That means the link named a case, or the contact is Primary on exactly one active case (Open, Filed or Pending) and has no other active case as Secondary. Anyone else needs `?ca=` to see it, including a client who is only Secondary, because a guess could send their documents to the wrong case.
+- **A wrong or unknown value doesn't break anything:** the page still plays.
+
+The old `?c=<contact_id>` form is retired, because it was a number anyone could type. Those links still play, as anonymous views.
 
 ### Insert Video buttons in the message editors
 
@@ -90,7 +102,7 @@ The Analytics panel on each video shows:
 - **Avg watch** — the average share of the video really watched, across views that were played. Opens nobody pressed play on don't pull it down. For views from before November 2026 it's how far the player got.
 - **CTA clicks** — a list of action button clicks, by label, with counts.
 
-Views are recorded the moment the page opens, even before play, so link scanners count: phone carriers and messaging apps fetch a texted link within seconds of sending it, usually twice, and nobody has seen the page. Trust **Played** over **Total views**. The contact and their primary case are attached to each view in the database — an active case (Open, Filed or Pending) first, then Concluded, then Closed, newest first within each.
+Views are recorded the moment the page opens, even before play, so link scanners count: phone carriers and messaging apps fetch a texted link within seconds of sending it, usually twice, and nobody has seen the page. Trust **Played** over **Total views**. The contact and a case are attached to each view (see [Linking a view to a case](#linking-a-view-to-a-case)).
 
 ### Seeing who watched
 
@@ -112,10 +124,10 @@ Three kinds of row are hidden by default:
 
 Automations can react when a client watches:
 
-- **Triggers** fire the moment it happens: `video.played`, `video.completed` (at least 90% really played) and `video.cta_clicked`. Pick them in Automations → Triggers. A rule can match on the video with `data.video_slug`, and on `extra.first_for_contact` for once per client.
-- **`video_watch_status`** answers later, in a workflow: did this client open, play or finish this video?
+- **Triggers** fire the moment it happens: `video.played`, `video.completed` (at least 90% really played) and `video.cta_clicked`. Pick them in Automations → Triggers. A rule can match on the video with `data.video_slug`, on `extra.first_for_contact` for once per client, or on `extra.first_for_case` for once per case, so a client's second bankruptcy counts as new.
+- **`video_watch_status`** answers later, in a workflow: did this client open, play or finish this video? Pass a `case_id` to ask about one case.
 
-Triggers only fire for a viewer who came by a `?ct=` link, because a `?c=` link is a number anyone can type. That proves the link, not the person: if a client forwards it, or you open it from a sent message and press play, it fires as that client. Excluding the view afterwards doesn't undo what a rule already did. Anonymous and excluded views fire nothing. There's no trigger for simply opening a page, because link scanners open every texted link. Details: [the Trigger System](../03-YisraFlow/15-triggers.md#the-video-events).
+Triggers only fire for a viewer who came by a `?ct=` link. That proves the link, not the person: if a client forwards it, or you open it from a sent message and press play, it fires as that client. Excluding the view afterwards doesn't undo what a rule already did. A forwarded link also shows any `{{ca}}` button, which carries the case id, and that opens the client's document page. Anonymous and excluded views fire nothing. There's no trigger for simply opening a page, because link scanners open every texted link. Details: [the Trigger System](../03-YisraFlow/15-triggers.md#the-video-events).
 
 ### Resetting analytics
 

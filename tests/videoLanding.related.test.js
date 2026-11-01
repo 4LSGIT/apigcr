@@ -9,8 +9,7 @@
  *   - A token viewer's cards carry ?ct=. They used to downgrade to ?c=, which
  *     stripped the next page's action buttons and contact_only access, and
  *     minted the deprecated form on every click.
- *   - A legacy ?c= arrival keeps ?c= and is never handed the token: ?c= is an
- *     integer anyone can type, so a card must not turn it into a credential.
+ *   - A retired ?c= arrival is anonymous and is never handed the token.
  *   - Only a token viewer is offered contact_only cards.
  *   - HEAD records no view.
  */
@@ -80,9 +79,9 @@ describe('related-video cards keep the identity the viewer arrived with', () => 
     expect(html).not.toMatch(/href="[^"]*\?c=/);
   });
 
-  test('legacy ?c= viewer: stays ?c= and the token is never fetched or printed', async () => {
+  test('retired ?c= viewer: a bare link, and the token is never fetched or printed', async () => {
     const html = await (await fetch(`${base}/v/demo?c=42`)).text();
-    expect(cardHref(html)).toBe('/v/next?c=42');
+    expect(cardHref(html)).toBe('/v/next');
     expect(html).not.toContain(TOKEN);
   });
 
@@ -95,7 +94,7 @@ describe('related-video cards keep the identity the viewer arrived with', () => 
 describe('contact_only cards are offered only to a token viewer', () => {
   test.each([
     ['anonymous', '/v/demo', true],
-    ['legacy ?c=', '/v/demo?c=42', true],
+    ['retired ?c=', '/v/demo?c=42', true],
     ['token', `/v/demo?ct=${TOKEN}`, false],
   ])('%s', async (_who, url, filtered) => {
     await (await fetch(base + url)).text();

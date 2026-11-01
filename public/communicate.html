@@ -783,7 +783,7 @@ async function insertVideoSms() {
   }
   const mmsCapable = senderOpt.dataset.mmsCapable === '1';
   const result = await YisraVideoInsert.openVideoPicker({
-    contactId, context: 'sms', mmsCapable,
+    contactId, caseId, context: 'sms', mmsCapable,
   });
   if (!result) return;
 
@@ -808,7 +808,7 @@ async function insertVideoEmail() {
     return Toast.fire({ icon: 'warning', title: 'Editor not ready' });
   }
   const result = await YisraVideoInsert.openVideoPicker({
-    contactId, context: 'email', mmsCapable: false,
+    contactId, caseId, context: 'email', mmsCapable: false,
   });
   if (!result) return;
 

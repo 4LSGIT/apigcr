@@ -33,9 +33,8 @@
  * migration, not the booking-style coherence move: title/description/actions
  * are staff-authored and rendered into HTML, which is the content class
  * origin separation exists for. og:url pins to landing_hosts[0] (see below).
- * Deliberately NOT in isCredentialedPath — ?c= is a raw contact_id
- * (attribution, not a bearer credential) and these pages are marketing
- * surface built to be shared; revisit if ?c= ever becomes a token.
+ * Deliberately NOT in isCredentialedPath: these pages are marketing surface
+ * built to be shared, and the query-aware decision is made in the route below.
  */
 
 const express      = require('express');
@@ -44,6 +43,19 @@ const path         = require('path');
 const videoService = require('../services/videoService');
 const { makeLimiter, getClientIp } = require('../lib/rateLimiter');
 const { PUBLIC_TOKEN_RE } = require('../lib/token');
+
+// lib/caseId.js: base32 today, base64url for legacy ids. The lookup decides.
+const CASE_PARAM_RE = /^[A-Za-z0-9_-]{1,20}$/;
+
+// A case lookup that fails costs the view its case, never the viewer the page.
+async function orNull(lookup) {
+  try {
+    return await lookup();
+  } catch (err) {
+    console.error('[GET /v/:slug] case lookup failed:', err);
+    return null;
+  }
+}
 
 const router = express.Router();
 
@@ -113,7 +125,7 @@ function htmlEscape(str) {
  *
  * Unknown types are skipped silently.
  */
-function renderActions(actions, contactToken) {
+function renderActions(actions, contactToken, viewCase = {}) {
   if (!Array.isArray(actions) || !actions.length) return '';
   // {{c}} / {{ct}} substitute the contact's TOKEN (contacts.contact_token) as
   // of 2026-08-17, not the raw contact_id it used to emit.
@@ -129,11 +141,17 @@ function renderActions(actions, contactToken) {
   // carries an empty ?c=, which downstream treats as anonymous — the same
   // thing it did for an unknown contact before.
   const cVal = contactToken != null ? String(contactToken) : '';
+  // {{ca}} is a case id, the key to /docReq, so only a certain case is printed.
+  const caVal = viewCase.certain && viewCase.caseId != null ? String(viewCase.caseId) : '';
   const out = [];
   for (const a of actions) {
     switch (a?.type) {
       case 'url': {
+        // A button that needs a case and has none would be a dead link, and a
+        // guess could send a client's documents to the wrong case: no button.
+        if (/\{\{ca\}\}/.test(String(a.config?.url || '')) && !caVal) break;
         const rawUrl = String(a.config?.url || '').replace(/\{\{ct\}\}/g, cVal)
+                                                  .replace(/\{\{ca\}\}/g, encodeURIComponent(caVal))
                                                   .replace(/\{\{c\}\}/g, cVal);
         // Scheme allowlist — the authoritative gate (2026-08-17 XSS fix).
         // htmlEscape below prevents attribute breakout but not a javascript:
@@ -169,18 +187,17 @@ function renderActions(actions, contactToken) {
  * no related videos — the template's {{RELATED_HTML}} substitution then
  * becomes empty, and the page just doesn't show the section.
  *
- * Each card carries the viewer's identity in the form it arrived in, so it
- * follows across navigations: ?ct= for a token viewer — a card that downgraded
- * to ?c= stripped the next page's action buttons and contact_only access —
- * and ?c= for a legacy arrival, which must never be handed the token.
+ * Each card carries what the viewer arrived with, so it follows across
+ * navigations: ?ct= for a token viewer, plus ?ca= when the link named a case.
+ * A guessed case isn't carried: it would turn a guess into a claim on the next
+ * page.
  */
-function renderRelated(relatedVideos, contactId, contactToken) {
+function renderRelated(relatedVideos, contactToken, linkCaseId) {
   if (!Array.isArray(relatedVideos) || !relatedVideos.length) return '';
-  const cParam = contactToken != null
-    ? '?ct=' + encodeURIComponent(String(contactToken))
-    : contactId != null
-      ? '?c=' + encodeURIComponent(String(contactId))
-      : '';
+  const params = new URLSearchParams();
+  if (contactToken != null) params.set('ct', String(contactToken));
+  if (linkCaseId != null) params.set('ca', String(linkCaseId));
+  const cParam = params.size ? '?' + params.toString() : '';
 
   const cards = relatedVideos.map(v => {
     const href  = '/v/' + encodeURIComponent(v.slug) + cParam;
@@ -188,7 +205,7 @@ function renderRelated(relatedVideos, contactId, contactToken) {
     const poster = v.gcs_poster_url
       ? `<img src="${htmlEscape(v.gcs_poster_url)}" alt="" loading="lazy">`
       : '<div class="related-no-poster"></div>';
-    return `<a class="related-card" href="${href}">`
+    return `<a class="related-card" href="${htmlEscape(href)}">`
          +    `<div class="related-thumb">${poster}</div>`
          +    `<div class="related-title">${title}</div>`
          + `</a>`;
@@ -220,11 +237,9 @@ router.get('/v/:slug', async (req, res) => {
     //        token routes/booking.js resolves, an indexed ?ct= URL would hand
     //        a stranger both this contact's contact_only videos AND their
     //        booking prefill identity.
-    //   ?c=  is attribution-only and grants nothing, but a ?c= URL is still a
-    //        duplicate of the canonical page that reveals which contact was
-    //        sent the link. Nobody wants it ranking, so it gets the same
-    //        treatment. One rule, no hairline distinction to maintain, and
-    //        nothing to revisit when the ?c= branch is finally deleted.
+    //   ?ca= is a case id, the key to /docReq. It must not rank either.
+    //   ?c=  is retired and grants nothing, but a ?c= URL still shows which
+    //        contact was sent the link, so it gets the same treatment.
     //
     // Keyed on PRESENCE, not validity: a malformed token must not become
     // indexable, and the header must never leak whether a token resolved.
@@ -234,7 +249,7 @@ router.get('/v/:slug', async (req, res) => {
     // /v/ in it would noindex the bare marketing URL too. The query-aware
     // decision belongs in the route that owns the query semantics. Narrowing
     // on a query is safe in a way that widening on one is not.
-    if (req.query.ct != null || req.query.c != null) {
+    if (req.query.ct != null || req.query.ca != null || req.query.c != null) {
       res.set('X-Robots-Tag', 'noindex, nofollow');
     }
 
@@ -244,34 +259,32 @@ router.get('/v/:slug', async (req, res) => {
     });
     if (!video) return res.status(404).type('text/plain').send('Not found');
 
-    // ── Resolve the contact (2026-08-17: ?ct= token replaces ?c= integer) ──
+    // ── Resolve the viewer ──
     //
     // ?ct=<contacts.contact_token> is a 32-hex bearer — the same per-contact
-    // token booking uses (column renamed from booking_token in the companion
-    // commit). It is unguessable, so it is the ONLY thing that may satisfy the
-    // contact_only gate.
+    // token booking uses. It is unguessable, so it is the ONLY thing that may
+    // satisfy the contact_only gate or fire a video.* event.
     //
-    // ?c=<contact_id> is the deprecated legacy form. It is a raw sequential
-    // integer that anyone can mint, so it was never a credential — it let
-    // anyone attribute views to arbitrary contacts by walking 1,2,3… and
-    // (latently) defeat contact_only entirely. It is now ACCEPTED FOR
-    // ATTRIBUTION ONLY and never satisfies the gate.
+    // ?ca=<cases.case_id> says which case. Beside a token it only counts when
+    // that contact is on the case (resolveViewCase), so a client can't point a
+    // view at someone else's. Alone it means the case's Primary: a case id is
+    // 40 random bits and already the key to /docReq, so holding one is real
+    // evidence, but it is not the token, so it opens no contact_only video and
+    // fires nothing.
     //
-    // Why accept it at all: the 341 and strategy-session sequences minted ?c=
-    // links until 2026-11-01 (templates 19 + 20, on every step version up to
-    // v2 / v1), so they are in inboxes and an enrollment pinned to an older
-    // version can still send one. Rejecting the param would 404 a client on a
-    // video the firm sent them. Ignoring it silently would work too, but
-    // keeping the attribution costs one lookup and loses nothing — the integer
-    // never granted access before this change either, since all 17 videos are
-    // access_level='public'.
+    // ?ct= wins outright. A token that misses doesn't fall through to ?ca=,
+    // which would hand an attacker a downgrade path. An EMPTY ?ct= is absent:
+    // that's what a send leaves when the token lookup failed.
     //
-    // Precedence: ?ct= wins outright. A request carrying both uses the token
-    // and ignores ?c= — no "fall back to the integer if the token misses",
-    // which would hand an attacker a downgrade path.
+    // ?c=<contact_id> was retired 2026-11-01: a sequential integer anyone can
+    // type. Links still in inboxes keep working and open anonymously.
     let contactId    = null;
     let contactToken = null;          // non-null ⇒ credentialed, gate may pass
-    const rawCt = req.query.ct;
+    let viewCase     = { caseId: null, certain: false, fromLink: false };
+    const rawCt   = req.query.ct;
+    const hasCt   = rawCt != null && rawCt !== '';
+    const caParam = typeof req.query.ca === 'string' && CASE_PARAM_RE.test(req.query.ca)
+      ? req.query.ca : null;
     if (typeof rawCt === 'string' && PUBLIC_TOKEN_RE.test(rawCt)) {
       const [c] = await req.db.query(
         'SELECT contact_id, contact_token FROM contacts WHERE contact_token = ? LIMIT 1',
@@ -280,27 +293,18 @@ router.get('/v/:slug', async (req, res) => {
       if (c.length) {
         contactId    = c[0].contact_id;
         contactToken = c[0].contact_token;
+        viewCase     = await orNull(() => videoService.resolveViewCase(req.db, contactId, caParam)) || viewCase;
       }
-    } else if (req.query.c != null && req.query.c !== '') {
-      // Legacy, attribution-only. Logged so the tail can be watched and the
-      // branch eventually deleted.
-      const id = parseInt(req.query.c, 10);
-      if (Number.isFinite(id) && id > 0 && String(id) === String(req.query.c)) {
-        const [c] = await req.db.query(
-          'SELECT contact_id FROM contacts WHERE contact_id = ? LIMIT 1',
-          [id],
-        );
-        if (c.length) {
-          contactId = c[0].contact_id;
-          console.warn('[videoLanding] deprecated ?c= integer used', {
-            slug: req.params.slug, contactId,
-          });
-        }
+    } else if (!hasCt && caParam) {
+      const primary = await orNull(() => videoService.primaryOfCase(req.db, caParam));
+      if (primary) {
+        contactId = primary.contactId;
+        viewCase  = { caseId: primary.caseId, certain: true, fromLink: true };
       }
     }
 
-    // Gate: contact_only requires a TOKEN-resolved contact. An attribution-only
-    // ?c= hit is deliberately not enough — that was the whole defect.
+    // Gate: contact_only requires a TOKEN-resolved contact. A ?ca= alone is
+    // deliberately not enough.
     if (video.access_level === 'contact_only' && contactToken == null) {
       return res.status(404).type('text/plain').send('Not found');
     }
@@ -322,6 +326,7 @@ router.get('/v/:slug', async (req, res) => {
           ipHash,
           userAgent,
           contactVerified: contactToken != null,
+          caseId:          viewCase.caseId,
         });
         if (r && r.viewId != null) {
           viewId     = String(r.viewId);
@@ -341,7 +346,7 @@ router.get('/v/:slug', async (req, res) => {
         limit:      3,
         publicOnly: contactToken == null,
       });
-      relatedHtml = renderRelated(related, contactId, contactToken);
+      relatedHtml = renderRelated(related, contactToken, viewCase.fromLink ? viewCase.caseId : null);
     } catch (err) {
       console.error('[GET /v/:slug] getRelatedVideos failed:', err);
     }
@@ -372,7 +377,7 @@ router.get('/v/:slug', async (req, res) => {
       '{{POSTER_URL}}':       htmlEscape(video.gcs_poster_url || ''),
       '{{VIDEO_URL}}':        htmlEscape(video.gcs_video_url),
       '{{LANDING_URL}}':      htmlEscape(landingUrl),
-      '{{ACTIONS_HTML}}':     renderActions(actions, contactToken),
+      '{{ACTIONS_HTML}}':     renderActions(actions, contactToken, viewCase),
       '{{OG_TYPE}}':          'video.other',
       '{{TWITTER_CARD}}':     'summary_large_image',
       '{{VIEW_ID}}':          htmlEscape(viewId),
@@ -395,6 +400,8 @@ router.get('/v/:slug', async (req, res) => {
 
     res
       .set('Content-Type', 'text/html; charset=utf-8')
+      // The URL holds the token and the case id; a button must not pass them on.
+      .set('Referrer-Policy', 'no-referrer')
       // Don't let proxies/CDNs cache this — it holds the view's track_token,
       // and action URLs vary by viewer.
       .set('Cache-Control', 'private, no-cache, no-store, must-revalidate')

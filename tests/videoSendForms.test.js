@@ -37,7 +37,7 @@ function loadInsert(apiSend) {
 }
 
 /** The source between two anchors, run as the body of the action loop. */
-async function runBlock(file, marker, from, to, { action, apiSend, mmsCapable = false }) {
+async function runBlock(file, marker, from, to, { action, apiSend, mmsCapable = false, recipients = RECIPIENTS }) {
   const src = read(file);
   const start = src.indexOf(from, src.indexOf(marker));
   expect(src.indexOf(marker)).toBeGreaterThan(-1);
@@ -46,7 +46,8 @@ async function runBlock(file, marker, from, to, { action, apiSend, mmsCapable = 
   const sends = [];
   const ctx = vm.createContext({
     action,
-    recipients: RECIPIENTS,
+    caseId: 'CASE1234',
+    recipients,
     smsOn: true, emailOn: true, smsFrom: '2480000000', emailFrom: 'a@example.com',
     successes: [],
     withSig: (x) => x,
@@ -112,8 +113,8 @@ describe.each([['sendingform-bk.html'], ['sendingform.html']])('%s, the other ac
 });
 
 describe('sendingform-bk.html, the IRS action', () => {
-  const run = (apiSend, mmsCapable) => runBlock('sendingform-bk.html', "// NOTE: irsGif/landing slug are hardcoded", "if (action.type === 'irs_idme') {", '// ── DOCS NEEDED ──', {
-    action: { type: 'irs_idme' }, apiSend, mmsCapable,
+  const run = (apiSend, mmsCapable, recipients) => runBlock('sendingform-bk.html', "// NOTE: irsGif/landing slug are hardcoded", "if (action.type === 'irs_idme') {", '// ── DOCS NEEDED ──', {
+    action: { type: 'irs_idme' }, apiSend, mmsCapable, recipients,
   });
   const bodies = (sends) => sends.map((s) => JSON.stringify(s.body));
 
@@ -123,8 +124,8 @@ describe('sendingform-bk.html, the IRS action', () => {
     const sam = bodies(sends).filter((b) => b.includes('5552220000') || b.includes('s@example.com'));
     expect(pat.length).toBe(2);
     expect(sam.length).toBe(2);
-    for (const b of pat) { expect(b).toContain('get-irs-transcripts?ct=tokenPrimary'); expect(b).not.toContain('tokenSecondary'); }
-    for (const b of sam) { expect(b).toContain('get-irs-transcripts?ct=tokenSecondary'); expect(b).not.toContain('tokenPrimary'); }
+    for (const b of pat) { expect(b).toContain('get-irs-transcripts?ct=tokenPrimary&ca=CASE1234'); expect(b).not.toContain('tokenSecondary'); }
+    for (const b of sam) { expect(b).toContain('get-irs-transcripts?ct=tokenSecondary&ca=CASE1234'); expect(b).not.toContain('tokenPrimary'); }
     expect(bodies(sends).join()).not.toMatch(/\?c=|ct=(11|22)\b/);
   });
 
@@ -136,7 +137,7 @@ describe('sendingform-bk.html, the IRS action', () => {
   test('a failed lookup still sends, with a bare link', async () => {
     const sends = await run(jest.fn(async () => { throw new Error('down'); }), false);
     expect(sends).toHaveLength(4);
-    expect(bodies(sends).join()).toContain('get-irs-transcripts\\n');
+    expect(bodies(sends).join()).toContain('get-irs-transcripts?ca=CASE1234\\n');
     expect(bodies(sends).join()).not.toMatch(/\?ct=|\?c=/);
   });
 });
@@ -175,6 +176,15 @@ describe('finishing a pick for one contact (communicate.html, no resolver)', () 
   });
 });
 
+test('a recipient with no contact id never gets a raw placeholder', async () => {
+  const sends = await runBlock('sendingform-bk.html', "// NOTE: irsGif/landing slug are hardcoded", "if (action.type === 'irs_idme') {", '// ── DOCS NEEDED ──', {
+    action: { type: 'irs_idme' }, apiSend: tokenApi(), recipients: [{ ...RECIPIENTS[0], contact_id: null }],
+  });
+  const text = JSON.stringify(sends);
+  expect(text).toContain('get-irs-transcripts?ca=CASE1234');
+  expect(text).not.toContain('{{');
+});
+
 describe('videoInsert buildUrl', () => {
   const { buildUrl } = loadInsert(jest.fn());
 
@@ -188,6 +198,39 @@ describe('videoInsert buildUrl', () => {
 
   test('a failed lookup is anonymous, because that send runs no resolver', () => {
     expect(buildUrl('x', '')).toBe('https://4lsg.com/v/x');
+  });
+
+  test('a case rides beside the token', () => {
+    expect(buildUrl('x', 'tok', 'AB12CD34')).toBe('https://4lsg.com/v/x?ct=tok&ca=AB12CD34');
+  });
+
+  test('a case keeps the placeholder form working', () => {
+    expect(buildUrl('x', null, 'AB12CD34')).toBe('https://4lsg.com/v/x?ct={{contacts.contact_token|default:}}&ca=AB12CD34');
+  });
+
+  test('a failed lookup with a case is still a working link, not a stray &', () => {
+    expect(buildUrl('x', '', 'AB12CD34')).toBe('https://4lsg.com/v/x?ca=AB12CD34');
+  });
+
+  test('a case id is escaped', () => {
+    expect(buildUrl('x', 'tok', 'a b')).toBe('https://4lsg.com/v/x?ct=tok&ca=a%20b');
+  });
+});
+
+describe('the case reaches the link', () => {
+  const PICKERS = /openVideoPicker\(\{([\s\S]*?)\}\)/g;
+
+  test.each([['sendingform-bk.html', 2], ['sendingform.html', 2], ['communicate.html', 2]])(
+    '%s passes its case to every picker', (file, count) => {
+      const calls = [...read(file).matchAll(PICKERS)].map((m) => m[1]);
+      expect(calls).toHaveLength(count);
+      for (const c of calls) expect(c).toMatch(/\bcaseId\b/);
+    });
+
+  test('finishPick carries it into the link', async () => {
+    const { finishPick } = loadInsert(tokenApi());
+    const out = await finishPick('sms-plain', { slug: 'x', title: 'X' }, 11, 'CASE1234');
+    expect(out.text).toBe('https://4lsg.com/v/x?ct=tokenPrimary&ca=CASE1234');
   });
 });
 

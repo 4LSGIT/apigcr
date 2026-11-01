@@ -1552,7 +1552,7 @@ function renderActionsList() {
       <input type="text" placeholder="Label (e.g. Book My 341 Prep Call)"
         value="${esc(a.label || '')}"
         oninput="state.form.actions[${i}].label = this.value">
-      <input type="text" placeholder="https://… (use {{c}} for the contact token)"
+      <input type="text" placeholder="https://… ({{c}} = contact token, {{ca}} = case id)"
         value="${esc(a.config?.url || '')}"
         oninput="state.form.actions[${i}].config.url = this.value">
       <select onchange="state.form.actions[${i}].config.style = this.value">
@@ -2187,8 +2187,7 @@ function copyEmbed(variant) {
   // The placeholder stays literal — campaign resolverService substitutes it
   // per-recipient at send time, and |default: keeps a contact with no token
   // from being sent the placeholder itself. Switched from contact_id to
-  // the token 2026-08-17: ?c=<id> is deprecated and attribution-only, and
-  // only ?ct=<token> can satisfy a contact_only video.
+  // the token 2026-08-17: only ?ct=<token> can satisfy a contact_only video.
   const snippet = '<a href="' + origin + '/v/' + slug + '?ct={{contacts.contact_token|default:}}">'
     + '<img src="' + imgUrl + '" alt="' + esc(title) + '" width="600" '
     + 'style="display:block; max-width:100%; height:auto;"></a>';

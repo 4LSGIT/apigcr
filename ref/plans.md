@@ -2078,3 +2078,9 @@ which never shows it). Two steps:
 - **`routes/booking.js` keeps its 1–127 bookable-length cap** as a product cap
   (the comment no longer blames the column). Raising it is a product decision
   for the booking owner.
+
+## From YisraVideo S5 (2026-11-01)
+
+- **`video_views.contact_verified`'s COMMENT doesn't mention `?ca=`-alone views**
+  (they are 0 too), and it still names `?c=`. Reword it with the next migration
+  that touches the table; not worth one of its own.

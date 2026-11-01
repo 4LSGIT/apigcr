@@ -1261,13 +1261,12 @@ async function send() {
       if (action.type === 'irs_idme') {
   const irsPdf = 'https://storage.googleapis.com/uploads.4lsg.com/f7cdbf587e6b80018b5e819c0ee54635.pdf';
   const irsGif = 'https://storage.googleapis.com/uploads.4lsg.com/a7ef1d16086cb08cbef03ac9a1b41fda.gif';
-  const irsVideoBase = 'https://4lsg.com/v/get-irs-transcripts'; // landing host (2026-08-17 origin-separation slice)
   const smsOpt = document.getElementById('smsFrom').selectedOptions[0];
   const mmsCapable = smsOpt?.dataset.mmsCapable === '1';
 
   for (const r of recipients) {
     const irsToken = await YisraVideoInsert.resolveContactToken(r.contact_id);
-    const irsVideo = irsVideoBase + (irsToken ? `?ct=${encodeURIComponent(irsToken)}` : '');
+    const irsVideo = YisraVideoInsert.buildUrl('get-irs-transcripts', irsToken || '', caseId);
     if (smsOn && r.phone) {
       if (mmsCapable) {
         await optoutSend('/internal/mms/send', 'POST', {
@@ -1703,6 +1702,7 @@ async function otherInsertVideoSms() {
   const mmsCapable = senderOpt.dataset.mmsCapable === '1';
   const result = await YisraVideoInsert.openVideoPicker({
     contactId: null,        // multi-recipient → leave placeholder literal
+    caseId,
     context: 'sms',
     mmsCapable,
   });
@@ -1726,6 +1726,7 @@ async function otherInsertVideoEmail() {
   }
   const result = await YisraVideoInsert.openVideoPicker({
     contactId: null,        // multi-recipient → leave placeholder literal
+    caseId,
     context: 'email',
     mmsCapable: false,
   });

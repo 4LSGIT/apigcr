@@ -239,15 +239,15 @@ filter — which is the intended behaviour, not a silent half-match.
 
 ### The `video.*` events
 
-These fire from a public page, so they only fire for a viewer who came by a `?ct=` link, which `recordView` stores as `video_views.contact_verified`. A `?c=` link carries an integer anyone can type, and a rule might text that client or move their case, so a view from one records as usual and fires nothing. Neither does an anonymous view, an excluded view, or a view from before this existed.
+These fire from a public page, so they only fire for a viewer who came by a `?ct=` link, which `recordView` stores as `video_views.contact_verified`. A rule might text a client or move their case, so a `?ca=` link with no token records as usual and fires nothing. Neither does an anonymous view, an excluded view, or a view from before this existed. The old `?c=` form is retired and opens anonymously.
 
 **A `?ct=` link proves the link, not the person.** If a client forwards it, or staff open it from a sent message and press play, the event fires as that client. Excluding the view afterwards takes it out of the stats but doesn't undo anything a rule already did. Don't rest anything irreversible on these events alone.
 
 There is no `video.open`: link scanners fetch a texted link seconds after it is sent, so an open says nothing about a person.
 
-Each fires once per view, or once per button for a click. A client who opens the link twice is two views and fires twice. A click only fires for a button the video has, so `extra.label` is always one of its own labels. For once per client, add the condition `extra.first_for_contact` equals `true`: it is false when this contact already did the same thing with this video on an earlier view. **Min interval** won't do it, because it is per rule, not per contact.
+Each fires once per view, or once per button for a click. A client who opens the link twice is two views and fires twice. A click only fires for a button the video has, so `extra.label` is always one of its own labels. For once per client, add the condition `extra.first_for_contact` equals `true`: it is false when this contact already did the same thing with this video on an earlier view. For once per case, use `extra.first_for_case`, which asks the same about the view's case, so a client's second bankruptcy reads as first and a joint debtor's watch counts for the case. It is null on a view with no case. **Min interval** won't do either, because it is per rule, not per contact. The event's `case_id` is the case the link named, or otherwise a guess at the contact's Primary case ([how a view gets its case](../05-Subsystems/01-YisraVideo.md#linking-a-view-to-a-case)), and `first_for_case` is worked out on it. For a client with two active cases that guess can be wrong, so a rule that changes a case should run from links that carry `?ca=`.
 
-`first_for_contact` counts every earlier view, including `?c=` views, because a client who watched on an old link has watched. So a typed `?c=` view that plays can make the client's real first play read as not first. Nothing fires for the typed view itself.
+Both flags count every earlier view, including ones from old `?c=` links, because a client who watched on one has watched.
 
 The page's report waits for the event to be queued, so the event isn't lost when the viewer leaves. A failed lookup loses that event and raises a `video_event_lost` alert; the view itself is still recorded. To branch on watching later, say a day after sending the link, use the `video_watch_status` function in a workflow ([Internal functions](05-internal-functions.md#video-workflow-only)).
 
