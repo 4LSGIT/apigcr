@@ -55,6 +55,7 @@
  */
 
 const { recomputePrimaryPhone } = require('../lib/contactMirror');
+const { retryOnDeadlock } = require('../lib/withTransaction');
 
 
 // ─────────────────────────────────────────────────────────────
@@ -480,7 +481,9 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
   const cid = parseInt(contactId, 10);
 
   // ─── Transaction ───
-  const { newId, autoPromoted, transferredFrom } = await db.withTransaction(async (conn) => {
+  // P1-fix (design §4.4): a pure-DB span — re-run once on ER_LOCK_DEADLOCK (the
+  // comm_consent_state gap cycle). Everything external runs after it returns.
+  const { newId, autoPromoted, transferredFrom } = await retryOnDeadlock(() => db.withTransaction(async (conn) => {
 
     // 1. Active-uniqueness collision check.
     //
@@ -639,7 +642,7 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
     await recomputePrimaryPhone(conn, cid);
 
     return { newId, autoPromoted, transferredFrom };
-  });
+  }));
 
   // 6. Re-fetch with joins (post-commit)
   const phoneRow = await getContactPhone(db, newId);
@@ -705,9 +708,16 @@ async function updateContactPhone(db, phoneId, fields, { updatedBy = 0, expected
   // Sparse output — only fields actually present in `fields` appear in
   // `incoming`.
   const { sms_optout_base: smsBase, ...rowFields } = fields;
-  const incoming = validatePhoneRow(rowFields, { mode: 'update' });
+  const validatedIn = validatePhoneRow(rowFields, { mode: 'update' });
 
-  await db.withTransaction(async (conn) => {
+  // P1-fix (design §4.4): a pure-DB span — re-run once on ER_LOCK_DEADLOCK (the
+  // comm_consent_state gap cycle). Everything external runs after it returns.
+  await retryOnDeadlock(() => db.withTransaction(async (conn) => {
+    // A fresh copy per attempt: the span rewrites `incoming` (the decided
+    // flag, a demoted is_primary, start_date, updated_by), and a re-run —
+    // the deadlock retry, or withTransaction's own dead-connection retry —
+    // must start from what the CALLER sent, or a resent flag reads as a change.
+    const incoming = { ...validatedIn };
 
     // Load current row
     const [[current]] = await conn.query(
@@ -820,7 +830,7 @@ async function updateContactPhone(db, phoneId, fields, { updatedBy = 0, expected
     if (mirrorAffected) {
       await recomputePrimaryPhone(conn, current.contact_id);
     }
-  });
+  }));
 
   const phoneRow = await getContactPhone(db, phoneId);
   return { phone: phoneRow };

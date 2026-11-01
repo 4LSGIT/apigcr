@@ -231,7 +231,9 @@ body. Governing migrations in `ref/migrations/`.*
   direct caller's recordConsent locks the active row through `*_active_uniq`
   first. Never re-lock a held row through that index (a deadlock against a
   waiting direct caller). Flag-deciding state reads are `FOR SHARE`, the
-  post-upsert read `FOR UPDATE`; deadlocks are not retried. The app's row
+  post-upsert read `FOR UPDATE`; the consent-bearing contact saves re-run
+  their pure-DB span once on `ER_LOCK_DEADLOCK` (`retryOnDeadlock` — the
+  state-gap cycle, design §4.4), as the direct writers' `consentTx` already do (P2 / P3 / P4). The app's row
   writers (contactPhone/EmailService create/update, contactService aggregate
   + scalar + createContact) go through optoutService on their own
   transaction: a new row is written, then `bornRow` sets its flag from the

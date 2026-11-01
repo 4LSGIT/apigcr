@@ -349,8 +349,19 @@ its read rule (one service, automation refuses, staff warn) stands.
   direct caller waiting on the row holds the index entry, and the second ask
   is a deadlock (proven on the engine — the reviewer's suggested `WHERE
   phone = ? AND end_date IS NULL FOR UPDATE` alone deadlocks the same way).
-  Deadlocks are not retried (`withTransaction` retries connection blips
-  only), so the order is load-bearing. The state is re-read after the upsert with a LOCKING read
+  `withTransaction` retries connection blips only, so the order is
+  load-bearing. One deadlock the order cannot prevent is retried: a `FOR
+  SHARE` read of a state row that does not exist yet is a GAP lock, and two
+  writers holding one gap that both insert their seed row deadlock (two
+  saves of never-recorded numbers, or a form save of two rows against a
+  direct writer) — so the consent-bearing saves (`contactService.createContact`
+  / `updateContact`, the per-row phone / email create and update) re-run
+  their pure-DB span once on `ER_LOCK_DEADLOCK` (`lib/withTransaction`
+  `retryOnDeadlock`), each attempt from the caller's own input, side effects
+  (Google push, domain events) only after the commit. The re-run lands or
+  answers a clean 409 `consent_changed`; it runs ONCE — a second deadlock
+  surfaces as the save's error (`tests/consentGapDeadlock.mysql.test.js`,
+  `tests/consentGapRetry.test.js`). The state is re-read after the upsert with a LOCKING read
   (`FOR UPDATE`), and every read that decides a row's flag is `FOR SHARE`:
   live runs REPEATABLE-READ, and a plain read would return the writer's
   older snapshot (no state row → "missing after its upsert"; a stale row →
@@ -840,9 +851,9 @@ Routes in `routes/api.consent.js` (auto-mounted).
   row A, then a `FOR SHARE` GAP lock on `comm_consent_state` (`stateFlag` on
   a number with no state row yet), then asks for row B; an import holding
   row B that inserts its state seed into that gap closes it. InnoDB rolled
-  back the one-row import in every round measured and `consentTx` retried
-  it; it is not guaranteed to pick the import. That, and two form saves of
-  never-recorded numbers in one gap, are filed in `ref/plans.md` (P4 r2).
+  back the one-row import in every round measured, and `consentTx` re-ran
+  it; the form was never the victim in this pairing, so its own retry
+  (§4.4) is proven by the form-vs-form races, not by this one.
 - **Contact form** (`public/forms/contact-form.html`): under each phone /
   email row, a chip per opted-out scope (`.ycr-badge`: "SMS: stopped", "No
   marketing email", "<topic label>: off"; an opted-in `opt_in` topic: "<label>:

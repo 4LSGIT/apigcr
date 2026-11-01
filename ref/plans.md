@@ -1411,30 +1411,20 @@ ref/YISRAMAIL_DESIGN.md §4.7 "As built" says what shipped.
   mirrors `campaignService`'s `EMAIL_CONSENT` and `tests/consentRoutes.test.js`
   holds the two to agreement.
 
-- **Found by P4 r2, P1's to fix: two writers of never-recorded destinations
-  in one `comm_consent_state` gap deadlock.** `stateFlag` (`decideRowFlag`,
-  `bornRow`) reads the state `FOR SHARE`; for a row that does not exist yet
-  that is a GAP lock, and two transactions holding the same gap that both go
-  on to insert their seed row deadlock (InnoDB rolls one back; the contact
-  form shows "Save failed", nothing retries). Measured on the scratch engine
-  (empty state table): two concurrent contact-form saves on two contacts,
-  each ticking a never-recorded number — 30 rounds, 30 deadlocks. Live the
-  table is sparse (~91 rows), so it needs two destinations sorting into one
-  gap at the same moment — rare, not impossible. P4's import avoided it with
-  a PLAIN read after the row lock (`scopeState`); the row writers can't
-  simply copy that (their snapshot may predate the lock). Options: retry
-  `ER_LOCK_DEADLOCK` once on the aggregate / per-row save spans (pure DB),
-  or seed the state row with a plain INSERT-or-nothing before the locking
-  read.
-  The same gap lock closes a second cycle with ANY direct writer (P4's
-  import, P2's keyword handler, the unsubscribe page): a form save of two
-  rows holds row A, then the gap, then asks for row B; a writer holding row
-  B that inserts its state seed into that gap completes it. Measured in
-  `tests/consentReads.mysql.test.js` (free-running two-number race): the
-  one-row import was the victim every round and its deadlock retry hid it;
-  InnoDB picks the lighter transaction, so a heavier direct writer would
-  make the FORM the victim. Locking every row the save touches first (by id,
-  before any state read) removes this one.
+- **Generic DB writes and the consent-state gap (P1-fix review, reasoned from
+  code, not reproduced).** `lib/internal_functions/db.js` `_syncConsentCache`
+  → `optoutService.syncRowCaches` loops lock-row → `stateFlag` (`FOR SHARE`)
+  → next row inside `update_db` / `insert_db`'s `withTransaction`, with no
+  deadlock retry. A multi-row generic write holding gap G and waiting on row
+  B can deadlock with a contact save holding B and inserting into G; when the
+  workflow's transaction is the victim the step fails. Fix shape: the same
+  `retryOnDeadlock` around those spans once they are proven pure-DB, or a
+  non-locking state read for a sync that records no event.
+- **Four copies of the once-on-deadlock retry.** `lib/withTransaction`
+  `retryOnDeadlock` (P1-fix) and the `consentTx` helpers in
+  `services/phoneConsentService.js`, `services/unsubService.js` and
+  `routes/api.consent.js` do the same thing; consolidate on
+  `retryOnDeadlock`.
 
 ## YisraMail T1 (transport contract, 2026-11-01) — deferred
 
@@ -1454,6 +1444,15 @@ ref/YISRAMAIL_DESIGN.md §5.2 "As built" says what shipped.
 - **The editor still lists bulk rows to any staff JWT** (`GET
   /api/email-credentials` is `jwtOrApiKey`); harmless (no secrets), but the
   list could move behind the SU gate once nothing else reads it.
+- **A second SES sender for one-off / transactional mail**: an un-flagged SMTP
+  row pointed at SES with its own verified identity (e.g. office@ or
+  mail.4lsg.com), own DKIM and a configuration set with the suppression
+  override, so a newsletter complaint never suppresses case mail (§5.6).
+  Allowed by the code today (the fence is per `bulk_ok` row, not per
+  provider); needs DNS + SES identity work (P0-style). Fred 2026-11-02: not
+  needed yet, file for later. Related: D16 over-cap operational sends
+  currently go through Gmail's 1500/day budget — C1 decides whether they may
+  use a bulk transport without a footer.
 
 ## From the contact-intake safety slices (2026-10-27) — deferred
 

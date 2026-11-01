@@ -1311,6 +1311,8 @@ tests/configShellAccess.test.js
 tests/configSystemTab.test.js
 tests/consentCore.mysql.test.js
 tests/consentCore.test.js
+tests/consentGapDeadlock.mysql.test.js
+tests/consentGapRetry.test.js
 tests/consentReads.mysql.test.js
 tests/consentRoutes.test.js
 tests/consentUi.test.js

@@ -152,7 +152,7 @@ Reveal endpoint (`GET /api/credentials/:id/reveal`) decrypts and returns plainte
 | `POST /api/credentials/:id/refresh` | admin | manual refresh trigger |
 | `POST /api/credentials/:id/revoke` | admin | revoke + clear |
 | `GET /api/email-credentials` | any auth user | the editor's list and the mailbox admin's send-credential picker — every row, bulk ones included (compose pickers read `firmData.emailFrom`, which leaves bulk rows out) |
-| `GET /api/email-credentials/:id` | admin | full row including smtp_pass |
+| `GET /api/email-credentials/:id` | admin | full row with `smtp_pass` scrubbed — `GET /api/email-credentials/:id/reveal` (admin, audited) returns it decrypted |
 | `POST/PUT/DELETE /api/email-credentials` | admin | CRUD |
 | `POST /api/email-credentials/:id/test` | admin | send test email |
 

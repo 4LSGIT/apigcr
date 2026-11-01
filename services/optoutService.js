@@ -502,8 +502,11 @@ async function consentHistory(db, channel, destination, { limit = 50 } = {}) {
 // ─────────────────────────────────────────────────────────────
 //
 // LOCK ORDER, every writer: the destination's contact row FIRST, then its
-// consent state row. InnoDB does not retry a deadlock here
-// (lib/withTransaction retries connection blips only), so it is load-bearing.
+// consent state row. lib/withTransaction retries connection blips only, so it
+// is load-bearing. The one deadlock it cannot prevent — two writers holding
+// one comm_consent_state GAP (a FOR SHARE read of a missing state row) that
+// both insert their seed — the contact saves absorb by re-running their
+// pure-DB span once (withTransaction.retryOnDeadlock; design §4.4).
 //   - A ROW WRITER already holds its row — by PRIMARY KEY (`WHERE id = ?`) —
 //     and passes it as `rowId`: recordConsent then takes no further row lock
 //     and syncs the cache by primary key. It must not touch the row through

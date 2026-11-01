@@ -55,6 +55,7 @@
  */
 
 const { recomputePrimaryEmail } = require('../lib/contactMirror');
+const { retryOnDeadlock } = require('../lib/withTransaction');
 
 
 // ─────────────────────────────────────────────────────────────
@@ -434,7 +435,9 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
   const cid = parseInt(contactId, 10);
 
   // ─── Transaction ───
-  const { newId, autoPromoted, transferredFrom } = await db.withTransaction(async (conn) => {
+  // P1-fix (design §4.4): a pure-DB span — re-run once on ER_LOCK_DEADLOCK (the
+  // comm_consent_state gap cycle). Everything external runs after it returns.
+  const { newId, autoPromoted, transferredFrom } = await retryOnDeadlock(() => db.withTransaction(async (conn) => {
 
     // 1. Active-uniqueness collision check
     let transferredFrom = null;
@@ -578,7 +581,7 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
     await recomputePrimaryEmail(conn, cid);
 
     return { newId, autoPromoted, transferredFrom };
-  });
+  }));
 
   // 6. Re-fetch with joins (post-commit)
   const emailRow = await getContactEmail(db, newId);
@@ -640,9 +643,16 @@ async function updateContactEmail(db, emailId, fields, { updatedBy = 0, expected
   // compare), never a column. validateEmailRow (update mode) — sparse,
   // per-field shape validation.
   const { email_optout_base: emailBase, ...rowFields } = fields;
-  const incoming = validateEmailRow(rowFields, { mode: 'update' });
+  const validatedIn = validateEmailRow(rowFields, { mode: 'update' });
 
-  await db.withTransaction(async (conn) => {
+  // P1-fix (design §4.4): a pure-DB span — re-run once on ER_LOCK_DEADLOCK (the
+  // comm_consent_state gap cycle). Everything external runs after it returns.
+  await retryOnDeadlock(() => db.withTransaction(async (conn) => {
+    // A fresh copy per attempt: the span rewrites `incoming` (the decided
+    // flag, a demoted is_primary, start_date, updated_by), and a re-run —
+    // the deadlock retry, or withTransaction's own dead-connection retry —
+    // must start from what the CALLER sent, or a resent flag reads as a change.
+    const incoming = { ...validatedIn };
 
     const [[current]] = await conn.query(
       `SELECT * FROM contact_emails WHERE id = ? FOR UPDATE`,
@@ -741,7 +751,7 @@ async function updateContactEmail(db, emailId, fields, { updatedBy = 0, expected
     if (mirrorAffected) {
       await recomputePrimaryEmail(conn, current.contact_id);
     }
-  });
+  }));
 
   const emailRow = await getContactEmail(db, emailId);
   return { email: emailRow };

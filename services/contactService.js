@@ -83,6 +83,7 @@ const phoneSvc = require('./contactPhoneService');
 const emailSvc = require('./contactEmailService');
 const addrSvc  = require('./contactAddressService');
 const logService = require('./logService');
+const { retryOnDeadlock } = require('../lib/withTransaction');
 const { generateToken } = require('../lib/token');
 const { blankDatesToNull } = require('../lib/blankDateToNull');
 const { assertNoteLengths } = require('../lib/noteLimits');
@@ -2544,7 +2545,9 @@ async function createContact(db, {
   const customAtCreate = fieldDefs.customCreateValue(
     await fieldDefs.defaultsObject(db, 'contact'));
 
-  const out = await db.withTransaction(async (conn) => {
+  // P1-fix (design §4.4): a pure-DB span — re-run once on ER_LOCK_DEADLOCK (the
+  // comm_consent_state gap cycle). Everything external runs after it returns.
+  const out = await retryOnDeadlock(() => db.withTransaction(async (conn) => {
 
     // Booking token minted at birth — same mint as the mint-or-return
     // endpoint in routes/booking.js (lib/token base62, PUBLIC_TOKEN_RE-
@@ -2690,7 +2693,7 @@ async function createContact(db, {
     );
 
     return { contact_id: newId, contact_name: created.contact_name };
-  });
+  }));
 
   // One-way Google Contacts sync (fire-and-forget; never blocks the response).
   // Post-commit (it already ran after commit); kept outside the transaction body
@@ -2933,7 +2936,9 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false,
 
   const finalKeys = Object.keys(normalized);
 
-  const out = await db.withTransaction(async (conn) => {
+  // P1-fix (design §4.4): a pure-DB span — re-run once on ER_LOCK_DEADLOCK (the
+  // comm_consent_state gap cycle). Everything external runs after it returns.
+  const out = await retryOnDeadlock(() => db.withTransaction(async (conn) => {
 
     // (Trigger T3) Pre-read the columns being written for the change diff.
     // `custom` joins it when cf_ keys are written (S2) — for the per-key
@@ -3089,7 +3094,7 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false,
     if (hasAddresses) resp.addresses_changed = addrResult.addresses_changed;
     if (transferredFrom.length) resp.transferred_from = transferredFrom;
     return resp;
-  });
+  }));
 
   // One-way Google Contacts sync (fire-and-forget; never blocks the response).
   // Post-commit (it already ran after commit); kept outside the transaction body
