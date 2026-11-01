@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-01T10:25:01.287Z_  
-_828 routes total — DELETE: 68, GET: 345, PATCH: 59, POST: 315, PUT: 38, _ALL: 3_
+_Generated 2026-11-01T21:49:40.933Z_  
+_832 routes total — DELETE: 68, GET: 347, PATCH: 59, POST: 317, PUT: 38, _ALL: 3_
 
 ## Global middleware chain
 
@@ -183,6 +183,10 @@ _828 routes total — DELETE: 68, GET: 345, PATCH: 59, POST: 315, PUT: 38, _ALL:
 | POST | `/api/comms-eval/sample` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/comms-eval/signing-check` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/compose-docs-message` | `jwtOrApiKey` | — |
+| GET | `/api/consent/export` | `jwtOrApiKey` | — |
+| GET | `/api/consent/history` | `jwtOrApiKey` | — |
+| POST | `/api/consent/import` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| POST | `/api/consent/preview` | `jwtOrApiKey` | — |
 | POST | `/api/contact-addresses` | `jwtOrApiKey` | — |
 | DELETE | `/api/contact-addresses/:id` | `jwtOrApiKey` | — |
 | PATCH | `/api/contact-addresses/:id` | `jwtOrApiKey` | — |
@@ -1108,4 +1112,4 @@ _828 routes total — DELETE: 68, GET: 345, PATCH: 59, POST: 315, PUT: 38, _ALL:
 
 ---
 
-_828 routes total — DELETE: 68, GET: 345, PATCH: 59, POST: 315, PUT: 38, _ALL: 3_
+_832 routes total — DELETE: 68, GET: 347, PATCH: 59, POST: 317, PUT: 38, _ALL: 3_

@@ -66,3 +66,36 @@ SQL query, an HTTP request, and an API key are.
 
 > Connections (the credential store these tools draw on) is documented under
 > [Integrations → Connections](../04-Integrations/01-connections.md).
+
+---
+
+## Consent: suppression import and proof export (no pane)
+
+Two consent tools have no Admin-tab pane yet; they are API routes (YisraMail
+P4).
+
+- **Import a suppression list** — `POST /api/consent/import`, **SU + elevation**
+  (the same guard as every tool here; API keys refused; audited as
+  `consent_import`). Body: `{ channel: "sms" | "email", scope, rows:
+  [{ destination, note? }], source: "import" }`, up to 5,000 rows. `scope` is
+  `all` for SMS, `marketing` (or a topic such as `newsletter`) for email. Every
+  row is checked first — one bad number or address (or a note over 1,000
+  characters) refuses the whole file with the bad rows listed, and nothing is
+  recorded. Then each number / address gets ONE opt-out (source `import`,
+  attributed to you, the note and a batch id kept as evidence); one already
+  opted out of that scope records nothing, so re-running a file is safe. An
+  import can only opt out — an opt-in is a staff decision on the contact (422).
+  The same number or address listed twice is recorded once (`duplicates`
+  counts the extra rows, and the answer's `message` says so). The answer is
+  `{ recorded, unchanged, invalid, duplicates, batch_id }`; if it fails part-way,
+  the ones already recorded stay recorded and the error says how many. Run it
+  from the main YisraCase window's DevTools console, e.g.
+  `await apiSend('/api/consent/import', 'POST', { channel: 'email', scope: 'marketing', source: 'import', rows: [{ destination: 'name@example.com', note: 'old list' }] })`
+  (`apiSend` asks for your password when elevation is needed).
+- **Export the proof for one number or address** — `GET
+  /api/consent/export?channel=…&destination=…` (any staff login): every consent
+  change for it as a CSV. Staff reach it from the contact page (the row's
+  **history** → **Export CSV**; see
+  [Contacts](../01-YisraCase-overview/02-contacts.md)). The evidence column is
+  the same trimmed view the history shows: no unsubscribe tokens, browser
+  details or full message bodies.

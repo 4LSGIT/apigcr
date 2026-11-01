@@ -2,8 +2,8 @@
 
 Status: **DRAFT v0.5 — 2026-10-29. P1 (consent core) built — §4.4 "As built";
 P2 (inbound SMS opt-out) built — §4.6 "As built"; P3 (email unsubscribe
-surface) built — §4.5 "As built"; T1 (transport contract) built — §5.2 "As
-built"; nothing else built.** Ruled 2026-10-29 (Fred):
+surface) built — §4.5 "As built"; P4 (staff consent UI) built — §4.7 "As
+built"; T1 (transport contract) built — §5.2 "As built"; nothing else built.** Ruled 2026-10-29 (Fred):
 D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
 Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
 later; D15 no RC push in v1, D16 over-cap operational sends with
@@ -339,8 +339,10 @@ its read rule (one service, automation refuses, staff warn) stands.
 - **Lock order, every writer: the destination's contact row, then its state
   row.** A row writer holds its row by primary key and passes it to
   recordConsent (`rowId`), which then takes no further row lock and syncs the
-  cache by primary key. A direct caller (the migration, P2's keyword handler)
-  holds nothing, so recordConsent locks the destination's ACTIVE row first
+  cache by primary key. A direct caller (the migration; P2's
+  `phoneConsentService` and P4's import in `routes/api.consent.js` take that
+  same lock themselves first and pass the row on as `rowId`) holds nothing,
+  so recordConsent locks the destination's ACTIVE row first
   (`SELECT … WHERE phone_active_uniq = ? FOR UPDATE` — the active-only unique
   key, so ended history rows are never locked, and a concurrent insert waits
   on the gap). A writer must never re-lock its own row through that index: a
@@ -697,8 +699,10 @@ this section, or diverged:
   task per number (`tasks.task_dedupe_key = 'consent_review:<number>'`, the
   `create_task` FIL-3 pattern; source `consent_review`), due on the third
   firm business day (`calendarService.nextBusinessDay`; calendar +3 when the
-  holiday calendar is unreachable). `sms_review` stays unused until P4's
-  toggle-with-note — the staff tick is recorded as `staff` (P1's path).
+  holiday calendar is unreachable). `sms_review` stays unused: the staff
+  tick is recorded as `staff` (P1's path), and since P4 it carries the
+  staff member's note (`evidence.note`) — a distinct review source is
+  deferred (`ref/plans.md`).
 - **The stranded-client task** opens only on a TRANSITION into opted out
   (was not, is now — read under the row lock): the same opt-out seen again
   by the 413 path or the reconcile opens nothing. Client = the number's
@@ -759,14 +763,120 @@ this section, or diverged:
 
 ### 4.7 Staff surfaces
 
-- Contact page email/phone rows: badges per scope (`plans.md` open item),
-  history popover from the ledger, toggles that call `recordConsent` with
-  `source='staff'` and an optional note.
-- Compose surfaces: the 409 warn stays for SMS (scope `all`); operational
-  email no longer warns (D18). The marketing class shows how many recipients
-  each scope removes.
-- SU tool: import a suppression list (CSV of addresses/numbers, scope,
-  source `import`), and export the ledger for a destination (proof request).
+**As built (P4).** Reads go through `optoutService` (the ONE reader); the one
+write path added — the import — goes through `recordConsent` (the ONE writer).
+Routes in `routes/api.consent.js` (auto-mounted).
+- **Reads** (`optoutService`): `consentSummary(db, channel, dests)` → per
+  destination `{ scopes, version }` — every scope with a STATE row (SMS `all`
+  + topics, email `marketing` + topics) as `{ opted_out, state, occurred_at,
+  source }`, plus `label` / `active` / `consent_model` for a topic; one
+  statement (state ⋈ the event that set it ⋈ `comm_topics`), `version` =
+  `consentVersions`' stamp. It is a DISPLAY read: what a send checks stays
+  `findOptedOut` (with the row-flag dual-read), so a cache flag set without a
+  state row shows on the checkbox but has no badge. `consentHistory(db,
+  channel, destination, { limit })` → one destination's ledger, newest first
+  by `(occurred_at, id)`, the staff actor's `user_name` joined, evidence
+  REDACTED by an allow-list (`redactEvidence`): kept — `via`, `note`,
+  `keyword`, `body` (the inbound text, clipped to 200), `ip`, `provider`,
+  `signal`, `delivery_code` / `delivery_reason`, `campaign_id`, `batch_id`,
+  `key_label`, `from_destination`, `carried_by`, `column`, `topic_missing`;
+  dropped — everything else, notably the unsubscribe `token` (a live
+  capability), `user_agent`, provider message refs, key ids, row ids and
+  Casey draft ids. Scalars only; strings clipped (note 1000, others 200).
+  `scopeState(conn, …)` is the import's PLAIN read of one scope, taken right
+  after the row lock (see Import).
+- **History popover** shows the route's default 50 rows and, when 50 came
+  back, says it shows the latest 50 and points at the CSV (all rows).
+- **List routes:** `GET /api/contacts/:id/{phones,emails}` add
+  `consent.scopes` (from `consentSummary`; `{}` when none) beside P1's
+  `opted_out` / `version` — additive; Casey's click-time re-check reads only
+  those two.
+- **Gates.** `GET /api/consent/history`, `GET /api/consent/export`, `POST
+  /api/consent/preview`: `jwtOrApiKey` — the gate of the contact-subrecord
+  list routes and of campaign compose (a scoped API key reaches them only
+  through its route scopes, else 403). `POST /api/consent/import`:
+  `superuserOnlyFor('consent_import')` — the `su` role, the step-up elevation
+  token, the per-tool rate limit; API keys 403; every outcome written to
+  `admin_audit_log` (tool `consent_import`).
+- **History / export** take `channel` + `destination`, normalized by
+  `normalizeDestination` (an email must be exactly ONE address — the helper
+  alone would take `a@x.com,b@y.com` as one string); anything else 400.
+  History: ≤ 500 rows (default 50). Export: the same rows (≤ 10,000) as CSV,
+  `Content-Disposition: attachment`, `nosniff`, every field quoted, quotes
+  doubled, and a field starting `=` `+` `-` `@` (or tab / CR) prefixed with
+  `'` — formula injection from a note or an inbound text.
+- **Import (SU)** `{ channel, scope, rows: [{ destination, note? }], source:
+  'import' }`, ≤ 5,000 rows. ALL-OR-NOTHING validation first: the scope must
+  pass `assertScope` (400), any bad destination or a note > 1000 refuses the
+  file with the bad rows listed (400, nothing written), an opt-in — by body
+  or by any row — is 422 (an import never opts in: the API-key rule).
+  Duplicates in the file collapse into the first occurrence (`duplicates`
+  count, and the answer's `message` says so). Then ONE `opt_out` per
+  destination, source `import`, actor = the SU, `contact_id` from the active
+  row, evidence `{ via: 'import', batch_id, note? }` — ONE TRANSACTION PER
+  DESTINATION (`withTransaction(retries: 1)` + one `ER_LOCK_DEADLOCK` retry),
+  so the import never holds two contact rows at once (a 100-row batch held
+  them in file order to commit and deadlocked a form save locking two rows of
+  one contact by id — review r2). The lock steps live in the route, as P2's
+  live in `phoneConsentService` (§4.4's direct-caller list names both): the
+  destination's ACTIVE row locked first (`*_active_uniq`, handed to
+  `recordConsent` as `rowId`), then the scope's state by a PLAIN read
+  (`scopeState` — the transaction's snapshot is taken there, after the row
+  lock). Not `FOR SHARE`: a locking read of a state row that does not exist
+  yet takes a gap lock, and two writers holding one gap that both insert
+  their seed row deadlock. Idempotent on STATE: already `opted_out` →
+  `unchanged`, nothing recorded (an `opted_in` state is recorded over — a
+  suppression wins), so a re-run records nothing → `{ recorded, unchanged,
+  invalid: 0, duplicates, batch_id }`. A failure part-way leaves the earlier
+  destinations committed and the 500 carries their counts; a failure before
+  any write says nothing was recorded. On the engine
+  (`tests/consentReads.mysql.test.js`): an import racing a contact-form
+  toggle of the same number, and an import paused between two numbers of one
+  contact while a form save of both rows waits (a forced interleave), move
+  InnoDB's deadlock counter not at all — the form lands or gets a clean 409
+  `consent_changed`. Free-running, an import of two numbers of one contact
+  racing a form save of both rows never surfaces a deadlock on either side,
+  but the counter does move: a P1 cycle, not the import's — the form holds
+  row A, then a `FOR SHARE` GAP lock on `comm_consent_state` (`stateFlag` on
+  a number with no state row yet), then asks for row B; an import holding
+  row B that inserts its state seed into that gap closes it. InnoDB rolled
+  back the one-row import in every round measured and `consentTx` retried
+  it; it is not guaranteed to pick the import. That, and two form saves of
+  never-recorded numbers in one gap, are filed in `ref/plans.md` (P4 r2).
+- **Contact form** (`public/forms/contact-form.html`): under each phone /
+  email row, a chip per opted-out scope (`.ycr-badge`: "SMS: stopped", "No
+  marketing email", "<topic label>: off"; an opted-in `opt_in` topic: "<label>:
+  on") and a **history** control — shown only for a destination with a state
+  row. The badges come from the two list routes, fetched on every load /
+  save (the contact load carries no consent). History is fetched on click
+  (firm-local times, `America/Detroit` from `firmData.firmTimezone`) with an
+  **Export CSV** button. **The note:** changing a LOADED row's opt-out reveals
+  an optional "Opt-out note" (≤ 1000); the aggregate save sends
+  `sms_optout_note` / `email_optout_note` on that row only, and
+  `contactService` passes it into the staff event's evidence (`note`) — on an
+  update (`applyRowDecision`) and on a correction whose flag the user set
+  (`bornRow`'s `staff` event, never a carried `row_replace`). The three-way
+  compare is unchanged; a note beside an unchanged flag records nothing; a
+  note > 1000 is a row validation error. New rows have no note.
+- **Compose** (`public/campaign.html`): after the selection changes
+  (debounced), `POST /api/consent/preview { channel, contact_ids }` (≤ 5,000)
+  answers `{ selected, will_send, skipped_optout, missing_destination,
+  not_found }` through `findOptedOut`, asked exactly as
+  `campaignService.executeSend` steps 3–5 ask: each contact's
+  `contacts.contact_phone` / `contact_email` (the primary mirror it sends
+  to), SMS operational, email `klass: 'marketing'` (campaigns have no class
+  until C1 — so today an email opt-out IS skipped by every email campaign).
+  Beside "N selected": "N will be skipped (texts stopped)" / "N will be
+  skipped (opted out of marketing email)", nothing at 0; never blocks the
+  send. The contact search (`getFilteredContacts`) already leaves out
+  contacts opted out at search time, so the line catches consent that moved
+  after the search.
+- **Sync bus:** none of the four routes is a MATCHERS entry — three are
+  reads, and the import writes destinations (ledger, state, recordConsent's
+  cache sync) with no contact field diff; an open contact form shows the new
+  badges on its next load / save.
+- Compose surfaces otherwise as ruled: the 409 warn stays for SMS (scope
+  `all`); operational email never warns (D18).
 
 ## 5. Transport
 
@@ -925,7 +1035,13 @@ until C2 calls it.
   Reply-To and tags; prints the provider id, the 250 line, the `email_log`
   id) and `--check <eml>` (GO only when the received message carries both
   one-click headers AND the `d=news.4lsg.com` DKIM signature lists both in
-  `h=`). Acceptance: pending Fred's run.
+  `h=`). Acceptance (Fred, 2026-11-01, row 17 → it@4lsg.com): GO — SES signs
+  `list-unsubscribe` and `list-unsubscribe-post` (and `list-id`) under
+  `d=news.4lsg.com` (Easy DKIM) and again under `d=amazonses.com`; the
+  receiver's DKIM verdict for news.4lsg.com is pass; `X-SES-CONFIGURATION-SET`
+  and `X-SES-MESSAGE-TAGS` are stripped before delivery; Reply-To arrives as
+  `office@4lsg.com`. RFC 8058's signed-header requirement is met: C2 may
+  build on these headers.
 
 ### 5.3 Sending domain (P0, no code)
 
@@ -1323,7 +1439,7 @@ is ruled for that list (ruled 2026-10-30 for SS's own lead lists).
 | P1 | Consent core | `comm_topics` / `comm_consent_events` / `comm_consent_state`; `optoutService` scopes + `recordConsent(conn, …)` (guarded upsert); hit shape kept; EVERY writer and bypassing reader of the row flags moved (§4.4 list); dual-read/dual-write transition; migration run before AND after the backend deploy; yc-sync MATCHERS for consent writes; `optoutFake` + test worlds; real-MySQL twin tests for the scope predicates and the race guard | — |
 | P2 | Inbound SMS opt-out — **built** (§4.6 "As built"; the reconcile ships dark) | **step 0:** RC consent-API permission/role/rate-group check + live STOP/START test on one RC and one Quo line + one captured consent-list response; keyword handler in the ingest of INCOMING texts, after the dedup precheck; RC 413 failures + read-only nightly consent reconcile (`sms_consent_sync`, behind `sms_rc_consent_sync_enabled`) → ledger; (the Quo confirmation job was built, then removed 2026-10-30 — Quo confirms REVOKE / OPT OUT itself); client-stranded staff task; free-text review task; `scripts/yisramailP2CheckInbound.js` (the wf17/wf18 `phone_log` wiring check, a deploy step) + per-provider inbound liveness alert | P1 |
 | P3 | Email unsubscribe surface — **built** (§4.5 "As built") | `comm_unsub_tokens` (+ `send_ref`) via `scripts/yisramailP3Migrate.js`; `services/unsubService.js` (mint for C2, lookup, one-click, page form); `/u/:token` GET page + one-click POST + prefs POST on the landing origin (all three `pageLanding` enumerations, test-locked; no-store / noindex / no-referrer; no per-IP limit on the one-click POST); `{{send.*}}` / `{{firm.*}}` resolver pseudo-tables; `lib/complianceFooter.js` (the footer block C2 injects); settings `consent_task_user_id`, `marketing_ad_label`, `marketing_debt_relief_statement` | P1 |
-| P4 | Staff consent UI | badges + history on contact rows; compose counts; SU suppression import/export | P1 |
+| P4 | Staff consent UI — **built** (§4.7 "As built") | badges + history on contact rows; compose counts; SU suppression import/export | P1 |
 | T1 | Transport contract — **built** (§5.2 As built) | adapter capabilities (`bulk`, `headers`, `tags`, `events`, `batch`); `headers` / `replyTo` / `tags` options through `sendEmailDirect` + `smtp.js` (marketing path only; public `sendEmail` strips them); driver-owned headers (SES `X-SES-*`); SES message id from the SMTP reply; `email_credentials.bulk_ok` + `events_driver`; bulk rows fenced out of `emailFrom`, public `sendEmail` and operational campaigns; DKIM `h=` acceptance test | — |
 | T2 | Events | SES → EventBridge API destination (+ SQS DLQ and a tested replay procedure) → YisraHook hook (`api_key` auth, `dedup_path` on the event id) → `mail_event_ingest` internal function (added to `CTA_FN_DENYLIST` — engine plumbing) → ledger (bounce/complaint/unsub) + `campaign_results` delivery columns by `result_id` tag + the per-transport complaint/bounce tally (§6.5); SES suppression-list removal on re-opt-in | T1, P1 |
 | C1 | Campaign hardening | `campaigns.class` / `topic_key`; 50 cap in `createCampaign` + D16 over-cap path; `campaigns.bulk` capability; `bulk_ok` refused for operational; **`marketing_send_enabled` kill switch (`'0'`): marketing refused 422 at create and skipped at send**; **send reservation / at-most-once for every campaign** (`sending` / `unknown` statuses); per-transport rate window at dispatch; per-campaign pump with bounded catch-up; cron per-tick `campaign_send` quota; `paused` status with defer semantics (§6.4 table); operational-class honesty prompt | P1, T1 |

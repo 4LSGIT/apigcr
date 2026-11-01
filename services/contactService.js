@@ -746,6 +746,20 @@ function _hasFieldDifferences(current, validated) {
  * @param {boolean} force    - if true, cross-contact conflicts become donor-ends in plan
  * @returns {Promise<{errors, conflicts, plan}>}
  */
+/**
+ * The optional note a staff member typed beside an opt-out they changed on the
+ * contact form (`sms_optout_note` / `email_optout_note`, YisraMail P4) →
+ * trimmed text, null when absent / blank, or false when longer than 1000
+ * characters (a row validation error). Evidence only (`evidence.note` on the
+ * staff consent event) — it never decides anything.
+ */
+function _consentNote(v) {
+  if (v == null) return null;
+  const t = String(v).trim();
+  if (!t) return null;
+  return t.length > 1000 ? false : t;
+}
+
 async function _planPhones(conn, contactId, incoming, force) {
   const errors = [];
   const cid = parseInt(contactId, 10);
@@ -773,7 +787,12 @@ async function _planPhones(conn, contactId, incoming, force) {
     // the apply phase.
     const base = hasId ? require('./optoutService').presentFlag(row.sms_optout_base) : undefined;
     if (base !== undefined && validated.sms_optout === base) delete validated.sms_optout;
-    validRows.push({ index: i, id: hasId ? row.id : null, validated, base });
+    const note = _consentNote(row.sms_optout_note);
+    if (note === false) {
+      errors.push({ index: i, field: 'sms_optout_note', message: 'Opt-out note must be 1000 characters or fewer' });
+      continue;
+    }
+    validRows.push({ index: i, id: hasId ? row.id : null, validated, base, note });
   }
 
   if (primaryCount > 1) {
@@ -837,6 +856,7 @@ async function _planPhones(conn, contactId, incoming, force) {
           current,
           validated: vr.validated,
           base: vr.base,
+          note: vr.note,
         });
       } else if (_hasFieldDifferences(current, vr.validated)
               // a flag the user CHANGED (it differs from its base — phase 1
@@ -851,6 +871,7 @@ async function _planPhones(conn, contactId, incoming, force) {
           current,
           validated: vr.validated,
           base: vr.base,
+          note: vr.note,
         });
       } else {
         ops.noOps.push({ index: vr.index, id: idNum, current });
@@ -1193,7 +1214,9 @@ async function _applyPhonePlan(conn, contactId, plan, userId, actor = null) {
     // it out, 'staff' when the user did.
     await optout.bornRow(conn, {
       channel: 'sms', rowId: newRowId, destination: newPhoneValue, intent: smsIntent, carried: smsCarried,
-      actor: consentActor, contactId: cid, evidence: { row_id: newRowId, via: 'aggregate' },
+      // The P4 note rides only on the user's own decision (intent → a 'staff'
+      // event), never on a carried 'row_replace'.
+      actor: consentActor, contactId: cid, evidence: { row_id: newRowId, via: 'aggregate', ...(smsIntent && er.note ? { note: er.note } : {}) },
     });
   }
 
@@ -1290,7 +1313,7 @@ async function _applyPhonePlan(conn, contactId, plan, userId, actor = null) {
     }
     if (smsDecision && smsDecision.action) {
       await optout.applyRowDecision(conn, { channel: 'sms', rowId: upd.id, destination: upd.current.phone, action: smsDecision.action,
-        actor: consentActor, contactId: cid, evidence: { row_id: upd.id, via: 'aggregate' } });
+        actor: consentActor, contactId: cid, evidence: { row_id: upd.id, via: 'aggregate', ...(upd.note ? { note: upd.note } : {}) } });
     }
   }
 
@@ -1329,7 +1352,12 @@ async function _planEmails(conn, contactId, incoming, force) {
     // the `email_optout_base` the form loaded is not a decision.
     const base = hasId ? require('./optoutService').presentFlag(row.email_optout_base) : undefined;
     if (base !== undefined && validated.email_optout === base) delete validated.email_optout;
-    validRows.push({ index: i, id: hasId ? row.id : null, validated, base });
+    const note = _consentNote(row.email_optout_note);
+    if (note === false) {
+      errors.push({ index: i, field: 'email_optout_note', message: 'Opt-out note must be 1000 characters or fewer' });
+      continue;
+    }
+    validRows.push({ index: i, id: hasId ? row.id : null, validated, base, note });
   }
   if (primaryCount > 1) {
     errors.push({
@@ -1372,12 +1400,12 @@ async function _planEmails(conn, contactId, incoming, force) {
 
       if (emailChanged) {
         ops.endReplaces.push({
-          index: vr.index, oldId: idNum, current, validated: vr.validated, base: vr.base,
+          index: vr.index, oldId: idNum, current, validated: vr.validated, base: vr.base, note: vr.note,
         });
       } else if (_hasFieldDifferences(current, vr.validated)
               || (vr.base !== undefined && 'email_optout' in vr.validated)) {   // a changed flag — see _planPhones
         ops.updates.push({
-          index: vr.index, id: idNum, current, validated: vr.validated, base: vr.base,
+          index: vr.index, id: idNum, current, validated: vr.validated, base: vr.base, note: vr.note,
         });
       } else {
         ops.noOps.push({ index: vr.index, id: idNum, current });
@@ -1652,7 +1680,7 @@ async function _applyEmailPlan(conn, contactId, plan, userId, actor = null) {
     }
     await optout.bornRow(conn, {
       channel: 'email', rowId: newRowId, destination: newEmailValue, intent: emailIntent, carried: emailCarried,
-      actor: consentActor, contactId: cid, evidence: { row_id: newRowId, via: 'aggregate' },
+      actor: consentActor, contactId: cid, evidence: { row_id: newRowId, via: 'aggregate', ...(emailIntent && er.note ? { note: er.note } : {}) },
     });
   }
 
@@ -1741,7 +1769,7 @@ async function _applyEmailPlan(conn, contactId, plan, userId, actor = null) {
     }
     if (emailDecision && emailDecision.action) {
       await optout.applyRowDecision(conn, { channel: 'email', rowId: upd.id, destination: upd.current.email, action: emailDecision.action,
-        actor: consentActor, contactId: cid, evidence: { row_id: upd.id, via: 'aggregate' } });
+        actor: consentActor, contactId: cid, evidence: { row_id: upd.id, via: 'aggregate', ...(upd.note ? { note: upd.note } : {}) } });
     }
   }
 

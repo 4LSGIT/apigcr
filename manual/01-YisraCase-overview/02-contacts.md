@@ -65,6 +65,25 @@ change again if it is still needed. Clearing an opt-out is a staff decision —
 an API integration can set one but never clear one. Automations
 (`update_db` / `insert_db`) cannot write either box at all.
 
+**Consent badges and history.** Under each phone and email row the contact
+page shows a small chip for every kind of message that number or address is
+opted out of — **SMS: stopped**, **No marketing email**, or a newsletter by
+name (**Newsletter: off**) — and a **history** button. A number or address with
+no recorded consent shows nothing. **History** lists the latest 50 consent
+changes for that number or address, newest first: when (firm time), opted out
+or in, for what, how it was recorded (staff, a text keyword, the unsubscribe
+page, a bounce, an import …), who, and any note. **Export CSV** in the same
+window downloads all of them — what to send when someone asks the firm to
+prove an opt-out. Badges and history belong to the number or address, so they include
+changes made while it was on another contact.
+
+**A note with your change.** When you tick or untick one of the two boxes on a
+saved row (open the row's ⚙), an **Opt-out note (optional)** box appears under
+it. What you type — who asked, how ("client called 11/1 and asked to resume
+texts") — is saved with that consent change and shows in history. A note
+beside a box you didn't change is not saved, and a new row has no note box
+(adding a number is never an opt-in).
+
 Search reaches into these tables, so looking up an old number still finds the
 contact — including numbers that have been ended.
 

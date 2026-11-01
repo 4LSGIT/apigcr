@@ -687,6 +687,7 @@ routes/api.checklists.js
 routes/api.codeBox.js
 routes/api.commsArchive.js
 routes/api.commsEval.js
+routes/api.consent.js
 routes/api.contactAddresses.js
 routes/api.contactEmails.js
 routes/api.contactLookup.js
@@ -911,6 +912,8 @@ scripts/mobile-survey/fixtures/api/comms-archive/search.json
 scripts/mobile-survey/fixtures/api/contact-lookup.json
 scripts/mobile-survey/fixtures/api/contacts/9001.json
 scripts/mobile-survey/fixtures/api/contacts/9001/communications.json
+scripts/mobile-survey/fixtures/api/contacts/9001/emails.json
+scripts/mobile-survey/fixtures/api/contacts/9001/phones.json
 scripts/mobile-survey/fixtures/api/credentials.json
 scripts/mobile-survey/fixtures/api/cta.json
 scripts/mobile-survey/fixtures/api/cta/10/executions.json
@@ -1308,6 +1311,9 @@ tests/configShellAccess.test.js
 tests/configSystemTab.test.js
 tests/consentCore.mysql.test.js
 tests/consentCore.test.js
+tests/consentReads.mysql.test.js
+tests/consentRoutes.test.js
+tests/consentUi.test.js
 tests/contactOrgKind.test.js
 tests/contactRelationService.updateType.test.js
 tests/contactRoles.roleForms.test.js

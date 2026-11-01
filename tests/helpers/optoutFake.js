@@ -10,7 +10,10 @@
 //     emails   [{ id, contact_id, email, end_date?, email_optout? }]
 //     contacts [{ contact_id, contact_name }]  (or a Map of id → row)
 //     states   [{ channel, destination, scope, state, last_event_id? }]  (comm_consent_state; default none)
-//     topics   [{ topic_key, channel, consent_model, active? }]           (comm_topics; default none)
+//     topics   [{ topic_key, channel, consent_model, active?, label? }]   (comm_topics; default none)
+//     events   [{ id, channel, destination, scope, action, source, occurred_at, … }] (comm_consent_events — the
+//              P4 summary's source column and the history read; default none)
+//     users    [{ user, user_name }]  (the history read's actor name; default none)
 // undefined = not an opt-out statement; the world goes on to its own handlers.
 // A world with no `states` is a world where only the row flags (the cache)
 // carry consent — exactly today's data until the migration runs.
@@ -28,7 +31,9 @@ function nameOf(contacts, id) {
 
 const lc = (v) => String(v).toLowerCase();
 
-function answerOptout(sql, params, { phones = [], emails = [], contacts = null, states = [], topics = [] } = {}) {
+const T = (d) => (d instanceof Date ? d.getTime() : new Date(d).getTime());
+
+function answerOptout(sql, params, { phones = [], emails = [], contacts = null, states = [], topics = [], events = [], users = [] } = {}) {
   const s = norm(sql);
   if (s === FIND_SQL.sms || s === FIND_SQL.email) {
     const sms = s === FIND_SQL.sms;
@@ -59,6 +64,31 @@ function answerOptout(sql, params, { phones = [], emails = [], contacts = null, 
       by.set(lc(r.destination), Math.max(by.get(lc(r.destination)) || 0, Number(r.last_event_id) || 0));
     }
     return [[...by].map(([destination, version]) => ({ destination, version }))];
+  }
+  if (s === FIND_SQL.summary) {
+    const [channel, keys] = params;
+    const k = new Set((keys || []).map(lc));
+    return [states.filter((r) => r.channel === channel && k.has(lc(r.destination)))
+      .sort((a, b) => (lc(a.destination) < lc(b.destination) ? -1 : lc(a.destination) > lc(b.destination) ? 1 : (a.scope < b.scope ? -1 : a.scope > b.scope ? 1 : 0)))
+      .map((r) => {
+        const e = events.find((x) => Number(x.id) === Number(r.last_event_id));
+        const t = topics.find((x) => x.topic_key === r.scope && x.channel === r.channel);
+        return { destination: r.destination, scope: r.scope, state: r.state, occurred_at: r.occurred_at == null ? null : r.occurred_at,
+          last_event_id: r.last_event_id == null ? null : r.last_event_id, source: e ? e.source : null,
+          topic_label: t ? (t.label == null ? t.topic_key : t.label) : null, topic_active: t ? (t.active == null ? 1 : t.active) : null,
+          topic_model: t ? t.consent_model : null };
+      })];
+  }
+  if (s === FIND_SQL.history) {
+    const [channel, dest, limit] = params;
+    const name = (id) => { const u = users.find((x) => Number(x.user) === Number(id)); return u ? u.user_name : null; };
+    return [events.filter((e) => e.channel === channel && lc(e.destination) === lc(dest))
+      .sort((a, b) => T(b.occurred_at) - T(a.occurred_at) || b.id - a.id)
+      .slice(0, limit)
+      .map((e) => ({ id: e.id, scope: e.scope, action: e.action, source: e.source, occurred_at: e.occurred_at,
+        contact_id: e.contact_id == null ? null : e.contact_id, line_number: e.line_number == null ? null : e.line_number,
+        send_ref: e.send_ref == null ? null : e.send_ref, evidence: e.evidence == null ? null : e.evidence,
+        actor_user_id: e.actor_user_id == null ? null : e.actor_user_id, actor_name: e.actor_user_id == null ? null : name(e.actor_user_id) }))];
   }
   return undefined;
 }

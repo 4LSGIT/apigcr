@@ -96,6 +96,9 @@
     .hidden { display: none !important; }
     .clickable { cursor: pointer; color: var(--accent-2); text-decoration: underline; }
     .select-all-wrap { margin-bottom: 6px; font-size: 13px; }
+    /* What consent removes from the selection (YisraMail P4) — empty = hidden. */
+    .consent-skip { margin-left: 12px; }
+    .consent-skip:empty { display: none; }
   </style>
 </head>
 <body>
@@ -170,6 +173,7 @@
     <div class="select-all-wrap">
       <label><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"> Select All</label>
       <span id="selected-count" class="text-muted" style="margin-left:12px;"></span>
+      <span id="consent-skip" class="text-muted consent-skip" aria-live="polite"></span>
     </div>
     <table class="logTable">
       <thead>
@@ -548,6 +552,7 @@ function showTab(tabId) {
 function onChannelChange() {
   const ch = document.getElementById('f-channel').value;
   const isSms = ch === 'sms';
+  clearConsentPreview();   // the count was for the other channel
 
   // Update sender dropdown
   const sel = document.getElementById('c-sender');
@@ -626,6 +631,7 @@ function renderContacts(res) {
       : 'No contacts match the selected filters.';
     results.classList.add('hidden');
     selectedContacts = [];
+    clearConsentPreview();
     return;
   }
 
@@ -660,6 +666,7 @@ function toggleSelectAll(el) {
 function updateSelectedCount() {
   const checked = document.querySelectorAll('.contact-cb:checked');
   document.getElementById('selected-count').textContent = `${checked.length} selected`;
+  scheduleConsentPreview();
   // Rebuild selectedContacts from checked boxes (preserving order)
   const ids = new Set([...checked].map(cb => Number(cb.dataset.id)));
   selectedContacts = selectedContacts.filter(c => ids.has(c.contact_id));
@@ -672,6 +679,53 @@ function updateSelectedCount() {
   });
 }
 
+// ─── Consent preview (YisraMail P4, design §4.7) ─────────────
+// After the selection changes (debounced), ask the server how many of the
+// checked contacts the send will skip for consent — POST /api/consent/preview
+// reads optoutService exactly as campaignService.executeSend does at send
+// time (the contact's contact_phone / contact_email; email as marketing).
+// Display only: it never blocks the send, and a failed read shows nothing.
+// The picker already leaves out contacts opted out at search time, so this
+// usually reads nothing; it catches consent that changed after the search.
+let consentPreviewTimer = null;
+let consentPreviewSeq = 0;
+
+function consentSkipText(channel, n) {
+  const k = Number(n) || 0;
+  if (!k) return '';
+  return channel === 'sms'
+    ? `${k} will be skipped (texts stopped)`
+    : `${k} will be skipped (opted out of marketing email)`;
+}
+
+function clearConsentPreview() {
+  clearTimeout(consentPreviewTimer);
+  consentPreviewSeq++;
+  const el = document.getElementById('consent-skip');
+  if (el) el.textContent = '';
+}
+
+function scheduleConsentPreview() {
+  clearTimeout(consentPreviewTimer);
+  consentPreviewTimer = setTimeout(runConsentPreview, 400);
+}
+
+async function runConsentPreview() {
+  const el = document.getElementById('consent-skip');
+  if (!el) return;
+  const seq = ++consentPreviewSeq;
+  const ids = [...document.querySelectorAll('.contact-cb:checked')].map(cb => Number(cb.dataset.id));
+  const channel = document.getElementById('f-channel').value === 'sms' ? 'sms' : 'email';
+  if (!ids.length || ids.length > 5000) { el.textContent = ''; return; }
+  try {
+    const r = await P.apiSend('/api/consent/preview', 'POST', { channel, contact_ids: ids });
+    if (seq !== consentPreviewSeq) return;
+    el.textContent = consentSkipText(channel, r && r.skipped_optout);
+  } catch (_) {
+    if (seq === consentPreviewSeq) el.textContent = '';
+  }
+}
+
 function clearFilters() {
   document.getElementById('f-tags').value = '';
   document.getElementById('f-case-type').selectedIndex = 0;   // the static "Any"
@@ -682,6 +736,7 @@ function clearFilters() {
   document.getElementById('contact-banner').textContent = 'Select filters and click Search to find contacts.';
   document.getElementById('contact-results').classList.add('hidden');
   selectedContacts = [];
+  clearConsentPreview();
 }
 
 

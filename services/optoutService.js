@@ -254,6 +254,20 @@ const FIND_SQL = Object.freeze({
   topic: 'SELECT channel, consent_model, active FROM comm_topics WHERE topic_key = ?',
   version: 'SELECT destination, MAX(last_event_id) AS version FROM comm_consent_state'
     + ' WHERE channel = ? AND destination IN (?) GROUP BY destination',
+  // P4 staff reads (consentSummary / consentHistory). Every scope the
+  // destinations have a state row for, with the source of the event that set
+  // it and — for a topic scope — the topic's label / active / model.
+  summary: 'SELECT s.destination, s.scope, s.state, s.occurred_at, s.last_event_id, e.source,'
+    + ' t.label AS topic_label, t.active AS topic_active, t.consent_model AS topic_model'
+    + ' FROM comm_consent_state s'
+    + ' LEFT JOIN comm_consent_events e ON e.id = s.last_event_id'
+    + ' LEFT JOIN comm_topics t ON t.topic_key = s.scope AND t.channel = s.channel'
+    + ' WHERE s.channel = ? AND s.destination IN (?) ORDER BY s.destination, s.scope',
+  // One destination's ledger, newest first ((occurred_at, id) — the order the state uses).
+  history: 'SELECT e.id, e.scope, e.action, e.source, e.occurred_at, e.contact_id, e.line_number, e.send_ref,'
+    + ' e.evidence, e.actor_user_id, u.user_name AS actor_name'
+    + ' FROM comm_consent_events e LEFT JOIN users u ON u.user = e.actor_user_id'
+    + ' WHERE e.channel = ? AND e.destination = ? ORDER BY e.occurred_at DESC, e.id DESC LIMIT ?',
 });
 
 /**
@@ -377,6 +391,113 @@ async function consentVersions(db, channel, dests) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Staff reads (YisraMail P4, design §4.7)
+// ─────────────────────────────────────────────────────────────
+
+const toIso = (v) => (v == null ? null : (v instanceof Date ? v.toISOString() : String(v)));
+
+/**
+ * Each destination's per-scope consent as staff see it → Map(key → { scopes,
+ * version }). `scopes` holds every scope with a STATE row — SMS 'all' +
+ * topics, email 'marketing' + topics — as { opted_out, state, occurred_at,
+ * source } (+ label / active / consent_model for a topic scope); {} when the
+ * destination has none. `version` is consentVersions' stamp (the newest
+ * event id, any scope). One statement, decided in JS. This is a DISPLAY read:
+ * what a send checks is findOptedOut (the dual-read with the row's cache
+ * flag stays there).
+ */
+async function consentSummary(db, channel, dests) {
+  const c = channelOf(channel);
+  const keys = keysFor(c, dests);
+  const out = new Map(keys.map((k) => [k, { scopes: {}, version: '0' }]));
+  if (!keys.length) return out;
+  const [rows] = await db.query(FIND_SQL.summary, [c, keys]);
+  for (const r of rows || []) {
+    const e = out.get(c === 'sms' ? String(r.destination) : String(r.destination).toLowerCase());
+    if (!e) continue;
+    const scope = String(r.scope);
+    const v = {
+      opted_out: r.state === 'opted_out',
+      state: String(r.state),
+      occurred_at: toIso(r.occurred_at),
+      source: r.source == null ? null : String(r.source),
+    };
+    if (r.topic_label != null) {
+      v.label = String(r.topic_label);
+      v.active = Number(r.topic_active) === 1;
+      v.consent_model = r.topic_model == null ? null : String(r.topic_model);
+    }
+    e.scopes[scope] = v;
+    if (r.last_event_id != null && Number(r.last_event_id) > Number(e.version)) e.version = String(r.last_event_id);
+  }
+  return out;
+}
+
+/**
+ * The evidence a staff reader sees — an ALLOW-list, so a key a future writer
+ * adds stays hidden until someone decides it is safe to show. Kept: how it
+ * happened (via, keyword, signal, carried_by, column, topic_missing), staff's
+ * note, the inbound text clipped to 200 characters (`body`), the requester's
+ * ip, provider + delivery verdict, campaign_id, the import's batch_id, an API
+ * key's label, and the destination an opt-out was carried from. Dropped:
+ * everything else — notably the unsubscribe `token` (a live capability),
+ * user_agent, provider message refs, key ids, row ids, Casey draft ids.
+ * Scalars only; strings clipped (note to 1000, everything else to 200).
+ */
+const EVIDENCE_KEEP = Object.freeze(['via', 'note', 'keyword', 'body', 'ip', 'provider', 'signal', 'delivery_code',
+  'delivery_reason', 'campaign_id', 'batch_id', 'key_label', 'from_destination', 'carried_by', 'column', 'topic_missing']);
+const EVIDENCE_CLIP = Object.freeze({ note: 1000 });
+const EVIDENCE_CLIP_DEFAULT = 200;
+
+function redactEvidence(ev) {
+  let o = ev;
+  if (typeof o === 'string') { try { o = JSON.parse(o); } catch (_) { return {}; } }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return {};
+  const out = {};
+  for (const k of EVIDENCE_KEEP) {
+    if (!Object.prototype.hasOwnProperty.call(o, k)) continue;
+    const v = o[k];
+    if (typeof v === 'string') {
+      const max = EVIDENCE_CLIP[k] || EVIDENCE_CLIP_DEFAULT;
+      out[k] = v.length > max ? `${v.slice(0, max)}…` : v;
+    } else if (typeof v === 'number' || typeof v === 'boolean') {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+const HISTORY_MAX = 10000;
+
+/**
+ * ONE destination's ledger, newest first → [{ id, scope, action, source,
+ * occurred_at, actor_user_id, actor, contact_id, line_number, send_ref,
+ * evidence }] — `actor` the staff member's user_name, `evidence` the
+ * redacted view (redactEvidence). [] when `destination` cannot be one.
+ * limit: 1..10000, default 50.
+ */
+async function consentHistory(db, channel, destination, { limit = 50 } = {}) {
+  const c = channelOf(channel);
+  const dest = normalizeDestination(c, destination);
+  if (!dest) return [];
+  const n = Math.min(HISTORY_MAX, Math.max(1, Number.isSafeInteger(Number(limit)) ? Number(limit) : 50));
+  const [rows] = await db.query(FIND_SQL.history, [c, dest, n]);
+  return (rows || []).map((r) => ({
+    id: Number(r.id),
+    scope: String(r.scope),
+    action: String(r.action),
+    source: String(r.source),
+    occurred_at: toIso(r.occurred_at),
+    actor_user_id: r.actor_user_id == null ? null : Number(r.actor_user_id),
+    actor: r.actor_name == null ? null : String(r.actor_name),
+    contact_id: r.contact_id == null ? null : Number(r.contact_id),
+    line_number: r.line_number == null ? null : String(r.line_number),
+    send_ref: r.send_ref == null ? null : String(r.send_ref),
+    evidence: redactEvidence(r.evidence),
+  }));
+}
+
+// ─────────────────────────────────────────────────────────────
 // Writes
 // ─────────────────────────────────────────────────────────────
 //
@@ -389,7 +510,9 @@ async function consentVersions(db, channel, dests) {
 //     the unique index: a direct caller waiting on that row holds its
 //     uk_*_active entry, and asking for it again is a deadlock (proven on the
 //     engine — tests/consentCore.mysql, "the reviewer's interleave").
-//   - A DIRECT caller (the migration, P2's keyword handler) holds nothing:
+//   - A DIRECT caller (the migration; P2's phoneConsentService and P4's import,
+//     routes/api.consent.js, take this same lock themselves and pass the row as
+//     rowId) holds nothing:
 //     recordConsent locks the destination's ACTIVE row first, through the
 //     generated *_active_uniq unique key — exactly the active row, or the gap
 //     where one would go (so a concurrent insert waits for it), never the
@@ -554,6 +677,25 @@ async function stateFlag(conn, channel, destination) {
   if (!dest) return { exists: false, flag: 0 };
   const [[s]] = await conn.query(STATE_SHARE_SQL, [c, dest, CACHE_SCOPE[c]]);
   return { exists: !!s, flag: s && s.state === 'opted_out' ? 1 : 0 };
+}
+
+/**
+ * One scope's state for a destination — a PLAIN read (the P4 import decides
+ * "already opted out" with it). Call it as the transaction's first
+ * non-locking read, right after locking the destination's contact row: the
+ * REPEATABLE-READ snapshot is taken at that read, so it sees every commit up
+ * to then, and every writer that holds the row waits for this transaction.
+ * NOT `FOR SHARE`: a locking read of a state row that does not exist yet
+ * takes a GAP lock, and two transactions holding the same gap that both go on
+ * to insert their seed row deadlock (proven on the engine, P4 review r2 —
+ * the import against a contact-form save of a different number). → { exists, state }
+ */
+async function scopeState(conn, channel, destination, scope) {
+  const c = channelOf(channel);
+  const dest = normalizeDestination(c, destination);
+  if (!dest) return { exists: false, state: null };
+  const [[s]] = await conn.query(STATE_READ_SQL, [c, dest, scope]);
+  return { exists: !!s, state: s ? String(s.state) : null };
 }
 
 // ─── Who is writing (fix round, minor 7) ────────────────────
@@ -789,8 +931,12 @@ module.exports = {
   smsOptedOutSql,
   emailOptedOutSql,
   consentVersions,
+  consentSummary,
+  consentHistory,
+  redactEvidence,
   recordConsent,
   stateFlag,
+  scopeState,
   consentActor,
   writerActor,
   rowConsent,

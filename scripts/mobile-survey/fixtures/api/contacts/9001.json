@@ -157,12 +157,16 @@
  "phones": [
   {
    "phone_number": "5555550123",
-   "phone_type": "Mobile"
+   "phone_type": "Mobile",
+   "id": 91,
+   "sms_optout": 1
   }
  ],
  "emails": [
   {
-   "email": "jane@example.com"
+   "email": "jane@example.com",
+   "id": 92,
+   "email_optout": 1
   }
  ],
  "addresses": []

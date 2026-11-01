@@ -299,6 +299,12 @@ body. Governing migrations in `ref/migrations/`.*
   alert (`sms_inbound_liveness_hours`); `scripts/yisramailP2CheckInbound.js`
   checks wf 17/18's `phone_log` wiring. Manual:
   01-YisraCase-overview/17-text-opt-outs.md.
+  **Staff consent UI (P4, 11-01 — design §4.7 "As built"):** staff read
+  consent only through optoutService (`consentSummary`, `consentHistory` —
+  evidence through the `redactEvidence` allow-list); `routes/api.consent.js`
+  holds the history / export / preview routes and the SU suppression import,
+  which writes only via `recordConsent`, one transaction per destination.
+  Manual: 01-YisraCase-overview/02-contacts.md.
 - **Casey reads email/phone ingest rules (A20.0/A20.1, 10-26):** the P12
   kinds take `email_ingest_rule_id` / `phone_ingest_rule_id` (definition,
   references), `email_ingest_execution_id` / `phone_ingest_execution_id` or a

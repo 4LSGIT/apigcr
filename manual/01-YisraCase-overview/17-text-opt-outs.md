@@ -52,7 +52,8 @@ day.
   refusal of a later text, the nightly list) does not open another.
 - **Possible text opt-out — review.** Opened for a message that sounds like a
   request to stop but isn't a keyword. Read it. If it is an opt-out, open the
-  contact, tick **SMS opted out** on that number and save. The law gives the
+  contact, tick **SMS opted out** on that number, add a note (e.g. "review
+  task: asked us to stop texting") and save. The law gives the
   firm 10 business days; the task is due in three. While one review task is
   open for a number, further messages from that number don't open another.
   (A "Possible text opt-in — review" task means someone who is opted out
@@ -70,6 +71,16 @@ day.
 - A client who opted out and later texts something else ("hi", a question)
   is still opted out here: automated texts stay off, and a text you send by
   hand asks you to confirm first. Ask them, and untick the box if they agree.
+- When you untick (or tick) the box, say in the **Opt-out note** who agreed
+  and how — it is kept with the change.
+
+## Where to see what happened
+
+Every opt-out and opt-in for a number — a keyword text, a phone company's
+refusal, the nightly list, a staff tick, an import — is in that number's
+**history**: the button under the phone row on the contact page, next to the
+**SMS: stopped** chip. It shows when, how, who and the message or note, and
+**Export CSV** downloads it. See [Contacts](02-contacts.md).
 
 ## For IT
 

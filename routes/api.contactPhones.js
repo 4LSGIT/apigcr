@@ -99,11 +99,19 @@ router.get('/api/contacts/:id/phones', jwtOrApiKey, async (req, res) => {
     }
     // Consent as a send reads it (YisraMail P1): each ACTIVE row gets
     // consent = { opted_out, version } from optoutService — what Casey's
-    // click-time re-check compares; an ended row gets null.
+    // click-time re-check compares; an ended row gets null. P4 adds
+    // consent.scopes (optoutService.consentSummary: every scope with a state
+    // row → { opted_out, state, occurred_at, source, … }; {} when none) — the
+    // contact form's badges. Additive: opted_out / version are unchanged.
     const rows = result.phones || [];
-    const consent = await optout.consentVersions(req.db, 'sms', rows.filter((r) => r.end_date == null).map((r) => r.phone));
+    const active = rows.filter((r) => r.end_date == null).map((r) => r.phone);
+    const consent = await optout.consentVersions(req.db, 'sms', active);
+    const summary = await optout.consentSummary(req.db, 'sms', active);
     for (const r of rows) {
-      r.consent = r.end_date == null ? (consent.get(optout.normalizeDestination('sms', r.phone)) || { opted_out: false, version: '0' }) : null;
+      const k = optout.normalizeDestination('sms', r.phone);
+      r.consent = r.end_date == null
+        ? { ...(consent.get(k) || { opted_out: false, version: '0' }), scopes: (summary.get(k) || { scopes: {} }).scopes }
+        : null;
     }
     res.json({ status: 'success', ...result });
   } catch (err) {

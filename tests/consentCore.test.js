@@ -591,9 +591,13 @@ describe('routes — consent on the list, casey_draft_id on the writes', () => {
     ], emails: [{ id: 21, contact_id: 1, email: 'pat@example.com', email_optout: 1 }],
     states: [{ ...optedState(PAT), last_event_id: 31 }, { ...optedState('pat@example.com', 'email'), last_event_id: 32 }] });
     const p = await call('GET', '/api/contacts/1/phones?include_inactive=true');
-    expect(p.json.phones.map((r) => [r.id, r.consent])).toEqual([[11, { opted_out: true, version: '31' }], [12, null]]);
+    // P4 added consent.scopes beside them (additive — opted_out / version are P1's, unchanged).
+    const at = '2026-01-01T00:00:00.000Z';
+    expect(p.json.phones.map((r) => [r.id, r.consent])).toEqual([[11, { opted_out: true, version: '31',
+      scopes: { all: { opted_out: true, state: 'opted_out', occurred_at: at, source: null } } }], [12, null]]);
     const e = await call('GET', '/api/contacts/1/emails');
-    expect(e.json.emails.map((r) => [r.id, r.consent])).toEqual([[21, { opted_out: false, version: '32' }]]);   // D18
+    expect(e.json.emails.map((r) => [r.id, r.consent])).toEqual([[21, { opted_out: false, version: '32',   // D18
+      scopes: { marketing: { opted_out: true, state: 'opted_out', occurred_at: at, source: null } } }]]);
   });
 
   test('PATCH: casey_draft_id never reaches the service; while the card\'s claim is in flight the event says so', async () => {

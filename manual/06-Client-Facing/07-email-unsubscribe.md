@@ -91,10 +91,11 @@ consent ledger until someone looks.
 ## Where staff see the result
 
 - **The contact's email row** — a marketing opt-out of *all* marketing
-  email shows on the row's "No marketing email" flag (see
-  [Contacts](../01-YisraCase-overview/02-contacts.md)). Topic-level choices
-  (e.g. only the newsletter) are in the consent ledger; showing them on the
-  contact page is a later slice.
+  email shows on the row's "No marketing email" flag and as a **No marketing
+  email** chip; a topic-level choice shows as its own chip (**Newsletter:
+  off**). The row's **history** button lists every change, how it was made
+  (unsubscribe page, one-click, preference page …) and any note (see
+  [Contacts](../01-YisraCase-overview/02-contacts.md)).
 - **Tasks** — notes from the "Anything else?" box.
 - An address that is not on any contact (an imported list) is still
   unsubscribed: consent belongs to the address, not to a contact.
@@ -103,7 +104,7 @@ consent ledger until someone looks.
 
 | Setting (Config → Firm → Marketing email & consent) | What it does |
 |---|---|
-| Consent follow-up assignee | Who gets the task for an unsubscribe-page note (and, later, for a client who texts STOP). |
+| Consent follow-up assignee | Who gets the task for an unsubscribe-page note, and the text opt-out tasks ([Text opt-outs](../01-YisraCase-overview/17-text-opt-outs.md)). |
 | Advertisement label | The first line of the marketing footer when the topic has no affirmative consent. Blank = "Advertisement". |
 | Debt-relief agency statement | The bankruptcy-law statement every marketing footer carries. Blank = the statutory wording. The firm's attorney confirms it before the first send. |
 

@@ -48,6 +48,28 @@
     }
     .ycp-revive-btn:hover { background: var(--accent-soft); color: var(--accent-on-soft); }
 
+    /* Consent history popover (YisraMail P4). Scoped through the popup's
+       container: scripts.js-injected dialog CSS and the shell's style.css
+       load around this mirrored sheet, so it wins on specificity, never on
+       order. The table wrapper scrolls sideways inside the popup at phone
+       widths instead of widening it. */
+    .swal2-html-container .ycp-consent-hist-wrap { overflow-x: auto; max-width: 100%; text-align: left; }
+    .swal2-html-container .ycp-consent-hist-wrap .ycp-hist-table { font-size: 13px; }
+    .swal2-html-container .ycp-consent-hist-detail { color: var(--text-2); overflow-wrap: anywhere; }
+    .swal2-html-container .ycp-consent-hist-empty,
+    .swal2-html-container .ycp-consent-hist-more { color: var(--text-muted); font-size: 13px; }
+    .swal2-html-container .ycp-consent-export {
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      color: var(--accent-2);
+      border-radius: 4px;
+      padding: 3px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    .swal2-html-container .ycp-consent-export:hover { background: var(--accent-soft); color: var(--accent-on-soft); }
+
     /* Transfer modal list — readable, grouped by source contact */
     .ycp-conflict-source { font-weight: 600; margin-top: 8px; }
     .ycp-conflict-source:first-child { margin-top: 0; }
@@ -176,6 +198,23 @@
     .ycp-w-state   { flex: 0 0 80px; }
     .ycp-w-zip     { flex: 0 0 110px; }
     .ycp-w-grow    { flex: 1 1 auto; min-width: 180px; }
+
+    /* Consent strip under a phone/email row (YisraMail P4): one chip per
+       scope the destination is opted out of (.ycr-badge, this page's badge),
+       and the ledger's "history" control. Shown only for a destination with
+       a consent state row — renderConsentStrip adds .ycp-show. Chips wrap,
+       and a long topic label breaks, so the strip never widens the row. */
+    .ycp-repeater-item .ycp-consent { display: none; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 4px; min-width: 0; }
+    .ycp-repeater-item .ycp-consent.ycp-show { display: flex; }
+    .ycp-consent .ycr-badge { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+    .ycp-consent .ycp-consent-history {
+      background: none; border: 1px solid var(--border-strong); border-radius: 4px;
+      padding: 1px 8px; font-size: 11px; color: var(--text-2); cursor: pointer;
+    }
+    .ycp-consent .ycp-consent-history:hover { background: var(--hover); color: var(--text); }
+    /* The optional note revealed when the user changes the row's opt-out. */
+    .ycp-repeater-item .ycp-consent-note { display: none; }
+    .ycp-repeater-item .ycp-consent-note.ycp-show { display: flex; }
 
     /* SweetAlert in dark mode. This form puts THEMED markup inside its
        popups — the history table, the transfer list, the revive confirm —
@@ -471,11 +510,18 @@
           <button type="button" class="yc-repeater-remove" title="Remove">×</button>
         </div>
       </div>
+      <div class="ycp-consent" data-channel="sms"></div>
       <div class="ycp-advanced">
         <div class="yc-row">
           <label class="ycp-primary-wrap"><input type="checkbox" name="sms_optout"> SMS opted out</label>
           <label class="ycp-primary-wrap"><input type="checkbox" name="mms_capable" checked> MMS capable</label>
           <label class="ycp-primary-wrap"><input type="checkbox" name="verified"> Verified</label>
+        </div>
+        <div class="ycp-consent-note" data-flag="sms_optout">
+          <div class="yc-field ycp-w-grow">
+            <label class="yc-label">Opt-out note (optional)</label>
+            <input type="text" class="ycp-consent-note-input" maxlength="1000" placeholder="Why it changed, e.g. asked by phone">
+          </div>
         </div>
         <div class="yc-row">
           <div class="yc-field ycp-w-grow">
@@ -523,10 +569,17 @@
           <button type="button" class="yc-repeater-remove" title="Remove">×</button>
         </div>
       </div>
+      <div class="ycp-consent" data-channel="email"></div>
       <div class="ycp-advanced">
         <div class="yc-row">
           <label class="ycp-primary-wrap" title="Marketing opt-out only — case and appointment email still goes"><input type="checkbox" name="email_optout"> No marketing email</label>
           <label class="ycp-primary-wrap"><input type="checkbox" name="verified"> Verified</label>
+        </div>
+        <div class="ycp-consent-note" data-flag="email_optout">
+          <div class="yc-field ycp-w-grow">
+            <label class="yc-label">Opt-out note (optional)</label>
+            <input type="text" class="ycp-consent-note-input" maxlength="1000" placeholder="Why it changed, e.g. asked by email">
+          </div>
         </div>
         <div class="yc-row">
           <div class="yc-field ycp-w-grow">
@@ -935,6 +988,13 @@
         bindRepeaterGlue('emails');
         bindRepeaterGlue('addresses');
         bindHistoryButtons();
+        bindConsentNoteToggle('phones');
+        bindConsentNoteToggle('emails');
+        bindConsentHistory();
+        // Consent badges (P4) come from the phone/email LIST routes'
+        // consent.scopes — the contact load does not carry them. Fire-and-
+        // forget like loadCustomFields: a failed read leaves the strip hidden.
+        refreshConsentBadges();
         bindRepeaterMasks();
         bindRepeaterErrorClear();
         // Apply readonly state to freshly-populated rows.
@@ -1231,6 +1291,9 @@
         // when the user changed it (a resent stale value records nothing) and
         // refuses a change made against consent that moved since the load.
         addConsentBase(patchPayload, this._original);
+        // P4: the optional note beside an opt-out the user CHANGED rides with
+        // that row only (`*_optout_note` → evidence.note on the staff event).
+        addConsentNotes(patchPayload, this._original);
         let patchResp = null;
 
         if (Object.keys(patchPayload).length > 0) {
@@ -1537,6 +1600,249 @@
           const was = row && row.id != null && row.id !== '' ? loaded.get(String(row.id)) : null;
           if (was) row[`${flag}_base`] = was[flag] ? 1 : 0;
         }
+      }
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // CONSENT — badges, history, the note (YisraMail P4, design §4.7)
+    //
+    // Badges: one chip per scope the destination is opted out of, from the
+    // phone/email LIST routes' consent.scopes (optoutService.consentSummary).
+    // Nothing for a destination with no state row. History: the ledger for
+    // one destination, fetched on click (GET /api/consent/history), with a
+    // CSV export (GET /api/consent/export). Note: an optional text revealed
+    // when the user changes a LOADED row's opt-out; addConsentNotes sends it
+    // for that row only.
+    // ────────────────────────────────────────────────────────────────
+    const CONSENT_FLAG = { phones: 'sms_optout', emails: 'email_optout' };
+    const CONSENT_HISTORY_PAGE = 50;   // GET /api/consent/history's default limit
+    const CONSENT_CHANNEL = { phones: 'sms', emails: 'email' };
+    const CONSENT_SOURCE_LABEL = {
+      staff: 'Staff', unsub_page: 'Unsubscribe page', one_click: 'One-click unsubscribe', pref_page: 'Preference page',
+      sms_keyword: 'Text keyword', sms_review: 'Text review', provider_optout: 'Provider opt-out', provider_bounce: 'Bounce',
+      provider_complaint: 'Spam complaint', import: 'Import', web_form: 'Web form', migration: 'Migration (old flag)',
+      row_replace: 'Carried from a corrected number/address',
+    };
+
+    /** The row the form LOADED with this id, from the baseline snapshot (null for a new row). */
+    function loadedRow(kind, id) {
+      if (id == null || id === '') return null;
+      const rows = (form._original && form._original[kind]) || [];
+      return rows.find((r) => r && String(r.id) === String(id)) || null;
+    }
+
+    /** One scope → its chip text, or null when the scope shows no chip. */
+    function consentChipText(channel, scope, v) {
+      if (!v) return null;
+      const label = v.label || scope;
+      if (v.opted_out) {
+        if (channel === 'sms' && scope === 'all') return 'SMS: stopped';
+        if (channel === 'email' && scope === 'marketing') return 'No marketing email';
+        return `${label}: off`;
+      }
+      // An opted-in state is the default for an opt_out topic — only an
+      // opt_in topic (consent given) is worth a chip.
+      if (v.state === 'opted_in' && v.consent_model === 'opt_in') return `${label}: on`;
+      return null;
+    }
+
+    /** Render one row's strip from its list-route row (or hide it). */
+    function renderConsentStrip(item, channel, listRow) {
+      const strip = item.querySelector('.ycp-consent');
+      if (!strip) return;
+      strip.innerHTML = '';
+      strip.classList.remove('ycp-show');
+      const scopes = listRow && listRow.consent && listRow.consent.scopes;
+      const keys = scopes && typeof scopes === 'object' ? Object.keys(scopes) : [];
+      if (!keys.length) return;
+      // The cache scope first (SMS all / email marketing), then topics by key.
+      const lead = channel === 'sms' ? 'all' : 'marketing';
+      keys.sort((a, b) => (a === lead ? -1 : b === lead ? 1 : a < b ? -1 : a > b ? 1 : 0));
+      for (const k of keys) {
+        const text = consentChipText(channel, k, scopes[k]);
+        if (!text) continue;
+        const chip = document.createElement('span');
+        chip.className = 'ycr-badge';
+        chip.textContent = text;
+        strip.appendChild(chip);
+      }
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ycp-consent-history';
+      btn.textContent = 'history';
+      btn.title = 'Consent history for this ' + (channel === 'sms' ? 'number' : 'address');
+      btn.dataset.channel = channel;
+      btn.dataset.destination = String(channel === 'sms' ? listRow.phone : listRow.email);
+      strip.dataset.scopes = JSON.stringify(scopes);
+      strip.appendChild(btn);
+      strip.classList.add('ycp-show');
+    }
+
+    let consentSeq = 0;
+    /** Fetch both list routes and repaint every row's strip. Latest call wins. */
+    async function refreshConsentBadges() {
+      const seq = ++consentSeq;
+      let lists;
+      try {
+        lists = await Promise.all(['phones', 'emails'].map((k) => P.apiSend(`/api/contacts/${contactId}/${k}`, 'GET')));
+      } catch (_) {
+        return;   // badges are a display aid; a failed read leaves them hidden
+      }
+      if (seq !== consentSeq) return;
+      ['phones', 'emails'].forEach((kind, i) => {
+        const rows = (lists[i] && Array.isArray(lists[i][kind])) ? lists[i][kind] : [];
+        const byId = new Map(rows.filter((r) => r && r.end_date == null).map((r) => [String(r.id), r]));
+        const container = document.querySelector(`#${kind}Repeater`);
+        if (!container) return;
+        container.querySelectorAll('.yc-repeater-item').forEach((item) => {
+          const idEl = item.querySelector('[name="id"]');
+          renderConsentStrip(item, CONSENT_CHANNEL[kind], idEl && idEl.value ? byId.get(String(idEl.value)) : null);
+        });
+      });
+      reportHeight();
+    }
+
+    /** Reveal a LOADED row's note while its opt-out differs from the loaded value. */
+    function bindConsentNoteToggle(kind) {
+      const container = document.querySelector(`#${kind}Repeater`);
+      if (!container || container.dataset.ycpConsentNoteBound) return;
+      container.dataset.ycpConsentNoteBound = '1';
+      const flag = CONSENT_FLAG[kind];
+      container.addEventListener('change', (e) => {
+        const cb = e.target;
+        if (!cb || cb.name !== flag) return;
+        const item = cb.closest('.yc-repeater-item');
+        const wrap = item && item.querySelector(`.ycp-consent-note[data-flag="${flag}"]`);
+        if (!wrap) return;
+        const idEl = item.querySelector('[name="id"]');
+        const was = loadedRow(kind, idEl && idEl.value);
+        wrap.classList.toggle('ycp-show', !!was && !!cb.checked !== !!was[flag]);
+        reportHeight();
+      });
+    }
+
+    /**
+     * Stamp `*_optout_note` on each LOADED row whose opt-out the user changed
+     * and whose note is non-blank. Rows are matched to the DOM by id; a new
+     * row (no id) never carries one — creating a row is never an opt-in, and
+     * its opt-out is the plain flag.
+     */
+    function addConsentNotes(payload, original) {
+      for (const [kind, flag] of [['phones', 'sms_optout'], ['emails', 'email_optout']]) {
+        if (!Array.isArray(payload[kind])) continue;
+        const loaded = new Map(((original && original[kind]) || [])
+          .filter((r) => r && r.id != null && r.id !== '')
+          .map((r) => [String(r.id), r]));
+        const items = Array.from(document.querySelectorAll(`#${kind}Repeater .yc-repeater-item`));
+        for (const row of payload[kind]) {
+          const id = row && row.id != null && row.id !== '' ? String(row.id) : null;
+          const was = id ? loaded.get(id) : null;
+          if (!was || !!row[flag] === !!was[flag]) continue;
+          const item = items.find((el) => { const i = el.querySelector('[name="id"]'); return i && i.value === id; });
+          const input = item && item.querySelector(`.ycp-consent-note[data-flag="${flag}"] .ycp-consent-note-input`);
+          const note = input ? String(input.value || '').trim().slice(0, 1000) : '';
+          if (note) row[`${flag}_note`] = note;
+        }
+      }
+    }
+
+    function fmtFirmTime(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      let tz = 'America/Detroit';
+      try { tz = (P.firmData && P.firmData.firmTimezone) || tz; } catch (_) { /* cross-origin */ }
+      try {
+        return new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: 'short', day: 'numeric',
+          hour: 'numeric', minute: '2-digit' }).format(d);
+      } catch (_) {
+        return d.toISOString();
+      }
+    }
+
+    function consentScopeLabel(channel, scope, scopes) {
+      if (channel === 'sms' && scope === 'all') return 'All texts';
+      if (channel === 'email' && scope === 'marketing') return 'All marketing email';
+      return (scopes && scopes[scope] && scopes[scope].label) || scope;
+    }
+
+    function bindConsentHistory() {
+      const formEl = document.querySelector('#contactForm');
+      if (!formEl || formEl.dataset.ycpConsentHistBound) return;
+      formEl.dataset.ycpConsentHistBound = '1';
+      formEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('.ycp-consent-history');
+        if (!btn) return;
+        e.preventDefault();
+        let scopes = null;
+        try { scopes = JSON.parse(btn.closest('.ycp-consent').dataset.scopes || 'null'); } catch (_) { /* labels fall back to keys */ }
+        openConsentHistory(btn.dataset.channel, btn.dataset.destination, scopes);
+      });
+    }
+
+    async function openConsentHistory(channel, destination, scopes) {
+      const q = new URLSearchParams({ channel, destination }).toString();
+      let data;
+      try {
+        data = await P.apiSend(`/api/consent/history?${q}`, 'GET');
+      } catch (e) {
+        await Swal.fire({ icon: 'error', title: 'Failed to load consent history', text: e.message });
+        return;
+      }
+      const events = (data && Array.isArray(data.events)) ? data.events : [];
+      const shown = channel === 'sms' ? formatPhoneDisplay(destination) : destination;
+      let html = '<div class="ycp-consent-hist-wrap">';
+      if (!events.length) {
+        html += '<p class="ycp-consent-hist-empty">No consent changes recorded.</p>';
+      } else {
+        html += '<table class="ycp-hist-table"><thead><tr><th>When</th><th>Change</th><th>Scope</th><th>Source</th><th>Who</th><th>Details</th></tr></thead><tbody>';
+        for (const ev of events) {
+          const evd = ev.evidence || {};
+          const who = ev.actor || (evd.key_label ? `API key: ${evd.key_label}` : '—');
+          const details = [evd.note, evd.keyword && `"${evd.keyword}"`, evd.body, evd.signal, evd.from_destination && `from ${evd.from_destination}`]
+            .filter(Boolean).join(' · ');
+          html += '<tr>';
+          html += `<td>${escapeHtml(fmtFirmTime(ev.occurred_at))}</td>`;
+          html += `<td>${escapeHtml(ev.action === 'opt_out' ? 'Opted out' : ev.action === 'opt_in' ? 'Opted in' : String(ev.action || ''))}</td>`;
+          html += `<td>${escapeHtml(consentScopeLabel(channel, ev.scope, scopes))}</td>`;
+          html += `<td>${escapeHtml(CONSENT_SOURCE_LABEL[ev.source] || String(ev.source || ''))}</td>`;
+          html += `<td>${escapeHtml(who)}</td>`;
+          html += `<td class="ycp-consent-hist-detail">${escapeHtml(details)}</td>`;
+          html += '</tr>';
+        }
+        html += '</tbody></table>';
+        if (events.length >= CONSENT_HISTORY_PAGE) {
+          html += `<p class="ycp-consent-hist-more">Showing the latest ${CONSENT_HISTORY_PAGE} — export the CSV for all of them.</p>`;
+        }
+      }
+      html += '<button type="button" class="ycp-consent-export">Export CSV</button></div>';
+      await Swal.fire({
+        title: `Consent history — ${shown}`,
+        html,
+        width: 760,
+        confirmButtonText: 'Close',
+        didOpen: () => {
+          const container = Swal.getHtmlContainer();
+          const exp = container && container.querySelector('.ycp-consent-export');
+          if (exp) exp.addEventListener('click', () => exportConsentCsv(channel, destination));
+        },
+      });
+    }
+
+    async function exportConsentCsv(channel, destination) {
+      const q = new URLSearchParams({ channel, destination }).toString();
+      try {
+        const blob = await P.apiSend(`/api/consent/export?${q}`, 'GET', null, {}, { responseType: 'blob' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `consent-${channel}-${String(destination).replace(/[^a-z0-9._-]/gi, '_')}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch (e) {
+        form._toast('error', 'Export failed', (e && e.message) || '');
       }
     }
 

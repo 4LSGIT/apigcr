@@ -1307,8 +1307,11 @@ ref/YISRAMAIL_DESIGN.md §4.6 "As built" says what shipped.
   by a word-bounded phrase list (`phoneConsentService.REVIEW_PHRASES`) plus
   the "STOP PLEASE" courtesy rule; a model pass over non-matching inbound
   texts could catch more, at a cost per text.
-- **`sms_review` as a ledger source** — waits for P4's consent toggle with a
-  note; until then a staff tick after a review task is recorded as `staff`.
+- **`sms_review` as a ledger source** — now possible: P4's note on the
+  contact-form toggle rides on the `staff` event (`evidence.note`), so a
+  review-task tick can say so in the note today. A distinct source would need
+  the form to know the tick answers a review task (e.g. opened from the task)
+  and pass `sms_review` through `applyRowDecision` — not built.
 - **Business-hours liveness.** The inbound-silence alert counts plain hours
   (`sms_inbound_liveness_hours`, default 72 — spans a weekend). A business-
   hours count would page sooner on a weekday.
@@ -1340,8 +1343,9 @@ objects AND stored definitions). Readers and writers to move first:
   `*OptedOutSql`) and **recordConsent's cache sync** (`CACHE_SYNC_SQL`).
 - **The contact form** (`public/forms/contact-form.html`) renders and posts the
   row flag as the "SMS opted out" / "No marketing email" checkboxes — it needs
-  the destination's state per scope instead (the list routes' `consent`, or
-  P4's consent control).
+  the destination's state per scope instead — the list routes'
+  `consent.scopes` (P4, `optoutService.consentSummary`), which already drive
+  the row's badges.
 - **Reports**: `lib/reportSchema/manifest.js` exposes both columns; reports
   would read `comm_consent_state` (and the `yc_report` per-column grants on
   the two columns go orphan on the drop — revoke or re-provision).
@@ -1388,8 +1392,56 @@ objects AND stored definitions). Readers and writers to move first:
   (verified 2026-10-30; RFC 8058 senders post urlencoded / multipart UTF-8,
   which pass). Fix in `server.js`: skip the two global parsers for
   `/^\/u\/[^/]+$/` POSTs (the handler ignores the body anyway).
-- **Topic-level consent on the contact page** (only `marketing` shows, as the
-  row's "No marketing email" flag) — P4's badges.
+
+## YisraMail P4 (staff consent UI, 2026-11-01) — deferred
+
+ref/YISRAMAIL_DESIGN.md §4.7 "As built" says what shipped.
+- **An Admin-tab pane for the suppression import.** `POST /api/consent/import`
+  is API-only (SU + elevation; the manual's 08-Admin-Tools README gives the
+  console call). A pane would take a CSV, show the validation result, then
+  import.
+- **Badges in an open frame after an import or a STOP.** The contact form
+  fetches the list routes on load / save only; a consent change made elsewhere
+  (import, keyword, unsubscribe page) shows on the next load. A sync-bus
+  announcement would need the destination → open contact mapping (no field
+  diff to carry).
+- **Two extra GETs per contact-form load** (the phone / email list routes, for
+  `consent.scopes`). Folding the summary into `contactService.getContact`'s
+  phones / emails would save them; it was outside P4's lane.
+- **Badges show the STATE only.** A row flag set with no state row (cache
+  drift — the P1 migration's NO-GO case) ticks the checkbox but shows no chip;
+  the dual-read still blocks the send. Dies with the cache-column drop.
+- **The compose skip line usually reads nothing**: the contact search already
+  drops contacts opted out at search time. Once C1 gives campaigns a class, the
+  email wording must follow it (an operational email campaign sends to
+  marketing opt-outs, D18) — `CAMPAIGN_CONSENT` in `routes/api.consent.js`
+  mirrors `campaignService`'s `EMAIL_CONSENT` and `tests/consentRoutes.test.js`
+  holds the two to agreement.
+
+- **Found by P4 r2, P1's to fix: two writers of never-recorded destinations
+  in one `comm_consent_state` gap deadlock.** `stateFlag` (`decideRowFlag`,
+  `bornRow`) reads the state `FOR SHARE`; for a row that does not exist yet
+  that is a GAP lock, and two transactions holding the same gap that both go
+  on to insert their seed row deadlock (InnoDB rolls one back; the contact
+  form shows "Save failed", nothing retries). Measured on the scratch engine
+  (empty state table): two concurrent contact-form saves on two contacts,
+  each ticking a never-recorded number — 30 rounds, 30 deadlocks. Live the
+  table is sparse (~91 rows), so it needs two destinations sorting into one
+  gap at the same moment — rare, not impossible. P4's import avoided it with
+  a PLAIN read after the row lock (`scopeState`); the row writers can't
+  simply copy that (their snapshot may predate the lock). Options: retry
+  `ER_LOCK_DEADLOCK` once on the aggregate / per-row save spans (pure DB),
+  or seed the state row with a plain INSERT-or-nothing before the locking
+  read.
+  The same gap lock closes a second cycle with ANY direct writer (P4's
+  import, P2's keyword handler, the unsubscribe page): a form save of two
+  rows holds row A, then the gap, then asks for row B; a writer holding row
+  B that inserts its state seed into that gap completes it. Measured in
+  `tests/consentReads.mysql.test.js` (free-running two-number race): the
+  one-row import was the victim every round and its deadlock retry hid it;
+  InnoDB picks the lighter transaction, so a heavier direct writer would
+  make the FORM the victim. Locking every row the save touches first (by id,
+  before any state read) removes this one.
 
 ## YisraMail T1 (transport contract, 2026-11-01) — deferred
 
@@ -1604,7 +1656,7 @@ Active surfaces with known next steps.
   IT test, sent 125; `campaigns.contact_count` is 0 on rows created before
   that column existed — count `campaign_results`, not `contact_count`.)
 
-- **Opt-out system.** The row toggles (contact form) and the staff warn-but-don't-block on direct sends are live (ruling 2026-10-27 — see "Recipient opt-out" above), and inbound STOP / START is handled (YisraMail P2). Left: opted-out badges on the contact / compose surfaces (YisraMail P4).
+- **Opt-out system.** The row toggles (contact form) and the staff warn-but-don't-block on direct sends are live (ruling 2026-10-27 — see "Recipient opt-out" above), and inbound STOP / START is handled (YisraMail P2); the contact page shows per-scope badges + the ledger history, and campaign compose the consent skip count (YisraMail P4, ref/YISRAMAIL_DESIGN.md §4.7).
 
 - **Image library refactor.** Picker, upload dialog, delete, and the "Save to library" checkbox are duplicated across `campaign.html`, `communicate.html`, `sendingform.html` (some with `sf` prefix to avoid collision). Extract to a standalone iframe-loadable module — e.g. `/js/imageLibrary.js` exposing `imageLibrary.pickImage()`, `imageLibrary.uploadDialog({ accept, maxMB })`, `imageLibrary.deleteImage(id)`. Each consumer drops in a `<script>` tag and gets consistent behavior. Bundle these into the refactor:
   - **File-type gating.** Email-attachment dialog (`campaign.html` ~line 1030) accepts PDFs/docs and offers "Save to library" — currently inserts the row but renders as a broken `<img>` in the picker. Either gate the checkbox to `image/*` MIME types, or rename the column/feature and teach the picker to render non-images with a file-type icon.

@@ -106,6 +106,17 @@ campaign skips an address opted out of marketing email ("No marketing email"
 on the contact) — campaigns are treated as marketing until they gain a send
 class (YisraMail C1).
 
+**What consent removes from a selection.** After the selection changes on the
+Select Contacts tab, the page asks `POST /api/consent/preview`
+`{ channel, contact_ids }` (≤ 5,000 ids; any staff login) and shows, beside
+"N selected", **"N will be skipped (texts stopped)"** for SMS or **"N will be
+skipped (opted out of marketing email)"** for email — nothing when it is 0. The
+count is computed the way the send itself decides (each contact's primary
+phone / email, SMS as operational, email as marketing), so it matches the
+`skipped` results the campaign will record. The contact search already leaves
+out contacts opted out at search time, so the line usually stays empty; it
+catches consent that changed after the search. It never blocks the send.
+
 ---
 
 ## API Reference
@@ -266,7 +277,7 @@ Loaded as an iframe in the main app. Uses `P.apiSend()` for all API calls and `P
 
 ### Tab 1: Select Contacts
 
-Filter controls for channel, tags, case type, case stage, and case open date range. Results display in a checkbox table. Info banner shows eligible count and excluded count (opt-out or missing contact info). Selected contacts are stored in memory for the Compose tab.
+Filter controls for channel, tags, case type, case stage, and case open date range. Results display in a checkbox table. Info banner shows eligible count and excluded count (opt-out or missing contact info). Beside "N selected", a line says how many of the checked contacts the send will skip for consent (see "What consent removes from a selection" above). Selected contacts are stored in memory for the Compose tab.
 
 ### Tab 2: Compose
 

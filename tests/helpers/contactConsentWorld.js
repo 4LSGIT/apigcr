@@ -127,7 +127,7 @@ function makeWorld({ contacts = [], phones = [], emails = [], states = [], topic
       r[f.flag] = Number(val);
       return [{ affectedRows: 1 }];
     }
-    return answerOptout(s, p, { phones: W.phones, emails: W.emails, contacts: W.contacts, states: W.states, topics: W.topics });
+    return answerOptout(s, p, { phones: W.phones, emails: W.emails, contacts: W.contacts, states: W.states, topics: W.topics, events: W.events });
   }
 
   async function query(sql, p = []) {
