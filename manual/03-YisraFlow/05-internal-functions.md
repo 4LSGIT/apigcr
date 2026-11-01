@@ -2,9 +2,9 @@
 
 ## For operators
 
-The system has **106 built-in functions** that workflows, sequences, scheduled jobs, hook targets and the email/phone ingest rules can call. Things like "send an SMS," "look up a contact," "create a task," "query the database," "branch to step 7."
+The system has **107 built-in functions** that workflows, sequences, scheduled jobs, hook targets and the email/phone ingest rules can call. Things like "send an SMS," "look up a contact," "create a task," "query the database," "branch to step 7."
 
-You don't usually pick a function by hand from a list — when you build a workflow step or a sequence step, you select **internal_function** as the action type and the UI shows you the available ones in a categorized dropdown with a form field for each parameter. Fourteen are hidden from the pickers (internal plumbing and the scheduled sweepers), so a workflow offers **92** and a sequence **79** — sequences don't get the thirteen that need workflow machinery.
+You don't usually pick a function by hand from a list — when you build a workflow step or a sequence step, you select **internal_function** as the action type and the UI shows you the available ones in a categorized dropdown with a form field for each parameter. Fifteen are hidden from the pickers (internal plumbing and the scheduled sweepers), so a workflow offers **92** and a sequence **79** — sequences don't get the thirteen that need workflow machinery.
 
 The thirteen that only work in workflows are the ones that need workflow-specific machinery: branching (`set_next`, `evaluate_condition`, `foreach`), delays (`wait_for`, `schedule_resume`, `wait_until_time`), variable formatting (`format_string`), pausing for a human (`request_decision`), minting a call-to-action link recorded against the run (`create_cta`), starting another workflow (`start_workflow`), and the two document renderers that write back to the execution (`document_generate_from_template`, `render_submission_pdf`).
 
@@ -39,9 +39,9 @@ Each function carries a `__meta` block — a JSON description of its params (nam
 
 ### The function registry
 
-**105 callable functions**, grouped by `__meta` category. Counts in this chapter go stale the moment somebody adds a file, so treat `GET /workflows/functions` as the live source of truth — it serves the registry's own metadata. The meta test (`tests/internal_functions.meta.test.js`) derives its coverage from the registry itself, so a new function without a `__meta` block fails the build rather than appearing here silently.
+**107 callable functions**, grouped by `__meta` category. Counts in this chapter go stale the moment somebody adds a file, so treat `GET /workflows/functions` as the live source of truth — it serves the registry's own metadata. The meta test (`tests/internal_functions.meta.test.js`) derives its coverage from the registry itself, so a new function without a `__meta` block fails the build rather than appearing here silently.
 
-Of the 105: **14** are `uiHidden` (internal plumbing and the recurring sweepers, marked † below), leaving 91 in the workflow picker; **14** are `workflowOnly` (marked *), 12 of them visible, so the sequence picker offers 79.
+Of the 107: **15** are `uiHidden` (internal plumbing and the recurring sweepers, marked † below), leaving 92 in the workflow picker; **15** are `workflowOnly` (marked *), 13 of them visible, so the sequence picker offers 79.
 
 | Category | Functions |
 |---|---|
@@ -68,7 +68,7 @@ Of the 105: **14** are `uiHidden` (internal plumbing and the recurring sweepers,
 | connections | `refresh_expiring_oauth_credentials`, `rc_renew_subscriptions`, `gcontacts_sync_pending` |
 | general | `query_db`, `update_db`, `insert_db` |
 | ai | `query_ai`, `ai_match` |
-| system | `comms_archive_sweep`†, `comms_archive_media_sweep`†, `comms_archive_verify`†, `comms_summarize_sweep`†, `comms_transcribe_sweep`†, `phone_outbound_sync`†, `sms_consent_sync`†, `court_extract`†, `court_review_retry`, `court_activity_summary`, `cta_expiry_sweep`†, `esign_reconcile`, `esign_remind`, `portal_callback_reminder`†, `report_email`, `run_error_sweep`, `set_system_alert_status`, `generate_firm_blocks`, `set_setting`, `get_setting`, `get_settings`, `sweep_trigger_executions`, `emit_stage_aged` |
+| system | `comms_archive_sweep`†, `comms_archive_media_sweep`†, `comms_archive_verify`†, `comms_summarize_sweep`†, `comms_transcribe_sweep`†, `phone_outbound_sync`†, `sms_consent_sync`†, `mail_event_ingest`†, `court_extract`†, `court_review_retry`, `court_activity_summary`, `cta_expiry_sweep`†, `esign_reconcile`, `esign_remind`, `portal_callback_reminder`†, `report_email`, `run_error_sweep`, `set_system_alert_status`, `generate_firm_blocks`, `set_setting`, `get_setting`, `get_settings`, `sweep_trigger_executions`, `emit_stage_aged` |
 | dev | `set_test_var`*† |
 
 `court_extract` carries only a minimal `uiHidden` meta: its params are envelope dot-paths that exist only in the email-ingest pipeline, so it must never appear in the step editors.
@@ -1880,6 +1880,10 @@ Recurring-job plumbing, `uiHidden` and denied to CTA links (they spend provider,
 - `comms_transcribe_sweep` / `comms_summarize_sweep` — transcription and summaries ([Comms transcription](../08-Admin-Tools/09-comms-transcription.md)).
 - `phone_outbound_sync` — the outbound SMS delivery sync (`phone_delivery_sync_enabled`; `ref/PHONE_DELIVERY_DESIGN.md`). Params `since` / `until` (window, default the last 48 h), `max_pages`, and `backfill: true` for a hand-run backfill (skips the ingest rules) — never on the recurring job. A text RingCentral refused because the recipient opted out is also recorded as an SMS opt-out ([Text opt-outs](../01-YisraCase-overview/17-text-opt-outs.md)).
 - `sms_consent_sync` — the nightly SMS consent run: the read-only RingCentral opt-out reconcile (`sms_rc_consent_sync_enabled`) and the inbound-text liveness alert (`sms_inbound_liveness_hours`, default 72). Param `dry_run: true` lists what the reconcile would record and writes nothing (runs even while it is off) — never on the recurring job. [Text opt-outs](../01-YisraCase-overview/17-text-opt-outs.md).
+
+### Email provider events (hidden)
+
+- `mail_event_ingest` — the target of hook `ses-events` only (params mapping `event` ← `body`): one Amazon SES event, delivered by EventBridge, updates the campaign result's delivery columns, records a hard bounce or a spam complaint as a marketing-email opt-out, opens one follow-up task when a client's address hard-bounces, and raises complaint / bounce-rate alerts. `uiHidden`, denied to CTA links. [Campaign manager](../01-YisraCase-overview/11-campaign-manager.md); `ref/YISRAMAIL_DESIGN.md` §5.4.
 
 ### Dropbox
 

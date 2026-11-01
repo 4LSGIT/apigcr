@@ -192,6 +192,15 @@ body. Governing migrations in `ref/migrations/`.*
   stays ORPHANED in `mysql.columns_priv` (inert; it re-attaches to a later
   column of the same name) until a re-provision or targeted REVOKE clears it.
 - **Hook credential headers are stripped before storage (2026-11-02):** `lib/hookCredentialHeaders` (static names + the hook's own `auth_config.header` + every hook's configured header, cached 30 s; any case) is applied by the receiver, `recordExecution` and `executeHook`'s entry, so new raw_input, captured_sample, spool, transform_output, delivery, workflow and sequence copies are clean. Older rows still hold x-hook-key / RingCentral's Verification-Token (~32.8k) until `scripts/hookExecutionsHeaderScrub.js --apply` runs AFTER the deploy. A new header-borne hook auth adds its default name there.
+- **Provider email events (YisraMail T2, 2026-11-02 — ref/YISRAMAIL_DESIGN.md
+  §5.4 "As built"):** SES → EventBridge → hook `ses-events` → internal function
+  `mail_event_ingest` (`services/mailEventService`). Hard bounces and
+  complaints become email `marketing` opt-outs through `recordConsent`
+  (idempotent on `<eventbridge id>:<recipient>`); `campaign_results` carries
+  delivery columns that only move up the precedence; C2 reads
+  `transportHealth`. Parsed shapes are confirmed on captured events
+  (`tests/fixtures/ses-events/*.json`); Reject / DeliveryDelay / Rendering
+  Failure stay on AWS's documented shape (`*.assumed.json`, `VERIFY(step0)`).
 - **Marketing transport fence (YisraMail T1, 2026-11-01 — ref/YISRAMAIL_DESIGN.md
   §5.2 "As built" holds the option, refusal and driver contract):**
   `email_credentials.bulk_ok = 1` marks a marketing (bulk) transport (the SES
@@ -1843,6 +1852,13 @@ email campaign's sender from `email_credentials` — unknown → throws; a
 `bulk_ok` (marketing transport) row → throws (every campaign is operational
 until C1's class). A sender made bulk after create fails each send with the
 permanent `bulk_sender_refused`. ref/YISRAMAIL_DESIGN.md §5.2.
+**Delivery state (YisraMail T2):** `campaign_results` gains
+`provider_message_id`, `delivery_status` (complained > bounced_hard > rejected
+> delivered > bounced_soft > unknown — never downgraded), `delivered_at` /
+`bounced_at` / `complained_at` (set once per rank), `delivery_diag`,
+`bounce_subtype` (SES suppression subtypes stay out of the bounce rate), written only by
+`mail_event_ingest` from provider events; `recordResult` never touches them.
+ref/YISRAMAIL_DESIGN.md §5.4.
 
 ## 18. TASK SYSTEM
 

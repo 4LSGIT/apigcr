@@ -3,7 +3,9 @@
 Status: **DRAFT v0.5 — 2026-10-29. P1 (consent core) built — §4.4 "As built";
 P2 (inbound SMS opt-out) built — §4.6 "As built"; P3 (email unsubscribe
 surface) built — §4.5 "As built"; P4 (staff consent UI) built — §4.7 "As
-built"; T1 (transport contract) built — §5.2 "As built"; nothing else built.** Ruled 2026-10-29 (Fred):
+built"; T1 (transport contract) built — §5.2 "As built"; T2 (events) built —
+§5.4 "As built" (parsed shapes confirmed on captured events except Reject /
+DeliveryDelay / Rendering Failure); nothing else built.** Ruled 2026-10-29 (Fred):
 D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
 Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
 later; D15 no RC push in v1, D16 over-cap operational sends with
@@ -1081,6 +1083,115 @@ SQS dead-letter queue (exhausted retries are otherwise dropped) and T2 ships a
 tested replay procedure (DLQ → re-POST to the hook); the hook's `dedup_path`
 on the event id makes a replay safe.
 
+**As built (T2).** The parser is confirmed on REAL events captured in step 0
+(2026-11-01: five SES mailbox-simulator sends through row 17, hook_executions
+36158–36169, kept as `tests/fixtures/ses-events/<type>.json`); the three types
+the simulator cannot produce stay on AWS's documented shape, marked
+`VERIFY(step0)`.
+- **Path.** Configuration set `yisramail-marketing` → event destination
+  EventBridge (Send, Rendering failure, Reject, Delivery, Hard bounce,
+  Complaint, Delivery delay — no Open/Click, D11) → rule
+  `yisramail-ses-events` (`source: aws.ses`) → API destination
+  `yisramail-hook` (Connection `yisramail-hook-conn`, API key) → hook
+  `ses-events` (api_key auth, header **`x-api-key`** — the receiver strips
+  that header from everything it stores, which the default `x-hook-key` was
+  not, before 2026-11-02; `dedup_path` `body.id`, the EventBridge event id;
+  passthrough) → target internal_function `mail_event_ingest`, params mapping
+  `event` ← `body`. DLQ `yisramail-ses-dlq` (14 days). The definition and a
+  recreate/add-target snippet: `ref/migrations/2026-11-02_yisramail_t2_hook_ses_events.console.js`.
+- **Parser** (`services/adapters/email/drivers/ses.js` `events`):
+  `parseDetailed(body)` → `{ events, ignored, unknown_shape, errors }`, never
+  throws. One SES event naming N recipients → N events, each `{ type,
+  provider_message_id (detail.mail.messageId), recipient (lowercased), at,
+  provider_event_id (<eventbridge id>:<recipient>, a sha256 suffix past 128
+  characters), tags {campaign_id, result_id} (mail.tags, arrays of one),
+  diagnostic, raw }`. Types: Delivery → `delivered`; Bounce Permanent →
+  `bounce_hard`; Bounce Transient / Undetermined and DeliveryDelay →
+  `bounce_soft` (an undetermined bounce never opts anyone out); Complaint →
+  `complaint` — except a `not-spam` feedback report, which retracts one and is
+  ignored (no opt-out, alert or status change); Reject → `reject`; Rendering
+  Failure → `rendering_failure`; Send / Open / Click / Subscription → ignored; a known type without its
+  sub-object, or an unknown eventType → `unknown_shape` (counted); not an
+  `aws.ses` event → an error (counted). `unsubscribe` is never produced (SES
+  list management is not used). `verify` is `true`: the hook's api_key auth
+  is the check (EventBridge signs nothing).
+- **Captured facts (step 0):** `source` `aws.ses`; `id` (a UUID — the dedup
+  key and the provider_event_id prefix); `detail-type` "Email Sent" / "Email
+  Delivered" / "Email Bounced" / "Email Complaint Received"; `resources` = the
+  configuration set's ARN; `detail.eventType` Send / Delivery / Bounce /
+  Complaint; `detail.mail.messageId` in the same shape the T1 driver reads
+  from the 250 reply; `detail.mail.tags` = our `campaign_id` / `result_id` plus
+  SES's `ses:*` tags (operation, source-ip, from-domain, outgoing-ip,
+  caller-identity, configuration-set, source-tls-version), every value a
+  one-string array (the parser reads only ours); `delivery.recipients`
+  (strings), `timestamp`, `smtpResponse`; bounces seen: Permanent / General
+  (`diagnosticCode` present), Transient / General (ooto — `emailAddress` only,
+  no diagnosticCode; the diagnostic falls back to "Transient/General"),
+  Permanent / **EmailValidationSuppressed** (suppressionlist — a suppression
+  subtype); complaint `abuse` with `complainedRecipients`; ooto@ also produces
+  a Delivery (the precedence keeps it `delivered`). The receiver stored no
+  `x-api-key` header (the strip works live).
+- **Still VERIFY(step0)** (not producible from the simulator; documented
+  shape; delivery columns only, never the ledger): Reject (`reject.reason`,
+  recipients = `mail.destination`), DeliveryDelay
+  (`deliveryDelay.delayedRecipients`), Rendering Failure (eventType with a
+  space, `failure.errorMessage`); and the DLQ message Body = the original
+  event (replay script) until a real DLQ message is seen.
+- **Ingest** (`services/mailEventService.ingest`, skin
+  `lib/internal_functions/mail.js`, CTA-denied, `uiHidden`): per event one
+  transaction (`withTransaction` retries:1 + one deadlock retry). Correlation:
+  the `result_id` tag's row when the `campaign_id` tag is present AND names
+  that row's campaign (C2 sends both; a tag-less result_id falls through),
+  else the row holding the `provider_message_id`, locked; none → `unknown` (a
+  non-campaign send). Delivery columns: `delivery_status` only rises —
+  complained > bounced_hard > rejected > delivered > bounced_soft > unknown —
+  with `delivery_diag` (and, for a bounce, `bounce_subtype`) following it;
+  `delivered_at` / `bounced_at` / `complained_at` are set once per rank (the
+  event that raises the status stamps its column — a hard bounce after a soft
+  one re-stamps `bounced_at`; a same-or-weaker event only fills an empty one);
+  `provider_message_id` filled on a tag-found row that had none, unless another
+  row already holds it. **Lock order for C2:** the ingest locks the
+  `campaign_results` row BEFORE recordConsent's contact row — a send path that
+  touches both must take them in the same order or tolerate a deadlock.
+  Ledger (D18):
+  `bounce_hard` → `recordConsent` opt_out email scope `marketing` source
+  `provider_bounce`, `complaint` → `provider_complaint`; provider_event_id as
+  above (a replay is `duplicate`); evidence `{via:'ses', event_type,
+  bounce_type, diagnostic ≤ 200, message_id}`; send_ref = the result_id;
+  contact_id = the result's contact; no rowId (recordConsent locks the
+  destination). After the commit: D17 — a newly recorded hard bounce on an
+  active address of a contact with an open Primary/Secondary case
+  (phoneConsentService's predicate) → one task to `consent_task_user_id`,
+  dedupe key `mail_bounce:<address>` (an open one is touched); each complaint →
+  a `warning` alert per address per UTC day; per transport touched, hard
+  bounces > 5 % over 24 h with ≥ 200 delivered → an `error` alert per UTC day
+  (an alert whose dedup key already exists is neither sent nor counted). An
+  address the ledger cannot hold still gets its delivery columns, no ledger
+  event, counted `invalid`; any thrown error (database, or a recordConsent
+  anomaly) is rethrown after the others ran, so the hook retries the target
+  once (every write is idempotent). Hard bounces with a suppression subtype
+  are still `bounced_hard` and still an opt-out (the address is known-bad). Returns `{ parsed, ignored, unknown_shape,
+  parse_errors, updated, unknown, invalid, ledger: {recorded, duplicate},
+  tasks, alerts }`.
+- **Columns** (`scripts/yisramailT2Migrate.js`, CHECK / `--apply`, one
+  connection, `lock_wait_timeout` 10; 291 rows live): `campaign_results.
+  provider_message_id` (+ `ix_provider_message_id`), `delivery_status`,
+  `delivered_at`, `bounced_at`, `complained_at`, `delivery_diag`,
+  `bounce_subtype` — each COMMENT says what sets it. `recordResult` never
+  writes them.
+- **Health** `mailEventService.transportHealth(db, {credentialId |
+  campaignId})` → `{ window_h: 24, delivered, bounced_hard, suppressed,
+  complained, delivery_rate, complaint_rate, bounce_rate, enough }` — the §6.5
+  definitions (suppression-subtype bounces in `suppressed`, not in
+  `bounced_hard`); computed from `campaign_results` (no counter table). C2
+  reads it before each marketing send and owns the hold.
+- **Replay** `scripts/yisramailT2ReplayDlq.js <messages.json> [--dry-run]`:
+  `aws sqs receive-message` output or bodies copied from the SQS console,
+  re-POSTed with the key from env `SES_HOOK_KEY` (never an argument, never
+  printed); an event the hook already has is a no-op.
+- **Not built:** SES account-level suppression removal on re-opt-in (needs the
+  SES API — `ref/plans.md`).
+
 ### 5.5 Provider (DECISION D6)
 
 Hard requirements (survey: `ref/archive/YISRAMAIL_SURVEY_2026-10-29.md`): marketing allowed by the AUP; **we set our
@@ -1323,16 +1434,22 @@ with no token, footer or headers.
 
 ### 6.5 Complaint safety (enforced from the first send) and reporting
 
-- **Enforcement — T2 + C2, part of gate G1.** T2's event ingest keeps a
-  rolling per-transport tally (complaints and hard bounces over delivered,
-  last 24 h and per campaign). C2 checks it before every marketing send:
-  complaint rate > 0.1 % → `warning` alert; > 0.3 % (the Gmail ceiling,
-  Appendix C) or hard bounces > 5 % → the **transport is held**: every
-  running marketing campaign on it is paused (§6.4), new ones refuse, an
-  `error` alert fires, and only an SU release (audited) lifts it. Rates are
-  computed only once a campaign has ≥ 200 deliveries, so one early
-  complaint doesn't trip a hold — but any single complaint in the first
-  200 still alerts (`warning`).
+- **Enforcement — T2 + C2, part of gate G1.** T2 computes the rates (no
+  counter table): `mailEventService.transportHealth(db, {credentialId |
+  campaignId})` over the last 24 h of `campaign_results` — per transport (the
+  campaigns' sender row) or per campaign — gives complaint_rate = complaints /
+  delivered and bounce_rate = hard bounces / (delivered + hard bounces), the
+  hard bounces leaving out SES's suppression subtypes (OnAccountSuppressionList,
+  EmailValidationSuppressed, OnTenantSuppressionList — AWS does not count them),
+  and `enough` = ≥ 200 deliveries in that window. T2 itself alerts: every
+  complaint → `warning` (once per address per day); a transport's hard bounces
+  > 5 % with `enough` → `error` (once per transport per day). C2 checks
+  `transportHealth` before every marketing send: complaint rate > 0.1 % →
+  `warning`; > 0.3 % (the Gmail ceiling, Appendix C) or hard bounces > 5 % →
+  the **transport is held**: every running marketing campaign on it is paused
+  (§6.4), new ones refuse, an `error` alert fires, and only an SU release
+  (audited) lifts it. Rates decide nothing until `enough`, so one early
+  complaint doesn't trip a hold — but any single complaint still alerts.
 - **Reporting — C4.** Campaign view adds delivered / bounced / complained /
   unsubscribed / unknown counts (unsubscribes from the ledger by
   `send_ref`) and the transport's current rates.
@@ -1452,7 +1569,7 @@ is ruled for that list (ruled 2026-10-30 for SS's own lead lists).
 | P3 | Email unsubscribe surface — **built** (§4.5 "As built") | `comm_unsub_tokens` (+ `send_ref`) via `scripts/yisramailP3Migrate.js`; `services/unsubService.js` (mint for C2, lookup, one-click, page form); `/u/:token` GET page + one-click POST + prefs POST on the landing origin (all three `pageLanding` enumerations, test-locked; no-store / noindex / no-referrer; no per-IP limit on the one-click POST); `{{send.*}}` / `{{firm.*}}` resolver pseudo-tables; `lib/complianceFooter.js` (the footer block C2 injects); settings `consent_task_user_id`, `marketing_ad_label`, `marketing_debt_relief_statement` | P1 |
 | P4 | Staff consent UI — **built** (§4.7 "As built") | badges + history on contact rows; compose counts; SU suppression import/export | P1 |
 | T1 | Transport contract — **built** (§5.2 As built) | adapter capabilities (`bulk`, `headers`, `tags`, `events`, `batch`); `headers` / `replyTo` / `tags` options through `sendEmailDirect` + `smtp.js` (marketing path only; public `sendEmail` strips them); driver-owned headers (SES `X-SES-*`); SES message id from the SMTP reply; `email_credentials.bulk_ok` + `events_driver`; bulk rows fenced out of `emailFrom`, public `sendEmail` and operational campaigns; DKIM `h=` acceptance test | — |
-| T2 | Events | SES → EventBridge API destination (+ SQS DLQ and a tested replay procedure) → YisraHook hook (`api_key` auth, `dedup_path` on the event id) → `mail_event_ingest` internal function (added to `CTA_FN_DENYLIST` — engine plumbing) → ledger (bounce/complaint/unsub) + `campaign_results` delivery columns by `result_id` tag + the per-transport complaint/bounce tally (§6.5); SES suppression-list removal on re-opt-in | T1, P1 |
+| T2 | Events — **built** (§5.4 As built; Reject / DeliveryDelay / Rendering Failure still documented-shape) | SES → EventBridge API destination (+ SQS DLQ and a tested replay procedure) → YisraHook hook (`api_key` auth, `dedup_path` on the event id) → `mail_event_ingest` internal function (added to `CTA_FN_DENYLIST` — engine plumbing) → ledger (bounce/complaint/unsub) + `campaign_results` delivery columns by `result_id` tag + the per-transport complaint/bounce tally (§6.5); SES suppression-list removal on re-opt-in | T1, P1 |
 | C1 | Campaign hardening | `campaigns.class` / `topic_key`; 50 cap in `createCampaign` + D16 over-cap path; `campaigns.bulk` capability; `bulk_ok` refused for operational; **`marketing_send_enabled` kill switch (`'0'`): marketing refused 422 at create and skipped at send**; **send reservation / at-most-once for every campaign** (`sending` / `unknown` statuses); per-transport rate window at dispatch; per-campaign pump with bounded catch-up; cron per-tick `campaign_send` quota; `paused` status with defer semantics (§6.4 table); operational-class honesty prompt | P1, T1 |
 | C2 | Marketing send path | executeSend marketing branch: scope check, token mint, explicit text part, footer inject/lock + post-render assert, headers/tags, transport, send-start snapshot (MRPC 7.2(b)), `email_log` without body; **complaint/bounce transport hold enforced before every send** (§6.5); account-pause detection; test send (HTML escaping + the sandboxed preview already shipped — §6.3) | P1, **P2**, P3, C1, T2 |
 | C3 | Designs + builder | spike first (§7, incl. a malicious `design_json`); then `email_designs` with server-side validation on save; Designer editor mode (GrapesJS + MJML); merge-tag picker; locked footer block; asset upload via AssetPicker/`apiSend` | C2 (can build in parallel, lands after) |

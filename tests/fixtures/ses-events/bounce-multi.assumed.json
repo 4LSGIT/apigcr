@@ -1,0 +1,83 @@
+{
+  "version": "0",
+  "id": "44444444-4444-4444-4444-444444444444",
+  "detail-type": "Email Bounced",
+  "source": "aws.ses",
+  "account": "123456789012",
+  "time": "2026-11-02T15:00:05Z",
+  "region": "us-east-2",
+  "resources": [
+    "arn:aws:ses:us-east-2:123456789012:configuration-set/yisramail-marketing"
+  ],
+  "detail": {
+    "eventType": "Bounce",
+    "mail": {
+      "timestamp": "2026-11-02T15:00:00.000Z",
+      "source": "Legal Solutions Group <news@news.example.com>",
+      "sendingAccountId": "123456789012",
+      "messageId": "0100019a3c2b1a00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-000000",
+      "destination": [
+        "a@example.com",
+        "b@example.com"
+      ],
+      "headersTruncated": false,
+      "headers": [
+        {
+          "name": "From",
+          "value": "Legal Solutions Group <news@news.example.com>"
+        },
+        {
+          "name": "To",
+          "value": "a@example.com"
+        }
+      ],
+      "commonHeaders": {
+        "from": [
+          "Legal Solutions Group <news@news.example.com>"
+        ],
+        "to": [
+          "a@example.com",
+          "b@example.com"
+        ],
+        "messageId": "0100019a3c2b1a00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-000000",
+        "subject": "News"
+      },
+      "tags": {
+        "ses:configuration-set": [
+          "yisramail-marketing"
+        ],
+        "ses:source-ip": [
+          "192.0.2.1"
+        ],
+        "ses:from-domain": [
+          "news.example.com"
+        ],
+        "ses:caller-identity": [
+          "ses-smtp-user"
+        ],
+        "campaign_id": [
+          "7"
+        ],
+        "result_id": [
+          "41"
+        ]
+      }
+    },
+    "bounce": {
+      "feedbackId": "fb3",
+      "bounceType": "Permanent",
+      "bounceSubType": "General",
+      "bouncedRecipients": [
+        {
+          "emailAddress": "A@Example.com",
+          "diagnosticCode": "smtp; 550 a"
+        },
+        {
+          "emailAddress": "b@example.com",
+          "diagnosticCode": "smtp; 550 b"
+        }
+      ],
+      "timestamp": "2026-11-02T15:00:02.000Z"
+    }
+  }
+}

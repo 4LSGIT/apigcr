@@ -1,0 +1,143 @@
+{
+  "id": "07ee2495-3a97-23cb-4189-1d3558120688",
+  "time": "2026-11-01T23:20:48Z",
+  "detail": {
+    "mail": {
+      "tags": {
+        "result_id": [
+          "t2-2"
+        ],
+        "campaign_id": [
+          "t2"
+        ],
+        "ses:operation": [
+          "SendSmtpEmail"
+        ],
+        "ses:source-ip": [
+          "212.76.115.151"
+        ],
+        "ses:from-domain": [
+          "news.4lsg.com"
+        ],
+        "ses:outgoing-ip": [
+          "23.251.226.6"
+        ],
+        "ses:caller-identity": [
+          "yisramail-smtp"
+        ],
+        "ses:configuration-set": [
+          "yisramail-marketing"
+        ],
+        "ses:source-tls-version": [
+          "TLSv1.3"
+        ]
+      },
+      "source": "news@news.4lsg.com",
+      "headers": [
+        {
+          "name": "Received",
+          "value": "from FredBook.local ([212.76.115.151]) by email-smtp.amazonaws.com with SMTP (SimpleEmailService-d-RXH4QY209) id vhNNsNbWZr9qlautxK70 for bounce@simulator.amazonses.com; Sun, 01 Nov 2026 23:20:48 +0000 (UTC)"
+        },
+        {
+          "name": "List-Unsubscribe",
+          "value": "<https://app.4lsg.com/u/T1ACCEPTANCE000000000>"
+        },
+        {
+          "name": "List-Unsubscribe-Post",
+          "value": "List-Unsubscribe=One-Click"
+        },
+        {
+          "name": "List-ID",
+          "value": "<news.news.4lsg.com>"
+        },
+        {
+          "name": "X-Ses-Configuration-Set",
+          "value": "yisramail-marketing"
+        },
+        {
+          "name": "X-Ses-Message-Tags",
+          "value": "campaign_id=t2, result_id=t2-2"
+        },
+        {
+          "name": "From",
+          "value": "Legal Solutions Group <news@news.4lsg.com>"
+        },
+        {
+          "name": "To",
+          "value": "bounce@simulator.amazonses.com"
+        },
+        {
+          "name": "Reply-To",
+          "value": "office@4lsg.com"
+        },
+        {
+          "name": "Subject",
+          "value": "YisraMail T1 acceptance 2026-11-01T23:20:42.665Z"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<c1a3acb0-0093-af9a-c0a4-88bb12356ff6@news.4lsg.com>"
+        },
+        {
+          "name": "Date",
+          "value": "Sun, 01 Nov 2026 23:20:42 +0000"
+        },
+        {
+          "name": "MIME-Version",
+          "value": "1.0"
+        },
+        {
+          "name": "Content-Type",
+          "value": "multipart/alternative; boundary=\"--_NmP-212d696c4c6f17d0-Part_1\""
+        }
+      ],
+      "messageId": "010f01a1996a6277-de1ef1f0-3a14-4637-a8f4-b5c0757a9660-000000",
+      "sourceArn": "arn:aws:ses:us-east-2:216822717350:identity/news.4lsg.com",
+      "timestamp": "2026-11-01T23:20:48.503Z",
+      "destination": [
+        "bounce@simulator.amazonses.com"
+      ],
+      "commonHeaders": {
+        "to": [
+          "bounce@simulator.amazonses.com"
+        ],
+        "date": "Sun, 01 Nov 2026 23:20:42 +0000",
+        "from": [
+          "Legal Solutions Group <news@news.4lsg.com>"
+        ],
+        "replyTo": [
+          "office@4lsg.com"
+        ],
+        "subject": "YisraMail T1 acceptance 2026-11-01T23:20:42.665Z",
+        "messageId": "010f01a1996a6277-de1ef1f0-3a14-4637-a8f4-b5c0757a9660-000000"
+      },
+      "headersTruncated": false,
+      "sendingAccountId": "216822717350"
+    },
+    "bounce": {
+      "timestamp": "2026-11-01T23:20:48.898Z",
+      "bounceType": "Permanent",
+      "feedbackId": "010f01a1996a642e-e581c4b6-0016-4af3-a560-13d7aed9f5e7-000000",
+      "remoteMtaIp": "54.173.236.213",
+      "reportingMTA": "dns; e226-6.smtp-out.us-east-2.amazonses.com",
+      "bounceSubType": "General",
+      "bouncedRecipients": [
+        {
+          "action": "failed",
+          "status": "5.1.1",
+          "emailAddress": "bounce@simulator.amazonses.com",
+          "diagnosticCode": "smtp; 550 5.1.1 As requested: user unknown <bounce@simulator.amazonses.com>"
+        }
+      ]
+    },
+    "eventType": "Bounce"
+  },
+  "region": "us-east-2",
+  "source": "aws.ses",
+  "account": "216822717350",
+  "version": "0",
+  "resources": [
+    "arn:aws:ses:us-east-2:216822717350:configuration-set/yisramail-marketing"
+  ],
+  "detail-type": "Email Bounced"
+}

@@ -92,6 +92,7 @@ lib/internal_functions/forwarding.js
 lib/internal_functions/index.js
 lib/internal_functions/intake.js
 lib/internal_functions/log.js
+lib/internal_functions/mail.js
 lib/internal_functions/pdf.js
 lib/internal_functions/pipeline.js
 lib/internal_functions/portalCallback.js
@@ -640,6 +641,8 @@ ref/migrations/2026-11-01_tools_visible_to.sql
 ref/migrations/2026-11-01_yisramail_t1_email_credentials_bulk.sql
 ref/migrations/2026-11-01_yisravid_s2_video_views_columns.sql
 ref/migrations/2026-11-01_yisravid_s4_contact_verified.sql
+ref/migrations/2026-11-02_yisramail_t2_campaign_results_delivery.sql
+ref/migrations/2026-11-02_yisramail_t2_hook_ses_events.console.js
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -999,6 +1002,8 @@ scripts/yisramailP2CheckInbound.js
 scripts/yisramailP3Migrate.js
 scripts/yisramailT1Acceptance.js
 scripts/yisramailT1Migrate.js
+scripts/yisramailT2Migrate.js
+scripts/yisramailT2ReplayDlq.js
 scripts/yisravidMintTokens.js
 scripts/yisravidS1Data.js
 scripts/yisravidS2Columns.js
@@ -1105,6 +1110,7 @@ services/ingestRuleChangeLog.js
 services/ingestRulePreviewService.js
 services/intakeService.js
 services/logService.js
+services/mailEventService.js
 services/mailbox/imapTransport.js
 services/mailbox/mailReadService.js
 services/mailbox/mailboxIngestService.js
@@ -1443,6 +1449,16 @@ tests/fixtures/ingestNativeGolden.json
 tests/fixtures/ingestRuleTestRoutes.golden.json
 tests/fixtures/intake_cards_definition.json
 tests/fixtures/quick_notes_slice2_definition.json
+tests/fixtures/ses-events/bounce-multi.assumed.json
+tests/fixtures/ses-events/bounce-permanent.json
+tests/fixtures/ses-events/bounce-suppressed.json
+tests/fixtures/ses-events/bounce-transient.json
+tests/fixtures/ses-events/complaint.json
+tests/fixtures/ses-events/delivery-delay.assumed.json
+tests/fixtures/ses-events/delivery.json
+tests/fixtures/ses-events/reject.assumed.json
+tests/fixtures/ses-events/rendering-failure.assumed.json
+tests/fixtures/ses-events/send.json
 tests/fixtures/slice26/issn_tabs_definition.json
 tests/fixtures/slice26/legacy_case_details_bk2.js
 tests/fixtures/slice26/legacy_notes_341.js
@@ -1599,6 +1615,8 @@ tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
 tests/logservice.buildcontactlogwhere.test.js
 tests/machineKeyScopes.test.js
+tests/mailEventHook.routes.test.js
+tests/mailEventIngest.mysql.test.js
 tests/mailboxFetchMerge.test.js
 tests/mailboxGmailParity.console.test.js
 tests/mailboxIngestStateComment.test.js
@@ -1742,6 +1760,7 @@ tests/sequences.expectedBase.mysql.test.js
 tests/sequences.recover.test.js
 tests/sequences.routeOrder.test.js
 tests/sequences.stepValidation.test.js
+tests/sesEvents.parse.test.js
 tests/sessionKeysUi.test.js
 tests/settingsArcMigrate.test.js
 tests/settingsAutomationGuard.test.js
@@ -1869,4 +1888,7 @@ tests/yisramailT1.adapters.test.js
 tests/yisramailT1.fences.routes.test.js
 tests/yisramailT1Acceptance.test.js
 tests/yisramailT1Migrate.mysql.test.js
+tests/yisramailT2HookSnippet.test.js
+tests/yisramailT2Migrate.mysql.test.js
+tests/yisramailT2ReplayDlq.test.js
 views/v.html

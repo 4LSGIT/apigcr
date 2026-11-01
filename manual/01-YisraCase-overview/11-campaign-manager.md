@@ -80,7 +80,27 @@ One row per contact per campaign. Written by `executeSend()`.
 | `error` | text | Error message on failure |
 | `sent_at` | datetime | |
 | `result_meta` | json | Provider response, messageId, etc. |
+| `provider_message_id` | varchar(128) | The provider's id for the send (SES); the second way a provider event finds this row |
+| `delivery_status` | enum: `unknown`, `delivered`, `bounced_hard`, `bounced_soft`, `complained`, `rejected` | What the provider later reported; only ever moves to a stronger outcome |
+| `delivered_at` / `bounced_at` / `complained_at` | datetime(3) | First time each was reported (UTC) |
+| `delivery_diag` | varchar(255) | The provider's reason behind `delivery_status` |
+| `bounce_subtype` | varchar(40) | The provider's bounce subtype (SES), e.g. `General`, `MailboxFull`, `OnAccountSuppressionList` — a suppression-list bounce still opts the address out but does not count toward the bounce rate |
 | | | UNIQUE on `(campaign_id, contact_id)` |
+
+**Delivery events (marketing email, YisraMail T2).** Mail sent through the
+marketing transport (Amazon SES) reports back what happened to it: delivered,
+bounced, complained (marked as spam), rejected. Those reports arrive through
+the hook `ses-events` and fill the delivery columns above — campaigns sent
+before then, and every SMS or operational send, stay `unknown`. A **hard
+bounce** (the address does not exist) or a **spam complaint** opts that
+address out of marketing email, recorded in the consent history like any other
+opt-out (source "provider bounce" / "provider complaint"); case and
+operational email to it are not blocked, but they will bounce too. When the
+bouncing address belongs to a **client** (a contact on an open case as Primary
+or Secondary), the firm's consent follow-up person gets **one** task to get a
+new address; a non-client's bounce only counts in the statistics. Each spam
+complaint raises a warning alert, and a hard-bounce rate above 5 % in a day
+(once 200 messages were delivered) raises an error alert.
 
 ### `image_library`
 

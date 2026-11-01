@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-01T20:51:32.517Z
+-- Generated: 2026-11-01T23:40:44.348Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:f4eba6d41fd55e4108b9c78aa1692ed0
+-- Fingerprint: sha256:92658fd14c5e5e202c9189daade53117
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -469,7 +469,14 @@ CREATE TABLE `campaign_results` (
   `status` enum('sent','failed','skipped') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `sent_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `result_meta` json DEFAULT NULL
+  `result_meta` json DEFAULT NULL,
+  `provider_message_id` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the provider message id of the send (SES: the id in the 250 reply, emailService info.providerMessageId; SES events carry it as detail.mail.messageId). Written at send by C2, and by mail_event_ingest when it correlated by the result_id tag first. Second correlation key after the result_id message tag. ref/YISRAMAIL_DESIGN.md §5.2',
+  `delivery_status` enum('unknown','delivered','bounced_hard','bounced_soft','complained','rejected') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'unknown' COMMENT 'the strongest provider outcome seen (mail_event_ingest, from SES events): complained > bounced_hard > rejected > delivered > bounced_soft > unknown — a weaker later event never downgrades it. bounced_soft = SES Bounce Transient/Undetermined or DeliveryDelay; rejected = Reject or Rendering Failure. unknown = no event yet (and every send before T2)',
+  `delivered_at` datetime(3) DEFAULT NULL COMMENT 'UTC time of the first SES Delivery event for this send (mail_event_ingest)',
+  `bounced_at` datetime(3) DEFAULT NULL COMMENT 'UTC time of the first SES Bounce / DeliveryDelay event for this send, hard or soft (mail_event_ingest)',
+  `complained_at` datetime(3) DEFAULT NULL COMMENT 'UTC time of the first SES Complaint event for this send (mail_event_ingest)',
+  `delivery_diag` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the provider diagnostic behind delivery_status (bounce diagnosticCode, complaint feedback type, reject reason, delay status), at most 255 characters; overwritten only when delivery_status changes',
+  `bounce_subtype` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the SES bounceSubType of the bounce behind delivery_status (mail_event_ingest; set when a bounce raises the status). OnAccountSuppressionList / EmailValidationSuppressed / OnTenantSuppressionList are SES refusing a known-bad address: still bounced_hard and an opt-out, but NOT counted in mailEventService.transportHealth bounce rate (AWS: they do not count toward the bounce rate)'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -4416,7 +4423,8 @@ ALTER TABLE `campaign_contacts`
 --
 ALTER TABLE `campaign_results`
   ADD PRIMARY KEY (`result_id`),
-  ADD UNIQUE KEY `uq_campaign_contact` (`campaign_id`,`contact_id`);
+  ADD UNIQUE KEY `uq_campaign_contact` (`campaign_id`,`contact_id`),
+  ADD KEY `ix_provider_message_id` (`provider_message_id`);
 
 --
 -- Indexes for table `campaigns`

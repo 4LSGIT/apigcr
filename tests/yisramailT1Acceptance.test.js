@@ -156,3 +156,31 @@ describe('--send', () => {
     expect(r.line).toMatch(/^NO-GO — sent, but the SES message id did not parse/);
   });
 });
+
+describe('--send to the SES mailbox simulator (T2 step 0)', () => {
+  const ROW = { id: 17, email: 'news@news.4lsg.com', from_name: 'Legal Solutions Group', provider: 'smtp', credential_id: null,
+    smtp_host: 'email-smtp.us-east-2.amazonaws.com', smtp_port: 587, smtp_secure: 0, smtp_user: 'AKIAEXAMPLE', smtp_pass: encrypt('pw'),
+    bulk_ok: 1, events_driver: 'ses', driver_config: { configuration_set: 'yisramail-marketing' } };
+  const db = { query: jest.fn(async (sql) => (/FROM email_credentials/.test(sql) ? [[ROW]] : (/FROM email_log/.test(sql) ? [[{ id: 1 }]] : [{}]))) };
+  beforeEach(() => {
+    mockSendMail.mockReset();
+    mockSendMail.mockImplementation(async () => ({ messageId: '<x@news.4lsg.com>', response: '250 Ok 0100018b5f6a1b2c-1a2b3c4d-5e6f-7a8b-9c0d-ef1234567890-000000', accepted: ['bounce@simulator.amazonses.com'], rejected: [] }));
+  });
+
+  test('carries the given campaign / result tags and points at the hook, not at --check', async () => {
+    const r = await acc.send(db, { rowId: 17, to: 'bounce@simulator.amazonses.com', campaignId: 't2', resultId: 't2-2', say: () => {} });
+    expect(r.ok).toBe(true);
+    expect(mockSendMail.mock.calls[0][0].headers['X-SES-MESSAGE-TAGS']).toBe('campaign_id=t2, result_id=t2-2');
+    expect(mockSendMail.mock.calls[0][0].to).toBe('bounce@simulator.amazonses.com');
+    expect(r.line).toMatch(/hook ses-events \(runbook stage 7\)/);
+    expect(r.line).not.toMatch(/--check/);
+  });
+
+  test('defaults stay t1 / t1; a tag outside the charset is refused by emailService (nothing sent)', async () => {
+    expect(acc.acceptanceMessage(ROW, 'it@4lsg.com').tags).toEqual({ campaign_id: 't1', result_id: 't1' });
+    const r = await acc.send(db, { rowId: 17, to: 'success@simulator.amazonses.com', campaignId: 't2', resultId: 'bad id', say: () => {} });
+    expect(r.ok).toBe(false);
+    expect(r.line).toMatch(/marketing_tags_invalid/);
+    expect(mockSendMail).not.toHaveBeenCalled();
+  });
+});

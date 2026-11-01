@@ -1,0 +1,139 @@
+{
+  "id": "3252d312-f082-d645-62c6-f72c2e6504a1",
+  "time": "2026-11-01T23:21:12Z",
+  "detail": {
+    "mail": {
+      "tags": {
+        "result_id": [
+          "t2-5"
+        ],
+        "campaign_id": [
+          "t2"
+        ],
+        "ses:operation": [
+          "SendSmtpEmail"
+        ],
+        "ses:source-ip": [
+          "212.76.115.151"
+        ],
+        "ses:from-domain": [
+          "news.4lsg.com"
+        ],
+        "ses:caller-identity": [
+          "yisramail-smtp"
+        ],
+        "ses:configuration-set": [
+          "yisramail-marketing"
+        ],
+        "ses:source-tls-version": [
+          "TLSv1.3"
+        ]
+      },
+      "source": "news@news.4lsg.com",
+      "headers": [
+        {
+          "name": "Received",
+          "value": "from FredBook.local ([212.76.115.151]) by email-smtp.amazonaws.com with SMTP (SimpleEmailService-d-AZTKEVTAL) id 7iV1k8jYUoOBj2aW3vwu for suppressionlist@simulator.amazonses.com; Sun, 01 Nov 2026 23:21:11 +0000 (UTC)"
+        },
+        {
+          "name": "List-Unsubscribe",
+          "value": "<https://app.4lsg.com/u/T1ACCEPTANCE000000000>"
+        },
+        {
+          "name": "List-Unsubscribe-Post",
+          "value": "List-Unsubscribe=One-Click"
+        },
+        {
+          "name": "List-ID",
+          "value": "<news.news.4lsg.com>"
+        },
+        {
+          "name": "X-Ses-Configuration-Set",
+          "value": "yisramail-marketing"
+        },
+        {
+          "name": "X-Ses-Message-Tags",
+          "value": "campaign_id=t2, result_id=t2-5"
+        },
+        {
+          "name": "From",
+          "value": "Legal Solutions Group <news@news.4lsg.com>"
+        },
+        {
+          "name": "To",
+          "value": "suppressionlist@simulator.amazonses.com"
+        },
+        {
+          "name": "Reply-To",
+          "value": "office@4lsg.com"
+        },
+        {
+          "name": "Subject",
+          "value": "YisraMail T1 acceptance 2026-11-01T23:21:06.407Z"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<8bbf5564-bf50-5b46-d867-fb59ec49c8ae@news.4lsg.com>"
+        },
+        {
+          "name": "Date",
+          "value": "Sun, 01 Nov 2026 23:21:06 +0000"
+        },
+        {
+          "name": "MIME-Version",
+          "value": "1.0"
+        },
+        {
+          "name": "Content-Type",
+          "value": "multipart/alternative; boundary=\"--_NmP-a0b6072d28bfb194-Part_1\""
+        }
+      ],
+      "messageId": "010f01a1996abf77-adb58101-1509-48dc-821c-7517f4d56841-000000",
+      "sourceArn": "arn:aws:ses:us-east-2:216822717350:identity/news.4lsg.com",
+      "timestamp": "2026-11-01T23:21:12.311Z",
+      "destination": [
+        "suppressionlist@simulator.amazonses.com"
+      ],
+      "commonHeaders": {
+        "to": [
+          "suppressionlist@simulator.amazonses.com"
+        ],
+        "date": "Sun, 01 Nov 2026 23:21:06 +0000",
+        "from": [
+          "Legal Solutions Group <news@news.4lsg.com>"
+        ],
+        "replyTo": [
+          "office@4lsg.com"
+        ],
+        "subject": "YisraMail T1 acceptance 2026-11-01T23:21:06.407Z",
+        "messageId": "010f01a1996abf77-adb58101-1509-48dc-821c-7517f4d56841-000000"
+      },
+      "headersTruncated": false,
+      "sendingAccountId": "216822717350"
+    },
+    "bounce": {
+      "timestamp": "2026-11-01T23:21:12.470Z",
+      "bounceType": "Permanent",
+      "feedbackId": "010f01a1996ac041-9c61bed5-a918-4445-a041-dee509437004-000000",
+      "reportingMTA": "dns; amazonses.com",
+      "bounceSubType": "EmailValidationSuppressed",
+      "bouncedRecipients": [
+        {
+          "action": "failed",
+          "status": "5.1.1",
+          "emailAddress": "suppressionlist@simulator.amazonses.com",
+          "diagnosticCode": "Amazon SES has suppressed sending to this address due to email validation. The address quality confidence level is below your configured threshold. For details on validation checks and threshold configuration, see https://docs.aws.amazon.com/ses/latest/dg/email-validation.html"
+        }
+      ]
+    },
+    "eventType": "Bounce"
+  },
+  "region": "us-east-2",
+  "source": "aws.ses",
+  "account": "216822717350",
+  "version": "0",
+  "resources": [
+    "arn:aws:ses:us-east-2:216822717350:configuration-set/yisramail-marketing"
+  ],
+  "detail-type": "Email Bounced"
+}

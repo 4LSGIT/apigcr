@@ -138,6 +138,10 @@ const CTA_FN_DENYLIST = Object.freeze([
   // YisraVideo S4: a public link has no use for a read, and this one returns a
   // client's watch history.
   'video_watch_status',
+  // YisraMail T2 (ref/YISRAMAIL_DESIGN.md §5.4): writes consent-ledger
+  // opt-outs and campaign delivery state from a provider payload — engine
+  // plumbing that only the ses-events hook may run, never a public link.
+  'mail_event_ingest',
 ]);
 
 /** Chromium-backed functions: eligible, but a public repeatable link fans out load. */

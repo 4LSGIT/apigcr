@@ -20,6 +20,13 @@
  *     not parse to an SES id — C2 stores that id; the --check stage can still
  *     run.
  *
+ *   T2 (2026-11-02): --send also takes SES's mailbox simulator as --to
+ *     (success@ / bounce@ / complaint@ / ooto@ / suppressionlist@
+ *     simulator.amazonses.com) and [--campaign-id <tag>] [--result-id <tag>]
+ *     (default t1 / t1; [A-Za-z0-9_-]{1,256}, held by emailService). A
+ *     simulator send skips the DKIM next step: its proof is the SES event that
+ *     reaches /hooks/ses-events (local/2026-11-02_YISRAMAIL_T2_SES_EVENTS_RUNBOOK.md).
+ *
  *   node scripts/yisramailT1Acceptance.js --check <path-to-eml> [--domain news.4lsg.com]
  *     Offline. <path> = Gmail's "Show original" → "Download original" of the
  *     received message. Parses EVERY DKIM-Signature header and prints each
@@ -147,7 +154,9 @@ function withTimeout(promise, ms, what) {
 }
 
 /** The message --send sends: the exact sendEmailDirect options (exported for the unit test). */
-function acceptanceMessage(row, to, now = new Date()) {
+const SIMULATOR_RE = /@simulator\.amazonses\.com$/i;
+
+function acceptanceMessage(row, to, now = new Date(), { campaignId = 't1', resultId = 't1' } = {}) {
   const stamp = now.toISOString();
   return {
     bulk: true,
@@ -162,11 +171,11 @@ function acceptanceMessage(row, to, now = new Date()) {
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
       'List-Id': '<news.news.4lsg.com>',
     },
-    tags: { campaign_id: 't1', result_id: 't1' },
+    tags: { campaign_id: campaignId, result_id: resultId },
   };
 }
 
-async function send(db, { rowId, to, say = console.log }) {
+async function send(db, { rowId, to, campaignId, resultId, say = console.log }) {
   const emailService = require('../services/emailService');
   const [[row]] = await db.query('SELECT * FROM email_credentials WHERE id = ? LIMIT 1', [rowId]);
   if (!row) return { ok: false, line: `NO-GO — no email_credentials row ${rowId}. Nothing was sent.` };
@@ -174,7 +183,8 @@ async function send(db, { rowId, to, say = console.log }) {
     return { ok: false, line: `NO-GO — row ${rowId} (${row.email}) is not bulk_ok. Mark it bulk in the sender editor first (after the migration + deploy). Nothing was sent.` };
   }
   say(`row ${row.id}: ${row.email} via ${row.smtp_host}:${row.smtp_port} — events_driver ${row.events_driver || '(none)'}, driver_config ${row.driver_config ? JSON.stringify(row.driver_config) : '(none)'}`);
-  const msg = acceptanceMessage(row, to);
+  const msg = acceptanceMessage(row, to, new Date(), { campaignId, resultId });
+  say(`tags:              campaign_id=${msg.tags.campaign_id}, result_id=${msg.tags.result_id}`);
   let info;
   try {
     info = await withTimeout(emailService.sendEmailDirect(db, row, msg), SEND_TIMEOUT_MS, 'the SMTP send');
@@ -194,14 +204,16 @@ async function send(db, { rowId, to, say = console.log }) {
     if (r) logId = r.id; else await new Promise((res) => setTimeout(res, 300));
   }
   say(`email_log id:      ${logId == null ? '(not found within 3 s)' : logId}`);
-  const next = `Next: in Gmail (${to}) open "${msg.subject}" → ⋮ → Show original → Download original, then: node scripts/yisramailT1Acceptance.js --check <downloaded .eml path>`;
+  const next = SIMULATOR_RE.test(to)
+    ? `Next: SES publishes the event for ${to} to EventBridge within about a minute — read it on hook ses-events (runbook stage 7).`
+    : `Next: in Gmail (${to}) open "${msg.subject}" → ⋮ → Show original → Download original, then: node scripts/yisramailT1Acceptance.js --check <downloaded .eml path>`;
   if (!info.providerMessageId) {
     return { ok: false, line: `NO-GO — sent, but the SES message id did not parse from the 250 reply above (the driver's format guess is wrong): paste this output to MAIL_MAN. ${next}` };
   }
   return { ok: true, line: `GO — sent through SES; message id parsed. ${next}` };
 }
 
-module.exports = { parseHeaders, parseDkim, checkEml, acceptanceMessage, send, DEFAULT_DOMAIN, REPLY_TO };
+module.exports = { parseHeaders, parseDkim, checkEml, acceptanceMessage, send, DEFAULT_DOMAIN, REPLY_TO, SIMULATOR_RE };
 
 // ─────────────────────────────────────────────────────────────
 // CLI
@@ -210,7 +222,7 @@ module.exports = { parseHeaders, parseDkim, checkEml, acceptanceMessage, send, D
 if (require.main === module) {
   const argv = process.argv.slice(2);
   const arg = (k) => { const i = argv.indexOf(k); return i === -1 ? undefined : argv[i + 1]; };
-  const usage = 'usage: node scripts/yisramailT1Acceptance.js --send --row 17 --to it@4lsg.com | --check <path-to-eml> [--domain news.4lsg.com]';
+  const usage = 'usage: node scripts/yisramailT1Acceptance.js --send --row 17 --to it@4lsg.com [--campaign-id t2 --result-id t2-1] | --check <path-to-eml> [--domain news.4lsg.com]';
 
   if (argv.includes('--check')) {
     const file = arg('--check');
@@ -245,7 +257,7 @@ if (require.main === module) {
             host: process.env.host, user: process.env.user, password: process.env.password,
             database: process.env.database, timezone: 'Z', connectTimeout: 15_000, connectionLimit: 2,
           }).promise();
-          const r = await send(pool, { rowId, to });
+          const r = await send(pool, { rowId, to, campaignId: arg('--campaign-id') || 't1', resultId: arg('--result-id') || 't1' });
           console.log(r.line);
           process.exitCode = r.ok ? 0 : 1;
         } catch (err) {

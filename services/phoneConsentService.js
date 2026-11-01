@@ -619,4 +619,9 @@ module.exports = {
   reviewDueDate,
   OPEN_CLIENT_CASE_SQL,
   ACTIVE_ROW_LOCK_SQL,
+  // shared with services/mailEventService (YisraMail T2 — D17 bounce task):
+  // one client predicate, one assignee rule + its unassigned warning, one
+  // open-task status set
+  taskAssignee,
+  OPEN_TASK_STATUSES,
 };

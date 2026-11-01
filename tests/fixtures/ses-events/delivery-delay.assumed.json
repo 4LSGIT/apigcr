@@ -1,0 +1,77 @@
+{
+  "version": "0",
+  "id": "77777777-7777-7777-7777-777777777777",
+  "detail-type": "Email Delivery Delayed",
+  "source": "aws.ses",
+  "account": "123456789012",
+  "time": "2026-11-02T15:00:05Z",
+  "region": "us-east-2",
+  "resources": [
+    "arn:aws:ses:us-east-2:123456789012:configuration-set/yisramail-marketing"
+  ],
+  "detail": {
+    "eventType": "DeliveryDelay",
+    "mail": {
+      "timestamp": "2026-11-02T15:00:00.000Z",
+      "source": "Legal Solutions Group <news@news.example.com>",
+      "sendingAccountId": "123456789012",
+      "messageId": "0100019a3c2b1a00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-000000",
+      "destination": [
+        "slow@example.com"
+      ],
+      "headersTruncated": false,
+      "headers": [
+        {
+          "name": "From",
+          "value": "Legal Solutions Group <news@news.example.com>"
+        },
+        {
+          "name": "To",
+          "value": "slow@example.com"
+        }
+      ],
+      "commonHeaders": {
+        "from": [
+          "Legal Solutions Group <news@news.example.com>"
+        ],
+        "to": [
+          "slow@example.com"
+        ],
+        "messageId": "0100019a3c2b1a00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-000000",
+        "subject": "News"
+      },
+      "tags": {
+        "ses:configuration-set": [
+          "yisramail-marketing"
+        ],
+        "ses:source-ip": [
+          "192.0.2.1"
+        ],
+        "ses:from-domain": [
+          "news.example.com"
+        ],
+        "ses:caller-identity": [
+          "ses-smtp-user"
+        ],
+        "campaign_id": [
+          "7"
+        ],
+        "result_id": [
+          "41"
+        ]
+      }
+    },
+    "deliveryDelay": {
+      "timestamp": "2026-11-02T15:30:00.000Z",
+      "delayType": "TransientCommunicationFailure",
+      "expirationTime": "2026-11-03T15:00:00.000Z",
+      "delayedRecipients": [
+        {
+          "emailAddress": "slow@example.com",
+          "status": "4.4.1",
+          "diagnosticCode": "smtp; 421 4.4.1 timeout"
+        }
+      ]
+    }
+  }
+}

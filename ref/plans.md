@@ -1454,6 +1454,42 @@ ref/YISRAMAIL_DESIGN.md §5.2 "As built" says what shipped.
   currently go through Gmail's 1500/day budget — C1 decides whether they may
   use a bulk transport without a footer.
 
+## YisraMail T2 (provider events, 2026-11-02) — deferred
+
+ref/YISRAMAIL_DESIGN.md §5.4 "As built" says what shipped.
+- **Reject, delivery delay and rendering failure stay unverified until a real
+  one is captured** (step 0 confirmed Send / Delivery / Bounce / Complaint on
+  real events; the mailbox simulator cannot produce the other three). Their
+  fixtures are `tests/fixtures/ses-events/*.assumed.json` and the parser marks
+  them `VERIFY(step0)`; they touch delivery columns only, and an unrecognised
+  shape is counted `unknown_shape`, never thrown. Same for the DLQ message
+  body (the replay script) until a real dead-lettered event is seen.
+- **SES account-level suppression removal on re-opt-in.** A hard bounce or a
+  complaint also lands the address on SES's account suppression list, which
+  keeps refusing it after a staff re-opt-in. Removing it needs the SES API:
+  `SESv2 DeleteSuppressedDestination { EmailAddress }` (`@aws-sdk/client-sesv2`,
+  a new dependency) with an IAM user/role allowed
+  `ses:DeleteSuppressedDestination` on the account, called from the consent
+  opt-in path for email scope `marketing`. Not built — Fred rules.
+- **Open / click tracking is C6** (D11): the SES event destination publishes no
+  Open/Click today.
+- **transportHealth scans `campaign_results`** over the 24 h window (no index on
+  the *_at columns). Fine at today's volume; when C2 calls it per send at 10k
+  rows/day, add an index on `(delivered_at)` / `(bounced_at)` or measure first.
+- **A client-bounce task lost on a crash.** The D17 task is created AFTER the
+  event's commit; if `createTask` throws (or the instance dies) there, the
+  ledger event is recorded and a replay is a `duplicate`, so the task is never
+  retried. Rare; an outbox row for the follow-up would close it.
+- **The EventBridge rule's pattern is `source: aws.ses` only.** A second SES
+  configuration set in the same account would deliver its events to this hook
+  too (they would correlate to nothing and still record bounce/complaint
+  opt-outs). The captured events carry `resources` = the configuration set's
+  ARN: the runbook's stage 4 holds the tightened pattern (source + resources +
+  the seven detail-types) as an optional edit for Fred.
+- **Header names of a hook deleted before a process started** are not in the
+  credential-header union (lib/hookCredentialHeaders): a custom (non-static)
+  name stops being stripped from events for its old slug.
+
 ## From the contact-intake safety slices (2026-10-27) — deferred
 
 - **A transfer's donor isn't announced on the sync bus.** "Create a separate

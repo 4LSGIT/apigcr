@@ -134,7 +134,7 @@ describe('the SES driver', () => {
     for (const r of [null, undefined, '', '250 OK', '550 Ok 0100018b5f6a1b2c', '250 2.0.0 Ok: queued as 4ABC', 42]) {
       expect(ses.messageIdFromResponse(r)).toBeNull();
     }
-    expect(ses.events).toBeNull();
+    expect(typeof ses.events.parseDetailed).toBe('function');   // T2 filled the driver's events (tests/sesEvents.parse.test.js)
   });
 
   test('emailService.validateDriverConfig: the editor\'s check', () => {
