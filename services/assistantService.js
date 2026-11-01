@@ -3407,7 +3407,8 @@ async function literalFirmSender(db, channel, from) {
     if (!line) throw httpError(422, `SMS from "${from}" is not an active firm phone line — use one of the firm's 10-digit line numbers`);
     return `${line.display_name || 'Line'} (${line.phone_number})`;
   }
-  const [[box]] = await db.query('SELECT email, from_name FROM email_credentials WHERE email = ? LIMIT 1', [from]);
+  // bulk_ok = a marketing transport (YisraMail T1): never proposed as a sender.
+  const [[box]] = await db.query('SELECT email, from_name FROM email_credentials WHERE email = ? AND bulk_ok = 0 LIMIT 1', [from]);
   if (!box) throw httpError(422, `Email from "${from}" is not a configured firm mailbox`);
   return `${box.from_name ? `${box.from_name} ` : ''}<${box.email}>`;
 }

@@ -23,6 +23,18 @@
 // untouched: still one 'outbound-smtp' row keyed by info.messageId (= the
 // caller's messageId when it passed one), to_email = `to` only.
 //
+// Marketing-path options (YisraMail T1, emailService MARKETING-ONLY OPTIONS):
+// headers (already held to the List-Unsubscribe / List-Unsubscribe-Post /
+// List-Id allowlist by emailService), replyTo, tags, and the row's `driver`
+// (services/adapters/email/drivers/). They reach mailOptions ONLY when
+// present, exactly like the hub's: `headers` = the caller's allowlisted ones
+// then the driver's headersFor({emailRow, tags}) — the driver may add only
+// the names in its own driver.HEADERS (anything else throws before the
+// send); `replyTo` as given. The returned info gains providerMessageId =
+// driver.messageIdFromResponse(info.response), null without a driver or when
+// the reply does not parse. email_log is unchanged: delivery_info.response
+// already carries the raw reply line.
+//
 // email_log.delivery_info — WHAT A ROW DOES AND DOESN'T PROVE:
 //   The row is written as soon as transporter.sendMail RESOLVES. That means
 //   the relay returned 250 on the handoff and nothing more — it is NOT
@@ -114,6 +126,26 @@ function describeError(err) {
   });
 }
 
+/**
+ * The caller's (allowlisted) headers, then the driver's. A driver header name
+ * outside driver.HEADERS, or a value with CR/LF/NUL, is a programming error:
+ * throw before anything is sent.
+ */
+function mergeHeaders(headers, driver, emailRow, tags) {
+  const out = { ...(headers || {}) };
+  if (driver) {
+    const own = driver.HEADERS || [];
+    for (const [name, value] of Object.entries(driver.headersFor({ emailRow, tags }) || {})) {
+      if (!own.includes(name)) throw new Error(`smtp adapter: driver ${driver.name} may not set header "${name}"`);
+      if (typeof value !== 'string' || /[\r\n\0]/.test(value)) {
+        throw new Error(`smtp adapter: driver ${driver.name} header ${name} has an invalid value`);
+      }
+      out[name] = value;
+    }
+  }
+  return out;
+}
+
 async function sendEmail(db, {
   from, fromName, to, subject, text, html,
   attachments, attachmentUrls,
@@ -121,8 +153,11 @@ async function sendEmail(db, {
   emailRow,
   // hub-only (S3) — see the header
   cc, bcc, inReplyTo, references, messageId,
+  // marketing path (T1) — see the header
+  headers, replyTo, tags, driver,
 }) {
   const mergedAttachments = buildAttachments(attachments, attachmentUrls);
+  const allHeaders = mergeHeaders(headers, driver, emailRow, tags);
 
   const mailOptions = {
     from: fromName ? `"${fromName.replace(/"/g, '\\"')}" <${from}>` : from,
@@ -136,6 +171,8 @@ async function sendEmail(db, {
     ...(inReplyTo && { inReplyTo }),
     ...(references && { references }),
     ...(messageId && { messageId }),
+    ...(Object.keys(allHeaders).length && { headers: allHeaders }),
+    ...(replyTo && { replyTo }),
   };
 
   let info;
@@ -180,6 +217,7 @@ async function sendEmail(db, {
   }
   logEmail(db, info.messageId || `SENT-${Date.now()}`, from, to, subject, text,
            describeSend(info));
+  info.providerMessageId = driver ? driver.messageIdFromResponse(info.response) : null;
   return info;
 }
 
@@ -188,6 +226,12 @@ module.exports = {
     html: true,
     attachments_inline: true,  // nodemailer's {filename, content, ...}
     attachments_url: true,     // nodemailer fetches `path` URLs at send
+    // T1 (emailService MARKETING-ONLY OPTIONS):
+    bulk: true,                // may send from a bulk_ok row (marketing path)
+    headers: true,             // mailOptions.headers / replyTo + a driver's headers
+    tags: true,                // forwarded to the row's driver (no driver → unused)
+    batch: false,              // one recipient list per call
+    events: false,             // events come from the DRIVER, not the transport
   },
   sendEmail,
 };

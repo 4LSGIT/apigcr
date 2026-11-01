@@ -9,7 +9,8 @@
  * Returns:
  *   currentUser  — full row (stripped of sensitive fields) for the JWT user
  *   phoneLines   — active phone lines
- *   emailFrom    — email sender addresses
+ *   emailFrom    — email sender addresses; bulk_ok rows (a marketing
+ *                  transport, YisraMail T1) are never included
  *   users        — EVERY user, disabled ones included (pages resolve names on old
  *                  records through this list — never filter it). Each row
  *                  carries `active` (boolean): user_auth LIKE 'authorized%',
@@ -87,8 +88,11 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
         // today) so compose surfaces can render an editable signature block
         // client-side. Client-side append is what makes the signature visible
         // before send and lands it in logs / stored campaign bodies.
+        // bulk_ok rows (a marketing transport, YisraMail T1 §5.2) are never a
+        // sender on any compose surface.
         `SELECT id, email, from_name, provider, signature_html, signature_text
          FROM email_credentials
+         WHERE bulk_ok = 0
          ORDER BY id`
       ),
       req.db.query(

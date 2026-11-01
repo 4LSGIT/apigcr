@@ -2,7 +2,8 @@
 
 Status: **DRAFT v0.5 — 2026-10-29. P1 (consent core) built — §4.4 "As built";
 P2 (inbound SMS opt-out) built — §4.6 "As built"; P3 (email unsubscribe
-surface) built — §4.5 "As built"; nothing else built.** Ruled 2026-10-29 (Fred):
+surface) built — §4.5 "As built"; T1 (transport contract) built — §5.2 "As
+built"; nothing else built.** Ruled 2026-10-29 (Fred):
 D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
 Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
 later; D15 no RC push in v1, D16 over-cap operational sends with
@@ -805,8 +806,9 @@ sendEmail(db, { …existing…,
                 headers,   // base allowlist: List-Unsubscribe, List-Unsubscribe-Post,
                            //   List-Id — plus whatever the DRIVER adds (below)
                 replyTo,   // the monitored mailbox for replies
-                tags })    // { campaign_id, result_id } → the driver's correlation headers
-events: { verify(req, credential) → bool,
+                tags,      // { campaign_id, result_id } → the driver's correlation headers
+                driver })  // the row's events driver (email_credentials.events_driver)
+driver.events: { verify(req, credential) → bool,                 // T2 — on the DRIVER
           parse(req) → [{ type: 'delivered'|'bounce_hard'|'bounce_soft'|
                           'complaint'|'unsubscribe'|'open'|'click',
                           provider_message_id, recipient, at, provider_event_id,
@@ -829,8 +831,9 @@ events: { verify(req, credential) → bool,
   (`sendEmailDirect` with a `bulk_ok` row); the public `sendEmail` strips them
   like `HUB_ONLY_OPTIONS`.
 - `email_credentials.bulk_ok tinyint(1) NOT NULL DEFAULT 0` + an
-  `events_driver varchar(20) NULL` naming the parser (the send is plain SMTP;
-  events come from the provider).
+  `events_driver varchar(20) NULL` naming the driver (the send is plain SMTP;
+  events come from the provider) + `driver_config json NULL` (the driver's
+  settings — for SES the configuration-set name).
 - **The bulk row is not a sender anywhere else.** `GET /api/firm-data` ships
   every `email_credentials` row to every compose surface, and the public
   `sendEmail` picks a row by `from` — unfenced, the SES row would appear in
@@ -844,6 +847,85 @@ events: { verify(req, credential) → bool,
   budget (their sends land in `email_log` under that transport's source),
   which covers the old `ref/plans.md` "count campaigns against the budget"
   item; marketing volume never touches it.
+
+**As built (T1).** The contract and the fences; nothing sends marketing mail
+until C2 calls it.
+- **Options** (`services/emailService.sendEmailDirect`, destructured like the
+  hub's): `bulk` (the caller's assertion that it IS the marketing path),
+  `headers`, `reply_to`, `tags` — `MARKETING_ONLY_OPTIONS`. The public
+  `sendEmail` strips all four the way it strips `HUB_ONLY_OPTIONS`.
+  `headers`: `MARKETING_HEADERS` = `List-Unsubscribe`, `List-Unsubscribe-Post`,
+  `List-Id`, matched case-insensitively and passed on canonical; string values,
+  no CR / LF / NUL, ≤ 998 bytes. `reply_to`: one address by the comms hub's own
+  rule (`mailboxSendService.parseRecipient`). `tags`: ≤ 10 pairs of
+  `[A-Za-z0-9_-]{1,256}` strings; they reach the wire only through the row's
+  driver (no driver → nothing to carry them).
+- **Refusals** (an `Error` whose `.code` is the name and whose message starts
+  with it), all before any provider call: `bulk_row_requires_marketing_path`
+  (a `bulk_ok` row without `bulk:true` — keeps the hub, the diagnostic route
+  and every automation off the SES row even when they load it directly;
+  `bulk_ok` counts unless it is exactly 0 / false / NULL);
+  `bulk_requires_bulk_row`; `marketing_options_require_bulk` (headers /
+  reply_to / tags without `bulk:true` — thrown, never stripped);
+  `marketing_header_refused`; `marketing_reply_to_invalid`;
+  `marketing_tags_invalid`; `adapter_lacks_capability` (gmail and pabbly never
+  see these options or a driver); `unknown_events_driver`;
+  `events_driver_requires_bulk` (a driver on a row that is not `bulk_ok` —
+  fail closed, so a driver's headers never ride operational or hub mail). The public
+  `sendEmail` refuses a `bulk_ok` row outright: `bulk_sender_refused` ("… is
+  a marketing transport; automation, workflows and operational campaigns
+  cannot send from it"), which `campaignService.isTransientError` classifies
+  permanent by its code.
+- **Capabilities:** smtp `bulk / headers / tags: true, batch / events:
+  false` (events come from the driver, not the transport); gmail and pabbly
+  all five `false`.
+- **Driver** `services/adapters/email/drivers/ses.js`, chosen by
+  `email_credentials.events_driver` (`bulk_ok` rows only) through
+  emailService's `DRIVERS` whitelist (no dynamic require). Contract: `HEADERS` (the only names it may
+  add — the smtp adapter throws on any other), `validateConfig(cfg)`,
+  `headersFor({emailRow, tags})`, `messageIdFromResponse(response)`, `events`
+  = null until T2. SES adds `X-SES-CONFIGURATION-SET` (from
+  `driver_config.configuration_set`; omitted when absent — the identity's
+  default set applies) and `X-SES-MESSAGE-TAGS` (`k=v, k=v`; omitted without
+  tags), merged after the caller's headers. nodemailer re-cases header names
+  on the wire (`X-Ses-Message-Tags`, `List-ID`); names are case-insensitive.
+  The smtp adapter returns `info.providerMessageId` (the SES id from the
+  `250 Ok <id>` reply; null without a driver or when it does not parse);
+  `email_log` is unchanged — `delivery_info.response` keeps the raw line.
+- **Columns** (`scripts/yisramailT1Migrate.js`, CHECK / `--apply`, one
+  connection, `lock_wait_timeout` 10, verifies types / defaults / collation /
+  comments and the data rules below): `bulk_ok`, `events_driver`,
+  `driver_config` — each COMMENT carries its rule.
+- **Fences:** `bulk_ok = 0` on `GET /api/firm-data` `emailFrom` (every compose
+  surface), `GET /api/email-from`, the diagnostic sender list, Casey's
+  literal-sender check (`assistantService.literalFirmSender`), the
+  self-service signature list (`/api/me/signatures`) and a user's
+  `default_email` (`auth.profile`). `/internal/email-test/send` refuses a bulk
+  row (400) on both paths and its override clone carries `bulk_ok`.
+  `createCampaign` accepts `type` exactly `'email'` or `'sms'` (executeSend
+  treats any non-sms type as email) and for email loads the sender row: an
+  unknown sender throws (before T1 nothing checked it — every job failed at send) and
+  a bulk one throws ("Operational campaigns cannot send from a marketing
+  transport"). `mailboxService.assertSendCredential` refuses a bulk row (400)
+  and the Mailboxes admin's send-credential picker leaves it out; the hub's
+  `whyNot` reports `bulk_transport` (picker + 409 at send). The
+  sender editor (`routes/api.emailCredentials.js`, `connections.html`) exposes
+  the three columns on SMTP rows only and refuses (400): `bulk_ok` /
+  `events_driver` / `driver_config` on a non-SMTP row, a driver or config set
+  on a row that is not bulk (un-marking bulk clears both), an unknown driver,
+  a bad `driver_config`, a bulk row whose (smtp_host, smtp_user) another row shares
+  (naming it), a plain row taking a bulk row's login, and marking bulk a row a
+  mailbox sends through. Leaving SMTP clears the three; the test send refuses
+  a bulk row. The editor list (`GET /api/email-credentials`) still lists bulk
+  rows — it is the editor's source (the mailbox admin filters them out), not
+  a compose picker. The migration CHECK also NO-GOs on a driver or
+  `driver_config` on a row that is not bulk.
+- **Acceptance** `scripts/yisramailT1Acceptance.js`: `--send --row 17 --to …`
+  (one production send through the marketing path with the three headers, a
+  Reply-To and tags; prints the provider id, the 250 line, the `email_log`
+  id) and `--check <eml>` (GO only when the received message carries both
+  one-click headers AND the `d=news.4lsg.com` DKIM signature lists both in
+  `h=`). Acceptance: pending Fred's run.
 
 ### 5.3 Sending domain (P0, no code)
 
@@ -1242,7 +1324,7 @@ is ruled for that list (ruled 2026-10-30 for SS's own lead lists).
 | P2 | Inbound SMS opt-out — **built** (§4.6 "As built"; the reconcile ships dark) | **step 0:** RC consent-API permission/role/rate-group check + live STOP/START test on one RC and one Quo line + one captured consent-list response; keyword handler in the ingest of INCOMING texts, after the dedup precheck; RC 413 failures + read-only nightly consent reconcile (`sms_consent_sync`, behind `sms_rc_consent_sync_enabled`) → ledger; (the Quo confirmation job was built, then removed 2026-10-30 — Quo confirms REVOKE / OPT OUT itself); client-stranded staff task; free-text review task; `scripts/yisramailP2CheckInbound.js` (the wf17/wf18 `phone_log` wiring check, a deploy step) + per-provider inbound liveness alert | P1 |
 | P3 | Email unsubscribe surface — **built** (§4.5 "As built") | `comm_unsub_tokens` (+ `send_ref`) via `scripts/yisramailP3Migrate.js`; `services/unsubService.js` (mint for C2, lookup, one-click, page form); `/u/:token` GET page + one-click POST + prefs POST on the landing origin (all three `pageLanding` enumerations, test-locked; no-store / noindex / no-referrer; no per-IP limit on the one-click POST); `{{send.*}}` / `{{firm.*}}` resolver pseudo-tables; `lib/complianceFooter.js` (the footer block C2 injects); settings `consent_task_user_id`, `marketing_ad_label`, `marketing_debt_relief_statement` | P1 |
 | P4 | Staff consent UI | badges + history on contact rows; compose counts; SU suppression import/export | P1 |
-| T1 | Transport contract | adapter capabilities (`bulk`, `headers`, `tags`, `events`, `batch`); `headers` / `replyTo` / `tags` options through `sendEmailDirect` + `smtp.js` (marketing path only; public `sendEmail` strips them); driver-owned headers (SES `X-SES-*`); SES message id from the SMTP reply; `email_credentials.bulk_ok` + `events_driver`; bulk rows fenced out of `emailFrom`, public `sendEmail` and operational campaigns; DKIM `h=` acceptance test | — |
+| T1 | Transport contract — **built** (§5.2 As built) | adapter capabilities (`bulk`, `headers`, `tags`, `events`, `batch`); `headers` / `replyTo` / `tags` options through `sendEmailDirect` + `smtp.js` (marketing path only; public `sendEmail` strips them); driver-owned headers (SES `X-SES-*`); SES message id from the SMTP reply; `email_credentials.bulk_ok` + `events_driver`; bulk rows fenced out of `emailFrom`, public `sendEmail` and operational campaigns; DKIM `h=` acceptance test | — |
 | T2 | Events | SES → EventBridge API destination (+ SQS DLQ and a tested replay procedure) → YisraHook hook (`api_key` auth, `dedup_path` on the event id) → `mail_event_ingest` internal function (added to `CTA_FN_DENYLIST` — engine plumbing) → ledger (bounce/complaint/unsub) + `campaign_results` delivery columns by `result_id` tag + the per-transport complaint/bounce tally (§6.5); SES suppression-list removal on re-opt-in | T1, P1 |
 | C1 | Campaign hardening | `campaigns.class` / `topic_key`; 50 cap in `createCampaign` + D16 over-cap path; `campaigns.bulk` capability; `bulk_ok` refused for operational; **`marketing_send_enabled` kill switch (`'0'`): marketing refused 422 at create and skipped at send**; **send reservation / at-most-once for every campaign** (`sending` / `unknown` statuses); per-transport rate window at dispatch; per-campaign pump with bounded catch-up; cron per-tick `campaign_send` quota; `paused` status with defer semantics (§6.4 table); operational-class honesty prompt | P1, T1 |
 | C2 | Marketing send path | executeSend marketing branch: scope check, token mint, explicit text part, footer inject/lock + post-render assert, headers/tags, transport, send-start snapshot (MRPC 7.2(b)), `email_log` without body; **complaint/bounce transport hold enforced before every send** (§6.5); account-pause detection; test send (HTML escaping + the sandboxed preview already shipped — §6.3) | P1, **P2**, P3, C1, T2 |

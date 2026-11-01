@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-01T11:31:22.789Z
+-- Generated: 2026-11-01T20:51:32.517Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:a2f2c0c646208d1f24e2e12ae447cbcf
+-- Fingerprint: sha256:f4eba6d41fd55e4108b9c78aa1692ed0
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1895,7 +1895,10 @@ CREATE TABLE `email_credentials` (
   `from_name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `signature_html` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `signature_text` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
-  `owner_user` tinyint DEFAULT NULL
+  `owner_user` tinyint DEFAULT NULL,
+  `bulk_ok` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = a marketing (bulk) transport: never listed to a sender picker, refused by the public emailService.sendEmail, by createCampaign and as a mailbox send_credential_id; only sendEmailDirect({bulk:true}) — the campaign marketing path — may send from it. SMTP rows only; no other row may share its (smtp_host, smtp_user) and no mailbox may send through it (the sender editor refuses both). ref/YISRAMAIL_DESIGN.md §5.2',
+  `events_driver` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'names the provider driver (services/adapters/email/drivers/<name>.js) that adds its headers at send and parses its events (T2); bulk_ok rows only (emailService throws events_driver_requires_bulk otherwise). NULL = plain SMTP, no driver. Today: ses',
+  `driver_config` json DEFAULT NULL COMMENT 'driver-specific settings, e.g. {"configuration_set": "yisramail-marketing"} for ses; bulk_ok rows only, cleared with the driver. NULL = the provider defaults'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------

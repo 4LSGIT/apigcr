@@ -1358,6 +1358,25 @@ objects AND stored definitions). Readers and writers to move first:
 - **Topic-level consent on the contact page** (only `marketing` shows, as the
   row's "No marketing email" flag) — P4's badges.
 
+## YisraMail T1 (transport contract, 2026-11-01) — deferred
+
+ref/YISRAMAIL_DESIGN.md §5.2 "As built" says what shipped.
+- **`events_driver` beyond the bulk row** — a driver is allowed on `bulk_ok`
+  rows only (editor 400, `events_driver_requires_bulk` at send, migration
+  CHECK NO-GO), so gmail / pabbly rows and plain SMTP senders have none.
+  Transactional event tracking for operational mail would need its own rule
+  for which headers ride hub mail; Google's feedback loop is Postmaster
+  Tools, not events (§5.5).
+- **API send / batch** (`capabilities.batch`) — every adapter is one message
+  per call; SMTP covers v1's volume (§5.1). A provider API send would be a
+  driver concern (SES `SendBulkEmail`), with its own message-id mapping.
+- **Tags without a driver go nowhere.** A `bulk_ok` row with no
+  `events_driver` accepts `tags` and drops them (nothing to carry them); C2
+  may want to require a driver on a marketing row instead.
+- **The editor still lists bulk rows to any staff JWT** (`GET
+  /api/email-credentials` is `jwtOrApiKey`); harmless (no secrets), but the
+  list could move behind the SU gate once nothing else reads it.
+
 ## From the contact-intake safety slices (2026-10-27) — deferred
 
 - **A transfer's donor isn't announced on the sync bus.** "Create a separate

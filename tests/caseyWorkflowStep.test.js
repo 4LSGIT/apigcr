@@ -455,6 +455,21 @@ describe('ruling 15 — workflow send steps (insert / edit)', () => {
     await expect(insert(email('nobody@example.com'))).rejects.toThrow(/not a configured firm mailbox/);
   });
 
+  test('YisraMail T1: a bulk (marketing) transport is never accepted as a literal sender', async () => {
+    const db = sendDb();
+    const base = db.query.getMockImplementation();
+    db.query.mockImplementation(async (sql, params) => {
+      if (/FROM email_credentials/.test(sql)) {   // the SES row exists; the fence predicate hides it
+        const rows = [{ email: 'news@news.4lsg.com', from_name: 'News', bulk_ok: 1 }]
+          .filter((r) => r.email === params[0] && !(/\bbulk_ok = 0\b/.test(sql) && r.bulk_ok));
+        return [rows.map(({ email: e, from_name }) => ({ email: e, from_name }))];
+      }
+      return base(sql, params);
+    });
+    await expect(normalizeActionDraft(db, { kind: 'workflow.step_insert.v1', workflow_id: 27, step: email('news@news.4lsg.com'), evidence: CITE }, EVID))
+      .rejects.toThrow(/not a configured firm mailbox/);
+  });
+
   test('{{V.key}} after get_settings and {{V}} after get_setting resolve — the live forms', async () => {
     const a = await insert(email('{{settings.email_automations}}'), { step_number: 4 });
     expect(a.step).toMatchObject({ sender: '{{settings.email_automations}}', recipient: '{{billingUser.email}}' });

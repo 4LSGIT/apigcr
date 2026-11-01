@@ -216,11 +216,34 @@ async function createCampaign(db, { type, sender, subject, body, contactIds, sch
   if (!type || !sender || !body) {
     throw new Error('Missing required fields: type, sender, body');
   }
+  // Exactly these two spellings (T1): executeSend treats any non-'sms' type as
+  // email, so a campaign typed 'EMAIL' would otherwise skip the sender check
+  // below and still send email.
+  if (type !== 'email' && type !== 'sms') {
+    throw new Error(`type must be "email" or "sms" (got ${JSON.stringify(String(type)).slice(0, 40)})`);
+  }
   if (!contactIds || !contactIds.length) {
     throw new Error('At least one contact is required');
   }
   if (type === 'email' && !subject) {
     throw new Error('Subject is required for email campaigns');
+  }
+
+  // Email sender: a configured email_credentials row, and never a marketing
+  // (bulk_ok) transport — every campaign here is operational until C1 adds
+  // the marketing class (YisraMail T1, ref/YISRAMAIL_DESIGN.md §5.2). Before
+  // T1 an unknown sender was only discovered by every job failing at send.
+  if (type === 'email') {
+    const [[senderRow]] = await db.query(
+      'SELECT id, bulk_ok FROM email_credentials WHERE email = ? LIMIT 1',
+      [sender]
+    );
+    if (!senderRow) {
+      throw new Error(`Email sender ${sender} is not a configured sender`);
+    }
+    if (senderRow.bulk_ok != null && Number(senderRow.bulk_ok) !== 0) {
+      throw new Error(`Operational campaigns cannot send from a marketing transport (${sender})`);
+    }
   }
 
   // MMS validation: attachment requires an MMS-capable line.
@@ -824,6 +847,11 @@ async function recordResult(db, campaignId, contactId, status, error, meta) {
 function isTransientError(err) {
   if (!err) return false;
 
+  // emailService's marketing-transport refusal (T1): the sender row is a
+  // bulk_ok row, which no retry changes. Decided by code, not by the message
+  // heuristics below — the address it names could contain "timeout" or a 5xx.
+  if (err.code === 'bulk_sender_refused') return false;
+
   // Node / nodemailer error codes (network-layer failures)
   const TRANSIENT_CODES = new Set([
     'ESOCKET', 'ETIMEDOUT', 'ETIME', 'ECONNRESET', 'ECONNREFUSED',
@@ -931,5 +959,8 @@ module.exports = {
   listCampaigns,
   getCampaignResults,
   executeSend,
-  previewCampaign
+  previewCampaign,
+  // TEST SEAM (T1): the bulk_sender_refused classification is pinned by
+  // tests/emailService.marketingOptions.test.js. Additive.
+  isTransientError
 };

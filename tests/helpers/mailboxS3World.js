@@ -55,7 +55,7 @@ function makeWorld() {
     T.email_credentials.push({
       id, email: `sender${id}@firm.test`, from_name: `Sender ${id}`, provider: 'smtp', credential_id: null,
       smtp_host: 'mail.firm.test', smtp_port: 587, smtp_user: `sender${id}@firm.test`, smtp_pass: 'ENCv1:x', smtp_secure: 0,
-      signature_html: null, signature_text: null, owner_user: null, ...over,
+      signature_html: null, signature_text: null, owner_user: null, bulk_ok: 0, events_driver: null, driver_config: null, ...over,
     });
     return id;
   };
@@ -118,11 +118,11 @@ function makeWorld() {
       const c = T.email_credentials.find(x => x.id === Number(p[0]));
       return [c ? [clone(c)] : []];
     }
-    if (sql === "SELECT id, email, provider, ((signature_html IS NOT NULL AND signature_html <> '') OR (signature_text IS NOT NULL AND signature_text <> '')) AS has_sig FROM email_credentials WHERE id IN (?)") {
+    if (sql === "SELECT id, email, provider, bulk_ok, ((signature_html IS NOT NULL AND signature_html <> '') OR (signature_text IS NOT NULL AND signature_text <> '')) AS has_sig FROM email_credentials WHERE id IN (?)") {
       rec();
       const ids = new Set(p[0].map(Number));
       return [T.email_credentials.filter(c => ids.has(c.id)).map(c => ({
-        id: c.id, email: c.email, provider: c.provider,
+        id: c.id, email: c.email, provider: c.provider, bulk_ok: c.bulk_ok,
         has_sig: (c.signature_html != null && c.signature_html !== '') || (c.signature_text != null && c.signature_text !== '') ? 1 : 0,
       }))];
     }

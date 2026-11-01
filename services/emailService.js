@@ -46,9 +46,62 @@
  *   present, so a call without them builds exactly what it built before.
  *   Grant checks are NOT here (design D6): the hub's route checks can_send.
  *
+ *   MARKETING-ONLY OPTIONS (YisraMail T1, ref/YISRAMAIL_DESIGN.md §5.2) —
+ *   sendEmailDirect only, and only together with a bulk_ok row:
+ *     bulk               true = the caller asserts it IS the campaign marketing
+ *                        path. Required to send from a bulk_ok row; refused on
+ *                        any other row.
+ *     headers            { 'List-Unsubscribe', 'List-Unsubscribe-Post',
+ *                          'List-Id' } — nothing else (MARKETING_HEADERS; keys
+ *                        matched case-insensitively, passed on canonical);
+ *                        string values, no CR/LF/NUL, ≤ 998 bytes
+ *     reply_to           ONE address (the comms hub's parseRecipient rule)
+ *     tags               { key: value } — [A-Za-z0-9_-]{1,256} each, ≤ 10;
+ *                        reach the wire only through the row's DRIVER
+ *   Refusals (Error, .code = the name, message starts with it):
+ *     bulk_row_requires_marketing_path   bulk_ok row without bulk:true — keeps
+ *                                        the hub, the diagnostic route and
+ *                                        every automation off the SES row even
+ *                                        when they load it directly
+ *     bulk_requires_bulk_row             bulk:true on a row that is not bulk_ok
+ *     marketing_options_require_bulk     headers / reply_to / tags without
+ *                                        bulk:true (a programming error, never
+ *                                        stripped silently)
+ *     marketing_header_refused           a header outside the allowlist, or a
+ *                                        bad value
+ *     marketing_reply_to_invalid / marketing_tags_invalid
+ *     adapter_lacks_capability           the row's adapter does not declare
+ *                                        bulk / headers / tags (gmail, pabbly
+ *                                        never see these options), or a row
+ *                                        names a driver on an adapter that
+ *                                        cannot carry its headers
+ *     unknown_events_driver              email_credentials.events_driver names
+ *                                        no entry of DRIVERS
+ *     events_driver_requires_bulk        a driver on a row that is not bulk_ok —
+ *                                        a driver belongs to the marketing
+ *                                        transport only (its headers must never
+ *                                        ride operational or hub mail); a
+ *                                        hand-edited row fails loudly
+ *   The public sendEmail STRIPS all four (MARKETING_ONLY_OPTIONS, like
+ *   HUB_ONLY_OPTIONS) and refuses a bulk_ok row outright: bulk_sender_refused
+ *   (campaignService.isTransientError classifies it permanent).
+ *
+ * Drivers (services/adapters/email/drivers/<name>.js — contract in ses.js):
+ *   email_credentials.events_driver → DRIVERS (whitelist, no dynamic
+ *   require), on bulk_ok rows only. sendEmailDirect hands the adapter
+ *   `driver` (absent when the column is NULL); the adapter merges driver.headersFor({emailRow, tags})
+ *   AFTER the caller's allowlisted headers and returns info.providerMessageId
+ *   from driver.messageIdFromResponse(info.response).
+ *
  * Adapter contract (services/adapters/email/<provider>.js):
  *   module.exports = {
- *     capabilities: { html, attachments_inline, attachments_url },
+ *     capabilities: { html, attachments_inline, attachments_url,
+ *                     bulk,      // may send from a bulk_ok row (marketing path)
+ *                     headers,   // carries `headers` / `replyTo` and a driver's headers
+ *                     tags,      // forwards `tags` to the row's driver
+ *                     batch,     // one call, many recipients (none yet)
+ *                     events },  // the ADAPTER parses provider events (none —
+ *                                //   events belong to the driver)
  *     async sendEmail(db, {
  *       from, fromName, to, subject,
  *       text, html,          // already normalized; both populated
@@ -57,7 +110,10 @@
  *       attachmentNames,     // raw legacy csv, may be undefined
  *       credential,          // credentials row, null when emailRow.credential_id is null
  *       emailRow,            // full email_credentials row (or synthesized one)
- *     }) → providerResult
+ *       // marketing path only (absent otherwise):
+ *       headers, replyTo, tags,
+ *       driver,              // absent when emailRow.events_driver is NULL
+ *     }) → providerResult    // smtp: nodemailer info + providerMessageId
  *   }
  *
  * Adding a provider:
@@ -84,6 +140,146 @@ const ADAPTERS = {
   pabbly: require('./adapters/email/pabbly'),
   gmail:  require('./adapters/email/gmail'),
 };
+
+// Whitelist of email_credentials.events_driver → driver module (T1). Same
+// reason as ADAPTERS: never require() a DB-controlled string.
+const DRIVERS = {
+  ses: require('./adapters/email/drivers/ses'),
+};
+
+// -------------------- MARKETING PATH (T1) --------------------
+
+/** The headers a marketing caller may set (§5.2 base allowlist), canonical case. */
+const MARKETING_HEADERS = Object.freeze(['List-Unsubscribe', 'List-Unsubscribe-Post', 'List-Id']);
+const HEADER_VALUE_MAX_BYTES = 998;     // RFC 5322 line limit
+const TAG_RE = /^[A-Za-z0-9_-]{1,256}$/;
+const TAGS_MAX = 10;
+
+function fenceError(code, detail) {
+  const err = new Error(`${code}: ${detail}`);
+  err.code = code;
+  return err;
+}
+
+/**
+ * A bulk_ok row. FAIL CLOSED: anything but an explicit 0 / false / NULL counts
+ * (mysql2 returns tinyint as a number; a synthesized row may carry true / '1').
+ */
+function isBulkRow(row) {
+  if (!row || row.bulk_ok == null || row.bulk_ok === false) return false;
+  return Number(row.bulk_ok) !== 0;
+}
+
+function rowLabel(row) {
+  return `email_credentials ${row && row.id != null ? row.id : '<synthesized>'} (${row && row.email})`;
+}
+
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v) &&
+    (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);
+}
+
+/** headers → { canonicalName: value } or throw marketing_header_refused. */
+function canonicalHeaders(headers) {
+  if (!isPlainObject(headers)) throw fenceError('marketing_header_refused', 'headers must be an object');
+  const out = {};
+  for (const [key, value] of Object.entries(headers)) {
+    const canon = MARKETING_HEADERS.find((h) => h.toLowerCase() === String(key).toLowerCase());
+    if (!canon) {
+      throw fenceError('marketing_header_refused',
+        `"${String(key).slice(0, 60)}" is not an allowed header (allowed: ${MARKETING_HEADERS.join(', ')})`);
+    }
+    if (Object.prototype.hasOwnProperty.call(out, canon)) throw fenceError('marketing_header_refused', `${canon} given twice`);
+    if (typeof value !== 'string' || value === '') throw fenceError('marketing_header_refused', `${canon} must be a non-empty string`);
+    if (/[\r\n\0]/.test(value)) throw fenceError('marketing_header_refused', `${canon} contains CR, LF or NUL`);
+    if (Buffer.byteLength(value, 'utf8') > HEADER_VALUE_MAX_BYTES) {
+      throw fenceError('marketing_header_refused', `${canon} is longer than ${HEADER_VALUE_MAX_BYTES} bytes`);
+    }
+    out[canon] = value;
+  }
+  return out;
+}
+
+/** reply_to → one formatted address, by the comms hub's own rule (mailboxSendService.parseRecipient). */
+function canonicalReplyTo(replyTo) {
+  if (typeof replyTo !== 'string') throw fenceError('marketing_reply_to_invalid', 'reply_to must be one address string');
+  // lazy require: mailboxSendService requires this module at load.
+  const { parseRecipient, formatAddr } = require('./mailbox/mailboxSendService');
+  try {
+    return formatAddr(parseRecipient(replyTo, 'reply_to'));
+  } catch (err) {
+    throw fenceError('marketing_reply_to_invalid', err.message);
+  }
+}
+
+function canonicalTags(tags) {
+  if (!isPlainObject(tags)) throw fenceError('marketing_tags_invalid', 'tags must be an object');
+  const entries = Object.entries(tags);
+  if (entries.length > TAGS_MAX) throw fenceError('marketing_tags_invalid', `at most ${TAGS_MAX} tags`);
+  for (const [k, v] of entries) {
+    if (!TAG_RE.test(k) || typeof v !== 'string' || !TAG_RE.test(v)) {
+      throw fenceError('marketing_tags_invalid', `tag "${String(k).slice(0, 60)}" — keys and values are 1–256 of A-Z a-z 0-9 _ -`);
+    }
+  }
+  return Object.fromEntries(entries);
+}
+
+/**
+ * email_credentials.events_driver → the driver module, null when unset.
+ * A driver on a non-bulk row, or an unknown one → throw (fail closed).
+ */
+function resolveDriver(emailRow) {
+  const name = emailRow && emailRow.events_driver;
+  if (name == null || name === '') return null;
+  if (!isBulkRow(emailRow)) {
+    throw fenceError('events_driver_requires_bulk', `${rowLabel(emailRow)} names events_driver "${String(name).slice(0, 40)}" but is not a bulk_ok row`);
+  }
+  if (!Object.prototype.hasOwnProperty.call(DRIVERS, name)) {
+    throw fenceError('unknown_events_driver', `${rowLabel(emailRow)} names events_driver "${String(name).slice(0, 40)}"`);
+  }
+  return DRIVERS[name];
+}
+
+/**
+ * The T1 fence, run by sendEmailDirect before dispatch. → what the adapter
+ * receives: { marketing, headers, replyTo, tags, driver }.
+ */
+function marketingDispatch(emailRow, adapter, { bulk, headers, reply_to, tags }) {
+  const caps = adapter.capabilities || {};
+  const hasHeaders = headers !== undefined && headers !== null;
+  const hasReplyTo = reply_to !== undefined && reply_to !== null;
+  const hasTags    = tags !== undefined && tags !== null;
+  const bulkRow = isBulkRow(emailRow);
+
+  if (bulkRow && bulk !== true) {
+    throw fenceError('bulk_row_requires_marketing_path',
+      `${rowLabel(emailRow)} is a marketing (bulk) transport; only the campaign marketing path (bulk:true) may send from it`);
+  }
+  if (bulk === true && !bulkRow) {
+    throw fenceError('bulk_requires_bulk_row', `${rowLabel(emailRow)} is not a bulk_ok row`);
+  }
+  if (bulk !== true && (hasHeaders || hasReplyTo || hasTags)) {
+    throw fenceError('marketing_options_require_bulk', 'headers / reply_to / tags are marketing-path options (bulk:true) only');
+  }
+
+  const driver = resolveDriver(emailRow);
+  if (driver && !caps.headers) {
+    throw fenceError('adapter_lacks_capability', `${rowLabel(emailRow)}: provider ${emailRow.provider} cannot carry driver ${driver.name} headers`);
+  }
+  if (bulk !== true) return { marketing: false, driver };
+
+  if (!caps.bulk) throw fenceError('adapter_lacks_capability', `provider ${emailRow.provider} cannot send bulk`);
+  if ((hasHeaders || hasReplyTo) && !caps.headers) throw fenceError('adapter_lacks_capability', `provider ${emailRow.provider} cannot set headers`);
+  if (hasTags && !caps.tags) throw fenceError('adapter_lacks_capability', `provider ${emailRow.provider} cannot carry tags`);
+
+  return {
+    marketing: true,
+    headers: hasHeaders ? canonicalHeaders(headers) : undefined,
+    replyTo: hasReplyTo ? canonicalReplyTo(reply_to) : undefined,
+    tags:    hasTags ? canonicalTags(tags) : undefined,
+    driver,
+  };
+}
 
 // -------------------- BODY NORMALIZATION --------------------
 
@@ -201,6 +397,8 @@ async function sendEmailDirect(db, emailRow, {
   signature = false,
   // HUB-ONLY OPTIONS (header) — absent for every caller but the comms hub.
   cc, bcc, in_reply_to, references, message_id, thread_id,
+  // MARKETING-ONLY OPTIONS (header, T1) — the campaign marketing path only.
+  bulk, headers, reply_to, tags,
 }) {
   if (!from || !to || !subject) {
     throw new Error('Missing required email fields (from, to, subject)');
@@ -229,6 +427,10 @@ async function sendEmailDirect(db, emailRow, {
   if (!adapter) {
     throw new Error(`Unknown email provider '${emailRow.provider}' for sender: ${from}`);
   }
+
+  // T1 fence: bulk rows only via bulk:true, marketing options only with it,
+  // and the row's driver (if any) resolved — all BEFORE any provider call.
+  const mkt = marketingDispatch(emailRow, adapter, { bulk, headers, reply_to, tags });
 
   // Load credential if linked.
   let credential = null;
@@ -262,6 +464,10 @@ async function sendEmailDirect(db, emailRow, {
     references,
     messageId:  message_id,
     threadId:   thread_id,
+    // Marketing path (T1): present only on a bulk:true send; the driver only
+    // when the row names one.
+    ...(mkt.marketing && { headers: mkt.headers, replyTo: mkt.replyTo, tags: mkt.tags }),
+    ...(mkt.driver && { driver: mkt.driver }),
   });
 }
 
@@ -272,9 +478,17 @@ async function sendEmailDirect(db, emailRow, {
  */
 const HUB_ONLY_OPTIONS = Object.freeze(['cc', 'bcc', 'in_reply_to', 'references', 'message_id', 'thread_id']);
 
-function withoutHubOnly(opts) {
+/**
+ * The options only the campaign marketing path may pass (sendEmailDirect with
+ * a bulk_ok row). The public sendEmail drops them the same way.
+ */
+const MARKETING_ONLY_OPTIONS = Object.freeze(['bulk', 'headers', 'reply_to', 'tags']);
+
+/** The public sendEmail's copy of opts: hub-only AND marketing-only options removed. */
+function withoutDirectOnlyOptions(opts) {
   const out = { ...opts };
   for (const k of HUB_ONLY_OPTIONS) delete out[k];
+  for (const k of MARKETING_ONLY_OPTIONS) delete out[k];
   return out;
 }
 
@@ -313,18 +527,39 @@ async function sendEmail(db, opts) {
   if (!emailRow) {
     throw new Error(`No credentials found for sender: ${from}`);
   }
+  // A marketing transport is never an automation / workflow / campaign
+  // sender (§5.2). Permanent — campaignService.isTransientError says so.
+  if (isBulkRow(emailRow)) {
+    throw fenceError('bulk_sender_refused',
+      `${emailRow.email} is a marketing transport; automation, workflows and operational campaigns cannot send from it`);
+  }
 
   // Forward already-normalized bodies; sendEmailDirect will idempotently
-  // re-normalize for direct callers. Hub-only options never pass this way.
+  // re-normalize for direct callers. Hub-only and marketing-only options never
+  // pass this way.
   return sendEmailDirect(db, emailRow, {
-    ...withoutHubOnly(opts),
+    ...withoutDirectOnlyOptions(opts),
     text: bodies.text,
     html: bodies.html,
   });
 }
 
 const VALID_PROVIDERS = Object.freeze(Object.keys(ADAPTERS));
+const VALID_EVENTS_DRIVERS = Object.freeze(Object.keys(DRIVERS));
+
+/** driver_config check for the editor route: null = valid (or no driver), else the message. */
+function validateDriverConfig(driverName, cfg) {
+  if (driverName == null || driverName === '') {
+    return cfg == null ? null : 'driver_config needs an events_driver';
+  }
+  if (!Object.prototype.hasOwnProperty.call(DRIVERS, driverName)) return `unknown events_driver "${String(driverName).slice(0, 40)}"`;
+  return DRIVERS[driverName].validateConfig(cfg);
+}
 
 // normalizeBodies is exported as a TEST SEAM (pure function, no SMTP/adapters).
 // Additive — nothing else imports it.
-module.exports = { sendEmail, sendEmailDirect, VALID_PROVIDERS, normalizeBodies, HUB_ONLY_OPTIONS };
+module.exports = {
+  sendEmail, sendEmailDirect, VALID_PROVIDERS, normalizeBodies, HUB_ONLY_OPTIONS,
+  // T1
+  MARKETING_ONLY_OPTIONS, MARKETING_HEADERS, VALID_EVENTS_DRIVERS, isBulkRow, validateDriverConfig,
+};

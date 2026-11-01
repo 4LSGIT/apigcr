@@ -41,7 +41,7 @@ router.get('/api/me/signatures', jwtOrApiKey, async (req, res) => {
     const [rows] = await req.db.query(
       `SELECT id, email, from_name, signature_html, signature_text
        FROM email_credentials
-       WHERE owner_user = ?
+       WHERE owner_user = ? AND bulk_ok = 0
        ORDER BY id`,
       [userId]
     );
@@ -94,7 +94,7 @@ router.put('/api/me/signatures/:id', jwtOrApiKey, async (req, res) => {
     const [[row]] = await req.db.query(
       `SELECT id, email, signature_html, signature_text
        FROM email_credentials
-       WHERE id = ? AND owner_user = ?
+       WHERE id = ? AND owner_user = ? AND bulk_ok = 0
        LIMIT 1`,
       [id, userId]
     );

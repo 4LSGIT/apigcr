@@ -154,8 +154,9 @@ router.post("/api/auth/update-profile", jwtOrApiKey, async (req, res) => {
       ? (default_phone ? String(default_phone).replace(/\D/g, "").slice(-10) : null)
       : undefined;
     if (defEmail) {
+      // bulk_ok = a marketing transport (YisraMail T1): never a default sender.
       const [[cred]] = await req.db.query(
-        "SELECT id FROM email_credentials WHERE email = ? LIMIT 1",
+        "SELECT id FROM email_credentials WHERE email = ? AND bulk_ok = 0 LIMIT 1",
         [defEmail]
       );
       if (!cred) {

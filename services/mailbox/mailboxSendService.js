@@ -147,6 +147,7 @@ const REASON_TEXT = Object.freeze({
   credential_missing: 'This mailbox\'s send credential no longer exists (a superuser re-points it in Admin → Mailboxes).',
   unsupported_provider: 'This mailbox sends through Pabbly, which cannot send replies or Cc/Bcc — a superuser re-points it to an SMTP or Gmail credential.',
   credential_mismatch: 'This mailbox\'s Google sender is for a different address — Gmail would send the mail under its own address instead. A superuser re-points it (Admin → Mailboxes) to the sender whose address is the mailbox\'s.',
+  bulk_transport: 'This mailbox\'s send credential is a marketing (bulk) transport, which never sends staff mail — a superuser re-points it (Admin → Mailboxes).',
 });
 
 
@@ -411,6 +412,11 @@ function whyNot(mb, cred) {
   if (mb.send_credential_id == null) return 'no_send_credential';
   if (!cred) return 'credential_missing';
   if (!SEND_PROVIDERS.includes(String(cred.provider))) return 'unsupported_provider';
+  // A bulk_ok row is the campaign marketing path's only (YisraMail T1 §5.2):
+  // never a mailbox identity, never counted in the hub's budget. The save is
+  // refused by mailboxService.assertSendCredential; this catches a row made
+  // bulk after the box was pointed at it (emailService refuses the send too).
+  if (cred.bulk_ok != null && Number(cred.bulk_ok) !== 0) return 'bulk_transport';
   // The Gmail API sends as the address only when it is that account's own
   // (or a verified alias — which is what each gmail email_credentials row
   // IS). Any other From is silently rewritten to the account's primary
@@ -473,7 +479,7 @@ async function listIdentities(db, userId) {
   const creds = new Map();
   if (credIds.length) {
     const [cr] = await db.query(
-      `SELECT id, email, provider,
+      `SELECT id, email, provider, bulk_ok,
               ((signature_html IS NOT NULL AND signature_html <> '') OR (signature_text IS NOT NULL AND signature_text <> '')) AS has_sig
          FROM email_credentials WHERE id IN (?)`,
       [credIds]

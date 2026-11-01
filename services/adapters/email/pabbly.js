@@ -87,6 +87,13 @@ module.exports = {
     html: true,
     attachments_inline: false,  // Pabbly doesn't accept inline buffers
     attachments_url: true,
+    // T1: never the marketing path — emailService refuses bulk / headers /
+    // tags / a driver for this provider before dispatch (§5.2: no bulk_ok here).
+    bulk: false,
+    headers: false,
+    tags: false,
+    batch: false,
+    events: false,
   },
   sendEmail,
 };

@@ -26,6 +26,16 @@ Per-sender config (`host`/`port`/`user`/`pass`/`secure`/`from_name`) plus `provi
 
 `smtp_pass` is ENCv1-encrypted: the API encrypts on write, and the SMTP adapter refuses a non-encrypted value outright (`services/adapters/email/smtp.js`). Gmail rows don't use it. The comms hub's "Google senders" (03-YisraFlow sending chapter) are these `provider='gmail'` rows.
 
+#### Marketing transport (SMTP senders only)
+
+The SMTP section of the Email Senders editor has a **Marketing transport** block with three fields (YisraMail T1 — `ref/YISRAMAIL_DESIGN.md` §5.2):
+
+- **Bulk / marketing transport** (`bulk_ok`) — marks the sender as the firm's newsletter transport (today: `news@news.4lsg.com` through Amazon SES). What staff see: the address **disappears from every From picker** — Comms, the sending form, workflow and sequence steps, campaigns, Casey's proposals, the Settings default-sender list — and nothing but a marketing campaign can send from it. Automations, workflows, operational campaigns and the diagnostic sender are refused (`bulk_sender_refused`); the comms hub never offers it as an identity, refuses to assign it as a mailbox's send credential, and answers a send through it with a 409 (`bulk_transport`). The Mailboxes admin's send-credential picker leaves it out, and the editor's **Test** button is hidden for it (a test send would be refused too). Its SMTP login may not be shared with any other sender, and no mailbox may send through it — the editor refuses either with a message naming the other row or mailbox. Only SMTP senders can be bulk.
+- **Events driver** (`events_driver`) — blank (plain SMTP) or `ses`; **bulk senders only** (the editor refuses it on any other). The driver adds the provider's own tracking headers to each send and will read its delivery / bounce / complaint events (T2).
+- **Configuration set** (stored in `driver_config` as `{"configuration_set": "…"}`) — SES only, bulk senders only; blank uses the sending identity's default configuration set.
+
+Unticking Bulk clears the driver and the configuration set; switching a sender away from SMTP clears all three. The list shows a **BULK** badge on such a sender.
+
 ## Architecture
 
 ```
@@ -141,7 +151,7 @@ Reveal endpoint (`GET /api/credentials/:id/reveal`) decrypts and returns plainte
 | `GET /auth/oauth/callback` | **public** | OAuth provider redirect target. Security via unguessable `state`. |
 | `POST /api/credentials/:id/refresh` | admin | manual refresh trigger |
 | `POST /api/credentials/:id/revoke` | admin | revoke + clear |
-| `GET /api/email-credentials` | any auth user | dropdowns |
+| `GET /api/email-credentials` | any auth user | the editor's list and the mailbox admin's send-credential picker — every row, bulk ones included (compose pickers read `firmData.emailFrom`, which leaves bulk rows out) |
 | `GET /api/email-credentials/:id` | admin | full row including smtp_pass |
 | `POST/PUT/DELETE /api/email-credentials` | admin | CRUD |
 | `POST /api/email-credentials/:id/test` | admin | send test email |

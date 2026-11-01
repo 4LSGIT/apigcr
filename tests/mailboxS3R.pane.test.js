@@ -145,3 +145,21 @@ describe('mailbox admin — send-as (alias) mode', () => {
     expect(Object.keys(lastWrite(calls).payload)).toEqual(['alias_of']);
   });
 });
+
+describe('mailbox admin — the send-credential picker (YisraMail T1)', () => {
+  test('a bulk_ok (marketing transport) credential is never offered; the others are', async () => {
+    const { window, doc, errors } = await boot({
+      rows: [box(1)],
+      handler: (url) => (url === '/api/email-credentials' ? { email_credentials: [
+        { id: 6, email: 'it@firm.test', provider: 'gmail', bulk_ok: 0 },
+        { id: 17, email: 'news@news.firm.test', provider: 'smtp', bulk_ok: 1 },
+        { id: 4, email: 'ops@firm.test', provider: 'smtp' },
+      ] } : undefined),
+    });
+    expect(errors).toEqual([]);
+    doc.getElementById('new-btn').click();
+    await tick(window);
+    const opts = [...doc.getElementById('mb-cred').options].map((o) => o.value).filter(Boolean);
+    expect(opts).toEqual(['6', '4']);
+  });
+});

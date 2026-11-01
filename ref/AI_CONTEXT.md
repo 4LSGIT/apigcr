@@ -191,6 +191,17 @@ body. Governing migrations in `ref/migrations/`.*
   8.4.11): a DROP does not fail on `yc_report`'s per-column grant — the grant
   stays ORPHANED in `mysql.columns_priv` (inert; it re-attaches to a later
   column of the same name) until a re-provision or targeted REVOKE clears it.
+- **Marketing transport fence (YisraMail T1, 2026-11-01 — ref/YISRAMAIL_DESIGN.md
+  §5.2 "As built" holds the option, refusal and driver contract):**
+  `email_credentials.bulk_ok = 1` marks a marketing (bulk) transport (the SES
+  row); only `emailService.sendEmailDirect(…, {bulk:true})` — C2's marketing
+  path — may send from it, and its marketing-only options exist nowhere else.
+  An `events_driver` (bulk rows only) adds the provider's headers at send.
+  Invariants: every reader that lists or picks a sender filters
+  `bulk_ok = 0`, and a new one must too; a caller that synthesizes an
+  `emailRow` from a real row carries `bulk_ok`; no other row shares a bulk
+  row's SMTP login and no mailbox sends through it (the editor refuses both —
+  the hub's budget groups by login).
 - **Recipient consent (YisraMail P1, 2026-10-29 — ref/YISRAMAIL_DESIGN.md
   §4.1–§4.4, "As built"):** consent belongs to a DESTINATION (10-digit number
   / lowercased address), per channel and SCOPE, in `comm_consent_state` (THE
@@ -1771,6 +1782,11 @@ is recorded as failed so completion can finalize. Unrecognized errors
 default PERMANENT (duplicate sends are worse than one-attempt failures).
 Cancellation deletes pending jobs by name prefix; in-flight jobs re-check
 status and record 'skipped'. Contact refs only in resolver context.
+**Email sender check at create (YisraMail T1):** `createCampaign` loads an
+email campaign's sender from `email_credentials` — unknown → throws; a
+`bulk_ok` (marketing transport) row → throws (every campaign is operational
+until C1's class). A sender made bulk after create fails each send with the
+permanent `bulk_sender_refused`. ref/YISRAMAIL_DESIGN.md §5.2.
 
 ## 18. TASK SYSTEM
 

@@ -838,11 +838,19 @@ async function assertEmitOverride(db, mailboxId, clean) {
   }
 }
 
-/** send_credential_id must name an email_credentials row (FK by convention). */
+/**
+ * send_credential_id must name an email_credentials row (FK by convention) —
+ * and never a bulk_ok one: a marketing transport is not a mailbox identity,
+ * and the hub's daily budget must never count newsletters (YisraMail T1,
+ * ref/YISRAMAIL_DESIGN.md §5.2 / §5.6).
+ */
 async function assertSendCredential(db, credId) {
   if (credId == null) return;
-  const [[row]] = await db.query('SELECT id FROM email_credentials WHERE id = ? LIMIT 1', [credId]);
+  const [[row]] = await db.query('SELECT id, bulk_ok FROM email_credentials WHERE id = ? LIMIT 1', [credId]);
   if (!row) throw httpError(400, `send_credential_id ${credId} is not an email_credentials row`);
+  if (row.bulk_ok != null && Number(row.bulk_ok) !== 0) {
+    throw httpError(400, `send_credential_id ${credId} is a marketing (bulk) transport — a mailbox cannot send through it`);
+  }
 }
 
 /** Column → DB value for an INSERT/UPDATE built from a validated `clean`. */

@@ -1386,7 +1386,11 @@ function renderEmailList(host) {
 }
 
 function emailListRow(r) {
-  const provider = `<span class="badge type">${esc(r.provider)}</span>`;
+  // A bulk (marketing) sender: YisraMail T1 — no From picker lists it and the
+  // test send refuses it (scripts/yisramailT1Acceptance.js tests it instead).
+  const bulk = Number(r.bulk_ok) === 1;
+  const provider = `<span class="badge type">${esc(r.provider)}</span>` +
+    (bulk ? ' <span class="badge status-pending" title="Marketing transport — not a sender anywhere else">bulk</span>' : '');
   let detail;
   if (r.provider === 'smtp') {
     detail = esc(r.smtp_host || '—');
@@ -1411,7 +1415,7 @@ function emailListRow(r) {
       <td>${detail}</td>
       <td class="actions-cell">
         <button data-action="edit">Edit</button>
-        <button data-action="test">Test</button>
+        ${bulk ? '' : '<button data-action="test">Test</button>'}
         ${verifyBtn}
         <button data-action="delete" class="danger">Delete</button>
       </td>
@@ -1456,6 +1460,9 @@ function blankEmail() {
     credential_name: null,
     signature_html: '',
     signature_text: '',
+    bulk_ok: 0,
+    events_driver: null,
+    driver_config: null,
   };
 }
 
@@ -1485,7 +1492,7 @@ function renderEmailEditor(host) {
         <span class="saving-hint" id="email-saving" style="display:none;">Saving…</span>
         <div class="right">
           <button class="btn" id="email-cancel">Cancel</button>
-          ${isNew ? '' : '<button class="btn" id="email-test">Test</button>'}
+          ${(isNew || Number(e.bulk_ok) === 1) ? '' : '<button class="btn" id="email-test">Test</button>'}
           ${verifyBtnHtml}
           ${isNew ? '' : '<button class="btn danger" id="email-delete">Delete</button>'}
           <button class="btn primary" id="email-save">Save</button>
@@ -1564,7 +1571,7 @@ function renderEmailEditor(host) {
   fillOwnerDropdown();
   if (!isNew) {
     E('email-delete').addEventListener('click', deleteEmailFromEditor);
-    E('email-test').addEventListener('click', () => openTestEmailDialog(e.id, e.email));
+    if (E('email-test')) E('email-test').addEventListener('click', () => openTestEmailDialog(e.id, e.email));
     if (e.provider === 'gmail') {
       E('email-verify').addEventListener('click', () => verifyEmailAliases(e.id, e.email));
     }
@@ -1752,6 +1759,50 @@ function renderEmailSmtpSection() {
         </div>
       </div>
     </div>
+    <div class="subsection">
+      <h4>Marketing transport</h4>
+      <div class="field field-row">
+        <label for="email-bulk-ok">Bulk / marketing transport</label>
+        <div>
+          <div class="checkbox-line">
+            <input id="email-bulk-ok" type="checkbox" ${Number(e.bulk_ok) === 1 ? 'checked' : ''}>
+            <span>This sender is for marketing campaigns only</span>
+          </div>
+          <div class="helper">
+            A bulk sender disappears from every From picker (Comms, workflows,
+            campaigns, Casey) and nothing but a marketing campaign can send from
+            it. Its SMTP login may not be shared with any other sender, and no
+            mailbox may send through it.
+          </div>
+        </div>
+      </div>
+      <div class="field field-row">
+        <label for="email-events-driver">Events driver</label>
+        <div>
+          <select id="email-events-driver">
+            <option value="" ${!e.events_driver ? 'selected' : ''}>— none (plain SMTP) —</option>
+            <option value="ses" ${e.events_driver === 'ses' ? 'selected' : ''}>ses (Amazon SES)</option>
+          </select>
+          <div class="helper">
+            Bulk senders only. The provider whose delivery, bounce and complaint
+            events this sender reports. It adds the provider's own tracking
+            headers to each send.
+          </div>
+        </div>
+      </div>
+      <div class="field field-row">
+        <label for="email-config-set">Configuration set</label>
+        <div>
+          <input id="email-config-set" type="text" maxlength="64"
+            value="${esc((e.driver_config && typeof e.driver_config === 'object' && e.driver_config.configuration_set) || '')}"
+            placeholder="e.g. yisramail-marketing">
+          <div class="helper">
+            SES only. Leave blank to use the sending identity's default
+            configuration set.
+          </div>
+        </div>
+      </div>
+    </div>
   `;
   bindEmailShowButton('email-pw-pass', e.id, isNew);
 }
@@ -1870,6 +1921,14 @@ async function saveEmail() {
       smtp_port:   Number(E('email-smtp-port').value || 587),
       smtp_user:   E('email-smtp-user').value.trim(),
       smtp_secure: E('email-smtp-secure').checked ? 1 : 0,
+      // T1: the marketing-transport columns (the server validates them). A
+      // driver and its configuration set belong to a bulk sender only, so an
+      // unticked Bulk sends them cleared.
+      bulk_ok:       E('email-bulk-ok').checked ? 1 : 0,
+      events_driver: (E('email-bulk-ok').checked && E('email-events-driver').value) || null,
+      driver_config: E('email-bulk-ok').checked && E('email-config-set').value.trim()
+        ? { configuration_set: E('email-config-set').value.trim() }
+        : null,
     };
     if (isNew || passInput !== '') extra.smtp_pass = passInput;
     if (!extra.smtp_host) { state.email.error = 'SMTP host is required.'; renderEmail(); return; }

@@ -475,7 +475,10 @@ async function loadRefs() {
   const [u, c] = await Promise.allSettled([api('/api/users', 'GET'), api('/api/email-credentials', 'GET')]);
   state.users = (u.status === 'fulfilled' && Array.isArray(u.value && u.value.users) ? u.value.users : [])
     .filter((x) => Number(x.user) > 0);
-  state.creds = c.status === 'fulfilled' && Array.isArray(c.value && c.value.email_credentials) ? c.value.email_credentials : [];
+  // A bulk_ok row (a marketing transport, YisraMail T1) is never a mailbox's
+  // send credential — the server refuses it (400); the picker never offers it.
+  state.creds = (c.status === 'fulfilled' && Array.isArray(c.value && c.value.email_credentials) ? c.value.email_credentials : [])
+    .filter((x) => !Number(x.bulk_ok));
   state.refsLoaded = u.status === 'fulfilled' && c.status === 'fulfilled';
 }
 

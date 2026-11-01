@@ -35,8 +35,26 @@
  *   - admin_audit_log details now include a before/after diff for updates
  *     (smtp_pass values redacted).
  *
- * The list endpoint is the dropdown source for hooks/sequences/workflows
- * when configuring an email sender, so it remains jwtOrApiKey (not SU).
+ * YisraMail T1 (ref/YISRAMAIL_DESIGN.md §5.2) — three SMTP-only columns:
+ *   bulk_ok        1 = a marketing (bulk) transport. 400 unless provider=smtp;
+ *                  400 when another row shares its (smtp_host, smtp_user) or a
+ *                  mailbox sends through it (the hub's budget must never count
+ *                  newsletters) — and a plain SMTP row may not take a bulk
+ *                  row's login either. Leaving smtp resets all three.
+ *   events_driver  null or a key of emailService.VALID_EVENTS_DRIVERS (ses);
+ *                  bulk_ok rows only (400 otherwise — a driver's headers must
+ *                  never ride operational mail). Un-marking bulk clears it.
+ *   driver_config  null or the driver's JSON object (emailService.
+ *                  validateDriverConfig — ses: {configuration_set}); bulk_ok
+ *                  rows only, cleared with the driver.
+ *   The test send refuses a bulk_ok row (400): the public sendEmail would
+ *   refuse it anyway; scripts/yisramailT1Acceptance.js tests that row.
+ *
+ * The list endpoint stays jwtOrApiKey (not SU) and lists EVERY row, bulk_ok
+ * ones included — the editor needs them; it also feeds the mailbox admin's
+ * send-credential picker (assertSendCredential refuses a bulk row there).
+ * Compose / automation sender pickers read firmData.emailFrom instead, which
+ * leaves bulk_ok rows out.
  */
 
 const express = require('express');
@@ -55,6 +73,7 @@ const TOOL = 'connections';
 const LIST_COLUMNS = [
   'id', 'email', 'smtp_host', 'smtp_port', 'smtp_user',
   'smtp_secure', 'provider', 'from_name', 'credential_id', 'owner_user',
+  'bulk_ok', 'events_driver',
 ];
 
 // Full column set for admin GET single. smtp_pass column included in the
@@ -64,6 +83,7 @@ const ALL_COLUMNS = [
   'id', 'email', 'smtp_host', 'smtp_port', 'smtp_user',
   'smtp_pass', 'smtp_secure', 'provider', 'from_name', 'credential_id',
   'signature_html', 'signature_text', 'owner_user',
+  'bulk_ok', 'events_driver', 'driver_config',
 ];
 
 // Per-provider required fields. Always required: email, provider, from_name.
@@ -83,6 +103,7 @@ const UPDATABLE_FIELDS = [
   'email', 'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass',
   'smtp_secure', 'provider', 'from_name', 'credential_id',
   'signature_html', 'signature_text', 'owner_user',
+  'bulk_ok', 'events_driver', 'driver_config',
 ];
 
 // Fields whose old/new values are redacted in the audit diff.
@@ -145,7 +166,89 @@ function coerceField(field, value) {
     const n = Number(value);
     return Number.isInteger(n) && n > 0 ? n : null;
   }
+  // T1. bulk_ok: only an explicit true / 1 / '1' sets it.
+  if (field === 'bulk_ok') return (value === true || value === 1 || value === '1') ? 1 : 0;
+  if (field === 'events_driver') {
+    if (value === undefined || value === null || value === '') return null;
+    return String(value);
+  }
+  // driver_config: JSON text for the column (mysql2's `SET ?` would expand an
+  // object into `key = value` pairs). A string is taken as JSON text as is.
+  if (field === 'driver_config') {
+    if (value === undefined || value === null || value === '') return null;
+    return typeof value === 'string' ? value : JSON.stringify(value);
+  }
   return value;
+}
+
+/**
+ * The T1 columns of the row as it will be after this save: the body over the
+ * existing row, except that a row leaving smtp drops them (the PUT resets
+ * them, like the smtp_* columns), and a row that is not bulk after the save
+ * drops a driver / config the body does not name (un-marking bulk clears them).
+ */
+function finalBulkState(body, existing, finalProvider) {
+  const leavingSmtp = !!existing && existing.provider === 'smtp' && finalProvider !== 'smtp';
+  const pick = (f, dflt) => (body[f] !== undefined
+    ? coerceField(f, body[f])
+    : (existing && !leavingSmtp ? existing[f] : dflt));
+  const bulk_ok = Number(pick('bulk_ok', 0)) ? 1 : 0;
+  const keepIfBulk = (f) => (body[f] !== undefined ? coerceField(f, body[f]) : (bulk_ok ? pick(f, null) : null));
+  return {
+    bulk_ok,
+    events_driver: keepIfBulk('events_driver'),
+    driver_config: keepIfBulk('driver_config'),
+  };
+}
+
+/**
+ * T1 rules for bulk_ok / events_driver / driver_config on the FINAL state.
+ * `id` = the row being saved (null on create). → null, or { status, message }.
+ */
+async function validateBulkState(db, { id, provider, smtp_host, smtp_user }, st) {
+  if (st.events_driver != null && !emailService.VALID_EVENTS_DRIVERS.includes(st.events_driver)) {
+    return { status: 400, message: `events_driver must be one of: ${emailService.VALID_EVENTS_DRIVERS.join(', ')} (or empty)` };
+  }
+  if (provider !== 'smtp' && (st.bulk_ok || st.events_driver != null || st.driver_config != null)) {
+    return { status: 400, message: 'bulk_ok, events_driver and driver_config are for SMTP senders only' };
+  }
+  if (!st.bulk_ok && (st.events_driver != null || st.driver_config != null)) {
+    return { status: 400, message: 'An events driver and configuration set are for bulk (marketing) senders only — tick Bulk, or clear them' };
+  }
+  const cfgProblem = emailService.validateDriverConfig(st.events_driver, st.driver_config);
+  if (cfgProblem) return { status: 400, message: cfgProblem };
+  if (provider !== 'smtp') return null;
+
+  // §5.2: no other row may share a bulk row's SMTP login — else the hub's
+  // budget (mailboxSendService.transportOf groups by host + user) would count
+  // newsletters, and a plain sender could leave through the marketing account.
+  const selfId = id == null ? 0 : Number(id);
+  if (st.bulk_ok) {
+    const [[other]] = await db.query(
+      `SELECT id FROM email_credentials
+        WHERE provider = 'smtp' AND smtp_host = ? AND smtp_user = ? AND id <> ? LIMIT 1`,
+      [smtp_host, smtp_user, selfId]
+    );
+    if (other) {
+      return { status: 400, message: `A bulk (marketing) sender cannot share its SMTP login with another sender — email_credentials ${other.id} uses the same host and user` };
+    }
+    if (id != null) {
+      const [[box]] = await db.query('SELECT id, address FROM mailboxes WHERE send_credential_id = ? LIMIT 1', [selfId]);
+      if (box) {
+        return { status: 400, message: `Mailbox ${box.id} (${box.address}) sends through this sender — re-point it (Admin → Mailboxes) before marking it bulk` };
+      }
+    }
+  } else {
+    const [[bulkRow]] = await db.query(
+      `SELECT id FROM email_credentials
+        WHERE provider = 'smtp' AND bulk_ok = 1 AND smtp_host = ? AND smtp_user = ? AND id <> ? LIMIT 1`,
+      [smtp_host, smtp_user, selfId]
+    );
+    if (bulkRow) {
+      return { status: 400, message: `That SMTP login belongs to a bulk (marketing) sender — email_credentials ${bulkRow.id}` };
+    }
+  }
+  return null;
 }
 
 /**
@@ -264,6 +367,12 @@ function buildDataRow(body) {
   data.signature_html = coerceField('signature_html', body.signature_html);
   data.signature_text = coerceField('signature_text', body.signature_text);
   data.owner_user     = coerceField('owner_user', body.owner_user);
+
+  // T1 — SMTP rows only (validateBulkState has refused them on any other).
+  const smtp = body.provider === 'smtp';
+  data.bulk_ok       = smtp ? coerceField('bulk_ok', body.bulk_ok) : 0;
+  data.events_driver = smtp ? coerceField('events_driver', body.events_driver) : null;
+  data.driver_config = smtp ? coerceField('driver_config', body.driver_config) : null;
 
   return data;
 }
@@ -507,6 +616,13 @@ router.post('/api/email-credentials', superuserOnlyFor(TOOL), async (req, res) =
       }
     }
 
+    const bulkCheck = await validateBulkState(req.db,
+      { id: null, provider: body.provider, smtp_host: body.smtp_host, smtp_user: body.smtp_user },
+      finalBulkState(body, null, body.provider));
+    if (bulkCheck) {
+      return res.status(bulkCheck.status).json({ status: 'error', message: bulkCheck.message });
+    }
+
     const data = buildDataRow(body);
     const [result] = await req.db.query(`INSERT INTO email_credentials SET ?`, [data]);
     const insertId = result.insertId;
@@ -649,6 +765,18 @@ router.put('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res
       body.provider = 'gmail';
     }
 
+    // T1 columns, on the final state.
+    const bulkFinal = finalBulkState(body, existing, finalProvider);
+    const bulkCheck = await validateBulkState(req.db, {
+      id,
+      provider: finalProvider,
+      smtp_host: body.smtp_host ?? existing.smtp_host,
+      smtp_user: body.smtp_user ?? existing.smtp_user,
+    }, bulkFinal);
+    if (bulkCheck) {
+      return res.status(bulkCheck.status).json({ status: 'error', message: bulkCheck.message });
+    }
+
     // Build the partial update. Only fields explicitly present in the body
     // are included — EXCEPT when provider is switching, in which case we
     // also force credential_id reset so smtp/pabbly rows don't leak a
@@ -669,6 +797,14 @@ router.put('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res
       } else {
         data[f] = coerceField(f, body[f]);
         touchedFields.push(f);
+      }
+    }
+
+    // T1: un-marking bulk clears a driver / config the body did not name.
+    for (const f of ['events_driver', 'driver_config']) {
+      if (body[f] === undefined && existing[f] != null && bulkFinal[f] == null) {
+        data[f] = null;
+        if (!touchedFields.includes(f)) touchedFields.push(f);
       }
     }
 
@@ -697,6 +833,13 @@ if (body.provider !== undefined && body.provider !== existing.provider) {
         data.smtp_pass   = '';
         data.smtp_secure = 0;
         for (const f of ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_secure']) {
+          if (!touchedFields.includes(f)) touchedFields.push(f);
+        }
+        // T1: the bulk / driver columns are SMTP-only — leaving smtp drops them.
+        data.bulk_ok       = 0;
+        data.events_driver = null;
+        data.driver_config = null;
+        for (const f of ['bulk_ok', 'events_driver', 'driver_config']) {
           if (!touchedFields.includes(f)) touchedFields.push(f);
         }
       }
@@ -907,11 +1050,20 @@ router.post('/api/email-credentials/:id/test', superuserOnlyFor(TOOL), async (re
 
   try {
     const [[row]] = await req.db.query(
-      `SELECT id, email, from_name FROM email_credentials WHERE id = ?`,
+      `SELECT id, email, from_name, bulk_ok FROM email_credentials WHERE id = ?`,
       [id]
     );
     if (!row) {
       return res.status(404).json({ status: 'error', message: 'Email credential not found' });
+    }
+    // T1: the public sendEmail refuses a marketing transport; say so plainly
+    // instead of failing the send. That row is tested by
+    // scripts/yisramailT1Acceptance.js.
+    if (emailService.isBulkRow(row)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'A bulk (marketing) sender cannot be test-sent from here — only the campaign marketing path sends from it',
+      });
     }
 
     const sentAt = new Date().toISOString();

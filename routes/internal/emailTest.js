@@ -32,6 +32,10 @@
  *        }
  *        Returns { ok, result } / { ok: false, error }.
  *
+ * A bulk_ok row (a marketing transport, YisraMail T1 §5.2) is neither listed
+ * nor sendable here, with or without overrides: the SES row is exercised by
+ * scripts/yisramailT1Acceptance.js, never by this diagnostic route.
+ *
  * JWT-guarded. Routes auto-mount via the routes/internal/ scan.
  */
 
@@ -39,6 +43,8 @@ const express      = require('express');
 const router       = express.Router();
 const jwtOrApiKey  = require('../../lib/auth.jwtOrApiKey');
 const emailService = require('../../services/emailService');
+
+const BULK_REFUSED = 'bulk_sender_refused: that row is a marketing (bulk) transport — the diagnostic sender never sends from it';
 
 // ─────────────────────────────────────────────────────────────
 // GET /internal/email-test/credentials
@@ -50,6 +56,7 @@ router.get('/internal/email-test/credentials', jwtOrApiKey, async (req, res) => 
     const [rows] = await req.db.query(
       `SELECT id, email, provider, from_name, credential_id
          FROM email_credentials
+        WHERE bulk_ok = 0
          ORDER BY id`
     );
     res.json({ ok: true, credentials: rows });
@@ -178,7 +185,7 @@ router.post('/internal/email-test/send', jwtOrApiKey, async (req, res) => {
     // ─── No overrides → original public path ───
     if (!usingOverrides) {
       const [[row]] = await req.db.query(
-        'SELECT email FROM email_credentials WHERE id = ? LIMIT 1',
+        'SELECT email, bulk_ok FROM email_credentials WHERE id = ? LIMIT 1',
         [from_id]
       );
       if (!row) {
@@ -186,6 +193,9 @@ router.post('/internal/email-test/send', jwtOrApiKey, async (req, res) => {
           ok: false,
           error: `No email_credentials row with id=${from_id}`,
         });
+      }
+      if (emailService.isBulkRow(row)) {
+        return res.status(400).json({ ok: false, error: BULK_REFUSED });
       }
 
       const result = await emailService.sendEmail(req.db, {
@@ -214,6 +224,9 @@ router.post('/internal/email-test/send', jwtOrApiKey, async (req, res) => {
           error: `No email_credentials row with id=${from_id}`,
         });
       }
+      if (emailService.isBulkRow(row)) {
+        return res.status(400).json({ ok: false, error: BULK_REFUSED });
+      }
       baseRow = row;
     }
 
@@ -234,6 +247,9 @@ router.post('/internal/email-test/send', jwtOrApiKey, async (req, res) => {
       smtp_user:   baseRow?.smtp_user,
       smtp_pass:   baseRow?.smtp_pass,
       smtp_secure: baseRow?.smtp_secure,
+      // Carried so sendEmailDirect's own fence refuses too (T1), should the
+      // check above ever be lost: a clone keeps the base row's SMTP login.
+      bulk_ok:     baseRow?.bulk_ok ?? 0,
     };
 
     if (!emailRow.email) {

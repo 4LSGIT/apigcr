@@ -5,7 +5,7 @@
  * routes/api.sending.js
  *
  * GET  /api/phone-lines          list active phone lines
- * GET  /api/email-from           list email sender addresses
+ * GET  /api/email-from           list email sender addresses (not bulk_ok rows)
  * GET  /api/users/me             current user's defaults
  * POST /api/compose-docs-message assemble doc request message from selections
  *
@@ -37,8 +37,10 @@ router.get('/api/phone-lines', jwtOrApiKey, async (req, res) => {
 router.get('/api/email-from', jwtOrApiKey, async (req, res) => {
   try {
     const [emails] = await req.db.query(
+      // bulk_ok rows (marketing transport, YisraMail T1 §5.2) are no sender.
       `SELECT id, email, from_name, provider
        FROM email_credentials
+       WHERE bulk_ok = 0
        ORDER BY id --from_name, email`
     );
     res.json({ status: 'success', emails });

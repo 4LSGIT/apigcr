@@ -636,6 +636,7 @@ ref/migrations/2026-10-29_yisramail_p1_consent_core.sql
 ref/migrations/2026-10-30_yisramail_p2_sms_consent_sync_job.sql
 ref/migrations/2026-10-30_yisramail_p3_unsub_tokens.sql
 ref/migrations/2026-11-01_tools_visible_to.sql
+ref/migrations/2026-11-01_yisramail_t1_email_credentials_bulk.sql
 ref/migrations/2026-11-01_yisravid_s2_video_views_columns.sql
 ref/migrations/2026-11-01_yisravid_s4_contact_verified.sql
 ref/migrations/S1_notes_migration.sql
@@ -991,11 +992,14 @@ scripts/verify_strictstring_live.js
 scripts/yisramailP1MigrateConsent.js
 scripts/yisramailP2CheckInbound.js
 scripts/yisramailP3Migrate.js
+scripts/yisramailT1Acceptance.js
+scripts/yisramailT1Migrate.js
 scripts/yisravidMintTokens.js
 scripts/yisravidS1Data.js
 scripts/yisravidS2Columns.js
 scripts/yisravidS4ContactVerified.js
 server.js
+services/adapters/email/drivers/ses.js
 services/adapters/email/gmail.js
 services/adapters/email/pabbly.js
 services/adapters/email/smtp.js
@@ -1362,6 +1366,7 @@ tests/dropboxService.normalizePath.test.js
 tests/dropboxService.retry.test.js
 tests/emailIngestSurrogate.mysql.test.js
 tests/emailIngestSurrogate.test.js
+tests/emailService.marketingOptions.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js
 tests/ensureSqlProxy.test.js
@@ -1845,4 +1850,8 @@ tests/ycPager.test.js
 tests/ycSettingRows.test.js
 tests/ycSync.test.js
 tests/yisramailP2CheckInbound.test.js
+tests/yisramailT1.adapters.test.js
+tests/yisramailT1.fences.routes.test.js
+tests/yisramailT1Acceptance.test.js
+tests/yisramailT1Migrate.mysql.test.js
 views/v.html

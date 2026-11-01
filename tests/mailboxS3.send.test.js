@@ -930,3 +930,17 @@ describe('opt-out (YisraMail D18): an email opt-out is marketing-only — mail-h
     expect(W.T.admin_audit_log.filter((a) => a.status === 'sent').every((a) => !('acknowledged_optout' in a.details))).toBe(true);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('YisraMail T1: a bulk (marketing) credential is never a mailbox identity', () => {
+  test('a box whose credential became bulk_ok: unsendable (bulk_transport) in the picker, 409 on send, nothing sent', async () => {
+    W.T.email_credentials.find((c) => c.id === 1).bulk_ok = 1;
+    const ids = await call('GET', '/api/mail/identities', { t: tok(SU) });
+    const billing = ids.json.identities.find((i) => i.address === 'billing@firm.test');
+    expect(billing).toMatchObject({ sendable: false, reason: 'bulk_transport' });
+    const r = await call('POST', '/api/mail/send', { t: tok(SENDER), body: NEW_MSG() });
+    expect(r.status).toBe(409);
+    expect(JSON.stringify(r.json)).toMatch(/marketing \(bulk\) transport/);
+    expect(mockSendMail).not.toHaveBeenCalled();
+  });
+});
