@@ -947,6 +947,10 @@ scripts/mobile-survey/fixtures/api/ui-config/pickers.json
 scripts/mobile-survey/fixtures/api/ui-config/versions.json
 scripts/mobile-survey/fixtures/api/ui-config/versions/2.json
 scripts/mobile-survey/fixtures/api/users.json
+scripts/mobile-survey/fixtures/api/videos.json
+scripts/mobile-survey/fixtures/api/videos/1.json
+scripts/mobile-survey/fixtures/api/videos/1/analytics.json
+scripts/mobile-survey/fixtures/api/videos/views.json
 scripts/mobile-survey/fixtures/firm-data.json
 scripts/mobile-survey/manualOrdinals.js
 scripts/mobile-survey/server.js
@@ -1794,9 +1798,11 @@ tests/videoLanding.rateLimit.test.js
 tests/videoLanding.related.test.js
 tests/videoLanding.track.test.js
 tests/videoLinkForms.test.js
+tests/videoManager.views.test.js
 tests/videoSendForms.test.js
 tests/videoService.mysql.test.js
 tests/videoTracker.test.js
+tests/videoViews.route.test.js
 tests/vocabWriteGates.test.js
 tests/workflowCancel.test.js
 tests/workflowEngine.cancelAndLoopGuard.test.js

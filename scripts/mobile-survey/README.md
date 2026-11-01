@@ -196,7 +196,9 @@ Sonnet summary, a pending voicemail summary), `tab:tabComms:phone-archive-*`; an
 the In call transcripts group from `comms-archive/search`,
 `tab:tabComms:phone-search-transcripts`), the
 System Alerts pane's Comms archive section (`comms-archive/health`,
-`panel:systemAlertsDiv:comms-archive`), the Calendar tab's list
+`panel:systemAlertsDiv:comms-archive`), YisraVideo's editor and Views tab
+(`videos`, `videos/1`, `videos/1/analytics`, `videos/views`;
+`panel:videoManagerDiv:editor`, `panel:videoManagerDiv:views`), the Calendar tab's list
 (`calendar-range` — one row per action-cell shape, surveyed as
 `tab:tabCalendar:list`; Grid is `tab:tabCalendar:grid`, against an empty
 `calendar-feed`), the

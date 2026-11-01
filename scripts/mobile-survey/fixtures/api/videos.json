@@ -1,0 +1,6 @@
+{
+  "videos": [
+    { "id": 1, "title": "What happens at your 341 meeting of creditors and how to get ready for it", "slug": "what-happens-at-your-341-meeting-of-creditors", "view_count": 18, "actions": [], "is_published": 1, "access_level": "public" },
+    { "id": 2, "title": "Send your documents", "slug": "reminder-send-documents", "view_count": 4, "actions": [], "is_published": 1, "access_level": "contact_only" }
+  ]
+}

@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-29T23:48:13.245Z_  
-_824 routes total — DELETE: 68, GET: 343, PATCH: 59, POST: 313, PUT: 38, _ALL: 3_
+_Generated 2026-11-01T10:08:27.791Z_  
+_827 routes total — DELETE: 68, GET: 344, PATCH: 59, POST: 315, PUT: 38, _ALL: 3_
 
 ## Global middleware chain
 
@@ -698,6 +698,9 @@ _824 routes total — DELETE: 68, GET: 343, PATCH: 59, POST: 313, PUT: 38, _ALL:
 | GET | `/api/videos/:id/analytics` | `jwtOrApiKey` | — |
 | POST | `/api/videos/:id/reset-analytics` | `jwtOrApiKey` | — |
 | POST | `/api/videos/upload-asset` | `jwtOrApiKey` | — |
+| GET | `/api/videos/views` | `jwtOrApiKey` | — |
+| POST | `/api/videos/views/:viewId/exclude` | `jwtOrApiKey` | — |
+| POST | `/api/videos/views/:viewId/restore` | `jwtOrApiKey` | — |
 
 ## /appt
 
@@ -1104,4 +1107,4 @@ _824 routes total — DELETE: 68, GET: 343, PATCH: 59, POST: 313, PUT: 38, _ALL:
 
 ---
 
-_824 routes total — DELETE: 68, GET: 343, PATCH: 59, POST: 313, PUT: 38, _ALL: 3_
+_827 routes total — DELETE: 68, GET: 344, PATCH: 59, POST: 315, PUT: 38, _ALL: 3_

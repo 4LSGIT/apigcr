@@ -1,0 +1,8 @@
+{
+  "total": 142, "played": 61, "completed": 33, "limit": 100, "offset": 0,
+  "views": [
+    { "id": 3, "video_id": 1, "video_title": "What happens at your 341 meeting of creditors and how to get ready for it", "contact_id": 10, "contact_name": "Maximiliana Featherstonehaugh-Cholmondeley", "case_id": "ABC12345", "case_number": "2:26-bk-40001-XYZ", "opened_at": "2026-07-01T12:00:00.000Z", "played_at": "2026-07-01T12:00:05.000Z", "completed_at": "2026-07-01T12:03:00.000Z", "watch_seconds": 165, "completion_pct": 92, "cta_labels": ["Book My 341 Prep Call", "Upload Documents"], "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X)", "device": "iPhone", "excluded_at": null, "excluded_by_name": null, "automated": false, "before_reset": false },
+    { "id": 2, "video_id": 2, "video_title": "Send your documents", "contact_id": 11, "contact_name": "Ann Lee", "case_id": null, "case_number": null, "opened_at": "2026-07-01T11:00:00.000Z", "played_at": null, "completed_at": null, "watch_seconds": 0, "completion_pct": 0, "cta_labels": [], "user_agent": "Mozilla/5.0 (X11; Linux x86_64)", "device": "Linux", "excluded_at": null, "excluded_by_name": null, "automated": true, "before_reset": true },
+    { "id": 1, "video_id": 2, "video_title": "Send your documents", "contact_id": null, "contact_name": null, "case_id": null, "case_number": null, "opened_at": "2026-07-01T10:00:00.000Z", "played_at": "2026-07-01T10:00:05.000Z", "completed_at": null, "watch_seconds": 7, "completion_pct": 58, "cta_labels": [], "user_agent": "Mozilla/5.0 (Macintosh)", "device": "Mac", "excluded_at": "2026-07-02T00:00:00.000Z", "excluded_by_name": "Fred", "automated": false, "before_reset": false }
+  ]
+}

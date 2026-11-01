@@ -596,6 +596,122 @@
       justify-content: flex-end;
     }
 
+    /* ── Videos / Views tabs ───────────────────────────── */
+    #mainTabs {
+      display: flex;
+      gap: 4px;
+      padding: 6px 14px 0;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex: 0 0 auto;
+    }
+    .main-tab {
+      padding: 6px 14px;
+      border: none;
+      border-bottom: 2px solid transparent;
+      background: none;
+      color: var(--text-2);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .main-tab.active { color: var(--text); border-bottom-color: var(--info); }
+
+    /* ── Views tab ──────────────────────────────────────── */
+    #viewsPane {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 14px;
+    }
+    #viewsFilters {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px 12px;
+      align-items: end;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    #viewsFilters .form-row { margin-bottom: 0; min-width: 0; }
+    #viewsFilters select,
+    #viewsFilters input[type="search"],
+    #viewsFilters input[type="date"] { height: 34px; }
+    #viewsFilters input[type="search"],
+    #viewsFilters input[type="date"] {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      font-size: 13px;
+      font-family: inherit;
+      color: var(--text);
+      background: var(--surface);
+    }
+    #viewsChecks {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 16px;
+    }
+    #viewsChecks label {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      color: var(--text-2);
+    }
+    #viewsChecks .spacer { flex: 1; }
+    #viewsSummary {
+      font-size: 12px;
+      color: var(--text-2);
+      margin-bottom: 8px;
+    }
+    #viewsTableWrap { overflow-x: auto; }
+    .views-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+    }
+    .views-table th {
+      text-align: left;
+      padding: 7px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-2);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .views-table td {
+      padding: 7px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+    .views-table tr.is-excluded td { opacity: 0.55; }
+    .views-table td.v-action { text-align: right; white-space: nowrap; }
+    .views-table .muted { color: var(--text-muted); }
+    .views-table .badge { white-space: nowrap; }
+    .views-table .v-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .views-table .v-link {
+      border: none;
+      background: none;
+      padding: 0;
+      color: var(--info);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .views-table .v-link:hover { text-decoration: underline; }
+    #viewsMore { text-align: center; padding: 12px 0; }
+
     .swal2-popup { font-size: 13px !important; }
   
     /* ── Phones: stack the two panes ────────────────────────────────────
@@ -606,6 +722,25 @@
       #listPane { width: auto; max-height: 45%; border-right: none; border-bottom: 1px solid var(--border); }
       #editorPane { padding: 14px 12px 24px; min-width: 0; }
       #editorEmpty { margin-top: 24px; }
+
+      /* The Views table as one card per view: seven columns don't fit. */
+      .views-table, .views-table tbody, .views-table tr, .views-table td { display: block; width: 100%; }
+      .views-table { border: none; background: none; }
+      .views-table thead { display: none; }
+      .views-table tr {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 6px 0;
+        margin-bottom: 8px;
+      }
+      .views-table td { border-bottom: none; padding: 3px 12px; }
+      .views-table td[data-label]::before {
+        content: attr(data-label) ": ";
+        font-weight: 600;
+        color: var(--text-2);
+      }
+      .views-table td.v-action { text-align: left; }
     }
   </style>
 </head>
@@ -614,9 +749,14 @@
 <div id="topbar">
   <div class="title">Yisra<span>Video</span> Manager</div>
   <div class="spacer"></div>
-  <button class="btn btn-primary" onclick="onNewVideo()">
+  <button class="btn btn-primary" id="newVideoBtn" onclick="onNewVideo()">
     <i class="fa-solid fa-plus"></i> New Video
   </button>
+</div>
+
+<div id="mainTabs">
+  <button class="main-tab active" type="button" data-main="videos" onclick="onMainTab('videos')">Videos</button>
+  <button class="main-tab" type="button" data-main="views" onclick="onMainTab('views')">Views</button>
 </div>
 
 <div id="panes">
@@ -643,6 +783,43 @@
     </div>
     <div id="editorContent" style="display:none"></div>
   </div>
+</div>
+
+<!-- ── Views tab: who watched what ─────────────────────── -->
+<div id="viewsPane" style="display:none">
+  <div id="viewsFilters">
+    <div class="form-row"><label for="vfVideo">Video</label><select id="vfVideo" onchange="onViewFilterChange()"></select></div>
+    <div class="form-row"><label for="vfContact">Contact</label><input id="vfContact" type="search" placeholder="Name" oninput="onViewSearchInput()"></div>
+    <div class="form-row"><label for="vfStatus">Status</label>
+      <select id="vfStatus" onchange="onViewFilterChange()">
+        <option value="">All</option>
+        <option value="played">Played</option>
+        <option value="completed">Completed</option>
+        <option value="clicked">Clicked a button</option>
+        <option value="not_played">Not played</option>
+      </select>
+    </div>
+    <div class="form-row"><label for="vfWho">Viewer</label>
+      <select id="vfWho" onchange="onViewFilterChange()">
+        <option value="">Everyone</option>
+        <option value="known">Known contacts</option>
+        <option value="anonymous">Anonymous</option>
+      </select>
+    </div>
+    <div class="form-row"><label for="vfFrom">From</label><input id="vfFrom" type="date" onchange="onViewFilterChange()"></div>
+    <div class="form-row"><label for="vfTo">To</label><input id="vfTo" type="date" onchange="onViewFilterChange()"></div>
+    <div id="viewsChecks">
+      <label title="Opens with no sign of a person, from a link scanner"><input id="vfHideAuto" type="checkbox" checked onchange="onViewFilterChange()"> Hide automated</label>
+      <label><input id="vfExcluded" type="checkbox" onchange="onViewFilterChange()"> Show excluded</label>
+      <label title="Views from before this video's analytics were reset"><input id="vfBeforeReset" type="checkbox" onchange="onViewFilterChange()"> Include before a reset</label>
+      <span class="spacer"></span>
+      <button class="btn btn-outline btn-sm" type="button" onclick="onClearViewFilters()">Clear filters</button>
+      <button class="btn btn-outline btn-sm" type="button" onclick="fetchViews()"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
+    </div>
+  </div>
+  <div id="viewsSummary"></div>
+  <div id="viewsTableWrap"></div>
+  <div id="viewsMore"></div>
 </div>
 
 <script>
@@ -696,6 +873,7 @@ const state = {
   uploading:   false,  // any uploader currently active
   analytics:   null,   // analytics for the open editor; null when no video open or new video
   editorDirty: false,  // any unsaved edits in the open editor (3.6)
+  views:       { rows: [], total: 0, played: 0, completed: 0 },  // the Views tab's loaded page(s)
 };
 
 // Slug input regex — must mirror SLUG_RE in services/videoService.js
@@ -1104,10 +1282,16 @@ function renderEditor() {
     <div class="form-section">
       <div class="section-head">
         <h3>Analytics</h3>
-        <button class="btn btn-outline-danger btn-sm" onclick="onResetAnalytics()"
-          title="Zero the visible view count and start a fresh window of analytics">
-          <i class="fa-solid fa-arrow-rotate-left"></i> Reset
-        </button>
+        <span class="copy-row">
+          <button class="btn btn-outline btn-sm" onclick="onSeeViewsOfVideo()"
+            title="Open the Views tab filtered to this video">
+            <i class="fa-solid fa-users"></i> See who watched
+          </button>
+          <button class="btn btn-outline-danger btn-sm" onclick="onResetAnalytics()"
+            title="Zero the visible view count and start a fresh window of analytics">
+            <i class="fa-solid fa-arrow-rotate-left"></i> Reset
+          </button>
+        </span>
       </div>
       <div id="analytics-panel">${renderAnalyticsHtml()}</div>
     </div>
@@ -1888,8 +2072,8 @@ async function onResetAnalytics() {
   const r = await Swal.fire({
     title: 'Reset analytics for "' + titleStr + '"?',
     html:  '<p style="margin-bottom:8px;">This zeros the visible view count. '
-         + 'Past view records are preserved in the database but won\'t appear '
-         + 'in the dashboard.</p>'
+         + 'Past view records are preserved but stop counting in the stats. '
+         + 'The Views tab can still list them.</p>'
          + '<p>This action can only be undone by direct database edit.</p>',
     icon:  'warning',
     showCancelButton:   true,
@@ -2092,6 +2276,217 @@ async function copyAsImageLink(variant) {
 // ════════════════════════════════════════════════════════════════════════════
 // Boot
 // ════════════════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════════════════
+// Views tab — who watched what, across every video
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Switching tabs only hides #panes, so an open editor and its unsaved edits
+// are still there on the way back.
+const VIEWS_PAGE = 100;
+const VIEWS_DEFAULT_CHECKS = { vfHideAuto: true, vfExcluded: false, vfBeforeReset: false };
+let viewsRequest = 0;       // the newest fetch; an older answer is dropped
+let viewsSearchTimer = null;
+
+function viewEl(id) { return document.getElementById(id); }
+
+// The filters are firm-local days, so the times beside them are too.
+function fmtFirmTime(iso) {
+  if (!iso) return '';
+  const timeZone = (P.firmData && P.firmData.firmTimezone) || 'America/Detroit';
+  return new Date(iso).toLocaleString([], { timeZone });
+}
+
+function onMainTab(tab) {
+  const views = tab === 'views';
+  viewEl('panes').style.display = views ? 'none' : '';
+  viewEl('viewsPane').style.display = views ? '' : 'none';
+  viewEl('newVideoBtn').style.display = views ? 'none' : '';
+  document.querySelectorAll('.main-tab').forEach(b => b.classList.toggle('active', b.dataset.main === tab));
+  if (views) {
+    fillViewVideoFilter();
+    fetchViews();
+  }
+}
+
+function fillViewVideoFilter() {
+  const select = viewEl('vfVideo');
+  const keep = select.value;
+  select.innerHTML = '<option value="">All videos</option>'
+    + state.videos.map(v => '<option value="' + Number(v.id) + '">' + esc(v.title) + '</option>').join('');
+  select.value = keep;
+}
+
+function viewsQueryString(limit, offset) {
+  const q = new URLSearchParams();
+  const put = (key, value) => { if (value) q.set(key, value); };
+  put('video_id', viewEl('vfVideo').value);
+  put('q',        viewEl('vfContact').value.trim());
+  put('status',   viewEl('vfStatus').value);
+  put('who',      viewEl('vfWho').value);
+  put('from',     viewEl('vfFrom').value);
+  put('to',       viewEl('vfTo').value);
+  if (!viewEl('vfHideAuto').checked)   q.set('automated', '1');
+  if (viewEl('vfExcluded').checked)    q.set('excluded', '1');
+  if (viewEl('vfBeforeReset').checked) q.set('before_reset', '1');
+  q.set('limit', limit);
+  q.set('offset', offset);
+  return q.toString();
+}
+
+/** Load the first page, or `limit` rows after a change to one of them. */
+async function fetchViews(limit = VIEWS_PAGE) {
+  const request = ++viewsRequest;
+  // Load more counts from the rows on screen, which this reload is replacing.
+  viewEl('viewsMore').innerHTML = '';
+  try {
+    const res = await P.apiSend('/api/videos/views?' + viewsQueryString(limit, 0), 'GET');
+    if (request !== viewsRequest) return;
+    state.views = { rows: res.views || [], total: res.total, played: res.played, completed: res.completed };
+    renderViews();
+  } catch (err) {
+    if (request !== viewsRequest) return;
+    state.views = { rows: [], total: 0, played: 0, completed: 0 };
+    viewEl('viewsSummary').textContent = '';
+    viewEl('viewsMore').innerHTML = '';
+    viewEl('viewsTableWrap').innerHTML = '<div class="empty-state" style="color:var(--danger)">'
+      + '<i class="fa-solid fa-circle-exclamation"></i><br>'
+      + 'Failed to load: ' + esc(err.message) + '</div>';
+  }
+}
+
+async function onMoreViews() {
+  const request = ++viewsRequest;
+  try {
+    const res = await P.apiSend(
+      '/api/videos/views?' + viewsQueryString(VIEWS_PAGE, state.views.rows.length), 'GET'
+    );
+    if (request !== viewsRequest) return;
+    state.views.rows = state.views.rows.concat(res.views || []);
+    renderViews();
+  } catch (err) {
+    if (request === viewsRequest) Swal.fire('Error', err.message || 'Could not load more views', 'error');
+  }
+}
+
+function viewRowHtml(v) {
+  const id = Number(v.id);
+  const who = v.contact_id
+    ? '<button class="v-link" type="button" data-id="' + Number(v.contact_id) + '" data-name="' + esc(v.contact_name)
+      + '" onclick="onViewContactLink(this)">' + esc(v.contact_name || ('Contact ' + v.contact_id)) + '</button>'
+    : '<span class="muted">Anonymous</span>';
+  const kase = v.case_id
+    ? '<div class="v-sub"><button class="v-link" type="button" data-id="' + esc(v.case_id) + '" data-name="' + esc(v.case_number)
+      + '" onclick="onViewCaseLink(this)">' + esc(v.case_number || v.case_id) + '</button></div>'
+    : '';
+
+  const watched = v.completed_at
+    ? '<span class="badge badge-published">Completed</span>'
+    : v.played_at
+      ? '<span class="badge badge-public">Played</span>'
+      : '<span class="muted">Not played</span>';
+  const amount = v.played_at
+    ? '<div class="v-sub">' + esc(fmtDuration(Number(v.watch_seconds))) + ' · ' + (Number(v.completion_pct) || 0) + '%</div>'
+    : '';
+
+  const tags = (v.automated ? '<span class="badge badge-draft" title="An open with no sign of a person, from a link scanner">Automated</span>' : '')
+    + (v.before_reset ? '<span class="badge badge-draft">Before reset</span>' : '')
+    + (v.excluded_at
+      ? '<span class="badge badge-contact">Excluded</span>'
+      : '');
+  const excludedBy = v.excluded_at
+    ? '<div class="v-sub">' + esc((v.excluded_by_name ? 'By ' + v.excluded_by_name + ', ' : '') + fmtFirmTime(v.excluded_at)) + '</div>'
+    : '';
+
+  const clicks = Array.isArray(v.cta_labels) && v.cta_labels.length
+    ? esc(v.cta_labels.join(', '))
+    : '<span class="muted">—</span>';
+  const action = v.excluded_at
+    ? '<button class="btn btn-outline btn-sm" type="button" onclick="onRestoreView(' + id + ')">Restore</button>'
+    : '<button class="btn btn-outline btn-sm" type="button" onclick="onExcludeView(' + id + ')" title="Stop counting this view in the stats. You can restore it.">Exclude</button>';
+
+  return '<tr class="' + (v.excluded_at ? 'is-excluded' : '') + '">'
+    + '<td data-label="Opened">' + esc(fmtFirmTime(v.opened_at)) + (tags ? '<div class="v-sub">' + tags + '</div>' : '') + excludedBy + '</td>'
+    + '<td data-label="Video">' + esc(v.video_title) + '</td>'
+    + '<td data-label="Viewer">' + who + kase + '</td>'
+    + '<td data-label="Watched">' + watched + amount + '</td>'
+    + '<td data-label="Clicked">' + clicks + '</td>'
+    + '<td data-label="Device" title="' + esc(v.user_agent) + '">' + esc(v.device) + '</td>'
+    + '<td class="v-action">' + action + '</td>'
+    + '</tr>';
+}
+
+function renderViews() {
+  const { rows, total, played, completed } = state.views;
+  const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+  viewEl('viewsSummary').textContent = plural(total, 'view') + ' · ' + played + ' played · ' + completed + ' completed';
+  viewEl('viewsTableWrap').innerHTML = rows.length
+    ? '<table class="views-table"><thead><tr>'
+      + '<th>Opened</th><th>Video</th><th>Viewer</th><th>Watched</th><th>Clicked</th><th>Device</th><th></th>'
+      + '</tr></thead><tbody>' + rows.map(viewRowHtml).join('') + '</tbody></table>'
+    : '<div class="empty-state"><i class="fa-solid fa-eye-slash"></i><br>No views match these filters.</div>';
+  const left = total - rows.length;
+  viewEl('viewsMore').innerHTML = left > 0
+    ? '<button class="btn btn-outline btn-sm" type="button" onclick="onMoreViews()">Load more (' + left + ' left)</button>'
+    : '';
+}
+
+function onViewFilterChange() { fetchViews(); }
+
+function onViewSearchInput() {
+  clearTimeout(viewsSearchTimer);
+  viewsSearchTimer = setTimeout(fetchViews, 300);
+}
+
+function clearViewFilterInputs() {
+  ['vfVideo', 'vfContact', 'vfStatus', 'vfWho', 'vfFrom', 'vfTo'].forEach(id => { viewEl(id).value = ''; });
+  Object.entries(VIEWS_DEFAULT_CHECKS).forEach(([id, on]) => { viewEl(id).checked = on; });
+}
+
+function onClearViewFilters() {
+  clearViewFilterInputs();
+  fetchViews();
+}
+
+/**
+ * The Analytics panel's "See who watched": this video only, automated opens
+ * included, so the list adds up to the panel's Total views.
+ */
+function onSeeViewsOfVideo() {
+  clearViewFilterInputs();
+  fillViewVideoFilter();
+  viewEl('vfVideo').value = String(state.selected);
+  viewEl('vfHideAuto').checked = false;
+  onMainTab('views');
+}
+
+function onViewContactLink(button) {
+  P.addFile(button.dataset.name || button.dataset.id, 'client', button.dataset.id);
+}
+
+function onViewCaseLink(button) {
+  P.addFile(button.dataset.name || button.dataset.id, 'case', button.dataset.id);
+}
+
+async function setViewExcludedFromTab(id, verb, done) {
+  try {
+    const result = await P.apiSend('/api/videos/views/' + id + '/' + verb, 'POST');
+    await Promise.all([fetchViews(Math.min(Math.max(state.views.rows.length, VIEWS_PAGE), 200)), loadList()]);
+    // The stats changed under the open editor's panel; its form is untouched.
+    if (state.selected === result.video_id) {
+      state.analytics = await P.apiSend('/api/videos/' + state.selected + '/analytics', 'GET')
+        .catch(err => ({ _error: err.message || 'Analytics unavailable' }));
+      const panel = document.getElementById('analytics-panel');
+      if (panel) panel.innerHTML = renderAnalyticsHtml();
+    }
+    Toast.fire({ icon: 'success', title: done });
+  } catch (err) {
+    Swal.fire('Error', err.message || 'Could not update the view', 'error');
+  }
+}
+
+function onExcludeView(id) { return setViewExcludedFromTab(id, 'exclude', 'Excluded from stats.'); }
+function onRestoreView(id) { return setViewExcludedFromTab(id, 'restore', 'Back in the stats.'); }
 
 // 3.6: Dirty-tracking listener. Delegated at #editorContent so it survives
 // the innerHTML replacement that renderEditor performs each load. innerHTML

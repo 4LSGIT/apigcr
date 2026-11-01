@@ -33,7 +33,10 @@
  */
 
 const crypto = require('crypto');
+const { DateTime } = require('luxon');
 const { generateToken } = require('../lib/token');
+const { escapeLike } = require('../lib/escapeLike');
+const { FIRM_TZ } = require('./timezoneService');
 
 // The share of a video that must really have played for a view to count as
 // completed. Near the end, not the end: people close the tab during an outro.
@@ -598,8 +601,13 @@ async function deleteVideo(db, id) {
 /**
  * Record a page-open. Single transaction:
  *   1. Resolve case_id from contactId (if any) — resolveCaseIdForContact.
- *   2. INSERT video_views row.
- *   3. UPDATE videos.view_count += 1.
+ *   2. UPDATE videos.view_count += 1.
+ *   3. INSERT video_views row.
+ *
+ * The UPDATE comes first on purpose. The INSERT's foreign key takes a shared
+ * lock on the videos row, so two opens inserting first each hold it, each need
+ * the exclusive lock, and MySQL kills one: a carrier fetching a link twice at
+ * once would lose a view. withTransaction doesn't retry a deadlock.
  *
  * Returns the new view's id (BIGINT). Caller should String() it before
  * embedding in HTML to be safe with values > Number.MAX_SAFE_INTEGER,
@@ -621,15 +629,15 @@ async function recordView(pool, { videoId, contactId, ipHash, userAgent }) {
 
     const caseId = await resolveCaseIdForContact(conn, contactId);
 
+    await conn.query(
+      'UPDATE videos SET view_count = view_count + 1 WHERE id = ?',
+      [videoId]
+    );
+
     const [result] = await conn.query(
       `INSERT INTO video_views (video_id, contact_id, case_id, ip_hash, user_agent, track_token)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [videoId, contactId, caseId, ipHash || null, (userAgent || '').slice(0, 255) || null, trackToken]
-    );
-
-    await conn.query(
-      'UPDATE videos SET view_count = view_count + 1 WHERE id = ?',
-      [videoId]
     );
 
     return result.insertId;
@@ -750,6 +758,9 @@ async function recordCtaClick(db, { viewId, videoId, label }) {
  *   re-climbs from zero, and the cutoff filter keeps the analytics panel
  *   matching going forward.
  *
+ * Excluded views (excluded_at) count nowhere here; setViewExcluded moves
+ * videos.view_count to match.
+ *
  * Two queries: one for the scalars (single SELECT), one for CTA aggregation
  * via JSON_TABLE. CTA query is wrapped in try/catch — falls back to JS
  * aggregation if JSON_TABLE is unavailable on the running MySQL version.
@@ -787,7 +798,8 @@ async function getVideoAnalytics(db, videoId) {
         ROUND(AVG(CASE WHEN played_at IS NOT NULL THEN completion_pct END)) AS avg_completion_pct
        FROM video_views
       WHERE video_id = ?
-        AND opened_at >= ?`,
+        AND opened_at >= ?
+        AND excluded_at IS NULL`,
     [videoId, cutoff]
   );
 
@@ -815,6 +827,7 @@ async function getVideoAnalytics(db, videoId) {
                 COLUMNS (label VARCHAR(200) PATH '$.label')) jt
         WHERE vv.video_id = ?
           AND vv.opened_at >= ?
+          AND vv.excluded_at IS NULL
           AND vv.cta_clicks IS NOT NULL
         GROUP BY jt.label
         ORDER BY cnt DESC, jt.label ASC`,
@@ -833,6 +846,7 @@ async function getVideoAnalytics(db, videoId) {
          FROM video_views
         WHERE video_id = ?
           AND opened_at >= ?
+          AND excluded_at IS NULL
           AND cta_clicks IS NOT NULL`,
       [videoId, cutoff]
     );
@@ -898,6 +912,227 @@ async function resetVideoAnalytics(pool, videoId) {
     ? new Date(row.analytics_reset_at).toISOString()
     : null;
   return { ok: true, reset_at: iso };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Who watched what — the Views tab
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * A view a machine opened, judged at read time so nothing is stored wrongly
+ * when a pattern changes. Unplayed, and a client no viewer uses: curl, and the
+ * Linux desktop Chrome that fetches a texted link seconds after it is sent.
+ * 25 views of 84 had this shape on 2026-11-01, none of them played. Any sign of
+ * a person rules it out: a play, a button click, or a completion (the 2026-11-01
+ * backfill set completed_at on views with no played_at).
+ */
+const AUTOMATED_SQL = `(vv.played_at IS NULL AND vv.completed_at IS NULL
+  AND COALESCE(JSON_LENGTH(vv.cta_clicks), 0) = 0
+  AND vv.user_agent IS NOT NULL
+  AND (vv.user_agent LIKE 'curl/%' OR vv.user_agent LIKE '%X11; Linux x86_64%'))`;
+
+const VIEW_STATUS_SQL = {
+  played:     'vv.played_at IS NOT NULL',
+  not_played: 'vv.played_at IS NULL',
+  completed:  'vv.completed_at IS NOT NULL',
+  clicked:    'JSON_LENGTH(vv.cta_clicks) > 0',
+};
+
+const VIEW_WHO_SQL = {
+  known:     'vv.contact_id IS NOT NULL',
+  anonymous: 'vv.contact_id IS NULL',
+};
+
+const VIEWS_PAGE_MAX = 200;
+
+function badRequest(message) {
+  const e = new Error(message);
+  e.statusCode = 400;
+  return e;
+}
+
+/** A YYYY-MM-DD firm-local day as a UTC Date, shifted by `addDays`. */
+function firmDayStart(value, addDays, name) {
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(value))
+    ? DateTime.fromISO(String(value), { zone: FIRM_TZ })
+    : null;
+  // The year bound keeps a typed 9999 from reaching MySQL as a value it refuses.
+  if (!day || !day.isValid || day.year > 2100) {
+    throw badRequest(`${name} must be a date (YYYY-MM-DD)`);
+  }
+  return day.startOf('day').plus({ days: addDays }).toUTC().toJSDate();
+}
+
+function deviceLabel(ua) {
+  if (!ua) return 'Unknown';
+  if (/^curl\//i.test(ua)) return 'Script';
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/iPad/.test(ua)) return 'iPad';
+  if (/Android/.test(ua)) return 'Android';
+  if (/Windows/.test(ua)) return 'Windows';
+  if (/Macintosh/.test(ua)) return 'Mac';
+  if (/Linux/.test(ua)) return 'Linux';
+  return 'Other';
+}
+
+/**
+ * One row per page open, newest first, for the Views tab.
+ *
+ * Hidden unless asked for: automated opens, excluded views, and views before
+ * the video's analytics reset. Those last two are exactly what the analytics
+ * panel doesn't count, so with includeAutomated on, this list and the panel
+ * agree. `from` / `to` are firm-local days, `to` inclusive.
+ *
+ * The select list is explicit: track_token is a bearer and ip_hash has no use
+ * on a screen, so neither leaves this function.
+ *
+ * @returns {Promise<{views: object[], total: number, played: number,
+ *   completed: number, limit: number, offset: number}>}
+ * @throws {Error} err.statusCode = 400 on a bad filter
+ */
+async function listViews(db, {
+  videoId, contact, status, who, from, to,
+  includeAutomated = false, includeExcluded = false, includeBeforeReset = false,
+  limit = 100, offset = 0,
+} = {}) {
+  const where = [];
+  const params = [];
+
+  if (videoId != null && videoId !== '') {
+    const id = Number(videoId);
+    if (!Number.isInteger(id) || id <= 0) throw badRequest('video_id must be a positive integer');
+    where.push('vv.video_id = ?');
+    params.push(id);
+  }
+  if (contact) {
+    where.push('c.contact_name LIKE ?');
+    params.push(`%${escapeLike(String(contact))}%`);
+  }
+  if (status) {
+    if (!Object.hasOwn(VIEW_STATUS_SQL, status)) throw badRequest('Unknown status');
+    where.push(VIEW_STATUS_SQL[status]);
+  }
+  if (who) {
+    if (!Object.hasOwn(VIEW_WHO_SQL, who)) throw badRequest('Unknown who');
+    where.push(VIEW_WHO_SQL[who]);
+  }
+  if (from) {
+    where.push('vv.opened_at >= ?');
+    params.push(firmDayStart(from, 0, 'from'));
+  }
+  if (to) {
+    where.push('vv.opened_at < ?');
+    params.push(firmDayStart(to, 1, 'to'));
+  }
+  if (!includeAutomated)   where.push(`NOT ${AUTOMATED_SQL}`);
+  if (!includeExcluded)    where.push('vv.excluded_at IS NULL');
+  if (!includeBeforeReset) where.push('(v.analytics_reset_at IS NULL OR vv.opened_at >= v.analytics_reset_at)');
+
+  const pageSize = Math.min(Math.max(parseInt(limit, 10) || 100, 1), VIEWS_PAGE_MAX);
+  const skip     = Math.min(Math.max(parseInt(offset, 10) || 0, 0), Number.MAX_SAFE_INTEGER);
+
+  const source = `
+      FROM video_views vv
+      JOIN videos v         ON v.id = vv.video_id
+      LEFT JOIN contacts c  ON c.contact_id = vv.contact_id
+      LEFT JOIN cases cs    ON cs.case_id = vv.case_id
+      LEFT JOIN users u     ON u.user = vv.excluded_by
+     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}`;
+
+  const [[totals]] = await db.query(
+    `SELECT COUNT(*) AS total,
+            SUM(CASE WHEN vv.played_at IS NOT NULL THEN 1 ELSE 0 END)    AS played,
+            SUM(CASE WHEN vv.completed_at IS NOT NULL THEN 1 ELSE 0 END) AS completed
+     ${source}`,
+    params
+  );
+
+  const [rows] = await db.query(
+    `SELECT vv.id, vv.video_id, v.title AS video_title,
+            vv.contact_id, c.contact_name, vv.case_id, cs.case_number,
+            vv.opened_at, vv.played_at, vv.completed_at,
+            vv.watch_seconds, vv.completion_pct, vv.cta_clicks, vv.user_agent,
+            vv.excluded_at, u.user_name AS excluded_by_name,
+            ${AUTOMATED_SQL} AS automated,
+            (v.analytics_reset_at IS NOT NULL AND vv.opened_at < v.analytics_reset_at) AS before_reset
+     ${source}
+      ORDER BY vv.opened_at DESC, vv.id DESC
+      LIMIT ? OFFSET ?`,
+    [...params, pageSize, skip]
+  );
+
+  const views = rows.map(({ cta_clicks, user_agent, automated, before_reset, ...row }) => {
+    const clicks = parseJsonField(cta_clicks);
+    return {
+      ...row,
+      user_agent,
+      device: deviceLabel(user_agent),
+      cta_labels: Array.isArray(clicks)
+        ? clicks.filter(click => click && typeof click.label === 'string').map(click => click.label)
+        : [],
+      automated: !!automated,
+      before_reset: !!before_reset,
+    };
+  });
+
+  return {
+    views,
+    total:     Number(totals.total)     || 0,
+    played:    Number(totals.played)    || 0,
+    completed: Number(totals.completed) || 0,
+    limit: pageSize,
+    offset: skip,
+  };
+}
+
+/**
+ * Take a view out of the stats, or put it back. The row stays either way;
+ * hard deletion is a SQL job. videos.view_count moves with it, unless the view
+ * is from before a reset: the reset already took it off the counter.
+ *
+ * Repeating a call changes nothing. Pure DB, so one retry is safe.
+ *
+ * @param {object} pool  mysql2 pool (must support withTransaction)
+ * @param {number} viewId
+ * @param {boolean} excluded
+ * @param {number|null} userId  users.user, recorded when excluding
+ * @returns {Promise<{id: number, video_id: number, excluded: boolean, changed: boolean}>}
+ * @throws {Error} err.statusCode = 404 if the view does not exist
+ */
+async function setViewExcluded(pool, viewId, excluded, userId = null) {
+  return pool.withTransaction(async (conn) => {
+    const [rows] = await conn.query(
+      'SELECT video_id, opened_at FROM video_views WHERE id = ? FOR UPDATE',
+      [viewId]
+    );
+    if (!rows.length) {
+      const e = new Error('View not found');
+      e.statusCode = 404;
+      throw e;
+    }
+    const { video_id: videoId, opened_at: openedAt } = rows[0];
+
+    const [result] = await conn.query(
+      excluded
+        ? `UPDATE video_views SET excluded_at = NOW(), excluded_by = ?
+            WHERE id = ? AND excluded_at IS NULL`
+        : `UPDATE video_views SET excluded_at = NULL, excluded_by = NULL
+            WHERE id = ? AND excluded_at IS NOT NULL`,
+      excluded ? [userId, viewId] : [viewId]
+    );
+    const changed = result.affectedRows === 1;
+
+    if (changed) {
+      await conn.query(
+        `UPDATE videos
+            SET view_count = ${excluded ? 'IF(view_count > 0, view_count - 1, 0)' : 'view_count + 1'}
+          WHERE id = ?
+            AND (analytics_reset_at IS NULL OR analytics_reset_at <= ?)`,
+        [videoId, openedAt]
+      );
+    }
+    return { id: Number(viewId), video_id: videoId, excluded, changed };
+  }, { retries: 1 });
 }
 
 /**
@@ -1038,6 +1273,8 @@ module.exports = {
   getRelatedVideos,
   getVideoAnalytics,
   resetVideoAnalytics,
+  listViews,
+  setViewExcluded,
   hashIp,
   resolveCaseIdForContact,
   getJsonOverlapsCachedStatus,

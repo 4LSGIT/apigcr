@@ -10,6 +10,9 @@
  *
  * Routes:
  *   GET    /api/videos                — list (?published=1, ?tag=foo)
+ *   GET    /api/videos/views          — one row per page open, with filters
+ *   POST   /api/videos/views/:id/exclude — take a view out of the stats
+ *   POST   /api/videos/views/:id/restore — put it back
  *   GET    /api/videos/:id            — single (includes `aliases` and
  *                                         `related_videos` arrays)
  *   POST   /api/videos                — create (slug optional, server gens if absent)
@@ -77,6 +80,58 @@ router.get('/api/videos', jwtOrApiKey, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Registered before /api/videos/:id, which would otherwise take "views" as an id.
+router.get('/api/videos/views', jwtOrApiKey, async (req, res) => {
+  try {
+    const q = req.query;
+    res.json(await videoService.listViews(req.db, {
+      videoId:            q.video_id,
+      contact:            q.q,   // q: the one name the audit log redacts from a URL
+      status:             q.status,
+      who:                q.who,
+      from:               q.from,
+      to:                 q.to,
+      includeAutomated:   q.automated === '1',
+      includeExcluded:    q.excluded === '1',
+      includeBeforeReset: q.before_reset === '1',
+      limit:              q.limit,
+      offset:             q.offset,
+    }));
+  } catch (err) {
+    if (err.statusCode === 400) return res.status(400).json({ error: err.message });
+    console.error('[GET /api/videos/views]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Exclude or restore one view. excluded_by is the person at the keyboard, not
+ * whoever they are viewing as. An API key has no user, so it stays NULL.
+ */
+function viewExclusionRoute(excluded) {
+  return async (req, res) => {
+    try {
+      const viewId = Number(req.params.viewId);
+      if (!Number.isSafeInteger(viewId) || viewId <= 0) {
+        return res.status(400).json({ error: 'Invalid view id' });
+      }
+      const actor  = (req.auth && req.auth.impersonator) || req.auth;
+      const userId = Number(actor && actor.userId);
+      const result = await videoService.setViewExcluded(
+        req.db, viewId, excluded, Number.isInteger(userId) && userId > 0 ? userId : null
+      );
+      res.json(result);
+    } catch (err) {
+      if (err.statusCode === 404) return res.status(404).json({ error: err.message });
+      console.error(`[POST /api/videos/views/:viewId/${excluded ? 'exclude' : 'restore'}]`, err);
+      res.status(500).json({ error: err.message });
+    }
+  };
+}
+
+router.post('/api/videos/views/:viewId/exclude', jwtOrApiKey, viewExclusionRoute(true));
+router.post('/api/videos/views/:viewId/restore', jwtOrApiKey, viewExclusionRoute(false));
 
 router.get('/api/videos/:id', jwtOrApiKey, async (req, res) => {
   try {

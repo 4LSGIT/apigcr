@@ -584,6 +584,15 @@ async function walk(page, W, record) {
         await record('panel:connectionsDiv:phone-no-transcribe', await measure(page, fr), await shot('panel_connections_phone_no_transcribe'));
         await fr.evaluate(() => { const d = document.getElementById('noTxDialog'); if (d && d.open) d.close(); });
       }
+      // YisraVideo → an open video's editor, then the Views tab, fixtures/api/videos*. Clicked
+      // bare: a tab that has gone away must fail the run, not pass as an unmeasured surface.
+      if (id === 'videoManagerDiv' && fr) {
+        await fr.evaluate(() => document.querySelector('.list-item').click()); await sleep(1200);
+        await record('panel:videoManagerDiv:editor', await measure(page, fr), await shot('panel_video_manager_editor'));
+        await fr.evaluate(() => document.querySelector('.main-tab[data-main="views"]').click()); await sleep(1200);
+        if (!await fr.evaluate(() => document.querySelectorAll('.views-table tbody tr').length === 3)) throw new Error('videoManagerDiv: the Views tab did not draw its 3 fixture rows');
+        await record('panel:videoManagerDiv:views', await measure(page, fr), await shot('panel_video_manager_views'));
+      }
       // System Alerts → the Comms archive health section (S4, F4), fixtures/api/comms-archive/health.json
       if (id === 'systemAlertsDiv' && fr) {
         await fr.evaluate(() => { const d = document.getElementById('caHealth'); if (d) d.open = true; }); await sleep(1200);

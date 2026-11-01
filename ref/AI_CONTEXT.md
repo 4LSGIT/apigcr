@@ -2101,6 +2101,17 @@ conditional UPDATE at `COMPLETE_PCT` (90); the page's `ended` event proves
 nothing, dragging the bar fires it. `?ct=` identifies a viewer; `?c=` is
 attribution-only and must never reach a page as a token.
 
+Views tab: `listViews` is one row per open and never selects `track_token` or
+`ip_hash`. `excluded_at` is a soft exclude (hard delete is SQL only): every
+query in `getVideoAnalytics` carries `excluded_at IS NULL`, so a new stat over
+`video_views` must too, and `setViewExcluded` moves `videos.view_count` in the
+same transaction unless the view predates `analytics_reset_at`. "Automated" is
+judged at read time from user agent + no sign of a person (`AUTOMATED_SQL`); it
+hides a row from the list only and never changes a stat. The contact filter
+travels as `q`, the one parameter the audit log redacts: a new free-text filter
+on a route reuses it. `recordView` UPDATEs `videos` before it INSERTs: the
+foreign key's shared lock otherwise deadlocks two opens of one video.
+
 ## 25. SCHEMA REF AUTO-GENERATION
 
 `ref/database.sql` regenerates itself: the pre-commit hook

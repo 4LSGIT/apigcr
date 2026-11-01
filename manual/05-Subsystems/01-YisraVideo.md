@@ -13,7 +13,9 @@ YisraVideo is the firm's home-grown video sharing system. It replaces our Dubb s
 
 **More → Video Manager** in the main navigation. Any logged-in user can use it.
 
-The Video Manager has two panes:
+The Video Manager has two tabs: **Videos**, covered first below, and **Views**, which lists who watched what across every video (see [Seeing who watched](#seeing-who-watched)).
+
+The Videos tab has two panes:
 
 - **Left:** list of all videos. Click a video to edit it.
 - **Right:** the editor for the selected video, with analytics at the top.
@@ -90,9 +92,25 @@ The Analytics panel on each video shows:
 
 Views are recorded the moment the page opens, even before play, so link scanners count: phone carriers and messaging apps fetch a texted link within seconds of sending it, usually twice, and nobody has seen the page. Trust **Played** over **Total views**. The contact and their primary case are attached to each view in the database — an active case (Open, Filed or Pending) first, then Concluded, then Closed, newest first within each.
 
+### Seeing who watched
+
+The **Views** tab lists every page open, newest first: when it was opened, the video, the viewer and their case, how much they watched, the buttons they clicked and their device. Click a viewer or a case to open it. **See who watched** in a video's Analytics panel opens the tab for that video, with automated opens shown so the list adds up to the panel.
+
+Filter by video, contact name, status (Played, Completed, Clicked a button, Not played), viewer (known contacts or anonymous) and dates. Dates and times on this tab are in the firm's time zone.
+
+Three kinds of row are hidden by default:
+
+- **Automated** rows, while **Hide automated** is ticked. These are opens from a link scanner: `curl`, or the Linux desktop browser that fetches texted links. A view that was played, completed or had a button clicked is never treated as automated. This only affects the list. The scanners still count in **Total views**.
+- **Excluded** rows, until you tick **Show excluded**.
+- Rows from before the video's last Reset, until you tick **Include before a reset**.
+
+### Excluding a view
+
+**Exclude** on a row takes that view out of the stats, for a test view or a scanner. It stops counting in every Analytics number and in the view count on the video list. Nothing is deleted: tick **Show excluded** to see it, along with who excluded it, and **Restore** puts it back.
+
 ### Resetting analytics
 
-The **Reset** button (at the top of the analytics panel) zeros out the visible counters and stamps a "Stats since" timestamp on the video. Past view records are preserved in the database — they just stop counting toward the displayed stats.
+The **Reset** button (at the top of the analytics panel) zeros out the visible counters and stamps a "Stats since" timestamp on the video. Past view records are preserved — they stop counting toward the displayed stats, and **Include before a reset** on the Views tab still lists them.
 
 Use it when:
 
