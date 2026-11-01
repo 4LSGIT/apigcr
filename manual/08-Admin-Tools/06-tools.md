@@ -55,6 +55,33 @@ real data into the page body.
 Pages are served with no-cache and `noindex, nofollow`, so search engines
 won't pick them up, but that is not access control.
 
+## Who sees it in the tool picker
+
+**Who sees it in the tool picker**, in the tool's editor, decides who is offered
+this tool when they make a button of their own (**My buttons**, see
+[Your own launcher](../01-YisraCase-overview/15-your-launcher.md#my-buttons)).
+
+- **Everyone** — the default. Every person can pick it.
+- **Hidden, except…** — only the roles you tick can pick it. **SU**, **Admin**
+  and **IT** are always ticked: they hold firm settings and see every tool. A
+  role nobody ticked, a new role included, is never offered it. Ticking nothing
+  leaves only those three.
+
+The list of tools shows **Restricted** beside the status of a tool with roles
+ticked; rest on it to see who.
+
+**This shortens a list and nothing more.** It isn't access control:
+
+- A button someone already made for the tool keeps working, and still shows the
+  tool's name in their editor.
+- The firm's launcher items aren't affected. A firm item that opens the tool
+  shows for whoever **Who sees what** allows (see
+  [Firm Launcher](../05-Subsystems/14-firm-launcher.md)).
+- `/tool/<key>` is still served to anyone who requests it (see above).
+
+Keep a tool off this list because most people have no use for it, not to keep it
+from them.
+
 ## Version history
 
 Every save that actually changes the HTML keeps a copy. The list of saved
@@ -65,8 +92,8 @@ versions sits alongside the editor, newest first, with who saved it and when.
 - **Delete** removes a single old version. You cannot delete the newest one,
   because the newest saved version is the tool's current content — the screen
   will refuse with an error rather than leave the history out of step.
-- Changing only the title or the status does **not** create a version. Only
-  content changes do.
+- Changing only the title, the status or who sees it does **not** create a
+  version. Only content changes do.
 
 ## Deleting a tool
 

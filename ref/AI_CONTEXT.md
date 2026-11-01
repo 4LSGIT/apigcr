@@ -2522,12 +2522,15 @@ Tools (SU)). Manual `manual/08-Admin-Tools/06-tools.md`. Tests
 
 ### Tables
 - `tools` — `tool_key` varchar(80) UNIQUE (`/^[a-z0-9-]{1,80}$/`), `title`,
-  `status` enum('draft','live'), `html` mediumtext, `updated_by` varchar(100).
+  `status` enum('draft','live'), `visible_to` json (below), `html` mediumtext,
+  `updated_by` varchar(100).
 - `tool_versions` — save history, FK → `tools` ON DELETE CASCADE.
 
-No migration is filed for either table: plain DDL, wholly captured by
+The tables themselves have no migration: plain DDL, wholly captured by
 `ref/database.sql` (retention rule in `ref/README.md`). Absence of a file in
-`ref/migrations/` is not evidence the change never happened.
+`ref/migrations/` is not evidence the change never happened. `visible_to` does:
+`2026-11-01_tools_visible_to.sql`, applied by
+`scripts/launcherL5ToolsVisibleTo.js`.
 
 ### Invariants — do not soften
 1. **Same-origin is deliberate.** A tool is authored code, not user content.
@@ -2551,10 +2554,22 @@ No migration is filed for either table: plain DDL, wholly captured by
 5. **Versioning (single source of truth).** On any save where `html` is
    provided AND differs from stored, a `tool_versions` row is appended with
    the NEW html — so the newest row always equals `tools.html` and restore is
-   literally "copy row N back". A title/status-only PATCH appends nothing; a
-   no-op restore appends nothing; deleting the newest version row is a 400.
+   literally "copy row N back". A PATCH of only title, status or visible_to
+   appends nothing; a no-op restore appends nothing; deleting the newest
+   version row is a 400.
    The append is non-transactional by house style — a crash between the two
    statements loses one history row, never the tool.
+6. **`tools.visible_to` is picker visibility, never access** (launcher-nits
+   L5). It filters one list, `GET /api/ui-config/pickers` → My buttons: NULL =
+   everyone, a list = those roles, `[]` = no role. Holders of `firm.settings`
+   (su, admin, IT) see every tool, in My buttons as in the Firm tab: one rule
+   on one route, keyed on who asks (`uiConfigService.pickers`) — Fred's ruling
+   2026-11-01. Nothing refuses a restricted tool: `/tool/<key>` is public and a
+   user's PUT never checks the key, because a button already made must keep
+   working. That button's title comes from the reply's `held` list, the
+   restricted tools the caller's own `items` open, so it does not read "(not
+   live)"; nobody else's reply names the tool. Firm items are the firm's
+   `visible_to`'s business, not this column's.
 
 ### Runtime contract — the tool shell API (ui-custom S3.3)
 - **What:** `window.ycTool` on the shell, defined beside `openToolDialog` in

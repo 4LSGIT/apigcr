@@ -83,7 +83,8 @@ const RO = { items: [FIRM_URL], hidden: [], locked: [], renames: {} };
 const FIRM = (ro = RO) => hubFirm({ items: ro.items || [], ro, visibleTo: { 'firm:admin': ['it', 'admin'], ...(ro.visible_to || {}) } });
 const PICKERS = { status: 'success',
   tools: [{ key: 'qa-intake-tool', title: 'Intake checklist' }, { key: 'clio-code', title: 'Get Clio Code' }],
-  views: [{ key: 'lead_followups', title: 'Leads <b>follow ups</b>' }, { key: 'upcoming_hearings', title: 'Upcoming hearings' }] };
+  views: [{ key: 'lead_followups', title: 'Leads <b>follow ups</b>' }, { key: 'upcoming_hearings', title: 'Upcoming hearings' }],
+  held: [{ key: 'kept-tool', title: 'Kept <b>tool</b>' }] };
 
 // ─────────────────────────────────────────────────────────────────────────
 // 1. computeEffective, pure, in a vm
@@ -737,6 +738,29 @@ describe('the editor\'s My buttons tab (for real)', () => {
     expect(t.toasts).toEqual(['Order saved']);
     expect([t.panel().hidden, t.w.ycLayoutEditor.isDirty()]).toEqual([false, false]);
     expect([...t.mb().querySelectorAll('select')].some((s) => s.disabled)).toBe(false);   // unfrozen
+  });
+
+  test('a button on a tool since restricted keeps its title and its choice; the list doesn\'t offer that tool to anything else (L5)', async () => {
+    const KEPT = { id: 'user:kept', label: 'Kept', icon: 'c', action: { type: 'tool', key: 'kept-tool', present: 'modal' } };
+    const GONE = { id: 'user:gone', label: 'Gone', icon: 'c', action: { type: 'tool', key: 'gone-tool', present: 'modal' } };
+    t = boot({ items: [KEPT, GONE] });
+    await t.openEditor();
+    expect(t.mbRows().map((r) => r.sum)).toEqual([
+      expect.stringContaining('Tool · Kept <b>tool</b>'),
+      expect.stringContaining('Tool · gone-tool (not live)'),
+    ]);
+    t.act('Kept', 'mb-edit').click();
+    const sel = () => t.mb().querySelector('#ymb_key');
+    expect(sel().value).toBe('kept-tool');
+    expect(sel().selectedOptions[0].textContent).toBe('Kept <b>tool</b>');
+    t.fill({ label: 'Still kept' });
+    t.mb().querySelector('[data-act="mb-commit"]').click();
+    await t.flush();
+    expect(t.server.puts[t.server.puts.length - 1].body.config.items[0].action.key).toBe('kept-tool');
+    t.mb().querySelector('[data-act="mb-open"]').click();
+    t.fill({ type: 'tool' });
+    expect([...sel().options].map((o) => o.value)).toEqual(['', 'qa-intake-tool', 'clio-code']);
+    expect([...sel().options].map((o) => o.textContent).join()).not.toMatch(/Kept/);
   });
 
   test('the lists can\'t be read: the tab says so; a link button can still be added and saved', async () => {

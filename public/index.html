@@ -3322,7 +3322,9 @@
        span min-width: 0, which let this nowrap tag's BOX shrink while its text
        painted past the list edge (320/375 survey overflow, 2026-10-21). The
        tag stays rigid; the wrapping label span absorbs the squeeze. */
-    #ycPalette .yc-pal-item .yc-pal-group { flex: 0 0 auto; margin-left: auto; padding-left: 8px; font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
+    /* A group is the firm's own section or page name since launcher-nits L3, up
+       to 40 characters: it gives way to the row's label, never widens the row. */
+    #ycPalette .yc-pal-item .yc-pal-group { flex: 0 1 auto; max-width: 45%; margin-left: auto; padding-left: 8px; font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     /* the user's keyboard shortcuts for a row (S4c) */
     #ycPalette .yc-pal-item .yc-pal-keys { flex: 0 0 auto; display: inline-flex; gap: 4px; margin-left: auto; }
     #ycPalette .yc-pal-item .yc-pal-keys + .yc-pal-group { margin-left: 0; }

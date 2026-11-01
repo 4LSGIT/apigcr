@@ -161,7 +161,8 @@ from `mailboxes/1/grants.json`); the Firm tab's setting History
 the holder (`panel:caseConfigDiv:<id>` — Contact Roles, Lists, System and the
 vocabulary tabs; a tab that does not open is a failure); the vocabulary tabs
 read-only as staff (`panel:caseConfigDiv:readonly:<id>` — a missing banner is
-a failure); Portal Manager → Settings; CTA Links → Link defaults.
+a failure); Portal Manager → Settings; CTA Links → Link defaults; Tools (SU) →
+the editor on a restricted tool, which also fails if its role row isn't showing.
 
 Fixtures cover one case (`TESTCASE1`) with two contacts, appointments, log
 rows, an alert, a custom-field value and a pipeline (`cases/TESTCASE1/pipeline`),

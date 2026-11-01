@@ -79,6 +79,7 @@
   }
   .badge.on  { background: var(--ok-soft);    color: var(--ok-on-soft); border-color: var(--ok); }
   .badge.off { background: var(--surface-2);  color: var(--text-muted); border-color: var(--border); }
+  .badge-row { display: flex; flex-wrap: wrap; gap: 4px; }
 
   /* ── Instructions panel ────────────────────────────────────── */
   details.instructions {
@@ -128,6 +129,15 @@
     font-size: 11.5px; min-height: 280px; resize: vertical; white-space: pre;
   }
   .field .hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+  /* Who sees it: .field label is the caps field label; these are choices. */
+  .vis-row { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+  .vis-roles { margin-top: 6px; padding-left: 18px; }
+  .vis-roles[hidden] { display: none; }   /* .vis-row's display would beat [hidden] */
+  .field label.vis-opt {
+    display: inline-flex; align-items: center; gap: 5px; margin: 0;
+    font-size: 12px; color: var(--text); text-transform: none; letter-spacing: normal;
+  }
+  .field label.vis-opt.locked { color: var(--text-muted); }
   .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
   .modal-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; }
   .modal-actions .right { display: flex; gap: 8px; margin-left: auto; }
@@ -248,6 +258,18 @@ as an iframe child of the YisraCase shell. Requirements:
       </div>
     </div>
 
+    <div class="field" id="f-vis">
+      <label>Who sees it in the tool picker</label>
+      <div class="vis-row">
+        <label class="vis-opt"><input type="radio" name="f-vis-mode" id="f-vis-all" value="all"> Everyone</label>
+        <label class="vis-opt"><input type="radio" name="f-vis-mode" id="f-vis-some" value="some"> Hidden, except…</label>
+      </div>
+      <div class="vis-row vis-roles" id="f-vis-roles" hidden></div>
+      <div class="hint">Decides who can pick this tool for a button of their own (<b>My buttons</b>). This only
+        shortens that list: a button someone already made keeps working, the firm's launcher items don't change,
+        and <code>/tool/&lt;key&gt;</code> stays reachable.</div>
+    </div>
+
     <div class="field">
       <label for="f-html">Tool HTML</label>
       <div class="muted" style="margin:2px 0 6px; padding:6px 10px; border:1px solid var(--warn); border-radius:4px; color:var(--warn);">
@@ -325,6 +347,15 @@ const state = { tools: [], editingId: null, versionsToolId: null };
 
 const TOOL_KEY_RE = /^[a-z0-9-]{1,80}$/;   // mirror of routes/api.tools.js
 
+// visible_to's roles: lib/capabilities.js ROLE_MEMBERS minus su, which is
+// implicit (tests/toolManagerVisibility.test.js pins this copy to it; the page
+// cannot require server code). ROLE_LOCKED hold firm settings, so they see every
+// tool whatever is ticked (uiConfigService.pickers): shown ticked, never sent.
+const ROLE_LOCKED = ['admin', 'it'];
+const ROLE_TICKS = ['attorney', 'staff', 'form_dev', 'automation'];
+const ROLE_LABELS = { admin: 'Admin', attorney: 'Attorney', staff: 'Staff', it: 'IT', form_dev: 'Form dev', automation: 'Automation' };
+const LOCKED_TIP = 'Superusers, Admin and IT hold firm settings and always see every tool';
+
 // ── Helpers ─────────────────────────────────────────────────
 const E = (id) => document.getElementById(id);
 function esc(s) {
@@ -361,6 +392,13 @@ function statusBadge(t) {
   return t.status === 'live'
     ? '<span class="badge on">Live</span>'
     : '<span class="badge off">Draft</span>';
+}
+/** The list's mark for a tool with a role list; nothing for everyone's. */
+function visibleBadge(t) {
+  if (!Array.isArray(t.visible_to)) return '';
+  const names = t.visible_to.filter((r) => !ROLE_LOCKED.includes(r)).map((r) => ROLE_LABELS[r] || r);
+  const who = names.length ? `${names.join(', ')}, and SU, Admin and IT` : 'SU, Admin and IT only';
+  return `<span class="badge off" title="In the tool picker for: ${esc(who)}">Restricted</span>`;
 }
 function fmtDate(d) {
   if (!d) return '';
@@ -447,7 +485,7 @@ function listRow(t) {
     <tr data-id="${t.id}">
       <td class="slug-cell">${esc(t.tool_key)}</td>
       <td>${t.title ? esc(t.title) : '<span class="muted">—</span>'}</td>
-      <td>${statusBadge(t)}</td>
+      <td><div class="badge-row">${statusBadge(t)}${visibleBadge(t)}</div></td>
       <td class="muted">${esc(t.version_count)}</td>
       <td class="muted">${t.updated_by ? esc(t.updated_by) : ''}</td>
       <td class="muted">${esc(fmtDate(t.updated_at))}</td>
@@ -483,6 +521,7 @@ async function openEditor(id) {
   E('f-title').value  = full && full.title ? full.title : '';
   E('f-status').value = full ? full.status : 'draft';
   E('f-html').value   = full ? full.html : '';
+  fillVisible(full ? full.visible_to : null);
 
   E('edit-backdrop').classList.add('open');
   E('f-key').focus();
@@ -491,6 +530,35 @@ async function openEditor(id) {
 function closeEditor() {
   E('edit-backdrop').classList.remove('open');
   state.editingId = null;
+}
+
+// ── Who sees it ─────────────────────────────────────────────
+function buildVisibleRoles() {
+  const box = (role, label, locked) => `
+    <label class="vis-opt${locked ? ' locked' : ''}"${locked ? ` title="${esc(LOCKED_TIP)}"` : ''}>
+      <input type="checkbox"${locked ? ' checked disabled' : ` data-role="${role}"`}> ${esc(label)}
+    </label>`;
+  E('f-vis-roles').innerHTML = box('su', 'SU', true)
+    + ROLE_LOCKED.map((r) => box(r, ROLE_LABELS[r], true)).join('')
+    + ROLE_TICKS.map((r) => box(r, ROLE_LABELS[r], false)).join('');
+}
+function syncVisibleRoles() {
+  E('f-vis-roles').hidden = !E('f-vis-some').checked;
+}
+/** visible_to → the form: null / absent = Everyone, a list = Hidden, except. */
+function fillVisible(list) {
+  const some = Array.isArray(list);
+  E('f-vis-all').checked = !some;
+  E('f-vis-some').checked = some;
+  E('f-vis-roles').querySelectorAll('input[data-role]').forEach((c) => {
+    c.checked = some && list.includes(c.dataset.role);
+  });
+  syncVisibleRoles();
+}
+/** The form → visible_to: null, or the ticked roles ([] = SU, Admin and IT only). */
+function readVisible() {
+  if (!E('f-vis-some').checked) return null;
+  return [...E('f-vis-roles').querySelectorAll('input[data-role]:checked')].map((c) => c.dataset.role);
 }
 function showErr(msg) { const el = E('modal-err'); el.textContent = msg; el.classList.add('show'); }
 function hideErr() { E('modal-err').classList.remove('show'); }
@@ -511,6 +579,7 @@ async function saveTool() {
     title: E('f-title').value.trim(),
     html,
     status: E('f-status').value,
+    visible_to: readVisible(),
   };
 
   const saveBtn = E('f-save');
@@ -692,6 +761,9 @@ async function deleteVersion(v) {
 
 // ── Init / wiring ───────────────────────────────────────────
 function init() {
+  buildVisibleRoles();
+  E('f-vis-all').addEventListener('change', syncVisibleRoles);
+  E('f-vis-some').addEventListener('change', syncVisibleRoles);
   E('f-cancel').addEventListener('click', closeEditor);
   E('f-save').addEventListener('click', saveTool);
   E('f-preview-unsaved').addEventListener('click', () => {

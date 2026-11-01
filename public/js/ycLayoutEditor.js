@@ -87,7 +87,9 @@
  * brands — ui-custom S6a), never typed. A list (icon, name, what it opens, where it is
  * placed and bound; move, edit, delete, "Add to Home" / "Add to sidebar") and
  * one add / edit form; the tool and view lists come from GET
- * /api/ui-config/pickers, read the first time the tab shows. Ids come from the
+ * /api/ui-config/pickers, read the first time the tab shows (a tool restricted
+ * from this user is not offered; their button on one keeps its title from the
+ * reply's `held` list, launcher-nits L5). Ids come from the
  * name (user:<slug>), unique against every button, the ids the user's layout
  * and shortcuts name, and the server's retired list; a saved button's id never
  * changes. While the panel is open the other tabs work from an effective
@@ -211,6 +213,11 @@
   function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
   function isObj(o) { return o !== null && typeof o === 'object' && Object.prototype.toString.call(o) === '[object Object]'; }
   function isArr(a) { return Object.prototype.toString.call(a) === '[object Array]'; }
+  /** The title of a tool the user holds a button on but isn't offered ('' if none). */
+  function heldTitle(pk, key) {
+    var hit = pk && isArr(pk.held) ? pk.held.filter(function (x) { return isObj(x) && x.key === key; })[0] : null;
+    return hit ? String(hit.title == null || hit.title === '' ? key : hit.title) : '';
+  }
 
   /** JSON with object keys sorted at every level — lib/uiConfigShape.js
    *  canonical(), line for line: "is it unchanged?" whatever order MySQL
@@ -1148,7 +1155,8 @@
   /**
    * The My buttons tab's core — pure: no DOM, no network.
    *   o.stored   the user's stored items document { items, retired? } (or null)
-   *   o.pickers  { tools: [{ key, title }], views: [{ key, title }] } or null
+   *   o.pickers  { tools: [{ key, title }], views: [{ key, title }],
+   *              held?: [{ key, title }] } or null
    *              (the lists could not be read)
    *   o.clean    the shell's client grammar for a button (ycLauncher.cleanUserItem)
    *   o.refs     () → ids the user's layout and shortcuts name now (stored and
@@ -1229,7 +1237,7 @@
       var list = pk ? (type === 'tool' ? pk.tools : pk.views) : null;
       var hit = isArr(list) ? list.filter(function (x) { return isObj(x) && x.key === key; })[0] : null;
       if (hit) return String(hit.title == null || hit.title === '' ? key : hit.title);
-      return pk ? key + (type === 'tool' ? ' (not live)' : ' (not found)') : key;
+      return (type === 'tool' && heldTitle(pk, key)) || (pk ? key + (type === 'tool' ? ' (not live)' : ' (not found)') : key);
     }
     function summary(r) {
       if (r.kept) return 'Can’t be edited here (it breaks today’s rules); it is kept as it is';
@@ -1842,7 +1850,7 @@
     Promise.resolve()
       .then(function () { return window.apiSend('/api/ui-config/pickers', 'GET'); })
       .then(function (r) {
-        done(isObj(r) && isArr(r.tools) && isArr(r.views) ? { tools: r.tools, views: r.views } : null);
+        done(isObj(r) && isArr(r.tools) && isArr(r.views) ? { tools: r.tools, views: r.views, held: isArr(r.held) ? r.held : [] } : null);
       }, function () { done(null); });
     if (its) renderButtons();
   }
@@ -2332,7 +2340,8 @@
   function formEl() { return mbSec().querySelector('.ymb-form'); }
   function fval(id) { return mbSec().querySelector('#ymb_' + id).value; }
   // The key picker for the chosen kind: the live tools / active saved views
-  // (titles), plus the stored key when the lists don't have it.
+  // (titles), plus the stored key when the lists don't have it — by its title
+  // when it is a tool held but no longer offered.
   function fillKeys(type, key) {
     var sel = mbSec().querySelector('#ymb_key');
     sel.textContent = '';
@@ -2347,7 +2356,7 @@
       sel.appendChild(op);
     });
     if (key && !Array.prototype.some.call(sel.options, function (op) { return op.value === key; })) {
-      var keep = el('option', null, key + (pickers ? (type === 'tool' ? ' (not live)' : ' (not found)') : ''));
+      var keep = el('option', null, (type === 'tool' && heldTitle(pickers, key)) || key + (pickers ? (type === 'tool' ? ' (not live)' : ' (not found)') : ''));
       keep.value = key;
       sel.appendChild(keep);
     }

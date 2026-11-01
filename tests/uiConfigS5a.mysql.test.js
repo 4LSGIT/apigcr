@@ -22,7 +22,8 @@
  *     (retired is per user); the user's layout and shortcuts may name a
  *     button (user: refs) and a deleted button's references, gone from the
  *     documents, can never re-point.
- *   - The pickers read: any staff user, keys and titles only.
+ *   - The pickers read: any staff user, keys and titles only (who is offered
+ *     which tool: tests/launcherL5.pickers.mysql.test.js).
  */
 'use strict';
 

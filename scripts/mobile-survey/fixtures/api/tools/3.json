@@ -1,0 +1,18 @@
+{
+  "status": "success",
+  "tool": {
+    "id": 3,
+    "tool_key": "qa-tool-with-a-very-long-key-name-for-the-tools-table",
+    "title": "A tool with a long title for the list of tools",
+    "status": "live",
+    "visible_to": [
+      "staff",
+      "attorney",
+      "form_dev"
+    ],
+    "updated_by": "IT",
+    "updated_at": "{{TODAY}}T07:00:00Z",
+    "html": "<!DOCTYPE html><p>A tool</p>",
+    "created_at": "{{TODAY}}T07:00:00Z"
+  }
+}

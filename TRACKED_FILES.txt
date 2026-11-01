@@ -939,6 +939,8 @@ scripts/mobile-survey/fixtures/api/phone-lines/readable.staff.json
 scripts/mobile-survey/fixtures/api/readonly-keys.json
 scripts/mobile-survey/fixtures/api/shared.json
 scripts/mobile-survey/fixtures/api/tasks.json
+scripts/mobile-survey/fixtures/api/tools.json
+scripts/mobile-survey/fixtures/api/tools/3.json
 scripts/mobile-survey/fixtures/api/ui-config.json
 scripts/mobile-survey/fixtures/api/ui-config/pickers.json
 scripts/mobile-survey/fixtures/api/ui-config/versions.json
@@ -1726,6 +1728,7 @@ tests/test_classifier.js
 tests/test_report_author.sh
 tests/themePrefsS5d.test.js
 tests/token.test.js
+tests/toolManagerVisibility.test.js
 tests/toolShellS33.test.js
 tests/triggerCodeGate.routes.test.js
 tests/triggerService.matchFailure.test.js

@@ -77,8 +77,10 @@ Each firm item has a **label**, an **icon** and what it **opens**:
 - **Dialog size** (tools and saved views): **Large**, the big working dialog
   (full screen on a phone), or **Compact**, a small card for something short
   like a code. Items saved before this choice existed open Large.
-- **Tools** are written by SU (Admin → **Tools (SU)**); the list here shows only
-  the ones that are **live**. A tool is how the firm gets a button that *does*
+- **Tools** are written by SU (Admin → **Tools (SU)**); the list here shows
+  every tool that is **live**, including one
+  [kept off people's own list](../08-Admin-Tools/06-tools.md#who-sees-it-in-the-tool-picker).
+  A tool is how the firm gets a button that *does*
   something — see [Tool actions](../08-Admin-Tools/11-tool-actions.md).
   **Saved views** come from YisraView (More → Views).
 - A link may not point at a tool page or a saved view directly (`/tool/…`,

@@ -326,6 +326,9 @@ the delete never saves something you hadn't finished.
   renames and **Who sees what** apply to the app's features and the firm's
   items; your own buttons are yours. A button is a shortcut, not a key: what
   the tool or view behind it lets you do is still decided by your role.
+- **The list of tools may be shorter for you.** A super-user can limit which
+  roles are offered a tool here. A button you already made for one keeps
+  working and keeps its name; the tool just isn't offered for a new button.
 - A button's internal name (its id) is made from the name you give it and
   never changes once saved, so renaming a saved button keeps its place on
   your Home and its shortcut. A deleted button's id is never used again for

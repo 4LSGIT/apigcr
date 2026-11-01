@@ -632,7 +632,17 @@ async function walk(page, W, record) {
         await fr.evaluate(() => openEditor(4)); await sleep(1000);
         await record('panel:landingPagesDiv:editor', await measure(page, fr), await shot('panel_landing_editor'));
       }
-      // YisraCase Config → the Firm tab (ui-custom S3.2's launcher editor), fixtures/api/ui-config*
+      // Tools (SU) → the editor on a restricted tool, its roles showing (launcher-nits L5), fixtures/api/tools*
+      if (id === 'toolsDiv' && fr) {
+        await fr.evaluate(() => openEditor(3)); await sleep(800);
+        const m = await measure(page, fr);
+        const shown = await fr.evaluate(() => getComputedStyle(document.getElementById('f-vis-roles')).display !== 'none');
+        const gone = await fr.evaluate(() => { document.getElementById('f-vis-all').click(); return getComputedStyle(document.getElementById('f-vis-roles')).display === 'none'; });
+        await fr.evaluate(() => document.getElementById('f-vis-some').click());
+        if (!shown || !gone) m.boxes = [{ sel: `#f-vis-roles (${shown ? 'not hidden on Everyone' : 'not shown'})`, missing: true }];
+        await record('panel:toolsDiv:editor', m, await shot('panel_tools_editor'));
+        await fr.evaluate(() => closeEditor());
+      }
       // (can_edit_firm, 38-40-character labels, a long href, a long picker title). The tab is gated
       // on can_edit_firm, so one that never opened is a FAILURE here (a missing box), not a quiet
       // capture of whichever tab was showing.
