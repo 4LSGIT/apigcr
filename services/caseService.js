@@ -86,8 +86,17 @@ async function listCases(db, {
   const params = [];
 
   if (query) {
+    // EXISTS, not co.contact_name: a WHERE on the joined contact would drop
+    // the case's other contacts from the row, and the count below would have
+    // to join every relate type to agree with it.
     where.push(`(
-      co.contact_name LIKE ?
+      EXISTS (
+        SELECT 1
+          FROM case_relate qcr
+          JOIN contacts qco ON qco.contact_id = qcr.case_relate_client_id
+         WHERE qcr.case_relate_case_id = c.case_id
+           AND qco.contact_name LIKE ?
+      )
       OR c.case_id LIKE ?
       OR c.case_number LIKE ?
       OR c.case_number_full LIKE ?
@@ -160,9 +169,6 @@ async function listCases(db, {
   const [[{ total }]] = await db.query(
     `SELECT COUNT(*) AS total
      FROM cases c
-     LEFT JOIN case_relate cr ON c.case_id = cr.case_relate_case_id
-       AND cr.case_relate_type = 'Primary'
-     LEFT JOIN contacts co ON cr.case_relate_client_id = co.contact_id
      ${whereSQL}`,
     params,
   );

@@ -307,6 +307,17 @@ describe('the tabs send what the routes read', () => {
     expect(await EV('title', 'DESC')).toEqual({ limit: 100, offset: 0, status: 'Scheduled', sort: 'desc', sort_by: 'title' });
   });
 
+  test('the Cases Stage filter offers exactly the case_stage enum, in its order', () => {
+    const stages = read('ref/database.sql').match(/`case_stage` enum\(([^)]*)\)/)[1]
+      .split(',').map((s) => s.replace(/'/g, ''));
+    const start = INDEX.indexOf('<select id="tabCasesStage"');
+    const sel = INDEX.slice(start, INDEX.indexOf('</select>', start));
+    const offered = [...sel.matchAll(/<option>([^<]+)<\/option>/g)].map((m) => m[1]);
+    expect(stages.length).toBeGreaterThan(0);
+    expect(offered).toEqual(stages);
+    expect(sel).toContain('<option value="%">All</option>');
+  });
+
   test('every sortable header is wired to a value its Order By select offers', () => {
     for (const [selId, thead] of [['tabContactsSort', 'contactsTable'], ['tabApptsSort', 'apptsTable'],
       ['tabEventsSort', 'eventsTable'], ['calxSortBy', 'calxTable'], ['tabCasesOrder', 'casesTable']]) {

@@ -247,6 +247,36 @@ d('list sorts on a real engine', () => {
       const desc = await caseService.listCases(pool, { sort_by: 'c.case_stage', sort_dir: 'DESC' });
       expect(ids(desc.cases, 'case_id')).toEqual(['CASEDDDD', 'CASECCCC', 'CASEBBBB', 'CASEAAAA']);
     });
+
+    test('a name search finds a Secondary-only client, and the total agrees', async () => {
+      const r = await caseService.listCases(pool, { query: 'Kim Zed' });
+      expect(ids(r.cases, 'case_id')).toEqual(['CASEAAAA']);
+      expect(r.total).toBe(1);
+    });
+
+    test('a name search keeps the case\'s other contacts on the row', async () => {
+      const r = await caseService.listCases(pool, { query: 'Kim Zed' });
+      const raw = r.cases[0].contacts;
+      const contacts = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      expect(contacts.map((c) => c.contact_name).sort()).toEqual(['Ann Able', 'Kim Zed']);
+    });
+
+    test('a client on two cases in different roles counts both, once each', async () => {
+      await q(`INSERT INTO case_relate (case_relate_case_id, case_relate_client_id, case_relate_type) VALUES
+        ('CASEBBBB', 5, 'Secondary')`);
+      try {
+        const r = await caseService.listCases(pool, { query: 'Kim Zed' });
+        expect(ids(r.cases, 'case_id').sort()).toEqual(['CASEAAAA', 'CASEBBBB']);
+        expect(r.total).toBe(2);
+      } finally {
+        await q(`DELETE FROM case_relate WHERE case_relate_case_id = 'CASEBBBB' AND case_relate_client_id = 5`);
+      }
+    });
+
+    test('no search: the total is every case, and a filter narrows it', async () => {
+      expect((await caseService.listCases(pool, {})).total).toBe(4);
+      expect((await caseService.listCases(pool, { stage: 'Closed' })).total).toBe(0);
+    });
   });
 
   describe('appts', () => {

@@ -63,12 +63,10 @@ A few things to know about Leads:
 - Leads are created automatically through the intake process when a new prospective client is entered
 - Leads that do not convert should be set to Closed
 
-> **The Stage filter's "Lead" option matches nothing.** The Cases tab offers
-> All / Lead / Filed / Closed, and the filter compares against `case_stage`,
-> whose only values are Open, Pending, Filed, Concluded and Closed. Selecting
-> **Lead** therefore returns an empty list — it is a leftover from before the
-> stage set settled. Filter on `pipeline_phase` (or use a
-> [view](../05-Subsystems/05-YisraView.md)) to list leads.
+> **The Stage filter cannot list leads.** It offers the five `case_stage`
+> values, and a lead sits in **Open** beside retained matters that have not been
+> filed yet. Use a [view](../05-Subsystems/05-YisraView.md) on `pipeline_phase`
+> to list leads.
 
 ---
 
