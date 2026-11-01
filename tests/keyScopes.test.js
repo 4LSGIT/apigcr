@@ -13,7 +13,8 @@
  *     malformed → false; a malformed scope NAME throws.
  *   - EVERY route mounting readonlyApiKeyAuth mounts requireKeyScope right
  *     after it, with the surface pinned per file — a new mount without one
- *     fails here, so a temp route cannot ride in silently (§5.1).
+ *     fails here, so a temp route cannot ride in silently (§5.1). The one
+ *     exception is named in UNSCOPED_MOUNTS (a key reading its own row).
  *   - Per-route surface matrix, driven through each REAL router's own first
  *     two layers (auth, scope — never the handler, so no temp route makes a
  *     provider call): a ["sql.ro"] key passes sql and gets a 403 NAMING the
@@ -154,6 +155,11 @@ const SURFACE_BY_FILE = {
   'api.temp.zohosign.js': 'temp.zohosign',
 };
 
+// Reaches no surface, so no scope can gate it. Nothing else joins this list
+// without the same argument (tests/keyWhoami.test.js locks what it returns).
+const UNSCOPED_MOUNTS = ['get /api/readonly/whoami'];
+const at = (m) => `${m.method} ${m.path}`;
+
 /** Every route layer in routes/ whose first handler is readonlyApiKeyAuth. */
 function readonlyMounts() {
   const out = [];
@@ -173,7 +179,12 @@ function readonlyMounts() {
 }
 
 describe('every readonly-key mount declares its surface', () => {
-  const mounts = readonlyMounts();
+  const allMounts = readonlyMounts();
+  const mounts = allMounts.filter(m => !UNSCOPED_MOUNTS.includes(at(m)));
+
+  test('exactly the named mounts skip the scope gate', () => {
+    expect(allMounts.filter(m => m.gate?.name !== 'keyScopeCheck').map(at)).toEqual(UNSCOPED_MOUNTS);
+  });
 
   test('the inventory: 22 mounts across the 8 files', () => {
     expect(mounts).toHaveLength(22);
@@ -184,7 +195,8 @@ describe('every readonly-key mount declares its surface', () => {
     for (const f of fs.readdirSync(path.join(ROOT, 'routes')).filter(n => n.endsWith('.js'))) {
       const src = fs.readFileSync(path.join(ROOT, 'routes', f), 'utf8');
       const bare = src.split('\n').filter(l => /readonlyApiKeyAuth\s*[,)]/.test(l) && !/require\(/.test(l)
-        && !/readonlyApiKeyAuth,\s*requireKeyScope\(/.test(l) && !/^\s*(\/\/|\*)/.test(l));
+        && !/readonlyApiKeyAuth,\s*requireKeyScope\(/.test(l) && !/^\s*(\/\/|\*)/.test(l)
+        && !UNSCOPED_MOUNTS.some(u => l.includes(`router.${u.split(' ')[0]}("${u.split(' ')[1]}"`)));
       expect({ f, bare }).toEqual({ f, bare: [] });
     }
   });

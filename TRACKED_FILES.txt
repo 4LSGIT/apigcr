@@ -1525,6 +1525,8 @@ tests/keyScopes.mysql.test.js
 tests/keyScopes.test.js
 tests/keyTasks.mysql.test.js
 tests/keyTasks.test.js
+tests/keyWhoami.mysql.test.js
+tests/keyWhoami.test.js
 tests/launcherC1.test.js
 tests/launcherC3.mysql.test.js
 tests/launcherC3.test.js

@@ -33,7 +33,7 @@ credentials). An unknown scope is refused, not dropped. Keys issued
 before scopes existed carry none recorded and keep reaching every surface —
 except the sensitive tables, which only a key minted with `sql.ro.sensitive`
 reads, and `keys.mint` and `tasks.own`, which only a key given them holds. A key that calls something outside its scopes gets a 403 that names
-the missing scope.
+the missing scope. Any live key can [ask what it holds](#asking-a-key-what-it-holds).
 
 The SQL surface, `POST /api/readonly/sql` with the key in the
 `X-Readonly-Api-Key` header, body `{ sql, params?, maxRows?, timeoutMs? }`,
@@ -95,7 +95,8 @@ someone a key and they can now read its shelf life straight off it.
 Two things to know about that stamp:
 
 - **It's a hint, not the rule.** Expiry is enforced from the database, which is
-  the only authority. The stamp is there to be read, never to be trusted.
+  the only authority. The stamp is there to be read, never to be trusted. For
+  the real answer, [ask the key](#asking-a-key-what-it-holds).
 - **Editing it changes nothing.** Only the part before the second underscore
   (`ycro_<random part>`) identifies the key. Everything after it is a free
   note: rewrite the stamp, replace it with your own note, or drop it, and the
@@ -106,6 +107,37 @@ Keys issued before this format existed have no stamp and keep working normally.
 Session keys are **not** IP-restricted. The create form once had an "IP
 allowlist" box; it was never enforced, so it was removed (October 2026) and a
 request that still sends one is refused.
+
+## Asking a key what it holds
+
+`GET /api/readonly/whoami`, with the key in the `X-Readonly-Api-Key` header,
+returns what that key can do right now. It needs no scope, so any live key can
+call it. A session handed a key should call it first rather than discover its
+limits by being refused.
+
+```json
+{
+  "ok": true,
+  "id": 214,
+  "label": "docs session",
+  "scopes": ["sql.ro", "scratch", "alert"],
+  "legacy": false,
+  "expiresAt": "2026-11-02T09:56:00.000Z",
+  "parentKeyId": null
+}
+```
+
+| Field | Means |
+|---|---|
+| `scopes` | what the key can reach today, from the same check every route uses. Scopes that grant nothing are left out, such as a retired scope still stored on the key. |
+| `legacy` | `true` for a key issued before scopes existed. It stores none, so `scopes` lists everything it reaches. |
+| `expiresAt` | when the key stops working. For a child key, that is its manager key's expiry if that comes first. |
+| `parentKeyId` | the manager key's id for a child key, otherwise `null`. |
+
+The answer comes from the database on each call, so an edit or renewal shows up
+at once, and so does a manager key losing a scope its child held. A key can only
+see itself. A dead key gets the usual 401, and each call appears in the key's
+usage log.
 
 ## Manager keys and child keys
 

@@ -415,7 +415,8 @@ Scope grammar, one flat namespace, three families:
 - **Surface scopes** (session keys): `sql.ro`, `sql.ro.sensitive` (§5.7),
   `scratch`, `alert`, `temp.clio`, `temp.dropbox`, `temp.zohosign`. Each
   auth.readonly-mounted route declares its surface; `keyAllows(auth,
-  scope)` enforces. New session-key mints default to
+  scope)` enforces. The one exception is `GET /api/readonly/whoami`, which
+  reaches no surface: a key reads only its own scopes and expiry. New session-key mints default to
   `["sql.ro","scratch","alert"]` — the documented trio; `temp.*` becomes
   an explicit grant.
 - **Route scopes** (machine keys): `route:/process-jobs`,

@@ -9,6 +9,9 @@
 // GET /api/readonly/settings — app_settings without its secrets (below).
 // Same auth and scope; one readonly_query_log row per call.
 //
+// GET /api/readonly/whoami — the calling key's own scopes and expiry (below).
+// Key auth, deliberately no scope; one readonly_query_log row per call.
+//
 // Safety layers (in order):
 //   1. DB user `yc_readonly` has only SELECT — hard guarantee, can't
 //      DDL/DML regardless of any bug above.
@@ -30,7 +33,7 @@ const router  = express.Router();
 const roPool  = require("../startup/dbReadonly");
 const { readonlyApiKeyAuth, requireKeyScope } = require("../lib/auth.readonly");
 const { isReadOnlyQuery, hasFileExfilClause, deniedTable } = require("../lib/sqlGuard");
-const { keyAllows } = require("../lib/capabilities");
+const { KEY_SCOPES, keyAllows } = require("../lib/capabilities");
 const reg = require("../lib/settingsRegistry");
 
 const SENSITIVE_SCOPE = "sql.ro.sensitive";
@@ -241,6 +244,27 @@ router.get("/api/readonly/settings", readonlyApiKeyAuth, requireKeyScope("sql.ro
   } finally {
     if (conn) conn.release();
   }
+});
+
+// What the calling key can do, read from the row auth just loaded. This is the
+// authority the key string's suffix can't be: scopes are editable after mint, a
+// child narrows with its parent, and a legacy key stores none — so `scopes` is
+// computed by the same keyAllows every gate uses, never echoed from the column,
+// and `expiresAt` is when the key stops working (a child dies with its parent).
+// Unscoped on purpose: it discloses nothing a scope 403 or an expiry 401 does
+// not already tell the holder (tests/keyScopes.test.js pins this one exception).
+router.get("/api/readonly/whoami", readonlyApiKeyAuth, (req, res) => {
+  const { keyId, label, scopes, expiresAt, parentExpiresAt, parentKeyId } = req.auth;
+  logQuery(req, { sql_text: "GET /api/readonly/whoami", row_count: 1, status: "success" });
+  res.json({
+    ok: true,
+    id: keyId,
+    label,
+    scopes: Object.keys(KEY_SCOPES).filter((s) => keyAllows(req.auth, s)),
+    legacy: scopes == null,
+    expiresAt: (parentExpiresAt && parentExpiresAt < expiresAt ? parentExpiresAt : expiresAt).toISOString(),
+    parentKeyId,
+  });
 });
 
 module.exports = router;

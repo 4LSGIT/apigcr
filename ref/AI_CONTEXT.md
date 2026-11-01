@@ -1955,7 +1955,7 @@ SU-managed, max TTL 3 days, shown once. Every call logs to `readonly_query_log` 
 `readonly_api_keys.scopes` — `sql.ro`, `sql.ro.sensitive`, `scratch`,
 `alert`, `keys.mint`, `tasks.own`, `temp.clio`, `temp.dropbox`,
 `temp.zohosign` (vocabulary `lib/capabilities.js` KEY_SCOPES; each route mounts
-`requireKeyScope`). NULL (every key minted before B1) = all of them EXCEPT an
+`requireKeyScope`, except `whoami` below). NULL (every key minted before B1) = all of them EXCEPT an
 `explicit` scope — today `sql.ro.sensitive`, `keys.mint` and `tasks.own`,
 which a legacy key never holds. A `keys.mint` (manager) key mints its own
 child keys, a `tasks.own` key manages its own tasks — both §30.
@@ -1979,6 +1979,15 @@ too and is TTL-capped (24h max, default 4h — a longer ask is a 400);
 Matching is a bare-word regex over the whole statement, so a sensitive name
 inside a string literal (an information_schema size query naming
 `ai_calls`) is refused too.
+
+**`GET /api/readonly/whoami`** (key auth, no scope — the one unscoped mount,
+named in `tests/keyScopes.test.js`) → `{ok, id, label, scopes, legacy,
+expiresAt, parentKeyId}`: the authority on what a key can do; the key string's
+suffix is only ever a hint. `scopes` is KEY_SCOPES filtered through `keyAllows`,
+never the column: legacy NULL expands to its surface, a child is its effective
+set, and route / capability / retired names (inert here) drop out. `expiresAt`
+is when the key stops working, for a child the earlier of its own and its
+parent's. A new key surface needs no change here, only a KEY_SCOPES entry.
 
 **`GET /api/readonly/settings`** (`sql.ro`) → `{ok, settings: [{key, value,
 updated_at, registered, kind, home}], count}`: app_settings without its
