@@ -35,6 +35,7 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const requireAuth = require('../lib/auth.requireAuth');
 const { can } = require('../lib/capabilities');
 const hookService = require('../services/hookService');
+const { stripCredentialHeaders, configuredHeaderNames } = require('../lib/hookCredentialHeaders');
 const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency');
 const actionDispatchers = require('../lib/actionDispatchers');
 const internalFunctions = require('../lib/internal_functions'); // __validateParamsMapping
@@ -88,6 +89,11 @@ const VALID_TARGET_TYPES = ['http', 'workflow', 'sequence', 'internal_function']
 //   - 'authorization'  — bearer/basic from any other internal auth path
 //   - 'cookie'         — session cookies; never a legitimate external
 //                        webhook payload field
+//   - 'x-hook-key', 'x-signature' — the api_key / hmac auth's default
+//                        headers; 'verification-token' — RingCentral's
+//                        shared token; and the hook's OWN auth_config.header
+//                        (any auth_type): a hook's credential is never data
+//                        (lib/hookCredentialHeaders, 2026-11-02)
 // External webhook senders (Stripe, Calendly, GitHub, etc.) put their
 // signatures in vendor-specific headers (Stripe-Signature, X-Hub-Signature,
 // etc.) that are NOT in the denylist, so legitimate use is unaffected.
@@ -97,16 +103,13 @@ const VALID_TARGET_TYPES = ['http', 'workflow', 'sequence', 'internal_function']
 // upstream did something different.
 // ─────────────────────────────────────────────────────────────
 
-const SENSITIVE_HEADER_DENYLIST = new Set(['x-api-key', 'authorization', 'cookie']);
-
-function stripSensitiveHeaders(headers) {
-  if (!headers || typeof headers !== 'object') return {};
-  const out = {};
-  for (const k of Object.keys(headers)) {
-    if (SENSITIVE_HEADER_DENYLIST.has(String(k).toLowerCase())) continue;
-    out[k] = headers[k];
-  }
-  return out;
+// The names are lib/hookCredentialHeaders' (static credential names + the
+// hook's own auth_config.header + every hook's configured header, any case —
+// the union covers an event that fell to _catchall). Until 2026-11-02 only
+// x-api-key / authorization / cookie were dropped here, so x-hook-key and
+// RingCentral's Verification-Token were stored in every execution row.
+function stripSensitiveHeaders(headers, hook, configured) {
+  return stripCredentialHeaders(headers, hook, configured);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -215,14 +218,14 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
       return res.status(401).json({ status: 'error', message: auth.error });
     }
 
-    // Build unified event shape.  Headers are stripped of auth-bearing
-    // entries (x-api-key, authorization, cookie) BEFORE being placed into
-    // input.headers — see SENSITIVE_HEADER_DENYLIST above for rationale.
-    // Authentication ran on the raw req above, so per-hook HMAC/header
-    // auth still works against the unscrubbed headers.
+    // Build unified event shape. Credential headers (lib/hookCredentialHeaders:
+    // the static names, this hook's own header and every hook's configured
+    // header) are stripped BEFORE being placed into input.headers — see the
+    // denylist rationale above. Authentication ran on the raw req above, so
+    // per-hook HMAC/header auth still works against the unscrubbed headers.
     const input = {
       body: req.body || {},
-      headers: stripSensitiveHeaders(req.headers),
+      headers: stripSensitiveHeaders(req.headers, hook, await configuredHeaderNames(db)),
       query: req.query || {},
       method: req.method,
       meta: {

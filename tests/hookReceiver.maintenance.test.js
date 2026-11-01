@@ -56,6 +56,8 @@ const ENV_KEYS = ['MAINTENANCE_MODE', 'CLOUD_TASKS_LOCATION', 'CLOUD_TASKS_SPOOL
                   'CLOUD_TASKS_TARGET_URL', 'APP_URL', 'INTERNAL_API_KEY'];
 const saved = {};
 let server, base, client, logSpy, errSpy, warnSpy;
+const QUIET_DB = { query: async () => [[]] };
+let currentDb = QUIET_DB;
 
 beforeAll((done) => {
   const app = express();
@@ -64,7 +66,7 @@ beforeAll((done) => {
   // the receiver agree about which requests are the receiver's.
   app.use(maintenance.gate());
   app.use('/hooks', express.json({ limit: '5mb' }));   // roomy: the too-large-to-spool case posts ~1 MB
-  app.use((req, _res, next) => { req.db = { query: async () => [[]] }; next(); });
+  app.use((req, _res, next) => { req.db = currentDb; next(); });
   app.use(require('../routes/api.hooks'));
   server = app.listen(0, () => { base = `http://127.0.0.1:${server.address().port}`; done(); });
 });
@@ -81,6 +83,8 @@ beforeEach(() => {
   hookService.authenticateRequest.mockReset().mockReturnValue({ valid: true });
   hookService.executeHook.mockReset().mockResolvedValue({ status: 'accepted', executionId: 7, targets: [] });
   hookService.recordExecution.mockReset().mockResolvedValue({ executionId: 7, truncated: false });
+  currentDb = QUIET_DB;
+  require('../lib/hookCredentialHeaders').invalidateConfiguredHeaderNames();
   client = fakeClient();
   hookSpool._test({ client });
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -282,5 +286,24 @@ describe('maintenance ON — capture, never execute', () => {
       expect(res.headers.get('retry-after')).toBe('60');
       expect(client.createTask).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('maintenance ON — the spooled input carries no credential header (2026-11-02)', () => {
+  beforeEach(() => { process.env.MAINTENANCE_MODE = '1'; });
+
+  test('an event for a deactivated hook (→ _catchall, auth none) is spooled WITHOUT that hook\'s custom header — the receiver\'s union strip', async () => {
+    const H = require('../lib/hookCredentialHeaders');
+    currentDb = { query: async (sql) => (sql === H.UNION_SQL ? [[{ header: 'X-Old-Hook-Secret' }]] : [[]]) };
+    const catchall = { id: 99, slug: '_catchall', auth_type: 'none', auth_config: null, capture_mode: 'off', targets: [] };
+    hookService.getHookBySlug.mockReset().mockImplementation(async (_db, slug) => (slug === '_catchall' ? catchall : null));
+    const res = await fire('old-hook', { 'X-Old-Hook-Secret': 'FAKE-old-secret', 'X-Hook-Key': 'FAKE-k', 'X-Trace': 'keep' }); // secret-scan: allow
+    expect(res.status).toBe(200);
+    const { payload } = storedTask();
+    const headers = (payload.input || payload).headers;
+    expect(Object.keys(headers)).not.toContain('x-old-hook-secret');
+    expect(Object.keys(headers)).not.toContain('x-hook-key');
+    expect(headers['x-trace']).toBe('keep');
+    expect(JSON.stringify(payload)).not.toContain('FAKE-old-secret');
   });
 });

@@ -143,6 +143,16 @@ const SRC_TARGETS = [
 
 describe('hookService.duplicateHook', () => {
 
+  test('a duplicate invalidates the credential-header union (its header joins the strip list on the next read)', async () => {
+    const H = require('../lib/hookCredentialHeaders');
+    H.invalidateConfiguredHeaderNames();
+    await H.configuredHeaderNames({ query: async () => [[]] });          // fresh cache
+    await hookService.duplicateHook(makeFakeDb(SRC_HOOK, SRC_TARGETS), 12, 99);
+    const reread = jest.fn(async () => [[{ header: 'X-Copied-Header' }]]);
+    await H.configuredHeaderNames({ query: reread });
+    expect(reread).toHaveBeenCalledTimes(1);
+  });
+
   test('deep-copies hook + targets: fresh slug, inactive, capture off, one tx', async () => {
     const db = makeFakeDb(SRC_HOOK, SRC_TARGETS);
     const out = await hookService.duplicateHook(db, 12, 99);

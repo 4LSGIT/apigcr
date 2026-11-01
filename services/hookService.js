@@ -38,6 +38,7 @@ const guestCode = require('../lib/guestCode');
 // line until MTH-2 and was removed — zero call sites in this file.
 const credentialInjection = require('../lib/credentialInjection');
 const { HOOK_SECRET_FIELDS, fieldsFor, encryptFields, decryptFields, parseJsonColumn } = require('../lib/secretAtRest');
+const { DEFAULT_API_KEY_HEADER, DEFAULT_HMAC_HEADER, scrubInputHeaders, configuredHeaderNames, invalidateConfiguredHeaderNames } = require('../lib/hookCredentialHeaders');
 
 // ── hooks.auth_config secrets at rest (access-control B4) ──────────────────
 // auth_config.key (api_key) and auth_config.secret (hmac) are stored ENCv1-
@@ -143,7 +144,7 @@ function authenticateRequest(hook, req) {
   }
 
   if (authType === 'api_key') {
-    const headerName = (config?.header || 'x-hook-key').toLowerCase();
+    const headerName = (config?.header || DEFAULT_API_KEY_HEADER).toLowerCase();
     const expected = config?.key;
     const actual = req.headers[headerName];
     if (!expected || actual !== expected) {
@@ -153,7 +154,7 @@ function authenticateRequest(hook, req) {
   }
 
   if (authType === 'hmac') {
-    const headerName = (config?.header || 'x-signature').toLowerCase();
+    const headerName = (config?.header || DEFAULT_HMAC_HEADER).toLowerCase();
     const secret = config?.secret;
     const algorithm = config?.algorithm || 'sha256';
     const signature = req.headers[headerName];
@@ -845,6 +846,9 @@ function dedupKeyFor(hook, input) {
  * @returns {Promise<{ executionId: number, truncated: boolean }>}
  */
 async function recordExecution(db, hook, slug, input, { claimed = false, dedup = false } = {}) {
+  // Never store a credential header (lib/hookCredentialHeaders): the receiver
+  // strips them already; this covers every other writer of raw_input.
+  input = scrubInputHeaders(input, hook, await configuredHeaderNames(db));
   const rawInputStr = JSON.stringify(input);
   const truncated = rawInputStr.length > RAW_INPUT_CAP;
   const storedInput = truncated ? rawInputStr.slice(0, RAW_INPUT_CAP) : rawInputStr;
@@ -897,6 +901,10 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
   if (!hook) {
     return { status: 'not_found', error: `No active hook with slug: ${slug}` };
   }
+  // One choke point for every caller (receiver, drain, live test, replay,
+  // ingest/trigger/page wrappers): no credential header reaches
+  // captured_sample, raw_input, transform_output or a delivery's request body.
+  input = scrubInputHeaders(input, hook, await configuredHeaderNames(db));
 
   // ────────────────────────────────────────────────────────────
   // CAPTURE MODE INTERCEPT (slice 2.2)
@@ -1412,6 +1420,7 @@ async function createHook(db, data) {
     data.slug = require('crypto').randomUUID().slice(0, 8);
   }
   const [result] = await db.query(`INSERT INTO hooks SET ?`, [data]);
+  invalidateConfiguredHeaderNames();   // a new header name joins the strip union
   return result.insertId;
 }
 
@@ -1419,6 +1428,7 @@ async function updateHook(db, id, data) {
   if (data.auth_config !== undefined) data = { ...data, auth_config: encryptHookAuthConfig(data.auth_config) };
   // Auto-increment version on every update
   await db.query(`UPDATE hooks SET ?, version = version + 1 WHERE id = ?`, [data, id]);
+  invalidateConfiguredHeaderNames();
 }
 
 async function deleteHook(db, id) {
@@ -1514,6 +1524,7 @@ async function duplicateHook(db, id, userId) {
     return hookId;
   });
 
+  invalidateConfiguredHeaderNames();   // the copy's header joins the strip union (lib/hookCredentialHeaders)
   return getHookById(db, newId);
 }
 

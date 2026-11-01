@@ -191,6 +191,7 @@ body. Governing migrations in `ref/migrations/`.*
   8.4.11): a DROP does not fail on `yc_report`'s per-column grant — the grant
   stays ORPHANED in `mysql.columns_priv` (inert; it re-attaches to a later
   column of the same name) until a re-provision or targeted REVOKE clears it.
+- **Hook credential headers are stripped before storage (2026-11-02):** `lib/hookCredentialHeaders` (static names + the hook's own `auth_config.header` + every hook's configured header, cached 30 s; any case) is applied by the receiver, `recordExecution` and `executeHook`'s entry, so new raw_input, captured_sample, spool, transform_output, delivery, workflow and sequence copies are clean. Older rows still hold x-hook-key / RingCentral's Verification-Token (~32.8k) until `scripts/hookExecutionsHeaderScrub.js --apply` runs AFTER the deploy. A new header-borne hook auth adds its default name there.
 - **Marketing transport fence (YisraMail T1, 2026-11-01 — ref/YISRAMAIL_DESIGN.md
   §5.2 "As built" holds the option, refusal and driver contract):**
   `email_credentials.bulk_ok = 1` marks a marketing (bulk) transport (the SES
@@ -1204,8 +1205,10 @@ cannot repaint a later run. Execution remains in the top shell. Operator view: m
   localStorage `jwt`; the shell also holds two tab-scoped sessionStorage
   tokens — `su_elev` (SU step-up) and `yc_view_as_jwt` (View-as, below) —
   and no pane ever receives either. Auth headers are stripped before anything
-  persists them: the hook receiver drops `authorization`/`cookie`/`x-api-key`
-  before persisting captures (api.hooks.js SENSITIVE_HEADER_DENYLIST), the
+  persists them: the hook receiver drops every credential header
+  `lib/hookCredentialHeaders` names (the static set, the hook's own
+  `auth_config.header`, every hook's configured header) before persisting
+  anything (§0 entry), the
   apiTester audit log redacts the same set, the client diag ring records
   method/url/status only. `jwt_api_audit_log` (`lib/auth.jwtOrApiKey`
   logJwtApiAttempt) drops by NAME — every header matching
