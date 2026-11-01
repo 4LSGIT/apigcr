@@ -138,6 +138,7 @@ async function rerunCalRow(db, calRow, { source = 'court_review',
     if ((force || forceCitations) && payload && typeof payload === 'object') delete payload.needs_review;
     const result = await courtExecutor.executeCourtActions(db, {
       payload, subject, body, dryRun,
+      fromEmail: from_email,
       skipCitationGate: !!forceCitations,
       overrideBy: forceCitations ? overrideBy : null,
       // Default 'court_review': every routes/courtReview.js caller is a human

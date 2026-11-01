@@ -483,6 +483,8 @@ const EVENT_TYPES = {
       { path: 'data.case_number_full',   label: 'Full docket (case row)' },
       { path: 'data.message_id',         label: 'Source email message id' },
       { path: 'data.court_ai_log_id',    label: 'court_ai_log row id for this run' },
+      { path: 'data.from_email',         label: "Sender address of the court email — transport truth, never model output (null on rows that settled before this field existed)" },
+      { path: 'data.subject',            label: 'Subject line of the court email' },
       { path: 'extra.applied_fields',    label: 'Case columns actually written (array; empty on outcome none)' },
       { path: 'extra.applied_types',     label: 'Action types applied (array)' },
       { path: 'extra.applied_count',     label: 'Applied action count' },

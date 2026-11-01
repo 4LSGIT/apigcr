@@ -654,6 +654,53 @@ describe('update_case fn — core whitelist + registry-gated cf_ keys', () => {
     await expect(caseFns.update_case({ case_id: 'A', fields: { cf_nope: 1 } }, db)).rejects.toThrow(/unknown custom field/);
     expect(db.state.updates).toHaveLength(0);
   });
+
+  // only_if_empty (stamp semantics). Live rows carry one VIRTUAL column per
+  // active def (the reconciler's contract), so the fixtures set the cf_ key
+  // at top level the way SELECT * really returns it.
+  test('only_if_empty drops a guarded key the case already holds; the rest writes', async () => {
+    const db = world({ cases: { A: { ...CASE_A(), cf_note: 'keep' } } });
+    const out = await caseFns.update_case({
+      case_id: 'A',
+      fields: { cf_note: 'replacement', cf_sel: 'a' },
+      only_if_empty: ['cf_note'],
+    }, db);
+    expect(out.output.updated_fields).toEqual(['cf_sel']);
+    expect(out.output.skipped_only_if_empty).toEqual(['cf_note']);
+    expect(db.state.cases.A.custom.cf_note).toBe('keep');
+    expect(db.state.cases.A.custom.cf_sel).toBe('A');
+  });
+
+  test('only_if_empty writes a guarded key the case holds nothing for (null, "", absent)', async () => {
+    const db = world({ cases: { A: { ...CASE_A(), cf_sel: '' } } });
+    const out = await caseFns.update_case({
+      case_id: 'A', fields: { cf_sel: 'a' }, only_if_empty: ['cf_sel'],
+    }, db);
+    expect(out.output.updated_fields).toEqual(['cf_sel']);
+    expect(out.output.skipped_only_if_empty).toBeUndefined();
+    expect(db.state.cases.A.custom.cf_sel).toBe('A');
+  });
+
+  test('only_if_empty short-circuits to a no-op when every field is guarded and held (core column too)', async () => {
+    const db = world({ cases: { A: CASE_A() } }); // case_stage: 'Open'
+    const out = await caseFns.update_case({
+      case_id: 'A', fields: { case_stage: 'Filed' }, only_if_empty: ['case_stage'],
+    }, db);
+    expect(out.output.updated_fields).toEqual([]);
+    expect(out.output.skipped_only_if_empty).toEqual(['case_stage']);
+    expect(db.state.updates).toHaveLength(0);
+  });
+
+  test('only_if_empty validates its shape and its names', async () => {
+    const db = world({ cases: { A: CASE_A() } });
+    await expect(caseFns.update_case({
+      case_id: 'A', fields: { cf_sel: 'a' }, only_if_empty: 'cf_sel',
+    }, db)).rejects.toThrow(/non-empty array/);
+    await expect(caseFns.update_case({
+      case_id: 'A', fields: { cf_sel: 'a' }, only_if_empty: ['cf_note'],
+    }, db)).rejects.toThrow(/not being written: cf_note/);
+    expect(db.state.updates).toHaveLength(0);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────

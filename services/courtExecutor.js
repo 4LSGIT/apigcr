@@ -346,6 +346,7 @@ async function flushChangeRows(db, rows, courtLogId) {
  */
 async function executeCourtActions(db, { payload, subject, body, dryRun, preview = false,
                                          skipCitationGate = false, overrideBy = null,
+                                         fromEmail = null,
                                          source = 'court_ingest' } = {}) {
   payload = payload || {};
   const messageId = payload.message_id || null;
@@ -1539,6 +1540,11 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
         case_number_full: resolved.case_number_full || null,
         message_id:       messageId,
         court_ai_log_id:  courtLogId,
+        // Transport truth, never model output: for rules that need the
+        // court's identity (e.g. a cf_court transform). Empty-string sender
+        // normalizes to null; rows replayed from before this field carry null.
+        from_email:       fromEmail || null,
+        subject:          subject || null,
       },
       extra: {
         applied_fields:    [...new Set(applied.filter(a => a.field).map(a => a.field))],

@@ -140,6 +140,7 @@ function run(overrides = {}, opts = {}) {
     subject: `${FULL} "Certificate of Service" Ch 13`,
     body: `Case Number: ${FULL}\nDocument filed.`,
     dryRun: false,
+    fromEmail: 'ecfnotices@mieb.uscourts.gov',
     ...opts.exec,
   });
 }
@@ -172,9 +173,32 @@ test('fallback resolution with grounded full docket fills the column, logs the c
   const emit = courtProcessedEmit();
   expect(emit).toBeTruthy();
   expect(emit[2].data.case_number_full).toBe(FULL);
+  // transport identity rides the emit (cf_court transform reads these)
+  expect(emit[2].data.from_email).toBe('ecfnotices@mieb.uscourts.gov');
+  expect(emit[2].data.subject).toBe(`${FULL} "Certificate of Service" Ch 13`);
   // the fill is NOT an action
   expect(res.outcome).toBe('none');
   expect(res.applied).toHaveLength(0);
+});
+
+// ── SOURCE PIN ── the two live callers must thread the sender. The executor
+// tolerates a missing fromEmail (null in the emit), so a dropped line ships
+// null senders SILENTLY — only this pin catches it (mutation-checked).
+test('ingest and replay callers pass fromEmail to the executor (source pin)', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const ingest = fs.readFileSync(path.join(__dirname, '../lib/internal_functions/court.js'), 'utf8');
+  const rerun  = fs.readFileSync(path.join(__dirname, '../services/courtRerun.js'), 'utf8');
+  expect(ingest).toMatch(/executeCourtActions\(db, \{\s*payload,\s*subject,\s*body,\s*dryRun,\s*fromEmail,/);
+  expect(rerun).toMatch(/payload, subject, body, dryRun,\s*fromEmail: from_email,/);
+});
+
+test('emit carries from_email null when the caller supplies none (pre-field replays)', async () => {
+  await run({}, { exec: { fromEmail: undefined } });
+  const emit = courtProcessedEmit();
+  expect(emit).toBeTruthy();
+  expect(emit[2].data.from_email).toBe(null);
+  expect(emit[2].data.subject).toBe(`${FULL} "Certificate of Service" Ch 13`);
 });
 
 // ── 2. EXACT MATCH ─────────────────────────────────────────────────────
