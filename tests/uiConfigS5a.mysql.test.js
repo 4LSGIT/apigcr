@@ -62,7 +62,7 @@ d('S5a: users\' own buttons on real MySQL', () => {
     await q('CREATE TABLE users (user tinyint NOT NULL PRIMARY KEY, user_name varchar(100) DEFAULT NULL) ENGINE=InnoDB');
     await q("INSERT INTO users (user, user_name) VALUES (1, 'Alex Admin'), (9, 'Sam Staff'), (11, 'Dana')");
     // the two tables pickers() reads — only the columns it touches, plus the html / sql it must never return
-    await q('CREATE TABLE tools (id int NOT NULL AUTO_INCREMENT PRIMARY KEY, tool_key varchar(80) NOT NULL, title varchar(200) DEFAULT NULL, status varchar(20) NOT NULL, html mediumtext) ENGINE=InnoDB');
+    await q('CREATE TABLE tools (id int NOT NULL AUTO_INCREMENT PRIMARY KEY, tool_key varchar(80) NOT NULL, title varchar(200) DEFAULT NULL, status varchar(20) NOT NULL, visible_to json NULL, html mediumtext) ENGINE=InnoDB');
     await q("INSERT INTO tools (tool_key, title, status, html) VALUES ('clio-code', 'Get Clio Code', 'live', '<script>secret tool html</script>'), ('draft-one', 'Draft', 'draft', 'x')");
     await q('CREATE TABLE report_definitions (id int NOT NULL AUTO_INCREMENT PRIMARY KEY, report_key varchar(60) NOT NULL, title varchar(200) DEFAULT NULL, kind varchar(20) NOT NULL, is_active tinyint NOT NULL DEFAULT 1, sql_text text) ENGINE=InnoDB');
     await q("INSERT INTO report_definitions (report_key, title, kind, is_active, sql_text) VALUES ('lead_followups', 'Leads', 'view', 1, 'SELECT secret'), ('old_view', 'Old', 'view', 0, 'x'), ('a_report', 'R', 'report', 1, 'x')");
@@ -180,7 +180,7 @@ d('S5a: users\' own buttons on real MySQL', () => {
     for (const who of ['staff', 'dana', 'admin']) {
       const r = await hit('GET', '/api/ui-config/pickers', who);
       expect([who, r.status]).toEqual([who, 200]);
-      expect(r.body).toEqual({ status: 'success', tools: [{ key: 'clio-code', title: 'Get Clio Code' }], views: [{ key: 'lead_followups', title: 'Leads' }] });
+      expect(r.body).toEqual({ status: 'success', tools: [{ key: 'clio-code', title: 'Get Clio Code' }], views: [{ key: 'lead_followups', title: 'Leads' }], held: [] });
       expect(r.text).not.toMatch(/secret|script/i);
     }
     const key = await fetch(base + '/api/ui-config/pickers', { headers: { 'x-api-key': process.env.INTERNAL_API_KEY } });

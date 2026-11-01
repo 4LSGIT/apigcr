@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-30T02:24:16.248Z
+-- Generated: 2026-11-01T00:52:39.829Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:155664478028632adbc5f4c28b233ddb
+-- Fingerprint: sha256:eda5483a5a4dc3ea8ee2f74fa347e98a
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -3888,6 +3888,7 @@ CREATE TABLE `tools` (
   `tool_key` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `title` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `status` enum('draft','live') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'draft',
+  `visible_to` json DEFAULT NULL COMMENT 'who the tool lists for in the tool picker (GET /api/ui-config/pickers, My buttons). NULL = everyone; a JSON array of users.roles members = those roles; [] = no role. Holders of firm.settings (admin, IT, su) always see every tool. An ALLOW-list: a role nobody ticked never sees it. Picker visibility only, never security: GET /tool/<key> is public and a button already made keeps working. Written by routes/api.tools.js validatePayload',
   `html` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `updated_by` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,

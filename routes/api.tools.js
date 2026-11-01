@@ -19,8 +19,8 @@
  * are rejected by the SU check with 403):
  *   GET    /api/tools                     — lean list (no html) + version_count
  *   GET    /api/tools/:id                 — full row
- *   POST   /api/tools                     — create { tool_key, title?, html, status? }
- *   PATCH  /api/tools/:id                 — partial update of tool_key/title/html/status
+ *   POST   /api/tools                     — create { tool_key, title?, html, status?, visible_to? }
+ *   PATCH  /api/tools/:id                 — partial update of tool_key/title/html/status/visible_to
  *   DELETE /api/tools/:id                 — delete (tool_versions cascade via FK)
  *   GET    /api/tools/:id/versions        — list (id, saved_by, saved_at, html_length)
  *   GET    /api/tools/:id/versions/:vid   — one full version
@@ -39,6 +39,15 @@
  *   The append runs after the tools write succeeds; no transaction, matching
  *   house style for sequential writes (see api.pages create-hook). A crash
  *   between the two statements loses one history row, never the tool itself.
+ *
+ * WHO SEES IT IN THE PICKER (launcher-nits L5): visible_to is the role
+ * allow-list for GET /api/ui-config/pickers (My buttons) — NULL = everyone, a
+ * list = those roles, [] = no role; su is implicit and refused in a list, like
+ * the firm's visible_to (lib/uiConfigShape.js header). Holders of firm.settings
+ * see every tool whatever the list says (uiConfigService.pickers). Visibility
+ * only, Fred's ruling 2026-11-01: nothing here or at /tool/:key refuses anyone,
+ * and a button already made keeps working. A visible_to-only PATCH appends no
+ * version: it is not html.
  *
  * Actor attribution: updated_by / saved_by are VARCHAR(100) — same shape and
  * convention as system_alerts.acked_by in routes/admin.systemAlerts.js:
@@ -67,14 +76,18 @@
 const express = require('express');
 const router = express.Router();
 const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
+const { ROLE_MEMBERS } = require('../lib/capabilities');
 
 const guard = superuserOnlyFor('tools');
 
 const TOOL_KEY_RE = /^[a-z0-9-]{1,80}$/;
 const STATUSES = new Set(['draft', 'live']);
+// Not uiConfigShape's VISIBLE_ROLES: that module requires this one.
+const VISIBLE_ROLES = Object.freeze(ROLE_MEMBERS.filter((r) => r !== 'su'));
+const VISIBLE_ROLES_MAX = 20;
 
-const LEAN_COLS = 't.id, t.tool_key, t.title, t.status, t.updated_by, t.updated_at';
-const FULL_COLS = 'id, tool_key, title, status, html, updated_by, created_at, updated_at';
+const LEAN_COLS = 't.id, t.tool_key, t.title, t.status, t.visible_to, t.updated_by, t.updated_at';
+const FULL_COLS = 'id, tool_key, title, status, visible_to, html, updated_by, created_at, updated_at';
 
 function errBody(msg) {
   return { status: 'error', message: msg };
@@ -118,7 +131,8 @@ async function audit(req, action, details, status = 'ok', errorMessage = null) {
  * Validate + normalize a create/update payload. `partial = true` for PATCH
  * semantics (only validate present keys). Throws Error with .status = 400.
  * tool_key is LOWERCASED before validation, so mixed-case input normalizes
- * rather than rejects.
+ * rather than rejects. visible_to comes back as JSON text or null: `SET ?`
+ * would spread an array into a list of values.
  */
 function validatePayload(body, { partial = false } = {}) {
   const out = {};
@@ -148,6 +162,20 @@ function validatePayload(body, { partial = false } = {}) {
     const status = String(body.status || '').trim();
     if (!STATUSES.has(status)) bad("status must be 'draft' or 'live'");
     out.status = status;
+  }
+
+  if (has('visible_to')) {
+    const list = body.visible_to;
+    if (list === null) {
+      out.visible_to = null;
+    } else {
+      if (!Array.isArray(list)) bad('visible_to must be null (everyone) or an array of roles');
+      if (list.length > VISIBLE_ROLES_MAX) bad(`visible_to: at most ${VISIBLE_ROLES_MAX} entries`);
+      if (list.includes('su')) bad('visible_to: su always sees every tool — leave it out');
+      const unknown = list.find((r) => !VISIBLE_ROLES.includes(r));
+      if (unknown !== undefined) bad(`visible_to: not a role (${VISIBLE_ROLES.join(', ')})`);
+      out.visible_to = JSON.stringify(VISIBLE_ROLES.filter((r) => list.includes(r)));
+    }
   }
 
   return out;

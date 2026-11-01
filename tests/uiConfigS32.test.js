@@ -273,10 +273,10 @@ describe('pickers', () => {
     const r = await call('GET', '/api/ui-config/pickers', { headers: tok(['admin']), db });
     expect(r.body).toEqual({ status: 'success',
       tools: [{ key: 'appt-form', title: 'Appt Form' }, { key: 'call-review', title: 'call-review' }],
-      views: [{ key: 'lead_followups', title: 'Leads' }] });
+      views: [{ key: 'lead_followups', title: 'Leads' }], held: [] });
     expect(r.text).not.toMatch(/script|html/);
     const [tq, vq] = notAudit(db);
-    expect(tq.sql).toMatch(/^SELECT tool_key, title FROM tools WHERE status = 'live'/);
+    expect(tq.sql).toMatch(/^SELECT tool_key, title, visible_to FROM tools WHERE status = 'live'/);
     expect(vq.sql).toMatch(/FROM report_definitions WHERE kind = 'view' AND is_active = 1/);
   });
 });

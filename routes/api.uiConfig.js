@@ -58,9 +58,14 @@
  *        document appends nothing (changed:false). A version the validator now
  *        refuses → 400 with errors[]; nothing is written.
  *   GET  /api/ui-config/pickers → { status, tools: [{ key, title }],
- *            views: [{ key, title }] } — live tools, active saved views; keys
- *        and titles only (never tool html). GET /api/tools is SU + step-up, so
- *        firm admins need this lean read to place tool items.
+ *            views: [{ key, title }], held: [{ key, title }] } — live tools,
+ *        active saved views; keys and titles only (never tool html). GET
+ *        /api/tools is SU + step-up, so firm admins need this lean read to
+ *        place tool items. A restricted tool (tools.visible_to, launcher-nits
+ *        L5) is in `tools` only for a listed role or a holder of firm.settings;
+ *        for anyone else it is left out, and in `held` only if one of their
+ *        own buttons already opens it, so that button keeps its title. The
+ *        filter is visibility only: /tool/<key> and PUT refuse nobody.
  *        Gate: requireAuth({ audience:'staff' }) — ANY staff user (ui-custom
  *        S5a), because every user's own buttons ("My buttons") pick a tool or
  *        a saved view the same way. Safe to show staff: keys and titles only,
@@ -140,7 +145,7 @@ router.post('/api/ui-config/versions/:id/restore', firmSettings, async (req, res
 // or a saved view too) — see the header. Was firm.settings (S3.2).
 router.get('/api/ui-config/pickers', staff, async (req, res) => {
   try {
-    res.json({ status: 'success', ...(await svc.pickers(req.db)) });
+    res.json({ status: 'success', ...(await svc.pickers(req.db, req.auth)) });
   } catch (err) { fail(res, 'GET /api/ui-config/pickers', err); }
 });
 

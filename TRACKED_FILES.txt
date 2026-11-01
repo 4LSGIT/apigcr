@@ -633,6 +633,7 @@ ref/migrations/2026-10-29_lead_list_drop_pt_raw_table.sql
 ref/migrations/2026-10-29_yisramail_p1_consent_core.sql
 ref/migrations/2026-10-30_yisramail_p2_sms_consent_sync_job.sql
 ref/migrations/2026-10-30_yisramail_p3_unsub_tokens.sql
+ref/migrations/2026-11-01_tools_visible_to.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -870,6 +871,7 @@ scripts/hookAsyncReceiverS0.js
 scripts/hookDedupS3.js
 scripts/ingestRuleEditStampAndChangeLog.js
 scripts/launcherC3MoreAdminPages.js
+scripts/launcherL5ToolsVisibleTo.js
 scripts/leadListImport.js
 scripts/leadListPtTableDrop.js
 scripts/mailboxIngestStateComment.js
@@ -1516,6 +1518,9 @@ tests/keyTasks.test.js
 tests/launcherC1.test.js
 tests/launcherC3.mysql.test.js
 tests/launcherC3.test.js
+tests/launcherL5.migration.mysql.test.js
+tests/launcherL5.pickers.mysql.test.js
+tests/launcherL5.pickers.test.js
 tests/launcherS2.test.js
 tests/launcherS31.test.js
 tests/launcherS34.test.js

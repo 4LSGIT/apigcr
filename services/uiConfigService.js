@@ -77,13 +77,17 @@
  *     version append. A version the validator now refuses (the rules
  *     tightened after it was saved) is a 400 listing the errors; nothing is
  *     written. 404 when the version is not a firm row's.
- *   pickers(db) → { tools: [{ key, title }], views: [{ key, title }] }
+ *   pickers(db, auth) → { tools: [{ key, title }], views: [{ key, title }], held: [{ key, title }] }
  *     tools = LIVE rows of `tools` (keys and titles only — never html);
  *     views = active report_definitions of kind 'view' by report_key. Keys the
  *     firm-item grammar would refuse are left out. Firm admins are not SU, so
  *     GET /api/tools (SU + step-up) is closed to them: this is the lean read.
  *     Since S5a every staff user reads it too, for their own buttons (the
- *     route header says why that is safe).
+ *     route header says why that is safe). A tool with a visible_to list
+ *     (launcher-nits L5) is in `tools` only for a role on it or a holder of
+ *     firm.settings, and otherwise in `held` when one of the caller's own
+ *     buttons opens it: the editor still names that button, and nobody else
+ *     is told the tool exists. Visibility only (routes/api.tools.js header).
  */
 
 'use strict';
@@ -281,15 +285,38 @@ async function firmVersionIds(db) {
   return out;
 }
 
-async function pickers(db) {
+/** Does this tool list for this caller? NULL = everyone; a holder of
+ *  firm.settings sees every tool (they place tools for the firm: su, admin, IT);
+ *  otherwise a role on the list. Anything else in the column fails closed. */
+function toolListsFor(visibleTo, auth) {
+  if (visibleTo === null || visibleTo === undefined) return true;
+  if (can(auth, 'firm.settings')) return true;
+  const roles = auth && Array.isArray(auth.roles) ? auth.roles : [];
+  return Array.isArray(visibleTo) && visibleTo.some((r) => roles.includes(r));
+}
+
+/** The tool keys of this user's own buttons. */
+async function ownToolKeys(db, auth) {
+  const doc = (await readFor(db, auth && auth.userId)).user.items;
+  const items = doc && Array.isArray(doc.items) ? doc.items : [];
+  return new Set(items.filter((i) => isObj(i) && isObj(i.action) && i.action.type === 'tool').map((i) => i.action.key));
+}
+
+async function pickers(db, auth) {
   const [tools] = await db.query(
-    "SELECT tool_key, title FROM tools WHERE status = 'live' ORDER BY COALESCE(NULLIF(TRIM(title), ''), tool_key), tool_key");
+    "SELECT tool_key, title, visible_to FROM tools WHERE status = 'live' ORDER BY COALESCE(NULLIF(TRIM(title), ''), tool_key), tool_key");
   const [views] = await db.query(
     "SELECT report_key, title FROM report_definitions WHERE kind = 'view' AND is_active = 1 ORDER BY COALESCE(NULLIF(TRIM(title), ''), report_key), report_key");
   const title = (t, k) => (typeof t === 'string' && t.trim() ? t.trim() : k);
+  const toolEntry = (t) => ({ key: t.tool_key, title: title(t.title, t.tool_key) });
+  const live = tools.filter((t) => typeof t.tool_key === 'string' && TOOL_KEY_RE.test(t.tool_key));
+  const withheld = live.filter((t) => !toolListsFor(t.visible_to, auth));
+  // A button already made for a tool since restricted keeps working: its title
+  // still reads, here only, for the buttons that hold it (ruling 2026-10-28).
+  const own = withheld.length ? await ownToolKeys(db, auth) : new Set();
   return {
-    tools: tools.filter((t) => typeof t.tool_key === 'string' && TOOL_KEY_RE.test(t.tool_key))
-      .map((t) => ({ key: t.tool_key, title: title(t.title, t.tool_key) })),
+    tools: live.filter((t) => !withheld.includes(t)).map(toolEntry),
+    held: withheld.filter((t) => own.has(t.tool_key)).map(toolEntry),
     views: views.filter((v) => typeof v.report_key === 'string' && shape.VIEW_KEY_RE.test(v.report_key))
       .map((v) => ({ key: v.report_key, title: title(v.title, v.report_key) })),
   };

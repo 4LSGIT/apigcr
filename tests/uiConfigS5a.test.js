@@ -320,7 +320,7 @@ describe('GET /api/ui-config/pickers — any staff user', () => {
     for (const roles of [['staff'], ['attorney'], ['form_dev'], ['automation'], [], ['admin']]) {
       const r = await get(tok(roles));
       expect([roles, r.status]).toEqual([roles, 200]);
-      expect(r.body).toEqual({ status: 'success', tools: [{ key: 'clio-code', title: 'Get Clio Code' }], views: [{ key: 'lead_followups', title: 'Leads' }] });
+      expect(r.body).toEqual({ status: 'success', tools: [{ key: 'clio-code', title: 'Get Clio Code' }], views: [{ key: 'lead_followups', title: 'Leads' }], held: [] });
       expect(r.text).not.toMatch(/script|secret|html|sql/i);
       for (const row of [...r.body.tools, ...r.body.views]) expect(Object.keys(row).sort()).toEqual(['key', 'title']);
     }

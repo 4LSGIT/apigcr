@@ -236,7 +236,7 @@ d('Firm-tab routes on real MySQL', () => {
       expect(r.status).toBe(200);
       expect(r.body).toEqual({ status: 'success',
         tools: [{ key: 'appt-form', title: 'Appt Form' }, { key: 'call-review', title: 'call-review' }],
-        views: [{ key: 'lead_followups', title: 'Leads — Follow Ups' }] });
+        views: [{ key: 'lead_followups', title: 'Leads — Follow Ups' }], held: [] });
       expect(r.text).not.toMatch(/secret tool html|draft/i);
     }
   });

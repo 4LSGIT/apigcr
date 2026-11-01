@@ -19,6 +19,9 @@
 //     the newest row (MAX(id) — equals tools.html) is not deletable (400),
 //     so a tool always keeps >= 1 version row and the newest-row-equals-
 //     current-html invariant survives any sequence of deletes.
+//   - visible_to (launcher-nits L5): null, or a list of users.roles members
+//     but su, stored as JSON text in role order; the column round trip is in
+//     tests/launcherL5.pickers.mysql.test.js.
 //
 // Harness: real superuserOnlyFor chain (JWTs + elevation, same as
 // tests/su.stepup.test.js) over a pattern-matching stateful fake db.
@@ -38,6 +41,8 @@ const SECRET = process.env.JWT_SECRET;
 
 // ── stateful fake db ────────────────────────────────────────────────────────
 let tools, versions, nextToolId, nextVerId, auditRows;
+// mysql2 hands a JSON column back parsed.
+const readVisible = (t) => (typeof t.visible_to === 'string' ? JSON.parse(t.visible_to) : t.visible_to ?? null);
 
 function resetDb() {
   tools = new Map();       // id -> row
@@ -63,15 +68,15 @@ const db = {
     // tools
     if (/^SELECT t\.id, t\.tool_key.*FROM tools t ORDER BY/i.test(s)) {
       const rows = [...tools.values()].map((t) => ({
-        id: t.id, tool_key: t.tool_key, title: t.title, status: t.status,
+        id: t.id, tool_key: t.tool_key, title: t.title, status: t.status, visible_to: readVisible(t),
         updated_by: t.updated_by, updated_at: t.updated_at,
         version_count: versions.filter((v) => v.tool_id === t.id).length,
       }));
       return [rows];
     }
-    if (/^SELECT id, tool_key, title, status, html, updated_by, created_at, updated_at FROM tools WHERE id = \?/i.test(s)) {
+    if (/^SELECT id, tool_key, title, status, visible_to, html, updated_by, created_at, updated_at FROM tools WHERE id = \?/i.test(s)) {
       const t = tools.get(Number(params[0]));
-      return [t ? [{ ...t }] : []];
+      return [t ? [{ ...t, visible_to: readVisible(t) }] : []];
     }
     if (/^SELECT html, status FROM tools WHERE tool_key = \?/i.test(s)) {
       const t = toolByKey(params[0]);
@@ -83,7 +88,7 @@ const db = {
       const id = nextToolId++;
       tools.set(id, {
         id, tool_key: data.tool_key, title: data.title ?? '', status: data.status ?? 'draft',
-        html: data.html, updated_by: data.updated_by ?? null,
+        visible_to: data.visible_to ?? null, html: data.html, updated_by: data.updated_by ?? null,
         created_at: 'T0', updated_at: 'T0',
       });
       return [{ insertId: id }];
@@ -387,6 +392,59 @@ describe('CRUD + version append convention (NEW html appended)', () => {
 });
 
 // ── S3: per-version delete ──────────────────────────────────────────────────
+describe('visible_to', () => {
+  const patch = (id, visible_to) => su(`/api/tools/${id}`, { method: 'PATCH', body: { visible_to } });
+
+  test('a new tool is for everyone unless it says otherwise', async () => {
+    expect((await createTool()).visible_to).toBeNull();
+    expect((await createTool({ tool_key: 'calc-2', visible_to: ['staff'] })).visible_to).toEqual(['staff']);
+  });
+
+  test('a list is stored as JSON text, deduplicated, in role order; [] and null are kept apart', async () => {
+    const t = await createTool();
+    let res = await patch(t.id, ['attorney', 'staff', 'attorney']);
+    expect((await res.json()).tool.visible_to).toEqual(['staff', 'attorney']);
+    expect(tools.get(t.id).visible_to).toBe('["staff","attorney"]');
+    res = await patch(t.id, []);
+    expect((await res.json()).tool.visible_to).toEqual([]);
+    expect(tools.get(t.id).visible_to).toBe('[]');
+    res = await patch(t.id, null);
+    expect((await res.json()).tool.visible_to).toBeNull();
+    expect(tools.get(t.id).visible_to).toBeNull();
+  });
+
+  test.each([
+    ['su in the list', ['staff', 'su'], /su always sees/],
+    ['an unknown role', ['staff', 'paralegal'], /not a role \(it, admin, staff, attorney, automation, form_dev\)/],
+    ['a non-string entry', [1], /not a role/],
+    ['a string', 'staff', /must be null \(everyone\) or an array/],
+    ['an object', { staff: true }, /must be null \(everyone\) or an array/],
+    ['too many entries', Array(21).fill('staff'), /at most 20/],
+  ])('%s is a 400 that writes nothing', async (_label, value, re) => {
+    const t = await createTool({ visible_to: ['staff'] });
+    const res = await patch(t.id, value);
+    expect(res.status).toBe(400);
+    expect((await res.json()).message).toMatch(re);
+    expect(tools.get(t.id).visible_to).toBe('["staff"]');
+  });
+
+  test('a PATCH without it leaves it; a PATCH of it alone appends no version and is audited by name', async () => {
+    const t = await createTool({ visible_to: ['staff'] });
+    await su(`/api/tools/${t.id}`, { method: 'PATCH', body: { title: 'Renamed' } });
+    expect(tools.get(t.id).visible_to).toBe('["staff"]');
+    expect((await patch(t.id, ['attorney'])).status).toBe(200);
+    expect(versions.filter((v) => v.tool_id === t.id)).toHaveLength(1);
+    expect(JSON.parse(auditRows[auditRows.length - 1][10])).toMatchObject({ action: 'update', fields: ['visible_to'], html_changed: false });
+  });
+
+  test('the lean list carries it, for the Tool Manager\'s badge', async () => {
+    await createTool({ visible_to: ['attorney'] });
+    const { tools: rows } = await (await su('/api/tools')).json();
+    expect(rows[0].visible_to).toEqual(['attorney']);
+    expect(rows[0].html).toBeUndefined();
+  });
+});
+
 describe('DELETE /api/tools/:id/versions/:vid', () => {
   test('404 on missing tool, on a vid scoped to a different tool, and on a missing vid', async () => {
     const a = await createTool({ tool_key: 'tool-a' });
