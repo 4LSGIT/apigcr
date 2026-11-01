@@ -2029,7 +2029,7 @@ This is the **Resume-Refetch-Recheck-Send pattern (§3.1)**, kicked off by an ex
 |---|---|
 | `lib/workflow_engine.js` | `advanceWorkflow`, `scheduleResume`, `mergeVariables`, `isControlStep`, `getWorkflowFinalStatus` |
 | `lib/sequenceEngine.js` | `enrollContact`, `enrollContactByTemplateId`, `executeStep`, `cancelSequences`, `cancelEnrollment`, `cancelByApptId`, `checkCondition`, `calculateStepTime`, `validateTemplateFilters` |
-| `lib/internal_functions/` | All 91 built-in functions, one file per category |
+| `lib/internal_functions/` | All 106 built-in functions, one file per category |
 | `lib/job_executor.js` | `executeJob`, inline blocks for `task_due_reminder` / `task_daily_digest` / `campaign_send` |
 | `routes/process_jobs.js` | Heartbeat: claim jobs, dispatch, record results, reschedule recurring |
 | `routes/scheduled_jobs.js` | CRUD on `scheduled_jobs` |

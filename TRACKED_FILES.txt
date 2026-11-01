@@ -101,6 +101,7 @@ lib/internal_functions/timing.js
 lib/internal_functions/trustee.js
 lib/internal_functions/users.js
 lib/internal_functions/variables.js
+lib/internal_functions/video.js
 lib/job_executor.js
 lib/jsonFieldStream.js
 lib/legacyTrap.js
@@ -635,6 +636,7 @@ ref/migrations/2026-10-30_yisramail_p2_sms_consent_sync_job.sql
 ref/migrations/2026-10-30_yisramail_p3_unsub_tokens.sql
 ref/migrations/2026-11-01_tools_visible_to.sql
 ref/migrations/2026-11-01_yisravid_s2_video_views_columns.sql
+ref/migrations/2026-11-01_yisravid_s4_contact_verified.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -989,6 +991,7 @@ scripts/yisramailP3Migrate.js
 scripts/yisravidMintTokens.js
 scripts/yisravidS1Data.js
 scripts/yisravidS2Columns.js
+scripts/yisravidS4ContactVerified.js
 server.js
 services/adapters/email/gmail.js
 services/adapters/email/pabbly.js
@@ -1795,6 +1798,7 @@ tests/validateCaseTrustee.test.js
 tests/versionDiff.sequences.test.js
 tests/versionDiff.test.js
 tests/versionPredicateCoverage.test.js
+tests/videoEvents.route.test.js
 tests/videoLanding.actionUrl.test.js
 tests/videoLanding.rateLimit.test.js
 tests/videoLanding.related.test.js

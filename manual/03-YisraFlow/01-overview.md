@@ -98,7 +98,7 @@ For `one_time` and `recurring` jobs, the actual *execution flavor* is stored in 
 
 **`/process-jobs` heartbeat** runs `recoverStuckJobs()`, then claims up to 10 pending jobs with `FOR UPDATE SKIP LOCKED` and dispatches each. It's called periodically by Cloud Scheduler.
 
-**`lib/internal_functions/`** is the action library — **91 functions**, 85 of them offered in the editors' pickers. It covers SMS, email, contact/case/appointment/event CRUD, task creation, sequence control, log writing, DB reads *and* writes, Dropbox, Google Calendar, e-signature, document generation, PDF, court, pipeline, and workflow-only control flow (branching, delays, `foreach`, `request_decision`). Workflows and sequences both call into it; scheduled jobs call into it via `data.type='internal_function'`; YisraHook targets and the email/phone ingest rule actions dispatch into it too.
+**`lib/internal_functions/`** is the action library — **106 functions**, 92 of them offered in the editors' pickers. It covers SMS, email, contact/case/appointment/event CRUD, task creation, sequence control, log writing, DB reads *and* writes, Dropbox, Google Calendar, e-signature, document generation, PDF, court, pipeline, and workflow-only control flow (branching, delays, `foreach`, `request_decision`). Workflows and sequences both call into it; scheduled jobs call into it via `data.type='internal_function'`; YisraHook targets and the email/phone ingest rule actions dispatch into it too.
 
 It is a **directory**, not a single file — one module per category, auto-scanned at boot by `index.js`, so adding a category needs no registration. Duplicate names throw at startup. See `lib/internal_functions/README.md` for the module convention and chapter 5 for the function reference.
 

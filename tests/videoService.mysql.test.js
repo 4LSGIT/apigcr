@@ -29,6 +29,10 @@
  *     the analytics panel (the panel's "See who watched" promises that).
  *   - recordView survives two opens at once: the foreign key's shared lock used
  *     to deadlock them and lose one.
+ *   - The video.* events: once per view (per button for a click), only for a
+ *     verified contact, never for an excluded view, and first_for_contact
+ *     ignores other people, other videos and excluded views.
+ *   - video_watch_status counts what a person did, not scanners or exclusions.
  *   - setViewExcluded moves the stats and view_count once, however many times
  *     it runs, and leaves the counter alone for a view a reset already took off.
  */
@@ -36,6 +40,8 @@
 
 const mysql = require('mysql2/promise');
 const videoService = require('../services/videoService');
+const domainEvents = require('../lib/domainEvents');
+const videoFns = require('../lib/internal_functions/video');
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const d = URL_ ? describe : describe.skip;
@@ -43,7 +49,7 @@ const d = URL_ ? describe : describe.skip;
 d('videoService on real MySQL', () => {
   let pool;
   const q = async (sql, p) => (await pool.query(sql, p))[0];
-  const TABLES = ['video_views', 'videos', 'case_relate', 'cases', 'contacts', 'users'];
+  const TABLES = ['video_views', 'video_slug_aliases', 'videos', 'case_relate', 'cases', 'contacts', 'users'];
 
   beforeAll(async () => {
     const dbName = new URL(URL_).pathname.slice(1);
@@ -88,6 +94,10 @@ d('videoService on real MySQL', () => {
       access_level enum('public','contact_only') NOT NULL DEFAULT 'public',
       is_published tinyint(1) NOT NULL DEFAULT '0',
       view_count int NOT NULL DEFAULT '0', analytics_reset_at timestamp NULL DEFAULT NULL)`);
+    await q(`CREATE TABLE video_slug_aliases (
+      id int NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      video_id int NOT NULL, slug varchar(64) NOT NULL UNIQUE,
+      archived_at timestamp NULL DEFAULT CURRENT_TIMESTAMP)`);
     await q(`CREATE TABLE video_views (
       id bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
       video_id int NOT NULL, contact_id int DEFAULT NULL, case_id varchar(20) DEFAULT NULL,
@@ -99,6 +109,7 @@ d('videoService on real MySQL', () => {
       completed_at timestamp NULL DEFAULT NULL,
       excluded_at timestamp NULL DEFAULT NULL,
       excluded_by int DEFAULT NULL,
+      contact_verified tinyint(1) NOT NULL DEFAULT '0',
       CONSTRAINT fk_video_views_video FOREIGN KEY (video_id) REFERENCES videos (id) ON DELETE CASCADE)`);
   });
 
@@ -645,6 +656,286 @@ d('videoService on real MySQL', () => {
       test('a missing view is a 404 and changes nothing', async () => {
         await expect(videoService.setViewExcluded(pool, 999, true, 6)).rejects.toMatchObject({ statusCode: 404 });
       });
+    });
+  });
+
+  describe('the video.* events', () => {
+    let emit;
+    beforeEach(async () => {
+      emit = jest.spyOn(domainEvents, 'emit').mockResolvedValue();
+      await q(`INSERT INTO videos (id, slug, title) VALUES (1, 'one', 'One'), (2, 'two', 'Two')`);
+      await q(`INSERT INTO contacts (contact_id, contact_name) VALUES (10, 'Ann Lee'), (11, 'Bob')`);
+    });
+    afterEach(() => emit.mockRestore());
+
+    const view = (row) => q('INSERT INTO video_views SET ?', [{
+      video_id: 1, contact_id: 10, case_id: 'C1', contact_verified: 1, ...row,
+    }]).then((r) => r.insertId);
+    const played = (viewId, videoId = 1) => videoService.recordPlayed(pool, { viewId, videoId });
+    const progress = (viewId, pct, videoId = 1) => videoService.recordProgress(pool, {
+      viewId, videoId, watchSeconds: pct, completionPct: pct,
+    });
+    const button = (label, url = 'https://example.com/book?c={{ct}}') => ({ type: 'url', label, config: { url } });
+    const click = (viewId, label, actions = [button(label)], videoId = 1) =>
+      videoService.recordCtaClick(pool, { viewId, videoId, label, actions });
+    const fired = () => emit.mock.calls.map((c) => c[1]);
+    const last = () => emit.mock.calls[emit.mock.calls.length - 1][2];
+
+    test('recordView stores what it was told, and defaults to unverified', async () => {
+      const yes = await videoService.recordView(pool, { videoId: 1, contactId: 10, contactVerified: true });
+      const no = await videoService.recordView(pool, { videoId: 1, contactId: 10 });
+      const rows = await q('SELECT id, contact_verified FROM video_views ORDER BY id');
+      expect(rows).toEqual([
+        { id: yes.viewId, contact_verified: 1 },
+        { id: no.viewId, contact_verified: 0 },
+      ]);
+    });
+
+    test('video.played carries the view, once, however many beacons arrive', async () => {
+      const id = await view({ watch_seconds: 0 });
+      const results = await Promise.all([played(id), played(id), played(id)]);
+      expect(results.filter((r) => r.playedNow).length).toBe(1);
+      expect(fired()).toEqual(['video.played']);
+      expect(emit.mock.calls[0][0]).toBe(pool);
+      expect(last()).toEqual({
+        contact_id: 10, case_id: 'C1', source: 'video_page', actor: { user_id: 0 },
+        data: { view_id: id, video_id: 1, video_slug: 'one', video_title: 'One', watch_seconds: 0, completion_pct: 0 },
+        extra: { first_for_contact: true },
+      });
+    });
+
+    test('the first play keeps its time', async () => {
+      const id = await view({ played_at: '2026-07-01 12:00:05' });
+      expect((await played(id)).playedNow).toBe(false);
+      const [row] = await q('SELECT played_at FROM video_views WHERE id = ?', [id]);
+      expect(row.played_at.toISOString()).toBe('2026-07-01T12:00:05.000Z');
+      expect(fired()).toEqual([]);
+    });
+
+    test('a play on another video\'s id does nothing', async () => {
+      const id = await view({});
+      expect((await played(id, 2)).playedNow).toBe(false);
+      expect(fired()).toEqual([]);
+    });
+
+    test('video.completed fires at 90% really played, once', async () => {
+      const id = await view({});
+      await progress(id, 89);
+      expect(fired()).toEqual([]);
+      await progress(id, 90);
+      await progress(id, 100);
+      expect(fired()).toEqual(['video.completed']);
+      expect(last().data).toMatchObject({ completion_pct: 90, watch_seconds: 90 });
+    });
+
+    test('video.cta_clicked fires once per button on a view; every click still counts', async () => {
+      const id = await view({});
+      expect((await click(id, 'Book')).firstClick).toBe(true);
+      expect((await click(id, 'Book')).firstClick).toBe(false);
+      expect((await click(id, 'Call')).firstClick).toBe(true);
+      expect(fired()).toEqual(['video.cta_clicked', 'video.cta_clicked']);
+      expect(emit.mock.calls.map((c) => c[2].extra.label)).toEqual(['Book', 'Call']);
+      const a = await videoService.getVideoAnalytics(pool, 1);
+      expect(a.cta_clicks_by_label).toEqual([{ label: 'Book', count: 2 }, { label: 'Call', count: 1 }]);
+    });
+
+    test.each([
+      ['a label the video has no button for', 'Invented', [button('Book')]],
+      ['a video with no buttons', 'Book', []],
+      ['actions missing', 'Book', null],
+      ['a label that only differs in case', 'book', [button('Book')]],
+      ['an action the page refuses to draw: a javascript: link', 'Book', [button('Book', 'javascript:alert(1)')]],
+      ['an action with no url', 'Book', [{ type: 'url', label: 'Book', config: {} }]],
+      ['an action type the page does not know', 'Book', [{ type: 'future', label: 'Book', config: { url: 'https://example.com' } }]],
+      ['an action with no type', 'Book', [{ label: 'Book', config: { url: 'https://example.com' } }]],
+    ])('%s is stored and fires nothing', async (_n, label, actions) => {
+      const id = await view({});
+      await click(id, label, actions);
+      expect(fired()).toEqual([]);
+      const [{ n }] = await q('SELECT JSON_LENGTH(cta_clicks) AS n FROM video_views WHERE id = ?', [id]);
+      expect(n).toBe(1);
+    });
+
+    test.each([
+      ['an unlabelled button reads Open on the page', 'Open', [{ type: 'url', config: { url: 'https://example.com' } }]],
+      ['the page trims what it sends', 'Book', [button('  Book  ')]],
+      ['the route cuts a long label at 200', 'x'.repeat(200), [button('x'.repeat(250))]],
+    ])('%s', async (_n, label, actions) => {
+      const id = await view({});
+      await click(id, label, actions);
+      expect(fired()).toEqual(['video.cta_clicked']);
+    });
+
+    test('a later view never makes an earlier one read as not first', async () => {
+      const earlier = await view({});
+      await view({ played_at: '2026-07-01 12:00:00' });
+      await played(earlier);
+      expect(last().extra.first_for_contact).toBe(true);
+    });
+
+    test('two clicks at once fire once and both count', async () => {
+      const id = await view({});
+      const results = await Promise.all([click(id, 'Book'), click(id, 'Book')]);
+      expect(results.filter((r) => r.firstClick).length).toBe(1);
+      expect(fired()).toEqual(['video.cta_clicked']);
+      const [{ n }] = await q('SELECT JSON_LENGTH(cta_clicks) AS n FROM video_views WHERE id = ?', [id]);
+      expect(n).toBe(2);
+    });
+
+    test('a label with quotes and a backslash still claims once', async () => {
+      const id = await view({});
+      const label = `Book "now" \\ it's free`;
+      await click(id, label);
+      await click(id, label);
+      expect(fired()).toEqual(['video.cta_clicked']);
+      expect(last().extra.label).toBe(label);
+    });
+
+    describe('a view that may not announce anything', () => {
+      test.each([
+        ['a typed ?c= link', { contact_verified: 0 }],
+        ['a view from before the column', { contact_verified: 0, case_id: null }],
+        ['an anonymous view', { contact_id: null, case_id: null, contact_verified: 0 }],
+        ['a verified flag with no contact', { contact_id: null, contact_verified: 1 }],
+        ['an excluded view', { excluded_at: '2026-07-02 00:00:00' }],
+      ])('%s still records, and fires nothing', async (_n, row) => {
+        const id = await view(row);
+        await played(id);
+        await progress(id, 100);
+        await click(id, 'Book');
+        expect(fired()).toEqual([]);
+        const [v] = await q('SELECT played_at, completed_at, cta_clicks FROM video_views WHERE id = ?', [id]);
+        expect(v.played_at).toBeInstanceOf(Date);
+        expect(v.completed_at).toBeInstanceOf(Date);
+        expect(v.cta_clicks).not.toBeNull();
+      });
+    });
+
+    describe('first_for_contact', () => {
+      const firstOn = async (act) => {
+        const id = await view({});
+        await act(id);
+        return last().extra.first_for_contact;
+      };
+
+      test('false once this contact has done it on an earlier view', async () => {
+        expect(await firstOn((id) => played(id))).toBe(true);
+        expect(await firstOn((id) => played(id))).toBe(false);
+      });
+      test('completion counts completions, not plays', async () => {
+        await view({ played_at: '2026-07-01 12:00:00' });
+        expect(await firstOn((id) => progress(id, 95))).toBe(true);
+        expect(await firstOn((id) => progress(id, 95))).toBe(false);
+      });
+      test('a click counts that button, not another', async () => {
+        await view({ cta_clicks: JSON.stringify([{ label: 'Call' }]) });
+        expect(await firstOn((id) => click(id, 'Book'))).toBe(true);
+        expect(await firstOn((id) => click(id, 'Book'))).toBe(false);
+      });
+      test('another person does not count', async () => {
+        await view({ contact_id: 11, played_at: '2026-07-01 12:00:00' });
+        expect(await firstOn((id) => played(id))).toBe(true);
+      });
+      test('another video does not count', async () => {
+        await view({ video_id: 2, played_at: '2026-07-01 12:00:00' });
+        expect(await firstOn((id) => played(id))).toBe(true);
+      });
+      test('an excluded view does not count', async () => {
+        await view({ played_at: '2026-07-01 12:00:00', excluded_at: '2026-07-02 00:00:00' });
+        expect(await firstOn((id) => played(id))).toBe(true);
+      });
+      test('a watch from before verification still counts: they really did watch', async () => {
+        await view({ contact_verified: 0, played_at: '2026-07-01 12:00:00' });
+        expect(await firstOn((id) => played(id))).toBe(false);
+      });
+    });
+  });
+
+  describe('video_watch_status', () => {
+    const LINUX = 'Mozilla/5.0 (X11; Linux x86_64) Chrome/139.0.0.0';
+    beforeEach(async () => {
+      await q(`INSERT INTO videos (id, slug, title, is_published) VALUES (1, 'one', 'One', 0), (2, 'two', 'Two', 1)`);
+    });
+    const view = (row) => q('INSERT INTO video_views SET ?', [{ video_id: 1, contact_id: 10, ...row }]);
+    const status = async (video = 'one', contact = '10') =>
+      (await videoFns.video_watch_status({ contact_id: contact, video }, pool)).output;
+
+    test('never opened', async () => {
+      expect(await status()).toEqual({
+        video_id: 1, video_slug: 'one', opened: false, played: false, completed: false, clicked: false,
+        best_completion_pct: 0, last_played_at: null, last_completed_at: null,
+      });
+    });
+
+    test('adds up across views, by id or by slug, published or not', async () => {
+      await view({ played_at: '2026-07-01 12:00:00', completion_pct: 40 });
+      await view({
+        played_at: '2026-07-03 12:00:00', completed_at: '2026-07-03 12:05:00', completion_pct: 95,
+        cta_clicks: JSON.stringify([{ label: 'Book' }]),
+      });
+      for (const video of ['one', '1', 1]) {
+        const s = await status(video);
+        expect(s).toMatchObject({ opened: true, played: true, completed: true, clicked: true, best_completion_pct: 95 });
+        expect(s.last_played_at.toISOString()).toBe('2026-07-03T12:00:00.000Z');
+        expect(s.last_completed_at.toISOString()).toBe('2026-07-03T12:05:00.000Z');
+      }
+    });
+
+    test('an old slug still finds the video', async () => {
+      await q(`INSERT INTO video_slug_aliases (video_id, slug) VALUES (1, 'old-name')`);
+      await view({ played_at: '2026-07-01 12:00:00' });
+      expect(await status('old-name')).toMatchObject({ video_id: 1, video_slug: 'one', played: true });
+    });
+
+    test('an all-digit slug answers for that video, not for the id it spells', async () => {
+      await q(`INSERT INTO videos (id, slug, title) VALUES (341, 'other', 'Other'), (3, '341', 'Digits')`);
+      await q('INSERT INTO video_views SET ?', [{ video_id: 3, contact_id: 10, played_at: '2026-07-01 12:00:00' }]);
+      expect(await status('341')).toMatchObject({ video_id: 3, video_slug: '341', played: true });
+    });
+
+    test('an id still works when no slug spells it', async () => {
+      await q(`INSERT INTO videos (id, slug, title) VALUES (341, 'other', 'Other')`);
+      expect(await status('341')).toMatchObject({ video_id: 341, video_slug: 'other' });
+    });
+
+    test('opened but not played is not watched', async () => {
+      await view({ user_agent: 'iPhone' });
+      expect(await status()).toMatchObject({ opened: true, played: false, completed: false });
+    });
+
+    test.each([
+      ['an excluded view', { played_at: '2026-07-01 12:00:00', excluded_at: '2026-07-02 00:00:00' }],
+      ['a scanner', { user_agent: LINUX }],
+      ['another video', { video_id: 2, played_at: '2026-07-01 12:00:00' }],
+      ['another contact', { contact_id: 11, played_at: '2026-07-01 12:00:00' }],
+    ])('%s does not count', async (_n, row) => {
+      await view(row);
+      expect(await status()).toMatchObject({ opened: false, played: false, clicked: false });
+    });
+
+    test('an empty click list is no click', async () => {
+      await view({ cta_clicks: '[]', user_agent: 'iPhone' });
+      expect(await status()).toMatchObject({ opened: true, clicked: false });
+    });
+
+    test('a view before an analytics reset still counts', async () => {
+      await q(`UPDATE videos SET analytics_reset_at = '2026-08-01 00:00:00' WHERE id = 1`);
+      await view({ opened_at: '2026-07-01 12:00:00', played_at: '2026-07-01 12:00:00' });
+      expect(await status()).toMatchObject({ played: true });
+    });
+
+    test('a video that does not exist fails the step', async () => {
+      await expect(status('nope')).rejects.toThrow('no video "nope"');
+      await expect(status('999')).rejects.toThrow('no video "999"');
+      await expect(status('1x')).rejects.toThrow('no video "1x"');
+    });
+
+    test.each([[''], [null], [undefined]])('no video (%s) fails the step', async (video) => {
+      await expect(videoFns.video_watch_status({ contact_id: '10', video }, pool)).rejects.toThrow('requires video');
+    });
+
+    test.each([['abc'], ['0'], [''], [undefined], ['{{contactId}}']])('contact_id %s fails the step', async (contact_id) => {
+      await expect(videoFns.video_watch_status({ contact_id, video: 'one' }, pool)).rejects.toThrow('numeric contact_id');
     });
   });
 });

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-01T07:33:53.471Z
+-- Generated: 2026-11-01T11:31:22.789Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:7004f6556f74ffcfa5621f32ebe57878
+-- Fingerprint: sha256:a2f2c0c646208d1f24e2e12ae447cbcf
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -4102,7 +4102,8 @@ CREATE TABLE `video_views` (
   `track_token` char(22) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'bearer for the public track + cta-click POSTs, rendered into the page that opened the view; ids are sequential; NULL on views before 2026-11-01; _bin: case-sensitive',
   `completed_at` timestamp NULL DEFAULT NULL COMMENT 'first time at least 90% really played (videoService.COMPLETE_PCT), claimed once by conditional UPDATE; before 2026-11-01 backfilled from completion_pct=100, which only meant the player reached the end',
   `excluded_at` timestamp NULL DEFAULT NULL COMMENT 'staff excluded this view from stats (test view, scanner); NULL = counted; reversible, never a delete',
-  `excluded_by` int DEFAULT NULL COMMENT 'users.user who excluded it'
+  `excluded_by` int DEFAULT NULL COMMENT 'users.user who excluded it',
+  `contact_verified` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = contact_id came from a ?ct= token; 0 = a ?c= integer anyone can type, no contact, or a view from before this column. Only 1 may fire video.* events'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------

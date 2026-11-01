@@ -69,7 +69,7 @@ In **Scheduled Jobs** (with *Internal* ticked) a `sequence_step` job can be edit
 | `sms` | Send a text message via the firm's phone lines |
 | `email` | Send an email via configured providers |
 | `task` | Create a task assigned to a user |
-| `internal_function` | Call any of the 74 built-in functions available to both engines (the 11 picker-visible workflow-only ones are filtered out — see chapter 5) |
+| `internal_function` | Call any of the 79 built-in functions available to both engines (the 13 picker-visible workflow-only ones are filtered out — see chapter 5) |
 | `webhook` | First-class HTTP call with credential injection (≠ `internal_function: webhook` — see below) |
 | `start_workflow` | Kick off a workflow execution from inside a sequence |
 

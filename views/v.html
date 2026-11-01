@@ -291,7 +291,7 @@
     }
 
     // First-play only. Re-firing on pause/resume or seek-replay does NOT
-    // re-record (matches the server-side COALESCE on played_at).
+    // re-record (the server only claims played_at while it is NULL).
     var started = false;
     video.addEventListener('play', function() {
       if (started) return;

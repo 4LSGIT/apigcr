@@ -2121,6 +2121,13 @@ travels as `q`, the one parameter the audit log redacts: a new free-text filter
 on a route reuses it. `recordView` UPDATEs `videos` before it INSERTs: the
 foreign key's shared lock otherwise deadlocks two opens of one video.
 
+Events: `video.played` / `video.completed` / `video.cta_clicked` fire only for
+`contact_verified` = 1 (a `?ct=` token resolved the contact; `?c=` is typeable),
+never for an excluded view, once per view (per button for a click) by
+conditional UPDATE. The emit is awaited inside the request. There is deliberately
+no `video.open`: scanners. `video_watch_status` reads the same table and is
+denied to CTA links.
+
 ## 25. SCHEMA REF AUTO-GENERATION
 
 `ref/database.sql` regenerates itself: the pre-commit hook

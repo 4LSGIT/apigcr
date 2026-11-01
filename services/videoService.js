@@ -36,6 +36,8 @@ const crypto = require('crypto');
 const { DateTime } = require('luxon');
 const { generateToken } = require('../lib/token');
 const { escapeLike } = require('../lib/escapeLike');
+const domainEvents = require('../lib/domainEvents');
+const { isTransient } = require('../lib/withTransaction');
 const { FIRM_TZ } = require('./timezoneService');
 
 // The share of a video that must really have played for a view to count as
@@ -621,9 +623,11 @@ async function deleteVideo(db, id) {
  * @param {number|null} args.contactId
  * @param {string} args.ipHash      64-char hex (use hashIp())
  * @param {string} args.userAgent   capped at 255 chars
+ * @param {boolean} [args.contactVerified]  contactId came from a ?ct= token.
+ *   Only such a view may fire events: anyone can type a ?c= integer.
  * @returns {Promise<{viewId: number, trackToken: string}>}
  */
-async function recordView(pool, { videoId, contactId, ipHash, userAgent }) {
+async function recordView(pool, { videoId, contactId, ipHash, userAgent, contactVerified = false }) {
   const trackToken = generateToken();
   const viewId = await pool.withTransaction(async (conn) => {
 
@@ -635,9 +639,10 @@ async function recordView(pool, { videoId, contactId, ipHash, userAgent }) {
     );
 
     const [result] = await conn.query(
-      `INSERT INTO video_views (video_id, contact_id, case_id, ip_hash, user_agent, track_token)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [videoId, contactId, caseId, ipHash || null, (userAgent || '').slice(0, 255) || null, trackToken]
+      `INSERT INTO video_views (video_id, contact_id, case_id, ip_hash, user_agent, track_token, contact_verified)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [videoId, contactId, caseId, ipHash || null, (userAgent || '').slice(0, 255) || null, trackToken,
+        contactVerified ? 1 : 0]
     );
 
     return result.insertId;
@@ -667,12 +672,17 @@ async function checkTrackToken(db, { viewId, videoId, token }) {
  * on a seek-replay) does not overwrite the original played_at timestamp.
  */
 async function recordPlayed(db, { viewId, videoId }) {
-  await db.query(
-    `UPDATE video_views
-        SET played_at = COALESCE(played_at, NOW())
-      WHERE id = ? AND video_id = ?`,
+  const [claim] = await db.query(
+    `UPDATE video_views SET played_at = NOW()
+      WHERE id = ? AND video_id = ? AND played_at IS NULL`,
     [viewId, videoId]
   );
+  const playedNow = claim.affectedRows === 1;
+  if (playedNow) {
+    const payload = await viewEventPayload(db, viewId, 'o.played_at IS NOT NULL');
+    if (payload) await domainEvents.emit(db, 'video.played', payload);
+  }
+  return { playedNow };
 }
 
 /**
@@ -708,26 +718,133 @@ async function recordProgress(db, { viewId, videoId, watchSeconds, completionPct
         AND completion_pct >= ?`,
     [viewId, videoId, COMPLETE_PCT]
   );
-  return { completedNow: claim.affectedRows === 1 };
+  const completedNow = claim.affectedRows === 1;
+  if (completedNow) {
+    const payload = await viewEventPayload(db, viewId, 'o.completed_at IS NOT NULL');
+    if (payload) await domainEvents.emit(db, 'video.completed', payload);
+  }
+  return { completedNow };
 }
 
 /**
  * Append a CTA click event to the cta_clicks JSON array.
  * Label is capped at 200 chars.
+ *
+ * The label is whatever the page posts, so anyone holding a view's token can
+ * send any text. It is stored either way, but only a button the video really
+ * has fires video.cta_clicked: `actions` is the video's list.
  */
-async function recordCtaClick(db, { viewId, videoId, label }) {
+async function recordCtaClick(db, { viewId, videoId, label, actions = [] }) {
   const trimmedLabel = String(label || '').slice(0, 200);
   const ts = new Date().toISOString();
-  await db.query(
-    `UPDATE video_views
+  const APPEND = `UPDATE video_views
         SET cta_clicks = JSON_ARRAY_APPEND(
               COALESCE(cta_clicks, JSON_ARRAY()),
               '$',
               JSON_OBJECT('label', ?, 'clicked_at', ?)
             )
-      WHERE id = ? AND video_id = ?`,
-    [trimmedLabel, ts, viewId, videoId]
+      WHERE id = ? AND video_id = ?`;
+
+  // The first click of this button on this view claims the event; every click
+  // is stored. Two conditional statements, not a read then a write, so two
+  // clicks at once can't both claim it.
+  const [claim] = await db.query(
+    `${APPEND} AND NOT COALESCE(JSON_CONTAINS(cta_clicks, JSON_OBJECT('label', ?)), 0)`,
+    [trimmedLabel, ts, viewId, videoId, trimmedLabel]
   );
+  const firstClick = claim.affectedRows === 1;
+  if (firstClick) {
+    const isButton = (Array.isArray(actions) ? actions : [])
+      .some(a => rendersAsButton(a) && String(a.label || 'Open').trim().slice(0, 200) === trimmedLabel);
+    const payload = isButton && await viewEventPayload(
+      db, viewId, `JSON_CONTAINS(o.cta_clicks, JSON_OBJECT('label', ?))`, [trimmedLabel]
+    );
+    if (payload) {
+      await domainEvents.emit(db, 'video.cta_clicked', {
+        ...payload,
+        extra: { ...payload.extra, label: trimmedLabel },
+      });
+    }
+  } else {
+    await db.query(APPEND, [trimmedLabel, ts, viewId, videoId]);
+  }
+  return { firstClick };
+}
+
+/** Does the page draw this action? Mirrors videoLanding's renderActions. */
+function rendersAsButton(action) {
+  if (action?.type !== 'url') return false;
+  return isSafeActionUrl(String(action.config?.url || '').replace(/\{\{ct\}\}/g, '1').replace(/\{\{c\}\}/g, '1'));
+}
+
+/**
+ * The envelope for a video.* event, or null when this view may not announce
+ * anything: an unverified contact (anyone can type a ?c= integer, and a rule
+ * might text a client), no contact, or an excluded view.
+ *
+ * `earlier` is the SQL test, on alias `o`, for this contact's earlier views of
+ * this video having done the same thing. min_interval_s is per rule, so a rule
+ * can't dedupe by contact; extra.first_for_contact is how it does. Earlier by
+ * id, not "any other": two views playing at once then can't both read false and
+ * leave a once-per-client rule unfired.
+ *
+ * Unverified earlier views count, because they are real history: a client who
+ * watched on an old ?c= link has watched. The price is that a typed ?c= view
+ * can read as that history (Fred's ruling pending).
+ *
+ * The tracking write has already landed and the claim is spent, so a failed
+ * lookup loses this event for good. It alerts rather than failing the page's
+ * beacon: a blip is a warning, a repeat or anything else is an error.
+ */
+let eventLookupFailing = false;
+
+async function viewEventPayload(db, viewId, earlier, earlierParams = []) {
+  try {
+    const [rows] = await db.query(
+      `SELECT vv.id, vv.video_id, vv.contact_id, vv.case_id, vv.watch_seconds, vv.completion_pct,
+              v.slug, v.title,
+              NOT EXISTS (
+                SELECT 1 FROM video_views o
+                 WHERE o.video_id = vv.video_id AND o.contact_id = vv.contact_id
+                   AND o.id < vv.id AND o.excluded_at IS NULL AND ${earlier}
+              ) AS first_for_contact
+         FROM video_views vv
+         JOIN videos v ON v.id = vv.video_id
+        WHERE vv.id = ?
+          AND vv.contact_verified = 1
+          AND vv.contact_id IS NOT NULL
+          AND vv.excluded_at IS NULL`,
+      [...earlierParams, viewId]
+    );
+    eventLookupFailing = false;
+    if (!rows.length) return null;
+    const r = rows[0];
+    return {
+      contact_id: r.contact_id,
+      case_id:    r.case_id,
+      source:     'video_page',
+      actor:      { user_id: 0 },
+      data: {
+        view_id:        Number(r.id),
+        video_id:       r.video_id,
+        video_slug:     r.slug,
+        video_title:    r.title,
+        watch_seconds:  r.watch_seconds,
+        completion_pct: r.completion_pct,
+      },
+      extra: { first_for_contact: !!r.first_for_contact },
+    };
+  } catch (err) {
+    console.error(`[videoService] event lookup failed for view ${viewId}:`, err.message);
+    const severity = isTransient(err) && !eventLookupFailing ? 'warning' : 'error';
+    eventLookupFailing = true;
+    await require('../lib/alerting').alert(db, {
+      source: 'app', kind: 'video_event_lost', severity, group_key: 'video_events',
+      title: `A video event was lost on view ${viewId}`,
+      message: err.message,
+    }).catch(() => {});
+    return null;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1086,6 +1203,40 @@ async function listViews(db, {
 }
 
 /**
+ * Has this contact watched this video? Backs the video_watch_status function.
+ * Excluded views and automated opens don't count. Views before an analytics
+ * reset do: the reset is about the dashboard, and they still watched.
+ *
+ * @returns {Promise<{opened: boolean, played: boolean, completed: boolean, clicked: boolean,
+ *   best_completion_pct: number, last_played_at: Date|null, last_completed_at: Date|null}>}
+ */
+async function getWatchStatus(db, { contactId, videoId }) {
+  const [[r]] = await db.query(
+    `SELECT COUNT(*) AS opens,
+            SUM(CASE WHEN vv.played_at IS NOT NULL THEN 1 ELSE 0 END)                AS plays,
+            SUM(CASE WHEN vv.completed_at IS NOT NULL THEN 1 ELSE 0 END)             AS completions,
+            SUM(CASE WHEN JSON_LENGTH(vv.cta_clicks) > 0 THEN 1 ELSE 0 END)          AS clicks,
+            MAX(vv.completion_pct) AS best_completion_pct,
+            MAX(vv.played_at)      AS last_played_at,
+            MAX(vv.completed_at)   AS last_completed_at
+       FROM video_views vv
+      WHERE vv.video_id = ? AND vv.contact_id = ?
+        AND vv.excluded_at IS NULL
+        AND NOT ${AUTOMATED_SQL}`,
+    [videoId, contactId]
+  );
+  return {
+    opened:    Number(r.opens) > 0,
+    played:    Number(r.plays) > 0,
+    completed: Number(r.completions) > 0,
+    clicked:   Number(r.clicks) > 0,
+    best_completion_pct: Number(r.best_completion_pct) || 0,
+    last_played_at:      r.last_played_at,
+    last_completed_at:   r.last_completed_at,
+  };
+}
+
+/**
  * Take a view out of the stats, or put it back. The row stays either way;
  * hard deletion is a SQL job. videos.view_count moves with it, unless the view
  * is from before a reset: the reset already took it off the counter.
@@ -1275,6 +1426,7 @@ module.exports = {
   resetVideoAnalytics,
   listViews,
   setViewExcluded,
+  getWatchStatus,
   hashIp,
   resolveCaseIdForContact,
   getJsonOverlapsCachedStatus,

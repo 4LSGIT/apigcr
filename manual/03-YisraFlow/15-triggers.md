@@ -155,6 +155,9 @@ The authoritative list is `EVENT_TYPES` in `services/triggerService.js` — it c
 | `case.contact_linked` | `caseService.addCaseContact` | the intake/petition routes' direct `case_relate` INSERTs at creation (`case.created` covers those) |
 | `case.contact_unlinked` | `caseService.removeCaseContact`, when a row was actually removed | — |
 | `form.submitted` | `formService.submitForm`; `extra.surface` = `internal` \| `external` | — |
+| `video.played` | `videoService.recordPlayed`, the first time a view presses play | **a viewer without a `?ct=` link** (below), an excluded view, a direct `video_views` write |
+| `video.completed` | `videoService.recordProgress`, the first time a view reaches 90% really played | the same; dragging the bar to the end never reaches it |
+| `video.cta_clicked` | `videoService.recordCtaClick`, the first time a view clicks a given button; `extra.label` = the button | the same; repeat clicks count in the stats and fire nothing |
 | `esign.status_changed` | `esignWebhookService.processStatusChange`, on real transitions (webhook or reconciliation — `source` distinguishes) | — |
 | `checkitem.completed` | `PATCH /checkitems/:id` on a transition to complete | idempotent re-saves don't fire |
 | `checklist.completed` | item status change or item deletion that completes the list | — |
@@ -233,6 +236,20 @@ filter — which is the intended behaviour, not a silent half-match.
 **The bypass column is the important one.** `case.updated` not firing for court-executor writes is a design decision, not a gap: those writes are high-volume and machine-driven, and routing them through the event system would have made every docket sync a potential trigger storm. If you need to react to one of them, react to the thing that caused it instead.
 
 `esign.status_changed` uses the **internal** status vocabulary — `sent`, `viewed`, `signed`, `declined`, `bounced`, `recalled`, `expired`, `reminded`. Filter `data.status equals "signed"` for completion; `data.provider_status` carries the raw provider string.
+
+### The `video.*` events
+
+These fire from a public page, so they only fire for a viewer who came by a `?ct=` link, which `recordView` stores as `video_views.contact_verified`. A `?c=` link carries an integer anyone can type, and a rule might text that client or move their case, so a view from one records as usual and fires nothing. Neither does an anonymous view, an excluded view, or a view from before this existed.
+
+**A `?ct=` link proves the link, not the person.** If a client forwards it, or staff open it from a sent message and press play, the event fires as that client. Excluding the view afterwards takes it out of the stats but doesn't undo anything a rule already did. Don't rest anything irreversible on these events alone.
+
+There is no `video.open`: link scanners fetch a texted link seconds after it is sent, so an open says nothing about a person.
+
+Each fires once per view, or once per button for a click. A client who opens the link twice is two views and fires twice. A click only fires for a button the video has, so `extra.label` is always one of its own labels. For once per client, add the condition `extra.first_for_contact` equals `true`: it is false when this contact already did the same thing with this video on an earlier view. **Min interval** won't do it, because it is per rule, not per contact.
+
+`first_for_contact` counts every earlier view, including `?c=` views, because a client who watched on an old link has watched. So a typed `?c=` view that plays can make the client's real first play read as not first. Nothing fires for the typed view itself.
+
+The page's report waits for the event to be queued, so the event isn't lost when the viewer leaves. A failed lookup loses that event and raises a `video_event_lost` alert; the view itself is still recorded. To branch on watching later, say a day after sending the link, use the `video_watch_status` function in a workflow ([Internal functions](05-internal-functions.md#video-workflow-only)).
 
 ### Match modes
 

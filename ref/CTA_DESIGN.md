@@ -182,7 +182,8 @@ persisting.
    links), and the provider-budget sweepers — `comms_archive_sweep`,
    `comms_archive_media_sweep`, `comms_archive_verify`,
    `phone_outbound_sync`, `comms_transcribe_sweep`,
-   `comms_summarize_sweep`, `sms_consent_sync` (they spend shared
+   `comms_summarize_sweep`, `sms_consent_sync`, `video_watch_status` (the
+   last reads a client's watch history; the others spend shared
    provider/STT/AI budgets and write the private archive, logs or the
    consent ledger; no public link may start them — a deliberate divergence
    from the other, eligible, sweepers).

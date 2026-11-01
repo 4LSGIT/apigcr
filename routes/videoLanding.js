@@ -321,6 +321,7 @@ router.get('/v/:slug', async (req, res) => {
           contactId,
           ipHash,
           userAgent,
+          contactVerified: contactToken != null,
         });
         if (r && r.viewId != null) {
           viewId     = String(r.viewId);
@@ -509,6 +510,7 @@ router.post('/api/v/:slug/cta-click', async (req, res) => {
       viewId:  vidNum,
       videoId: video.id,
       label:   label.slice(0, 200),
+      actions: video.actions,
     });
 
     return res.status(204).end();

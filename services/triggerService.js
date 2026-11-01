@@ -150,6 +150,16 @@ const CALENDAR_DATA_FIELDS = [
   { path: 'data.superseded_by_event_id',   label: 'Successor event id (event rows only; no writer until U6/U7)' },
 ];
 
+// Every video.* envelope (videoService.viewEventPayload).
+const VIDEO_DATA_FIELDS = [
+  { path: 'data.view_id',        label: 'video_views.id' },
+  { path: 'data.video_id',       label: 'Video id' },
+  { path: 'data.video_slug',     label: 'Video slug' },
+  { path: 'data.video_title',    label: 'Video title' },
+  { path: 'data.watch_seconds',  label: 'Seconds really played so far' },
+  { path: 'data.completion_pct', label: 'Percent really played so far' },
+];
+
 const EVENT_TYPES = {
   'appt.created': {
     label: 'Appointment created',
@@ -398,6 +408,28 @@ const EVENT_TYPES = {
     fields: [ ...COMMON_FIELDS ],
   },
   // ── T4 events ────────────────────────────────────────────
+  'video.played': {
+    label: 'Video played',
+    description: 'Fires from videoService.recordPlayed the first time a view presses play. Only for a viewer who came by a ?ct= link: a typed ?c= link, an anonymous view and an excluded view fire nothing, so nobody can set off a rule by typing a link. A ?ct= link proves the link, not the person: if a client forwards it, or staff open it from a sent message and press play, it fires as that client, and excluding the view afterwards retracts nothing. extra.first_for_contact is false when this contact already played this video on an earlier view; add it as a condition for once per client, since Min interval is per rule.',
+    fields: [...COMMON_FIELDS, ...VIDEO_DATA_FIELDS,
+      { path: 'extra.first_for_contact', label: "This contact's first play of this video (bool)" },
+    ],
+  },
+  'video.completed': {
+    label: 'Video completed',
+    description: 'Fires from videoService.recordProgress the first time a view reaches 90% really played; dragging the bar does not count. Same viewers as video.played. extra.first_for_contact is false when this contact already completed this video on an earlier view.',
+    fields: [...COMMON_FIELDS, ...VIDEO_DATA_FIELDS,
+      { path: 'extra.first_for_contact', label: "This contact's first completion of this video (bool)" },
+    ],
+  },
+  'video.cta_clicked': {
+    label: 'Video button clicked',
+    description: 'Fires from videoService.recordCtaClick the first time a view clicks a given button on the video; repeat clicks are counted in the stats but fire nothing, and so does a label the video has no button for. Same viewers as video.played. extra.label is the button. extra.first_for_contact is false when this contact already clicked that button on an earlier view.',
+    fields: [...COMMON_FIELDS, ...VIDEO_DATA_FIELDS,
+      { path: 'extra.label',             label: 'Button label' },
+      { path: 'extra.first_for_contact', label: "This contact's first click of this button (bool)" },
+    ],
+  },
   'form.submitted': {
     label: 'Form submitted',
     description: 'Fires from formService.submitForm — both the internal client (case2/contact2 YisraForms) and the external surface. extra.surface = internal | external. The envelope deliberately excludes the submission data payload (large + potentially sensitive); rules needing values should route to a workflow that fetches the submission.',

@@ -2,11 +2,11 @@
 
 ## For operators
 
-The system has **104 built-in functions** that workflows, sequences, scheduled jobs, hook targets and the email/phone ingest rules can call. Things like "send an SMS," "look up a contact," "create a task," "query the database," "branch to step 7."
+The system has **106 built-in functions** that workflows, sequences, scheduled jobs, hook targets and the email/phone ingest rules can call. Things like "send an SMS," "look up a contact," "create a task," "query the database," "branch to step 7."
 
-You don't usually pick a function by hand from a list — when you build a workflow step or a sequence step, you select **internal_function** as the action type and the UI shows you the available ones in a categorized dropdown with a form field for each parameter. Thirteen are hidden from the pickers (internal plumbing and the scheduled sweepers), so a workflow offers **91** and a sequence **79** — sequences don't get the twelve that need workflow machinery.
+You don't usually pick a function by hand from a list — when you build a workflow step or a sequence step, you select **internal_function** as the action type and the UI shows you the available ones in a categorized dropdown with a form field for each parameter. Fourteen are hidden from the pickers (internal plumbing and the scheduled sweepers), so a workflow offers **92** and a sequence **79** — sequences don't get the thirteen that need workflow machinery.
 
-The twelve that only work in workflows are the ones that need workflow-specific machinery: branching (`set_next`, `evaluate_condition`, `foreach`), delays (`wait_for`, `schedule_resume`, `wait_until_time`), variable formatting (`format_string`), pausing for a human (`request_decision`), minting a call-to-action link recorded against the run (`create_cta`), starting another workflow (`start_workflow`), and the two document renderers that write back to the execution (`document_generate_from_template`, `render_submission_pdf`).
+The thirteen that only work in workflows are the ones that need workflow-specific machinery: branching (`set_next`, `evaluate_condition`, `foreach`), delays (`wait_for`, `schedule_resume`, `wait_until_time`), variable formatting (`format_string`), pausing for a human (`request_decision`), minting a call-to-action link recorded against the run (`create_cta`), starting another workflow (`start_workflow`), and the two document renderers that write back to the execution (`document_generate_from_template`, `render_submission_pdf`).
 
 Everything else works the same way in any engine that calls it.
 
@@ -122,12 +122,13 @@ was removed — don't go looking for it.)
 
 Why these are workflow-only: they need machinery a sequence doesn't have — the
 step graph, the execution's variable bag, or the ability to suspend and resume.
+`video_watch_status` is the one that only returns a value: a sequence can't read it.
 
-- **Workflow only (14, of which 12 appear in the picker):** `set_next`,
+- **Workflow only (15, of which 13 appear in the picker):** `set_next`,
   `evaluate_condition`, `foreach`, `request_decision`, `start_workflow`,
   `create_cta`, `schedule_resume`, `wait_for`, `wait_until_time`,
   `format_string`, `document_generate_from_template`, `render_submission_pdf`,
-  plus the hidden `decision_timeout_cleanup` and `set_test_var`.
+  `video_watch_status`, plus the hidden `decision_timeout_cleanup` and `set_test_var`.
 - **Both engines (79 in the picker):** everything else.
 
 Sequences have their own timing model, which is why the `wait_*` family is
@@ -1852,6 +1853,23 @@ Example:
 #### `set_system_alert_status`
 
 Acknowledge (`ack` — clears the open-alerts banner) or resolve (`resolve`, implies ack) the open `system_alerts` rows of one `group_key` that existed at the `before` cutoff — the same action as Admin → System Alerts, reversible there with Reopen. New failures still alert. The failure digest's Acknowledge / Resolve buttons are CTA links over this. Params: `action` (`ack` / `resolve`), `group_key`, `before` (ISO UTC; rows created later are untouched), `by` (attribution, default `"cta"`).
+
+### Video (workflow only)
+
+#### `video_watch_status`
+
+Has this contact watched this video? Use it where a workflow branches, such as "send the reminder only if they haven't finished the video". It isn't offered in sequences, because a sequence can't read what a function returns. To skip a sequence step for someone who has watched, start a workflow from it, or give the step a `condition` query on `video_views` that repeats `excluded_at IS NULL`.
+
+| Param | Required | Notes |
+|---|---|---|
+| `contact_id` | yes | |
+| `video` | yes | The video's slug or id. A slug is tried first, and an old slug still works. |
+
+Output: `video_id`, `video_slug`, `opened`, `played`, `completed` and `clicked` (true or false), `best_completion_pct`, `last_played_at`, `last_completed_at`. `completed` means at least 90% really played.
+
+Excluded views and automated opens don't count. Views from before an analytics reset do. Views from a `?c=` link count too, because older views can't be told apart from `?ct=` ones. A video that doesn't exist fails the step, so a typo can't read as "they didn't watch". Denied to CTA links.
+
+To react the moment someone watches, use the [`video.*` trigger events](15-triggers.md#the-video-events) instead.
 
 ### Comms archive, phone delivery and SMS consent sweeps (hidden)
 

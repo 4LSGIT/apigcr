@@ -108,6 +108,15 @@ Three kinds of row are hidden by default:
 
 **Exclude** on a row takes that view out of the stats, for a test view or a scanner. It stops counting in every Analytics number and in the view count on the video list. Nothing is deleted: tick **Show excluded** to see it, along with who excluded it, and **Restore** puts it back.
 
+### Acting on a view
+
+Automations can react when a client watches:
+
+- **Triggers** fire the moment it happens: `video.played`, `video.completed` (at least 90% really played) and `video.cta_clicked`. Pick them in Automations → Triggers. A rule can match on the video with `data.video_slug`, and on `extra.first_for_contact` for once per client.
+- **`video_watch_status`** answers later, in a workflow: did this client open, play or finish this video?
+
+Triggers only fire for a viewer who came by a `?ct=` link, because a `?c=` link is a number anyone can type. That proves the link, not the person: if a client forwards it, or you open it from a sent message and press play, it fires as that client. Excluding the view afterwards doesn't undo what a rule already did. Anonymous and excluded views fire nothing. There's no trigger for simply opening a page, because link scanners open every texted link. Details: [the Trigger System](../03-YisraFlow/15-triggers.md#the-video-events).
+
 ### Resetting analytics
 
 The **Reset** button (at the top of the analytics panel) zeros out the visible counters and stamps a "Stats since" timestamp on the video. Past view records are preserved — they stop counting toward the displayed stats, and **Include before a reset** on the Views tab still lists them.

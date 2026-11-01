@@ -135,6 +135,9 @@ const CTA_FN_DENYLIST = Object.freeze([
   // YisraMail P2 (ref/YISRAMAIL_DESIGN.md §4.6): spends the RingCentral rate
   // group and writes the consent ledger — engine plumbing, no public link.
   'sms_consent_sync',
+  // YisraVideo S4: a public link has no use for a read, and this one returns a
+  // client's watch history.
+  'video_watch_status',
 ]);
 
 /** Chromium-backed functions: eligible, but a public repeatable link fans out load. */
