@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-01T00:52:39.829Z
+-- Generated: 2026-11-01T07:33:53.471Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:eda5483a5a4dc3ea8ee2f74fa347e98a
+-- Fingerprint: sha256:7004f6556f74ffcfa5621f32ebe57878
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -4096,9 +4096,13 @@ CREATE TABLE `video_views` (
   `user_agent` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `opened_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `played_at` timestamp NULL DEFAULT NULL,
-  `watch_seconds` int NOT NULL DEFAULT '0',
+  `watch_seconds` int NOT NULL DEFAULT '0' COMMENT 'seconds really played since 2026-11-01; before that the furthest position reached, so dragging the bar counted',
   `completion_pct` tinyint NOT NULL DEFAULT '0',
-  `cta_clicks` json DEFAULT NULL
+  `cta_clicks` json DEFAULT NULL,
+  `track_token` char(22) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'bearer for the public track + cta-click POSTs, rendered into the page that opened the view; ids are sequential; NULL on views before 2026-11-01; _bin: case-sensitive',
+  `completed_at` timestamp NULL DEFAULT NULL COMMENT 'first time at least 90% really played (videoService.COMPLETE_PCT), claimed once by conditional UPDATE; before 2026-11-01 backfilled from completion_pct=100, which only meant the player reached the end',
+  `excluded_at` timestamp NULL DEFAULT NULL COMMENT 'staff excluded this view from stats (test view, scanner); NULL = counted; reversible, never a delete',
+  `excluded_by` int DEFAULT NULL COMMENT 'users.user who excluded it'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------

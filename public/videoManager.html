@@ -1277,7 +1277,7 @@ function renderEditor() {
         </button>
       </div>
       <div class="copy-hint">
-        HTML snippets contain <code>{{contacts.contact_token}}</code> as a literal placeholder
+        HTML snippets contain <code>{{contacts.contact_token|default:}}</code> as a literal placeholder
         for the campaign resolver to substitute later.
       </div>
     </div>
@@ -2000,11 +2000,12 @@ function copyEmbed(variant) {
     return;
   }
   const origin = PUBLIC_VIDEO_ORIGIN;
-  // {{contacts.contact_token}} stays literal — campaign resolverService
-  // substitutes it per-recipient at send time. Switched from contact_id to
+  // The placeholder stays literal — campaign resolverService substitutes it
+  // per-recipient at send time, and |default: keeps a contact with no token
+  // from being sent the placeholder itself. Switched from contact_id to
   // the token 2026-08-17: ?c=<id> is deprecated and attribution-only, and
   // only ?ct=<token> can satisfy a contact_only video.
-  const snippet = '<a href="' + origin + '/v/' + slug + '?ct={{contacts.contact_token}}">'
+  const snippet = '<a href="' + origin + '/v/' + slug + '?ct={{contacts.contact_token|default:}}">'
     + '<img src="' + imgUrl + '" alt="' + esc(title) + '" width="600" '
     + 'style="display:block; max-width:100%; height:auto;"></a>';
   copyText(snippet, 'Embed snippet (' + variant + ')');

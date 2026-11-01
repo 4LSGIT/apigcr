@@ -944,7 +944,7 @@ function removeEmailAttachment() {
 // ─── INSERT VIDEO (YisraVideo picker) ─────────────────────────
 //
 // Campaigns are templated sends to many contacts. We pass contactId: null so
-// the picker emits {{contacts.contact_id}} as a literal placeholder. The
+// the picker emits {{contacts.contact_token|default:}} as a literal placeholder. The
 // resolverService runs on body (and subject) at executeSend time, substituting
 // per-recipient. attachment_url is NOT resolved (it's a static GCS asset URL
 // with no contact placeholders, so this is fine).

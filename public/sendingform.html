@@ -632,13 +632,15 @@ async function send() {
       if (action.type === 'other') {
         for (const r of recipients) {
           // Per-recipient placeholder substitution. The Insert Video picker
-          // emits {{contacts.contact_id}} as a literal (campaign mode) so
-          // each recipient's URL tracks correctly to their own contact_id.
+          // emits {{contacts.contact_token|default:}} as a literal (campaign
+          // mode) so each recipient's URL carries their own token.
           // No server-side resolver runs on the 'other' send path; this is
-          // intentional client-side substitution.
-          const recipSmsText  = (action.sms_text  || '').replace(/\{\{contacts\.contact_id\}\}/g, r.contact_id);
-          const recipEmailHtml = (action.email_html || '').replace(/\{\{contacts\.contact_id\}\}/g, r.contact_id);
-          const recipEmailText = (action.email_text || '').replace(/\{\{contacts\.contact_id\}\}/g, r.contact_id);
+          // intentional client-side substitution, and whatever is not filled
+          // here reaches the client as text.
+          const fillFor = (s) => YisraVideoInsert.fillContactToken((s || '').replace(/\{\{contacts\.contact_id\}\}/g, r.contact_id), r.contact_id);
+          const recipSmsText   = await fillFor(action.sms_text);
+          const recipEmailHtml = await fillFor(action.email_html);
+          const recipEmailText = await fillFor(action.email_text);
 
           if (action.mode === 'sms' && smsOn && r.phone) {
             if (action.mms_attachment) {
@@ -823,9 +825,9 @@ function otherRemoveEmailAttachment() {
 // ── Insert Video (YisraVideo picker) ──
 //
 // sendingform.html is multi-recipient (primary + secondary contact). We pass
-// contactId: null so the picker emits {{contacts.contact_id}} as a literal
-// placeholder, and the 'other' action send path substitutes per-recipient
-// at send time (see actions.js, search "{{contacts.contact_id}}").
+// contactId: null so the picker emits {{contacts.contact_token|default:}} as a
+// literal placeholder, and the 'other' action send path substitutes
+// per-recipient at send time (YisraVideoInsert.fillContactToken).
 
 async function otherInsertVideoSms() {
   const smsSelect = document.getElementById('smsFrom');

@@ -503,7 +503,7 @@ const TASK_DRAFT_LINKS = Object.freeze({
 // narrower than the shared report validator.
 const ASSISTANT_DENIED = [
   'contact_ssn', 'contact_dob', 'password', 'password_hash', 'reset_token',
-  'contact_token', 'appt_manage_token', 'task_action_token', 'draft_key',
+  'contact_token', 'appt_manage_token', 'task_action_token', 'track_token', 'draft_key',
   'attachments', 'delivery_info',
 ];
 

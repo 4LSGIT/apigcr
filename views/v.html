@@ -261,12 +261,15 @@
     // VIEW_ID is the BIGINT video_views.id, stringified server-side.
     // Empty string when recordView failed — script no-ops in that case.
     var VIEW_ID = "{{VIEW_ID}}";
+    // TRACK_TOKEN proves this page opened the view. The server refuses a
+    // report without it, because view ids are sequential.
+    var TOKEN   = "{{TRACK_TOKEN}}";
     // CANONICAL_SLUG is the video's current canonical slug, even if the
     // request hit an alias URL. Tracking POSTs go to the canonical so the
     // server doesn't need a second alias lookup per event.
     var SLUG    = "{{CANONICAL_SLUG}}";
 
-    if (!VIEW_ID || !SLUG) return;
+    if (!VIEW_ID || !TOKEN || !SLUG) return;
 
     var video = document.querySelector('.video-wrap video');
     if (!video) return;
@@ -289,45 +292,54 @@
 
     // First-play only. Re-firing on pause/resume or seek-replay does NOT
     // re-record (matches the server-side COALESCE on played_at).
-    var played = false;
+    var started = false;
     video.addEventListener('play', function() {
-      if (played) return;
-      played = true;
-      send(TRACK_URL, { viewId: VIEW_ID, event: 'play' });
+      if (started) return;
+      started = true;
+      send(TRACK_URL, { viewId: VIEW_ID, token: TOKEN, event: 'play' });
     });
 
-    // Progress every ~10s of wall-clock playback.
-    // Reports the highest currentTime seen so far (not strictly cumulative
-    // watch time — the server's GREATEST() guards against monotonic
-    // regressions either way).
+    // Seconds that really played: the browser's own record, each moment
+    // counted once. Dragging the bar adds nothing, unlike currentTime.
+    function watchedSeconds() {
+      var ranges = video.played, total = 0;
+      for (var i = 0; i < ranges.length; i++) total += ranges.end(i) - ranges.start(i);
+      return total;
+    }
+
     var PROGRESS_INTERVAL_S = 10;
     var lastReported = 0;
-    video.addEventListener('timeupdate', function() {
-      var cur = Math.floor(video.currentTime);
-      if (cur - lastReported < PROGRESS_INTERVAL_S) return;
-      lastReported = cur;
+    function report(event) {
+      var watched = watchedSeconds();
+      lastReported = Math.floor(watched);
       var pct = (video.duration && isFinite(video.duration))
-        ? Math.min(100, Math.round((cur / video.duration) * 100))
+        ? Math.min(100, Math.round((watched / video.duration) * 100))
         : 0;
       send(TRACK_URL, {
         viewId:        VIEW_ID,
-        event:         'progress',
-        watchSeconds:  cur,
+        token:         TOKEN,
+        event:         event,
+        watchSeconds:  lastReported,
         completionPct: pct,
       });
+    }
+
+    // Progress every ~10s of real playback.
+    video.addEventListener('timeupdate', function() {
+      if (Math.floor(watchedSeconds()) - lastReported < PROGRESS_INTERVAL_S) return;
+      report('progress');
     });
 
-    // 'ended' fires once the video plays to its natural end. The server
-    // forces completion_pct=100 for this event regardless of payload, but
-    // we still send watchSeconds so analytics has a value.
-    video.addEventListener('ended', function() {
-      var cur = Math.floor(video.currentTime);
-      send(TRACK_URL, {
-        viewId:        VIEW_ID,
-        event:         'complete',
-        watchSeconds:  cur,
-        completionPct: 100,
-      });
+    video.addEventListener('ended', function() { report('complete'); });
+
+    // Whatever played since the last report, on the way out. Phones often
+    // background a page without ever firing pagehide, so listen for both.
+    function flush() {
+      if (Math.floor(watchedSeconds()) > lastReported) report('progress');
+    }
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'hidden') flush();
     });
 
     // CTA click delegation — captures any .vid-btn anchor click in the
@@ -339,7 +351,7 @@
         if (!a) return;
         var label = (a.textContent || '').trim().slice(0, 200);
         if (!label) return;
-        send(CTA_URL, { viewId: VIEW_ID, label: label });
+        send(CTA_URL, { viewId: VIEW_ID, token: TOKEN, label: label });
       });
     }
   })();

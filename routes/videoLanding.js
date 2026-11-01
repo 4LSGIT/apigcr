@@ -6,8 +6,8 @@
  *
  * Public-facing endpoints (no auth):
  *   GET  /v/:slug                      — landing page (HTML)
- *   POST /api/v/:slug/track            — { viewId, event, watchSeconds?, completionPct? }
- *   POST /api/v/:slug/cta-click        — { viewId, label }
+ *   POST /api/v/:slug/track            — { viewId, token, event, watchSeconds?, completionPct? }
+ *   POST /api/v/:slug/cta-click        — { viewId, token, label }
  *
  * Slug resolution order on GET:
  *   1. canonical (`videos.slug`)
@@ -18,6 +18,10 @@
  *
  * View row is recorded ONLY after access checks pass (so 404s don't pollute
  * the log). Tracking-endpoint failures don't block rendering.
+ *
+ * The POSTs need the view's track_token, handed to the page that opened the
+ * view. View ids are sequential, so the id alone let anyone report on any view.
+ * A wrong token is a 404, the same as a view that does not exist.
  *
  * The HTML template lives in views/ (not public/) so the static middleware
  * and the /:page catch-all in server.js don't accidentally serve the
@@ -256,8 +260,7 @@ router.get('/v/:slug', async (req, res) => {
     // Why accept it at all: the 341 and strategy-session sequences minted ?c=
     // links until 2026-11-01 (templates 19 + 20, on every step version up to
     // v2 / v1), so they are in inboxes and an enrollment pinned to an older
-    // version can still send one; public/sendingform-bk.html still builds one
-    // for the IRS transcripts video. Rejecting the param would 404 a client on a
+    // version can still send one. Rejecting the param would 404 a client on a
     // video the firm sent them. Ignoring it silently would work too, but
     // keeping the attribution costs one lookup and loses nothing — the integer
     // never granted access before this change either, since all 17 videos are
@@ -308,6 +311,7 @@ router.get('/v/:slug', async (req, res) => {
     //    HEAD is a link checker asking whether the URL works: nobody saw the
     //    page, so it records nothing (Express routes HEAD through this GET).
     let viewId = '';
+    let trackToken = '';
     if (req.method !== 'HEAD') {
       try {
         const ipHash    = videoService.hashIp(getClientIp(req));
@@ -318,7 +322,10 @@ router.get('/v/:slug', async (req, res) => {
           ipHash,
           userAgent,
         });
-        if (r && r.viewId != null) viewId = String(r.viewId);
+        if (r && r.viewId != null) {
+          viewId     = String(r.viewId);
+          trackToken = r.trackToken;
+        }
       } catch (err) {
         console.error('[GET /v/:slug] recordView failed:', err);
       }
@@ -368,6 +375,7 @@ router.get('/v/:slug', async (req, res) => {
       '{{OG_TYPE}}':          'video.other',
       '{{TWITTER_CARD}}':     'summary_large_image',
       '{{VIEW_ID}}':          htmlEscape(viewId),
+      '{{TRACK_TOKEN}}':      htmlEscape(trackToken),
       '{{CANONICAL_SLUG}}':   htmlEscape(video.slug),
       '{{RELATED_HTML}}':     relatedHtml,
     };
@@ -386,7 +394,8 @@ router.get('/v/:slug', async (req, res) => {
 
     res
       .set('Content-Type', 'text/html; charset=utf-8')
-      // Don't let proxies/CDNs cache this — actions URLs vary by ?c=.
+      // Don't let proxies/CDNs cache this — it holds the view's track_token,
+      // and action URLs vary by viewer.
       .set('Cache-Control', 'private, no-cache, no-store, must-revalidate')
       .send(html);
 
@@ -397,7 +406,7 @@ router.get('/v/:slug', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// POST /api/v/:slug/track  — { viewId, event, watchSeconds?, completionPct? }
+// POST /api/v/:slug/track  — { viewId, token, event, watchSeconds?, completionPct? }
 // ─────────────────────────────────────────────────────────────
 
 const TRACK_EVENTS = new Set(['play', 'progress', 'complete']);
@@ -408,7 +417,7 @@ router.post('/api/v/:slug/track', async (req, res) => {
       return res.status(429).json({ error: 'Too many requests' });
     }
     const body = req.body || {};
-    const { viewId, event, watchSeconds, completionPct } = body;
+    const { viewId, token, event, watchSeconds, completionPct } = body;
 
     // Validate event.
     if (!TRACK_EVENTS.has(event)) {
@@ -424,10 +433,10 @@ router.post('/api/v/:slug/track', async (req, res) => {
     }
 
     // Validate progress payload.
-    if (event === 'progress') {
+    if (event === 'progress' || event === 'complete') {
       if (typeof watchSeconds !== 'number' || typeof completionPct !== 'number') {
         return res.status(400).json({
-          error: 'progress requires numeric watchSeconds and completionPct',
+          error: `${event} requires numeric watchSeconds and completionPct`,
         });
       }
     }
@@ -439,34 +448,24 @@ router.post('/api/v/:slug/track', async (req, res) => {
     });
     if (!video) return res.status(404).json({ error: 'Not found' });
 
-    // Verify viewId belongs to this video. Prevents cross-video poisoning.
-    const [check] = await req.db.query(
-      'SELECT id FROM video_views WHERE id = ? AND video_id = ? LIMIT 1',
-      [vidNum, video.id]
-    );
-    if (!check.length) return res.status(404).json({ error: 'Not found' });
+    // The view must belong to this video and the caller must hold its token.
+    if (!await videoService.checkTrackToken(req.db, { viewId: vidNum, videoId: video.id, token })) {
+      return res.status(404).json({ error: 'Not found' });
+    }
 
     if (event === 'play') {
       await videoService.recordPlayed(req.db, {
         viewId:  vidNum,
         videoId: video.id,
       });
-    } else if (event === 'progress') {
+    } else {
+      // 'complete' is the player reaching the end, which dragging the bar does
+      // too, so it proves nothing by itself: it is the last progress report.
       await videoService.recordProgress(req.db, {
         viewId:        vidNum,
         videoId:       video.id,
         watchSeconds,
         completionPct,
-      });
-    } else if (event === 'complete') {
-      // 'complete' forces 100% but uses whatever watchSeconds the client
-      // reported (still GREATEST-guarded by recordProgress).
-      const ws = typeof watchSeconds === 'number' ? watchSeconds : 0;
-      await videoService.recordProgress(req.db, {
-        viewId:         vidNum,
-        videoId:        video.id,
-        watchSeconds:   ws,
-        completionPct:  100,
       });
     }
 
@@ -478,7 +477,7 @@ router.post('/api/v/:slug/track', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// POST /api/v/:slug/cta-click  — { viewId, label }
+// POST /api/v/:slug/cta-click  — { viewId, token, label }
 // ─────────────────────────────────────────────────────────────
 
 router.post('/api/v/:slug/cta-click', async (req, res) => {
@@ -487,7 +486,7 @@ router.post('/api/v/:slug/cta-click', async (req, res) => {
       return res.status(429).json({ error: 'Too many requests' });
     }
     const body = req.body || {};
-    const { viewId, label } = body;
+    const { viewId, token, label } = body;
 
     const vidNum = Number(viewId);
     if (!Number.isInteger(vidNum) || vidNum <= 0) {
@@ -502,11 +501,9 @@ router.post('/api/v/:slug/cta-click', async (req, res) => {
     });
     if (!video) return res.status(404).json({ error: 'Not found' });
 
-    const [check] = await req.db.query(
-      'SELECT id FROM video_views WHERE id = ? AND video_id = ? LIMIT 1',
-      [vidNum, video.id]
-    );
-    if (!check.length) return res.status(404).json({ error: 'Not found' });
+    if (!await videoService.checkTrackToken(req.db, { viewId: vidNum, videoId: video.id, token })) {
+      return res.status(404).json({ error: 'Not found' });
+    }
 
     await videoService.recordCtaClick(req.db, {
       viewId:  vidNum,

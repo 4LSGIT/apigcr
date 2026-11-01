@@ -30,6 +30,7 @@ const BIN_COLUMNS = [
   ['appts',             'appt_manage_token'],
   ['contacts',          'contact_token'],
   ['tasks',             'task_action_token'],
+  ['video_views',       'track_token'],
   ['decision_requests', 'token'],
   ['users',             'reset_token'],
   // CTA bearer (/c/<t>) — ref/migrations/2026-10-07_cta.sql creates it _bin.

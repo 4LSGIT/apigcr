@@ -40,7 +40,7 @@ const fakeDb = {
       return [params[0] === 'demo' ? [videoRow()] : []];
     }
     if (/FROM video_slug_aliases a/i.test(sql)) return [[]];
-    if (/FROM video_views WHERE id = \?/i.test(sql)) return [[{ id: params[0] }]];
+    if (/FROM video_views WHERE id = \?/i.test(sql)) return [[{ track_token: 'tok' }]];
     return [[]];
   }),
   withTransaction: jest.fn(async (fn) => fn(fakeConn)),
@@ -72,7 +72,7 @@ const post = (p, ip) =>
   fetch(base + p, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-forwarded-for': `1.2.3.4, ${ip}` },
-    body: JSON.stringify({ viewId: 555, event: 'play' }),
+    body: JSON.stringify({ viewId: 555, token: 'tok', event: 'play' }),
   });
 
 describe('GET /v/:slug limiter', () => {
@@ -110,7 +110,7 @@ describe('POST beacon limiter (shared)', () => {
       const r = await fetch(base + '/api/v/demo/cta-click', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-forwarded-for': '1.2.3.4, 198.51.100.4' },
-        body: JSON.stringify({ viewId: 555, label: 'x' }),
+        body: JSON.stringify({ viewId: 555, token: 'tok', label: 'x' }),
       });
       expect(r.status).toBe(204);
     }

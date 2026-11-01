@@ -2093,6 +2093,14 @@ on a camera-facing frame. Uploader gates: mp4 ≤500MB; insertion variants
 auto-drop when poster/GIF absent. Depth: manual
 05-Subsystems/01-YisraVideo.
 
+Tracking: `/api/v/:slug/track` and `cta-click` are public, so each needs the
+view's `video_views.track_token`, rendered into the page that opened the view
+(ids are sequential). `watch_seconds` / `completion_pct` come from the
+browser's `video.played` ranges, and `completed_at` is claimed once by a
+conditional UPDATE at `COMPLETE_PCT` (90); the page's `ended` event proves
+nothing, dragging the bar fires it. `?ct=` identifies a viewer; `?c=` is
+attribution-only and must never reach a page as a token.
+
 ## 25. SCHEMA REF AUTO-GENERATION
 
 `ref/database.sql` regenerates itself: the pre-commit hook

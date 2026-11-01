@@ -19,6 +19,11 @@
  *   - avg_completion_pct averages played views only: AVG(CASE ...) over the
  *     real NULLs, not the 0 an unplayed row would drag in.
  *   - publicOnly filters both the hand-picked and the tag auto-fill lookup.
+ *   - track_token is stored, compared case-sensitively through a _bin column,
+ *     and a NULL (a view from before tokens) always refuses.
+ *   - recordProgress claims completed_at exactly once, at the threshold, however
+ *     many beacons arrive, and the claim keeps the first timestamp.
+ *   - Completed counts completed_at, so a scrub to 100% position cannot count.
  */
 'use strict';
 
@@ -74,7 +79,11 @@ d('videoService on real MySQL', () => {
       ip_hash char(64) DEFAULT NULL, user_agent varchar(255) DEFAULT NULL,
       opened_at timestamp NULL DEFAULT CURRENT_TIMESTAMP, played_at timestamp NULL DEFAULT NULL,
       watch_seconds int NOT NULL DEFAULT '0', completion_pct tinyint NOT NULL DEFAULT '0',
-      cta_clicks json DEFAULT NULL)`);
+      cta_clicks json DEFAULT NULL,
+      track_token char(22) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,
+      completed_at timestamp NULL DEFAULT NULL,
+      excluded_at timestamp NULL DEFAULT NULL,
+      excluded_by int DEFAULT NULL)`);
   });
 
   afterAll(async () => { if (pool) await pool.end(); });
@@ -139,6 +148,106 @@ d('videoService on real MySQL', () => {
     expect(row.case_id).toBe('F');
     const [v] = await q('SELECT view_count FROM videos WHERE id = 1');
     expect(v.view_count).toBe(1);
+  });
+
+  describe('track_token', () => {
+    let viewId, trackToken;
+    beforeEach(async () => {
+      await q(`INSERT INTO videos (id, slug, title, is_published) VALUES (1, 'a', 'A', 1)`);
+      ({ viewId, trackToken } = await videoService.recordView(pool, { videoId: 1, contactId: null, ipHash: 'x', userAgent: 'ua' }));
+    });
+    const check = (token, videoId = 1, id = viewId) => videoService.checkTrackToken(pool, { viewId: id, videoId, token });
+
+    test('recordView stores what it returns', async () => {
+      const [row] = await q('SELECT track_token FROM video_views WHERE id = ?', [viewId]);
+      expect(row.track_token).toBe(trackToken);
+      expect(trackToken).toMatch(/^[0-9A-Za-z]{22}$/);
+    });
+
+    test('the right token passes', async () => {
+      expect(await check(trackToken)).toBe(true);
+    });
+
+    test('a token differing only by case refuses', async () => {
+      const flipped = trackToken.replace(/[a-zA-Z]/, (c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()));
+      expect(flipped).not.toBe(trackToken);
+      expect(await check(flipped)).toBe(false);
+    });
+
+    test.each([['missing', undefined], ['empty', ''], ['a number', 7], ['the wrong length', 'short']])('%s refuses', async (_n, t) => {
+      expect(await check(t)).toBe(false);
+    });
+
+    test('another view\'s token refuses', async () => {
+      const other = await videoService.recordView(pool, { videoId: 1, contactId: null, ipHash: 'x', userAgent: 'ua' });
+      expect(await check(other.trackToken)).toBe(false);
+    });
+
+    test('the right token on the wrong video refuses', async () => {
+      expect(await check(trackToken, 2)).toBe(false);
+    });
+
+    test('a view from before tokens holds NULL and refuses', async () => {
+      await q('UPDATE video_views SET track_token = NULL WHERE id = ?', [viewId]);
+      expect(await check(trackToken)).toBe(false);
+    });
+  });
+
+  describe('recordProgress claims completed_at', () => {
+    let viewId;
+    const progress = (watchSeconds, completionPct) => videoService.recordProgress(pool, { viewId, videoId: 1, watchSeconds, completionPct });
+    const row = async () => (await q('SELECT watch_seconds, completion_pct, completed_at FROM video_views WHERE id = ?', [viewId]))[0];
+
+    beforeEach(async () => {
+      await q(`INSERT INTO videos (id, slug, title, is_published) VALUES (1, 'a', 'A', 1)`);
+      ({ viewId } = await videoService.recordView(pool, { videoId: 1, contactId: null, ipHash: 'x', userAgent: 'ua' }));
+    });
+
+    test('the line is 90%', () => {
+      expect(videoService.COMPLETE_PCT).toBe(90);
+    });
+
+    test('below the line claims nothing', async () => {
+      expect(await progress(50, videoService.COMPLETE_PCT - 1)).toEqual({ completedNow: false });
+      expect((await row()).completed_at).toBeNull();
+    });
+
+    test('at the line claims', async () => {
+      expect(await progress(50, videoService.COMPLETE_PCT)).toEqual({ completedNow: true });
+      expect((await row()).completed_at).not.toBeNull();
+    });
+
+    test('only the first beacon past the line claims, and its time stands', async () => {
+      await progress(90, 95);
+      await q(`UPDATE video_views SET completed_at = '2026-01-01 00:00:00' WHERE id = ?`, [viewId]);
+      expect(await progress(100, 100)).toEqual({ completedNow: false });
+      expect((await row()).completed_at.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    test('racing beacons claim once', async () => {
+      const out = await Promise.all([1, 2, 3, 4].map(() => progress(95, 95)));
+      expect(out.filter((r) => r.completedNow)).toHaveLength(1);
+    });
+
+    test('a later smaller beacon regresses nothing and claims nothing', async () => {
+      await progress(40, 40);
+      expect(await progress(10, 10)).toEqual({ completedNow: false });
+      const r = await row();
+      expect([r.watch_seconds, r.completion_pct]).toEqual([40, 40]);
+    });
+
+    test('another video\'s id claims nothing', async () => {
+      const out = await videoService.recordProgress(pool, { viewId, videoId: 2, watchSeconds: 100, completionPct: 100 });
+      expect(out).toEqual({ completedNow: false });
+      expect((await row()).completion_pct).toBe(0);
+    });
+  });
+
+  test('Completed counts completed_at, not a 100% position', async () => {
+    await q(`INSERT INTO videos (id, slug, title, is_published) VALUES (1, 'a', 'A', 1)`);
+    await q(`INSERT INTO video_views (video_id, played_at, completion_pct, completed_at) VALUES
+      (1, NOW(), 100, NULL), (1, NOW(), 95, NOW()), (1, NOW(), 92, NOW())`);
+    expect((await videoService.getVideoAnalytics(pool, 1)).completed_count).toBe(2);
   });
 
   describe('getVideoAnalytics avg_completion_pct', () => {

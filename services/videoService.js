@@ -33,6 +33,11 @@
  */
 
 const crypto = require('crypto');
+const { generateToken } = require('../lib/token');
+
+// The share of a video that must really have played for a view to count as
+// completed. Near the end, not the end: people close the tab during an outro.
+const COMPLETE_PCT = 90;
 
 // Whitelisted fields that PATCH /api/videos/:id is allowed to write.
 // `slug` is handled separately (see updateVideo) because it requires
@@ -242,10 +247,15 @@ async function assertSlugAvailable(db, slug, ownerId) {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * SHA-256 of an IP. Stored in video_views.ip_hash so plain IPs never hit disk.
+ * Keyed hash of an IP, stored in video_views.ip_hash so plain IPs never hit
+ * disk. Keyed because the IPv4 space is small enough to walk: a plain SHA-256
+ * reads back as the address. Rows before 2026-11-01 hold that plain hash, and
+ * rotating JWT_SECRET only breaks same-device grouping across the rotation.
  */
 function hashIp(ip) {
-  return crypto.createHash('sha256').update(String(ip || 'unknown')).digest('hex');
+  return crypto.createHmac('sha256', String(process.env.JWT_SECRET || ''))
+    .update('video-ip:' + String(ip || 'unknown'))
+    .digest('hex');
 }
 
 /**
@@ -593,7 +603,9 @@ async function deleteVideo(db, id) {
  *
  * Returns the new view's id (BIGINT). Caller should String() it before
  * embedding in HTML to be safe with values > Number.MAX_SAFE_INTEGER,
- * though we won't reach that range in practice.
+ * though we won't reach that range in practice. Also returns the view's
+ * track_token, the page's proof that it may report on this view: ids are
+ * sequential, so the id alone let anyone write to any view.
  *
  * @param {object} pool   mysql2 pool (must support getConnection)
  * @param {object} args
@@ -601,17 +613,18 @@ async function deleteVideo(db, id) {
  * @param {number|null} args.contactId
  * @param {string} args.ipHash      64-char hex (use hashIp())
  * @param {string} args.userAgent   capped at 255 chars
- * @returns {Promise<{viewId: number}>}
+ * @returns {Promise<{viewId: number, trackToken: string}>}
  */
 async function recordView(pool, { videoId, contactId, ipHash, userAgent }) {
+  const trackToken = generateToken();
   const viewId = await pool.withTransaction(async (conn) => {
 
     const caseId = await resolveCaseIdForContact(conn, contactId);
 
     const [result] = await conn.query(
-      `INSERT INTO video_views (video_id, contact_id, case_id, ip_hash, user_agent)
-       VALUES (?, ?, ?, ?, ?)`,
-      [videoId, contactId, caseId, ipHash || null, (userAgent || '').slice(0, 255) || null]
+      `INSERT INTO video_views (video_id, contact_id, case_id, ip_hash, user_agent, track_token)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [videoId, contactId, caseId, ipHash || null, (userAgent || '').slice(0, 255) || null, trackToken]
     );
 
     await conn.query(
@@ -621,7 +634,24 @@ async function recordView(pool, { videoId, contactId, ipHash, userAgent }) {
 
     return result.insertId;
   });
-  return { viewId };
+  return { viewId, trackToken };
+}
+
+/**
+ * Does this request hold the view's track_token? Compared here in constant
+ * time, since these are anonymous endpoints. A view recorded before tokens
+ * existed holds NULL and always refuses.
+ */
+async function checkTrackToken(db, { viewId, videoId, token }) {
+  if (typeof token !== 'string' || !token) return false;
+  const [rows] = await db.query(
+    'SELECT track_token FROM video_views WHERE id = ? AND video_id = ? LIMIT 1',
+    [viewId, videoId]
+  );
+  const stored = rows.length ? rows[0].track_token : null;
+  if (!stored) return false;
+  const a = Buffer.from(token), b = Buffer.from(stored);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 /**
@@ -642,6 +672,15 @@ async function recordPlayed(db, { viewId, videoId }) {
  *   watchSeconds  → [0, 86400]   (24h cap to keep ints sane)
  *   completionPct → [0, 100]
  * Uses GREATEST in SQL so a backward seek can't regress the stored value.
+ *
+ * Both values are what really played, from the browser's own played ranges,
+ * so dragging to the end adds nothing and watching a section twice counts once.
+ *
+ * Stamps completed_at the first time the view crosses COMPLETE_PCT. It is a
+ * conditional UPDATE so exactly one call sees completedNow:true, however many
+ * beacons race, because the crossing can arrive on any progress beacon.
+ *
+ * @returns {Promise<{completedNow: boolean}>}
  */
 async function recordProgress(db, { viewId, videoId, watchSeconds, completionPct }) {
   const ws  = Math.max(0, Math.min(86400, parseInt(watchSeconds,  10) || 0));
@@ -653,6 +692,15 @@ async function recordProgress(db, { viewId, videoId, watchSeconds, completionPct
       WHERE id = ? AND video_id = ?`,
     [ws, pct, viewId, videoId]
   );
+  const [claim] = await db.query(
+    `UPDATE video_views
+        SET completed_at = NOW()
+      WHERE id = ? AND video_id = ?
+        AND completed_at IS NULL
+        AND completion_pct >= ?`,
+    [viewId, videoId, COMPLETE_PCT]
+  );
+  return { completedNow: claim.affectedRows === 1 };
 }
 
 /**
@@ -735,7 +783,7 @@ async function getVideoAnalytics(db, videoId) {
         SUM(CASE WHEN contact_id IS NOT NULL THEN 1 ELSE 0 END)   AS identified_views,
         SUM(CASE WHEN contact_id IS NULL     THEN 1 ELSE 0 END)   AS anonymous_views,
         SUM(CASE WHEN played_at  IS NOT NULL THEN 1 ELSE 0 END)   AS played_count,
-        SUM(CASE WHEN completion_pct = 100   THEN 1 ELSE 0 END)   AS completed_count,
+        SUM(CASE WHEN completed_at IS NOT NULL THEN 1 ELSE 0 END) AS completed_count,
         ROUND(AVG(CASE WHEN played_at IS NOT NULL THEN completion_pct END)) AS avg_completion_pct
        FROM video_views
       WHERE video_id = ?
@@ -993,6 +1041,8 @@ module.exports = {
   hashIp,
   resolveCaseIdForContact,
   getJsonOverlapsCachedStatus,
+  checkTrackToken,
+  COMPLETE_PCT,
   // 2026-08-17 action-URL XSS fix
   isSafeActionUrl,
   validateActions,

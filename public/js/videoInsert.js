@@ -20,8 +20,10 @@
 //   { kind: 'mms',      text: 'https://...', attachmentUrl: '...', mediaKind: 'poster' | 'gif' }
 //
 // Notes:
-// - Placeholder syntax: when contactId is null, URLs contain {{contacts.contact_token}}
+// - Placeholder syntax: when contactId is null, URLs contain {{contacts.contact_token|default:}}
 //   (matches resolverService schema). Caller is responsible for resolving at send time.
+//   The |default: is load-bearing: a NULL value with no default stays in the text, so a
+//   contact without a token would be sent the placeholder itself.
 // - Snippet shape (email): wrapped `<a><img></a>` form. The EmailImage blot is
 //   registered on each host page so the <img> attributes survive Quill's clipboard.
 //   If round-trip stripping is observed, switch to the two-line fallback below.
@@ -129,40 +131,46 @@
    *
    * @param {string} slug
    * @param {string|null} contactToken
-   *   When falsy/null: produces ...?ct={{contacts.contact_token}} — the
+   *   When null: produces ...?ct={{contacts.contact_token|default:}} — the
    *     campaign-template form, substituted per recipient by resolverService.
+   *   When '': a failed lookup, produces the bare anonymous link. The send
+   *     paths that pass a contact run no resolver, so a placeholder here
+   *     would reach the client as text.
    *   Otherwise: produces ...?ct=<token> (already substituted).
    */
   function buildUrl(slug, contactToken) {
     const base = PUBLIC_VIDEO_ORIGIN + '/v/' + encodeURIComponent(slug);
-    const c = (contactToken === null || contactToken === undefined || contactToken === '')
-      ? '{{contacts.contact_token}}'
+    if (contactToken === '') return base;
+    const c = (contactToken === null || contactToken === undefined)
+      ? '{{contacts.contact_token|default:}}'
       : String(contactToken);
     return base + '?ct=' + c;
   }
 
   /**
    * contact_id → contact_token, via the mint-or-return endpoint booking
-   * already uses. Cached per contact for the life of the page.
+   * already uses. A token is cached per contact for the life of the page; a
+   * failure is not, so the next send tries again.
    *
-   * Returns null on failure, which degrades to the anonymous form of the link
+   * Returns '' on failure, which degrades to the anonymous form of the link
    * rather than blocking the insert — losing attribution on one send is a far
-   * better outcome than refusing to send.
+   * better outcome than refusing to send. Returns null when there is no
+   * contact to look up (campaign-template mode).
    */
   const tokenCache = new Map();
   async function resolveContactToken(contactId) {
     if (contactId === null || contactId === undefined || contactId === '') return null;
     const key = String(contactId);
     if (tokenCache.has(key)) return tokenCache.get(key);
-    let token = null;
+    let token = '';
     try {
       const P = window.parent && window.parent.apiSend ? window.parent : window;
       const resp = await P.apiSend('/api/contacts/' + encodeURIComponent(key) + '/booking-link', 'POST', {});
-      token = (resp && resp.token) || null;
+      token = (resp && resp.token) || '';
     } catch (err) {
       console.warn('[videoInsert] contact_token lookup failed; sending anonymous link', err);
     }
-    tokenCache.set(key, token);
+    if (token) tokenCache.set(key, token);
     return token;
   }
 
@@ -428,15 +436,32 @@
     const variantKey = await pickVariant(Swal, video, variants);
     if (!variantKey) return null;
 
-    // Stage 3 — resolve the contact's token (no-op in campaign-template mode,
-    // where contactId is null and the placeholder stays literal).
-    const contactToken = await resolveContactToken(contactId);
+    return finishPick(variantKey, video, contactId);
+  }
 
+  // Stage 3 — resolve the contact's token (no-op in campaign-template mode,
+  // where contactId is null and the placeholder stays literal).
+  async function finishPick(variantKey, video, contactId) {
+    const contactToken = await resolveContactToken(contactId);
     return buildResult(variantKey, video, contactToken);
+  }
+
+  /**
+   * Fill the picker's token placeholder for one recipient, on a send path with
+   * no server-side resolver (the sending forms' multi-recipient 'other'
+   * action). Looks up nothing when the text holds no placeholder. A failed
+   * lookup leaves an empty ?ct=, which opens anonymously.
+   */
+  const TOKEN_PLACEHOLDER = /\{\{contacts\.contact_token(?:\|default:)?\}\}/g;
+  async function fillContactToken(text, contactId) {
+    const src = text || '';
+    if (src.search(TOKEN_PLACEHOLDER) === -1) return src;
+    const token = await resolveContactToken(contactId);
+    return src.replace(TOKEN_PLACEHOLDER, () => encodeURIComponent(token || ''));
   }
 
   // ── Export ─────────────────────────────────────────────────────────────────
 
-  global.YisraVideoInsert = { openVideoPicker };
+  global.YisraVideoInsert = { openVideoPicker, finishPick, buildUrl, fillContactToken, resolveContactToken };
 
 })(window);

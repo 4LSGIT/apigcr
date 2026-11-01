@@ -56,9 +56,9 @@ There are three buttons on each video in the list:
 
 - **Copy landing URL** — `/v/<slug>` with no parameters. Use for posting publicly, QR codes, or anywhere you don't have a specific contact in mind.
 - **Copy URL for contact…** — opens a contact picker, then copies a URL with `?ct=<contact_token>` appended. The action buttons on the page will then know who's watching.
-- **Copy embed snippet** — produces a clickable HTML block (poster image wrapped in a link to the landing page). When you have both a poster and a GIF, you'll see two snippets — one of each. The contact placeholder in the snippet is `{{contacts.contact_token}}`, which the campaign manager fills in automatically when sending; for one-off emails just paste it through Insert Video instead.
+- **Copy embed snippet** — produces a clickable HTML block (poster image wrapped in a link to the landing page). When you have both a poster and a GIF, you'll see two snippets — one of each. The contact placeholder in the snippet is `{{contacts.contact_token|default:}}`, which the campaign manager fills in automatically when sending. For one-off messages use Insert Video instead: a pasted snippet goes out with the placeholder still in it.
 
-A video link written into a sequence, workflow or template uses the same form: `https://4lsg.com/v/<slug>?ct={{contacts.contact_token|default:}}`. Keep the `|default:` — a few older contacts have no token, and without it they would be sent the placeholder itself. The older `?c=<contact_id>` form still opens the page and attributes the view, but it proves nothing about who clicked: it can't open a contact-only video, and action buttons on that page lose the viewer's identity.
+A video link written into a sequence or template uses the same form: `https://4lsg.com/v/<slug>?ct={{contacts.contact_token|default:}}`. Keep the `|default:` — a few older contacts have no token, and without it they would be sent the placeholder itself. The older `?c=<contact_id>` form still opens the page and attributes the view, but it proves nothing about who clicked: it can't open a contact-only video, and action buttons on that page lose the viewer's identity.
 
 ### Insert Video buttons in the message editors
 
@@ -74,7 +74,7 @@ Click Insert Video, search and select the video, then choose the format:
 - **SMS with non-RingCentral sender** — inserts the URL as plain text at the cursor.
 - **SMS with RingCentral sender (MMS-capable)** — three options: plain SMS, MMS with poster, MMS with GIF. The MMS options write the URL to the SMS body AND attach the image to the message in one click.
 
-Insertion in single-contact contexts (the Communications composer, Sending Form) substitutes the contact's real token into the URL right away — what you see in the editor is what you'll send. In the Campaign Manager, the URL contains a placeholder that gets filled in per recipient at send time.
+In the Communications composer, Insert Video substitutes the contact's real token into the URL right away — what you see in the editor is what you'll send. The Sending Form can go to two people, so it shows the placeholder and fills in each recipient's own token when it sends. In the Campaign Manager, the URL contains a placeholder that gets filled in per recipient at send time.
 
 ---
 
@@ -84,8 +84,8 @@ The Analytics panel on each video shows:
 
 - **Total views** — every time someone opens the landing page, broken down into "identified" (a contact token or ID was on the URL) vs "anonymous" (neither).
 - **Played** — how many of those viewers actually pressed play, with the percentage.
-- **Completed** — how many watched to the end (100% completion), with the percentage of plays.
-- **Avg watch** — the average completion percentage across views that were played. Opens nobody pressed play on don't pull it down.
+- **Completed** — how many really watched at least 90% of the video, with the percentage of plays. Dragging the bar to the end doesn't count. Views from before November 2026 count as completed if the player reached the end, because the page didn't yet record what really played.
+- **Avg watch** — the average share of the video really watched, across views that were played. Opens nobody pressed play on don't pull it down. For views from before November 2026 it's how far the player got.
 - **CTA clicks** — a list of action button clicks, by label, with counts.
 
 Views are recorded the moment the page opens, even before play, so link scanners count: phone carriers and messaging apps fetch a texted link within seconds of sending it, usually twice, and nobody has seen the page. Trust **Played** over **Total views**. The contact and their primary case are attached to each view in the database — an active case (Open, Filed or Pending) first, then Concluded, then Closed, newest first within each.
