@@ -2084,3 +2084,21 @@ which never shows it). Two steps:
 - **`video_views.contact_verified`'s COMMENT doesn't mention `?ca=`-alone views**
   (they are 0 too), and it still names `?c=`. Reword it with the next migration
   that touches the table; not worth one of its own.
+- **iPhone play tracking is unconfirmed.** Desktop Safari and Chromium record a
+  full watch; no iPhone has played since `video.played` landed, and none was
+  available to test with. Check: `SELECT id, watch_seconds, completion_pct FROM
+  video_views WHERE track_token IS NOT NULL AND played_at IS NOT NULL AND
+  user_agent LIKE '%iPhone%'`. Repeated `watch_seconds` 0 on played rows means
+  the full-screen player isn't reporting.
+- **The Clio Grow `inbox_lead_token` stays in the webhook config** of sequence 20
+  step 11, versions 1 and 2, rather than in credentials (Fred, 2026-11-01). The
+  firm plans to leave Clio; the token goes with that cutover.
+- **A hand-pasted embed snippet in `communicate.html` goes out with
+  `{{contacts.contact_token|default:}}` literal** (the manual warns). Fix =
+  fill it on send, as the Insert Video path does.
+- **`ip_hash` on views from before S2 is an unkeyed SHA-256**, reversible for an
+  IPv4 address; newer rows are HMAC. They look alike, so a cleanup nulls by id
+  below the first S2 row.
+- **A token holder who hand-posts the label of a hidden `{{ca}}` button still
+  fires `video.cta_clicked`.** They hold a real token, so the only harm is a click
+  record on a button they didn't see.

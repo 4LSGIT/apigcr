@@ -207,6 +207,11 @@ Gates beyond Commands & gates below, every model:
   A kill is jest's EXIT CODE, never a grepped tail: a `tail -3` missed
   `Tests: N failed` and reported 9 false survivors (2026-10-25), and a harness
   exit (127 — macOS has no `timeout` — or 124) is not a kill either.
+  Every wait in a test is bounded: under a mutation, a `while` polling for
+  something that no longer happens hangs the run instead of failing it. A
+  real-engine schema carries what the bug needs: a twin without the production
+  FK cannot show an FK-lock deadlock, so the fix looks unproven or needless
+  (both YisraVideo, 2026-11-01).
   Gated real-engine twins (`*.mysql.test.js`) pointed at the same
   `YC_TEST_MYSQL_URL` share its `*_test` DB: a twin builds every table it
   touches, and drops in its before-hook any table a SIBLING creates — ids
