@@ -656,6 +656,9 @@ module.exports = {
   serverDraftsEnabled,
   checkDraftShape,
   getServerDraft,
+  // A12 — Ask Casey's form.template read and form.draft normalizer walk the
+  // SAME registry of declared fields the draft and submit routes check:
+  buildValueRegistry,
   // exported for tests:
   evalCond,
 };

@@ -43,6 +43,10 @@ const KINDS = new Map([
   // row, ids included — the one matching the reviewed target is the receipt).
   ['document.update.v1', 'document_id'],
   ['document.link.v1', 'document_link_id'],
+  // A12: both receipt the form_submissions row — the draft the POST upserted
+  // (it returns the row id) and the submission the PATCH linked.
+  ['form.draft.v1', 'submission_id'],
+  ['form.submission.link.v1', 'submission_id'],
   ['job.code_safe.create.v1', 'job_id'],
   ['workflow.draft.v1', 'workflow_id'],
   ['workflow.step_insert.v1', 'workflow_id'],

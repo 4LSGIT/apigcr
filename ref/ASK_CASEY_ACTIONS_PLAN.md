@@ -16,9 +16,15 @@ contracts and three platform prerequisites (P11-P13); nothing in it is built.
 
 ## Review briefing
 
-The shipped baseline is 26 proposal kinds across four reviewed families: the
-complete Task lifecycle, Event create/update/complete/cancel, the seven
-Appointment actions, and nine contact phone/email/address actions. Every family
+The shipped baseline is 65 proposal kinds (the action ledger's `KINDS`
+registry; `tests/caseyActionPermissions.test.js` pins the inventory against it)
+in 29 browser families: the record families — Tasks, Events, Appointments,
+contact phone / email / address rows, contact relations and roles, case and
+contact notes and case alerts, case contacts, case pipeline moves, the case
+docket, checklists and their items, documents and their links, form drafts and
+submission links — plus direct SMS / email sends, report drafts and the
+automation families (safe code jobs, workflow draft / step / publish / start,
+hooks, sequence step / publish / enroll, ingest rules). Every family
 uses the same boundary: one
 closed, evidence-backed, server-normalized proposal; exact SweetAlert review;
 a fixed browser-owned route/method/body mapping; the ordinary authenticated
@@ -1157,13 +1163,155 @@ relation?}).
 relink queue, sync roots, unlink, status changes, replacement, deletion,
 `shared_link`.
 
-#### A12: Forms and form templates
+#### A12: Forms — draft and submission link shipped 2026-11-02
 
 Start with a form draft or prefill and save/link it to a resolved record.
 Submission, PDF filing, template editing, publishing, visibility changes,
 version restore, and deletion are separate proposal kinds and later releases.
 Render the template/version, destination, material answers, overwrite behavior,
 and whether the operation makes anything client-visible.
+
+**What the routes guard.** POST `/api/forms/draft` (`routes/api.forms.js` →
+`formService.upsertDraft`, bare `jwtOrApiKey`) checks only that form_key,
+link_type, link_id and data are present: it is `INSERT … ON DUPLICATE KEY
+UPDATE data = VALUES(data)` on the generated `draft_key` (one draft per
+form_key + link_type + link_id, compared under general_ci), so a second save
+keeps the row and REPLACES the whole payload — any answer it does not carry is
+gone — and stamps the body's `schema_version` (1 when the body omits it). It
+validates nothing against the template and emits no event. PATCH
+`/api/forms/submissions/:id/link` → `formService.linkSubmission` answers 400 for
+a draft, 409 for an already-linked row (its own read, and its conditional
+UPDATE losing a race) and for another link type than the template's (a
+submission with no template row skips that check), 404 for an unknown
+submission or target; it renumbers the version to MAX + 1 of the TARGET
+series, stamps `linked_by` / `linked_at`, writes one best-effort `form` log
+entry ("Form adopted: <title>" / "… was linked to this <type> from the Form
+Inbox." — fixed wording) and stamps `cases.case_intake_form = 'yf:<id>'` for an
+`intake` form only when the pointer is `''` (the column is NOT NULL). All of it
+is pinned on a real engine (`tests/caseyForms.mysql.test.js`).
+
+**Read enablement.** `form_templates` is outside the curated report manifest
+(adding it needs the production grant re-run, A11), so a TYPED read on the app
+pool, `form.template` {form_key, search?} — the A6.0 `contact.relations`
+precedent: the template's title, link type, visibility, schema_version,
+published flag, data mode and server-drafts flag, and the PUBLISHED
+definition's field list (key, label, type, required, options as a JSON list,
+mask, min / max, max length, repeater rows) through
+`extFormService.buildValueRegistry` — the registry the external draft and
+submit routes check keys against; display-only items are left out and the raw
+definition never leaves the server. An unpublished template returns its head
+row only. 49 field rows per read; `search` narrows by key or label. The
+`form_submissions` rows themselves are in the manifest (`data` readable), so
+`sql.read` reads drafts and submissions.
+
+**Shipped contract.** Two kinds behind one switch: `form.draft.v1` (POST
+`/api/forms/draft` {form_key, link_type, link_id, schema_version, data}) and
+`form.submission.link.v1` (PATCH `/api/forms/submissions/:id/link` {link_type,
+link_id}).
+- **Refused by name**, before anything is read: the route-owned columns
+  `status`, `version`, `submitted_by`, `schema_version`; any key shaped like
+  another form operation (submit, pdf / render / file, publish, delete /
+  discard, visibility, restore, unlink / relink, template); any other unknown
+  key; an appointment link (no template links to one).
+- **Draft.** The evidence cites a row with the exact case_id / contact_id AND
+  the investigation holds a `form.template` read of that form_key (the field
+  keys come from it, never from memory). Refused: an unknown form_key; an
+  unpublished template; a link type other than the template's; a gone record;
+  a key the published form does not have (display-only items carry no
+  answer); a value of the wrong type — text for text / textarea / hidden (no
+  line break in a one-line field, the field's max length), a finite number
+  inside min / max, an ISO date, `YYYY-MM-DDTHH:MM`, one listed option for a
+  select / radio (an `optionsFrom` list is filled when the form opens, so only
+  the template's static values pass), a boolean for a checkbox, option values
+  for a checkgroup (one extra value when it has an Other box), words for tags,
+  row objects of the repeater's own fields (≤ 50 rows); `null`; a payload over
+  64 KB; a card over 60,000 characters (it carries the whole draft, and the
+  chat stores a message's details up to 100,000); a stored draft that is not a
+  JSON object; a no-op. Values are stored
+  the way yc-forms' `collect()` stores them (numbers as text, lists
+  comma-joined, masks stripped — disclosed). Required answers left empty are
+  disclosed, not refused (a draft never submits).
+- **The carry-forward.** The normalizer reads the existing draft through
+  `formService.getLatest` (the read the click re-runs) and sends every answer
+  it holds that the card does not set again VERBATIM — the card says "N
+  existing answers carried forward unchanged" (and how many are not on the
+  current form). The body's `schema_version` is the template's (server-chosen;
+  the route would store 1).
+- **Disclosed:** each answer before → after (an answer already equal is shown
+  unchanged); who last saved the draft and when — someone else (the client
+  included) within 24 hours is a danger warning; **RESTORE BLANKS** — the form's
+  Restore populates every field from the draft, so each field the draft does
+  not hold shows blank, and a save after it saves the blanks (and writes the
+  record when the form patches it) — a danger warning naming them; the latest
+  SUBMITTED row is untouched; the form-version restamp; no trigger event and no
+  pipeline step (both count submitted forms only). **Client visibility**, read
+  off the serving code: only `public` templates are served outside the app
+  (`getServableTemplate`'s default scope), and the public page reads a server
+  draft back only when the template set `external.serverDrafts === true`
+  (case-linked) — then the D1 GET returns whatever draft row exists, staff
+  draft included, and the card warns CLIENT-VISIBLE; otherwise (public without
+  server drafts, portal, internal) the card says no client sees it.
+- **Link.** The evidence cites the submission's row (`form_submissions.id AS
+  submission_id`; the report pool's BIGINT string accepted) AND a row with the
+  target's exact id. Refused first, in the route's words: gone, a draft, already
+  linked, a link type other than the template's, a gone target — plus a
+  submission whose form has NO template (stricter than the route, which skips
+  the check). **Identity** (the Form Inbox's own keys `name` / `phone` /
+  `email`): a name matches a person when its first and last words (accents,
+  case and punctuation ignored; one word alone) are both among the person's
+  name words; a phone when its 10 digits (intake's normalizePhone: a leading 1
+  dropped from 11) equal any of the person's phones, ended rows included; an
+  email when it equals any of the person's emails, case-insensitive. The
+  people are the case's contacts (any role) or the contact. Answers matching
+  no one are an IDENTITY MISMATCH danger warning, never a refusal; no answers
+  to compare, or a case with no contacts, is said. Disclosed: the version it
+  becomes (MAX + 1 of the target series — the newest submission), the form tab
+  (snapshot forms show these answers from now on), the log entry word for
+  word, the intake gate (`''` stamped / already set), the active pipeline steps
+  whose `form` detector names this form_key (case-insensitive) — they read as
+  done — and that it emits no event.
+- **Freshness:** `expected` = the existing draft's id + updated_at + the
+  SHA-256 of its canonical (key-sorted) JSON, or none (draft); the
+  submission's status + link_type + link_id + version (link). The click re-reads
+  the record (GET `/api/cases/:id` / `/api/contacts/:id`) and GET
+  `/api/forms/latest` or GET `/api/forms/submissions/:id`, and refuses on any
+  difference before the claim — a draft saved, restored or discarded since, a
+  draft that appeared over a "no draft" card, a submission linked since.
+- **Idempotency:** none added. One claim per draft; a second draft card re-reads
+  the changed draft and refuses; a second link card is refused by its re-read or
+  the route's 409.
+- **Outcomes:** the link route's 409s ("already linked", "was linked by
+  someone else", the template's link type) and 404s (submission, target) are
+  before-write refusals (`knownOutcome`); a 400 is a refusal; anything else —
+  every draft-route 500, an answer that does not echo the reviewed form and
+  record or the submission — stays ambiguous.
+- **Receipt:** the integer `submission_id` for both — the draft row the POST
+  upserted (it returns the row id) and the submission the PATCH linked. Two
+  browser families (`form_draft`, `form_link`): their routes, re-reads and
+  outcomes differ.
+- **Sync (fixed in this slice):** yc-sync had no matcher for any `/api/forms`
+  route, so a Casey draft was silent to an open form. Both routes now announce
+  `form:<link_type>:<link_id>` (a `yc_refetch` marker); POST
+  `/api/forms/draft` answers its `{id, updated_at}` PLUS an additive
+  `{form_key, link_type, link_id}` echo for it (the link route already answers
+  the target). `YCForm._setupSync` (public/js/yc-forms.js) subscribes in any
+  host that loads yc-sync — render.html loads it in normal internal mode only
+  (never external, whose landing host has no `/js/yc-sync.js`): it re-reads GET
+  `/api/forms/latest`; a clean form repopulates through `refresh()` and raises
+  the draft banner; a form with unsaved typing is never repopulated — it shows
+  the newer draft's banner and HOLDS its autosave (which would replace the
+  newer draft whole) until Restore / Discard or a save. Fenced on its own
+  autosave echo (`_api` stamps draft POSTs, 1.5 s), parked while hidden, mid-save
+  or typed in. The older hand-built form pages (casedetails, casedetails-bk,
+  341notes, issn, contact-form) do not load yc-sync — the card says so.
+- Off switch `casey_forms_enabled` (on unless '0', casey section, sort 64).
+  Tests: `tests/caseyForms.test.js`, gated `tests/caseyForms.mysql.test.js`,
+  `tests/formRender.sync.test.js`, `tests/assistantUi.test.js`,
+  `tests/ycSync.test.js`.
+
+**Deferred** (`ref/plans.md`): submit, PDF render / filing, template editing /
+publishing / visibility / version restore / deletion, deleting a draft,
+appointment-linked forms, the hand-built form pages on the bus.
 
 #### A13: Message triage and communication drafts
 

@@ -74,7 +74,11 @@ router.post('/api/forms/draft', jwtOrApiKey, async (req, res) => {
       req.db, form_key, link_type, link_id,
       schema_version || 1, data, req.auth.userId
     );
-    res.json({ status: 'success', ...result });
+    // A12: the record the draft belongs to rides the answer (additive — the
+    // service's { id, updated_at } is unchanged) so public/js/yc-sync.js can
+    // announce `form:<link_type>:<link_id>` from the RESPONSE, the way every
+    // matcher reads what the server wrote; an open copy of the form refetches.
+    res.json({ status: 'success', ...result, form_key, link_type, link_id });
   } catch (err) {
     console.error('[api.forms] upsertDraft error:', err);
     res.status(500).json({ status: 'error', message: err.message });

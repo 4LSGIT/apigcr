@@ -56,6 +56,7 @@ const PLAN_FAMILY_MARKERS = {
   ingest_rule: 'Reviewed ingest-rule actions are available',
   checklist: 'Reviewed checklist actions are available',
   document: 'Reviewed document actions are available',
+  form: 'Reviewed form actions are available',
 };
 
 describe('every shipped action kind is taught to every model stage', () => {
@@ -380,9 +381,39 @@ describe('A7c — every stage teaches the docket card, verbatim numbers and its 
     expect(answerPrompt).toContain('court-email matching (court mail carrying the number is filed on this case)');
     expect(answerPrompt).toContain('A BLANK case\n    number is filled only through the docket kind below.');
     expect(answerPrompt).not.toContain('names, docket, trustee');
-    expect(answerPrompt).toContain('ingest-rule/report-draft/case-docket actions.');
+    expect(answerPrompt).toContain('ingest-rule/report-draft/case-docket/');
     expect(repairPrompt).toContain('case.docket.adopt.v1: kind,case_id,case_number?,case_number_full?,evidence');
     expect(repairPrompt).toContain('Only a BLANK number is filled: never replace or clear one, never a number another case holds');
+  });
+});
+
+// A12: the form family — the typed form.template read must be taught to the
+// plan and investigate stages (a draft without it is refused), and every stage
+// must teach the never-submit rule, the field-key rule and the refusals.
+describe('A12 — every stage teaches the form cards, the form.template read and their refusals', () => {
+  test('the plan carries the read kind and its own bullet with the reads the cards cite', () => {
+    expect(planPrompt).toContain('form.template ({"form_key":"341_notes","search":optional field search} — one form\n  template');
+    expect(planPrompt).toContain('form_templates is NOT in the curated schema, so never sql.read it');
+    expect(planPrompt).toContain('Reviewed form actions are available: save ONE draft of a published form for a case or contact (form.draft — it\n  never submits)');
+    expect(planPrompt).toContain('a form.template read of the form (its field keys, types and\n  options — read it BEFORE drafting; never guess a key)');
+    expect(planPrompt).toContain('form_submissions.id AS submission_id, form_key, status, link_type, link_id, version, created_at,\n  data');
+  });
+  test('the investigate stage names the read kind and both proposal families', () => {
+    expect(investigatePrompt).toContain('form.template ({"form_key","search"?} — one form template and its published fields; never\n  sql.read form_templates)');
+    expect(investigatePrompt).toContain('and form draft proposals, which need a form.template read of the form');
+    expect(investigatePrompt).toContain('submission link\n  proposals, which need the submission\'s row with form_submissions.id AS submission_id');
+  });
+  test('the answer and repair stages teach the shapes, the field-key rule, never-submit and every refusal', () => {
+    expect(answerPrompt).toContain('Form rules (A12');
+    expect(answerPrompt).toContain('Read the form FIRST\n    with a form.template read and use ONLY its field keys');
+    expect(answerPrompt).toContain('Send only the answers being set: the server carries every answer already in the draft forward unchanged.');
+    expect(answerPrompt).toContain('It NEVER submits the form.');
+    expect(answerPrompt).toContain('"status" / "version" / "submitted_by" /\n    "schema_version" (the route sets them)');
+    expect(answerPrompt).toContain('linking a draft or an already-linked submission');
+    expect(answerPrompt).toContain('a public form with server drafts shows it on the client\'s link');
+    expect(answerPrompt).toContain('ingest-rule/report-draft/case-docket/form actions.');
+    expect(repairPrompt).toContain('form.draft.v1: kind,form_key,link_type,link_id,data,evidence — form_key and every key in data come from a\n  form.template read of a PUBLISHED form');
+    expect(repairPrompt).toContain('never a draft, never an already-linked submission, never an appointment');
   });
 });
 

@@ -57,6 +57,10 @@ class YCForm {
     this._draftData = null;        // Stored draft from server (for recovery)
     this._submittedData = null;    // Latest submitted row from server
     this._liveData = null;         // Data from the source entity table
+    this._draftConflict = false;   // A12: a newer draft arrived over the bus while
+                                   // this form held unsaved typing — autosave holds
+                                   // until the banner's Restore / Discard (or a save).
+    this._lastDraftWrite = 0;      // A12: when this frame last POSTed a draft (echo fence).
     this._userEditSeq = 0;         // Bumped on every TRUSTED user input/change.
                                    // Lets refresh()/save() tell "onLoad wrote this
                                    // field" from "the user typed into it while we
@@ -243,6 +247,11 @@ if (this.config.endpoints.load && !this.config.external) {
       //      (initial evaluation in _setupConditionals ran before populate)
       this._evaluateConditionals();
 
+      // 13d. Listen for this record's form writes from other frames (A12).
+      //     A host that loads yc-sync.js late calls _setupSync() again.
+      this._initDone = true;
+      this._setupSync();
+
       // 14. Hide loading
       this._showLoading(false);
 
@@ -363,6 +372,7 @@ if (this.config.endpoints.load && !this.config.external) {
         // populate() alone doesn't re-evaluate conditionals (init does it in
         // step 13b) — restored values may show/hide sections.
         this._evaluateConditionals();
+        this._draftConflict = false;   // A12: the newer draft is the form's now
         this._draftBannerEl.style.display = 'none';
       };
     }
@@ -397,6 +407,7 @@ if (this.config.endpoints.load && !this.config.external) {
           }
         }
         this._draftData = null;
+        this._draftConflict = false;   // A12: the newer draft is gone
         this._draftBannerEl.style.display = 'none';
       };
     }
@@ -1003,6 +1014,7 @@ if (this.config.endpoints.load && !this.config.external) {
         ).catch(err => console.warn('[YCForm] Draft cleanup failed (non-blocking):', err));
       }
       this._draftData = null;
+      this._draftConflict = false;   // A12: a save supersedes any pending draft
       if (this._draftBannerEl) this._draftBannerEl.style.display = 'none';
 
 
@@ -1246,6 +1258,15 @@ if (this.config.endpoints.load && !this.config.external) {
       return;
     }
 
+    // A12: a newer draft (someone else's, or an Ask Casey card) arrived over
+    // the sync bus while this form held unsaved typing. The route replaces a
+    // draft WHOLE, so saving now would silently erase it: hold until the
+    // banner's Restore or Discard decides.
+    if (this._draftConflict) {
+      this._showStatus('Draft not saved — a newer draft is waiting: Restore or Discard it first');
+      return;
+    }
+
     try {
       this._showStatus('Saving draft...', true);
 
@@ -1263,6 +1284,105 @@ if (this.config.endpoints.load && !this.config.external) {
       console.warn('[YCForm] Autosave failed:', err);
       this._showStatus('Draft save failed');
     }
+  }
+
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SYNC BUS (A12) — another frame saved a draft of, or adopted a submission
+  // onto, THIS record's forms
+  //
+  // public/js/yc-sync.js announces POST /api/forms/draft and PATCH
+  // /api/forms/submissions/:id/link as `form:<link_type>:<link_id>` — above all
+  // an Ask Casey card applied from the assistant pane, which an open form used
+  // to stay blind to until it was reloaded. Active only when the host page
+  // loads yc-sync.js (window.YC), in internal mode, with a record.
+  //
+  // §3.6: the handler never emits. syncLatest() is one GET plus refresh(),
+  // which populates and never saves; the autosave it may HOLD is a write it
+  // prevents, not one it makes.
+  //
+  // FENCES, in order:
+  //   · its own echo — this frame POSTed a draft within SYNC_ECHO_MS (_api
+  //     stamps it), so the message is its own autosave;
+  //   · hidden (its tab, or the browser tab), mid-save, or the caret in a field
+  //     of the form: PARKED in _syncStale and re-run when the page becomes
+  //     visible, the frame is shown again (a resize), or the focus leaves the
+  //     field.
+  // Then: refetch GET /api/forms/latest; a clean form repopulates through
+  // refresh() (whose data source raises the draft banner); a form with unsaved
+  // typing is never repopulated — it shows the newer draft's banner and holds
+  // its autosave (_draftConflict), because the route replaces a draft whole
+  // and the next autosave would erase the newer one.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  _setupSync() {
+    if (this._syncOn || !this._initDone || this.config.external) return;
+    const YC = window.YC;
+    if (!YC || typeof YC.on !== 'function') return;
+    if (!this.config.formKey || !this.config.linkType || !this.config.linkId) return;
+    this._syncOn = true;
+    this._syncStale = false;
+    const addr = ('form:' + this.config.linkType + ':' + this.config.linkId).toLowerCase();
+    YC.on('form:*', '*', (_fields, msg) => {
+      if (!msg || String(msg.addr || '').toLowerCase() !== addr) return;
+      if (Date.now() - this._lastDraftWrite < YCForm.SYNC_ECHO_MS) return;   // our own write, echoed
+      this._syncStale = true;
+      this._syncPoll();
+    });
+    const later = () => setTimeout(() => this._syncPoll(), 0);
+    document.addEventListener('visibilitychange', later);
+    document.addEventListener('focusout', later);
+    window.addEventListener('resize', later);
+  }
+
+  _syncShown() {
+    if (document.visibilityState === 'hidden') return false;
+    try { const f = window.frameElement; return !f || f.getClientRects().length > 0; }
+    catch (_) { return true; }
+  }
+
+  _syncBusy() {
+    if (this._saving || this._syncing) return true;
+    const a = document.activeElement;
+    if (!a || a === document.body || !this.el.contains(a)) return false;
+    if (a.isContentEditable || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT') return true;
+    return a.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset)$/i.test(a.type || '');
+  }
+
+  async _syncPoll() {
+    if (!this._syncStale || !this._syncShown() || this._syncBusy()) return;
+    this._syncStale = false;
+    this._syncing = true;
+    try { await this.syncLatest(); }
+    catch (err) { console.warn('[YCForm] sync refetch failed:', err); }
+    finally { this._syncing = false; }
+  }
+
+  /**
+   * Re-read this record's latest draft + submission and show them WITHOUT
+   * destroying user input.
+   * @returns {Promise<'skipped-dirty'|'kept-user-edits'|'refreshed'>}
+   */
+  async syncLatest() {
+    const latest = await this._api(
+      `/api/forms/latest?form_key=${encodeURIComponent(this.config.formKey)}&link_type=${encodeURIComponent(this.config.linkType)}&link_id=${encodeURIComponent(this.config.linkId)}`,
+      'GET'
+    );
+    this._submittedData = (latest && latest.submitted) || null;
+    this._draftData = (latest && latest.draft) || null;
+    const outcome = await this.refresh();   // repopulates ONLY a clean form; never saves
+    const d = this._draftData;
+    const s = this._submittedData;
+    const newer = !!d && (!s || new Date(d.updated_at).getTime() > new Date(s.updated_at).getTime());
+    if (outcome !== 'refreshed') {
+      // Unsaved typing: never repopulated. Offer the newer draft, hold autosave.
+      if (newer) { this._draftConflict = true; this._showDraftBanner(d, s); }
+    } else {
+      this._draftConflict = false;
+    }
+    if (!newer && this._draftBannerEl) { this._draftConflict = false; this._draftBannerEl.style.display = 'none'; }
+    this._showLastSaved();
+    return outcome;
   }
 
 
@@ -2391,7 +2511,16 @@ if (this.config.endpoints.load && !this.config.external) {
       }
       return resp.json();
     } else {
-      // Internal mode: relay through parent iframe chain
+      // Internal mode: relay through parent iframe chain.
+      // A12: stamp this frame's own draft writes at the start AND when they
+      // settle — the bus announces a write when its response lands, and the
+      // form must not take its own autosave for someone else's draft.
+      if (method === 'POST' && String(url).split('?')[0] === '/api/forms/draft') {
+        this._lastDraftWrite = Date.now();
+        const p = window.parent.apiSend(url, method, body);
+        Promise.resolve(p).then(() => { this._lastDraftWrite = Date.now(); }, () => { this._lastDraftWrite = Date.now(); });
+        return p;
+      }
       return window.parent.apiSend(url, method, body);
     }
   }
@@ -2401,5 +2530,9 @@ if (this.config.endpoints.load && !this.config.external) {
 // ═══════════════════════════════════════════════════════════════════════════
 // GLOBAL EXPORT
 // ═══════════════════════════════════════════════════════════════════════════
+
+// A12: how long after this frame's own draft POST settles a bus message for
+// the same record is taken as its echo (checklistView's CL_ECHO_MS).
+YCForm.SYNC_ECHO_MS = 1500;
 
 window.YCForm = YCForm;

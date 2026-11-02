@@ -2237,6 +2237,232 @@ function caseDocketKnownOutcome(e) {
   return null;
 }
 
+// Forms (A12). Save ONE draft of a published form for a case or contact, or
+// link ONE unlinked submitted form to a case or contact, through the Forms
+// tab's and the Form Inbox's own routes: POST /api/forms/draft {form_key,
+// link_type, link_id, schema_version, data} and PATCH
+// /api/forms/submissions/:id/link {link_type, link_id}. The server checked
+// every answer against the PUBLISHED form, carried every answer already in
+// the draft forward verbatim into `data` (the route replaces a draft whole),
+// named who saved the draft last and whether a client sees it, compared a
+// submission's name / phone / email with the people on the target, and baked
+// the existing draft's id + updated_at + data hash (draft) or the
+// submission's status + link + version (link) into `expected`. The click
+// re-reads GET /api/forms/latest or GET /api/forms/submissions/:id (plus the
+// record) and refuses on ANY difference BEFORE the claim. No Idempotency-Key:
+// one claim per draft; a second draft card re-reads the changed draft, and a
+// second link card is the route's own 409. Both writes are on the yc-sync bus
+// (form:<link_type>:<link_id>), so an open copy of the form refetches.
+// Receipt: the integer submission_id for both (two families — their routes,
+// re-reads and outcomes differ).
+const FORM_DRAFT_ACTION_KINDS = new Set(['form.draft.v1']);
+const FORM_LINK_ACTION_KINDS = new Set(['form.submission.link.v1']);
+// form_submissions.data — the same 64 KB bound the server checked.
+const FORM_DATA_MAX_BYTES = 64 * 1024;
+
+// The server's key-order-insensitive serialization (MySQL re-orders JSON keys).
+function formCanonical(value) {
+  if (Array.isArray(value)) return `[${value.map(formCanonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${formCanonical(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value === undefined ? null : value);
+}
+
+async function formDataHash(data) {
+  const bytes = new TextEncoder().encode(formCanonical(data));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function formIso(value) {
+  if (value == null) return null;
+  const t = new Date(value);
+  return Number.isNaN(t.getTime()) ? String(value) : t.toISOString();
+}
+
+function formRecordLabel(draft) {
+  const r = draft && draft.kind === 'form.submission.link.v1' ? draft.target : draft && draft.record;
+  return String((r && (r.label || r.link_id)) || 'the record');
+}
+
+function formLabel(draft) {
+  if (draft && draft.kind === 'form.submission.link.v1') {
+    return (draft.link || {}).link_type === 'contact' ? 'Link form submission to contact' : 'Link form submission to case';
+  }
+  return 'Save form draft';
+}
+
+function formTitle(draft) {
+  const f = draft && (draft.kind === 'form.submission.link.v1' ? draft.submission : draft.form) || {};
+  return String(f.title || f.form_key || 'form');
+}
+
+function formText(draft) {
+  const lines = [];
+  if (draft.kind === 'form.submission.link.v1') {
+    const s = draft.submission || {}; const t = draft.target || {};
+    lines.push('Form submission link proposal — not applied', `Action: ${formLabel(draft)}`,
+      `Submission: #${s.submission_id} "${formTitle(draft)}" (${s.form_key}), received ${s.created_at ? String(s.created_at).slice(0, 16).replace('T', ' ') + ' UTC' : 'at an unknown time'} by ${s.saved_by || 'the public form'} — unlinked`);
+    for (const x of draft.identity || []) {
+      lines.push(`Answer: ${x.answer} "${x.value}" — ${x.matched ? `matches ${x.matched}` : `matches no one on ${t.label || 'the record'}`}${x.note ? ` (${x.note})` : ''}`);
+    }
+    if (!(draft.identity || []).length) lines.push('Answer: no name, phone or email in the answers');
+    lines.push(`Link to: ${t.label || formRecordLabel(draft)}${t.case_type ? ` (${t.case_type})` : ''}`,
+      `Becomes: version ${Number(draft.version_after) || 0} of "${formTitle(draft)}" on that record`);
+  } else {
+    const f = draft.form || {}; const ex = draft.existing; const sub = draft.submitted; const c = draft.carried || {};
+    lines.push('Form draft proposal — not applied', `Action: ${formLabel(draft)}`,
+      `Form: "${formTitle(draft)}" (${f.form_key}, a ${f.link_type} form, ${f.visibility}, form version ${Number(f.schema_version) || 1})`,
+      `Record: ${formRecordLabel(draft)}`,
+      ex ? `Existing draft: #${ex.draft_id}, saved by ${ex.saved_by} at ${String(ex.updated_at || '').slice(0, 16).replace('T', ' ')} UTC — replaced whole; ${Number(c.count) || 0} existing answer(s) carried forward unchanged`
+        : 'Existing draft: none — this card creates it',
+      sub ? `Latest submission: version ${sub.version} (#${sub.submission_id}, ${String(sub.updated_at || '').slice(0, 16).replace('T', ' ')} UTC) — untouched` : 'Latest submission: none');
+    for (const ch of draft.changes || []) {
+      lines.push(`Answer: ${ch.label} (${ch.key}): ${ch.unchanged ? `already ${ch.after} — unchanged` : `${ch.before == null ? '(not in the draft)' : ch.before} → ${ch.after}`}`);
+    }
+  }
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  if (draft.kind === 'form.submission.link.v1') {
+    lines.push('Writes: link_type, link_id, version, linked_by (you) and linked_at on this one submission — its answers are untouched — plus one log entry.',
+      'One-way: the route never unlinks or relinks a submission.',
+      'Stale check: if the submission is linked, removed or changed before you apply, nothing is written.',
+      'Other open pages: an open copy of this form for that record on the form page, in this browser, refreshes on its own; the record\'s Forms tab and the Form Inbox show it when refreshed.',
+      'Notification: Casey sends nothing; linking runs no trigger rule.');
+  } else {
+    lines.push(`Writes: one DRAFT row for this form and record — never a submission; the draft's answers are saved whole (${Number(draft.data_bytes) || 0} bytes).`,
+      'Stale check: if anyone saves, restores or discards this draft before you apply, nothing is written.',
+      'Other open pages: an open copy of this form for this record on the form page, in this browser, picks the draft up on its own (a copy with unsaved typing shows the draft\'s banner and holds its autosave); a copy open in another browser, or on one of the older hand-built form pages, shows it only when reopened.',
+      'Notification: Casey sends nothing; saving a draft runs no trigger rule.');
+  }
+  return lines.join('\n');
+}
+
+function formRecordPath(linkType, linkId) {
+  if (linkType === 'case' && /^[A-Za-z0-9_-]{1,20}$/.test(linkId)) return `/api/cases/${encodeURIComponent(linkId)}`;
+  if (linkType === 'contact' && /^[1-9]\d{0,19}$/.test(linkId)) return `/api/contacts/${encodeURIComponent(linkId)}`;
+  throw new Error('This card has no usable record.');
+}
+
+function formDraftRequest(draft) {
+  const f = draft.form || {}; const r = draft.record || {};
+  const formKey = typeof f.form_key === 'string' ? f.form_key : '';
+  if (!/^[A-Za-z0-9_-]{1,50}$/.test(formKey)) throw new Error('This card has no usable form.');
+  const linkId = typeof r.link_id === 'string' ? r.link_id : '';
+  formRecordPath(r.link_type, linkId);
+  if (r.link_type !== f.link_type) throw new Error('This card\'s record is not the form\'s link type.');
+  const version = Number(f.schema_version);
+  if (!Number.isSafeInteger(version) || version < 1) throw new Error('This card has no usable form version.');
+  const data = draft.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data) || !Object.keys(data).length) throw new Error('This card has no answers.');
+  if (new TextEncoder().encode(JSON.stringify(data)).length > FORM_DATA_MAX_BYTES) throw new Error('This card\'s answers are over the form store\'s 64 KB limit.');
+  for (const ch of draft.changes || []) {
+    if (!Object.prototype.hasOwnProperty.call(data, ch.key)) throw new Error('This card\'s answers do not carry the reviewed change.');
+  }
+  return { path: '/api/forms/draft', method: 'POST', body: { form_key: formKey, link_type: r.link_type, link_id: linkId, schema_version: version, data } };
+}
+
+async function formDraftPrecheck(draft) {
+  const req = formDraftRequest(draft); // a card that cannot be written is never read
+  const x = draft.expected || {};
+  const b = req.body;
+  const where = `"${formTitle(draft)}" for ${formRecordLabel(draft)}`;
+  try { await api(formRecordPath(b.link_type, b.link_id), null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `${formRecordLabel(draft)} no longer exists. Nothing was written.`; throw e; }
+  const got = await api(`/api/forms/latest?form_key=${encodeURIComponent(b.form_key)}&link_type=${encodeURIComponent(b.link_type)}&link_id=${encodeURIComponent(b.link_id)}`, null, 'GET');
+  if (!got || got.status !== 'success' || !('draft' in got)) throw new Error('the form could not be read');
+  const d = got.draft;
+  if (x.draft_id == null) {
+    if (d) return `Someone saved a draft of ${where} since this card was prepared (draft #${d.id}${d.user_name ? `, by ${d.user_name}` : ''}). Nothing was written — this card would have replaced it. Ask Casey to prepare it again.`;
+    return '';
+  }
+  if (!d) return `The draft of ${where} was discarded or submitted since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  let stored = d.data;
+  if (typeof stored === 'string') { try { stored = JSON.parse(stored); } catch (_) { stored = null; } }
+  if (Number(d.id) !== Number(x.draft_id) || formIso(d.updated_at) !== formIso(x.updated_at) || !stored || await formDataHash(stored) !== x.data_hash) {
+    return `The draft of ${where} changed since this card was prepared (someone saved it${d.user_name ? ` — last by ${d.user_name}` : ''}). Nothing was written; its answers would have been replaced. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function formDraftResult(draft, result) {
+  const b = formDraftRequest(draft).body;
+  const id = Number(result && result.id);
+  if (!result || result.status !== 'success' || !Number.isSafeInteger(id) || id < 1) throw new Error('The forms route did not confirm the draft');
+  const same = (a, c) => String(a == null ? '' : a).toLowerCase() === String(c == null ? '' : c).toLowerCase();
+  if (!same(result.form_key, b.form_key) || result.link_type !== b.link_type || !same(result.link_id, b.link_id)) throw new Error('The forms route did not confirm the reviewed form and record');
+  return { submission_id: id };
+}
+
+function formLinkRequest(draft) {
+  const subId = Number((draft.submission || {}).submission_id);
+  if (!Number.isSafeInteger(subId) || subId < 1) throw new Error('This card has no usable submission id.');
+  const l = draft.link || {};
+  const linkId = typeof l.link_id === 'string' ? l.link_id : '';
+  formRecordPath(l.link_type, linkId);
+  return { path: `/api/forms/submissions/${subId}/link`, method: 'PATCH', body: { link_type: l.link_type, link_id: linkId } };
+}
+
+async function formLinkPrecheck(draft) {
+  const req = formLinkRequest(draft); // a card that cannot be written is never read
+  const x = draft.expected || {};
+  const subId = Number(draft.submission.submission_id);
+  try { await api(formRecordPath(req.body.link_type, req.body.link_id), null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `${formRecordLabel(draft)} no longer exists. Nothing was written.`; throw e; }
+  let got;
+  try { got = await api(`/api/forms/submissions/${subId}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `Submission #${subId} no longer exists. Nothing was written.`; throw e; }
+  const s = got && got.submission;
+  if (!s || Number(s.id) !== subId || !('link_type' in s) || !('version' in s)) throw new Error('the submission could not be read');
+  if (s.link_type !== '') return `Submission #${subId} is already linked (${s.link_type} ${s.link_id}) — someone linked it since this card was prepared. Nothing was written.`;
+  if (String(s.status) !== String(x.status) || String(s.link_type) !== String(x.link_type) || String(s.link_id == null ? '' : s.link_id) !== String(x.link_id) || Number(s.version) !== Number(x.version)) {
+    return `Submission #${subId} changed since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function formLinkResult(draft, result) {
+  const req = formLinkRequest(draft);
+  const subId = Number(draft.submission.submission_id);
+  if (!result || result.status !== 'success' || Number(result.id) !== subId) throw new Error('The forms route did not confirm the submission');
+  if (result.link_type !== req.body.link_type || String(result.link_id).toLowerCase() !== req.body.link_id.toLowerCase()) throw new Error('The forms route did not link the reviewed record');
+  return { submission_id: subId };
+}
+
+// The link route's answers written before any write, worded for staff: its
+// 409s (already linked — its own read or its conditional UPDATE losing a race
+// — and the template's link type) and its 404s (the submission or the target
+// is gone). A 400 is a refusal by the shared rule; anything else stays ambiguous.
+function formLinkKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const refused = 'Refused — nothing written';
+  const message = String((e && e.body && e.body.message) || (e && e.message) || '');
+  if (e && e.status === 409) {
+    if (/^Submission \d+ is already linked \(/.test(message) || /^Submission \d+ was linked by someone else — refresh$/.test(message)) {
+      return { status: refused, text: `Refused — nothing written: ${message.replace(/ — refresh$/, '')} — someone linked it after this card was prepared. Ask Casey to read it again.` };
+    }
+    if (/^Form ".+" is a \w+-linked form — it cannot be linked to a \w+$/.test(message)) {
+      return { status: refused, text: `Refused — nothing written: ${message}.` };
+    }
+  }
+  if (e && e.status === 404 && (/^Submission \d+ not found$/.test(message) || /^(?:case|contact|appt) ".*" not found$/.test(message))) {
+    return { status: refused, text: `Refused — nothing written: ${message} — it no longer exists. Ask Casey to read it again.` };
+  }
+  return null;
+}
+
+function formEntity(draft) {
+  const r = (draft.kind === 'form.submission.link.v1' ? draft.target : draft.record) || {};
+  const linkType = r.link_type === 'contact' ? 'contact' : 'case';
+  return { kind: linkType, id: String(r.link_id || ''), label: formRecordLabel(draft).replace(/^case /, '').replace(/ \(contact #\d+\)$/, '') };
+}
+
+function formOpen(draft) {
+  const e = formEntity(draft);
+  openEntity(e.kind, e.id, e.label);
+}
+
 // Safe code jobs (safe-mode S3). The body runs ONCE in the QuickJS guest
 // engine (no network, no DB, no host realm), so the reviewed card schedules a
 // computation, not server-side execution capability. code_mode is pinned
@@ -3727,6 +3953,47 @@ const ACTION_FAMILIES = [
     }),
     reviewWarning: 'Review the case, each number before and after, every reader that shows it (court email included) and every trigger rule it runs — they start the moment it is saved. Nothing is sent by Casey itself. Canceling writes nothing.',
     open: (draft) => openEntity('case', String(draft.case && draft.case.case_id), caseDocketAfterLabel(draft)),
+  },
+  {
+    // A12: the receipt is the integer submission_id the draft route upserted.
+    id: 'form_draft', kinds: FORM_DRAFT_ACTION_KINDS, title: 'Form draft', noun: 'form draft', errorNoun: 'form draft',
+    label: formLabel, text: formText, request: formDraftRequest, result: formDraftResult,
+    idField: 'submission_id', appliedKey: 'result_form_draft_id',
+    // A recent draft by someone else, fields a restore blanks, or a client who sees it.
+    danger: (draft) => (draft.warnings || []).length > 0,
+    precheck: formDraftPrecheck,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `draft #${payload.submission_id}`,
+    entity: (draft) => formEntity(draft),
+    failure: 'The form draft could not be saved.',
+    appliedCopy: (draft) => ({
+      status: `Applied — draft #${draft.result_form_draft_id} saved`,
+      warning: `"${formTitle(draft)}" now has a draft for ${formRecordLabel(draft)}, saved using your signed-in account. It is NOT submitted — open the form and Restore the draft to review and save it.`,
+      button: `Open ${formEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review the form, the record, every answer before and after, the answers carried forward and who can see the draft. It is saved as a draft only — nothing is submitted. Canceling writes nothing.',
+    open: formOpen,
+  },
+  {
+    // A12: the receipt is the integer submission_id the link route adopted.
+    id: 'form_link', kinds: FORM_LINK_ACTION_KINDS, title: 'Form submission link', noun: 'submission link', errorNoun: 'submission link',
+    label: formLabel, text: formText, request: formLinkRequest, result: formLinkResult,
+    idField: 'submission_id', appliedKey: 'result_form_link_id',
+    // Answers that match no one on the record, or a record with nobody to compare.
+    danger: (draft) => (draft.warnings || []).length > 0,
+    precheck: formLinkPrecheck,
+    knownOutcome: formLinkKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `submission #${payload.submission_id}`,
+    entity: (draft) => formEntity(draft),
+    failure: 'The submission could not be linked.',
+    appliedCopy: (draft) => ({
+      status: `Applied — submission #${draft.result_form_link_id} linked`,
+      warning: `"${formTitle(draft)}" submission #${draft.result_form_link_id} is now linked to ${formRecordLabel(draft)} (version ${Number(draft.version_after) || 0}), using your signed-in account. The route never unlinks it.`,
+      button: `Open ${formEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review the submission, its name / phone / email against the people on the record, the version it becomes and the log entry. Linking is one-way. Canceling writes nothing.',
+    open: formOpen,
   },
   {
     id: 'job', kinds: JOB_ACTION_KINDS, title: 'Safe code job', noun: 'scheduled job', errorNoun: 'job action',

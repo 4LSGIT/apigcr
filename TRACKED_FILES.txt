@@ -1254,6 +1254,8 @@ tests/caseyDocket.mysql.test.js
 tests/caseyDocket.test.js
 tests/caseyDocuments.mysql.test.js
 tests/caseyDocuments.test.js
+tests/caseyForms.mysql.test.js
+tests/caseyForms.test.js
 tests/caseyHookCreate.test.js
 tests/caseyIngestRule.mysql.test.js
 tests/caseyIngestRule.test.js
@@ -1489,6 +1491,7 @@ tests/formRender.slice2.test.js
 tests/formRender.slice25A.test.js
 tests/formRender.slice25B.test.js
 tests/formRender.slice26.test.js
+tests/formRender.sync.test.js
 tests/formRender.x6card.test.js
 tests/formTemplates_slice4_service.test.js
 tests/formbuilder.formdev.ui.test.js

@@ -1091,6 +1091,39 @@ COMMENTs.)
   that step fails without sending — and the card does not warn.
   The card could read the contact's active phone/email rows and say so.
 
+## From the Ask Casey arc — A12 forms (2026-11-02) — deferred
+
+- **Submitting a form** (POST `/api/forms/submit`): fires `form.submitted`,
+  can PATCH the record (`onSubmit.patch`) and start workflows from the BROWSER
+  (`onSubmit.workflows` — yc-forms' save(), not the route), so a Casey submit
+  needs its own card: the record columns it writes, every workflow it starts,
+  the trigger rules on `form.submitted`, and required answers as refusals.
+- **PDF render / filing** (`/api/forms/submissions/:id/pdf/file` — not
+  idempotent, a second call files a second copy).
+- **Template editing, publishing, visibility, version restore, deletion.**
+- **Deleting / discarding a draft** (DELETE `/api/forms/draft`).
+- **Appointment-linked forms** — no template links to an appointment today.
+- **The hand-built form pages on the bus.** `casedetails.html`,
+  `casedetails-bk.html`, `341notes.html`, `issn.html` and `contact-form.html`
+  do not load yc-sync, so they miss `form:` markers (render.html does). Loading
+  it is one script tag each, but contact-form.html mirrors save() by hand and
+  would need `_draftConflict` cleared on its own save.
+- **The record's Forms tab and the Form Inbox on the bus.**
+  `forms/submissionsWidget.html` and `formInbox.html` load yc-sync but do not
+  subscribe, so a link made elsewhere shows only on refresh.
+- **Native gaps found while tracing (not Casey's):**
+  - Drafts have no concurrency check: two people (two browsers — the bus is
+    per browser) with the same form open replace each other's draft on every
+    autosave, whole. An `updated_at` precondition on POST `/api/forms/draft`
+    would refuse the stale one.
+  - POST `/api/forms/draft` defaults `schema_version` to 1 when the body omits
+    it, and maps every failure to 500 (no 400 for a malformed `data`).
+  - `linkSubmission`'s log entry says "linked … from the Form Inbox" whoever
+    calls it.
+  - The D1 public draft GET returns whatever draft row exists for (form, case)
+    — a staff draft included — to whoever holds the case link (the accepted
+    D1 trade; worth a line in the form builder's server-drafts toggle).
+
 ## From the Ask Casey arc — A7c docket adopt (2026-11-02) — deferred
 
 - **Replacing a docket.** The adopt route refuses it by design (a

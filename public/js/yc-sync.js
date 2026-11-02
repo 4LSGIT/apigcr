@@ -79,6 +79,8 @@
  *   'doclink:case:AAAAAAAA'   ← Documents S3: the SET of documents on a target
  *   'checklist:case:AAAAAAAA' ← A10: the SET of notes & lists on a record
  *                               (the doclink split again — see its matchers)
+ *   'form:case:AAAAAAAA'      ← A12: a record's form rows (drafts and
+ *                               adopted submissions) — a refetch marker
  *
  * Subscribe to a specific entity, or to `'case:*'` for every case (the Cases
  * tab's "something, somewhere, changed" subscription). The wildcard is a
@@ -1073,7 +1075,47 @@
     [/^\/checklists$/,               'checklist', checklistGetter(false), ['POST']],
     [/^\/checklists\/(\d+)\/items$/, 'checklist', checklistGetter(false), ['POST']],
     [/^\/checkitems\/(\d+)$/,        'checklist', checklistGetter(true),  ['PATCH']],
+
+    /* FORMS (A12). A saved draft and a submission adopted onto a record
+       announce the RECORD whose form rows changed, as
+       `form:<link_type>:<link_id>` — a marker (`yc_refetch`): a draft is a
+       whole payload, never a `{column: value}` diff, and the reader re-reads
+       GET /api/forms/latest for its own form anyway. Not `case:<id>`: the
+       form rows are not the case row, and that would cost every open case
+       file a full refetch on every autosave. The reader is YCForm itself
+       (public/js/yc-forms.js _setupSync) in every form host that loads this
+       file.
+         POST  /api/forms/draft                  { id, updated_at } + the
+                                                 additive { form_key,
+                                                 link_type, link_id } echo the
+                                                 route carries for this (the
+                                                 service row has no link)
+         PATCH /api/forms/submissions/:id/link   { id, link_type, link_id,
+                                                 version, … } — the TARGET
+       Fails closed without a link (an unlinked '' row belongs to no record).
+       Not matched: POST /api/forms/submit, DELETE /api/forms/draft and the
+       PDF routes — no Casey card sends them (ref/plans.md). */
+    [/^\/api\/forms\/draft$/,                         'form', formGetter, ['POST']],
+    [/^\/api\/forms\/submissions\/(\d+)\/link$/, 'form', formGetter, ['PATCH']],
   ];
+
+  /**
+   * Form writes — announce the RECORD whose form rows changed (A12).
+   *
+   * Array return (getter contract v2): the address is the record, which the
+   * draft URL never names; both routes answer `link_type` / `link_id`.
+   *
+   * @param   {object} r  the parsed response body
+   * @returns {Array|null}
+   */
+  function formGetter(r) {
+    if (!r || typeof r !== 'object') return null;
+    var t = r.link_type;
+    var l = r.link_id;
+    if (typeof t !== 'string' || !t) return null;
+    if (l == null || l === '') return null;
+    return [{ addr: 'form:' + t + ':' + l, fields: { yc_refetch: 1 } }];
+  }
 
   /**
    * Checklist writes — announce the RECORD whose notes-and-lists set changed.

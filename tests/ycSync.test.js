@@ -2707,3 +2707,68 @@ describe('_sniff — checklist matchers (A10)', () => {
     expect(seenB).toEqual([{ addr: 'checklist:case:AAAA', fields: { yc_refetch: 1 } }]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// _sniff — forms (A12)
+//
+// A saved draft and an adopted submission announce the RECORD whose form rows
+// changed, `form:<link_type>:<link_id>`, with a refetch marker (a draft is a
+// whole payload, never a column diff). The draft route's service row has no
+// link, so the route echoes form_key / link_type / link_id additively; the
+// link route answers the TARGET.
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — form matchers (A12)', () => {
+  function spy(w) {
+    const seen = [];
+    ['form:*', 'case:*', 'contact:*'].forEach((a) => w.YC.on(a, '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin })));
+    return seen;
+  }
+
+  test('the draft POST and the link PATCH announce the record, with a marker (their real answers)', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST',  '/api/forms/draft', { status: 'success', id: 88, updated_at: '2026-11-02T10:00:00.000Z', form_key: '341_notes', link_type: 'case', link_id: 'AAAA' });
+    w.YC._sniff('PATCH', '/api/forms/submissions/602/link', { status: 'success', id: 602, link_type: 'contact', link_id: '77', version: 5, linked_by: 6, intake_stamped: false, logged: true });
+    expect(seen).toEqual([
+      { addr: 'form:case:AAAA', fields: { yc_refetch: 1 }, origin: 'auto:POST /api/forms/draft' },
+      { addr: 'form:contact:77', fields: { yc_refetch: 1 }, origin: 'auto:PATCH /api/forms/submissions/602/link' },
+    ]);
+  });
+
+  test('FAILS CLOSED: the pre-A12 draft answer (no echo), an unlinked row, an error body', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST',  '/api/forms/draft', { status: 'success', id: 88, updated_at: '2026-11-02T10:00:00.000Z' });
+    w.YC._sniff('POST',  '/api/forms/draft', { status: 'success', id: 88, link_type: '', link_id: '' });
+    w.YC._sniff('POST',  '/api/forms/draft', { status: 'success', id: 88, link_type: 'case', link_id: null });
+    w.YC._sniff('PATCH', '/api/forms/submissions/602/link', { status: 'error', message: 'Submission 602 is already linked (case B)' });
+    expect(seen).toEqual([]);
+  });
+
+  test('only the two writes: GET, submit, the draft DELETE, the PDF routes and other verbs are silent', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    const row = { status: 'success', id: 1, form_key: 'k', link_type: 'case', link_id: 'AAAA' };
+    w.YC._sniff('GET',    '/api/forms/latest?form_key=k&link_type=case&link_id=AAAA', row);
+    w.YC._sniff('POST',   '/api/forms/submit', row);
+    w.YC._sniff('DELETE', '/api/forms/draft?form_key=k&link_type=case&link_id=AAAA', row);
+    w.YC._sniff('PUT',    '/api/forms/draft', row);
+    w.YC._sniff('POST',   '/api/forms/submissions/1/link', row);
+    w.YC._sniff('PATCH',  '/api/forms/submissions/abc/link', row);
+    w.YC._sniff('POST',   '/api/forms/submissions/1/pdf/file', row);
+    w.YC._sniff('POST',   '/api/ext/forms/k/draft', row);
+    expect(seen).toEqual([]);
+  });
+
+  test('a form write crosses windows — the form open elsewhere hears it — and never wakes a case or contact page', async () => {
+    const a = mkWindow();
+    const b = mkWindow();
+    const seenB = []; const records = [];
+    b.YC.on('form:case:AAAA', '*', (f, m) => seenB.push({ addr: m.addr, fields: f }));
+    ['case:*', 'contact:*'].forEach((x) => b.YC.on(x, '*', (f, m) => records.push(m.addr)));
+    a.YC._sniff('POST', '/api/forms/draft?x=1', { status: 'success', id: 9, form_key: 'k', link_type: 'case', link_id: 'AAAA' });
+    await settle();
+    expect([seenB, records]).toEqual([[{ addr: 'form:case:AAAA', fields: { yc_refetch: 1 } }], []]);
+  });
+});

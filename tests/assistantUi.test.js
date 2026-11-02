@@ -82,6 +82,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'documentOpenInfo', 'documentEntity', 'documentOpen',
   'caseDocketLabel', 'caseDocketCaseLabel', 'caseDocketAfterLabel', 'caseDocketShown', 'caseDocketText', 'caseDocketBody', 'caseDocketRequest',
   'caseDocketPrecheck', 'caseDocketResult', 'caseDocketKnownOutcome',
+  'formCanonical', 'formDataHash', 'formIso', 'formRecordLabel', 'formLabel', 'formTitle', 'formText', 'formRecordPath', 'formDraftRequest',
+  'formDraftPrecheck', 'formDraftResult', 'formLinkRequest', 'formLinkPrecheck', 'formLinkResult', 'formLinkKnownOutcome', 'formEntity', 'formOpen',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
   'workflowDraftLabel', 'workflowSendLines', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
   'workflowStepActionLabel', 'workflowStepWorkflowLine', 'workflowStepInsertText', 'workflowStepEditValue',
@@ -122,6 +124,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'DOCUMENT_ACTION_KINDS'), constSrc(html, 'DOCLINK_ACTION_KINDS'), constSrc(html, 'DOCUMENT_FIELD_MAX'),
     constSrc(html, 'CASE_DOCKET_ACTION_KINDS'), constSrc(html, 'CASE_DOCKET_FIELDS'), constSrc(html, 'CASE_DOCKET_NAMES'),
     constSrc(html, 'CASE_DOCKET_MAX'), constSrc(html, 'CASE_DOCKET_CONTROL'),
+    constSrc(html, 'FORM_DRAFT_ACTION_KINDS'), constSrc(html, 'FORM_LINK_ACTION_KINDS'), constSrc(html, 'FORM_DATA_MAX_BYTES'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
     constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEQUENCE_ENROLL_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
@@ -3808,6 +3811,254 @@ describe('A7c docket card (case.docket.adopt)', () => {
     const fam = box.actionFamily({ kind: 'case.docket.adopt.v1' });
     expect([[...fam.kinds], fam.idField, fam.appliedKey, !!fam.stringReceipt]).toEqual([['case.docket.adopt.v1'], 'case_id', 'result_docket_case_id', true]);
     for (const kind of ['case.docket.replace.v1', 'case.docket.clear.v1', 'case.field.update.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    dom.window.close();
+  });
+});
+
+describe('A12 form cards (form.draft / form.submission.link)', () => {
+  const CASE_ID = '7KQ2M9XA';
+  const sha = (text) => require('crypto').createHash('sha256').update(text, 'utf8').digest('hex');
+  // Model-shaped junk that must never reach a request.
+  const JUNK = { status: 'draft', version: 9, submitted_by: 1, submit: true, schema_version: 99 };
+  const STORED = { trustee_name: 'Old', outcome: 'Continued' };
+  const DATA = { outcome: 'Continued', trustee_name: 'Jane Trustee' };
+  const AT = '2026-11-01T10:00:00.000Z';
+  const draftMsg = (over = {}) => ({ action_draft: {
+    draft_id: '7a7a7a7a-1b2c-4d3e-8f40-123456789abc', kind: 'form.draft.v1', received_at: Date.now(), ...JUNK, status: 'draft',
+    form: { form_key: '341_notes', title: '341 Notes', link_type: 'case', visibility: 'internal', schema_version: 4, data_mode: 'snapshot' },
+    record: { link_type: 'case', link_id: CASE_ID, label: 'case 25-12345' },
+    changes: [{ key: 'trustee_name', label: 'Trustee', type: 'text', before: '"Old"', after: '"Jane Trustee"', unchanged: false }],
+    carried: { count: 1, off_form: 0 }, existing: { draft_id: 55, updated_at: AT, saved_by: 'Stuart (user #2)', schema_version: 4 },
+    submitted: null, required_empty: [], absent: 0, data: DATA, data_bytes: 52,
+    effects: ['Saved as a DRAFT only — nothing is submitted. No submission of this form exists on this record yet.'], warnings: [],
+    expected: { draft_id: 55, updated_at: AT, data_hash: sha('{"outcome":"Continued","trustee_name":"Old"}') }, evidence: [], ...over } });
+  const caseGet = () => ({ case: { case_id: CASE_ID } });
+  const LATEST = `/api/forms/latest?form_key=341_notes&link_type=case&link_id=${CASE_ID}`;
+  const reads = (over = {}) => (path) => {
+    if (path === `/api/cases/${CASE_ID}`) { if (over.gone) throw Object.assign(new Error('Case not found'), { status: 404 }); return caseGet(); }
+    if (path === LATEST) {
+      if (over.latest !== undefined) return over.latest;
+      // MySQL hands the JSON back with its keys re-ordered.
+      return { status: 'success', submitted: null, draft: { id: 55, schema_version: 4, data: { outcome: 'Continued', trustee_name: 'Old' }, updated_at: AT, user_name: 'Stuart' } };
+    }
+    if (path === '/api/forms/submissions/4521') {
+      if (over.subGone) throw Object.assign(new Error('Submission 4521 not found'), { status: 404 });
+      return over.sub || { status: 'success', submission: { id: 4521, form_key: '341_notes', status: 'submitted', link_type: '', link_id: '', version: 17 } };
+    }
+    throw new Error(`unexpected read ${path}`);
+  };
+  function runForm(message, { read = reads(), write, confirm = true } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); return read(path, body); }
+      writes.push({ path, body, method, headers }); return write(path, body, method);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a12' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) } };
+    const history = []; const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, openEntity, sandbox }));
+  }
+  const saved = async (_p, body) => ({ status: 'success', id: 55, updated_at: '2026-11-02T10:00:00.000Z', form_key: body.form_key, link_type: body.link_type, link_id: body.link_id });
+
+  test('draft: re-reads the record and the draft; ONE POST of exactly the reviewed form, record, template version and whole data (no junk); the integer receipt', async () => {
+    const m = draftMsg();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runForm(m, { write: saved });
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('form_draft');
+    expect(gets).toEqual([`/api/cases/${CASE_ID}`, LATEST]);
+    expect(writes).toEqual([{ path: '/api/forms/draft', method: 'POST', headers: undefined,
+      body: { form_key: '341_notes', link_type: 'case', link_id: CASE_ID, schema_version: 4, data: DATA } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a12', result: { submission_id: 55 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_form_draft_id: 55 });
+    expect(history[0].text).toBe('Save form draft applied to draft #55.');
+    expect(history[0].entities).toEqual([{ kind: 'case', id: CASE_ID, label: '25-12345' }]);
+    expect(openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'question', confirmButtonText: 'Save form draft' });
+    for (const line of ['Form draft proposal — not applied', 'Form: "341 Notes" (341_notes, a case form, internal, form version 4)', 'Record: case 25-12345',
+      'Existing draft: #55, saved by Stuart (user #2) at 2026-11-01 10:00 UTC — replaced whole; 1 existing answer(s) carried forward unchanged',
+      'Latest submission: none', 'Answer: Trustee (trustee_name): "Old" → "Jane Trustee"',
+      'Effect: Saved as a DRAFT only — nothing is submitted.', 'Writes: one DRAFT row for this form and record — never a submission',
+      'Stale check: if anyone saves, restores or discards this draft before you apply, nothing is written.',
+      'Notification: Casey sends nothing; saving a draft runs no trigger rule.']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+    // A warning danger-styles the card; a card with no draft expects none and creates one.
+    const fresh = draftMsg({ existing: null, expected: { draft_id: null, updated_at: null, data_hash: null }, warnings: ['RESTORE BLANKS 3 FIELDS: …'],
+      changes: [{ key: 'trustee_name', label: 'Trustee', type: 'text', before: null, after: '"Jane Trustee"', unchanged: false }] });
+    const rf = await runForm(fresh, { write: saved, read: reads({ latest: { status: 'success', submitted: null, draft: null } }) });
+    expect(rf.writes.length).toBe(1);
+    expect(rf.P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning', focusCancel: true });
+    expect(rf.P.Swal.fire.mock.calls[0][0].text).toContain('Existing draft: none — this card creates it');
+    expect(rf.P.Swal.fire.mock.calls[0][0].text).toContain('Answer: Trustee (trustee_name): (not in the draft) → "Jane Trustee"');
+  });
+
+  test('draft: the builder fixes route, method and body; a bad card never reaches a read, the claim or the route', async () => {
+    const big = { trustee_name: 'x'.repeat(70 * 1024) };
+    for (const [message, why] of [
+      [draftMsg({ form: { form_key: 'bad key!', link_type: 'case', schema_version: 4 } }), 'no usable form'],
+      [draftMsg({ record: { link_type: 'case', link_id: 'bad id!' } }), 'no usable record'],
+      [draftMsg({ record: { link_type: 'bill', link_id: '9' } }), 'no usable record'],
+      [draftMsg({ record: { link_type: 'contact', link_id: '1309' } }), 'not the form\'s link type'],
+      [draftMsg({ form: { form_key: '341_notes', link_type: 'case', schema_version: 0 } }), 'no usable form version'],
+      [draftMsg({ data: {} }), 'has no answers'],
+      [draftMsg({ data: ['x'] }), 'has no answers'],
+      [draftMsg({ data: { outcome: 'Continued' } }), 'do not carry the reviewed change'],
+      [draftMsg({ data: big, changes: [] }), 'over the form store\'s 64 KB limit'],
+    ]) {
+      const x = await runForm(message, { write: saved });
+      expect({ why, gets: x.gets, ledger: x.ledger, writes: x.writes }).toEqual({ why, gets: [], ledger: [], writes: [] });
+      expect(message.action_draft.action_error).toContain(why);
+    }
+  });
+
+  test('draft: click-time freshness refuses BEFORE the claim, on ANY difference in the draft (key order is not one)', async () => {
+    const draftRow = (over) => ({ status: 'success', submitted: null, draft: { id: 55, data: { outcome: 'Continued', trustee_name: 'Old' }, updated_at: AT, user_name: 'Stuart', ...over } });
+    for (const [message, read, why] of [
+      [draftMsg(), reads({ gone: true }), 'case 25-12345 no longer exists. Nothing was written.'],
+      [draftMsg(), reads({ latest: { status: 'success', submitted: null, draft: null } }), 'The draft of "341 Notes" for case 25-12345 was discarded or submitted since this card was prepared.'],
+      [draftMsg(), reads({ latest: draftRow({ id: 56 }) }), 'The draft of "341 Notes" for case 25-12345 changed since this card was prepared (someone saved it — last by Stuart). Nothing was written; its answers would have been replaced.'],
+      [draftMsg(), reads({ latest: draftRow({ updated_at: '2026-11-01T10:00:01.000Z' }) }), 'changed since this card was prepared'],
+      [draftMsg(), reads({ latest: draftRow({ data: { outcome: 'Concluded', trustee_name: 'Old' } }) }), 'changed since this card was prepared'],
+      [draftMsg(), reads({ latest: draftRow({ data: '{"outcome":"Continued","trustee_name":"Old","x":1}' }) }), 'changed since this card was prepared'],
+      [draftMsg({ existing: null, expected: { draft_id: null, updated_at: null, data_hash: null } }), reads(),
+        'Someone saved a draft of "341 Notes" for case 25-12345 since this card was prepared (draft #55, by Stuart). Nothing was written — this card would have replaced it.'],
+    ]) {
+      const x = await runForm(message, { read, write: saved });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(message.action_draft.refusal_error).toContain(why);
+    }
+    // The stored JSON as a STRING, keys in another order, still matches.
+    const s = draftMsg();
+    const rs = await runForm(s, { read: reads({ latest: draftRow({ data: '{"trustee_name":"Old","outcome":"Continued"}' }) }), write: saved });
+    expect(rs.writes.length).toBe(1);
+    // An unreadable answer leaves the card retryable (nothing claimed).
+    const u = draftMsg();
+    const ur = await runForm(u, { read: reads({ latest: { status: 'success' } }), write: saved });
+    expect([ur.writes, ur.ledger]).toEqual([[], []]);
+    expect(u.action_draft.action_error).toMatch(/^Could not re-check the record before applying \(the form could not be read\)/);
+  });
+
+  test('draft: outcomes — a 400 refuses; a 500, a missing echo and a missing id stay ambiguous', async () => {
+    const bad = draftMsg();
+    await runForm(bad, { write: async () => { throw Object.assign(new Error('Missing required fields: form_key, link_type, link_id, data'), { status: 400 }); } });
+    expect(bad.action_draft.refusal_error).toBe('Refused — nothing written (Missing required fields: form_key, link_type, link_id, data). Ask Casey to prepare it again.');
+    const lost = draftMsg();
+    await runForm(lost, { write: async () => { throw Object.assign(new Error('boom'), { status: 500 }); } });
+    expect(lost.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    const noEcho = draftMsg();
+    await runForm(noEcho, { write: async () => ({ status: 'success', id: 55, updated_at: 'x' }) });
+    expect(noEcho.action_draft.ambiguous_error).toMatch(/did not confirm the reviewed form and record/);
+    const otherRecord = draftMsg();
+    await runForm(otherRecord, { write: async (p, body) => ({ ...(await saved(p, body)), link_id: 'OTHER123' }) });
+    expect(otherRecord.action_draft.ambiguous_error).toMatch(/did not confirm the reviewed form and record/);
+    const noId = draftMsg();
+    await runForm(noId, { write: async (p, body) => ({ ...(await saved(p, body)), id: 0 }) });
+    expect(noId.action_draft.ambiguous_error).toMatch(/did not confirm the draft/);
+  });
+
+  const linkMsg = (over = {}) => ({ action_draft: {
+    draft_id: '8b8b8b8b-1b2c-4d3e-8f40-123456789abc', kind: 'form.submission.link.v1', received_at: Date.now(), ...JUNK, status: 'draft',
+    submission: { submission_id: 4521, form_key: '341_notes', title: '341 Notes', created_at: '2026-10-30T15:04:00.000Z', version: 17, saved_by: 'the public form (no staff account)' },
+    identity: [{ answer: 'name', value: 'Dana Debtor', matched: 'Dana Q. Debtor' }, { answer: 'phone', value: '555-1212', matched: null, note: 'not a 10-digit phone number' }],
+    target: { link_type: 'case', link_id: CASE_ID, case_id: CASE_ID, case_type: 'Bankruptcy', label: 'case 25-12345' },
+    link: { link_type: 'case', link_id: CASE_ID }, version_after: 3,
+    effects: ['Log: a "form" entry is written on case 25-12345'], warnings: ['IDENTITY MISMATCH: …'],
+    expected: { status: 'submitted', link_type: '', link_id: '', version: 17 }, evidence: [], ...over } });
+  const linked = async () => ({ status: 'success', id: 4521, link_type: 'case', link_id: CASE_ID, version: 3, linked_by: 6, intake_stamped: false, logged: true });
+
+  test('link: re-reads the record and the submission; ONE PATCH of exactly {link_type, link_id}; the integer receipt; a mismatch danger-styles the card', async () => {
+    const m = linkMsg();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runForm(m, { write: linked });
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('form_link');
+    expect(gets).toEqual([`/api/cases/${CASE_ID}`, '/api/forms/submissions/4521']);
+    expect(writes).toEqual([{ path: '/api/forms/submissions/4521/link', method: 'PATCH', headers: undefined, body: { link_type: 'case', link_id: CASE_ID } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a12', result: { submission_id: 4521 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_form_link_id: 4521 });
+    expect(history[0].text).toBe('Link form submission to case applied to submission #4521.');
+    expect(openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Link form submission to case' });
+    for (const line of ['Form submission link proposal — not applied', 'Submission: #4521 "341 Notes" (341_notes), received 2026-10-30 15:04 UTC by the public form (no staff account) — unlinked',
+      'Answer: name "Dana Debtor" — matches Dana Q. Debtor', 'Answer: phone "555-1212" — matches no one on case 25-12345 (not a 10-digit phone number)',
+      'Link to: case 25-12345 (Bankruptcy)', 'Becomes: version 3 of "341 Notes" on that record', 'Warning: IDENTITY MISMATCH: …',
+      'One-way: the route never unlinks or relinks a submission.', 'Stale check: if the submission is linked, removed or changed before you apply, nothing is written.']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+  });
+
+  test('link: the builder; click-time freshness before the claim', async () => {
+    for (const [message, why] of [
+      [linkMsg({ submission: { submission_id: 0 } }), 'no usable submission id'],
+      [linkMsg({ link: { link_type: 'case', link_id: 'bad id!' } }), 'no usable record'],
+      [linkMsg({ link: { link_type: 'appt', link_id: '5' } }), 'no usable record'],
+    ]) {
+      const x = await runForm(message, { write: linked });
+      expect({ why, gets: x.gets, ledger: x.ledger, writes: x.writes }).toEqual({ why, gets: [], ledger: [], writes: [] });
+      expect(message.action_draft.action_error).toContain(why);
+    }
+    const sub = (over) => ({ status: 'success', submission: { id: 4521, status: 'submitted', link_type: '', link_id: '', version: 17, ...over } });
+    for (const [read, why] of [
+      [reads({ gone: true }), 'case 25-12345 no longer exists. Nothing was written.'],
+      [reads({ subGone: true }), 'Submission #4521 no longer exists. Nothing was written.'],
+      [reads({ sub: sub({ link_type: 'case', link_id: 'ZZ1', version: 1 }) }), 'Submission #4521 is already linked (case ZZ1) — someone linked it since this card was prepared. Nothing was written.'],
+      [reads({ sub: sub({ version: 18 }) }), 'Submission #4521 changed since this card was prepared.'],
+      [reads({ sub: sub({ status: 'draft' }) }), 'Submission #4521 changed since this card was prepared.'],
+    ]) {
+      const message = linkMsg();
+      const x = await runForm(message, { read, write: linked });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(message.action_draft.refusal_error).toContain(why);
+    }
+    const u = linkMsg();
+    const ur = await runForm(u, { read: reads({ sub: { status: 'success', submission: { id: 4521 } } }), write: linked });
+    expect([ur.writes, ur.ledger]).toEqual([[], []]);
+    expect(u.action_draft.action_error).toMatch(/^Could not re-check the record before applying \(the submission could not be read\)/);
+  });
+
+  test('link: outcomes — the route\'s 409s and 404s are refusals that wrote nothing; a 400 refuses; a bare 409, a 500 and an unconfirmed answer stay ambiguous', async () => {
+    const fail = (status, message) => async () => { throw Object.assign(new Error(message), { status, body: { status: 'error', message } }); };
+    for (const [status, message, text] of [
+      [409, 'Submission 4521 is already linked (case ZZ1)', 'Refused — nothing written: Submission 4521 is already linked (case ZZ1) — someone linked it after this card was prepared. Ask Casey to read it again.'],
+      [409, 'Submission 4521 was linked by someone else — refresh', 'Refused — nothing written: Submission 4521 was linked by someone else — someone linked it after this card was prepared. Ask Casey to read it again.'],
+      [409, 'Form "341_notes" is a contact-linked form — it cannot be linked to a case', 'Refused — nothing written: Form "341_notes" is a contact-linked form — it cannot be linked to a case.'],
+      [404, 'Submission 4521 not found', 'Refused — nothing written: Submission 4521 not found — it no longer exists. Ask Casey to read it again.'],
+      [404, `case "${CASE_ID}" not found`, `Refused — nothing written: case "${CASE_ID}" not found — it no longer exists. Ask Casey to read it again.`],
+      [400, 'Only submitted submissions can be linked', 'Refused — nothing written (Only submitted submissions can be linked). Ask Casey to prepare it again.'],
+    ]) {
+      const m = linkMsg();
+      await runForm(m, { write: fail(status, message) });
+      expect(m.action_draft.refusal_error).toBe(text);
+    }
+    // Any other 404 is a refusal by the shared 4xx rule (the route read it and wrote nothing).
+    const other404 = linkMsg();
+    await runForm(other404, { write: fail(404, 'Not found') });
+    expect(other404.action_draft.refusal_error).toBe('Refused — nothing written (Not found). Ask Casey to prepare it again.');
+    for (const write of [fail(409, 'conflict'), fail(409, 'Submission 4521 is already linked'), fail(500, 'boom'),
+      async () => ({ ...(await linked()), id: 4522 }), async () => ({ ...(await linked()), link_id: 'OTHER123' })]) {
+      const m = linkMsg();
+      await runForm(m, { write });
+      expect(m.action_draft.ambiguous_error).toMatch(/may already have been applied|did not confirm the submission|did not link the reviewed record/);
+    }
+  });
+
+  test('reopened cards restore from the ledger with the integer receipt; two families, one kind each', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    const d = draftMsg(); const l = linkMsg();
+    box.applyActionResults([d, l], [
+      { draft_id: d.action_draft.draft_id, kind: 'form.draft.v1', outcome: 'applied', result: { submission_id: 55 } },
+      { draft_id: l.action_draft.draft_id, kind: 'form.submission.link.v1', outcome: 'applied', result: { submission_id: 4521 } }]);
+    expect([d.action_draft.status, d.action_draft.result_form_draft_id, l.action_draft.result_form_link_id]).toEqual(['applied', 55, 4521]);
+    const host = dom.window.document.createElement('div');
+    box.hydrateActionDraft(box.actionFamily(d.action_draft), host, d, d.action_draft);
+    expect(host.querySelector('.action-draft-status').textContent).toBe('Applied — draft #55 saved');
+    expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open 25-12345', 'Copy details']);
+    const fd = box.actionFamily({ kind: 'form.draft.v1' }); const fl = box.actionFamily({ kind: 'form.submission.link.v1' });
+    expect([[...fd.kinds], fd.idField, fd.appliedKey, !!fd.stringReceipt]).toEqual([['form.draft.v1'], 'submission_id', 'result_form_draft_id', false]);
+    expect([[...fl.kinds], fl.idField, fl.appliedKey, !!fl.stringReceipt]).toEqual([['form.submission.link.v1'], 'submission_id', 'result_form_link_id', false]);
+    for (const kind of ['form.submit.v1', 'form.template.publish.v1', 'form.draft.delete.v1', 'form.submission.unlink.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
   });
 });

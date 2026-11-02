@@ -42,6 +42,25 @@ If the draft's `schema_version` differs from the form's current `schemaVersion`,
 
 ---
 
+## A Draft Saved Elsewhere
+
+A draft saved for the same record in another frame of the same browser — an
+Ask Casey draft card, or the same form open in another tab — is announced on the
+sync bus (`form:<link_type>:<link_id>`). A form page that loads the bus (the
+form renderer, `forms/render.html`) re-reads the latest draft and submission:
+
+- **No unsaved typing:** the form refreshes and shows the draft banner.
+- **Unsaved typing:** the form is never repopulated. It shows the newer draft's
+  banner and **stops autosaving** ("Draft not saved — a newer draft is
+  waiting") — every autosave replaces the whole draft, so the next one would
+  erase the newer draft. Restore, Discard or a save ends the hold.
+
+The form's own autosave echo is ignored, and the refresh waits while the page
+is hidden or a field has the caret. A copy open in another browser, or one of
+the older hand-built form pages, does not hear it and sees the draft on reload.
+
+---
+
 ## What Happens on Submit
 
 The draft is NOT deleted on submit. It becomes stale — the next autosave overwrites it, and on next load the submission is newer so no banner appears.

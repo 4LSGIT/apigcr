@@ -612,6 +612,50 @@ const CASE_DOCKET_REPLACE_KEY = /replac|overwrit|clear|remov|delet|unset|force|r
 const CASE_DOCKET_OTHER_FIELD_KEY = /status|stage|date|trustee|judge|tag|type|chapter|caption|phase|rec\b|note|alert|source/i;
 // Control characters (C0, DEL, C1) and the Unicode line / paragraph separators.
 const CASE_DOCKET_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+// A12: forms — ONE draft saved for a case's / contact's form
+// (form.draft.v1 → POST /api/forms/draft {form_key, link_type, link_id,
+// schema_version, data}) and ONE unlinked submission adopted onto a case or a
+// contact (form.submission.link.v1 → PATCH /api/forms/submissions/:id/link
+// {link_type, link_id}), the Forms tab's and the Form Inbox's own routes.
+//   * The draft route REPLACES the whole stored payload (INSERT … ON DUPLICATE
+//     KEY UPDATE data = VALUES(data)) and checks nothing against the template,
+//     so the normalizer reads the template's PUBLISHED definition (the same
+//     registry of declared fields the external draft / submit routes use) and
+//     the existing draft (formService.getLatest — the read the click re-runs),
+//     refuses an unknown field and a value of the wrong type, and carries every
+//     existing answer the card does not set forward VERBATIM. `schema_version`
+//     is the template's (server-chosen; the route would store 1 without it).
+//   * The link route refuses a draft, an already-linked row, another link type
+//     than the template's and a missing target; the normalizer refuses them
+//     first and compares the identifying answers (name / phone / email — the
+//     Form Inbox's own keys) with the people on the target.
+// A `form.template` typed read (app pool — form_templates is outside the
+// curated report schema) gives the model the field list before it drafts.
+// One per-family switch, casey_forms_enabled (on unless '0').
+const FORM_ACTION_KINDS = new Set(['form.draft.v1', 'form.submission.link.v1']);
+const FORM_DRAFT_KEYS = new Set(['kind', 'form_key', 'link_type', 'link_id', 'data', 'evidence']);
+const FORM_LINK_KEYS = new Set(['kind', 'submission_id', 'link_type', 'link_id', 'evidence']);
+// form_submissions columns the route owns: refused by name at the top level.
+const FORM_RESERVED_KEYS = ['status', 'version', 'submitted_by', 'schema_version'];
+// Keys that read as another, higher-impact form operation: refused by name.
+const FORM_OTHER_OP_KEY = /submit|publish|pdf|render|file_?to|delete|discard|visib|restore|unlink|relink|template/i;
+const FORM_LINK_TYPES = ['case', 'contact'];
+// form_submissions.data — the same 64 KB storage bound the external routes enforce.
+const FORM_DATA_MAX_BYTES = 64 * 1024;
+// A draft someone ELSE saved this recently is a danger warning.
+const FORM_FOREIGN_DRAFT_MS = 24 * 60 * 60 * 1000;
+// form.template read: the optional field search, and fields listed on a card.
+const FORM_TEMPLATE_SEARCH_MAX = 80;
+const FORM_CARD_LIST = 40;
+// Repeater rows per answer (a card that sets more is not reviewable).
+const FORM_REPEATER_ROWS_MAX = 50;
+// The whole card (it carries the draft's full data): the chat stores a message's
+// details up to 100,000 characters (assistantChatService MAX_PAYLOAD), and the
+// answer text, sources and the applied marker need room beside it.
+const FORM_CARD_MAX_CHARS = 60000;
+// The masks yc-forms strips on collect() (_stripMaskByType), so a draft stores
+// what a person's own save would.
+const FORM_MASK_DIGITS = new Set(['phone', 'ssn', 'zip', 'ein']);
 const CONTACT_PHONE_UPDATE_KEYS = new Set(['label', 'is_primary', 'sms_optout', 'mms_capable', 'notes']);
 const CONTACT_EMAIL_UPDATE_KEYS = new Set(['label', 'is_primary', 'email_optout', 'notes']);
 const CONTACT_ADDRESS_UPDATE_KEYS = new Set(['address1', 'address2', 'city', 'state', 'zip', 'country', 'label', 'is_primary', 'notes']);
@@ -3905,6 +3949,628 @@ async function normalizeCaseDocketAction(db, value, evidence, { currentUserId = 
   };
 }
 
+// ── A12: forms ────────────────────────────────────────────────────────────
+// The template is read on the app pool (form_templates is outside the curated
+// report schema — adding it would need the production grant re-run, A11); the
+// existing draft through formService.getLatest (GET /api/forms/latest — the
+// read the click re-runs); a submission through formService.getSubmission (GET
+// /api/forms/submissions/:id). Real-engine twin: tests/caseyForms.mysql.test.js.
+
+function formError(message) { return httpError(422, message); }
+
+function formHas(obj, key) { return !!obj && Object.prototype.hasOwnProperty.call(obj, key); }
+
+// mysql2 hands a JSON column back parsed or raw depending on driver config.
+function formParse(data) {
+  if (typeof data !== 'string') return data;
+  try { return JSON.parse(data); } catch (_) { return null; }
+}
+
+// Key-order-insensitive serialization: MySQL re-orders JSON object keys on
+// write, so a hash of the stored draft must not depend on key order.
+function formCanonical(value) {
+  if (Array.isArray(value)) return `[${value.map(formCanonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${formCanonical(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value === undefined ? null : value);
+}
+
+// The stored draft's fingerprint; the browser computes the same SHA-256 over
+// the same canonical text at the click (assistant.html formDataHash).
+function formDataHash(data) {
+  return crypto.createHash('sha256').update(formCanonical(data), 'utf8').digest('hex');
+}
+
+// The template row and its PUBLISHED definition (definition NULL = never published).
+async function formTemplateLoad(db, formKey) {
+  const [rows] = await db.query(
+    `SELECT id, form_key, title, link_type, schema_version, visibility, published_at, definition
+       FROM form_templates WHERE form_key = ? LIMIT 1`, [formKey]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) return null;
+  const def = formParse(row.definition);
+  const published = !!(def && typeof def === 'object' && !Array.isArray(def));
+  return {
+    id: Number(row.id), form_key: String(row.form_key), title: String(row.title || row.form_key).slice(0, 150),
+    link_type: String(row.link_type || ''), schema_version: Number(row.schema_version) || 1,
+    visibility: String(row.visibility || 'internal'), published_at: documentIso(row.published_at),
+    definition: published ? def : null, published,
+  };
+}
+
+// The declared fields of a published definition: top-level fields and each
+// repeater's row fields — extFormService.buildValueRegistry, the walk the
+// external draft and submit routes check keys against (display-only content /
+// embed items carry no answer and are not in it).
+function formFields(def) {
+  const { buildValueRegistry } = require('./extFormService'); // lazy (convention)
+  return buildValueRegistry(def);
+}
+
+function formOptionValues(field) {
+  return (Array.isArray(field.options) ? field.options : [])
+    .map((o) => (o && typeof o === 'object' ? String(o.value != null ? o.value : '') : String(o)));
+}
+
+function formLabel(field, key) {
+  const label = String(field && field.label != null && field.label !== '' ? field.label : key).trim();
+  return label.length > 120 ? `${label.slice(0, 120)}…` : label;
+}
+
+function formFieldRow(formKey, key, f, repeater) {
+  const opts = formOptionValues(f);
+  return {
+    row_type: 'field', form_key: formKey, key, label: formLabel(f, key), type: String(f.type || 'text'),
+    required: f.required === true ? 1 : 0, required_when: f.requiredWhen ? 'conditional' : '',
+    options: opts.length ? JSON.stringify(opts) : '',
+    ...(repeater ? { repeater } : {}),
+    ...(f.mask ? { mask: String(f.mask) } : {}),
+    ...(typeof f.min === 'number' ? { min: f.min } : {}),
+    ...(typeof f.max === 'number' ? { max: f.max } : {}),
+    ...(Number(f.maxLength) > 0 ? { max_length: Number(f.maxLength) } : {}),
+    ...(f.allowOther ? { allow_other: 1 } : {}),
+    ...(f.optionsFrom ? { options_note: 'its list is filled when the form opens; Casey may use only the values listed here' } : {}),
+  };
+}
+
+// The form.template read (A12): the template, published or not, and the
+// PUBLISHED definition's field list — key, label, type, required, options —
+// never the raw definition JSON. Optional `search` narrows the field rows by
+// key or label (a 300-field questionnaire does not fit one read).
+async function formTemplateRead(db, formKey, search = '') {
+  const tpl = await formTemplateLoad(db, formKey);
+  if (!tpl) {
+    return { rows: [{ row_type: 'not_found', form_key: formKey, note: `No form template has form_key "${formKey}" — Casey drafts only a form that has a template` }], truncated: false };
+  }
+  const head = {
+    row_type: 'template', form_key: tpl.form_key, title: tpl.title, link_type: tpl.link_type, visibility: tpl.visibility,
+    schema_version: tpl.schema_version, published: tpl.published ? 1 : 0, published_at: tpl.published_at,
+  };
+  if (!tpl.published) {
+    head.note = 'UNPUBLISHED — it has no published definition, so it has no field list and Casey cannot draft it (publishing is a form-builder operation)';
+    return { rows: [head], truncated: false };
+  }
+  const def = tpl.definition;
+  head.data_mode = def.dataMode === 'snapshot' ? 'snapshot' : 'live';
+  head.server_drafts = def.external && def.external.serverDrafts === true ? 1 : 0;
+  const { fields, repeaters } = formFields(def);
+  const all = [];
+  for (const [key, f] of Object.entries(fields)) all.push(formFieldRow(tpl.form_key, key, f, null));
+  for (const [rep, reg] of Object.entries(repeaters)) {
+    all.push({ row_type: 'repeater', form_key: tpl.form_key, key: rep, label: rep, type: 'repeater',
+      note: 'a repeating section: its answer is a list of rows, each an object of the fields marked with this repeater' });
+    for (const [key, f] of Object.entries(reg)) all.push(formFieldRow(tpl.form_key, key, f, rep));
+  }
+  head.field_count = Object.keys(fields).length;
+  head.repeater_count = Object.keys(repeaters).length;
+  const q = String(search || '').trim().toLowerCase();
+  const picked = q ? all.filter((r) => `${r.key} ${r.label} ${r.repeater || ''}`.toLowerCase().includes(q)) : all;
+  if (q) { head.search = q; head.matched = picked.length; }
+  const room = MAX_ROWS - 1;
+  if (picked.length > room) head.note = `only the first ${room} of ${picked.length} field rows are listed — read again with a "search" to find the others`;
+  return { rows: [head, ...picked.slice(0, room)], truncated: picked.length > room };
+}
+
+// One answer, checked against its field and stored the way yc-forms'
+// collect() stores it (strings for every input, a boolean for a checkbox,
+// comma-joined text for tags / checkgroup, an array of row objects for a
+// repeater), so the form's Restore populates it exactly.
+function formValue(f, value, where) {
+  const type = String(f.type || 'text');
+  const bad = (why) => formError(`${where}: ${why}. Nothing is proposed`);
+  if (value === null || value === undefined) {
+    throw bad('give a value — "" clears a text answer, false a checkbox, [] a list; null is not an answer');
+  }
+  const list = (v) => {
+    const items = Array.isArray(v) ? v : typeof v === 'string' ? (v === '' ? [] : v.split(',')) : null;
+    if (!items || items.some((x) => typeof x !== 'string')) throw bad('this field takes a list of text values');
+    const out = [];
+    for (const raw of items) {
+      const x = raw.trim();
+      if (!x) continue;
+      if (x.includes(',')) throw bad(`"${x.slice(0, 40)}" contains a comma — the form stores this list comma-joined, so one value cannot hold one`);
+      if (!out.includes(x)) out.push(x);
+    }
+    return out;
+  };
+  const opts = formOptionValues(f);
+  const optsText = () => `${opts.slice(0, 12).map((o) => JSON.stringify(o)).join(', ')}${opts.length > 12 ? ` … (${opts.length} in all)` : ''}`;
+  switch (type) {
+    case 'checkbox':
+      if (typeof value !== 'boolean') throw bad('a checkbox takes true or false');
+      return { stored: value };
+    case 'number': {
+      let text;
+      if (typeof value === 'number') {
+        if (!Number.isFinite(value)) throw bad('a number field takes a finite number');
+        text = String(value);
+      } else if (typeof value === 'string') text = value.trim();
+      else throw bad('a number field takes a number');
+      if (text === '') return { stored: '' };
+      if (!/^-?\d+(?:\.\d+)?$/.test(text)) throw bad(`"${text.slice(0, 40)}" is not a number`);
+      const n = Number(text);
+      if (typeof f.min === 'number' && n < f.min) throw bad(`${text} is below the field's minimum (${f.min}) — the form refuses it`);
+      if (typeof f.max === 'number' && n > f.max) throw bad(`${text} is above the field's maximum (${f.max}) — the form refuses it`);
+      return { stored: text };
+    }
+    case 'date': {
+      if (typeof value !== 'string') throw bad('a date field takes an ISO date, YYYY-MM-DD');
+      if (value === '') return { stored: '' };
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+      const d = m && new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+      if (!m || d.getUTCFullYear() !== +m[1] || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) {
+        throw bad(`"${value.slice(0, 40)}" is not an ISO date (YYYY-MM-DD)`);
+      }
+      return { stored: value };
+    }
+    case 'datetime': {
+      if (typeof value !== 'string') throw bad('a date-and-time field takes YYYY-MM-DDTHH:MM');
+      if (value === '') return { stored: '' };
+      const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+      const d = m && new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]));
+      if (!m || d.getUTCFullYear() !== +m[1] || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3] || d.getUTCHours() !== +m[4] || d.getUTCMinutes() !== +m[5]) {
+        throw bad(`"${value.slice(0, 40)}" is not a date and time (YYYY-MM-DDTHH:MM, firm-local)`);
+      }
+      return { stored: value };
+    }
+    case 'select':
+    case 'radio': {
+      if (typeof value !== 'string') throw bad(`a ${type} takes one of its options as text`);
+      if (value === '' || opts.includes(value)) return { stored: value };
+      throw bad(`"${value.slice(0, 60)}" is not one of its options (${optsText()})${f.optionsFrom ? ' — its list is filled when the form opens, which the server cannot check, so only the values listed in the template are accepted' : ''}`);
+    }
+    case 'checkgroup': {
+      const picked = list(value);
+      const other = picked.filter((x) => !opts.includes(x));
+      if (other.length && !f.allowOther) throw bad(`${other.map((x) => `"${x.slice(0, 40)}"`).join(', ')} ${other.length > 1 ? 'are' : 'is'} not among its options (${optsText()})`);
+      if (other.length > 1) throw bad(`only ONE value outside the options fits its "Other" box (got ${other.map((x) => `"${x.slice(0, 40)}"`).join(', ')})`);
+      return { stored: picked.join(','), ...(other.length ? { note: `"${other[0]}" goes in its "Other" box` } : {}) };
+    }
+    case 'tags':
+      return { stored: list(value).join(',') };
+    default: {
+      // text, textarea, hidden
+      if (typeof value !== 'string') throw bad(`a ${type} field takes text`);
+      if (type !== 'textarea' && /[\r\n]/.test(value)) throw bad('a one-line field cannot hold a line break (the form would drop it)');
+      if (Number(f.maxLength) > 0 && Array.from(value).length > Number(f.maxLength)) {
+        throw bad(`${Array.from(value).length} characters is over the field's limit of ${Number(f.maxLength)}`);
+      }
+      let stored = value;
+      if (FORM_MASK_DIGITS.has(f.mask)) stored = value.replace(/\D/g, '');
+      else if (f.mask === 'currency') stored = value.replace(/[^\d.-]/g, '');
+      return { stored, ...(stored !== value ? { note: `stored as "${stored}" — the field's ${f.mask} mask keeps ${f.mask === 'currency' ? 'digits, the point and the sign' : 'digits only'}, exactly as the form saves it` } : {}) };
+    }
+  }
+}
+
+function formRepeaterValue(reg, value, where) {
+  if (!Array.isArray(value)) throw formError(`${where}: a repeating section takes a list of rows (an array of objects). Nothing is proposed`);
+  if (value.length > FORM_REPEATER_ROWS_MAX) throw formError(`${where}: ${value.length} rows is more than one card can review (${FORM_REPEATER_ROWS_MAX}). Nothing is proposed`);
+  const keys = Object.keys(reg);
+  return value.map((row, i) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) throw formError(`${where}, row ${i + 1}: each row is an object of the section's fields. Nothing is proposed`);
+    const out = {};
+    for (const [k, v] of Object.entries(row)) {
+      if (!reg[k]) throw formError(`${where}, row ${i + 1}: "${String(k).slice(0, 40)}" is not a field of this repeating section (its fields: ${keys.join(', ')}). Nothing is proposed`);
+      out[k] = formValue(reg[k], v, `${where}, row ${i + 1}, ${formLabel(reg[k], k)}`).stored;
+    }
+    return out;
+  });
+}
+
+// How a value reads on the card.
+function formShow(value) {
+  if (value === undefined) return '(not in the draft)';
+  if (typeof value === 'string') return value === '' ? '(empty)' : `"${value.length > 300 ? `${value.slice(0, 300)}…` : value}"`;
+  if (typeof value === 'boolean') return value ? 'checked' : 'unchecked';
+  const text = JSON.stringify(value);
+  return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+}
+
+function formEmpty(value) {
+  return value === undefined || value === null || value === '' || value === false || (Array.isArray(value) && !value.length);
+}
+
+// Exactly who can see a draft of this template outside the app — read off the
+// serving code: only `public` templates are served outside the app
+// (extFormService.getServableTemplate's default scope, every caller), and the
+// public page reads a server draft back only when the template opted into
+// server drafts (external.serverDrafts === true, case-linked) — the D1 GET
+// returns whatever draft row exists for (form, case), staff-saved included.
+function formVisibility(tpl) {
+  const def = tpl.definition || {};
+  if (tpl.visibility === 'public') {
+    if (def.external && def.external.serverDrafts === true && tpl.link_type === 'case') {
+      return { warning: `CLIENT-VISIBLE: "${tpl.title}" is a public form with server drafts — whoever opens this case's public form link (the client) is offered THIS draft to resume, every answer in it shown to them; their own autosave then replaces it, and their submit deletes it.` };
+    }
+    return { effect: 'Public form without server drafts: its public link keeps a client\'s unsent answers in the client\'s own browser, so the public page never shows this staff draft — staff only.' };
+  }
+  if (tpl.visibility === 'portal') {
+    return { effect: 'Portal visibility: no portal page serves forms today (only public forms are served outside the app), so no client sees this draft — staff only.' };
+  }
+  return { effect: 'Staff-only form (internal): no client page shows it.' };
+}
+
+// Refused by name before anything is read: the route-owned columns, then any
+// other form operation, then anything else unknown.
+function formRefuseKeys(extra, which) {
+  const reserved = extra.filter((k) => FORM_RESERVED_KEYS.includes(String(k).toLowerCase()));
+  if (reserved.length) {
+    throw formError(`RESERVED FIELDS refused (${reserved.join(', ')}): ${which === 'draft'
+      ? 'a draft card sends form_key, link_type, link_id and data — the route sets the row\'s status, version and author itself, and the form version is the template\'s'
+      : 'a link card sends link_type and link_id — the route renumbers the version and stamps who linked it'}`);
+  }
+  const ops = extra.filter((k) => FORM_OTHER_OP_KEY.test(k));
+  if (ops.length) {
+    throw formError(`OTHER FORM OPERATIONS refused (${ops.join(', ')}): Casey saves ONE draft or links ONE submission. Submitting a form, making or filing its PDF, editing / publishing / restoring a template, changing its visibility, deleting or discarding a draft and unlinking are not available to Casey — the user does them on the form, the Form Inbox or the form builder`);
+  }
+  if (extra.length) {
+    throw formError(`A form ${which} card carries unsupported fields: ${extra.join(', ')} — it takes ${which === 'draft' ? 'form_key, link_type, link_id, data' : 'submission_id, link_type, link_id'} and evidence only`);
+  }
+}
+
+function formLinkTarget(value) {
+  const linkType = String(value.link_type == null ? '' : value.link_type).trim().toLowerCase();
+  if (linkType === 'appt' || linkType === 'appointment') {
+    throw formError('APPOINTMENT-LINKED forms are not available to Casey — no form template links to an appointment today (a later slice)');
+  }
+  if (!FORM_LINK_TYPES.includes(linkType)) {
+    throw formError(`A form belongs to a case (link_type "case", link_id = the exact case_id) or a contact (link_type "contact", link_id = the exact contact_id) — got ${linkType ? `"${linkType.slice(0, 40)}"` : 'nothing'}`);
+  }
+  if (linkType === 'case') {
+    const linkId = String(value.link_id == null ? '' : value.link_id).trim();
+    if (!/^[A-Za-z0-9_-]{1,20}$/.test(linkId)) throw formError('A case form needs link_id = the case\'s exact case_id');
+    return { linkType, linkId };
+  }
+  const n = Number(value.link_id);
+  if (!Number.isSafeInteger(n) || n < 1) throw formError('A contact form needs link_id = the contact\'s exact positive contact_id');
+  return { linkType, linkId: String(n) };
+}
+
+function formTargetCited(refs, evidence, linkType, linkId) {
+  return linkType === 'case'
+    ? documentRowCited(refs, evidence, (row) => row.case_id != null && String(row.case_id) === linkId)
+    : documentRowCited(refs, evidence, (row) => Number(row.contact_id) === Number(linkId));
+}
+
+function formWhen(value) {
+  const iso = documentIso(value);
+  return iso ? `${iso.slice(0, 16).replace('T', ' ')} UTC` : 'an unknown time';
+}
+
+async function normalizeFormDraft(db, value, evidence, currentUserId) {
+  formRefuseKeys(Object.keys(value).filter((k) => !FORM_DRAFT_KEYS.has(k)), 'draft');
+  const formKey = String(value.form_key == null ? '' : value.form_key).trim();
+  if (!formKey || formKey.length > 50) throw formError('A form draft needs the form\'s exact form_key (read the form first with a form.template read)');
+  const { linkType, linkId } = formLinkTarget(value);
+  const asked = value.data;
+  if (!asked || typeof asked !== 'object' || Array.isArray(asked)) throw formError('A form draft needs "data": an object of field key → answer for the fields being set');
+  const askedKeys = Object.keys(asked);
+  if (!askedKeys.length) throw formError('A form draft needs at least one answer in "data"');
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!formTargetCited(refs, evidence, linkType, linkId)) {
+    throw formError(`The draft evidence does not identify ${linkType} ${linkId} — cite a row carrying its exact ${linkType === 'case' ? 'case_id' : 'contact_id'} (read the ${linkType} first)`);
+  }
+  // The typed template read must be in this investigation: the field keys,
+  // types and options come from it, never from memory.
+  const read = (Array.isArray(evidence) ? evidence : []).some((q) => q && q.kind === 'form.template'
+    && (q.rows || []).some((r) => r && r.row_type === 'template' && String(r.form_key).toLowerCase() === formKey.toLowerCase()));
+  if (!read) throw formError(`Read the form first: a form draft needs a form.template read of "${formKey}" in this investigation (it returns the field keys, types and options the draft must use)`);
+  const tpl = await formTemplateLoad(db, formKey);
+  if (!tpl) throw formError(`No form template has form_key "${formKey}" — Casey drafts only a form that has a template`);
+  if (!tpl.published) {
+    throw formError(`UNPUBLISHED FORM refused: "${tpl.title}" (${tpl.form_key}) has never been published, so it has no field list a draft could be checked against — publishing it is a form-builder operation`);
+  }
+  if (tpl.link_type !== linkType) {
+    throw formError(`"${tpl.title}" is a ${tpl.link_type}-linked form — its draft belongs to a ${tpl.link_type}, not a ${linkType}`);
+  }
+  const record = await documentLinkRecord(db, linkType, linkId);
+  if (!record) throw formError(`${linkType === 'case' ? 'Case' : 'Contact'} ${linkId} no longer exists`);
+  const def = tpl.definition;
+  const { fields, repeaters } = formFields(def);
+  const fieldKeys = Object.keys(fields); const repKeys = Object.keys(repeaters);
+  const sets = {}; const notes = [];
+  for (const key of askedKeys) {
+    if (fields[key]) {
+      const r = formValue(fields[key], asked[key], `"${formLabel(fields[key], key)}" (${key})`);
+      sets[key] = r.stored;
+      if (r.note) notes.push(`"${formLabel(fields[key], key)}": ${r.note}.`);
+    } else if (repeaters[key]) {
+      sets[key] = formRepeaterValue(repeaters[key], asked[key], `Repeating section "${key}"`);
+    } else {
+      throw formError(`"${String(key).slice(0, 60)}" is not a field of "${tpl.title}" (display-only items carry no answer) — use the keys the form.template read returned: ${[...fieldKeys, ...repKeys].slice(0, 20).join(', ')}${fieldKeys.length + repKeys.length > 20 ? ' …' : ''}`);
+    }
+  }
+
+  const formSvc = require('./formService'); // lazy (convention)
+  const latest = await formSvc.getLatest(db, tpl.form_key, linkType, record.link_id);
+  const draftRow = latest && latest.draft ? latest.draft : null;
+  const subRow = latest && latest.submitted ? latest.submitted : null;
+  const stored = draftRow ? formParse(draftRow.data) : null;
+  if (draftRow && (!stored || typeof stored !== 'object' || Array.isArray(stored))) {
+    throw formError(`The existing draft #${draftRow.id} holds data that is not a JSON object — replacing it would lose it. The user opens the form and discards or fixes the draft`);
+  }
+  const base = stored || {};
+  const merged = { ...base, ...sets };
+  const bytes = Buffer.byteLength(JSON.stringify(merged), 'utf8');
+  if (bytes > FORM_DATA_MAX_BYTES) {
+    throw formError(`The draft would be ${bytes.toLocaleString('en-US')} bytes — the form store's limit is ${FORM_DATA_MAX_BYTES.toLocaleString('en-US')} (64 KB). Nothing is proposed`);
+  }
+  const labelOf = (key) => formLabel(fields[key] || null, key);
+  const changes = []; let changed = 0;
+  for (const key of askedKeys) {
+    const had = formHas(base, key);
+    const same = had && formCanonical(base[key]) === formCanonical(sets[key]);
+    if (!same) changed += 1;
+    changes.push({ key, label: labelOf(key), type: fields[key] ? String(fields[key].type || 'text') : 'repeater',
+      before: had ? formShow(base[key]) : null, after: formShow(sets[key]), unchanged: same });
+  }
+  if (!changed) throw formError(`That changes nothing — the existing draft of "${tpl.title}" on ${record.label} already holds exactly those answers`);
+
+  const warnings = []; const effects = [];
+  const carriedKeys = Object.keys(base).filter((k) => !formHas(sets, k));
+  const offForm = carriedKeys.filter((k) => !fields[k] && !repeaters[k]);
+  const allKeys = [...fieldKeys, ...repKeys];
+  const absent = allKeys.filter((k) => !formHas(merged, k));
+  const requiredEmpty = fieldKeys.filter((k) => fields[k].required === true && formEmpty(merged[k])).map(labelOf);
+
+  let existing = null;
+  if (draftRow) {
+    const by = draftRow.submitted_by == null ? null : Number(draftRow.submitted_by);
+    const mine = by != null && currentUserId != null && by === Number(currentUserId);
+    const who = by == null ? 'the client, on the public form link (no staff account)'
+      : mine ? 'you' : `${String(draftRow.user_name || '').trim().slice(0, 80) || 'a user'} (user #${by})`;
+    const at = draftRow.updated_at instanceof Date ? draftRow.updated_at : new Date(draftRow.updated_at);
+    existing = { draft_id: Number(draftRow.id), updated_at: documentIso(draftRow.updated_at), saved_by: who,
+      schema_version: Number(draftRow.schema_version) || 1 };
+    if (!mine && !Number.isNaN(at.getTime()) && Date.now() - at.getTime() < FORM_FOREIGN_DRAFT_MS) {
+      warnings.push(`RECENT DRAFT BY SOMEONE ELSE: ${who} saved this draft at ${formWhen(draftRow.updated_at)} — within the last 24 hours, so they may still be working on it. Every answer they saved is carried forward unchanged, but if they still have the form open in another browser, their next autosave replaces the whole draft, this card's answers included.`);
+    }
+  }
+  if (absent.length) {
+    const saves = !!(def.onSubmit && def.onSubmit.patch);
+    warnings.push(`RESTORE BLANKS ${absent.length} FIELD${absent.length > 1 ? 'S' : ''}: after this card the draft holds ${allKeys.length - absent.length} of the form's ${allKeys.length} answers. Restoring it on the form shows every other field BLANK (${absent.slice(0, FORM_CARD_LIST).map(labelOf).join(', ')}${absent.length > FORM_CARD_LIST ? ` … +${absent.length - FORM_CARD_LIST} more` : ''}), and saving the form after a restore saves those blanks${saves ? ' — and this form also writes fields to the record itself when saved' : ''}. Check the restored form before saving it.`);
+  }
+  const vis = formVisibility(tpl);
+  if (vis.warning) warnings.push(vis.warning);
+
+  effects.push(`Saved as a DRAFT only — nothing is submitted. ${subRow
+    ? `The latest SUBMITTED answers (version ${Number(subRow.version) || 0}, submission #${subRow.id}, saved by ${String(subRow.user_name || '').trim() || (subRow.submitted_by == null ? 'the client' : `user #${subRow.submitted_by}`)} at ${formWhen(subRow.updated_at)}) are untouched — a draft is a separate row.`
+    : 'No submission of this form exists on this record yet.'}`);
+  if (existing) {
+    effects.push(`Replaces draft #${existing.draft_id} (saved by ${existing.saved_by} at ${formWhen(existing.updated_at)}): the form store replaces a draft WHOLE, so every answer it holds that this card does not set is sent again verbatim — ${carriedKeys.length} existing answer${carriedKeys.length === 1 ? '' : 's'} carried forward unchanged${carriedKeys.length ? ` (${carriedKeys.slice(0, FORM_CARD_LIST).map(labelOf).join(', ')}${carriedKeys.length > FORM_CARD_LIST ? ` … +${carriedKeys.length - FORM_CARD_LIST} more` : ''})` : ''}.${offForm.length ? ` ${offForm.length} of them ${offForm.length > 1 ? 'are' : 'is'} not on the current form (kept as stored).` : ''}`);
+    if (existing.schema_version !== tpl.schema_version) {
+      effects.push(`Form version: the draft was saved under form version ${existing.schema_version}; it is stamped with the current version ${tpl.schema_version}.`);
+    }
+  } else {
+    effects.push('No draft exists yet: this card creates the draft for this record.');
+  }
+  effects.push('Where it shows: wherever this form opens for this record (its tab on the case page, or a custom view\'s form button), a banner says there is an unsaved draft, with Restore and Discard. Nothing on the form changes until someone clicks Restore; Discard deletes the draft, and saving the form deletes it too.');
+  if (vis.effect) effects.push(vis.effect);
+  notes.forEach((n) => effects.push(`Stored form: ${n}`));
+  if (requiredEmpty.length) {
+    effects.push(`Required answers still empty: ${requiredEmpty.slice(0, FORM_CARD_LIST).join(', ')}${requiredEmpty.length > FORM_CARD_LIST ? ` … +${requiredEmpty.length - FORM_CARD_LIST} more` : ''} — a draft may leave them empty; the form asks for them when it is saved.`);
+  }
+  effects.push('Trigger event: none — saving a draft emits no event (form.submitted fires on a submission only), and a draft satisfies no pipeline step (those count submitted forms only).');
+
+  const card = {
+    draft_id: crypto.randomUUID(), kind: 'form.draft.v1', status: 'draft',
+    form: { form_key: tpl.form_key, title: tpl.title, link_type: tpl.link_type, visibility: tpl.visibility,
+      schema_version: tpl.schema_version, data_mode: def.dataMode === 'snapshot' ? 'snapshot' : 'live' },
+    record: { link_type: linkType, link_id: record.link_id, label: record.label },
+    changes, carried: { count: carriedKeys.length, off_form: offForm.length },
+    existing, submitted: subRow ? { submission_id: Number(subRow.id), version: Number(subRow.version) || 0, updated_at: documentIso(subRow.updated_at) } : null,
+    required_empty: requiredEmpty.slice(0, FORM_CARD_LIST), absent: absent.length,
+    data: merged, data_bytes: bytes,
+    effects, warnings,
+    expected: existing
+      ? { draft_id: existing.draft_id, updated_at: existing.updated_at, data_hash: formDataHash(base) }
+      : { draft_id: null, updated_at: null, data_hash: null },
+    evidence: refs,
+  };
+  const chars = JSON.stringify(card).length;
+  if (chars > FORM_CARD_MAX_CHARS) {
+    throw formError(`This draft card would be ${chars.toLocaleString('en-US')} characters (the draft's answers ride on it) — more than a chat can store with it (${FORM_CARD_MAX_CHARS.toLocaleString('en-US')}). Nothing is proposed — the user fills the form in directly`);
+  }
+  return card;
+}
+
+// ── form.submission.link.v1 ──
+
+// The identifying answers the Form Inbox reads (formInbox.html: d.name /
+// d.phone / d.email) compared with the people on the target.
+function formNameTokens(text) {
+  return String(text == null ? '' : text).normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    .split(/[^\p{L}]+/u).filter(Boolean);
+}
+
+// intakeService.normalizePhone's rule: 10 digits, a leading 1 dropped from 11.
+function formPhone(text) {
+  const d = String(text == null ? '' : text).replace(/\D/g, '');
+  if (d.length === 11 && d.startsWith('1')) return d.slice(1);
+  return d.length === 10 ? d : null;
+}
+
+async function formLinkPeople(db, linkType, linkId) {
+  let ids;
+  if (linkType === 'case') {
+    const [rows] = await db.query(
+      'SELECT case_relate_client_id AS contact_id, case_relate_type AS relate_type FROM case_relate WHERE case_relate_case_id = ?', [linkId]);
+    ids = Array.isArray(rows) ? rows : [];
+  } else ids = [{ contact_id: Number(linkId), relate_type: null }];
+  const cids = [...new Set(ids.map((r) => Number(r.contact_id)).filter((n) => Number.isSafeInteger(n) && n > 0))].slice(0, 60);
+  if (!cids.length) return [];
+  const [contacts] = await db.query(
+    'SELECT contact_id, contact_name, contact_fname, contact_lname, contact_phone, contact_email FROM contacts WHERE contact_id IN (?)', [cids]);
+  const [phones] = await db.query('SELECT contact_id, phone FROM contact_phones WHERE contact_id IN (?)', [cids]);
+  const [emails] = await db.query('SELECT contact_id, email FROM contact_emails WHERE contact_id IN (?)', [cids]);
+  const role = new Map(ids.map((r) => [Number(r.contact_id), r.relate_type || null]));
+  return (Array.isArray(contacts) ? contacts : []).map((c) => {
+    const id = Number(c.contact_id);
+    const ph = new Set([formPhone(c.contact_phone), ...(phones || []).filter((p) => Number(p.contact_id) === id).map((p) => formPhone(p.phone))].filter(Boolean));
+    const em = new Set([c.contact_email, ...(emails || []).filter((e) => Number(e.contact_id) === id).map((e) => e.email)]
+      .map((e) => String(e == null ? '' : e).trim().toLowerCase()).filter(Boolean));
+    const name = String(c.contact_name || '').trim().slice(0, 120) || `contact #${id}`;
+    return { contact_id: id, name, relate_type: role.get(id) || null, phones: ph, emails: em,
+      tokens: new Set(formNameTokens(`${c.contact_name || ''} ${c.contact_fname || ''} ${c.contact_lname || ''}`)) };
+  });
+}
+
+// The rule: a NAME matches a person when its first and last words (accents,
+// case and punctuation ignored; one word = that word) are both among the
+// person's name words; a PHONE when its 10 digits equal any of the person's
+// phones (ended rows included — intake's include_ended); an EMAIL when it
+// equals any of the person's emails, case-insensitive.
+function formIdentity(data, people) {
+  const pick = (k) => (typeof data[k] === 'string' ? data[k].trim() : typeof data[k] === 'number' ? String(data[k]) : '');
+  const out = [];
+  const name = pick('name');
+  if (name) {
+    const t = formNameTokens(name);
+    const want = t.length > 1 ? [t[0], t[t.length - 1]] : t;
+    const hit = want.length ? people.find((p) => want.every((w) => p.tokens.has(w))) : null;
+    out.push({ answer: 'name', value: name.slice(0, 120), matched: hit ? hit.name : null });
+  }
+  const phoneRaw = pick('phone');
+  if (phoneRaw) {
+    const d = formPhone(phoneRaw);
+    const hit = d ? people.find((p) => p.phones.has(d)) : null;
+    out.push({ answer: 'phone', value: phoneRaw.slice(0, 40), matched: hit ? hit.name : null, ...(d ? {} : { note: 'not a 10-digit phone number' }) });
+  }
+  const email = pick('email');
+  if (email) {
+    const hit = people.find((p) => p.emails.has(email.toLowerCase()));
+    out.push({ answer: 'email', value: email.slice(0, 120), matched: hit ? hit.name : null });
+  }
+  return out;
+}
+
+async function normalizeFormSubmissionLink(db, value, evidence) {
+  formRefuseKeys(Object.keys(value).filter((k) => !FORM_LINK_KEYS.has(k)), 'link');
+  const subId = Number(value.submission_id);
+  if (!Number.isSafeInteger(subId) || subId < 1) throw formError('A submission link needs the submission\'s exact positive submission_id (form_submissions.id AS submission_id)');
+  const { linkType, linkId } = formLinkTarget(value);
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!documentRowCited(refs, evidence, (row) => row.submission_id != null && Number(row.submission_id) === subId)) {
+    throw formError(`The link evidence does not identify submission #${subId} — cite a form_submissions row carrying its exact submission_id (read it first: form_submissions.id AS submission_id)`);
+  }
+  if (!formTargetCited(refs, evidence, linkType, linkId)) {
+    throw formError(`The link evidence does not identify ${linkType} ${linkId} — cite a row carrying its exact ${linkType === 'case' ? 'case_id' : 'contact_id'} (read the ${linkType} first)`);
+  }
+  const formSvc = require('./formService'); // lazy (convention)
+  let sub;
+  try { sub = await formSvc.getSubmission(db, subId); } catch (e) {
+    if (e && e.status === 404) throw formError(`Submission #${subId} no longer exists`);
+    throw e;
+  }
+  if (sub.status !== 'submitted') {
+    throw formError(`A DRAFT cannot be linked: submission #${subId} is a draft — the route links submitted forms only ("Only submitted submissions can be linked")`);
+  }
+  if (sub.link_type !== '') {
+    throw formError(`ALREADY LINKED: submission #${subId} is already linked (${sub.link_type} ${sub.link_id}) — the route links an unlinked submission once and never relinks; moving it is a manual fix`);
+  }
+  const tpl = await formTemplateLoad(db, sub.form_key);
+  if (!tpl) {
+    throw formError(`Submission #${subId}'s form "${sub.form_key}" has no template, so Casey cannot check where it belongs (the route would not check either) — the user links it from the Form Inbox`);
+  }
+  if (tpl.link_type !== linkType) {
+    throw formError(`Form "${sub.form_key}" is a ${tpl.link_type}-linked form — it cannot be linked to a ${linkType}`);
+  }
+  const record = await documentLinkRecord(db, linkType, linkId);
+  if (!record) throw formError(`${linkType} "${linkId}" not found`);
+
+  const data = formParse(sub.data);
+  const answers = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  const people = await formLinkPeople(db, linkType, record.link_id);
+  const identity = formIdentity(answers, people);
+  const [[maxRow]] = await db.query(
+    `SELECT COALESCE(MAX(version), 0) AS max_version
+       FROM form_submissions
+      WHERE form_key = ? AND link_type = ? AND link_id = ? AND status = 'submitted'`,
+    [sub.form_key, linkType, record.link_id]);
+  const prior = Number(maxRow && maxRow.max_version) || 0;
+  const next = prior + 1;
+
+  const warnings = []; const effects = [];
+  const missed = identity.filter((x) => !x.matched);
+  if (!identity.length) {
+    effects.push('Identity: the answers carry no name, phone or email (the Form Inbox\'s identifying answers), so nothing could be compared with the people on the record — check the answers yourself.');
+  } else if (!people.length) {
+    warnings.push(`IDENTITY NOT CHECKED: ${record.label} has no contacts, so the submission's ${identity.map((x) => x.answer).join(' / ')} could not be compared with anyone. Check it is the right ${linkType}.`);
+  } else if (missed.length) {
+    warnings.push(`IDENTITY MISMATCH: the submission's ${missed.map((x) => `${x.answer} "${x.value}"`).join(', ')} match${missed.length > 1 ? '' : 'es'} no ${linkType === 'case' ? 'contact on this case' : 'phone, email or name of this contact'} (${people.slice(0, 6).map((p) => `${p.name}${p.relate_type ? `, ${p.relate_type}` : ''}`).join('; ')}${people.length > 6 ? ' …' : ''}). Check it is the right person before linking — the route never unlinks.`);
+  }
+  effects.push(`Links submission #${subId} ("${tpl.title}", received ${formWhen(sub.created_at)}, unlinked) to ${record.label}: it becomes version ${next} of this form there — the NEWEST submission (${prior ? `the latest until now is version ${prior}` : 'the first submission of this form on this record'}; it carried version ${Number(sub.version) || 0} in the unlinked series).`);
+  const def = tpl.definition || {};
+  effects.push(tpl.published && def.dataMode === 'snapshot'
+    ? 'The form opens in SNAPSHOT mode: once a submission exists it is what the form shows, so this form on the record shows these answers from now on.'
+    : 'The form opens in live mode (its fields read the record itself): the submission joins the record\'s form history; the form\'s fields do not change.');
+  effects.push(`Log: a "form" entry is written on ${record.label} — subject "Form adopted: ${tpl.title}", message "${tpl.title} submission #${subId} (received unlinked) was linked to this ${linkType} from the Form Inbox." (the route's fixed wording, which names the Form Inbox although Casey prepared the card). It is best-effort: a failed log write keeps the link.`);
+  if (sub.form_key === 'intake' && linkType === 'case') {
+    const [[c]] = await db.query('SELECT case_intake_form FROM cases WHERE case_id = ? LIMIT 1', [record.link_id]);
+    const cur = c ? c.case_intake_form : null;
+    if (cur === '') {
+      effects.push(`Intake gate: the case's intake-form pointer is empty, so it is stamped "yf:${subId}" — the intake reminder sequences stop asking for an intake form.`);
+    } else if (cur == null) {
+      effects.push('Intake gate: the case\'s intake-form pointer is NULL — the route stamps only an EMPTY pointer, so it stays unstamped and any intake reminder keeps running.');
+    } else {
+      effects.push(`Intake gate: the case's intake-form pointer already reads "${String(cur).slice(0, 20)}" — not changed.`);
+    }
+  }
+  if (linkType === 'case') {
+    const [reqs] = await db.query(
+      `SELECT internal_label FROM pipeline_stage_requirements
+        WHERE active = 1 AND detector = 'form'
+          AND LOWER(JSON_UNQUOTE(JSON_EXTRACT(detector_config, '$.form_key'))) = LOWER(?)`, [sub.form_key]);
+    const labels = [...new Set((Array.isArray(reqs) ? reqs : []).map((r) => String(r.internal_label || '').trim()).filter(Boolean))];
+    effects.push(labels.length
+      ? `Pipeline steps: ${labels.slice(0, 10).map((l) => `"${l}"`).join(', ')}${labels.length > 10 ? ' …' : ''} look for a submitted "${sub.form_key}" form on the case — on this case they read as done from now on.`
+      : `Pipeline steps: no active step looks for a submitted "${sub.form_key}" form.`);
+  }
+  effects.push('Trigger event: none — linking emits no event (form.submitted fired when the form arrived, with no case or contact) and starts no workflow.');
+  effects.push('Staff only: no client page lists form submissions.');
+
+  return {
+    draft_id: crypto.randomUUID(), kind: 'form.submission.link.v1', status: 'draft',
+    submission: { submission_id: subId, form_key: String(sub.form_key), title: tpl.title, created_at: documentIso(sub.created_at),
+      version: Number(sub.version) || 0, saved_by: sub.submitted_by == null ? 'the public form (no staff account)' : String(sub.user_name || `user #${sub.submitted_by}`) },
+    identity, target: record, link: { link_type: linkType, link_id: record.link_id }, version_after: next,
+    effects, warnings,
+    expected: { status: String(sub.status), link_type: String(sub.link_type), link_id: String(sub.link_id == null ? '' : sub.link_id), version: Number(sub.version) || 0 },
+    evidence: refs,
+  };
+}
+
+async function normalizeFormAction(db, value, evidence, { currentUserId = null } = {}) {
+  // The per-family switch: '0' and the A12 kinds do not exist.
+  if (require('../lib/firmConfig').cfg('casey_forms_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  if (value.kind === 'form.draft.v1') return normalizeFormDraft(db, value, evidence, currentUserId);
+  return normalizeFormSubmissionLink(db, value, evidence);
+}
+
 async function taskDraftLink(db, value) {
   if (value == null) return null;
   if (!onlyKeys(value, new Set(['type', 'id']))) throw httpError(422, 'Task draft link is malformed');
@@ -6836,6 +7502,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && CHECKLIST_ACTION_KINDS.has(value.kind)) return normalizeChecklistAction(db, value, evidence, { currentUserId });
   if (value && DOCUMENT_ACTION_KINDS.has(value.kind)) return normalizeDocumentAction(db, value, evidence, { currentUserId });
   if (value && CASE_DOCKET_ACTION_KINDS.has(value.kind)) return normalizeCaseDocketAction(db, value, evidence, { currentUserId });
+  if (value && FORM_ACTION_KINDS.has(value.kind)) return normalizeFormAction(db, value, evidence, { currentUserId });
   if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Action kind is unavailable');
   if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
   if (!onlyKeys(value, TASK_CREATE_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
@@ -7017,7 +7684,12 @@ function taskDraftRequested(question, history = []) {
   // 25-12345 to the Smith case", "put the docket on it").
   const docketAdopt = /\b(?:dockets?|docket numbers?|case (?:numbers?|nos?\.?|#)|bankruptcy (?:numbers?|case numbers?)|court (?:numbers?|case numbers?)|full case numbers?)\b/i.test(text) &&
     /\b(?:draft|propose|prepare|add|put|set|record|enter|fill|adopt|attach|save|store|give|assign|update|link)\b/i.test(request);
-  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || checklist || documentEdit || docketAdopt || job || workflow || hook || sequence || send || ingestRule ||
+  // A12: a form draft / prefill, or a submission linked to a case or contact
+  // ("prefill the 341 notes for the Smith case", "link that intake submission
+  // to her case").
+  const formWork = /\b(?:forms?|questionnaires?|submissions?|dbkq|341 notes)\b/i.test(text) &&
+    /\b(?:draft|propose|prepare|prefill|pre-fill|fill(?: in| out)?|start|save|link|attach|adopt|assign|connect|associate|file\b[^.?!\n]{0,40}\b(?:to|under|on|with))\b/i.test(request);
+  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || checklist || documentEdit || docketAdopt || formWork || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 
@@ -7186,6 +7858,20 @@ function validateStep(query, index) {
     const contactId = Number(query.contact_id);
     if (!Number.isSafeInteger(contactId) || contactId < 1) throw httpError(422, `Step ${id} needs a positive contact_id`);
     return { id, kind, purpose, contact_id: contactId };
+  }
+  // A12 — one form template and its published field list (typed, key-keyed:
+  // form_templates is outside the curated schema; the model reads it before
+  // drafting a form).
+  if (kind === 'form.template') {
+    const formKey = String(query.form_key == null ? '' : query.form_key).trim();
+    if (!formKey || formKey.length > 50 || !/^[A-Za-z0-9_-]+$/.test(formKey)) throw httpError(422, `Step ${id} needs a form_key (letters, digits, - or _, up to 50)`);
+    const out = { id, kind, purpose, form_key: formKey };
+    if (query.search !== undefined && query.search !== null && String(query.search).trim() !== '') {
+      const search = String(query.search).trim();
+      if (search.length > FORM_TEMPLATE_SEARCH_MAX) throw httpError(422, `Step ${id} form.template search is over ${FORM_TEMPLATE_SEARCH_MAX} characters`);
+      out.search = search;
+    }
+    return out;
   }
   if (kind === 'weather.lookup') {
     const location = String(query.location || '').trim();
@@ -7367,6 +8053,7 @@ function stepFingerprint(step) {
   if (kind === 'sql.read') return `${kind}:${String(step.sql || '').replace(/\s+/g, ' ').trim().toLowerCase()}`;
   if (kind === 'weather.lookup') return `${kind}:${String(step.location || '').trim().toLowerCase()}`;
   if (kind === 'contact.relations') return `${kind}:${Number(step.contact_id)}`;
+  if (kind === 'form.template') return `${kind}:${String(step.form_key || '').toLowerCase()}:${String(step.search || '').trim().toLowerCase()}`;
   if (kind === 'automation.definition') return `${kind}:${recordFingerprint(step)}:${step.version === undefined ? 'current' : Number(step.version)}`;
   if (kind === 'automation.run') {
     if (step.execution_id !== undefined) return `${kind}:x${Number(step.execution_id)}`;
@@ -7650,6 +8337,11 @@ async function executeReadStep(db, query, { auth, userId }) {
     rowCount = 1;
   } else if (query.kind === 'contact.relations') {
     const out = await contactRelationsRead(db, query.contact_id);
+    rows = out.rows;
+    rowCount = rows.length;
+    truncated = out.truncated;
+  } else if (query.kind === 'form.template') {
+    const out = await formTemplateRead(db, query.form_key, query.search || '');
     rows = out.rows;
     rowCount = rows.length;
     truncated = out.truncated;
@@ -8209,7 +8901,7 @@ module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
-  normalizeActionDraft, contactRelationsRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
+  normalizeActionDraft, contactRelationsRead, formTemplateRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
   repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan, answerSystemAppend, answerMaxTokens,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,

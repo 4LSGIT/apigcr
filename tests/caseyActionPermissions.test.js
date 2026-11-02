@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 63 shipped kinds:
+ * These tests ask that claim two questions for all 65 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 63 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 65 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -128,6 +128,9 @@ const KINDS = [
   // A11: the Documents page's own registry routes (routes/api.documents.js).
   { kind: 'document.update.v1', method: 'PATCH', path: '/api/documents/1' },
   { kind: 'document.link.v1', method: 'POST', path: '/api/documents/1/links' },
+  // A12: the Forms tab's draft autosave route and the Form Inbox's adopt route (routes/api.forms.js).
+  { kind: 'form.draft.v1', method: 'POST', path: '/api/forms/draft' },
+  { kind: 'form.submission.link.v1', method: 'PATCH', path: '/api/forms/submissions/1/link' },
   { kind: 'job.code_safe.create.v1', method: 'POST', path: '/scheduled-jobs' },
   { kind: 'workflow.draft.v1', method: 'POST', path: '/workflows/bulk' },
   { kind: 'workflow.step_insert.v1', method: 'POST', path: '/workflows/1/steps' },
@@ -184,7 +187,9 @@ const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/api.contactRelation
   // below).
   'routes/api.checklists.js',
   // A11: the document registry routes — jwtOrApiKey only (pinned below).
-  'routes/api.documents.js'];
+  'routes/api.documents.js',
+  // A12: the form routes — jwtOrApiKey only (pinned below).
+  'routes/api.forms.js'];
 
 // ── Shared HTTP harness: the real routers behind the real jwtOrApiKey ──────
 // Both sections drive the SAME routers. Section 1 hands them a stub req.db
@@ -235,19 +240,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 63 kinds (no database)
+// SECTION 1 — the route-level gate, for all 65 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 63 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 65 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 63 kinds cover 56 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(63);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(56);
+  test('the 65 kinds cover 58 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(65);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(58);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -255,7 +260,7 @@ describe('P2 — what the canonical write route gates on (all 63 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 63', async () => {
+  test('no token: every kind is 401 — authentication is required for all 65', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -398,6 +403,26 @@ describe('P2 — what the canonical write route gates on (all 63 shipped kinds)'
     for (const k of KINDS.filter((x) => x.kind.startsWith('document.'))) {
       const res = await call(a, k, bearer(token({ roles: ['staff'] })), k.method === 'PATCH' ? { title: 'T' } : { link_type: 'case', link_id: 'A' });
       expect({ kind: k.kind, status: res.status, gated: [401, 403].includes(res.status) }).toEqual({ kind: k.kind, status: 404, gated: false });
+    }
+  });
+
+  // A12: the form routes are jwtOrApiKey only — no role, capability or
+  // superuser read anywhere in the file. A roleless staff token reaches both
+  // handlers: past the gate, the stub db's empty rows read as the draft
+  // service's own failure (a 500 on the stub's missing row — the handler ran)
+  // and 'Submission 1 not found' (404), never 401/403.
+  test('A12 route file: no capability, role or superuser gate', async () => {
+    const src = read('routes/api.forms.js');
+    expect(/requireAuth|isSuperuser|\bcan\(\s*req\.auth/.test(src)).toBe(false);
+    for (const mount of ["router.post('/api/forms/draft', jwtOrApiKey", "router.patch('/api/forms/submissions/:id/link', jwtOrApiKey"]) {
+      expect(src).toContain(mount);
+    }
+    const a = app();
+    for (const roles of [['staff'], [], ['attorney']]) {
+      const draft = await call(a, KINDS.find((x) => x.kind === 'form.draft.v1'), bearer(token({ roles })), { form_key: 'k', link_type: 'case', link_id: 'A', data: {} });
+      const link = await call(a, KINDS.find((x) => x.kind === 'form.submission.link.v1'), bearer(token({ roles })), { link_type: 'case', link_id: 'A' });
+      expect({ roles: roles.join(',') || 'none', draft: draft.status, link: [link.status, link.body.message] })
+        .toEqual({ roles: roles.join(',') || 'none', draft: 500, link: [404, 'Submission 1 not found'] });
     }
   });
 

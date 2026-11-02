@@ -228,6 +228,20 @@
   var VIEW = (!preview && !EXT && params.get('view_submission'))
     ? { id: params.get('view_submission') } : null;
 
+  // A12: the sync bus, so an open form hears a draft saved (or a submission
+  // adopted) for its record in another frame (YCForm._setupSync). Loaded only
+  // in normal internal mode — never in external mode, which the landing host
+  // serves and whose allowlist has no /js/yc-sync.js (pageLanding.js), nor in
+  // preview / view mode (no record to listen for). Asynchronous: whichever of
+  // this load and YCForm.init() finishes last subscribes (_setupSync is
+  // idempotent and waits for init).
+  if (!EXT && !preview && !VIEW && !window.YC) {
+    var ycSyncTag = document.createElement('script');
+    ycSyncTag.src = '/js/yc-sync.js';
+    ycSyncTag.onload = function () { if (window.ycForm && window.ycForm._setupSync) window.ycForm._setupSync(); };
+    document.head.appendChild(ycSyncTag);
+  }
+
   // ── DOM builder (no innerHTML; text via textContent, attrs via setAttribute) ──
   function el(tag, attrs, kids) {
     var n = document.createElement(tag);

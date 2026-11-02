@@ -14,7 +14,7 @@ The forms system replaces external form tools (JotForm) with internal, reusable 
 | 4 | [04-layout-and-styling.md](04-layout-and-styling.md) | Rows, columns, sections, labels, buttons, responsive |
 | 5 | [05-field-types.md](05-field-types.md) | All field types, masks, and the readonly property |
 | 6 | [06-data-modes.md](06-data-modes.md) | Live vs Snapshot — when to use each |
-| 7 | [07-autosave-and-drafts.md](07-autosave-and-drafts.md) | Draft persistence, recovery, schema versioning |
+| 7 | [07-autosave-and-drafts.md](07-autosave-and-drafts.md) | Draft persistence, recovery, schema versioning, a draft saved elsewhere (sync bus) |
 | 8 | [08-validation-and-saving.md](08-validation-and-saving.md) | Validation rules, save flow, PATCH, workflow triggers, logging |
 | 9 | [09-advanced-features.md](09-advanced-features.md) | Repeaters, conditional logic, tabs, tags input |
 | 10 | [10-hosting-and-wiring.md](10-hosting-and-wiring.md) | Loading forms in iframes, apiSend relay, parent communication |

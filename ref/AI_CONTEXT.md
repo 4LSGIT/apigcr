@@ -732,6 +732,38 @@ body. Governing migrations in `ref/migrations/`.*
   docket matcher. Off switch `casey_case_docket_enabled` (on unless '0'). Tests:
   `tests/caseyDocket.test.js`, gated `tests/caseyDocket.mysql.test.js`; plan:
   ASK_CASEY_ACTIONS_PLAN A7c.
+- **Casey forms (A12, 11-02):** kinds `form.draft.v1` → POST
+  `/api/forms/draft` {form_key, link_type, link_id, schema_version, data} and
+  `form.submission.link.v1` → PATCH `/api/forms/submissions/:id/link`
+  {link_type, link_id} (bare `jwtOrApiKey`). The draft route is `ON DUPLICATE
+  KEY UPDATE data = VALUES(data)` on `draft_key` (one draft per form + record,
+  general_ci): it REPLACES the whole payload, validates nothing, stamps the
+  body's schema_version (1 when omitted). The normalizer checks every answer
+  against the PUBLISHED definition (`extFormService.buildValueRegistry`),
+  stores it the way yc-forms `collect()` would, and carries every existing
+  draft answer it does not set forward verbatim; the body's schema_version is
+  the template's. A typed read `form.template` {form_key, search?} (app pool —
+  form_templates is not in the report manifest) gives the field list and must
+  be in the investigation before a draft. Disclosed: answers before → after,
+  carried count, someone else's draft < 24 h (danger), RESTORE BLANKS (fields
+  the draft lacks show blank on Restore — danger), CLIENT-VISIBLE only for a
+  `public` template with `external.serverDrafts === true` (the D1 GET returns
+  any draft row for form + case). The link route 400s a draft, 409s an
+  already-linked row / another link type, 404s a gone submission / target,
+  renumbers to MAX + 1 of the target series, writes one `form` log entry,
+  stamps `case_intake_form` for `intake` only when `''`; the normalizer
+  refuses those first plus a template-less form, and compares the answers'
+  name / phone / email with the target's people (a mismatch is a danger
+  warning). Freshness: draft id + updated_at + SHA-256 of the canonical stored
+  JSON / the submission's status + link + version, re-read at the click.
+  Receipt: integer `submission_id` (both). Sync (new): both routes announce
+  `form:<link_type>:<link_id>` (the draft POST echoes form_key / link_type /
+  link_id additively); `YCForm._setupSync` refetches, never repopulates a
+  dirty form and holds its autosave while a newer draft waits; render.html
+  loads yc-sync in internal mode only. Off switch `casey_forms_enabled` (on
+  unless '0'). Tests: `tests/caseyForms.test.js`, gated
+  `tests/caseyForms.mysql.test.js`, `tests/formRender.sync.test.js`; plan:
+  ASK_CASEY_ACTIONS_PLAN A12.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL

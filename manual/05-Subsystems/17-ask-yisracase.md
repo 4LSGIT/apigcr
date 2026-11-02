@@ -660,6 +660,66 @@ this paystub to Dana's contact").
 The off switch for these cards is the `casey_documents_enabled` setting (on
 unless set to 0).
 
+### Forms: drafts and submission links
+
+Casey can **save one draft of a form** for a case or contact, or **link one
+submitted form that arrived unlinked** (a public form sent without a case — it
+waits in the Form Inbox) to its case or contact — one per card, through the
+same routes the form's own autosave and the Form Inbox's Link button use. Ask in
+plain words ("prefill the 341 notes for the Smith case: trustee Jane Trustee,
+meeting on November 20", "link that intake submission from Dana to her case").
+Casey first reads the form itself — its fields, their types and their choices —
+and uses only those.
+
+- **A draft is only a draft.** Nothing is submitted: the form's submitted
+  answers stay as they are, and no automation runs. Where the form opens for
+  that record, a banner says there is an unsaved draft, with **Restore** and
+  **Discard**; nothing on the form changes until someone clicks Restore.
+- **A draft card** shows the form and the record, each answer before and after,
+  who saved the existing draft last and when, and how many of its answers are
+  **carried forward unchanged** — saving a draft replaces it whole, so Casey
+  sends every answer already in it again. It warns when someone else saved the
+  draft in the last 24 hours (they may still be working on it, and a copy open
+  in another browser would replace the draft on its next autosave), and when
+  the draft does not hold every field: **Restore fills the form from the draft,
+  so each field it lacks shows blank** — check the restored form before saving
+  it. Required answers left empty are listed (the form asks for them when it is
+  saved). Values are stored the way the form saves them (a phone as digits
+  only, a list of choices comma-separated), and the card says so.
+- **Can the client see it?** Only a public form that keeps its drafts on the
+  server shows a draft on the client's own form link — the client is offered
+  this draft to resume, every answer in it — and the card warns when that is
+  the case. Any other form's draft is staff only, and the card says so.
+- **A link card** shows the submission (the form, when it arrived, its name,
+  phone and email) beside the people on the case or the contact, and warns when
+  those answers match no one there — check it is the right person; a link is
+  never undone by the app. It shows the version the submission becomes (the
+  newest of that form on the record — a form that shows its latest submission
+  shows these answers from then on), the log entry the link writes, whether an
+  intake form closes the case's intake reminders, and the pipeline steps that
+  read as done because a submitted form now exists.
+- **What Casey will not do, and says so:**
+  - submit a form, make or file its PDF, edit, publish or restore a form,
+    change who can see it, discard a draft, or unlink a submission — do those on
+    the form, in the Form Inbox or in the form builder;
+  - draft a form that was never published, or use a field the form does not
+    have, a value of the wrong kind or a choice that is not on its list;
+  - link a draft, a submission that is already linked, or a form to the wrong
+    kind of record (a case form to a contact);
+  - work on appointment-linked forms.
+- **Freshness.** When you confirm, the card re-reads the record and the draft
+  (or the submission). If anyone saved, restored or discarded the draft, or
+  linked the submission, since the card was prepared, nothing is written; ask
+  Casey to prepare it again.
+- **Other open pages.** A copy of the form open in the form page in this browser
+  picks up the new draft by itself; if you were typing in it, it keeps your
+  typing, shows the new draft's banner and stops autosaving until you Restore or
+  Discard. The older built-in form pages (Case Details, ISSN, the contact form)
+  and copies open in another browser show it when reopened.
+
+The off switch for these cards is the `casey_forms_enabled` setting (on unless
+set to 0).
+
 ### Sending a text or email
 
 Ask Casey can send ONE text message or ONE email to ONE client, now, when you
@@ -924,7 +984,10 @@ remain read-only: `sql.read`, `manual.search`, `comms.search`, the narrowly
 scoped `weather.lookup` external read, the typed `contact.relations` read (one
 contact's relationships, roles, and the relationship-type and role lists —
 those tables are outside the report schema, so it is the only way Casey sees
-them), and the typed automation reads —
+them), the typed `form.template` read (one form's title, who can see it,
+whether it is published, and its published fields with their types and
+choices — the form-template tables are outside the report schema too), and the
+typed automation reads —
 `automation.list`, `automation.definition`, `automation.run`, and
 `automation.references` — which let Casey explain a workflow or sequence, one
 of its runs or enrollments, and what can start or enroll it. Those projections redact webhook URLs to method + host + credential

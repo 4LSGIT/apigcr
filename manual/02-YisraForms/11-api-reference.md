@@ -46,10 +46,17 @@ Upsert a draft. Called by autosave.
 
 **Response:**
 ```json
-{ "status": "success", "id": 43, "updated_at": "2026-04-07T16:02:15.000Z" }
+{ "status": "success", "id": 43, "updated_at": "2026-04-07T16:02:15.000Z",
+  "form_key": "contact_info", "link_type": "contact", "link_id": "1001" }
 ```
 
-Uses `INSERT ... ON DUPLICATE KEY UPDATE` on the `draft_key` unique index — no race conditions.
+`form_key` / `link_type` / `link_id` echo the request so the sync bus can
+announce `form:<link_type>:<link_id>` (an open copy of the form refetches —
+see [Autosave & Drafts](07-autosave-and-drafts.md)).
+
+Uses `INSERT ... ON DUPLICATE KEY UPDATE` on the `draft_key` unique index — no race conditions. The
+whole `data` payload is REPLACED on every save (answers a save does not carry are gone), and
+`schema_version` is overwritten too (1 when omitted).
 
 **Console test:**
 ```js
