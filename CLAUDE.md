@@ -72,7 +72,10 @@ picks per task:
      pushes the amended commit to a `land/<slug>-<sha>` branch, waits for the
      `.github/workflows/node.js.yml` run on that exact SHA (`gh run watch`),
      fast-forwards main to it, and deletes the branch (skip the suite only
-     for doc-only, `--no-jest`). Ends on one GO / NO-GO naming the run URL.
+     for doc-only, `--no-jest`). Ends on one GO / NO-GO naming the run URL;
+     on GO it also fast-forwards Fred's main checkout (`pull --ff-only`, only
+     when that checkout is on `main` with a clean tree — otherwise it says
+     why and leaves the old "Next: pull" step; 2026-11-02).
      A main that moved during the run makes the push fail: rerun, which
      rebases and tests the new SHA. `--local-suite` (Actions down) runs jest
      here instead and takes every cpu slot. The slot queues the next lander;
@@ -219,6 +222,10 @@ Gates beyond Commands & gates below, every model:
   (`commsSummarize.audit` vs `commsSummarize`, 2026-10-25). Prove
   order-independence on a fresh `_test` DB (`--default-time-zone=+00:00`,
   prod sql_mode) with a forced testSequencer over every order.
+  Two twin families cannot share one DB in one run: a twin that LOADS the
+  whole `ref/database.sql` (`logCommDate.mysql`) breaks after a twin that
+  drops and rebuilds its own tables (`log`, `events`, …), and passes alone
+  (A7c, 2026-11-02). Give each family its own `*_test` DB.
 - A module-scope check that reads ANOTHER module's export at load
   (settingsRegistry's `assertAlsoWrite` reads `firmConfig.REGISTRY`) throws in
   every test that `jest.mock`s that module with a partial factory — red CI on a
@@ -389,6 +396,7 @@ The rest, in no particular order:
 - Sync bus: handlers triggered by a bus message must never emit on the same bus. Dirty-fence echo stamps go at fetch START, not completion. A new write endpoint on a bus-watched entity (cases, contacts, their children) is SILENT to every other open frame until it is registered in `public/js/yc-sync.js` MATCHERS and its response carries the field diff (`changes`) — the writing page repaints itself from the response, so the gap is invisible in the page you test from. Bitten by `/pipeline/move` (Oct 2026): moves wrote the DB and the case page, and no open board heard it. Adding a write route = add the matcher + its ycSync test in the same slice.
 - Alert severity convention: transient (timeout / socket / 429 / 5xx) AND first occurrence for its subject → `warning`; repeated or non-transient → `error`. Warnings still record to `system_alerts` but never email on their own (`alert_email_min_severity` = 'error'). Born of alerts 152–154 (Sept 2026): three error-severity IT pages for self-healing blips, zero action needed. Sites: `documentSyncService.syncAll` ("repeat" = `root.last_error` still set when the tick claimed the root), `fieldDefReconciler` boot connect-fail and boot lock-busy (a boot backstop losing GET_LOCK to a sibling running the same idempotent diff is a no-op; a MUTATION trigger losing it still pages — no periodic reconcile sweeps up after it). New alert sites follow this.
 - A SQL boolean expression (`(x LIKE 'y%') AS flag`) reaches JS from mysql2 as 1/0, not true/false — map it with `!!` before a client checks `=== false` / `!== false`, or a 0 slips through (`0 !== false` is true). Caught in review (access D3, firmData `active`, 2026-10-15).
+- A table or column added to `lib/reportSchema/manifest.js` (the curated read set for reports and Casey's `sql.read`) is unreadable in production until `scripts/reportGrantUserProvision.js --apply --rotate` (root through the Auth Proxy; `REPORT_DB_PASSWORD` = the password Cloud Run already holds, or the live report pool loses its login) has re-generated the per-column grants of the least-privilege `yc_report` account — `SELECT command denied` otherwise. It is the SQL step of that slice's deploy order: run BEFORE the backend deploys (A11, 2026-11-02; the script's CHECK mode is read-only and prints the plan).
 - A new app_settings key = an entry in `lib/settingsRegistry.js` in the same slice (its kind, ONE editor home, type): the home decides who may read and write it, and `tests/settingsInventory.test.js` fails on a key the code reads that the registry lacks. A registered key's label / type / category come from code — the DB row holds only the value (AI_CONTEXT §32).
 - Module resolution: `require('./internal_functions')` resolves to its `index.js` — adding function files needs no consumer updates.
 - Internal functions require services LAZILY (inside the function — the `// lazy require (convention)` lines). Modules the services themselves load pull the registry in mid-load (aiService → aiPrompts → assistantAnswer → internal_functions), so a module-scope `require` of a service can capture its half-built exports and fails only in a process that loaded the service first — production, not a test that loads the registry first. query_ai was dead 2026-10-23→26 that way, as a warning nobody was emailed (`tests/queryAiLoadOrder.test.js` loads aiService first).
