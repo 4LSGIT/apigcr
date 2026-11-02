@@ -3868,16 +3868,20 @@
       <label class="yc-f yc-f-q"><span class="yc-f-l">Query</span>
       <input id="tabContactsQuery" type="text" placeholder="Search contacts…" onkeypress="if (event.keyCode == 13) {tabContactsGet(0)}" /></label>
       <div class="yc-f-panel">
-      <label class="yc-f"><span class="yc-f-l">Role</span>
-      <select id="tabContactsRole" style="width: auto" onchange="tabContactsGet(0)">
-        <option value="">All roles</option>
-        <!-- Both fixed options are IN THE MARKUP, not appended by
-             tabContactsRolesLoad: the catalog fetch is allowed to fail (see
-             that function), and "No roles" — the everyday "hide the judges
-             and trustees" filter — must not fail with it. "-none" is a
-             sentinel, never a role_code; contactService.ROLE_NONE. -->
-        <option value="-none">No roles</option>
-      </select></label>
+      <span class="yc-f"><span class="yc-f-l">Role</span>
+      <details class="yc-multi" id="tabContactsRole">
+        <summary><span id="tabContactsRoleLabel">All roles</span></summary>
+        <div class="yc-multi-menu" id="tabContactsRoleMenu">
+          <!-- "No roles" is IN THE MARKUP, not appended by
+               tabContactsRolesLoad: the catalog fetch is allowed to fail (see
+               that function), and "No roles" — the everyday "hide the judges
+               and trustees" filter — must not fail with it. "-none" is a
+               sentinel, never a role_code (contactService.ROLE_NONE), and it
+               negates the whole axis, so checking it clears the code boxes
+               and vice versa (contactsRoleChanged). -->
+          <label><input type="checkbox" value="-none" onchange="contactsRoleChanged(this)"> No roles</label>
+        </div>
+      </details></span>
       <!-- BIRTHDAYS (SS's request, 2026-10-27) — contactService.birthdayDays.
            Self-contained: this select and its one line in tabContactsGet. A
            window lists only birthdays in it, upcoming first. -->
@@ -3950,10 +3954,13 @@
 
       const params = { limit, offset, sort_by, sort_dir };
       if (q) params.q = q;
-      // Role filter (role-forms slice). Default "" adds NOTHING to params —
-      // the default-state request stays byte-identical to pre-slice.
-      const roleSel = E("tabContactsRole");
-      if (roleSel && roleSel.value) params.role = roleSel.value;
+      // Role filter (role-forms slice; multi since F2). Nothing checked adds
+      // NOTHING to params — the default-state request stays byte-identical to
+      // pre-slice. '-none' rides alone (the control keeps it exclusive);
+      // several codes ride as CSV → EXISTS(role IN …) on the server.
+      const roles = contactsRoleValues();
+      if (roles.includes('-none')) params.role = '-none';
+      else if (roles.length) params.role = roles.join(',');
       const bdaySel = E("tabContactsBirthdays");     // BIRTHDAYS
       if (bdaySel && bdaySel.value) params.birthdays = bdaySel.value;
 
@@ -4049,17 +4056,40 @@
        add-on, never a gate on the list itself. Fire-and-forget from
        openContactsTab so the first tabContactsGet is not delayed. */
     let contactsRolesLoaded = false;
+    // Role multi-filter (F2). Same shape as the Cases stage filter; the one
+    // extra rule is '-none' exclusivity (see the markup comment). The select
+    // it replaced refetched on change, so this does too.
+    function contactsRoleValues() {
+      return [...document.querySelectorAll('#tabContactsRole input:checked')].map((c) => c.value);
+    }
+    function contactsRoleChanged(box) {
+      if (box && box.checked) {
+        const boxes = [...document.querySelectorAll('#tabContactsRole input')];
+        if (box.value === '-none') boxes.forEach((b) => { if (b !== box) b.checked = false; });
+        else { const none = boxes.find((b) => b.value === '-none'); if (none) none.checked = false; }
+      }
+      const checked = [...document.querySelectorAll('#tabContactsRole input:checked')];
+      const names = checked.map((c) => c.closest('label').textContent.trim());
+      E('tabContactsRoleLabel').textContent =
+        !names.length ? 'All roles' : names.length <= 2 ? names.join(', ') : `${names.length} roles`;
+      tabContactsGet(0);
+    }
+
     async function tabContactsRolesLoad() {
       if (contactsRolesLoaded) return;
       contactsRolesLoaded = true;
       try {
         const data = await apiSend("/api/contact-role-types", "GET");
-        const sel = E("tabContactsRole");
+        const menu = E("tabContactsRoleMenu");
         (data.types || []).forEach((t) => {
-          const opt = document.createElement("option");
-          opt.value = t.role_code;
-          opt.textContent = t.label || t.role_code;
-          sel.appendChild(opt);
+          const lab = document.createElement("label");
+          const box = document.createElement("input");
+          box.type = "checkbox";
+          box.value = t.role_code;
+          box.addEventListener("change", () => contactsRoleChanged(box));
+          lab.appendChild(box);
+          lab.appendChild(document.createTextNode(" " + (t.label || t.role_code)));
+          menu.appendChild(lab);
         });
       } catch (err) {
         contactsRolesLoaded = false; // next open retries
@@ -4106,15 +4136,17 @@
         <option value="__all__">All</option>
         <option value="__other__">Other</option>
       </select></label>
-      <label class="yc-f"><span class="yc-f-l">Status</span>
-      <select id="tabApptsStatus" style="width: auto">
-        <option>All</option>
-        <option>Attended</option>
-        <option>Canceled</option>
-        <option>No Show</option>
-        <option>Rescheduled</option>
-        <option selected>Scheduled</option>
-      </select></label>
+      <span class="yc-f"><span class="yc-f-l">Status</span>
+      <details class="yc-multi" id="tabApptsStatus">
+        <summary><span id="tabApptsStatusLabel">Scheduled</span></summary>
+        <div class="yc-multi-menu">
+          <label><input type="checkbox" value="Attended" onchange="apptsStatusChanged()"> Attended</label>
+          <label><input type="checkbox" value="Canceled" onchange="apptsStatusChanged()"> Canceled</label>
+          <label><input type="checkbox" value="No Show" onchange="apptsStatusChanged()"> No Show</label>
+          <label><input type="checkbox" value="Rescheduled" onchange="apptsStatusChanged()"> Rescheduled</label>
+          <label><input type="checkbox" value="Scheduled" onchange="apptsStatusChanged()" checked> Scheduled</label>
+        </div>
+      </details></span>
       <label class="yc-f"><span class="yc-f-l">With</span>
       <select id="tabApptsWith" class="userslist" data-userlist-filter="does_appts" style="width: auto">
         <option value="">All</option>
@@ -5401,6 +5433,17 @@
      *       red-toast a user who did nothing. console.warn instead.
      *   Every pre-existing caller passes nothing and keeps today's behaviour.
      */
+    // Status multi-filter (F2) — the Cases stage pattern. No refetch on
+    // change: the old select had none either (the bar's Search button runs it).
+    function apptsStatusValues() {
+      return [...document.querySelectorAll('#tabApptsStatus input:checked')].map((c) => c.value);
+    }
+    function apptsStatusChanged() {
+      const v = apptsStatusValues();
+      E('tabApptsStatusLabel').textContent =
+        !v.length ? 'All' : v.length <= 2 ? v.join(', ') : `${v.length} statuses`;
+    }
+
     async function tabApptsGet(offset, silent = false) {
       tabApptsTypesLoad();                     // lazy, non-blocking — the list is
                                                // only needed once staff open it
@@ -5416,7 +5459,7 @@
       E("tabApptsLoad").style.display = "block";
 
       const typeVal = E("tabApptsType").value;
-      const status = E("tabApptsStatus").value;
+      const statuses = apptsStatusValues();
       const time = E("tabApptsTime").value;
       const date1 = E("tabApptsDate1").value;
       const date2 = E("tabApptsDate2").value;
@@ -5440,8 +5483,10 @@
       if (params.sort_by !== "upcoming") params.sort_dir = E("tabApptsSort2").value;
 
 
-      // Status filter
-      if (status !== "All") params.status = status;
+      // Status filter — none checked = All; several ride as CSV → IN.
+      // Scheduled starts checked, so the default request still says
+      // status=Scheduled, exactly as the old select's default did.
+      if (statuses.length) params.status = statuses.join(",");
 
       // Date range filter
       if (time === "Before") { params.to = date1; }

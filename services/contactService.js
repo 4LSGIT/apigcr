@@ -2133,7 +2133,26 @@ async function listContacts(db, {
   // contactRoleService's SLUG_RE is /^[a-z0-9_]{1,40}$/, so no role_code can
   // ever contain a '-' and collide with it.
   const roleCode = role == null ? '' : String(role).trim();
-  if (roleCode === ROLE_NONE) {
+  // F2: several codes ride as CSV or array → ONE EXISTS over role IN (…).
+  // Entries are held to contactRoleService's SLUG_RE shape, which silently
+  // drops '-none' (unspellable as a code) and empties from a list; a list
+  // that filters to nothing adds no clause. The lone-value paths below stay
+  // byte-identical to the role-forms slice (pinned test).
+  const roleParts = Array.isArray(role) ? role.map((s) => String(s).trim())
+    : roleCode.includes(',') ? roleCode.split(',').map((s) => s.trim())
+    : null;
+  const roleList = roleParts && roleParts.filter((s) => /^[a-z0-9_]{1,40}$/.test(s));
+  if (roleList && roleList.length) {
+    where.push(`EXISTS (
+      SELECT 1 FROM contact_roles crl
+       WHERE crl.contact_id = c.contact_id
+         AND crl.role IN (${roleList.map(() => '?').join(',')})
+         AND crl.active = 1
+    )`);
+    params.push(...roleList);
+  } else if (roleList) {
+    // a list was given but nothing in it is a code — no clause (All)
+  } else if (roleCode === ROLE_NONE) {
     where.push(`NOT EXISTS (
       SELECT 1 FROM contact_roles crl
        WHERE crl.contact_id = c.contact_id

@@ -73,7 +73,20 @@ router.get('/api/appts', jwtOrApiKey, async (req, res) => {
       params.push(case_id);
     }
   }
-  if (status)     { conditions.push('appts.appt_status = ?');    params.push(status); }
+  if (status) {
+    // F2: CSV/array = IN (the tab's multi filter); one value keeps `= ?`,
+    // byte-identical to before. appt_status is enum-ish — no commas.
+    const statusList = Array.isArray(status) ? status.map((s) => String(s).trim()).filter(Boolean)
+      : String(status).includes(',') ? String(status).split(',').map((s) => s.trim()).filter(Boolean)
+      : null;
+    if (statusList && statusList.length) {
+      conditions.push(`appts.appt_status IN (${statusList.map(() => '?').join(',')})`);
+      params.push(...statusList);
+    } else if (!statusList) {
+      conditions.push('appts.appt_status = ?');
+      params.push(status);
+    }
+  }
   if (from)       { conditions.push('appts.appt_date >= ?');     params.push(`${from} 00:00:00`); }
   if (to)         { conditions.push('appts.appt_date < DATE_ADD(?, INTERVAL 1 DAY)'); params.push(to);} 
   if (type)         { conditions.push('appts.appt_type = ?');  params.push(type); }

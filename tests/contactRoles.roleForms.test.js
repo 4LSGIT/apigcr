@@ -393,6 +393,22 @@ describe('listContacts role filter', () => {
     expect(db.calls[1].params).toEqual(['trustee']);
   });
 
+  test('role CSV/array → ONE EXISTS over role IN; non-codes drop out; all-dropped = no clause', async () => {
+    const db = captureDb();
+    await contactService.listContacts(db, { role: 'trustee, judge' });
+    const s = db.calls[0].sql.replace(/\s+/g, ' ');
+    expect(s).toMatch(/EXISTS \( SELECT 1 FROM contact_roles crl WHERE crl\.contact_id = c\.contact_id AND crl\.role IN \(\?,\?\) AND crl\.active = 1 \)/);
+    expect(db.calls[0].params).toEqual(['trustee', 'judge', 50, 0]);
+
+    const db2 = captureDb();
+    await contactService.listContacts(db2, { role: ['judge', '-none', ''] });
+    expect(db2.calls[0].params).toEqual(['judge', 50, 0]); // '-none' and '' dropped from a list
+
+    const db3 = captureDb();
+    await contactService.listContacts(db3, { role: '-none,' });
+    expect(db3.calls[0].sql).toBe(PRE_SQL_MAIN); // nothing valid in the list → no clause
+  });
+
   test('composes with query + type: role rides the same AND chain, params in clause order', async () => {
     const db = captureDb();
     await contactService.listContacts(db, { query: 'smith', type: 'Client', role: ' trustee ' });
@@ -751,6 +767,10 @@ describe('role-forms UI surfaces — inline scripts parse', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'public/index.html'), 'utf8');
     expect(html).toMatch(/id="tabContactsRole"/);
     expect(html).toMatch(/tabContactsRolesLoad\(\)/);
-    expect(html).toMatch(/if \(roleSel && roleSel\.value\) params\.role = roleSel\.value;/);
+    // F2: the select became the .yc-multi checkbox dropdown; the read is the
+    // helper + the '-none'-rides-alone rule.
+    expect(html).toMatch(/const roles = contactsRoleValues\(\);/);
+    expect(html).toMatch(/if \(roles\.includes\('-none'\)\) params\.role = '-none';/);
+    expect(html).toMatch(/else if \(roles\.length\) params\.role = roles\.join\(','\);/);
   });
 });

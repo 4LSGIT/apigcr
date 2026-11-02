@@ -279,10 +279,12 @@ describe('the tabs send what the routes read', () => {
   const CONTACTS = { tabContactsLoad: 'div', tabContactsQuery: '', tabContactsRole: '', contactsTable: 'table', contactsTableFoot: 'div' };
   test('contacts: the two sort selects and the birthday window', async () => {
     const p = await run('tabContactsGet', 'var offsets = {}, contacts;',
-      { ...CONTACTS, tabContactsSort: 'contact_dob', tabContactsSort2: 'DESC', tabContactsBirthdays: 'next30' });
+      { ...CONTACTS, tabContactsSort: 'contact_dob', tabContactsSort2: 'DESC', tabContactsBirthdays: 'next30' },
+      ['contactsRoleValues']);
     expect(p).toEqual({ limit: 100, offset: 0, sort_by: 'contact_dob', sort_dir: 'DESC', birthdays: 'next30' });
     const none = await run('tabContactsGet', 'var offsets = {}, contacts;',
-      { ...CONTACTS, tabContactsSort: 'contact_lname', tabContactsSort2: 'ASC', tabContactsBirthdays: '' });
+      { ...CONTACTS, tabContactsSort: 'contact_lname', tabContactsSort2: 'ASC', tabContactsBirthdays: '' },
+      ['contactsRoleValues']);
     expect(none).not.toHaveProperty('birthdays');
   });
 
@@ -290,9 +292,9 @@ describe('the tabs send what the routes read', () => {
     tabApptsDate1: '', tabApptsDate2: '', tabApptsWith: '', apptsTable: 'table', apptsTableFoot: 'div' };
   const APPTS_PRE = 'var offsets = {}, appts, apptsLastLoad = 0; function tabApptsTypesLoad() {}';
   test('appts: upcoming sends no direction; a column sends both', async () => {
-    expect(await run('tabApptsGet', APPTS_PRE, { ...APPTS, tabApptsSort: 'upcoming', tabApptsSort2: 'DESC' }))
+    expect(await run('tabApptsGet', APPTS_PRE, { ...APPTS, tabApptsSort: 'upcoming', tabApptsSort2: 'DESC' }, ['apptsStatusValues']))
       .toEqual({ limit: 100, offset: 0, sort_by: 'upcoming' });
-    expect(await run('tabApptsGet', APPTS_PRE, { ...APPTS, tabApptsSort: 'with', tabApptsSort2: 'DESC' }))
+    expect(await run('tabApptsGet', APPTS_PRE, { ...APPTS, tabApptsSort: 'with', tabApptsSort2: 'DESC' }, ['apptsStatusValues']))
       .toEqual({ limit: 100, offset: 0, sort_by: 'with', sort_dir: 'DESC' });
   });
 

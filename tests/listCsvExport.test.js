@@ -296,9 +296,13 @@ const TABS = {
   },
   contacts: {
     fn: 'tabContactsGet', kind: 'contacts', prelude: 'var offsets = {}, contacts;',
+    extra: ['contactsRoleValues'],
+    // The role control is a .yc-multi (F2): an empty stub div = nothing
+    // checked = no role param. Role filter coverage lives in
+    // contactRoles.roleForms + listSorting.mysql.
     dom: { tabContactsLoad: 'div', tabContactsQuery: 'input=pat', tabContactsSort: 'input=contact_lname', tabContactsSort2: 'input=ASC',
-      tabContactsRole: 'input=judge', tabContactsBirthdays: 'input=next7', contactsTable: 'table', contactsTableFoot: 'div' },
-    filters: { q: 'pat', sort_by: 'contact_lname', sort_dir: 'ASC', role: 'judge', birthdays: 'next7' },
+      tabContactsRole: 'div', tabContactsBirthdays: 'input=next7', contactsTable: 'table', contactsTableFoot: 'div' },
+    filters: { q: 'pat', sort_by: 'contact_lname', sort_dir: 'ASC', birthdays: 'next7' },
     list: { total: 1, contacts: [{ contact_id: 1, cases: [] }] },
   },
   events: {
@@ -312,11 +316,14 @@ const TABS = {
   },
   appts: {
     fn: 'tabApptsGet', kind: 'appts', prelude: 'var offsets = {}, appts, apptsLastLoad = 0; function tabApptsTypesLoad() {}',
+    extra: ['apptsStatusValues'],
+    // Status is a .yc-multi (F2): the empty stub div = nothing checked = no
+    // status param. Status coverage lives in listSorting.mysql.
     dom: { tabApptsButton: 'input', tabApptsLoad: 'div', tabApptsType: 'input=__default__',
-      tabApptsStatus: 'input=Scheduled', tabApptsTime: 'input', tabApptsDate1: 'input',
+      tabApptsStatus: 'div', tabApptsTime: 'input', tabApptsDate1: 'input',
       tabApptsDate2: 'input', tabApptsWith: 'input=6', tabApptsSort: 'input=client', tabApptsSort2: 'input=DESC',
       apptsTable: 'table', apptsTableFoot: 'div' },
-    filters: { exclude_type_key: 'meeting_341', appt_with: '6', sort_by: 'client', sort_dir: 'DESC', status: 'Scheduled' },
+    filters: { exclude_type_key: 'meeting_341', appt_with: '6', sort_by: 'client', sort_dir: 'DESC' },
     list: { counter: 1, appts: [{ id: 5 }] },
   },
 };

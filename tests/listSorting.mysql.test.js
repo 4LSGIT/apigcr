@@ -40,7 +40,7 @@ const d = URL_ ? describe : describe.skip;
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
-const TABLES = ['users', 'contacts', 'cases', 'case_relate', 'appts', 'events', 'tasks'];
+const TABLES = ['users', 'contacts', 'cases', 'case_relate', 'appts', 'events', 'tasks', 'contact_roles'];
 const NOW = Date.parse('2026-10-27T16:00:00Z');   // noon, America/Detroit (EDT)
 
 function dumpBlocks(dumpLines, table) {
@@ -173,6 +173,25 @@ d('list sorts on a real engine', () => {
 
   describe('contacts', () => {
     const list = (o) => contactService.listContacts(pool, { limit: 100, ...o });
+
+    // Role multi filter (F2): CSV/array = one EXISTS over role IN; '-none'
+    // alone keeps its NOT-EXISTS meaning; fixtures are per-test and cleaned.
+    test('role CSV matches the union of codes; -none still means no active role', async () => {
+      await q(`INSERT INTO contact_roles (contact_id, role, active) VALUES
+        (1, 'judge', 1), (2, 'trustee', 1), (3, 'judge', 0)`);
+      try {
+        const both = await list({ role: 'judge,trustee' });
+        expect(ids(both.contacts, 'contact_id').sort()).toEqual([1, 2]);
+        expect(both.total).toBe(2);
+        // inactive role rows never match
+        expect(ids((await list({ role: 'judge' })).contacts, 'contact_id')).toEqual([1]);
+        // -none = everyone with no ACTIVE role row (contact 3's is inactive)
+        const none = await list({ role: '-none' });
+        expect(ids(none.contacts, 'contact_id').sort()).toEqual([3, 4, 5, 6, 7, 8, 9]);
+      } finally {
+        await q(`DELETE FROM contact_roles WHERE contact_id IN (1, 2, 3)`);
+      }
+    });
 
     test('last name breaks ties on first name, then id', async () => {
       const { contacts } = await list({ sort_by: 'contact_lname', sort_dir: 'ASC' });
@@ -330,6 +349,26 @@ d('list sorts on a real engine', () => {
 
   describe('appts', () => {
     const order = async (qs) => ids((await get(`/api/appts?limit=50${qs}`)).body.appts, 'id');
+
+    // Status multi filter (F2): CSV = IN on the route; one value keeps `= ?`.
+    test('status CSV matches the union of statuses', async () => {
+      const all = (await get('/api/appts?limit=50')).body.appts;
+      const by = {};
+      for (const a of all) by[a.status] = (by[a.status] || 0) + 1;
+      const statuses = Object.keys(by);
+      expect(statuses.length).toBeGreaterThan(1);  // the fixture must exercise IN
+      const [s1, s2] = statuses;
+      const two = (await get(`/api/appts?limit=50&status=${encodeURIComponent(`${s1},${s2}`)}`)).body.appts;
+      expect(two.length).toBe(by[s1] + by[s2]);
+      expect(two.every((a) => a.status === s1 || a.status === s2)).toBe(true);
+      const one = (await get(`/api/appts?limit=50&status=${encodeURIComponent(s1)}`)).body.appts;
+      expect(one.length).toBe(by[s1]);
+      // a single-element CSV (trailing comma) MUST take the IN branch: a
+      // mutation that drops it filters nothing, and by[s1] < total catches it
+      expect(by[s1]).toBeLessThan(all.length);
+      const csvOne = (await get(`/api/appts?limit=50&status=${encodeURIComponent(`${s1},`)}`)).body.appts;
+      expect(csvOne.length).toBe(by[s1]);
+    });
 
     test('no sort_by: newest first, as every other caller has always had', async () => {
       expect(await order('')).toEqual([107, 104, 103, 102, 101, 105, 106]);
