@@ -12,20 +12,23 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 65 shipped kinds:
+ * These tests ask that claim two questions for all 67 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 65 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 67 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
  *     a capability gate on STANDARD-mode code only, which the fixed request
  *     builder never sends (code_mode pinned 'safe'), so for this kind's
  *     actual request the route is as capability-free as the rest — pinned by
- *     its own test below. The
+ *     its own test below. The comms hub kinds are the other exception: the
+ *     A14 sends and the A13 mail triage routes add requireJwt (a staff JWT
+ *     only) and their authority is the caller's per-channel grant (send /
+ *     mailbox read), resolved in the service — each pinned below. The
  *     schema has no firm_id/tenant_id column at all (0 occurrences in
  *     ref/database.sql), so "cross-firm" has no expression here; the
  *     row-scope negatives are foreign-PARENT negatives instead (a subrecord
@@ -145,6 +148,10 @@ const KINDS = [
   { kind: 'sequence.enroll.v1', method: 'POST', path: '/sequences/enroll' },
   { kind: 'sms.send.v1', method: 'POST', path: '/api/phone-lines/3/sms' },
   { kind: 'email.send.v1', method: 'POST', path: '/api/mail/send' },
+  // A13: the comms hub's one-message read-state and case-link routes (a read
+  // card sends DELETE for "unread" on the same path — pinned below).
+  { kind: 'mail.read.v1', method: 'POST', path: '/api/mail/messages/1/read' },
+  { kind: 'mail.case_link.v1', method: 'POST', path: '/api/mail/messages/1/case-link' },
   // A16: the Reports editor's own create route.
   { kind: 'report.draft.v1', method: 'POST', path: '/api/reports' },
   // A20.2 / A20.3: the ingest rule editor's own routes (email shown; the
@@ -240,19 +247,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 65 kinds (no database)
+// SECTION 1 — the route-level gate, for all 67 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 65 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 67 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 65 kinds cover 58 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(65);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(58);
+  test('the 67 kinds cover 60 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(67);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(60);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -260,7 +267,7 @@ describe('P2 — what the canonical write route gates on (all 65 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 65', async () => {
+  test('no token: every kind is 401 — authentication is required for all 67', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -523,6 +530,32 @@ describe('P2 — what the canonical write route gates on (all 65 shipped kinds)'
       expect(mailSpy).not.toHaveBeenCalled();
       expect(typeof mailSend.resolveIdentity).toBe('function');
     } finally { smsSpy.mockRestore(); mailSpy.mockRestore(); }
+  });
+
+  // A13: the mail triage routes sit behind the same human-only guard as the
+  // send routes (jwtOrApiKey + requireJwt: an x-api-key caller is 403) and
+  // NO role or capability; their authority is the caller's mailbox READ grant,
+  // resolved in mailReadService (loadVisible → mailboxService.getAccess / the
+  // alias slices). A roleless staff token with no grant on the message's
+  // mailbox gets 404 'Message not found' — no existence oracle — on all three
+  // mounts, and nothing is written.
+  test('mail.read.v1 / mail.case_link.v1: no role gate; the mailbox read grant is the authority (404 without it) behind the human-only guard', async () => {
+    const src = read('routes/api.mail.js');
+    for (const mount of ["router.post('/api/mail/messages/:id/read', ...guard", "router.delete('/api/mail/messages/:id/read', ...guard",
+      "router.post('/api/mail/messages/:id/case-link', ...guard"]) expect(src).toContain(mount);
+    expect(src).toContain('const guard = [jwtOrApiKey, requireJwt];');
+    const writes = [];
+    // The gate's own fire-and-forget audit insert is not a mail write.
+    const db = { query: async (sql) => { if (!/^\s*SELECT/i.test(sql) && !/INSERT INTO jwt_api_audit_log/.test(sql)) writes.push(sql); return [[], []]; } };
+    const a = appWith(db);
+    for (const roles of [['staff'], [], ['attorney']]) {
+      for (const [method, p, body] of [['POST', '/api/mail/messages/1/read', {}], ['DELETE', '/api/mail/messages/1/read', {}], ['POST', '/api/mail/messages/1/case-link', { case_id: 'ABC' }]]) {
+        const res = await call(a, { method, path: p }, bearer(token({ roles })), body);
+        expect({ roles: roles.join(',') || 'none', method, p, status: res.status, message: res.body.message })
+          .toEqual({ roles: roles.join(',') || 'none', method, p, status: 404, message: 'Message not found' });
+      }
+    }
+    expect(writes).toEqual([]);
   });
 
   // A20.2 / A20.3: the ingest rule routes gate on authentication, plus the

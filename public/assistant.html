@@ -230,8 +230,8 @@ function messageContextHtml(label) {
 }
 
 function actionHtml(action) {
-  const icon = { case: 'fa-folder-open', contact: 'fa-user', appointment: 'fa-calendar-check', event: 'fa-calendar-day', task: 'fa-list-check', checklist: 'fa-list-check', document: 'fa-file-lines' }[action.kind] || 'fa-arrow-up-right-from-square';
-  const noun = { case: 'case', contact: 'contact', appointment: 'appointment', event: 'event', task: 'task', checklist: 'list', document: 'document' }[action.kind] || 'record';
+  const icon = { case: 'fa-folder-open', contact: 'fa-user', appointment: 'fa-calendar-check', event: 'fa-calendar-day', task: 'fa-list-check', checklist: 'fa-list-check', document: 'fa-file-lines', mail: 'fa-envelope' }[action.kind] || 'fa-arrow-up-right-from-square';
+  const noun = { case: 'case', contact: 'contact', appointment: 'appointment', event: 'event', task: 'task', checklist: 'list', document: 'document', mail: 'email' }[action.kind] || 'record';
   return `<button data-open-kind="${esc(action.kind)}" data-open-id="${esc(action.id)}" data-open-label="${esc(action.label)}"><i class="fa-solid ${icon}"></i> Open ${noun}: ${esc(action.label)}</button>`;
 }
 
@@ -2463,6 +2463,194 @@ function formOpen(draft) {
   openEntity(e.kind, e.id, e.label);
 }
 
+// Mail triage (A13). Mark ONE email read or unread for the signed-in user, or
+// link ONE email to ONE case, through the comms hub's own routes: POST /
+// DELETE /api/mail/messages/:id/read and POST /api/mail/messages/:id/case-link
+// {case_id} — under the user's own mailbox grants (the route is the
+// authority). The server read the message as this user (getMessage), refused a
+// no-op, a copy left unread, a message already on a case and anything bulk,
+// predicted the log entry the link reuses or creates, compared the sender with
+// the case's contacts, and baked the read state (read card) or the message's
+// log stamp + resolved log entry + the case's contacts (link card) into
+// `expected`. The click re-reads GET /api/mail/messages/:id (plus the case and
+// its contacts for a link) and refuses on ANY difference BEFORE the claim. No
+// Idempotency-Key: read state is idempotent by the route, and a second link
+// card is refused by its re-read. Both writes are on the yc-sync bus
+// (mail:<id>; a link also comms:case:<case_id>), so an open comms hub or Comms
+// tab repaints. Receipts: the integer mail_message_id (read) and log_id (link).
+const MAIL_READ_ACTION_KINDS = new Set(['mail.read.v1']);
+const MAIL_LINK_ACTION_KINDS = new Set(['mail.case_link.v1']);
+
+function mailLabel(draft) {
+  if (draft && draft.kind === 'mail.case_link.v1') return 'Link email to case';
+  return draft && draft.read === false ? 'Mark email unread' : 'Mark email read';
+}
+
+function mailCaseLabel(draft) {
+  const c = (draft && draft.case) || {};
+  return String(c.label || (c.case_id ? `case ${c.case_id}` : 'the case'));
+}
+
+function mailMessageLine(draft) {
+  const m = (draft && draft.message) || {};
+  const when = m.date ? `${String(m.date).slice(0, 16).replace('T', ' ')} UTC` : 'no date';
+  return `#${m.mail_message_id} in ${m.mailbox || 'a mailbox'}${m.place ? ` (${m.place})` : ''} — from ${m.from || '(no sender)'}, "${m.subject || '(no subject)'}", ${when}`;
+}
+
+function mailText(draft) {
+  const lines = [];
+  if (draft.kind === 'mail.case_link.v1') {
+    const l = draft.log || {}; const idn = draft.identity || {};
+    const who = idn.direction === 'outgoing' ? 'Recipient' : 'Sender';
+    lines.push('Email case link proposal — not applied', `Action: ${mailLabel(draft)}`, `Email: ${mailMessageLine(draft)}`,
+      `Case: ${mailCaseLabel(draft)}${draft.case && draft.case.case_type ? ` (${draft.case.case_type})` : ''}`,
+      l.mode === 'reuse'
+        ? `Log entry: reuses #${l.log_id} (a "${l.type}" entry${l.about_before ? `, now attributed to ${l.about_before}` : ''}) — no new entry`
+        : `Log entry: creates ONE "email" entry with the message's text (${Number(l.message_chars) || 0} characters), linked to ${l.other_party || 'the other party'}`);
+    for (const x of idn.matched || []) lines.push(`${who}: ${x.address} — ${x.name}${x.relate_type ? ` (${x.relate_type})` : ''}, a contact on this case`);
+    for (const a of idn.unmatched || []) lines.push(`${who}: ${a} — NOT a contact on this case`);
+  } else {
+    lines.push('Email read-state proposal — not applied', `Action: ${mailLabel(draft)}`, `Email: ${mailMessageLine(draft)}`,
+      `Read state (yours only): ${draft.before} → ${draft.after}`);
+  }
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  if (draft.kind === 'mail.case_link.v1') {
+    lines.push('Writes: the log entry\'s link to this case (and, when it creates one, that entry) plus the message\'s log stamp — the email itself and its mailbox are untouched.',
+      'Stale check: if the message is linked or logged, its read access changes, or the case\'s contacts change before you apply, nothing is written.',
+      'Other open pages: an open comms hub, or this case\'s Comms tab, in this browser refreshes on its own; the case\'s Log tab shows it when reopened.',
+      'Notification: Casey sends nothing; linking runs no trigger rule.');
+  } else {
+    lines.push('Writes: one row of YOUR read state for this message — nothing else, and nobody else\'s.',
+      'Stale check: if the message\'s read state changes, or it stops being readable for you, before you apply, nothing is written.',
+      'Other open pages: an open comms hub or Comms tab in this browser repaints on its own.',
+      'Notification: none — read state is private to you.');
+  }
+  return lines.join('\n');
+}
+
+function mailMessageIdOf(draft) {
+  const id = Number(((draft && draft.message) || {}).mail_message_id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('This card has no usable message id.');
+  return id;
+}
+
+function mailReadRequest(draft) {
+  const id = mailMessageIdOf(draft);
+  if (typeof draft.read !== 'boolean') throw new Error('This card has no read state.');
+  return draft.read
+    ? { path: `/api/mail/messages/${id}/read`, method: 'POST', body: {} }
+    : { path: `/api/mail/messages/${id}/read`, method: 'DELETE', body: null };
+}
+
+// GET /api/mail/messages/:id as this user — null when it no longer answers
+// (gone, or the user's grant on its mailbox changed: the route never says which).
+async function mailReadMessage(id) {
+  let got;
+  try { got = await api(`/api/mail/messages/${id}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return null; throw e; }
+  const m = got && Array.isArray(got.messages) ? got.messages[0] : null;
+  if (!m || Number(m.id) !== id || typeof m.unread !== 'boolean') throw new Error('the message could not be read');
+  return m;
+}
+
+async function mailReadPrecheck(draft) {
+  mailReadRequest(draft); // a card that cannot be written is never read
+  const id = mailMessageIdOf(draft);
+  const x = draft.expected || {};
+  const m = await mailReadMessage(id);
+  if (!m) return `Message #${id} is no longer one you can read (it was removed, or your access to its mailbox changed). Nothing was written.`;
+  if (m.unread !== !!x.unread) return `Message #${id} is now ${m.unread ? 'unread' : 'read'} for you — its read state changed since this card was prepared. Nothing was written.`;
+  return '';
+}
+
+function mailReadResult(draft, result) {
+  const id = mailMessageIdOf(draft);
+  if (!result || result.status !== 'success' || Number(result.id) !== id || result.unread !== !draft.read) throw new Error('The mail route did not confirm the read state');
+  return { mail_message_id: id };
+}
+
+function mailLinkRequest(draft) {
+  const id = mailMessageIdOf(draft);
+  const caseId = typeof ((draft && draft.case) || {}).case_id === 'string' ? draft.case.case_id : '';
+  if (!/^[A-Za-z0-9_-]{1,20}$/.test(caseId)) throw new Error('This card has no usable case.');
+  return { path: `/api/mail/messages/${id}/case-link`, method: 'POST', body: { case_id: caseId } };
+}
+
+async function mailLinkPrecheck(draft) {
+  const req = mailLinkRequest(draft); // a card that cannot be written is never read
+  const id = mailMessageIdOf(draft);
+  const caseId = req.body.case_id;
+  const x = draft.expected || {};
+  const label = mailCaseLabel(draft);
+  try { await api(`/api/cases/${encodeURIComponent(caseId)}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `${label} no longer exists. Nothing was written.`; throw e; }
+  const m = await mailReadMessage(id);
+  if (!m) return `Message #${id} is no longer one you can read (it was removed, or your access to its mailbox changed). Nothing was written.`;
+  const st = m.log_status || {};
+  const linked = st.state === 'case' && st.case && st.case.case_id != null ? String(st.case.case_id) : '';
+  if (linked) {
+    return linked.toLowerCase() === caseId.toLowerCase()
+      ? `Message #${id} is already linked to ${label} — someone linked it since this card was prepared. Nothing was written.`
+      : `Message #${id} was linked to another case (${st.case.case_number || linked}) since this card was prepared. Nothing was written.`;
+  }
+  const num = (v) => (v == null ? null : Number(v));
+  if (num(m.log_id) !== num(x.stamp_log_id) || num(st.log_id) !== num(x.log_id)) {
+    return `Message #${id}'s log entry changed since this card was prepared (the mail sync or someone else logged it). Nothing was written. Ask Casey to prepare it again.`;
+  }
+  const got = await api(`/api/cases/${encodeURIComponent(caseId)}/contacts`, null, 'GET');
+  if (!got || !Array.isArray(got.contacts)) throw new Error('the case contacts could not be read');
+  const now = [...new Set(got.contacts.map((c) => `${Number(c.contact_id)}:${String(c.contact_email == null ? '' : c.contact_email).trim().toLowerCase()}`))].sort();
+  if (JSON.stringify(now) !== JSON.stringify(x.contacts || [])) {
+    return `The contacts on ${label} changed since this card was prepared, so its sender check may no longer hold. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function mailLinkResult(draft, result) {
+  const req = mailLinkRequest(draft);
+  const id = mailMessageIdOf(draft);
+  const logId = Number(result && result.log_id);
+  if (!result || result.status !== 'success' || Number(result.id) !== id || !Number.isSafeInteger(logId) || logId < 1) throw new Error('The mail route did not confirm the link');
+  if (!result.case || String(result.case.case_id).toLowerCase() !== req.body.case_id.toLowerCase()) throw new Error('The mail route did not link the reviewed case');
+  return { log_id: logId };
+}
+
+// The case-link route's 409s, all written before any write (inside its
+// transaction, which rolls back): the mail sync may still log the message, a
+// store-only message is inside its grace window, or the stamped log entry is
+// gone. Its 404s / 422 / 400 are refusals by the shared rule; anything else
+// stays ambiguous.
+function mailLinkKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const message = String((e && e.body && e.body.message) || (e && e.message) || '');
+  if (e && e.status === 409 && (/^This message is still being processed by the mail sync — try again in a few minutes\.$/.test(message)
+      || /^This email arrived in the last few minutes and another mail sync may still log it — try again in about \d+ minutes\.$/.test(message)
+      || /^The log entry this message points at no longer exists\.$/.test(message))) {
+    return { status: 'Refused — nothing written', text: `Refused — nothing written: ${message} Ask Casey to prepare it again then.` };
+  }
+  return null;
+}
+
+function mailOpenInfo(label) {
+  try { P.Swal?.fire({ icon: 'info', title: label || 'Email', text: 'Find it in Comms → Email (search its sender or subject).', heightAuto: false }); }
+  catch (_) { /* outside the shell the chat line already names the email */ }
+}
+
+function mailEntity(draft) {
+  if (draft.kind === 'mail.case_link.v1') {
+    const c = draft.case || {};
+    return { kind: 'case', id: String(c.case_id || ''), label: mailCaseLabel(draft).replace(/^case /, '') };
+  }
+  const m = draft.message || {};
+  return { kind: 'mail', id: String(m.mail_message_id || ''), label: `"${String(m.subject || '(no subject)').slice(0, 80)}"` };
+}
+
+function mailOpen(draft) {
+  const e = mailEntity(draft);
+  openEntity(e.kind, e.id, e.label);
+}
+
 // Safe code jobs (safe-mode S3). The body runs ONCE in the QuickJS guest
 // engine (no network, no DB, no host realm), so the reviewed card schedules a
 // computation, not server-side execution capability. code_mode is pinned
@@ -3996,6 +4184,48 @@ const ACTION_FAMILIES = [
     open: formOpen,
   },
   {
+    // A13: the receipt is the integer mail_message_id whose read state was set.
+    id: 'mail_read', kinds: MAIL_READ_ACTION_KINDS, title: 'Email read state', noun: 'read state', errorNoun: 'read-state change',
+    label: mailLabel, text: mailText, request: mailReadRequest, result: mailReadResult,
+    idField: 'mail_message_id', appliedKey: 'result_mail_read_id',
+    // Read state is the user's own, reversible, and seen by nobody else.
+    danger: () => false,
+    precheck: mailReadPrecheck,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `message #${payload.mail_message_id}`,
+    entity: (draft) => mailEntity(draft),
+    failure: 'The read state could not be changed.',
+    appliedCopy: (draft) => ({
+      status: `Applied — message #${draft.result_mail_read_id} marked ${draft.read ? 'read' : 'unread'}`,
+      warning: `The email is now ${draft.read ? 'read' : 'unread'} for you only, using your signed-in account. Nobody else's read state changed.`,
+      button: 'Where to find it',
+    }),
+    reviewWarning: 'Review the email and its read state before and after. It changes YOUR read state only. Canceling writes nothing.',
+    open: mailOpen,
+  },
+  {
+    // A13: the receipt is the integer log_id the case-link route bridged.
+    id: 'mail_link', kinds: MAIL_LINK_ACTION_KINDS, title: 'Email case link', noun: 'email link', errorNoun: 'email link',
+    label: mailLabel, text: mailText, request: mailLinkRequest, result: mailLinkResult,
+    idField: 'log_id', appliedKey: 'result_mail_link_log_id',
+    // A sender who is not on the case, a case with no contacts to compare, or
+    // an about-link the link replaces.
+    danger: (draft) => (draft.warnings || []).length > 0,
+    precheck: mailLinkPrecheck,
+    knownOutcome: mailLinkKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `log entry #${payload.log_id}`,
+    entity: (draft) => mailEntity(draft),
+    failure: 'The email could not be linked.',
+    appliedCopy: (draft) => ({
+      status: `Applied — email linked (log entry #${draft.result_mail_link_log_id})`,
+      warning: `Message #${(draft.message || {}).mail_message_id} is now linked to ${mailCaseLabel(draft)} through log entry #${draft.result_mail_link_log_id}, using your signed-in account. It shows on the case's Comms and Log tabs; Casey cannot move or unlink it.`,
+      button: `Open ${mailEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review the email, the case, the log entry it reuses or creates (a created entry copies the email\'s text into the case\'s log) and whether the sender is a contact on the case. Canceling writes nothing.',
+    open: mailOpen,
+  },
+  {
     id: 'job', kinds: JOB_ACTION_KINDS, title: 'Safe code job', noun: 'scheduled job', errorNoun: 'job action',
     label: jobActionLabel, text: jobDraftText, request: jobActionRequest, result: jobActionResult,
     idField: 'job_id', appliedKey: 'result_job_id',
@@ -4690,6 +4920,7 @@ function openEntity(kind, id, label) {
     else if (kind === 'report') openAutomationRecord('reports.report', Number(id), `Report #${id}`, 'Find it under More → Reports.');
     else if (kind === 'checklist') checklistOpenPersonal(label);
     else if (kind === 'document') documentOpenInfo(label);
+    else if (kind === 'mail') mailOpenInfo(label);
   } catch (_) { /* The links are useful only inside the YisraCase shell. */ }
 }
 

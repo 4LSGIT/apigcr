@@ -12,6 +12,7 @@
 <script src="/js/vendor/purify-3.4.16.min.js"></script>
 <script src="/js/mailRender.js"></script>
 <script src="/js/mailboxColor.js"></script>
+<script src="/js/yc-sync.js"></script>
 <script src="/js/ycNoTranscribe.js"></script>  <!-- admin-tools slot: the do-not-transcribe dialog -->
 <script src="/js/ycSubTab.js"></script>  <!-- the shell's workspace URL: this pane's tab (wsurl S3) -->
 <script src="/js/optoutAck.js"></script>  <!-- opted-out recipient: confirm, then resend acknowledged -->
@@ -4823,6 +4824,55 @@ document.addEventListener('comms-tab', (e) => {
   if (!adminTools.loaded) adminToolsLoad();
 });
 /* ══ ADMIN TOOLS ▲ ═══════════════════════════════════════════════════════════ */
+
+// ── Sync bus reader (public/js/yc-sync.js, A13) ─────────────
+// Another frame (an Ask Casey mail card, another hub, a Comms tab) changed ONE
+// message's read state or case link. `unread` is a real value: the list row
+// and the open conversation repaint from it with no GET (a merged row is
+// unread while ANY copy is). A case link carries the case id and log id, not
+// the docket: the open card's log line repaints from them, and a listed row
+// re-reads the list quietly (its chip needs the server's case number). A row
+// or card already showing that case — this pane's own write — is skipped.
+// §3.6: nothing here emits; a GET never announces.
+function busListRow(id) {
+  return state.messages.find((m) => m.id === id || (m.copies || []).some((c) => c.id === id)) || null;
+}
+function busThreadMessages(id) {
+  const t = state.thread;
+  return t ? t.messages.filter((x) => x.id === id || (x.copies || []).some((c) => c.id === id)) : [];
+}
+function busUnreadAfter(x, id, unread) {
+  for (const c of x.copies || []) if (c.id === id) c.unread = unread;
+  return x.copies && x.copies.length ? x.copies.some((c) => c.unread) : unread;
+}
+let busListTimer = null;
+if (window.YC) {
+  window.YC.on('mail:*', '*', (fields, msg) => {
+    const id = Number(String(msg.addr).slice('mail:'.length));
+    if (!Number.isSafeInteger(id) || id < 1) return;
+    const has = (k) => Object.prototype.hasOwnProperty.call(fields, k);
+    if (has('unread') && typeof fields.unread === 'boolean') {
+      const row = busListRow(id);
+      if (row) markRowsRead([row.id], busUnreadAfter(row, id, fields.unread));
+      for (const x of busThreadMessages(id)) { x.unread = busUnreadAfter(x, id, fields.unread); paintCardState(x); }
+      refreshCountsSoon();
+    }
+    if (has('case_id') && fields.case_id != null && fields.case_id !== '') {
+      const caseId = String(fields.case_id);
+      const same = (x) => !!(x && x.log_status && x.log_status.state === 'case' && x.log_status.case
+        && String(x.log_status.case.case_id).toLowerCase() === caseId.toLowerCase());
+      for (const x of busThreadMessages(id)) {
+        if (same(x)) continue;
+        x.case = { case_id: caseId, case_number: null };
+        x.log_id = fields.log_id;
+        x.log_status = { state: 'case', case: x.case, log_id: fields.log_id, via: 'stamped' };
+        paintLogLine(x);
+      }
+      const row = busListRow(id);
+      if (row && !same(row)) { clearTimeout(busListTimer); busListTimer = setTimeout(() => loadList({ silent: true }), 250); }
+    }
+  });
+}
 
 // ── Boot ────────────────────────────────────────────────────
 // Runs LAST: if the parent is already ready this calls init() synchronously.

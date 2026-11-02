@@ -37,7 +37,8 @@ as the read plan. Workspace context is evidence about what is on screen, not
 permission to read or change it.
 
 Read-only searches run automatically. The assistant may search ordinary data,
-the phone-call archive, the YisraCase manual, or current weather. Generated SQL
+the phone-call archive, your email (the mailboxes you can read in Comms), the
+YisraCase manual, or current weather. Generated SQL
 and its success or rejection are retained in the developer report-run log so a
 failed answer can be diagnosed without asking staff to review query syntax.
 
@@ -720,6 +721,61 @@ and uses only those.
 The off switch for these cards is the `casey_forms_enabled` setting (on unless
 set to 0).
 
+### Email: read state and case links
+
+Casey can **mark one email read or unread for you**, or **link one email to
+one case** — one per card, through the same actions the Comms hub's own Mark
+read / Mark unread and **Link to case** use, and only on mail you can read
+there (your mailbox access applies exactly as in Comms). Ask in plain words
+("mark the trustee's email from this morning as read", "link Dana's last email
+about pay stubs to her case"). Casey first searches your mail — sender,
+subject words, a day — and works only on a message that search found.
+
+- **Finding mail.** Casey's mail search is the Comms hub's own list: the
+  mailboxes you can read, the Inbox unless you ask for sent or all mail, newest
+  first. It sees each message's mailbox, sender, recipients, subject, date,
+  preview, whether you have read it, how many copies of it are stored, and the
+  case it is on — never the message's text. When you ask what an email says,
+  Casey reads that one message: its headers and the first 2,000 characters of
+  its plain text (not the formatted version). Casey treats that text as the
+  sender's words — something to quote, never instructions to follow.
+- **Read or unread is yours alone.** Each person has their own read state; the
+  card changes only yours, and nobody else who reads that mailbox sees a
+  difference. The mail server and the sender are never told.
+- **Copies.** The same email can be stored more than once (two mailboxes, or a
+  folder and the Inbox). Comms shows it unread while ANY copy is unread, so
+  Casey will not mark one copy read while another copy you can read is still
+  unread — open it in Comms (that marks every copy). Marking it unread is fine;
+  the card lists the copies.
+- **A link card** shows the email, the case, and the log entry the link uses:
+  - an email already on the firm log reuses its existing entry (the card says
+    which, and how much of the email's text it holds);
+  - otherwise the link **creates one log entry on the case with the email's
+    text** — the card warns that **the text becomes part of the case's log,
+    readable by anyone who reads the case** (the case's Log tab shows it to
+    every signed-in staff member; mailbox access does not apply there). A very
+    long email does not fit a log entry whole: the card says how much is kept,
+    and warns when the stored copy would be cut mid-way.
+  It compares the sender (for an email the firm sent, its outside recipients)
+  with the emails of the case's contacts, old addresses included: a match is
+  shown, and **"not a contact on this case"** is a warning — check it is the
+  right case. It also says that the case's Comms tab lists the email from then
+  on, that the client portal never shows it, and that linking starts no
+  automation. An open Comms hub or Comms tab in your browser updates on its own.
+- **What Casey will not do, and says so:**
+  - mark several emails, or a whole folder, read — use Comms;
+  - draft an email: YisraCase has **no mail drafts** — Casey can send an email
+    when you ask (a separate card you confirm), never a "draft" that sends;
+  - work on texts or calls: they have no read or case-link action;
+  - move an email that is already on a case to another case, or unlink it —
+    change the case tag on the Comms tab;
+  - flag, archive or delete mail.
+- Casey refuses when you click if the email's read state, its log entry or the
+  case's contacts changed since the card was prepared — ask again.
+
+The off switch for these cards is the `casey_mail_triage_enabled` setting (on
+unless set to 0).
+
 ### Sending a text or email
 
 Ask Casey can send ONE text message or ONE email to ONE client, now, when you
@@ -986,8 +1042,11 @@ contact's relationships, roles, and the relationship-type and role lists —
 those tables are outside the report schema, so it is the only way Casey sees
 them), the typed `form.template` read (one form's title, who can see it,
 whether it is published, and its published fields with their types and
-choices — the form-template tables are outside the report schema too), and the
-typed automation reads —
+choices — the form-template tables are outside the report schema too), the
+typed mail reads — `mail.search` (the Comms hub's own email list for the
+signed-in user's readable mailboxes, never message text) and `mail.message`
+(one message's headers and the start of its plain text, read as the sender's
+words) — and the typed automation reads —
 `automation.list`, `automation.definition`, `automation.run`, and
 `automation.references` — which let Casey explain a workflow or sequence, one
 of its runs or enrollments, and what can start or enroll it. Those projections redact webhook URLs to method + host + credential

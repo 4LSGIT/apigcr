@@ -47,6 +47,11 @@ const KINDS = new Map([
   // (it returns the row id) and the submission the PATCH linked.
   ['form.draft.v1', 'submission_id'],
   ['form.submission.link.v1', 'submission_id'],
+  // A13: a read card receipts the message whose read state it set (the route
+  // answers {id, unread}); a case link receipts the log row the route
+  // bridged — reused or created — which it returns as log_id.
+  ['mail.read.v1', 'mail_message_id'],
+  ['mail.case_link.v1', 'log_id'],
   ['job.code_safe.create.v1', 'job_id'],
   ['workflow.draft.v1', 'workflow_id'],
   ['workflow.step_insert.v1', 'workflow_id'],

@@ -21,7 +21,7 @@ Core doctrine: **the bus carries values, not "something changed" pings** — a m
   - `YC.on(addr, field, fn)` — `field '*'` = any; `addr 'case:*'` = wildcard over one type (cannot cross types). Returns unsubscribe.
   - `YC.bindValue(addr, field, el)` — guarded input binding (skips focused / `ycDirty` elements).
   - `YC._log` — ring buffer of the last 50 messages, for debugging.
-- **Addresses:** `case:<id>` · `contact:<id>` · `appt:<id>` · `event:<id>` · `setting:<key>` · `checklist:<link_type>:<link>` (the set of notes & lists on one record) · `form:<link_type>:<link_id>` (a record's form rows — drafts and adopted submissions).
+- **Addresses:** `case:<id>` · `contact:<id>` · `appt:<id>` · `event:<id>` · `setting:<key>` · `checklist:<link_type>:<link>` (the set of notes & lists on one record) · `form:<link_type>:<link_id>` (a record's form rows — drafts and adopted submissions) · `mail:<id>` (one stored email, `mail_messages.id`) · `comms:case:<case_id>` (a case's communications set).
 - **Message:** `{addr, fields, origin, ts}`. `origin` is a trace string (`auto:PATCH /api/cases/AAAA`, `checklistView:saveBody`).
 
 ## How announcements happen — the sniff
@@ -44,6 +44,7 @@ Matched endpoints (read `MATCHERS` in yc-sync.js for the always-current list —
 | `/api/appts…` (PATCH, attended/no-show, create, cancel, reschedule — reschedule emits **both** old and new ids) · `/api/events…` (PATCH, complete/cancel, create) | | `yc_refetch` markers |
 | `/checklists` (POST) · `/checklists/:id/items` (POST) · `/checkitems/:id` (PATCH) — root routes, no `/api` | | `yc_refetch` to `checklist:<link_type>:<link>`, the list's record (from the list row; the item PATCH echoes `checklist: {id, link_type, link}` for it); an unlinked list is silent. Other list writes (PATCH/DELETE a list, DELETE an item, upsert-items) are not matched |
 | `/api/forms/draft` (POST) · `/api/forms/submissions/:id/link` (PATCH) | | `yc_refetch` to `form:<link_type>:<link_id>`, the record the form rows belong to (the draft POST echoes `form_key`, `link_type`, `link_id` for it; the link PATCH answers the target); an unlinked row is silent. Submit, the draft DELETE and the PDF routes are not matched |
+| `/api/mail/messages/:id/read` (POST, DELETE) · `/api/mail/messages/:id/case-link` (POST) | | real values to `mail:<id>` — `{unread}` from the read answer, `{log_id, case_id}` from the link answer — and, for a link, `yc_refetch` to `comms:case:<case_id>`. Fails closed on an answer for another id or without the value. The bulk POST `/api/mail/read` (a count, no ids), views, image senders and send are not matched; no log route (POST `/api/log`, PUT `/api/log/:id/about`) announces |
 
 **`yc_refetch` is a reserved field**: "refetch this entity." It exists for the two shapes values can't express — an *absence* (a row left: transfers, relate removals) and a *response that carries no values* (appts/events). Handlers must never merge it into entity state. It is the only sanctioned invalidation on the bus.
 
@@ -61,6 +62,8 @@ Matched endpoints (read `MATCHERS` in yc-sync.js for the always-current list —
 | contact.html | `contact:<own>`, `appt:*`, `event:*` | same shape, no pipeline |
 | checklistView | per native card; `checklist:*` | updates the card body behind dirty/inflight/value-equality fences; a `checklist:` marker for its own record or (case board) a contact group reloads the board — skipped on its own echo (api() stamps writes, 1.5s), parked while hidden or typed in and reloaded on refocus / visibility / tab re-entry |
 | YCForm (any form host that loads yc-sync — render.html in normal internal mode) | `form:*` | a marker for its own record re-reads `/api/forms/latest`: a clean form repopulates through `refresh()` and shows the draft banner; a form with unsaved typing is never repopulated — it shows the newer draft's banner and holds its autosave until Restore / Discard. Skipped on its own autosave echo (`_api` stamps draft POSTs, 1.5s), parked while hidden, mid-save or typed in |
+| comms.html (the comms hub) | `mail:*` | `unread` repaints the list row and the open card with no GET (a merged row stays unread while any copy is) and refreshes the counts; a link repaints the open card's log line and re-reads the list quietly — skipped for a row or card already on that case (its own write) |
+| entityCommunications.html (a case's / contact's Comms tab) | `comms:case:<own case>`, `mail:*` (field `case_id`) | re-reads its feed (debounced); `mail:` only when it shows that message under another case — so its own case-tag write is skipped; parked while hidden, refreshed on return |
 | pipelineBoard | `case:*` | full board refetch (query view — membership is server-computed), scroll preserved |
 | calendar | `appt:*`, `event:*` | FullCalendar `refetchEvents()` |
 

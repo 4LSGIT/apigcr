@@ -2208,6 +2208,10 @@ module.exports = {
   emissionPending,
   folderEmits,
   STORE_ONLY_GRACE_MIN,
+  // A13 (Ask Casey mail triage): the case-link card predicts caseLink's log
+  // row — the same cross-source lookup and the same text cap — read-only.
+  priorLogId,
+  LOG_MESSAGE_SOFT_CAP,
   emailsIn,
   placeOf,
   referencedCids,

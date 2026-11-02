@@ -1097,7 +1097,61 @@
        PDF routes — no Casey card sends them (ref/plans.md). */
     [/^\/api\/forms\/draft$/,                         'form', formGetter, ['POST']],
     [/^\/api\/forms\/submissions\/(\d+)\/link$/, 'form', formGetter, ['PATCH']],
+    /* Mail triage (A13) — the comms hub's ONE-message writes, which the Ask
+       Casey mail cards send and the hub itself sends (Mark unread, the case
+       tag). Before A13 no /api/mail route had a matcher and neither reader
+       loaded this file, so a read or a link made in one frame was invisible
+       to an open hub or Comms tab until it reloaded; no log writer anywhere
+       announces either (POST /api/log, PUT /api/log/:id/about — none). Both
+       announce the MESSAGE as `mail:<id>` with REAL VALUES; the link also
+       announces the case's communications set as `comms:case:<case_id>` (a
+       marker — the Comms tab re-reads its feed). Not `case:<id>`: a log row
+       is not the case row, and that would cost every open case file a full
+       refetch.
+         POST / DELETE /api/mail/messages/:id/read   { id, unread }
+         POST /api/mail/messages/:id/case-link        { id, log_id,
+                                                       log_created, case:
+                                                       {case_id, case_number} }
+       Readers: public/comms.html (the hub's list and open conversation) and
+       public/entityCommunications.html (a case's or contact's Comms tab).
+       Fails closed without the id / case. Not matched: the bulk POST
+       /api/mail/read (its answer is a count, no ids — the hub repaints its
+       own rows; no Casey card sends it), the views, image senders, send. */
+    [/^\/api\/mail\/messages\/(\d+)\/read$/,      'mail', mailReadGetter, ['POST', 'DELETE']],
+    [/^\/api\/mail\/messages\/(\d+)\/case-link$/, 'mail', mailCaseLinkGetter, ['POST']],
   ];
+
+  /**
+   * Mail read state (A13): the message, with the value the route answered.
+   *
+   * @param   {object} r   `{status, id, unread}`
+   * @param   {string} id  the URL capture
+   * @returns {Array|null}
+   */
+  function mailReadGetter(r, id) {
+    if (!r || typeof r !== 'object' || !id) return null;
+    if (typeof r.unread !== 'boolean' || String(r.id) !== String(id)) return null;
+    return [{ addr: 'mail:' + id, fields: { unread: r.unread } }];
+  }
+
+  /**
+   * Mail case link (A13): the message's log row and case, and the case's
+   * communications set.
+   *
+   * @param   {object} r   `{status, id, log_id, log_created, case:{case_id}}`
+   * @param   {string} id  the URL capture
+   * @returns {Array|null}
+   */
+  function mailCaseLinkGetter(r, id) {
+    if (!r || typeof r !== 'object' || !id || String(r.id) !== String(id)) return null;
+    var c = r['case'];
+    var caseId = c && c.case_id;
+    if (caseId == null || caseId === '' || r.log_id == null) return null;
+    return [
+      { addr: 'mail:' + id, fields: { log_id: r.log_id, case_id: caseId } },
+      { addr: 'comms:case:' + caseId, fields: { yc_refetch: 1 } },
+    ];
+  }
 
   /**
    * Form writes — announce the RECORD whose form rows changed (A12).

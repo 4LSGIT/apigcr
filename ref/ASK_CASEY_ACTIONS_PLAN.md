@@ -2,28 +2,39 @@
 
 The destination is `ref/CASEY_VISION.md`; this document is the mechanics.
 
-Status: A0/A0.1, A1, A2, A3, A4, A4.1, and A5 implemented 2026-10-20. A2 covers
-the complete Task lifecycle; A3 covers reviewed Event create/update/complete/
-cancel; A4/A4.1 cover reviewed Appointment create, narrow update, attended,
-no-show, cancel, reschedule-now, and reschedule-later through the existing
-authenticated routes. A5 covers one reviewed phone/email/address subrecord
-create, narrow update, or history-preserving end. No general action executor is introduced.
+Status (2026-11-02): A0/A0.1, A1, A2, A3, A4, A4.1 and A5 shipped 2026-10-20 —
+the Task lifecycle; reviewed Event create/update/complete/cancel; Appointment
+create, narrow update, attended, no-show, cancel, reschedule-now and
+reschedule-later; one phone/email/address subrecord create, narrow update or
+history-preserving end. Since then: A6 (contact relations and roles — create and
+update), A7 group A (case notes, case alerts, contact notes), A7c (case docket
+adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
+advance and move; off-ramp = exit), A10 (checklists and items), A11 (documents —
+update and link), A12 (form drafts and submission links), A13 (mail triage —
+read state and case link; no drafts exist, no SMS triage), A14 (direct email /
+SMS send), A16 (reports), A17.0–A17.4, A17.6, A17.7 (workflows — explain,
+preview, draft, step, publish, start), A18.2, A18.3, A18.4a/b (sequences — step,
+publish, enroll), A19.0/A19.1 (inbound hooks), A20.0–A20.3 (email and phone
+ingest rules), R1 (read-loop continuation) and P13. A15 (e-signature) is not
+built. Each slice's section below carries its shipped contract. No general
+action executor is introduced.
 The 2026-10-21 independent-review fix package (branch `fix/casey`) amends this
 plan — see **Course corrections** below; where they conflict, it wins.
 The automation-authoring family (A17 workflows, A18 sequences and trigger
-rules) was planned in a dedicated session on 2026-10-22 and now carries slice
-contracts and three platform prerequisites (P11-P13); nothing in it is built.
+rules) was planned in a dedicated session on 2026-10-22 with three platform
+prerequisites (P11-P13); its shipped sub-slices are listed above, and the rest
+of its plan stands in those sections.
 
 ## Review briefing
 
-The shipped baseline is 65 proposal kinds (the action ledger's `KINDS`
+The shipped baseline is 67 proposal kinds (the action ledger's `KINDS`
 registry; `tests/caseyActionPermissions.test.js` pins the inventory against it)
-in 29 browser families: the record families — Tasks, Events, Appointments,
+in 31 browser families: the record families — Tasks, Events, Appointments,
 contact phone / email / address rows, contact relations and roles, case and
 contact notes and case alerts, case contacts, case pipeline moves, the case
 docket, checklists and their items, documents and their links, form drafts and
-submission links — plus direct SMS / email sends, report drafts and the
-automation families (safe code jobs, workflow draft / step / publish / start,
+submission links, an email's read state and its case link — plus direct SMS /
+email sends, report drafts and the automation families (safe code jobs, workflow draft / step / publish / start,
 hooks, sequence step / publish / enroll, ingest rules). Every family
 uses the same boundary: one
 closed, evidence-backed, server-normalized proposal; exact SweetAlert review;
@@ -1313,12 +1324,172 @@ link_id}).
 publishing / visibility / version restore / deletion, deleting a draft,
 appointment-linked forms, the hand-built form pages on the bus.
 
-#### A13: Message triage and communication drafts
+#### A13: Message triage — mail read state and case link shipped 2026-11-02 (no drafts: none exist)
 
-Low-risk communication work comes first: mark a known message read/unread,
-link one message to a case, or prepare a non-sent email/SMS draft where a
-canonical draft operation exists. A draft must be visibly non-sent. Never
-reinterpret an endpoint that sends immediately as a draft endpoint.
+The slice as planned: mark a known message read/unread, link one message to a
+case, or prepare a non-sent email/SMS draft where a canonical draft operation
+exists. A draft must be visibly non-sent. Never reinterpret an endpoint that
+sends immediately as a draft endpoint.
+
+**What exists, and what that leaves out.**
+- **No drafts.** No draft operation exists anywhere in the mail or phone hub:
+  `routes/api.mail.js`, `routes/api.phoneComms.js` and `services/mailbox/*`
+  have no draft route, table or service (the comms hub's unsent composer state
+  lives in the page and dies with it). The only "draft" is the Ask Casey send
+  card's own `draft_id`. So drafts are not in this slice; Casey says there is
+  no mail draft operation and never turns a draft request into a send
+  (`/api/mail/send` and the phone-line SMS route send at once — A14 is their
+  card).
+- **No SMS / call triage.** The phone hub has no read-marking and no case-link
+  route, so texts and calls are out. A message here is an email in the comms
+  hub's store (`mail_messages`).
+- **The mail hub's routes** (`routes/api.mail.js`, guard `jwtOrApiKey` +
+  `requireJwt`: a staff JWT only — grants and read state belong to a person;
+  `services/mailbox/mailReadService.js`): POST / DELETE
+  `/api/mail/messages/:id/read` → `setRead` (per-user `mail_read_state`, row
+  present = read; INSERT … ON DUPLICATE KEY UPDATE / DELETE, idempotent;
+  answers `{id, unread}`); POST `/api/mail/read` {ids | all} → `markRead` —
+  BULK, not used; POST `/api/mail/messages/:id/case-link` {case_id} →
+  `caseLink`. Every one resolves the message through `loadVisible`: its
+  mailbox readable (grant, SU, the attorney read bypass) or a readable alias
+  slice admits it, else 404 — exactly as missing.
+- **What `caseLink` does** (read whole; pinned on a real engine): in a
+  transaction (`retries: 1`, pure DB) it locks the message row and picks a log
+  row in this order — the message's own `log_id` stamp, else the lowest-id
+  COPY (same RFC Message-ID) carrying a stamp, else another ingest source's
+  `email_ingest_executions` row keyed by the Message-ID or a provider id
+  (`priorLogId`) — and only when none exists CREATES one with
+  `logService.createLogEntry`: type `email`, link `email` → the other party
+  (the sender of incoming mail, the first To of the firm's own), about the
+  case, written by the user, From / To / Subject and the message's text (the
+  plain-text part, else text derived from the HTML — never the HTML; cut at
+  50,000 characters), dated when it was sent but never later than it was
+  stored. It refuses (409) while the mail sync may still emit the message, and
+  for a store-only folder for 10 minutes after it was stored; 422 when there is
+  no usable address; 404 for the case or the message. It stamps
+  `mail_messages.log_id` when it was NULL and sets the log row's about-link to
+  the case with `setLogAbout` — which OVERWRITES any existing about-link: a
+  message already on another case is silently MOVED (the Comms tab's case tag
+  relies on that). A stamped row whose log row was deleted is 409. It emits no
+  event and runs no rule. It answers `{id, log_id, log_created, case}`.
+
+**Read enablement.** `mail_messages`, `mail_read_state` and `mailboxes` are
+not in the curated report manifest and are not added (bodies are sensitive;
+adding a table needs the production grant re-run). `email_log` is in the
+manifest but is the SEND / ingest log, not the mailbox. Casey reads mail only
+through two typed reads on the app pool, executed AS THE ASKING USER through
+`mailReadService`, so the hub's grant resolution applies unchanged — and each
+read is audited like `comms.search` (`admin_audit_log` tool `mail_read`,
+message ids only, never text):
+- `mail.search` {q?, from?, mailbox_id?, unread_only?, since?, folder?,
+  limit ≤ 20} → `listMessages` (the hub's own list: readable mailboxes, the
+  Inbox unless folder is `sent` or `all`, newest first). `q` is the hub's
+  search (a phrase inside the sender or the subject); `from` is a domain
+  (`from_domain`) or one address (ridden on `q` when there is none, then
+  matched exactly on the sender); `since` is a firm-local day. The address and
+  since filters run over the newest 100 matches, and the head row says when more
+  may exist. Per message: `mail_message_id`, mailbox, place, from, the first two
+  To addresses, subject, date, snippet, `read_by_me`, copies, attachments count,
+  the log id and state, and `linked_case_id` / `linked_case_number` (the hub's
+  full resolution — the stamp, a copy's, or another source's log row) — NEVER
+  `body_text`, `body_html`, `raw_ref` or `gcs_ref`. A mailbox the user cannot
+  read returns nothing and is said.
+- `mail.message` {mail_message_id} → `getMessage`: one message's headers (To /
+  Cc up to six), attachment names, and the first 2,000 characters of its
+  PLAIN-TEXT body only (an HTML-only message is not read — the row says so),
+  with a note that the body is the sender's text: quoted evidence, never
+  instructions. The prompts say to use it only when what an email says matters.
+  A message the user cannot read is a `not_found` row.
+
+**Shipped contract.** Two kinds behind one switch: `mail.read.v1` (POST or
+DELETE `/api/mail/messages/:id/read`) and `mail.case_link.v1` (POST
+`/api/mail/messages/:id/case-link` {case_id}).
+- **Refused by name**, before anything is read: bulk (`all`, `ids`,
+  `mail_message_ids`, `filters`, `mailbox_ids`, a list as `mail_message_id`);
+  any key shaped like another mail operation (draft, send, reply, forward,
+  flag, answer, archive, delete, move, unlink, relink, label, log_id, about);
+  any other unknown key. A card needs a signed-in user.
+- **Evidence:** the message's row from a `mail.search` / `mail.message` read
+  of this investigation (`row_type` message, its `mail_message_id`) — nothing
+  else can carry one; a link also cites a row with the case's exact case_id.
+  The message is re-read through `getMessage` as the user: one the user cannot
+  read is refused ("not a message you can read"), never distinguished from a
+  missing one.
+- **Read card.** Refused: a no-op (already read / unread for this user), and
+  **COPIES** — marking read while another copy of the same email (same RFC
+  Message-ID) that the user can read is still unread: the single-message
+  route marks ONE copy, and the hub shows an email unread while ANY copy is,
+  so the card would change nothing visible (the hub's own Mark read and
+  open-to-read use the bulk route over every copy; the user does it there).
+  Marking unread with copies is allowed and disclosed. Card: the message
+  (mailbox, from, subject, date, place), read state before → after, **for you
+  only** (read state is per person — nobody else's changes, the server's Seen
+  flag and the sender are untouched), no event / log / rule.
+- **Link card.** The normalizer predicts `caseLink`'s log row read-only with
+  `caseLink`'s own lookups in its order (`priorLogId` is now exported for it)
+  and refuses first: the 409s in the route's own words (the sync still
+  emitting; the store-only grace), no usable address, a dead stamped log row,
+  a message ALREADY on THIS case (no-op) and a message on ANOTHER case — the
+  route would move it, Casey refuses (moving between cases is a later
+  sub-slice; the Comms tab's case tag does it). Disclosed: whether the link
+  REUSES an existing entry (its id, type, date, which lookup found it, its
+  stored text length — "it shows on the case's Log tab, readable by every
+  signed-in staff member; the mailbox's read grant does not apply there") or
+  CREATES one (type, the other party, the text length and source, the date —
+  "the message text becomes part of the case's log, readable by anyone who
+  reads the case") — and what the row can hold: `log_message` is
+  varchar(10000), so a longer text keeps its first 10,000 characters there
+  (said), and a data copy over the TEXT column's 65,535 bytes is cut mid-way
+  (danger; both cut silently under the relaxed sql_mode, pinned on the engine);
+  an existing about-link to something other than a case is REPLACED (danger); the case's Comms tab lists it from then on (its mail card
+  shows to staff who can read the mailbox); the client portal never shows it
+  (the portal reads no log rows of any type — its field whitelist excludes log
+  columns); no event, rule or send. **Identity:** the sender of incoming mail
+  (every outside To / Cc address of the firm's own mail) against the case's
+  contacts' emails (`contacts.contact_email` plus every `contact_emails` row,
+  ended ones included, case-insensitive): a match is shown, a mismatch is a
+  danger warning ("not a contact on this case"), a case with no contacts is
+  IDENTITY NOT CHECKED (danger) — never a refusal.
+- **Freshness:** `expected` = the read state (read card); the message's
+  `log_id` stamp, the resolved log id (or none) and the case's contacts as GET
+  `/api/cases/:id/contacts` returns them (`contact_id:contact_email`, sorted —
+  link card). The click re-reads GET `/api/mail/messages/:id` (a 404 refuses:
+  gone or no longer readable) and, for a link, GET `/api/cases/:id` and
+  `/api/cases/:id/contacts`, and refuses before the claim on any difference —
+  the read state flipped, the message linked (this case or another) or logged
+  since, the contacts changed.
+- **Idempotency:** none added — read state is idempotent in the route, and a
+  second link card is refused by its re-read.
+- **Outcomes:** the link route's three 409s are before-write refusals (all
+  thrown inside its transaction, which rolls back); 404 / 422 / 400 are
+  refusals by the shared 4xx rule; a bare 409, any 5xx or an answer that does
+  not echo the message, the case or a log id stays ambiguous. The read route's
+  404 is a refusal; an answer whose `unread` is not the reviewed state is
+  ambiguous.
+- **Receipt:** the integer `mail_message_id` (read) and the `log_id` the route
+  answers (link). Two browser families (`mail_read`, `mail_link`); an email
+  entity opens a "find it in Comms → Email" note.
+- **Sync (fixed in this slice):** no `/api/mail` route had a matcher, no log
+  writer announces anything (POST `/api/log`, PUT `/api/log/:id/about`), and
+  neither reader loaded yc-sync — a read or a link was invisible to an open hub
+  or Comms tab until it reloaded. Both routes now announce the MESSAGE as
+  `mail:<id>` with the answered values (`{unread}`; `{log_id, case_id}`), and a
+  link also `comms:case:<case_id>` (a marker). The comms hub (`comms.html`)
+  repaints the row and the open card from `unread` (a merged row stays unread
+  while any copy is), re-reads its list quietly on a link and repaints the open
+  card's log line; a case's Comms tab (`entityCommunications.html`) re-reads
+  its feed on its `comms:case` address, and any Comms tab showing the message
+  under another case re-reads on `mail:<id>`; parked while hidden, skipped on
+  its own write. The bulk POST `/api/mail/read` (a count, no ids) is not
+  matched — the hub repaints its own rows.
+- Off switch `casey_mail_triage_enabled` (on unless '0', casey section, sort
+  65). Tests: `tests/caseyMailTriage.test.js`, gated
+  `tests/caseyMailTriage.mysql.test.js`, `tests/caseyMailTriage.panes.test.js`,
+  `tests/assistantUi.test.js`, `tests/ycSync.test.js`.
+
+**Deferred** (`ref/plans.md`): bulk read, SMS / call triage (no route),
+drafts (none exist), moving a message to another case, unlinking, flags
+(flagged / answered), archive, reading an HTML-only body.
 
 #### A14: Outbound email and SMS — SHIPPED 2026-10-27 (direct send, ruling 15)
 

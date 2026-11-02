@@ -10,6 +10,7 @@
 <script src="/js/vendor/purify-3.4.16.min.js"></script>
 <script src="/js/mailRender.js"></script>
 <script src="/js/optoutAck.js"></script>
+<script src="/js/yc-sync.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   html, body { margin: 0; min-height: 100%; background: var(--page-bg); color: var(--text); font-family: var(--ui); }
@@ -1000,6 +1001,35 @@ E('include-contacts-wrap').hidden = linkType !== 'case';
 
 window.reloadCommunications = () => loadFeed({ silent: true });
 window.ycBecameVisible = () => { if (!E('history-view').hidden) loadFeed({ silent: true }); };
+
+// ── Sync bus reader (public/js/yc-sync.js, A13) ─────────────
+// An email was linked to a case in another frame (an Ask Casey mail card, the
+// comms hub, another Comms tab): a case's tab re-reads its feed on
+// `comms:case:<case_id>` (the new log row is ITS communication now); any tab
+// showing that message re-reads on `mail:<id>` when the message's case
+// differs from what it shows (a contact's tab prints the case tag). A feed
+// that already shows the case — this tab's own case-tag write — skips it.
+// Parked while hidden, refreshed on return. §3.6: a GET never announces.
+if (window.YC) {
+  let busTimer = null;
+  let busStale = false;
+  const busVisible = () => !document.hidden && (!window.frameElement || window.frameElement.getBoundingClientRect().width > 0);
+  const busRefetch = () => {
+    if (!busVisible()) { busStale = true; return; }
+    clearTimeout(busTimer);
+    busTimer = setTimeout(() => loadFeed({ silent: true }), 250);
+  };
+  if (linkType === 'case' && linkId) window.YC.on(`comms:case:${linkId}`, '*', busRefetch);
+  window.YC.on('mail:*', 'case_id', (fields, msg) => {
+    const id = Number(String(msg.addr).slice('mail:'.length));
+    const caseId = String(fields.case_id == null ? '' : fields.case_id).toLowerCase();
+    const shown = state.items.filter((it) => it && it.email && Number(it.email.id) === id);
+    if (shown.some((it) => String(it.case_id == null ? '' : it.case_id).toLowerCase() !== caseId)) busRefetch();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (busStale && busVisible()) { busStale = false; loadFeed({ silent: true }); }
+  });
+}
 
 // Boot — the standard iframe pattern: wait for the hosting page's apiSend
 // relay (case.html / contact.html restore this tab during their own boot).

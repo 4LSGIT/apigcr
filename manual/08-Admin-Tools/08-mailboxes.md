@@ -341,7 +341,11 @@ Comms](#phone-lines--comms), below).
   the conversation, messages that were unread when you opened it keep a
   **New** tag (and a blue left edge), so you can still see what arrived since
   you last looked; **Mark unread** / **Mark read** in a message's **⋯** menu
-  switches it (the tag then says **Unread**).
+  switches it (the tag then says **Unread**). An Ask Casey card that marks a
+  message read or unread or links it to a case — and **Mark unread** or a case
+  link made on another Comms page or a Comms tab in this browser — updates an
+  open Comms page without a reload (**Mark read** and **Mark all read** made
+  elsewhere show on its next refresh).
   YisraCase never marks anything read on the mail server, so Outlook and
   webmail are unaffected. **Mark all read** clears exactly what the list
   shows — the ticked boxes and the filters on screen, including pages not

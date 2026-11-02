@@ -84,6 +84,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'caseDocketPrecheck', 'caseDocketResult', 'caseDocketKnownOutcome',
   'formCanonical', 'formDataHash', 'formIso', 'formRecordLabel', 'formLabel', 'formTitle', 'formText', 'formRecordPath', 'formDraftRequest',
   'formDraftPrecheck', 'formDraftResult', 'formLinkRequest', 'formLinkPrecheck', 'formLinkResult', 'formLinkKnownOutcome', 'formEntity', 'formOpen',
+  'mailLabel', 'mailCaseLabel', 'mailMessageLine', 'mailText', 'mailMessageIdOf', 'mailReadRequest', 'mailReadMessage', 'mailReadPrecheck',
+  'mailReadResult', 'mailLinkRequest', 'mailLinkPrecheck', 'mailLinkResult', 'mailLinkKnownOutcome', 'mailOpenInfo', 'mailEntity', 'mailOpen',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
   'workflowDraftLabel', 'workflowSendLines', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
   'workflowStepActionLabel', 'workflowStepWorkflowLine', 'workflowStepInsertText', 'workflowStepEditValue',
@@ -125,6 +127,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CASE_DOCKET_ACTION_KINDS'), constSrc(html, 'CASE_DOCKET_FIELDS'), constSrc(html, 'CASE_DOCKET_NAMES'),
     constSrc(html, 'CASE_DOCKET_MAX'), constSrc(html, 'CASE_DOCKET_CONTROL'),
     constSrc(html, 'FORM_DRAFT_ACTION_KINDS'), constSrc(html, 'FORM_LINK_ACTION_KINDS'), constSrc(html, 'FORM_DATA_MAX_BYTES'),
+    constSrc(html, 'MAIL_READ_ACTION_KINDS'), constSrc(html, 'MAIL_LINK_ACTION_KINDS'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
     constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEQUENCE_ENROLL_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
@@ -4060,5 +4063,226 @@ describe('A12 form cards (form.draft / form.submission.link)', () => {
     expect([[...fl.kinds], fl.idField, fl.appliedKey, !!fl.stringReceipt]).toEqual([['form.submission.link.v1'], 'submission_id', 'result_form_link_id', false]);
     for (const kind of ['form.submit.v1', 'form.template.publish.v1', 'form.draft.delete.v1', 'form.submission.unlink.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
+  });
+});
+
+describe('A13 mail cards (mail.read / mail.case_link)', () => {
+  const CASE_ID = '7KQ2M9XA';
+  // Model-shaped junk that must never reach a request.
+  const JUNK = { ids: [1, 2], all: true, flagged: true, mailbox_id: 9, log_id: 1 };
+  const MESSAGE = { mail_message_id: 88123, mailbox_id: 3, mailbox: 'intake@firm.test', from: 'Dana Debtor <dana@example.com>', to: 'intake@firm.test',
+    subject: 'Pay stubs', date: '2026-10-30T15:04:00.000Z', place: 'Inbox' };
+  const readMsg = (over = {}) => ({ action_draft: {
+    draft_id: '9c9c9c9c-1b2c-4d3e-8f40-123456789abc', kind: 'mail.read.v1', received_at: Date.now(), ...JUNK, status: 'draft',
+    message: { ...MESSAGE }, read: true, before: 'unread', after: 'read', copies: 0,
+    effects: ['Marks message #88123 READ for YOU only: read state is per person'], warnings: [],
+    expected: { unread: true, mailbox_id: 3 }, evidence: [], ...over } });
+  const linkMsg = (over = {}) => ({ action_draft: {
+    draft_id: 'adadadad-1b2c-4d3e-8f40-123456789abc', kind: 'mail.case_link.v1', received_at: Date.now(), ...JUNK, status: 'draft',
+    message: { ...MESSAGE }, case: { case_id: CASE_ID, case_number: '25-12345', case_type: 'Bankruptcy', label: 'case 25-12345' },
+    log: { mode: 'create', other_party: 'dana@example.com', direction: 'incoming', message_chars: 22, derived: false, date: '2026-10-30T15:04:00.000Z' },
+    identity: { direction: 'incoming', compared: ['dana@example.com'], matched: [{ address: 'dana@example.com', contact_id: 1309, name: 'Dana Debtor', relate_type: 'Primary' }], unmatched: [], people: 1 },
+    effects: ['Creates ONE log entry on case 25-12345: type "email"'], warnings: [],
+    expected: { stamp_log_id: null, log_id: null, contacts: ['1309:dana@example.com'] }, evidence: [], ...over } });
+  const msgGet = (over = {}) => ({ status: 'success', messages: [{ id: 88123, unread: true, log_id: null, log_status: { state: 'store_only' }, ...over }] });
+  const reads = (over = {}) => (path) => {
+    if (path === '/api/mail/messages/88123') {
+      if (over.gone) throw Object.assign(new Error('Message not found'), { status: 404 });
+      return over.message || msgGet();
+    }
+    if (path === `/api/cases/${CASE_ID}`) { if (over.caseGone) throw Object.assign(new Error('Case not found'), { status: 404 }); return { case: { case_id: CASE_ID } }; }
+    if (path === `/api/cases/${CASE_ID}/contacts`) return over.contacts || { contacts: [{ contact_id: 1309, contact_email: 'Dana@Example.com ', relate_type: 'Primary' }] };
+    throw new Error(`unexpected read ${path}`);
+  };
+  function runMail(message, { read = reads(), write, confirm = true } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); return read(path, body); }
+      writes.push({ path, body, method, headers }); return write(path, body, method);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a13' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) } };
+    const history = []; const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, openEntity, sandbox }));
+  }
+  const marked = (unread) => async () => ({ status: 'success', id: 88123, unread });
+  const linked = async () => ({ status: 'success', id: 88123, log_id: 5001, log_created: true, case: { case_id: CASE_ID, case_number: '25-12345' } });
+
+  test('read: re-reads the message; ONE POST of exactly the message path (no junk); the integer receipt; never danger', async () => {
+    const m = readMsg();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runMail(m, { write: marked(false) });
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('mail_read');
+    expect(gets).toEqual(['/api/mail/messages/88123']);
+    expect(writes).toEqual([{ path: '/api/mail/messages/88123/read', method: 'POST', headers: undefined, body: {} }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a13', result: { mail_message_id: 88123 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_mail_read_id: 88123 });
+    expect(history[0].text).toBe('Mark email read applied to message #88123.');
+    expect(history[0].entities).toEqual([{ kind: 'mail', id: '88123', label: '"Pay stubs"' }]);
+    expect(openEntity).toHaveBeenCalledWith('mail', '88123', '"Pay stubs"');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'question', confirmButtonText: 'Mark email read' });
+    for (const line of ['Email read-state proposal — not applied', 'Email: #88123 in intake@firm.test (Inbox) — from Dana Debtor <dana@example.com>, "Pay stubs", 2026-10-30 15:04 UTC',
+      'Read state (yours only): unread → read', 'Writes: one row of YOUR read state for this message — nothing else, and nobody else\'s.',
+      'Stale check: if the message\'s read state changes, or it stops being readable for you, before you apply, nothing is written.',
+      'Notification: none — read state is private to you.']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+  });
+
+  test('unread: ONE DELETE with no body; the route\'s answer must echo the reviewed state', async () => {
+    const m = readMsg({ read: false, before: 'read', after: 'unread', expected: { unread: false, mailbox_id: 3 } });
+    const { writes, P } = await runMail(m, { read: reads({ message: msgGet({ unread: false }) }), write: marked(true) });
+    expect(writes).toEqual([{ path: '/api/mail/messages/88123/read', method: 'DELETE', headers: undefined, body: null }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_mail_read_id: 88123 });
+    expect(P.Swal.fire.mock.calls[0][0].confirmButtonText).toBe('Mark email unread');
+    const wrong = readMsg();
+    await runMail(wrong, { write: marked(true) });
+    expect(wrong.action_draft.ambiguous_error).toMatch(/did not confirm the read state/);
+  });
+
+  test('read: the builder; click-time freshness refuses BEFORE the claim; an unreadable answer leaves it retryable', async () => {
+    for (const [message, why] of [
+      [readMsg({ message: { ...MESSAGE, mail_message_id: 0 } }), 'no usable message id'],
+      [readMsg({ read: 'yes' }), 'no read state'],
+    ]) {
+      const x = await runMail(message, { write: marked(false) });
+      expect({ why, gets: x.gets, ledger: x.ledger, writes: x.writes }).toEqual({ why, gets: [], ledger: [], writes: [] });
+      expect(message.action_draft.action_error).toContain(why);
+    }
+    for (const [read, why] of [
+      [reads({ gone: true }), 'Message #88123 is no longer one you can read (it was removed, or your access to its mailbox changed). Nothing was written.'],
+      [reads({ message: msgGet({ unread: false }) }), 'Message #88123 is now read for you — its read state changed since this card was prepared. Nothing was written.'],
+    ]) {
+      const message = readMsg();
+      const x = await runMail(message, { read, write: marked(false) });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(message.action_draft.refusal_error).toBe(why);
+    }
+    const u = readMsg();
+    const ur = await runMail(u, { read: reads({ message: { status: 'success', messages: [{ id: 88123 }] } }), write: marked(false) });
+    expect([ur.writes, ur.ledger]).toEqual([[], []]);
+    expect(u.action_draft.action_error).toMatch(/^Could not re-check the record before applying \(the message could not be read\)/);
+  });
+
+  test('read: outcomes — a 404 refuses (the shared 4xx rule); a 500 stays ambiguous', async () => {
+    const gone = readMsg();
+    await runMail(gone, { write: async () => { throw Object.assign(new Error('Message not found'), { status: 404 }); } });
+    expect(gone.action_draft.refusal_error).toBe('Refused — nothing written (Message not found). Ask Casey to prepare it again.');
+    const lost = readMsg();
+    await runMail(lost, { write: async () => { throw Object.assign(new Error('boom'), { status: 500 }); } });
+    expect(lost.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+  });
+
+  test('link: re-reads the case, the message and the case\'s contacts; ONE POST of exactly {case_id}; the log_id receipt', async () => {
+    const m = linkMsg();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runMail(m, { write: linked });
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('mail_link');
+    expect(gets).toEqual([`/api/cases/${CASE_ID}`, '/api/mail/messages/88123', `/api/cases/${CASE_ID}/contacts`]);
+    expect(writes).toEqual([{ path: '/api/mail/messages/88123/case-link', method: 'POST', headers: undefined, body: { case_id: CASE_ID } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a13', result: { log_id: 5001 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_mail_link_log_id: 5001 });
+    expect(history[0].text).toBe('Link email to case applied to log entry #5001.');
+    expect(openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'question', confirmButtonText: 'Link email to case' });
+    for (const line of ['Email case link proposal — not applied', 'Case: case 25-12345 (Bankruptcy)',
+      'Log entry: creates ONE "email" entry with the message\'s text (22 characters), linked to dana@example.com',
+      'Sender: dana@example.com — Dana Debtor (Primary), a contact on this case',
+      'Stale check: if the message is linked or logged, its read access changes, or the case\'s contacts change before you apply, nothing is written.',
+      'Notification: Casey sends nothing; linking runs no trigger rule.']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+    // A sender who is not on the case (any warning) danger-styles the card; a reuse card names the entry.
+    const warned = linkMsg({ warnings: ['THE SENDER IS NOT A CONTACT ON THIS CASE: …'], identity: { direction: 'incoming', compared: ['x@y.test'], matched: [], unmatched: ['x@y.test'], people: 1 },
+      log: { mode: 'reuse', log_id: 5001, via: 'stamped', type: 'email', about_before: 'contact 1309' }, expected: { stamp_log_id: 5001, log_id: 5001, contacts: ['1309:dana@example.com'] } });
+    const w = await runMail(warned, { read: reads({ message: msgGet({ log_id: 5001, log_status: { state: 'logged', log_id: 5001 } }) }), write: async () => ({ ...(await linked()), log_created: false }) });
+    expect(w.P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning', focusCancel: true });
+    expect(w.P.Swal.fire.mock.calls[0][0].text).toContain('Log entry: reuses #5001 (a "email" entry, now attributed to contact 1309) — no new entry');
+    expect(w.P.Swal.fire.mock.calls[0][0].text).toContain('Sender: x@y.test — NOT a contact on this case');
+    expect(w.writes.length).toBe(1);
+  });
+
+  test('link: the builder; click-time freshness before the claim on the case, the link, the log entry and the contacts', async () => {
+    for (const [message, why] of [
+      [linkMsg({ message: { ...MESSAGE, mail_message_id: 'x' } }), 'no usable message id'],
+      [linkMsg({ case: { case_id: 'bad id!' } }), 'no usable case'],
+    ]) {
+      const x = await runMail(message, { write: linked });
+      expect({ why, gets: x.gets, ledger: x.ledger, writes: x.writes }).toEqual({ why, gets: [], ledger: [], writes: [] });
+      expect(message.action_draft.action_error).toContain(why);
+    }
+    for (const [read, why] of [
+      [reads({ caseGone: true }), 'case 25-12345 no longer exists. Nothing was written.'],
+      [reads({ gone: true }), 'Message #88123 is no longer one you can read'],
+      [reads({ message: msgGet({ log_id: 9, log_status: { state: 'case', case: { case_id: CASE_ID.toLowerCase(), case_number: '25-12345' }, log_id: 9 } }) }),
+        'Message #88123 is already linked to case 25-12345 — someone linked it since this card was prepared. Nothing was written.'],
+      [reads({ message: msgGet({ log_id: 9, log_status: { state: 'case', case: { case_id: 'OTHER123', case_number: '24-99999' }, log_id: 9 } }) }),
+        'Message #88123 was linked to another case (24-99999) since this card was prepared. Nothing was written.'],
+      [reads({ message: msgGet({ log_id: 9, log_status: { state: 'logged', log_id: 9 } }) }), 'Message #88123\'s log entry changed since this card was prepared'],
+      [reads({ message: msgGet({ log_status: { state: 'logged', log_id: 9, via: 'source' } }) }), 'Message #88123\'s log entry changed since this card was prepared'],
+      [reads({ contacts: { contacts: [{ contact_id: 1309, contact_email: 'dana@example.com' }, { contact_id: 1400, contact_email: null }] } }),
+        'The contacts on case 25-12345 changed since this card was prepared, so its sender check may no longer hold.'],
+      [reads({ contacts: { contacts: [{ contact_id: 1309, contact_email: 'new@example.com' }] } }), 'The contacts on case 25-12345 changed'],
+    ]) {
+      const message = linkMsg();
+      const x = await runMail(message, { read, write: linked });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(message.action_draft.refusal_error).toContain(why);
+    }
+    const u = linkMsg();
+    const ur = await runMail(u, { read: reads({ contacts: { status: 'success' } }), write: linked });
+    expect([ur.writes, ur.ledger]).toEqual([[], []]);
+    expect(u.action_draft.action_error).toMatch(/^Could not re-check the record before applying \(the case contacts could not be read\)/);
+  });
+
+  test('link: outcomes — the route\'s three 409s are refusals that wrote nothing; 404 / 422 refuse; a bare 409, a 500 and an unconfirmed answer stay ambiguous', async () => {
+    const fail = (status, message) => async () => { throw Object.assign(new Error(message), { status, body: { status: 'error', message } }); };
+    for (const message of ['This message is still being processed by the mail sync — try again in a few minutes.',
+      'This email arrived in the last few minutes and another mail sync may still log it — try again in about 10 minutes.',
+      'The log entry this message points at no longer exists.']) {
+      const m = linkMsg();
+      await runMail(m, { write: fail(409, message) });
+      expect(m.action_draft.refusal_error).toBe(`Refused — nothing written: ${message} Ask Casey to prepare it again then.`);
+    }
+    for (const [status, message] of [[404, 'Case not found'], [404, 'Message not found'], [422, 'This message has no usable address to log it under.'], [400, 'case_id is required']]) {
+      const m = linkMsg();
+      await runMail(m, { write: fail(status, message) });
+      expect(m.action_draft.refusal_error).toBe(`Refused — nothing written (${message}). Ask Casey to prepare it again.`);
+    }
+    for (const write of [fail(409, 'conflict'), fail(409, 'This message is still being processed'), fail(500, 'boom'),
+      async () => ({ ...(await linked()), id: 1 }), async () => ({ ...(await linked()), log_id: 0 }), async () => ({ ...(await linked()), case: { case_id: 'OTHER123' } })]) {
+      const m = linkMsg();
+      await runMail(m, { write });
+      expect(m.action_draft.ambiguous_error).toMatch(/may already have been applied|did not confirm the link|did not link the reviewed case/);
+    }
+  });
+
+  test('reopened cards restore from the ledger with the integer receipts; two families, one kind each; no other mail kind resolves', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    const r = readMsg(); const l = linkMsg();
+    box.applyActionResults([r, l], [
+      { draft_id: r.action_draft.draft_id, kind: 'mail.read.v1', outcome: 'applied', result: { mail_message_id: 88123 } },
+      { draft_id: l.action_draft.draft_id, kind: 'mail.case_link.v1', outcome: 'applied', result: { log_id: 5001 } }]);
+    expect([r.action_draft.status, r.action_draft.result_mail_read_id, l.action_draft.result_mail_link_log_id]).toEqual(['applied', 88123, 5001]);
+    const host = dom.window.document.createElement('div');
+    box.hydrateActionDraft(box.actionFamily(l.action_draft), host, l, l.action_draft);
+    expect(host.querySelector('.action-draft-status').textContent).toBe('Applied — email linked (log entry #5001)');
+    expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open 25-12345', 'Copy details']);
+    const hr = dom.window.document.createElement('div');
+    box.hydrateActionDraft(box.actionFamily(r.action_draft), hr, r, r.action_draft);
+    expect(hr.querySelector('.action-draft-status').textContent).toBe('Applied — message #88123 marked read');
+    const fr = box.actionFamily({ kind: 'mail.read.v1' }); const fl = box.actionFamily({ kind: 'mail.case_link.v1' });
+    expect([[...fr.kinds], fr.idField, fr.appliedKey, !!fr.stringReceipt]).toEqual([['mail.read.v1'], 'mail_message_id', 'result_mail_read_id', false]);
+    expect([[...fl.kinds], fl.idField, fl.appliedKey, !!fl.stringReceipt]).toEqual([['mail.case_link.v1'], 'log_id', 'result_mail_link_log_id', false]);
+    for (const kind of ['mail.draft.v1', 'mail.bulk_read.v1', 'mail.unlink.v1', 'mail.flag.v1', 'sms.read.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    dom.window.close();
+  });
+
+  test('an email entity opens a where-to-find-it note, never a URL', () => {
+    expect(html).toContain("else if (kind === 'mail') mailOpenInfo(label);");
+    expect(html).toContain("mail: 'fa-envelope'");
   });
 });

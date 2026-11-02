@@ -2772,3 +2772,79 @@ describe('_sniff — form matchers (A12)', () => {
     expect([seenB, records]).toEqual([[{ addr: 'form:case:AAAA', fields: { yc_refetch: 1 } }], []]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// _sniff — mail triage (A13)
+//
+// The comms hub's one-message writes (an Ask Casey mail card, the hub's Mark
+// unread, a Comms tab's case tag) announce the MESSAGE, `mail:<id>`, with the
+// route's real values; a case link also announces `comms:case:<case_id>` (a
+// marker — the case's Comms tab re-reads its feed). Never `case:<id>`: a log
+// row is not the case row.
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — mail matchers (A13)', () => {
+  function spy(w) {
+    const seen = [];
+    ['mail:*', 'comms:*', 'case:*', 'contact:*'].forEach((a) => w.YC.on(a, '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin })));
+    return seen;
+  }
+
+  test('read / unread announce the message with the answered value; a case link announces the message and the case\'s comms (their real answers)', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST',   '/api/mail/messages/88123/read', { status: 'success', id: 88123, unread: false });
+    w.YC._sniff('DELETE', '/api/mail/messages/88123/read', { status: 'success', id: 88123, unread: true });
+    w.YC._sniff('POST',   '/api/mail/messages/88123/case-link', { status: 'success', id: 88123, log_id: 5001, log_created: true, case: { case_id: 'AAAA', case_number: '25-12345' } });
+    expect(seen).toEqual([
+      { addr: 'mail:88123', fields: { unread: false }, origin: 'auto:POST /api/mail/messages/88123/read' },
+      { addr: 'mail:88123', fields: { unread: true }, origin: 'auto:DELETE /api/mail/messages/88123/read' },
+      { addr: 'mail:88123', fields: { log_id: 5001, case_id: 'AAAA' }, origin: 'auto:POST /api/mail/messages/88123/case-link' },
+      { addr: 'comms:case:AAAA', fields: { yc_refetch: 1 }, origin: 'auto:POST /api/mail/messages/88123/case-link' },
+    ]);
+  });
+
+  test('FAILS CLOSED: an error body, a missing value, an answer for another message, a link without its case or log id', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/mail/messages/88123/read', { status: 'error', message: 'Message not found' });
+    w.YC._sniff('POST', '/api/mail/messages/88123/read', { status: 'success', id: 88123 });
+    w.YC._sniff('POST', '/api/mail/messages/88123/read', { status: 'success', id: 99, unread: false });
+    w.YC._sniff('POST', '/api/mail/messages/88123/case-link', { status: 'success', id: 88123, log_id: 5001 });
+    w.YC._sniff('POST', '/api/mail/messages/88123/case-link', { status: 'success', id: 99, log_id: 5001, case: { case_id: 'AAAA' } });
+    w.YC._sniff('POST', '/api/mail/messages/88123/case-link', { status: 'success', id: 88123, log_id: null, case: { case_id: 'AAAA' } });
+    w.YC._sniff('POST', '/api/mail/messages/88123/case-link', { status: 'error', message: 'This message is still being processed by the mail sync — try again in a few minutes.' });
+    expect(seen).toEqual([]);
+  });
+
+  test('only the one-message writes: GET, the bulk mark-read, other verbs, views and send are silent', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    const body = { status: 'success', id: 1, unread: false, log_id: 2, case: { case_id: 'AAAA' }, marked: 3 };
+    w.YC._sniff('GET',    '/api/mail/messages/1', body);
+    w.YC._sniff('POST',   '/api/mail/read', body);
+    w.YC._sniff('PATCH',  '/api/mail/messages/1/read', body);
+    w.YC._sniff('DELETE', '/api/mail/messages/1/case-link', body);
+    w.YC._sniff('POST',   '/api/mail/messages/abc/read', body);
+    w.YC._sniff('POST',   '/api/mail/views', body);
+    w.YC._sniff('POST',   '/api/mail/send', body);
+    expect(seen).toEqual([]);
+  });
+
+  test('a mail write crosses windows — the hub and the case\'s Comms tab hear it — and never wakes a case or contact page', async () => {
+    const a = mkWindow();
+    const b = mkWindow();
+    const mail = []; const comms = []; const records = [];
+    b.YC.on('mail:*', '*', (f, m) => mail.push({ addr: m.addr, fields: f }));
+    b.YC.on('comms:case:AAAA', '*', (f, m) => comms.push({ addr: m.addr, fields: f }));
+    ['case:*', 'contact:*'].forEach((x) => b.YC.on(x, '*', (f, m) => records.push(m.addr)));
+    a.YC._sniff('POST', '/api/mail/messages/7/case-link', { status: 'success', id: 7, log_id: 9, log_created: false, case: { case_id: 'AAAA', case_number: null } });
+    a.YC._sniff('POST', '/api/mail/messages/7/read?x=1', { status: 'success', id: 7, unread: false });
+    await settle();
+    expect([mail, comms, records]).toEqual([
+      [{ addr: 'mail:7', fields: { log_id: 9, case_id: 'AAAA' } }, { addr: 'mail:7', fields: { unread: false } }],
+      [{ addr: 'comms:case:AAAA', fields: { yc_refetch: 1 } }],
+      [],
+    ]);
+  });
+});

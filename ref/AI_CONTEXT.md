@@ -764,6 +764,45 @@ body. Governing migrations in `ref/migrations/`.*
   unless '0'). Tests: `tests/caseyForms.test.js`, gated
   `tests/caseyForms.mysql.test.js`, `tests/formRender.sync.test.js`; plan:
   ASK_CASEY_ACTIONS_PLAN A12.
+- **Casey mail triage (A13, 11-02):** kinds `mail.read.v1` → POST / DELETE
+  `/api/mail/messages/:id/read` and `mail.case_link.v1` → POST
+  `/api/mail/messages/:id/case-link` {case_id} (guard `jwtOrApiKey` +
+  `requireJwt`; the authority is the caller's mailbox READ grant through
+  `mailReadService.loadVisible` — 404 without it, no oracle). No draft
+  operation exists in the mail or phone hub and the phone hub has no read /
+  case-link route, so drafts and SMS triage are out (Casey says so; a draft is
+  never turned into a send). Mail is outside the report manifest (not added):
+  two typed reads run AS THE ASKING USER through mailReadService —
+  `mail.search` (`listMessages`; q / from / mailbox_id / unread_only / since /
+  folder, ≤ 20 rows, NEVER bodies; the case link is `linked_case_id`) and
+  `mail.message` (`getMessage`; headers + the first 2,000 chars of body_text
+  only, marked untrusted sender text) — audited as `admin_audit_log` tool
+  `mail_read` (ids only). Read card: refuses a no-op and COPIES (another
+  readable copy of the same RFC Message-ID still unread — the single route
+  marks one copy and the hub shows an email unread while any copy is);
+  discloses "for you only". Link card: predicts `caseLink`'s log row
+  read-only in its order (stamp → lowest-id copy's stamp → `priorLogId`, now
+  exported → create) and refuses first its 409s (sync still emitting,
+  store-only grace, dead stamp), the 422 (no address), a message already on
+  THIS case, and one on ANOTHER case — `setLogAbout` would silently MOVE it;
+  discloses reuse vs create (a created `email` entry copies the text — up to
+  50,000 chars — into the case's log, readable by every staff member on the
+  Log tab; the mailbox grant does not apply there; `log_message` varchar(10000)
+  keeps 10,000 and `log_data` TEXT 65,535 bytes — both cut silently, said /
+  danger), an about-link it replaces
+  (danger), the sender (outgoing: outside recipients) vs the case's contacts'
+  emails incl. ended rows (mismatch = danger, never a refusal), Comms tab yes,
+  portal never (it reads no log rows), no event. Freshness: read state / the
+  stamp + resolved log id + `contact_id:contact_email` set, re-read via GET
+  `/api/mail/messages/:id`, `/api/cases/:id`, `/api/cases/:id/contacts`.
+  Receipts: integer `mail_message_id` / `log_id`. Sync (new): both routes
+  announce `mail:<id>` with real values ({unread} / {log_id, case_id}), the
+  link also `comms:case:<case_id>`; comms.html and entityCommunications.html
+  now load yc-sync and subscribe (the first log-row announcement anywhere —
+  POST `/api/log` and PUT `/api/log/:id/about` still announce nothing). Off
+  switch `casey_mail_triage_enabled` (on unless '0'). Tests:
+  `tests/caseyMailTriage.test.js`, gated `tests/caseyMailTriage.mysql.test.js`,
+  `tests/caseyMailTriage.panes.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A13.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL
