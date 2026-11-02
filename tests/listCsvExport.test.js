@@ -287,6 +287,7 @@ describe('csvFilterOf: a fetch\'s params as an export filter', () => {
 const TABS = {
   cases: {
     fn: 'tabCasesGet', kind: 'cases', prelude: 'var offsets = {}, cases; function populateCaseTypeFilter() {}',
+    extra: ['casesStageValues'],
     dom: { tabCasesLoad: 'div', tabCasesQuery: 'input=pat', tabCasesType: 'select=%', tabCasesStage: 'input=%',
       tabCasesStatus: 'input=Open', tabCasesOrder: 'input=c.case_id', tabCasesOrder2: 'input=ASC',
       casesTable: 'table', casesTableFoot: 'div' },

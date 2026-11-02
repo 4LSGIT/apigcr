@@ -3599,15 +3599,17 @@
         <!-- Type / "Type: Subtype" options are populated from fe-case_types
              (populateCaseTypeFilter in scripts.js) after firmData loads. -->
       </select></label>
-      <label class="yc-f"><span class="yc-f-l">Stage</span>
-      <select id="tabCasesStage" style="width: auto">
-        <option value="%">All</option>
-        <option>Open</option>
-        <option>Pending</option>
-        <option>Filed</option>
-        <option>Concluded</option>
-        <option>Closed</option>
-      </select></label>
+      <span class="yc-f"><span class="yc-f-l">Stage</span>
+      <details class="yc-multi" id="tabCasesStage">
+        <summary><span id="tabCasesStageLabel">All</span></summary>
+        <div class="yc-multi-menu">
+          <label><input type="checkbox" value="Open" onchange="casesStageChanged()"> Open</label>
+          <label><input type="checkbox" value="Pending" onchange="casesStageChanged()"> Pending</label>
+          <label><input type="checkbox" value="Filed" onchange="casesStageChanged()"> Filed</label>
+          <label><input type="checkbox" value="Concluded" onchange="casesStageChanged()"> Concluded</label>
+          <label><input type="checkbox" value="Closed" onchange="casesStageChanged()"> Closed</label>
+        </div>
+      </details></span>
       <label class="yc-f"><span class="yc-f-l">Case Status</span>
       <input id="tabCasesStatus" style="width: auto" onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}" /></label>
       <label class="yc-f" data-nocount><span class="yc-f-l">Caption</span>
@@ -3690,7 +3692,7 @@
       const typeOpt = E("tabCasesType").selectedOptions[0];
       const type = typeOpt ? (typeOpt.dataset.type ?? typeOpt.value) : "%";
       const subtype = (typeOpt && typeOpt.dataset.subtype) || "";
-      const stage = E("tabCasesStage").value;
+      const stages = casesStageValues();
       const status = E("tabCasesStatus").value;
       const sort_by = E("tabCasesOrder").value;
       const sort_dir = E("tabCasesOrder2").value;
@@ -3705,7 +3707,7 @@
       if (q) params.q = q;
       if (type !== '%') params.type = type;
       if (subtype) params.subtype = subtype;
-      if (stage !== '%') params.stage = stage;
+      if (stages.length) params.stage = stages.join(',');   // CSV → IN on the server
       if (status) params.status = `%${status}%`;
 
       try {
@@ -3801,6 +3803,19 @@
        table as it was before the column. Every row carries both, so a change
        needs no refetch. Saved per browser and per user. */
     const CASES_CAPTION_MODES = ['column', 'name', 'off'];
+    // Stage multi-filter (F1). Checked boxes = the filter; none checked = All.
+    // Names chosen so no document/element member shadows them (inline-handler
+    // resolution trap — CLAUDE.md). The dropdown itself is a <details>; the
+    // outside-click close is the delegated .yc-multi handler in scripts.js.
+    function casesStageValues() {
+      return [...document.querySelectorAll('#tabCasesStage input:checked')].map((c) => c.value);
+    }
+    function casesStageChanged() {
+      const v = casesStageValues();
+      E('tabCasesStageLabel').textContent =
+        !v.length ? 'All' : v.length <= 2 ? v.join(', ') : `${v.length} stages`;
+    }
+
     const casesCaptionKey = () => `caption.${(user && user.user) || 0}`;
 
     function casesCaptionApply(mode) {

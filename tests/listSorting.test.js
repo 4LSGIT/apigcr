@@ -310,12 +310,14 @@ describe('the tabs send what the routes read', () => {
   test('the Cases Stage filter offers exactly the case_stage enum, in its order', () => {
     const stages = read('ref/database.sql').match(/`case_stage` enum\(([^)]*)\)/)[1]
       .split(',').map((s) => s.replace(/'/g, ''));
-    const start = INDEX.indexOf('<select id="tabCasesStage"');
-    const sel = INDEX.slice(start, INDEX.indexOf('</select>', start));
-    const offered = [...sel.matchAll(/<option>([^<]+)<\/option>/g)].map((m) => m[1]);
+    const start = INDEX.indexOf('<details class="yc-multi" id="tabCasesStage"');
+    expect(start).toBeGreaterThan(-1);
+    const sel = INDEX.slice(start, INDEX.indexOf('</details>', start));
+    const offered = [...sel.matchAll(/<input type="checkbox" value="([^"]+)"/g)].map((m) => m[1]);
     expect(stages.length).toBeGreaterThan(0);
     expect(offered).toEqual(stages);
-    expect(sel).toContain('<option value="%">All</option>');
+    // none checked = All; the summary label says so by default
+    expect(sel).toContain('id="tabCasesStageLabel">All<');
   });
 
   test('every sortable header is wired to a value its Order By select offers', () => {

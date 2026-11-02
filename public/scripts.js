@@ -492,6 +492,14 @@ function ycFiltersToggle(btn) {
   ycFiltersSync(bar);
 }
 
+/* details.yc-multi filter dropdowns close when a click lands outside them.
+   Delegated for the same reason as the filter-count listeners below. */
+document.addEventListener('click', (e) => {
+  document.querySelectorAll('details.yc-multi[open]').forEach((d) => {
+    if (!d.contains(e.target)) d.removeAttribute('open');
+  });
+});
+
 /* Delegated, so bars rendered after this file loads need no wiring. 'click'
    is in the list for the values a tab sets in code (no change event fires
    for those): the next tap anywhere in the bar — Search included — re-reads

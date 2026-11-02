@@ -303,6 +303,29 @@ d('list sorts on a real engine', () => {
       expect((await caseService.listCases(pool, {})).total).toBe(4);
       expect((await caseService.listCases(pool, { stage: 'Closed' })).total).toBe(0);
     });
+
+    // Stage multi filter (F1): CSV/array = IN; one value keeps the legacy
+    // LIKE so '%'-pattern callers are untouched. Fixture: all four cases are
+    // 'Open'; two are flipped per test and restored.
+    test('stage CSV and array become IN; a lone value still matches as LIKE', async () => {
+      await q(`UPDATE cases SET case_stage = 'Filed'  WHERE case_id = 'CASEAAAA'`);
+      await q(`UPDATE cases SET case_stage = 'Closed' WHERE case_id = 'CASEBBBB'`);
+      try {
+        const csv = await caseService.listCases(pool, { stage: 'Filed,Closed' });
+        expect(ids(csv.cases, 'case_id').sort()).toEqual(['CASEAAAA', 'CASEBBBB']);
+        expect(csv.total).toBe(2);
+        const arr = await caseService.listCases(pool, { stage: ['Open', 'Filed'] });
+        expect(ids(arr.cases, 'case_id').sort()).toEqual(['CASEAAAA', 'CASECCCC', 'CASEDDDD']);
+        expect(arr.total).toBe(3);
+        // IN is exact: no LIKE semantics ride a list member
+        expect((await caseService.listCases(pool, { stage: 'Fil%,Closed' })).total).toBe(1);
+        // legacy single value keeps LIKE patterns
+        expect((await caseService.listCases(pool, { stage: 'Fil%' })).total).toBe(1);
+        expect((await caseService.listCases(pool, { stage: '%' })).total).toBe(4);
+      } finally {
+        await q(`UPDATE cases SET case_stage = 'Open' WHERE case_id IN ('CASEAAAA', 'CASEBBBB')`);
+      }
+    });
   });
 
   describe('appts', () => {

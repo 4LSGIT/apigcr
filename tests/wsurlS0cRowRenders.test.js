@@ -132,6 +132,7 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
       tabCasesStatus: 'input', tabCasesOrder: 'input', tabCasesOrder2: 'input',
       casesTable: 'table', casesTableFoot: 'div',
     }, `${PAGER} var offsets = {}, cases; function populateCaseTypeFilter() {}
+        ${fnSrc(INDEX, 'casesStageValues')}
         ${fnSrc(INDEX, 'tabCasesGet')}`,
     async () => ({ total: 1, cases: [{
       case_id: 'ABCD2345', case_number: V, case_caption: V, caption_adds_info: true, case_type: V,

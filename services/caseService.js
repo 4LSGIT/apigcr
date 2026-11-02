@@ -66,7 +66,8 @@ const { captionAddsInfo } = require('../lib/caseCaption');
  * @param {string}  [opts.subtype]     - case_subtype filter (EXACT match;
  *                                       only applied when non-empty — there is
  *                                       deliberately no '%'-means-all here)
- * @param {string}  [opts.stage]       - case_stage filter (use '%' for all)
+ * @param {string|string[]} [opts.stage] - case_stage filter: '%' = all, one
+ *                                        value = LIKE (legacy), CSV/array = IN
  * @param {string}  [opts.status]      - case_status filter (use '%' for all)
  * @param {number}  [opts.limit=50]
  * @param {number}  [opts.offset=0]
@@ -117,8 +118,19 @@ async function listCases(db, {
     where.push('c.case_subtype = ?');
     params.push(subtype);
   }
-  where.push('c.case_stage LIKE ?');
-  params.push(stage);
+  // Stage: '%' or a single value keeps the legacy LIKE (patterns work);
+  // a CSV or array — the tab's multi filter (F1) — becomes IN. Stage values
+  // are a fixed enum and carry no commas, so the CSV split is safe.
+  const stageList = Array.isArray(stage) ? stage.map((s) => String(s).trim()).filter(Boolean)
+    : String(stage).includes(',') ? String(stage).split(',').map((s) => s.trim()).filter(Boolean)
+    : null;
+  if (stageList && stageList.length) {
+    where.push(`c.case_stage IN (${stageList.map(() => '?').join(',')})`);
+    params.push(...stageList);
+  } else {
+    where.push('c.case_stage LIKE ?');
+    params.push(stage);
+  }
   where.push('c.case_status LIKE ?');
   params.push(status);
 
