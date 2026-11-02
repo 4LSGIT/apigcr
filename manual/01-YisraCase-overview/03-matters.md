@@ -84,6 +84,18 @@ A caption is the court's name for a case, so a case has one only once it has a d
 
 The first court email to name a case fills an empty caption. After that nothing overwrites it, so when the court renames a case, or staff have typed a fuller version, the existing caption stays. Staff can correct a caption in Case Details at any time.
 
+## The Court Field
+
+Every case can carry a **Court** — a pick from the firm's court list (short
+names like MIEB or 36D; the full names show in the picker). It lives in Case
+Details with the other custom fields, and new courts are added in Config →
+Custom Fields.
+
+Like the caption, the court fills itself where the record proves it: a court
+email on a docketed case stamps the sending court, and a stamp never
+overwrites a court already set — by hand or by an earlier email. State-court
+cases have no court email, so staff pick their court by hand.
+
 ---
 
 ## Contacts on a Case
