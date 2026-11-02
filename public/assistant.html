@@ -2084,6 +2084,159 @@ function documentOpen(draft) {
   openEntity(e.kind, e.id, e.label);
 }
 
+// Case docket adopt (A7c). Fill ONE case's BLANK case number and/or full case
+// number with the number exactly as the user gave it, through the court-review
+// adopt flow's own route: PATCH /api/cases/:id/docket {case_number?,
+// case_number_full?} — never the generic cases PATCH. The server refused
+// replacing or clearing a number the case already has, a number another case
+// holds in either column (the route's own collision function — the database's
+// equality, never docket shape), an over-width value and a control character;
+// left out a column already holding exactly the value; named every reader of
+// the two columns (header, Cases list, portal, Documents, court email,
+// caption, the judge link a full number re-resolves); dry-ran case.updated
+// against the active trigger rules; and baked both columns as stored, the case
+// type and — with a full number — the judge text and link into `expected`.
+// The click re-reads GET /api/cases/:id and refuses on ANY difference BEFORE
+// the claim. No Idempotency-Key: one claim per draft, and the route's
+// adopt-only guard answers a second card 409 before any write (read here as a
+// refusal, like its collision 409). The route is on the yc-sync bus (a
+// case:<id> marker with `changes`), so case pages and the Cases list refresh.
+// Receipt: the STRING case_id (stringReceipt).
+const CASE_DOCKET_ACTION_KINDS = new Set(['case.docket.adopt.v1']);
+const CASE_DOCKET_FIELDS = ['case_number', 'case_number_full'];
+const CASE_DOCKET_NAMES = { case_number: 'Case number', case_number_full: 'Full case number' };
+// cases.case_number / case_number_full are varchar(20).
+const CASE_DOCKET_MAX = 20;
+const CASE_DOCKET_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+function caseDocketLabel(draft) {
+  const keys = Object.keys((draft && draft.writes) || {});
+  if (keys.length === 1) return keys[0] === 'case_number_full' ? 'Add full case number' : 'Add case number';
+  return 'Add case numbers';
+}
+
+function caseDocketCaseLabel(draft) {
+  const c = (draft && draft.case) || {};
+  return String(c.label || c.case_id || 'Case');
+}
+
+// The case's label once the number is on it (the header's own rule, server-computed).
+function caseDocketAfterLabel(draft) {
+  const after = ((draft && draft.displays) || {}).after || {};
+  return after.header && after.header !== 'Not Filed' ? String(after.header) : caseDocketCaseLabel(draft);
+}
+
+function caseDocketShown(value) { return value == null ? 'blank' : value === '' ? 'blank (empty text)' : `"${value}"`; }
+
+function caseDocketText(draft) {
+  const c = draft.case || {}; const w = draft.writes || {}; const cur = draft.current || {};
+  const kept = new Map((draft.kept || []).map((k) => [k.column, k.value]));
+  const lines = ['Case number proposal — not applied', `Action: ${caseDocketLabel(draft)}`,
+    `Case: ${caseDocketCaseLabel(draft)} (case ${c.case_id}${c.case_type ? `, ${c.case_type}` : ''}${c.case_subtype ? ` / ${c.case_subtype}` : ''})${(c.clients || []).length ? ` — ${c.clients.join(', ')}` : ''}`];
+  for (const f of CASE_DOCKET_FIELDS) {
+    if (w[f]) lines.push(`${CASE_DOCKET_NAMES[f]}: ${caseDocketShown(w[f].from)} → "${w[f].to}"`);
+    else if (kept.has(f)) lines.push(`${CASE_DOCKET_NAMES[f]}: already "${kept.get(f)}" — not sent`);
+    else lines.push(`${CASE_DOCKET_NAMES[f]}: ${caseDocketShown(cur[f])} — not on this card, unchanged`);
+  }
+  (draft.warnings || []).forEach((x) => lines.push(`Warning: ${x}`));
+  (draft.effects || []).forEach((x) => lines.push(`Effect: ${x}`));
+  const a = draft.automation || {}; const acting = a.lines || [];
+  lines.push(acting.length
+    ? `Automation: ${Number(a.rules_checked) || 0} active trigger rule(s) on case.updated checked; ${acting.length} would act:`
+    : `Automation: no active trigger rule acts on this case.updated (${Number(a.rules_checked) || 0} checked).`);
+  acting.forEach((x) => lines.push(`Automation: ${x}`));
+  if (acting.length) lines.push('Automation: what those actions cause in turn is not followed here.');
+  lines.push(`Writes: only the case's ${Object.keys(w).map((f) => String(CASE_DOCKET_NAMES[f] || f).toLowerCase()).join(' and ')}${w.case_number_full ? ' (and the judge link it re-resolves)' : ''}, through the case-review docket adopt — no other case field.`,
+    'Replacing: never — this card only fills a blank number.',
+    'Stale check: if either number, the case type or (for a full number) the judge changes before you apply, nothing is written; the route itself refuses a number another case took meanwhile.',
+    'Other open pages: case pages and the Cases list refresh on their own.',
+    'Notification: Casey sends nothing itself; the trigger rules above are the only follow-on effects.');
+  return lines.join('\n');
+}
+
+function caseDocketBody(draft) {
+  const w = draft.writes || {};
+  const keys = Object.keys(w);
+  if (!keys.length) throw new Error('This card changes nothing.');
+  const body = {};
+  for (const k of keys) {
+    if (!CASE_DOCKET_FIELDS.includes(k)) throw new Error('This card carries a field Casey never writes.');
+    const to = w[k] && w[k].to;
+    if (typeof to !== 'string' || !to || to !== to.trim() || CASE_DOCKET_CONTROL.test(to) || Array.from(to).length > CASE_DOCKET_MAX) {
+      throw new Error(`This card's ${CASE_DOCKET_NAMES[k].toLowerCase()} is unusable.`);
+    }
+    body[k] = to;
+  }
+  return body;
+}
+
+function caseDocketRequest(draft) {
+  const caseId = actionStringReceipt(draft.case && typeof draft.case.case_id === 'string' ? draft.case.case_id : '');
+  if (!caseId) throw new Error('This card has no usable case id.');
+  return { path: `/api/cases/${encodeURIComponent(caseId)}/docket`, method: 'PATCH', body: caseDocketBody(draft) };
+}
+
+async function caseDocketPrecheck(draft) {
+  const req = caseDocketRequest(draft); // a card that cannot be written is never read
+  const caseId = actionStringReceipt(draft.case.case_id);
+  const x = draft.expected || {};
+  const name = `case ${caseDocketCaseLabel(draft)}`;
+  let got;
+  try { got = await api(`/api/cases/${encodeURIComponent(caseId)}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `Case ${caseDocketCaseLabel(draft)} no longer exists. Nothing was written.`; throw e; }
+  const row = got && got.case;
+  if (!row || typeof row !== 'object' || !('case_number' in row) || !('case_number_full' in row)) throw new Error('the case could not be read');
+  const s = (v) => (v == null ? null : String(v));
+  for (const f of Object.keys(req.body)) {
+    if (String(row[f] == null ? '' : row[f]).trim() !== '' && s(row[f]) !== s(x[f])) {
+      return `${name} now has a ${CASE_DOCKET_NAMES[f].toLowerCase()} ("${String(row[f]).trim()}") — someone set it since this card was prepared. Nothing was written; replacing it is a Case Details edit.`;
+    }
+  }
+  if (s(row.case_number) !== s(x.case_number) || s(row.case_number_full) !== s(x.case_number_full) || s(row.case_type) !== s(x.case_type)) {
+    return `The case number, full case number or type of ${name} changed since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  if (Object.prototype.hasOwnProperty.call(x, 'case_judge')) {
+    const link = row.case_judge_contact_id == null ? null : Number(row.case_judge_contact_id);
+    if (s(row.case_judge) !== s(x.case_judge) || link !== (x.case_judge_contact_id == null ? null : Number(x.case_judge_contact_id))) {
+      return `The judge of ${name} changed since this card was prepared, which changes the judge link the full case number re-resolves. Nothing was written. Ask Casey to prepare it again.`;
+    }
+  }
+  return '';
+}
+
+function caseDocketResult(draft, result) {
+  const row = result && result.status === 'success' && result.data && result.data.case;
+  const caseId = actionStringReceipt(draft.case && draft.case.case_id);
+  if (!row || !caseId || String(row.case_id).toLowerCase() !== caseId.toLowerCase()) throw new Error('The docket route did not confirm the case');
+  for (const [k, w] of Object.entries(draft.writes || {})) {
+    if (String(row[k] == null ? '' : row[k]).trim() !== w.to) throw new Error('The docket route did not save the reviewed number');
+  }
+  return { case_id: caseId };
+}
+
+// The route's answers written before any write, worded for staff: its two
+// 409s (the case already holds a different number — the adopt-only guard; or
+// another case holds it — the collision guard; both carry body.conflict) and
+// its 404 (the case is gone). A 400 is a refusal by the shared rule; anything
+// else stays ambiguous.
+function caseDocketKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const refused = 'Refused — nothing written';
+  const message = String((e && e.body && e.body.message) || (e && e.message) || '');
+  if (e && e.status === 409 && e.body && e.body.conflict) {
+    if (/already has a (?:case number|full docket) .*Replacing it is a case-detail-form operation, not an adopt\.$/.test(message)) {
+      return { status: refused, text: `Refused — nothing written: the case already had a different number when this was applied (${message}) — someone set it after this card was prepared. Ask Casey to read the case again.` };
+    }
+    if (/^That docket already belongs to case /.test(message)) {
+      return { status: refused, text: `Refused — nothing written: ${message} Another case took that number after this card was prepared; two cases cannot share a docket.` };
+    }
+  }
+  if (e && e.status === 404 && /not found/i.test(message)) {
+    return { status: refused, text: 'Refused — nothing written: the case no longer exists. Ask Casey to read it again.' };
+  }
+  return null;
+}
+
 // Safe code jobs (safe-mode S3). The body runs ONCE in the QuickJS guest
 // engine (no network, no DB, no host realm), so the reviewed card schedules a
 // computation, not server-side execution capability. code_mode is pinned
@@ -3553,6 +3706,27 @@ const ACTION_FAMILIES = [
     }),
     reviewWarning: 'Review the document, the record it joins, where it will show and every trigger rule it runs — they start the moment it is saved. Nothing is sent by Casey itself. Canceling writes nothing.',
     open: documentOpen,
+  },
+  {
+    // A7c: the receipt is the STRING case_id — the docket route returns the case.
+    id: 'case_docket', kinds: CASE_DOCKET_ACTION_KINDS, title: 'Case number', noun: 'case', errorNoun: 'case number',
+    label: caseDocketLabel, text: caseDocketText, request: caseDocketRequest, result: caseDocketResult,
+    idField: 'case_id', appliedKey: 'result_docket_case_id', stringReceipt: true,
+    // A judge link that changes, or a rule that could not be evaluated.
+    danger: (draft) => (draft.warnings || []).length > 0,
+    precheck: caseDocketPrecheck,
+    knownOutcome: caseDocketKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `case ${payload.case_id}`,
+    entity: (draft) => ({ kind: 'case', id: String(draft.case && draft.case.case_id), label: caseDocketAfterLabel(draft) }),
+    failure: 'The case number could not be added.',
+    appliedCopy: (draft) => ({
+      status: `Applied — ${caseDocketLabel(draft).replace(/^Add /, '')} added`,
+      warning: `Case ${caseDocketCaseLabel(draft)} now carries ${Object.entries(draft.writes || {}).map(([k, w]) => `${String(CASE_DOCKET_NAMES[k] || k).toLowerCase()} "${w.to}"`).join(' and ')}, saved using your signed-in account.${(draft.automation || {}).lines && draft.automation.lines.length ? ' The trigger rules listed above run from this change.' : ''}`,
+      button: `Open ${caseDocketAfterLabel(draft)}`,
+    }),
+    reviewWarning: 'Review the case, each number before and after, every reader that shows it (court email included) and every trigger rule it runs — they start the moment it is saved. Nothing is sent by Casey itself. Canceling writes nothing.',
+    open: (draft) => openEntity('case', String(draft.case && draft.case.case_id), caseDocketAfterLabel(draft)),
   },
   {
     id: 'job', kinds: JOB_ACTION_KINDS, title: 'Safe code job', noun: 'scheduled job', errorNoun: 'job action',

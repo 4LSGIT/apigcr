@@ -572,6 +572,46 @@ const DOCUMENT_LINKS_MAX = 20;
 const DOCUMENT_LINKS_DISCLOSE = 5;
 // Linked records / related records listed on a card.
 const DOCUMENT_CARD_LINKS = 25;
+// A7c: a case's docket — ADOPT one (case.docket.adopt.v1 → PATCH
+// /api/cases/:id/docket {case_number?, case_number_full?}), the dedicated,
+// collision-checked writer the court-review adopt flow uses. Never the
+// generic cases PATCH. The route already refuses (409) a column the case holds
+// a DIFFERENT value for and a value another case holds in either column
+// (caseService.checkCaseNumberCollision — the database's own equality, no
+// docket-shape parsing; CLAUDE.md: the server never parses a docket), so:
+//   * the normalizer refuses both FIRST, by name, stating the stored value /
+//     the other case — replacing a docket is a case-detail-form operation, and
+//     clearing one is not an adopt (deferred: plans.md);
+//   * the values are the user's words, opaque: trimmed, one line, no control
+//     character, at most CASE_DOCKET_MAX characters (varchar(20) — relaxed
+//     sql_mode would cut a longer one short silently);
+//   * a column already holding exactly the value is not sent; nothing to fill
+//     at all is a no-op refusal;
+//   * any other case field (status, stage, dates, trustee, judge, tags, type…)
+//     and any replace / clear key refuse by name before anything is read.
+// The card names every reader of the two columns that matters — the case
+// header, the Cases list (whose column reads case_number_full whenever it is
+// not NULL), the client portal, the Documents tabs' case badges, court-email
+// matching and the caption stamp, the judge link a full number re-resolves —
+// and dry-runs the case.updated event updateCase emits (source
+// 'docket_adopt') against the active trigger rules (preview lane, nothing
+// dispatched). Freshness: both columns as stored (NULL and '' distinct), the
+// case type, and — when the full number is sent — the judge text and its
+// link; the click re-reads GET /api/cases/:id and refuses on any difference
+// (cases has no updated_at). Receipt: the STRING case_id. One per-family
+// switch, casey_case_docket_enabled (on unless '0').
+const CASE_DOCKET_ACTION_KINDS = new Set(['case.docket.adopt.v1']);
+const CASE_DOCKET_KEYS = new Set(['kind', 'case_id', 'case_number', 'case_number_full', 'evidence']);
+const CASE_DOCKET_FIELDS = ['case_number', 'case_number_full'];
+const CASE_DOCKET_LABEL = { case_number: 'case number', case_number_full: 'full case number' };
+// cases.case_number / case_number_full are varchar(20).
+const CASE_DOCKET_MAX = 20;
+// Keys that read as replacing / clearing a docket, and keys naming another case
+// field: both refused by name before anything is read.
+const CASE_DOCKET_REPLACE_KEY = /replac|overwrit|clear|remov|delet|unset|force|reset/i;
+const CASE_DOCKET_OTHER_FIELD_KEY = /status|stage|date|trustee|judge|tag|type|chapter|caption|phase|rec\b|note|alert|source/i;
+// Control characters (C0, DEL, C1) and the Unicode line / paragraph separators.
+const CASE_DOCKET_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 const CONTACT_PHONE_UPDATE_KEYS = new Set(['label', 'is_primary', 'sms_optout', 'mms_capable', 'notes']);
 const CONTACT_EMAIL_UPDATE_KEYS = new Set(['label', 'is_primary', 'email_optout', 'notes']);
 const CONTACT_ADDRESS_UPDATE_KEYS = new Set(['address1', 'address2', 'city', 'state', 'zip', 'country', 'label', 'is_primary', 'notes']);
@@ -3637,6 +3677,234 @@ async function normalizeDocumentAction(db, value, evidence, { currentUserId = nu
   return normalizeDocumentLink(db, value, evidence, currentUserId);
 }
 
+// ── A7c: case docket adopt ────────────────────────────────────────────────
+// The case is read through caseService.getCase (GET /api/cases/:id — the read
+// the click re-runs); the collision check is the route's own
+// caseService.checkCaseNumberCollision; the judge link a full number
+// re-resolves is lib/caseRoleResolver's, the resolver updateCase runs. The one
+// SQL of this family's own is the judge contacts' names. Real-engine twin:
+// tests/caseyDocket.mysql.test.js.
+
+function caseDocketError(message) { return httpError(422, message); }
+
+// Characters as MySQL's VARCHAR counts them — code points, not UTF-16 units.
+function caseDocketChars(text) { return Array.from(String(text)).length; }
+
+// A stored value as the card and the click compare it: NULL and '' distinct.
+function caseDocketStored(value) { return value == null ? null : String(value); }
+
+// What each reader of the two columns shows for a row — each reader's own
+// rule, read off its code:
+//   header     case.html updateHeader: full || number || 'Not Filed' (JS — '' falls through)
+//   cases_list caseService.listCases: COALESCE(full, number, case_id) — NULL only, so a
+//              full number stored as '' shows as a blank Case Number
+//   portal     portalCaseService.deriveDocket: full || number || none (JS)
+//   documents  documentService._labelTargets: COALESCE(NULLIF(full,''), NULLIF(number,''), case_id)
+function caseDocketDisplays(row) {
+  const js = (v) => (v == null || String(v) === '' ? null : String(v));
+  // NULLIF(v, '') under PAD SPACE: trailing spaces compare equal to ''.
+  const nullif = (v) => (v == null || String(v).replace(/ +$/, '') === '' ? null : String(v));
+  const id = String(row.case_id);
+  return {
+    header: js(row.case_number_full) || js(row.case_number) || 'Not Filed',
+    cases_list: row.case_number_full != null ? String(row.case_number_full) : row.case_number != null ? String(row.case_number) : id,
+    portal: js(row.case_number_full) || js(row.case_number),
+    documents: nullif(row.case_number_full) || nullif(row.case_number) || id,
+  };
+}
+
+// One submitted column: undefined / null / '' (after trimming) = not supplied
+// (the route's own reading); otherwise one line of plain text that fits.
+function caseDocketValue(value, field) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') throw caseDocketError(`The ${CASE_DOCKET_LABEL[field]} must be text, exactly as the user gave it`);
+  if (CASE_DOCKET_CONTROL.test(value)) {
+    throw caseDocketError(`The ${CASE_DOCKET_LABEL[field]} contains a line break or another control character — a docket is one line of plain text. Nothing is proposed`);
+  }
+  const text = value.trim();
+  if (!text) return null;
+  const n = caseDocketChars(text);
+  if (n > CASE_DOCKET_MAX) {
+    throw caseDocketError(`The ${CASE_DOCKET_LABEL[field]} "${text.slice(0, 40)}" is ${n} characters — the column keeps ${CASE_DOCKET_MAX}, and the database would save it cut short. Nothing is proposed`);
+  }
+  return text;
+}
+
+async function normalizeCaseDocketAction(db, value, evidence, { currentUserId = null } = {}) {
+  // The per-family switch: '0' and the A7c kind does not exist.
+  if (require('../lib/firmConfig').cfg('casey_case_docket_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  // Refused by name before anything is read: replacing or clearing, then any
+  // other case field, then anything else unknown.
+  const extra = Object.keys(value).filter((k) => !CASE_DOCKET_KEYS.has(k));
+  const replaceKeys = extra.filter((k) => CASE_DOCKET_REPLACE_KEY.test(k));
+  if (replaceKeys.length) {
+    throw caseDocketError(`REPLACING OR CLEARING A DOCKET refused (${replaceKeys.join(', ')}): a docket card only fills a BLANK case number / full case number. Changing or clearing one the case already has is a case-detail-form operation — the user does it in Case Details`);
+  }
+  const fieldKeys = extra.filter((k) => CASE_DOCKET_OTHER_FIELD_KEY.test(k));
+  if (fieldKeys.length) {
+    throw caseDocketError(`OTHER CASE FIELDS refused (${fieldKeys.join(', ')}): a docket card sets only case_number and case_number_full. A case's status, stage, dates, trustee, judge, tags, type and other fields are not editable by Casey (the stage moves through the pipeline cards) — the user edits them in Case Details`);
+  }
+  if (extra.length) {
+    throw caseDocketError(`A docket card carries unsupported fields: ${extra.join(', ')} — it takes case_id, case_number, case_number_full and evidence only`);
+  }
+  const caseId = String(value.case_id == null ? '' : value.case_id).trim();
+  if (!caseId || caseId.length > 20 || !/^[A-Za-z0-9_-]+$/.test(caseId)) throw caseDocketError('A docket card needs the case\'s exact case_id');
+  const asked = {};
+  for (const f of CASE_DOCKET_FIELDS) {
+    const v = caseDocketValue(value[f], f);
+    if (v != null) asked[f] = v;
+  }
+  if (!Object.keys(asked).length) {
+    throw caseDocketError('A docket card needs "case_number" and/or "case_number_full" — the number exactly as the user gave it (a blank value is not sent; clearing a number is not available to Casey)');
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  const cited = refs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return row && String(row.case_id) === caseId;
+  });
+  if (!cited) throw caseDocketError(`The docket evidence does not identify case ${caseId} — cite a row carrying its exact case_id (read the case first)`);
+
+  const caseSvc = require('./caseService');
+  const found = await caseSvc.getCase(db, caseId, 'contacts');
+  if (!found || !found.case) throw caseDocketError(`Case ${caseId} no longer exists`);
+  const row = found.case;
+  const id = String(row.case_id);
+  const before = caseDocketDisplays(row);
+  const caseLabel = before.header === 'Not Filed' ? id : before.header;
+
+  // The route's adopt-only guard, word for word: a column already holding a
+  // DIFFERENT non-blank value (trimmed, exact) is a replacement.
+  const writes = {}; const kept = [];
+  for (const f of CASE_DOCKET_FIELDS) {
+    if (!(f in asked)) continue;
+    const stored = String(row[f] == null ? '' : row[f]).trim();
+    if (stored !== '' && stored !== asked[f]) {
+      throw caseDocketError(`REPLACING refused: case ${caseLabel} already has a ${CASE_DOCKET_LABEL[f]} ("${stored}"), and "${asked[f]}" is different. Casey only fills a blank number — replacing one is a case-detail-form operation, not an adopt. The user changes it in Case Details`);
+    }
+    if (stored === asked[f]) kept.push({ column: f, value: stored });
+    else writes[f] = { from: caseDocketStored(row[f]), to: asked[f] };
+  }
+  if (!Object.keys(writes).length) {
+    throw caseDocketError(`Case ${caseLabel} already has ${kept.map((k) => `${CASE_DOCKET_LABEL[k.column]} "${k.value}"`).join(' and ')} — that changes nothing`);
+  }
+
+  // The route's cross-case guard, run here first: the same function, so the
+  // same equality (the database's — capitalisation and trailing spaces aside).
+  const conflict = await caseSvc.checkCaseNumberCollision(db, id, {
+    case_number: writes.case_number ? writes.case_number.to : null,
+    case_number_full: writes.case_number_full ? writes.case_number_full.to : null,
+  });
+  if (conflict) {
+    const fold = (v) => String(v == null ? '' : v).replace(/ +$/, '').toLowerCase();
+    const held = [conflict.case_number, conflict.case_number_full].map(fold).filter(Boolean);
+    const hit = Object.values(writes).map((w) => w.to).filter((v) => held.includes(fold(v)));
+    throw caseDocketError(`ANOTHER CASE HOLDS IT: ${hit.length ? hit.map((v) => `"${v}"`).join(' and ') : 'that docket'} is already on case ${conflict.case_id}${conflict.case_type ? ` (${conflict.case_type})` : ''} — its case number is ${conflict.case_number ? `"${conflict.case_number}"` : 'blank'}, its full case number ${conflict.case_number_full ? `"${conflict.case_number_full}"` : 'blank'}. Two cases cannot share a docket (the server compares the whole text in either column, never its shape). If they are the same matter, merge the cases on the case page`);
+  }
+
+  // The post-state, exactly as the route writes it: only the columns sent.
+  const after = { ...row };
+  for (const [f, w] of Object.entries(writes)) after[f] = w.to;
+  const now = caseDocketDisplays(after);
+  const effects = []; const warnings = [];
+  for (const k of kept) effects.push(`${CASE_DOCKET_LABEL[k.column][0].toUpperCase()}${CASE_DOCKET_LABEL[k.column].slice(1)}: already "${k.value}" — not sent.`);
+  effects.push(`Case page header: ${before.header === 'Not Filed' ? '"Not Filed"' : `"${before.header}"`} → "${now.header}" (it shows the full case number, else the case number).`);
+  if (now.cases_list === '') {
+    effects.push(`Cases list: its Case Number column keeps showing BLANK — it reads the full case number whenever that is not NULL, and this case's full case number is stored as empty text. Searching the Cases list by "${Object.values(writes)[0].to}" does find the case.`);
+  } else {
+    effects.push(`Cases list: the Case Number column reads "${now.cases_list}"${before.cases_list !== now.cases_list ? ` (was ${before.cases_list === '' ? 'blank' : `"${before.cases_list}"`})` : ' (unchanged)'}, and searching by the number finds the case.`);
+  }
+  const clients = (Array.isArray(found.clients) ? found.clients : [])
+    .filter((c) => c && (c.relate_type === 'Primary' || c.relate_type === 'Secondary'))
+    .map((c) => String(c.contact_name || '').trim().slice(0, 200)).filter(Boolean);
+  effects.push(clients.length
+    ? `Client portal: the case's docket line reads "${now.portal}" for ${clients.slice(0, 4).join(', ')}${clients.length > 4 ? ` (+${clients.length - 4} more)` : ''} (its Primary / Secondary contacts) once they sign in; portal cards that show the case number read it too.`
+    : 'Client portal: no Primary or Secondary contact is on this case, so no client sees it in the portal.');
+  effects.push(`Documents: each Documents tab badges this case's documents "case ${now.documents}"${before.documents !== now.documents ? ` (was "case ${before.documents}")` : ''}, and the Dropbox relink panel's docket match looks for folders whose name contains the number.`);
+  effects.push('Court email: the court-email pipeline matches incoming court mail to cases by these two columns, so court mail carrying this number is filed on THIS case from now on — the hearings, deadlines and docket entries it extracts land here.');
+  // Rows already filed under the number join the case at once: events linked
+  // by docket (eventService's RESOLVED_CASE_SUBQUERY — either column) and log
+  // rows (logService._buildCaseLogWhere's three clauses over the case's
+  // identifiers). No other case holds the number (checked above), so today
+  // they belong to no case.
+  const sent = Object.values(writes).map((w) => w.to);
+  const [[evCount]] = await db.query(
+    "SELECT COUNT(*) AS n FROM events WHERE event_link_type = 'case_number' AND event_link_id IN (?)", [sent]);
+  const [[logCount]] = await db.query(
+    `SELECT COUNT(*) AS n FROM log
+      WHERE (log_link_type = 'case' AND log_link_id IN (?))
+         OR (log_link_type IS NULL AND log_link IN (?))
+         OR (log_about_type = 'case' AND log_about_id IN (?))`, [sent, sent, sent]);
+  const nEv = Number(evCount && evCount.n) || 0; const nLog = Number(logCount && logCount.n) || 0;
+  effects.push(nEv || nLog
+    ? `Joins this case now: ${nEv} event${nEv === 1 ? '' : 's'} calendared against this number and ${nLog} log entr${nLog === 1 ? 'y' : 'ies'} filed under it (court mail that arrived before the case had the number, for example) — they show on this case's Events tab and log from now on.`
+    : 'Events and log: nothing is filed under this number yet.');
+  if (!String(row.case_caption == null ? '' : row.case_caption).trim()) {
+    effects.push('Caption: the case has no caption; the first court email that names the case can set one (lib/caseCaption.js: "In re <debtor>" on a main bankruptcy case, the court\'s name otherwise).');
+  }
+  effects.push('Templates: {{cases.case_number}} / {{cases.case_number_full}} in letters, forms, emails and texts resolve to the new value from now on.');
+
+  // A full number re-resolves the judge link (updateCase → caseRoleResolver),
+  // from the full number's suffix, else the judge text.
+  const nextFields = {}; for (const [f, w] of Object.entries(writes)) nextFields[f] = w.to;
+  const updatedFields = Object.keys(nextFields);
+  let judge = null;
+  if (writes.case_number_full) {
+    const resolver = require('../lib/caseRoleResolver'); // lazy (convention)
+    const to = await resolver.resolveJudge(db, { case_number_full: writes.case_number_full.to, case_judge: row.case_judge });
+    const from = row.case_judge_contact_id == null ? null : Number(row.case_judge_contact_id);
+    const toId = to == null ? null : Number(to);
+    const ids = [...new Set([from, toId].filter((n) => n != null))];
+    const names = new Map();
+    if (ids.length) {
+      const [rows] = await db.query('SELECT contact_id, contact_name FROM contacts WHERE contact_id IN (?)', [ids]);
+      for (const r of (Array.isArray(rows) ? rows : [])) names.set(Number(r.contact_id), String(r.contact_name || '').trim().slice(0, 120) || `contact #${r.contact_id}`);
+    }
+    const who = (n) => (n == null ? 'none' : `${names.get(n) || 'a contact'} (contact #${n})`);
+    judge = { from, to: toId, from_label: who(from), to_label: who(toId) };
+    nextFields.case_judge_contact_id = toId;
+    updatedFields.push('case_judge_contact_id');
+    if (from === toId) {
+      effects.push(`Judge link: re-resolved from the full case number — unchanged (${who(from)}).`);
+    } else if (from != null) {
+      warnings.push(`JUDGE LINK CHANGES: setting the full case number re-resolves the case's judge contact from its suffix (else from the judge text "${String(row.case_judge || '').slice(0, 100)}") — ${who(from)} → ${who(toId)}. The judge text itself is untouched.`);
+    } else {
+      effects.push(`Judge link: re-resolved from the full case number — none → ${who(toId)} (the judge text is untouched).`);
+    }
+  }
+
+  // Downstream automation: the case.updated envelope updateCase emits.
+  const { buildEnvelope, buildChanges } = require('../lib/domainEvents');
+  const changes = buildChanges(row, nextFields, updatedFields);
+  const automation = await casePipelineAutomation(db, buildEnvelope('case.updated', {
+    case_id: id, ...(currentUserId != null ? { actor: { user_id: currentUserId } } : {}), source: 'docket_adopt',
+    data: { ...row, ...nextFields }, changes, extra: { updated_fields: updatedFields },
+  }), 'case.updated', 'this docket adopt');
+  if (automation.lines.some((l) => l.outcome === 'unknown')) warnings.push('AUTOMATION: at least one trigger rule could not be evaluated for this docket adopt — read its line; it may run.');
+  effects.push('Trigger event: case.updated fires (source "docket_adopt") — every active rule on it that would act is listed below.');
+
+  return {
+    draft_id: crypto.randomUUID(), kind: 'case.docket.adopt.v1', status: 'draft',
+    case: {
+      case_id: id, label: caseLabel, case_type: String(row.case_type || '').slice(0, 40), case_subtype: String(row.case_subtype || '').slice(0, 40),
+      clients: clients.slice(0, 4),
+    },
+    current: { case_number: caseDocketStored(row.case_number), case_number_full: caseDocketStored(row.case_number_full) },
+    writes, kept, judge,
+    displays: { before, after: now },
+    automation: { events: ['case.updated'], lines: automation.lines.map((l) => l.text), rules_checked: automation.rules_checked, quiet: automation.quiet },
+    effects, warnings,
+    expected: {
+      case_number: caseDocketStored(row.case_number), case_number_full: caseDocketStored(row.case_number_full),
+      case_type: caseDocketStored(row.case_type),
+      ...(writes.case_number_full ? { case_judge: caseDocketStored(row.case_judge), case_judge_contact_id: row.case_judge_contact_id == null ? null : Number(row.case_judge_contact_id) } : {}),
+    },
+    evidence: refs,
+  };
+}
+
 async function taskDraftLink(db, value) {
   if (value == null) return null;
   if (!onlyKeys(value, new Set(['type', 'id']))) throw httpError(422, 'Task draft link is malformed');
@@ -6567,6 +6835,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && CASE_PIPELINE_ACTION_KINDS.has(value.kind)) return normalizeCasePipelineAction(db, value, evidence, { currentUserId });
   if (value && CHECKLIST_ACTION_KINDS.has(value.kind)) return normalizeChecklistAction(db, value, evidence, { currentUserId });
   if (value && DOCUMENT_ACTION_KINDS.has(value.kind)) return normalizeDocumentAction(db, value, evidence, { currentUserId });
+  if (value && CASE_DOCKET_ACTION_KINDS.has(value.kind)) return normalizeCaseDocketAction(db, value, evidence, { currentUserId });
   if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Action kind is unavailable');
   if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
   if (!onlyKeys(value, TASK_CREATE_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
@@ -6744,7 +7013,11 @@ function taskDraftRequested(question, history = []) {
   // verb an edit or link in a request message.
   const documentEdit = /\b(?:documents?|pdfs?|scans?|scanned)\b/i.test(text) &&
     /\b(?:draft|propose|prepare|retitle|re-?title|rename|title|tag|re-?tag|untag|classify|categori[sz]e|label|link|attach|associate|connect|file\b[^.?!\n]{0,40}\b(?:to|under|on|with)|set (?:the|its) (?:title|type|tags?)|change (?:the|its) (?:title|type|tags?))\b/i.test(request);
-  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || checklist || documentEdit || job || workflow || hook || sequence || send || ingestRule ||
+  // A7c: a docket / case number being added to a case ("add the case number
+  // 25-12345 to the Smith case", "put the docket on it").
+  const docketAdopt = /\b(?:dockets?|docket numbers?|case (?:numbers?|nos?\.?|#)|bankruptcy (?:numbers?|case numbers?)|court (?:numbers?|case numbers?)|full case numbers?)\b/i.test(text) &&
+    /\b(?:draft|propose|prepare|add|put|set|record|enter|fill|adopt|attach|save|store|give|assign|update|link)\b/i.test(request);
+  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || checklist || documentEdit || docketAdopt || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 

@@ -42,8 +42,8 @@ suite('P5 ledger on real MySQL', () => {
   });
   // The pin is deliberate: every kind added to the registry is a conscious
   // choice, so this count moves with it (A10: 57 + the three checklist kinds;
-  // A11: + the two document kinds).
-  test('all 62 kinds register without evidence; duplicate issuance, foreign actors and malformed inputs are refused', async () => {
+  // A11: + the two document kinds; A7c: + the docket kind).
+  test('all 63 kinds register without evidence; duplicate issuance, foreign actors and malformed inputs are refused', async () => {
     const outcomes = [];
     for (const [kind] of ledger.KINDS) {
       const d = await issue(kind);
@@ -58,7 +58,7 @@ suite('P5 ledger on real MySQL', () => {
       try { await op(); errors.push('accepted'); } catch (e) { errors.push(e.status || e.code); }
     }
     expect({ count: ledger.KINDS.size, outcomes: [...new Set(outcomes)], errors,
-      foreignRead: await ledger.read(db, 7, [d.draft_id]) }).toEqual({ count: 62, outcomes: ['not-applied'],
+      foreignRead: await ledger.read(db, 7, [d.draft_id]) }).toEqual({ count: 63, outcomes: ['not-applied'],
       errors: ['ER_DUP_ENTRY', 'ER_NO_REFERENCED_ROW_2', 400, 403, 400, 400, 404], foreignRead: [] });
   });
   test('committed claim fences two tabs, a business rollback cannot release it, and fresh or old claims remain unknown', async () => {

@@ -385,9 +385,10 @@ Casey can edit three text fields, one per card: a case's **notes**, a case's
 **alerts** (the banner at the top of the case), and a contact's **notes**.
 Ask it to add a line ("add a note to the case that the client is sending pay
 stubs Friday") or to rewrite, replace or clear the field. Nothing else on a
-case or contact — status, dates, names, docket, trustee, judge, source,
-tags — is available to Casey; edit those on the case or contact page. A case's
-pipeline stage moves only through the pipeline cards below.
+case or contact — status, dates, names, trustee, judge, source, tags — is
+available to Casey; edit those on the case or contact page. A case's pipeline
+stage moves only through the pipeline cards below, and a blank case number is
+filled only through the case number card below.
 
 - **Adding keeps what is there.** An added line goes at the end, on its own
   line; the existing text is kept exactly as it is. A rewrite replaces the
@@ -520,6 +521,46 @@ this lead dead", "move the case back to Docs requested").
 
 The off switch for these cards is the `casey_case_pipeline_enabled` setting
 (on unless set to 0).
+
+### A case's number (docket)
+
+Casey can **add a case number to a case that has none** — the case number,
+the full case number (the one with the judge's letters), or both — one case
+per card, through the same route the court review queue uses to adopt a
+docket. Ask in plain words ("add case number 25-12345 to the Smith case").
+Casey copies the number exactly as you give it; it never reformats it or works
+out one form from the other.
+
+- **The card** shows both numbers before and after, and everything that reads
+  them: the case page header; the Cases list (if the case's full case number
+  is stored as empty text, the Cases list's Case Number column stays blank
+  even after a case number is added — the card says so); the client portal,
+  for the case's Primary and Secondary contacts; the Documents tabs' case
+  label; court email — court mail carrying the number is filed on this case
+  from now on, and the first one that names the case can set its caption if it
+  has none; letter, form and message templates; any events or log entries
+  already filed under the number, which join the case at once (counted on the
+  card); and, for a full case number, the judge link it re-resolves from the
+  judge's letters (a change to an existing judge link is shown as a warning).
+- **Automation.** Adding a number is a "case updated" event. The card checks
+  every active rule on it and lists each that would run, and any whose test
+  could not run — that one **may** run.
+- **What Casey will not do, and says so:**
+  - change or clear a number the case already has — do that in Case Details;
+  - add a number another case already has, in either field (the card names
+    that case; if they are the same matter, merge the cases on the case page);
+  - save a number longer than 20 characters, or one with a line break;
+  - change any other field of the case.
+- **Freshness.** When you confirm, the card re-reads the case. If either
+  number, the case type or (for a full case number) the judge changed since the
+  card was prepared, nothing is written; ask Casey to prepare it again. If
+  another case took the number in the meantime, the server refuses it and
+  nothing is written.
+- Once applied, the card opens the case. Open case pages and the Cases list
+  refresh on their own.
+
+The off switch for this card is the `casey_case_docket_enabled` setting (on
+unless set to 0).
 
 ### Checklists and notes
 

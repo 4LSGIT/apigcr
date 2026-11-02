@@ -80,6 +80,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'documentId', 'documentUpdateBody', 'documentUpdateRequest', 'documentLinkRequest', 'documentLinkSignature', 'documentRead',
   'documentUpdatePrecheck', 'documentLinkPrecheck', 'documentUpdateResult', 'documentLinkResult', 'documentKnownOutcome',
   'documentOpenInfo', 'documentEntity', 'documentOpen',
+  'caseDocketLabel', 'caseDocketCaseLabel', 'caseDocketAfterLabel', 'caseDocketShown', 'caseDocketText', 'caseDocketBody', 'caseDocketRequest',
+  'caseDocketPrecheck', 'caseDocketResult', 'caseDocketKnownOutcome',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
   'workflowDraftLabel', 'workflowSendLines', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
   'workflowStepActionLabel', 'workflowStepWorkflowLine', 'workflowStepInsertText', 'workflowStepEditValue',
@@ -118,6 +120,8 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CASE_PIPELINE_ACTION_KINDS'), constSrc(html, 'CASE_PIPELINE_STAGE_KEY'), constSrc(html, 'CASE_PIPELINE_OPEN'),
     constSrc(html, 'CHECKLIST_ACTION_KINDS'), constSrc(html, 'CHECKITEM_ACTION_KINDS'), constSrc(html, 'CHECKLIST_LINK_TYPES'),
     constSrc(html, 'DOCUMENT_ACTION_KINDS'), constSrc(html, 'DOCLINK_ACTION_KINDS'), constSrc(html, 'DOCUMENT_FIELD_MAX'),
+    constSrc(html, 'CASE_DOCKET_ACTION_KINDS'), constSrc(html, 'CASE_DOCKET_FIELDS'), constSrc(html, 'CASE_DOCKET_NAMES'),
+    constSrc(html, 'CASE_DOCKET_MAX'), constSrc(html, 'CASE_DOCKET_CONTROL'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
     constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEQUENCE_ENROLL_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
@@ -3642,6 +3646,168 @@ describe('A11 document cards (document.update / document.link)', () => {
     expect([[...docs.kinds], docs.idField, docs.appliedKey, !!docs.stringReceipt]).toEqual([['document.update.v1'], 'document_id', 'result_document_id', false]);
     expect([[...links.kinds], links.idField, links.appliedKey, !!links.stringReceipt]).toEqual([['document.link.v1'], 'document_link_id', 'result_document_link_id', false]);
     for (const kind of ['document.unlink.v1', 'document.delete.v1', 'document.share.v1', 'document.register.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    dom.window.close();
+  });
+});
+
+describe('A7c docket card (case.docket.adopt)', () => {
+  const CASE_ID = '7KQ2M9XA';
+  // Model-shaped junk that must never reach a request.
+  const JUNK = { case_status: 'Filed', replace: true, case_judge: 'Someone' };
+  const adopt = (over = {}) => ({ action_draft: {
+    draft_id: '6f6f6f6f-1b2c-4d3e-8f40-123456789abc', kind: 'case.docket.adopt.v1', status: 'draft', received_at: Date.now(),
+    case: { case_id: CASE_ID, label: CASE_ID, case_type: 'Bankruptcy', case_subtype: 'Chapter 7', clients: ['Dana Debtor'] },
+    current: { case_number: null, case_number_full: '' },
+    writes: { case_number: { from: null, to: '25-12345' } }, kept: [], judge: null,
+    displays: { before: { header: 'Not Filed', cases_list: '', portal: null, documents: CASE_ID }, after: { header: '25-12345', cases_list: '', portal: '25-12345', documents: '25-12345' } },
+    automation: { events: ['case.updated'], lines: ['Trigger rule #7 "Docket arrived" runs: starts workflow #12'], rules_checked: 3, quiet: 2 },
+    effects: ['Cases list: its Case Number column keeps showing BLANK — it reads the full case number whenever that is not NULL, and this case\'s full case number is stored as empty text. Searching the Cases list by "25-12345" does find the case.',
+      'Court email: the court-email pipeline matches incoming court mail to cases by these two columns, so court mail carrying this number is filed on THIS case from now on — the hearings, deadlines and docket entries it extracts land here.'],
+    warnings: [],
+    expected: { case_number: null, case_number_full: '', case_type: 'Bankruptcy' }, evidence: [], ...JUNK, ...over } });
+  const caseGet = (over = {}) => ({ case: { case_id: CASE_ID, case_number: null, case_number_full: '', case_type: 'Bankruptcy', case_judge: '', case_judge_contact_id: null, ...over } });
+  const reads = (over = {}) => (path) => {
+    if (path === `/api/cases/${CASE_ID}`) { if (over.gone) throw Object.assign(new Error('Case not found'), { status: 404 }); return over.got || caseGet(); }
+    throw new Error(`unexpected read ${path}`);
+  };
+  function runDocket(message, { read = reads(), write, confirm = true } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); return read(path, body); }
+      writes.push({ path, body, method, headers }); return write(path, body, method);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a7c' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) } };
+    const history = []; const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, openEntity, sandbox }));
+  }
+  const adopted = async (p, body) => ({ status: 'success', data: { case: { ...caseGet().case, ...body } }, changes: Object.fromEntries(Object.entries(body).map(([k, v]) => [k, { from: null, to: v }])) });
+
+  test('re-reads the case; ONE PATCH of only the reviewed column (no other field, no junk); the STRING case_id receipt', async () => {
+    const m = adopt();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runDocket(m, { write: adopted });
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('case_docket');
+    expect(gets).toEqual([`/api/cases/${CASE_ID}`]);
+    expect(writes).toEqual([{ path: `/api/cases/${CASE_ID}/docket`, method: 'PATCH', headers: undefined, body: { case_number: '25-12345' } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a7c', result: { case_id: CASE_ID } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_docket_case_id: CASE_ID });
+    expect(history[0].text).toBe(`Add case number applied to case ${CASE_ID}.`);
+    expect(history[0].entities).toEqual([{ kind: 'case', id: CASE_ID, label: '25-12345' }]);
+    expect(openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'question', confirmButtonText: 'Add case number' });
+    for (const line of [`Case: ${CASE_ID} (case ${CASE_ID}, Bankruptcy / Chapter 7) — Dana Debtor`, 'Case number: blank → "25-12345"',
+      'Full case number: blank (empty text) — not on this card, unchanged', 'Effect: Cases list: its Case Number column keeps showing BLANK',
+      'Effect: Court email: the court-email pipeline matches incoming court mail to cases by these two columns',
+      'Automation: 3 active trigger rule(s) on case.updated checked; 1 would act:', 'Automation: Trigger rule #7 "Docket arrived" runs: starts workflow #12',
+      'Writes: only the case\'s case number, through the case-review docket adopt — no other case field.', 'Replacing: never — this card only fills a blank number.',
+      'Stale check: if either number, the case type or (for a full number) the judge changes before you apply, nothing is written']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+    // Both numbers, one kept; a judge warning danger-styles the card and the full number's judge inputs are re-checked.
+    const both = adopt({ writes: { case_number_full: { from: null, to: '25-12345-abc' } }, kept: [{ column: 'case_number', value: '25-12345' }],
+      current: { case_number: '25-12345', case_number_full: null }, warnings: ['JUDGE LINK CHANGES: …'],
+      expected: { case_number: '25-12345', case_number_full: null, case_type: 'Bankruptcy', case_judge: 'Mark Example', case_judge_contact_id: 41 } });
+    const rb = await runDocket(both, { write: adopted, read: reads({ got: caseGet({ case_number: '25-12345', case_number_full: null, case_judge: 'Mark Example', case_judge_contact_id: 41 }) }) });
+    expect(rb.writes[0].body).toEqual({ case_number_full: '25-12345-abc' });
+    expect(rb.P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Add full case number' });
+    expect(rb.P.Swal.fire.mock.calls[0][0].text).toContain('Case number: already "25-12345" — not sent');
+    expect(rb.P.Swal.fire.mock.calls[0][0].text).toContain('Writes: only the case\'s full case number (and the judge link it re-resolves)');
+  });
+
+  test('the builder fixes route, method and body; a bad card never reaches a read, the claim or the route', async () => {
+    for (const [message, why] of [
+      [adopt({ writes: {} }), 'changes nothing'],
+      [adopt({ writes: { case_status: { from: null, to: 'Filed' } } }), 'a field Casey never writes'],
+      [adopt({ writes: { case_number: { from: null, to: 'x'.repeat(21) } } }), 'case number is unusable'],
+      [adopt({ writes: { case_number: { from: null, to: ' 25-12345' } } }), 'case number is unusable'],
+      [adopt({ writes: { case_number: { from: null, to: '25-1\n2345' } } }), 'case number is unusable'],
+      [adopt({ writes: { case_number: { from: null, to: '' } } }), 'case number is unusable'],
+      [adopt({ writes: { case_number_full: { from: null, to: 2512345 } } }), 'full case number is unusable'],
+      [adopt({ case: { case_id: 'bad id!' } }), 'no usable case id'],
+    ]) {
+      const x = await runDocket(message, { write: adopted });
+      expect({ why, gets: x.gets, ledger: x.ledger, writes: x.writes }).toEqual({ why, gets: [], ledger: [], writes: [] });
+      expect(message.action_draft.action_error).toContain(why);
+    }
+  });
+
+  test('click-time freshness refuses BEFORE the claim, on ANY difference', async () => {
+    const withJudge = () => adopt({ writes: { case_number_full: { from: '', to: '25-12345-abc' } },
+      expected: { case_number: null, case_number_full: '', case_type: 'Bankruptcy', case_judge: '', case_judge_contact_id: null } });
+    for (const [message, read, why] of [
+      [adopt(), reads({ gone: true }), `Case ${CASE_ID} no longer exists. Nothing was written.`],
+      [adopt(), reads({ got: caseGet({ case_number: '25-99999' }) }), `case ${CASE_ID} now has a case number ("25-99999") — someone set it since this card was prepared. Nothing was written; replacing it is a Case Details edit.`],
+      [adopt(), reads({ got: caseGet({ case_number: '' }) }), 'The case number, full case number or type of case 7KQ2M9XA changed since this card was prepared.'],
+      [adopt(), reads({ got: caseGet({ case_number_full: null }) }), 'changed since this card was prepared'],
+      [adopt(), reads({ got: caseGet({ case_number_full: '25-1-abc' }) }), 'The case number, full case number or type'],
+      [adopt(), reads({ got: caseGet({ case_type: 'Civil' }) }), 'The case number, full case number or type'],
+      [withJudge(), reads({ got: caseGet({ case_judge: 'Ann Other' }) }), 'The judge of case 7KQ2M9XA changed since this card was prepared'],
+      [withJudge(), reads({ got: caseGet({ case_judge_contact_id: 42 }) }), 'The judge of case 7KQ2M9XA changed'],
+    ]) {
+      const x = await runDocket(message, { read, write: adopted });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(message.action_draft.refusal_error).toContain(why);
+    }
+    // A judge change does not refuse a card that sends no full number.
+    const plain = adopt();
+    const rp = await runDocket(plain, { read: reads({ got: caseGet({ case_judge: 'Ann Other', case_judge_contact_id: 42 }) }), write: adopted });
+    expect(rp.writes.length).toBe(1);
+    // An unreadable answer leaves the card retryable (nothing claimed).
+    const u = adopt();
+    const ur = await runDocket(u, { read: reads({ got: { case: { case_id: CASE_ID } } }), write: adopted });
+    expect([ur.writes, ur.ledger]).toEqual([[], []]);
+    expect(u.action_draft.action_error).toMatch(/^Could not re-check the record before applying \(the case could not be read\)/);
+  });
+
+  test('outcomes: both 409s and the 404 are refusals that wrote nothing; a 400 refuses; a bare 409, a 500 and an unconfirmed answer stay ambiguous', async () => {
+    const replaced = adopt();
+    const msg1 = `Case ${CASE_ID} already has a case number (25-99999). Replacing it is a case-detail-form operation, not an adopt.`;
+    await runDocket(replaced, { write: async () => { throw Object.assign(new Error(msg1), { status: 409, body: { status: 'error', message: msg1, conflict: { case_id: CASE_ID } } }); } });
+    expect(replaced.action_draft.refusal_error).toBe(`Refused — nothing written: the case already had a different number when this was applied (${msg1}) — someone set it after this card was prepared. Ask Casey to read the case again.`);
+    const taken = adopt();
+    const msg2 = 'That docket already belongs to case ZZZ99999 (25-12345).';
+    await runDocket(taken, { write: async () => { throw Object.assign(new Error(msg2), { status: 409, body: { status: 'error', message: msg2, conflict: { case_id: 'ZZZ99999' } } }); } });
+    expect(taken.action_draft.refusal_error).toBe(`Refused — nothing written: ${msg2} Another case took that number after this card was prepared; two cases cannot share a docket.`);
+    const gone = adopt();
+    await runDocket(gone, { write: async () => { throw Object.assign(new Error('Case not found'), { status: 404, body: { status: 'error', message: 'Case not found' } }); } });
+    expect(gone.action_draft.refusal_error).toBe('Refused — nothing written: the case no longer exists. Ask Casey to read it again.');
+    const bad = adopt();
+    await runDocket(bad, { write: async () => { throw Object.assign(new Error('At least one of case_number / case_number_full is required'), { status: 400 }); } });
+    expect(bad.action_draft.refusal_error).toBe('Refused — nothing written (At least one of case_number / case_number_full is required). Ask Casey to prepare it again.');
+    const bare = adopt();
+    await runDocket(bare, { write: async () => { throw Object.assign(new Error('conflict'), { status: 409, body: { message: 'conflict' } }); } });
+    expect(bare.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    // A 409 worded like the collision but without the route's conflict body is not one of the audited answers.
+    const unbodied = adopt();
+    await runDocket(unbodied, { write: async () => { throw Object.assign(new Error(msg2), { status: 409, body: { message: msg2 } }); } });
+    expect(unbodied.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    const lost = adopt();
+    await runDocket(lost, { write: async () => { throw Object.assign(new Error('boom'), { status: 500 }); } });
+    expect(lost.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    const other = adopt();
+    await runDocket(other, { write: async (p, body) => ({ ...(await adopted(p, body)), data: { case: { ...caseGet().case, case_id: 'OTHER123', ...body } } }) });
+    expect(other.action_draft.ambiguous_error).toMatch(/did not confirm the case/);
+    const notSaved = adopt();
+    await runDocket(notSaved, { write: async () => ({ status: 'success', data: caseGet(), changes: {} }) });
+    expect(notSaved.action_draft.ambiguous_error).toMatch(/did not save the reviewed number/);
+  });
+
+  test('a reopened card restores from the ledger with the STRING receipt; one family, one kind', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    const m = adopt();
+    box.applyActionResults([m], [{ draft_id: m.action_draft.draft_id, kind: 'case.docket.adopt.v1', outcome: 'applied', result: { case_id: CASE_ID } }]);
+    expect([m.action_draft.status, m.action_draft.result_docket_case_id]).toEqual(['applied', CASE_ID]);
+    const host = dom.window.document.createElement('div');
+    box.hydrateActionDraft(box.actionFamily(m.action_draft), host, m, m.action_draft);
+    expect(host.querySelector('.action-draft-status').textContent).toBe('Applied — case number added');
+    expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open 25-12345', 'Copy details']);
+    const fam = box.actionFamily({ kind: 'case.docket.adopt.v1' });
+    expect([[...fam.kinds], fam.idField, fam.appliedKey, !!fam.stringReceipt]).toEqual([['case.docket.adopt.v1'], 'case_id', 'result_docket_case_id', true]);
+    for (const kind of ['case.docket.replace.v1', 'case.docket.clear.v1', 'case.field.update.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
   });
 });

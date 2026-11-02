@@ -640,7 +640,8 @@ Expose small field groups rather than the broad bodies accepted by
 `PATCH /api/contacts/:id` and `PATCH /api/cases/:id`. Every proposal shows
 before and after values and carries a server-owned stale-value/version check
 through confirmation. Start with low-impact descriptive fields. Identity,
-access, merge, docket, intake ownership, and pipeline state remain excluded.
+access, merge, docket (a BLANK one is filled only through A7c's adopt), intake ownership, and pipeline state (A9)
+remain excluded.
 
 **Fred's rulings (2026-10-28, recorded by the manager).**
 1. The first field group is `case_notes` + `case_alerts` (cases) and
@@ -688,6 +689,88 @@ workflows — all deliberate consumers of the text.
 **Later groups.** `case_source` (ruling 3) and the other low-impact
 descriptive fields, each as its own group with its own refusal table; a
 client-facing group brings the conditional-write precondition (ruling 2).
+
+#### A7c: Case docket adopt — shipped 2026-11-02
+
+Origin: a refused request (Fred, 2026-10-29): "can you add a case number to a
+given case?" — 887 of 1,130 non-closed cases had a blank `case_number`
+(measured 2026-11-02). One kind fills a BLANK docket; replacing or clearing one
+stays the user's Case Details edit.
+
+**What the route guards.** `PATCH /api/cases/:id/docket` {case_number?,
+case_number_full?} — the court-review adopt flow's dedicated writer, never the
+generic cases PATCH — trims each value (empty = not supplied) and answers 409,
+before any write, (1) when the case already holds a DIFFERENT non-blank value
+in a submitted column (trimmed, compared exactly in JS: a capitalisation
+difference is a replacement; "Replacing it is a case-detail-form operation, not
+an adopt.") and (2) when another case holds a submitted value in EITHER column
+(`caseService.checkCaseNumberCollision`: the database's equality under
+general_ci — capitalisation and trailing spaces aside — never a docket-shape
+parse); 404 for an unknown case. It writes only the submitted columns through
+`updateCase` (`source:'docket_adopt'`), which re-resolves the judge link
+(`case_judge_contact_id`, lib/caseRoleResolver) whenever case_number_full is
+written and emits `case.updated` (fire-and-forget) when something changed; it
+answers `{status, data:<getCase result>, changes:{field:{from,to}}}`. It checks
+no width: relaxed sql_mode stores a value over varchar(20) cut short, answered
+200. All pinned on a real engine (`tests/caseyDocket.mysql.test.js`).
+
+**Shipped contract.** One kind, `case.docket.adopt.v1` {case_id,
+case_number?, case_number_full?, evidence} → that route. The values are the
+user's words, opaque server-side; the card shows them verbatim, quoted.
+- **Refused by name before anything is read:** a replace / clear / overwrite /
+  force-shaped key; any other case field (status, stage, dates, trustee, judge,
+  tags, type, chapter, caption …); any other unknown key.
+- **Refused:** a non-text value; a line break or control character anywhere
+  (C0, DEL, C1, U+2028/2029 — edges included, before the route's trim); more
+  than 20 characters counted in code points; neither number given; evidence
+  not citing the exact case_id; a gone case; a column holding a DIFFERENT
+  value (the route's rule word for word, naming the stored value); nothing to
+  fill (every given number already there — no-op); another case holding a
+  number (the route's own function, run first; the refusal names that case and
+  both its values). A column already holding exactly the value is not sent and
+  says so.
+- **The card** names the case, both columns before → after (NULL vs empty text
+  shown), and every reader that changes, each by its own rule read off the
+  code: the case header (`full || number || 'Not Filed'`); the Cases list
+  (`COALESCE(full, number, case_id)` — NULL only, so a full number stored as
+  `''` keeps the Case Number column BLANK, said in so many words); the client
+  portal docket line (`deriveDocket`, for the Primary / Secondary contacts
+  named) and portal cards; the Documents tabs' case badge
+  (`_labelTargets`, blank-skipping) and the Dropbox relink panel's docket lane;
+  court-email matching (`courtResolve`: court mail carrying the number is filed
+  on this case from now on); the caption stamp when the case has none
+  (`lib/caseCaption.js` rules; `courtExecutor` fills an empty caption from the
+  first resolved court email); templates; the events and log rows ALREADY filed
+  under the number that join the case at once (counted with
+  `eventService`'s docket expansion and `logService._buildCaseLogWhere`'s
+  three clauses); the judge link a full number re-resolves (none → X, unchanged,
+  or — a danger warning — an existing link that changes or clears); and every
+  active `case.updated` rule that would run / fail / MAY run — updateCase's
+  exact envelope (priorRow overlaid, `changes` via `buildChanges` including the
+  judge link, `extra.updated_fields`) through A9's
+  `listActiveRulesForEvent` + `evaluateDraft` on the preview lane, nothing
+  dispatched.
+- **Freshness:** `expected` = both columns as stored (NULL and `''` distinct),
+  `case_type`, and — when the full number is sent — `case_judge` and
+  `case_judge_contact_id` (cases has no `updated_at`); the click re-reads GET
+  `/api/cases/:id` and refuses on any difference before the claim (a number set
+  by hand since is named). A number another case took meanwhile is the route's
+  own 409.
+- **Idempotency:** none added — one claim per draft; a second card on the same
+  case is refused by the precheck, or by the route's adopt-only 409.
+- **Outcomes:** both 409s (matched by message, with `body.conflict`) and the 404
+  are before-write refusals (`knownOutcome`); a 400 is a refusal; any other 409
+  and 5xx stay ambiguous.
+- **Receipt:** the STRING case_id (A7's `STRING_RECEIPT_FIELDS` path — the route
+  returns the case, no integer).
+- **Sync:** the route already has its yc-sync matcher (`case:<id>` with
+  `changes`); case pages and the Cases list refresh. Nothing added.
+- Off switch `casey_case_docket_enabled` (on unless '0', casey section, sort
+  63). Tests: `tests/caseyDocket.test.js`, gated `tests/caseyDocket.mysql.test.js`,
+  `tests/assistantUi.test.js`.
+
+**Deferred** (`ref/plans.md`): replacing a docket; clearing one; the other
+scalar case fields (A7 groups B/C).
 
 #### A8: Case-contact membership — shipped 2026-10-28
 

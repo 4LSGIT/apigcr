@@ -1248,6 +1248,8 @@ tests/caseyChecklists.mysql.test.js
 tests/caseyChecklists.test.js
 tests/caseyContactRelations.mysql.test.js
 tests/caseyContactRelations.test.js
+tests/caseyDocket.mysql.test.js
+tests/caseyDocket.test.js
 tests/caseyDocuments.mysql.test.js
 tests/caseyDocuments.test.js
 tests/caseyHookCreate.test.js

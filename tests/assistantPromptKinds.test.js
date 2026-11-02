@@ -355,6 +355,37 @@ describe('A11 — every stage teaches the document cards, their evidence alias a
   });
 });
 
+// A7c: the docket kind joins the case family (its plan marker is the case
+// notes bullet), so it carries its own bullet too. Pins that every stage
+// teaches what a stage that does not know it gets wrong: the number copied
+// verbatim (never reformatted, split or derived), the adopt-only rule (never
+// replace or clear), the collision refusal, the other-field refusals — and
+// that no stage still lists "docket" among the fields Casey cannot touch.
+describe('A7c — every stage teaches the docket card, verbatim numbers and its refusals', () => {
+  test('the plan carries its own bullet with the collision read', () => {
+    expect(planPrompt).toContain('Reviewed case docket actions are available: fill ONE case\'s BLANK case number and/or full case number');
+    expect(planPrompt).toContain("a sql.read of cases WHERE case_number = '<the number>' OR case_number_full = '<the number>'");
+    expect(planPrompt).toContain('The server refuses replacing or\n  clearing a number the case already has');
+    expect(planPrompt).not.toContain('names, docket, trustee');
+  });
+  test('the investigate stage names the proposal family', () => {
+    expect(investigatePrompt).toContain('and case docket proposals, which\n  need a row carrying the exact case_id with its current case_number and case_number_full');
+  });
+  test('the answer and repair stages teach the verbatim copy, the adopt-only rule and every refusal', () => {
+    expect(answerPrompt).toContain('Case docket rules (A7c');
+    expect(answerPrompt).toContain('{"kind":"case.docket.adopt.v1","case_id":"7KQ2M9XA","case_number":"25-12345","case_number_full":"25-12345-abc"');
+    expect(answerPrompt).toContain('copy it character for character; never reformat it, never split one into the other');
+    expect(answerPrompt).toContain('REPLACING a number the case already has with\n    a different one, or clearing one');
+    expect(answerPrompt).toContain('a\n    number ANOTHER case already holds in either column');
+    expect(answerPrompt).toContain('court-email matching (court mail carrying the number is filed on this case)');
+    expect(answerPrompt).toContain('A BLANK case\n    number is filled only through the docket kind below.');
+    expect(answerPrompt).not.toContain('names, docket, trustee');
+    expect(answerPrompt).toContain('ingest-rule/report-draft/case-docket actions.');
+    expect(repairPrompt).toContain('case.docket.adopt.v1: kind,case_id,case_number?,case_number_full?,evidence');
+    expect(repairPrompt).toContain('Only a BLANK number is filled: never replace or clear one, never a number another case holds');
+  });
+});
+
 describe('a job request forces the draft-required path like the other families', () => {
   const svc = require(path.join(REPO, 'services', 'assistantService'));
 

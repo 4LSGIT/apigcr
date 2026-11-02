@@ -1091,6 +1091,31 @@ COMMENTs.)
   that step fails without sending — and the card does not warn.
   The card could read the contact's active phone/email rows and say so.
 
+## From the Ask Casey arc — A7c docket adopt (2026-11-02) — deferred
+
+- **Replacing a docket.** The adopt route refuses it by design (a
+  case-detail-form operation); a Casey replacement needs its own card — the
+  number it overwrites, every court-email / event / log row that leaves the
+  case with the old number, the judge link it re-resolves — and probably a
+  conditional write rather than the read-then-write the adopt does.
+- **Clearing a number.** Not an adopt; same readers leave the case at once.
+- **The other scalar case fields** (A7 groups B/C: `case_source`, dates,
+  status-like fields …) — each its own group with its own refusal table.
+- **Native gaps found while tracing (not Casey's):**
+  - The adopt route (and the court-review `adopt-rerun`) checks no width:
+    relaxed sql_mode stores a value over varchar(20) cut to 20 and answers
+    200 — and the collision check compares the UNCUT value, so a long value
+    whose first 20 characters equal another case's docket stores a duplicate
+    docket. Refuse > 20 in the route.
+  - `caseService.listCases` shows `COALESCE(case_number_full, case_number,
+    case_id)` with no NULLIF, so a case whose full number is stored as `''`
+    shows a BLANK Case Number in the Cases list even when its case number is
+    set (the header, the portal and the Documents labels skip the blank).
+    `NULLIF(…, '')` on both would fix it; measure how many rows hold `''`.
+  - The route's adopt-only guard compares in JS (exact), its collision guard
+    in SQL (general_ci): a value differing from the case's own stored number
+    only in capitalisation is refused as a "replacement".
+
 ## From the Ask Casey arc — A11 documents (2026-11-02) — deferred
 
 - **Register by external id** (POST `/api/documents/register` {external_id}).

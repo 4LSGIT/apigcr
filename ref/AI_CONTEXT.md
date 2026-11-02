@@ -707,6 +707,31 @@ body. Governing migrations in `ref/migrations/`.*
   matchers, nothing added. Off switch `casey_documents_enabled` (on unless
   '0'). Tests: `tests/caseyDocuments.test.js`, gated
   `tests/caseyDocuments.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A11.
+- **Casey docket adopt (A7c, 11-02):** kind `case.docket.adopt.v1` → PATCH
+  `/api/cases/:id/docket` {case_number?, case_number_full?} (the court-review
+  adopt writer, bare `jwtOrApiKey`; never the cases PATCH). Fills a BLANK
+  docket only: the route 409s a column holding a DIFFERENT value (trimmed, JS
+  exact — capitalisation counts) and a value another case holds in either
+  column (`checkCaseNumberCollision`, general_ci + PAD SPACE equality, no shape
+  parse) — the normalizer refuses both first, through the same rule / the same
+  function. The route checks NO width (varchar(20) cut short, 200) and no
+  control characters — the normalizer refuses > 20 code points and any
+  C0/DEL/C1/U+2028-9. Refused by name before any read: replace / clear keys and
+  any other case field. A column already holding the value is not sent.
+  Disclosed, each reader by its own rule: header (`full || number`), Cases list
+  (`COALESCE(full, number, case_id)` — a `''` full number keeps it BLANK),
+  portal `deriveDocket`, Documents badge (`_labelTargets`), court-email matching
+  (`courtResolve`) + the empty-caption stamp, templates, the events / log rows
+  already filed under the number that join the case, the judge link updateCase
+  re-resolves when the full number is written (a changed existing link is a
+  danger warning), and `case.updated` (source `docket_adopt`, updateCase's own
+  envelope) dry-run on the preview lane. Freshness: both columns as stored
+  (NULL ≠ ''), case_type, + case_judge / case_judge_contact_id with a full
+  number (cases has no updated_at), re-read via GET `/api/cases/:id`. Both 409s
+  and the 404 read as refusals. Receipt: STRING `case_id`. Sync: the existing
+  docket matcher. Off switch `casey_case_docket_enabled` (on unless '0'). Tests:
+  `tests/caseyDocket.test.js`, gated `tests/caseyDocket.mysql.test.js`; plan:
+  ASK_CASEY_ACTIONS_PLAN A7c.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL
