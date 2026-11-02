@@ -1,0 +1,9 @@
+{
+  "counter": 4,
+  "appts": [
+    { "id": 9001, "format_date": "Nov. 12, 2026", "time": "10:00 AM", "contact_name": "Shaneika Monay Smith-Williams", "appt_client_id": 1, "case_number": "26-49875-lsg", "appt_case_id": "TESTCASE2", "appt_type": "341 Meeting", "appt_length": 30, "appt_platform": "Zoom", "status": "Scheduled", "user_name": "Alex Admin", "appt_note": "Meeting ID 931 641 2796, Passcode 0827744230, Phone 1 313 391 5508 — bring both course certificates", "appt_datetime_local": "2026-11-12 10:00" },
+    { "id": 9002, "format_date": "Nov. 3, 2026", "time": "2:30 PM", "contact_name": "Konstantinos Papadopoulos-Vandenberg", "appt_client_id": 4, "case_number": "26-41066-tjt", "appt_case_id": "TESTCASE3", "appt_type": "Initial Consultation - Bankruptcy", "appt_length": 60, "appt_platform": "In Person", "status": "Attended", "user_name": "Alex Admin", "appt_note": "", "appt_datetime_local": "2026-11-03 14:30" },
+    { "id": 9003, "format_date": "Oct. 20, 2026", "time": "9:15 AM", "contact_name": "Al Thiel", "appt_client_id": 3, "case_number": "", "appt_case_id": "", "appt_type": "Follow Up", "appt_length": 15, "appt_platform": "Phone", "status": "No Show", "user_name": "Stuart S", "appt_note": "left voicemail", "appt_datetime_local": "2026-10-20 09:15" },
+    { "id": 9004, "format_date": "Dec. 1, 2026", "time": "4:00 PM", "contact_name": "Mt. Hawley Insurance Company of North America", "appt_client_id": 2, "case_number": "26-04202-mar", "appt_case_id": "TESTCASE1", "appt_type": "Deposition Preparation Session", "appt_length": 120, "appt_platform": "Teams", "status": "Rescheduled", "user_name": "Alex Admin", "appt_note": "", "appt_datetime_local": "2026-12-01 16:00" }
+  ]
+}

@@ -898,6 +898,7 @@ scripts/mobile-survey/fixtures/api/admin/users.json
 scripts/mobile-survey/fixtures/api/api-keys.json
 scripts/mobile-survey/fixtures/api/app-settings.json
 scripts/mobile-survey/fixtures/api/app-settings/firm_name/history.json
+scripts/mobile-survey/fixtures/api/appts.json
 scripts/mobile-survey/fixtures/api/calendar-feed.json
 scripts/mobile-survey/fixtures/api/calendar-range.json
 scripts/mobile-survey/fixtures/api/cases.json
@@ -917,6 +918,7 @@ scripts/mobile-survey/fixtures/api/comms-archive/media/97002/transcript.json
 scripts/mobile-survey/fixtures/api/comms-archive/no-transcribe.json
 scripts/mobile-survey/fixtures/api/comms-archive/search.json
 scripts/mobile-survey/fixtures/api/contact-lookup.json
+scripts/mobile-survey/fixtures/api/contacts.json
 scripts/mobile-survey/fixtures/api/contacts/9001.json
 scripts/mobile-survey/fixtures/api/contacts/9001/communications.json
 scripts/mobile-survey/fixtures/api/contacts/9001/emails.json

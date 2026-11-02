@@ -276,6 +276,21 @@ async function walk(page, W, record) {
       await page.evaluate(() => casesCaptionSet('column'));
     }
 
+    // Contacts and Appts rows (S0, closing the headers-only gap): long
+    // name/email/address, an org, a blank row, several cases per contact
+    // (fixtures/api/contacts.json); appts add the per-row action buttons and
+    // long types (fixtures/api/appts.json).
+    if (tabs.includes('tabContacts')) {
+      await page.evaluate(async () => { openMainTab('tabContacts'); await tabContactsGet(0); });
+      await sleep(600);
+      await record('tab:tabContacts:rows', await measure(page, null), await shot('contacts_rows'));
+    }
+    if (tabs.includes('tabAppts')) {
+      await page.evaluate(async () => { openMainTab('tabAppts'); await tabApptsGet(0); });
+      await sleep(600);
+      await record('tab:tabAppts:rows', await measure(page, null), await shot('appts_rows'));
+    }
+
     // Settings (settings arc): My access and Manage access as a staff member
     // (fixtures/api/mailboxes.staff.json, phone-lines/readable.staff.json — a
     // grant with Manage, an attorney "via role" row, an inactive box; the card's
