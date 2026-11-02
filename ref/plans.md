@@ -640,9 +640,10 @@ showed and the slice left alone:
   YisraView's job unless a firm default earns its place. Candidates already in the
   responses: Cases (Judge, Trustee, Chapter), Contacts (Type, Tags), Appts
   (Length, Platform, Note). Appts Case Type needs one column added to the SELECT,
-  `cases` is already joined. Not the Calendar list (it mixes item kinds). Contacts,
-  Appts and Logs have no scroll box above 768px, so the survey at 1000 and 1200 has
-  to run with every column on.
+  `cases` is already joined. Not the Calendar list (it mixes item kinds). Contacts
+  and Appts tables scroll in their own box at every width (S0, 2026-11-02, with
+  survey rows passes on their fixtures); Logs still has none above 768px. The
+  survey at 1000 and 1200 still runs with every column on.
 
 ## From the dark-button-state fix (2026-11-01) — deferred
 
