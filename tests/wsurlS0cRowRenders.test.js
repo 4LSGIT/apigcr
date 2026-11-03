@@ -134,6 +134,8 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
     }, `${PAGER} var offsets = {}, cases; function casesTypeTreeBuild() {}
         ${fnSrc(INDEX, 'casesStageValues')}
         ${fnSrc(INDEX, 'casesTypeValues')}
+        ${fnSrc(INDEX, 'casesTypeOtherChecked')}
+        ${fnSrc(INDEX, 'casesTypeListed')}
         ${fnSrc(INDEX, 'tabCasesGet')}`,
     async () => ({ total: 1, cases: [{
       case_id: 'ABCD2345', case_number: V, case_caption: V, caption_adds_info: true, case_type: V,

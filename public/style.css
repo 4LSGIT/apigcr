@@ -543,6 +543,8 @@ input:where(:not([type=radio]):not([type=checkbox])), select, textarea, button {
    travels with the label text too. */
 .yc-multi-menu label.yc-multi-sub { margin-left: 18px; }
 .yc-multi-menu label.yc-multi-dim { opacity: 0.55; cursor: default; }
+/* The "Other (unlisted)" row sits apart from the type tree above it. */
+.yc-multi-menu label.yc-multi-other { margin-top: 2px; border-top: 1px solid var(--border-strong); padding-top: 8px; }
 @media (max-width: 768px) {
   .yc-multi > summary { min-height: var(--ctl-h-lg); }
 }

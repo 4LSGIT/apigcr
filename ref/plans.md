@@ -644,6 +644,14 @@ showed and the slice left alone:
   and Appts tables scroll in their own box at every width (S0, 2026-11-02, with
   survey rows passes on their fixtures); Logs still has none above 768px. The
   survey at 1000 and 1200 still runs with every column on.
+- **Cases type filter: a "(no subtype)" row under each type** (from F3b,
+  2026-11-03, Fred: not needed now). The type box reaches blank-subtype cases
+  (742 Bankruptcy ones live), but "only the unclassified ones" isn't
+  expressible. The wire is ready for it: the tuple `["Bankruptcy", ""]` is
+  collision-free ('' can never be a real subtype name — registry filters
+  blanks), so it's one builder row plus relaxing the non-empty-subtype
+  validation in `parseTypesParam` / `listCases` to the exact match
+  `case_subtype = ''`.
 
 ## From the dark-button-state fix (2026-11-01) — deferred
 

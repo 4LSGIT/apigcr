@@ -62,7 +62,8 @@ const MAP = {
   Other: [],
 };
 
-const LIFTED = ['casesTypeTreeBuild', 'casesTypeChanged', 'casesTypeLabelSync', 'casesTypeValues'];
+const LIFTED = ['casesTypeTreeBuild', 'casesTypeChanged', 'casesTypeLabelSync', 'casesTypeValues',
+  'casesTypeOtherChecked', 'casesTypeListed'];
 
 function page() {
   const jsd = new JSDOM(`<!DOCTYPE html><html><body>
@@ -95,25 +96,31 @@ function page() {
 }
 
 const boxes = (w) => [...w.document.querySelectorAll('#tabCasesTypeMenu input')];
-const box = (w, type, sub = '') => boxes(w).find((b) => b.dataset.type === type && (b.dataset.subtype || '') === sub);
+const box = (w, type, sub = '') => boxes(w).find((b) => !b.dataset.other && b.dataset.type === type && (b.dataset.subtype || '') === sub);
+const otherBox = (w) => boxes(w).find((b) => b.dataset.other);
 const click = (w, b) => { b.checked = !b.checked; b.dispatchEvent(new w.Event('change', { bubbles: true })); };
 const label = (w) => w.document.getElementById('tabCasesTypeLabel').textContent;
 
 describe('casesTypeTreeBuild — the grouped tree', () => {
-  test('one row per type, its subtypes indented under it, in registry order', () => {
+  test('one row per type, its subtypes indented under it, Other (unlisted) last', () => {
     const w = page();
     const rows = boxes(w).map((b) => ({
       type: b.dataset.type, sub: b.dataset.subtype || '',
       indented: b.closest('label').classList.contains('yc-multi-sub'),
+      other: !!b.dataset.other,
     }));
     expect(rows).toEqual([
-      { type: 'Bankruptcy', sub: '', indented: false },
-      { type: 'Bankruptcy', sub: 'Chapter 7', indented: true },
-      { type: 'Bankruptcy', sub: 'Chapter 13', indented: true },
-      { type: 'Civil, Litigation', sub: '', indented: false },
-      { type: 'Civil, Litigation', sub: '100% Business', indented: true },
-      { type: 'Other', sub: '', indented: false },
+      { type: 'Bankruptcy', sub: '', indented: false, other: false },
+      { type: 'Bankruptcy', sub: 'Chapter 7', indented: true, other: false },
+      { type: 'Bankruptcy', sub: 'Chapter 13', indented: true, other: false },
+      { type: 'Civil, Litigation', sub: '', indented: false, other: false },
+      { type: 'Civil, Litigation', sub: '100% Business', indented: true, other: false },
+      { type: 'Other', sub: '', indented: false, other: false },
+      { type: undefined, sub: '', indented: false, other: true },
     ]);
+    expect(boxes(w).at(-1).closest('label').textContent.trim()).toBe('Other (unlisted)');
+    // the complement basis is the whole-type rows, in order
+    expect(w.casesTypeListed()).toEqual(['Bankruptcy', 'Civil, Litigation', 'Other']);
     expect(label(w)).toBe('All');
   });
 
@@ -169,6 +176,32 @@ describe('the subsume rule and the wire shape', () => {
   });
 });
 
+describe('the Other (unlisted) row', () => {
+  test('is not a tuple, counts in the label, and is distinct from a type named Other', () => {
+    const w = page();
+    click(w, otherBox(w));
+    expect(w.casesTypeValues()).toEqual([]);          // no tuple from it
+    expect(w.casesTypeOtherChecked()).toBe(true);
+    expect(label(w)).toBe('Other');
+    // a registry type literally named 'Other' is a different checkbox
+    click(w, box(w, 'Other'));
+    expect(w.casesTypeValues()).toEqual([['Other']]);
+    expect(label(w)).toBe('Other, Other');
+  });
+
+  test('is independent of the subsume rule and survives a rebuild', () => {
+    const w = page();
+    click(w, otherBox(w));
+    click(w, box(w, 'Bankruptcy'));
+    // the type's subsume touched its own subtree only
+    expect(otherBox(w).checked).toBe(true);
+    expect(otherBox(w).disabled).toBe(false);
+    w.casesTypeTreeBuild();
+    expect(w.casesTypeOtherChecked()).toBe(true);
+    expect(w.casesTypeValues()).toEqual([['Bankruptcy']]);
+  });
+});
+
 describe('tabCasesGet sends what the route reads', () => {
   test('nothing checked sends no types key at all', async () => {
     const w = page();
@@ -183,6 +216,17 @@ describe('tabCasesGet sends what the route reads', () => {
     await w.tabCasesGet(0, true);
     expect(JSON.parse(w.calls[0].params.types))
       .toEqual([['Bankruptcy'], ['Civil, Litigation', '100% Business']]);
+    expect(w.calls[0].params).not.toHaveProperty('types_not');
+  });
+
+  test('Other checked rides as types_not = the displayed whole-type list', async () => {
+    const w = page();
+    click(w, otherBox(w));
+    click(w, box(w, 'Bankruptcy'));
+    await w.tabCasesGet(0, true);
+    expect(JSON.parse(w.calls[0].params.types)).toEqual([['Bankruptcy']]);
+    expect(JSON.parse(w.calls[0].params.types_not))
+      .toEqual(['Bankruptcy', 'Civil, Litigation', 'Other']);
   });
 });
 
@@ -236,6 +280,51 @@ describe('GET /api/cases?types=', () => {
   test('an oversize array is a 400, not a giant WHERE', async () => {
     const big = JSON.stringify(Array.from({ length: 101 }, (_, i) => [`t${i}`]));
     expect((await get(`?types=${encodeURIComponent(big)}`)).status).toBe(400);
+    expect(caseService.listCases).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/cases?types_not=', () => {
+  let server; let base;
+  beforeAll(async () => {
+    const app = express();
+    app.use((req, res, next) => { req.db = {}; next(); });
+    app.use(require('../routes/api.cases'));
+    server = http.createServer(app);
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    base = `http://127.0.0.1:${server.address().port}`;
+  });
+  afterAll(() => new Promise((r) => server.close(r)));
+  beforeEach(() => caseService.listCases.mockClear());
+
+  const get = (qs) => fetch(`${base}/api/cases${qs}`);
+
+  test('a valid list reaches listCases parsed; [] stays meaningful', async () => {
+    const listed = ['Bankruptcy', 'Civil, Litigation'];
+    expect((await get(`?types_not=${encodeURIComponent(JSON.stringify(listed))}`)).status).toBe(200);
+    expect(caseService.listCases.mock.calls[0][1].typesNot).toEqual(listed);
+    expect((await get(`?types_not=${encodeURIComponent('[]')}`)).status).toBe(200);
+    expect(caseService.listCases.mock.calls[1][1].typesNot).toEqual([]);
+    expect((await get('')).status).toBe(200);
+    expect(caseService.listCases.mock.calls[2][1].typesNot).toBeNull();
+  });
+
+  test.each([
+    ['not JSON', 'Bankruptcy'],
+    ['not an array', '{"a":1}'],
+    ['a non-string member', '[1]'],
+    ['an empty string member', '[""]'],
+    ['a tuple member', '[["Bankruptcy"]]'],
+  ])('%s is a 400 that never reaches the service', async (_, raw) => {
+    const r = await get(`?types_not=${encodeURIComponent(raw)}`);
+    expect(r.status).toBe(400);
+    expect((await r.json()).message).toMatch(/types_not/);
+    expect(caseService.listCases).not.toHaveBeenCalled();
+  });
+
+  test('an oversize list is a 400', async () => {
+    const big = JSON.stringify(Array.from({ length: 101 }, (_, i) => `t${i}`));
+    expect((await get(`?types_not=${encodeURIComponent(big)}`)).status).toBe(400);
     expect(caseService.listCases).not.toHaveBeenCalled();
   });
 });

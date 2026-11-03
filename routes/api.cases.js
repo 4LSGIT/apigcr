@@ -50,6 +50,19 @@ function parseTypesParam(raw) {
   return ok ? parsed : undefined;
 }
 
+// "Other (unlisted)" (F3b): `types_not` is a JSON array of the type names the
+// client's tree displayed; the service matches its complement. An EMPTY array
+// is meaningful (nothing listed → every case is "other"), so unlike `types`
+// it is passed through, not folded to null. Same return contract as above.
+function parseTypesNotParam(raw) {
+  if (raw == null || raw === '') return null;
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return undefined; }
+  if (!Array.isArray(parsed) || parsed.length > TYPES_MAX) return undefined;
+  const ok = parsed.every((t) => typeof t === 'string' && t !== '');
+  return ok ? parsed : undefined;
+}
+
 // ─── LIST ───
 router.get('/api/cases', jwtOrApiKey, async (req, res) => {
   try {
@@ -57,11 +70,16 @@ router.get('/api/cases', jwtOrApiKey, async (req, res) => {
     if (types === undefined) {
       return res.status(400).json({ status: 'error', message: 'types must be a JSON array of [type] or [type, subtype] tuples' });
     }
+    const typesNot = parseTypesNotParam(req.query.types_not);
+    if (typesNot === undefined) {
+      return res.status(400).json({ status: 'error', message: 'types_not must be a JSON array of type names' });
+    }
     const result = await caseService.listCases(req.db, {
       query: req.query.q || req.query.query || "",
       type: req.query.type || "%",
       subtype: req.query.subtype || "",
       types,
+      typesNot,
       stage: req.query.stage || "%",
       status: req.query.status || "%",
       sort_by: req.query.sort_by || "c.case_open_date",

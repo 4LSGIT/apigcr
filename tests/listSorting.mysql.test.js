@@ -391,6 +391,34 @@ d('list sorts on a real engine', () => {
         await q(`UPDATE cases SET case_type = 'bk', case_subtype = '' WHERE case_id IN ('CASEAAAA', 'CASEBBBB', 'CASECCCC', 'CASEDDDD')`);
       }
     });
+
+    // "Other (unlisted)" (F3b): typesNot is the type list the client
+    // displayed; the match is its complement — any case_type not on it,
+    // including '' ("no type set"). OR'd into the same group as the tuples.
+    test('typesNot complements the displayed list, blank types included', async () => {
+      await q(`UPDATE cases SET case_type = 'Bankruptcy'     WHERE case_id = 'CASEAAAA'`);
+      await q(`UPDATE cases SET case_type = 'potato hunting' WHERE case_id = 'CASEBBBB'`);
+      await q(`UPDATE cases SET case_type = ''               WHERE case_id = 'CASECCCC'`);
+      // CASEDDDD stays 'bk' — unlisted too
+      try {
+        const other = await caseService.listCases(pool, { typesNot: ['Bankruptcy', 'Civil Litigation'] });
+        expect(ids(other.cases, 'case_id').sort()).toEqual(['CASEBBBB', 'CASECCCC', 'CASEDDDD']);
+        expect(other.total).toBe(3);
+        // same OR group as the tuples: a listed type plus Other takes both
+        const both = await caseService.listCases(pool, {
+          types: [['Bankruptcy']], typesNot: ['Bankruptcy', 'Civil Litigation'] });
+        expect(both.total).toBe(4);
+        // nothing listed: every case is "other"
+        expect((await caseService.listCases(pool, { typesNot: [] })).total).toBe(4);
+        // still ANDs with the rest of the filter chain
+        expect((await caseService.listCases(pool, { typesNot: ['Bankruptcy'], stage: 'Closed' })).total).toBe(0);
+        // a malformed entry throws rather than silently mis-filtering
+        await expect(caseService.listCases(pool, { typesNot: [''] })).rejects.toThrow(/typesNot/);
+        await expect(caseService.listCases(pool, { typesNot: [1] })).rejects.toThrow(/typesNot/);
+      } finally {
+        await q(`UPDATE cases SET case_type = 'bk' WHERE case_id IN ('CASEAAAA', 'CASEBBBB', 'CASECCCC')`);
+      }
+    });
   });
 
   describe('appts', () => {

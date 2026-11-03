@@ -3710,6 +3710,9 @@
       // may carry commas. Nothing checked adds NOTHING — the default-state
       // request stays byte-identical to pre-F3.
       if (typePairs.length) params.types = JSON.stringify(typePairs);
+      // "Other (unlisted)": the complement of the list the tree displayed —
+      // the server matches any type not on it, blank included.
+      if (casesTypeOtherChecked()) params.types_not = JSON.stringify(casesTypeListed());
       if (stages.length) params.stage = stages.join(',');   // CSV → IN on the server
       if (status) params.status = `%${status}%`;
 
@@ -3836,7 +3839,7 @@
       if (!menu) return;
       const prior = {};
       menu.querySelectorAll('input').forEach((b) => {
-        prior[`${b.dataset.type}\u0000${b.value}`] =
+        prior[b.dataset.other ? '\u0000other' : `${b.dataset.type}\u0000${b.value}`] =
           { checked: b.checked, disabled: b.disabled, prev: b.dataset.prev };
       });
       menu.innerHTML = '';
@@ -3863,6 +3866,22 @@
         add(type, '');
         subs.forEach((s) => add(type, s));
       }
+      // "Other (unlisted)" (F3b, Fred-ruled 2026-11-03): a fixed last row
+      // matching every case whose type is NOT in the tree above, blank
+      // included — so checking every box genuinely equals All. The server
+      // gets the complement BASIS (casesTypeListed) rather than a sentinel
+      // value: case types are free text, so no in-band value is safe.
+      const olab = document.createElement('label');
+      olab.className = 'yc-multi-other';
+      const obox = document.createElement('input');
+      obox.type = 'checkbox';
+      obox.dataset.other = '1';
+      const oldOther = prior['\u0000other'];
+      if (oldOther) obox.checked = oldOther.checked;
+      obox.addEventListener('change', () => casesTypeChanged(obox));
+      olab.appendChild(obox);
+      olab.appendChild(document.createTextNode(' Other (unlisted)'));
+      menu.appendChild(olab);
       casesTypeLabelSync();
     }
 
@@ -3871,7 +3890,7 @@
        ycFiltersActive counter), remembering their prior state in data-prev
        for the uncheck. */
     function casesTypeChanged(box) {
-      if (!box.dataset.subtype) {
+      if (!box.dataset.subtype && !box.dataset.other) {
         document.querySelectorAll('#tabCasesTypeMenu input[data-subtype]').forEach((sub) => {
           if (sub.dataset.type !== box.dataset.type) return;
           if (box.checked) {
@@ -3893,16 +3912,31 @@
     function casesTypeLabelSync() {
       const names = casesTypeValues()
         .map((t) => (t.length === 2 ? `${t[0]}: ${t[1]}` : t[0]));
+      if (casesTypeOtherChecked()) names.push('Other');
       E('tabCasesTypeLabel').textContent =
         !names.length ? 'All' : names.length <= 2 ? names.join(', ') : `${names.length} selected`;
     }
 
     /* The wire shape: an array of tuples — [type] for a whole type, [type,
        subtype] for one pair — sent as JSON (listCases `types`). Disabled
-       boxes are subsumed by their checked type and never counted. */
+       boxes are subsumed by their checked type and never counted; the Other
+       row rides as types_not (below), never as a tuple. */
     function casesTypeValues() {
-      return [...document.querySelectorAll('#tabCasesTypeMenu input:checked:not(:disabled)')]
+      return [...document.querySelectorAll('#tabCasesTypeMenu input:checked:not(:disabled):not([data-other])')]
         .map((b) => (b.dataset.subtype ? [b.dataset.type, b.dataset.subtype] : [b.dataset.type]));
+    }
+
+    function casesTypeOtherChecked() {
+      const b = document.querySelector('#tabCasesTypeMenu input[data-other]');
+      return !!(b && b.checked);
+    }
+
+    /* The whole-type rows the tree DISPLAYED — the basis the server
+       complements for "Other (unlisted)" (listCases typesNot). Read at send
+       time from the menu, so it is exactly the list the user saw. */
+    function casesTypeListed() {
+      return [...document.querySelectorAll('#tabCasesTypeMenu input:not([data-subtype]):not([data-other])')]
+        .map((b) => b.dataset.type);
     }
 
     const casesCaptionKey = () => `caption.${(user && user.user) || 0}`;

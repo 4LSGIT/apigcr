@@ -287,7 +287,7 @@ describe('csvFilterOf: a fetch\'s params as an export filter', () => {
 const TABS = {
   cases: {
     fn: 'tabCasesGet', kind: 'cases', prelude: 'var offsets = {}, cases; function casesTypeTreeBuild() {}',
-    extra: ['casesStageValues', 'casesTypeValues'],
+    extra: ['casesStageValues', 'casesTypeValues', 'casesTypeOtherChecked', 'casesTypeListed'],
     // Type is a .yc-multi tree (F3): the empty stub div = nothing checked =
     // no types param. Type coverage lives in caseTypeMultiFilter +
     // listSorting.mysql.

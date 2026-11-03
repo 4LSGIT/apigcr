@@ -77,6 +77,12 @@ const { captionAddsInfo } = require('../lib/caseCaption');
  *                                        absent adds nothing; `type`/`subtype`
  *                                        above still apply independently (the
  *                                        tab sends one shape or the other).
+ * @param {string[]} [opts.typesNot]   - "Other (unlisted)" (F3b): the type
+ *                                        list the client displayed; matches
+ *                                        its complement — any case_type NOT
+ *                                        in it, '' included. OR'd into the
+ *                                        same group as `types`. [] = every
+ *                                        case. null/absent adds nothing.
  * @param {string}  [opts.status]      - case_status filter (use '%' for all)
  * @param {number}  [opts.limit=50]
  * @param {number}  [opts.offset=0]
@@ -87,6 +93,7 @@ async function listCases(db, {
   type   = '%',
   subtype = '',
   types  = null,
+  typesNot = null,
   stage  = '%',
   status = '%',
   sort_by  = 'c.case_open_date',
@@ -128,12 +135,15 @@ async function listCases(db, {
     where.push('c.case_subtype = ?');
     params.push(subtype);
   }
-  // Case type multi (F3, Fred-ruled 2026-11-02): an OR of whole-type matches
-  // and (type, subtype) pairs, all EXACT (`=`, not LIKE — free-text values may
-  // contain '%'). Tuples only; a malformed entry throws rather than silently
-  // widening or narrowing the filter (the route 400s before this on bad JSON).
+  // Case type multi (F3, Fred-ruled 2026-11-02): ONE OR group of whole-type
+  // matches, (type, subtype) pairs, and — F3b, Fred-ruled 2026-11-03 — the
+  // "Other (unlisted)" complement. All EXACT (`=` / `NOT IN`, never LIKE —
+  // free-text values may contain '%'). Tuples only; a malformed entry throws
+  // rather than silently widening or narrowing the filter (the route 400s
+  // before this on bad JSON).
+  const typeOrs = [];
   if (Array.isArray(types) && types.length) {
-    const ors = types.map((t) => {
+    for (const t of types) {
       if (!Array.isArray(t) || t.length < 1 || t.length > 2
           || typeof t[0] !== 'string' || t[0] === ''
           || (t.length === 2 && (typeof t[1] !== 'string' || t[1] === ''))) {
@@ -141,13 +151,33 @@ async function listCases(db, {
       }
       if (t.length === 2) {
         params.push(t[0], t[1]);
-        return '(c.case_type = ? AND c.case_subtype = ?)';
+        typeOrs.push('(c.case_type = ? AND c.case_subtype = ?)');
+      } else {
+        params.push(t[0]);
+        typeOrs.push('c.case_type = ?');
       }
-      params.push(t[0]);
-      return 'c.case_type = ?';
-    });
-    where.push(`(${ors.join(' OR ')})`);
+    }
   }
+  // "Other (unlisted)": typesNot is the type list the CLIENT DISPLAYED, and
+  // the match is its complement — any type not on it, including no type at
+  // all. NOT IN alone covers the blanks: case_type is NOT NULL (so '' is the
+  // only blank shape, never NULL-excluded), and entries are validated
+  // non-empty, so '' always falls outside the list. The client sends the
+  // basis so the filter means exactly "none of the boxes I saw"; the server
+  // never reads the registry here, so there is no skew window. An EMPTY list
+  // is meaningful: nothing listed, so every case is "other".
+  if (Array.isArray(typesNot)) {
+    if (!typesNot.every((t) => typeof t === 'string' && t !== '')) {
+      throw new TypeError('listCases: typesNot entries must be non-empty strings');
+    }
+    if (typesNot.length) {
+      typeOrs.push(`c.case_type NOT IN (${typesNot.map(() => '?').join(',')})`);
+      params.push(...typesNot);
+    } else {
+      typeOrs.push('1=1');
+    }
+  }
+  if (typeOrs.length) where.push(`(${typeOrs.join(' OR ')})`);
   // Stage: '%' or a single value keeps the legacy LIKE (patterns work);
   // a CSV or array — the tab's multi filter (F1) — becomes IN. Stage values
   // are a fixed enum and carry no commas, so the CSV split is safe.
