@@ -28,10 +28,13 @@ Every campaign has a **type** (the send *class*), chosen on the Compose tab:
     marketing footer.
 - **Marketing** — newsletters and announcements. Email only, sent under a
   **topic** (e.g. Newsletter) the recipient can unsubscribe from, from a
-  marketing transport, by a **campaigns.bulk** holder. **Switched off for
-  now:** creating one is refused until the compliance checklist passes and a
-  superuser turns on `marketing_send_enabled`; a marketing campaign that
-  somehow got queued is recorded *skipped*, never sent.
+  marketing transport, by a **campaigns.bulk** holder. Every marketing email
+  carries the compliance footer, an unsubscribe link of its own and the
+  one-click unsubscribe headers (see "Marketing email" below). **Switched off
+  for now:** creating one is refused until the compliance checklist passes and
+  a superuser turns on `marketing_send_enabled`; a marketing campaign that
+  somehow got queued is recorded *skipped*, never sent. The **test send**
+  works while it is off.
 
 **Pacing.** Marketing and over-cap campaigns send at the *Paced send rate*
 (60 per minute by default): their sends are spread out when the campaign is
@@ -64,7 +67,8 @@ POST /api/campaigns
                 │
                 ├─ This recipient already has a result? → touch nothing
                 ├─ Campaign status: paused → wait (no attempt used); canceled / finished → skipped
-                ├─ Marketing → skipped (switched off / not built yet)
+                ├─ Marketing → skipped while switched off; else the marketing path
+                │   (transport hold, snapshot, unsubscribe token, footer, headers)
                 ├─ Check the destination's consent (by class — see Opt-out below)
                 ├─ Resolve {{placeholders}} via resolverService
                 ├─ Reserve the result row ('sending'), then send
@@ -98,6 +102,7 @@ Each send is a standalone `one_time` scheduled job. The job system handles retri
 | `created` | timestamp | |
 | `updated_at` | datetime | Auto-updated |
 | `result_summary` | json | Final rollup: `{ sent, failed, skipped, unknown }` |
+| `send_snapshot` | json | Marketing only: the send-start snapshot (footer values, topic, reply-to, the template with its footer), written once by the first send |
 
 ### `campaign_contacts`
 
@@ -205,7 +210,9 @@ All routes require JWT auth via `jwtOrApiKey`.
 | `GET` | `/api/campaigns/:id` | Single campaign with results summary (`results`: sent, failed, skipped, sending, unknown, pending) |
 | `GET` | `/api/campaigns/:id/results` | Per-contact result details |
 | `PATCH` | `/api/campaigns/:id` | `{ status: "canceled" }` (from scheduled / sending / paused), `{ status: "paused" }` (from scheduled / sending), `{ status: "sending" }` = resume (from paused). 404 missing, 409 not allowed from the current status |
-| `GET` | `/api/campaigns/compose-options` | What the Compose tab offers: marketing senders, active email topics, the cap, whether marketing is switched on, whether you hold campaigns.bulk |
+| `GET` | `/api/campaigns/compose-options` | What the Compose tab offers: marketing senders (each with `held` / `held_reason`), active email topics, the cap, whether marketing is switched on, whether you hold campaigns.bulk, the footer-slot marker |
+| `POST` | `/api/campaigns/test-send` | Marketing "send a test to me": `{ sender, subject, body, topic_key, contactId, attachmentUrl? }` → `{ sent, to, messageId }`. campaigns.bulk; works while marketing is switched off; 422 `transport_held` |
+| `POST` | `/api/campaigns/transports/:id/release` | Lift a marketing transport's hold. Superuser + step-up, audited (`mail_transport_release`); 404 unknown, 409 not held |
 
 ### Contact Selection
 
@@ -307,15 +314,17 @@ When `/process-jobs` picks up a `campaign_send` job, `job_executor.js` delegates
 1. **Load campaign** — type, class, topic, sender, subject, body, status
 2. **Already recorded?** — a result row that is final (`sent`, `failed`, `skipped`, `unknown`) means a replayed job: nothing is touched. A `sending` row means an earlier attempt reserved the send and never finished — it becomes `unknown`, never resent
 3. **Check status** — `paused` (only a job already claimed when the pause parked the rest): the job waits 5 minutes, using no attempt and recording nothing; `canceled`: `skipped`; `sent` / `failed` / `partial_fail`: a straggler, `skipped`
-4. **Marketing** — recorded `skipped`: `marketing_disabled` while the switch is off, `marketing_path_unbuilt` when it is on (the marketing send path — footer, unsubscribe link, headers — is the next slice, C2)
-5. **Load contact**, **check opt-out** by class (`sms_optout` / `email_optout` → `skipped`), **check channel info** (missing phone / email → `failed`), **resolve placeholders** (unresolved → `failed`)
-6. **Rate window** — an over-cap campaign on the marketing transport: if that transport already took the paced rate in the last 60 seconds, the job waits 2–8 seconds (no attempt used)
-7. **Reserve** — the result row is written as `sending` BEFORE the provider is called
-8. **Send** — `phoneService`, `emailService.sendEmail()`, or (over-cap on the marketing transport) `emailService.sendEmailDirect(…, {bulk:true})` with no footer or marketing headers
+4. **Marketing** — recorded `skipped` `marketing_disabled` while the switch is off; switched on, the marketing path below
+5. **Load contact**, **check opt-out** by class (`sms_optout` / `email_optout` → `skipped`; a marketing campaign asks for its topic — an opt-in topic needs the address opted in), **check channel info** (missing phone / email → `failed`), **resolve placeholders** (unresolved → `failed`; a marketing body is resolved at step 7)
+6. **Marketing transport checks** — the transport **hold** (held → the campaign pauses, the job waits, nothing recorded — "Transport hold" below) and the campaign's **send-start snapshot** (taken by its first send). Then the **rate window** — a campaign on the marketing transport (marketing, or over-cap): if that transport already took the paced rate in the last 60 seconds, the job waits 2–8 seconds (no attempt used)
+7. **Reserve** — the result row is written as `sending` BEFORE the provider is called. Marketing then mints the recipient's **unsubscribe token**, renders the email with the footer and checks the result (a missing footer or unsubscribe link → `failed` `footer_missing`, nothing sent)
+8. **Send** — `phoneService`, `emailService.sendEmail()`, or through the marketing transport `emailService.sendEmailDirect(…, {bulk:true})`: marketing with the footer, the text part and the unsubscribe headers; over-cap operational with no footer or marketing headers
 9. **Record** — `sent` (+ the provider's message id when it gave one)
 10. **Check completion** — if every contact has a final result, finalize the campaign
 
 **Error handling:** a provider REFUSAL (an SMTP or HTTP error reply, a connection that never opened) clears the reservation; a temporary one (SMTP 4xx, HTTP 429/5xx, network) throws so the job retries and sends again, a permanent one is recorded `failed`. A send where the provider **stopped answering** (timeout, dropped connection) is recorded **`unknown`** and never retried — and so is a send whose outcome could not be written down on its last attempt (it may have gone out).
+
+**Provider paused the account.** If Amazon SES answers a marketing send with "sending paused for this account" (or suspended), the recipient goes back to the queue (no attempt used), the transport is **held** and every running marketing campaign on it is paused — instead of failing every remaining recipient.
 
 **"Unknown" means** the message may or may not have reached the provider — the app cannot tell, so it does not send again (a missed message is better than a duplicate). Check with the recipient if it matters. Unknown counts like failed for the campaign's final status.
 
@@ -330,6 +339,28 @@ When `/process-jobs` picks up a `campaign_send` job, `job_executor.js` delegates
 1. Sets campaign status to `canceled` (allowed from `scheduled`, `sending` and `paused`)
 2. Deletes pending jobs — the sends and the pump: `DELETE FROM scheduled_jobs WHERE name LIKE 'campaign:{id}:%' AND status = 'pending'`
 3. Already-running jobs check campaign status at execution time and record as `skipped`
+
+## Marketing email
+
+What a marketing send adds, per recipient:
+
+- **An unsubscribe link of its own** — a token row (`comm_unsub_tokens`) minted with the send. The link opens the unsubscribe page (unsubscribe from this topic, stop all marketing email, preferences); mail clients' one-click unsubscribe uses the same link. If a send is retried after the provider refused it, the same link is reused.
+- **The compliance footer** — the advertisement label (topics without opt-in consent), why they got it + the unsubscribe link + "Manage preferences", the firm's name, postal address and phone, the responsible attorney and the debt-relief-agency statement (Config → Firm → Identity and Marketing email & consent). It goes before `</body>` — or wherever the body has the marker `<!-- yc:footer-slot -->` (for designs that want it inside a layout). If the firm's name, address or attorney is missing, the recipient is recorded `failed` (`footer_missing`) and nothing is sent; after rendering, the send checks that the footer and the unsubscribe link really are in both the HTML and the plain-text version, and refuses to send otherwise.
+- **A plain-text version** written from the HTML, links kept as visible URLs, the footer at the end.
+- **Headers** — `List-Unsubscribe` (the link), `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, `List-Id` (`<topic.sending-domain>`, e.g. `<newsletter.news.4lsg.com>`), and the **Reply-To**: *Marketing reply-to address* (Config → Firm → Marketing email & consent), or the firm email when blank. No signature is appended.
+- **The send log** (`email_log`) keeps who / when / the provider's reply, not the body — the campaign's snapshot is the copy.
+
+**Attachments** (every email campaign and the test send) must be an `https://` link — the attach button's uploads always are; anything else is refused when the campaign is created. The file goes out once.
+
+**Send-start snapshot.** The campaign's first send stores the footer values (firm name, address, attorney…), the topic, the reply-to and the template with its footer on the campaign (`campaigns.send_snapshot`, kept at least 2 years — MRPC 7.2(b)). Every recipient's footer comes from it, so editing the firm's settings while a campaign is sending changes nothing for that campaign; the next campaign uses the new values.
+
+**Test send.** "Send test to me" on the Compose tab (marketing type, campaigns.bulk) sends the email rendered for the first selected contact to your own address, with `[TEST]` before the subject, the real footer, headers and reply-to, through the marketing transport. Its unsubscribe link is a placeholder that does nothing; no campaign or result is created. It works while marketing campaigns are still switched off, so the footer can be checked first. It is refused while the transport is held.
+
+### Transport hold
+
+The marketing transport is **held** (stopped) automatically when, over the last 24 hours with at least 200 delivered, spam complaints pass **0.3 %** or hard bounces pass **5 %** — or when the provider pauses the account. While held: every marketing campaign on it is paused, a send that comes due pauses its campaign and waits, new marketing campaigns and test sends are refused, and IT gets one error alert a day per hold. Complaints over 0.1 % only warn (once a day). The compose sender list shows the transport as "— HELD".
+
+Only a **superuser** releases it, through the API — `POST /api/campaigns/transports/:id/release` with step-up (there is no button); recorded in the admin audit log. Fix the cause first. Paused campaigns stay paused after the release; resume each one (Resume is refused while the transport is still held).
 
 ## Pause and resume
 
@@ -373,13 +404,14 @@ Filter controls for channel, tags, case type, case stage, and case open date ran
 ### Tab 2: Compose
 
 - **Campaign type** — Operational (default; shows the honesty line and the cap) or Marketing (email only; a Topic select appears and the sender list switches to the marketing transports from `/api/campaigns/compose-options`)
-- **Sender** — dropdown from the shell's firm data: phone lines (SMS) or the email senders (email; never a marketing transport), or the marketing senders for a marketing campaign
+- **Sender** — dropdown from the shell's firm data: phone lines (SMS) or the email senders (email; never a marketing transport), or the marketing senders for a marketing campaign (a held one reads "— HELD")
 - **Subject** (email only) — with placeholder inserter and character count hint
 - **Body** — channel-dependent:
   - **Email:** Dual editor (Rich Text via Quill / HTML Code via textarea). Quill syncs to the textarea on every change; textarea is always the source of truth. Swal warns when switching HTML → Rich Text (may simplify complex formatting). Image button opens upload/URL/library dialog with size picker.
   - **SMS:** Plain textarea with placeholder inserter
 - **Schedule** — Send Now or datetime picker (firm local time), at most 366 days ahead
 - **Preview** — resolves placeholders against first selected contact, shows in Swal
+- **Send test to me** (marketing, campaigns.bulk) — the real marketing email for the first selected contact to your own address, `[TEST]` subject ("Marketing email" above)
 - **Create** — over the cap, the page asks you to type the recipient count and resends; a refusal (no capability, marketing switched off) shows its message
 
 ### Tab 3: View Campaigns
@@ -403,7 +435,7 @@ A custom Quill Image blot preserves `width`, `style`, and `alt` attributes that 
 ## Email Rendering
 
 - `emailService.sendEmail()` handles text↔HTML auto-conversion via `normalizeBodies()`
-- If only HTML is provided (campaign body), plain text is auto-generated
+- If only HTML is provided (campaign body), plain text is auto-generated — except marketing, which builds its own plain-text version with visible link URLs and the footer
 - Campaign body is stored as HTML regardless of which editor produced it
 - Images use hosted URLs (GCS bucket), never base64 — avoids spam filter issues and message bloat
 

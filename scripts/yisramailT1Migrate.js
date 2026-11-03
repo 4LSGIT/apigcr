@@ -51,6 +51,13 @@ const BASE_COLUMNS = Object.freeze([
   'provider', 'credential_id', 'from_name', 'signature_html', 'signature_text', 'owner_user',
 ]);
 
+/**
+ * Columns a LATER slice adds to the table — tolerated when present (never
+ * checked or touched here), so this CHECK and its twin keep passing once the
+ * dump carries them: C2's transport hold (scripts/yisramailC2Migrate.js).
+ */
+const LATER_COLUMNS = Object.freeze(['held_at', 'held_reason']);
+
 /** T1 columns: name → [COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLLATION_NAME | null]; comments come from the file. */
 const EXPECTED_COLUMNS = Object.freeze({
   bulk_ok:       ['tinyint(1)', 'NO', '0', null],
@@ -107,7 +114,7 @@ async function columnState(conn) {
   const problems = [];
   for (const b of BASE_COLUMNS) if (!have.has(b)) problems.push(`pre-T1 column ${b} is missing`);
   for (const name of have.keys()) {
-    if (!BASE_COLUMNS.includes(name) && !EXPECTED_COLUMNS[name]) problems.push(`unexpected column ${name}`);
+    if (!BASE_COLUMNS.includes(name) && !EXPECTED_COLUMNS[name] && !LATER_COLUMNS.includes(name)) problems.push(`unexpected column ${name}`);
   }
   const c = clauses();
   const missing = [];
@@ -232,7 +239,7 @@ async function run(conn, { apply = false, say = console.log } = {}) {
   return { ok: true, line, altered };
 }
 
-module.exports = { run, clauses, commentOf, alterSql, columnState, MIGRATION, TABLE, BASE_COLUMNS, EXPECTED_COLUMNS, KNOWN_DRIVERS, SQL };
+module.exports = { run, clauses, commentOf, alterSql, columnState, MIGRATION, TABLE, BASE_COLUMNS, LATER_COLUMNS, EXPECTED_COLUMNS, KNOWN_DRIVERS, SQL };
 
 // ─────────────────────────────────────────────────────────────
 // CLI

@@ -1062,7 +1062,7 @@ router.post('/api/email-credentials/:id/test', superuserOnlyFor(TOOL), async (re
     if (emailService.isBulkRow(row)) {
       return res.status(400).json({
         status: 'error',
-        message: 'A bulk (marketing) sender cannot be test-sent from here — only the campaign marketing path sends from it',
+        message: 'A bulk (marketing) sender cannot be test-sent from here — only campaign bulk sends (marketing, or operational over the cap) go out through it; a marketing campaign\'s own test send is in the campaign compose',
       });
     }
 

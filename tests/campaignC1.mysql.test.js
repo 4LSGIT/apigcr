@@ -13,7 +13,8 @@
  *   C  createCampaign: the cap counts DEDUPED ids; over it → 403 without campaigns.bulk, 409
  *      naming the real count, then created paced + pump + audited; the T1 fence within the cap
  *   O  D18: an OPERATIONAL email reaches a marketing opt-out; a marketing campaign is skipped
- *      (marketing_disabled / marketing_path_unbuilt) and never sent
+ *      marketing_disabled while the switch is not exactly '1' and never sent (switched on, the
+ *      C2 send path — tests/campaignC2.mysql.test.js)
  *   M  marketing create refused while the switch is not exactly '1'; topic validation
  *   D  a deferral (paused) leaves attempts / execution_count untouched, no job_results row
  *   Q  the cron batch claims at most CAMPAIGN_SEND_QUOTA campaign_send rows, other jobs first
@@ -27,8 +28,8 @@
  * ── GATED ON YC_TEST_MYSQL_URL — SKIPPED OTHERWISE ──────────────────────────
  *   YC_TEST_MYSQL_URL=mysql://root@127.0.0.1:3321/yc_c1_test npx jest tests/campaignC1.mysql.test.js --runInBand
  * Its OWN *_test DB family: it drops and rebuilds every table it touches (cloned from
- * ref/database.sql, the consent tables from the P1 migration, then the C1 migration script —
- * idempotent, so the twin is independent of whether the dump carries C1 yet).
+ * ref/database.sql, the consent tables from the P1 migration, then the C1 and C2 migration
+ * scripts — idempotent, so the twin is independent of whether the dump carries them yet).
  */
 'use strict';
 
@@ -58,6 +59,7 @@ d('C1 campaign hardening on real MySQL', () => {
   const { buildConsentTables } = require('./helpers/consentSchema');
   const { withTransaction } = require('../lib/withTransaction');
   const c1Migrate = require('../scripts/yisramailC1Migrate');
+  const c2Migrate = require('../scripts/yisramailC2Migrate');
   const campaignService = require('../services/campaignService');
   const emailService = require('../services/emailService');
   const phoneService = require('../services/phoneService');
@@ -110,7 +112,11 @@ d('C1 campaign hardening on real MySQL', () => {
     await schema.build(pool, TABLES);
     await buildConsentTables(q);
     const c = await pool.getConnection();
-    try { expect((await c1Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true); } finally { c.release(); }
+    try {
+      expect((await c1Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true);
+      // C2's columns too (campaignService reads send_snapshot / held_at) — idempotent, like C1's.
+      expect((await c2Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true);
+    } finally { c.release(); }
     await q('SET FOREIGN_KEY_CHECKS = 1');
     await q(`INSERT INTO contacts (contact_id, contact_name, contact_fname, contact_lname, contact_phone, contact_email) VALUES
       (1, 'Pat One', 'Pat', 'One', '3135550001', 'pat@example.com'),
@@ -337,9 +343,11 @@ d('C1 campaign hardening on real MySQL', () => {
       expect(sendEmail.mock.calls[0][1]).toMatchObject({ to: 'pat@example.com' });
     });
 
-    test('a marketing campaign is recorded skipped — marketing_disabled unless the switch is exactly 1, then marketing_path_unbuilt', async () => {
+    // Switched on (exactly '1') a marketing recipient takes the C2 send path —
+    // tests/campaignC2.mysql.test.js (S); C1 pins only the switch's fail-closed reads.
+    test('a marketing campaign is recorded skipped marketing_disabled unless the switch is exactly 1', async () => {
       const cases = [[{}, 'marketing_disabled'], [{ marketing_send_enabled: '0' }, 'marketing_disabled'], [{ marketing_send_enabled: ' 1' }, 'marketing_disabled'],
-        [{ marketing_send_enabled: 'true' }, 'marketing_disabled'], [{ marketing_send_enabled: '1' }, 'marketing_path_unbuilt']];
+        [{ marketing_send_enabled: 'true' }, 'marketing_disabled'], [{ marketing_send_enabled: '' }, 'marketing_disabled']];
       let id = 41;
       for (const [settings, reason] of cases) {
         await setSettings(settings);

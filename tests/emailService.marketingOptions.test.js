@@ -72,7 +72,7 @@ describe('capabilities (the adapter contract)', () => {
     expect(five(pabbly.capabilities)).toEqual({ bulk: false, headers: false, tags: false, batch: false, events: false });
   });
   test('the option lists', () => {
-    expect(emailService.MARKETING_ONLY_OPTIONS).toEqual(['bulk', 'headers', 'reply_to', 'tags']);
+    expect(emailService.MARKETING_ONLY_OPTIONS).toEqual(['bulk', 'headers', 'reply_to', 'tags', 'log_body']);
     expect(emailService.MARKETING_HEADERS).toEqual(['List-Unsubscribe', 'List-Unsubscribe-Post', 'List-Id']);
     expect(emailService.HUB_ONLY_OPTIONS).toEqual(['cc', 'bcc', 'in_reply_to', 'references', 'message_id', 'thread_id']);
     expect(emailService.VALID_EVENTS_DRIVERS).toEqual(['ses']);
@@ -217,5 +217,62 @@ describe('the public sendEmail', () => {
       const e = await rejects(emailService.sendEmail(dbWith({ ...SES_ROW, email }), { ...MSG, from: email }), 'bulk_sender_refused');
       expect(isTransientError(e)).toBe(false);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// YisraMail C2 — log_body:false (the marketing broadcast's email_log row
+// without its body) and the reworded bulk fence (D16: two bulk callers)
+// ─────────────────────────────────────────────────────────────
+describe('C2: log_body:false — the email_log row keeps the envelope, not the body', () => {
+  const logged = (d) => d.query.mock.calls.filter((c) => /INSERT INTO email_log/.test(c[0])).map((c) => c[1]);
+
+  test('marketing send with List-Unsubscribe: the success row body is LOG_BODY_OMITTED, delivery_info kept', async () => {
+    const d = db();
+    await emailService.sendEmailDirect(d, SES_ROW, { ...MSG, ...MKT, html: '<p>secret newsletter body</p>', text: 'secret newsletter body', log_body: false });
+    const rows = logged(d);
+    expect(rows).toHaveLength(1);
+    expect(rows[0][4]).toBe(smtp.LOG_BODY_OMITTED);
+    expect(rows[0][4]).not.toMatch(/secret/);
+    expect(JSON.parse(rows[0][5]).response).toMatch(/^250 Ok/);
+    expect(rows[0][1]).toBe('news@news.test');                    // envelope kept
+  });
+
+  test('without log_body (the D16 over-cap send, any operational send) the body is logged as before', async () => {
+    const d = db();
+    await emailService.sendEmailDirect(d, SES_ROW, { ...MSG, bulk: true, tags: { campaign_id: '1', result_id: '2' }, text: 'ops body' });
+    expect(logged(d)[0][4]).toBe('ops body');
+  });
+
+  test('refused: log_body other than false; false without a List-Unsubscribe header; false without bulk', async () => {
+    for (const v of [true, 0, '', 'false', {}]) {
+      await rejects(emailService.sendEmailDirect(db(), SES_ROW, { ...MSG, ...MKT, log_body: v }), 'marketing_log_body_refused');
+    }
+    await rejects(emailService.sendEmailDirect(db(), SES_ROW, { ...MSG, bulk: true, log_body: false }), 'marketing_log_body_refused');
+    await rejects(emailService.sendEmailDirect(db(), SES_ROW, { ...MSG, bulk: true, headers: { 'List-Id': '<a.b.test>' }, log_body: false }), 'marketing_log_body_refused');
+    await rejects(emailService.sendEmailDirect(db(), PLAIN_ROW, { ...MSG, from: 'it@mdbl.test', log_body: false }), 'marketing_options_require_bulk');
+    expect(mockSendMail).not.toHaveBeenCalled();
+  });
+
+  test('an adapter without log_without_body cannot be asked to drop it (fail closed)', async () => {
+    const caps = smtp.capabilities.log_without_body;
+    try {
+      smtp.capabilities.log_without_body = false;
+      await rejects(emailService.sendEmailDirect(db(), SES_ROW, { ...MSG, ...MKT, log_body: false }), 'adapter_lacks_capability');
+    } finally { smtp.capabilities.log_without_body = caps; }
+    expect(smtp.capabilities.log_without_body).toBe(true);
+    expect(gmail.capabilities.log_without_body).toBeFalsy();
+    expect(pabbly.capabilities.log_without_body).toBeFalsy();
+  });
+
+  test('the public sendEmail strips log_body like the other bulk options (the body is logged)', async () => {
+    const d = { query: jest.fn(async (sql) => (/FROM email_credentials/.test(sql) ? [[PLAIN_ROW]] : [{}])) };
+    await emailService.sendEmail(d, { ...MSG, from: 'it@mdbl.test', log_body: false });
+    expect(logged(d)[0][4]).toBe('t');
+  });
+
+  test('the bulk fence message names BOTH bulk callers (marketing, operational over the cap) — D16', async () => {
+    const err = await rejects(emailService.sendEmailDirect(db(), SES_ROW, MSG), 'bulk_row_requires_marketing_path');
+    expect(err.message).toBe('bulk_row_requires_marketing_path: email_credentials 17 (news@news.test) is a marketing (bulk) transport; only a campaign bulk send (bulk:true — the marketing path, or an operational campaign confirmed over the cap) may send from it');
   });
 });

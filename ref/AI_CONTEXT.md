@@ -192,6 +192,24 @@ body. Governing migrations in `ref/migrations/`.*
   stays ORPHANED in `mysql.columns_priv` (inert; it re-attaches to a later
   column of the same name) until a re-provision or targeted REVOKE clears it.
 - **Hook credential headers are stripped before storage (2026-11-02):** `lib/hookCredentialHeaders` (static names + the hook's own `auth_config.header` + every hook's configured header, cached 30 s; any case) is applied by the receiver, `recordExecution` and `executeHook`'s entry, so new raw_input, captured_sample, spool, transform_output, delivery, workflow and sequence copies are clean. Older rows still hold x-hook-key / RingCentral's Verification-Token (~32.8k) until `scripts/hookExecutionsHeaderScrub.js --apply` runs AFTER the deploy. A new header-borne hook auth adds its default name there.
+- **Marketing send path (YisraMail C2, 2026-11-04 — §17 below; ref/YISRAMAIL_DESIGN.md
+  §6.4 / §6.5 "As built (C2)"), DARK until G1:** `executeSend`'s marketing
+  branch mints one unsub token per send (after the reservation, `send_ref` =
+  result id, re-used across a definite retry), renders from the campaign's
+  write-once `campaigns.send_snapshot` (MRPC 7.2(b)), injects the compliance
+  footer (at `<!-- yc:footer-slot -->` or before `</body>`), asserts footer +
+  unsubscribe URL in the FINAL html AND text before any provider call, and
+  sends with List-Unsubscribe / -Post / List-Id, Reply-To, tags and
+  `log_body:false` (email_log without the body). The transport HOLD
+  (`email_credentials.held_at`) is set by the §6.5 rates or an SES
+  account-level refusal, pauses every marketing campaign on it, and only an
+  audited SU release lifts it. Invariants: a new caller of `bulk:true` never
+  gets `log_body` (fenced to sends carrying List-Unsubscribe); a throw in the
+  token / render step clears the reservation (C1's scheduled→sending flip
+  after it can still leave a row `unknown` — a missed send, never a
+  duplicate); an email attachment is `https://` only and no adapter reads a
+  local file (`disableFileAccess` in smtp + gmail — nodemailer reads any
+  non-URL `path` from disk); a campaign attachment is passed ONCE.
 - **Campaign hardening (YisraMail C1, 2026-11-03 — §17 below; ref/YISRAMAIL_DESIGN.md
   §6.1 / §6.4 "As built (C1)"):** campaigns have a class (operational |
   marketing), an operational cap with an audited `campaigns.bulk` over-cap
@@ -215,8 +233,8 @@ body. Governing migrations in `ref/migrations/`.*
   `email_credentials.bulk_ok = 1` marks a marketing (bulk) transport (the SES
   row); only `emailService.sendEmailDirect(…, {bulk:true})` — C2's marketing
   path, and since C1 an operational campaign confirmed over the cap (D16, no
-  footer, no headers) — may send from it, and its marketing-only options exist
-  nowhere else.
+  footer, no headers) — may send from it, and its marketing-only options
+  (`headers`, `reply_to`, `tags`, C2's `log_body`) exist nowhere else.
   An `events_driver` (bulk rows only) adds the provider's headers at send.
   Invariants: every reader that lists or picks a sender filters
   `bulk_ok = 0`, and a new one must too; a caller that synthesizes an
@@ -277,9 +295,8 @@ body. Governing migrations in `ref/migrations/`.*
   `scripts/yisramailP1MigrateConsent.js`. Manual: 01-YisraCase-overview/02-contacts.md,
   03-YisraFlow/08-error-policies.md.
   **Email unsubscribe (P3, 10-30 — design §4.5 "As built"):** one
-  `comm_unsub_tokens` row per marketing send (minted by C2 through
-  `services/unsubService.mintUnsubToken(conn, …)` — nothing mints before
-  C2), a bearer for ONE address's MARKETING consent only (D18: no control
+  `comm_unsub_tokens` row per marketing send (minted by C2's marketing send
+  through `services/unsubService.mintOrReuseUnsubToken(conn, …)`), a bearer for ONE address's MARKETING consent only (D18: no control
   stops case mail; recordConsent refuses an email `all`). Three public routes,
   `routes/unsubActions.js`, landing origin, sessionless: `GET /u/:token` (the
   page — never mutates), `POST /u/:token` (RFC 8058 one-click: any content
@@ -2031,9 +2048,11 @@ constraint), idempotency_key `campaign:{id}:{contactId}`, UNIQUE
 (campaign_id, contact_id) on `campaign_results` backs the reservation and
 recordResult. executeSend: existing final row → replay, touch nothing
 (`sending` → `unknown`) → status (paused DEFERS, canceled / finished →
-skipped) → marketing → skipped (C2 builds that send) → consent by class →
-channel check → strict resolve → (bulk transport: rate window) → RESERVE
-(`sending`) → send → `sent` + checkCompletion (finalizes
+skipped) → marketing switch off → skipped → consent by class →
+channel check → strict resolve (marketing: after the reservation) →
+(marketing: transport HOLD → pause + defer; send-start snapshot) → (bulk
+transport: rate window) → RESERVE (`sending`) → (marketing: token, render,
+post-render assert) → send → `sent` + checkCompletion (finalizes
 sent/failed/partial_fail; `sending` is not done, `unknown` counts like
 failed).
 **Class (YisraMail C1, ref/YISRAMAIL_DESIGN.md §6.1 / §6.4 "As built (C1)"):**
@@ -2047,8 +2066,37 @@ count (403 / 409 naming it), audited (`campaign_over_cap`), stored as
 (`sendEmailDirect` bulk:true, nothing else — D16). Marketing: email only,
 topic, `bulk_ok` sender, `campaigns.bulk`, refused 422 while
 `marketing_send_enabled` ≠ exactly `'1'` (read uncached); executeSend records
-it `skipped` (`marketing_disabled` / `marketing_path_unbuilt`). ONE consent
+it `skipped` `marketing_disabled` (switched on: the C2 path below). ONE consent
 answer for send, picker and compose preview: `consentOptsFor`.
+**Marketing send (YisraMail C2, ref/YISRAMAIL_DESIGN.md §6.4 / §6.5 "As built
+(C2)"):** per recipient one `comm_unsub_tokens` row (`unsubService.
+mintOrReuseUnsubToken`, autocommit after the reservation — no transaction
+holds the result row, so T2's result-row-then-contact lock order never meets
+it; a definite retry re-uses the unused token); render from
+`campaigns.send_snapshot` (written once by the first send: firm values,
+topic, reply-to, List-Id, the footer-injected template) so a mid-send settings
+edit never splits the footer; `lib/complianceFooter` block at the slot marker
+or before `</body>` (never after `</html>`), an explicit text part with
+visible link URLs; the post-render assert (`footerHoles`) on the final html +
+text → `failed` `footer_missing` with no provider call. A throw in the token /
+render step clears the reservation (the scheduled→sending flip after it is
+C1's: a throw there → `unknown`). Email attachments: `https://` only at create
+and in the test send, passed once (`attachment_urls`); the smtp / gmail
+adapters never read a local file (`disableFileAccess`). Send: `sendEmailDirect` bulk:true +
+List-Unsubscribe / List-Unsubscribe-Post / List-Id (`<topic.sender-domain>`)
++ Reply-To (`marketing_reply_to` → `firm_email`) + tags + `log_body:false`
+(email_log body = `smtp.LOG_BODY_OMITTED`); no signature. **Hold:**
+`email_credentials.held_at` / `held_reason`, checked before every marketing
+send and at marketing create (422 `transport_held`); set by 24 h complaint
+rate > 0.3 % or hard-bounce rate > 5 % with ≥ 200 delivered (> 0.1 % warns)
+or an SES account-level refusal (`isAccountPausedError`, VERIFY(live) — the
+recipient goes back to pending); pauses every running marketing campaign on
+the sender; error alert once a day; lifted only by
+`POST /api/campaigns/transports/:id/release` (SU + step-up, audited in the
+same transaction); resume refuses a marketing campaign on a held transport. **Test send:** `POST /api/campaigns/test-send`
+(campaigns.bulk, works with the switch off) — the same render + transport +
+headers to the caller's `users.email`, `[TEST]` subject, a dead placeholder
+token, no rows written.
 **At most once:** the row is INSERTed `sending` (attempt id
 `<job id>:<attempt>`) before the provider call; a later attempt finding it
 `sending` records `unknown` and never resends; a DEFINITE provider error (a

@@ -73,9 +73,10 @@ maybe('the T1 migration on real MySQL', () => {
 
   async function fresh() {
     await schema.build(pool, ['email_credentials', 'mailboxes']);
-    // the pre-T1 shape, whatever the dump says (header: post-land dumps carry the columns)
+    // the pre-T1 shape, whatever the dump says (header: post-land dumps carry the columns —
+    // T1's and the LATER slices' (C2's hold), which the script tolerates; yisramailC2Migrate twin L)
     const t1 = (await q(`SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'email_credentials' AND COLUMN_NAME IN (?)`, [ALL])).map((r) => r.n);
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'email_credentials' AND COLUMN_NAME IN (?)`, [[...ALL, ...m.LATER_COLUMNS]])).map((r) => r.n);
     if (t1.length) await q(`ALTER TABLE email_credentials ${t1.map((n) => `DROP COLUMN ${n}`).join(', ')}`);
     await q(`INSERT INTO email_credentials (id, email, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_secure, provider, credential_id, from_name) VALUES
       (1, 'stuart@firm.test', '', 0, '', '', 0, 'gmail', 11, 'Stuart'),

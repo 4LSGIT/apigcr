@@ -54,9 +54,10 @@ maybe('the C1 migration on real MySQL', () => {
 
   async function fresh() {
     await schema.build(pool, ['campaigns', 'campaign_results', 'email_credentials', 'app_settings']);
-    // Strip C1 (the dump carries it once the migration ran live).
+    // Strip C1 (the dump carries it once the migration ran live) and the LATER
+    // slices' columns (C2) the script tolerates — yisramailC2Migrate twin L proves that.
     for (const [t, cols] of Object.entries(m.ADDED)) {
-      const present = (await colsOf(t)).filter((n) => cols[n]);
+      const present = (await colsOf(t)).filter((n) => cols[n] || m.LATER_COLUMNS[t].includes(n));
       if (present.length) await q(`ALTER TABLE ${t} ${present.map((n) => `DROP COLUMN ${n}`).join(', ')}`);
     }
     await q("ALTER TABLE campaigns MODIFY COLUMN status enum('draft','scheduled','sending','sent','failed','partial_fail','canceled') DEFAULT 'draft' COMMENT ''");

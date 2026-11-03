@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-03T21:46:21.396Z_  
-_833 routes total — DELETE: 68, GET: 348, PATCH: 59, POST: 317, PUT: 38, _ALL: 3_
+_Generated 2026-11-04T00:32:08.576Z_  
+_835 routes total — DELETE: 68, GET: 348, PATCH: 59, POST: 319, PUT: 38, _ALL: 3_
 
 ## Global middleware chain
 
@@ -137,6 +137,8 @@ _833 routes total — DELETE: 68, GET: 348, PATCH: 59, POST: 317, PUT: 38, _ALL:
 | GET | `/api/campaigns/compose-options` | `jwtOrApiKey` | — |
 | GET | `/api/campaigns/contacts` | `jwtOrApiKey` | — |
 | POST | `/api/campaigns/preview` | `jwtOrApiKey` | — |
+| POST | `/api/campaigns/test-send` | `jwtOrApiKey` | — |
+| POST | `/api/campaigns/transports/:id/release` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/case-events/audit` | `jwtOrApiKey` | — |
 | GET | `/api/cases` | `jwtOrApiKey` | — |
 | GET | `/api/cases/:id` | `jwtOrApiKey` | — |
@@ -1113,4 +1115,4 @@ _833 routes total — DELETE: 68, GET: 348, PATCH: 59, POST: 317, PUT: 38, _ALL:
 
 ---
 
-_833 routes total — DELETE: 68, GET: 348, PATCH: 59, POST: 317, PUT: 38, _ALL: 3_
+_835 routes total — DELETE: 68, GET: 348, PATCH: 59, POST: 319, PUT: 38, _ALL: 3_

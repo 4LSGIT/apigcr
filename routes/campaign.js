@@ -18,6 +18,8 @@
  *   GET    /campaigns/:id           — single campaign with results summary
  *   GET    /campaigns/:id/results   — per-contact result details
  *   PATCH  /campaigns/:id           — cancel, pause or resume a campaign
+ *   POST   /campaigns/test-send     — marketing "send a test to me" (C2; campaigns.bulk)
+ *   POST   /campaigns/transports/:id/release — lift a transport HOLD (C2; SU + step-up, audited)
  *
  * C1 (ref/YISRAMAIL_DESIGN.md §6.1): createCampaign is the gate for class,
  * cap, over-cap and the marketing kill switch (API keys reach it too); its
@@ -29,6 +31,17 @@ const express       = require('express');
 const router        = express.Router();
 const jwtOrApiKey   = require('../lib/auth.jwtOrApiKey');
 const campaignService = require('../services/campaignService');
+const { superuserOnlyFor } = require('../lib/auth.superuser');
+
+/** { route, method, ip, userAgent } for an audit row. */
+function requestInfo(req) {
+  return {
+    route: req.originalUrl,
+    method: req.method,
+    ip: req.headers['x-forwarded-for']?.split(',').shift() || req.socket?.remoteAddress || null,
+    userAgent: req.headers['user-agent'] || null,
+  };
+}
 
 /** A CampaignError → its status + { error, code, ...extra }; anything else → null. */
 function campaignErrorBody(err) {
@@ -260,6 +273,51 @@ router.patch('/api/campaigns/:id', jwtOrApiKey, async (req, res) => {
                : err.message.includes('Cannot cancel') ? 409
                : 500;
     res.status(code).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// POST /campaigns/test-send — marketing "send a test to me" (YisraMail C2)
+//
+// { sender, subject, body, topic_key, contactId, attachmentUrl? } → the
+// marketing render for that contact, "[TEST] " subject, the same transport /
+// headers / Reply-To, sent to the caller's own users.email. No token, no
+// campaign row, no result row. Works while marketing_send_enabled is off
+// (staff-to-self, before gate G1); needs campaigns.bulk (createCampaign's
+// rule for marketing); 422 on a held transport.
+// ─────────────────────────────────────────────────────────────
+router.post('/api/campaigns/test-send', jwtOrApiKey, async (req, res) => {
+  const { sender, subject, body, topic_key, contactId, attachmentUrl } = req.body || {};
+  try {
+    const result = await campaignService.testSendMarketing(req.db, {
+      auth: req.auth, sender, subject, body, topicKey: topic_key ?? null, contactId, attachmentUrl: attachmentUrl || null,
+    });
+    res.json(result);
+  } catch (err) {
+    const known = campaignErrorBody(err);
+    if (known) return res.status(known.status).json(known.body);
+    console.error('[POST /campaigns/test-send]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// POST /campaigns/transports/:id/release — lift a marketing transport HOLD
+//
+// §6.5: the hold (email_credentials.held_at) is set by the complaint / bounce
+// thresholds or an account-level provider refusal and is NEVER lifted
+// automatically. SU + step-up (superuserOnlyFor, the consent-import pattern);
+// the release and its admin_audit_log row commit together; an `info` alert
+// follows. Paused campaigns stay paused (resume each). 404 / 409 not held.
+// ─────────────────────────────────────────────────────────────
+router.post('/api/campaigns/transports/:id/release', ...superuserOnlyFor(campaignService.RELEASE_TOOL), async (req, res) => {
+  try {
+    res.json(await campaignService.releaseTransport(req.db, req.params.id, { auth: req.auth, request: requestInfo(req) }));
+  } catch (err) {
+    const known = campaignErrorBody(err);
+    if (known) return res.status(known.status).json(known.body);
+    console.error('[POST /campaigns/transports/:id/release]', err);
+    res.status(500).json({ error: err.message });
   }
 });
 

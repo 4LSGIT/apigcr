@@ -23,17 +23,22 @@
 // untouched: still one 'outbound-smtp' row keyed by info.messageId (= the
 // caller's messageId when it passed one), to_email = `to` only.
 //
-// Marketing-path options (YisraMail T1, emailService MARKETING-ONLY OPTIONS):
-// headers (already held to the List-Unsubscribe / List-Unsubscribe-Post /
-// List-Id allowlist by emailService), replyTo, tags, and the row's `driver`
+// Bulk-send options (YisraMail T1, emailService MARKETING-ONLY OPTIONS — sent
+// by the campaign marketing path, C2, and by an operational campaign confirmed
+// over the cap, C1/D16, which passes tags only): headers (already held to the
+// List-Unsubscribe / List-Unsubscribe-Post / List-Id allowlist by
+// emailService), replyTo, tags, and the row's `driver`
 // (services/adapters/email/drivers/). They reach mailOptions ONLY when
 // present, exactly like the hub's: `headers` = the caller's allowlisted ones
 // then the driver's headersFor({emailRow, tags}) — the driver may add only
 // the names in its own driver.HEADERS (anything else throws before the
 // send); `replyTo` as given. The returned info gains providerMessageId =
 // driver.messageIdFromResponse(info.response), null without a driver or when
-// the reply does not parse. email_log is unchanged: delivery_info.response
-// already carries the raw reply line.
+// the reply does not parse. delivery_info.response carries the raw reply line.
+// logBody:false (C2's marketing send only — emailService refuses it without a
+// List-Unsubscribe header) writes the success row's body as LOG_BODY_OMITTED:
+// the campaign's send_snapshot is the copy, so a 5k send adds rows, not
+// megabytes. The FAILED row's body is the error text either way.
 //
 // email_log.delivery_info — WHAT A ROW DOES AND DOESN'T PROVE:
 //   The row is written as soon as transporter.sendMail RESOLVES. That means
@@ -51,6 +56,9 @@
 //   see a resolved promise. It just stops the evidence being thrown away.
 //   See ref/migrations/2026-09-15_email_log_delivery_info.sql.
 //
+// Local files: the transport sets disableFileAccess (see sendEmail) — an
+// attachment `path` must be a URL; a local path fails the send (EFILEACCESS).
+//
 // Encryption-at-rest:
 //   - emailRow.smtp_pass is ENCv1: ciphertext (lib/credentialCrypto).
 //     The adapter decrypts inside the existing try/catch block, so any
@@ -61,6 +69,9 @@
 //     scripts/encrypt-smtp-passwords.js to migrate any legacy plaintext.
 
 const nodemailer = require('nodemailer');
+
+/** email_log.body of a marketing send (logBody:false) — the body is not stored. */
+const LOG_BODY_OMITTED = '[marketing send: body not stored; campaigns.send_snapshot holds the copy]';
 const { decrypt, isEncrypted } = require('../../../lib/credentialCrypto');
 
 function urlToNodemailerAttachment(item) {
@@ -153,8 +164,8 @@ async function sendEmail(db, {
   emailRow,
   // hub-only (S3) — see the header
   cc, bcc, inReplyTo, references, messageId,
-  // marketing path (T1) — see the header
-  headers, replyTo, tags, driver,
+  // bulk sends (T1; logBody C2) — see the header
+  headers, replyTo, tags, driver, logBody,
 }) {
   const mergedAttachments = buildAttachments(attachments, attachmentUrls);
   const allHeaders = mergeHeaders(headers, driver, emailRow, tags);
@@ -198,6 +209,14 @@ async function sendEmail(db, {
         user: emailRow.smtp_user,
         pass: smtpPassPlain,
       },
+      // NEVER read a local file (YisraMail C2 security fix): nodemailer reads
+      // any attachment `path` that is not a URL from disk, so a caller-chosen
+      // '/proc/self/environ' would mail the server's secrets. Set on the
+      // TRANSPORT, which nodemailer forces onto every message (a message
+      // cannot switch it back off). URL paths and inline {content} still
+      // work; disableUrlAccess is deliberately NOT set. No caller passes a
+      // local path (swept 2026-11-04). tests/emailService.marketingOptions.test.js.
+      disableFileAccess: true,
     });
 
     info = await transporter.sendMail(mailOptions);
@@ -215,8 +234,8 @@ async function sendEmail(db, {
       `${info.rejected.join(', ')} | from=${from} subject=${subject}`
     );
   }
-  logEmail(db, info.messageId || `SENT-${Date.now()}`, from, to, subject, text,
-           describeSend(info));
+  logEmail(db, info.messageId || `SENT-${Date.now()}`, from, to, subject,
+           logBody === false ? LOG_BODY_OMITTED : text, describeSend(info));
   info.providerMessageId = driver ? driver.messageIdFromResponse(info.response) : null;
   return info;
 }
@@ -227,11 +246,13 @@ module.exports = {
     attachments_inline: true,  // nodemailer's {filename, content, ...}
     attachments_url: true,     // nodemailer fetches `path` URLs at send
     // T1 (emailService MARKETING-ONLY OPTIONS):
-    bulk: true,                // may send from a bulk_ok row (marketing path)
+    bulk: true,                // may send from a bulk_ok row (campaign bulk sends)
     headers: true,             // mailOptions.headers / replyTo + a driver's headers
     tags: true,                // forwarded to the row's driver (no driver → unused)
+    log_without_body: true,    // honours logBody:false (C2 marketing — the body is not logged)
     batch: false,              // one recipient list per call
     events: false,             // events come from the DRIVER, not the transport
   },
   sendEmail,
+  LOG_BODY_OMITTED,
 };

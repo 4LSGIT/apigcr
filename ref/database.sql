@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-03T21:03:03.647Z
+-- Generated: 2026-11-04T00:32:17.039Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:328571feeb0d1cd08626bab512fc0846
+-- Fingerprint: sha256:6ae54a205281a92c4e73f5813da8a71d
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -503,7 +503,8 @@ CREATE TABLE `campaigns` (
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `class` enum('operational','marketing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'operational' COMMENT 'the send class chosen at compose (C1, ref/YISRAMAIL_DESIGN.md §6.1), enforced by campaignService.createCampaign (every caller, API keys included): operational = about the recipient''s case, appointment or account; email asks NO consent (D18), SMS asks scope all (D19); capped at campaign_operational_cap unless confirmed over the cap (bulk_confirmed_count). marketing = email only (D1), topic required, a bulk_ok sender, the campaigns.bulk capability, and refused while app_settings marketing_send_enabled is not exactly 1 (create 422; executeSend records skipped marketing_disabled — and marketing_path_unbuilt until C2 builds the marketing send path)',
   `topic_key` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'marketing campaigns only (NULL for operational): the comm_topics.topic_key recipients are sent under and can unsubscribe from — shape [a-z0-9_]{1,40} (interpolated into SQL by optoutService), validated at create as an existing, active email topic; executeSend asks consent for scope marketing + this topic',
-  `bulk_confirmed_count` int unsigned DEFAULT NULL COMMENT 'operational campaigns over the cap only (D16): the recipient count a campaigns.bulk holder typed to confirm the send (equals contact_count; audited as admin_audit_log tool campaign_over_cap). NOT NULL marks the campaign over-cap: paced (staggered jobs + a campaign_pump job) and allowed to send through a bulk_ok email row (bulk:true, no footer, no headers). NULL = within the cap, or marketing'
+  `bulk_confirmed_count` int unsigned DEFAULT NULL COMMENT 'operational campaigns over the cap only (D16): the recipient count a campaigns.bulk holder typed to confirm the send (equals contact_count; audited as admin_audit_log tool campaign_over_cap). NOT NULL marks the campaign over-cap: paced (staggered jobs + a campaign_pump job) and allowed to send through a bulk_ok email row (bulk:true, no footer, no headers). NULL = within the cap, or marketing',
+  `send_snapshot` json DEFAULT NULL COMMENT 'marketing campaigns only (C2, MRPC 7.2(b) — keep >= 2 years): written ONCE by the first marketing send (conditional UPDATE ... WHERE send_snapshot IS NULL; a concurrent first send reads the winner back) — {v, taken_at, firm (complianceFooter.firmValues at send start), topic {topic_key,label,consent_model}, reply_to, list_id, sender, subject, html, text (the template copy with the footer injected; token_placeholder names the per-recipient token)}. Every recipient renders its footer and refs.firm FROM it, so a settings edit mid-send cannot split the campaign. NULL = no marketing send has started (and every operational campaign)'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1909,7 +1910,9 @@ CREATE TABLE `email_credentials` (
   `owner_user` tinyint DEFAULT NULL,
   `bulk_ok` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = a marketing (bulk) transport: never in a sender picker (campaign compose lists it apart, for marketing and over-cap campaigns only), refused by the public emailService.sendEmail, by createCampaign for an operational campaign within the cap, and as a mailbox send_credential_id; only sendEmailDirect({bulk:true}) may send from it — the campaign marketing path (C2) and an operational campaign confirmed over the cap (C1, D16: no footer, no headers). SMTP rows only; no other row may share its (smtp_host, smtp_user) and no mailbox may send through it (the sender editor refuses both). ref/YISRAMAIL_DESIGN.md §5.2, §6.1',
   `events_driver` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'names the provider driver (services/adapters/email/drivers/<name>.js) that adds its headers at send and parses its events (T2); bulk_ok rows only (emailService throws events_driver_requires_bulk otherwise). NULL = plain SMTP, no driver. Today: ses',
-  `driver_config` json DEFAULT NULL COMMENT 'driver-specific settings, e.g. {"configuration_set": "yisramail-marketing"} for ses; bulk_ok rows only, cleared with the driver. NULL = the provider defaults'
+  `driver_config` json DEFAULT NULL COMMENT 'driver-specific settings, e.g. {"configuration_set": "yisramail-marketing"} for ses; bulk_ok rows only, cleared with the driver. NULL = the provider defaults',
+  `held_at` datetime DEFAULT NULL COMMENT 'UTC time the marketing transport was HELD (C2, ref/YISRAMAIL_DESIGN.md §6.5): set by campaignService when the 24 h complaint rate passes 0.3 % or the hard-bounce rate 5 % (with >= 200 delivered), or when the provider refuses at the account level (SES sending paused). While set: every marketing send on it pauses its campaign, new marketing campaigns on it are refused (422 transport_held), the marketing test send is refused. Never cleared automatically — only the audited SU release (POST /api/campaigns/transports/:id/release, admin_audit_log tool mail_transport_release). NULL = not held',
+  `held_reason` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'why the transport is held (the first trip wins — a later trip while held does not overwrite it); cleared with held_at by the SU release. NULL when not held'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------

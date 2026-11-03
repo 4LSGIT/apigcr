@@ -47,10 +47,14 @@
  *   Grant checks are NOT here (design D6): the hub's route checks can_send.
  *
  *   MARKETING-ONLY OPTIONS (YisraMail T1, ref/YISRAMAIL_DESIGN.md §5.2) —
- *   sendEmailDirect only, and only together with a bulk_ok row:
- *     bulk               true = the caller asserts it IS the campaign marketing
- *                        path. Required to send from a bulk_ok row; refused on
- *                        any other row.
+ *   sendEmailDirect only, and only together with a bulk_ok row. Two callers
+ *   send bulk:true, both in campaignService.executeSend: the campaign
+ *   MARKETING path (C2 — headers, reply_to, tags, log_body:false) and an
+ *   operational campaign confirmed over the cap (C1, D16 — tags only: no
+ *   headers, no reply_to, no footer):
+ *     bulk               true = the caller asserts it IS a campaign bulk send
+ *                        (marketing, or operational over the cap). Required to
+ *                        send from a bulk_ok row; refused on any other row.
  *     headers            { 'List-Unsubscribe', 'List-Unsubscribe-Post',
  *                          'List-Id' } — nothing else (MARKETING_HEADERS; keys
  *                        matched case-insensitively, passed on canonical);
@@ -58,18 +62,30 @@
  *     reply_to           ONE address (the comms hub's parseRecipient rule)
  *     tags               { key: value } — [A-Za-z0-9_-]{1,256} each, ≤ 10;
  *                        reach the wire only through the row's DRIVER
+ *     log_body           false = the email_log row keeps the envelope and
+ *                        delivery_info but NOT the body (LOG_BODY_OMITTED in its
+ *                        place — C2: the campaign's send_snapshot is the copy).
+ *                        Only with headers carrying List-Unsubscribe (i.e. a
+ *                        marketing broadcast — the over-cap D16 send carries no
+ *                        headers, so it always logs its body), and only on an
+ *                        adapter declaring log_without_body. Any value but
+ *                        false / absent is refused.
  *   Refusals (Error, .code = the name, message starts with it):
  *     bulk_row_requires_marketing_path   bulk_ok row without bulk:true — keeps
  *                                        the hub, the diagnostic route and
  *                                        every automation off the SES row even
- *                                        when they load it directly
+ *                                        when they load it directly (the code
+ *                                        name predates D16: campaign bulk sends
+ *                                        of either kind pass bulk:true)
  *     bulk_requires_bulk_row             bulk:true on a row that is not bulk_ok
- *     marketing_options_require_bulk     headers / reply_to / tags without
- *                                        bulk:true (a programming error, never
- *                                        stripped silently)
+ *     marketing_options_require_bulk     headers / reply_to / tags / log_body
+ *                                        without bulk:true (a programming
+ *                                        error, never stripped silently)
  *     marketing_header_refused           a header outside the allowlist, or a
  *                                        bad value
  *     marketing_reply_to_invalid / marketing_tags_invalid
+ *     marketing_log_body_refused         log_body anything but false, or false
+ *                                        without a List-Unsubscribe header
  *     adapter_lacks_capability           the row's adapter does not declare
  *                                        bulk / headers / tags (gmail, pabbly
  *                                        never see these options), or a row
@@ -82,7 +98,7 @@
  *                                        transport only (its headers must never
  *                                        ride operational or hub mail); a
  *                                        hand-edited row fails loudly
- *   The public sendEmail STRIPS all four (MARKETING_ONLY_OPTIONS, like
+ *   The public sendEmail STRIPS all five (MARKETING_ONLY_OPTIONS, like
  *   HUB_ONLY_OPTIONS) and refuses a bulk_ok row outright: bulk_sender_refused
  *   (campaignService.isTransientError classifies it permanent).
  *
@@ -96,9 +112,10 @@
  * Adapter contract (services/adapters/email/<provider>.js):
  *   module.exports = {
  *     capabilities: { html, attachments_inline, attachments_url,
- *                     bulk,      // may send from a bulk_ok row (marketing path)
+ *                     bulk,      // may send from a bulk_ok row (campaign bulk sends)
  *                     headers,   // carries `headers` / `replyTo` and a driver's headers
  *                     tags,      // forwards `tags` to the row's driver
+ *                     log_without_body, // honours logBody:false (C2)
  *                     batch,     // one call, many recipients (none yet)
  *                     events },  // the ADAPTER parses provider events (none —
  *                                //   events belong to the driver)
@@ -110,8 +127,9 @@
  *       attachmentNames,     // raw legacy csv, may be undefined
  *       credential,          // credentials row, null when emailRow.credential_id is null
  *       emailRow,            // full email_credentials row (or synthesized one)
- *       // marketing path only (absent otherwise):
+ *       // bulk:true sends only (absent otherwise):
  *       headers, replyTo, tags,
+ *       logBody,             // false only (C2 marketing); absent = log the body
  *       driver,              // absent when emailRow.events_driver is NULL
  *     }) → providerResult    // smtp: nodemailer info + providerMessageId
  *   }
@@ -244,7 +262,7 @@ function resolveDriver(emailRow) {
  * The T1 fence, run by sendEmailDirect before dispatch. → what the adapter
  * receives: { marketing, headers, replyTo, tags, driver }.
  */
-function marketingDispatch(emailRow, adapter, { bulk, headers, reply_to, tags }) {
+function marketingDispatch(emailRow, adapter, { bulk, headers, reply_to, tags, log_body }) {
   const caps = adapter.capabilities || {};
   const hasHeaders = headers !== undefined && headers !== null;
   const hasReplyTo = reply_to !== undefined && reply_to !== null;
@@ -253,13 +271,14 @@ function marketingDispatch(emailRow, adapter, { bulk, headers, reply_to, tags })
 
   if (bulkRow && bulk !== true) {
     throw fenceError('bulk_row_requires_marketing_path',
-      `${rowLabel(emailRow)} is a marketing (bulk) transport; only the campaign marketing path (bulk:true) may send from it`);
+      `${rowLabel(emailRow)} is a marketing (bulk) transport; only a campaign bulk send (bulk:true — the marketing path, or an operational campaign confirmed over the cap) may send from it`);
   }
   if (bulk === true && !bulkRow) {
     throw fenceError('bulk_requires_bulk_row', `${rowLabel(emailRow)} is not a bulk_ok row`);
   }
-  if (bulk !== true && (hasHeaders || hasReplyTo || hasTags)) {
-    throw fenceError('marketing_options_require_bulk', 'headers / reply_to / tags are marketing-path options (bulk:true) only');
+  const hasLogBody = log_body !== undefined && log_body !== null;
+  if (bulk !== true && (hasHeaders || hasReplyTo || hasTags || hasLogBody)) {
+    throw fenceError('marketing_options_require_bulk', 'headers / reply_to / tags / log_body are campaign bulk-send options (bulk:true) only');
   }
 
   const driver = resolveDriver(emailRow);
@@ -272,11 +291,24 @@ function marketingDispatch(emailRow, adapter, { bulk, headers, reply_to, tags })
   if ((hasHeaders || hasReplyTo) && !caps.headers) throw fenceError('adapter_lacks_capability', `provider ${emailRow.provider} cannot set headers`);
   if (hasTags && !caps.tags) throw fenceError('adapter_lacks_capability', `provider ${emailRow.provider} cannot carry tags`);
 
+  const canonHeaders = hasHeaders ? canonicalHeaders(headers) : undefined;
+  // log_body:false (C2): the marketing broadcast's email_log row drops its
+  // body. FAIL CLOSED: exactly false, and only on a send carrying
+  // List-Unsubscribe — the over-cap D16 send (no headers) always logs its body.
+  if (hasLogBody) {
+    if (log_body !== false) throw fenceError('marketing_log_body_refused', 'log_body may only be false');
+    if (!canonHeaders || !canonHeaders['List-Unsubscribe']) {
+      throw fenceError('marketing_log_body_refused', 'log_body:false needs a List-Unsubscribe header (the marketing broadcast only)');
+    }
+    if (!caps.log_without_body) throw fenceError('adapter_lacks_capability', `provider ${emailRow.provider} cannot omit the logged body`);
+  }
+
   return {
     marketing: true,
-    headers: hasHeaders ? canonicalHeaders(headers) : undefined,
+    headers: canonHeaders,
     replyTo: hasReplyTo ? canonicalReplyTo(reply_to) : undefined,
     tags:    hasTags ? canonicalTags(tags) : undefined,
+    ...(hasLogBody ? { logBody: false } : {}),
     driver,
   };
 }
@@ -397,8 +429,8 @@ async function sendEmailDirect(db, emailRow, {
   signature = false,
   // HUB-ONLY OPTIONS (header) — absent for every caller but the comms hub.
   cc, bcc, in_reply_to, references, message_id, thread_id,
-  // MARKETING-ONLY OPTIONS (header, T1) — the campaign marketing path only.
-  bulk, headers, reply_to, tags,
+  // MARKETING-ONLY OPTIONS (header, T1) — campaign bulk sends only.
+  bulk, headers, reply_to, tags, log_body,
 }) {
   if (!from || !to || !subject) {
     throw new Error('Missing required email fields (from, to, subject)');
@@ -430,7 +462,7 @@ async function sendEmailDirect(db, emailRow, {
 
   // T1 fence: bulk rows only via bulk:true, marketing options only with it,
   // and the row's driver (if any) resolved — all BEFORE any provider call.
-  const mkt = marketingDispatch(emailRow, adapter, { bulk, headers, reply_to, tags });
+  const mkt = marketingDispatch(emailRow, adapter, { bulk, headers, reply_to, tags, log_body });
 
   // Load credential if linked.
   let credential = null;
@@ -464,9 +496,10 @@ async function sendEmailDirect(db, emailRow, {
     references,
     messageId:  message_id,
     threadId:   thread_id,
-    // Marketing path (T1): present only on a bulk:true send; the driver only
-    // when the row names one.
+    // Bulk path (T1): present only on a bulk:true send; the driver only when
+    // the row names one; logBody only when C2's marketing send passes false.
     ...(mkt.marketing && { headers: mkt.headers, replyTo: mkt.replyTo, tags: mkt.tags }),
+    ...(mkt.logBody === false && { logBody: false }),
     ...(mkt.driver && { driver: mkt.driver }),
   });
 }
@@ -479,10 +512,11 @@ async function sendEmailDirect(db, emailRow, {
 const HUB_ONLY_OPTIONS = Object.freeze(['cc', 'bcc', 'in_reply_to', 'references', 'message_id', 'thread_id']);
 
 /**
- * The options only the campaign marketing path may pass (sendEmailDirect with
- * a bulk_ok row). The public sendEmail drops them the same way.
+ * The options only a campaign bulk send may pass (sendEmailDirect with a
+ * bulk_ok row: the marketing path, or an operational campaign over the cap).
+ * The public sendEmail drops them the same way.
  */
-const MARKETING_ONLY_OPTIONS = Object.freeze(['bulk', 'headers', 'reply_to', 'tags']);
+const MARKETING_ONLY_OPTIONS = Object.freeze(['bulk', 'headers', 'reply_to', 'tags', 'log_body']);
 
 /** The public sendEmail's copy of opts: hub-only AND marketing-only options removed. */
 function withoutDirectOnlyOptions(opts) {
@@ -560,6 +594,8 @@ function validateDriverConfig(driverName, cfg) {
 // Additive — nothing else imports it.
 module.exports = {
   sendEmail, sendEmailDirect, VALID_PROVIDERS, normalizeBodies, HUB_ONLY_OPTIONS,
+  // htmlToText: C2's marketing text part builds on it (campaignService.textPartFor).
+  htmlToText,
   // T1
   MARKETING_ONLY_OPTIONS, MARKETING_HEADERS, VALID_EVENTS_DRIVERS, isBulkRow, validateDriverConfig,
 };

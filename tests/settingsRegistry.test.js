@@ -151,6 +151,7 @@ describe('classification snapshot', () => {
     "manage_reschedule_template": "firm firm booking ui template",
     "marketing_ad_label": "firm firm consent ui string",
     "marketing_debt_relief_statement": "firm firm consent ui string",
+    "marketing_reply_to": "firm firm consent ui email",
     "marketing_send_enabled": "system system switches console bool",
     "min_client_build": "system system platform ui date",
     "office_alerts_to": "firm firm routing ui user_csv",

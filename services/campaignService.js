@@ -23,6 +23,14 @@
  * marketing kill switch, a send reservation (at most once, every class), a
  * per-transport rate window, a per-campaign pump and a `paused` status.
  *
+ * YisraMail C2 (the marketing send path, §4.5 / §6.4 / §6.5 "As built (C2)"):
+ * executeSend's marketing branch — consent by topic, the transport HOLD
+ * (email_credentials.held_at, set by the §6.5 thresholds or an account-level
+ * provider refusal, released only by a superuser — releaseTransport), the
+ * send-start snapshot (campaigns.send_snapshot), the per-recipient unsub
+ * token, the explicit text part + compliance footer + post-render assert, the
+ * marketing headers, email_log without the body; and testSendMarketing.
+ *
  * Functions:
  *   getFilteredContacts(db, filters)       — contact selection with tag/case/channel filters
  *   createCampaign(db, opts)               — single-transaction: campaign + contacts + jobs (+ pump)
@@ -36,9 +44,13 @@
  *   runPump(db, campaignId, opts)          — one pump tick (called by job_executor)
  *   previewCampaign(db, opts)              — resolve placeholders for preview display
  *   consentOptsFor(type, klass, topicKey)  — the consent question a send asks (shared with the preview)
+ *   testSendMarketing(db, opts)            — "send a test to me" (C2)
+ *   releaseTransport(db, credentialId, o)  — the SU release of a held transport (C2)
  */
 
 const { resolve }    = require('./resolverService');
+// The footer builder, called through the module object (a test can stand in a gutted footer — C2's post-render assert).
+const complianceFooter = require('../lib/complianceFooter');
 const phoneService = require('./phoneService');
 const emailService = require('./emailService');
 const { localToUTC } = require('./timezoneService');
@@ -113,6 +125,20 @@ class CampaignError extends Error {
     this.code = code;
     this.extra = extra;
   }
+}
+
+/**
+ * An email attachment URL must be https:// (C2 security fix). The smtp / gmail
+ * adapters hand it to nodemailer as an attachment `path`, and nodemailer READS
+ * A LOCAL FILE at any path that is not a URL — '/proc/self/environ' would have
+ * mailed the server's environment to whoever chose the recipient. Refused,
+ * never stripped. (The smtp adapter also sets disableFileAccess — the root fix;
+ * this is the fail-closed front door.)
+ */
+function assertHttpsAttachment(url, code = 'bad_attachment_url') {
+  let ok = typeof url === 'string' && /^https:\/\/[^\s]+$/i.test(url) && url.length <= 2048;
+  if (ok) { try { ok = new URL(url).protocol === 'https:'; } catch (_) { ok = false; } }
+  if (!ok) throw new CampaignError(400, code, 'An email attachment must be an https:// URL.');
 }
 
 function positiveNumber(v, dflt) {
@@ -328,16 +354,18 @@ async function getComposeOptions(db, auth) {
   const settings = await readCampaignSettings(db);
   const { UNSUB_SQL } = require('./unsubService'); // lazy require (convention)
   const [senders] = await db.query(
-    'SELECT email, from_name FROM email_credentials WHERE bulk_ok = 1 ORDER BY id'
+    'SELECT id, email, from_name, held_at, held_reason FROM email_credentials WHERE bulk_ok = 1 ORDER BY id'
   );
   const [topics] = await db.query(UNSUB_SQL.topics);
   return {
-    marketing_senders: (senders || []).map((r) => ({ email: r.email, from_name: r.from_name })),
+    // held (C2, §6.5): a held transport refuses marketing creates and sends until an SU release.
+    marketing_senders: (senders || []).map((r) => ({ id: r.id, email: r.email, from_name: r.from_name, held: r.held_at != null, held_reason: r.held_at != null ? (r.held_reason || null) : null })),
     topics: (topics || []).map((t) => ({ topic_key: t.topic_key, label: t.label, description: t.description, consent_model: t.consent_model })),
     operational_cap: settings.cap,
     marketing_rate: settings.rate,
     marketing_enabled: settings.marketingEnabled,
     can_bulk: can(auth, 'campaigns.bulk'),
+    footer_slot: FOOTER_SLOT,
   };
 }
 
@@ -439,7 +467,8 @@ async function createCampaign(db, {
 
   if (klass === 'marketing') {
     // The kill switch (§6.1): until gate G1 passes, nothing creates a
-    // marketing campaign — C1's executeSend has no footer/token/header path.
+    // marketing campaign (C2 built the send path; the switch stays '0' until
+    // the checklist passes).
     if (!settings.marketingEnabled) {
       throw new CampaignError(422, 'marketing_disabled',
         'Marketing campaigns are switched off. They open once the compliance checklist passes and a superuser turns on marketing_send_enabled.');
@@ -472,7 +501,7 @@ async function createCampaign(db, {
   // failing at send.
   if (type === 'email') {
     const [[senderRow]] = await db.query(
-      'SELECT id, bulk_ok FROM email_credentials WHERE email = ? LIMIT 1',
+      'SELECT id, bulk_ok, held_at, held_reason FROM email_credentials WHERE email = ? LIMIT 1',
       [sender]
     );
     if (!senderRow) {
@@ -482,10 +511,20 @@ async function createCampaign(db, {
     if (klass === 'marketing' && !bulkSender) {
       throw new CampaignError(400, 'marketing_requires_bulk_sender', `Marketing campaigns send only from a marketing transport — ${sender} is not one.`);
     }
+    // C2 (§6.5): a HELD transport refuses new marketing campaigns.
+    if (klass === 'marketing' && senderRow.held_at != null) {
+      throw new CampaignError(422, 'transport_held',
+        `Marketing transport ${sender} is held: ${senderRow.held_reason || 'no reason recorded'}. A superuser release lifts it.`,
+        { held_reason: senderRow.held_reason || null });
+    }
     if (klass === 'operational' && bulkSender && !overCap) {
       throw new CampaignError(400, 'bulk_sender_refused', `Operational campaigns cannot send from a marketing transport (${sender})`);
     }
   }
+
+  // Email attachment: https:// only (assertHttpsAttachment — create time;
+  // rows created before C2 are not re-checked).
+  if (attachmentUrl && type === 'email') assertHttpsAttachment(attachmentUrl);
 
   // MMS validation: attachment requires an MMS-capable line.
   // (Capability lives on phone_lines.mms_capable; checked at send time too.)
@@ -738,9 +777,20 @@ async function pauseCampaign(db, campaignId) {
  * send. A pump still RUNNING its last tick does not block the insert: the
  * older pump retires itself on its next tick (runPump: newest live pump
  * wins). Then checkCompletion — every send may have finished while paused.
+ * C2: a marketing campaign whose transport is HELD refuses (422 transport_held).
  */
 async function resumeCampaign(db, campaignId) {
   const settings = await readCampaignSettings(db);
+  // C2 (§6.5): a marketing campaign does not resume onto a HELD transport —
+  // only the SU release lifts the hold (its first send would re-pause anyway).
+  const [[mk]] = await db.query(
+    `SELECT ec.held_at, ec.held_reason, ec.email FROM campaigns c JOIN email_credentials ec ON ec.email = c.sender
+      WHERE c.campaign_id = ? AND c.class = 'marketing' AND c.type = 'email' LIMIT 1`, [campaignId]);
+  if (mk && mk.held_at != null) {
+    throw new CampaignError(422, 'transport_held',
+      `Marketing transport ${mk.email} is held: ${mk.held_reason || 'no reason recorded'}. A superuser release lifts it; then resume.`,
+      { held_reason: mk.held_reason || null });
+  }
   const resumed = await db.withTransaction(async (conn) => {
     const [r] = await conn.query(
       "UPDATE campaigns SET status = 'sending', updated_at = NOW() WHERE campaign_id = ? AND status = 'paused'",
@@ -1009,6 +1059,7 @@ const DEFINITE_OWN_CODES = new Set([
   'bulk_sender_refused', 'bulk_row_requires_marketing_path', 'bulk_requires_bulk_row',
   'marketing_options_require_bulk', 'marketing_header_refused', 'marketing_reply_to_invalid',
   'marketing_tags_invalid', 'adapter_lacks_capability', 'unknown_events_driver', 'events_driver_requires_bulk',
+  'marketing_log_body_refused',
 ]);
 function isAmbiguousSendError(err) {
   if (!err) return false;
@@ -1057,6 +1108,612 @@ async function markUnknown(db, campaignId, contactId, prevMeta, note, error = nu
 
 
 // ─────────────────────────────────────────────────────────────
+// MARKETING SEND PATH (C2 — ref/YISRAMAIL_DESIGN.md §4.5, §6.4, §6.5 "As built (C2)")
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * The ONE footer-slot marker. A body that carries it gets the compliance
+ * footer AT the marker (the first one) instead of before </body> — C3's
+ * builder places it inside a card layout without touching C2 again. Anything
+ * else: before the LAST </body>; no </body> → before </html>; neither →
+ * appended. Never after </html>.
+ */
+const FOOTER_SLOT = '<!-- yc:footer-slot -->';
+/**
+ * The test send's unsubscribe token: a DEAD placeholder. It fails
+ * lib/token.PUBLIC_TOKEN_RE (the '.'), so /u/<it> answers the neutral
+ * unknown-token page and a one-click on it records nothing — a test send
+ * writes no comm_unsub_tokens row.
+ */
+const TEST_SEND_TOKEN = 'test.send.no-token';
+/** lib/complianceFooter's block marker — the post-render assert looks for it in the final html. */
+const FOOTER_MARKER = 'data-yc-compliance-footer="1"';
+/** The snapshot's template copy names the token by this placeholder (the per-recipient token is minted at send). */
+const SNAPSHOT_TOKEN = '{token}';
+/** §6.5 thresholds over transportHealth's 24 h window, decided only when `enough` (≥ 200 delivered). */
+const COMPLAINT_WARN_RATE = 0.001;   // > 0.1 % → warning, once per transport per UTC day
+const COMPLAINT_HOLD_RATE = 0.003;   // > 0.3 % (the Gmail ceiling) → HOLD
+const BOUNCE_HOLD_RATE = 0.05;       // hard bounces > 5 % → HOLD
+/** email_credentials.held_reason is varchar(255). */
+const HOLD_REASON_MAX = 255;
+
+/**
+ * SES's ACCOUNT-LEVEL refusal (account or configuration-set sending paused /
+ * suspended) — the provider refuses every message until AWS lifts it, so the
+ * transport is held instead of failing each remaining recipient as a 5xx.
+ * VERIFY(live): AWS documents the condition ("Account is paused", API
+ * exceptions SendingPausedException / AccountSendingPausedException /
+ * ConfigurationSetSendingPausedException) but not the SMTP reply text; the
+ * SMTP shapes below ("554 Sending paused for this account…", "…suspended…",
+ * "…paused for this configuration set") are the community-reported ones. We
+ * cannot produce one; widen the pattern from the first real reply.
+ */
+const ACCOUNT_PAUSE_RE = /\b(?:account is paused|sending (?:is )?paused for (?:this|your) (?:account|configuration set)|sending suspended for (?:this|your) account|AccountSendingPaused(?:Exception)?|ConfigurationSetSendingPaused(?:Exception)?|SendingPausedException)\b/i;
+function isAccountPausedError(err) {
+  if (!err) return false;
+  if (typeof err.responseCode === 'number' && (err.responseCode < 400 || err.responseCode >= 600)) return false;
+  const text = [err.response, err.message, err.code, err.name].filter((v) => v != null).map(String).join(' ');
+  return ACCOUNT_PAUSE_RE.test(text);
+}
+
+function escAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * ASCII-only lowercase: same LENGTH as the input (String#toLowerCase can grow
+ * a string — 'İ' becomes two code units — and shift every index after it).
+ */
+function asciiLower(s) {
+  return s.replace(/[A-Z]+/g, (m) => m.toLowerCase());
+}
+
+/**
+ * The next `<name` TAG at or after `from` in an asciiLower'd string (followed
+ * by whitespace, '>', '/' or the end), or -1. LINEAR: every indexOf advances.
+ */
+function findTag(lower, name, from) {
+  const open = `<${name}`;
+  for (let i = from; ;) {
+    i = lower.indexOf(open, i);
+    if (i === -1) return -1;
+    const c = lower.charCodeAt(i + open.length);
+    if (Number.isNaN(c) || c === 62 || c === 47 || c <= 32) return i;
+    i += 1;
+  }
+}
+
+/**
+ * The footer's insertion window in a body (asciiLower'd): from the end of the
+ * <body …> open tag (no <body>: the end of </head>, else 0) to the closing
+ * </body> — but never past </html>: a </body> that comes after </html> is
+ * ignored, so the footer can never land after </html>. No closer at all → the
+ * end (append).
+ */
+function bodyBounds(lower) {
+  const closeHtml = lower.lastIndexOf('</html');
+  const lastBody = lower.lastIndexOf('</body');
+  const closeBody = lastBody !== -1 && (closeHtml === -1 || lastBody < closeHtml) ? lastBody : -1;
+  const end = closeBody !== -1 ? closeBody : closeHtml !== -1 ? closeHtml : lower.length;
+  let start = 0;
+  const openBody = findTag(lower, 'body', 0);
+  if (openBody !== -1 && openBody < end) {
+    const gt = lower.indexOf('>', openBody);
+    start = gt === -1 || gt + 1 > end ? end : gt + 1;
+  } else {
+    const closeHead = lower.lastIndexOf('</head', end);
+    if (closeHead !== -1) {
+      const gt = lower.indexOf('>', closeHead);
+      start = gt === -1 || gt + 1 > end ? end : gt + 1;
+    }
+  }
+  return { start, end };
+}
+
+/**
+ * The footer html into the body: at the FIRST FOOTER_SLOT inside the body
+ * window (a marker in <head> / <title> or after </body> is ignored), else at
+ * the window's end (before </body>, else before </html>), else appended.
+ * Never after </html>. Linear.
+ */
+function injectFooter(html, footerHtml) {
+  const body = String(html == null ? '' : html);
+  const { start, end } = bodyBounds(asciiLower(body));
+  const slot = body.indexOf(FOOTER_SLOT, start);
+  if (slot !== -1 && slot + FOOTER_SLOT.length <= end) return body.slice(0, slot) + footerHtml + body.slice(slot + FOOTER_SLOT.length);
+  if (end < body.length) return body.slice(0, end) + footerHtml + '\n' + body.slice(end);
+  return body + '\n' + footerHtml;
+}
+
+/** Comments removed; an unclosed `<!--` swallows the rest (as a browser does). Linear. */
+function stripComments(s) {
+  let out = '';
+  for (let i = 0; ;) {
+    const j = s.indexOf('<!--', i);
+    if (j === -1) return out + s.slice(i);
+    out += s.slice(i, j);
+    const k = s.indexOf('-->', j + 4);
+    if (k === -1) return out;
+    i = k + 3;
+  }
+}
+
+/** Every <name …>…</name> element removed; an unclosed one swallows the rest. Linear per name. */
+function stripElements(s, names) {
+  for (const name of names) {
+    const lower = asciiLower(s);
+    let out = '';
+    let i = 0;
+    for (;;) {
+      const j = findTag(lower, name, i);
+      if (j === -1) { out += s.slice(i); break; }
+      out += s.slice(i, j);
+      const c = findTag(lower, `/${name}`, j + 1);
+      if (c === -1) break;
+      const gt = lower.indexOf('>', c);
+      i = gt === -1 ? s.length : gt + 1;
+    }
+    s = out;
+  }
+  return s;
+}
+
+/** Tags stripped; an unclosed `<` and what follows stay as text. Linear. */
+function stripTags(s) {
+  let out = '';
+  for (let i = 0; ;) {
+    const j = s.indexOf('<', i);
+    if (j === -1) return out + s.slice(i);
+    const k = s.indexOf('>', j + 1);
+    if (k === -1) return out + s.slice(i);
+    out += s.slice(i, j);
+    i = k + 1;
+  }
+}
+
+/** The FIRST href="…" / href='…' attribute of one open tag, or null (an unclosed quote → null). Linear. */
+function hrefOf(tag) {
+  const lower = asciiLower(tag);
+  for (let k = lower.indexOf('href'); k !== -1; k = lower.indexOf('href', k + 4)) {
+    const before = lower.charCodeAt(k - 1);
+    if (!(before <= 32)) continue;
+    let p = k + 4;
+    while (p < tag.length && tag.charCodeAt(p) <= 32) p++;
+    if (tag[p] !== '=') continue;
+    p++;
+    while (p < tag.length && tag.charCodeAt(p) <= 32) p++;
+    const q = tag[p];
+    if (q !== '"' && q !== "'") return null;
+    const e = tag.indexOf(q, p + 1);
+    return e === -1 ? null : tag.slice(p + 1, e);
+  }
+  return null;
+}
+
+/** <a href>…</a> → "label (url)" / the bare url; a non-http(s)/mailto href keeps only the label. Linear. */
+function linkify(s) {
+  const lower = asciiLower(s);
+  let out = '';
+  for (let i = 0; ;) {
+    const j = findTag(lower, 'a', i);
+    if (j === -1) return out + s.slice(i);
+    const gt = s.indexOf('>', j);
+    if (gt === -1) return out + s.slice(i);
+    const close = findTag(lower, '/a', gt + 1);
+    if (close === -1) return out + s.slice(i);
+    const closeGt = s.indexOf('>', close);
+    const inner = s.slice(gt + 1, close);
+    const raw = hrefOf(s.slice(j, gt));
+    const href = raw == null ? null : raw.trim();
+    out += s.slice(i, j);
+    if (href && /^(?:https?:|mailto:)/i.test(href)) {
+      const label = stripTags(inner).trim();
+      out += !label || label === href ? ` ${href} ` : `${inner} (${href})`;
+    } else {
+      out += inner;
+    }
+    i = closeGt === -1 ? s.length : closeGt + 1;
+  }
+}
+
+/** Trailing spaces / tabs off each line — a loop, not /[ \t]+$/ (quadratic on a long run). */
+function trimLineEnds(s) {
+  return s.split('\n').map((l) => {
+    let e = l.length;
+    while (e > 0 && (l.charCodeAt(e - 1) === 32 || l.charCodeAt(e - 1) === 9)) e--;
+    return l.slice(0, e);
+  }).join('\n');
+}
+
+/**
+ * The marketing text part of an html body. A link keeps its URL visible
+ * ("label (url)", the bare url when the label IS the url); comments and
+ * <head> / <style> / <script> / <title> content never leak in as text; line
+ * breaks for <br>, </p>, </li>; tags stripped; named and numeric entities
+ * decoded. EVERY step is linear (CLAUDE.md: a body any staff member authors
+ * runs here per recipient and inside the test-send request) — scans are
+ * indexOf loops, the few regexes have no nested or overlapping quantifier.
+ * tests/campaignC2.test.js pins the worst cases with a timing bound. The
+ * footer's own text part is appended by the caller.
+ */
+function textPartFor(html) {
+  let s = String(html == null ? '' : html);
+  s = stripComments(s);
+  s = stripElements(s, ['head', 'style', 'script', 'title']);
+  s = linkify(s);
+  s = s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p\s*>/gi, '\n\n').replace(/<\/li\s*>/gi, '\n');
+  s = stripTags(s)
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;|&#x0*27;|&apos;/gi, "'")
+    .replace(/&#(\d{1,7});/g, (m, d) => { const n = Number(d); return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m; })
+    .replace(/&#x([0-9a-f]{1,6});/gi, (m, h) => { const n = parseInt(h, 16); return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m; })
+    .replace(/&amp;/gi, '&');
+  return trimLineEnds(s).replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * List-Id (RFC 2919): <topic.sender-domain>, e.g. <newsletter.news.4lsg.com> —
+ * stable per topic and transport, '_' in a topic key becomes '-'.
+ */
+function listIdFor(topicKey, senderEmail) {
+  const domain = String(senderEmail || '').split('@').pop().toLowerCase();
+  if (!TOPIC_RE.test(String(topicKey || '')) || !/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(domain)) {
+    throw new Error(`listIdFor: cannot build a List-Id from topic "${String(topicKey).slice(0, 40)}" and sender "${String(senderEmail).slice(0, 80)}"`);
+  }
+  return `<${String(topicKey).replace(/_/g, '-')}.${domain}>`;
+}
+
+/** The three marketing headers (T1's allowlist). */
+function marketingHeaders(unsubscribeUrl, listId) {
+  return {
+    'List-Unsubscribe': `<${unsubscribeUrl}>`,
+    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    'List-Id': listId,
+  };
+}
+
+/**
+ * The POST-RENDER ASSERT (§4.5, fail closed) — on the FINAL html and text,
+ * where the property has to hold: the html carries the footer block and the
+ * unsubscribe URL as an href; the text carries the footer text and the URL.
+ * → null when it holds, else what is missing.
+ */
+function footerHoles({ html, text, footer, unsubscribeUrl }) {
+  const holes = [];
+  if (!footer || typeof footer.html !== 'string' || typeof footer.text !== 'string') return ['the footer block'];
+  // The builder's own marker must be in the html, and never after </html> —
+  // independent of whatever footer object reached here.
+  const at = String(html).indexOf(FOOTER_MARKER);
+  if (at === -1) holes.push('html: footer marker');
+  else {
+    const closeHtml = asciiLower(String(html)).lastIndexOf('</html');
+    if (closeHtml !== -1 && at > closeHtml) holes.push('html: footer after </html>');
+  }
+  if (!String(html).includes(footer.html)) holes.push('html: footer block');
+  if (!String(html).includes(`href="${escAttr(unsubscribeUrl)}"`)) holes.push('html: unsubscribe href');
+  if (!String(text).includes(footer.text)) holes.push('text: footer block');
+  if (!String(text).includes(unsubscribeUrl)) holes.push('text: unsubscribe URL');
+  return holes.length ? holes : null;
+}
+
+/** The marketing Reply-To: marketing_reply_to, else firm_email, else none (replies reach the sender address). */
+function marketingReplyTo() {
+  const { cfg } = require('../lib/firmConfig'); // lazy require (convention)
+  const norm = (v) => (v == null || String(v).trim() === '' ? null : String(v).trim());
+  return norm(cfg('marketing_reply_to')) || norm(cfg('firm_email'));
+}
+
+/** comm_topics row of a marketing topic → { topic_key, label, consent_model, active } | null. */
+async function topicRow(db, topicKey) {
+  const [[t]] = await db.query('SELECT topic_key, label, consent_model, active, channel FROM comm_topics WHERE topic_key = ?', [topicKey]);
+  return t || null;
+}
+
+/**
+ * Render one marketing email (the campaign send AND the test send — one path).
+ *   body / subject     the campaign's (unresolved) copy
+ *   contactId          resolver refs.contacts
+ *   unsubscribeUrl / preferencesUrl   the token's URLs (the test send: TEST_SEND_TOKEN's)
+ *   topic              { topic_key, label, consent_model } the footer states
+ *   firm               the send-start snapshot (C2) — refs.firm AND the footer's values
+ * → { status: 'ok', html, text, subject, footer }
+ *   | { status: 'unresolved', detail }        (a placeholder did not resolve — permanent)
+ *   | { status: 'footer_missing', detail }    (the builder threw, or the assert found a hole)
+ * A resolver DB error throws (the caller decides retry).
+ */
+async function renderMarketing(db, { body, subject, contactId, unsubscribeUrl, preferencesUrl, topic, firm }) {
+  const refs = {
+    contacts: { contact_id: contactId },
+    send: { unsubscribe_url: unsubscribeUrl, preferences_url: preferencesUrl, topic_key: topic.topic_key, topic_label: topic.label },
+    firm,
+  };
+  const rb = await resolve({ db, text: body, refs, strict: true, escape: 'html' });
+  if (rb.status !== 'success') {
+    return { status: 'unresolved', detail: rb.unresolved?.length ? `Unresolved placeholders: ${rb.unresolved.join(', ')}` : (rb.errors?.join('; ') || 'Body placeholder resolution failed') };
+  }
+  const rs = await resolve({ db, text: subject || '', refs, strict: true });
+  if (rs.status !== 'success') {
+    return { status: 'unresolved', detail: rs.unresolved?.length ? `Unresolved placeholders in subject: ${rs.unresolved.join(', ')}` : (rs.errors?.join('; ') || 'Subject placeholder resolution failed') };
+  }
+  let footer;
+  try {
+    footer = complianceFooter.buildComplianceFooter({ unsubscribeUrl, preferencesUrl, topic, firm });
+  } catch (err) {
+    return { status: 'footer_missing', detail: String(err.message || err) };
+  }
+  const html = injectFooter(rb.text, footer.html);
+  const text = `${textPartFor(rb.text)}\n\n${footer.text}`;
+  const holes = footerHoles({ html, text, footer, unsubscribeUrl });
+  if (holes) return { status: 'footer_missing', detail: `post-render check failed: ${holes.join('; ')}` };
+  return { status: 'ok', html, text, subject: rs.text, footer };
+}
+
+function parseSnapshot(v) {
+  if (v == null) return null;
+  const o = typeof v === 'object' ? v : (() => { try { return JSON.parse(v); } catch (_) { return null; } })();
+  return o && typeof o === 'object' && o.firm && o.topic ? o : null;
+}
+
+/**
+ * The campaign's SEND-START SNAPSHOT (MRPC 7.2(b): ≥ 2 years, what was sent
+ * with the footer as it stood at send start) — campaigns.send_snapshot, written
+ * ONCE (the first marketing send to reach here; a concurrent first send loses
+ * the conditional UPDATE and both read the winner back). Every recipient
+ * renders from it: refs.firm and the footer's values, the topic the footer
+ * states, the Reply-To, the List-Id — so a settings edit mid-send cannot
+ * split the campaign. Holds the template copy too: the body with the footer
+ * injected (token = SNAPSHOT_TOKEN), its text part, the subject.
+ * A firm hole (the builder throws) → { error } and nothing is written: the
+ * recipient is recorded failed (footer_missing); the next send tries again.
+ * → { snapshot } | { error }
+ */
+async function ensureSendSnapshot(db, campaign) {
+  const have = parseSnapshot(campaign.send_snapshot);
+  if (have) return { snapshot: have };
+  const { firmValues } = complianceFooter;
+  const { urlFor, preferencesUrlFor } = require('./unsubService'); // lazy require (convention)
+  const t = await topicRow(db, campaign.topic_key);
+  if (!t) return { error: `topic "${campaign.topic_key}" does not exist` };
+  const topic = { topic_key: String(t.topic_key), label: String(t.label), consent_model: String(t.consent_model) };
+  const firm = firmValues();
+  let footer;
+  try {
+    footer = complianceFooter.buildComplianceFooter({ unsubscribeUrl: urlFor(SNAPSHOT_TOKEN), preferencesUrl: preferencesUrlFor(SNAPSHOT_TOKEN), topic, firm });
+  } catch (err) {
+    return { error: String(err.message || err) };
+  }
+  const snap = {
+    v: 1,
+    taken_at: new Date().toISOString(),
+    firm,
+    topic,
+    reply_to: marketingReplyTo(),
+    list_id: listIdFor(campaign.topic_key, campaign.sender),
+    sender: campaign.sender,
+    subject: campaign.subject,
+    html: injectFooter(campaign.body, footer.html),
+    text: `${textPartFor(campaign.body)}\n\n${footer.text}`,
+    token_placeholder: SNAPSHOT_TOKEN,
+  };
+  await db.query('UPDATE campaigns SET send_snapshot = ? WHERE campaign_id = ? AND send_snapshot IS NULL',
+    [JSON.stringify(snap), campaign.campaign_id]);
+  const [[row]] = await db.query('SELECT send_snapshot FROM campaigns WHERE campaign_id = ?', [campaign.campaign_id]);
+  const stored = parseSnapshot(row && row.send_snapshot);
+  if (!stored) throw new Error(`campaign ${campaign.campaign_id}: send_snapshot did not store`);
+  return { snapshot: stored };
+}
+
+function utcDay() { return new Date().toISOString().slice(0, 10); }
+
+function alertQuietly(db, o) {
+  try {
+    const { alert } = require('../lib/alerting'); // lazy require (convention)
+    return Promise.resolve(alert(db, { source: 'mail', ...o })).catch((e) => console.error('[CAMPAIGN] alert failed:', e.message));
+  } catch (e) { return Promise.resolve(); }
+}
+
+/** The `error` alert a held transport raises — ONE per transport per UTC day (dedup key). */
+function heldAlert(db, row, reason, heldAt = null) {
+  // Once per HOLD per UTC day: keyed on the hold's held_at too, so a re-hold
+  // after a same-day release raises its own alert.
+  const stamp = heldAt ? new Date(heldAt).toISOString() : 'held';
+  return alertQuietly(db, {
+    kind: 'mail_transport_held', group_key: `mail_transport_held:${row.id}`, severity: 'error',
+    dedup_key: `mail_transport_held:${row.id}:${stamp}:${utcDay()}`,
+    title: `Marketing email transport ${row.id} (${row.email}) is HELD`,
+    message: `Marketing sends on ${row.email} are stopped: ${reason}. Its running marketing campaigns are paused and new ones are refused. `
+      + `Only a superuser lifts the hold, through the API — POST /api/campaigns/transports/${row.id}/release (superuser + step-up; there is no button) — `
+      + 'after fixing the cause; then resume the paused campaigns one by one (ref/YISRAMAIL_DESIGN.md §6.5).',
+  });
+}
+
+/**
+ * Pause every running (scheduled / sending) MARKETING campaign on a transport
+ * (C1's pauseCampaign — the pending sends are parked). → the paused ids.
+ */
+async function pauseMarketingOnTransport(db, senderEmail) {
+  const [rows] = await db.query(
+    "SELECT campaign_id FROM campaigns WHERE class = 'marketing' AND sender = ? AND status IN ('scheduled', 'sending') ORDER BY campaign_id",
+    [senderEmail]);
+  const paused = [];
+  for (const r of rows || []) {
+    try {
+      await pauseCampaign(db, r.campaign_id);
+      paused.push(Number(r.campaign_id));
+    } catch (err) {
+      if (!(err && err.name === 'CampaignError' && err.status === 409)) throw err;   // finished / paused meanwhile
+    }
+  }
+  return paused;
+}
+
+/**
+ * SET the hold on a transport (§6.5): email_credentials.held_at / held_reason
+ * (first setter wins — the reason of the first trip stays), then every running
+ * marketing campaign on it is paused and the error alert raised (once a day).
+ * No auto-release: only releaseTransport lifts it. → { held, paused }
+ */
+async function holdTransport(db, row, reason) {
+  const why = String(reason).slice(0, HOLD_REASON_MAX);
+  const [r] = await db.query(
+    'UPDATE email_credentials SET held_at = UTC_TIMESTAMP(), held_reason = ? WHERE id = ? AND held_at IS NULL',
+    [why, row.id]);
+  const paused = await pauseMarketingOnTransport(db, row.email);
+  console.error(`[CAMPAIGN] transport ${row.id} (${row.email}) ${r && r.affectedRows ? 'HELD' : 'already held'}: ${why}; paused ${paused.length ? paused.join(', ') : 'none'}`);
+  const [[now]] = await db.query('SELECT held_at, held_reason FROM email_credentials WHERE id = ?', [row.id]);
+  await heldAlert(db, row, (now && now.held_reason) || why, now && now.held_at);
+  return { held: !!(r && r.affectedRows), paused };
+}
+
+/**
+ * The transport health gate before a marketing send (§6.5) over
+ * mailEventService.transportHealth's 24 h window, rates decided only when
+ * `enough`: complaint rate > 0.3 % or hard-bounce rate > 5 % → the hold
+ * reason; > 0.1 % → a warning (once per transport per day) and the send goes.
+ * → the hold reason, or null.
+ */
+async function transportHealthGate(db, row) {
+  const { transportHealth } = require('./mailEventService'); // lazy require (convention)
+  const h = await transportHealth(db, { credentialId: row.id });
+  if (!h.enough) return null;
+  const pct = (x) => `${(x * 100).toFixed(2)}%`;
+  if (h.complaint_rate != null && h.complaint_rate > COMPLAINT_HOLD_RATE) {
+    return `complaint rate ${pct(h.complaint_rate)} over the last ${h.window_h} h (${h.complained} of ${h.delivered} delivered) is above the 0.3% limit`;
+  }
+  if (h.bounce_rate != null && h.bounce_rate > BOUNCE_HOLD_RATE) {
+    return `hard-bounce rate ${pct(h.bounce_rate)} over the last ${h.window_h} h (${h.bounced_hard} hard bounces, ${h.delivered} delivered) is above the 5% limit`;
+  }
+  if (h.complaint_rate != null && h.complaint_rate > COMPLAINT_WARN_RATE) {
+    await alertQuietly(db, {
+      kind: 'mail_complaint_rate', group_key: `mail_complaint_rate:${row.id}`, severity: 'warning',
+      dedup_key: `mail_complaint_rate:${row.id}:${utcDay()}`,
+      title: `Complaint rate ${pct(h.complaint_rate)} on marketing transport ${row.id} (${row.email})`,
+      message: `Over the last ${h.window_h} h: ${h.complained} complaint(s), ${h.delivered} delivered — above 0.1%. `
+        + 'At 0.3% the transport is held and every marketing campaign on it pauses (ref/YISRAMAIL_DESIGN.md §6.5).',
+    });
+  }
+  return null;
+}
+
+/**
+ * The SU release of a held transport (§6.5) — audited, in one transaction
+ * with the write (a release exists iff its admin_audit_log row does), then an
+ * `info` alert. Paused campaigns stay paused: staff resume each one.
+ * 404 unknown transport, 409 not held. → { released, credential_id, held_at, held_reason }
+ */
+async function releaseTransport(db, credentialId, { auth = null, request = null } = {}) {
+  const id = Number(credentialId);
+  if (!Number.isSafeInteger(id) || id < 1) throw new CampaignError(400, 'bad_id', 'transport id must be a positive integer');
+  const out = await db.withTransaction(async (conn) => {
+    const [[row]] = await conn.query('SELECT id, email, held_at, held_reason FROM email_credentials WHERE id = ? FOR UPDATE', [id]);
+    if (!row) throw new CampaignError(404, 'not_found', 'Email transport not found');
+    if (row.held_at == null) throw new CampaignError(409, 'not_held', `Transport ${id} (${row.email}) is not held`);
+    await conn.query('UPDATE email_credentials SET held_at = NULL, held_reason = NULL WHERE id = ?', [id]);
+    const { auditAdminAction } = require('../lib/auth.superuser'); // lazy require (convention)
+    await auditAdminAction(conn, {
+      tool: RELEASE_TOOL,
+      userId: auth?.userId ?? null,
+      username: auth?.username ?? null,
+      route: request?.route || `POST /api/campaigns/transports/${id}/release`,
+      method: request?.method || 'POST',
+      status: 'success',
+      ip: request?.ip ?? null,
+      userAgent: request?.userAgent ?? null,
+      details: { credential_id: id, email: row.email, held_at: row.held_at, held_reason: row.held_reason },
+    });
+    return { email: row.email, held_at: row.held_at, held_reason: row.held_reason };
+  }, { retries: 0 });
+  await alertQuietly(db, {
+    kind: 'mail_transport_released', group_key: `mail_transport_held:${id}`, severity: 'info',
+    title: `Marketing email transport ${id} (${out.email}) released by ${auth?.username || 'a superuser'}`,
+    message: `The hold (${out.held_reason || 'no reason recorded'}) is lifted. Campaigns it paused stay paused until resumed one by one.`,
+  });
+  return { released: true, credential_id: id, held_at: out.held_at, held_reason: out.held_reason };
+}
+/** admin_audit_log.tool of the release (and the superuserOnlyFor tool name). */
+const RELEASE_TOOL = 'mail_transport_release';
+
+/**
+ * "Send a test to me" (§6.4): the marketing render against a chosen contact,
+ * `[TEST] ` before the subject, through the SAME transport, headers and
+ * Reply-To as a campaign send — to the caller's own users.email. No token
+ * (TEST_SEND_TOKEN, a dead placeholder), no campaign, no campaign_results
+ * row, the email_log body kept (not a broadcast), live firm values (no
+ * snapshot — nothing has started). Works while marketing_send_enabled is off
+ * (staff-to-self, so the footer and headers can be checked before G1); needs
+ * campaigns.bulk; refused on a held transport.
+ * → { sent: true, to, messageId, providerMessageId }
+ */
+async function testSendMarketing(db, { auth = null, sender, subject, body, topicKey, contactId, attachmentUrl = null } = {}) {
+  if (!can(auth, 'campaigns.bulk')) throw new CampaignError(403, 'bulk_capability_required', 'A marketing test send needs the campaigns.bulk capability (admin role).');
+  const userId = Number(auth && auth.userId);
+  if (!Number.isSafeInteger(userId) || userId < 1) throw new CampaignError(400, 'test_send_needs_user', 'A test send goes to the signed-in staff member — a staff login is required.');
+  if (!sender || !subject || !body) throw new CampaignError(400, 'missing_fields', 'sender, subject and body are required');
+  const cid = Number(contactId);
+  if (!Number.isSafeInteger(cid) || cid < 1) throw new CampaignError(400, 'contact_required', 'Choose the contact to render the test for.');
+  if (attachmentUrl != null && attachmentUrl !== '') assertHttpsAttachment(attachmentUrl);
+  await assertMarketingTopic(db, topicKey);
+  const [[row]] = await db.query('SELECT * FROM email_credentials WHERE email = ? LIMIT 1', [sender]);
+  if (!row) throw new CampaignError(400, 'unknown_sender', `Email sender ${sender} is not a configured sender`);
+  if (!emailService.isBulkRow(row)) throw new CampaignError(400, 'marketing_requires_bulk_sender', `Marketing email sends only from a marketing transport — ${sender} is not one.`);
+  if (row.held_at != null) throw new CampaignError(422, 'transport_held', `Transport ${sender} is held: ${row.held_reason || 'no reason recorded'}. A superuser release lifts it.`, { held_reason: row.held_reason || null });
+  const [[me]] = await db.query('SELECT email FROM users WHERE user = ?', [userId]);
+  const to = me && me.email ? String(me.email).trim() : '';
+  if (!to) throw new CampaignError(400, 'no_user_email', 'Your user record has no email address to send the test to.');
+  const [[contact]] = await db.query('SELECT contact_id FROM contacts WHERE contact_id = ?', [cid]);
+  if (!contact) throw new CampaignError(404, 'contact_not_found', 'Contact not found');
+
+  const { firmValues } = complianceFooter;
+  const { urlFor, preferencesUrlFor } = require('./unsubService'); // lazy require (convention)
+  const t = await topicRow(db, topicKey);
+  const topic = { topic_key: String(t.topic_key), label: String(t.label), consent_model: String(t.consent_model) };
+  const unsubscribeUrl = urlFor(TEST_SEND_TOKEN);
+  const r = await renderMarketing(db, {
+    body, subject, contactId: cid, unsubscribeUrl, preferencesUrl: preferencesUrlFor(TEST_SEND_TOKEN), topic, firm: firmValues(),
+  });
+  if (r.status === 'unresolved') throw new CampaignError(400, 'body_unresolved', r.detail);
+  if (r.status !== 'ok') throw new CampaignError(422, 'footer_missing', r.detail);
+  const replyTo = marketingReplyTo();
+  const opts = {
+    from: sender, to, subject: `[TEST] ${r.subject}`, html: r.html, text: r.text,
+    bulk: true, headers: marketingHeaders(unsubscribeUrl, listIdFor(topicKey, sender)),
+    ...(replyTo ? { reply_to: replyTo } : {}),
+  };
+  if (attachmentUrl) opts.attachment_urls = attachmentUrl;   // once (see executeSend); https-checked above
+  let res;
+  try {
+    res = await emailService.sendEmailDirect(db, row, opts);
+  } catch (err) {
+    throw new CampaignError(502, 'send_failed', `The test send failed: ${String(err.message || err).slice(0, 500)}`);
+  }
+  return { sent: true, to, messageId: res?.messageId || null, providerMessageId: res?.providerMessageId || null };
+}
+
+
+/** Delete THIS attempt's 'sending' row (nothing reached the provider). */
+async function clearReservation(db, campaignId, contactId, attemptId) {
+  await db.query(
+    `DELETE FROM campaign_results
+      WHERE campaign_id = ? AND contact_id = ? AND status = 'sending'
+        AND JSON_UNQUOTE(JSON_EXTRACT(result_meta, '$.attempt_id')) = ?`,
+    [campaignId, contactId, attemptId]
+  );
+}
+
+/** Finalize THIS attempt's 'sending' row as 'failed' — a permanent outcome with no provider call (C2: render / footer). */
+async function failReservation(db, campaignId, contactId, attemptId, error, meta) {
+  await db.query(
+    `UPDATE campaign_results SET status = 'failed', error = ?, result_meta = ?
+      WHERE campaign_id = ? AND contact_id = ? AND status = 'sending'
+        AND JSON_UNQUOTE(JSON_EXTRACT(result_meta, '$.attempt_id')) = ?`,
+    [error, JSON.stringify({ attempt_id: attemptId, ...meta }), campaignId, contactId, attemptId]
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // EXECUTE SEND (called by job_executor for each contact)
 // ─────────────────────────────────────────────────────────────
 
@@ -1073,16 +1730,24 @@ async function markUnknown(db, campaignId, contactId, prevMeta, note, error = nu
  *      canceled → skipped; sent/failed/partial_fail → skipped (a straggler;
  *      recorded only when no row exists); scheduled / sending → proceed
  *   4. class marketing: the kill switch (setting not exactly '1' → skipped
- *      marketing_disabled); switch on → skipped marketing_path_unbuilt (C2
- *      builds that path — never the operational send)
- *   5. contact, consent (consentOptsFor: operational email asks nothing, D18),
- *      channel info, placeholders — as before
- *   6. over-cap operational on a bulk_ok sender: the per-transport rate window
- *      (≥ rate sends in the last 60 s → DEFER 2–8 s, no attempt)
- *   7. RESERVE (insert the row as 'sending' with an attempt id), flip a
+ *      marketing_disabled); switch on → the C2 path below
+ *   5. contact, consent (consentOptsFor: operational email asks nothing, D18;
+ *      marketing asks scope marketing + the topic — an opt_in topic needs
+ *      opted_in), channel info, placeholders (marketing: resolved at 7a)
+ *   6. a bulk_ok sender (marketing, or over-cap operational). MARKETING
+ *      first: the transport HOLD (held, or the §6.5 thresholds trip it) →
+ *      pause the campaign + DEFER (nothing recorded); the send-start snapshot
+ *      (a firm hole → failed footer_missing). Then the per-transport rate
+ *      window (≥ rate sends in the last 60 s → DEFER 2–8 s, no attempt)
+ *   7. RESERVE (insert the row as 'sending' with an attempt id)
+ *   7a. marketing: mint (or re-use) the unsub token, send_ref = the row's id;
+ *      render from the snapshot + the footer + the post-render assert (a hole
+ *      → this reservation 'failed' footer_missing, no provider call); flip a
  *      scheduled campaign to sending
- *   8. send; ambiguous provider error → 'unknown'; definite → reservation
- *      cleared, then the classification below
+ *   8. send (marketing: text part, footer, List-Unsubscribe / -Post / List-Id,
+ *      Reply-To, tags, log_body:false); an account-level SES refusal → the
+ *      transport held, the recipient back to pending; ambiguous provider error
+ *      → 'unknown'; definite → reservation cleared, then the classification below
  *   9. 'sent' + provider_message_id; checkCompletion
  *
  * Error handling (unchanged in shape):
@@ -1114,7 +1779,7 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
     // ── 1. Load campaign ──
 
     const [[campaign]] = await db.query(
-      'SELECT campaign_id, type, class, topic_key, bulk_confirmed_count, sender, subject, body, attachment_url, include_signature, status FROM campaigns WHERE campaign_id = ?',
+      'SELECT campaign_id, type, class, topic_key, bulk_confirmed_count, sender, subject, body, attachment_url, include_signature, status, send_snapshot FROM campaigns WHERE campaign_id = ?',
       [campaignId]
     );
 
@@ -1168,15 +1833,24 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
       return { skipped: true, reason: 'campaign_finished' };
     }
 
-    // ── 4. Marketing: the kill switch, then fail closed (C2 builds the path) ──
+    // ── 4. Marketing: the kill switch (read uncached), then the C2 path ──
 
     let settings = null;
-    if (campaign.class === 'marketing') {
+    const marketing = campaign.class === 'marketing';
+    if (marketing) {
       settings = await readCampaignSettings(db);
-      const reason = settings.marketingEnabled ? 'marketing_path_unbuilt' : 'marketing_disabled';
-      await recordResult(db, campaignId, contactId, 'skipped', null, { reason });
-      await checkCompletion(db, campaignId);
-      return { skipped: true, reason };
+      if (!settings.marketingEnabled) {
+        await recordResult(db, campaignId, contactId, 'skipped', null, { reason: 'marketing_disabled' });
+        await checkCompletion(db, campaignId);
+        return { skipped: true, reason: 'marketing_disabled' };
+      }
+      // createCampaign refuses both; a hand-written row must not reach a send.
+      if (campaign.type !== 'email' || !campaign.topic_key) {
+        const reason = campaign.type !== 'email' ? 'marketing_sms_refused' : 'topic_missing';
+        await recordResult(db, campaignId, contactId, 'failed', `Marketing campaign cannot send: ${reason}`, { reason });
+        await checkCompletion(db, campaignId);
+        return { failed: true, reason };
+      }
     }
 
     // ── 5. Load contact ──
@@ -1233,11 +1907,16 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
     // It will be caught by the outer try/catch below and classified as
     // transient → retry-able.
 
+    // MARKETING resolves AFTER the reservation instead (C2): its body may name
+    // {{send.unsubscribe_url}}, and the token is minted with the reservation's
+    // id — renderMarketing below.
+
     const refs = { contacts: { contact_id: contactId } };
 
     // Email bodies are HTML: substituted values are escaped (bodyEscapeFor).
     // The subject below is a header, never HTML — resolved unescaped.
-    const resolvedBody = await resolve({ db, text: campaign.body, refs, strict: true, escape: bodyEscapeFor(campaign.type) });
+    const resolvedBody = marketing ? { status: 'success', text: null }
+      : await resolve({ db, text: campaign.body, refs, strict: true, escape: bodyEscapeFor(campaign.type) });
 
     if (resolvedBody.status !== 'success') {
       // Semantic resolver failure — permanent.
@@ -1250,7 +1929,7 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
     }
 
     let resolvedSubject = null;
-    if (campaign.type === 'email' && campaign.subject) {
+    if (!marketing && campaign.type === 'email' && campaign.subject) {
       resolvedSubject = await resolve({ db, text: campaign.subject, refs, strict: true });
 
       if (resolvedSubject.status !== 'success') {
@@ -1263,18 +1942,57 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
       }
     }
 
-    // ── 6. Over-cap operational on a bulk_ok row: the rate window ──
+    // ── 6. A bulk_ok row (marketing, or over-cap operational): hold, health,
+    //       snapshot (marketing), then the rate window ──
     //
-    // Only an over-cap operational EMAIL campaign may hold a bulk_ok sender
-    // (createCampaign); a within-cap one goes through the public sendEmail,
-    // which refuses a bulk row (bulk_sender_refused). Non-bulk transports get
-    // no window here — the hub budget covers them.
+    // Only a marketing or an over-cap operational EMAIL campaign may hold a
+    // bulk_ok sender (createCampaign); a within-cap one goes through the
+    // public sendEmail, which refuses a bulk row (bulk_sender_refused).
+    // Non-bulk transports get no window here — the hub budget covers them.
 
     let bulkRow = null;
-    if (campaign.type === 'email' && campaign.bulk_confirmed_count != null) {
+    if (campaign.type === 'email' && (marketing || campaign.bulk_confirmed_count != null)) {
       const [[row]] = await db.query('SELECT * FROM email_credentials WHERE email = ? LIMIT 1', [campaign.sender]);
       if (row && emailService.isBulkRow(row)) bulkRow = row;
     }
+
+    let snapshot = null;
+    let sendTopic = null;
+    if (marketing) {
+      if (!bulkRow) {
+        // The sender row stopped being a marketing transport after create.
+        await recordResult(db, campaignId, contactId, 'failed', `${campaign.sender} is not a marketing transport`, { reason: 'marketing_requires_bulk_sender' });
+        await checkCompletion(db, campaignId);
+        return { failed: true, reason: 'marketing_requires_bulk_sender' };
+      }
+      // §6.5 THE HOLD, before every marketing send: a held transport pauses
+      // the campaign (its pending sends parked) and this job waits with them
+      // — nothing recorded; resume re-staggers it. The thresholds can SET it.
+      let holdReason = bulkRow.held_at != null ? (bulkRow.held_reason || 'held') : null;
+      if (!holdReason) {
+        const trip = await transportHealthGate(db, bulkRow);
+        if (trip) { await holdTransport(db, bulkRow, trip); holdReason = trip; }
+      }
+      if (holdReason) {
+        try { await pauseCampaign(db, campaignId); } catch (err) { if (!(err && err.name === 'CampaignError' && err.status === 409)) throw err; }
+        if (bulkRow.held_at != null) await heldAlert(db, bulkRow, holdReason, bulkRow.held_at);   // a fresh trip alerted in holdTransport
+        return { deferred: true, retryAtMs: Date.now() + PAUSED_DEFER_MS + Math.floor(Math.random() * PAUSED_DEFER_SPREAD_MS), reason: 'transport_held' };
+      }
+      const snap = await ensureSendSnapshot(db, campaign);
+      if (snap.error) {
+        await recordResult(db, campaignId, contactId, 'failed', `footer_missing: ${snap.error}`.slice(0, 1000), { reason: 'footer_missing' });
+        await checkCompletion(db, campaignId);
+        return { failed: true, reason: 'footer_missing', detail: snap.error };
+      }
+      snapshot = snap.snapshot;
+      // The footer states the snapshot's topic — with the advertisement label
+      // whenever EITHER the snapshot or the live topic is opt_out (a topic
+      // flipped mid-send never drops the label).
+      const live = await topicRow(db, campaign.topic_key);
+      sendTopic = { ...snapshot.topic,
+        consent_model: snapshot.topic.consent_model === 'opt_out' || (live && String(live.consent_model) === 'opt_out') ? 'opt_out' : 'opt_in' };
+    }
+
     if (bulkRow) {
       settings = settings || await readCampaignSettings(db);
       const [[w]] = await db.query(
@@ -1308,6 +2026,44 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
         return { replay: true, reason: 'reserved_elsewhere' };
       }
       throw err;
+    }
+
+    // ── 7a. Marketing (C2): the unsub token (send_ref = this reservation),
+    //        then the render + post-render assert — still before any provider call ──
+    //
+    // Plain autocommit statements: no transaction holds the campaign_results
+    // row while the token row is written (T2's lock order is never in play).
+    // Anything THROWN here clears the reservation like a definite send error
+    // (nothing reached the provider — a retry re-reserves, and re-uses this
+    // unused token); a permanent render outcome finalizes THIS reservation as
+    // 'failed' with no provider call.
+    let mk = null;
+    let unsubscribeUrl = null;
+    if (marketing) {
+      try {
+        if (!resultId) throw new Error('the reservation returned no result id (the token needs it)');
+        const unsub = require('./unsubService'); // lazy require (convention)
+        const { token } = await unsub.mintOrReuseUnsubToken(db, {
+          destination: contact.contact_email, topicKey: campaign.topic_key,
+          campaignId, contactId, sendRef: String(resultId),
+        });
+        unsubscribeUrl = unsub.urlFor(token);
+        mk = await renderMarketing(db, {
+          body: campaign.body, subject: campaign.subject, contactId,
+          unsubscribeUrl, preferencesUrl: unsub.preferencesUrlFor(token), topic: sendTopic, firm: snapshot.firm,
+        });
+      } catch (err) {
+        await clearReservation(db, campaignId, contactId, attemptId);
+        reservation.held = false;
+        throw err;
+      }
+      if (mk.status !== 'ok') {
+        const reason = mk.status === 'unresolved' ? 'body_unresolved' : 'footer_missing';
+        await failReservation(db, campaignId, contactId, attemptId, (reason === 'footer_missing' ? `footer_missing: ${mk.detail}` : mk.detail).slice(0, 1000), { reason });
+        reservation.held = false;
+        await checkCompletion(db, campaignId);
+        return { failed: true, reason, detail: mk.detail };
+      }
     }
 
     // The first send flips a scheduled campaign to sending (§6.4).
@@ -1352,12 +2108,11 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
           signature: !!campaign.include_signature
         };
 
-        // Email attachment — pass in both formats so emailService routes correctly
-        if (campaign.attachment_url) {
-          const fname = campaign.attachment_url.split('/').pop().split('?')[0] || 'attachment';
-          emailOpts.attachments     = [{ filename: fname, path: campaign.attachment_url }]; // SMTP (nodemailer)
-          emailOpts.attachment_urls = campaign.attachment_url;                              // Pabbly/Gmail
-        }
+        // Email attachment — ONCE, as attachment_urls: every adapter reads it
+        // (smtp / gmail turn it into one {filename, path:url}; pabbly sends the
+        // URL). Passing it as `attachments` too made smtp and gmail attach the
+        // file TWICE (their buildAttachments concatenates both) — fixed in C2.
+        if (campaign.attachment_url) emailOpts.attachment_urls = campaign.attachment_url;
 
         // D16 (Fred, 2026-11-02): an over-cap operational campaign may send
         // through a bulk_ok row — bulk:true and the correlation tags
@@ -1365,7 +2120,24 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
         // update still finds this row — T2 needs both tags), nothing else: no
         // headers, no reply_to, no footer. Every other email stays on the
         // public sendEmail (which refuses a bulk row).
-        sendResult = bulkRow
+        if (marketing) {
+          // C2: the explicit text part, the footer, the three headers, the
+          // snapshot's Reply-To, the correlation tags, no signature, and the
+          // email_log row without its body (the snapshot is the copy).
+          emailOpts.subject = mk.subject;
+          emailOpts.html = mk.html;
+          emailOpts.text = mk.text;
+          delete emailOpts.signature;
+        }
+        sendResult = marketing
+          ? await emailService.sendEmailDirect(db, bulkRow, {
+            ...emailOpts, bulk: true,
+            headers: marketingHeaders(unsubscribeUrl, snapshot.list_id),
+            ...(snapshot.reply_to ? { reply_to: snapshot.reply_to } : {}),
+            tags: { campaign_id: String(campaignId), result_id: String(resultId) },
+            log_body: false,
+          })
+          : bulkRow
           ? await emailService.sendEmailDirect(db, bulkRow, {
             ...emailOpts, bulk: true,
             ...(resultId ? { tags: { campaign_id: String(campaignId), result_id: String(resultId) } } : {}),
@@ -1373,6 +2145,18 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
           : await emailService.sendEmail(db, emailOpts);
       }
     } catch (sendErr) {
+      // Only a DEFINITE refusal: an error that is also ambiguous (no reply —
+      // the provider may have accepted it) must stay 'unknown', never re-pend.
+      if (marketing && !isAmbiguousSendError(sendErr) && isAccountPausedError(sendErr)) {
+        // SES refused at the ACCOUNT level (§6.4) — before acceptance, so the
+        // reservation is cleared like a definite error and this recipient goes
+        // back to pending (a deferral: no attempt used); the transport is held
+        // and every marketing campaign on it — this one included — paused.
+        await clearReservation(db, campaignId, contactId, attemptId);
+        reservation.held = false;
+        await holdTransport(db, bulkRow, `the provider refused at the account level: ${String(sendErr.response || sendErr.message || '').slice(0, 180)}`);
+        return { deferred: true, retryAtMs: Date.now() + PAUSED_DEFER_MS + Math.floor(Math.random() * PAUSED_DEFER_SPREAD_MS), reason: 'account_paused' };
+      }
       if (isAmbiguousSendError(sendErr)) {
         // The provider may have taken it: 'unknown', never resent.
         console.error(`[CAMPAIGN SEND] campaign=${campaignId} contact=${contactId} ambiguous provider error — recorded unknown: ${sendErr.message}`);
@@ -1385,12 +2169,7 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
       // Definite: nothing was accepted. Clear the reservation so a transient
       // retry re-reserves and resends, and a permanent failure records
       // 'failed' below — today's classification.
-      await db.query(
-        `DELETE FROM campaign_results
-          WHERE campaign_id = ? AND contact_id = ? AND status = 'sending'
-            AND JSON_UNQUOTE(JSON_EXTRACT(result_meta, '$.attempt_id')) = ?`,
-        [campaignId, contactId, attemptId]
-      );
+      await clearReservation(db, campaignId, contactId, attemptId);
       reservation.held = false;
       throw sendErr;
     }
@@ -1733,6 +2512,12 @@ module.exports = {
   previewCampaign,
   consentOptsFor,
   CampaignError,
+  // C2
+  testSendMarketing,
+  releaseTransport,
+  RELEASE_TOOL,
+  FOOTER_SLOT,
+  TEST_SEND_TOKEN,
   KLASSES,
   TOPIC_RE,
   DEFAULT_OPERATIONAL_CAP,
@@ -1748,4 +2533,19 @@ module.exports = {
   PAUSED_DEFER_MS,
   PARKED_AFTER,
   MAX_SCHEDULE_DAYS,
+  // C2 test seams (tests/campaignC2*.test.js)
+  assertHttpsAttachment,
+  injectFooter,
+  textPartFor,
+  listIdFor,
+  marketingHeaders,
+  footerHoles,
+  isAccountPausedError,
+  renderMarketing,
+  ensureSendSnapshot,
+  holdTransport,
+  transportHealthGate,
+  COMPLAINT_WARN_RATE,
+  COMPLAINT_HOLD_RATE,
+  BOUNCE_HOLD_RATE,
 };

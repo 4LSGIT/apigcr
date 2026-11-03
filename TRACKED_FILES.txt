@@ -645,6 +645,7 @@ ref/migrations/2026-11-02_cf_court_and_stamp_rule.md
 ref/migrations/2026-11-02_yisramail_t2_campaign_results_delivery.sql
 ref/migrations/2026-11-02_yisramail_t2_hook_ses_events.console.js
 ref/migrations/2026-11-03_yisramail_c1_campaign_class.sql
+ref/migrations/2026-11-04_yisramail_c2_marketing_send.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -1003,6 +1004,7 @@ scripts/updateRoutes.js
 scripts/verifyTrusteeReadthrough.js
 scripts/verify_strictstring_live.js
 scripts/yisramailC1Migrate.js
+scripts/yisramailC2Migrate.js
 scripts/yisramailP1MigrateConsent.js
 scripts/yisramailP2CheckInbound.js
 scripts/yisramailP3Migrate.js
@@ -1229,6 +1231,9 @@ tests/campaignC1.mysql.test.js
 tests/campaignC1.routes.test.js
 tests/campaignC1.test.js
 tests/campaignC1.ui.test.js
+tests/campaignC2.mysql.test.js
+tests/campaignC2.test.js
+tests/campaignC2.ui.test.js
 tests/campaignCaseTypeFilter.test.js
 tests/campaignPreviewEscape.test.js
 tests/capabilities.test.js
@@ -1410,6 +1415,7 @@ tests/dropboxService.normalizePath.test.js
 tests/dropboxService.retry.test.js
 tests/emailIngestSurrogate.mysql.test.js
 tests/emailIngestSurrogate.test.js
+tests/emailNoFileAccess.test.js
 tests/emailService.marketingOptions.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js
@@ -1911,6 +1917,7 @@ tests/ycPager.test.js
 tests/ycSettingRows.test.js
 tests/ycSync.test.js
 tests/yisramailC1Migrate.mysql.test.js
+tests/yisramailC2Migrate.mysql.test.js
 tests/yisramailP2CheckInbound.test.js
 tests/yisramailT1.adapters.test.js
 tests/yisramailT1.fences.routes.test.js

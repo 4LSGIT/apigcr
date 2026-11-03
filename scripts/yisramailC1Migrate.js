@@ -52,6 +52,17 @@ const BASE_COLUMNS = Object.freeze({
     'credential_id', 'from_name', 'signature_html', 'signature_text', 'owner_user', 'bulk_ok', 'events_driver', 'driver_config']),
 });
 
+/**
+ * Columns a LATER slice adds to these tables — tolerated when present (never
+ * checked or touched here), so this CHECK and its twins keep passing once the
+ * dump carries them: C2 (scripts/yisramailC2Migrate.js).
+ */
+const LATER_COLUMNS = Object.freeze({
+  campaigns: Object.freeze(['send_snapshot']),
+  campaign_results: Object.freeze([]),
+  email_credentials: Object.freeze(['held_at', 'held_reason']),
+});
+
 /** Columns C1 ADDS: table → name → [COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLLATION_NAME | null]. */
 const ADDED = Object.freeze({
   campaigns: Object.freeze({
@@ -164,7 +175,7 @@ async function state(conn) {
     const have = new Map(cols.map((x) => [x.name, x]));
     for (const b of BASE_COLUMNS[table]) if (!have.has(b)) problems.push(`${table}: pre-C1 column ${b} is missing`);
     for (const name of have.keys()) {
-      if (!BASE_COLUMNS[table].includes(name) && !ADDED[table][name]) problems.push(`${table}: unexpected column ${name}`);
+      if (!BASE_COLUMNS[table].includes(name) && !ADDED[table][name] && !LATER_COLUMNS[table].includes(name)) problems.push(`${table}: unexpected column ${name}`);
     }
     for (const [name, def] of Object.entries(ADDED[table])) {
       const col = have.get(name);
@@ -277,7 +288,7 @@ async function run(conn, { apply = false, say = console.log } = {}) {
   return { ok: true, line, altered };
 }
 
-module.exports = { run, state, clauses, commentOf, alterSql, MIGRATION, TABLES, BASE_COLUMNS, ADDED, MODIFIED, SETTING, SQL };
+module.exports = { run, state, clauses, commentOf, alterSql, MIGRATION, TABLES, BASE_COLUMNS, LATER_COLUMNS, ADDED, MODIFIED, SETTING, SQL };
 
 // ─────────────────────────────────────────────────────────────
 // CLI

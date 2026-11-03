@@ -142,3 +142,19 @@ describe('firmValues (the resolver\'s firm pseudo-table)', () => {
     expect(formatPhone('')).toBeNull();
   });
 });
+
+// YisraMail C2: the send-start snapshot (campaigns.send_snapshot.firm) feeds the footer.
+describe('the firm snapshot input (C2)', () => {
+  test('a snapshot wins over the live values; it is held to the same fail-closed checks; defaults still apply', async () => {
+    await primeFirm(FIRM);
+    const snap = { name: 'Old Firm', postal_address: '1 Old Rd, Detroit, MI', phone: '3135550000', attorney_name: 'Old Attorney', debt_relief_statement: null, ad_label: '' };
+    const f = buildComplianceFooter({ unsubscribeUrl: UNSUB, preferencesUrl: PREFS, topic: NEWS, firm: snap });
+    expect(f.text).toContain('Old Firm · 1 Old Rd, Detroit, MI · (313) 555-0000');
+    expect(f.text).toContain('Responsible attorney: Old Attorney');
+    expect(f.text).toContain(DEFAULTS.debt_relief_statement);
+    expect(f.text).toContain(DEFAULTS.ad_label);
+    expect(f.html).not.toMatch(/Smith &amp; Jones/);
+    expect(() => buildComplianceFooter({ unsubscribeUrl: UNSUB, preferencesUrl: PREFS, topic: NEWS, firm: { ...snap, attorney_name: ' ' } })).toThrow(/firm_attorney_name/);
+    expect(() => buildComplianceFooter({ unsubscribeUrl: UNSUB, preferencesUrl: PREFS, topic: NEWS, firm: 'Old Firm' })).toThrow(/firm must be/);
+  });
+});

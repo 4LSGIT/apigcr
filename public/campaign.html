@@ -353,6 +353,7 @@
 
   <div style="display:flex; gap:10px; margin-top:8px;">
     <button class="btn btn-outline" onclick="previewCampaign()">Preview</button>
+    <button class="btn btn-outline hidden" id="c-test-send" onclick="sendMarketingTest()" title="Sends this email, rendered for the first selected contact, to your own address — [TEST] subject, the real footer and headers, no unsubscribe token">Send test to me</button>
     <button class="btn btn-success" onclick="createCampaign()">Create Campaign</button>
   </div>
 </div>
@@ -659,7 +660,8 @@ function populateSenders() {
   } else {
     const list = campaignClass() === 'marketing' ? (composeOpts.marketing_senders || []) : emailAddresses;
     list.forEach(e => {
-      const label = e.from_name ? `${e.from_name} (${e.email})` : e.email;
+      // C2: a HELD marketing transport stays listed (the reason shows) but refuses creates and sends.
+      const label = (e.from_name ? `${e.from_name} (${e.email})` : e.email) + (e.held ? ' — HELD' : '');
       sel.innerHTML += `<option value="${esc(e.email)}">${esc(label)}</option>`;
     });
   }
@@ -671,6 +673,8 @@ function syncClassUi() {
   const klass = campaignClass();
   document.getElementById('class-honesty').classList.toggle('hidden', klass !== 'operational');
   document.getElementById('class-marketing').classList.toggle('hidden', klass !== 'marketing');
+  // C2: the marketing test send (works while the switch is off; needs campaigns.bulk).
+  document.getElementById('c-test-send').classList.toggle('hidden', klass !== 'marketing' || !composeOpts.can_bulk);
   const note = document.getElementById('class-marketing-note');
   note.textContent = !composeOpts.marketing_enabled
     ? 'Marketing campaigns are not switched on yet — creating one will be refused.'
@@ -1234,6 +1238,32 @@ async function previewCampaign() {
     });
   } catch (err) {
     Toast.fire({ icon: 'error', title: err.message || 'Preview failed' });
+  }
+}
+
+/**
+ * "Send test to me" (YisraMail C2): the marketing render for the first
+ * selected contact — the real footer, headers and Reply-To, "[TEST] " subject —
+ * sent to the caller's own address. No unsubscribe token (its link is a dead
+ * placeholder), no campaign is created.
+ */
+async function sendMarketingTest() {
+  if (campaignClass() !== 'marketing') return;
+  if (!selectedContacts.length) return Toast.fire({ icon: 'warning', title: 'Select a contact first — the test renders for the first one' });
+  const sender = document.getElementById('c-sender').value;
+  const subject = document.getElementById('c-subject').value.trim();
+  const body = getBody();
+  if (!sender) return Toast.fire({ icon: 'warning', title: 'Select a sender' });
+  if (!campaignTopic()) return Toast.fire({ icon: 'warning', title: 'Choose a topic for a marketing campaign' });
+  if (!subject) return Toast.fire({ icon: 'warning', title: 'Subject is required for email' });
+  if (!body.replace(/<[^>]*>/g, '').trim() && !/<img\b/i.test(body)) return Toast.fire({ icon: 'warning', title: 'Message body is empty' });
+  try {
+    const payload = { sender, subject, body, topic_key: campaignTopic(), contactId: selectedContacts[0].contact_id };
+    if (emailAttachmentUrl) payload.attachmentUrl = emailAttachmentUrl;
+    const r = await P.apiSend('/api/campaigns/test-send', 'POST', payload);
+    Toast.fire({ icon: 'success', title: `Test sent to ${r && r.to ? r.to : 'you'}` });
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: err.message || 'Test send failed' });
   }
 }
 

@@ -48,6 +48,8 @@ function makeDb({ settings = {}, campaigns = {} } = {}) {
     if (/^DELETE FROM scheduled_jobs/.test(sql)) return [{ affectedRows: 2 }];
     if (/^UPDATE scheduled_jobs SET scheduled_time = scheduled_time \+ INTERVAL/.test(sql)) { T.parked = (T.parked || 0) + 1; return [{ affectedRows: 3 }]; }
     if (/^SELECT class, bulk_confirmed_count FROM campaigns/.test(sql)) return [[{ class: 'operational', bulk_confirmed_count: null }]];
+    // C2: resume's held-transport read (a marketing campaign only) — none here.
+    if (/FROM campaigns c JOIN email_credentials ec ON ec\.email = c\.sender/.test(sql)) return [[]];
     if (/^UPDATE scheduled_jobs sj JOIN/.test(sql)) { T.pulled = (T.pulled || 0) + 1; return [{ affectedRows: 3 }]; }
     if (/MIN\(scheduled_time\) AS due/.test(sql)) return [[{ due: null, n: 0 }]];
     if (/AS total/.test(sql)) return [[{ total: 2, done: 0 }]];

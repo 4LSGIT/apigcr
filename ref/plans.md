@@ -1667,9 +1667,8 @@ ref/YISRAMAIL_DESIGN.md §6.1 / §6.4 "As built (C1)" says what shipped.
 - **The operational choice is not separately attested**: the class is stored
   with `created_by`; the honesty line is shown, not recorded as an event.
 - **Resume is not gated** on `campaigns.bulk` (any staff login may pause /
-  resume / cancel, as cancel always was). C2's transport hold pauses
-  campaigns and wants an SU-only release — resume must then refuse a held
-  transport.
+  resume / cancel, as cancel always was). Since C2 resume refuses a marketing
+  campaign whose transport is held (the SU release comes first).
 - **`scheduled_jobs.name` has no index**: the pump tick, resume and the batch
   quota's candidate read filter `name LIKE 'campaign:…'` (13.5k rows today).
   Add one (or a `campaign_id` column) if campaigns grow the table a lot.
@@ -1680,6 +1679,43 @@ ref/YISRAMAIL_DESIGN.md §6.1 / §6.4 "As built (C1)" says what shipped.
   after C1 reports `bulk_ok` / `provider_message_id` "comment differs" (C1
   rewrote both comments). They are one-shot records of their runs; their
   twins clone and strip, so they stay green.
+
+## YisraMail C2 (marketing send path, 2026-11-04) — deferred
+
+ref/YISRAMAIL_DESIGN.md §6.4 / §6.5 "As built (C2)" says what shipped (dark).
+- **SES account-pause reply shapes are `VERIFY(live)`** (`campaignService.
+  ACCOUNT_PAUSE_RE`): AWS documents the condition and the API exception names,
+  not the SMTP reply text. Widen the pattern from the first real reply; until
+  then an unrecognised pause reply is an ordinary permanent 554 per recipient.
+- **The hold gates the marketing class only.** An over-cap operational (D16)
+  campaign on the same `bulk_ok` row keeps sending while it is held (and an
+  account-level refusal on a D16 send is a per-recipient failure). Extend the
+  hold to every `bulk:true` send if D16 sends ever go out through SES at volume.
+- **`transportHealth` runs on every marketing send** (24 h scan of
+  `campaign_results`, no index on the *_at columns — see T2 above); cache it
+  per transport for a few seconds, or index, before 10k-row days.
+- **The test send is not audited or rate-limited** beyond `campaigns.bulk`
+  (it only ever reaches the caller's own address).
+- **No snapshot purge / retention job**: `campaigns.send_snapshot` is kept as
+  long as the campaign row (MRPC 7.2(b) asks ≥ 2 years; nothing deletes
+  campaigns). Re-check if a campaign delete or archive is ever added.
+- **A topic flipped mid-send**: consent follows the live topic, the footer
+  states the snapshot's topic with the ad label when either is `opt_out`.
+  A cleaner answer is to freeze a campaign's topic model at create.
+- **Tags without a driver** (T1 above) still apply: the marketing path does
+  not require a driver on the row; the live row has `ses`.
+- **`emailService.htmlToText` is quadratic on unclosed tags** (pre-existing,
+  found in C2 review round 1): its `<[^>]+>` strip re-scans to the end from
+  every `<` with no `>` — 48 KB of `<a ` takes ~0.3 s, 96 KB ~1.2 s. It runs
+  for every html-only send (operational campaigns, workflows) through
+  `normalizeBodies`. C2's marketing text part no longer uses it. A linear
+  strip (`<[^<>]*>`, or campaignService's `stripTags` loop) changes what a
+  tag containing a stray `<` strips — decide with a fixture sweep.
+- **Inline nodemailer `attachments` on `/internal/email`** are forwarded raw
+  from internal callers; local paths are now refused by `disableFileAccess`,
+  but the route still accepts any nodemailer attachment shape (an `href`
+  fetch from the server's network position). Restrict it to
+  `{filename, content}` / https URLs if internal callers allow.
 
 ## From the contact-intake safety slices (2026-10-27) — deferred
 

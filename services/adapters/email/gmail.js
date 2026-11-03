@@ -198,9 +198,9 @@ async function materializeAttachments(mergedAttachments) {
         );
       }
     }
-    // path: that isn't an HTTP(S) URL is treated as a local file by
-    // MailComposer; we don't support that here and it shouldn't appear
-    // in normal usage (every production caller passes URLs).
+    // path: that isn't an HTTP(S) URL would be read as a LOCAL FILE by
+    // MailComposer — compileMime sets disableFileAccess, so it fails the send
+    // instead (YisraMail C2 security fix; every production caller passes URLs).
   }
 }
 
@@ -210,7 +210,9 @@ async function materializeAttachments(mergedAttachments) {
 
 function compileMime(mailOptions, { keepBcc = false } = {}) {
   return new Promise((resolve, reject) => {
-    const composer = new MailComposer(mailOptions);
+    // disableFileAccess: never read a local file for an attachment path
+    // (C2 security fix — the smtp adapter's transport sets the same flag).
+    const composer = new MailComposer({ ...mailOptions, disableFileAccess: true });
     const node = composer.compile();
     // Only a hub send with a bcc sets this (see the header): the Gmail API
     // takes its recipients from the raw headers.

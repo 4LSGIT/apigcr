@@ -58,6 +58,7 @@ const { advanceWorkflow } = require('../lib/workflow_engine');
 const seq = require('../lib/sequenceEngine');
 const campaignService = require('../services/campaignService');
 const c1Migrate = require('../scripts/yisramailC1Migrate');
+const c2Migrate = require('../scripts/yisramailC2Migrate');
 const apptService = require('../services/apptService');
 const booking = require('../routes/booking');
 const manage = require('../routes/manage');
@@ -132,7 +133,8 @@ d('opt-out on real MySQL', () => {
     for (const sql of consentStatements()) await q(sql);
     // C1 columns (campaigns.class …) — the dump lacks them until the C1
     // migration has run live; the migration script is idempotent.
-    { const c = await pool.getConnection(); try { expect((await c1Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true); } finally { c.release(); } }
+    // C1 + C2 (campaignService reads class / send_snapshot / held_at) — both idempotent.
+    { const c = await pool.getConnection(); try { expect((await c1Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true); expect((await c2Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true); } finally { c.release(); } }
 
     await q(`INSERT INTO contacts (contact_id, contact_name, contact_fname, contact_lname, contact_phone, contact_email) VALUES
       (1, 'Pat One', 'Pat', 'One', '${PAT_PHONE}', 'pat@example.com'),

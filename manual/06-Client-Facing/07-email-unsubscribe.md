@@ -12,9 +12,11 @@ and the two headers that make Gmail, Outlook and Apple Mail show their own
 authorization, and it only ever covers one email address's **marketing**
 email.
 
-> Status: the page is live, but nothing sends marketing email yet — links are
-> minted by the marketing send path (campaigns, slice C2), which is not built.
-> Until then the page is reached only by test links.
+> Status: the page is live and the marketing send path (campaigns, slice C2)
+> mints one link per marketing email — but marketing campaigns stay switched
+> off until the compliance checklist passes, so for now the page is reached
+> only by test links. (A campaign **test send** carries a placeholder link that
+> opens the page's "link not recognized" view and changes nothing.)
 
 **Case and appointment email is never affected.** An unsubscribe here stops
 marketing email to that address — nothing else. Reminders, document

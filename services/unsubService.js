@@ -4,13 +4,17 @@
  * Email unsubscribe tokens — the substrate behind /u/<token> (YisraMail P3,
  * ref/YISRAMAIL_DESIGN.md §4.5; routes/unsubActions.js is the surface).
  *
- * One comm_unsub_tokens row per marketing send (C2 mints it inside the send
- * reservation). The token is a bearer capability for ONE destination's
+ * One comm_unsub_tokens row per marketing send (C2 mints it right after the
+ * send reservation, send_ref = the reservation's campaign_results id; a retry
+ * after a DEFINITE send failure re-uses the unused token —
+ * mintOrReuseUnsubToken). The token is a bearer capability for ONE destination's
  * MARKETING consent: it can opt that address out of (or back into) marketing
  * topics and nothing else — D18: there is no email scope that stops case or
  * appointment mail, and recordConsent refuses an email 'all'.
  *
- *   mintUnsubToken(conn, …)   C2, on the caller's connection
+ *   mintUnsubToken(conn, …)   on the caller's connection
+ *   mintOrReuseUnsubToken(conn, …)  C2's: an unused token of the same
+ *                             (campaign, contact, destination, topic) first
  *   urlFor(token)             the /u/ URL on the landing origin
  *   lookupToken(db, token)    the page's read — READ ONLY
  *   oneClick(db, token, …)    RFC 8058 POST: opt_out of the token's topic (D4)
@@ -90,6 +94,13 @@ const UNSUB_SQL = Object.freeze({
   lock: 'SELECT token, destination, topic_key, campaign_id, contact_id, send_ref, used_at'
     + ' FROM comm_unsub_tokens WHERE token = ? FOR UPDATE',
   used: 'UPDATE comm_unsub_tokens SET used_at = NOW() WHERE token = ? AND used_at IS NULL',
+  // C2: a token minted for an earlier attempt of the same send that never
+  // reached the provider (a definite failure cleared its reservation) —
+  // never POSTed, so it was never seen. Newest first.
+  reusable: 'SELECT token FROM comm_unsub_tokens WHERE campaign_id = ? AND contact_id = ? AND destination = ? AND topic_key = ?'
+    + ' AND used_at IS NULL ORDER BY created_at DESC, token LIMIT 1',
+  // ...re-pointed at the new attempt's campaign_results id.
+  repoint: 'UPDATE comm_unsub_tokens SET send_ref = ? WHERE token = ? AND used_at IS NULL',
   // The topics the page offers: active email topics (D18 — marketing scopes only).
   topics: "SELECT topic_key, label, description, consent_model FROM comm_topics WHERE channel = 'email' AND active = 1 ORDER BY topic_key",
   assignee: "SELECT user FROM users WHERE user = ? AND user_auth LIKE 'authorized%'",
@@ -129,9 +140,8 @@ function clip(s, max) {
  * Collision retry on ER_DUP_ENTRY (the token is the only unique key).
  * `generate` is a test seam. → the token string
  */
-async function mintUnsubToken(conn, {
-  destination, topicKey, campaignId = null, contactId = null, sendRef = null,
-} = {}, { generate = generateToken } = {}) {
+/** The mint's checks → { dest, cid, ctid, ref } (throws on any of them). */
+async function mintArgs(conn, { destination, topicKey, campaignId, contactId, sendRef }) {
   if (!conn || typeof conn.query !== 'function') throw new Error('mintUnsubToken: needs the caller\'s connection');
   const dest = optout.normalizeDestination(CHANNEL, destination);
   if (!dest) throw new Error(`mintUnsubToken: "${destination}" is not a valid address`);
@@ -145,7 +155,17 @@ async function mintUnsubToken(conn, {
   const ctid = optInt(contactId, 'contactId');
   const ref = sendRef == null || sendRef === '' ? null : String(sendRef);
   if (ref !== null && ref.length > 64) throw new Error('mintUnsubToken: sendRef exceeds 64 characters');
+  return { dest, cid, ctid, ref };
+}
 
+async function mintUnsubToken(conn, {
+  destination, topicKey, campaignId = null, contactId = null, sendRef = null,
+} = {}, { generate = generateToken } = {}) {
+  const { dest, cid, ctid, ref } = await mintArgs(conn, { destination, topicKey, campaignId, contactId, sendRef });
+  return insertToken(conn, { dest, topicKey, cid, ctid, ref }, generate);
+}
+
+async function insertToken(conn, { dest, topicKey, cid, ctid, ref }, generate) {
   for (let i = 0; i < MINT_ATTEMPTS; i++) {
     const token = generate();
     try {
@@ -157,6 +177,31 @@ async function mintUnsubToken(conn, {
     }
   }
   throw new Error(`mintUnsubToken: no unique token after ${MINT_ATTEMPTS} attempts`);
+}
+
+/**
+ * C2's mint (campaignService.executeSend, right after the reservation, plain
+ * autocommit statements on the pool — no transaction holds a campaign_results
+ * lock while this runs, so T2's lock order is never in play). Same checks as
+ * mintUnsubToken. When an UNUSED token already exists for the same campaign,
+ * contact, destination and topic — an earlier attempt of THIS send whose
+ * provider call failed definitely (its reservation was cleared, so nobody
+ * received that token) — it is re-pointed at the new attempt (send_ref) and
+ * returned instead of minting a second row. No campaign or contact id → a
+ * plain mint. → { token, reused }
+ */
+async function mintOrReuseUnsubToken(conn, {
+  destination, topicKey, campaignId = null, contactId = null, sendRef = null,
+} = {}, { generate = generateToken } = {}) {
+  const a = await mintArgs(conn, { destination, topicKey, campaignId, contactId, sendRef });
+  if (a.cid != null && a.ctid != null) {
+    const [[old]] = await conn.query(UNSUB_SQL.reusable, [a.cid, a.ctid, a.dest, topicKey]);
+    if (old) {
+      const [r] = await conn.query(UNSUB_SQL.repoint, [a.ref, old.token]);
+      if (r && r.affectedRows) return { token: String(old.token), reused: true };
+    }
+  }
+  return { token: await insertToken(conn, { dest: a.dest, topicKey, cid: a.cid, ctid: a.ctid, ref: a.ref }, generate), reused: false };
 }
 
 /** The unsubscribe URL on the landing origin (the one place it is built — lib/ctaLinks' convention). */
@@ -521,6 +566,7 @@ module.exports = {
   NOTE_MAX,
   UnsubInputError,
   mintUnsubToken,
+  mintOrReuseUnsubToken,
   urlFor,
   preferencesUrlFor,
   lookupToken,

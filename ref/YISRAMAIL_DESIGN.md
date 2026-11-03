@@ -6,7 +6,9 @@ surface) built — §4.5 "As built"; P4 (staff consent UI) built — §4.7 "As
 built"; T1 (transport contract) built — §5.2 "As built"; T2 (events) built —
 §5.4 "As built" (parsed shapes confirmed on captured events except Reject /
 DeliveryDelay / Rendering Failure); C1 (campaign hardening) built — §6.1 and
-§6.4 "As built (C1)"; nothing else built.** Ruled 2026-10-29 (Fred):
+§6.4 "As built (C1)"; C2 (the marketing send path) built, landing dark —
+§6.4 / §6.5 "As built (C2)" (the SES account-pause reply shapes are
+`VERIFY(live)`); nothing else built.** Ruled 2026-10-29 (Fred):
 D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
 Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
 later; D15 no RC push in v1, D16 over-cap operational sends with
@@ -460,8 +462,9 @@ its read rule (one service, automation refuses, staff warn) stands.
   - **An explicit text part.** Today `executeSend` passes `html` only and
     `htmlToText` (`services/emailService.js`) strips tags, so a URL that lives
     only in an `href` vanishes from the text part. The marketing path builds
-    and stores the text part itself (`campaigns.body_text`), rendering links
-    as visible URLs. After render the send asserts the unsubscribe URL is in
+    the text part itself (its template copy is stored in the send-start
+    snapshot, `campaigns.send_snapshot.text`), rendering links as visible
+    URLs. After render the send asserts the unsubscribe URL is in
     the HTML (as an `href`) **and** visible in the text part, else it records
     `failed` (fail closed).
   - Headers: exactly one `List-Unsubscribe: <https://4lsg.com/u/<token>>`
@@ -507,8 +510,10 @@ its read rule (one service, automation refuses, staff warn) stands.
 - Replies saying "remove me" land in the reply-to mailbox (YC hub); staff
   unsubscribe via the contact page (source `staff`).
 
-**As built (P3).** Nothing mints a token until C2 wires `executeSend`; the
-surface is live and smoke-tested ahead of it (gate G1).
+**As built (P3).** C2's marketing send mints the tokens (§6.4 "As built
+(C2)": one per send, right after the reservation, `send_ref` = its
+`campaign_results` id, re-used across a definite retry); the surface went
+live and was smoke-tested ahead of it (gate G1).
 - **Table** `comm_unsub_tokens` as in §4.2 (with `send_ref`), created by
   `scripts/yisramailP3Migrate.js` (CHECK / `--apply`: verifies every column,
   the keys and — in a rolled-back transaction on the engine — that two tokens
@@ -565,7 +570,9 @@ surface is live and smoke-tested ahead of it (gate G1).
   note that changed nothing has no event, so it gets a warning of its own
   carrying the text.
 - **The footer** `lib/complianceFooter.buildComplianceFooter({ unsubscribeUrl,
-  preferencesUrl, topic })` → `{ html, text }`: ad label (opt_out topics
+  preferencesUrl, topic, firm? })` → `{ html, text }` (`firm` = C2's
+  send-start snapshot of `firmValues()`, held to the same checks; absent, the
+  values are read now): ad label (opt_out topics
   only), why + unsubscribe URL (an `href` AND visible) + manage preferences,
   firm name · address · phone, responsible attorney, the §528 statement;
   inline styles, no tables, every value escaped. Throws on a missing firm
@@ -1359,10 +1366,10 @@ with no token, footer or headers.
   marketing because campaigns had no class); an operational email campaign
   now reaches one — the ruled design, pinned by
   `tests/campaignC1.mysql.test.js` (O) and `tests/optout.mysql.test.js`.
-- **The marketing send is NOT built:** `executeSend` records a marketing
-  recipient `skipped` — `marketing_disabled` while the switch is off,
-  `marketing_path_unbuilt` once it is on — and never falls through to the
-  operational send (C2 builds the path).
+- **The marketing send** was not built in C1 (a marketing recipient was
+  recorded `skipped` `marketing_path_unbuilt` with the switch on); C2 built it
+  — §6.4 "As built (C2)". `marketing_disabled` while the switch is off is
+  unchanged.
 - **D16 as built:** an over-cap operational EMAIL campaign whose sender is a
   `bulk_ok` row sends through `emailService.sendEmailDirect(db, row,
   {…, bulk: true, tags: {campaign_id, result_id}})` — the tags so an SES
@@ -1632,6 +1639,157 @@ marketing path, the per-recipient token and the test send are C2's.
   checkCompletion. A pump still running its last tick at resume retires on
   its next one (newest wins), so the resume race leaves one pump.
 
+**As built (C2).** `services/campaignService.js` (executeSend's marketing
+branch, `testSendMarketing`, `releaseTransport`), `services/unsubService.js`
+(`mintOrReuseUnsubToken`), `services/emailService.js` + `smtp.js`
+(`log_body`), `lib/complianceFooter.js` (`firm` snapshot input),
+`routes/campaign.js`, `public/campaign.html`; schema by
+`scripts/yisramailC2Migrate.js`
+(`ref/migrations/2026-11-04_yisramail_c2_marketing_send.sql`). It slots INTO
+C1's reservation contract — reserve → send → `sent`, ambiguous → `unknown` —
+unchanged. `marketing_send_enabled` stays `'0'` until gate G1.
+- **Order, marketing email** (switch exactly `'1'`): contact → consent
+  (`consentOptsFor` → `findOptedOut(…, {klass:'marketing', topic})`: scope
+  `marketing` / the topic, and an `opt_in` topic needs state `opted_in` — P1's
+  predicate) → channel → the `bulk_ok` row (gone non-bulk since create →
+  `failed` `marketing_requires_bulk_sender`) → **the hold** (§6.5 "As built
+  (C2)") → **the send-start snapshot** → C1's rate window → RESERVE →
+  **token + render + post-render assert** → send → `sent`. A marketing body
+  is resolved AFTER the reservation (it may use `{{send.unsubscribe_url}}`,
+  and the token needs the row's id). Anything THROWN in the token / render
+  step (a resolver DB error, a mint deadlock) clears the reservation exactly
+  like a definite send error — nothing reached the provider, so a retry
+  re-reserves (pinned: `tests/campaignC2.mysql.test.js` X). C1's
+  scheduled → sending campaign flip still sits between that step and the
+  send, outside the clearing catch: a throw there leaves the row `sending`
+  and the retry records it `unknown` (a missed send, never a duplicate —
+  C1's rule); a permanent render outcome
+  (`body_unresolved`, `footer_missing`) finalizes THAT reservation `failed`
+  (`failReservation`, conditional on `sending` + the attempt id) with no
+  provider call.
+- **Token (`mintOrReuseUnsubToken`):** plain autocommit statements on the
+  pool right after the single-row reservation INSERT — no transaction holds
+  the `campaign_results` row while the token row is written, so T2's lock
+  order (result row, then contact row) is never in play. `send_ref` = the
+  reservation's `result_id`. An UNUSED token of the same (campaign, contact,
+  destination, topic) — an earlier attempt of this send whose provider call
+  failed definitely, so nobody received it — is re-pointed at the new
+  attempt instead of minting a second row; a token after an ambiguous attempt
+  never comes back (that recipient is `unknown`, never re-reserved).
+- **Render (`renderMarketing`, shared with the test send):** body resolved
+  `escape:'html'`, subject unescaped, refs `contacts` + `send`
+  (`unsubscribe_url`, `preferences_url`, `topic_key`, `topic_label`) + `firm`
+  = the snapshot's. Footer = `buildComplianceFooter({unsubscribeUrl:
+  urlFor(token), preferencesUrl: preferencesUrlFor(token), topic, firm})`,
+  injected at the **footer-slot marker `<!-- yc:footer-slot -->`** (the
+  first one INSIDE the body — after the `<body>` open tag, or after
+  `</head>` when there is no `<body>`, and before the closing tag; a marker in
+  `<head>` / `<title>` or after `</body>` is normally ignored — C3's builder
+  places the footer inside a card layout with it) or before the LAST
+  `</body>`, else before `</html>`, else appended; a `</body>` that comes
+  after `</html>` is
+  ignored, so the footer never lands after `</html>`. Indices come from an
+  ASCII-only lowercase (`toLowerCase` can lengthen a string). The body window
+  is found by plain string search, so this placement is best effort against
+  ACCIDENTAL misplacement, not a visibility guarantee: a `<body` inside a
+  comment, a `<title>` or an attribute value in `<head>` moves the window into
+  `<head>`, and the post-render assert still passes. A campaign author can
+  defeat it deliberately — as with CSS that hides the footer, which no string
+  assert catches. **Text part**
+  (`textPartFor`): comments and `<head>` / `<style>` / `<script>` /
+  `<title>` removed, every http(s) / mailto link kept visible as
+  `label (url)` (the bare url when the label is the url), `<br>` / `</p>` /
+  `</li>` line breaks (no other block closer adds one), tags stripped, and
+  these entities decoded: `&nbsp;` `&lt;` `&gt;` `&quot;` `&apos;` / `&#39;`
+  `&amp;` plus every numeric entity (`&#NNN;`, `&#xHH;`) — other named
+  entities (`&copy;`, `&mdash;`, `&rsquo;` …) pass through as written, as
+  they did in `emailService.htmlToText`;
+  the footer's text appended at the end. Every step is LINEAR (indexOf loops,
+  no overlapping quantifiers — CLAUDE.md's validator rule: a staff-authored
+  body runs here per recipient and inside the test-send request); the worst
+  cases are pinned by a timing test (`tests/campaignC2.test.js`). It no
+  longer calls `emailService.htmlToText`, whose `<[^>]+>` strip is quadratic
+  on unclosed tags (pre-existing, `ref/plans.md`). The topic the footer states is the snapshot's, with the
+  advertisement label whenever EITHER the snapshot or the live topic is
+  `opt_out` (a topic flipped mid-send never drops the label).
+- **Post-render assert (`footerHoles`), fail closed:** on the FINAL html and
+  text — the html carries the builder's own marker
+  (`data-yc-compliance-footer="1"`), not after `</html>`, the footer block
+  and `href="<unsubscribe url>"`; the text contains the footer text and the
+  url. A hole, or the builder
+  throwing (a missing firm name / address / attorney), → that recipient
+  `failed` `footer_missing: …`, NO provider call, per recipient (the job
+  returns normally; the campaign finalizes).
+- **Send:** `sendEmailDirect(bulkRow, {…, bulk:true, headers:
+  {List-Unsubscribe: <url>, List-Unsubscribe-Post: List-Unsubscribe=One-Click,
+  List-Id: <topic.sender-domain>}, reply_to, tags: {campaign_id, result_id}
+  (strings), log_body:false})`, html + the explicit text, the attachment
+  ONCE (below), NO signature. `List-Id` = `<topic_key.sender-domain>`
+  (`_` → `-`), e.g. `<newsletter.news.4lsg.com>`. Reply-To = the snapshot's
+  (`marketing_reply_to`, blank → `firm_email`; both blank → none, replies go
+  to the sender). The SES driver adds its own headers (T1).
+  `provider_message_id` lands on the `sent` update (C1's, unchanged).
+- **`email_log` without the body:** `log_body:false` (a new bulk-only
+  option) makes the smtp adapter write `LOG_BODY_OMITTED` in place of the
+  body on the success row (envelope + `delivery_info` kept; the FAILED row's
+  body is the error text either way). Fail closed in `emailService`: exactly
+  `false`, only with `bulk:true`, only with a `List-Unsubscribe` header (so the
+  over-cap D16 send — no headers — always logs its body), only on an adapter
+  declaring `log_without_body` (smtp); else `marketing_log_body_refused` /
+  `adapter_lacks_capability`. The public `sendEmail` strips it.
+- **Send-start snapshot (`campaigns.send_snapshot`, MRPC 7.2(b)):** written
+  ONCE by the first marketing send to reach it (`UPDATE … WHERE send_snapshot
+  IS NULL`, then read back — a concurrent first send converges on the
+  winner): `{v, taken_at, firm (firmValues()), topic, reply_to, list_id,
+  sender, subject, html, text, token_placeholder:'{token}'}` — the template
+  copy is the body with the footer injected for the placeholder token. Every
+  recipient renders from it, so a settings edit mid-send cannot split the
+  campaign; a new campaign takes the new values. A firm hole at snapshot time
+  → that recipient `failed` `footer_missing`, nothing written (the next send
+  tries again). No campaign delete route exists — keep it that way (§4.5).
+- **Account pause:** a marketing send's DEFINITE error (`isAmbiguousSendError`
+  says no — an error with no reply stays `unknown`, never re-pended)
+  matching SES's account-level family (`isAccountPausedError`: "Account is
+  paused", "Sending paused for this account / configuration set", "Sending
+  suspended for this account", the `*SendingPaused*` exception names; an SMTP
+  reply code, if any, 4xx/5xx) → the reservation cleared (the refusal came
+  before acceptance), the transport HELD with the reply as the reason (which
+  pauses every running marketing campaign on it, this one included, and
+  raises the `error` alert), and the job DEFERRED like the paused backstop —
+  the recipient is back to pending, no attempt used. **`VERIFY(live)`:** AWS
+  documents the condition and the API exception names, not the SMTP reply
+  text; the SMTP shapes are community-reported — widen the pattern from the
+  first real one. An ordinary 554 (an unverified address) stays a
+  per-recipient `failed`.
+- **Test send (`POST /api/campaigns/test-send`, `testSendMarketing`):**
+  `{sender, subject, body, topic_key, contactId, attachmentUrl?}` → the same
+  `renderMarketing` for that contact with the LIVE firm values, `[TEST] `
+  before the subject, the same transport, headers and Reply-To, to the
+  caller's own `users.email`. The unsubscribe URL uses the dead placeholder
+  token `test.send.no-token` (it fails `PUBLIC_TOKEN_RE`, so `/u/` answers
+  the neutral page and a one-click records nothing) — no token row, no
+  campaign or result row, no tags, the body logged (not a broadcast). Needs
+  `campaigns.bulk` (403) and a staff login with an email (400); refused on a
+  held transport (422). Works while `marketing_send_enabled` is off: it is
+  staff-to-self, so the footer and headers can be checked before G1. The
+  compose tab shows "Send test to me" for the marketing class (with
+  `campaigns.bulk`), rendering for the first selected contact.
+- **Attachments (security + a pre-existing duplicate, review round 1):**
+  an EMAIL campaign's `attachment_url` must be `https://` at create
+  (`assertHttpsAttachment`, 400 `bad_attachment_url` — refused, never
+  stripped; rows created before C2 are not re-checked), and so must the test
+  send's: nodemailer reads any attachment `path` that is not a URL as a LOCAL
+  FILE, so `/proc/self/environ` would have mailed the server's secrets. The
+  root fix is in the adapters: the smtp transport and the gmail adapter's
+  MailComposer set `disableFileAccess` (URL paths and inline `content` still
+  work; `disableUrlAccess` is not set; no caller passes a local path — swept
+  2026-11-04). executeSend (every class) and the test send pass the file
+  ONCE, as `attachment_urls` — passing it as `attachments` too made smtp and
+  gmail attach it twice (their `buildAttachments` concatenates both).
+- **Not built here:** the C3 builder (it places the slot marker), C4's
+  reporting, a hold for the over-cap D16 sends on a held transport (the
+  hold gates marketing only — `ref/plans.md`), and auto-release (never).
+
 ### 6.5 Complaint safety (enforced from the first send) and reporting
 
 - **Enforcement — T2 + C2, part of gate G1.** T2 computes the rates (no
@@ -1653,6 +1811,37 @@ marketing path, the per-recipient token and the test send are C2's.
 - **Reporting — C4.** Campaign view adds delivered / bounced / complained /
   unsubscribed / unknown counts (unsubscribes from the ledger by
   `send_ref`) and the transport's current rates.
+
+**As built (C2).** The HOLD is `email_credentials.held_at` / `held_reason`
+(per transport, survives restarts, visible in compose — the marketing sender
+reads "— HELD"). `transportHealth` stays computed (no counter table).
+- **Checked before EVERY marketing send** (executeSend, after consent, before
+  the snapshot and the rate window) and at **marketing `createCampaign`**
+  (422 `transport_held`, `held_reason` in the body); the test send refuses it
+  too. A held transport → `pauseCampaign` (C1 — the pending sends parked),
+  nothing recorded for the recipient (its job DEFERS like the paused
+  backstop and is re-staggered on resume), and an `error` alert
+  `mail_transport_held` once per HOLD per UTC day (dedup key on the
+  transport, its `held_at` and the day — a re-hold after a same-day release
+  alerts again). The alert names the release path: the API route below
+  (there is no button).
+- **The thresholds** (`transportHealthGate`, each marketing send, decided
+  only with `enough` = ≥ 200 delivered in 24 h): complaint rate > 0.3 % or
+  hard-bounce rate > 5 % → SET the hold (first trip wins the reason),
+  pause EVERY running (scheduled / sending) marketing campaign on that
+  sender, the alert above, and this send defers; complaint rate > 0.1 % →
+  `warning` `mail_complaint_rate` once per transport per day and the send
+  goes. The account-level refusal (§6.4 "As built (C2)") sets it too.
+- **Release:** `POST /api/campaigns/transports/:id/release`,
+  `superuserOnlyFor('mail_transport_release')` (SU + step-up + rate limit —
+  the consent-import pattern). The clear and its `admin_audit_log` row
+  (`mail_transport_release`, details: id, email, held_at, held_reason) commit
+  in ONE transaction; then an `info` alert. 404 unknown, 409 not held.
+  Paused campaigns stay paused — staff resume each; `resumeCampaign` refuses
+  a marketing campaign whose transport is still held (422 `transport_held`).
+  No auto-release.
+- The hold gates the MARKETING class only; an over-cap operational (D16)
+  campaign on the same `bulk_ok` row is not held (`ref/plans.md`).
 
 ### 6.6 What stays out (later, `ref/plans.md`)
 
@@ -1771,7 +1960,7 @@ is ruled for that list (ruled 2026-10-30 for SS's own lead lists).
 | T1 | Transport contract — **built** (§5.2 As built) | adapter capabilities (`bulk`, `headers`, `tags`, `events`, `batch`); `headers` / `replyTo` / `tags` options through `sendEmailDirect` + `smtp.js` (marketing path only; public `sendEmail` strips them); driver-owned headers (SES `X-SES-*`); SES message id from the SMTP reply; `email_credentials.bulk_ok` + `events_driver`; bulk rows fenced out of `emailFrom`, public `sendEmail` and operational campaigns; DKIM `h=` acceptance test | — |
 | T2 | Events — **built** (§5.4 As built; Reject / DeliveryDelay / Rendering Failure still documented-shape) | SES → EventBridge API destination (+ SQS DLQ and a tested replay procedure) → YisraHook hook (`api_key` auth, `dedup_path` on the event id) → `mail_event_ingest` internal function (added to `CTA_FN_DENYLIST` — engine plumbing) → ledger (bounce/complaint/unsub) + `campaign_results` delivery columns by `result_id` tag + the per-transport complaint/bounce tally (§6.5); SES suppression-list removal on re-opt-in | T1, P1 |
 | C1 | Campaign hardening — **built** (§6.1, §6.4 "As built (C1)") | `campaigns.class` / `topic_key`; 50 cap in `createCampaign` + D16 over-cap path; `campaigns.bulk` capability; `bulk_ok` refused for operational; **`marketing_send_enabled` kill switch (`'0'`): marketing refused 422 at create and skipped at send**; **send reservation / at-most-once for every campaign** (`sending` / `unknown` statuses); per-transport rate window at dispatch; per-campaign pump with bounded catch-up; cron per-tick `campaign_send` quota; `paused` status with defer semantics (§6.4 table); operational-class honesty prompt | P1, T1 |
-| C2 | Marketing send path | executeSend marketing branch: scope check, token mint, explicit text part, footer inject/lock + post-render assert, headers/tags, transport, send-start snapshot (MRPC 7.2(b)), `email_log` without body; **complaint/bounce transport hold enforced before every send** (§6.5); account-pause detection; test send (HTML escaping + the sandboxed preview already shipped — §6.3) | P1, **P2**, P3, C1, T2 |
+| C2 | Marketing send path — **built, dark** (§6.4 / §6.5 "As built (C2)"; account-pause shapes `VERIFY(live)`) | executeSend marketing branch: scope check, token mint, explicit text part, footer inject/lock + post-render assert, headers/tags, transport, send-start snapshot (MRPC 7.2(b)), `email_log` without body; **complaint/bounce transport hold enforced before every send** (§6.5); account-pause detection; test send (HTML escaping + the sandboxed preview already shipped — §6.3) | P1, **P2**, P3, C1, T2 |
 | C3 | Designs + builder | spike first (§7, incl. a malicious `design_json`); then `email_designs` with server-side validation on save; Designer editor mode (GrapesJS + MJML); merge-tag picker; locked footer block; asset upload via AssetPicker/`apiSend` | C2 (can build in parallel, lands after) |
 | C4 | Segments + reporting | saved segments; campaign stats incl. `unknown`; transport-rate display; bounce digest | C2 |
 | C5 | Outside-list import | provenance-recording import; hygiene check; first-send warm-up order | G2, C2 |

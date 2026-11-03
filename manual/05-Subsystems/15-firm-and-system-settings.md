@@ -46,15 +46,18 @@ first.
 | **Client self-service & booking** | What a client may do from their manage link (cancel, reschedule, rebook), the cutoff and horizon, the texts sent, and the Shabbos booking window |
 | **Dropbox filing** | The case folder templates and the "unsorted" folders for uploads, forms, generated and signed documents |
 | **E-Sign** | Test mode, the default reminder sequence, and the credit balance and its low-credit alert |
-| **Marketing email & consent** | Who gets consent follow-up tasks (unsubscribe-page notes, clients who opted out of texts, possible text opt-outs) and the marketing footer's advertisement label and debt-relief-agency statement — see [Email unsubscribe](../06-Client-Facing/07-email-unsubscribe.md) and [Text opt-outs](../01-YisraCase-overview/17-text-opt-outs.md) |
+| **Marketing email & consent** | Who gets consent follow-up tasks (unsubscribe-page notes, clients who opted out of texts, possible text opt-outs), the marketing footer's advertisement label and debt-relief-agency statement, the marketing reply-to address, and the campaign cap and paced rate — see [Email unsubscribe](../06-Client-Facing/07-email-unsubscribe.md) and [Text opt-outs](../01-YisraCase-overview/17-text-opt-outs.md) |
 | **Automation variables** | Settings the firm made for its own workflows (below) |
 
-**Marketing email & consent** holds four settings: *Consent follow-up
+**Marketing email & consent** holds six settings: *Consent follow-up
 assignee* (a staff picker — unset, or a user who is no longer active, means
 no task is created and IT is warned once a day), *Advertisement label*
-(blank = "Advertisement"), *Debt-relief agency statement* (blank = the
+(blank = "Advertisement"), *Marketing reply-to address* (where replies to
+marketing email go; blank = the firm email; a campaign keeps the value it
+started with), *Debt-relief agency statement* (blank = the
 statutory wording; the firm's attorney confirms it before the first
-marketing send). The
+marketing send), *Operational campaign recipient cap* and *Paced send rate*
+([Campaign Manager](../01-YisraCase-overview/11-campaign-manager.md)). The
 marketing footer also reads the firm's name, mailing address, phone and
 signing attorney from **Firm identity**.
 
