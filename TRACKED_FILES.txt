@@ -1238,6 +1238,7 @@ tests/caseEventService.test.js
 tests/caseId.test.js
 tests/caseMergeShapes.test.js
 tests/casePanelCss.test.js
+tests/caseTypeMultiFilter.test.js
 tests/caseUi.addClientExisting.test.js
 tests/caseUi.detTab.test.js
 tests/caseUi.stepsPanel.test.js

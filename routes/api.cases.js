@@ -32,13 +32,36 @@ function actingUserId(req) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Case type multi filter (F3): `types` is a JSON array of tuples — [type] for
+// a whole type, [type, subtype] for one exact pair. JSON, not CSV: both values
+// are opaque free text and may legitimately contain commas and '%'. Returns
+// the parsed array, null when absent/empty, or undefined when malformed (the
+// caller 400s). Capped so a hostile body can't inflate the WHERE.
+const TYPES_MAX = 100;
+function parseTypesParam(raw) {
+  if (raw == null || raw === '') return null;
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return undefined; }
+  if (!Array.isArray(parsed) || parsed.length > TYPES_MAX) return undefined;
+  if (!parsed.length) return null;
+  const ok = parsed.every((t) => Array.isArray(t) && t.length >= 1 && t.length <= 2
+    && typeof t[0] === 'string' && t[0] !== ''
+    && (t.length === 1 || (typeof t[1] === 'string' && t[1] !== '')));
+  return ok ? parsed : undefined;
+}
+
 // ─── LIST ───
 router.get('/api/cases', jwtOrApiKey, async (req, res) => {
   try {
+    const types = parseTypesParam(req.query.types);
+    if (types === undefined) {
+      return res.status(400).json({ status: 'error', message: 'types must be a JSON array of [type] or [type, subtype] tuples' });
+    }
     const result = await caseService.listCases(req.db, {
       query: req.query.q || req.query.query || "",
       type: req.query.type || "%",
       subtype: req.query.subtype || "",
+      types,
       stage: req.query.stage || "%",
       status: req.query.status || "%",
       sort_by: req.query.sort_by || "c.case_open_date",

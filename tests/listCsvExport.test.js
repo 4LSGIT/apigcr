@@ -286,9 +286,12 @@ describe('csvFilterOf: a fetch\'s params as an export filter', () => {
 
 const TABS = {
   cases: {
-    fn: 'tabCasesGet', kind: 'cases', prelude: 'var offsets = {}, cases; function populateCaseTypeFilter() {}',
-    extra: ['casesStageValues'],
-    dom: { tabCasesLoad: 'div', tabCasesQuery: 'input=pat', tabCasesType: 'select=%', tabCasesStage: 'input=%',
+    fn: 'tabCasesGet', kind: 'cases', prelude: 'var offsets = {}, cases; function casesTypeTreeBuild() {}',
+    extra: ['casesStageValues', 'casesTypeValues'],
+    // Type is a .yc-multi tree (F3): the empty stub div = nothing checked =
+    // no types param. Type coverage lives in caseTypeMultiFilter +
+    // listSorting.mysql.
+    dom: { tabCasesLoad: 'div', tabCasesQuery: 'input=pat', tabCasesType: 'div', tabCasesStage: 'input=%',
       tabCasesStatus: 'input=Open', tabCasesOrder: 'input=c.case_id', tabCasesOrder2: 'input=ASC',
       casesTable: 'table', casesTableFoot: 'div' },
     filters: { q: 'pat', status: '%Open%', sort_by: 'c.case_id', sort_dir: 'ASC' },

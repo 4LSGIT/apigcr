@@ -537,6 +537,12 @@ input:where(:not([type=radio]):not([type=checkbox])), select, textarea, button {
   cursor: pointer;
   font-weight: normal;
 }
+/* Grouped tree rows (the Cases type filter): subtypes indent under their
+   type; a row subsumed by its checked type (force-checked + disabled) dims.
+   A class set by casesTypeChanged, not :disabled styling, so the dim always
+   travels with the label text too. */
+.yc-multi-menu label.yc-multi-sub { margin-left: 18px; }
+.yc-multi-menu label.yc-multi-dim { opacity: 0.55; cursor: default; }
 @media (max-width: 768px) {
   .yc-multi > summary { min-height: var(--ctl-h-lg); }
 }

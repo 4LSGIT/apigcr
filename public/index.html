@@ -3593,12 +3593,18 @@
       <label class="yc-f yc-f-q"><span class="yc-f-l">Query</span>
       <input id="tabCasesQuery" type="text" placeholder="Search cases…" onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}" /></label>
       <div class="yc-f-panel">
-      <label class="yc-f"><span class="yc-f-l">Case Type</span>
-      <select id="tabCasesType" style="width: auto">
-        <option value="%">All</option>
-        <!-- Type / "Type: Subtype" options are populated from fe-case_types
-             (populateCaseTypeFilter in scripts.js) after firmData loads. -->
-      </select></label>
+      <span class="yc-f"><span class="yc-f-l">Case Type</span>
+      <details class="yc-multi" id="tabCasesType">
+        <summary><span id="tabCasesTypeLabel">All</span></summary>
+        <div class="yc-multi-menu" id="tabCasesTypeMenu">
+          <!-- Grouped type tree built from fe-case_types (casesTypeTreeBuild
+               below) after firmData loads: a type checkbox takes the WHOLE
+               type; its subtypes indent under it as individually checkable
+               (type, subtype) pairs. Checking a type subsumes its subtype
+               boxes (force-checked + disabled; prior state restored on
+               uncheck). Nothing checked = All. -->
+        </div>
+      </details></span>
       <span class="yc-f"><span class="yc-f-l">Stage</span>
       <details class="yc-multi" id="tabCasesStage">
         <summary><span id="tabCasesStageLabel">All</span></summary>
@@ -3682,16 +3688,11 @@
       E("tabCasesLoad").style.display = "block";
 
       const q = E("tabCasesQuery").value;
-      // Type filter options come from fe-case_types (populateCaseTypeFilter
-      // is idempotent and preserves the selection — safe to re-run here in
-      // case this fires before the post-auth populate). The selected option
-      // carries the filter in data attrs: data-type (case_type) and
-      // data-subtype (exact case_subtype, '' = all). The static "All"
-      // option has neither and falls through to its value '%'.
-      populateCaseTypeFilter(E("tabCasesType"));
-      const typeOpt = E("tabCasesType").selectedOptions[0];
-      const type = typeOpt ? (typeOpt.dataset.type ?? typeOpt.value) : "%";
-      const subtype = (typeOpt && typeOpt.dataset.subtype) || "";
+      // Type tree options come from fe-case_types (casesTypeTreeBuild is
+      // idempotent and preserves checked state — safe to re-run here in
+      // case this fires before the post-auth build).
+      casesTypeTreeBuild();
+      const typePairs = casesTypeValues();
       const stages = casesStageValues();
       const status = E("tabCasesStatus").value;
       const sort_by = E("tabCasesOrder").value;
@@ -3705,8 +3706,10 @@
 
       const params = { limit, offset, sort_by, sort_dir };
       if (q) params.q = q;
-      if (type !== '%') params.type = type;
-      if (subtype) params.subtype = subtype;
+      // Tuples as JSON, never CSV: type and subtype are opaque free text and
+      // may carry commas. Nothing checked adds NOTHING — the default-state
+      // request stays byte-identical to pre-F3.
+      if (typePairs.length) params.types = JSON.stringify(typePairs);
       if (stages.length) params.stage = stages.join(',');   // CSV → IN on the server
       if (status) params.status = `%${status}%`;
 
@@ -3814,6 +3817,92 @@
       const v = casesStageValues();
       E('tabCasesStageLabel').textContent =
         !v.length ? 'All' : v.length <= 2 ? v.join(', ') : `${v.length} stages`;
+    }
+
+    /* Case-type multi filter (F3, Fred-ruled 2026-11-02): a grouped tree in
+       one .yc-multi. A type checkbox takes the WHOLE type; its subtypes are
+       individually checkable (type, subtype) pairs. Options come from
+       fe-case_types via getCaseTypeMap() (scripts.js) — the same source as
+       populateCaseTypeFilter, which other pages keep using. Like the stage
+       filter, changes apply on Search, not per click. Names chosen so no
+       document/element member shadows them (inline-handler trap). */
+
+    /* Idempotent build: re-run on init and before every read; preserves
+       checked/disabled state by re-checking the same values (restore, don't
+       clobber — a type the registry dropped falls out of the menu and so out
+       of the filter, which is the honest behavior). */
+    function casesTypeTreeBuild() {
+      const menu = E('tabCasesTypeMenu');
+      if (!menu) return;
+      const prior = {};
+      menu.querySelectorAll('input').forEach((b) => {
+        prior[`${b.dataset.type}\u0000${b.value}`] =
+          { checked: b.checked, disabled: b.disabled, prev: b.dataset.prev };
+      });
+      menu.innerHTML = '';
+      const add = (type, subtype) => {
+        const lab = document.createElement('label');
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.value = subtype || type;      // a type row's value IS the type
+        box.dataset.type = type;
+        if (subtype) { box.dataset.subtype = subtype; lab.className = 'yc-multi-sub'; }
+        const old = prior[`${type}\u0000${box.value}`];
+        if (old) {
+          box.checked = old.checked;
+          box.disabled = old.disabled;
+          if (old.prev != null) box.dataset.prev = old.prev;
+          if (old.disabled) lab.classList.add('yc-multi-dim');
+        }
+        box.addEventListener('change', () => casesTypeChanged(box));
+        lab.appendChild(box);
+        lab.appendChild(document.createTextNode(' ' + (subtype || type)));
+        menu.appendChild(lab);
+      };
+      for (const [type, subs] of Object.entries(getCaseTypeMap())) {
+        add(type, '');
+        subs.forEach((s) => add(type, s));
+      }
+      casesTypeLabelSync();
+    }
+
+    /* A checked type visually subsumes its subtype boxes: they force-check
+       and disable (disabled boxes are skipped by both casesTypeValues and the
+       ycFiltersActive counter), remembering their prior state in data-prev
+       for the uncheck. */
+    function casesTypeChanged(box) {
+      if (!box.dataset.subtype) {
+        document.querySelectorAll('#tabCasesTypeMenu input[data-subtype]').forEach((sub) => {
+          if (sub.dataset.type !== box.dataset.type) return;
+          if (box.checked) {
+            sub.dataset.prev = sub.checked ? '1' : '0';
+            sub.checked = true;
+            sub.disabled = true;
+            sub.closest('label').classList.add('yc-multi-dim');
+          } else {
+            sub.checked = sub.dataset.prev === '1';
+            delete sub.dataset.prev;
+            sub.disabled = false;
+            sub.closest('label').classList.remove('yc-multi-dim');
+          }
+        });
+      }
+      casesTypeLabelSync();
+    }
+
+    function casesTypeLabelSync() {
+      const names = casesTypeValues()
+        .map((t) => (t.length === 2 ? `${t[0]}: ${t[1]}` : t[0]));
+      E('tabCasesTypeLabel').textContent =
+        !names.length ? 'All' : names.length <= 2 ? names.join(', ') : `${names.length} selected`;
+    }
+
+    /* The wire shape: an array of tuples — [type] for a whole type, [type,
+       subtype] for one pair — sent as JSON (listCases `types`). Disabled
+       boxes are subsumed by their checked type and never counted. */
+    function casesTypeValues() {
+      return [...document.querySelectorAll('#tabCasesTypeMenu input:checked:not(:disabled)')]
+        .map((b) => (b.dataset.subtype ? [b.dataset.type, b.dataset.subtype] : [b.dataset.type]));
     }
 
     const casesCaptionKey = () => `caption.${(user && user.user) || 0}`;
@@ -8118,11 +8207,11 @@ async function initAuth() {
         if (prev) sel.value = prev;
       });
 
-      // Populate the Cases-tab type filter from fe-case_types — same single
-      // source as NewCaseForm and case's overview selects
-      // (populateCaseTypeFilter in scripts.js). Re-run on every init for the
-      // same restore-don't-clobber behavior as the event-type selects above.
-      populateCaseTypeFilter(E('tabCasesType'));
+      // Build the Cases-tab type tree from fe-case_types — same single
+      // source as NewCaseForm and case's overview selects (getCaseTypeMap
+      // in scripts.js). Re-run on every init for the same
+      // restore-don't-clobber behavior as the event-type selects above.
+      casesTypeTreeBuild();
     }
 
     initAuth();

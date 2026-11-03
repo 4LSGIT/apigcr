@@ -68,6 +68,15 @@ const { captionAddsInfo } = require('../lib/caseCaption');
  *                                       deliberately no '%'-means-all here)
  * @param {string|string[]} [opts.stage] - case_stage filter: '%' = all, one
  *                                        value = LIKE (legacy), CSV/array = IN
+ * @param {Array<string[]>} [opts.types] - case type multi filter (F3): tuples,
+ *                                        [type] = the whole type, [type, subtype]
+ *                                        = that exact pair; the WHERE is an OR
+ *                                        across tuples. Both values are opaque
+ *                                        free text (may carry ',' and '%'), so
+ *                                        this is an ARRAY, never CSV. Empty or
+ *                                        absent adds nothing; `type`/`subtype`
+ *                                        above still apply independently (the
+ *                                        tab sends one shape or the other).
  * @param {string}  [opts.status]      - case_status filter (use '%' for all)
  * @param {number}  [opts.limit=50]
  * @param {number}  [opts.offset=0]
@@ -77,6 +86,7 @@ async function listCases(db, {
   query  = '',
   type   = '%',
   subtype = '',
+  types  = null,
   stage  = '%',
   status = '%',
   sort_by  = 'c.case_open_date',
@@ -117,6 +127,26 @@ async function listCases(db, {
   if (subtype != null && subtype !== '') {
     where.push('c.case_subtype = ?');
     params.push(subtype);
+  }
+  // Case type multi (F3, Fred-ruled 2026-11-02): an OR of whole-type matches
+  // and (type, subtype) pairs, all EXACT (`=`, not LIKE — free-text values may
+  // contain '%'). Tuples only; a malformed entry throws rather than silently
+  // widening or narrowing the filter (the route 400s before this on bad JSON).
+  if (Array.isArray(types) && types.length) {
+    const ors = types.map((t) => {
+      if (!Array.isArray(t) || t.length < 1 || t.length > 2
+          || typeof t[0] !== 'string' || t[0] === ''
+          || (t.length === 2 && (typeof t[1] !== 'string' || t[1] === ''))) {
+        throw new TypeError('listCases: types entries must be [type] or [type, subtype] of non-empty strings');
+      }
+      if (t.length === 2) {
+        params.push(t[0], t[1]);
+        return '(c.case_type = ? AND c.case_subtype = ?)';
+      }
+      params.push(t[0]);
+      return 'c.case_type = ?';
+    });
+    where.push(`(${ors.join(' OR ')})`);
   }
   // Stage: '%' or a single value keeps the legacy LIKE (patterns work);
   // a CSV or array — the tab's multi filter (F1) — becomes IN. Stage values

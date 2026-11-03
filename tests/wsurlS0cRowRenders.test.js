@@ -128,11 +128,12 @@ const PAGER = 'var YcPager = { getLimit: (k, d) => d, renderFooter() {} };';
 describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
   test('tabCasesGet', async () => {
     const w = page({
-      tabCasesLoad: 'div', tabCasesQuery: 'input', tabCasesType: 'select=%', tabCasesStage: 'input=%',
+      tabCasesLoad: 'div', tabCasesQuery: 'input', tabCasesType: 'div', tabCasesStage: 'input=%',
       tabCasesStatus: 'input', tabCasesOrder: 'input', tabCasesOrder2: 'input',
       casesTable: 'table', casesTableFoot: 'div',
-    }, `${PAGER} var offsets = {}, cases; function populateCaseTypeFilter() {}
+    }, `${PAGER} var offsets = {}, cases; function casesTypeTreeBuild() {}
         ${fnSrc(INDEX, 'casesStageValues')}
+        ${fnSrc(INDEX, 'casesTypeValues')}
         ${fnSrc(INDEX, 'tabCasesGet')}`,
     async () => ({ total: 1, cases: [{
       case_id: 'ABCD2345', case_number: V, case_caption: V, caption_adds_info: true, case_type: V,

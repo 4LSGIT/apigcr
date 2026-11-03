@@ -345,6 +345,52 @@ d('list sorts on a real engine', () => {
         await q(`UPDATE cases SET case_stage = 'Open' WHERE case_id IN ('CASEAAAA', 'CASEBBBB')`);
       }
     });
+
+    // Case type multi filter (F3): `types` tuples — [type] takes the whole
+    // type, [type, subtype] one exact pair — OR'd together. Both values are
+    // opaque free text, so the fixture plants a comma and a '%' to prove the
+    // wire survives them (JSON, never CSV) and the match is `=`, never LIKE.
+    test('types tuples: whole types OR (type, subtype) pairs, all exact', async () => {
+      await q(`UPDATE cases SET case_type = 'Bankruptcy', case_subtype = 'Chapter 7'  WHERE case_id = 'CASEAAAA'`);
+      await q(`UPDATE cases SET case_type = 'Bankruptcy', case_subtype = 'Chapter 13' WHERE case_id = 'CASEBBBB'`);
+      await q(`UPDATE cases SET case_type = 'Civil, Litigation', case_subtype = '100% Business' WHERE case_id = 'CASECCCC'`);
+      // D's subtype MATCHES the '100% Business' LIKE pattern ('100' + any +
+      // ' Business') without equalling it — the row that catches a pair
+      // clause drifting from `=` to LIKE.
+      await q(`UPDATE cases SET case_type = 'Civil, Litigation', case_subtype = '100345 Business' WHERE case_id = 'CASEDDDD'`);
+      try {
+        // a subtype's '%' is data: the pair takes C and never pattern-takes D
+        const pct = await caseService.listCases(pool, { types: [['Civil, Litigation', '100% Business']] });
+        expect(ids(pct.cases, 'case_id')).toEqual(['CASECCCC']);
+        expect(pct.total).toBe(1);
+        const pair = await caseService.listCases(pool, { types: [['Bankruptcy', 'Chapter 7']] });
+        expect(ids(pair.cases, 'case_id')).toEqual(['CASEAAAA']);
+        expect(pair.total).toBe(1);
+        // a whole type takes every subtype under it
+        const whole = await caseService.listCases(pool, { types: [['Bankruptcy']] });
+        expect(ids(whole.cases, 'case_id').sort()).toEqual(['CASEAAAA', 'CASEBBBB']);
+        expect(whole.total).toBe(2);
+        // OR of a pair and a whole type, with ',' and '%' riding as data
+        const mix = await caseService.listCases(pool, {
+          types: [['Civil, Litigation', '100% Business'], ['Bankruptcy', 'Chapter 13']] });
+        expect(ids(mix.cases, 'case_id').sort()).toEqual(['CASEBBBB', 'CASECCCC']);
+        expect(mix.total).toBe(2);
+        // the whole type still takes every subtype under it
+        expect((await caseService.listCases(pool, { types: [['Civil, Litigation']] })).total).toBe(2);
+        // exact, not LIKE: a lone '%' matches nothing, not everything
+        expect((await caseService.listCases(pool, { types: [['%']] })).total).toBe(0);
+        // the multi composes with the other filters (same AND chain)
+        expect((await caseService.listCases(pool, { types: [['Bankruptcy']], stage: 'Closed' })).total).toBe(0);
+        // an empty array adds nothing
+        expect((await caseService.listCases(pool, { types: [] })).total).toBe(4);
+        // a malformed entry throws rather than silently mis-filtering
+        await expect(caseService.listCases(pool, { types: [['']] })).rejects.toThrow(/types entries/);
+        await expect(caseService.listCases(pool, { types: ['Bankruptcy'] })).rejects.toThrow(/types entries/);
+        await expect(caseService.listCases(pool, { types: [['Bankruptcy', '']] })).rejects.toThrow(/types entries/);
+      } finally {
+        await q(`UPDATE cases SET case_type = 'bk', case_subtype = '' WHERE case_id IN ('CASEAAAA', 'CASEBBBB', 'CASECCCC', 'CASEDDDD')`);
+      }
+    });
   });
 
   describe('appts', () => {
