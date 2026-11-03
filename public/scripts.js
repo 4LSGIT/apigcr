@@ -1372,6 +1372,34 @@ const CASE_CSV_COLUMNS = [
       .join('; ') },
 ];
 
+/* ── List-tab column model (custom_table_view S1) ───────────────────────────
+   One declarative definition per list tab: [{key, label, render?, sort?,
+   default_on, min_width?}]. render(row) returns the CELL's innerHTML and
+   OWNS ITS ESCAPING (escText / fileLinkHtml), reproducing what the tab's
+   old positional template produced byte for byte; a column without render
+   shows escText(row[key]). `sort` is the tab's existing sort-whitelist key
+   (nothing from the model ever reaches SQL except through those
+   whitelists); absent = unsortable header. Model fields are STATIC CODE
+   LITERALS only — `sort` and `label` are interpolated into header markup,
+   so no model value may ever come from settings or user data. default_on
+   and min_width are
+   read by the coming picker slices — today every shipped column is on.
+   Definitions live next to their tabs in index.html (CONTACT_COLUMNS is
+   the first); these renderers are the whole mechanism. The header carries
+   the same inline onclick="sort(this, …)" as the old static markup, which
+   sort()/sortSelect() select on (th[onclick^="sort("]). */
+function ycColsHeadRender(table, cols) {
+  if (!table) return;
+  const html = cols.map((c) => (c.sort
+    ? `<th onclick="sort(this, '${c.sort}')">${escText(c.label)}</th>`
+    : `<th>${escText(c.label)}</th>`)).join('');
+  if (table.rows.length) table.rows[0].innerHTML = html;
+  else table.insertRow().innerHTML = html;
+}
+function ycColsRowHtml(cols, row) {
+  return cols.map((c) => `<td>${c.render ? c.render(row) : escText(row[c.key] ?? '')}</td>`).join('');
+}
+
 // Every column the list query returns. Only the PRIMARY phone and email \u2014
 // a contact's other numbers and addresses are not in the list query (a
 // backend change; ref/plans.md). Reports exports those today.

@@ -152,7 +152,8 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
     const w = page({
       tabContactsLoad: 'div', tabContactsQuery: 'input', tabContactsSort: 'input=contact_lname', tabContactsSort2: 'input=ASC',
       tabContactsRole: 'input', contactsTable: 'table', contactsTableFoot: 'div',
-    }, `${PAGER} var offsets = {}, contacts; ${fnSrc(INDEX, 'contactsRoleValues')} ${fnSrc(INDEX, 'tabContactsGet')}`,
+    }, `${PAGER} var offsets = {}, contacts; ${constSrc(INDEX, 'CONTACT_COLUMNS')}
+        ${fnSrc(INDEX, 'contactsRoleValues')} ${fnSrc(INDEX, 'tabContactsGet')}`,
     async () => ({ total: 1, contacts: [{
       contact_id: 1405, contact_name: V, contact_phone: V, contact_email: V, contact_address: V,
       contact_city: V, contact_state: V, contact_zip: V, dob: V,

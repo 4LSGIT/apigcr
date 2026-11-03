@@ -1339,6 +1339,7 @@ tests/consentGapRetry.test.js
 tests/consentReads.mysql.test.js
 tests/consentRoutes.test.js
 tests/consentUi.test.js
+tests/contactColumns.s1.test.js
 tests/contactOrgKind.test.js
 tests/contactRelationService.updateType.test.js
 tests/contactRoles.roleForms.test.js
@@ -1460,6 +1461,7 @@ tests/fixtures/comms_s2_audio/rc_cbr_mono_32k.mp3.head
 tests/fixtures/comms_s2_audio/tiny_1s.mp3.head
 tests/fixtures/comms_s2_audio/vbr_xing.mp3.head
 tests/fixtures/comms_s2_audio/vm.wav.head
+tests/fixtures/contactColumns.s1.json
 tests/fixtures/ingestNativeGolden.json
 tests/fixtures/ingestRuleTestRoutes.golden.json
 tests/fixtures/intake_cards_definition.json

@@ -4031,16 +4031,11 @@
       <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
       <button class="yc-f-go" onclick="tabContactsGet(0)" data-type="goButton">Search</button>
     </div>
+    <!-- Headers are generated from CONTACT_COLUMNS (the tab's column model,
+         in the script block below) by ycColsHeadRender — same cells, same
+         sort() onclicks as the static row this replaces (S1). -->
     <table id="contactsTable" class="logTable">
-      <tr>
-        <th onclick="sort(this, 'contact_id')">ID</th>
-        <th onclick="sort(this, 'contact_lname')">Name</th>
-        <th>Phone</th>
-        <th>Email</th>
-        <th>Address</th>
-        <th>Cases</th>
-        <th onclick="sort(this, 'contact_dob')">Date of Birth</th>
-      </tr>
+      <tr></tr>
     </table>
     <div id="contactsTableFoot"></div>
     <div id="tabContactsLoad" style="display: none">
@@ -4049,6 +4044,43 @@
   </div>
 
   <script>
+    /* The Contacts tab's column model (custom_table_view S1) — rendered by
+       ycColsHeadRender / ycColsRowHtml (scripts.js, the model's contract is
+       documented there). Each render reproduces the old positional
+       template's cell byte for byte; tests/contactColumns.s1.test.js pins
+       that against the frozen pre-S1 fixture. default_on is for the coming
+       picker slices — today every column ships on. */
+    const CONTACT_COLUMNS = [
+      { key: 'contact_id', label: 'ID', sort: 'contact_id', default_on: true,
+        render: (r) => `${r.contact_id}` },
+      { key: 'contact_name', label: 'Name', sort: 'contact_lname', default_on: true,
+        render: (r) => fileLinkHtml(r.contact_name, 'contact', r.contact_id, r.contact_name || '') },
+      { key: 'contact_phone', label: 'Phone', default_on: true,
+        render: (r) => escText((r.contact_phone || '').replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3')) },
+      { key: 'contact_email', label: 'Email', default_on: true,
+        render: (r) => escText(r.contact_email || '') },
+      { key: 'contact_address', label: 'Address', default_on: true,
+        render: (r) => (r.contact_address
+          ? `${escText(r.contact_address)}<br>${escText(r.contact_city)}, ${escText(r.contact_state)} ${escText(r.contact_zip)}`
+          : '') },
+      { key: 'cases', label: 'Cases', default_on: true,
+        render: (r) => {
+          const list = typeof r.cases === 'string' ? JSON.parse(r.cases) : r.cases;
+          let html = '';
+          list.forEach((c) => {
+            if (c.case_id) html += `${fileLinkHtml(c.case_number || c.case_id, 'case', c.case_id, c.case_number || c.case_id, c.case_id)}<br>`;
+          });
+          return html;
+        } },
+      { key: 'dob', label: 'Date of Birth', sort: 'contact_dob', default_on: true,
+        render: (r) => escText(r.dob || '') },
+    ];
+    // Headers from the model, HERE, the statement after the declaration —
+    // the table markup sits above this block, and nothing runs between that
+    // could fail and leave the tab headerless. Once, at parse time, never on
+    // fetch: sort()/sortSelect() paint the sort marks into these <th>s.
+    ycColsHeadRender(E('contactsTable'), CONTACT_COLUMNS);
+
     /**
      * @param {number}  offset
      * @param {boolean} silent  TRUE for a BUS-TRIGGERED background refetch.
@@ -4070,6 +4102,9 @@
       const sort_dir = E("tabContactsSort2").value;
 
       const table = E("contactsTable");
+      // Headers are built ONCE, at parse time (just under CONTACT_COLUMNS) —
+      // never here: sort()/sortSelect() paint the sort marks into the <th>s,
+      // and a rebuild on fetch would wipe the mark the click just painted.
       const foot = E("contactsTableFoot");
       foot.innerHTML = "";
       const rows = table.getElementsByTagName("tr");
@@ -4093,28 +4128,7 @@
 
         if (data.total > 0) {
           contacts.forEach((contact) => {
-            const row = table.insertRow();
-            const phone = (contact.contact_phone || "").replace(/(\d{3})(\d{3})(\d{4})/, "$1-$2-$3");
-            const address = contact.contact_address
-              ? `${escText(contact.contact_address)}<br>${escText(contact.contact_city)}, ${escText(contact.contact_state)} ${escText(contact.contact_zip)}`
-              : "";
-
-            let casesHTML = "";
-            const caseList = typeof contact.cases === "string" ? JSON.parse(contact.cases) : contact.cases;
-            caseList.forEach((c) => {
-              if (c.case_id) {
-                casesHTML += `${fileLinkHtml(c.case_number || c.case_id, 'case', c.case_id, c.case_number || c.case_id, c.case_id)}<br>`;
-              }
-            });
-
-            row.innerHTML = `
-            <td>${contact.contact_id}</td>
-            <td>${fileLinkHtml(contact.contact_name, 'contact', contact.contact_id, contact.contact_name || '')}</td>
-            <td>${escText(phone)}</td>
-            <td>${escText(contact.contact_email || "")}</td>
-            <td>${address}</td>
-            <td>${casesHTML}</td>
-            <td>${escText(contact.dob || "")}</td>`;
+            table.insertRow().innerHTML = ycColsRowHtml(CONTACT_COLUMNS, contact);
           });
 
           // Pagination — the shared footer (js/ycPager.js), same shape and

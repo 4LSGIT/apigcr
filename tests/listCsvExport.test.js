@@ -299,6 +299,7 @@ const TABS = {
   },
   contacts: {
     fn: 'tabContactsGet', kind: 'contacts', prelude: 'var offsets = {}, contacts;',
+    consts: ['CONTACT_COLUMNS'],                 // S1: rows render via the model
     extra: ['contactsRoleValues'],
     // The role control is a .yc-multi (F2): an empty stub div = nothing
     // checked = no role param. Role filter coverage lives in
@@ -335,7 +336,8 @@ describe('index.html footers: Export exports the list on screen', () => {
   test.each(Object.keys(TABS))('%s', async (name) => {
     const t = TABS[name];
     const spec = LISTS[t.kind];
-    const code = `${t.prelude} ${(t.extra || []).map((f) => fnSrc(INDEX, f)).join('\n')} ${fnSrc(INDEX, t.fn)}`;
+    const code = `${t.prelude} ${(t.consts || []).map((c) => constSrc(INDEX, c)).join('\n')}
+      ${(t.extra || []).map((f) => fnSrc(INDEX, f)).join('\n')} ${fnSrc(INDEX, t.fn)}`;
     let exporting = false;
     const w = page((url, params, n) => (exporting && n === 0 ? { [spec.totalKey]: 1 } : t.list), code, t.dom);
     w.__swalValue = { from: 1, to: 1 };

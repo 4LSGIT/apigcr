@@ -1,0 +1,112 @@
+{
+  "note": "Frozen pre-S1 contacts cells: landed renderer @ d325e7e over these rows (4th row added same day, rendered by the same d325e7e code via git show). The S1 model render must reproduce it cell for cell.",
+  "rows": [
+    {
+      "contact_id": 1405,
+      "contact_name": "Pat Q. O'Hara",
+      "contact_phone": "3135551234",
+      "contact_email": "pat@example.com",
+      "contact_address": "1 Main St",
+      "contact_city": "Detroit",
+      "contact_state": "MI",
+      "contact_zip": "48201",
+      "dob": "Oct. 29, 1980",
+      "cases": [
+        {
+          "case_id": "ABCD2345",
+          "case_number": "26-41234"
+        },
+        {
+          "case_id": "WXYZ9876",
+          "case_number": ""
+        }
+      ]
+    },
+    {
+      "contact_id": 2,
+      "contact_name": "",
+      "contact_phone": "",
+      "contact_email": null,
+      "contact_address": "",
+      "contact_city": "",
+      "contact_state": "",
+      "contact_zip": "",
+      "dob": null,
+      "cases": []
+    },
+    {
+      "contact_id": 3,
+      "contact_name": "<img src=x onerror=\"document.body.innerHTML+='<div id=pwn></div>'\">'\"&<script>",
+      "contact_phone": "555",
+      "contact_email": "<img src=x onerror=\"document.body.innerHTML+='<div id=pwn></div>'\">'\"&<script>",
+      "contact_address": "<img src=x onerror=\"document.body.innerHTML+='<div id=pwn></div>'\">'\"&<script>",
+      "contact_city": "<img src=x onerror=\"document.body.innerHTML+='<div id=pwn></div>'\">'\"&<script>",
+      "contact_state": "<img src=x onerror=\"document.body.innerHTML+='<div id=pwn></div>'\">'\"&<script>",
+      "contact_zip": "<img src=x onerror=\"document.body.innerHTML+='<div id=pwn></div>'\">'\"&<script>",
+      "dob": "<img src=x onerror=\"document.body.innerHTML+='<div id=pwn></div>'\">'\"&<script>",
+      "cases": "[{\"case_id\":\"EVIL1111\",\"case_number\":\"<img src=x onerror=\\\"document.body.innerHTML+='<div id=pwn></div>'\\\">'\\\"&<script>\"}]"
+    },
+    {
+      "contact_id": 4,
+      "contact_name": null,
+      "contact_phone": null,
+      "contact_email": "",
+      "contact_address": "1 Edge St",
+      "contact_city": null,
+      "contact_state": null,
+      "contact_zip": null,
+      "dob": "",
+      "cases": [
+        {
+          "case_id": 0,
+          "case_number": "SKIPME"
+        },
+        {
+          "case_id": null
+        },
+        {
+          "case_id": "REAL1234",
+          "case_number": null
+        }
+      ]
+    }
+  ],
+  "cells": [
+    [
+      "1405",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"contact\" data-file-id=\"1405\" data-file-label=\"Pat Q. O'Hara\">Pat Q. O'Hara</a>",
+      "313-555-1234",
+      "pat@example.com",
+      "1 Main St<br>Detroit, MI 48201",
+      "<a href=\"#\" class=\"yc-file-link\" title=\"ABCD2345\" data-file-kind=\"case\" data-file-id=\"ABCD2345\" data-file-label=\"26-41234\">26-41234</a><br><a href=\"#\" class=\"yc-file-link\" title=\"WXYZ9876\" data-file-kind=\"case\" data-file-id=\"WXYZ9876\" data-file-label=\"WXYZ9876\">WXYZ9876</a><br>",
+      "Oct. 29, 1980"
+    ],
+    [
+      "2",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"contact\" data-file-id=\"2\" data-file-label=\"\"></a>",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "3",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"contact\" data-file-id=\"3\" data-file-label=\"<img src=x onerror=&quot;document.body.innerHTML+='<div id=pwn></div>'&quot;>'&quot;&amp;<script>\">&lt;img src=x onerror=\"document.body.innerHTML+='&lt;div id=pwn&gt;&lt;/div&gt;'\"&gt;'\"&amp;&lt;script&gt;</a>",
+      "555",
+      "&lt;img src=x onerror=\"document.body.innerHTML+='&lt;div id=pwn&gt;&lt;/div&gt;'\"&gt;'\"&amp;&lt;script&gt;",
+      "&lt;img src=x onerror=\"document.body.innerHTML+='&lt;div id=pwn&gt;&lt;/div&gt;'\"&gt;'\"&amp;&lt;script&gt;<br>&lt;img src=x onerror=\"document.body.innerHTML+='&lt;div id=pwn&gt;&lt;/div&gt;'\"&gt;'\"&amp;&lt;script&gt;, &lt;img src=x onerror=\"document.body.innerHTML+='&lt;div id=pwn&gt;&lt;/div&gt;'\"&gt;'\"&amp;&lt;script&gt; &lt;img src=x onerror=\"document.body.innerHTML+='&lt;div id=pwn&gt;&lt;/div&gt;'\"&gt;'\"&amp;&lt;script&gt;",
+      "<a href=\"#\" class=\"yc-file-link\" title=\"EVIL1111\" data-file-kind=\"case\" data-file-id=\"EVIL1111\" data-file-label=\"<img src=x onerror=&quot;document.body.innerHTML+='<div id=pwn></div>'&quot;>'&quot;&amp;<script>\">&lt;img src=x onerror=\"document.body.innerHTML+='&lt;div id=pwn&gt;&lt;/div&gt;'\"&gt;'\"&amp;&lt;script&gt;</a><br>",
+      "&lt;img src=x onerror=\"document.body.innerHTML+='&lt;div id=pwn&gt;&lt;/div&gt;'\"&gt;'\"&amp;&lt;script&gt;"
+    ],
+    [
+      "4",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"contact\" data-file-id=\"4\" data-file-label=\"\"></a>",
+      "",
+      "",
+      "1 Edge St<br>,  ",
+      "<a href=\"#\" class=\"yc-file-link\" title=\"REAL1234\" data-file-kind=\"case\" data-file-id=\"REAL1234\" data-file-label=\"REAL1234\">REAL1234</a><br>",
+      ""
+    ]
+  ]
+}

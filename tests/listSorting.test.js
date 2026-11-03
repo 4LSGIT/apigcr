@@ -277,12 +277,14 @@ describe('the tabs send what the routes read', () => {
   };
 
   const CONTACTS = { tabContactsLoad: 'div', tabContactsQuery: '', tabContactsRole: '', contactsTable: 'table', contactsTableFoot: 'div' };
+  // tabContactsGet renders through the column model since S1.
+  const CONTACTS_PRE = `var offsets = {}, contacts; ${constSrc(INDEX, 'CONTACT_COLUMNS')}`;
   test('contacts: the two sort selects and the birthday window', async () => {
-    const p = await run('tabContactsGet', 'var offsets = {}, contacts;',
+    const p = await run('tabContactsGet', CONTACTS_PRE,
       { ...CONTACTS, tabContactsSort: 'contact_dob', tabContactsSort2: 'DESC', tabContactsBirthdays: 'next30' },
       ['contactsRoleValues']);
     expect(p).toEqual({ limit: 100, offset: 0, sort_by: 'contact_dob', sort_dir: 'DESC', birthdays: 'next30' });
-    const none = await run('tabContactsGet', 'var offsets = {}, contacts;',
+    const none = await run('tabContactsGet', CONTACTS_PRE,
       { ...CONTACTS, tabContactsSort: 'contact_lname', tabContactsSort2: 'ASC', tabContactsBirthdays: '' },
       ['contactsRoleValues']);
     expect(none).not.toHaveProperty('birthdays');
@@ -327,10 +329,19 @@ describe('the tabs send what the routes read', () => {
       ['tabEventsSort', 'eventsTable'], ['calxSortBy', 'calxTable'], ['tabCasesOrder', 'casesTable']]) {
       const sel = INDEX.slice(INDEX.indexOf(`<select id="${selId}"`), INDEX.indexOf('</select>', INDEX.indexOf(`<select id="${selId}"`)));
       const values = [...sel.matchAll(/value="([^"]+)"/g)].map((m) => m[1]);
-      const tStart = INDEX.indexOf(`<table id="${thead}"`);
-      const head = INDEX.slice(tStart, INDEX.indexOf('</tr>', tStart));
-      const keys = [...head.matchAll(/onclick="sort\(this, '([^']+)'\)"/g)].map((m) => m[1]);
-      const ups = [...head.matchAll(/data-sort-upcoming="([^"]+)"/g)].map((m) => m[1]);
+      let keys; let ups = [];
+      if (thead === 'contactsTable') {
+        // S1: the Contacts headers are generated from the column model, so
+        // the static-markup scan below would come back empty. Read the
+        // model's sort keys instead — building the array runs no render.
+        const cols = new Function(`${constSrc(INDEX, 'CONTACT_COLUMNS')} return CONTACT_COLUMNS;`)();
+        keys = cols.filter((c) => c.sort).map((c) => c.sort);
+      } else {
+        const tStart = INDEX.indexOf(`<table id="${thead}"`);
+        const head = INDEX.slice(tStart, INDEX.indexOf('</tr>', tStart));
+        keys = [...head.matchAll(/onclick="sort\(this, '([^']+)'\)"/g)].map((m) => m[1]);
+        ups = [...head.matchAll(/data-sort-upcoming="([^"]+)"/g)].map((m) => m[1]);
+      }
       expect(keys.length).toBeGreaterThan(0);
       for (const k of [...keys, ...ups]) expect({ selId, k, offered: values.includes(k) }).toEqual({ selId, k, offered: true });
     }
