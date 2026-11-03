@@ -3030,9 +3030,12 @@ function workflowPublishResult(draft, result) {
   return { workflow_id: Number(draft.workflow.workflow_id), published_version: version };
 }
 
-// Workflow start (A17.7): ONE run of the workflow's PUBLISHED version, NOW,
-// with no input. The request is pinned here — `{init_data: {}}`, no
-// contact_id, and never use_draft (no query string, no body key) — and the
+// Workflow start (A17.7): ONE run of the workflow's PUBLISHED version, NOW.
+// The request is fixed here — never use_draft (no query string, no body key);
+// with no reviewed input the body is `{init_data: {}}`, and with one (A17.7b)
+// it is the card's server-computed `payload` EXACTLY as reviewed — the
+// init_data object of scalar values and an optional contact_id, frozen at
+// proposal and only re-checked (never rebuilt) here — and the
 // draft_id rides as Idempotency-Key: the route keeps the claim on any
 // failure after the run was created, so an unknown outcome can never start a
 // second run. The card is the server-computed impact preview; a start is
@@ -3050,8 +3053,46 @@ function workflowStartText(draft) {
   const wf = draft.workflow || {};
   const recent = draft.recent || {};
   const lines = ['Workflow start proposal — not started',
-    `Workflow: #${wf.workflow_id} "${wf.name}" — active, runs published v${wf.version} (${wf.step_count} steps)${wf.has_draft ? '; it also has an unpublished draft — this start runs v' + wf.version + ', NOT the draft' : ''}`,
-    'Input: NONE — no contact and no variables are sent with this start.'];
+    `Workflow: #${wf.workflow_id} "${wf.name}" — active, runs published v${wf.version} (${wf.step_count} steps)${wf.has_draft ? '; it also has an unpublished draft — this start runs v' + wf.version + ', NOT the draft' : ''}`];
+  const payload = draft.payload && typeof draft.payload === 'object' ? draft.payload : null;
+  if (!payload) {
+    lines.push('Input: NONE — no contact and no variables are sent with this start.');
+  } else {
+    // A17.7b: every value verbatim (text in quotes, so "12" and 12 differ),
+    // one key per line, then the steps whose {{placeholders}} read it.
+    const data = payload.init_data && typeof payload.init_data === 'object' ? payload.init_data : {};
+    const input = draft.input || {};
+    const reads = new Map((input.reads || []).map((r) => [r.key, r]));
+    const keys = Object.keys(data);
+    lines.push(keys.length
+      ? `Input: ${keys.length} value(s), sent exactly as shown — on this run {{key}} reads each one`
+      : 'Input: no variables are sent with this start (init_data is empty).');
+    for (const key of keys) {
+      const v = data[key];
+      lines.push(`Input ${key}: ${typeof v === 'string' ? `"${v}"` : String(v)}`);
+      const r = reads.get(key);
+      const where = r && (r.steps || []).length
+        ? r.steps.map((st) => `step ${st.step_number}${st.label ? ` "${st.label}"` : ''}`).join(', ')
+        : 'no step\'s {{placeholder}} — the workflow\'s test_input sample names it (a safe-mode code step may still read it)';
+      lines.push(`  read by: ${where}${r && r.stored_by_step ? ' — a step also sets it; reads after that step see the step\'s value' : ''}`);
+    }
+    const c = input.contact;
+    const dk = input.default_key;
+    if (c) {
+      lines.push(`Contact: the run is tied to #${c.contact_id} "${c.name}" ${c.via === 'contact_id'
+        ? `(contact_id, from the evidence${dk ? `; it beats the workflow's own default, init_data.${dk}` : ''}) — the run lists on that contact's workflow runs; contact_id sets no {{variable}}, steps read only the input above`
+        : `(the workflow's own default, init_data.${dk}) — the run lists on that contact's workflow runs`}.`);
+    } else {
+      lines.push(`Contact: none — ${dk ? `the workflow's default reads init_data.${dk}, which this input does not set to a contact id` : 'no contact_id is sent and the workflow has no default'}; the run is tied to no contact.`);
+    }
+  }
+  // An armed capture (server-read capture_mode) keeps this start's input.
+  const capturedWhat = payload ? 'the input above' : 'its empty input';
+  if (draft.capture === 'capturing') {
+    lines.push(`Capture: this workflow is armed to capture — this start's input (${capturedWhat}) will be stored as the workflow's captured input sample, visible to automation staff in the workflow editor, and the arm turns off; the run proceeds (unless another start reaches the arm first).`);
+  } else if (draft.capture === 'intercept') {
+    lines.push(`Capture: this workflow is armed to INTERCEPT — this start's input (${capturedWhat}) will be stored as the workflow's captured input sample, visible to automation staff in the workflow editor, and this run is HELD before step 1: none of its steps run until someone resumes it (unless another start reaches the arm first).`);
+  }
   if ((draft.unset_inputs || []).length) {
     lines.push(`Blank inputs: this version reads ${draft.unset_inputs.map((n) => `{{${n}}}`).join(', ')}, which no step sets — on this run each resolves BLANK.`);
   }
@@ -3076,7 +3117,28 @@ function workflowStartText(draft) {
 function workflowStartRequest(draft) {
   const wfId = Number(draft.workflow && draft.workflow.workflow_id);
   if (!Number.isSafeInteger(wfId) || wfId < 1) throw new Error('This start has no usable workflow.');
-  return { path: `/workflows/${wfId}/start`, method: 'POST', body: { init_data: {} }, idempotent: true };
+  const body = { init_data: {} };
+  const payload = draft.payload;
+  if (payload != null) {
+    // The reviewed payload, re-checked (never rebuilt): only init_data and
+    // contact_id, scalar values, a positive contact id — else nothing is sent.
+    const data = payload && payload.init_data;
+    if (typeof payload !== 'object' || Array.isArray(payload) || !data || typeof data !== 'object' || Array.isArray(data)
+      || Object.keys(payload).some((k) => k !== 'init_data' && k !== 'contact_id')) throw new Error('This start carries an unusable input.');
+    for (const key of Object.keys(data)) {
+      const v = data[key];
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype'
+        || !(v === null || typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)))) {
+        throw new Error('This start carries an unusable input.');
+      }
+      body.init_data[key] = v;
+    }
+    if (payload.contact_id !== undefined) {
+      if (!Number.isSafeInteger(payload.contact_id) || payload.contact_id < 1) throw new Error('This start carries an unusable contact.');
+      body.contact_id = payload.contact_id;
+    }
+  }
+  return { path: `/workflows/${wfId}/start`, method: 'POST', body, idempotent: true };
 }
 
 async function workflowStartPrecheck(draft) {
@@ -4451,7 +4513,7 @@ const ACTION_FAMILIES = [
       warning: `Execution #${draft.result_started_execution_id} of "${draft.workflow ? draft.workflow.name : 'the workflow'}" was started using your signed-in account. Its steps run as they are reached; steps already run cannot be undone.`,
       button: `Open execution #${draft.result_started_execution_id}`,
     }),
-    reviewWarning: 'This STARTS A RUN NOW of the published version, with no input — every send, webhook, record write and chained start listed above happens as its step is reached, and none can be recalled. Cancelling the run later stops only the steps it has not reached. Canceling the dialog starts nothing.',
+    reviewWarning: (draft) => `This STARTS A RUN NOW of the published version, ${draft && draft.payload ? 'with exactly the input listed above' : 'with no input'} — every send, webhook, record write and chained start listed above happens as its step is reached, and none can be recalled. Cancelling the run later stops only the steps it has not reached. Canceling the dialog starts nothing.`,
     open: (draft) => openAutomationRecord('automations.workflow', draft.result_started_execution_id,
       `Execution #${draft.result_started_execution_id}`,
       'Find it under More → Automations → Workflows, on the workflow\'s Executions tab.', 'execution'),
@@ -4857,7 +4919,8 @@ function hydrateActionDraft(family, host, message, draft) {
 
   const next = document.createElement('div'); next.className = 'action-draft-next';
   const warning = document.createElement('div'); warning.className = 'action-draft-next-warning';
-  warning.textContent = applied ? (appliedCopy ? appliedCopy.warning : `Applied to ${family.noun} #${appliedId} using your signed-in account.`) : family.reviewWarning;
+  warning.textContent = applied ? (appliedCopy ? appliedCopy.warning : `Applied to ${family.noun} #${appliedId} using your signed-in account.`)
+    : typeof family.reviewWarning === 'function' ? family.reviewWarning(draft) : family.reviewWarning;
   if (family.steps) {
     const nextTitle = document.createElement('b');
     nextTitle.textContent = applied ? 'This action has been applied in YisraCase.'

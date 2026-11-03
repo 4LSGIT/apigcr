@@ -21,6 +21,13 @@
  * back as a DECIMAL string; and the start's claim/settle/replay is the real
  * unique key (user_id, scope, idem_key) — the second request of a key must
  * hit ER_DUP_ENTRY on the engine, not on a fake.
+ *
+ * A17.7b adds the reviewed input: the closed key set computed from a real
+ * published version's step rows (placeholders inside real JSON params, which
+ * mysql2 returns PARSED), the union with a real test_input JSON column, the
+ * contact read from a real contacts row, the default_contact_id_from binding,
+ * and the reviewed payload stored verbatim by the real route — while the
+ * no-input card stays the shipped envelope.
  */
 'use strict';
 
@@ -51,7 +58,7 @@ const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVIS
 // sibling twin (caseyWorkflowSend: workflows + workflow_steps) cannot drop.
 // "What normally starts it" (automationReadService.references, its own
 // suites' SQL) is stubbed: this suite is about the start predicates.
-const TABLES = ['workflows', 'workflow_versions', 'workflow_steps', 'workflow_executions', 'workflow_execution_steps', 'request_idempotency'];
+const TABLES = ['workflows', 'workflow_versions', 'workflow_steps', 'workflow_executions', 'workflow_execution_steps', 'request_idempotency', 'contacts'];
 
 // Line-based extraction (column COMMENTs may hold ';'). Constraint clauses
 // that reference a table outside TABLES are dropped.
@@ -117,9 +124,9 @@ d('A17.7 workflow start on real MySQL', () => {
   });
 
   const evidenceFor = (id) => [{ id: 'q1', label: `Workflow ${id}`, rows: [{ workflow_id: id, row_number: 1 }] }];
-  const card = (id) => normalizeActionDraft(pool, {
-    kind: 'workflow.start.v1', workflow_id: id, evidence: [{ query_id: 'q1', row_number: 1 }],
-  }, evidenceFor(id));
+  const card = (id, over = {}, evidence = evidenceFor(id)) => normalizeActionDraft(pool, {
+    kind: 'workflow.start.v1', workflow_id: id, evidence: [{ query_id: 'q1', row_number: 1 }], ...over,
+  }, evidence);
   const runsOf = async (id) => q('SELECT id, status, workflow_version, contact_id, init_data FROM workflow_executions WHERE workflow_id = ? ORDER BY id', [id]);
 
   // Published v2 (two steps, a send among them) + draft v3 whose only step is
@@ -255,5 +262,86 @@ d('A17.7 workflow start on real MySQL', () => {
     expect({ status: retry.status, outcome: retry.body.idempotency && retry.body.idempotency.outcome }).toEqual({ status: 409, outcome: 'in_flight' });
     expect(await runsOf(12)).toHaveLength(1);
     expect(advanceWorkflow).not.toHaveBeenCalled();
+  });
+
+  // ── A17.7b ────────────────────────────────────────────────────────────────
+  const SHIPPED_CARD_KEYS = ['draft_id', 'kind', 'status', 'workflow', 'unset_inputs', 'starters', 'effects', 'in_flight_count', 'recent', 'expected', 'evidence'];
+  const withContactEvidence = (id, contactId) => [...evidenceFor(id), { id: 'q2', label: 'Contact', rows: [{ contact_id: contactId, contact_name: 'x' }] }];
+  const contactRefs = [{ query_id: 'q1', row_number: 1 }, { query_id: 'q2', row_number: 1 }];
+
+  test('A17.7b: the no-input card is the shipped envelope, and init_data {} is the same card', async () => {
+    await seedWorkflow(20);
+    const a = await card(20);
+    const b = await card(20, { init_data: {} });
+    expect(Object.keys(a)).toEqual(SHIPPED_CARD_KEYS);
+    const strip = ({ draft_id: _d, ...rest }) => rest;
+    expect(strip(b)).toEqual(strip(a));
+    expect(buildRequest(b)).toEqual({ path: '/workflows/20/start', method: 'POST', body: { init_data: {} }, idempotent: true });
+  });
+
+  test('A17.7b: the closed key set comes from the real published step rows ∪ the real test_input column', async () => {
+    await seedWorkflow(21, { published: [
+      { type: 'internal_function', config: { params: { text: 'for {{day}} via {{ source }} at {{env.now}}', output_var: 'logged' }, function_name: 'create_log' } },
+      { type: 'internal_function', config: { params: { body: '{{logged}} {{who.name}} {{this.x}}', to: 'staff@4lsg.com' }, function_name: 'send_email' } },
+    ] });
+    // Only the published v2 is read: the draft v3's code step has no placeholders to add.
+    await expect(card(21, { init_data: { logged: 'x' } })).rejects.toThrow(/init_data key "logged" is not read by workflow 21's published version — allowed: day, source, who \(/);
+    const ok = await card(21, { init_data: { day: '2026-11-03', source: 'Casey', who: 'Fred' } });
+    expect(ok.payload).toEqual({ init_data: { day: '2026-11-03', source: 'Casey', who: 'Fred' } });
+    expect(ok.input.reads).toEqual([
+      { key: 'day', steps: [{ step_number: 1, label: null }], stored_by_step: 0 },
+      { key: 'source', steps: [{ step_number: 1, label: null }], stored_by_step: 0 },
+      { key: 'who', steps: [{ step_number: 2, label: null }], stored_by_step: 0 },
+    ]);
+    expect(ok.unset_inputs).toEqual([]);
+    // The real JSON test_input column joins the set (mysql2 returns it parsed); a dotted key never does.
+    await q('UPDATE workflows SET test_input = ? WHERE id = 21', [JSON.stringify({ extra: 1, 'a.b': 2, logged: 'x' })]);
+    const [row] = await q('SELECT test_input FROM workflows WHERE id = 21');
+    expect(typeof row.test_input).toBe('object');
+    const withSample = await card(21, { init_data: { extra: 'yes', logged: 'seed' } });
+    expect(withSample.input.reads).toEqual([
+      { key: 'extra', steps: [], stored_by_step: 0 },
+      { key: 'logged', steps: [{ step_number: 2, label: null }], stored_by_step: 1 },
+    ]);
+    expect(withSample.unset_inputs).toEqual(['day', 'source', 'who']);
+    await expect(card(21, { init_data: { 'a.b': 1 } })).rejects.toThrow(/allowed: day, extra, logged, source, who \(/);
+  });
+
+  test('A17.7b: the contact comes from evidence and a real contacts row; the default key binds through the engine\'s precedence', async () => {
+    await seedWorkflow(22);
+    await q("INSERT INTO contacts (contact_id, contact_type, contact_name, contact_lfm_name) VALUES (512, 'Client', 'Jane Doe', 'Doe, Jane')");
+    const c1 = await card(22, { contact_id: 512, evidence: contactRefs }, withContactEvidence(22, 512));
+    expect(c1.input.contact).toEqual({ contact_id: 512, name: 'Jane Doe', via: 'contact_id' });
+    await expect(card(22, { contact_id: 513, evidence: contactRefs }, withContactEvidence(22, 513))).rejects.toThrow(/Contact 513 is unavailable/);
+    await q("UPDATE workflows SET default_contact_id_from = 'day' WHERE id = 22");
+    await expect(card(22, { init_data: { day: 512 } })).rejects.toThrow(/init_data\.day = 512 ties the run to contact 512/);
+    const c2 = await card(22, { init_data: { day: '512' }, evidence: contactRefs }, withContactEvidence(22, 512));
+    expect(c2.input).toMatchObject({ contact: { contact_id: 512, via: 'default' }, default_key: 'day' });
+
+    // Through the real route: the run stores the reviewed init_data and the bound contact.
+    const first = await call(buildRequest(c2), { 'Idempotency-Key': c2.draft_id });
+    expect(first.status).toBe(202);
+    const explicit = await card(22, { init_data: { day: 'Monday' }, contact_id: 512, evidence: contactRefs }, withContactEvidence(22, 512));
+    expect(explicit.input).toMatchObject({ contact: { contact_id: 512, via: 'contact_id' }, default_key: 'day' });
+    const second = await call(buildRequest(explicit), { 'Idempotency-Key': explicit.draft_id });
+    expect(second.status).toBe(202);
+    expect(await runsOf(22)).toEqual([
+      { id: first.body.executionId, status: 'active', workflow_version: 2, contact_id: 512, init_data: { day: '512' } },
+      { id: second.body.executionId, status: 'active', workflow_version: 2, contact_id: 512, init_data: { day: 'Monday' } },
+    ]);
+  });
+
+  test('A17.7b: an armed capture is on the card, and the route really stores this start\'s input as the sample', async () => {
+    await seedWorkflow(23);
+    expect(await card(23)).not.toHaveProperty('capture');
+    await q("UPDATE workflows SET capture_mode = 'intercept' WHERE id = 23");
+    expect((await card(23)).capture).toBe('intercept');
+    await q("UPDATE workflows SET capture_mode = 'capturing' WHERE id = 23");
+    const c = await card(23, { init_data: { day: 'Tuesday' } });
+    expect(c.capture).toBe('capturing');
+    expect((await call(buildRequest(c), { 'Idempotency-Key': c.draft_id })).status).toBe(202);
+    const [wf] = await q('SELECT capture_mode, captured_input FROM workflows WHERE id = 23');
+    expect(wf).toEqual({ capture_mode: 'off', captured_input: { day: 'Tuesday' } });
+    expect(await card(23)).not.toHaveProperty('capture');
   });
 });

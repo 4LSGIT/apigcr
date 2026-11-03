@@ -11,13 +11,14 @@
  *      version's rows (never the draft): effects (sends, webhooks reduced to
  *      method + host, safe code), what normally starts it, runs in flight,
  *      recent volume, and the placeholder inputs this empty start leaves blank;
- *   2. refusals: use_draft BY NAME, any input key, unknown keys, evidence that
+ *   2. refusals: use_draft BY NAME, initData / input BY NAME, unknown keys, evidence that
  *      does not carry the workflow_id, an inactive or never-published workflow,
  *      a STANDARD-mode code step (absent / 'standard' / unparseable config —
  *      fail closed; safe mode starts), and the casey_workflow_start_enabled
  *      off switch;
  *   3. the SHIPPED browser builder can express nothing but
- *      POST /workflows/:id/start {init_data:{}} — whatever the draft carries;
+ *      POST /workflows/:id/start {init_data:{}} — whatever the draft carries —
+ *      unless the server-computed `payload` is present (A17.7b, below);
  *   4. the route: no key = the old behaviour (two posts, two runs, zero
  *      idempotency queries); a key replays the first run (same executionId,
  *      replayed:true, NO second INSERT, NO second advance); a pre-INSERT
@@ -67,6 +68,18 @@ function proposalDb(over = {}) {
     state.reads.push([sql.replace(/\s+/g, ' ').trim(), params]);
     if (/SELECT id, name, active, current_version, draft_version FROM workflows WHERE id = \?/.test(sql)) {
       return [params[0] === state.wf.id ? [{ ...state.wf }] : []];
+    }
+    // A17.7b: the capture arm, read on every start (the card discloses it).
+    if (/SELECT capture_mode FROM workflows WHERE id = \?/.test(sql)) {
+      return [params[0] === state.wf.id ? [{ capture_mode: over.capture_mode || 'off' }] : []];
+    }
+    // A17.7b: read only when the draft carries an input.
+    if (/SELECT default_contact_id_from, test_input FROM workflows WHERE id = \?/.test(sql)) {
+      return [params[0] === state.wf.id ? [{ default_contact_id_from: null, test_input: null, ...(over.meta || {}) }] : []];
+    }
+    if (/SELECT contact_id, contact_name FROM contacts WHERE contact_id = \?/.test(sql)) {
+      const name = (over.contacts || { 12: 'Jane Doe', 14: 'Sam Roe' })[params[0]];
+      return [name ? [{ contact_id: params[0], contact_name: name }] : []];
     }
     if (/SELECT \* FROM workflow_steps WHERE workflow_id = \? AND version = \?/.test(sql)) {
       if (params[1] === state.wf.current_version) return [state.published.map((s) => ({ ...s }))];
@@ -130,12 +143,19 @@ describe('the workflow-start normalizer', () => {
     }
   });
 
-  test('an input payload and any other unknown key are refused', async () => {
-    for (const key of ['init_data', 'initData', 'contact_id', 'input']) {
+  // A17.7b moved this pin: init_data and contact_id are no longer refused by
+  // name — an unknown init_data key and an unevidenced contact_id are (below).
+  test('the other input spellings are refused BY NAME; an unknown key, an unknown init_data key and an unevidenced contact_id are refused', async () => {
+    for (const key of ['initData', 'input']) {
       const { db } = proposalDb();
       await expect(normalizeActionDraft(db, startDraft({ [key]: { a: 1 } }), EVIDENCE))
-        .rejects.toThrow(new RegExp(`takes no input \\(${key}\\)`));
+        .rejects.toThrow(new RegExp(`takes its input as init_data only \\(${key}\\)`));
+      expect(db.query).not.toHaveBeenCalled();
     }
+    await expect(normalizeActionDraft(proposalDb().db, startDraft({ init_data: { a: 1 } }), EVIDENCE))
+      .rejects.toThrow(/init_data key "a" is not read by workflow 5's published version — allowed: day, source/);
+    await expect(normalizeActionDraft(proposalDb().db, startDraft({ contact_id: 9 }), EVIDENCE))
+      .rejects.toThrow(/contact_id 9 is not in the evidence/);
     const { db } = proposalDb();
     await expect(normalizeActionDraft(db, startDraft({ version: 4 }), EVIDENCE)).rejects.toThrow(/unsupported fields/);
   });
@@ -401,5 +421,193 @@ describe('POST /workflows/:id/start — optional Idempotency-Key (scope workflow
     expect(r.body.idempotency).toEqual({ outcome: 'invalid_key' });
     expect(state.executions).toEqual([]);
     expect(state.idemQueries).toBe(0);
+  });
+});
+
+// ── A17.7b: the reviewed input payload ──────────────────────────────────────
+// The no-input start is pinned byte-for-byte; an input is a CLOSED key set
+// (the placeholders the published version reads that no step sets ∪ the
+// workflow's test_input keys), scalar values shown verbatim, and a contact
+// only from evidence (explicit contact_id, or the value the workflow's
+// default_contact_id_from would bind).
+const EVIDENCE_C = [...EVIDENCE, { id: 'q2', label: 'Contacts', rows: [{ contact_id: 12, contact_name: 'Jane Doe' }, { contact_id: 14 }] }];
+const withContact = (over = {}) => startDraft({ evidence: [{ query_id: 'q1', row_number: 1 }, { query_id: 'q2', row_number: 1 }], ...over });
+const SHIPPED_CARD_KEYS = ['draft_id', 'kind', 'status', 'workflow', 'unset_inputs', 'starters', 'effects', 'in_flight_count', 'recent', 'expected', 'evidence'];
+
+describe('A17.7b — the no-input start is unchanged', () => {
+  test('no init_data, init_data {} and contact_id null all produce the SHIPPED envelope, reads and request', async () => {
+    const cards = [];
+    for (const over of [{}, { init_data: {} }, { init_data: {}, contact_id: null }]) {
+      const { db, state } = proposalDb();
+      const out = await normalizeActionDraft(db, startDraft(over), EVIDENCE);
+      expect(Object.keys(out)).toEqual(SHIPPED_CARD_KEYS);
+      // No input → none of the input reads happen.
+      expect(state.reads.some(([sql]) => /default_contact_id_from|FROM contacts/.test(sql))).toBe(false);
+      expect(buildRequest(out)).toEqual({ path: '/workflows/5/start', method: 'POST', body: { init_data: {} }, idempotent: true });
+      const { draft_id: _id, ...rest } = out;
+      cards.push(rest);
+    }
+    expect(cards[1]).toEqual(cards[0]);
+    expect(cards[2]).toEqual(cards[0]);
+    expect(cards[0].unset_inputs).toEqual(['day', 'source']);
+  });
+});
+
+describe('A17.7b — the closed key set', () => {
+  test('a placeholder the published version reads is allowed; the card carries the exact payload, where each key is read, and the blank-list minus it', async () => {
+    const { db } = proposalDb();
+    const out = await normalizeActionDraft(db, startDraft({ init_data: { source: 'Casey', day: 3 } }), EVIDENCE);
+    expect(out.payload).toEqual({ init_data: { source: 'Casey', day: 3 } });
+    expect(out.input).toEqual({
+      reads: [{ key: 'source', steps: [{ step_number: 1, label: 'Log' }], stored_by_step: 0 },
+        { key: 'day', steps: [{ step_number: 1, label: 'Log' }], stored_by_step: 0 }],
+      contact: null, default_key: null,
+    });
+    expect(out.unset_inputs).toEqual([]);
+    const partial = await normalizeActionDraft(proposalDb().db, startDraft({ init_data: { day: '2026-11-03' } }), EVIDENCE);
+    expect(partial.unset_inputs).toEqual(['source']);
+    expect(buildRequest(partial).body).toEqual({ init_data: { day: '2026-11-03' } });
+  });
+
+  test('a variable a step stores, an engine root and a key no placeholder reads are refused — unless the test_input sample names it', async () => {
+    await expect(normalizeActionDraft(proposalDb().db, startDraft({ init_data: { rows: 1 } }), EVIDENCE))
+      .rejects.toThrow(/init_data key "rows" is not read .* allowed: day, source \(the \{\{placeholders\}\} it reads that no step sets, plus its test_input sample's keys\)/);
+    for (const key of ['this', 'env']) {
+      await expect(normalizeActionDraft(proposalDb({ meta: { test_input: { [key]: 1 } } }).db, startDraft({ init_data: { [key]: 1 } }), EVIDENCE))
+        .rejects.toThrow(new RegExp(`init_data key "${key}" is reserved — \\{\\{${key}\\}\\} is the workflow engine's own`));
+    }
+    // The test_input union (string or parsed JSON column): its keys are allowed and disclosed as read by no placeholder.
+    for (const test_input of [{ extra: 'x', rows: [] }, JSON.stringify({ extra: 'x', rows: [] })]) {
+      const out = await normalizeActionDraft(proposalDb({ meta: { test_input } }).db, startDraft({ init_data: { extra: true, rows: null } }), EVIDENCE);
+      expect(out.input.reads).toEqual([{ key: 'extra', steps: [], stored_by_step: 0 },
+        { key: 'rows', steps: [{ step_number: 3, label: 'Mail' }], stored_by_step: 1 }]);
+    }
+    // A test_input key that cannot be a placeholder root is never allowed (a dotted key would shadow a nested read).
+    await expect(normalizeActionDraft(proposalDb({ meta: { test_input: { 'env.now': 1, 'a b': 1 } } }).db, startDraft({ init_data: { 'env.now': 1 } }), EVIDENCE))
+      .rejects.toThrow(/init_data key "env\.now" is not read by workflow 5's published version — allowed: day, source \(/);
+    // A version that reads nothing says so.
+    const quiet = [{ step_number: 1, type: 'internal_function', label: null, note: null, config: JSON.stringify({ function_name: 'create_log', params: { text: 'hi' } }), error_policy: null }];
+    await expect(normalizeActionDraft(proposalDb({ published: quiet }).db, startDraft({ init_data: { a: 1 } }), EVIDENCE))
+      .rejects.toThrow(/it reads no input key, so start it with no init_data/);
+  });
+});
+
+describe('A17.7b — scalar values only, each one reviewable whole', () => {
+  test('an object or array value is refused by name; text, numbers, true/false and null start', async () => {
+    for (const [v, what] of [[{ a: 1 }, 'an object'], [[1], 'an array']]) {
+      const { db } = proposalDb();
+      await expect(normalizeActionDraft(db, startDraft({ init_data: { source: v } }), EVIDENCE))
+        .rejects.toThrow(new RegExp(`init_data\\.source is ${what} — Casey sends scalar values only .* a hand-built envelope is a forgery, not an input`));
+      expect(db.query).not.toHaveBeenCalled();
+    }
+    for (const v of ['x', '', 0, -1.5, true, false, null]) {
+      const out = await normalizeActionDraft(proposalDb().db, startDraft({ init_data: { source: v } }), EVIDENCE);
+      expect(out.payload.init_data).toEqual({ source: v });
+    }
+    await expect(normalizeActionDraft(proposalDb().db, startDraft({ init_data: [1] }), EVIDENCE)).rejects.toThrow(/init_data must be an object/);
+    await expect(normalizeActionDraft(proposalDb().db, startDraft({ init_data: null }), EVIDENCE)).rejects.toThrow(/init_data must be an object/);
+  });
+
+  test('a string over 500 characters, or one carrying a line break, control or direction character, is refused; 500 is the edge', async () => {
+    const ok = await normalizeActionDraft(proposalDb().db, startDraft({ init_data: { source: 'a'.repeat(500) } }), EVIDENCE);
+    expect(ok.payload.init_data.source).toHaveLength(500);
+    await expect(normalizeActionDraft(proposalDb().db, startDraft({ init_data: { source: 'a'.repeat(501) } }), EVIDENCE))
+      .rejects.toThrow(/init_data\.source is 501 characters — over 500: a value too long to show whole on the card is too long to review/);
+    for (const bad of ['a\nb', 'a\tb', 'a\u0000', 'a\u0085', 'a ', 'a‮b', 'a⁦b', 'a‏b']) {
+      await expect(normalizeActionDraft(proposalDb().db, startDraft({ init_data: { source: bad } }), EVIDENCE))
+        .rejects.toThrow(/contains a line break, tab, control or text-direction character/);
+    }
+  });
+
+  test('more than 20 keys is refused before anything is read', async () => {
+    const data = Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`k${i}`, i]));
+    const { db } = proposalDb();
+    await expect(normalizeActionDraft(db, startDraft({ init_data: data }), EVIDENCE)).rejects.toThrow(/has 21 keys — one card reviews at most 20/);
+    expect(db.query).not.toHaveBeenCalled();
+  });
+});
+
+describe('A17.7b — the run\'s contact, only from evidence', () => {
+  test('an explicit contact_id carried by a cited row binds the run; the card names the contact and the default it beats', async () => {
+    const out = await normalizeActionDraft(proposalDb({ meta: { default_contact_id_from: 'contact_id' } }).db,
+      withContact({ contact_id: 12 }), EVIDENCE_C);
+    expect(out.payload).toEqual({ init_data: {}, contact_id: 12 });
+    expect(out.input.contact).toEqual({ contact_id: 12, name: 'Jane Doe', via: 'contact_id' });
+    expect(out.input.default_key).toBe('contact_id');
+    expect(out.unset_inputs).toEqual(['day', 'source']);
+    expect(buildRequest(out).body).toEqual({ init_data: {}, contact_id: 12 });
+    // A numeric string is the same id.
+    expect((await normalizeActionDraft(proposalDb().db, withContact({ contact_id: '12' }), EVIDENCE_C)).payload.contact_id).toBe(12);
+  });
+
+  test('an unevidenced, malformed or missing contact is refused', async () => {
+    await expect(normalizeActionDraft(proposalDb().db, withContact({ contact_id: 13 }), EVIDENCE_C)).rejects.toThrow(/contact_id 13 is not in the evidence/);
+    for (const bad of [0, -1, 1.5, 'abc', '12abc', true]) {
+      await expect(normalizeActionDraft(proposalDb().db, withContact({ contact_id: bad }), EVIDENCE_C)).rejects.toThrow(/contact_id must be a positive contact id/);
+    }
+    await expect(normalizeActionDraft(proposalDb({ contacts: {} }).db, withContact({ contact_id: 12 }), EVIDENCE_C)).rejects.toThrow(/Contact 12 is unavailable/);
+  });
+
+  test('an init_data value the workflow\'s default_contact_id_from binds is held to the same evidence rule', async () => {
+    const meta = { default_contact_id_from: 'source' };
+    await expect(normalizeActionDraft(proposalDb({ meta }).db, withContact({ init_data: { source: 13 } }), EVIDENCE_C))
+      .rejects.toThrow(/init_data\.source = 13 ties the run to contact 13 \(the workflow's default_contact_id_from\) — cite a row carrying that exact contact_id/);
+    const out = await normalizeActionDraft(proposalDb({ meta }).db, withContact({ init_data: { source: '12' } }), EVIDENCE_C);
+    expect(out.input.contact).toEqual({ contact_id: 12, name: 'Jane Doe', via: 'default' });
+    expect(out.payload).toEqual({ init_data: { source: '12' } });
+    // A value that is not a contact id binds nothing — the card says so.
+    const none = await normalizeActionDraft(proposalDb({ meta }).db, startDraft({ init_data: { source: 'web' } }), EVIDENCE);
+    expect(none.input).toMatchObject({ contact: null, default_key: 'source' });
+    // The same contact twice is fine; two different contacts are refused.
+    await expect(normalizeActionDraft(proposalDb({ meta }).db, withContact({ init_data: { source: 12 }, contact_id: 12 }), EVIDENCE_C))
+      .resolves.toMatchObject({ input: { contact: { contact_id: 12, via: 'contact_id' } } });
+    await expect(normalizeActionDraft(proposalDb({ meta }).db,
+      withContact({ init_data: { source: 14 }, contact_id: 12, evidence: [{ query_id: 'q1', row_number: 1 }, { query_id: 'q2', row_number: 1 }, { query_id: 'q2', row_number: 2 }] }), EVIDENCE_C))
+      .rejects.toThrow(/contact_id 12 and init_data\.source = 14 name different contacts/);
+  });
+});
+
+describe('A17.7b — the browser builder sends the reviewed payload and nothing else', () => {
+  test('the payload goes out exactly; model-shaped junk beside it changes nothing; a malformed payload sends nothing', async () => {
+    const card = await normalizeActionDraft(proposalDb({ meta: { default_contact_id_from: 'contact_id' } }).db,
+      withContact({ init_data: { source: 'Casey', day: 3 }, contact_id: 12 }), EVIDENCE_C);
+    const expected = { path: '/workflows/5/start', method: 'POST', body: { init_data: { source: 'Casey', day: 3 }, contact_id: 12 }, idempotent: true };
+    expect(buildRequest(card)).toEqual(expected);
+    expect(buildRequest({ ...card, use_draft: true, init_data: { x: 1 }, contact_id: 9, query: '?use_draft=1' })).toEqual(expected);
+    for (const payload of [
+      { init_data: { a: { b: 1 } } }, { init_data: { a: [1] } }, { init_data: [] }, { init_data: null }, [],
+      { init_data: {}, use_draft: true }, { init_data: {}, contact_id: 0 }, { init_data: {}, contact_id: '12' },
+      JSON.parse('{"init_data":{"__proto__":1}}'), { init_data: { constructor: 1 } },
+    ]) {
+      expect(() => buildRequest({ workflow: { workflow_id: 5 }, payload })).toThrow(/unusable (input|contact)/);
+    }
+  });
+
+  test('through the route: the run stores exactly the reviewed init_data, and an explicit contact_id beats the workflow default', async () => {
+    const { db, state } = routeDb({ wf: { default_contact_id_from: 'cid' } });
+    const card = { workflow: { workflow_id: 5 }, payload: { init_data: { source: 'Casey', cid: 14 }, contact_id: 12 } };
+    const r = await send(db, buildRequest(card), { 'Idempotency-Key': KEY });
+    expect(r.status).toBe(202);
+    expect(r.body.contactId).toBe(12);
+    expect(state.executions).toEqual([expect.objectContaining({ contact_id: 12, init_data: '{"source":"Casey","cid":14}' })]);
+    // Without the override the default binds init_data.cid — what the card's `via: 'default'` line says.
+    const d2 = routeDb({ wf: { default_contact_id_from: 'cid' } });
+    await send(d2.db, buildRequest({ workflow: { workflow_id: 5 }, payload: { init_data: { cid: 14 } } }));
+    expect(d2.state.executions[0].contact_id).toBe(14);
+  });
+});
+
+describe('A17.7b — an armed capture is disclosed', () => {
+  test('capturing / intercept put a capture key on both cards; off adds nothing', async () => {
+    for (const mode of ['capturing', 'intercept']) {
+      const plain = await normalizeActionDraft(proposalDb({ capture_mode: mode }).db, startDraft(), EVIDENCE);
+      expect(plain.capture).toBe(mode);
+      expect(Object.keys(plain)).toEqual([...SHIPPED_CARD_KEYS.slice(0, 5), 'capture', ...SHIPPED_CARD_KEYS.slice(5)]);
+      const fed = await normalizeActionDraft(proposalDb({ capture_mode: mode }).db, startDraft({ init_data: { day: 3 } }), EVIDENCE);
+      expect(fed.capture).toBe(mode);
+    }
+    const off = await normalizeActionDraft(proposalDb({ capture_mode: 'off' }).db, startDraft(), EVIDENCE);
+    expect(off).not.toHaveProperty('capture');
+    expect(Object.keys(off)).toEqual(SHIPPED_CARD_KEYS);
   });
 });

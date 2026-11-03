@@ -460,19 +460,33 @@ body. Governing migrations in `ref/migrations/`.*
   (ref/plans.md). Tests: `tests/caseySequencePublish.test.js`, gated
   `tests/caseySequencePublish.mysql.test.js`; plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A18.3.
-- **Workflow start idempotency + Casey start card (A17.7, 10-28):**
+- **Workflow start idempotency + Casey start card (A17.7, 10-28; reviewed
+  input A17.7b, 11-03):**
   `POST /workflows/:id/start` takes an optional `Idempotency-Key` (scope
   `workflows.start`) under the SEND rule (`releaseOnRefusalOnly`): only a
   pre-INSERT 4xx refusal (404 / inactive / never published / no draft / bad
   contact_id) releases the claim; a 5xx or lost commit ack keeps it, so a key
   can never start a second run. A replay answers the FIRST run's body with
   `replayed: true` and advances nothing. No key = unchanged, zero extra
-  queries. Kind `workflow.start.v1`: the model supplies only `workflow_id`
-  + evidence; Casey starts the PUBLISHED version only (`use_draft` refused by
-  name, unexpressible by the fixed builder) with NO input — the body is pinned
-  `{init_data: {}}` (measured 10-28: 7,999 of 8,002 live runs in 90 days
-  carried input, so the card lists the `{{placeholders}}` no step sets, which
-  resolve blank). Refused: inactive, never published, a STANDARD-mode code
+  queries. Kind `workflow.start.v1`: the model supplies `workflow_id`
+  + evidence and optionally `init_data` / `contact_id`; Casey starts the
+  PUBLISHED version only (`use_draft` refused by name, unexpressible by the
+  fixed builder). No input (absent or `{}`, no contact) = the shipped card
+  and body `{init_data: {}}`, byte-identical; the card lists the
+  `{{placeholders}}` no step sets, which resolve blank. A17.7b input:
+  `init_data` only (`initData` / `input` refused by name), a CLOSED key set
+  = the published version's unset placeholder roots ∪ `workflows.test_input`
+  keys (`workflowStartAllowedKeys`; never `this`/`env`, dotted or other
+  non-root names, prototype names — the set cannot see a safe code step's
+  returned variables, so it may over- or under-list), SCALAR values only
+  (objects/arrays refused: provider envelopes are forgeries, not inputs;
+  strings ≤500 chars, no control / line-break / bidi chars), ≤20 keys; a
+  contact only from a cited row carrying that contact_id — explicit
+  `contact_id`, or the value `default_contact_id_from` would bind (precedence
+  via the engine's `resolveExecutionContactId`; two different contacts
+  refused). The card shows each value verbatim with the steps reading it,
+  the contact binding, the blank-list minus the payload; `payload` is the
+  exact body the builder sends (re-checked, never rebuilt). Refused: inactive, never published, a STANDARD-mode code
   step in the published version (`standardCodeStepNumbers`, shared with
   A17.6). The card shows effects (shared with publish), starters, in-flight
   runs (`pending|active|processing|delayed|held`, any version), 90-day

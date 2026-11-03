@@ -157,7 +157,9 @@ const JOB_CODE_MAX_INPUT_JSON_CHARS = 10000;
 // NOT publish a version containing a STANDARD-mode custom_code step (Fred's
 // ruling 2026-10-22, narrowed 2026-10-25: safe-mode steps publish and are
 // disclosed on the card). migrate_in_flight is never offered and never sent.
-// A17.7 adds start: ONE run of the PUBLISHED version, now, with no input —
+// A17.7 adds start: ONE run of the PUBLISHED version, now — with no input, or
+// (A17.7b) a reviewed scalar init_data over the keys that version reads and an
+// evidence-bound contact_id —
 // the one workflow kind that executes rather than authors, so it has its own
 // off switch (casey_workflow_start_enabled). use_draft is never sent, the
 // standard-mode code refusal applies, and the route honours the card's
@@ -216,7 +218,22 @@ const WORKFLOW_STEP_INSERT_KEYS = new Set(['kind', 'workflow_id', 'step_number',
 const WORKFLOW_STEP_EDIT_KEYS = new Set(['kind', 'workflow_id', 'step_number', 'changes', 'evidence']);
 const WORKFLOW_STEP_EDIT_CHANGE_KEYS = new Set(['label', 'note', 'params', 'code', 'input']);
 const WORKFLOW_PUBLISH_KEYS = new Set(['kind', 'workflow_id', 'evidence']);
-const WORKFLOW_START_KEYS = new Set(['kind', 'workflow_id', 'evidence']);
+const WORKFLOW_START_KEYS = new Set(['kind', 'workflow_id', 'init_data', 'contact_id', 'evidence']);
+// A17.7b: a start's reviewed input. Scalar values only; a string is capped so
+// the card can show it whole and verbatim on one line (a value too long to
+// show whole is too long to review), and one card reviews at most 20 keys —
+// the shipped blank-list's own cap. A key must be a name a {{placeholder}}
+// root can be: no `.`, `[`, `]`, `|`, braces, `:` or whitespace (a dotted key
+// would shadow a nested read — the engine tries `key in variables` with the
+// whole placeholder first), and never an engine-provided root (`this`,
+// `env`) or a prototype name.
+const WORKFLOW_START_MAX_KEYS = 20;
+const WORKFLOW_START_MAX_STRING = 500;
+const WORKFLOW_START_KEY_BAD = /[.[\]|{}:\s]/;
+const WORKFLOW_START_RESERVED_KEYS = new Set(['this', 'env', '__proto__', 'constructor', 'prototype']);
+// C0, DEL, C1, the line / paragraph separators and the bidi controls: a value
+// carrying one cannot be shown on one line exactly as it will be sent.
+const WORKFLOW_START_VALUE_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 // Functions whose presence in a draft the publish card must call out: they
 // leave the firm or fan out the moment a published version runs. Prefix
 // classes (send_/esign_) plus the named chain/write functions. This is CARD
@@ -5837,15 +5854,92 @@ function workflowStarters(referenceRows) {
 // step's returned set_vars cannot be seen from config, so this over-reports
 // rather than under-reports; `this` and `env.*` are engine-provided.
 function workflowUnsetInputs(steps) {
+  return workflowUnsetRoots(steps).slice(0, 20);
+}
+
+// The whole blank-list, uncapped (A17.7b subtracts a reviewed input from it).
+function workflowUnsetRoots(steps) {
   const parsedSteps = steps.map((s) => ({ ...s, config: workflowStepConfig(s) }));
-  const roots = new Set();
-  for (const s of parsedSteps) {
-    for (const m of JSON.stringify(s.config).matchAll(/{{([^}]{1,200})}}/g)) {
+  const roots = new Set([...workflowPlaceholderReads(parsedSteps).keys()].map((root) => root.slice(0, 64)));
+  return [...roots].filter((name) => !parsedSteps.some((s) => workflowStepWritesVar(s, name))).sort();
+}
+
+// Every placeholder root a version's step configs read → the steps reading
+// it, in step order (the scan the blank-list is built from).
+function workflowPlaceholderReads(steps) {
+  const reads = new Map();
+  for (const s of steps) {
+    for (const m of JSON.stringify(workflowStepConfig(s)).matchAll(/{{([^}]{1,200})}}/g)) {
       const root = m[1].trim().split(/[.[|\s]/)[0];
-      if (root && root !== 'this' && root !== 'env') roots.add(root.slice(0, 64));
+      if (!root || root === 'this' || root === 'env') continue;
+      if (!reads.has(root)) reads.set(root, []);
+      const at = reads.get(root);
+      if (!at.some((x) => x.step_number === s.step_number)) at.push({ step_number: Number(s.step_number), label: s.label ? String(s.label).slice(0, 100) : null });
     }
   }
-  return [...roots].filter((name) => !parsedSteps.some((s) => workflowStepWritesVar(s, name))).sort().slice(0, 20);
+  return reads;
+}
+
+// A17.7b: the CLOSED key set a reviewed start may feed — the roots the
+// published version reads that no step stores (exactly the blank-list's
+// names, uncapped and untruncated) ∪ the keys of the workflow's test_input
+// sample (the author's own documentation of the init_data shape). What it can
+// and cannot know: a safe-mode code step reads its `input` config (scanned
+// like any config) but the variables it RETURNS are invisible, and a body may
+// read a variable the scan never sees — so a key may be over- or under-listed;
+// a test_input key no placeholder reads is allowed and the card says it is
+// read by no placeholder. Names that cannot be a placeholder root, the
+// engine's own roots and prototype names are never allowed.
+function workflowStartAllowedKeys(steps, testInput) {
+  const parsedSteps = steps.map((s) => ({ ...s, config: workflowStepConfig(s) }));
+  const reads = workflowPlaceholderReads(parsedSteps);
+  const usable = (k) => typeof k === 'string' && k.length >= 1 && k.length <= 64
+    && !WORKFLOW_START_KEY_BAD.test(k) && !WORKFLOW_START_RESERVED_KEYS.has(k);
+  const fromReads = [...reads.keys()].filter((k) => usable(k) && !parsedSteps.some((s) => workflowStepWritesVar(s, k)));
+  const fromSample = testInput && typeof testInput === 'object' && !Array.isArray(testInput)
+    ? Object.keys(testInput).filter(usable) : [];
+  return { allowed: new Set([...fromReads, ...fromSample]), reads };
+}
+
+// A17.7b: the shape of a reviewed init_data, checked before anything is read.
+// Returns the object to send (its own keys, values verbatim), or null when
+// the draft carries no input (absent, or `{}` — the shipped no-input start).
+function workflowStartInitData(value) {
+  if (!Object.prototype.hasOwnProperty.call(value, 'init_data')) return null;
+  const data = value.init_data;
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    throw httpError(422, 'Workflow start init_data must be an object of key → scalar value (or left out for a start with no input)');
+  }
+  const keys = Object.keys(data);
+  if (!keys.length) return null;
+  if (keys.length > WORKFLOW_START_MAX_KEYS) {
+    throw httpError(422, `Workflow start init_data has ${keys.length} keys — one card reviews at most ${WORKFLOW_START_MAX_KEYS}`);
+  }
+  const out = {};
+  for (const key of keys) {
+    if (WORKFLOW_START_RESERVED_KEYS.has(key)) {
+      throw httpError(422, `Workflow start init_data key "${key}" is reserved — ${key === 'this' || key === 'env'
+        ? `{{${key}}} is the workflow engine's own, and an input of that name would shadow it` : 'a prototype name is never an input'}`);
+    }
+    const v = data[key];
+    if (v !== null && typeof v === 'object') {
+      throw httpError(422, `Workflow start init_data.${String(key).slice(0, 64)} is ${Array.isArray(v) ? 'an array' : 'an object'} — Casey sends scalar values only (text, number, true/false, null). Provider-envelope workflows are event handlers, not hand-fed starts: a hand-built envelope is a forgery, not an input`);
+    }
+    if (typeof v === 'number' && !Number.isFinite(v)) throw httpError(422, `Workflow start init_data.${String(key).slice(0, 64)} is not a finite number`);
+    if (v !== null && !['string', 'number', 'boolean'].includes(typeof v)) {
+      throw httpError(422, `Workflow start init_data.${String(key).slice(0, 64)} must be text, a number, true/false or null`);
+    }
+    if (typeof v === 'string') {
+      if (v.length > WORKFLOW_START_MAX_STRING) {
+        throw httpError(422, `Workflow start init_data.${String(key).slice(0, 64)} is ${v.length} characters — over ${WORKFLOW_START_MAX_STRING}: a value too long to show whole on the card is too long to review`);
+      }
+      if (WORKFLOW_START_VALUE_CONTROL.test(v)) {
+        throw httpError(422, `Workflow start init_data.${String(key).slice(0, 64)} contains a line break, tab, control or text-direction character — the card shows every value on one line exactly as it is sent`);
+      }
+    }
+    out[key] = v;
+  }
+  return out;
 }
 
 // A17.6: publish a workflow's draft. The model proposes only {workflow_id};
@@ -5949,10 +6043,19 @@ async function normalizeWorkflowPublishAction(db, value, evidence) {
 //   * PUBLISHED VERSION ONLY. `use_draft` is refused by name and the
 //     browser's fixed builder cannot express it — running an unpublished draft
 //     is an author's own test (the editor's Run button), not a reviewed action.
-//   * NO INPUT. The start body is pinned to `{init_data: {}}` with no contact_id
-//     (measured 2026-10-28: 7,999 of 8,002 live runs in 90 days carried input,
-//     so the card lists the placeholders that will resolve blank). A reviewed
-//     input payload is its own decision, not this slice.
+//   * INPUT IS OPTIONAL AND REVIEWED (A17.7b). No `init_data` (or `{}`) and no
+//     `contact_id` is the shipped no-input start: the same card, the same
+//     `{init_data: {}}` body. Otherwise `init_data` is a CLOSED key set
+//     (workflowStartAllowedKeys — the placeholders the published version
+//     reads that no step stores ∪ its test_input sample's keys), scalar values
+//     only (workflowStartInitData), each shown verbatim on the card with the
+//     steps that read it; `initData` / `input` are refused by name (one
+//     spelling). A run's contact comes only from evidence: an explicit
+//     `contact_id`, or an init_data value the workflow's
+//     `default_contact_id_from` would bind the run to, must each be carried by
+//     a cited row — resolveExecutionContactId's precedence (explicit beats the
+//     default) is the engine's own function, and the two naming different
+//     contacts is refused. The card's `payload` is the exact request body.
 //   * The A17.6 code-step refusal, mode-scoped: a STANDARD-mode custom_code
 //     step in the published version refuses the card (standardCodeStepNumbers,
 //     shared with publish); safe-mode steps start and are disclosed.
@@ -5969,12 +6072,12 @@ async function normalizeWorkflowStartAction(db, value, evidence) {
   if (value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, 'use_draft')) {
     throw httpError(422, 'Workflow start never runs a draft (use_draft) — Casey starts the PUBLISHED version only; a draft test-run is the author\'s own Run button in the editor');
   }
-  const payloadKeys = value && typeof value === 'object'
-    ? Object.keys(value).filter((k) => ['init_data', 'initData', 'contact_id', 'input'].includes(k)) : [];
-  if (payloadKeys.length) {
-    throw httpError(422, `Workflow start takes no input (${payloadKeys.join(', ')}) — Casey starts a run with empty input; the user starts it with data in the workflow editor`);
+  const otherSpellings = value && typeof value === 'object'
+    ? Object.keys(value).filter((k) => ['initData', 'input'].includes(k)) : [];
+  if (otherSpellings.length) {
+    throw httpError(422, `Workflow start takes its input as init_data only (${otherSpellings.join(', ')}) — one spelling, scalar values, keys the published version reads`);
   }
-  if (!onlyKeys(value, WORKFLOW_START_KEYS)) throw httpError(422, 'Workflow start contains unsupported fields — it takes workflow_id and evidence only');
+  if (!onlyKeys(value, WORKFLOW_START_KEYS)) throw httpError(422, 'Workflow start contains unsupported fields — it takes workflow_id, init_data, contact_id and evidence only');
   const workflowId = Number(value.workflow_id);
   if (!Number.isSafeInteger(workflowId) || workflowId < 1) {
     throw httpError(422, 'Workflow start needs a positive workflow_id');
@@ -5982,6 +6085,17 @@ async function normalizeWorkflowStartAction(db, value, evidence) {
   const refs = jobDraftEvidence(value.evidence, evidence);
   if (!refs.length || !evidenceSupportsAutomation(refs, evidence, workflowId)) {
     throw httpError(422, 'Workflow start evidence does not identify the target workflow — read it with automation.definition first');
+  }
+  const initData = workflowStartInitData(value);
+  let explicitContactId = null;
+  if (value.contact_id != null) {
+    const raw = value.contact_id;
+    const n = typeof raw === 'number' || (typeof raw === 'string' && /^\d{1,15}$/.test(raw)) ? Number(raw) : NaN;
+    if (!Number.isSafeInteger(n) || n < 1) throw httpError(422, 'Workflow start contact_id must be a positive contact id');
+    if (!contactEvidenceSupports(refs, evidence, n)) {
+      throw httpError(422, `Workflow start contact_id ${n} is not in the evidence — cite a row carrying that exact contact_id (read the contact first)`);
+    }
+    explicitContactId = n;
   }
   const [[wf]] = await db.query(
     'SELECT id, name, active, current_version, draft_version FROM workflows WHERE id = ?', [workflowId]);
@@ -6000,6 +6114,17 @@ async function normalizeWorkflowStartAction(db, value, evidence) {
     throw httpError(422, `Workflow ${workflowId}'s published version contains standard-mode code step${standardCodeSteps.length > 1 ? 's' : ''} ` +
       `${standardCodeSteps.join(', ')} — Casey does not start versions with standard-mode code; the user starts it in the workflow editor`);
   }
+  // A17.7b: the reviewed input — read only when the draft carries one, so the
+  // no-input start reads, refuses and returns exactly what it shipped with.
+  const input = (initData || explicitContactId)
+    ? await workflowStartInput(db, workflowId, steps, initData || {}, explicitContactId, refs, evidence) : null;
+  // An armed capture stores THIS start's input as the workflow's captured
+  // sample (lib/workflow_engine captureWorkflowInput at the route for
+  // 'capturing'; the step-0 block for 'intercept', which also HOLDS the run
+  // before step 1). The card says so; an unarmed workflow's card carries no
+  // key, so the shipped envelope is unchanged.
+  const [[cap]] = await db.query('SELECT capture_mode FROM workflows WHERE id = ?', [workflowId]);
+  const captureMode = cap && (cap.capture_mode === 'capturing' || cap.capture_mode === 'intercept') ? cap.capture_mode : null;
 
   // Non-terminal runs of ANY version (the enum's five live states).
   const [[inFlight]] = await db.query(
@@ -6023,13 +6148,76 @@ async function normalizeWorkflowStartAction(db, value, evidence) {
       step_count: steps.length,
       has_draft: wf.draft_version != null ? 1 : 0,
     },
-    unset_inputs: workflowUnsetInputs(steps),
+    unset_inputs: input ? input.unset_inputs : workflowUnsetInputs(steps),
+    ...(input ? { payload: input.payload, input: input.card } : {}),
+    ...(captureMode ? { capture: captureMode } : {}),
     starters,
     effects: workflowStepEffects(steps, 'on this run'),
     in_flight_count: Number(inFlight && inFlight.n) || 0,
     recent: { runs_90d: Number(recent && recent.n) || 0, avg_steps: Number.isFinite(avgSteps) ? avgSteps : null },
     expected: { current_version: version },
     evidence: refs,
+  };
+}
+
+// A17.7b: check a start's reviewed input against the PUBLISHED version and
+// compute its card lines. `payload` is the exact request body the browser
+// sends; `card` is what the review shows beside it: per key the steps that
+// read it (or that only the test_input sample names it), and the run's
+// contact binding with the precedence resolveExecutionContactId applies.
+async function workflowStartInput(db, workflowId, steps, initData, explicitContactId, refs, evidence) {
+  const [[meta]] = await db.query('SELECT default_contact_id_from, test_input FROM workflows WHERE id = ?', [workflowId]);
+  let testInput = meta ? meta.test_input : null;
+  if (typeof testInput === 'string') { try { testInput = JSON.parse(testInput); } catch (_) { testInput = null; } }
+  const { allowed, reads } = workflowStartAllowedKeys(steps, testInput);
+  const unknown = Object.keys(initData).filter((k) => !allowed.has(k));
+  if (unknown.length) {
+    const list = [...allowed].sort();
+    throw httpError(422, `Workflow start init_data key${unknown.length > 1 ? 's' : ''} ${unknown.map((k) => `"${String(k).slice(0, 64)}"`).join(', ')} ` +
+      `${unknown.length > 1 ? 'are' : 'is'} not read by workflow ${workflowId}'s published version — ` +
+      (list.length ? `allowed: ${list.slice(0, 40).join(', ')}${list.length > 40 ? ', …' : ''}` : 'it reads no input key, so start it with no init_data') +
+      ' (the {{placeholders}} it reads that no step sets, plus its test_input sample\'s keys)');
+  }
+
+  const defaultKey = meta && typeof meta.default_contact_id_from === 'string' && meta.default_contact_id_from.trim()
+    ? meta.default_contact_id_from : null;
+  // The engine's own precedence function, so the card cannot disagree with
+  // the run: what the default alone would bind, then the explicit override.
+  const { resolveExecutionContactId } = require('../lib/workflow_engine'); // lazy require (convention)
+  const viaDefault = resolveExecutionContactId({ initData, defaultKey });
+  if (explicitContactId && viaDefault && viaDefault !== explicitContactId) {
+    throw httpError(422, `Workflow start contact_id ${explicitContactId} and init_data.${defaultKey} = ${viaDefault} name different contacts — ` +
+      `the run would be tied to ${explicitContactId} while its steps read ${viaDefault}; send one contact`);
+  }
+  const bound = resolveExecutionContactId({ explicitContactId: explicitContactId || undefined, initData, defaultKey });
+  let contact = null;
+  if (bound) {
+    if (!explicitContactId && !contactEvidenceSupports(refs, evidence, bound)) {
+      throw httpError(422, `Workflow start init_data.${defaultKey} = ${bound} ties the run to contact ${bound} (the workflow's default_contact_id_from) — cite a row carrying that exact contact_id (read the contact first)`);
+    }
+    const [[row]] = await db.query('SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1', [bound]);
+    if (!row) throw httpError(422, `Contact ${bound} is unavailable — the run cannot be tied to it`);
+    contact = {
+      contact_id: bound,
+      name: String(row.contact_name || '').trim().slice(0, 200) || `Contact ${bound}`,
+      via: explicitContactId ? 'contact_id' : 'default',
+    };
+  }
+  const has = (k) => Object.prototype.hasOwnProperty.call(initData, k);
+  const parsedSteps = steps.map((s) => ({ ...s, config: workflowStepConfig(s) }));
+  return {
+    payload: { init_data: initData, ...(explicitContactId ? { contact_id: explicitContactId } : {}) },
+    card: {
+      reads: Object.keys(initData).map((key) => ({
+        key, steps: (reads.get(key) || []).slice(0, 10),
+        // allowed through the test_input sample although a step stores it:
+        // reads after that step see the step's value, not this one.
+        stored_by_step: parsedSteps.some((s) => workflowStepWritesVar(s, key)) ? 1 : 0,
+      })),
+      contact,
+      default_key: defaultKey ? String(defaultKey).slice(0, 100) : null,
+    },
+    unset_inputs: workflowUnsetRoots(steps).filter((k) => !has(k)).slice(0, 20),
   };
 }
 

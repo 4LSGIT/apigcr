@@ -166,15 +166,27 @@ describe('A18.3 — every stage teaches sequence publish, none still excludes it
 // A17.7: the workflow family marker in PLAN_FAMILY_MARKERS is the draft
 // bullet, so start needs its own pin — a planner that only knows drafting and
 // publishing refuses "start the workflow" (the job lesson).
-describe('A17.7 — every stage teaches workflow start, published-only and inputless', () => {
+// A17.7b moved the input pins: the stages taught "NO INPUT" and refused
+// init_data / contact_id by name; they now teach the reviewed scalar input,
+// and the old exclusion must be gone everywhere (a stage still saying so
+// refuses the widened kind — the job lesson).
+describe('A17.7 — every stage teaches workflow start, published-only, with an optional reviewed input', () => {
   test('the plan carries its own start bullet', () => {
     expect(planPrompt).toContain('A reviewed workflow start action is available');
+    expect(planPrompt).toContain('or with a reviewed scalar init_data');
   });
-  test('the answer and repair stages teach published-only, no input, and the standard-code refusal', () => {
+  test('the answer and repair stages teach published-only, the closed scalar input, the evidence-bound contact, and the standard-code refusal', () => {
     expect(answerPrompt).toContain('Workflow start rules (A17.7');
     expect(answerPrompt).toContain('PUBLISHED VERSION ONLY: never a draft — there is no use_draft key');
-    expect(answerPrompt).toContain('NO INPUT: the run starts with empty input');
-    expect(repairPrompt).toContain('no use_draft, init_data, contact_id or input key');
+    expect(answerPrompt).toContain('OPTIONAL REVIEWED INPUT (A17.7b)');
+    expect(answerPrompt).toContain('Values are SCALARS only');
+    expect(answerPrompt).toContain('contact_id sets no {{variable}}');
+    expect(repairPrompt).toContain('no use_draft, initData or\n  input key');
+    expect(repairPrompt).toContain('keys ONLY from the refusal\'s allowed list');
+    for (const p of [planPrompt, answerPrompt, repairPrompt]) {
+      expect(p).not.toContain('NO INPUT: the run starts with empty input');
+      expect(p).not.toContain('no use_draft, init_data, contact_id or input key');
+    }
   });
 });
 

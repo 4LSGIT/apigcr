@@ -13,8 +13,8 @@ advance and move; off-ramp = exit), A10 (checklists and items), A11 (documents �
 update and link), A11.1 (a case's Dropbox folder — candidates-only relink),
 A12 (form drafts and submission links), A13 (mail triage —
 read state and case link; no drafts exist, no SMS triage), A14 (direct email /
-SMS send), A16 (reports), A17.0–A17.4, A17.6, A17.7 (workflows — explain,
-preview, draft, step, publish, start), A18.2, A18.3, A18.4a/b (sequences — step,
+SMS send), A16 (reports), A17.0–A17.4, A17.6, A17.7 + A17.7b (workflows — explain,
+preview, draft, step, publish, start with an optional reviewed input), A18.2, A18.3, A18.4a/b (sequences — step,
 publish, enroll), A19.0/A19.1 (inbound hooks), A20.0–A20.3 (email and phone
 ingest rules), R1 (read-loop continuation) and P13. A15 (e-signature) is not
 built. Each slice's section below carries its shipped contract. No general
@@ -2515,7 +2515,8 @@ every stage. At run time `send_sms` / `send_email` refuse an opted-out
 recipient (ruling 2026-10-27) and the engine records the step skipped — for
 human-authored send steps too.
 
-**A17.7: Start a workflow. SHIPPED 2026-10-28** — kind `workflow.start.v1`
+**A17.7: Start a workflow. SHIPPED 2026-10-28; reviewed input (A17.7b)
+2026-11-03** — kind `workflow.start.v1`
 on the card engine: ONE run of a workflow's PUBLISHED version, started now.
 An irreversible fan-out, not an extension of publish: the execution row
 commits and the advance is detached, so every step that sends, calls, writes
@@ -2538,25 +2539,93 @@ nothing. No key = the old behaviour and zero extra queries (the editor's Run
 button, x-api-key callers, every native start). Before this, every call
 created another execution.
 
-**The card.** The model supplies only `{workflow_id, evidence}`; evidence
-must carry that exact id from an `automation.definition` read. Fixed rules:
+**The card.** The model supplies `{workflow_id, init_data?, contact_id?,
+evidence}`; evidence must carry that exact workflow id from an
+`automation.definition` read. Fixed rules:
 
 - **Published version only.** `use_draft` is refused by name (any value) and
   the fixed request builder cannot express it — no query string, no body key.
   Running an unpublished draft is an author's own test, not a reviewed action
   (Fred, 2026-10-22). An inactive or never-published workflow refuses at
   proposal time.
-- **No input** (judgment call, flagged for Fred). The builder pins the body to
-  `{init_data: {}}` with no `contact_id`; `init_data`, `initData`,
-  `contact_id` and `input` are refused by name. Measured live 2026-10-28:
-  7,999 of 8,002 runs in 90 days carried input (the 3 empty ones were a test
-  workflow), and of the 13 live workflows with no standard-mode code step
-  most are event handlers whose payloads are provider envelopes. So the card
-  lists the `{{placeholders}}` the version reads that no step stores
-  (`output_var` / `set_vars` / `set_var`; `this` and `env.*` excluded; a code
-  step's returned variables are invisible, so it over-reports) and says each
-  resolves blank on this run. A reviewed input payload is its own decision —
-  filed in `ref/plans.md`.
+- **Input is optional and reviewed** (A17.7b; Fred delegated the pick, the
+  manager ruled 2026-11-03). Measured live 2026-10-28: 7,999 of 8,002 runs in
+  90 days carried input, so a start with none was nearly decorative.
+  - **No input** — `init_data` absent or `{}`, no `contact_id` — is the
+    shipped start, unchanged: the same card envelope (no `payload` / `input`
+    keys, no extra read) and the same `{init_data: {}}` body. The card lists
+    the `{{placeholders}}` the version reads that no step stores
+    (`output_var` / `set_vars` / `set_var`; `this` and `env.*` excluded)
+    and says each resolves blank on this run.
+  - **Spelling.** `init_data` only; `initData` and `input` are refused by
+    name, `use_draft` stays refused by name (any value).
+  - **Closed key set.** An `init_data` key must be one the PUBLISHED version
+    reads: a placeholder root of its step configs that no step stores (the
+    blank-list's own scan, uncapped) ∪ the keys of the workflow's
+    `test_input` sample (`workflows.test_input`, the author's documentation
+    of the init_data shape; `captured_input` is not consulted — a captured
+    provider envelope documents what was sent, not what is read). Any other
+    key is refused with the allowed set in the message. Never allowed: a name
+    that cannot be a placeholder root (`.` `[` `]` `|` braces `:`
+    whitespace — a dotted key would shadow a nested read, since the engine
+    tries `key in variables` with the whole placeholder first), `this` /
+    `env` (refused by name: an input of that name would shadow the engine's
+    own), prototype names. **What the set cannot know:** a safe-mode code
+    step's `input` config is scanned like any config, but the variables it
+    returns are invisible and a body may read a variable no placeholder names
+    — so the set can over- or under-list a key. The union is taken honestly
+    and the card discloses it: a key only the test_input sample names reads
+    "no step's {{placeholder}} — the workflow's test_input sample names it (a
+    safe-mode code step may still read it)"; a sample key a step also stores
+    says later reads see the step's value.
+  - **Scalar values only** (vision-style, per `ref/CASEY_VISION.md`): *says
+    yes* to every hand-fed start the firm runs today with flat values (e.g.
+    the Daily Appointment Report's `{source}`); *risk* — of the 13 startable
+    live workflows most are provider event handlers (message / call
+    envelopes), and a hand-built envelope is a forgery, not an input: a run
+    acting on a fabricated provider payload; *mitigation* — text / number /
+    true/false / null only, an object or array refused by name with that
+    reason; *deferred* — nested values, until a workflow needs a hand-fed
+    structured input and the card can review it whole. A string is capped at
+    **500 characters** and refused when it carries a line break, tab, control
+    or text-direction character: the card shows every value whole and
+    verbatim on one line (text in quotes, so `"12"` and `12` differ), and a
+    value too long to show whole is too long to review — 500 is several card
+    lines, well past the identifiers and short labels live starts carry. At
+    most 20 keys per card (the blank-list's own cap).
+  - **Contact only from evidence** (A8's two-source pattern: the workflow row
+    and a contact row). An explicit `contact_id` needs a cited row carrying
+    that exact contact_id; so does an `init_data` value the workflow's
+    `default_contact_id_from` would bind the run to. The precedence is the
+    engine's own `resolveExecutionContactId` (explicit beats the default);
+    an explicit id and a default-bound value naming DIFFERENT contacts is
+    refused (the run would be tied to one while its steps read the other).
+    The card names the contact, how the run is bound (contact_id — and that it
+    beats the workflow's default when one exists — or the default key), or
+    "none" (and why); `contact_id` sets no `{{variable}}` and the card says
+    so. A missing contact is refused.
+  - **The card adds**, server-computed: one line per key with its value
+    verbatim, the steps whose placeholders read it, the contact binding, and
+    the blank-list minus what the payload feeds; the review warning says
+    "with exactly the input listed above". `payload` is the exact request
+    body; the browser builder sends it as reviewed — frozen at proposal,
+    re-checked (scalar values, only `init_data` / `contact_id`, a positive
+    contact id) and never rebuilt; a malformed payload sends nothing.
+  - **Capture disclosure — both cards.** When the workflow is armed
+    (`workflows.capture_mode` `'capturing'` or `'intercept'`, read at
+    proposal time), the card carries `capture` and says this start's input
+    (the values above, or its empty input) will be stored as the workflow's
+    captured input sample, visible to automation staff in the editor, and
+    the arm turns off — `'capturing'` stores it at the route and the run
+    proceeds; `'intercept'` stores it at step 0 and HOLDS the run before
+    step 1 until someone resumes it; either way unless another start reaches
+    the one-shot arm first. An unarmed workflow's card carries no `capture`
+    key, so the no-input envelope stays the shipped one (it gains the key
+    only when armed). Not re-checked at click.
+  - **Send class.** A start with input is the same class as one without: it
+    already runs under A14's SEND rule (keep-the-claim idempotency), danger
+    styling and a fresh confirmation, all unchanged — the input adds review
+    lines, not a new class. No new kind, flag or route change.
 - **The A17.6 code-step refusal, mode-scoped** (Fred, 2026-10-22, narrowed
   2026-10-25): a STANDARD-mode `custom_code` step in the published version
   (`code_mode` absent, `'standard'`, or unparseable config) refuses the card;
@@ -2601,7 +2670,10 @@ must carry that exact id from an `automation.definition` read. Fixed rules:
 
 Known limit, as A17.6: the predicate is direct — a `start_workflow` step or a
 trigger downstream may reach a workflow with standard code; transitive closure
-is not chased. The P2 matrix covers 45 kinds / 40 mounts (with A18.4b). Tests:
+is not chased. Also not chased: a value that is itself an id a step acts on
+(e.g. a case id a write step reads) is reviewed as a value, not proved from
+evidence — only the run's contact binding is. The P2 matrix covers 45 kinds /
+40 mounts (with A18.4b). Tests:
 `tests/caseyWorkflowStart.test.js`, gated `tests/caseyWorkflowStart.mysql.test.js`,
 the UI card in `tests/assistantUi.test.js`, the deep-link grammar in
 `tests/assistantSidebar.test.js`.

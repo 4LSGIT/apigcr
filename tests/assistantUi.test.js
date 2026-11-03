@@ -1504,6 +1504,102 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     expect([cancelled.writes, cancelled.gets, cancelled.ledger]).toEqual([[], [], []]);
   });
 
+  // A17.7b: a reviewed input rides as the card's server-computed `payload` —
+  // sent EXACTLY (never the model-shaped top-level junk), every value shown
+  // verbatim key by key with the steps that read it, the contact binding
+  // named, and the warning says "exactly the input". The no-input card keeps
+  // its shipped warning word for word.
+  const SHIPPED_START_WARNING = 'This STARTS A RUN NOW of the published version, with no input — every send, webhook, record write and chained start listed above happens as its step is reached, and none can be recalled. Cancelling the run later stops only the steps it has not reached. Canceling the dialog starts nothing.';
+  const inputMessage = () => startMessage({
+    payload: { init_data: { source: 'Casey: by hand', day: 3, flag: false, note: null, n: '12' }, contact_id: 12 },
+    input: {
+      reads: [
+        { key: 'source', steps: [{ step_number: 1, label: 'Log' }, { step_number: 3, label: null }], stored_by_step: 0 },
+        { key: 'day', steps: [{ step_number: 1, label: 'Log' }], stored_by_step: 0 },
+        { key: 'flag', steps: [], stored_by_step: 0 },
+        { key: 'note', steps: [{ step_number: 2, label: 'Rows' }], stored_by_step: 1 },
+        { key: 'n', steps: [{ step_number: 1, label: 'Log' }], stored_by_step: 0 },
+      ],
+      contact: { contact_id: 12, name: 'Jane Doe', via: 'contact_id' }, default_key: 'contact_id',
+    },
+    unset_inputs: [],
+  });
+
+  test('workflow start card with a reviewed input: ONE keyed POST of exactly the payload; the dialog lists every value verbatim', async () => {
+    const m = inputMessage();
+    const { writes, P } = await runStart(m);
+    expect(writes).toEqual([{ path: '/workflows/5/start', method: 'POST',
+      body: { init_data: { source: 'Casey: by hand', day: 3, flag: false, note: null, n: '12' }, contact_id: 12 },
+      headers: { 'Idempotency-Key': m.action_draft.draft_id } }]);
+    const text = P.Swal.fire.mock.calls[0][0].text;
+    expect(text).not.toContain('Input: NONE');
+    expect(text).toContain('Input: 5 value(s), sent exactly as shown — on this run {{key}} reads each one');
+    expect(text).toContain('Input source: "Casey: by hand"\n  read by: step 1 "Log", step 3\n');
+    expect(text).toContain('Input day: 3\n');
+    expect(text).toContain('Input n: "12"\n');
+    expect(text).toContain('Input note: null\n  read by: step 2 "Rows" — a step also sets it; reads after that step see the step\'s value');
+    expect(text).toContain('Input flag: false\n  read by: no step\'s {{placeholder}} — the workflow\'s test_input sample names it (a safe-mode code step may still read it)');
+    expect(text).toContain('Contact: the run is tied to #12 "Jane Doe" (contact_id, from the evidence; it beats the workflow\'s own default, init_data.contact_id) — the run lists on that contact\'s workflow runs; contact_id sets no {{variable}}, steps read only the input above.');
+    expect(text).not.toContain('Blank inputs:');
+  });
+
+  test('workflow start card: the rendered card shows each value whole (a colon inside a value stays in the value) and words its warning by input', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div id="host"></div>');
+    const { document } = dom.window;
+    const { hydrateActionDraft, actionFamily } = actionSandbox({ document, navigator: dom.window.navigator });
+    const m = inputMessage();
+    const host = document.createElement('div');
+    hydrateActionDraft(actionFamily(m.action_draft), host, m, m.action_draft);
+    const pairs = [...host.querySelectorAll('dt')].map((dt) => [dt.textContent, dt.nextElementSibling.textContent]);
+    expect(pairs).toEqual(expect.arrayContaining([['Input source', '"Casey: by hand"'], ['Input n', '"12"'], ['Input day', '3'],
+      ['  read by', 'step 1 "Log", step 3']]));
+    expect(host.querySelector('.action-draft-next-warning').textContent).toBe(SHIPPED_START_WARNING.replace('with no input', 'with exactly the input listed above'));
+    // The no-input card: the shipped warning, word for word.
+    const plain = startMessage();
+    const host2 = document.createElement('div');
+    hydrateActionDraft(actionFamily(plain.action_draft), host2, plain, plain.action_draft);
+    expect(host2.querySelector('.action-draft-next-warning').textContent).toBe(SHIPPED_START_WARNING);
+    expect([...host2.querySelectorAll('dt')].map((dt) => dt.textContent)).toContain('Input');
+  });
+
+  test('workflow start card: an armed capture is disclosed on the no-input and the input card, and only when armed', async () => {
+    const lines = {
+      capturing: 'Capture: this workflow is armed to capture — this start\'s input (WHAT) will be stored as the workflow\'s captured input sample, visible to automation staff in the workflow editor, and the arm turns off; the run proceeds (unless another start reaches the arm first).',
+      intercept: 'Capture: this workflow is armed to INTERCEPT — this start\'s input (WHAT) will be stored as the workflow\'s captured input sample, visible to automation staff in the workflow editor, and this run is HELD before step 1: none of its steps run until someone resumes it (unless another start reaches the arm first).',
+    };
+    for (const mode of ['capturing', 'intercept']) {
+      const plain = startMessage({ capture: mode });
+      let r = await runStart(plain);
+      expect(r.P.Swal.fire.mock.calls[0][0].text).toContain(lines[mode].replace('WHAT', 'its empty input'));
+      expect(r.writes[0].body).toEqual({ init_data: {} });
+      const fed = inputMessage();
+      fed.action_draft.capture = mode;
+      r = await runStart(fed);
+      expect(r.P.Swal.fire.mock.calls[0][0].text).toContain(lines[mode].replace('WHAT', 'the input above'));
+    }
+    const unarmed = await runStart(startMessage());
+    expect(unarmed.P.Swal.fire.mock.calls[0][0].text).not.toContain('Capture:');
+  });
+
+  test('workflow start card: the contact lines — bound through the workflow default, or none', async () => {
+    const viaDefault = inputMessage();
+    viaDefault.action_draft.payload = { init_data: { cid: 14 } };
+    viaDefault.action_draft.input = { reads: [{ key: 'cid', steps: [{ step_number: 1, label: 'Log' }], stored_by_step: 0 }],
+      contact: { contact_id: 14, name: 'Sam Roe', via: 'default' }, default_key: 'cid' };
+    let r = await runStart(viaDefault);
+    expect(r.writes[0].body).toEqual({ init_data: { cid: 14 } });
+    expect(r.P.Swal.fire.mock.calls[0][0].text).toContain('Contact: the run is tied to #14 "Sam Roe" (the workflow\'s own default, init_data.cid) — the run lists on that contact\'s workflow runs.');
+    for (const [dk, line] of [[null, 'Contact: none — no contact_id is sent and the workflow has no default; the run is tied to no contact.'],
+      ['cid', 'Contact: none — the workflow\'s default reads init_data.cid, which this input does not set to a contact id; the run is tied to no contact.']]) {
+      const none = inputMessage();
+      none.action_draft.payload = { init_data: { day: 3 } };
+      none.action_draft.input = { reads: [{ key: 'day', steps: [], stored_by_step: 0 }], contact: null, default_key: dk };
+      r = await runStart(none);
+      expect(r.P.Swal.fire.mock.calls[0][0].text).toContain(line);
+    }
+  });
+
   // A18.4b: the sequence enroll card through the SHARED engine. Pinned: the
   // click-time re-read (template + the contact's active enrollments) refuses
   // before the ledger claim, the request is exactly {contact_id, template_id,

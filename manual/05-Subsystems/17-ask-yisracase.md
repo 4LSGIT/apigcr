@@ -1156,8 +1156,17 @@ Casey never adds email attachments. The same applies when Casey inserts or
 edits a step in an existing workflow, and the publish card names every send
 step and its recipient.
 It may instead be one `workflow.start.v1` proposal: starting ONE run of an
-active workflow's published version now, with no input — no contact and no
-variables; the card lists the placeholders that will therefore be blank.
+active workflow's published version now — with no input, or with the input
+you give it. Input values must be for names the workflow's published steps
+actually read (or that its test input sample lists); Casey refuses any other
+name and says which names are allowed. Each value is plain text (up to 500
+characters, one line), a number, true/false or empty — never a nested
+structure, so workflows that handle provider events (incoming messages or
+calls) are not fed by hand. The card shows every value exactly as it will be
+sent, which steps read it, and which placeholders stay blank. A run can be tied
+to a contact only when Casey has read that contact in the conversation; the
+card names the contact and whether this overrides the workflow's own default
+contact.
 Casey never runs a draft (testing a draft is the editor's Run button) and
 never starts a version that contains a standard-mode code step. The card
 shows what the run can send, call, write and start, what normally starts the

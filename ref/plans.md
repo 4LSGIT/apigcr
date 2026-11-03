@@ -1061,19 +1061,12 @@ COMMENTs.)
 
 ## From the Ask Casey arc — A17.7 workflow start (2026-10-28) — deferred
 
-- **A reviewed input payload for Casey starts.** A17.7 starts with NO input
-  (`{init_data: {}}`, no `contact_id`) — the narrowest reviewable shape.
-  Measured live 2026-10-28 (read-only account): 7,999 of 8,002 runs in 90 days
-  carried input (the 3 empty ones were workflow 41, a test); of the 35 live
-  workflows 22 carry a standard-mode code step in their published version (so
-  the card refuses them anyway), and of the 13 left most are provider event
-  handlers (17/18/21: message/call envelopes) — only a few, such as the Daily
-  Appointment Report (77 runs, input `{source}`), plausibly run with nothing.
-  A payload slice would need: a closed key set per workflow (from its
-  `test_input` / `captured_input` sample, or the placeholders it reads), values
-  shown verbatim on the card, `contact_id` only from an evidence row, and a
-  decision on whether a payload makes the start a send-class action (A14's
-  bar). Fred's call on whether it is wanted at all.
+- **The `automation.definition` read does not return `test_input`** (or
+  `default_contact_id_from`). A17.7b's allowed init_data keys include the
+  workflow's test_input keys, so the model learns those only from the start
+  card's refusal message and fixes the draft in the repair stage. Returning
+  both on the workflow definition read would let it propose the right keys
+  the first time.
 - **The editor's Run button and native starts send no `Idempotency-Key`.**
   The route honours one (scope `workflows.start`); a double-clicked Run or a
   retried x-api-key start still creates two runs. Wiring the editor would be
@@ -1114,7 +1107,7 @@ COMMENTs.)
   card would be cheap, but the queue is the panel's working surface.
 - **Unlink** — see A11's unlink bullet; a re-link detaches only the sync's own
   links outside the new folder.
-- **An undo verb for a claim** — pending Fred's ruling. The audit log entry
+- **An undo verb for a claim** — deferred (Fred delegated, manager ruled 2026-11-03). The audit log entry
   (`log_extra.relink`) keeps the old path and the old link; an undo would
   re-point the case at the old link and re-attach the old folder's files —
   which is a re-link of the old folder, and the old folder is not always still
