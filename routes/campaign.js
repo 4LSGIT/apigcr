@@ -11,18 +11,40 @@
  *
  * Routes:
  *   GET    /campaigns/contacts      — filter contacts for selection
+ *   GET    /campaigns/compose-options — marketing senders, topics, cap, switch state (C1)
  *   POST   /campaigns/preview       — resolve placeholders for preview
  *   POST   /campaigns               — create campaign + jobs
  *   GET    /campaigns               — list campaigns (paginated)
  *   GET    /campaigns/:id           — single campaign with results summary
  *   GET    /campaigns/:id/results   — per-contact result details
- *   PATCH  /campaigns/:id           — cancel a campaign
+ *   PATCH  /campaigns/:id           — cancel, pause or resume a campaign
+ *
+ * C1 (ref/YISRAMAIL_DESIGN.md §6.1): createCampaign is the gate for class,
+ * cap, over-cap and the marketing kill switch (API keys reach it too); its
+ * CampaignError refusals carry the HTTP status (400 / 403 / 409 / 422), a
+ * `code` and extra fields (the over-cap refusal names the real `count`).
  */
 
 const express       = require('express');
 const router        = express.Router();
 const jwtOrApiKey   = require('../lib/auth.jwtOrApiKey');
 const campaignService = require('../services/campaignService');
+
+/** A CampaignError → its status + { error, code, ...extra }; anything else → null. */
+function campaignErrorBody(err) {
+  if (!err || err.name !== 'CampaignError') return null;
+  return { status: err.status, body: { error: err.message, code: err.code, ...(err.extra || {}) } };
+}
+
+/** ?class= / ?topic= (contacts search, consent preview): validated, or a 400 message. */
+function readClassTopic(klass, topic) {
+  const k = klass == null || klass === '' ? 'operational' : klass;
+  if (!campaignService.KLASSES.includes(k)) return { error: 'class must be "operational" or "marketing"' };
+  const t = topic == null || topic === '' ? null : topic;
+  if (t !== null && (typeof t !== 'string' || !campaignService.TOPIC_RE.test(t))) return { error: 'topic must be a topic key' };
+  if (t !== null && k !== 'marketing') return { error: 'a topic applies to marketing campaigns only' };
+  return { klass: k, topic: t };
+}
 
 // ─────────────────────────────────────────────────────────────
 // GET /campaigns/contacts — filter contacts for campaign selection
@@ -43,6 +65,12 @@ router.get('/api/campaigns/contacts', jwtOrApiKey, async (req, res) => {
     if (req.query.case_open_after) filters.case_open_after  = req.query.case_open_after;
     if (req.query.case_open_before) filters.case_open_before = req.query.case_open_before;
     if (req.query.channel)         filters.channel          = req.query.channel;
+    // C1: the class (and marketing topic) decide the email opt-out question
+    // (campaignService.consentOptsFor) — operational excludes no opt-out (D18).
+    const ct = readClassTopic(req.query.class, req.query.topic);
+    if (ct.error) return res.status(400).json({ error: ct.error });
+    filters.klass = ct.klass;
+    filters.topic = ct.topic;
 
     const result = await campaignService.getFilteredContacts(req.db, filters);
     res.json(result);
@@ -73,6 +101,24 @@ router.get('/api/campaigns/case-types', jwtOrApiKey, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// GET /campaigns/compose-options — what the compose form offers (C1)
+//
+// { marketing_senders, topics, operational_cap, marketing_rate,
+//   marketing_enabled, can_bulk }. The marketing senders are the bulk_ok rows
+// firm-data's emailFrom leaves out (the T1 fence stays where it is: this is
+// a separate, campaign-only source). Display only — createCampaign decides.
+// MUST stay above /campaigns/:id.
+// ─────────────────────────────────────────────────────────────
+router.get('/api/campaigns/compose-options', jwtOrApiKey, async (req, res) => {
+  try {
+    res.json(await campaignService.getComposeOptions(req.db, req.auth));
+  } catch (err) {
+    console.error('[GET /campaigns/compose-options]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // POST /campaigns/preview — resolve placeholders for one contact
 // ─────────────────────────────────────────────────────────────
 router.post('/api/campaigns/preview', jwtOrApiKey, async (req, res) => {
@@ -98,7 +144,7 @@ router.post('/api/campaigns/preview', jwtOrApiKey, async (req, res) => {
 // POST /campaigns — create a new campaign
 // ─────────────────────────────────────────────────────────────
 router.post('/api/campaigns', jwtOrApiKey, async (req, res) => {
-  const { type, sender, subject, body, contactIds, scheduledTime, attachmentUrl, includeSignature } = req.body;
+  const { type, sender, subject, body, contactIds, scheduledTime, attachmentUrl, includeSignature, confirmCount } = req.body;
 
   if (!type || !sender || !body) {
     return res.status(400).json({ error: 'type, sender, and body are required' });
@@ -117,10 +163,23 @@ router.post('/api/campaigns', jwtOrApiKey, async (req, res) => {
       scheduledTime: scheduledTime || null,
       createdBy: req.auth.userId,
       attachmentUrl: attachmentUrl || null,
-      includeSignature: includeSignature === true
+      includeSignature: includeSignature === true,
+      // C1: absent class = operational; createCampaign validates the spelling.
+      klass: req.body.class === undefined ? 'operational' : req.body.class,
+      topicKey: req.body.topic_key ?? null,
+      confirmCount: confirmCount ?? null,
+      auth: req.auth,
+      request: {
+        route: req.originalUrl,
+        method: req.method,
+        ip: req.headers['x-forwarded-for']?.split(',').shift() || req.socket?.remoteAddress || null,
+        userAgent: req.headers['user-agent'] || null,
+      },
     });
     res.json(result);
   } catch (err) {
+    const known = campaignErrorBody(err);
+    if (known) return res.status(known.status).json(known.body);
     console.error('[POST /campaigns]', err);
     res.status(500).json({ error: err.message });
   }
@@ -171,19 +230,30 @@ router.get('/api/campaigns/:id/results', jwtOrApiKey, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// PATCH /campaigns/:id — cancel a campaign
+// PATCH /campaigns/:id — cancel, pause or resume a campaign
+//
+//   { status: 'canceled' }  from draft / scheduled / sending / paused
+//   { status: 'paused' }    from scheduled / sending (C1 — pending sends stay
+//                           pending and defer themselves; the pump stops)
+//   { status: 'sending' }   resume, from paused only (the pump restarts)
+// Not found → 404; a transition the status does not allow → 409.
 // ─────────────────────────────────────────────────────────────
 router.patch('/api/campaigns/:id', jwtOrApiKey, async (req, res) => {
   const { status } = req.body;
 
-  if (status !== 'canceled') {
-    return res.status(400).json({ error: 'Only status: "canceled" is supported' });
+  if (status !== 'canceled' && status !== 'paused' && status !== 'sending') {
+    return res.status(400).json({ error: 'status must be "canceled", "paused" or "sending" (resume)' });
   }
 
   try {
-    const result = await campaignService.cancelCampaign(req.db, parseInt(req.params.id));
+    const id = parseInt(req.params.id);
+    const result = status === 'canceled' ? await campaignService.cancelCampaign(req.db, id)
+                 : status === 'paused'   ? await campaignService.pauseCampaign(req.db, id)
+                 :                         await campaignService.resumeCampaign(req.db, id);
     res.json(result);
   } catch (err) {
+    const known = campaignErrorBody(err);
+    if (known) return res.status(known.status).json(known.body);
     console.error('[PATCH /campaigns/:id]', err);
 
     const code = err.message.includes('not found') ? 404

@@ -480,52 +480,69 @@ describe('writers — contactService (the contact form\'s aggregate save, scalar
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Campaigns — no behaviour change until C1 gives them a class
+// Campaigns — the consent question follows the class (C1; D18 / D19)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('campaigns: email asks as MARKETING (still skips an email opt-out), SMS stays scope all', () => {
+describe('campaigns (C1): operational email asks NO consent (D18), marketing email asks marketing + topic, SMS stays scope all', () => {
   const campaignService = require('../services/campaignService');
   const emailService = require('../services/emailService');
   const phoneService = require('../services/phoneService');
-  function campaignDb(type, { emails = [], phones = [], states = [] } = {}) {
+  function campaignDb(type, { emails = [], phones = [], states = [], klass = 'operational' } = {}) {
     const results = [];
+    const reads = [];
     const db = {
       results,
+      reads,
       async query(sql, p) {
         const consent = answerOptout(sql, p, { emails, phones, states, contacts: [C1] });
-        if (consent) return consent;
+        if (consent) { reads.push(sql); return consent; }
         const s = sql.replace(/\s+/g, ' ').trim();
-        if (s.startsWith('SELECT campaign_id, type, sender')) return [[{ campaign_id: 7, type, sender: type === 'sms' ? '2485550000' : 'firm@firm.test', subject: 'S', body: 'Hi', status: 'sending' }]];
+        if (s.startsWith('SELECT campaign_id, type, class')) return [[{ campaign_id: 7, type, class: klass, topic_key: null, bulk_confirmed_count: null, sender: type === 'sms' ? '2485550000' : 'firm@firm.test', subject: 'S', body: 'Hi', status: 'sending' }]];
+        if (s.startsWith('SELECT status, result_meta FROM campaign_results')) return [[]];
         if (s.startsWith('SELECT contact_id, contact_name, contact_phone, contact_email FROM contacts')) return [[{ contact_id: 1, contact_name: 'Pat One', contact_phone: PAT, contact_email: 'pat@example.com' }]];
-        if (s.startsWith('INSERT INTO campaign_results')) { results.push({ status: p[2], meta: p[4] && JSON.parse(p[4]) }); return [{ affectedRows: 1 }]; }
+        if (s.startsWith('INSERT INTO campaign_results')) { results.push({ status: /'sending'/.test(s) ? 'sending' : p[2], meta: JSON.parse(/'sending'/.test(s) ? p[2] : p[4] || 'null') }); return [{ affectedRows: 1 }]; }
+        if (s.startsWith("UPDATE campaign_results SET status = 'sent'")) { results.push({ status: 'sent' }); return [{ affectedRows: 1 }]; }
         if (/AS total/.test(s)) return [[{ total: 9, done: 1 }]];
+        if (/FROM app_settings/.test(s)) return [[]];
         throw new Error(`campaign fake: unscripted ${s}`);
       },
     };
     return db;
   }
-  test('executeSend: the email cache flag OR a marketing state skips (email_optout); a clean address would send', async () => {
+  test('executeSend, operational email: a marketing opt-out (cache flag OR state) does NOT skip — it sends, and no consent row is read (D18)', async () => {
     const send = jest.spyOn(emailService, 'sendEmail').mockResolvedValue({ messageId: '<m>' });
     for (const world of [{ emails: [{ id: 21, contact_id: 1, email: 'pat@example.com', email_optout: 1 }] },
       { emails: [{ id: 21, contact_id: 1, email: 'pat@example.com', email_optout: 0 }], states: [optedState('pat@example.com', 'email')] }]) {
       const db = campaignDb('email', world);
-      expect(await campaignService.executeSend(db, 7, 1)).toEqual({ skipped: true, reason: 'email_optout' });
-      expect(db.results).toEqual([{ status: 'skipped', meta: { reason: 'email_optout' } }]);
+      expect(await campaignService.executeSend(db, 7, 1)).toEqual({ sent: true, messageId: '<m>' });
+      expect(db.results.map((r) => r.status)).toEqual(['sending', 'sent']);
+      expect(db.reads).toEqual([]);
     }
-    expect(send).not.toHaveBeenCalled();
-    // an SMS campaign reads scope all only: an email opt-out never skips it
+    expect(send).toHaveBeenCalledTimes(2);
+    // an SMS campaign reads scope all only: an email opt-out never skips it…
     jest.spyOn(phoneService, 'sendSms').mockResolvedValue({ id: 'x' });
     const sms = campaignDb('sms', { emails: [{ id: 21, contact_id: 1, email: 'pat@example.com', email_optout: 1 }] });
     await campaignService.executeSend(sms, 7, 1);
-    expect(sms.results.map((r) => r.status)).toEqual(['sent']);
+    expect(sms.results.map((r) => r.status)).toEqual(['sending', 'sent']);
+    // …and a STOP does (D19), whatever the class
+    const stopped = campaignDb('sms', { states: [optedState(PAT)] });
+    expect(await campaignService.executeSend(stopped, 7, 1)).toEqual({ skipped: true, reason: 'sms_optout' });
   });
-  test('the preview filter carries the same scopes: marketing for email, all for SMS', async () => {
+  test('consentOptsFor: the one consent question (send, picker, preview)', () => {
+    expect(campaignService.consentOptsFor('email', 'operational', null)).toBeNull();
+    expect(campaignService.consentOptsFor('email', 'marketing', 'newsletter')).toEqual({ klass: 'marketing', topic: 'newsletter' });
+    expect(campaignService.consentOptsFor('sms', 'operational', null)).toEqual({});
+    expect(campaignService.consentOptsFor('sms', 'marketing', 'newsletter')).toEqual({});
+  });
+  test('the picker filter carries the class: operational email excludes no opt-out; marketing reads marketing + topic; SMS scope all', async () => {
     const seen = [];
     const db = { query: async (sql) => { seen.push(sql); return [[]]; } };
     await campaignService.getFilteredContacts(db, { channel: 'email' });
-    expect(seen[0]).toContain(`${optout.emailOptedOutSql('c.contact_email', { klass: 'marketing' })} AS email_opted_out`);
+    expect(seen[0]).toContain('(0 = 1) AS email_opted_out');
     expect(seen[0]).toContain(`${optout.smsOptedOutSql('c.contact_phone')} AS sms_opted_out`);
-    expect(seen[0]).toContain("oo_s.scope IN ('marketing')");
+    await campaignService.getFilteredContacts(db, { channel: 'email', klass: 'marketing', topic: 'newsletter' });
+    expect(seen[1]).toContain(`${optout.emailOptedOutSql('c.contact_email', { klass: 'marketing', topic: 'newsletter' })} AS email_opted_out`);
+    expect(seen[1]).toContain("oo_s.scope IN ('marketing', 'newsletter')");
   });
 });
 

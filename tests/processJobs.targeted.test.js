@@ -64,6 +64,11 @@ function makeDb({ claimRows = [], hookClaimThrows = false } = {}) {
     if (s.includes('FROM scheduled_jobs') && s.includes('FOR UPDATE')) {
       return [claimRows.map((r) => ({ ...r }))];
     }
+    // The batch claim's candidate reads (C1 quota): the non-campaign read
+    // returns the claim rows' ids; the campaign_send read returns none.
+    if (s.startsWith('SELECT id FROM scheduled_jobs')) {
+      return [s.includes('NOT LIKE') ? claimRows.map((r) => ({ id: r.id })) : []];
+    }
     if (s.includes('UPDATE workflow_executions') && s.includes("status IN ('delayed', 'active', 'processing')")) {
       return [{ affectedRows: 1 }];
     }

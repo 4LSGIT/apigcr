@@ -12,8 +12,8 @@
  * SMS opt-out (scope 'all') makes automation refuse and staff warn, as
  * before; an email opt-out is MARKETING-only — every operational email here
  * (send_email, forward_as_email, request_decision, appointment and booking
- * confirmations) SENDS to it, while a campaign email (klass 'marketing')
- * still skips it. The flags here are the row cache with no consent state
+ * confirmations, and since C1 an OPERATIONAL campaign email) SENDS to it,
+ * while a MARKETING campaign selection still excludes it. The flags here are the row cache with no consent state
  * yet — exactly the live data before the P1 migration runs (dual-read);
  * tests/consentCore.mysql.test.js holds the state-table half.
  *
@@ -57,6 +57,7 @@ const fns = require('../lib/internal_functions');
 const { advanceWorkflow } = require('../lib/workflow_engine');
 const seq = require('../lib/sequenceEngine');
 const campaignService = require('../services/campaignService');
+const c1Migrate = require('../scripts/yisramailC1Migrate');
 const apptService = require('../services/apptService');
 const booking = require('../routes/booking');
 const manage = require('../routes/manage');
@@ -67,7 +68,8 @@ const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVIS
 const TABLES = ['contacts', 'contact_phones', 'contact_emails',
   'workflows', 'workflow_steps', 'workflow_executions', 'workflow_execution_steps',
   'sequence_templates', 'sequence_template_versions', 'sequence_steps', 'sequence_enrollments', 'sequence_step_log',
-  'scheduled_jobs', 'campaigns', 'campaign_contacts', 'campaign_results', 'decision_requests', 'app_settings'];
+  'scheduled_jobs', 'campaigns', 'campaign_contacts', 'campaign_results', 'decision_requests', 'app_settings',
+  'email_credentials'];   // email_credentials: the C1 migration script verifies it (bulk_ok COMMENT)
 
 // Line-based extraction (column COMMENTs may hold ';'); constraint clauses
 // naming a table outside TABLES are dropped — this suite tests predicates.
@@ -128,6 +130,9 @@ d('opt-out on real MySQL', () => {
     for (const sql of creates) await q(sql);
     for (const sql of alters) await q(sql);
     for (const sql of consentStatements()) await q(sql);
+    // C1 columns (campaigns.class …) — the dump lacks them until the C1
+    // migration has run live; the migration script is idempotent.
+    { const c = await pool.getConnection(); try { expect((await c1Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true); } finally { c.release(); } }
 
     await q(`INSERT INTO contacts (contact_id, contact_name, contact_fname, contact_lname, contact_phone, contact_email) VALUES
       (1, 'Pat One', 'Pat', 'One', '${PAT_PHONE}', 'pat@example.com'),
@@ -350,29 +355,31 @@ d('opt-out on real MySQL', () => {
   });
 
   // ───────────────────────────────────────────────────────────────────────
-  describe('campaigns: SMS reads scope all, EMAIL reads as marketing (no behaviour change)', () => {
-    test('preview: Pat (row opt-out) is excluded; Sam (consenting rows) is NOT', async () => {
+  describe('campaigns (C1): SMS reads scope all; EMAIL by class — operational reaches a marketing opt-out (D18), marketing excludes it', () => {
+    test('picker: Pat (row opt-out) is excluded from SMS and from a MARKETING email selection, not from an operational one', async () => {
       const sms = await campaignService.getFilteredContacts(pool, { channel: 'sms' });
       expect(sms.contacts.map((c) => c.contact_id).sort()).toEqual([2, 4]);
       expect(sms).toMatchObject({ total: 4, excluded: 2 });          // Pat opted out, Old has no phone
-      const email = await campaignService.getFilteredContacts(pool, { channel: 'email' });
-      expect(email.contacts.map((c) => c.contact_id).sort()).toEqual([2, 4]);
+      const operational = await campaignService.getFilteredContacts(pool, { channel: 'email' });
+      expect(operational.contacts.map((c) => c.contact_id).sort()).toEqual([1, 2, 4]);   // Old has no email
+      const marketing = await campaignService.getFilteredContacts(pool, { channel: 'email', klass: 'marketing' });
+      expect(marketing.contacts.map((c) => c.contact_id).sort()).toEqual([2, 4]);
     });
 
-    test('send: an opted-out destination is recorded skipped (sms_optout / email_optout); a consenting one sends', async () => {
+    test('send: SMS opt-out skipped; an OPERATIONAL email SENDS to a marketing opt-out (D18); consenting ones send', async () => {
       await q(`INSERT INTO campaigns (campaign_id, type, sender, subject, body, status) VALUES
         (1, 'sms', '2485550000', NULL, 'Hi {{contacts.contact_fname}}', 'sending'),
         (2, 'email', 'firm@firm.test', 'S', '<p>Hi</p>', 'sending')`);
       await q('INSERT INTO campaign_contacts (campaign_id, contact_id) VALUES (1, 1), (1, 2), (2, 1), (2, 2)');
       expect(await campaignService.executeSend(pool, 1, 1)).toEqual({ skipped: true, reason: 'sms_optout' });
       expect(await campaignService.executeSend(pool, 1, 2)).toMatchObject({ sent: true });
-      expect(await campaignService.executeSend(pool, 2, 1)).toEqual({ skipped: true, reason: 'email_optout' });
+      expect(await campaignService.executeSend(pool, 2, 1)).toMatchObject({ sent: true });
       expect(await campaignService.executeSend(pool, 2, 2)).toMatchObject({ sent: true });
-      expect(sent).toEqual([{ kind: 'sms', to: SAM_PHONE }, { kind: 'email', to: 'sam@example.com' }]);
+      expect(sent).toEqual([{ kind: 'sms', to: SAM_PHONE }, { kind: 'email', to: 'pat@example.com' }, { kind: 'email', to: 'sam@example.com' }]);
       const res = await q('SELECT campaign_id, contact_id, status FROM campaign_results ORDER BY campaign_id, contact_id');
       expect(res).toEqual([
         { campaign_id: 1, contact_id: 1, status: 'skipped' }, { campaign_id: 1, contact_id: 2, status: 'sent' },
-        { campaign_id: 2, contact_id: 1, status: 'skipped' }, { campaign_id: 2, contact_id: 2, status: 'sent' },
+        { campaign_id: 2, contact_id: 1, status: 'sent' }, { campaign_id: 2, contact_id: 2, status: 'sent' },
       ]);
     });
   });

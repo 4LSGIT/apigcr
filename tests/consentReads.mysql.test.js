@@ -32,7 +32,7 @@ const mysql = require('mysql2/promise');
 const { withTransaction } = require('../lib/withTransaction');
 const optout = require('../services/optoutService');
 const contactService = require('../services/contactService');
-const { importConsent, previewConsent, CAMPAIGN_CONSENT } = require('../routes/api.consent');
+const { importConsent, previewConsent, campaignConsent } = require('../routes/api.consent');
 const { CONSENT_TABLES: COMM, consentStatements } = require('./helpers/consentSchema');
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
@@ -326,7 +326,7 @@ d('staff consent reads, import and preview on real MySQL', () => {
     expect(await deadlocks()).toBe(dl0);
   }, 30000);
 
-  test('preview counts = executeSend\'s own per-contact reader call (contacts.contact_phone / contact_email; email as marketing); the STATE decides, not the row flag', async () => {
+  test('preview counts = executeSend\'s own per-contact reader call (contacts.contact_phone / contact_email; the question by class — C1); the STATE decides, not the row flag', async () => {
     await record({ channel: 'sms', destination: PAT, scope: 'all', action: 'opt_out', source: 'staff', actorUserId: 6 });
     // ANN: opted out in the STATE with the row flag forced clear (a drifted cache) — still skipped.
     await record({ channel: 'sms', destination: ANN, scope: 'all', action: 'opt_out', source: 'sms_keyword', providerEventId: 'rc:9' });
@@ -334,23 +334,26 @@ d('staff consent reads, import and preview on real MySQL', () => {
     await record({ channel: 'email', destination: 'pat@example.com', scope: 'marketing', action: 'opt_out', source: 'unsub_page' });
     await record({ channel: 'email', destination: 'sam@example.com', scope: 'newsletter', action: 'opt_out', source: 'one_click' });   // a topic: not a campaign skip
     const ids = [1, 2, 3, 4, 99];
-    for (const channel of ['sms', 'email']) {
-      const pv = await previewConsent(pool, { channel, contact_ids: ids });
-      // executeSend steps 3–5, per contact, verbatim reader call.
+    for (const [channel, klass] of [['sms', 'operational'], ['email', 'operational'], ['email', 'marketing']]) {
+      const pv = await previewConsent(pool, { channel, class: klass, contact_ids: ids });
+      // executeSend's consent step, per contact, verbatim reader call (none for operational email, D18).
+      const consent = campaignConsent(channel, klass, null);
       const want = { skipped_optout: 0, missing_destination: 0, will_send: 0, not_found: 0 };
       for (const id of ids) {
         const [[c]] = await pool.query('SELECT contact_id, contact_name, contact_phone, contact_email FROM contacts WHERE contact_id = ?', [id]);
         if (!c) { want.not_found++; continue; }
         const dest = channel === 'sms' ? c.contact_phone : c.contact_email;
-        const hits = channel === 'sms' ? await optout.findOptedOut(pool, 'sms', dest) : await optout.findOptedOut(pool, 'email', dest, { klass: 'marketing' });
+        const hits = consent ? await optout.findOptedOut(pool, channel, dest, consent) : [];
         if (hits.length) want.skipped_optout++;
         else if (!dest) want.missing_destination++;
         else want.will_send++;
       }
-      expect([channel, pv]).toEqual([channel, { channel, selected: 5, ...want }]);
+      expect([channel, klass, pv]).toEqual([channel, klass, { channel, class: klass, topic: null, selected: 5, ...want }]);
     }
     expect(await previewConsent(pool, { channel: 'sms', contact_ids: [1, 2, 3, 4, 99] })).toMatchObject({ skipped_optout: 2, will_send: 1, missing_destination: 1, not_found: 1 });
-    expect(await previewConsent(pool, { channel: 'email', contact_ids: [1, 2, 3, 4, 99] })).toMatchObject({ skipped_optout: 1, will_send: 2, missing_destination: 1, not_found: 1 });
-    expect(CAMPAIGN_CONSENT.email).toEqual({ klass: 'marketing' });
+    // operational (the default): Pat's marketing opt-out skips nothing (D18); marketing skips her
+    expect(await previewConsent(pool, { channel: 'email', contact_ids: [1, 2, 3, 4, 99] })).toMatchObject({ skipped_optout: 0, will_send: 3, missing_destination: 1, not_found: 1 });
+    expect(await previewConsent(pool, { channel: 'email', class: 'marketing', contact_ids: [1, 2, 3, 4, 99] })).toMatchObject({ skipped_optout: 1, will_send: 2, missing_destination: 1, not_found: 1 });
+    expect(campaignConsent('email', 'operational', null)).toBeNull();
   });
 });

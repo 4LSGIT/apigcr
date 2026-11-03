@@ -125,6 +125,7 @@ describe('capability registry', () => {
       'tools.author': true,
       'system.settings': false,
       'firm.lists': false,
+      'campaigns.bulk': false,
     });
   });
 
@@ -139,7 +140,7 @@ describe('capability registry', () => {
 
   test('ROLE_CAPS is exactly the reviewed snapshot (su and it absent)', () => {
     expect(ROLE_CAPS).toEqual({
-      admin: ['firm.settings', 'automations.manage', 'archives.purge'],
+      admin: ['firm.settings', 'automations.manage', 'archives.purge', 'campaigns.bulk'],
       attorney: ['comms.read_all'],
       form_dev: ['templates.code'],
       staff: ['firm.lists'],
@@ -204,10 +205,10 @@ describe('can()', () => {
     for (const c of ROOT) expect(can(stacked, c)).toBe(false);
   });
 
-  test('admin: exactly firm.settings, automations.manage, archives.purge', () => {
+  test('admin: exactly firm.settings, automations.manage, archives.purge, campaigns.bulk (C1, D13)', () => {
     const a = jwtAuth(['admin']);
     expect(ALL.filter(c => can(a, c)))
-      .toEqual(['firm.settings', 'automations.manage', 'archives.purge']);
+      .toEqual(['firm.settings', 'automations.manage', 'archives.purge', 'campaigns.bulk']);
   });
 
   test('attorney: exactly comms.read_all', () => {

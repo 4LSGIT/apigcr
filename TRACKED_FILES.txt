@@ -644,6 +644,7 @@ ref/migrations/2026-11-01_yisravid_s4_contact_verified.sql
 ref/migrations/2026-11-02_cf_court_and_stamp_rule.md
 ref/migrations/2026-11-02_yisramail_t2_campaign_results_delivery.sql
 ref/migrations/2026-11-02_yisramail_t2_hook_ses_events.console.js
+ref/migrations/2026-11-03_yisramail_c1_campaign_class.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -1001,6 +1002,7 @@ scripts/uiCustomS6cConfigKeyComment.js
 scripts/updateRoutes.js
 scripts/verifyTrusteeReadthrough.js
 scripts/verify_strictstring_live.js
+scripts/yisramailC1Migrate.js
 scripts/yisramailP1MigrateConsent.js
 scripts/yisramailP2CheckInbound.js
 scripts/yisramailP3Migrate.js
@@ -1223,6 +1225,10 @@ tests/calendarEvents.event.test.js
 tests/calendarEvents.registry.test.js
 tests/calendarTypeService.test.js
 tests/calendarUi.sync.test.js
+tests/campaignC1.mysql.test.js
+tests/campaignC1.routes.test.js
+tests/campaignC1.test.js
+tests/campaignC1.ui.test.js
 tests/campaignCaseTypeFilter.test.js
 tests/campaignPreviewEscape.test.js
 tests/capabilities.test.js
@@ -1903,6 +1909,7 @@ tests/ycIconS6a.test.js
 tests/ycPager.test.js
 tests/ycSettingRows.test.js
 tests/ycSync.test.js
+tests/yisramailC1Migrate.mysql.test.js
 tests/yisramailP2CheckInbound.test.js
 tests/yisramailT1.adapters.test.js
 tests/yisramailT1.fences.routes.test.js

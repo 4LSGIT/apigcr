@@ -71,6 +71,10 @@
     .badge-partial_fail{ background: var(--warn-soft); color: var(--warn); }
     .badge-canceled    { background: var(--border); color: var(--text-2); }
     .badge-draft       { background: var(--border); color: var(--text-2); }
+    .badge-paused      { background: var(--border); color: var(--text-2); }
+    .badge-skipped     { background: var(--border); color: var(--text-2); }
+    .badge-unknown     { background: var(--warn-soft); color: var(--warn); }
+    .badge-class       { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); text-transform: none; }
 
     /* ── Compose ── */
     .compose-section { margin-bottom: 14px; }
@@ -99,6 +103,12 @@
     /* What consent removes from the selection (YisraMail P4) — empty = hidden. */
     .consent-skip { margin-left: 12px; }
     .consent-skip:empty { display: none; }
+    /* Send class (YisraMail C1, design §6.1). Radios, not buttons: no selected
+       state for a dark button rule to swallow. */
+    .class-picker { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 4px; }
+    .class-picker label { font-weight: 400; display: inline-flex; align-items: center; gap: 6px; }
+    .class-note { display: block; margin-top: 2px; }
+    #class-marketing { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
   </style>
 </head>
 <body>
@@ -194,6 +204,23 @@
 <!-- ═══════════════════════════════════════════════════ TAB 2: COMPOSE -->
 <div id="tab-compose" class="tab-panel">
   <div id="compose-banner" class="info-banner warn">No contacts selected. Go to Select Contacts first.</div>
+
+  <!-- Send class (YisraMail C1, design §6.1) — chosen explicitly; the server
+       enforces it (createCampaign: cap, capability, kill switch). -->
+  <div class="compose-section" id="class-group">
+    <label>Campaign type</label>
+    <div class="class-picker" role="radiogroup" aria-label="Campaign type">
+      <label><input type="radio" name="c-class" value="operational" checked onchange="onClassChange()"> Operational</label>
+      <label><input type="radio" name="c-class" value="marketing" onchange="onClassChange()"> Marketing</label>
+    </div>
+    <span id="class-honesty" class="text-muted class-note">Operational means: this message is about the recipient's case, appointment or account — not promoting services. It reaches clients who opted out of marketing email.</span>
+    <span id="class-cap-note" class="text-muted class-note"></span>
+    <div id="class-marketing" class="hidden">
+      <label for="c-topic" class="text-muted">Topic</label>
+      <select id="c-topic" onchange="onTopicChange()"></select>
+      <span id="class-marketing-note" class="text-muted"></span>
+    </div>
+  </div>
 
   <!-- Sender row -->
   <div class="compose-section">
@@ -339,6 +366,7 @@
         <option value="">All</option>
         <option value="scheduled">Scheduled</option>
         <option value="sending">Sending</option>
+        <option value="paused">Paused</option>
         <option value="sent">Sent</option>
         <option value="failed">Failed</option>
         <option value="partial_fail">Partial Fail</option>
@@ -380,6 +408,10 @@ let pollTimer = null;
 let mmsAttachmentUrl = null;
 let emailAttachmentUrl = null;
 let caseTypeFacets = null;   // { Type: [Subtype, ...] } of types that EXIST
+// GET /api/campaigns/compose-options (C1): marketing senders (bulk rows —
+// never in firmData.emailFrom), active email topics, the operational cap, the
+// kill switch state, whether this user holds campaigns.bulk. Display only.
+let composeOpts = { marketing_senders: [], topics: [], operational_cap: 50, marketing_enabled: false, can_bulk: false };
 
 // ─── CUSTOM QUILL IMAGE BLOT ──────────────────────────────────
 // Quill's default Image blot only keeps src. This extends it to
@@ -442,6 +474,16 @@ function fillCaseTypeFilter() {
   } catch (_) { /* same-origin, cannot actually throw */ }
 }
 
+async function loadComposeOptions() {
+  try {
+    const r = await P.apiSend('/api/campaigns/compose-options', 'GET');
+    if (r) composeOpts = { ...composeOpts, ...r };
+  } catch (err) {
+    console.warn('compose options unavailable:', err.message);
+  }
+  fillTopicSelect();
+}
+
 async function loadCaseTypeFacets() {
   try {
     const r = await P.apiSend('/api/campaigns/case-types', 'GET');
@@ -463,6 +505,7 @@ async function init() {
 
   await loadCaseTypeFacets();
   fillCaseTypeFilter();
+  await loadComposeOptions();
 
   // Quill — custom image handler uploads to GCS instead of base64 embed
   quill = new Quill('#quill-editor', {
@@ -529,6 +572,13 @@ async function init() {
     _sigBlock.style.display = _sigChk.checked && !_sigChk.disabled ? '' : 'none';
   });
 
+  // Schedule cap (C1): the server refuses more than 366 days out — offer no later date.
+  try {
+    const max = new Date(Date.now() + 366 * 86400000);
+    const pad = (n) => String(n).padStart(2, '0');
+    document.getElementById('c-schedule').max = `${max.getFullYear()}-${pad(max.getMonth() + 1)}-${pad(max.getDate())}T00:00`;
+  } catch (_) { /* display only */ }
+
   // Populate sender dropdown for default channel
   onChannelChange();
 }
@@ -554,22 +604,14 @@ function onChannelChange() {
   const isSms = ch === 'sms';
   clearConsentPreview();   // the count was for the other channel
 
-  // Update sender dropdown
-  const sel = document.getElementById('c-sender');
-  sel.innerHTML = '';
-  if (isSms) {
-    phoneLines.forEach(l => {
-      const suffix = l.mms_capable ? '' : ' (SMS only)';
-      const label = l.display_name ? `${l.display_name} (${fmtPhone(l.phone_number)})${suffix}` : `${fmtPhone(l.phone_number)}${suffix}`;
-      sel.innerHTML += `<option value="${esc(l.phone_number)}" data-mms-capable="${l.mms_capable ? '1' : '0'}">${esc(label)}</option>`;
-    });
-  } else {
-    emailAddresses.forEach(e => {
-      const label = e.from_name ? `${e.from_name} (${e.email})` : e.email;
-      sel.innerHTML += `<option value="${esc(e.email)}">${esc(label)}</option>`;
-    });
+  // Marketing is email only (D1): an SMS campaign is always operational.
+  const mkt = document.querySelector('input[name="c-class"][value="marketing"]');
+  if (mkt) {
+    mkt.disabled = isSms;
+    if (isSms && mkt.checked) document.querySelector('input[name="c-class"][value="operational"]').checked = true;
   }
-  syncCampaignSig();
+  syncClassUi();
+  populateSenders();
 
   // Toggle email-only vs SMS-only sections
   document.getElementById('subject-group').classList.toggle('hidden', isSms);
@@ -582,10 +624,80 @@ function onChannelChange() {
   updateMmsVisibility();
 }
 
+// ─── Send class (YisraMail C1) ───────────────────────────────
+function campaignClass() {
+  const r = document.querySelector('input[name="c-class"]:checked');
+  return r && r.value === 'marketing' && document.getElementById('f-channel').value !== 'sms' ? 'marketing' : 'operational';
+}
+
+function campaignTopic() {
+  const sel = document.getElementById('c-topic');
+  return campaignClass() === 'marketing' && sel && sel.value ? sel.value : null;
+}
+
+function fillTopicSelect() {
+  const sel = document.getElementById('c-topic');
+  if (!sel) return;
+  const keep = sel.value;
+  sel.innerHTML = (composeOpts.topics || []).map(t => `<option value="${esc(t.topic_key)}">${esc(t.label || t.topic_key)}</option>`).join('')
+    || '<option value="">(no active email topic)</option>';
+  if (keep && [...sel.options].some(o => o.value === keep)) sel.value = keep;
+}
+
+/** Sender list by channel and class: phone lines; plain senders; or (marketing) the marketing transports. */
+function populateSenders() {
+  const isSms = document.getElementById('f-channel').value === 'sms';
+  const sel = document.getElementById('c-sender');
+  const keep = sel.value;
+  sel.innerHTML = '';
+  if (isSms) {
+    phoneLines.forEach(l => {
+      const suffix = l.mms_capable ? '' : ' (SMS only)';
+      const label = l.display_name ? `${l.display_name} (${fmtPhone(l.phone_number)})${suffix}` : `${fmtPhone(l.phone_number)}${suffix}`;
+      sel.innerHTML += `<option value="${esc(l.phone_number)}" data-mms-capable="${l.mms_capable ? '1' : '0'}">${esc(label)}</option>`;
+    });
+  } else {
+    const list = campaignClass() === 'marketing' ? (composeOpts.marketing_senders || []) : emailAddresses;
+    list.forEach(e => {
+      const label = e.from_name ? `${e.from_name} (${e.email})` : e.email;
+      sel.innerHTML += `<option value="${esc(e.email)}">${esc(label)}</option>`;
+    });
+  }
+  if (keep && [...sel.options].some(o => o.value === keep)) sel.value = keep;
+  syncCampaignSig();
+}
+
+function syncClassUi() {
+  const klass = campaignClass();
+  document.getElementById('class-honesty').classList.toggle('hidden', klass !== 'operational');
+  document.getElementById('class-marketing').classList.toggle('hidden', klass !== 'marketing');
+  const note = document.getElementById('class-marketing-note');
+  note.textContent = !composeOpts.marketing_enabled
+    ? 'Marketing campaigns are not switched on yet — creating one will be refused.'
+    : (!composeOpts.can_bulk ? 'Marketing campaigns need the campaigns.bulk capability (admin).' : '');
+  const cap = Number(composeOpts.operational_cap) || 50;
+  document.getElementById('class-cap-note').textContent = klass === 'operational'
+    ? `Over ${cap} recipients needs the campaigns.bulk capability and typing the recipient count to confirm.`
+    : '';
+}
+
+function onClassChange() {
+  syncClassUi();
+  populateSenders();
+  scheduleConsentPreview();   // the skip count depends on the class
+}
+
+function onTopicChange() {
+  scheduleConsentPreview();
+}
+
 async function searchContacts() {
   const params = new URLSearchParams();
   const ch = document.getElementById('f-channel').value;
   params.set('channel', ch);
+  // C1: the class decides the email opt-out question (operational excludes none).
+  params.set('class', campaignClass());
+  if (campaignTopic()) params.set('topic', campaignTopic());
 
   const tags = document.getElementById('f-tags').value.trim();
   if (tags) params.set('tags', tags);
@@ -680,10 +792,12 @@ function updateSelectedCount() {
 }
 
 // ─── Consent preview (YisraMail P4, design §4.7) ─────────────
-// After the selection changes (debounced), ask the server how many of the
-// checked contacts the send will skip for consent — POST /api/consent/preview
-// reads optoutService exactly as campaignService.executeSend does at send
-// time (the contact's contact_phone / contact_email; email as marketing).
+// After the selection (or the class / topic) changes (debounced), ask the
+// server how many of the checked contacts the send will skip for consent —
+// POST /api/consent/preview reads optoutService exactly as
+// campaignService.executeSend does at send time (the contact's contact_phone /
+// contact_email; the class and topic decide the question — an operational
+// email skips nobody, D18, so the line stays empty).
 // Display only: it never blocks the send, and a failed read shows nothing.
 // The picker already leaves out contacts opted out at search time, so this
 // usually reads nothing; it catches consent that changed after the search.
@@ -718,7 +832,9 @@ async function runConsentPreview() {
   const channel = document.getElementById('f-channel').value === 'sms' ? 'sms' : 'email';
   if (!ids.length || ids.length > 5000) { el.textContent = ''; return; }
   try {
-    const r = await P.apiSend('/api/consent/preview', 'POST', { channel, contact_ids: ids });
+    const body = { channel, class: campaignClass(), contact_ids: ids };
+    if (campaignTopic()) body.topic = campaignTopic();
+    const r = await P.apiSend('/api/consent/preview', 'POST', body);
     if (seq !== consentPreviewSeq) return;
     el.textContent = consentSkipText(channel, r && r.skipped_optout);
   } catch (_) {
@@ -1171,7 +1287,9 @@ async function createCampaign() {
   const sendNow = document.getElementById('c-send-now').checked;
   const schedule = document.getElementById('c-schedule').value;
 
+  const klass = campaignClass();
   if (!sender) return Toast.fire({ icon: 'warning', title: 'Select a sender' });
+  if (klass === 'marketing' && !campaignTopic()) return Toast.fire({ icon: 'warning', title: 'Choose a topic for a marketing campaign' });
   if (channel === 'email' && !subject) return Toast.fire({ icon: 'warning', title: 'Subject is required for email' });
   if (channel === 'sms' && !body.trim()) return Toast.fire({ icon: 'warning', title: 'Message body is empty' });
   if (channel === 'email' && !body.replace(/<[^>]*>/g, '').trim() && !/<img\b/i.test(body)) return Toast.fire({ icon: 'warning', title: 'Message body is empty' });
@@ -1179,7 +1297,7 @@ async function createCampaign() {
 
   const confirm = await Swal.fire({
     title: 'Send Campaign?',
-    html: `<strong>${channel.toUpperCase()}${mmsAttachmentUrl ? ' (MMS)' : emailAttachmentUrl ? ' + attachment' : ''}</strong> to <strong>${selectedContacts.length}</strong> contact${selectedContacts.length !== 1 ? 's' : ''}${sendNow ? ' <em>immediately</em>' : ` on <em>${schedule}</em>`}`,
+    html: `<strong>${channel.toUpperCase()}${mmsAttachmentUrl ? ' (MMS)' : emailAttachmentUrl ? ' + attachment' : ''}</strong> (${klass}) to <strong>${selectedContacts.length}</strong> contact${selectedContacts.length !== 1 ? 's' : ''}${sendNow ? ' <em>immediately</em>' : ` on <em>${esc(schedule)}</em>`}`,
     icon: 'question',
     showCancelButton: true,
     confirmButtonText: sendNow ? 'Send Now' : 'Schedule',
@@ -1195,8 +1313,10 @@ async function createCampaign() {
       subject: channel === 'email' ? subject : undefined,
       body,
       contactIds: selectedContacts.map(c => c.contact_id),
-      scheduledTime: sendNow ? null : schedule
+      scheduledTime: sendNow ? null : schedule,
+      class: klass
     };
+    if (klass === 'marketing') payload.topic_key = campaignTopic();
     const attachment = channel === 'sms' ? mmsAttachmentUrl : emailAttachmentUrl;
     if (attachment) payload.attachmentUrl = attachment;
     // Signature is baked into the stored body (block contents, edits included)
@@ -1209,7 +1329,8 @@ async function createCampaign() {
       payload.body = payload.body + '<br><br>' + sigBlock.innerHTML;
     }
 
-    const res = await P.apiSend('/api/campaigns', 'POST', payload);
+    const res = await postCampaign(payload);
+    if (!res) return;   // the over-cap prompt was dismissed
 
     Toast.fire({ icon: 'success', title: `Campaign #${res.campaignId} created — ${res.status}` });
     removeMmsAttachment();
@@ -1218,6 +1339,39 @@ async function createCampaign() {
   } catch (err) {
     Swal.fire('Error', err.message || 'Failed to create campaign', 'error');
   }
+}
+
+
+/**
+ * POST /api/campaigns. Over the operational cap the server answers 409
+ * over_cap_confirmation with the real (deduplicated) count: ask the user to
+ * type it and resend with confirmCount — the server stays the gate (a stale
+ * or wrong number is refused again with the real one). → the result, or null
+ * when the user backs out. Other refusals (403 capability, 422 switch off)
+ * throw to the caller's error dialog.
+ */
+async function postCampaign(payload) {
+  for (let round = 0; round < 3; round++) {
+    try {
+      return await P.apiSend('/api/campaigns', 'POST', payload);
+    } catch (err) {
+      const b = err && err.body;
+      if (!(err && err.status === 409 && b && b.code === 'over_cap_confirmation')) throw err;
+      const n = Number(b.count);
+      const r = await Swal.fire({
+        title: 'Over the recipient cap',
+        text: `${b.error || ''} Type ${n} to send to all ${n} recipients.`,
+        input: 'text',
+        inputAttributes: { inputmode: 'numeric', autocomplete: 'off', 'aria-label': 'Recipient count' },
+        showCancelButton: true,
+        confirmButtonText: 'Confirm send',
+        inputValidator: (v) => (String(v).trim() === String(n) ? undefined : `Type ${n} exactly`)
+      });
+      if (!r.isConfirmed) return null;
+      payload = { ...payload, confirmCount: Number(String(r.value).trim()) };
+    }
+  }
+  throw new Error('The recipient count kept changing — search again and retry.');
 }
 
 
@@ -1245,18 +1399,21 @@ function renderCampaignList(campaigns) {
   }
 
   tbody.innerHTML = campaigns.map(c => {
-    const sent = c.sent_count || 0;
-    const failed = c.failed_count || 0;
-    const skipped = c.skipped_count || 0;
-    const done = sent + failed + skipped;
+    // mysql2 returns SUM() as a string: coerce, or '1' + 0 concatenates.
+    const sent = Number(c.sent_count) || 0;
+    const failed = Number(c.failed_count) || 0;
+    const skipped = Number(c.skipped_count) || 0;
+    const unknown = Number(c.unknown_count) || 0;
+    const inFlight = Number(c.sending_count) || 0;
+    const done = sent + failed + skipped + unknown;
     const total = c.contact_count || 0;
     const pct = total ? Math.round((done / total) * 100) : 0;
 
     let progressHtml;
-    if (c.status === 'sending') {
-      progressHtml = `${done}/${total}<div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>`;
+    if (c.status === 'sending' || c.status === 'paused') {
+      progressHtml = `${done}/${total}${inFlight ? ` <span class="text-muted">(${inFlight} in flight)</span>` : ''}<div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>`;
     } else if (['sent', 'failed', 'partial_fail'].includes(c.status)) {
-      progressHtml = `<span style="color:var(--ok)">${sent}</span> / <span style="color:var(--danger)">${failed}</span>` + (skipped ? ` / <span style="color:var(--text-muted)">${skipped} skip</span>` : '');
+      progressHtml = `<span style="color:var(--ok)">${sent}</span> / <span style="color:var(--danger)">${failed}</span>` + (skipped ? ` / <span style="color:var(--text-muted)">${skipped} skip</span>` : '') + (unknown ? ` / <span style="color:var(--warn)">${unknown} unknown</span>` : '');
     } else {
       progressHtml = `${total} contact${total !== 1 ? 's' : ''}`;
     }
@@ -1265,13 +1422,19 @@ function renderCampaignList(campaigns) {
 
     let actions = `<button class="btn btn-outline btn-sm" onclick="viewStats(${c.campaign_id})">Stats</button> `;
     if (['scheduled', 'sending'].includes(c.status)) {
+      actions += `<button class="btn btn-outline btn-sm" onclick="pauseCampaignRow(${c.campaign_id})">Pause</button> `;
+    }
+    if (c.status === 'paused') {
+      actions += `<button class="btn btn-success btn-sm" onclick="resumeCampaignRow(${c.campaign_id})">Resume</button> `;
+    }
+    if (['scheduled', 'sending', 'paused'].includes(c.status)) {
       actions += `<button class="btn btn-danger btn-sm" onclick="cancelCampaign(${c.campaign_id})">Cancel</button> `;
     }
     actions += `<button class="btn btn-outline btn-sm" onclick="duplicateCampaign(${c.campaign_id})">Dup</button>`;
 
     return `<tr>
       <td>${c.campaign_id}</td>
-      <td>${c.type.toUpperCase()}</td>
+      <td>${c.type.toUpperCase()}${c.class === 'marketing' ? ' <span class="badge badge-class">marketing</span>' : ''}${c.bulk_confirmed_count != null ? ' <span class="badge badge-class">over cap</span>' : ''}</td>
       <td>${esc(c.subject || c.sender || '-')}</td>
       <td>${schedDisplay}</td>
       <td><span class="badge badge-${c.status}">${c.status}</span></td>
@@ -1299,8 +1462,9 @@ async function viewStats(id) {
 
     const r = campaign.results;
     let html = `
-      <p><strong>Type:</strong> ${campaign.type.toUpperCase()} &nbsp; <strong>Sender:</strong> ${esc(campaign.sender)}</p>
-      <p><strong>Sent:</strong> ${r.sent} &nbsp; <strong>Failed:</strong> ${r.failed} &nbsp; <strong>Skipped:</strong> ${r.skipped} &nbsp; <strong>Pending:</strong> ${r.pending}</p>
+      <p><strong>Type:</strong> ${campaign.type.toUpperCase()} &nbsp; <strong>Class:</strong> ${esc(campaign.class || 'operational')}${campaign.topic_key ? ` (${esc(campaign.topic_key)})` : ''}${campaign.bulk_confirmed_count != null ? ` — over the cap, ${Number(campaign.bulk_confirmed_count)} confirmed` : ''} &nbsp; <strong>Sender:</strong> ${esc(campaign.sender)}</p>
+      <p><strong>Sent:</strong> ${r.sent} &nbsp; <strong>Failed:</strong> ${r.failed} &nbsp; <strong>Skipped:</strong> ${r.skipped} &nbsp; <strong>Unknown:</strong> ${r.unknown || 0} &nbsp; <strong>In flight:</strong> ${r.sending || 0} &nbsp; <strong>Pending:</strong> ${r.pending}</p>
+      ${r.unknown ? '<p class="text-muted">Unknown: the provider stopped answering mid-send, so the message may or may not have gone out. It is never resent automatically — check with the recipient if it matters.</p>' : ''}
     `;
 
     if (results.length) {
@@ -1341,13 +1505,39 @@ async function cancelCampaign(id) {
   }
 }
 
+// Pause / resume (C1): pending sends stay queued while paused and wait
+// without using an attempt; resume restarts the pump.
+async function pauseCampaignRow(id) {
+  try {
+    await P.apiSend(`/api/campaigns/${id}`, 'PATCH', { status: 'paused' });
+    Toast.fire({ icon: 'success', title: `Campaign #${id} paused` });
+    loadCampaigns();
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: err.message || 'Pause failed' });
+  }
+}
+
+async function resumeCampaignRow(id) {
+  try {
+    await P.apiSend(`/api/campaigns/${id}`, 'PATCH', { status: 'sending' });
+    Toast.fire({ icon: 'success', title: `Campaign #${id} resumed` });
+    loadCampaigns();
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: err.message || 'Resume failed' });
+  }
+}
+
 async function duplicateCampaign(id) {
   try {
     const campaign = await P.apiSend(`/api/campaigns/${id}`, 'GET');
 
     // Set channel (triggers onChannelChange which shows/hides correct sections)
     document.getElementById('f-channel').value = campaign.type;
+    // Class + topic first: the sender list depends on them (C1)
+    const radio = document.querySelector(`input[name="c-class"][value="${campaign.class === 'marketing' ? 'marketing' : 'operational'}"]`);
+    if (radio) radio.checked = true;
     onChannelChange();
+    if (campaign.topic_key) { document.getElementById('c-topic').value = campaign.topic_key; }
 
     // Set sender
     document.getElementById('c-sender').value = campaign.sender;

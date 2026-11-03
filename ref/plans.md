@@ -1574,11 +1574,8 @@ ref/YISRAMAIL_DESIGN.md §4.7 "As built" says what shipped.
   drift — the P1 migration's NO-GO case) ticks the checkbox but shows no chip;
   the dual-read still blocks the send. Dies with the cache-column drop.
 - **The compose skip line usually reads nothing**: the contact search already
-  drops contacts opted out at search time. Once C1 gives campaigns a class, the
-  email wording must follow it (an operational email campaign sends to
-  marketing opt-outs, D18) — `CAMPAIGN_CONSENT` in `routes/api.consent.js`
-  mirrors `campaignService`'s `EMAIL_CONSENT` and `tests/consentRoutes.test.js`
-  holds the two to agreement.
+  drops contacts opted out at search time (and since C1 an operational email
+  selection skips nobody — the line stays empty by design).
 
 - **Generic DB writes and the consent-state gap (P1-fix review, reasoned from
   code, not reproduced).** `lib/internal_functions/db.js` `_syncConsentCache`
@@ -1658,6 +1655,38 @@ ref/YISRAMAIL_DESIGN.md §5.4 "As built" says what shipped.
 - **Header names of a hook deleted before a process started** are not in the
   credential-header union (lib/hookCredentialHeaders): a custom (non-static)
   name stops being stripped from events for its old slug.
+
+## YisraMail C1 (campaign hardening, 2026-11-03) — deferred
+
+ref/YISRAMAIL_DESIGN.md §6.1 / §6.4 "As built (C1)" says what shipped.
+- **No rate window on non-bulk transports.** The per-transport window counts
+  only for a `bulk_ok` sender; Gmail / SMTP campaign sends rely on the hub
+  budget (their `email_log` rows count against it) and the cron quota. If a
+  firm Gmail account starts refusing a large over-cap send, give non-bulk
+  transports a window keyed on the sender too.
+- **Within-cap campaigns now drain at 5 per cron tick** (the per-tick
+  `campaign_send` quota; was 10): a 50-recipient send-now campaign takes ~10
+  minutes. Give within-cap send-now campaigns a pump (or ring their doorbells
+  at create) if that wait matters.
+- **The kill switch has no UI** beyond the compose note ("not switched on
+  yet") — it is SU-console-only by design; a read-only line in Config → System
+  shows it (registry, edit: console).
+- **The operational choice is not separately attested**: the class is stored
+  with `created_by`; the honesty line is shown, not recorded as an event.
+- **Resume is not gated** on `campaigns.bulk` (any staff login may pause /
+  resume / cancel, as cancel always was). C2's transport hold pauses
+  campaigns and wants an SU-only release — resume must then refuse a held
+  transport.
+- **`scheduled_jobs.name` has no index**: the pump tick, resume and the batch
+  quota's candidate read filter `name LIKE 'campaign:…'` (13.5k rows today).
+  Add one (or a `campaign_id` column) if campaigns grow the table a lot.
+- **The rate-window query** joins `campaign_results` → `campaigns` on
+  `sender` (no index) over the last 60 s of `sent_at` (no index); fine at
+  today's volume, index `(sent_at)` before C2's marketing volume.
+- **T1 / T2 migration scripts read live comments**: re-running their CHECK
+  after C1 reports `bulk_ok` / `provider_message_id` "comment differs" (C1
+  rewrote both comments). They are one-shot records of their runs; their
+  twins clone and strip, so they stay green.
 
 ## From the contact-intake safety slices (2026-10-27) — deferred
 

@@ -208,12 +208,12 @@ The list endpoint hides `workflow_resume` and `sequence_step` by default. Pass `
 `POST /process-jobs` (accepts any method) is the heartbeat, invoked every minute by Cloud Scheduler. A `workflow_resume` or `sequence_step` job due within 90 seconds also gets a Cloud Tasks push to `POST /process-job/:id`, which claims and runs that one row at once — the heartbeat is the fallback when the push never lands. Each heartbeat call:
 
 1. Runs `recoverStuckJobs()` — resets `running` jobs >15 min old back to `pending`, resets `processing` workflow executions >15 min old back to `active`.
-2. Atomically claims up to 10 pending jobs (`FOR UPDATE SKIP LOCKED`).
+2. Atomically claims up to 10 pending jobs (`FOR UPDATE SKIP LOCKED`) — at most 5 of them campaign sends (`campaign:{id}:send:…`), other due jobs first, so a large campaign never fills the batch.
 3. Marks each `running`.
 4. For each job:
    - Special-case dispatch for `workflow_resume` / `sequence_step` / `hook_retry` — the executors run concurrently and the request waits for them before answering; the job stays `running` until its executor finishes.
    - All other types go through `executeJob()` synchronously.
-5. Records results to `job_results`, reschedules recurring jobs, handles retries.
+5. Records results to `job_results`, reschedules recurring jobs, handles retries. A campaign send or pump may instead **defer** itself (a paused campaign, a full rate window, the pump's next tick): the row goes back to `pending` at a later `scheduled_time` with `attempts` and `execution_count` unchanged and no `job_results` row (response status `deferred`).
 
 ```json
 // Response

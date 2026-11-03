@@ -2,7 +2,42 @@
 
 The Campaign Manager sends bulk SMS and email messages to groups of contacts. Staff select contacts by filters (tags, case type, case stage, date range), compose a message with placeholder personalization, and send immediately or schedule for later.
 
-Campaigns execute through the scheduled jobs system — one job per contact — so each send is atomic, retryable, and doesn't timeout on Cloud Run.
+Campaigns execute through the scheduled jobs system — one job per contact — so each send is atomic, retryable, and doesn't timeout on Cloud Run. Each recipient is sent to **at most once**: a send that might have gone out is never repeated (see "Unknown" below).
+
+---
+
+## Campaign type: operational or marketing
+
+Every campaign has a **type** (the send *class*), chosen on the Compose tab:
+
+- **Operational** (the default) — the message is about the recipient's case,
+  appointment or account: a note to a dozen clients, a hearing change, an
+  office closure. Choosing it is a statement, and the screen says so:
+  *"this message is about the recipient's case, appointment or account — not
+  promoting services."* An operational message must not carry promotional
+  content (that can make the whole message commercial under CAN-SPAM).
+  - **Opt-outs:** an operational EMAIL reaches clients who opted out of
+    marketing email — opt-outs stop promotion, not case mail (ruling D18). An
+    operational TEXT still skips a number that texted STOP.
+  - **The cap:** up to **50 recipients** (the *Operational campaign recipient
+    cap*, Config → Firm → Marketing email & consent), counted after
+    duplicates are removed. Over the cap needs the **campaigns.bulk**
+    capability (the admin role) and **typing the exact recipient count** to
+    confirm; the send is recorded in the admin audit log. Over-cap campaigns
+    are paced (below) and may use the marketing transport, still without any
+    marketing footer.
+- **Marketing** — newsletters and announcements. Email only, sent under a
+  **topic** (e.g. Newsletter) the recipient can unsubscribe from, from a
+  marketing transport, by a **campaigns.bulk** holder. **Switched off for
+  now:** creating one is refused until the compliance checklist passes and a
+  superuser turns on `marketing_send_enabled`; a marketing campaign that
+  somehow got queued is recorded *skipped*, never sent.
+
+**Pacing.** Marketing and over-cap campaigns send at the *Paced send rate*
+(60 per minute by default): their sends are spread out when the campaign is
+created, and a background "pump" moves them along at that rate; on the
+marketing transport no more than that many go out in any minute (a send
+waits a few seconds instead). Campaigns within the cap send as before.
 
 ---
 
@@ -14,25 +49,30 @@ Staff creates campaign
         ▼
 POST /api/campaigns
         │
-        ├─ INSERT campaigns row
+        ├─ validate class / cap / capability / kill switch (createCampaign)
+        ├─ INSERT campaigns row (class, topic_key, bulk_confirmed_count)
         ├─ INSERT campaign_contacts (one per contact)
-        └─ INSERT scheduled_jobs (one per contact, type=campaign_send)
+        ├─ INSERT scheduled_jobs (one per contact, campaign_send; staggered when paced)
+        └─ paced only: ONE campaign_pump job + audit row
                 │
                 ▼
-        /process-jobs picks up jobs in batches of 10
+        /process-jobs (≤ 10 jobs a tick, ≤ 5 of them campaign sends)
+        or a Cloud Tasks doorbell rung by the pump
                 │
                 ▼
         job_executor.js → campaignService.executeSend()
                 │
-                ├─ Check campaign status (bail if canceled)
-                ├─ Check the destination's consent (SMS: opted out of texts; email: of marketing)
+                ├─ This recipient already has a result? → touch nothing
+                ├─ Campaign status: paused → wait (no attempt used); canceled / finished → skipped
+                ├─ Marketing → skipped (switched off / not built yet)
+                ├─ Check the destination's consent (by class — see Opt-out below)
                 ├─ Resolve {{placeholders}} via resolverService
-                ├─ Send via phoneService or emailService
-                ├─ Record result in campaign_results
+                ├─ Reserve the result row ('sending'), then send
+                ├─ Record 'sent' (or 'unknown' / 'failed')
                 └─ Check if campaign is complete → finalize status
 ```
 
-Each send is a standalone `one_time` scheduled job. The job system handles retries (3 attempts, 60s exponential backoff) and batch processing (10 per minute via Cloud Scheduler).
+Each send is a standalone `one_time` scheduled job. The job system handles retries (3 attempts, 60s exponential backoff) and batch processing (Cloud Scheduler every minute).
 
 ---
 
@@ -48,13 +88,16 @@ Each send is a standalone `one_time` scheduled job. The job system handles retri
 | `subject` | text | Email only, supports `{{placeholders}}` |
 | `body` | mediumtext | Message body, supports `{{placeholders}}`. HTML for email, plain text for SMS |
 | `attachment_url` | varchar(500) | MMS image URL (SMS+RingCentral only, nullable) |
-| `status` | enum | `draft`, `scheduled`, `sending`, `sent`, `failed`, `partial_fail`, `canceled` |
+| `class` | enum: `operational`, `marketing` | The send class (default `operational`) |
+| `topic_key` | varchar(40) | Marketing only: the topic recipients can unsubscribe from |
+| `bulk_confirmed_count` | int | Operational over the cap only: the count the sender typed to confirm (marks the campaign over-cap) |
+| `status` | enum | `draft`, `scheduled`, `sending`, `sent`, `failed`, `partial_fail`, `canceled`, `paused` |
 | `scheduled_time` | datetime | Firm-local time. NULL = sent immediately |
 | `contact_count` | int | Denormalized count for display |
 | `created_by` | tinyint | FK → users |
 | `created` | timestamp | |
 | `updated_at` | datetime | Auto-updated |
-| `result_summary` | json | Final rollup: `{ sent, failed, skipped }` |
+| `result_summary` | json | Final rollup: `{ sent, failed, skipped, unknown }` |
 
 ### `campaign_contacts`
 
@@ -76,11 +119,11 @@ One row per contact per campaign. Written by `executeSend()`.
 | `result_id` | int PK | |
 | `campaign_id` | int | |
 | `contact_id` | int | |
-| `status` | enum: `sent`, `failed`, `skipped` | |
+| `status` | enum: `sent`, `failed`, `skipped`, `sending`, `unknown` | `sending` = reserved, the send is in flight; `unknown` = the provider stopped answering mid-send (see below) |
 | `error` | text | Error message on failure |
 | `sent_at` | datetime | |
 | `result_meta` | json | Provider response, messageId, etc. |
-| `provider_message_id` | varchar(128) | The provider's id for the send (SES); the second way a provider event finds this row |
+| `provider_message_id` | varchar(128) | The provider's id for the send (SES), stored when the send returns one; the second way a provider event finds this row |
 | `delivery_status` | enum: `unknown`, `delivered`, `bounced_hard`, `bounced_soft`, `complained`, `rejected` | What the provider later reported; only ever moves to a stronger outcome |
 | `delivered_at` / `bounced_at` / `complained_at` | datetime(3) | First time each was reported (UTC) |
 | `delivery_diag` | varchar(255) | The provider's reason behind `delivery_status` |
@@ -121,21 +164,31 @@ Reusable uploaded images for email campaigns.
 Consent belongs to the number or address the campaign sends to, read through
 `services/optoutService.js` (the destination's consent state, plus the
 `sms_optout` / `email_optout` flag on its ACTIVE row while that flag is still
-kept in step). An SMS campaign skips a number opted out of texts; an email
-campaign skips an address opted out of marketing email ("No marketing email"
-on the contact) — campaigns are treated as marketing until they gain a send
-class (YisraMail C1).
+kept in step). What a send checks depends on its class
+(`campaignService.consentOptsFor`, one answer for the send, the contact search
+and the preview):
 
-**What consent removes from a selection.** After the selection changes on the
-Select Contacts tab, the page asks `POST /api/consent/preview`
-`{ channel, contact_ids }` (≤ 5,000 ids; any staff login) and shows, beside
-"N selected", **"N will be skipped (texts stopped)"** for SMS or **"N will be
-skipped (opted out of marketing email)"** for email — nothing when it is 0. The
-count is computed the way the send itself decides (each contact's primary
-phone / email, SMS as operational, email as marketing), so it matches the
-`skipped` results the campaign will record. The contact search already leaves
-out contacts opted out at search time, so the line usually stays empty; it
-catches consent that changed after the search. It never blocks the send.
+| | Operational | Marketing |
+|---|---|---|
+| SMS | skips a number opted out of texts (a STOP) | not offered |
+| Email | **checks nothing** — reaches "No marketing email" contacts (D18) | skips an address opted out of marketing email or of the campaign's topic |
+
+Before YisraMail C1 every email campaign skipped marketing opt-outs; since C1
+an operational email campaign does not. That is the ruled design: the
+operational class is the honest way to tell everyone, opted out or not, about
+their case or the office.
+
+**What consent removes from a selection.** After the selection, the type or
+the topic changes, the page asks `POST /api/consent/preview`
+`{ channel, class, topic, contact_ids }` (≤ 5,000 ids; any staff login; `class`
+defaults to operational) and shows, beside "N selected", **"N will be skipped
+(texts stopped)"** for SMS or **"N will be skipped (opted out of marketing
+email)"** for marketing email — nothing when it is 0, and always nothing for an
+operational email. The count is computed the way the send itself decides, so
+it matches the `skipped` results the campaign will record. The contact search
+(which takes the same `class` / `topic`) already leaves out contacts opted out
+at search time, so the line usually stays empty; it catches consent that
+changed after the search. It never blocks the send.
 
 ---
 
@@ -149,9 +202,10 @@ All routes require JWT auth via `jwtOrApiKey`.
 |--------|----------|-------------|
 | `GET` | `/api/campaigns` | List campaigns (paginated). Query: `status`, `page`, `limit` |
 | `POST` | `/api/campaigns` | Create campaign + contacts + jobs |
-| `GET` | `/api/campaigns/:id` | Single campaign with results summary |
+| `GET` | `/api/campaigns/:id` | Single campaign with results summary (`results`: sent, failed, skipped, sending, unknown, pending) |
 | `GET` | `/api/campaigns/:id/results` | Per-contact result details |
-| `PATCH` | `/api/campaigns/:id` | Cancel: `{ status: "canceled" }` |
+| `PATCH` | `/api/campaigns/:id` | `{ status: "canceled" }` (from scheduled / sending / paused), `{ status: "paused" }` (from scheduled / sending), `{ status: "sending" }` = resume (from paused). 404 missing, 409 not allowed from the current status |
+| `GET` | `/api/campaigns/compose-options` | What the Compose tab offers: marketing senders, active email topics, the cap, whether marketing is switched on, whether you hold campaigns.bulk |
 
 ### Contact Selection
 
@@ -164,6 +218,8 @@ All routes require JWT auth via `jwtOrApiKey`.
 | Param | Example | Notes |
 |-------|---------|-------|
 | `channel` | `email` or `sms` | Filters by has-email/phone + opt-out |
+| `class` | `operational` (default) or `marketing` | Decides the email opt-out question (operational excludes none) |
+| `topic` | `newsletter` | Marketing only |
 | `tags` | `intake,vip` | Comma-separated, OR logic (has any) |
 | `case_type` | `Chapter 7` | Exact match via case_relate → cases |
 | `case_stage` | `Open,Filed` | Comma-separated, IN match |
@@ -209,11 +265,16 @@ asset store writes to.
   "subject": "Important update for {{contacts.contact_fname}}",
   "body": "<p>Hi {{contacts.contact_fname}},</p><p>Your case status has been updated.</p>",
   "contactIds": [101, 102, 103, 104],
-  "scheduledTime": "2026-04-20T09:00:00"
+  "scheduledTime": "2026-04-20T09:00:00",
+  "class": "operational"
 }
 ```
 
-- `scheduledTime` is firm-local time (America/Detroit). Converted to UTC internally for job scheduling.
+- `class` — `operational` (default) or `marketing`, spelled exactly; `topic_key` for marketing only.
+- `confirmCount` — over the operational cap: the recipient count typed to confirm.
+- Refusals carry an HTTP status and a `code`: `400` (bad class / topic, unknown or wrong sender), `403 bulk_capability_required` (marketing, or over the cap, without campaigns.bulk — `count` / `cap` included), `409 over_cap_confirmation` (no or wrong `confirmCount` — `count` is the real deduplicated number, so the page re-prompts), `422 marketing_disabled` (the switch is off) / `marketing_sms_refused`.
+
+- `scheduledTime` is firm-local time (America/Detroit). Converted to UTC internally for job scheduling. At most **366 days** ahead — a later date (often a year typo, "2926" for "2026") is refused with `400 schedule_too_far`; the Compose date picker offers nothing later.
 - Omit `scheduledTime` or set to `null` for immediate send.
 - `contactIds` are frozen into `campaign_contacts` at creation. The list does not re-evaluate.
 - Placeholders use `resolverService` syntax: `{{contacts.contact_fname}}`, `{{contacts.contact_email|email_mask}}`, etc.
@@ -224,15 +285,18 @@ asset store writes to.
   "campaignId": 87,
   "contactCount": 4,
   "jobsCreated": 4,
-  "status": "scheduled"
+  "status": "scheduled",
+  "class": "operational",
+  "overCap": false,
+  "paced": false
 }
 ```
 
 **What happens internally:**
-1. Single transaction: INSERT campaign → batch INSERT campaign_contacts → batch INSERT scheduled_jobs
+1. Single transaction: INSERT campaign → batch INSERT campaign_contacts → batch INSERT scheduled_jobs (→ the pump job and the audit row when paced)
 2. Each job has `idempotency_key = campaign:{id}:{contactId}` to prevent duplicates
-3. Job `name = campaign:{id}:send:{contactId}` for LIKE-based cleanup on cancellation
-4. Status is `sending` for immediate, `scheduled` for future sends
+3. Job `name = campaign:{id}:send:{contactId}` (the pump: `campaign:{id}:pump`) for LIKE-based cleanup on cancellation
+4. Status is `sending` for immediate, `scheduled` for future sends (the first send flips it to `sending`)
 
 ---
 
@@ -240,19 +304,22 @@ asset store writes to.
 
 When `/process-jobs` picks up a `campaign_send` job, `job_executor.js` delegates to `campaignService.executeSend(db, campaignId, contactId)`:
 
-1. **Load campaign** — get type, sender, subject, body
-2. **Check status** — if `canceled`, record as `skipped`, return
-3. **Load contact** — get phone/email
-4. **Check opt-out** — `optoutService.findOptedOut` (SMS: scope `all`; email: `klass: 'marketing'`) → record as `skipped` (`sms_optout` / `email_optout`)
-5. **Check channel info** — missing phone for SMS or email for email → record as `failed`
-6. **Resolve placeholders** — `resolverService.resolve()` with `refs: { contacts: { contact_id } }`
-7. **Send** — `phoneService.sendSms()` or `emailService.sendEmail()` (handles text↔html auto-conversion)
-8. **Record result** — INSERT into `campaign_results` (INSERT IGNORE for retry safety)
-9. **Check completion** — if all contacts processed, finalize campaign status
+1. **Load campaign** — type, class, topic, sender, subject, body, status
+2. **Already recorded?** — a result row that is final (`sent`, `failed`, `skipped`, `unknown`) means a replayed job: nothing is touched. A `sending` row means an earlier attempt reserved the send and never finished — it becomes `unknown`, never resent
+3. **Check status** — `paused` (only a job already claimed when the pause parked the rest): the job waits 5 minutes, using no attempt and recording nothing; `canceled`: `skipped`; `sent` / `failed` / `partial_fail`: a straggler, `skipped`
+4. **Marketing** — recorded `skipped`: `marketing_disabled` while the switch is off, `marketing_path_unbuilt` when it is on (the marketing send path — footer, unsubscribe link, headers — is the next slice, C2)
+5. **Load contact**, **check opt-out** by class (`sms_optout` / `email_optout` → `skipped`), **check channel info** (missing phone / email → `failed`), **resolve placeholders** (unresolved → `failed`)
+6. **Rate window** — an over-cap campaign on the marketing transport: if that transport already took the paced rate in the last 60 seconds, the job waits 2–8 seconds (no attempt used)
+7. **Reserve** — the result row is written as `sending` BEFORE the provider is called
+8. **Send** — `phoneService`, `emailService.sendEmail()`, or (over-cap on the marketing transport) `emailService.sendEmailDirect(…, {bulk:true})` with no footer or marketing headers
+9. **Record** — `sent` (+ the provider's message id when it gave one)
+10. **Check completion** — if every contact has a final result, finalize the campaign
 
-**Error handling:** Infrastructure errors (DB down) throw → job system retries. Send errors (SMTP reject) are caught → recorded as `failed`, job completes normally.
+**Error handling:** a provider REFUSAL (an SMTP or HTTP error reply, a connection that never opened) clears the reservation; a temporary one (SMTP 4xx, HTTP 429/5xx, network) throws so the job retries and sends again, a permanent one is recorded `failed`. A send where the provider **stopped answering** (timeout, dropped connection) is recorded **`unknown`** and never retried — and so is a send whose outcome could not be written down on its last attempt (it may have gone out).
 
-**Completion logic:** After each send, counts `campaign_contacts` vs `campaign_results`. When equal: all sent → `sent`, all failed → `failed`, mixed → `partial_fail`. The WHERE guard prevents overwriting a `canceled` status.
+**"Unknown" means** the message may or may not have reached the provider — the app cannot tell, so it does not send again (a missed message is better than a duplicate). Check with the recipient if it matters. Unknown counts like failed for the campaign's final status.
+
+**Completion logic:** counts `campaign_contacts` vs the final results (a `sending` row is not final). When every contact has one: everything sent → `sent`, nothing sent → `failed`, otherwise → `partial_fail`; `result_summary` carries all four counts. The WHERE guard prevents overwriting a `canceled` status; a `paused` campaign whose sends all finished is finalized too.
 
 ---
 
@@ -260,9 +327,13 @@ When `/process-jobs` picks up a `campaign_send` job, `job_executor.js` delegates
 
 `PATCH /api/campaigns/:id` with `{ status: "canceled" }`:
 
-1. Sets campaign status to `canceled`
-2. Deletes pending jobs: `DELETE FROM scheduled_jobs WHERE name LIKE 'campaign:{id}:%' AND status = 'pending'`
+1. Sets campaign status to `canceled` (allowed from `scheduled`, `sending` and `paused`)
+2. Deletes pending jobs — the sends and the pump: `DELETE FROM scheduled_jobs WHERE name LIKE 'campaign:{id}:%' AND status = 'pending'`
 3. Already-running jobs check campaign status at execution time and record as `skipped`
+
+## Pause and resume
+
+**Pause** (`{ status: "paused" }`, the Pause button) stops a `scheduled` or `sending` campaign without losing anything: its pending sends stay queued but are set aside (their scheduled time moved 1,000 years out, so a paused campaign never holds up other campaigns' sends), and the pump stops. A send already being processed when you pause finishes normally, or waits 5 minutes and is picked up again on resume. **Resume** (`{ status: "sending" }`, the Resume button) brings every waiting send back — spread out from now at the paced rate (within-cap campaigns: all at once); a campaign paused before its scheduled start keeps its start — and restarts the pump. Cancel works on a paused campaign too.
 
 ---
 
@@ -301,17 +372,19 @@ Filter controls for channel, tags, case type, case stage, and case open date ran
 
 ### Tab 2: Compose
 
-- **Sender** — dropdown populated from `/api/phone-lines` (SMS) or `/api/email-from` (email)
+- **Campaign type** — Operational (default; shows the honesty line and the cap) or Marketing (email only; a Topic select appears and the sender list switches to the marketing transports from `/api/campaigns/compose-options`)
+- **Sender** — dropdown from the shell's firm data: phone lines (SMS) or the email senders (email; never a marketing transport), or the marketing senders for a marketing campaign
 - **Subject** (email only) — with placeholder inserter and character count hint
 - **Body** — channel-dependent:
   - **Email:** Dual editor (Rich Text via Quill / HTML Code via textarea). Quill syncs to the textarea on every change; textarea is always the source of truth. Swal warns when switching HTML → Rich Text (may simplify complex formatting). Image button opens upload/URL/library dialog with size picker.
   - **SMS:** Plain textarea with placeholder inserter
-- **Schedule** — Send Now or datetime picker (firm local time)
+- **Schedule** — Send Now or datetime picker (firm local time), at most 366 days ahead
 - **Preview** — resolves placeholders against first selected contact, shows in Swal
+- **Create** — over the cap, the page asks you to type the recipient count and resends; a refusal (no capability, marketing switched off) shows its message
 
 ### Tab 3: View Campaigns
 
-Campaign list with status filter. Shows inline progress bar for `sending` campaigns (auto-polls every 8 seconds). Stats button opens per-contact results in Swal. Cancel and Duplicate actions available.
+Campaign list with status filter (Paused included). Shows inline progress bar for `sending` and `paused` campaigns ("N in flight" while sends are reserved; auto-polls every 8 seconds while any is sending). Marketing and over-cap campaigns carry a badge. Stats opens per-contact results with the class, topic and the sent / failed / skipped / unknown / in-flight counts. Pause (scheduled / sending), Resume (paused), Cancel and Duplicate actions.
 
 ### Image Handling
 
@@ -338,10 +411,9 @@ A custom Quill Image blot preserves `width`, `style`, and `alt` attributes that 
 
 ## Throughput
 
-- `process-jobs` claims 10 jobs per batch, called every ~1 minute by Cloud Scheduler
-- Effective rate: ~10 sends per minute, ~600 per hour
-- A 200-contact campaign completes in ~20 minutes
-- For the firm's scale (50–200 contacts per campaign), this is well within limits
+- `process-jobs` claims up to 10 jobs per minute (Cloud Scheduler), **at most 5 of them campaign sends** — other due jobs claim first, so a large campaign never starves reminders or workflows
+- Campaigns within the cap ride that cron: ~5 sends a minute
+- Paced campaigns (marketing, over-cap) are driven by their pump: about once a minute (it re-arms itself 55 seconds out and rings its own doorbell) it rings Cloud Tasks doorbells for sends due in the next 90 seconds, at most the paced rate × 55/60 per tick (55 at 60/min — never more than the rate per minute), overdue ones included — 2,000 recipients ≈ 33 minutes
 
 ---
 
@@ -352,5 +424,7 @@ A custom Quill Image blot preserves `width`, `style`, and `alt` attributes that 
 | `services/campaignService.js` | All business logic |
 | `routes/campaign.js` | Thin HTTP wrappers, JWT auth |
 | `routes/api.assets.js` | The shared [asset store](../05-Subsystems/08-asset-manager.md), reached through `/js/assetpicker.js` |
-| `lib/job_executor.js` | `campaign_send` job type dispatch |
+| `lib/job_executor.js` | `campaign_send` / `campaign_pump` dispatch; a deferral sentinel (`deferJob`) |
+| `routes/process_jobs.js` | The claim (campaign-send quota) and the deferral handling |
+| `scripts/yisramailC1Migrate.js` | The C1 schema migration (class, topic_key, bulk_confirmed_count, paused, sending / unknown, the kill-switch row) |
 | `public/campaign.html` | Frontend (iframe) |

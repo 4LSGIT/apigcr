@@ -192,6 +192,15 @@ body. Governing migrations in `ref/migrations/`.*
   stays ORPHANED in `mysql.columns_priv` (inert; it re-attaches to a later
   column of the same name) until a re-provision or targeted REVOKE clears it.
 - **Hook credential headers are stripped before storage (2026-11-02):** `lib/hookCredentialHeaders` (static names + the hook's own `auth_config.header` + every hook's configured header, cached 30 s; any case) is applied by the receiver, `recordExecution` and `executeHook`'s entry, so new raw_input, captured_sample, spool, transform_output, delivery, workflow and sequence copies are clean. Older rows still hold x-hook-key / RingCentral's Verification-Token (~32.8k) until `scripts/hookExecutionsHeaderScrub.js --apply` runs AFTER the deploy. A new header-borne hook auth adds its default name there.
+- **Campaign hardening (YisraMail C1, 2026-11-03 — §17 below; ref/YISRAMAIL_DESIGN.md
+  §6.1 / §6.4 "As built (C1)"):** campaigns have a class (operational |
+  marketing), an operational cap with an audited `campaigns.bulk` over-cap
+  path, the dark `marketing_send_enabled` kill switch, a send reservation
+  (`sending` / `unknown`, at most once), a pump, a cron per-tick
+  `campaign_send` quota (5) and `paused`. The deferral sentinel
+  (`lib/job_executor` `deferJob`, honoured by `routes/process_jobs.js`) is new
+  job-system plumbing: a job may say "run me again at T" without using an
+  attempt — only an executor's own code can say it (a Symbol mark).
 - **Provider email events (YisraMail T2, 2026-11-02 — ref/YISRAMAIL_DESIGN.md
   §5.4 "As built"):** SES → EventBridge → hook `ses-events` → internal function
   `mail_event_ingest` (`services/mailEventService`). Hard bounces and
@@ -205,7 +214,9 @@ body. Governing migrations in `ref/migrations/`.*
   §5.2 "As built" holds the option, refusal and driver contract):**
   `email_credentials.bulk_ok = 1` marks a marketing (bulk) transport (the SES
   row); only `emailService.sendEmailDirect(…, {bulk:true})` — C2's marketing
-  path — may send from it, and its marketing-only options exist nowhere else.
+  path, and since C1 an operational campaign confirmed over the cap (D16, no
+  footer, no headers) — may send from it, and its marketing-only options exist
+  nowhere else.
   An `events_driver` (bulk rows only) adds the provider's headers at send.
   Invariants: every reader that lists or picks a sender filters
   `bulk_ok = 0`, and a new one must too; a caller that synthesizes an
@@ -227,8 +238,9 @@ body. Governing migrations in `ref/migrations/`.*
   SMS → `all`; operational EMAIL → nothing (D18: an email opt-out is
   marketing-only — send_email, forwards, request_decision, the mail hub, CTA
   and `/internal/email` sends and the appt/booking confirmations all send);
-  `klass:'marketing'` → `marketing`/`all` + topic (campaign email asks as
-  marketing until C1). For SMS the 2026-10-27 rule stands (D19): AUTOMATION
+  `klass:'marketing'` → `marketing`/`all` + topic (a campaign asks by its
+  class since C1: `campaignService.consentOptsFor` — operational email asks
+  nothing). For SMS the 2026-10-27 rule stands (D19): AUTOMATION
   REFUSES (`OptOutRefusal`, code `RECIPIENT_OPTED_OUT` → workflow step
   `skipped`, sequence `skipped`/`recipient_opted_out`, never `failed`; appt /
   booking / manage confirmations skip the channel, logged); STAFF ARE WARNED
@@ -1562,7 +1574,8 @@ scheduling. Routes: `GET /isWorkday` (no auth), `POST /nextBusinessDay`,
 ## 10. SCHEDULED JOBS
 
 Unified `scheduled_jobs` queue, index (status, scheduled_time), drained by
-`/process-jobs` (Cloud Scheduler, every minute; claims ≤ 10 per pass). A
+`/process-jobs` (Cloud Scheduler, every minute; claims ≤ 10 per pass, ≤ 5 of
+them `campaign_send` rows — other jobs first, §17). A
 near-due (≤ 90 s) `workflow_resume` / `sequence_step` row also gets a Cloud
 Tasks doorbell → `POST /process-job/:id`, which claims that one row at once
 (lib/taskQueue; the tick is the fallback). The engine-internal types and
@@ -2001,10 +2014,53 @@ HMAC.
 
 Bulk SMS/email as ONE `campaign_send` job per contact (Cloud Run timeout
 constraint), idempotency_key `campaign:{id}:{contactId}`, UNIQUE
-(campaign_id, contact_id) on `campaign_results` backs recordResult's
-upsert. executeSend: bail-as-skipped if canceled → opt-out check → channel
-check → strict resolve → send → recordResult + checkCompletion (finalizes
-sent/failed/partial_fail).
+(campaign_id, contact_id) on `campaign_results` backs the reservation and
+recordResult. executeSend: existing final row → replay, touch nothing
+(`sending` → `unknown`) → status (paused DEFERS, canceled / finished →
+skipped) → marketing → skipped (C2 builds that send) → consent by class →
+channel check → strict resolve → (bulk transport: rate window) → RESERVE
+(`sending`) → send → `sent` + checkCompletion (finalizes
+sent/failed/partial_fail; `sending` is not done, `unknown` counts like
+failed).
+**Class (YisraMail C1, ref/YISRAMAIL_DESIGN.md §6.1 / §6.4 "As built (C1)"):**
+`campaigns.class` operational (default) | marketing, enforced in
+`createCampaign` (API keys reach it). Operational: email asks NO consent
+(D18 — a deliberate change: before C1 every email campaign skipped marketing
+opt-outs), SMS scope `all`; capped at `campaign_operational_cap` (50) DEDUPED
+recipients — over it needs `campaigns.bulk` (admin) + `confirmCount` = the
+count (403 / 409 naming it), audited (`campaign_over_cap`), stored as
+`bulk_confirmed_count`, and may send through a `bulk_ok` row
+(`sendEmailDirect` bulk:true, nothing else — D16). Marketing: email only,
+topic, `bulk_ok` sender, `campaigns.bulk`, refused 422 while
+`marketing_send_enabled` ≠ exactly `'1'` (read uncached); executeSend records
+it `skipped` (`marketing_disabled` / `marketing_path_unbuilt`). ONE consent
+answer for send, picker and compose preview: `consentOptsFor`.
+**At most once:** the row is INSERTed `sending` (attempt id
+`<job id>:<attempt>`) before the provider call; a later attempt finding it
+`sending` records `unknown` and never resends; a DEFINITE provider error (a
+reply code / status, a connection that never opened, anything unrecognized)
+deletes the reservation and keeps the old retry/permanent rules; an
+AMBIGUOUS one (timeout / socket drop, no reply) → `unknown`
+(`isAmbiguousSendError`, codes before message heuristics). A failure after the
+reservation with no retry coming (final attempt / permanent) marks that
+attempt's row `unknown` — never left `sending`. recordResult is FIRST-WINS
+(never overwrites).
+**Pacing:** marketing + over-cap jobs are staggered at
+`campaign_marketing_rate`/min with ONE `campaign_pump` job
+(`campaign:{id}:pump`, inside the cancel prefix) that rings doorbells for
+sends due within ACCEL_WINDOW_MS, ≤ rate per tick, and defers its own row
+60 s until none remain; a bulk transport defers a send 2–8 s when it took
+`rate` in the last 60 s. The cron batch claims ≤ 5 `campaign_send` rows
+(`name LIKE 'campaign:%:send:%'`), other jobs first (candidate reads, then a
+lock by id). **paused** (PATCH from scheduled / sending): the same
+transaction PARKS the pending sends (`scheduled_time + 1000 YEAR` — never
+due, so a paused campaign never holds the quota); a job claimed before the
+pause defers itself 5 min (the backstop); resume (`status:'sending'`) pulls
+them back re-staggered from now (a not-yet-started campaign keeps its start)
+and re-inserts the pump when sends remain. The pump re-arms its row 55 s out
+and rings that row's own doorbell. An over-cap bulk send carries the
+`{campaign_id, result_id}` tags (T2 correlation). A DEFERRAL (`deferJob`) puts the job back to
+pending at retryAt with attempts / execution_count untouched.
 **Error classification:** skips + permanent errors record and return;
 transient (socket/timeouts, SMTP 4xx, HTTP 429/5xx, DB blips, resolver
 throws) THROW for job retry — except on the final attempt, where transient
@@ -2013,16 +2069,18 @@ default PERMANENT (duplicate sends are worse than one-attempt failures).
 Cancellation deletes pending jobs by name prefix; in-flight jobs re-check
 status and record 'skipped'. Contact refs only in resolver context.
 **Email sender check at create (YisraMail T1):** `createCampaign` loads an
-email campaign's sender from `email_credentials` — unknown → throws; a
-`bulk_ok` (marketing transport) row → throws (every campaign is operational
-until C1's class). A sender made bulk after create fails each send with the
-permanent `bulk_sender_refused`. ref/YISRAMAIL_DESIGN.md §5.2.
+email campaign's sender from `email_credentials` — unknown → 400; a
+`bulk_ok` (marketing transport) row → 400 for an operational campaign within
+the cap (allowed over it, D16; required for marketing). A within-cap sender
+made bulk after create fails each send with the permanent
+`bulk_sender_refused`. ref/YISRAMAIL_DESIGN.md §5.2.
 **Delivery state (YisraMail T2):** `campaign_results` gains
 `provider_message_id`, `delivery_status` (complained > bounced_hard > rejected
 > delivered > bounced_soft > unknown — never downgraded), `delivered_at` /
 `bounced_at` / `complained_at` (set once per rank), `delivery_diag`,
 `bounce_subtype` (SES suppression subtypes stay out of the bounce rate), written only by
-`mail_event_ingest` from provider events; `recordResult` never touches them.
+`mail_event_ingest` from provider events; `recordResult` never touches them
+(C1's `sent` update writes `provider_message_id` only when none is stored).
 ref/YISRAMAIL_DESIGN.md §5.4.
 
 ## 18. TASK SYSTEM

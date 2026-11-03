@@ -5,7 +5,8 @@ P2 (inbound SMS opt-out) built — §4.6 "As built"; P3 (email unsubscribe
 surface) built — §4.5 "As built"; P4 (staff consent UI) built — §4.7 "As
 built"; T1 (transport contract) built — §5.2 "As built"; T2 (events) built —
 §5.4 "As built" (parsed shapes confirmed on captured events except Reject /
-DeliveryDelay / Rendering Failure); nothing else built.** Ruled 2026-10-29 (Fred):
+DeliveryDelay / Rendering Failure); C1 (campaign hardening) built — §6.1 and
+§6.4 "As built (C1)"; nothing else built.** Ruled 2026-10-29 (Fred):
 D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
 Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
 later; D15 no RC push in v1, D16 over-cap operational sends with
@@ -871,17 +872,18 @@ Routes in `routes/api.consent.js` (auto-mounted).
   (`bornRow`'s `staff` event, never a carried `row_replace`). The three-way
   compare is unchanged; a note beside an unchanged flag records nothing; a
   note > 1000 is a row validation error. New rows have no note.
-- **Compose** (`public/campaign.html`): after the selection changes
-  (debounced), `POST /api/consent/preview { channel, contact_ids }` (≤ 5,000)
-  answers `{ selected, will_send, skipped_optout, missing_destination,
-  not_found }` through `findOptedOut`, asked exactly as
-  `campaignService.executeSend` steps 3–5 ask: each contact's
+- **Compose** (`public/campaign.html`): after the selection, the class or the
+  topic changes (debounced), `POST /api/consent/preview { channel, class,
+  topic, contact_ids }` (≤ 5,000; `class` defaults to operational) answers
+  `{ selected, will_send, skipped_optout, missing_destination, not_found }`
+  through `findOptedOut`, asked exactly as `campaignService.executeSend`
+  asks (`campaignService.consentOptsFor`, C1): each contact's
   `contacts.contact_phone` / `contact_email` (the primary mirror it sends
-  to), SMS operational, email `klass: 'marketing'` (campaigns have no class
-  until C1 — so today an email opt-out IS skipped by every email campaign).
-  Beside "N selected": "N will be skipped (texts stopped)" / "N will be
-  skipped (opted out of marketing email)", nothing at 0; never blocks the
-  send. The contact search (`getFilteredContacts`) already leaves out
+  to), SMS operational, marketing email scope `marketing` + the topic,
+  operational email NO reader call (D18 — nothing is skipped). Beside "N
+  selected": "N will be skipped (texts stopped)" / "N will be skipped (opted
+  out of marketing email)", nothing at 0; never blocks the send. The contact
+  search (`getFilteredContacts`, same `class` / `topic`) already leaves out
   contacts opted out at search time, so the line catches consent that moved
   after the search.
 - **Sync bus:** none of the four routes is a MATCHERS entry — three are
@@ -963,7 +965,8 @@ driver.events: { verify(req, credential) → bool,                 // T2 — on 
   Comms, workflow and campaign pickers and operational mail could leave
   through the marketing subdomain without a footer. So: `bulk_ok` rows are
   filtered out of `emailFrom`; the public `sendEmail` and operational
-  campaigns refuse a `bulk_ok` row; no mailbox `send_credential_id` and no
+  campaigns within the cap refuse a `bulk_ok` row (D16 lets an over-cap one
+  use it, no footer); no mailbox `send_credential_id` and no
   other row may share its SMTP login (else the hub's `checkBudget` would
   count newsletters against the hub). `gmail.js` never gets `bulk_ok`.
 - Operational campaigns through Gmail/SMTP already count against the hub
@@ -974,7 +977,8 @@ driver.events: { verify(req, credential) → bool,                 // T2 — on 
 **As built (T1).** The contract and the fences; nothing sends marketing mail
 until C2 calls it.
 - **Options** (`services/emailService.sendEmailDirect`, destructured like the
-  hub's): `bulk` (the caller's assertion that it IS the marketing path),
+  hub's): `bulk` (the caller's assertion that it IS a path allowed on a bulk row: the
+  marketing path, C2, or — since C1 — an over-cap operational campaign, D16),
   `headers`, `reply_to`, `tags` — `MARKETING_ONLY_OPTIONS`. The public
   `sendEmail` strips all four the way it strips `HUB_ONLY_OPTIONS`.
   `headers`: `MARKETING_HEADERS` = `List-Unsubscribe`, `List-Unsubscribe-Post`,
@@ -1029,7 +1033,8 @@ until C2 calls it.
   treats any non-sms type as email) and for email loads the sender row: an
   unknown sender throws (before T1 nothing checked it — every job failed at send) and
   a bulk one throws ("Operational campaigns cannot send from a marketing
-  transport"). `mailboxService.assertSendCredential` refuses a bulk row (400)
+  transport") — within the operational cap; since C1 an operational campaign
+  confirmed over the cap may name one (D16, §6.1 "As built (C1)"). `mailboxService.assertSendCredential` refuses a bulk row (400)
   and the Mailboxes admin's send-credential picker leaves it out; the hub's
   `whyNot` reports `bulk_transport` (picker + 409 at send). The
   sender editor (`routes/api.emailCredentials.js`, `connections.html`) exposes
@@ -1306,6 +1311,81 @@ flipped by an SU only after the G1 checklist (§9) passes. Without it, C1
 would let staff create marketing campaigns that today's `executeSend` sends
 with no token, footer or headers.
 
+**As built (C1).** `services/campaignService.js`, `routes/campaign.js`,
+`public/campaign.html`; schema by `scripts/yisramailC1Migrate.js`
+(`ref/migrations/2026-11-03_yisramail_c1_campaign_class.sql`).
+- **Columns:** `campaigns.class enum('operational','marketing') NOT NULL
+  DEFAULT 'operational'`, `campaigns.topic_key varchar(40) NULL`, and — beyond
+  the list above — `campaigns.bulk_confirmed_count int unsigned NULL`: the
+  count a `campaigns.bulk` holder typed to confirm an over-cap operational
+  send. NOT NULL marks a campaign over-cap, which is what lets `executeSend`
+  send it through a `bulk_ok` row (a stored fact, not a re-derivation from a
+  cap that may have changed since).
+- **`createCampaign`** (every caller — API keys included): `class` exactly
+  `operational` | `marketing` (route body `class`, absent = operational; 400
+  otherwise). Operational: no `topic_key` (400); the cap
+  (`campaign_operational_cap`, blank / absent / not > 0 → 50) counts the
+  DEDUPED ids; over it → 403 `bulk_capability_required` without
+  `campaigns.bulk` (checked FIRST, so a correct count never helps a staff
+  login), then 409 `over_cap_confirmation` unless `confirmCount` equals the
+  deduped count (the body names the real `count` and `cap`; the page
+  re-prompts); over-cap may name a `bulk_ok` email sender, within the cap the
+  T1 refusal stands (400). Marketing: SMS → 422 `marketing_sms_refused`; the
+  switch not exactly `'1'` → 422 `marketing_disabled`; no `campaigns.bulk` →
+  403; the topic must exist, be an EMAIL topic (`optoutService.assertScope`)
+  and be active (400 — the scope names `marketing` / `all` are not topics);
+  the sender must be a `bulk_ok` row (400). Marketing and over-cap creates
+  write an `admin_audit_log` row (`campaign_marketing_create` /
+  `campaign_over_cap`; details: campaign id, class, type, sender, count,
+  topic, cap, rate, confirmed count) INSIDE the create transaction, so a
+  campaign exists iff its audit row does. Refusals are `CampaignError`s
+  carrying `status` / `code` / extra fields; the route answers them as-is
+  (other create errors stay 500). A `scheduledTime` more than 366 days out
+  (`MAX_SCHEDULE_DAYS`) → 400 `schedule_too_far` (a year typo; it also keeps
+  pause parking's threshold unreachable).
+- **Settings are read UNCACHED** (`settingsService.getSettings`, one query —
+  the way the kill switch's neighbours `documents_sync_enabled` /
+  `court_ingest_live` are read) rather than through `lib/firmConfig.cfg`: a
+  switch turned off must hold on every instance at once, and cfg's cache
+  fails OPEN on a refresh error. `marketing_send_enabled` (system / switches /
+  console, ships `'0'` as an explicit row; anything but exactly `'1'` is off),
+  `campaign_operational_cap` and `campaign_marketing_rate` (firm / consent
+  section, blank → 50 / 60).
+- **Consent by class** (`consentOptsFor`, the ONE answer for `executeSend`,
+  `getFilteredContacts` and the compose preview): SMS → `{}` (scope `all`,
+  D19) whatever the class; marketing email → `{klass:'marketing', topic}`;
+  operational email → no consent query at all (D18). **Behaviour change:**
+  before C1 every email campaign skipped a marketing opt-out (it asked as
+  marketing because campaigns had no class); an operational email campaign
+  now reaches one — the ruled design, pinned by
+  `tests/campaignC1.mysql.test.js` (O) and `tests/optout.mysql.test.js`.
+- **The marketing send is NOT built:** `executeSend` records a marketing
+  recipient `skipped` — `marketing_disabled` while the switch is off,
+  `marketing_path_unbuilt` once it is on — and never falls through to the
+  operational send (C2 builds the path).
+- **D16 as built:** an over-cap operational EMAIL campaign whose sender is a
+  `bulk_ok` row sends through `emailService.sendEmailDirect(db, row,
+  {…, bulk: true, tags: {campaign_id, result_id}})` — the tags so an SES
+  event that beats the `sent` update still correlates (T2 needs both); no
+  `headers` / `reply_to`, no footer — which is exactly what T1's
+  `bulk_row_requires_marketing_path` fence asks for;
+  every other campaign email stays on the public `sendEmail` (a within-cap
+  campaign whose row turned bulk later fails `bulk_sender_refused`). Still
+  consent-checked by its class (operational: email nothing, SMS scope `all`).
+  `campaigns.bulk` (root: false, admin role) gates both paths
+  (`lib/capabilities.js`; the shell's copy in `public/index.html` follows).
+- **Compose** (`campaign.html`): a class picker (radios, default
+  Operational) showing the honesty line; Marketing shows a topic select and
+  swaps the sender list to the marketing senders from
+  `GET /api/campaigns/compose-options` (bulk rows, the active email topics via
+  `unsubService.UNSUB_SQL.topics`, the cap, the switch state, `can_bulk`) —
+  firm-data's `emailFrom` keeps its T1 fence; the 409 opens a typed-count
+  prompt and resends `confirmCount`.
+- **Not built here:** an attestation record of WHO chose the operational
+  class beyond `campaigns.created_by` + `class` (the honesty line is shown,
+  not separately recorded), and any kill-switch UI beyond the compose note
+  (`ref/plans.md`).
+
 ### 6.2 Audiences and lists
 
 - Keep the ad-hoc filter (tags / case type / stage / dates) and add
@@ -1431,6 +1511,126 @@ with no token, footer or headers.
   `clicked_at` arrive with C6. Fed by §5.4.
 - Test send: "send a test to me" renders against a chosen contact and goes
   through the same transport (no token write, `[TEST]` subject prefix).
+
+**As built (C1).** Account pause, the delivery-state precedence on the
+marketing path, the per-recipient token and the test send are C2's.
+- **Reservation (every class):** `executeSend` first reads this recipient's
+  row: final (`sent` / `failed` / `skipped` / `unknown`) → a replay, nothing
+  touched; `sending` → an earlier attempt reserved and died: the row becomes
+  `unknown` (old `result_meta` kept + `unknown_note`), never resent. Before
+  the provider call it INSERTs the row as `sending` with
+  `result_meta.attempt_id = '<scheduled_jobs.id>:<attempt>'` (a plain INSERT;
+  a duplicate means another worker owns it → touch nothing) — single-row
+  autocommit, so nothing here holds a `campaign_results` lock and then asks
+  for a contact row (T2's lock order). Success UPDATEs THAT attempt's row to
+  `sent` + `provider_message_id` (`COALESCE` — never overwrites a stored one)
+  + a fresh `sent_at`; the update also accepts `unknown` for the same attempt
+  id (a slow attempt a recovery run marked unknown still lands as sent).
+  Skip / failure outcomes with no provider call are recorded FIRST-WINS
+  (`recordResult`'s ODKU no longer overwrites — a replay can never turn
+  `sent` into `skipped`).
+- **Error classification (`isAmbiguousSendError`):** DEFINITE (reservation
+  deleted, then `isTransientError` decides retry vs `failed` as before) —
+  checked by CODE first, before any message heuristic: an SMTP reply
+  (`err.responseCode` — even a 421 whose text says "Timeout"), our own T1
+  fence codes (`bulk_sender_refused` and kin), a MySQL server error (`ER_*` /
+  `PROTOCOL_*` code or a `sqlState`); then an HTTP status (`err.status`, or a
+  `"<Provider> API|SMS|MMS <status>:"` message), a connection that never
+  opened (`ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN`, `EHOSTUNREACH`,
+  `ENETUNREACH`, `EAUTH`, `ETLS`, `EDNS`, `UND_ERR_CONNECT_TIMEOUT`), and
+  anything unrecognized (our own pre-send errors: a missing credential, a bad
+  number — `isTransientError` calls an unrecognized error permanent, so none
+  of these is resent). AMBIGUOUS (→
+  `unknown`, returned, never retried) — `ESOCKET`, `ETIMEDOUT`, `ETIME`,
+  `ECONNRESET`, `EPIPE`, `ECONNECTION` (nodemailer's "closed unexpectedly"),
+  `ECONNABORTED`, `UND_ERR_SOCKET` / body / headers timeouts, an Abort /
+  Timeout error, or a "timed out / socket hang up / closed unexpectedly /
+  connection reset" message — with no reply code. One conservative edge: a
+  DB CONNECT timeout / reset (mysql2 `ETIMEDOUT` / `ECONNRESET`, no sqlState)
+  in a pre-send lookup inside the send span cannot be told from a provider
+  socket and comes out AMBIGUOUS (`unknown`, a missed message, never a
+  duplicate). The adapters log to `email_log` / `phone_log` fire-and-forget,
+  so no post-acceptance DB write surfaces as a definite error. A failure
+  AFTER the reservation that the outer catch sees (the `sent` update or the
+  clearing DELETE threw): transient with attempts left → rethrown, and the
+  retry finds the row `sending` → `unknown`; final attempt or permanent → no
+  retry follows, so the outer catch marks THIS attempt's row `unknown` itself
+  (conditional on `sending` + its attempt id — a row that landed `sent` is
+  untouched) and checkCompletion runs, instead of a first-wins `failed` that
+  would be a no-op and leave the campaign unfinished forever.
+- **checkCompletion:** `sending` rows are not done; `unknown` is. Final
+  status: `sent` only when nothing failed, was skipped or is unknown; `failed`
+  when nothing was sent; else `partial_fail` (unknown counts like failed);
+  `result_summary` = `{sent, failed, skipped, unknown}`. Finalizes from
+  `sending` / `scheduled` / `paused`. getCampaign / listCampaigns carry
+  `sending` / `unknown` counts.
+- **Rate window — narrowed to bulk transports:** only a campaign whose sender
+  is a `bulk_ok` row (today: over-cap operational; C2 adds marketing) counts
+  `campaign_results` `IN ('sending','sent')` joined `campaigns` on the same
+  `sender` with `sent_at` in the last 60 s; ≥ `campaign_marketing_rate` →
+  DEFER 2–8 s (jittered). Non-bulk transports have no window (the hub budget
+  covers them) — the reading of "per transport" C1 took (`ref/plans.md`).
+- **Deferral:** `executeSend` returns `{deferred, retryAtMs, reason}`;
+  `lib/job_executor` wraps it in `deferJob()` — an object marked with a
+  module-private Symbol (no job OUTPUT can forge it: custom code and webhook
+  results cross as JSON); `routes/process_jobs.js`, right after `executeJob`
+  and before the recording transaction (unchanged), sets the row `pending` at
+  `retryAt` (`WHERE status = 'running'`) — `attempts` / `execution_count`
+  untouched, no `job_results` row, no doorbell.
+- **Status table as built:** `scheduled` proceeds (the first reservation
+  flips it to `sending`); `sending` proceeds; `paused` — normally never seen,
+  pause parks the pending rows — is the backstop for a job claimed before
+  the pause: it defers 5 min (+ ≤ 30 s jitter), nothing recorded; `canceled` → `skipped`; `sent` / `failed` /
+  `partial_fail` → `skipped` (first-wins, so only when no row exists).
+- **The pump** (`campaign_pump` job, `campaignService.runPump`): inserted at
+  create for marketing and over-cap campaigns, due at the campaign's start
+  (`jobTime` — now for a send-now, the scheduled time otherwise — floored to
+  the second: DATETIME rounds), its doorbell rung when within
+  `ACCEL_WINDOW_MS`; name + idempotency key `campaign:{id}:pump` (inside the
+  cancel prefix). Each tick: campaign gone / paused / canceled / finished →
+  done (the job completes); a NEWER pending / running pump for the campaign →
+  done (`superseded`); else ring `enqueueJobDispatch` for the campaign's
+  pending sends with `scheduled_time <= NOW() + 90 s`, ordered by time, LIMIT
+  `pumpBound(rate)` = rate × 55/60 — the re-arm interval, so a catch-up tick
+  never exceeds the rate per minute (≥ 1) — overdue ones included;
+  then sends still pending / running → re-arm the SAME row 55 s out (the
+  deferral above: one row per pump; a crash mid-tick leaves it `running` for
+  recoverStuckJobs, never a second row) AND ring that row's own doorbell for
+  the same instant (55 s < ACCEL_WINDOW_MS, invariant 3 holds) — a 60 s
+  re-arm with no doorbell waited for the next cron tick and ran the pump at
+  about half the rate; none left → done. Sends are
+  staggered at create: job i at `jobTime + i × 60/rate s`. Within-cap
+  campaigns get no pump and no stagger.
+- **Cron quota:** `runJobPass`'s BATCH claim only — two candidate reads with
+  no locks (non-campaign due rows `ORDER BY scheduled_time LIMIT 10`, then
+  `name LIKE 'campaign:%:send:%'` rows `LIMIT min(5, 10 − others)`), then ONE
+  locking read `WHERE id IN (…) AND <the claim predicate> FOR UPDATE SKIP
+  LOCKED`, all in the one claim transaction; others execute first. The
+  targeted claim is unchanged; the predicate is one shared text (`CLAIMABLE`).
+  Locking by id instead of a name-filtered range scan keeps REPEATABLE READ
+  from locking every campaign row walked past (a pump doorbell arriving
+  meanwhile would lose its claim).
+- **Pause / resume:** `PATCH /api/campaigns/:id` `{status:'paused'}` from
+  scheduled / sending, `{status:'sending'}` from paused (409 otherwise, 404
+  missing); `cancelCampaign` accepts `paused`. PAUSE, in ONE transaction with
+  the status write, PARKS the campaign's pending campaign_send rows
+  (`scheduled_time + INTERVAL 1000 YEAR`; a row ≥ 2900-01-01 is parked — a
+  threshold no real send can reach: `createCampaign` refuses a
+  `scheduledTime` more than 366 days out, 400 `schedule_too_far`):
+  still pending, never due, so a paused campaign's overdue rows cannot hold
+  the cron's 5-row quota against other campaigns (a fixed per-tick defer did:
+  15 paused rows starved a within-cap send for three ticks). A crash leaves
+  both writes or neither; a job already claimed is the backstop case above.
+  RESUME, in one transaction with its status write, pulls every pending row
+  back: stragglers first, then the parked rows in their original order, row i
+  at base + i × 60/rate s (within-cap: + 0), base = the later of NOW() and the
+  earliest parked original — a running campaign restarts paced from now, one
+  paused before its start keeps its start. Resume rule: insert a pump iff
+  the campaign has pending / running sends and no pump is already PENDING —
+  whatever its class (a within-cap campaign's deferred sends then return at
+  once instead of 5 per cron tick) — due at the earliest pending send; then
+  checkCompletion. A pump still running its last tick at resume retires on
+  its next one (newest wins), so the resume race leaves one pump.
 
 ### 6.5 Complaint safety (enforced from the first send) and reporting
 
@@ -1570,7 +1770,7 @@ is ruled for that list (ruled 2026-10-30 for SS's own lead lists).
 | P4 | Staff consent UI — **built** (§4.7 "As built") | badges + history on contact rows; compose counts; SU suppression import/export | P1 |
 | T1 | Transport contract — **built** (§5.2 As built) | adapter capabilities (`bulk`, `headers`, `tags`, `events`, `batch`); `headers` / `replyTo` / `tags` options through `sendEmailDirect` + `smtp.js` (marketing path only; public `sendEmail` strips them); driver-owned headers (SES `X-SES-*`); SES message id from the SMTP reply; `email_credentials.bulk_ok` + `events_driver`; bulk rows fenced out of `emailFrom`, public `sendEmail` and operational campaigns; DKIM `h=` acceptance test | — |
 | T2 | Events — **built** (§5.4 As built; Reject / DeliveryDelay / Rendering Failure still documented-shape) | SES → EventBridge API destination (+ SQS DLQ and a tested replay procedure) → YisraHook hook (`api_key` auth, `dedup_path` on the event id) → `mail_event_ingest` internal function (added to `CTA_FN_DENYLIST` — engine plumbing) → ledger (bounce/complaint/unsub) + `campaign_results` delivery columns by `result_id` tag + the per-transport complaint/bounce tally (§6.5); SES suppression-list removal on re-opt-in | T1, P1 |
-| C1 | Campaign hardening | `campaigns.class` / `topic_key`; 50 cap in `createCampaign` + D16 over-cap path; `campaigns.bulk` capability; `bulk_ok` refused for operational; **`marketing_send_enabled` kill switch (`'0'`): marketing refused 422 at create and skipped at send**; **send reservation / at-most-once for every campaign** (`sending` / `unknown` statuses); per-transport rate window at dispatch; per-campaign pump with bounded catch-up; cron per-tick `campaign_send` quota; `paused` status with defer semantics (§6.4 table); operational-class honesty prompt | P1, T1 |
+| C1 | Campaign hardening — **built** (§6.1, §6.4 "As built (C1)") | `campaigns.class` / `topic_key`; 50 cap in `createCampaign` + D16 over-cap path; `campaigns.bulk` capability; `bulk_ok` refused for operational; **`marketing_send_enabled` kill switch (`'0'`): marketing refused 422 at create and skipped at send**; **send reservation / at-most-once for every campaign** (`sending` / `unknown` statuses); per-transport rate window at dispatch; per-campaign pump with bounded catch-up; cron per-tick `campaign_send` quota; `paused` status with defer semantics (§6.4 table); operational-class honesty prompt | P1, T1 |
 | C2 | Marketing send path | executeSend marketing branch: scope check, token mint, explicit text part, footer inject/lock + post-render assert, headers/tags, transport, send-start snapshot (MRPC 7.2(b)), `email_log` without body; **complaint/bounce transport hold enforced before every send** (§6.5); account-pause detection; test send (HTML escaping + the sandboxed preview already shipped — §6.3) | P1, **P2**, P3, C1, T2 |
 | C3 | Designs + builder | spike first (§7, incl. a malicious `design_json`); then `email_designs` with server-side validation on save; Designer editor mode (GrapesJS + MJML); merge-tag picker; locked footer block; asset upload via AssetPicker/`apiSend` | C2 (can build in parallel, lands after) |
 | C4 | Segments + reporting | saved segments; campaign stats incl. `unknown`; transport-rate display; bounce digest | C2 |

@@ -4,7 +4,7 @@ const router = express.Router();
 const { CronExpressionParser } = require("cron-parser");
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const { advanceWorkflow, scheduleResume } = require("../lib/workflow_engine");
-const { executeJob }      = require("../lib/job_executor");
+const { executeJob, JOB_DEFER } = require("../lib/job_executor");
 const { executeStep }     = require("../lib/sequenceEngine");
 const domainEventDrain    = require("../lib/domainEventDrain");
 const hookDrain           = require("../lib/hookDrain");
@@ -198,9 +198,11 @@ async function recoverStuckJobs(db) {
  * diverge.
  *
  * Modes:
- *   jobId === null  (cron batch — the pre-slice behavior, unchanged):
+ *   jobId === null  (cron batch):
  *     recoverStuckJobs housekeeping, claim up to batchSize due jobs
- *     (FOR UPDATE SKIP LOCKED), dispatch, stamp the heartbeat.
+ *     (FOR UPDATE SKIP LOCKED) — at most CAMPAIGN_SEND_QUOTA of them
+ *     campaign_send rows, other due jobs first (YisraMail C1) — dispatch,
+ *     stamp the heartbeat.
  *   jobId set       (targeted — POST /process-job/:id from a Cloud Task):
  *     claim ONLY that job with the same predicates. NO recoverStuckJobs
  *     (per-minute housekeeping; running it per task multiplies DB load for
@@ -217,6 +219,21 @@ async function recoverStuckJobs(db) {
  * Everything after the claim handles its own errors per job, exactly as
  * before the extraction.
  */
+/**
+ * The claim predicate — ONE text for the targeted claim, the batch's
+ * candidate reads and its locking read. A task can never execute a job the
+ * cron could not (paused / expired / not yet due).
+ */
+const CLAIMABLE = `status = 'pending'
+            AND active = 1
+            AND scheduled_time <= NOW()
+            AND (expires_at IS NULL OR expires_at > NOW())
+            AND (max_executions IS NULL OR execution_count < max_executions)`;
+/** campaign_send rows by name (campaignService.createCampaign: campaign:{id}:send:{contact}). */
+const CAMPAIGN_SEND_NAME = `'campaign:%:send:%'`;
+/** At most this many campaign_send rows per cron batch (< batchSize; YisraMail C1 §6.4). */
+const CAMPAIGN_SEND_QUOTA = 5;
+
 async function runJobPass(db, { jobId = null, batchSize = 10 } = {}) {
   const targeted = jobId !== null;
 
@@ -292,40 +309,47 @@ async function runJobPass(db, { jobId = null, batchSize = 10 } = {}) {
   }
 
   jobs = await db.withTransaction(async (connection) => {
-    // Targeted and batch claims share every predicate. SKIP LOCKED in BOTH:
-    // for the targeted claim it means a row currently being claimed by the
-    // cron returns 0 rows immediately (→ already_claimed) instead of a lock
-    // wait holding the Cloud Task's request open — same outcome, no stall.
-    const [rows] = targeted
-      ? await connection.query(
-          `
-          SELECT *
-          FROM scheduled_jobs
-          WHERE id = ?
-            AND status = 'pending'
-            AND active = 1
-            AND scheduled_time <= NOW()
-            AND (expires_at IS NULL OR expires_at > NOW())
-            AND (max_executions IS NULL OR execution_count < max_executions)
-          FOR UPDATE SKIP LOCKED
-          `,
-          [jobId]
-        )
-      : await connection.query(
-          `
-          SELECT *
-          FROM scheduled_jobs
-          WHERE status = 'pending'
-            AND active = 1
-            AND scheduled_time <= NOW()
-            AND (expires_at IS NULL OR expires_at > NOW())
-            AND (max_executions IS NULL OR execution_count < max_executions)
-          ORDER BY scheduled_time
-          LIMIT ?
-          FOR UPDATE SKIP LOCKED
-          `,
-          [batchSize]
-        );
+    // Targeted and batch claims share every predicate (CLAIMABLE). SKIP
+    // LOCKED in BOTH: for the targeted claim it means a row currently being
+    // claimed by the cron returns 0 rows immediately (→ already_claimed)
+    // instead of a lock wait holding the Cloud Task's request open — same
+    // outcome, no stall.
+    let rows;
+    if (targeted) {
+      [rows] = await connection.query(
+        `SELECT * FROM scheduled_jobs WHERE id = ? AND ${CLAIMABLE} FOR UPDATE SKIP LOCKED`,
+        [jobId]
+      );
+    } else {
+      // BATCH: at most CAMPAIGN_SEND_QUOTA campaign_send rows per tick, other
+      // due jobs first (YisraMail C1, §6.4) — a 2,000-row overdue campaign
+      // can never fill the batch. The candidates are PLAIN reads (no locks);
+      // only the chosen ids are then locked, by primary key, with the full
+      // predicate re-checked. A single locking range scan that filtered by
+      // name would lock (under REPEATABLE READ) every campaign row it walked
+      // past, and a pump doorbell arriving meanwhile would lose its claim.
+      const [others] = await connection.query(
+        `SELECT id FROM scheduled_jobs WHERE ${CLAIMABLE} AND (name IS NULL OR name NOT LIKE ${CAMPAIGN_SEND_NAME})
+          ORDER BY scheduled_time LIMIT ?`,
+        [batchSize]
+      );
+      const room = Math.min(CAMPAIGN_SEND_QUOTA, batchSize - others.length);
+      const [sends] = room > 0
+        ? await connection.query(
+            `SELECT id FROM scheduled_jobs WHERE ${CLAIMABLE} AND name LIKE ${CAMPAIGN_SEND_NAME}
+              ORDER BY scheduled_time LIMIT ?`,
+            [room]
+          )
+        : [[]];
+      const order = [...others, ...sends].map((r) => r.id);
+      if (order.length === 0) return [];
+      const [locked] = await connection.query(
+        `SELECT * FROM scheduled_jobs WHERE id IN (?) AND ${CLAIMABLE} FOR UPDATE SKIP LOCKED`,
+        [order]
+      );
+      const pos = new Map(order.map((id, i) => [String(id), i]));
+      rows = locked.slice().sort((a, b) => pos.get(String(a.id)) - pos.get(String(b.id)));
+    }
 
     if (rows.length === 0) return [];
 
@@ -583,6 +607,19 @@ async function runJobPass(db, { jobId = null, batchSize = 10 } = {}) {
       // a later poll, exactly as the { retries: 0 } note below describes.
       const rawOutput = await executeJob(job, db);
 
+      // DEFERRAL (C1 — lib/job_executor deferJob, campaign sends + pump): back
+      // to pending at retryAt; attempts / execution_count untouched, no
+      // job_results row. No doorbell: the pump or the cron takes it.
+      if (JOB_DEFER && rawOutput && rawOutput[JOB_DEFER] === true) {
+        const retryAt = new Date(rawOutput.retryAtMs);
+        await db.query(
+          `UPDATE scheduled_jobs SET status = 'pending', scheduled_time = ?, updated_at = NOW() WHERE id = ? AND status = 'running'`,
+          [retryAt, job.id]
+        );
+        results.push({ id: job.id, status: 'deferred', reason: rawOutput.reason, retry_at: retryAt.toISOString() });
+        continue;
+      }
+
       // executeJob is NOT idempotent, so the recording transaction keeps
       // { retries: 0 } — a transient pre-commit failure must not re-run the
       // callback. Now that the callback contains only DB writes that is a
@@ -796,3 +833,7 @@ router.post("/process-hook-execution/:id", jwtOrApiKey, async (req, res) => {
 });
 
 module.exports = router;
+// TEST SEAMS (YisraMail C1): the claim pass and its quota, for the real-engine
+// twin (tests/campaignC1.mysql.test.js). module.exports stays the router.
+module.exports.runJobPass = runJobPass;
+module.exports.CAMPAIGN_SEND_QUOTA = CAMPAIGN_SEND_QUOTA;

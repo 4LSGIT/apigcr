@@ -5,7 +5,7 @@
  *
  * GET  /api/consent/history?channel=&destination=[&limit=]  one destination's ledger, newest first
  * GET  /api/consent/export?channel=&destination=            the same rows as a CSV (a proof request)
- * POST /api/consent/preview  { channel, contact_ids }         what consent removes from a campaign selection
+ * POST /api/consent/preview  { channel, contact_ids, class?, topic? }  what consent removes from a campaign selection
  * POST /api/consent/import   { channel, scope, rows, source } SU: a suppression list → opt_out events
  *
  * Gates. history / export / preview: jwtOrApiKey — the gate the contact
@@ -37,6 +37,7 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
 const { withTransaction } = require('../lib/withTransaction');
 const optout = require('../services/optoutService');
+const campaignService = require('../services/campaignService');
 
 const IMPORT_TOOL = 'consent_import';
 const MAX_IMPORT_ROWS = 5000;
@@ -47,13 +48,15 @@ const HISTORY_MAX = 500;      // the history route; the export reads up to optou
 const EXPORT_MAX = 10000;
 
 /**
- * What campaignService.executeSend asks findOptedOut, per campaign type (its
- * step 4): SMS operational (scope 'all', D19), email as klass 'marketing'
- * (campaignService's EMAIL_CONSENT — campaigns have no class until C1). The
- * preview must ask the SAME question; tests/consentRoutes.test.js holds the
- * two to agreement by spying on the reader from both sides.
+ * What campaignService.executeSend asks findOptedOut (its consent step) is
+ * campaignService.consentOptsFor(type, class, topic) — since C1 a campaign
+ * has a class: SMS operational (scope 'all', D19) whatever the class;
+ * marketing email scope 'marketing' + the topic; operational email asks
+ * NOTHING (D18 — null). The preview asks through the SAME function;
+ * tests/consentRoutes.test.js holds the two to agreement by spying on the
+ * reader from both sides.
  */
-const CAMPAIGN_CONSENT = Object.freeze({ sms: Object.freeze({}), email: Object.freeze({ klass: 'marketing' }) });
+const campaignConsent = (channel, klass, topic) => campaignService.consentOptsFor(channel, klass, topic);
 
 class ConsentRouteError extends Error {
   constructor(status, code, message, extra = {}) {
@@ -271,18 +274,26 @@ async function importConsent(db, body, { actorUserId = null, batchId = null } = 
 
 /**
  * What consent removes from a campaign selection, asked the way
- * campaignService.executeSend asks at send time (steps 3–5): each contact's
+ * campaignService.executeSend asks at send time: each contact's
  * contacts.contact_phone (SMS) / contacts.contact_email (email) — the
  * contact's primary mirror, which is what executeSend sends to — through
- * findOptedOut with CAMPAIGN_CONSENT. One reader call for the whole
+ * findOptedOut with campaignConsent(channel, class, topic). `class` defaults
+ * to 'operational' like createCampaign; an operational EMAIL selection asks
+ * no reader at all (D18 — nothing is skipped). One reader call for the whole
  * selection (findOptedOut decides each destination on its own, so the batch
  * answer is the per-contact answer).
- * → { channel, selected, will_send, skipped_optout, missing_destination, not_found }
+ * → { channel, class, topic, selected, will_send, skipped_optout, missing_destination, not_found }
  */
 async function previewConsent(db, body) {
   const b = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
   const channel = readChannel(b.channel);
   if (!channel) throw new ConsentRouteError(400, 'bad_channel', 'channel must be "sms" or "email"');
+  const klass = b.class == null || b.class === '' ? 'operational' : b.class;
+  if (!campaignService.KLASSES.includes(klass)) throw new ConsentRouteError(400, 'bad_class', 'class must be "operational" or "marketing"');
+  const topic = b.topic == null || b.topic === '' ? null : b.topic;
+  if (topic !== null && (typeof topic !== 'string' || !campaignService.TOPIC_RE.test(topic) || klass !== 'marketing')) {
+    throw new ConsentRouteError(400, 'bad_topic', 'topic must be a topic key, and applies to the marketing class only');
+  }
   if (!Array.isArray(b.contact_ids) || b.contact_ids.length > MAX_PREVIEW_IDS) {
     throw new ConsentRouteError(400, 'bad_contact_ids', `contact_ids must be an array of at most ${MAX_PREVIEW_IDS} ids`);
   }
@@ -293,13 +304,14 @@ async function previewConsent(db, body) {
     if (!Number.isSafeInteger(n) || n < 1) throw new ConsentRouteError(400, 'bad_contact_ids', 'contact_ids must be positive integers');
     if (!seen.has(n)) { seen.add(n); ids.push(n); }
   }
-  const out = { channel, selected: ids.length, will_send: 0, skipped_optout: 0, missing_destination: 0, not_found: 0 };
+  const out = { channel, class: klass, topic, selected: ids.length, will_send: 0, skipped_optout: 0, missing_destination: 0, not_found: 0 };
   if (!ids.length) return out;
   const [contacts] = await db.query('SELECT contact_id, contact_phone, contact_email FROM contacts WHERE contact_id IN (?)', [ids]);
   const col = channel === 'sms' ? 'contact_phone' : 'contact_email';
   const keysOf = channel === 'sms' ? optout.phoneKeys : optout.emailKeys;
   const dests = (contacts || []).map((c) => c[col]).filter((d) => d != null && d !== '');
-  const hits = dests.length ? await optout.findOptedOut(db, channel, dests, CAMPAIGN_CONSENT[channel]) : [];
+  const consent = campaignConsent(channel, klass, topic);
+  const hits = dests.length && consent ? await optout.findOptedOut(db, channel, dests, consent) : [];
   const out_ = new Set(hits.map((h) => h.destination));
   out.not_found = ids.length - (contacts || []).length;
   for (const c of contacts || []) {
@@ -391,4 +403,4 @@ module.exports = router;
 module.exports.importConsent = importConsent;
 module.exports.previewConsent = previewConsent;
 module.exports.csvCell = csvCell;
-module.exports.CAMPAIGN_CONSENT = CAMPAIGN_CONSENT;
+module.exports.campaignConsent = campaignConsent;

@@ -404,13 +404,19 @@ describe('import (SU)', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('preview (campaign compose)', () => {
-  test('counts: skipped for consent, missing a destination, not found; email asks as marketing (D18 has no effect on a campaign until C1)', async () => {
+  test('counts: skipped for consent, missing a destination, not found; email by class — operational skips nothing (D18), marketing asks marketing (C1)', async () => {
     const w = withUsers(ledgerWorld());
     w.contacts.push({ contact_id: 3, contact_name: 'No Phone', contact_phone: '', contact_email: '' });
     const pv = (body) => call('POST', '/api/consent/preview', { bearer: staff(), body });
-    expect((await pv({ channel: 'sms', contact_ids: [1, 2, 3, 99, 2] })).json).toEqual({ status: 'success', channel: 'sms', selected: 4,
+    expect((await pv({ channel: 'sms', contact_ids: [1, 2, 3, 99, 2] })).json).toEqual({ status: 'success', channel: 'sms', class: 'operational', topic: null, selected: 4,
       will_send: 1, skipped_optout: 1, missing_destination: 1, not_found: 1 });
-    expect((await pv({ channel: 'email', contact_ids: [1, 2] })).json).toMatchObject({ skipped_optout: 1, will_send: 1 });
+    // the same selection: operational (the default) skips no email opt-out; marketing does
+    expect((await pv({ channel: 'email', contact_ids: [1, 2] })).json).toMatchObject({ class: 'operational', skipped_optout: 0, will_send: 2 });
+    expect((await pv({ channel: 'email', class: 'operational', contact_ids: [1, 2] })).json).toMatchObject({ skipped_optout: 0, will_send: 2 });
+    expect((await pv({ channel: 'email', class: 'marketing', contact_ids: [1, 2] })).json).toMatchObject({ class: 'marketing', skipped_optout: 1, will_send: 1 });
+    expect((await pv({ channel: 'email', class: 'Marketing', contact_ids: [1] })).status).toBe(400);
+    expect((await pv({ channel: 'email', class: 'operational', topic: 'newsletter', contact_ids: [1] })).status).toBe(400);
+    expect((await pv({ channel: 'email', class: 'marketing', topic: 'News Letter', contact_ids: [1] })).status).toBe(400);
     expect((await pv({ channel: 'email', contact_ids: [] })).json).toMatchObject({ selected: 0, skipped_optout: 0 });
     expect((await pv({ channel: 'fax', contact_ids: [1] })).status).toBe(400);
     expect((await pv({ channel: 'sms', contact_ids: ['x'] })).status).toBe(400);
@@ -425,13 +431,15 @@ describe('preview (campaign compose)', () => {
     expect(r.json).toMatchObject({ skipped_optout: 1, will_send: 0 });
   });
 
-  test('asks findOptedOut what campaignService.executeSend asks, per channel (same channel, same opts, same destination)', async () => {
+  test('asks findOptedOut what campaignService.executeSend asks, per channel and class (same channel, same opts, same destination — or neither asks)', async () => {
     const campaignService = require('../services/campaignService');
-    for (const type of ['sms', 'email']) {
+    for (const [type, klass, asks] of [['sms', 'operational', true], ['email', 'operational', false]]) {
       const spy = jest.spyOn(optout, 'findOptedOut').mockResolvedValue([{ destination: 'x' }]);
+      jest.spyOn(require('../services/emailService'), 'sendEmail').mockResolvedValue({ messageId: '<m>' });
       const db = {
         query: async (sql) => {
-          if (/FROM campaigns WHERE campaign_id/.test(sql)) return [[{ campaign_id: 5, type, sender: 's', subject: 'x', body: 'b', status: 'pending' }]];
+          if (/FROM campaigns WHERE campaign_id/.test(sql)) return [[{ campaign_id: 5, type, class: klass, topic_key: null, bulk_confirmed_count: null, sender: 's', subject: 'x', body: 'b', status: 'pending' }]];
+          if (/FROM campaign_results WHERE campaign_id = \? AND contact_id = \?/.test(sql)) return [[]];
           if (/FROM contacts WHERE contact_id = \?/.test(sql)) return [[{ contact_id: 1, contact_name: 'Pat', contact_phone: PAT, contact_email: 'pat@example.com' }]];
           if (/FROM contacts WHERE contact_id IN/.test(sql)) return [[{ contact_id: 1, contact_phone: PAT, contact_email: 'pat@example.com' }]];
           if (/^\s*SELECT/i.test(sql)) return [[{ done: 0, total: 2 }]];   // checkCompletion: still in progress
@@ -439,15 +447,27 @@ describe('preview (campaign compose)', () => {
         },
       };
       await campaignService.executeSend(db, 5, 1);
-      await consentRoute.previewConsent(db, { channel: type, contact_ids: [1] });
-      expect(spy).toHaveBeenCalledTimes(2);
-      const [send, preview] = spy.mock.calls;
-      expect(preview[1]).toBe(send[1]);                                                   // channel
-      expect(preview[3] || {}).toEqual(send[3] || {});                                    // klass / topic
-      const keys = type === 'sms' ? optout.phoneKeys : optout.emailKeys;
-      expect(keys(preview[2])).toEqual(keys(send[2]));                                    // destination
-      spy.mockRestore();
+      await consentRoute.previewConsent(db, { channel: type, class: klass, contact_ids: [1] });
+      if (!asks) {
+        // operational email (D18): neither side asks the reader
+        expect(spy).not.toHaveBeenCalled();
+      } else {
+        expect(spy).toHaveBeenCalledTimes(2);
+        const [send, preview] = spy.mock.calls;
+        expect(preview[1]).toBe(send[1]);                                                   // channel
+        expect(preview[3] || {}).toEqual(send[3] || {});                                    // klass / topic
+        const keys = type === 'sms' ? optout.phoneKeys : optout.emailKeys;
+        expect(keys(preview[2])).toEqual(keys(send[2]));                                    // destination
+      }
+      jest.restoreAllMocks();
     }
+    // marketing (its send is C2's — executeSend records it skipped today): the
+    // preview asks exactly campaignService.consentOptsFor
+    const spy = jest.spyOn(optout, 'findOptedOut').mockResolvedValue([]);
+    const db = { query: async () => [[{ contact_id: 1, contact_phone: PAT, contact_email: 'pat@example.com' }]] };
+    await consentRoute.previewConsent(db, { channel: 'email', class: 'marketing', topic: 'newsletter', contact_ids: [1] });
+    expect(spy.mock.calls[0][3]).toEqual(campaignService.consentOptsFor('email', 'marketing', 'newsletter'));
+    spy.mockRestore();
   });
 });
 
