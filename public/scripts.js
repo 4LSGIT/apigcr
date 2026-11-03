@@ -424,15 +424,15 @@ function swalWide(pct) {
   return window.matchMedia && window.matchMedia('(max-width: 768px)').matches ? '100%' : pct;
 }
 
-function sortSelect(element) {
-  const tab = element.closest('.tab-main, [data-sort-scope]');
-  const bar = tab || element.parentNode;
-  const sortBy = bar.querySelector('select[data-type="sortBy"]');
-  const sortDi = bar.querySelector('select[data-type="sortDi"]');
-  const go = bar.querySelector('button[data-type="goButton"]');
-  const table = (tab || element.parentNode.parentNode).querySelector("table");
-  const headers = table.querySelectorAll('th[onclick^="sort("]');
-  headers.forEach((head) => {
+/* Repaints every sortable header's mark from the two selects — the paint
+   half of sortSelect, callable on its own after a header REBUILD: the
+   Contacts column picker re-renders the <th>s (which clears the marks) and
+   must not refetch. `bar` scopes the selects, `table` the headers. */
+function sortMarksSync(bar, table) {
+  const sortBy = bar && bar.querySelector('select[data-type="sortBy"]');
+  const sortDi = bar && bar.querySelector('select[data-type="sortDi"]');
+  if (!sortBy || !sortDi || !table) return;
+  table.querySelectorAll('th[onclick^="sort("]').forEach((head) => {
     const header = head.getAttribute("onclick").split("'")[1];
     const text = sortMarkStrip(head.innerText);
     if (head.dataset.sortUpcoming && sortBy.value === head.dataset.sortUpcoming) {
@@ -443,6 +443,12 @@ function sortSelect(element) {
       head.innerText = text;
     }
   });
+}
+function sortSelect(element) {
+  const tab = element.closest('.tab-main, [data-sort-scope]');
+  const bar = tab || element.parentNode;
+  const go = bar.querySelector('button[data-type="goButton"]');
+  sortMarksSync(bar, (tab || element.parentNode.parentNode).querySelector("table"));
   go.click();
 }
 
@@ -1382,7 +1388,11 @@ const CASE_CSV_COLUMNS = [
    whitelists); absent = unsortable header. Model fields are STATIC CODE
    LITERALS only — `sort` and `label` are interpolated into header markup,
    so no model value may ever come from settings or user data. default_on
-   and min_width are
+   is, for now, only the FALLBACK set (what shows when nothing or garbage
+   is stored): the picker stores the HIDDEN keys, so a later-added column
+   shows for everyone — a column that should ship OFF by default needs the
+   storage extended to carry turned-on keys too, in its own slice, before
+   any model entry sets default_on: false. min_width and the rest are
    read by the coming picker slices — today every shipped column is on.
    Definitions live next to their tabs in index.html (CONTACT_COLUMNS is
    the first); these renderers are the whole mechanism. The header carries

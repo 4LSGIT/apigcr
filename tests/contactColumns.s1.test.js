@@ -81,12 +81,14 @@ function page(rows) {
   w.eval(`
     window.Swal = { mixin: () => ({ fire: () => Promise.resolve({}) }), fire: () => Promise.resolve({}) };
     ${SCRIPTS}
-    var offsets = {}, contacts;
+    var offsets = {}, contacts, user;
     var YcPager = { getLimit: (k, d) => d, renderFooter() {} };
     var exportListCsv = () => {}, csvFilterOf = (p) => p;
     var apiSend = async () => ({ total: window.__rows.length, contacts: window.__rows });
     ${constSrc(INDEX, 'CONTACT_COLUMNS')}
-    ${fnSrc(INDEX, 'contactsRoleValues')}
+    var contactsColsVis = CONTACT_COLUMNS;   // the picker's on-screen set (S2)
+    ${['contactsRoleValues', 'contactsColsKey', 'contactsColsVisible', 'contactsRenderRows']
+      .map((f) => fnSrc(INDEX, f)).join('\n')}
     ${fnSrc(INDEX, 'tabContactsGet')}
     ycColsHeadRender(E('contactsTable'), CONTACT_COLUMNS);   // the parse-time build
     window.__go = tabContactsGet;

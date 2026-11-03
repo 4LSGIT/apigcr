@@ -298,9 +298,11 @@ const TABS = {
     list: { total: 1, cases: [{ case_id: 'ABCD2345', contacts: [] }] },
   },
   contacts: {
-    fn: 'tabContactsGet', kind: 'contacts', prelude: 'var offsets = {}, contacts;',
+    fn: 'tabContactsGet', kind: 'contacts', prelude: 'var offsets = {}, contacts, user;',
     consts: ['CONTACT_COLUMNS'],                 // S1: rows render via the model
-    extra: ['contactsRoleValues'],
+    // S2: the rows render through the picker's on-screen set (default = all).
+    post: 'var contactsColsVis = CONTACT_COLUMNS;',
+    extra: ['contactsRoleValues', 'contactsColsKey', 'contactsColsVisible', 'contactsRenderRows'],
     // The role control is a .yc-multi (F2): an empty stub div = nothing
     // checked = no role param. Role filter coverage lives in
     // contactRoles.roleForms + listSorting.mysql.
@@ -337,6 +339,7 @@ describe('index.html footers: Export exports the list on screen', () => {
     const t = TABS[name];
     const spec = LISTS[t.kind];
     const code = `${t.prelude} ${(t.consts || []).map((c) => constSrc(INDEX, c)).join('\n')}
+      ${t.post || ''}
       ${(t.extra || []).map((f) => fnSrc(INDEX, f)).join('\n')} ${fnSrc(INDEX, t.fn)}`;
     let exporting = false;
     const w = page((url, params, n) => (exporting && n === 0 ? { [spec.totalKey]: 1 } : t.list), code, t.dom);

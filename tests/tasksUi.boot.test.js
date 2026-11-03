@@ -49,7 +49,7 @@ function declSrc(src, head) {
   }
   throw new Error(`${head}: unbalanced`);
 }
-const SORT_SRC = ['const sortMarkStrip =', 'function sort(', 'function sortSelect(']
+const SORT_SRC = ['const sortMarkStrip =', 'function sort(', 'function sortMarksSync(', 'function sortSelect(']
   .map((h) => declSrc(SCRIPTS, h)).join('\n');
 
 // Close every window so jsdom timers (waitForShell's 100ms poll, the query

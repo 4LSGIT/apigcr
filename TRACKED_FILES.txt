@@ -1348,6 +1348,7 @@ tests/consentReads.mysql.test.js
 tests/consentRoutes.test.js
 tests/consentUi.test.js
 tests/contactColumns.s1.test.js
+tests/contactColumns.s2.test.js
 tests/contactOrgKind.test.js
 tests/contactRelationService.updateType.test.js
 tests/contactRoles.roleForms.test.js
