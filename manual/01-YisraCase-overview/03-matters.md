@@ -166,8 +166,15 @@ that runs the same operation. See
 
 From the Cases tab, you can filter by:
 
-- Type
-- Stage / Status (text search on the status field)
+- **Type** — a dropdown of checkboxes, one per configured case type with its
+  subtypes indented under it. Checking a type takes the whole type (its
+  subtype boxes grey out — they are included); checking individual subtypes
+  takes exactly those type + subtype combinations. **Other (unlisted)** at the
+  bottom catches every case whose type is not on the list — hand-typed types
+  and cases with no type at all. Nothing checked means all types.
+- **Stage** — checkboxes; check any combination of stages. Nothing checked
+  means all stages.
+- **Status** — text search on the status field.
 - Search text (matches case ID, court case number, caption, notes, or the name of any contact on the case)
 
 The **Caption** control in the filter bar sets how the table shows captions: **Column** gives them their own column, **In name** adds a line under the client only when the caption says something the client's name does not, and **Off** leaves them out. The choice is saved in your browser, so each device keeps its own.

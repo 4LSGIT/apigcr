@@ -72,7 +72,7 @@ How the meeting will be conducted:
 
 Status changes are made from the appointment list or detail view. Each change updates the record, writes a log entry, and triggers relevant automations.
 
-The Appointments tab lists **upcoming first**: today's appointments (all of today, including the ones already past), then the future soonest first, then the past newest first. **Order By** — or a click on the Date, Contact Name, Case, Appt Type, Status or With header — sorts by that column instead; the Date header steps through upcoming → oldest first → newest first.
+The **Status** filter on the tab is a dropdown of checkboxes — check any combination of statuses; nothing checked means all. The Appointments tab lists **upcoming first**: today's appointments (all of today, including the ones already past), then the future soonest first, then the past newest first. **Order By** — or a click on the Date, Contact Name, Case, Appt Type, Status or With header — sorts by that column instead; the Date header steps through upcoming → oldest first → newest first.
 
 ---
 
