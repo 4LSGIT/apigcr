@@ -2651,6 +2651,133 @@ function mailOpen(draft) {
   openEntity(e.kind, e.id, e.label);
 }
 
+// Case folder relink (A11.1). Claim ONE Dropbox folder for ONE case through
+// the Documents relink panel's own confirm: POST /api/documents/relink
+// {case_id, folder_path}. The server proposed only a folder the case's
+// document.relink.candidates read listed (the panel's own strict lanes, never
+// a surname-only guess), copied byte for byte; refused a folder another case
+// holds, the case's current folder, a gone case and a switched-off sync;
+// predicted with applyRelink's own predicates how many files attach and how
+// many of the sync's links outside the folder are detached; dry-ran
+// case.updated against the active trigger rules; and baked the case's link,
+// its cached path and the folder's path / file count into `expected`. The
+// click re-reads GET /api/documents/relink/:caseId/candidates and refuses on
+// ANY difference BEFORE the claim. No Idempotency-Key: one claim per draft; a
+// second card's re-read sees the changed folder. A `skipped` answer (sync off)
+// wrote nothing and reads as a refusal, never a success; the route's 409 (a
+// folder another case took meanwhile) is a refusal. The route is on the
+// yc-sync bus (case:<id> with case_dropbox; doclink:case:<id>). Receipt: the
+// STRING case_id (stringReceipt). There is no undo.
+const CASE_FOLDER_ACTION_KINDS = new Set(['case.folder.relink.v1']);
+const CASE_FOLDER_PATH_MAX = 1024;
+const CASE_FOLDER_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+function caseFolderLabel() { return 'Link case folder'; }
+
+function caseFolderCaseLabel(draft) {
+  const c = (draft && draft.case) || {};
+  return String(c.label || c.case_id || 'Case');
+}
+
+function caseFolderText(draft) {
+  const c = draft.case || {}; const f = draft.folder || {};
+  const lines = ['Case folder proposal — not applied', `Action: ${caseFolderLabel(draft)}`,
+    `Case: ${caseFolderCaseLabel(draft)} (case ${c.case_id})${(c.clients || []).length ? ` — ${c.clients.join('; ')}` : ''}`,
+    `Folder: ${f.path}`,
+    `Registered files under it: ${Number(f.files) || 0}${f.newest ? ` (newest ${String(f.newest).slice(0, 10)})` : ''}`];
+  (draft.warnings || []).forEach((x) => lines.push(`Warning: ${x}`));
+  (draft.effects || []).forEach((x) => lines.push(`Effect: ${x}`));
+  const a = draft.automation || {}; const acting = a.lines || [];
+  lines.push(acting.length
+    ? `Automation: ${Number(a.rules_checked) || 0} active trigger rule(s) on case.updated checked; ${acting.length} would act:`
+    : `Automation: no active trigger rule acts on this case.updated (${Number(a.rules_checked) || 0} checked).`);
+  acting.forEach((x) => lines.push(`Automation: ${x}`));
+  if (acting.length) lines.push('Automation: what those actions cause in turn is not followed here.');
+  lines.push(`No undo: ${draft.no_undo || 'There is no undo button; a wrong folder is repaired by re-linking the right one.'}`,
+    'Writes: the case\'s Dropbox link, its folder cache, the sync\'s links between this case and documents (detached outside the folder, attached inside), its relink-queue dismissal and one audit entry — through the Documents relink panel\'s own confirm. No other case field.',
+    'Stale check: if the case\'s link or cached folder changes, or the folder is claimed by another case, drops out of the candidates or changes its file count before you apply, nothing is written; the route itself refuses a folder another case took meanwhile.',
+    'Other open pages: open case pages take the new link and the case\'s Documents tab refreshes on its own.',
+    'Notification: Casey sends nothing itself; the trigger rules above are the only follow-on effects.');
+  return lines.join('\n');
+}
+
+function caseFolderRequest(draft) {
+  const caseId = actionStringReceipt(draft.case && typeof draft.case.case_id === 'string' ? draft.case.case_id : '');
+  if (!caseId) throw new Error('This card has no usable case id.');
+  const path = draft.folder && draft.folder.path;
+  const x = draft.expected || {};
+  if (typeof path !== 'string' || !path.startsWith('/') || path.length > CASE_FOLDER_PATH_MAX || CASE_FOLDER_CONTROL.test(path) || path !== x.path) {
+    throw new Error('This card has no usable folder path.');
+  }
+  return { path: '/api/documents/relink', method: 'POST', body: { case_id: caseId, folder_path: path } };
+}
+
+async function caseFolderPrecheck(draft) {
+  const req = caseFolderRequest(draft); // a card that cannot be written is never read
+  const x = draft.expected || {};
+  const name = `case ${caseFolderCaseLabel(draft)}`;
+  let got;
+  try { got = await api(`/api/documents/relink/${encodeURIComponent(req.body.case_id)}/candidates`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `Case ${caseFolderCaseLabel(draft)} no longer exists. Nothing was written.`; throw e; }
+  if (!got || String(got.case_id) !== req.body.case_id || !Array.isArray(got.candidates) || !('current_link' in got) || !('current_path' in got)) {
+    throw new Error('the folder candidates could not be read');
+  }
+  const s = (v) => (v == null ? null : String(v));
+  if (s(got.current_link) !== s(x.case_dropbox) || s(got.current_path) !== s(x.current_path)) {
+    return `The Dropbox folder of ${name} changed since this card was prepared (someone re-linked it, or its link or cached folder changed). Nothing was written. Ask Casey to read the candidates again.`;
+  }
+  const c = got.candidates.find((r) => r && r.path === req.body.folder_path);
+  if (!c) return `The folder "${req.body.folder_path}" is no longer a candidate for ${name} (it moved, was renamed or emptied). Nothing was written. Ask Casey to read the candidates again.`;
+  if (Array.isArray(c.already_linked_to) && c.already_linked_to.length) {
+    return `The folder "${req.body.folder_path}" now belongs to case ${c.already_linked_to.join(', ')} — another case claimed it since this card was prepared. Nothing was written.`;
+  }
+  if (Number(c.files) !== Number(x.files)) {
+    return `The folder's registered files changed since this card was prepared (${Number(x.files) || 0} → ${Number(c.files) || 0}), so its counts are stale. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function caseFolderResult(draft, result) {
+  const r = result && result.status === 'success' ? result.result : null;
+  // The sync switched off: the route did nothing and said so.
+  if (r && r.skipped === true) throw Object.assign(new Error('skipped'), { caseFolderSkipped: true });
+  const caseId = actionStringReceipt(draft.case && draft.case.case_id);
+  if (!r || !caseId || r.case_id !== caseId) throw new Error('The relink route did not confirm the case');
+  if (typeof r.shared_link !== 'string' || !r.shared_link || typeof r.new_path !== 'string' || !r.new_path) {
+    throw new Error('The relink route did not confirm the new folder link');
+  }
+  draft.relink_outcome = {
+    new_path: r.new_path, linked: Number(r.linked_docs) || 0, detached: Number(r.detached_docs) || 0,
+    warnings: Array.isArray(r.warnings) ? r.warnings.slice(0, 6).map((w) => String(w).slice(0, 300)) : [],
+  };
+  return { case_id: caseId };
+}
+
+// The route's answers written before any write, worded for staff: the
+// `skipped` answer (the sync engine is off — nothing changed) and its 409 (the
+// folder already belongs to another case — applyRelink's guard, re-run at the
+// click). A 400 / 404 is a refusal by the shared rule (every 4xx this route
+// answers is thrown before the write); anything else stays ambiguous.
+function caseFolderKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const refused = 'Refused — nothing written';
+  if (e && e.caseFolderSkipped === true) {
+    return { status: refused, text: 'Refused — nothing written: the Dropbox document sync is switched off (documents_sync_enabled), so the relink route did nothing and the case still points at its old folder. Ask IT before turning the sync back on.' };
+  }
+  const message = String((e && e.body && e.body.message) || (e && e.message) || '');
+  if (e && e.status === 409 && /^that folder is already linked to case /.test(message)) {
+    return { status: refused, text: `Refused — nothing written: ${message}. Another case claimed this folder after the card was prepared.` };
+  }
+  return null;
+}
+
+function caseFolderAppliedMessage(draft, payload, replayed) {
+  if (replayed) return `${caseFolderLabel(draft)} had already been applied to case ${payload.case_id}; nothing was done a second time.`;
+  const o = draft.relink_outcome || {};
+  const notes = (o.warnings || []).length ? ` Notes: ${o.warnings.join('; ')}.` : '';
+  return `${caseFolderLabel(draft)} applied to case ${payload.case_id}: it now points at "${o.new_path || (draft.folder || {}).path}" — detached ${Number(o.detached) || 0}, attached ${Number(o.linked) || 0}.${notes}`;
+}
+
 // Safe code jobs (safe-mode S3). The body runs ONCE in the QuickJS guest
 // engine (no network, no DB, no host realm), so the reviewed card schedules a
 // computation, not server-side execution capability. code_mode is pinned
@@ -4141,6 +4268,28 @@ const ACTION_FAMILIES = [
     }),
     reviewWarning: 'Review the case, each number before and after, every reader that shows it (court email included) and every trigger rule it runs — they start the moment it is saved. Nothing is sent by Casey itself. Canceling writes nothing.',
     open: (draft) => openEntity('case', String(draft.case && draft.case.case_id), caseDocketAfterLabel(draft)),
+  },
+  {
+    // A11.1: the receipt is the STRING case_id — the relink route answers the case it re-pointed.
+    id: 'case_folder', kinds: CASE_FOLDER_ACTION_KINDS, title: 'Case folder', noun: 'case folder', errorNoun: 'folder link',
+    label: caseFolderLabel, text: caseFolderText, request: caseFolderRequest, result: caseFolderResult,
+    idField: 'case_id', appliedKey: 'result_folder_case_id', stringReceipt: true,
+    // Always: it rewrites the case's link, moves documents on and off the case, and has no undo.
+    danger: () => true,
+    precheck: caseFolderPrecheck,
+    knownOutcome: caseFolderKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `case ${payload.case_id}`,
+    appliedMessage: caseFolderAppliedMessage,
+    entity: (draft) => ({ kind: 'case', id: String(draft.case && draft.case.case_id), label: caseFolderCaseLabel(draft) }),
+    failure: 'The case folder could not be linked.',
+    appliedCopy: (draft) => ({
+      status: 'Applied — case folder linked',
+      warning: `Case ${caseFolderCaseLabel(draft)} now points at "${(draft.relink_outcome && draft.relink_outcome.new_path) || (draft.folder || {}).path}", using your signed-in account. There is no undo: a wrong folder is repaired by re-linking the right one.${(draft.automation || {}).lines && draft.automation.lines.length ? ' The trigger rules listed above run from this change.' : ''}`,
+      button: `Open ${caseFolderCaseLabel(draft)}`,
+    }),
+    reviewWarning: 'Review the case, the folder, what the case points at now, the files that attach and the links that are detached, and every trigger rule it runs. There is no undo. Nothing is sent by Casey itself. Canceling writes nothing.',
+    open: (draft) => openEntity('case', String(draft.case && draft.case.case_id), caseFolderCaseLabel(draft)),
   },
   {
     // A12: the receipt is the integer submission_id the draft route upserted.

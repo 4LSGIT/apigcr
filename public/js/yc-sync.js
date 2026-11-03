@@ -1052,6 +1052,25 @@
     // generate with no target fails closed exactly as upload-commit does.
     [/^\/api\/documents\/generate$/, 'document', docLinkGetter, ['POST']],
 
+    /* GUIDED RE-LINK (A11.1). `POST /api/documents/relink {case_id,
+       folder_path}` — the Documents relink panel's confirm, and Ask Casey's
+       folder card — changes TWO things about one case, so it is the array
+       shape: the case's `case_dropbox` column (rewritten through updateCase
+       with the folder's shared link — a real VALUE: the answer carries it as
+       `result.shared_link`, and case.html merges it like any case column) and
+       the case's DOCUMENT SET (the sync's links outside the folder detached,
+       the files inside attached — `doclink:case:<id>`, the address the case's
+       Documents tab already refetches on). Read off `result`, the route's
+       answer `{status, result: applyRelink's return}`: `case_id` addresses
+       both. A no-op until A11.1: the panel repaints itself, and nothing else
+       was told.
+       FAILS CLOSED on a skip: with the sync switched off the route answers
+       `{result: {skipped: true}}` and wrote nothing, so nothing is announced.
+       A missing case_id, or a missing / non-string shared link, announces
+       nothing either (the column value would be a lie; the set marker alone
+       would be honest but half the change — never a partial). */
+    [/^\/api\/documents\/relink$/, 'case', relinkGetter, ['POST']],
+
     /* CHECKLISTS (A10). The three writes Ask Casey's checklist cards make —
        which are also the Notes & Lists board's own new-list, add-item and
        rename / check writes — announce the RECORD whose notes-and-lists set
@@ -1375,6 +1394,26 @@
     if (typeof t !== 'string' || !t) return null;
     if (i == null || i === '') return null;
     return [{ addr: 'doclink:' + t + ':' + i, fields: { yc_refetch: 1 } }];
+  }
+
+  /**
+   * Guided re-link (A11.1) — announce the case's new Dropbox link by VALUE and
+   * its document set by marker. See the matcher comment for the fail-closed
+   * rules.
+   *
+   * @param   {object} r `{status, result: {case_id, shared_link, …} | {skipped}}`
+   * @returns {Array|null}
+   */
+  function relinkGetter(r) {
+    var x = r && r.result;
+    if (!x || typeof x !== 'object' || x.skipped) return null;
+    var id = x.case_id;
+    if (typeof id !== 'string' || !id) return null;
+    if (typeof x.shared_link !== 'string' || !x.shared_link) return null;
+    return [
+      { addr: 'case:' + id, fields: { case_dropbox: x.shared_link } },
+      { addr: 'doclink:case:' + id, fields: { yc_refetch: 1 } },
+    ];
   }
 
   /** Getter for contact-subrecord create/update responses. The returned row

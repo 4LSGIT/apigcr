@@ -2,7 +2,7 @@
 
 The destination is `ref/CASEY_VISION.md`; this document is the mechanics.
 
-Status (2026-11-02): A0/A0.1, A1, A2, A3, A4, A4.1 and A5 shipped 2026-10-20 —
+Status (2026-11-03): A0/A0.1, A1, A2, A3, A4, A4.1 and A5 shipped 2026-10-20 —
 the Task lifecycle; reviewed Event create/update/complete/cancel; Appointment
 create, narrow update, attended, no-show, cancel, reschedule-now and
 reschedule-later; one phone/email/address subrecord create, narrow update or
@@ -10,7 +10,8 @@ history-preserving end. Since then: A6 (contact relations and roles — create a
 update), A7 group A (case notes, case alerts, contact notes), A7c (case docket
 adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
 advance and move; off-ramp = exit), A10 (checklists and items), A11 (documents —
-update and link), A12 (form drafts and submission links), A13 (mail triage —
+update and link), A11.1 (a case's Dropbox folder — candidates-only relink),
+A12 (form drafts and submission links), A13 (mail triage —
 read state and case link; no drafts exist, no SMS triage), A14 (direct email /
 SMS send), A16 (reports), A17.0–A17.4, A17.6, A17.7 (workflows — explain,
 preview, draft, step, publish, start), A18.2, A18.3, A18.4a/b (sequences — step,
@@ -27,12 +28,12 @@ of its plan stands in those sections.
 
 ## Review briefing
 
-The shipped baseline is 67 proposal kinds (the action ledger's `KINDS`
+The shipped baseline is 68 proposal kinds (the action ledger's `KINDS`
 registry; `tests/caseyActionPermissions.test.js` pins the inventory against it)
-in 31 browser families: the record families — Tasks, Events, Appointments,
+in 32 browser families: the record families — Tasks, Events, Appointments,
 contact phone / email / address rows, contact relations and roles, case and
 contact notes and case alerts, case contacts, case pipeline moves, the case
-docket, checklists and their items, documents and their links, form drafts and
+docket, the case's Dropbox folder, checklists and their items, documents and their links, form drafts and
 submission links, an email's read state and its case link — plus direct SMS /
 email sends, report drafts and the automation families (safe code jobs, workflow draft / step / publish / start,
 hooks, sequence step / publish / enroll, ingest rules). Every family
@@ -1171,8 +1172,130 @@ relation?}).
   `tests/reportSchemaDenylist.test.js`.
 
 **Deferred** (`ref/plans.md`): register by external id, generate, share,
-relink queue, sync roots, unlink, status changes, replacement, deletion,
-`shared_link`.
+sync roots, unlink, status changes, replacement, deletion, `shared_link`. The
+relink confirm shipped as A11.1 (below).
+
+#### A11.1: Case folder relink — shipped 2026-11-03
+
+Origin: the 2026-11-02 note on cases without a Dropbox folder (15 cases with a
+blank `case_status` lack `case_dropbox`; 119,056 active documents had no link,
+1,099 folders were cached, none dismissed — measured 2026-11-03). One kind
+claims ONE Dropbox folder for ONE case through the Documents relink panel's own
+confirm.
+
+**What the route guards.** `POST /api/documents/relink` {case_id, folder_path}
+(`routes/api.documents.js` → `documentSyncService.applyRelink`, bare
+`jwtOrApiKey`) answers `{status:'success', result:{skipped:true}}` — 200,
+nothing written — while `documents_sync_enabled` is not `'1'`. Otherwise, in
+order: 400 for a blank / relative path, a root, or a folder under no enabled
+sync root; 404 for an unknown case; **409** when another case's
+`case_folder_cache` row holds the folder (`_loadFolderOwners` — exact
+`path_lower` EQUALITY; a folder merely inside another case's folder passes and
+is a nesting note); 404 for a folder Dropbox does not have (only when no
+registered file is under it); then it mints the folder's permanent shared link
+(Dropbox's existing direct link, else a new PUBLIC one), rewrites
+`cases.case_dropbox` through `updateCase` (`source:'documents_relink'` —
+`case.updated`, fire-and-forget), refreshes this case's cache row, DETACHES the
+case's sync-made links (relation `path`, no creator) to documents outside the
+folder (`reconcileCaseFolderLinks`), attaches what is under it with engine
+parity (innermost cached folder; add-only — a document already holding any
+case's sync link is skipped; at most 20,000 rows considered), clears the
+dismissal and writes one `update` log entry with the old path and old link. A
+Dropbox error before the write can answer 4xx (`mapErrorStatus` reads
+"→ 4xx:" out of the message); every 4xx is thrown before step 4 (audited), the
+502 / 500 pre-write errors stay ambiguous. All of it is pinned on a real engine
+(`tests/caseyRelink.mysql.test.js`, the Dropbox provider stubbed at its
+boundary). The panel itself lists only cases in its queue (a cached folder,
+no attributed document) and offers only candidates — weak ones behind a toggle
+and a second tick; it has **no typed-path field** (the route accepts any path,
+no screen sends one).
+
+**Read enablement.** A typed read `document.relink.candidates` {case_id}
+(app pool — `case_folder_cache` stays OUT of the report manifest; no grant run)
+→ `documentSyncService.relinkCandidates` — the panel's own read, open to any staff member as its route is — NEVER
+`includeWeak` (not exposed: surname-only suggestions are a different client
+nearly every time — the service header's measurement). Rows: a head row
+(docket, clients, `current_path`, `current_link` — `case_dropbox`, already
+readable through `sql.read` — the resolve error, the dismissal, the count,
+`candidates_truncated`) and one row per candidate (≤ the service's cap of 10):
+exact `path`, transitive `files`, `newest`, `confidence` / `matched_on`,
+`already_linked_to`, `inside_case_id`, `nested_case_ids`, `is_current`,
+`proposable`. It works for ANY case, including cases outside the panel's queue
+(no folder at all, or documents already attributed).
+
+**Shipped contract.** One kind, `case.folder.relink.v1` {case_id, folder_path,
+evidence} → that route.
+- **Refused by name before anything is read**, in order: bulk keys (`case_ids`,
+  `all`, `folders`, `paths` … — quoting the route header: "a bulk verb would
+  exist to save eight clicks and would be the single most dangerous button in
+  the app"); dismiss / undismiss / undo / restore; unlink / detach / clear /
+  remove; weak / force / override / skip; free-typed folder keys (`path`,
+  `folder`, `dropbox_path`, `url`, `shared_link`, `case_dropbox` …); any other
+  key.
+- **Two sources:** a `sql.read` row carrying the exact case_id AND a cited
+  candidate row from a `document.relink.candidates` read of the SAME case whose
+  `path` equals `folder_path` byte for byte. Refused: no candidates read; a
+  read of another case; a path the read did not list ("NOT A CANDIDATE … pick it
+  in the Documents relink panel" — which also cannot take a typed path; a
+  re-cased copy is told to copy exactly); the candidate row not cited.
+- **Refused after the reads** (`relinkCandidates` re-run without weak matches):
+  a gone case; the sync switched off (the route would only skip); a folder no
+  longer a candidate; a candidate whose `already_linked_to` names another case
+  (the route's 409, named); the case's current folder (a no-op).
+- **The card** — danger-styled always (a rewritten link, documents moved on and
+  off the case, no undo): the case (number, clients) and the folder (path,
+  registered files, newest); the lane it matched on; what the case points at
+  now (or no folder); that `cases.case_dropbox` is REWRITTEN with the folder's
+  permanent shared link (Dropbox's existing one, else a new public one — the
+  old link survives only in the audit entry); the attach count predicted with
+  applyRelink's own predicates (step 7's rows matched with `_matchCase` against
+  the cache as step 5 leaves it), with the files that already carry a case's
+  sync link (named by case) and those under nested case folders, and "at
+  least" plus a LARGE FOLDER warning past 20,000; the detach count
+  (`reconcileCaseFolderLinks`' clause — a danger line when non-zero) and the
+  person-made links that stay; nested case folders keep their files; INSIDE
+  ANOTHER CASE'S FOLDER (danger); the Documents tab (staff only — the portal
+  lists no documents); FILING: client uploads (portal and public documents
+  link → "Client Uploads"), form PDFs, signed e-sign documents and
+  `{{case_dropbox}}` automation steps go to this folder from now on; the
+  dismissal it clears; truncated candidates; a cache that fails to resolve
+  attaches / detaches nothing until the next cache run; the audit entry; and
+  **NO UNDO**: recovery is re-linking the correct folder (which retracts these
+  sync links) or per-document unlink plus clearing the link by hand — the
+  audit entry keeps the old path and link. `case.updated` (updateCase's own
+  envelope, source `documents_relink`, `changes.case_dropbox`, the new link a
+  stand-in — it is minted at the click) is dry-run against every active rule
+  (A9's `listActiveRulesForEvent` + `evaluateDraft`, preview lane, nothing
+  dispatched; "MAY run", danger, when a rule cannot be evaluated).
+- **Freshness:** `expected` = the case's link and cached path and the
+  candidate's path / file count / owners; the click re-reads GET
+  `/api/documents/relink/:caseId/candidates` and refuses on ANY difference
+  before the claim (re-pointed, folder claimed, gone, file count changed).
+- **Idempotency:** none added — one claim per draft; a second card's re-read
+  sees the changed folder (and the normalizer refuses the current folder).
+- **Outcomes:** `result.skipped` is NOT done — read as a refusal, never a
+  success; the 409 (matched by the service's message) is a refusal naming the
+  case; a 400 / 404 refuses by the shared rule; any other 409, a 5xx and an
+  answer that does not confirm the case and a new link stay ambiguous.
+- **Receipt:** the STRING case_id from `result` (A7c's string path); a new
+  browser family `case_folder` (applied key `result_folder_case_id`). The
+  applied line carries the route's detached / attached counts and notes.
+- **Sync (new):** `POST /api/documents/relink` had no matcher (the panel
+  repaints itself). It now announces `case:<case_id>` with the real value
+  `{case_dropbox: result.shared_link}` and `doclink:case:<case_id>` (refetch —
+  the case's Documents tab's own address); a skip, a missing case id or link
+  announce nothing (`tests/ycSync.test.js`, the answer's key set pinned against
+  the real route in the twin). The case page merges the value; its Dropbox
+  panel is embedded once at load and shows the new folder on reopen (native
+  gap, `ref/plans.md`).
+- Off switch `casey_document_relink_enabled` (on unless '0', casey section,
+  sort 66). Tests: `tests/caseyRelink.test.js`, gated
+  `tests/caseyRelink.mysql.test.js`, `tests/assistantUi.test.js`,
+  `tests/ycSync.test.js`.
+
+**Deferred** (`ref/plans.md`): free-typed folder paths; relink dismiss /
+undo-dismiss through Casey; unlink; an undo verb for a claim (pending Fred);
+bulk anything — NEVER.
 
 #### A12: Forms — draft and submission link shipped 2026-11-02
 

@@ -661,6 +661,64 @@ this paystub to Dana's contact").
 The off switch for these cards is the `casey_documents_enabled` setting (on
 unless set to 0).
 
+### A case's Dropbox folder
+
+Casey can **link one case to one Dropbox folder** — the same confirm the
+Documents page's re-link panel uses (More → Documents → **Sync**; see
+[Documents — Sync & Re-linking](06-documents.md)). Ask in plain words ("link
+the Smith case to its Dropbox folder", "the Jones case points at the wrong
+folder — fix it"). Casey reads the case and the panel's own **folder
+suggestions** for it, and works only on a folder that list shows.
+
+- **Only a suggested folder.** The suggestions are the panel's strict ones: a
+  folder whose name holds the case's docket number, or **every** required word
+  of a client's name (surname and first name). Surname-only matches — usually a
+  different client — are never offered by Casey (the panel shows them behind a
+  toggle and a second tick). A folder you type or describe is not proposable:
+  no screen takes a typed path; ask IT. Casey works for any case — also one
+  with no folder at all, which the panel's queue never lists.
+- **The card** names the case and the folder (its path and how many registered
+  files are under it), what the case points at now, and:
+  - the case's **Dropbox link is rewritten** with the folder's permanent shared
+    link (Dropbox's existing link for it, or a new one anyone holding it can
+    open); the old link is kept only in the case's activity log;
+  - how many files **attach to the case now** — and, separately, files that
+    already belong to another case through the sync (they stay there) and files
+    inside another case's folder nested in this one (they stay with that case);
+  - how many of the sync's links to files **outside** the folder are
+    **detached** — those files leave the case's Documents tab. Links a person
+    made are never touched;
+  - that a folder sitting **inside another case's folder** is flagged — right
+    for joint debtors, wrong otherwise;
+  - that from now on the case's client uploads (portal and the documents link,
+    into "Client Uploads"), filed form PDFs, signed e-sign documents and
+    automation steps using the case folder go to **this** folder;
+  - that a case marked dismissed in the re-link queue has the dismissal
+    cleared, and every trigger rule the case update would run (any rule that could
+    not be checked **may** run).
+- **There is no undo.** A wrong folder is fixed by re-linking the right one —
+  that also detaches the wrong folder's files — or by unlinking documents one
+  by one and clearing the case's Dropbox link by hand. The activity-log entry
+  keeps the old path and link. The card is always styled as a warning.
+- **What Casey will not do, and says so:**
+  - take a folder another case already holds (two cases never share one);
+  - re-link a case to the folder it already points at;
+  - re-link several cases or folders at once — there is no bulk re-link;
+  - dismiss or un-dismiss a case in the queue, undo a re-link, or unlink;
+  - use a surname-only match or a folder that is not suggested.
+- **Freshness.** When you confirm, the card re-reads the suggestions. If the
+  case was re-linked or its link changed, the folder was claimed by another
+  case, dropped out of the suggestions, or its file count changed since the
+  card was prepared, nothing is written; ask Casey to prepare it again. If the
+  document sync is switched off, nothing is written and the card says so.
+- Once applied, the card says how many files were detached and attached (and
+  any notes) and opens the case. Open case pages take the new link, and the
+  case's Documents tab refreshes on its own; the case page's Dropbox panel
+  shows the new folder once the case is reopened.
+
+The off switch for these cards is the `casey_document_relink_enabled` setting
+(on unless set to 0).
+
 ### Forms: drafts and submission links
 
 Casey can **save one draft of a form** for a case or contact, or **link one
@@ -1046,7 +1104,9 @@ choices — the form-template tables are outside the report schema too), the
 typed mail reads — `mail.search` (the Comms hub's own email list for the
 signed-in user's readable mailboxes, never message text) and `mail.message`
 (one message's headers and the start of its plain text, read as the sender's
-words) — and the typed automation reads —
+words) — the typed `document.relink.candidates` read (one case's Dropbox folder
+suggestions, the Documents re-link panel's own strict list, and the folder the
+case points at now) — and the typed automation reads —
 `automation.list`, `automation.definition`, `automation.run`, and
 `automation.references` — which let Casey explain a workflow or sequence, one
 of its runs or enrollments, and what can start or enroll it. Those projections redact webhook URLs to method + host + credential

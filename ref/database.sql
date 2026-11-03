@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-02T00:11:04.581Z
+-- Generated: 2026-11-03T21:03:03.647Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:fbb1144a3baf10d23d7290af97ed1a3f
+-- Fingerprint: sha256:328571feeb0d1cd08626bab512fc0846
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -466,11 +466,11 @@ CREATE TABLE `campaign_results` (
   `result_id` int NOT NULL,
   `campaign_id` int NOT NULL,
   `contact_id` int NOT NULL,
-  `status` enum('sent','failed','skipped') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('sent','failed','skipped','sending','unknown') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'one row per recipient (uq_campaign_contact). The send reservation (C1, at most once): campaignService.executeSend INSERTs the row as sending (result_meta.attempt_id) BEFORE the provider call, then UPDATEs that attempt''s row to sent; a definite provider refusal deletes the reservation before retry / failed. A later attempt finding a sending row never resends: the row becomes unknown (the provider may have accepted it). sending is NOT done for checkCompletion; unknown is (and counts like failed for the final status). skipped / failed with no provider call are recorded first-wins (never overwrite an existing row)',
   `error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `sent_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `result_meta` json DEFAULT NULL,
-  `provider_message_id` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the provider message id of the send (SES: the id in the 250 reply, emailService info.providerMessageId; SES events carry it as detail.mail.messageId). Written at send by C2, and by mail_event_ingest when it correlated by the result_id tag first. Second correlation key after the result_id message tag. ref/YISRAMAIL_DESIGN.md §5.2',
+  `provider_message_id` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the provider message id of the send (SES: the id in the 250 reply, emailService info.providerMessageId; SES events carry it as detail.mail.messageId). Written by campaignService.executeSend''s sent update when the transport returned one (C1; never overwrites a value already stored), and by mail_event_ingest when it correlated by the result_id tag first. Second correlation key after the result_id message tag. ref/YISRAMAIL_DESIGN.md §5.2',
   `delivery_status` enum('unknown','delivered','bounced_hard','bounced_soft','complained','rejected') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'unknown' COMMENT 'the strongest provider outcome seen (mail_event_ingest, from SES events): complained > bounced_hard > rejected > delivered > bounced_soft > unknown — a weaker later event never downgrades it. bounced_soft = SES Bounce Transient/Undetermined or DeliveryDelay; rejected = Reject or Rendering Failure. unknown = no event yet (and every send before T2)',
   `delivered_at` datetime(3) DEFAULT NULL COMMENT 'UTC time of the first SES Delivery event for this send (mail_event_ingest)',
   `bounced_at` datetime(3) DEFAULT NULL COMMENT 'UTC time of the first SES Bounce / DeliveryDelay event for this send, hard or soft (mail_event_ingest)',
@@ -495,12 +495,15 @@ CREATE TABLE `campaigns` (
   `attachment_url` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `include_signature` tinyint(1) NOT NULL DEFAULT '0',
   `created` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `status` enum('draft','scheduled','sending','sent','failed','partial_fail','canceled') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT 'draft',
+  `status` enum('draft','scheduled','sending','sent','failed','partial_fail','canceled','paused') COLLATE utf8mb4_general_ci DEFAULT 'draft' COMMENT 'scheduled (future send) -> sending (the first send flips it) -> sent / failed / partial_fail (campaignService.checkCompletion when every recipient has a terminal result: unknown counts like failed); canceled (cancelCampaign, from draft / scheduled / sending / paused — pending jobs deleted); paused (C1: PATCH from scheduled / sending — pending send jobs stay pending but PARKED (scheduled_time + 1000 years, never due), the pump stops; resume = sending again, the parked jobs re-staggered from now). draft is never written. ref/YISRAMAIL_DESIGN.md §6.4',
   `scheduled_time` datetime DEFAULT NULL,
   `created_by` tinyint unsigned DEFAULT NULL,
   `result_summary` json DEFAULT NULL,
   `contact_count` int unsigned NOT NULL DEFAULT '0',
-  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `class` enum('operational','marketing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'operational' COMMENT 'the send class chosen at compose (C1, ref/YISRAMAIL_DESIGN.md §6.1), enforced by campaignService.createCampaign (every caller, API keys included): operational = about the recipient''s case, appointment or account; email asks NO consent (D18), SMS asks scope all (D19); capped at campaign_operational_cap unless confirmed over the cap (bulk_confirmed_count). marketing = email only (D1), topic required, a bulk_ok sender, the campaigns.bulk capability, and refused while app_settings marketing_send_enabled is not exactly 1 (create 422; executeSend records skipped marketing_disabled — and marketing_path_unbuilt until C2 builds the marketing send path)',
+  `topic_key` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'marketing campaigns only (NULL for operational): the comm_topics.topic_key recipients are sent under and can unsubscribe from — shape [a-z0-9_]{1,40} (interpolated into SQL by optoutService), validated at create as an existing, active email topic; executeSend asks consent for scope marketing + this topic',
+  `bulk_confirmed_count` int unsigned DEFAULT NULL COMMENT 'operational campaigns over the cap only (D16): the recipient count a campaigns.bulk holder typed to confirm the send (equals contact_count; audited as admin_audit_log tool campaign_over_cap). NOT NULL marks the campaign over-cap: paced (staggered jobs + a campaign_pump job) and allowed to send through a bulk_ok email row (bulk:true, no footer, no headers). NULL = within the cap, or marketing'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1904,7 +1907,7 @@ CREATE TABLE `email_credentials` (
   `signature_html` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `signature_text` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `owner_user` tinyint DEFAULT NULL,
-  `bulk_ok` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = a marketing (bulk) transport: never listed to a sender picker, refused by the public emailService.sendEmail, by createCampaign and as a mailbox send_credential_id; only sendEmailDirect({bulk:true}) — the campaign marketing path — may send from it. SMTP rows only; no other row may share its (smtp_host, smtp_user) and no mailbox may send through it (the sender editor refuses both). ref/YISRAMAIL_DESIGN.md §5.2',
+  `bulk_ok` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = a marketing (bulk) transport: never in a sender picker (campaign compose lists it apart, for marketing and over-cap campaigns only), refused by the public emailService.sendEmail, by createCampaign for an operational campaign within the cap, and as a mailbox send_credential_id; only sendEmailDirect({bulk:true}) may send from it — the campaign marketing path (C2) and an operational campaign confirmed over the cap (C1, D16: no footer, no headers). SMTP rows only; no other row may share its (smtp_host, smtp_user) and no mailbox may send through it (the sender editor refuses both). ref/YISRAMAIL_DESIGN.md §5.2, §6.1',
   `events_driver` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'names the provider driver (services/adapters/email/drivers/<name>.js) that adds its headers at send and parses its events (T2); bulk_ok rows only (emailService throws events_driver_requires_bulk otherwise). NULL = plain SMTP, no driver. Today: ses',
   `driver_config` json DEFAULT NULL COMMENT 'driver-specific settings, e.g. {"configuration_set": "yisramail-marketing"} for ses; bulk_ok rows only, cleared with the driver. NULL = the provider defaults'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

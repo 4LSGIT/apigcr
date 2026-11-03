@@ -32,6 +32,9 @@ const KINDS = new Map([
   // A7c: the receipt is the case whose docket was adopted — the STRING case_id
   // path (the docket route returns the case; a case has no integer id).
   ['case.docket.adopt.v1', 'case_id'],
+  // A11.1: the receipt is the case whose Dropbox folder was claimed — the
+  // STRING case_id path (the relink route answers {result:{case_id, …}}).
+  ['case.folder.relink.v1', 'case_id'],
   // A10: create and item add receipt the LIST (both routes return the whole
   // list, and the new item is one row of it); the item update receipts the
   // ITEM (the PATCH returns that row).

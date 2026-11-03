@@ -1269,6 +1269,8 @@ tests/caseyMailTriage.test.js
 tests/caseyPipeline.mysql.test.js
 tests/caseyPipeline.test.js
 tests/caseyRecordText.test.js
+tests/caseyRelink.mysql.test.js
+tests/caseyRelink.test.js
 tests/caseyReportDraft.mysql.test.js
 tests/caseyReportDraft.test.js
 tests/caseySend.routes.test.js

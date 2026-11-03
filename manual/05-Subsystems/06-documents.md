@@ -218,6 +218,13 @@ Only documents the system attached by itself are detached this way. Anything a
 person attached to the case by hand stays put — correcting a folder never
 silently undoes somebody's filing decision.
 
+**From Ask Casey.** Casey can prepare the same re-link for one case as a card
+you confirm (see [Ask Casey → A case's Dropbox folder](17-ask-yisracase.md)).
+It offers only the strict suggestions above — never a surname-only match —
+also for cases this queue does not list (a case with no folder at all), and its
+card counts the documents that attach and the ones that are detached before
+you confirm.
+
 ### Dismissing
 
 **Dismiss** clears a case from the queue. It changes **nothing** — no document,

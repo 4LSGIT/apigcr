@@ -803,6 +803,43 @@ body. Governing migrations in `ref/migrations/`.*
   switch `casey_mail_triage_enabled` (on unless '0'). Tests:
   `tests/caseyMailTriage.test.js`, gated `tests/caseyMailTriage.mysql.test.js`,
   `tests/caseyMailTriage.panes.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A13.
+- **Casey case folder relink (A11.1, 11-03):** kind `case.folder.relink.v1` →
+  POST `/api/documents/relink` {case_id, folder_path} (the Documents relink
+  panel's confirm, `documentSyncService.applyRelink`, bare `jwtOrApiKey`).
+  `folder_path` must equal byte for byte the `path` of a cited candidate row of
+  a typed read `document.relink.candidates` {case_id} of the SAME case
+  (`relinkCandidates` on the app pool, NEVER `includeWeak` — surname-only is a
+  different client nearly every time; `case_folder_cache` stays out of the
+  report manifest), plus a `sql.read` row with the exact case_id. The panel
+  has no typed-path field and lists only its queue's cases; the read works for
+  any case. Refused by name first: bulk (quoting the route header), dismiss /
+  undo, unlink / clear, weak / force, free-typed path keys, any other key;
+  then: not a candidate, a gone case, the sync off (the route answers 200
+  `{result:{skipped:true}}`, nothing written), a candidate no longer listed,
+  `already_linked_to` another case (the route's 409 — `_loadFolderOwners`
+  path EQUALITY; a folder inside another case's folder is disclosed, not
+  refused), the case's current folder. The card predicts with applyRelink's
+  own predicates: attach = step 7's rows (active, under the folder, no case
+  path-link at all — add-only, ≤ 20,000) matched by `_matchCase` against the
+  cache with this case on the folder; detach = `reconcileCaseFolderLinks`'
+  clause (the case's relation-`path` links with no creator to documents
+  outside the folder); plus files held by other cases, nested-case files,
+  person-made links kept, the `case_dropbox` REWRITE (Dropbox's existing
+  direct link, else a new public one), FILING (portal / public uploads, form
+  PDFs, e-sign filings, `{{case_dropbox}}` steps follow the link), the
+  dismissal it clears, and NO UNDO (re-link the right folder, or unlink + clear
+  by hand; the log entry keeps old path + link). `case.updated` (source
+  `documents_relink`, `changes.case_dropbox`, the link a stand-in) dry-run on
+  the preview lane. Always danger-styled. Freshness: case link + cached path +
+  the candidate's path / files / owners, re-read via GET
+  `/api/documents/relink/:caseId/candidates`. Outcomes: `skipped` = refusal
+  (never success), the guard's 409 = refusal, 400 / 404 refuse (every 4xx is
+  pre-write), other 409 / 5xx ambiguous. Receipt: STRING `case_id` (family
+  `case_folder`). Sync (new): the route announces `case:<id>`
+  `{case_dropbox}` (value) and `doclink:case:<id>` (refetch); a skip announces
+  nothing. Off switch `casey_document_relink_enabled` (on unless '0'). Tests:
+  `tests/caseyRelink.test.js`, gated `tests/caseyRelink.mysql.test.js` (Dropbox
+  provider stubbed at its boundary only); plan: ASK_CASEY_ACTIONS_PLAN A11.1.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL

@@ -1821,6 +1821,9 @@ describe('_sniff — every matcher in the table, no shadowing', () => {
     w.YC._sniff('POST',   '/api/documents/412/share', { shared_link: 'https://www.dropbox.com/s/abc' });
     w.YC._sniff('POST',   '/api/documents/412/links', { links: [], link_type: 'case', link_id: 'AAAA' });
     w.YC._sniff('DELETE', '/api/documents/412/links', { removed: true, link_type: 'contact', link_id: '22' });
+    // A11.1: the relink confirm sits under the same prefix; anchored, it is
+    // not swallowed by `/api/documents/:id` (digits only) and swallows nothing.
+    w.YC._sniff('POST',   '/api/documents/relink',    { status: 'success', result: { case_id: 'AAAA', shared_link: 'https://www.dropbox.com/scl/fo/n' } });
 
     expect(seen).toEqual([
       'case:AAAA', 'contact:5', 'case:AAAA', 'case:AAAA', 'case:AAAA',
@@ -1832,6 +1835,7 @@ describe('_sniff — every matcher in the table, no shadowing', () => {
       'case:AAAA', 'case:AAAA', 'case:AAAA', 'contact:1001',
       'document:412', 'document:412',
       'doclink:case:AAAA', 'doclink:contact:22',
+      'case:AAAA', 'doclink:case:AAAA',
     ]);
   });
 
@@ -2846,5 +2850,61 @@ describe('_sniff — mail matchers (A13)', () => {
       [{ addr: 'comms:case:AAAA', fields: { yc_refetch: 1 } }],
       [],
     ]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// _sniff — guided re-link (A11.1)
+//
+// POST /api/documents/relink answers {status, result: applyRelink's return}
+// — the exact shape below (its key set is pinned against the real route in
+// tests/caseyRelink.mysql.test.js). Two things about ONE case changed: its
+// case_dropbox column (a real value — the minted shared link) and its
+// document set (doclink:case:<id>, the address its Documents tab refetches
+// on). A skip wrote nothing and announces nothing.
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — guided re-link (A11.1)', () => {
+  function spy(w, addr) {
+    const seen = [];
+    w.YC.on(addr, '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin }));
+    return seen;
+  }
+  const ANSWER = { status: 'success', result: {
+    case_id: '7KQ2M9XA', old_path: '/law/potential/smith', new_path: '/law/active/ 7 - smith, dana - 25-12345',
+    requested_path: '/law/active/ 7 - smith, dana - 25-12345', shared_link: 'https://www.dropbox.com/scl/fo/abc/new?rlkey=x&dl=0',
+    linked_docs: 12, detached_docs: 3, scanned_docs: 12,
+    cache: { resolved: 1, failed: 0, out_of_root: [], scanned: 1, candidates: 1, limit: 300, targeted: true, timed_out: false, elapsed_ms: 5 },
+    warnings: [], elapsed_ms: 40 } };
+
+  test('announces the case\'s new link by VALUE and its document set by marker', () => {
+    const w = mkWindow();
+    const caseSeen = spy(w, 'case:*');
+    const linkSeen = spy(w, 'doclink:*');
+    const docSeen = spy(w, 'document:*');
+    w.YC._sniff('POST', '/api/documents/relink', ANSWER);
+    expect(caseSeen.map((x) => [x.addr, x.fields, x.origin])).toEqual([['case:7KQ2M9XA',
+      { case_dropbox: 'https://www.dropbox.com/scl/fo/abc/new?rlkey=x&dl=0' }, 'auto:POST /api/documents/relink']]);
+    expect(linkSeen.map((x) => [x.addr, x.fields])).toEqual([['doclink:case:7KQ2M9XA', { yc_refetch: 1 }]]);
+    expect(docSeen).toEqual([]);
+  });
+
+  test('fails closed: a skip, a missing case id or link, another verb, and the dismiss / queue / candidates paths announce nothing', () => {
+    const w = mkWindow();
+    const seen = [];
+    ['case:*', 'doclink:*', 'document:*'].forEach((a) => w.YC.on(a, '*', (f, m) => seen.push(m.addr)));
+    w.YC._sniff('POST', '/api/documents/relink', { status: 'success', result: { skipped: true, reason: 'documents_sync_enabled is not "1"' } });
+    w.YC._sniff('POST', '/api/documents/relink', { status: 'success', result: { ...ANSWER.result, skipped: true } });
+    w.YC._sniff('POST', '/api/documents/relink', { status: 'success', result: { ...ANSWER.result, case_id: '' } });
+    w.YC._sniff('POST', '/api/documents/relink', { status: 'success', result: { ...ANSWER.result, case_id: 42 } });
+    w.YC._sniff('POST', '/api/documents/relink', { status: 'success', result: { ...ANSWER.result, shared_link: '' } });
+    w.YC._sniff('POST', '/api/documents/relink', { status: 'success', result: { ...ANSWER.result, shared_link: null } });
+    w.YC._sniff('POST', '/api/documents/relink', { status: 'success' });
+    w.YC._sniff('POST', '/api/documents/relink', null);
+    w.YC._sniff('PATCH', '/api/documents/relink', ANSWER);
+    w.YC._sniff('DELETE', '/api/documents/relink', ANSWER);
+    w.YC._sniff('POST', '/api/documents/relink/dismiss', { status: 'success', updated: 1, case_ids: ['7KQ2M9XA'], dismissed: true });
+    w.YC._sniff('POST', '/api/documents/relink/7KQ2M9XA/candidates', ANSWER);
+    expect(seen).toEqual([]);
   });
 });

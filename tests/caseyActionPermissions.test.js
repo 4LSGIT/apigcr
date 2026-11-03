@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 67 shipped kinds:
+ * These tests ask that claim two questions for all 68 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 67 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 68 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -124,6 +124,8 @@ const KINDS = [
   { kind: 'case.pipeline.move.v1', method: 'POST', path: '/api/cases/1/pipeline/advance' },
   // A7c: the court-review adopt flow's own docket route (routes/api.cases.js).
   { kind: 'case.docket.adopt.v1', method: 'PATCH', path: '/api/cases/1/docket' },
+  // A11.1: the Documents relink panel's own confirm (routes/api.documents.js).
+  { kind: 'case.folder.relink.v1', method: 'POST', path: '/api/documents/relink' },
   // A10: the Notes & Lists routes, mounted at the ROOT (routes/api.checklists.js).
   { kind: 'checklist.create.v1', method: 'POST', path: '/checklists' },
   { kind: 'checklist.item.add.v1', method: 'POST', path: '/checklists/1/items' },
@@ -247,19 +249,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 67 kinds (no database)
+// SECTION 1 — the route-level gate, for all 68 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 67 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 68 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 67 kinds cover 60 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(67);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(60);
+  test('the 68 kinds cover 61 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(68);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(61);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -267,7 +269,7 @@ describe('P2 — what the canonical write route gates on (all 67 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 67', async () => {
+  test('no token: every kind is 401 — authentication is required for all 68', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -443,6 +445,20 @@ describe('P2 — what the canonical write route gates on (all 67 shipped kinds)'
     for (const roles of [['staff'], [], ['attorney']]) {
       const res = await call(app(), k, bearer(token({ roles })), { case_number: '25-12345' });
       expect({ roles: roles.join(',') || 'none', status: res.status, message: res.body.message }).toEqual({ roles: roles.join(',') || 'none', status: 404, message: 'Case not found' });
+    }
+  });
+
+  // A11.1: the relink confirm is jwtOrApiKey only (api.documents.js is one of
+  // the capability-free files pinned above). A roleless staff token reaches the
+  // handler: past the gate, the stub db holds no documents_sync_enabled row, so
+  // the route answers its own `skipped` (200, nothing written), never 401/403.
+  test('A11.1 relink route: a roleless staff token reaches the handler', async () => {
+    expect(read('routes/api.documents.js')).toContain("router.post('/api/documents/relink', jwtOrApiKey, async");
+    const k = KINDS.find((x) => x.kind === 'case.folder.relink.v1');
+    for (const roles of [['staff'], [], ['attorney']]) {
+      const res = await call(app(), k, bearer(token({ roles })), { case_id: 'ABCD1234', folder_path: '/a/b' });
+      expect({ roles: roles.join(',') || 'none', status: res.status, result: res.body.result })
+        .toEqual({ roles: roles.join(',') || 'none', status: 200, result: { skipped: true, reason: 'documents_sync_enabled is not "1"' } });
     }
   });
 

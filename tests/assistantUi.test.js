@@ -82,6 +82,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'documentOpenInfo', 'documentEntity', 'documentOpen',
   'caseDocketLabel', 'caseDocketCaseLabel', 'caseDocketAfterLabel', 'caseDocketShown', 'caseDocketText', 'caseDocketBody', 'caseDocketRequest',
   'caseDocketPrecheck', 'caseDocketResult', 'caseDocketKnownOutcome',
+  'caseFolderLabel', 'caseFolderCaseLabel', 'caseFolderText', 'caseFolderRequest', 'caseFolderPrecheck', 'caseFolderResult',
+  'caseFolderKnownOutcome', 'caseFolderAppliedMessage',
   'formCanonical', 'formDataHash', 'formIso', 'formRecordLabel', 'formLabel', 'formTitle', 'formText', 'formRecordPath', 'formDraftRequest',
   'formDraftPrecheck', 'formDraftResult', 'formLinkRequest', 'formLinkPrecheck', 'formLinkResult', 'formLinkKnownOutcome', 'formEntity', 'formOpen',
   'mailLabel', 'mailCaseLabel', 'mailMessageLine', 'mailText', 'mailMessageIdOf', 'mailReadRequest', 'mailReadMessage', 'mailReadPrecheck',
@@ -126,6 +128,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'DOCUMENT_ACTION_KINDS'), constSrc(html, 'DOCLINK_ACTION_KINDS'), constSrc(html, 'DOCUMENT_FIELD_MAX'),
     constSrc(html, 'CASE_DOCKET_ACTION_KINDS'), constSrc(html, 'CASE_DOCKET_FIELDS'), constSrc(html, 'CASE_DOCKET_NAMES'),
     constSrc(html, 'CASE_DOCKET_MAX'), constSrc(html, 'CASE_DOCKET_CONTROL'),
+    constSrc(html, 'CASE_FOLDER_ACTION_KINDS'), constSrc(html, 'CASE_FOLDER_PATH_MAX'), constSrc(html, 'CASE_FOLDER_CONTROL'),
     constSrc(html, 'FORM_DRAFT_ACTION_KINDS'), constSrc(html, 'FORM_LINK_ACTION_KINDS'), constSrc(html, 'FORM_DATA_MAX_BYTES'),
     constSrc(html, 'MAIL_READ_ACTION_KINDS'), constSrc(html, 'MAIL_LINK_ACTION_KINDS'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
@@ -4284,5 +4287,160 @@ describe('A13 mail cards (mail.read / mail.case_link)', () => {
   test('an email entity opens a where-to-find-it note, never a URL', () => {
     expect(html).toContain("else if (kind === 'mail') mailOpenInfo(label);");
     expect(html).toContain("mail: 'fa-envelope'");
+  });
+});
+
+describe('A11.1 case folder card (case.folder.relink)', () => {
+  const CASE_ID = '7KQ2M9XA';
+  const FOLDER = '/law/active/ 7 - smith, dana - 25-12345';
+  // Model-shaped junk that must never reach a request.
+  const JUNK = { include_weak: true, case_ids: ['X'], path: '/elsewhere' };
+  const relink = (over = {}) => ({ action_draft: {
+    draft_id: '7a7a7a7a-1b2c-4d3e-8f40-123456789abc', kind: 'case.folder.relink.v1', status: 'draft', received_at: Date.now(),
+    case: { case_id: CASE_ID, label: '25-12345', case_number: '25-12345', case_number_full: null, clients: ['Smith, Dana'] },
+    folder: { path: FOLDER, files: 12, newest: '2026-10-01T10:00:00.000Z', confidence: 'docket', matched_on: '25-12345', inside_case_id: null, nested_case_ids: [] },
+    current: { path: '/law/potential/smith', path_display: '/Law/Potential/Smith', link: 'https://www.dropbox.com/scl/fo/old', resolve_error: null, dismissed_at: null },
+    prediction: { attach: 12, detach: 0 },
+    automation: { events: ['case.updated'], lines: ['Trigger rule #7 "Folder fixed" runs: starts workflow #12'], rules_checked: 3, quiet: 2 },
+    effects: ['Matched on: the docket lane — the case number "25-12345" appears in the folder\'s name.', 'Now points at: "/Law/Potential/Smith".'],
+    warnings: [],
+    no_undo: 'There is no undo button. To recover, re-link the correct folder.',
+    expected: { case_dropbox: 'https://www.dropbox.com/scl/fo/old', current_path: '/law/potential/smith', path: FOLDER, files: 12, already_linked_to: null },
+    evidence: [], ...JUNK, ...over } });
+  const candidatesGet = (over = {}, cand = {}) => ({ status: 'success', case_id: CASE_ID, current_path: '/law/potential/smith',
+    current_link: 'https://www.dropbox.com/scl/fo/old', candidates: [{ path: FOLDER, files: 12, already_linked_to: null, ...cand }], ...over });
+  const reads = (over = {}) => (path) => {
+    if (path === `/api/documents/relink/${CASE_ID}/candidates`) { if (over.gone) throw Object.assign(new Error('Case not found'), { status: 404 }); return over.got || candidatesGet(); }
+    throw new Error(`unexpected read ${path}`);
+  };
+  function runRelink(message, { read = reads(), write, confirm = true } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); return read(path, body); }
+      writes.push({ path, body, method, headers }); return write(path, body, method);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a111' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) } };
+    const history = []; const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, openEntity, sandbox }));
+  }
+  const relinked = async (_p, body) => ({ status: 'success', result: { case_id: body.case_id, old_path: '/law/potential/smith', new_path: body.folder_path,
+    requested_path: body.folder_path, shared_link: 'https://www.dropbox.com/scl/fo/new', linked_docs: 12, detached_docs: 3, scanned_docs: 12,
+    cache: { resolved: 1 }, warnings: ['1 other case folder (NEST1111) sit inside this one; their documents stay on their own cases'], elapsed_ms: 40 } });
+
+  test('re-reads the candidates; ONE POST of exactly {case_id, folder_path} (no junk); the STRING case_id receipt; danger review; the counts in the applied line', async () => {
+    const m = relink();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runRelink(m, { write: relinked });
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('case_folder');
+    expect(gets).toEqual([`/api/documents/relink/${CASE_ID}/candidates`]);
+    expect(writes).toEqual([{ path: '/api/documents/relink', method: 'POST', headers: undefined, body: { case_id: CASE_ID, folder_path: FOLDER } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a111', result: { case_id: CASE_ID } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_folder_case_id: CASE_ID });
+    expect(history[0].text).toBe(`Link case folder applied to case ${CASE_ID}: it now points at "${FOLDER}" — detached 3, attached 12. Notes: 1 other case folder (NEST1111) sit inside this one; their documents stay on their own cases.`);
+    expect(history[0].entities).toEqual([{ kind: 'case', id: CASE_ID, label: '25-12345' }]);
+    expect(openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    // Always danger: a rewritten link, documents on and off the case, no undo.
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Link case folder' });
+    for (const line of [`Case: 25-12345 (case ${CASE_ID}) — Smith, Dana`, `Folder: ${FOLDER}`, 'Registered files under it: 12 (newest 2026-10-01)',
+      'Effect: Matched on: the docket lane', 'Effect: Now points at: "/Law/Potential/Smith".',
+      'Automation: 3 active trigger rule(s) on case.updated checked; 1 would act:', 'Automation: Trigger rule #7 "Folder fixed" runs: starts workflow #12',
+      'No undo: There is no undo button. To recover, re-link the correct folder.',
+      'Writes: the case\'s Dropbox link, its folder cache, the sync\'s links between this case and documents',
+      'Stale check: if the case\'s link or cached folder changes, or the folder is claimed by another case, drops out of the candidates or changes its file count before you apply, nothing is written']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+  });
+
+  test('the builder fixes route, method and body; a bad card never reaches a read, the claim or the route', async () => {
+    for (const [message, why] of [
+      [relink({ case: { case_id: 'bad id!' } }), 'no usable case id'],
+      [relink({ folder: { path: 'law/active/x' }, expected: { path: 'law/active/x' } }), 'no usable folder path'],
+      [relink({ folder: { path: `${FOLDER}\n` }, expected: { path: `${FOLDER}\n` } }), 'no usable folder path'],
+      [relink({ folder: { path: '/a b' }, expected: { path: '/a b' } }), 'no usable folder path'],
+      [relink({ folder: { path: `/${'x'.repeat(1024)}` }, expected: { path: `/${'x'.repeat(1024)}` } }), 'no usable folder path'],
+      [relink({ folder: { path: '/other' } }), 'no usable folder path'],
+      [relink({ folder: { path: 42 } }), 'no usable folder path'],
+    ]) {
+      const x = await runRelink(message, { write: relinked });
+      expect({ why, gets: x.gets, ledger: x.ledger, writes: x.writes }).toEqual({ why, gets: [], ledger: [], writes: [] });
+      expect(message.action_draft.action_error).toContain(why);
+    }
+  });
+
+  test('click-time freshness refuses BEFORE the claim, on ANY difference', async () => {
+    for (const [read, why] of [
+      [reads({ gone: true }), 'Case 25-12345 no longer exists. Nothing was written.'],
+      [reads({ got: candidatesGet({ current_link: 'https://www.dropbox.com/scl/fo/other' }) }), 'The Dropbox folder of case 25-12345 changed since this card was prepared'],
+      [reads({ got: candidatesGet({ current_link: null }) }), 'The Dropbox folder of case 25-12345 changed'],
+      [reads({ got: candidatesGet({ current_path: '/law/active/x' }) }), 'The Dropbox folder of case 25-12345 changed'],
+      [reads({ got: candidatesGet({ current_path: null }) }), 'The Dropbox folder of case 25-12345 changed'],
+      [reads({ got: candidatesGet({ candidates: [] }) }), `The folder "${FOLDER}" is no longer a candidate for case 25-12345`],
+      [reads({ got: candidatesGet({}, { already_linked_to: ['ZZZ99999'] }) }), `The folder "${FOLDER}" now belongs to case ZZZ99999 — another case claimed it since this card was prepared. Nothing was written.`],
+      [reads({ got: candidatesGet({}, { files: 13 }) }), 'The folder\'s registered files changed since this card was prepared (12 → 13)'],
+    ]) {
+      const message = relink();
+      const x = await runRelink(message, { read, write: relinked });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(message.action_draft.refusal_error).toContain(why);
+    }
+    // An unreadable answer leaves the card retryable (nothing claimed).
+    for (const got of [{ status: 'success', case_id: CASE_ID, candidates: [] }, candidatesGet({ case_id: 'OTHER123' }), candidatesGet({ candidates: null })]) {
+      const u = relink();
+      const ur = await runRelink(u, { read: reads({ got }), write: relinked });
+      expect([ur.writes, ur.ledger]).toEqual([[], []]);
+      expect(u.action_draft.action_error).toMatch(/^Could not re-check the record before applying \(the folder candidates could not be read\)/);
+    }
+  });
+
+  test('outcomes: a skipped answer is a refusal, never a success; the 409 is a refusal naming the case; a 400 / 404 refuse; a bare 409, a 5xx and an unconfirmed answer stay ambiguous', async () => {
+    const skipped = relink();
+    const rs = await runRelink(skipped, { write: async () => ({ status: 'success', result: { skipped: true, reason: 'documents_sync_enabled is not "1"' } }) });
+    expect(skipped.action_draft.status).not.toBe('applied');
+    expect(skipped.action_draft.refusal_error).toBe('Refused — nothing written: the Dropbox document sync is switched off (documents_sync_enabled), so the relink route did nothing and the case still points at its old folder. Ask IT before turning the sync back on.');
+    expect(skipped.action_draft.refusal_status).toBe('Refused — nothing written');
+    expect(rs.history).toEqual([]);
+    const taken = relink();
+    const msg = 'that folder is already linked to case ZZZ99999 — linking it here as well would put both clients\' documents on both cases';
+    await runRelink(taken, { write: async () => { throw Object.assign(new Error(msg), { status: 409, body: { status: 'error', message: msg } }); } });
+    expect(taken.action_draft.refusal_error).toBe(`Refused — nothing written: ${msg}. Another case claimed this folder after the card was prepared.`);
+    const bad = relink();
+    await runRelink(bad, { write: async () => { throw Object.assign(new Error('that folder is not under any enabled sync root'), { status: 400 }); } });
+    expect(bad.action_draft.refusal_error).toBe('Refused — nothing written (that folder is not under any enabled sync root). Ask Casey to prepare it again.');
+    const gone = relink();
+    await runRelink(gone, { write: async () => { throw Object.assign(new Error(`Case ${CASE_ID} not found`), { status: 404 }); } });
+    expect(gone.action_draft.refusal_error).toBe(`Refused — nothing written (Case ${CASE_ID} not found). Ask Casey to prepare it again.`);
+    const bare = relink();
+    await runRelink(bare, { write: async () => { throw Object.assign(new Error('conflict'), { status: 409, body: { message: 'conflict' } }); } });
+    expect(bare.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    const lost = relink();
+    await runRelink(lost, { write: async () => { throw Object.assign(new Error('Dropbox returned no shared link for that folder'), { status: 502 }); } });
+    expect(lost.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    for (const answer of [{ status: 'success', result: { case_id: 'OTHER123', shared_link: 'x', new_path: FOLDER } },
+      { status: 'success', result: { case_id: CASE_ID, new_path: FOLDER } }, { status: 'success', result: { case_id: CASE_ID, shared_link: 'x' } },
+      { status: 'success' }, { status: 'success', result: { case_id: CASE_ID.toLowerCase(), shared_link: 'x', new_path: FOLDER } }]) {
+      const u = relink();
+      await runRelink(u, { write: async () => answer });
+      expect(u.action_draft.status).not.toBe('applied');
+      expect(u.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    }
+  });
+
+  test('a reopened card restores from the ledger with the STRING receipt; one family, one kind; no other folder kind resolves', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    const m = relink();
+    box.applyActionResults([m], [{ draft_id: m.action_draft.draft_id, kind: 'case.folder.relink.v1', outcome: 'applied', result: { case_id: CASE_ID } }]);
+    expect([m.action_draft.status, m.action_draft.result_folder_case_id]).toEqual(['applied', CASE_ID]);
+    const host = dom.window.document.createElement('div');
+    box.hydrateActionDraft(box.actionFamily(m.action_draft), host, m, m.action_draft);
+    expect(host.querySelector('.action-draft-status').textContent).toBe('Applied — case folder linked');
+    expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open 25-12345', 'Copy details']);
+    const f = box.actionFamily({ kind: 'case.folder.relink.v1' });
+    expect([[...f.kinds], f.idField, f.appliedKey, !!f.stringReceipt]).toEqual([['case.folder.relink.v1'], 'case_id', 'result_folder_case_id', true]);
+    for (const kind of ['case.folder.unlink.v1', 'case.folder.dismiss.v1', 'case.folder.bulk_relink.v1', 'document.relink.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    dom.window.close();
   });
 });
