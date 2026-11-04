@@ -315,7 +315,9 @@ const TABS = {
   },
   events: {
     fn: 'tabEventsGet', kind: 'events', prelude: 'var offsets = {}, events;',
-    extra: ['escHtml', 'escAttrJSON'],
+    consts: ['EVENTS_COLUMNS'],                  // S3b: rows render via the model
+    post: 'var eventsColsVis = EVENTS_COLUMNS;',
+    extra: ['escHtml', 'escAttrJSON', 'eventsRenderRows'],
     dom: { tabEventsButton: 'input', tabEventsLoad: 'div', tabEventsType: 'input', tabEventsStatus: 'input=Scheduled',
       tabEventsTime: 'input=After', tabEventsDate1: 'input=2026-10-01', tabEventsDate2: 'input', tabEventsQ: 'input',
       tabEventsSort: 'input=upcoming', tabEventsSort2: 'input=ASC', tabEventsUnlinked: 'check', eventsTable: 'table', eventsTableFoot: 'div' },
@@ -324,7 +326,9 @@ const TABS = {
   },
   appts: {
     fn: 'tabApptsGet', kind: 'appts', prelude: 'var offsets = {}, appts, apptsLastLoad = 0; function tabApptsTypesLoad() {}',
-    extra: ['apptsStatusValues'],
+    consts: ['APPTS_COLUMNS'],                   // S3b: rows render via the model
+    post: 'var apptsColsVis = APPTS_COLUMNS;',
+    extra: ['apptsStatusValues', 'apptsRenderRows'],
     // Status is a .yc-multi (F2): the empty stub div = nothing checked = no
     // status param. Status coverage lives in listSorting.mysql.
     dom: { tabApptsButton: 'input', tabApptsLoad: 'div', tabApptsType: 'input=__default__',

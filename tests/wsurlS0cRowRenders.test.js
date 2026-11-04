@@ -201,7 +201,10 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
       tabEventsTime: 'input', tabEventsDate1: 'input', tabEventsDate2: 'input', tabEventsQ: 'input',
       tabEventsSort: 'input', tabEventsSort2: 'input=ASC', tabEventsUnlinked: 'check', eventsTable: 'table', eventsTableFoot: 'div',
     }, `${PAGER} var offsets = {}, events;
-        ${fnSrc(INDEX, 'escHtml')} ${fnSrc(INDEX, 'escAttrJSON')} ${fnSrc(INDEX, 'tabEventsGet')}`,
+        ${constSrc(INDEX, 'EVENTS_COLUMNS')}
+        var eventsColsVis = EVENTS_COLUMNS;   // the picker's on-screen set (S3b)
+        ${fnSrc(INDEX, 'escHtml')} ${fnSrc(INDEX, 'escAttrJSON')}
+        ${fnSrc(INDEX, 'eventsRenderRows')} ${fnSrc(INDEX, 'tabEventsGet')}`,
     async () => ({ total: 1, data: [{
       event_id: 9, event_type: V, event_title: V, event_date: V, event_time: V, event_all_day: 0,
       event_with: 6, event_status: V, event_link_type: 'contact', event_link_id: 1405,
@@ -221,7 +224,10 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
       tabApptsDate2: 'input', tabApptsWith: 'input', tabApptsSort: 'input=upcoming', tabApptsSort2: 'input=ASC',
       apptsTable: 'table', apptsTableFoot: 'div',
     }, `${PAGER} var offsets = {}, appts, apptsLastLoad = 0; function tabApptsTypesLoad() {}
+        ${constSrc(INDEX, 'APPTS_COLUMNS')}
+        var apptsColsVis = APPTS_COLUMNS;   // the picker's on-screen set (S3b)
         ${fnSrc(INDEX, 'apptsStatusValues')}
+        ${fnSrc(INDEX, 'apptsRenderRows')}
         ${fnSrc(INDEX, 'tabApptsGet')}`,
     async () => ({ counter: 1, appts: [{
       id: 5, format_date: V, time: V, contact_name: V, appt_client_id: 1405, case_number: V,

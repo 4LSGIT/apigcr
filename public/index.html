@@ -3756,8 +3756,9 @@
     }
 
     /* Everything on screen, from casesColsVis: headers (then the sort marks
-       the rebuild cleared), checkbox states, summary label, and — when rows
-       are in memory — the rows. */
+       the rebuild cleared), checkbox states, summary label, and the rows —
+       unconditionally, so an empty or reset cache clears the table instead
+       of leaving rows under rebuilt headers. */
     function casesColsRender() {
       const table = E('casesTable');
       // Marks exist only once the user has sorted (the selects always hold
@@ -3774,7 +3775,7 @@
       E('tabCasesColsLabel').textContent =
         casesColsVis.length === CASES_COLUMNS.length ? 'All'
           : `${casesColsVis.length} of ${CASES_COLUMNS.length}`;
-      if (cases) casesRenderRows();
+      casesRenderRows();   // unconditional: the screen is render(vis, cache), whatever the cache
     }
 
     function casesColsApply() {          // storage → the on-screen set
@@ -3902,8 +3903,12 @@
             onPrint: true,
             onExport: () => exportListCsv('cases', () => csvFilterOf(params)),
           });
-        } else if (!silent) {
-          Toast.fire({ icon: "error", title: "No cases found!" });
+        } else {
+          // The cache is the empty page — render it, clearing any rows a
+          // picker change painted while this fetch was in flight (review
+          // S3b: the empty branch needs this as much as the catch does).
+          casesRenderRows();
+          if (!silent) Toast.fire({ icon: "error", title: "No cases found!" });
         }
       } catch (err) {
         // The rows were already cleared above; null the cache too, or a
@@ -4288,8 +4293,9 @@
     }
 
     /* Everything on screen, from contactsColsVis: headers (then the sort
-       marks the rebuild cleared), checkbox states, summary label, and —
-       when rows are in memory — the rows. */
+       marks the rebuild cleared), checkbox states, summary label, and the
+       rows — unconditionally, so an empty or reset cache clears the table
+       instead of leaving rows under rebuilt headers. */
     function contactsColsRender() {
       const table = E('contactsTable');
       // Marks exist only once the user has sorted (the selects always hold
@@ -4306,7 +4312,7 @@
       E('tabContactsColsLabel').textContent =
         contactsColsVis.length === CONTACT_COLUMNS.length ? 'All'
           : `${contactsColsVis.length} of ${CONTACT_COLUMNS.length}`;
-      if (contacts) contactsRenderRows();
+      contactsRenderRows();   // unconditional: the screen is render(vis, cache), whatever the cache
     }
 
     function contactsColsApply() {          // storage → the on-screen set
@@ -4417,8 +4423,12 @@
             onPrint: true,
             onExport: () => exportListCsv('contacts', () => csvFilterOf(params)),
           });
-        } else if (!silent) {
-          Toast.fire({ icon: "error", title: "No contacts found!" });
+        } else {
+          // The cache is the empty page — render it, clearing any rows a
+          // picker change painted while this fetch was in flight (review
+          // S3b: the empty branch needs this as much as the catch does).
+          contactsRenderRows();
+          if (!silent) Toast.fire({ icon: "error", title: "No contacts found!" });
         }
       } catch (err) {
         // The rows were cleared before the fetch, so the cache no longer
@@ -4582,6 +4592,15 @@
       <input id="tabApptsDate1" type="date" style="width: auto; display: none" />
       <label id="tabApptsDateLabel"></label>
       <input id="tabApptsDate2" type="date" style="width: auto; display: none" /></span>
+      <span class="yc-f" data-nocount><span class="yc-f-l">Columns</span>
+      <details class="yc-multi" id="tabApptsCols">
+        <summary><span id="tabApptsColsLabel">All</span></summary>
+        <div class="yc-multi-menu" id="tabApptsColsMenu">
+          <!-- One checkbox per APPTS_COLUMNS entry (apptsColsInit). Saved
+               per browser and per user (localStorage); data-nocount —
+               showing fewer columns is not a filter. -->
+        </div>
+      </details></span>
       <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
       <select id="tabApptsSort" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
         <option value="upcoming">Upcoming first</option>
@@ -4600,18 +4619,12 @@
       <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
       <button id="tabApptsButton" class="yc-f-go" onclick="tabApptsGet(0)" data-type="goButton">Search</button>
     </div>
+    <!-- Headers are generated from APPTS_COLUMNS (the tab's column model,
+         in the script block below) by ycColsHeadRender — same cells, same
+         sort() onclicks, same data-sort-upcoming Date header as the static
+         row this replaces (S3b). -->
     <table id="apptsTable" class="logTable">
-      <tr>
-        <th>ID</th>
-        <th onclick="sort(this, 'date')" data-sort-upcoming="upcoming" title="Upcoming first → oldest first → newest first">Date ⇅</th>
-        <th>Time</th>
-        <th onclick="sort(this, 'client')">Contact Name</th>
-        <th onclick="sort(this, 'case')">Case</th>
-        <th onclick="sort(this, 'type')">Appt Type</th>
-        <th onclick="sort(this, 'status')">Status</th>
-        <th onclick="sort(this, 'with')">With</th>
-        <th>Update</th>
-      </tr>
+      <tr></tr>
     </table>
     <div id="apptsTableFoot"></div>
     <div id="tabApptsLoad" style="display: none">
@@ -4665,6 +4678,15 @@
       <input id="tabEventsDate1" type="date" style="width: auto; display: none" />
       <label id="tabEventsDateLabel"></label>
       <input id="tabEventsDate2" type="date" style="width: auto; display: none" /></span>
+      <span class="yc-f" data-nocount><span class="yc-f-l">Columns</span>
+      <details class="yc-multi" id="tabEventsCols">
+        <summary><span id="tabEventsColsLabel">All</span></summary>
+        <div class="yc-multi-menu" id="tabEventsColsMenu">
+          <!-- One checkbox per EVENTS_COLUMNS entry (eventsColsInit). Saved
+               per browser and per user (localStorage); data-nocount —
+               showing fewer columns is not a filter. -->
+        </div>
+      </details></span>
       <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
       <select id="tabEventsSort" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
         <option value="upcoming">Upcoming first</option>
@@ -4681,19 +4703,12 @@
       <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
       <button id="tabEventsButton" class="yc-f-go" onclick="tabEventsGet(0)" data-type="goButton">Search</button>
     </div>
+    <!-- Headers are generated from EVENTS_COLUMNS (the tab's column model,
+         in the script block below) by ycColsHeadRender — same cells, same
+         sort() onclicks, same data-sort-upcoming Date header as the static
+         row this replaces (S3b). -->
     <table id="eventsTable" class="logTable">
-      <tr>
-        <th>ID</th>
-        <th onclick="sort(this, 'type')">Type</th>
-        <th onclick="sort(this, 'title')">Title</th>
-        <th onclick="sort(this, 'date')" data-sort-upcoming="upcoming" title="Upcoming first → oldest first → newest first">Date ⇅</th>
-        <th>Time</th>
-        <th>Blocks</th>
-        <th onclick="sort(this, 'status')">Status</th>
-        <th>Linked</th>
-        <th>Location</th>
-        <th>Action</th>
-      </tr>
+      <tr></tr>
     </table>
     <div id="eventsTableFoot"></div>
     <div id="tabEventsLoad" style="display: none">
@@ -5466,6 +5481,303 @@
   </script>
 
   <script>
+    /* The Appts and Events tabs' column models (custom_table_view S3b) —
+       rendered by ycColsHeadRender / ycColsRowHtml (scripts.js, the model's
+       contract is documented there). Each render reproduces the old
+       positional template's cell byte for byte; tests/listColumns.s3b.test.js
+       pins that against the frozen pre-S3b fixtures. The Date columns carry
+       th_extra (data-sort-upcoming + title) and the static "⇅" in their
+       labels — these tabs default to the upcoming sort, whose mark IS that
+       "⇅", so sortMarksSync is a boot no-op here and the pickers need no
+       ever-sorted latch (unlike Contacts/Cases, where an unconditional sync
+       would paint a mark at boot). */
+    const APPTS_COLUMNS = [
+      { key: 'id', label: 'ID', default_on: true,
+        render: (a) => `<a href="#" onclick="showAppt(${a.id})">${a.id}</a>` },
+      { key: 'format_date', label: 'Date ⇅', sort: 'date', default_on: true,
+        th_extra: ' data-sort-upcoming="upcoming" title="Upcoming first → oldest first → newest first"',
+        render: (a) => escText(a.format_date) },
+      { key: 'time', label: 'Time', default_on: true,
+        render: (a) => escText(a.time) },
+      { key: 'contact_name', label: 'Contact Name', sort: 'client', default_on: true,
+        render: (a) => { const name = a.contact_name || ''; return fileLinkHtml(name, 'client', a.appt_client_id, name); } },
+      { key: 'case_number', label: 'Case', sort: 'case', default_on: true,
+        render: (a) => {
+          const caseName = a.case_number || a.appt_case_id || '';
+          return fileLinkHtml(caseName, 'case', a.appt_case_id || '', caseName);
+        } },
+      { key: 'appt_type', label: 'Appt Type', sort: 'type', default_on: true,
+        render: (a) => escText(a.appt_type) },
+      { key: 'status', label: 'Status', sort: 'status', default_on: true,
+        render: (a) => escText(a.status) },
+      { key: 'user_name', label: 'With', sort: 'with', default_on: true,
+        render: (a) => escText(a.user_name) },
+      { key: 'update', label: 'Update', default_on: true,
+        // Buttons only — their click listeners are bound per row in
+        // apptsRenderRows, AFTER the innerHTML write (wsurl S0c: status and
+        // dates are server text and must never be quoted into onclick).
+        render: (a) => {
+          const s = a.status;
+          const buttons = [];
+          if (s !== "Attended") {
+            buttons.push(`<button data-appt-act="Attended"><i class="fa-solid fa-user-check"></i> Attended</button>`);
+          }
+          if (s !== "No Show") {
+            buttons.push(`<button data-appt-act="No Show"><i class="fa-solid fa-user-xmark"></i> No Show</button>`);
+          }
+          if (s !== "Canceled") {
+            buttons.push(`<button data-appt-act="Cancel"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>`);
+          }
+          if (s !== "Rescheduled") {
+            buttons.push(`<button data-appt-act="Reschedule"><i class="fa-solid fa-user-clock"></i> Reschedule</button>`);
+          }
+          return buttons.join(" ");
+        } },
+    ];
+    const EVENTS_COLUMNS = [
+      { key: 'event_id', label: 'ID', default_on: true,
+        render: (ev) => `<a href="#" onclick="showEvent(${ev.event_id});return false">${ev.event_id}</a>` },
+      { key: 'event_type', label: 'Type', sort: 'type', default_on: true,
+        render: (ev) => escHtml(ev.event_type == null ? "" : String(ev.event_type)) },
+      { key: 'event_title', label: 'Title', sort: 'title', default_on: true,
+        render: (ev) => escHtml(ev.event_title == null ? "" : String(ev.event_title)) },
+      { key: 'event_date', label: 'Date ⇅', sort: 'date', default_on: true,
+        th_extra: ' data-sort-upcoming="upcoming" title="Upcoming first → oldest first → newest first"',
+        render: (ev) => escHtml(ev.event_date ? String(ev.event_date).slice(0, 10) : "") },
+      { key: 'event_time', label: 'Time', default_on: true,
+        render: (ev) => {
+          const allDay = ev.event_all_day == 1 || ev.event_all_day === true;
+          return escHtml(allDay ? "All day" : (ev.event_time ? String(ev.event_time).slice(0, 5) : ""));
+        } },
+      { key: 'event_with', label: 'Blocks', default_on: true,
+        // events.event_with: whose booking availability this timed event
+        // carves. NULL = everyone (firm-wide); an id = that provider only.
+        // All-day events never block → blank.
+        render: (ev) => {
+          const allDay = ev.event_all_day == 1 || ev.event_all_day === true;
+          if (allDay) return "";
+          if (ev.event_with == null) return "Everyone";
+          if (Number(ev.event_with) === 0) return "Nobody";
+          const wu = (window.firmData?.users || [])
+            .find(u => Number(u.user) === Number(ev.event_with));
+          return escHtml(wu ? wu.user_name : `#${ev.event_with}`);
+        } },
+      { key: 'event_status', label: 'Status', sort: 'status', default_on: true,
+        render: (ev) => escHtml(ev.event_status == null ? "" : String(ev.event_status)) },
+      { key: 'linked', label: 'Linked', default_on: true,
+        // addFile link (matches the rest of the page). case_number rows:
+        // docket verbatim; clickable only when the docket currently resolves
+        // to a case (resolved_case_id from the API's query-side resolution).
+        render: (ev) => {
+          const esc = (s) => escHtml(s == null ? "" : String(s));
+          if (ev.event_link_type === "case_number" && ev.event_link_id != null) {
+            const docket = String(ev.link_label || ev.event_link_id);
+            if (ev.resolved_case_id) {
+              return `Case #: ${fileLinkHtml(docket, 'case', ev.resolved_case_id, docket)}`;
+            }
+            return `Case #: ${esc(docket)}`;
+          }
+          if (ev.link_label && ev.event_link_id != null) {
+            const ft = ev.event_link_type === "case" ? "case" : "contact";
+            const noun = ev.event_link_type === "case" ? "Case" : "Contact";
+            return `${noun}: ${fileLinkHtml(ev.link_label, ft, ev.event_link_id, String(ev.link_label))}`;
+          }
+          return "";
+        } },
+      { key: 'event_location', label: 'Location', default_on: true,
+        render: (ev) => escHtml(ev.event_location == null ? "" : String(ev.event_location)) },
+      { key: 'action', label: 'Action', default_on: true,
+        // Inline onclicks (escAttrJSON-quoted), no listeners: each write goes
+        // through the shell's apiSend and the tab's own `event:*` subscriber
+        // refetches — a callback would be a second fetch of the same page.
+        render: (ev) => {
+          const buttons = [];
+          buttons.push(`<button onclick='newEventDialog({ event: ${escAttrJSON(ev)} })'><i class="fa-solid fa-pen"></i> Edit</button>`);
+          if (ev.event_status === "Scheduled") {
+            buttons.push(`<button onclick="eventComplete(${ev.event_id})"><i class="fa-solid fa-check"></i> Complete</button>`);
+            buttons.push(`<button onclick="eventCancel(${ev.event_id})"><i class="fa-solid fa-ban"></i> Cancel</button>`);
+          }
+          return buttons.join(" ");
+        } },
+    ];
+    // Headers from the models, HERE, right after the declarations — both
+    // tables sit above this block, and nothing runs between that could fail
+    // and leave a tab headerless. Once, at parse time, never on fetch.
+    ycColsHeadRender(E('apptsTable'), APPTS_COLUMNS);
+    ycColsHeadRender(E('eventsTable'), EVENTS_COLUMNS);
+
+    /* ── Column pickers (S3b) ────────────────────────────────────────────
+       The Contacts/Cases pickers' structural twins (S2's block above
+       tabContactsGet holds the full reasoning): ONE in-memory visible set
+       per tab renders headers and rows; storage = HIDDEN model keys at
+       yc.appts.cols_off.<uid> / yc.events.cols_off.<uid>; unknown stored
+       keys drop; hide-all falls back to default_on; data-nocount. One
+       difference: sortMarksSync runs UNCONDITIONALLY here — these tabs
+       default to the upcoming sort, whose mark is the Date label's own "⇅",
+       so a boot sync repaints exactly the parse-time header (no latch). */
+    let apptsColsVis = APPTS_COLUMNS;
+
+    function apptsColsKey() { return `cols_off.${(user && user.user) || 0}`; }
+
+    function apptsColsVisible() {
+      const off = getTabPref('appts', apptsColsKey(), '').split(',');
+      const vis = APPTS_COLUMNS.filter((c) => !off.includes(c.key));
+      return vis.length ? vis : APPTS_COLUMNS.filter((c) => c.default_on);
+    }
+
+    /* Clears the data rows and renders them again from the rows already
+       fetched (the `appts` global), through the ON-SCREEN visible set —
+       then binds each row's action buttons, AFTER the innerHTML write, with
+       the row's own values (wsurl S0c: status and dates are server text and
+       were once quoted into onclick source). Shared by the fetch path and
+       the picker (which must not refetch). */
+    function apptsRenderRows() {
+      const table = E('apptsTable');
+      for (let i = table.rows.length - 1; i > 0; i--) table.deleteRow(i);
+      (appts || []).forEach((appt) => {
+        const row = table.insertRow();
+        row.innerHTML = ycColsRowHtml(apptsColsVis, appt);
+        const apptDateTime = `${appt.format_date} at ${appt.time}`;
+        const s = appt.status;
+        const actDate = { Cancel: apptDateTime, Reschedule: `${appt.appt_datetime_local}` };
+        row.querySelectorAll("button[data-appt-act]").forEach((b) => {
+          b.addEventListener("click", () => {
+            const act = b.dataset.apptAct;
+            apptUpdate(Number(appt.id), act, actDate[act] ?? null, null, `${s}`);
+          });
+        });
+      });
+    }
+
+    function apptsColsRender() {
+      const table = E('apptsTable');
+      ycColsHeadRender(table, apptsColsVis);
+      sortMarksSync(E('tabAppts'), table);
+      document.querySelectorAll('#tabApptsColsMenu input').forEach((b) => {
+        b.checked = apptsColsVis.some((c) => c.key === b.value);
+      });
+      E('tabApptsColsLabel').textContent =
+        apptsColsVis.length === APPTS_COLUMNS.length ? 'All'
+          : `${apptsColsVis.length} of ${APPTS_COLUMNS.length}`;
+      apptsRenderRows();   // unconditional: the screen is render(vis, cache), whatever the cache
+    }
+
+    function apptsColsApply() {          // storage → the on-screen set
+      apptsColsVis = apptsColsVisible();
+      apptsColsRender();
+    }
+
+    function apptsColsChanged(box) {
+      const checked = [...document.querySelectorAll('#tabApptsColsMenu input:checked')];
+      if (!checked.length) { box.checked = true; return; }   // never zero columns
+      const keys = checked.map((b) => b.value);
+      apptsColsVis = APPTS_COLUMNS.filter((c) => keys.includes(c.key));
+      setTabPref('appts', apptsColsKey(),
+        APPTS_COLUMNS.filter((c) => !keys.includes(c.key)).map((c) => c.key).join(','));
+      apptsColsRender();
+    }
+
+    /* Menu from the model + first apply. Runs in loadUserContext, not at
+       parse: the storage key carries the user id, which auth supplies. */
+    function apptsColsInit() {
+      const menu = E('tabApptsColsMenu');
+      if (!menu) return;
+      menu.innerHTML = '';
+      APPTS_COLUMNS.forEach((c) => {
+        const lab = document.createElement('label');
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.value = c.key;
+        box.addEventListener('change', () => apptsColsChanged(box));
+        lab.appendChild(box);
+        // sortMarkStrip: the Date label carries the header's static "⇅",
+        // which is a sort mark, not part of the column's name.
+        lab.appendChild(document.createTextNode(' ' + sortMarkStrip(c.label)));
+        menu.appendChild(lab);
+      });
+      if (!apptsColsInit.wired) {
+        apptsColsInit.wired = true;
+        window.addEventListener('storage', (e) => {
+          if (e.key === `yc.appts.${apptsColsKey()}`) apptsColsApply();
+        });
+      }
+      apptsColsApply();
+    }
+
+    let eventsColsVis = EVENTS_COLUMNS;
+
+    function eventsColsKey() { return `cols_off.${(user && user.user) || 0}`; }
+
+    function eventsColsVisible() {
+      const off = getTabPref('events', eventsColsKey(), '').split(',');
+      const vis = EVENTS_COLUMNS.filter((c) => !off.includes(c.key));
+      return vis.length ? vis : EVENTS_COLUMNS.filter((c) => c.default_on);
+    }
+
+    /* The `events` global is "" (not null) after an empty page — both are
+       falsy, so the guard below and the `if (events)` in eventsColsRender
+       treat them alike. */
+    function eventsRenderRows() {
+      const table = E('eventsTable');
+      for (let i = table.rows.length - 1; i > 0; i--) table.deleteRow(i);
+      (events || []).forEach((ev) => {
+        table.insertRow().innerHTML = ycColsRowHtml(eventsColsVis, ev);
+      });
+    }
+
+    function eventsColsRender() {
+      const table = E('eventsTable');
+      ycColsHeadRender(table, eventsColsVis);
+      sortMarksSync(E('tabEvents'), table);
+      document.querySelectorAll('#tabEventsColsMenu input').forEach((b) => {
+        b.checked = eventsColsVis.some((c) => c.key === b.value);
+      });
+      E('tabEventsColsLabel').textContent =
+        eventsColsVis.length === EVENTS_COLUMNS.length ? 'All'
+          : `${eventsColsVis.length} of ${EVENTS_COLUMNS.length}`;
+      eventsRenderRows();   // unconditional: the screen is render(vis, cache), whatever the cache
+    }
+
+    function eventsColsApply() {          // storage → the on-screen set
+      eventsColsVis = eventsColsVisible();
+      eventsColsRender();
+    }
+
+    function eventsColsChanged(box) {
+      const checked = [...document.querySelectorAll('#tabEventsColsMenu input:checked')];
+      if (!checked.length) { box.checked = true; return; }   // never zero columns
+      const keys = checked.map((b) => b.value);
+      eventsColsVis = EVENTS_COLUMNS.filter((c) => keys.includes(c.key));
+      setTabPref('events', eventsColsKey(),
+        EVENTS_COLUMNS.filter((c) => !keys.includes(c.key)).map((c) => c.key).join(','));
+      eventsColsRender();
+    }
+
+    function eventsColsInit() {
+      const menu = E('tabEventsColsMenu');
+      if (!menu) return;
+      menu.innerHTML = '';
+      EVENTS_COLUMNS.forEach((c) => {
+        const lab = document.createElement('label');
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.value = c.key;
+        box.addEventListener('change', () => eventsColsChanged(box));
+        lab.appendChild(box);
+        // sortMarkStrip: the Date label carries the header's static "⇅",
+        // which is a sort mark, not part of the column's name.
+        lab.appendChild(document.createTextNode(' ' + sortMarkStrip(c.label)));
+        menu.appendChild(lab);
+      });
+      if (!eventsColsInit.wired) {
+        eventsColsInit.wired = true;
+        window.addEventListener('storage', (e) => {
+          if (e.key === `yc.events.${eventsColsKey()}`) eventsColsApply();
+        });
+      }
+      eventsColsApply();
+    }
+
     /* ── RETIRED (Slice 3): the appt-updated / event-updated postMessage system.
        Two `message` listeners lived here. Each walked THIS document's iframes
        calling refreshAppts()/refreshEvents() on whichever ones exported them —
@@ -5558,67 +5870,7 @@
 
         if (total > 0 && data.data && data.data.length) {
           events = data.data;
-          events.forEach((ev) => {
-            const row = table.insertRow();
-            const date = ev.event_date ? String(ev.event_date).slice(0, 10) : "";
-            const allDay = ev.event_all_day == 1 || ev.event_all_day === true;
-            const timeStr = allDay ? "All day" : (ev.event_time ? String(ev.event_time).slice(0, 5) : "");
-            const esc = (s) => escHtml(s == null ? "" : String(s));
-            // Blocks cell (events.event_with): whose booking availability this
-            // timed event carves. NULL = everyone (firm-wide); an id = that
-            // provider only. All-day events never block → blank.
-            let blocks = "";
-            if (!allDay) {
-              if (ev.event_with == null) {
-                blocks = "Everyone";
-              } else if (Number(ev.event_with) === 0) {
-                blocks = "Nobody";
-              } else {
-                const wu = (window.firmData?.users || [])
-                  .find(u => Number(u.user) === Number(ev.event_with));
-                blocks = esc(wu ? wu.user_name : `#${ev.event_with}`);
-              }
-            }
-            // Linked cell → addFile link (matches the rest of the page).
-            // case_number rows: docket verbatim; clickable only when the
-            // docket currently resolves to a case (resolved_case_id from the
-            // API's query-side resolution) — otherwise plain text.
-            let linked = "";
-            if (ev.event_link_type === "case_number" && ev.event_link_id != null) {
-              const docket = String(ev.link_label || ev.event_link_id);
-              if (ev.resolved_case_id) {
-                linked = `Case #: ${fileLinkHtml(docket, 'case', ev.resolved_case_id, docket)}`;
-              } else {
-                linked = `Case #: ${esc(docket)}`;
-              }
-            } else if (ev.link_label && ev.event_link_id != null) {
-              const ft = ev.event_link_type === "case" ? "case" : "contact";
-              const noun = ev.event_link_type === "case" ? "Case" : "Contact";
-              linked = `${noun}: ${fileLinkHtml(ev.link_label, ft, ev.event_link_id, String(ev.link_label))}`;
-            }
-            row.innerHTML = `
-              <td><a href="#" onclick="showEvent(${ev.event_id});return false">${ev.event_id}</a></td>
-              <td>${esc(ev.event_type)}</td>
-              <td>${esc(ev.event_title)}</td>
-              <td>${esc(date)}</td>
-              <td>${esc(timeStr)}</td>
-              <td>${blocks}</td>
-              <td>${esc(ev.event_status)}</td>
-              <td>${linked}</td>
-              <td>${esc(ev.event_location)}</td>`;
-
-            // No onSaved / onDone callback: each of these writes through the
-            // shell's apiSend, the sniff announces `event:<id>`, and this
-            // tab's own `event:*` subscriber refetches the current page. The
-            // callback would be a second, redundant fetch of the same page.
-            const buttons = [];
-            buttons.push(`<button onclick='newEventDialog({ event: ${escAttrJSON(ev)} })'><i class="fa-solid fa-pen"></i> Edit</button>`);
-            if (ev.event_status === "Scheduled") {
-              buttons.push(`<button onclick="eventComplete(${ev.event_id})"><i class="fa-solid fa-check"></i> Complete</button>`);
-              buttons.push(`<button onclick="eventCancel(${ev.event_id})"><i class="fa-solid fa-ban"></i> Cancel</button>`);
-            }
-            row.innerHTML += `<td>${buttons.join(" ")}</td>`;
-          });
+          eventsRenderRows();
 
           // Footer — the shared pager (js/ycPager.js), page size remembered
           // under this tab's own key instead of moving the shared global.
@@ -5632,10 +5884,18 @@
           });
         } else {
           events = "";
+          // Render the empty cache: rows a picker change painted while this
+          // fetch was in flight must not survive an empty result (review S3b).
+          eventsRenderRows();
           foot.innerHTML = "";
           if (!silent) Toast.fire({ icon: "info", title: "No events found." });
         }
       } catch (err) {
+        // The rows were already cleared above; null the cache too and
+        // re-render, so a picker change can't redraw the stale page and rows
+        // a picker change painted mid-flight don't outlive the failure.
+        events = null;
+        eventsRenderRows();
         if (silent) console.warn("[events] background refetch failed:", err);
         else Toast.fire({ icon: "error", title: "Error loading events", text: err.message });
       }
@@ -5922,54 +6182,20 @@
 
       try {
         const data = await apiSend("/api/appts", "GET", params);
+        // Assigned on EVERY outcome (the Cases/Contacts shape): an empty
+        // page must replace the cache, or a later picker toggle — or a
+        // storage-event re-apply from another window — would repaint the
+        // previous page's rows, action buttons bound to stale statuses and
+        // all (review S3b, the blocker).
+        appts = data.appts || [];
 
         if (data.counter > 0) {
-          appts = data.appts;
-          appts.forEach((appt, apptNum) => {
-            const row = table.insertRow();
-            const caseName = appt.case_number || appt.appt_case_id || "";
-            const caseId = appt.appt_case_id || "";
-            const name = appt.contact_name || "";
-            row.innerHTML = `
-            <td><a href="#" onclick="showAppt(${appt.id})">${appt.id}</a></td>
-            <td>${escText(appt.format_date)}</td>
-            <td>${escText(appt.time)}</td>
-            <td>${fileLinkHtml(name, 'client', appt.appt_client_id, name)}</td>
-            <td>${fileLinkHtml(caseName, 'case', caseId, caseName)}</td>
-            <td>${escText(appt.appt_type)}</td>
-            <td>${escText(appt.status)}</td>
-            <td>${escText(appt.user_name)}</td>`;
-
-            // Always show all 4 action buttons except the one matching the current status.
-            // Backend blocks same-state transitions; user gets a correction warning on
-            // non-Scheduled transitions via apptUpdate's confirmCorrection() helper.
-            const apptDateTime = `${appt.format_date} at ${appt.time}`;
-            const s = appt.status;
-            const buttons = [];
-            if (s !== "Attended") {
-              buttons.push(`<button data-appt-act="Attended"><i class="fa-solid fa-user-check"></i> Attended</button>`);
-            }
-            if (s !== "No Show") {
-              buttons.push(`<button data-appt-act="No Show"><i class="fa-solid fa-user-xmark"></i> No Show</button>`);
-            }
-            if (s !== "Canceled") {
-              buttons.push(`<button data-appt-act="Cancel"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>`);
-            }
-            if (s !== "Rescheduled") {
-              buttons.push(`<button data-appt-act="Reschedule"><i class="fa-solid fa-user-clock"></i> Reschedule</button>`);
-            }
-            row.innerHTML += `<td>${buttons.join(" ")}</td>`;
-            // Bound here, AFTER the last innerHTML write, with the row's own
-            // values: status and dates are server text, and used to be quoted
-            // into onclick source (wsurl S0c). Same apptUpdate arguments.
-            const actDate = { Cancel: apptDateTime, Reschedule: `${appt.appt_datetime_local}` };
-            row.querySelectorAll("button[data-appt-act]").forEach((b) => {
-              b.addEventListener("click", () => {
-                const act = b.dataset.apptAct;
-                apptUpdate(Number(appt.id), act, actDate[act] ?? null, null, `${s}`);
-              });
-            });
-          });
+          // Rows (and the per-row action-button listeners) come from the
+          // model path — apptsRenderRows, shared with the column picker.
+          // "All 4 action buttons except the one matching the current
+          // status" lives in the model's Update render; backend blocks
+          // same-state transitions (apptUpdate's confirmCorrection()).
+          apptsRenderRows();
 
           // Pagination — the shared footer (js/ycPager.js), same shape and
           // same off-by-one fix as the Cases tab's. This list's total arrives
@@ -5982,10 +6208,18 @@
             onPrint: true,
             onExport: () => exportListCsv('appts', () => csvFilterOf(params)),
           });
-        } else if (!silent) {
-          Toast.fire({ icon: "error", title: "No appointments found!" });
+        } else {
+          // Render the empty cache: clears rows a picker change painted
+          // while this fetch was in flight (review S3b).
+          apptsRenderRows();
+          if (!silent) Toast.fire({ icon: "error", title: "No appointments found!" });
         }
       } catch (err) {
+        // The rows were already cleared above; null the cache too and
+        // re-render, so a picker change can't redraw the stale page and rows
+        // a picker change painted mid-flight don't outlive the failure.
+        appts = null;
+        apptsRenderRows();
         if (silent) console.warn("[appts] background refetch failed:", err);
         else Toast.fire({ icon: "error", title: "Error loading appointments", text: err.message });
       }
@@ -8548,6 +8782,8 @@ async function initAuth() {
       // because their storage keys carry the authed user's id.
       contactsColsInit();
       casesColsInit();
+      apptsColsInit();
+      eventsColsInit();
     }
 
     initAuth();

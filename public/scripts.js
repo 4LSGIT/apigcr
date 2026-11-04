@@ -1388,8 +1388,12 @@ const CASE_CSV_COLUMNS = [
    whitelists); absent = unsortable header. `cls` (optional) is a CSS class
    stamped on the column's <th> AND every <td> — how the Cases Caption
    column keeps the `col-caption` class the caption-mode CSS selects on.
-   Model fields are STATIC CODE LITERALS only — `sort`, `label` and `cls`
-   are interpolated into header/cell markup,
+   `th_extra` (optional) is a raw attribute string appended to the <th>
+   after onclick — how the Appts/Events Date columns keep their
+   data-sort-upcoming + title attributes (their labels carry the static
+   "⇅", a boot no-op for sortMarksSync because those tabs default to the
+   upcoming sort). Model fields are STATIC CODE LITERALS only — `sort`,
+   `label`, `cls` and `th_extra` are interpolated into header/cell markup,
    so no model value may ever come from settings or user data. default_on
    is, for now, only the FALLBACK set (what shows when nothing or garbage
    is stored): the picker stores the HIDDEN keys, so a later-added column
@@ -1404,7 +1408,7 @@ const CASE_CSV_COLUMNS = [
 function ycColsHeadRender(table, cols) {
   if (!table) return;
   const html = cols.map((c) =>
-    `<th${c.cls ? ` class="${c.cls}"` : ''}${c.sort ? ` onclick="sort(this, '${c.sort}')"` : ''}>${escText(c.label)}</th>`).join('');
+    `<th${c.cls ? ` class="${c.cls}"` : ''}${c.sort ? ` onclick="sort(this, '${c.sort}')"` : ''}${c.th_extra || ''}>${escText(c.label)}</th>`).join('');
   if (table.rows.length) table.rows[0].innerHTML = html;
   else table.insertRow().innerHTML = html;
 }

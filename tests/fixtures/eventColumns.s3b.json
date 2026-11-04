@@ -1,0 +1,201 @@
+{
+  "frozen_from": "tabEventsGet @ main pre-S3b",
+  "rows": [
+    {
+      "event_id": 71,
+      "event_type": "Hearing",
+      "event_title": "Confirmation",
+      "event_date": "2026-11-20",
+      "event_all_day": 0,
+      "event_time": "09:30:00",
+      "event_with": null,
+      "event_status": "Scheduled",
+      "event_link_type": "case",
+      "event_link_id": 101,
+      "link_label": "24-10001",
+      "event_location": "Courtroom 1"
+    },
+    {
+      "event_id": 72,
+      "event_type": "Office",
+      "event_title": "Closed",
+      "event_date": "2026-11-27",
+      "event_all_day": 1,
+      "event_time": null,
+      "event_with": 0,
+      "event_status": "Completed",
+      "event_link_type": "contact",
+      "event_link_id": 7,
+      "link_label": "John Smith",
+      "event_location": null
+    },
+    {
+      "event_id": 73,
+      "event_type": "<img src=x onerror=\"window.__pwn=1\">",
+      "event_title": "<img src=x onerror=\"window.__pwn=1\">",
+      "event_date": "2026-12-01",
+      "event_all_day": 0,
+      "event_time": "14:00:00",
+      "event_with": 6,
+      "event_status": "Scheduled",
+      "event_link_type": "case_number",
+      "event_link_id": 55,
+      "link_label": "26-99999",
+      "resolved_case_id": 505,
+      "event_location": "<img src=x onerror=\"window.__pwn=1\">"
+    },
+    {
+      "event_id": 74,
+      "event_type": "Deadline",
+      "event_title": "Objection<b>!</b>",
+      "event_date": "2026-12-05",
+      "event_all_day": 0,
+      "event_time": "17:00:00",
+      "event_with": 9,
+      "event_status": "Canceled",
+      "event_link_type": "case_number",
+      "event_link_id": 56,
+      "link_label": "26-00000<i>?</i>",
+      "resolved_case_id": null,
+      "event_location": ""
+    },
+    {
+      "event_id": 75,
+      "event_type": null,
+      "event_title": null,
+      "event_date": null,
+      "event_all_day": 0,
+      "event_time": null,
+      "event_with": 0,
+      "event_status": null,
+      "event_link_type": null,
+      "event_link_id": null,
+      "link_label": null,
+      "event_location": null
+    }
+  ],
+  "cells": [
+    [
+      "<a href=\"#\" onclick=\"showEvent(71);return false\">71</a>",
+      "Hearing",
+      "Confirmation",
+      "2026-11-20",
+      "09:30",
+      "Everyone",
+      "Scheduled",
+      "Case: <a href=\"#\" class=\"yc-file-link\" data-file-kind=\"case\" data-file-id=\"101\" data-file-label=\"24-10001\">24-10001</a>",
+      "Courtroom 1",
+      "<button onclick=\"newEventDialog({ event: {&quot;event_id&quot;:71,&quot;event_type&quot;:&quot;Hearing&quot;,&quot;event_title&quot;:&quot;Confirmation&quot;,&quot;event_date&quot;:&quot;2026-11-20&quot;,&quot;event_all_day&quot;:0,&quot;event_time&quot;:&quot;09:30:00&quot;,&quot;event_with&quot;:null,&quot;event_status&quot;:&quot;Scheduled&quot;,&quot;event_link_type&quot;:&quot;case&quot;,&quot;event_link_id&quot;:101,&quot;link_label&quot;:&quot;24-10001&quot;,&quot;event_location&quot;:&quot;Courtroom 1&quot;} })\"><i class=\"fa-solid fa-pen\"></i> Edit</button> <button onclick=\"eventComplete(71)\"><i class=\"fa-solid fa-check\"></i> Complete</button> <button onclick=\"eventCancel(71)\"><i class=\"fa-solid fa-ban\"></i> Cancel</button>"
+    ],
+    [
+      "<a href=\"#\" onclick=\"showEvent(72);return false\">72</a>",
+      "Office",
+      "Closed",
+      "2026-11-27",
+      "All day",
+      "",
+      "Completed",
+      "Contact: <a href=\"#\" class=\"yc-file-link\" data-file-kind=\"contact\" data-file-id=\"7\" data-file-label=\"John Smith\">John Smith</a>",
+      "",
+      "<button onclick=\"newEventDialog({ event: {&quot;event_id&quot;:72,&quot;event_type&quot;:&quot;Office&quot;,&quot;event_title&quot;:&quot;Closed&quot;,&quot;event_date&quot;:&quot;2026-11-27&quot;,&quot;event_all_day&quot;:1,&quot;event_time&quot;:null,&quot;event_with&quot;:0,&quot;event_status&quot;:&quot;Completed&quot;,&quot;event_link_type&quot;:&quot;contact&quot;,&quot;event_link_id&quot;:7,&quot;link_label&quot;:&quot;John Smith&quot;,&quot;event_location&quot;:null} })\"><i class=\"fa-solid fa-pen\"></i> Edit</button>"
+    ],
+    [
+      "<a href=\"#\" onclick=\"showEvent(73);return false\">73</a>",
+      "&lt;img src=x onerror=\"window.__pwn=1\"&gt;",
+      "&lt;img src=x onerror=\"window.__pwn=1\"&gt;",
+      "2026-12-01",
+      "14:00",
+      "Fred",
+      "Scheduled",
+      "Case #: <a href=\"#\" class=\"yc-file-link\" data-file-kind=\"case\" data-file-id=\"505\" data-file-label=\"26-99999\">26-99999</a>",
+      "&lt;img src=x onerror=\"window.__pwn=1\"&gt;",
+      "<button onclick=\"newEventDialog({ event: {&quot;event_id&quot;:73,&quot;event_type&quot;:&quot;<img src=x onerror=\\&quot;window.__pwn=1\\&quot;>&quot;,&quot;event_title&quot;:&quot;<img src=x onerror=\\&quot;window.__pwn=1\\&quot;>&quot;,&quot;event_date&quot;:&quot;2026-12-01&quot;,&quot;event_all_day&quot;:0,&quot;event_time&quot;:&quot;14:00:00&quot;,&quot;event_with&quot;:6,&quot;event_status&quot;:&quot;Scheduled&quot;,&quot;event_link_type&quot;:&quot;case_number&quot;,&quot;event_link_id&quot;:55,&quot;link_label&quot;:&quot;26-99999&quot;,&quot;resolved_case_id&quot;:505,&quot;event_location&quot;:&quot;<img src=x onerror=\\&quot;window.__pwn=1\\&quot;>&quot;} })\"><i class=\"fa-solid fa-pen\"></i> Edit</button> <button onclick=\"eventComplete(73)\"><i class=\"fa-solid fa-check\"></i> Complete</button> <button onclick=\"eventCancel(73)\"><i class=\"fa-solid fa-ban\"></i> Cancel</button>"
+    ],
+    [
+      "<a href=\"#\" onclick=\"showEvent(74);return false\">74</a>",
+      "Deadline",
+      "Objection&lt;b&gt;!&lt;/b&gt;",
+      "2026-12-05",
+      "17:00",
+      "#9",
+      "Canceled",
+      "Case #: 26-00000&lt;i&gt;?&lt;/i&gt;",
+      "",
+      "<button onclick=\"newEventDialog({ event: {&quot;event_id&quot;:74,&quot;event_type&quot;:&quot;Deadline&quot;,&quot;event_title&quot;:&quot;Objection<b>!</b>&quot;,&quot;event_date&quot;:&quot;2026-12-05&quot;,&quot;event_all_day&quot;:0,&quot;event_time&quot;:&quot;17:00:00&quot;,&quot;event_with&quot;:9,&quot;event_status&quot;:&quot;Canceled&quot;,&quot;event_link_type&quot;:&quot;case_number&quot;,&quot;event_link_id&quot;:56,&quot;link_label&quot;:&quot;26-00000<i>?</i>&quot;,&quot;resolved_case_id&quot;:null,&quot;event_location&quot;:&quot;&quot;} })\"><i class=\"fa-solid fa-pen\"></i> Edit</button>"
+    ],
+    [
+      "<a href=\"#\" onclick=\"showEvent(75);return false\">75</a>",
+      "",
+      "",
+      "",
+      "",
+      "Nobody",
+      "",
+      "",
+      "",
+      "<button onclick=\"newEventDialog({ event: {&quot;event_id&quot;:75,&quot;event_type&quot;:null,&quot;event_title&quot;:null,&quot;event_date&quot;:null,&quot;event_all_day&quot;:0,&quot;event_time&quot;:null,&quot;event_with&quot;:0,&quot;event_status&quot;:null,&quot;event_link_type&quot;:null,&quot;event_link_id&quot;:null,&quot;link_label&quot;:null,&quot;event_location&quot;:null} })\"><i class=\"fa-solid fa-pen\"></i> Edit</button>"
+    ]
+  ],
+  "tdAttrs": [
+    [
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ]
+  ]
+}

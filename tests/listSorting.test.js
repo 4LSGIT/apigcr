@@ -295,7 +295,15 @@ describe('the tabs send what the routes read', () => {
 
   const APPTS = { tabApptsButton: '', tabApptsLoad: 'div', tabApptsType: '__all__', tabApptsStatus: 'All', tabApptsTime: 'All',
     tabApptsDate1: '', tabApptsDate2: '', tabApptsWith: '', apptsTable: 'table', apptsTableFoot: 'div' };
-  const APPTS_PRE = 'var offsets = {}, appts, apptsLastLoad = 0; function tabApptsTypesLoad() {}';
+  // S3b: both tabs render through their column models.
+  const APPTS_PRE = `var offsets = {}, appts, apptsLastLoad = 0; function tabApptsTypesLoad() {}
+    ${constSrc(INDEX, 'APPTS_COLUMNS')}
+    var apptsColsVis = APPTS_COLUMNS;
+    ${fnSrc(INDEX, 'apptsRenderRows')}`;
+  const EVENTS_PRE = `var offsets = {}, events;
+    ${constSrc(INDEX, 'EVENTS_COLUMNS')}
+    var eventsColsVis = EVENTS_COLUMNS;
+    ${fnSrc(INDEX, 'eventsRenderRows')}`;
   test('appts: upcoming sends no direction; a column sends both', async () => {
     expect(await run('tabApptsGet', APPTS_PRE, { ...APPTS, tabApptsSort: 'upcoming', tabApptsSort2: 'DESC' }, ['apptsStatusValues']))
       .toEqual({ limit: 100, offset: 0, sort_by: 'upcoming' });
@@ -305,7 +313,7 @@ describe('the tabs send what the routes read', () => {
 
   const EVENTS = { tabEventsButton: '', tabEventsLoad: 'div', tabEventsType: '', tabEventsStatus: 'Scheduled', tabEventsTime: 'All',
     tabEventsDate1: '', tabEventsDate2: '', tabEventsQ: '', tabEventsUnlinked: 'check', eventsTable: 'table', eventsTableFoot: 'div' };
-  const EV = (by, dir) => run('tabEventsGet', 'var offsets = {}, events;', { ...EVENTS, tabEventsSort: by, tabEventsSort2: dir },
+  const EV = (by, dir) => run('tabEventsGet', EVENTS_PRE, { ...EVENTS, tabEventsSort: by, tabEventsSort2: dir },
     ['escHtml', 'escAttrJSON']);
   test('events: upcoming, date both ways, a column', async () => {
     expect(await EV('upcoming', 'DESC')).toEqual({ limit: 100, offset: 0, status: 'Scheduled', sort: 'upcoming' });
@@ -333,13 +341,16 @@ describe('the tabs send what the routes read', () => {
       const sel = INDEX.slice(INDEX.indexOf(`<select id="${selId}"`), INDEX.indexOf('</select>', INDEX.indexOf(`<select id="${selId}"`)));
       const values = [...sel.matchAll(/value="([^"]+)"/g)].map((m) => m[1]);
       let keys; let ups = [];
-      const MODEL = { contactsTable: 'CONTACT_COLUMNS', casesTable: 'CASES_COLUMNS' };
+      const MODEL = { contactsTable: 'CONTACT_COLUMNS', casesTable: 'CASES_COLUMNS',
+        apptsTable: 'APPTS_COLUMNS', eventsTable: 'EVENTS_COLUMNS' };
       if (MODEL[thead]) {
-        // S1/S3a: these headers are generated from the column model, so the
-        // static-markup scan below would come back empty. Read the model's
-        // sort keys instead — building the array runs no render.
+        // S1/S3a/S3b: these headers are generated from the column model, so
+        // the static-markup scan below would come back empty. Read the
+        // model's sort keys instead — building the array runs no render.
         const cols = new Function(`${constSrc(INDEX, MODEL[thead])} return ${MODEL[thead]};`)();
         keys = cols.filter((c) => c.sort).map((c) => c.sort);
+        ups = cols.flatMap((c) => [...(c.th_extra || '').matchAll(/data-sort-upcoming="([^"]+)"/g)]
+          .map((m) => m[1]));
       } else {
         const tStart = INDEX.indexOf(`<table id="${thead}"`);
         const head = INDEX.slice(tStart, INDEX.indexOf('</tr>', tStart));

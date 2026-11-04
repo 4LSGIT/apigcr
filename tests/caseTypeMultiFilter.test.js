@@ -54,6 +54,18 @@ function fnSrc(src, name) {
   }
   throw new Error(`function ${name}: unbalanced`);
 }
+function constSrc(src, name) {
+  const m = new RegExp(`const\\s+${name}\\s*=\\s*`).exec(src);
+  if (!m) throw new Error(`const ${name} not found`);
+  const open = m.index + m[0].length;
+  const pairs = { '{': '}', '[': ']' };
+  let depth = 0;
+  for (let j = open; j < src.length; j++) {
+    if (src[j] === src[open]) depth++;
+    else if (src[j] === pairs[src[open]] && --depth === 0) return src.slice(m.index, j + 1) + ';';
+  }
+  throw new Error(`const ${name}: unbalanced`);
+}
 
 // The live-ish registry shape: a type with subtypes, one without.
 const MAP = {
@@ -88,6 +100,9 @@ function page() {
     var apiSend = async (url, method, params) => { window.calls.push({ url, method, params }); return { total: 0, cases: [] }; };
     function getCaseTypeMap() { return ${JSON.stringify(MAP)}; }
     function casesStageValues() { return []; }
+    ${constSrc(INDEX, 'CASES_COLUMNS')}
+    var casesColsVis = CASES_COLUMNS;   // S3b: the empty branch renders too
+    ${fnSrc(INDEX, 'casesRenderRows')}
     ${LIFTED.map((f) => fnSrc(INDEX, f)).join('\n')}
     ${fnSrc(INDEX, 'tabCasesGet')}
   `);

@@ -355,6 +355,41 @@ describe('failure paths stay aligned', () => {
     expect(html).toBe(want);
   });
 
+  test('an EMPTY fetch replaces the cache — a picker toggle cannot resurrect the page (S3b fix)', async () => {
+    const w = page();
+    await w.__go(0);
+    w.__rows = [];
+    await w.__go(0);                                        // the empty result
+    expect(cells(w)).toEqual([]);
+    setBox(w, 'case_stage', false);
+    expect(cells(w)).toEqual([]);                           // no resurrection
+    expectAligned(w);
+  });
+
+  test('a mid-flight picker change does not outlive an EMPTY response either (S3b fix)', async () => {
+    const w = page();
+    await w.__go(0);
+    let resolve;
+    w.__hang = new Promise((res) => { resolve = res; });
+    w.eval('apiSend = () => window.__hang');
+    const pending = w.__go(0);
+    setBox(w, 'case_stage', false);                         // race: redraws the old page
+    expect(cells(w)).toHaveLength(FROZEN.rows.length);
+    resolve({ total: 0, cases: [] });
+    await pending;
+    expect(cells(w)).toEqual([]);                           // the empty branch cleared them
+    expectAligned(w);
+  });
+
+  test('a reset cache ("" after logout) cannot leave rows under rebuilt headers (S3b fix)', async () => {
+    const w = page();
+    await w.__go(0);                                        // rows on screen
+    w.eval('cases = ""');                                   // the logout reset shape
+    setBox(w, 'case_stage', false);
+    expect(cells(w)).toEqual([]);                           // cleared, not skipped
+    expectAligned(w);
+  });
+
   test('a picker change mid-page re-renders the page in memory and leaves the footer', async () => {
     const w = page();
     await w.__go(100);                                      // some offset

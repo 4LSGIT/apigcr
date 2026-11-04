@@ -1,0 +1,263 @@
+{
+  "frozen_from": "tabApptsGet @ main pre-S3b",
+  "rows": [
+    {
+      "id": 501,
+      "format_date": "Nov. 12, 2026",
+      "time": "10:30 AM",
+      "contact_name": "John Smith",
+      "appt_client_id": 7,
+      "case_number": "24-10001",
+      "appt_case_id": 101,
+      "appt_type": "Consultation",
+      "status": "Scheduled",
+      "user_name": "Fred",
+      "appt_datetime_local": "2026-11-12T10:30"
+    },
+    {
+      "id": 502,
+      "format_date": "<img src=x onerror=\"window.__pwn=1\">",
+      "time": "<b>now</b>",
+      "contact_name": "Jane \"JJ\" <script>x</script>",
+      "appt_client_id": 8,
+      "case_number": "<img src=x onerror=\"window.__pwn=1\">",
+      "appt_case_id": 102,
+      "appt_type": "<img src=x onerror=\"window.__pwn=1\">",
+      "status": "Attended",
+      "user_name": "<i>SS</i>",
+      "appt_datetime_local": "2026-11-13T09:00"
+    },
+    {
+      "id": 503,
+      "format_date": null,
+      "time": null,
+      "contact_name": null,
+      "appt_client_id": null,
+      "case_number": null,
+      "appt_case_id": null,
+      "appt_type": null,
+      "status": null,
+      "user_name": null,
+      "appt_datetime_local": null
+    },
+    {
+      "id": 504,
+      "format_date": "Dec. 1, 2026",
+      "time": "9:00 AM",
+      "contact_name": "Amy Doe",
+      "appt_client_id": 12,
+      "case_number": null,
+      "appt_case_id": "ABCD2345",
+      "appt_type": "Review",
+      "status": "Scheduled",
+      "user_name": "Stuart",
+      "appt_datetime_local": "2026-12-01T09:00"
+    },
+    {
+      "id": 505,
+      "format_date": "Dec. 2, 2026",
+      "time": "11:00 AM",
+      "contact_name": "Bob Roe",
+      "appt_client_id": 13,
+      "case_number": "26-55555",
+      "appt_case_id": 110,
+      "appt_type": "Hearing",
+      "status": "No Show",
+      "user_name": "Fred",
+      "appt_datetime_local": "2026-12-02T11:00"
+    },
+    {
+      "id": 506,
+      "format_date": "Dec. 2, 2026",
+      "time": "11:00 AM",
+      "contact_name": "Bob Roe",
+      "appt_client_id": 13,
+      "case_number": "26-55555",
+      "appt_case_id": 110,
+      "appt_type": "Hearing",
+      "status": "Canceled",
+      "user_name": "Fred",
+      "appt_datetime_local": "2026-12-02T11:00"
+    },
+    {
+      "id": 507,
+      "format_date": "Dec. 2, 2026",
+      "time": "11:00 AM",
+      "contact_name": "Bob Roe",
+      "appt_client_id": 13,
+      "case_number": "26-55555",
+      "appt_case_id": 110,
+      "appt_type": "Hearing",
+      "status": "Rescheduled",
+      "user_name": "Fred",
+      "appt_datetime_local": "2026-12-02T11:00"
+    }
+  ],
+  "cells": [
+    [
+      "<a href=\"#\" onclick=\"showAppt(501)\">501</a>",
+      "Nov. 12, 2026",
+      "10:30 AM",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"client\" data-file-id=\"7\" data-file-label=\"John Smith\">John Smith</a>",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"case\" data-file-id=\"101\" data-file-label=\"24-10001\">24-10001</a>",
+      "Consultation",
+      "Scheduled",
+      "Fred",
+      "<button data-appt-act=\"Attended\"><i class=\"fa-solid fa-user-check\"></i> Attended</button> <button data-appt-act=\"No Show\"><i class=\"fa-solid fa-user-xmark\"></i> No Show</button> <button data-appt-act=\"Cancel\"><i class=\"fa-solid fa-calendar-xmark\"></i> Cancel</button> <button data-appt-act=\"Reschedule\"><i class=\"fa-solid fa-user-clock\"></i> Reschedule</button>"
+    ],
+    [
+      "<a href=\"#\" onclick=\"showAppt(502)\">502</a>",
+      "&lt;img src=x onerror=\"window.__pwn=1\"&gt;",
+      "&lt;b&gt;now&lt;/b&gt;",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"client\" data-file-id=\"8\" data-file-label=\"Jane &quot;JJ&quot; <script>x</script>\">Jane \"JJ\" &lt;script&gt;x&lt;/script&gt;</a>",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"case\" data-file-id=\"102\" data-file-label=\"<img src=x onerror=&quot;window.__pwn=1&quot;>\">&lt;img src=x onerror=\"window.__pwn=1\"&gt;</a>",
+      "&lt;img src=x onerror=\"window.__pwn=1\"&gt;",
+      "Attended",
+      "&lt;i&gt;SS&lt;/i&gt;",
+      "<button data-appt-act=\"No Show\"><i class=\"fa-solid fa-user-xmark\"></i> No Show</button> <button data-appt-act=\"Cancel\"><i class=\"fa-solid fa-calendar-xmark\"></i> Cancel</button> <button data-appt-act=\"Reschedule\"><i class=\"fa-solid fa-user-clock\"></i> Reschedule</button>"
+    ],
+    [
+      "<a href=\"#\" onclick=\"showAppt(503)\">503</a>",
+      "",
+      "",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"client\" data-file-id=\"\" data-file-label=\"\"></a>",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"case\" data-file-id=\"\" data-file-label=\"\"></a>",
+      "",
+      "",
+      "",
+      "<button data-appt-act=\"Attended\"><i class=\"fa-solid fa-user-check\"></i> Attended</button> <button data-appt-act=\"No Show\"><i class=\"fa-solid fa-user-xmark\"></i> No Show</button> <button data-appt-act=\"Cancel\"><i class=\"fa-solid fa-calendar-xmark\"></i> Cancel</button> <button data-appt-act=\"Reschedule\"><i class=\"fa-solid fa-user-clock\"></i> Reschedule</button>"
+    ],
+    [
+      "<a href=\"#\" onclick=\"showAppt(504)\">504</a>",
+      "Dec. 1, 2026",
+      "9:00 AM",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"client\" data-file-id=\"12\" data-file-label=\"Amy Doe\">Amy Doe</a>",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"case\" data-file-id=\"ABCD2345\" data-file-label=\"ABCD2345\">ABCD2345</a>",
+      "Review",
+      "Scheduled",
+      "Stuart",
+      "<button data-appt-act=\"Attended\"><i class=\"fa-solid fa-user-check\"></i> Attended</button> <button data-appt-act=\"No Show\"><i class=\"fa-solid fa-user-xmark\"></i> No Show</button> <button data-appt-act=\"Cancel\"><i class=\"fa-solid fa-calendar-xmark\"></i> Cancel</button> <button data-appt-act=\"Reschedule\"><i class=\"fa-solid fa-user-clock\"></i> Reschedule</button>"
+    ],
+    [
+      "<a href=\"#\" onclick=\"showAppt(505)\">505</a>",
+      "Dec. 2, 2026",
+      "11:00 AM",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"client\" data-file-id=\"13\" data-file-label=\"Bob Roe\">Bob Roe</a>",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"case\" data-file-id=\"110\" data-file-label=\"26-55555\">26-55555</a>",
+      "Hearing",
+      "No Show",
+      "Fred",
+      "<button data-appt-act=\"Attended\"><i class=\"fa-solid fa-user-check\"></i> Attended</button> <button data-appt-act=\"Cancel\"><i class=\"fa-solid fa-calendar-xmark\"></i> Cancel</button> <button data-appt-act=\"Reschedule\"><i class=\"fa-solid fa-user-clock\"></i> Reschedule</button>"
+    ],
+    [
+      "<a href=\"#\" onclick=\"showAppt(506)\">506</a>",
+      "Dec. 2, 2026",
+      "11:00 AM",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"client\" data-file-id=\"13\" data-file-label=\"Bob Roe\">Bob Roe</a>",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"case\" data-file-id=\"110\" data-file-label=\"26-55555\">26-55555</a>",
+      "Hearing",
+      "Canceled",
+      "Fred",
+      "<button data-appt-act=\"Attended\"><i class=\"fa-solid fa-user-check\"></i> Attended</button> <button data-appt-act=\"No Show\"><i class=\"fa-solid fa-user-xmark\"></i> No Show</button> <button data-appt-act=\"Reschedule\"><i class=\"fa-solid fa-user-clock\"></i> Reschedule</button>"
+    ],
+    [
+      "<a href=\"#\" onclick=\"showAppt(507)\">507</a>",
+      "Dec. 2, 2026",
+      "11:00 AM",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"client\" data-file-id=\"13\" data-file-label=\"Bob Roe\">Bob Roe</a>",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"case\" data-file-id=\"110\" data-file-label=\"26-55555\">26-55555</a>",
+      "Hearing",
+      "Rescheduled",
+      "Fred",
+      "<button data-appt-act=\"Attended\"><i class=\"fa-solid fa-user-check\"></i> Attended</button> <button data-appt-act=\"No Show\"><i class=\"fa-solid fa-user-xmark\"></i> No Show</button> <button data-appt-act=\"Cancel\"><i class=\"fa-solid fa-calendar-xmark\"></i> Cancel</button>"
+    ]
+  ],
+  "tdAttrs": [
+    [
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ]
+  ],
+  "btnCounts": [
+    4,
+    3,
+    4,
+    4,
+    3,
+    3,
+    3
+  ]
+}
