@@ -383,6 +383,33 @@ describe('trigger_data carries type_key (U5)', () => {
     expect(triggerData.appt_with).toBe(1);
   });
 
+  test('no_show trigger_data.appt_time is the true UTC instant, not the fake-UTC row value', async () => {
+    // appt_date is naive firm-local ('2026-09-01 10:00' Detroit = EDT, UTC-4).
+    // The shipped bug passed the row value straight through, so the payload
+    // said 10:00Z — the wall clock mislabeled UTC. createAppt's pre_appt path
+    // ships appt_date_utc.toISOString(); markNoShow must match it.
+    const db = makeDb([existingAppt({ appt_id: 803 })]);
+    await apptService.markNoShow(db, { appt_id: 803, enroll: true });
+    await flush();
+    expect(enrollment('no_show')[3].appt_time).toBe('2026-09-01T14:00:00.000Z');
+  });
+
+  test('appt_time handles the mysql2 fake-UTC Date shape and nulls an unparseable value', async () => {
+    // mysql2 on a TZ=Z pool returns the naive column as a Date whose UTC
+    // fields hold the firm-local wall clock — same instant answer required.
+    const db = makeDb([existingAppt({ appt_id: 804, appt_date: new Date('2026-01-15T09:30:00Z') })]);
+    await apptService.markNoShow(db, { appt_id: 804, enroll: true });
+    await flush();
+    // January = EST (UTC-5).
+    expect(enrollment('no_show')[3].appt_time).toBe('2026-01-15T14:30:00.000Z');
+
+    const db2 = makeDb([existingAppt({ appt_id: 805, appt_date: 'not a date' })]);
+    await apptService.markNoShow(db2, { appt_id: 805, enroll: true });
+    await flush();
+    const calls = seqEngine.enrollContact.mock.calls.filter((c) => c[2] === 'no_show');
+    expect(calls[calls.length - 1][3].appt_time).toBeNull();
+  });
+
   test('a no_show on a pre-U2 row (NULL key) enrolls with null, not undefined', async () => {
     // undefined and null are the same to the cascade (both \"not provided\"),
     // but null is what the column holds and what the payload should say.

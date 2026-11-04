@@ -129,6 +129,19 @@ function computeApptEndLocal(apptDateLocal, lengthMinutes) {
 }
 
 /**
+ * The true UTC instant of a naive firm-local appt_date — a string or a mysql2
+ * fake-UTC Date — as the ISO string trigger_data.appt_time carries everywhere
+ * (createAppt ships appt_date_utc.toISOString()). The raw row value must never
+ * be used as an instant: it is the firm-local wall clock mislabeled UTC,
+ * 4–5 h off depending on DST. Returns null when the input can't be parsed.
+ */
+function apptDateToUtcIso(apptDateLocal) {
+  const naive = apptDateToNaiveLocal(apptDateLocal);
+  if (naive === null) return null;
+  return DateTime.fromISO(naive, { zone: FIRM_TZ }).toJSDate().toISOString();
+}
+
+/**
  * Build the calendar event summary/description/location for an appointment.
  * Kept in one place so the event text is easy to tune. Title format:
  *   "<appt_type> — <contact_name>"   (falls back gracefully if either is blank)
@@ -1946,7 +1959,7 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
           const seq = getSequenceEngine();
           await seq.enrollContact(db, appt.appt_client_id, 'no_show', {
             appt_id:     appt_id,
-            appt_time:   appt.appt_date,
+            appt_time:   apptDateToUtcIso(appt.appt_date),
             case_id:     appt.appt_case_id,
             appt_type:   appt.appt_type,
             // U5 — the no_show cascade key. The SELECT above already returns
