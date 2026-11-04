@@ -210,12 +210,36 @@ describe('A18.4b — every stage teaches sequence enroll, with an optional revie
     expect(answerPrompt).toContain('Evidence is REQUIRED and must carry BOTH ids');
     expect(answerPrompt).toContain('OPTIONAL REVIEWED TRIGGER DATA (A18.4c)');
     expect(answerPrompt).toContain('it makes the enrollment APPOINTMENT-scoped');
-    expect(answerPrompt).toContain('signing_request_id, user, user_id, task_id, contact_id\n    and contact are refused inside trigger_data');
+    // A18.4d moved this pin: signing_request_id left the refused list (the A18.4d block below).
+    expect(answerPrompt).toContain('user, user_id, task_id, contact_id and contact are refused\n    inside trigger_data');
     expect(repairPrompt).toContain('optional trigger_data (keys ONLY from the refusal\'s allowed list;');
     expect(repairPrompt).toContain('no top-level appt_id, signing_request_id or case_id');
     for (const p of [planPrompt, answerPrompt, repairPrompt]) {
       expect(p).not.toContain('CONTACT-SCOPED ONLY, NO TRIGGER DATA');
       expect(p).not.toContain('no trigger_data, payload, input, appt_id,');
+    }
+  });
+});
+
+// A18.4d: e-sign-scoped enrollments. Every stage that taught "e-sign reminder
+// enrollments are not available" / "signing_request_id is refused" would
+// refuse the widened kind (the job lesson); each now teaches the esign.requests
+// read and the evidence-bound signing_request_id.
+describe('A18.4d — every stage teaches the e-sign scope and its typed read', () => {
+  test('plan and investigate name esign.requests; the plan bullet drops the e-sign exclusion', () => {
+    expect(planPrompt).toContain('esign.requests ({"contact_id":N} or\n  {"case_id":"7KQ2M9XA"} — exactly one;');
+    expect(planPrompt).toContain('e-sign-scoped (reminders for one signature request, cancelled when the document completes)');
+    expect(planPrompt).not.toContain('E-sign reminder enrollments and bulk enrollment are not');
+    expect(investigatePrompt).toContain('esign.requests ({"contact_id"} or {"case_id"}');
+    expect(investigatePrompt).toContain('and e-sign-scoped sequence enrollments, which need an esign.requests read');
+  });
+  test('the answer and repair stages bind signing_request_id to an esign.requests row, never beside appt_id', () => {
+    expect(answerPrompt).toContain('E-SIGN SCOPE (A18.4d');
+    expect(answerPrompt).toContain('esign.requests row with that exact signing_request_id (no other read counts)');
+    expect(answerPrompt).toContain('Never send it with appt_id.');
+    expect(repairPrompt).toContain('signing_request_id a number in a cited esign.requests row,\n  never with appt_id');
+    for (const p of [answerPrompt, repairPrompt]) {
+      expect(p).not.toContain('signing_request_id, user, user_id, task_id, contact_id');
     }
   });
 });

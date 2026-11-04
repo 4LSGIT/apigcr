@@ -533,7 +533,7 @@ body. Governing migrations in `ref/migrations/`.*
   `tests/caseyWorkflowStart.mysql.test.js`; plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A17.7.
 - **Casey enroll card (A18.4b, 10-28; reviewed trigger_data A18.4c,
-  11-04):** kind `sequence.enroll.v1` over the
+  11-04; e-sign scope A18.4d, 11-04):** kind `sequence.enroll.v1` over the
   A18.4a-hardened `POST /sequences/enroll` (`Idempotency-Key` = draft_id,
   scope `sequences.enroll`). No `trigger_data` (or `{}`) = the shipped card
   and body `{contact_id, template_id, trigger_data: {}}`, byte-identical.
@@ -547,9 +547,7 @@ body. Governing migrations in `ref/migrations/`.*
   template's `test_input` and `captured_input` keys; it cannot see what a
   started workflow, a webhook receiver or an internal function does with a
   value); scalar values, A17.7b's caps reused; refused inside it by name:
-  `signing_request_id` (no read cites one; the e-sign birth path also writes
-  `signing_requests.seq_instance_id`, the route does not), `user` /
-  `user_id` (no user-id evidence row shape), `task_id`, `contact_id` /
+  `user` / `user_id` (no user-id evidence row shape), `task_id`, `contact_id` /
   `contact`, prototype names. Ids are evidence-bound and contact-consistent:
   `case_id` cited + linked to the contact (`case_relate`); `appt_id` cited +
   the appointment's `appt_client_id` IS the contact (both named on a
@@ -557,13 +555,32 @@ body. Governing migrations in `ref/migrations/`.*
   `appt_time` must be that appointment's instant (firm-local naive
   `appt_date` → UTC), `appt_with` its provider, `case_id` its case. The
   preview and walk run WITH the payload; the duplicate predicate and the
-  click-time re-check use the scoped identity (`appt_id <=> ?`). An armed
+  click-time re-check use the scoped identity (`appt_id <=> ? AND
+  signing_request_id <=> ?`). A18.4d: `signing_request_id` (a number, never
+  beside a truthy `appt_id`) cited ONLY from a typed `esign.requests` row
+  (`assistantService.esignRequestsRead`: a contact's or a case's requests,
+  allow-listed columns — never recipients / provider_id / raw_payload /
+  placement_json / PDF paths / completion_targets — each row's `contact_id`
+  the REMINDER contact via `esignPrefillService.buildContext`, finished
+  requests returned marked) makes the enrollment E-SIGN-scoped; mirrored from
+  `esignSendService._tryEnrollReminders`: reminder contact IS the contact,
+  status in `OUTSTANDING_STATUSES` (a terminal one never transitions again; a
+  draft is unsent), the `seq_instance_id` pointer names no ACTIVE enrollment
+  (a finished one is replaced), `document_name` / `tracking_id` / case-linked
+  `case_id` the request's own. `POST /sequences/enroll` itself (any caller,
+  `esignPointerBase` / `writeEsignPointer`) refuses a missing / not-awaiting /
+  claimed request 409 before any row, then writes the pointer with ONE
+  conditional UPDATE (pointer still the base read, status still outstanding);
+  a miss or throw CANCELS the enrollment → 500
+  `SIGNING_REQUEST_WRITEBACK_FAILED` (`cancelled`), a failed cancel alerts IT.
+  So `applyStatus` cancels a chat-born e-sign chain on completion. The
+  card's click-time check re-reads `GET /api/esign/:id`. An armed
   `capture_mode` (sequences have no intercept) puts `capture` on both cards.
   Evidence must carry the template id
   (`automation.definition`) AND the contact id. Refused: inactive /
   never-published / empty / unreviewed-type template, missing contact, an
   active enrollment of the same scope (the engine's `appt_id <=> ? AND
-  signing_request_id <=> NULL` predicate), and a first-placement walk that
+  signing_request_id <=> ?` predicate), and a first-placement walk that
   hits a timing error (the enroll would fail `SCHEDULING_FAILED`). The preview
   is `sequenceEngine.previewEnrollmentSteps(db, {…, version: 'published'})` —
   an additive, fail-closed option (the editor's default previews the DRAFT
@@ -580,10 +597,13 @@ body. Governing migrations in `ref/migrations/`.*
   (Fred, 2026-10-28: ONE polarity for all of them — a flag that must START
   dark gets an explicit '0' row seeded at land time, never an inverted code
   default; it first shipped dark-unless-'1' and was normalized same day).
-  No yc-sync matcher (the enroll route has none).
+  No yc-sync matcher (the enroll route has none; nothing watches
+  `signing_requests`).
   Tests: `tests/caseySequenceEnroll.test.js`, gated
-  `tests/caseySequenceEnroll.mysql.test.js`; plan:
-  ref/ASK_CASEY_ACTIONS_PLAN.md A18.4.
+  `tests/caseySequenceEnroll.mysql.test.js`; A18.4d
+  `tests/caseySequenceEnrollEsign.test.js`, gated
+  `tests/caseySequenceEnrollEsign.mysql.test.js`; plan:
+  ref/ASK_CASEY_ACTIONS_PLAN.md A18.4 (A18.4d).
 - **Casey relation/role cards + `contact.relations` read (A6, 10-28):** the
   relation/role tables are NOT in the report manifest (so not in `sql.read` or
   the yc_report grants); the typed read `contact.relations {contact_id}`

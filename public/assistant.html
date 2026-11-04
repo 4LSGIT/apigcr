@@ -3308,11 +3308,17 @@ function sequencePublishResult(draft, result) {
 // server-computed preview from the engine itself; an enrollment is immediate
 // fan-out, so it is danger-styled. Click-time freshness re-reads the template
 // (deactivated, or a different published version, refuses) and the contact's
-// active enrollments of the SAME scope (contact-scoped, or this appointment —
-// the engine's duplicate identity) before the ledger claim. The
+// active enrollments of the SAME scope (contact-scoped, this appointment, or
+// — A18.4d — this signing request: the engine's duplicate identity) before
+// the ledger claim; an e-sign-scoped card also re-reads the signing request
+// (GET /api/esign/:id): still awaiting signature, and its reminder pointer
+// still the one reviewed. The route ties an e-sign-scoped enrollment to its
+// request (or cancels it). The
 // route's coded outcomes are read by knownOutcome: a coded 409 / 503 is a
 // refusal written before any row; SCHEDULING_FAILED is a known FAILURE whose
-// row the engine cancelled; anything else after the claim stays unknown.
+// row the engine cancelled, SIGNING_REQUEST_WRITEBACK_FAILED one whose row the
+// route cancelled (only when it says cancelled); anything else after the claim
+// stays unknown.
 const SEQUENCE_ENROLL_ACTION_KINDS = new Set(['sequence.enroll.v1']);
 
 function sequenceEnrollLabel() { return 'Enroll contact in sequence'; }
@@ -3348,6 +3354,7 @@ function sequenceEnrollReadText(r) {
     case 'binds_appts': return `${at} (binds {{appts.*}} to the appointment)`;
     case 'binds_cases': return `${at} (binds {{cases.*}} to the case)`;
     case 'binds_users': return `${at} (binds {{users.*}} to the provider)`;
+    case 'esign_scope': return 'the engine (it makes the enrollment e-sign-scoped: its duplicate identity, and the signing request\'s reminder enrollment)';
     default: return at;
   }
 }
@@ -3380,6 +3387,13 @@ function sequenceEnrollTriggerLines(draft) {
       : `The appointment is already ${a.status}, so no later status change of it cancels this enrollment automatically.`}`);
     if (a.provider) lines.push(`Provider: {{users.*}} reads ${a.provider.name} (user #${a.provider.user_id}) — appointment #${a.appt_id}'s provider (appt_with).`);
     lines.push(`Already enrolled: no — this contact has no active enrollment in this template for appointment #${a.appt_id} (re-checked when you apply).`);
+  } else if (trig.scope === 'esign' && trig.esign) {
+    // A18.4d: the signing request, server-read; the reminder contact checked.
+    const s = trig.esign;
+    lines.push(`Scope: E-SIGN-scoped — tied to signing request #${s.signing_request_id}${s.document_name ? ` "${s.document_name}"` : ''}${s.kind ? ` (${s.kind})` : ''}, status ${s.status}${s.sent_text ? `, sent ${s.sent_text}` : ''}${s.case_id ? `, case ${s.case_id}` : ''}; its reminder contact is ${c.contact_name} (checked — the contact the send itself enrolls). It neither blocks nor is blocked by a contact-scoped or appointment-scoped enrollment of this contact in this template. Once enrolled it is recorded as the request's reminder enrollment, so it is cancelled automatically when the document is signed, declined, expires, is recalled, or is marked satisfied outside e-sign.`);
+    if (s.status === 'bounced') lines.push('Bounced: the request\'s email bounced — an esign_remind step skips a bounced request until it is re-sent; text and email steps still run as they come due.');
+    if (s.prior_enrollment) lines.push(`Earlier reminders: the request's reminder enrollment #${s.prior_enrollment.enrollment_id} is ${s.prior_enrollment.status} — this enrollment replaces it as the request's reminder enrollment.`);
+    lines.push(`Already enrolled: no — this contact has no active enrollment in this template for signing request #${s.signing_request_id}, and the request has no active reminder enrollment (both re-checked when you apply).`);
   } else {
     lines.push('Scope: contact-scoped — no appointment rides with it.');
     lines.push('Already enrolled: no — this contact has no active contact-scoped enrollment in this template (re-checked when you apply).');
@@ -3433,6 +3447,9 @@ function sequenceEnrollText(draft) {
   lines.push(`Running enrollments of this template: ${draft.active_enrollments}.`);
   lines.push('Effect: enrolls NOW. An enrollment is immediate fan-out — every step above runs as it comes due. The enrollment can be cancelled from the sequence\'s enrollments, but steps already run stay run.');
   lines.push('Stale check: if the template is deactivated or its published version changes, or the contact becomes enrolled, before you apply, nothing is enrolled.');
+  if (draft.trigger && draft.trigger.scope === 'esign') {
+    lines.push('Signing request check: if the request finishes or its reminder enrollment changes before you apply, nothing is enrolled; if the new enrollment cannot then be recorded as the request\'s reminder enrollment, it is cancelled at once and the card says so.');
+  }
   return lines.join('\n');
 }
 
@@ -3456,15 +3473,24 @@ function sequenceEnrollTriggerBody(draft) {
   const data = payload && payload.trigger_data;
   if (typeof payload !== 'object' || Array.isArray(payload) || !data || typeof data !== 'object' || Array.isArray(data)
     || Object.keys(payload).some((k) => k !== 'trigger_data')) throw new Error('This enrollment carries unusable trigger data.');
-  const refused = ['signing_request_id', 'user', 'user_id', 'task_id', 'contact_id', 'contact', '__proto__', 'constructor', 'prototype'];
+  const refused = ['user', 'user_id', 'task_id', 'contact_id', 'contact', '__proto__', 'constructor', 'prototype'];
   for (const key of Object.keys(data)) {
     const v = data[key];
     if (refused.includes(key) || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(key)
       || !(v === null || typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)))
-      || (key === 'appt_id' && v !== null && !(Number.isSafeInteger(v) && v > 0))) {
+      || (key === 'appt_id' && v !== null && !(Number.isSafeInteger(v) && v > 0))
+      || (key === 'signing_request_id' && !(Number.isSafeInteger(v) && v > 0))) {
       throw new Error('This enrollment carries unusable trigger data.');
     }
     out[key] = v;
+  }
+  // A18.4d: a signing request rides only on the e-sign-scoped card that names
+  // it, never beside an appointment.
+  if (out.signing_request_id) {
+    const trig = draft.trigger || {};
+    if (out.appt_id || trig.scope !== 'esign' || !trig.esign || Number(trig.esign.signing_request_id) !== out.signing_request_id) {
+      throw new Error('This enrollment carries unusable trigger data.');
+    }
   }
   return out;
 }
@@ -3482,6 +3508,10 @@ async function sequenceEnrollPrecheck(draft) {
   const contactId = Number(draft.contact && draft.contact.contact_id);
   const reviewed = Number(draft.expected && draft.expected.current_version);
   const apptId = sequenceEnrollApptScope(draft);
+  // A18.4d: the e-sign scope (the engine's rule: a truthy signing_request_id).
+  const scoped = draft.payload && draft.payload.trigger_data;
+  const srRaw = scoped && scoped.signing_request_id ? Number(scoped.signing_request_id) : null;
+  const srId = Number.isSafeInteger(srRaw) && srRaw > 0 ? srRaw : null;
   const read = await api(`/sequences/templates/${tplId}`, null, 'GET');
   const tpl = read && read.template;
   if (!tpl) return 'The sequence template no longer exists. Nothing was enrolled.';
@@ -3494,8 +3524,25 @@ async function sequenceEnrollPrecheck(draft) {
   const total = Number(list && list.pagination && list.pagination.total);
   if (!rows || !Number.isFinite(total) || total > rows.length) throw new Error('the contact\'s active enrollments could not be read in full');
   const dup = rows.find((e) => Number(e.contact_id) === contactId && Number(e.template_id) === tplId
-    && (apptId == null ? e.appt_id == null : Number(e.appt_id) === apptId) && e.signing_request_id == null && e.status === 'active');
-  if (dup) return `${draft.contact.contact_name} is already enrolled in this sequence${apptId == null ? '' : ` for appointment #${apptId}`} (active enrollment #${Number(dup.id)}). Nothing was enrolled.`;
+    && (apptId == null ? e.appt_id == null : Number(e.appt_id) === apptId)
+    && (srId == null ? e.signing_request_id == null : Number(e.signing_request_id) === srId) && e.status === 'active');
+  if (dup) return `${draft.contact.contact_name} is already enrolled in this sequence${apptId != null ? ` for appointment #${apptId}` : srId != null ? ` for signing request #${srId}` : ''} (active enrollment #${Number(dup.id)}). Nothing was enrolled.`;
+  if (srId != null) {
+    // Still awaiting signature (esignService.OUTSTANDING_STATUSES), and its
+    // reminder pointer still the one the card reviewed (none, or a finished one).
+    const sr = await api(`/api/esign/${srId}`, null, 'GET');
+    const req = sr && sr.request;
+    if (!req) return `Signing request #${srId} no longer exists. Nothing was enrolled.`;
+    if (!['sent', 'viewed', 'partially_signed', 'bounced'].includes(req.status)) {
+      return `Signing request #${srId} is now ${req.status} — no longer awaiting signature, so reminders tied to it would never be cancelled by its completion. Nothing was enrolled.`;
+    }
+    const es = (draft.trigger && draft.trigger.esign) || {};
+    const base = es.pointer_base == null ? null : Number(es.pointer_base);
+    const now = req.seq_instance_id == null ? null : Number(req.seq_instance_id);
+    if (now !== base) {
+      return `Signing request #${srId}'s reminder enrollment changed since this card was prepared (${base == null ? 'none' : `#${base}`} → ${now == null ? 'none' : `#${now}`}). Nothing was enrolled. Ask Casey to prepare it again.`;
+    }
+  }
   return '';
 }
 
@@ -3533,6 +3580,14 @@ function sequenceEnrollKnownOutcome(e) {
   }
   if (e.status === 500 && body.code === 'SCHEDULING_FAILED') {
     return { status: 'Failed — nothing will send', text: `Failed — enrollment${named} was created, but its first step could not be scheduled, so no step is scheduled and nothing will send (${e.message || 'scheduling failed'}). Fix the sequence's timing in the sequence editor before enrolling again.` };
+  }
+  // A18.4d — the e-sign-scoped enroll (routes/sequences.js esignPointerBase /
+  // writeEsignPointer): refused before any row, or a row the route cancelled.
+  if (e.status === 409 && ['SIGNING_REQUEST_NOT_FOUND', 'SIGNING_REQUEST_NOT_LIVE', 'SIGNING_REQUEST_CLAIMED'].includes(body.code)) {
+    return { status: refused, text: `Refused — nothing enrolled (${e.message || body.code}): the signing request changed since this card was reviewed. Ask Casey to prepare the enrollment again.` };
+  }
+  if (e.status === 500 && body.code === 'SIGNING_REQUEST_WRITEBACK_FAILED' && body.cancelled === true) {
+    return { status: 'Failed — enrollment cancelled', text: `Failed — enrollment${named} was created, but it could not be recorded as the signing request's reminder enrollment, so it was cancelled and no further step runs (${e.message || 'reminder pointer not written'}). Ask Casey to prepare the enrollment again.` };
   }
   return null;
 }

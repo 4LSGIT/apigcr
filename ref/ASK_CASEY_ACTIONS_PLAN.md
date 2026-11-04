@@ -14,8 +14,8 @@ update and link), A11.1 (a case's Dropbox folder — candidates-only relink),
 A12 (form drafts and submission links), A13 (mail triage —
 read state and case link; no drafts exist, no SMS triage), A14 (direct email /
 SMS send), A16 (reports), A17.0–A17.4, A17.6, A17.7 + A17.7b (workflows — explain,
-preview, draft, step, publish, start with an optional reviewed input), A18.2, A18.3, A18.4a/b/c (sequences — step,
-publish, enroll with an optional reviewed trigger_data), A19.0/A19.1 (inbound hooks), A20.0–A20.3 (email and phone
+preview, draft, step, publish, start with an optional reviewed input), A18.2, A18.3, A18.4a/b/c/d (sequences — step,
+publish, enroll with an optional reviewed trigger_data, appointment- or e-sign-scoped), A19.0/A19.1 (inbound hooks), A20.0–A20.3 (email and phone
 ingest rules), R1 (read-loop continuation) and P13. A15 (e-signature) is not
 built. Each slice's section below carries its shipped contract. No general
 action executor is introduced.
@@ -2908,7 +2908,7 @@ card:
   `error` / `message` pair and adds `code`.
 
 **A18.4b: the Casey enroll card. SHIPPED 2026-10-28; reviewed trigger_data
-(A18.4c) 2026-11-04** — kind
+(A18.4c) 2026-11-04; e-sign scope (A18.4d, below) 2026-11-04** — kind
 `sequence.enroll.v1`, through the hardened `POST /sequences/enroll` (the card's
 `draft_id` is the `Idempotency-Key`, scope `sequences.enroll`). Direct mode by
 `template_id`; `triggerData`, `payload`, `input`, `template_type` and the
@@ -2920,8 +2920,8 @@ contact id (a row with `contact_id`, the A14 / contact-subrecord convention).
 The normalizer refuses an inactive, never-published, empty or
 unreviewed-action-type template, a missing contact, and an active
 enrollment of that contact in that template IN THE SAME SCOPE (the engine's own
-duplicate predicate, `appt_id <=> ? AND signing_request_id <=> NULL` — the
-payload's `appt_id`, or NULL for a contact-scoped enrollment — named by id).
+duplicate predicate, `appt_id <=> ? AND signing_request_id <=> ?` — the
+payload's `appt_id` and `signing_request_id`, each NULL when absent — named by id).
 
 - **No trigger data** — `trigger_data` absent or `{}` — is the shipped
   enroll, unchanged: the same card envelope (no `payload` / `trigger` keys,
@@ -2954,12 +2954,7 @@ payload's `appt_id`, or NULL for a contact-scoped enrollment — named by id).
     (`WORKFLOW_START_MAX_KEYS` 20, `WORKFLOW_START_MAX_STRING` 500, the
     one-line control/bidi refusal): every value is shown verbatim and whole.
   - **Refused by name inside trigger_data**, each with the engine's reason:
-    `signing_request_id` (no Casey read cites a signing request — the
-    evidence vocabulary has no such row shape — and `esignSendService` also
-    writes `signing_requests.seq_instance_id`, the pointer that cancels the
-    reminders when the document completes, which the enroll route never
-    writes; e-sign reminders stay born from the send, filed in
-    `ref/plans.md`); `user` / `user_id` (they bind `{{users.*}}`, and no
+    `user` / `user_id` (they bind `{{users.*}}`, and no
     evidence row shape cites a user by id); `task_id` (binds `{{tasks.*}}`, a
     binding this card does not review); `contact_id` / `contact` (the
     enrollment's contact is the card's; a step reading the trigger-data value —
@@ -3004,8 +2999,10 @@ payload's `appt_id`, or NULL for a contact-scoped enrollment — named by id).
     the contact's relation); the review warning says "with exactly the
     trigger data listed above". The browser builder sends `payload` as
     reviewed — re-checked (only `trigger_data`, placeholder-readable keys,
-    none of the refused names, scalar values, a positive `appt_id`), never
-    rebuilt; a malformed payload sends nothing.
+    none of the refused names, scalar values, a positive `appt_id`, and a
+    `signing_request_id` only on the e-sign-scoped card naming that very
+    request, never beside an `appt_id`), never rebuilt; a malformed payload
+    sends nothing.
 - **Capture disclosure — both cards.** An armed template
   (`sequence_templates.capture_mode` `'capturing'`; sequences have no
   intercept mode) stores THIS enrollment's trigger data as its
@@ -3041,14 +3038,19 @@ Click-time precheck: `GET /sequences/templates/:id` (gone / deactivated /
 trigger data is frozen on the card, so the walk verdict depends on nothing
 else and an unchanged version is an unchanged preview) and `GET
 /sequences/enrollments?contact_id=…&status=active&limit=100` (an active row of
-this template in the card's scope — contact-scoped, or this appointment's —
-refuses; a list it cannot read in full fails the re-check, nothing claimed).
+this template in the card's scope — contact-scoped, this appointment's, or this
+signing request's — refuses; a list it cannot read in full fails the re-check,
+nothing claimed); an e-sign-scoped card also re-reads `GET /api/esign/:id`
+(A18.4d, below).
 **Outcomes** in A14's vocabulary via a family `knownOutcome` hook on the card
 engine, keyed on exact status + `code` pairs (an idempotency body or anything
 uncoded falls through): `ALREADY_ENROLLED` 409 → refused, naming the existing
 enrollment; `NEVER_PUBLISHED` / `EMPTY_SEQUENCE` 409 → refused, stale card;
 `ENROLL_BUSY` 503 → refused, try again in a moment; `SCHEDULING_FAILED` 500 →
-"Failed — nothing will send", naming the enrollment; a plain 4xx (400 / 404) →
+"Failed — nothing will send", naming the enrollment; the A18.4d codes
+`SIGNING_REQUEST_NOT_FOUND` / `_NOT_LIVE` / `_CLAIMED` 409 → refused, stale card,
+and `SIGNING_REQUEST_WRITEBACK_FAILED` 500 with `cancelled: true` → "Failed —
+enrollment cancelled", naming it (with `cancelled: false` it stays unknown); a plain 4xx (400 / 404) →
 refused; any other 409 / 5xx / dead socket → unknown, write control removed.
 201 → success with the enrollment id and when its first step runs (or that
 none could be scheduled), `replayed` disclosed. Ledger receipt
@@ -3065,7 +3067,118 @@ matcher and no enrollment view is bus-watched; the card adds no write route.
 Tests: `tests/caseySequenceEnroll.test.js`, gated
 `tests/caseySequenceEnroll.mysql.test.js`, the UI card in
 `tests/assistantUi.test.js`, the deep-link grammar in
-`tests/assistantSidebar.test.js`.
+`tests/assistantSidebar.test.js`; A18.4d in `tests/caseySequenceEnrollEsign.test.js`
+and gated `tests/caseySequenceEnrollEsign.mysql.test.js`.
+
+**A18.4d: e-sign-scoped enrollments and the reminder pointer. SHIPPED
+2026-11-04** (Fred, 2026-11-04: "allow everything"; "ok" to this slice). No
+new kind, flag or write route. A18.4c refused `trigger_data.signing_request_id`
+for two measured reasons — no Casey read carried a signing request id (so
+evidence could not cite one), and `POST /sequences/enroll` never wrote
+`signing_requests.seq_instance_id`, the pointer `esignService.applyStatus`
+cancels the reminder enrollment through when a request goes terminal, so a
+chat-born e-sign enrollment would have kept reminding after signing. This
+slice closes both.
+
+- **The typed read `esign.requests`** (`{"contact_id":N}` or
+  `{"case_id":"…"}`, exactly one; `assistantService.esignRequestsRead`, app
+  pool — the report manifest's `signing_requests` has neither the pointer nor
+  the reminder contact). A contact's read lists its contact-linked requests
+  and the requests of every case it is related to; a case's read, that case's.
+  Newest first, capped at 20 (a summary head row says when more exist). Per
+  row: `signing_request_id` (named so evidence matches the trigger key),
+  `status`, `awaiting_signature` (`OUTSTANDING_STATUSES`: sent / viewed /
+  partially_signed / bounced), `terminal` (signed / declined / expired /
+  recalled / satisfied_external), `document_name`, `kind`, `template_id` +
+  `template_name`, `tracking_id`, `linkable_type`, `case_id`, `contact_id` +
+  `contact_name` — the request's REMINDER contact, resolved by
+  `esignPrefillService.buildContext` (the send's own call: a case's Primary,
+  MIN(contact_id) tiebreak, or a contact-linked request's own contact; a
+  Secondary reads its case's Primary) — the four timestamps, `seq_instance_id`
+  + `reminder_status` + `reminder_template_id`, and `enrollable`. Finished
+  requests are RETURNED, marked (Casey answering "did X sign?" wants them); the
+  normalizer refuses enrolling on one. The SELECT is an allow-list and the row
+  mapping is explicit: `recipients` (signer emails / IPs), `provider_id`,
+  `raw_payload` (the provider's payloads — where a signing link could live),
+  `placement_json`, the signed / certificate PDF paths and
+  `completion_targets` are never read, and no signing link is stored anywhere.
+  `tracking_id` is exposed: it is printed on the debtor's own document and no
+  route looks a request up by it, and the send puts it in trigger_data. Posture:
+  any staff JWT, as `GET /api/esign` (A11.1's — no capability beyond the
+  assistant's own).
+- **`signing_request_id` inside trigger_data** is evidence-bound like
+  `appt_id`, but ONLY to a cited `esign.requests` row (`row_type`
+  `signing_request`; a `sql.read` row aliasing an id does not count — it does
+  not carry the send's contact resolution); a positive number. It is the e-sign
+  SCOPE key: accepted whether or not a step reads it (the engine reads it — the
+  duplicate identity and the scope column — and the route ties the request to
+  it), and kept out of the listed allowed set so A18.4c's refusal text is
+  unchanged.
+- **Consistency, mirroring `esignSendService._tryEnrollReminders`.**
+  Mirrored: the request's reminder contact IS the enrollment's contact (both
+  named on a mismatch; a request with no Primary refused — the send would not
+  enroll anyone); the request has been sent and is still awaiting signature (a
+  TERMINAL one never transitions again, so `applyStatus` — which cancels on the
+  transition INTO a terminal status — would never end the chain; a `draft` has
+  nothing at the provider and the send enrolls its own reminders when it goes
+  out — and a draft that later sends would overwrite the pointer, orphaning a
+  chat-born chain); its pointer names no ACTIVE enrollment (named — one live
+  reminder chain per request); `document_name`, `tracking_id` and a
+  case-linked request's `case_id`, when sent, are the request's own (the send
+  builds them from the row; the refusal names the value). Not mirrored, on
+  purpose: WHICH sequence the send would pick (the document template's
+  `reminder_seq_id` or the firm default — the user names the template) and the
+  template's `reminders_off` (an explicit request is the user's call); the card
+  names the template either way. **Both scopes at once** (`appt_id` AND
+  `signing_request_id`) is refused by name: measured on the engine, it files
+  the row under both scope columns (its identity and lock carry both), but no
+  birth path ever makes one, so neither cancel was designed to share a chain.
+- **A pointer to a finished enrollment** (cancelled, completed, or a missing
+  row) does not block: it is disclosed ("Earlier reminders: … is cancelled —
+  this enrollment replaces it") and becomes the base the write-back replaces —
+  as `resendPipeline` re-arms over a finished enrollment.
+- **The write-back lives in the ROUTE** (`routes/sequences.js`
+  `esignPointerBase` / `writeEsignPointer`), so every caller of `POST
+  /sequences/enroll` is safe, not only the card — a browser-side write after the
+  enroll could be cut off by a closed tab, leaving exactly the orphan this
+  prevents. It does not touch `esignSendService`, which calls the engine
+  directly and writes its own pointer. For a body whose trigger_data carries a
+  truthy `signing_request_id` (the engine's own scope rule), in both modes:
+  BEFORE any row — the request exists, is awaiting signature and is unclaimed,
+  else 409 `SIGNING_REQUEST_NOT_FOUND` / `_NOT_LIVE` / `_CLAIMED` (claim given
+  back; 400 `SIGNING_REQUEST_INVALID` for a non-id); AFTER the engine enrolls —
+  ONE conditional `UPDATE signing_requests SET seq_instance_id = <new> WHERE id
+  = ? AND seq_instance_id <=> <base read before> AND status IN
+  (OUTSTANDING_STATUSES)`. A concurrent claim or a terminal transition in
+  between matches nothing (`applyStatus` writes its status before it reads the
+  pointer: it either sees ours and cancels it, or ours matches nothing). A miss
+  or a throw CANCELS the enrollment (`cancelEnrollment`: the row and its pending
+  jobs, `cancel_reason` `esign pointer not written: …`) and answers 500
+  `SIGNING_REQUEST_WRITEBACK_FAILED` with `enrollment_id` and `cancelled`
+  (claim kept — a row existed); a cancel that also fails records an
+  `esign_pointer_orphan` error alert (the one shape `applyStatus` cannot
+  reach). Caveat, disclosed: an immediate first step's dispatch may already be
+  on its way when the cancel lands; cancelling stops every step not yet run.
+  A body without a signing request issues no new query.
+- **The card**: scope `esign` with `trigger.esign` (request id, document name,
+  kind, status, sent time, case, `pointer_base`, `prior_enrollment`); the scope
+  line names the request, its status and the reminder contact and says the
+  enrollment is cancelled when the document is signed, declined, expires, is
+  recalled or is satisfied outside e-sign — true because the route records it
+  as the request's reminder enrollment (the twin proves `applyStatus` cancelling
+  it); a bounced request's line (esign_remind skips a bounced request until
+  re-sent); a "Signing request check" line. The duplicate distinction covers
+  all three scopes — contact-, appointment- and e-sign-scoped enrollments never
+  block each other. Click-time: the scoped enrollment re-read plus `GET
+  /api/esign/:id` — still awaiting signature, `seq_instance_id` still the
+  reviewed base. The no-payload and appointment-scoped paths are unchanged
+  (no `esign` key, no `signing_requests` read; pinned).
+- **Sync bus:** nothing in `public/js/yc-sync.js` watches `signing_requests` or
+  enrollments, so the pointer write needs no matcher (no open view shows it).
+- **Not this slice:** `user` / `user_id` / `task_id` stay refused
+  (`ref/plans.md`). The `enroll_sequence` internal function and hook / trigger
+  enroll targets call the engine directly, so a signing_request_id handed to
+  them still gets no pointer (filed in `ref/plans.md`).
 
 Also note for any later enrollment work: step firing has no "already sent this
 step" check, and `recoverStuckJobs` resets a job sitting in `running` for over

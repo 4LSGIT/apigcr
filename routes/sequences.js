@@ -1807,6 +1807,9 @@ router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
     // nothing. No key = unchanged behaviour and no extra query.
     const { value: enrolled, replayed } = await idempotentRequest(req, 'sequences.enroll', async () => {
       try {
+        // A18.4d: an e-sign-scoped enroll (see esignPointerBase below) is
+        // checked before any row exists and tied to its signing request after.
+        const esignScope = esignScopeOf(trigger_data);
         if (hasId) {
           const idInt = parseInt(template_id, 10);
           if (!Number.isInteger(idInt) || idInt <= 0) {
@@ -1819,12 +1822,16 @@ router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
             [idInt]
           );
           if (!tpl) throw enrollRefusal(404, { error: 'Template not found' });
+          const pointerBase = esignScope === null ? null : await esignPointerBase(db, esignScope);
           const result = await enrollContactByTemplateId(db, contact_id, idInt, trigger_data);
+          if (esignScope !== null) await writeEsignPointer(db, esignScope, pointerBase, result);
           return { success: true, ...result };
         }
 
         // By-type (cascade) mode — cascade keys come from trigger_data.
+        const pointerBase = esignScope === null ? null : await esignPointerBase(db, esignScope);
         const result = await enrollContact(db, contact_id, template_type, trigger_data);
+        if (esignScope !== null) await writeEsignPointer(db, esignScope, pointerBase, result);
         return { success: true, ...result };
       } catch (err) {
         throw enrollFailure(err);
@@ -1871,6 +1878,110 @@ function enrollFailure(err) {
 // refusal, or ENROLL_BUSY (the lock was never granted, so the INSERT never ran).
 function releaseEnrollClaim(err) {
   return releaseOnRefusalOnly(err) || !!(err && err.code === 'ENROLL_BUSY');
+}
+
+// ── E-sign-scoped enrollments: the reminder pointer (A18.4d) ──
+//
+// An enrollment whose trigger_data carries a truthy signing_request_id is
+// E-SIGN-scoped (the engine's own rule, _enrollWithTemplate: it fills
+// sequence_enrollments.signing_request_id and joins the duplicate identity).
+// What ends such a chain is NOT that column: esignService.applyStatus cancels
+// the enrollment that signing_requests.seq_instance_id POINTS AT when the
+// request goes terminal (signed / declined / expired / recalled /
+// satisfied_external), and esign_remind's lazy cancel uses the same pointer.
+// esignSendService writes the pointer for the enrollments it makes; this route
+// never did, so an e-sign-scoped enroll through it kept reminding after the
+// document completed. Here, for every caller of this route (Ask Casey's card
+// among them), the enroll ends with the pointer written or with no live
+// enrollment — never a chain applyStatus cannot cancel:
+//   1. BEFORE any row (a refusal, 409, gives the idempotency claim back): the
+//      request exists, is still awaiting signature (OUTSTANDING_STATUSES —
+//      sent / viewed / partially_signed / bounced; a draft has nothing at the
+//      provider and the send enrolls its own reminders when it goes out), and
+//      its pointer does not name an ACTIVE enrollment (one live reminder chain
+//      per request). A pointer to a cancelled / completed / missing enrollment
+//      is the base this enroll replaces — as resendPipeline re-arms over a
+//      finished one.
+//   2. AFTER the engine enrolls: ONE conditional UPDATE — the pointer is still
+//      the base read in 1 AND the request is still awaiting signature. A
+//      concurrent claim or a terminal transition in between matches no row
+//      (applyStatus writes its status before it reads the pointer, so either
+//      it sees ours and cancels it, or ours matches nothing).
+//   3. The UPDATE threw or matched nothing → this enrollment is CANCELLED
+//      (its pending jobs with it) and the caller gets 500
+//      SIGNING_REQUEST_WRITEBACK_FAILED naming it; the claim is kept (a row
+//      existed). A cancel that also fails pages IT — the one shape left that
+//      applyStatus cannot reach.
+// esignSendService calls the engine directly and never passes through here.
+// A dispatch of an immediate first step may already be on its way when step 3
+// cancels; cancelling stops every step not yet run.
+function esignScopeOf(triggerData) {
+  if (!triggerData || typeof triggerData !== 'object' || Array.isArray(triggerData)) return null;
+  return triggerData.signing_request_id ? Number(triggerData.signing_request_id) : null;
+}
+
+async function esignPointerBase(db, signingRequestId) {
+  const esignService = require('../services/esignService'); // lazy (convention)
+  if (!Number.isSafeInteger(signingRequestId) || signingRequestId < 1) {
+    throw enrollRefusal(400, { error: 'trigger_data.signing_request_id must be a positive signing request id', code: 'SIGNING_REQUEST_INVALID' });
+  }
+  const [[sr]] = await db.query(
+    `SELECT sr.id, sr.status, sr.seq_instance_id, e.status AS pointer_status
+       FROM signing_requests sr
+       LEFT JOIN sequence_enrollments e ON e.id = sr.seq_instance_id
+      WHERE sr.id = ? LIMIT 1`,
+    [signingRequestId]
+  );
+  const refuse = (code, message, extra = {}) =>
+    enrollRefusal(409, { error: 'Failed to enroll contact', message, code, signing_request_id: signingRequestId, ...extra });
+  if (!sr) throw refuse('SIGNING_REQUEST_NOT_FOUND', `Signing request ${signingRequestId} not found — nothing was enrolled`);
+  if (!esignService.OUTSTANDING_STATUSES.includes(sr.status)) {
+    throw refuse('SIGNING_REQUEST_NOT_LIVE',
+      `Signing request ${signingRequestId} is ${sr.status}, not awaiting signature — its reminders would never be cancelled by its completion; nothing was enrolled`,
+      { status: sr.status });
+  }
+  if (sr.seq_instance_id != null && sr.pointer_status === 'active') {
+    throw refuse('SIGNING_REQUEST_CLAIMED',
+      `Signing request ${signingRequestId} already has an active reminder enrollment (#${Number(sr.seq_instance_id)}) — one live reminder chain per request; nothing was enrolled`,
+      { enrollment_id: Number(sr.seq_instance_id) });
+  }
+  return sr.seq_instance_id == null ? null : Number(sr.seq_instance_id);
+}
+
+async function writeEsignPointer(db, signingRequestId, base, result) {
+  const { OUTSTANDING_STATUSES } = require('../services/esignService'); // lazy (convention)
+  const enrollmentId = Number(result && result.enrollmentId);
+  let cause = null;
+  try {
+    const [res] = await db.query(
+      `UPDATE signing_requests SET seq_instance_id = ?
+        WHERE id = ? AND seq_instance_id <=> ? AND status IN (${OUTSTANDING_STATUSES.map(() => '?').join(', ')})`,
+      [enrollmentId, signingRequestId, base, ...OUTSTANDING_STATUSES]
+    );
+    if (res && res.affectedRows === 1) return;
+    cause = 'the request finished or another enrollment claimed it before the pointer was written';
+  } catch (err) {
+    cause = `the pointer write failed (${err && err.message})`;
+  }
+  let cancelled = false;
+  try {
+    await require('../lib/sequenceEngine').cancelEnrollment(db, enrollmentId,
+      Array.from(`esign pointer not written: ${cause}`).slice(0, 200).join(''));
+    cancelled = true;
+  } catch (cancelErr) {
+    console.error(`[sequence] enrollment ${enrollmentId}: the signing request ${signingRequestId} pointer was not written AND the cancel failed:`, cancelErr.message);
+    await require('../lib/alerting').alert(db, {
+      source: 'sequence', kind: 'esign_pointer_orphan', group_key: `seq_esign_pointer:${signingRequestId}`, severity: 'error',
+      title: `Sequence enrollment ${enrollmentId} is e-sign-scoped to signing request ${signingRequestId} but not its reminder pointer`,
+      message: `${cause}; cancelling the enrollment also failed (${cancelErr.message}). Its completion will not cancel it — cancel enrollment #${enrollmentId} by hand.`,
+      context: { enrollment_id: enrollmentId, signing_request_id: signingRequestId },
+      ref_table: 'sequence_enrollments', ref_id: enrollmentId,
+    });
+  }
+  const message = `Enrollment #${enrollmentId} could not be tied to signing request ${signingRequestId} — ${cause}; ` +
+    (cancelled ? 'the enrollment was cancelled, so no further step runs' : 'cancelling it ALSO failed and IT was alerted; cancel it by hand');
+  const body = { error: 'Failed to enroll contact', message, code: 'SIGNING_REQUEST_WRITEBACK_FAILED', enrollment_id: enrollmentId, signing_request_id: signingRequestId, cancelled };
+  throw Object.assign(new Error(message), { status: 500, code: body.code, enrollResponse: { status: 500, body } });
 }
 
 // POST /sequences/preview — Slice 8A

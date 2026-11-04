@@ -527,8 +527,9 @@ describe('A18.4c — the closed key set', () => {
 
 describe('A18.4c — values, names, and what stays refused', () => {
   test('refused names inside trigger_data are refused BY NAME, with the reason, before anything is read', async () => {
+    // A18.4d un-refused signing_request_id (evidence-bound, e-sign-scoped):
+    // tests/caseySequenceEnrollEsign.test.js pins it.
     const reasons = {
-      signing_request_id: /an e-sign-scoped enrollment needs a cited signing request, and no Casey read carries a signing_request_id yet .*signing_requests\.seq_instance_id/,
       user: /it binds \{\{users\.\*\}\} to a staff member, and no Casey read cites a user by id/,
       user_id: /it binds \{\{users\.\*\}\} to a staff member/,
       task_id: /it binds \{\{tasks\.\*\}\}/,

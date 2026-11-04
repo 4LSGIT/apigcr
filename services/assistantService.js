@@ -271,7 +271,8 @@ const WORKFLOW_PUBLISH_EFFECT_FNS = new Set(['enroll_sequence', 'start_workflow'
 // dark gets an explicit '0' row seeded at land time instead).
 // Direct mode by template_id; trigger_data {} unless the draft carries a
 // reviewed trigger_data (A18.4c): a closed key set, scalar values, ids bound
-// by evidence — an appt_id makes the enrollment appointment-scoped.
+// by evidence — an appt_id makes the enrollment appointment-scoped, a
+// signing_request_id (A18.4d, cited from an esign.requests read) e-sign-scoped.
 const SEQUENCE_ACTION_KINDS = new Set(['sequence.step_insert.v1', 'sequence.publish.v1', 'sequence.enroll.v1']);
 const SEQUENCE_PUBLISH_KEYS = new Set(['kind', 'sequence_template_id', 'evidence']);
 const SEQUENCE_ENROLL_KEYS = new Set(['kind', 'sequence_template_id', 'contact_id', 'trigger_data', 'evidence']);
@@ -289,7 +290,6 @@ const SEQUENCE_ENROLL_MAX_PREVIEW_STEPS = 40;
 // gives (lib/sequenceEngine buildRefsForStep / _enrollWithTemplate):
 const SEQUENCE_TRIGGER_KEY_OK = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 const SEQUENCE_TRIGGER_REFUSED = new Map([
-  ['signing_request_id', 'an e-sign-scoped enrollment needs a cited signing request, and no Casey read carries a signing_request_id yet — and esignSendService also writes the enrollment back to signing_requests.seq_instance_id, the pointer that cancels the reminders when the document completes, which POST /sequences/enroll never writes; e-sign reminders are enrolled by the send itself'],
   ['user', 'it binds {{users.*}} to a staff member, and no Casey read cites a user by id — an appointment\'s provider binds through appt_id + appt_with instead'],
   ['user_id', 'it binds {{users.*}} to a staff member, and no Casey read cites a user by id — an appointment\'s provider binds through appt_id + appt_with instead'],
   ['task_id', 'it binds {{tasks.*}} to a task, a binding this card does not review'],
@@ -6941,10 +6941,10 @@ function sequenceEnrollPreviewStep(entry, stored) {
 //     2026-10-28). A later step's timing error is disclosed: the enrollment
 //     stalls there, active with nothing further sent;
 //   * the already-enrolled state, with the engine's own duplicate predicate
-//     (same contact + template + appt_id, signing_request_id NULL, status
+//     (same contact + template + appt_id + signing_request_id, status
 //     active) — an existing enrollment of the SAME scope refuses the card by
-//     id; a contact-scoped and an appointment-scoped enrollment never block
-//     each other;
+//     id; contact-scoped, appointment-scoped and e-sign-scoped enrollments
+//     never block each other;
 //   * what the version sends, calls and starts, what normally enrolls it, and
 //     how many enrollments are already running.
 // Fixed rules, none model-chosen: direct mode by template_id (never the type
@@ -6972,11 +6972,24 @@ function sequenceEnrollPreviewStep(entry, stored) {
 //     appointment's client IS this contact; appt_time, when sent, is that
 //     appointment's own instant; appt_with is its provider; case_id cited,
 //     linked to the contact, and the appointment's own case when it has one;
-//   * signing_request_id, user / user_id, task_id, contact_id / contact
-//     refused by name (SEQUENCE_TRIGGER_REFUSED says why);
+//   * user / user_id, task_id, contact_id / contact refused by name
+//     (SEQUENCE_TRIGGER_REFUSED says why);
 //   * the preview and the walk run WITH the payload, so a template dating
 //     step 1 from the payload becomes enrollable; the card's `payload` is the
 //     exact trigger_data the browser sends.
+//
+// A18.4d — an E-SIGN-scoped enrollment (Fred, 2026-11-04: "allow
+// everything"): trigger_data.signing_request_id, cited from an esign.requests
+// row, makes the enrollment e-sign-scoped (the engine's own rule). The checks
+// mirror what esignSendService._tryEnrollReminders guarantees at birth — the
+// request's debtor 1 (esignPrefillService.buildContext, the very function the
+// send calls) IS the contact; the request is still awaiting signature (a
+// TERMINAL one never transitions again, so applyStatus would never cancel the
+// chain; a draft has not been sent); its seq_instance_id pointer names no
+// ACTIVE enrollment; document_name / tracking_id / case_id, when sent, are the
+// request's own — and refuse appt_id beside it (no birth path makes both
+// scopes at once). POST /sequences/enroll writes the pointer back (or cancels
+// the enrollment): see routes/sequences.js esignPointerBase / writeEsignPointer.
 async function normalizeSequenceEnrollAction(db, value, evidence) {
   if (require('../lib/firmConfig').cfg('casey_sequence_enroll_enabled') === '0') {
     throw httpError(422, 'Action kind is unavailable');
@@ -6984,7 +6997,7 @@ async function normalizeSequenceEnrollAction(db, value, evidence) {
   const isObj = value && typeof value === 'object';
   const payloadKeys = isObj ? Object.keys(value).filter((k) => SEQUENCE_ENROLL_PAYLOAD_KEYS.includes(k)) : [];
   if (payloadKeys.length) {
-    throw httpError(422, `Sequence enroll takes its enrollment data as trigger_data only (${payloadKeys.join(', ')}) — one spelling, and appt_id / case_id ride INSIDE trigger_data as evidence-bound ids`);
+    throw httpError(422, `Sequence enroll takes its enrollment data as trigger_data only (${payloadKeys.join(', ')}) — one spelling, and appt_id / case_id ride INSIDE trigger_data as evidence-bound ids, as does signing_request_id`);
   }
   if (isObj && Object.prototype.hasOwnProperty.call(value, 'template_type')) {
     throw httpError(422, 'Sequence enroll never picks a template by type (template_type) — Casey enrolls in the exact sequence_template_id the user named');
@@ -7008,8 +7021,10 @@ async function normalizeSequenceEnrollAction(db, value, evidence) {
   const triggerData = sequenceEnrollTriggerData(value);
   if (triggerData) sequenceEnrollTriggerEvidence(triggerData, refs, evidence);
   // The engine's own scope rule (_enrollWithTemplate): a truthy appt_id makes
-  // the enrollment appointment-scoped; signing_request_id is refused above.
+  // the enrollment appointment-scoped, a truthy signing_request_id (A18.4d)
+  // e-sign-scoped; both at once is refused above.
   const apptScope = triggerData && triggerData.appt_id ? Number(triggerData.appt_id) : null;
+  const signingScope = triggerData && triggerData.signing_request_id ? Number(triggerData.signing_request_id) : null;
 
   const [[tpl]] = await db.query(
     'SELECT id, name, type, active, current_version, draft_version FROM sequence_templates WHERE id = ?', [templateId]);
@@ -7046,7 +7061,7 @@ async function normalizeSequenceEnrollAction(db, value, evidence) {
   const captureMode = cap && cap.capture_mode === 'capturing' ? 'capturing' : null;
 
   // The engine's duplicate guard (lib/sequenceEngine _enrollWithTemplate),
-  // exactly: this scope's appt id (or NULL), signing request id NULL.
+  // exactly: this scope's appt id and signing request id (each, or NULL).
   const [existing] = await db.query(
     `SELECT id FROM sequence_enrollments
       WHERE contact_id = ?
@@ -7055,9 +7070,9 @@ async function normalizeSequenceEnrollAction(db, value, evidence) {
         AND (signing_request_id <=> ?)
         AND status = 'active'
       LIMIT 1`,
-    [contactId, templateId, apptScope, null]);
+    [contactId, templateId, apptScope, signingScope]);
   if (existing.length) {
-    throw httpError(422, `${contactName} (contact ${contactId}) is already enrolled in "${String(tpl.name || `Template ${templateId}`).slice(0, 200)}"${apptScope ? ` for appointment #${apptScope}` : ''} — active enrollment #${existing[0].id}; nothing is proposed (an enroll would be refused ALREADY_ENROLLED)`);
+    throw httpError(422, `${contactName} (contact ${contactId}) is already enrolled in "${String(tpl.name || `Template ${templateId}`).slice(0, 200)}"${apptScope ? ` for appointment #${apptScope}` : signingScope ? ` for signing request #${signingScope}` : ''} — active enrollment #${existing[0].id}; nothing is proposed (an enroll would be refused ALREADY_ENROLLED)`);
   }
 
   const preview = await require('../lib/sequenceEngine').previewEnrollmentSteps(db, {
@@ -7184,6 +7199,21 @@ function sequenceEnrollTriggerData(value) {
   if (has(out, 'appt_with') && !apptBound) {
     throw httpError(422, 'Sequence enroll trigger_data.appt_with binds {{users.*}} to a staff member, and only an appointment (appt_id) proves which one — send it with the appointment, as its provider');
   }
+  // A18.4d: the e-sign scope id — a positive number (the engine Numbers it
+  // into the enrollment's scope column; esign_remind requires an integer).
+  if (has(out, 'signing_request_id')) {
+    if (!(Number.isSafeInteger(out.signing_request_id) && out.signing_request_id > 0)) {
+      throw httpError(422, 'Sequence enroll trigger_data.signing_request_id must be a positive signing request id (a number), cited from an esign.requests read');
+    }
+    // Both scopes at once: the engine would file the row under both ids (its
+    // duplicate identity and lock carry both), but no birth path ever makes
+    // one — apptService never sets a signing request, esignSendService never
+    // an appointment — so neither the appointment's cancel nor the document's
+    // was designed to share a chain. Refused by name.
+    if (apptBound) {
+      throw httpError(422, 'Sequence enroll trigger_data carries both appt_id and signing_request_id — an enrollment is appointment-scoped OR e-sign-scoped, never both (no automation makes one); send one of them');
+    }
+  }
   return out;
 }
 
@@ -7202,6 +7232,20 @@ function sequenceEnrollTriggerEvidence(data, refs, evidence) {
       return row && row.case_id != null && String(row.case_id) === data.case_id;
     });
     if (!cited) throw httpError(422, `Sequence enroll trigger_data.case_id "${data.case_id}" is not in the evidence — cite a row carrying that exact case_id (read the case first)`);
+  }
+  // A18.4d: a signing request is cited ONLY from the typed esign.requests read
+  // — the read that resolves the request's reminder contact the way the send
+  // does; a sql.read row aliasing an id is not that.
+  if (data.signing_request_id) {
+    const cited = refs.some((ref) => {
+      const query = evidence.find((item) => item && item.id === ref.query_id);
+      if (!query || query.kind !== 'esign.requests') return false;
+      const row = Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+      return row && row.row_type === 'signing_request' && Number(row.signing_request_id) === data.signing_request_id;
+    });
+    if (!cited) {
+      throw httpError(422, `Sequence enroll trigger_data.signing_request_id ${data.signing_request_id} is not in the evidence — cite the esign.requests row carrying that exact signing_request_id (read the contact's or case's signing requests with esign.requests first)`);
+    }
   }
 }
 
@@ -7298,7 +7342,12 @@ async function sequenceEnrollTrigger(db, templateId, version, steps, data, conta
     'SELECT template_condition FROM sequence_template_versions WHERE template_id = ? AND version = ?', [templateId, version]);
   const { allowed, reads } = sequenceEnrollAllowedKeys(steps, condRow ? condRow.template_condition : null,
     meta ? meta.test_input : null, meta ? meta.captured_input : null);
-  const unknown = Object.keys(data).filter((k) => !allowed.has(k));
+  // A18.4d: signing_request_id is the e-sign SCOPE key — the engine itself
+  // reads it (duplicate identity, scope column) and the route ties the request
+  // to the enrollment through it — so it is accepted whether or not a step
+  // names it, and stays out of the listed set (which lists what the version
+  // reads).
+  const unknown = Object.keys(data).filter((k) => !allowed.has(k) && k !== 'signing_request_id');
   if (unknown.length) {
     const list = [...allowed].sort();
     throw httpError(422, `Sequence enroll trigger_data key${unknown.length > 1 ? 's' : ''} ${unknown.map((k) => `"${String(k).slice(0, 64)}"`).join(', ')} ` +
@@ -7370,12 +7419,190 @@ async function sequenceEnrollTrigger(db, templateId, version, steps, data, conta
     };
   }
 
+  const esign = data.signing_request_id
+    ? await sequenceEnrollEsignBinding(db, data, contactId, contactName)
+    : null;
+
   return {
-    reads: Object.keys(data).map((key) => ({ key, read_by: (reads.get(key) || []).slice(0, 10) })),
-    scope: appointment ? 'appointment' : 'contact',
+    reads: Object.keys(data).map((key) => ({ key, read_by: [
+      ...(reads.get(key) || []).slice(0, key === 'signing_request_id' ? 9 : 10),
+      ...(key === 'signing_request_id' ? [{ step_number: null, via: 'esign_scope' }] : []),
+    ] })),
+    scope: appointment ? 'appointment' : esign ? 'esign' : 'contact',
     appointment,
     case: caseBinding,
+    ...(esign ? { esign } : {}),
   };
+}
+
+// A18.4d: bind an e-sign-scoped enrollment to its signing request, mirroring
+// what esignSendService._tryEnrollReminders guarantees when the send enrolls
+// reminders: the contact is the request's debtor 1 as esignPrefillService.
+// buildContext resolves it (called here, the same function — a case's Primary
+// relate with the MIN(contact_id) tiebreak, or a contact-linked request's own
+// contact); the request has gone out and is still awaiting signature
+// (esignService.OUTSTANDING_STATUSES — the send enrolls only after a
+// successful send; a TERMINAL request never transitions again, so applyStatus,
+// which cancels on the transition INTO a terminal status, would never end the
+// chain); its seq_instance_id pointer names no ACTIVE enrollment (one live
+// reminder chain per request — a pointer to a cancelled, completed or missing
+// enrollment is replaced, as resendPipeline re-arms over a finished one); and
+// the values the send itself puts in trigger_data, when sent, are the
+// request's own (document_name, tracking_id, and a case-linked request's
+// case_id). Deliberately NOT mirrored: WHICH sequence the send would pick (the
+// document template's reminder_seq_id or the firm default — staff name the
+// template here) and the template's reminders_off switch (an explicit request
+// is the user's own call); the card names the template either way.
+async function sequenceEnrollEsignBinding(db, data, contactId, contactName) {
+  const esignService = require('./esignService'); // lazy (convention)
+  const srId = data.signing_request_id;
+  const [[sr]] = await db.query(
+    `SELECT sr.id, sr.status, sr.kind, sr.document_name, sr.tracking_id, sr.linkable_type, sr.linkable_id,
+            sr.seq_instance_id, sr.sent_at, e.status AS pointer_status
+       FROM signing_requests sr
+       LEFT JOIN sequence_enrollments e ON e.id = sr.seq_instance_id
+      WHERE sr.id = ? LIMIT 1`, [srId]);
+  if (!sr) throw httpError(422, `Signing request ${srId} is unavailable — the enrollment cannot be tied to it`);
+  const status = String(sr.status || '');
+  const label = `Signing request #${srId}${sr.document_name ? ` ("${String(sr.document_name).slice(0, 120)}")` : ''}`;
+  if (esignService.TERMINAL.has(status)) {
+    throw httpError(422, `${label} is ${status} — finished. Its reminders would remind on a finished document, and nothing would ever cancel them (a request's reminders are cancelled on its transition INTO a finished status, which has already happened); nothing is proposed`);
+  }
+  if (!esignService.OUTSTANDING_STATUSES.includes(status)) {
+    throw httpError(422, `${label} is ${status || 'of no status'}, not awaiting signature — ${status === 'draft' ? 'it has not been sent; the send enrolls its own reminders when it goes out' : 'only a sent request is reminded'}; nothing is proposed`);
+  }
+  const ctx = await require('./esignPrefillService').buildContext(db, { linkableType: sr.linkable_type, linkableId: sr.linkable_id });
+  const debtor1 = ctx && ctx.debtor1 ? Number(ctx.debtor1.contact_id) : null;
+  if (!debtor1) {
+    throw httpError(422, `${label} has no reminder contact — its ${sr.linkable_type} ${String(sr.linkable_id).slice(0, 64)} has no Primary client (debtor 1), so the send would not enroll anyone either; nothing is proposed`);
+  }
+  if (debtor1 !== contactId) {
+    const owner = `${String(ctx.debtor1.contact_name || '').trim().slice(0, 200) || `Contact ${debtor1}`} (contact ${debtor1})`;
+    throw httpError(422, `${label}'s reminder contact is ${owner} — ${sr.linkable_type === 'case' ? `debtor 1 of case ${String(sr.linkable_id).slice(0, 64)}` : 'the contact it was sent for'}, the contact the send enrolls — not ${contactName} (contact ${contactId}); enroll that contact, or cite this contact's own signing request`);
+  }
+  if (sr.seq_instance_id != null && sr.pointer_status === 'active') {
+    throw httpError(422, `${label} already has an active reminder enrollment, #${Number(sr.seq_instance_id)} — one live reminder chain per request (its completion cancels the enrollment the request points at); nothing is proposed`);
+  }
+  if (has(data, 'document_name') && (data.document_name ?? null) !== (sr.document_name ?? null)) {
+    throw httpError(422, `Sequence enroll trigger_data.document_name ${JSON.stringify(data.document_name)} is not signing request #${srId}'s document name — send ${JSON.stringify(sr.document_name ?? null)} (what the send puts there), or leave it out`);
+  }
+  if (has(data, 'tracking_id') && data.tracking_id !== sr.tracking_id) {
+    throw httpError(422, `Sequence enroll trigger_data.tracking_id ${JSON.stringify(data.tracking_id)} is not signing request #${srId}'s tracking id — send ${JSON.stringify(sr.tracking_id)} (what the send puts there), or leave it out`);
+  }
+  const srCase = sr.linkable_type === 'case' ? String(sr.linkable_id) : null;
+  if (data.case_id && srCase && data.case_id !== srCase) {
+    throw httpError(422, `Sequence enroll trigger_data.case_id "${data.case_id}" is not signing request #${srId}'s case ("${srCase}") — send the request's own case, or leave case_id out`);
+  }
+  const sent = sr.sent_at instanceof Date ? sr.sent_at : (sr.sent_at ? new Date(`${String(sr.sent_at).replace(' ', 'T')}Z`) : null);
+  return {
+    signing_request_id: srId,
+    document_name: sr.document_name == null ? null : String(sr.document_name).slice(0, 200),
+    kind: sr.kind == null ? null : String(sr.kind).slice(0, 64),
+    status,
+    sent_text: sent && !Number.isNaN(sent.getTime()) ? seqFirmTime(sent) : null,
+    case_id: srCase,
+    // The pointer this enrollment replaces (null when the request has none);
+    // the click-time re-check requires it unchanged.
+    pointer_base: sr.seq_instance_id == null ? null : Number(sr.seq_instance_id),
+    prior_enrollment: sr.seq_instance_id == null ? null
+      : { enrollment_id: Number(sr.seq_instance_id), status: sr.pointer_status == null ? 'missing' : String(sr.pointer_status) },
+  };
+}
+
+// A18.4d — the esign.requests read: ONE contact's or ONE case's signing
+// requests, newest first, capped. Typed and on the app pool: the report
+// manifest's signing_requests entry has neither the reminder pointer nor the
+// request's reminder contact, and the contact is resolved the way the send
+// resolves it (esignPrefillService.buildContext — debtor 1), so a row's
+// contact_id is the contact an e-sign-scoped enrollment must be for. Every
+// staff member reads it, as every staff JWT reads GET /api/esign (the A11.1
+// posture: no capability gate beyond the assistant's own). Rows answer
+// "did X sign?" too, so finished requests are RETURNED, marked
+// (awaiting_signature 0, terminal 1, enrollable 0) — the enroll normalizer
+// refuses them.
+//
+// NEVER exposed (the column list below is an allow-list, and
+// tests/caseySequenceEnrollEsign pins it): recipients (signer emails and IPs),
+// provider_id (the provider's own handle on the envelope), raw_payload (the
+// provider's payloads), placement_json, signed_pdf_path / cert_pdf_path
+// (Dropbox paths to the documents), completion_targets, and any signing link
+// — the system stores none, and none of these columns is read.
+const ESIGN_REQUESTS_READ_MAX = 20;
+const ESIGN_REQUESTS_READ_COLUMNS = `sr.id AS signing_request_id, sr.status, sr.kind, sr.document_name, sr.tracking_id,
+            sr.template_id, ct.name AS template_name, sr.linkable_type, sr.linkable_id, sr.seq_instance_id,
+            e.status AS reminder_status, e.template_id AS reminder_template_id,
+            sr.sent_at, sr.created_at, sr.expires_at, sr.completed_at`;
+async function esignRequestsRead(db, { contact_id: contactId, case_id: caseId } = {}) {
+  const esignService = require('./esignService'); // lazy (convention)
+  const byCase = caseId != null;
+  // linkable_id is bound as a STRING (esignService's header: a number drops
+  // idx_sr_linkable to its one-column prefix).
+  const where = byCase
+    ? "sr.linkable_type = 'case' AND sr.linkable_id = ?"
+    : `(sr.linkable_type = 'contact' AND sr.linkable_id = ?)
+        OR (sr.linkable_type = 'case' AND sr.linkable_id IN
+            (SELECT cr.case_relate_case_id FROM case_relate cr WHERE cr.case_relate_client_id = ?))`;
+  const params = byCase ? [String(caseId)] : [String(contactId), contactId];
+  const [found] = await db.query(
+    `SELECT ${ESIGN_REQUESTS_READ_COLUMNS}
+       FROM signing_requests sr
+       LEFT JOIN contract_templates ct ON ct.id = sr.template_id
+       LEFT JOIN sequence_enrollments e ON e.id = sr.seq_instance_id
+      WHERE ${where}
+      ORDER BY sr.id DESC
+      LIMIT ${ESIGN_REQUESTS_READ_MAX + 1}`, params);
+  const list = Array.isArray(found) ? found.slice(0, ESIGN_REQUESTS_READ_MAX) : [];
+  const truncated = Array.isArray(found) && found.length > ESIGN_REQUESTS_READ_MAX;
+  // The reminder contact, per distinct linkable: the send's own resolution.
+  const contacts = new Map();
+  for (const r of list) {
+    const key = `${r.linkable_type}:${r.linkable_id}`;
+    if (contacts.has(key)) continue;
+    const ctx = await require('./esignPrefillService').buildContext(db, { linkableType: r.linkable_type, linkableId: r.linkable_id });
+    const d1 = ctx && ctx.debtor1;
+    contacts.set(key, d1 ? { contact_id: Number(d1.contact_id), contact_name: String(d1.contact_name || '').trim().slice(0, 200) || `Contact ${d1.contact_id}` } : null);
+  }
+  const rows = list.map((r) => {
+    const status = String(r.status || '');
+    const who = contacts.get(`${r.linkable_type}:${r.linkable_id}`);
+    const awaiting = esignService.OUTSTANDING_STATUSES.includes(status);
+    const claimed = r.seq_instance_id != null && r.reminder_status === 'active';
+    return {
+      row_type: 'signing_request',
+      signing_request_id: Number(r.signing_request_id),
+      status,
+      awaiting_signature: awaiting ? 1 : 0,
+      terminal: esignService.TERMINAL.has(status) ? 1 : 0,
+      document_name: r.document_name == null ? null : String(r.document_name),
+      kind: r.kind == null ? null : String(r.kind),
+      template_id: r.template_id == null ? null : Number(r.template_id),
+      template_name: r.template_name == null ? null : String(r.template_name),
+      tracking_id: r.tracking_id == null ? null : String(r.tracking_id),
+      linkable_type: String(r.linkable_type),
+      case_id: r.linkable_type === 'case' ? String(r.linkable_id) : null,
+      contact_id: who ? who.contact_id : null,
+      contact_name: who ? who.contact_name : null,
+      sent_at: documentIso(r.sent_at),
+      created_at: documentIso(r.created_at),
+      expires_at: documentIso(r.expires_at),
+      completed_at: documentIso(r.completed_at),
+      seq_instance_id: r.seq_instance_id == null ? null : Number(r.seq_instance_id),
+      reminder_status: r.seq_instance_id == null ? null : (r.reminder_status == null ? 'missing' : String(r.reminder_status)),
+      reminder_template_id: r.reminder_template_id == null ? null : Number(r.reminder_template_id),
+      enrollable: awaiting && who && !claimed ? 1 : 0,
+    };
+  });
+  const scope = byCase ? `case ${caseId}` : `contact ${contactId}`;
+  const head = {
+    row_type: 'summary', ...(byCase ? { case_id: String(caseId) } : { contact_id: contactId }),
+    requests: rows.length, truncated: truncated ? 1 : 0,
+    note: `${rows.length ? `${rows.length} signing request${rows.length === 1 ? '' : 's'} for ${scope}, newest first${truncated ? ` — ONLY the newest ${ESIGN_REQUESTS_READ_MAX}; more exist` : ''}` : `No signing request for ${scope}`}. `
+      + 'A row\'s contact_id is the request\'s REMINDER contact — debtor 1 of its case (or the contact it was sent for), the contact the send enrolls in reminders. '
+      + 'awaiting_signature 1 = sent and not finished (sent / viewed / partially_signed / bounced); terminal 1 = finished (signed / declined / expired / recalled / satisfied_external). '
+      + 'seq_instance_id is the request\'s reminder enrollment (reminder_status its state) — the enrollment its completion cancels. '
+      + 'enrollable 1 = an e-sign-scoped enroll (trigger_data.signing_request_id) may cite this row for that reminder contact: awaiting signature, a reminder contact, and no ACTIVE reminder enrollment.',
+  };
+  return { rows: [head, ...rows], truncated };
 }
 
 async function normalizeHookCreateAction(db, value, evidence) {
@@ -9230,6 +9457,21 @@ function validateStep(query, index) {
     if (!/^[A-Za-z0-9_-]{1,20}$/.test(caseId)) throw httpError(422, `Step ${id} needs the case's exact case_id`);
     return { id, kind, purpose, case_id: caseId };
   }
+  // A18.4d — ONE contact's or ONE case's signing requests (typed: the reminder
+  // pointer and the reminder contact are outside the curated schema).
+  if (kind === 'esign.requests') {
+    const hasContact = query.contact_id !== undefined && query.contact_id !== null;
+    const hasCase = query.case_id !== undefined && query.case_id !== null;
+    if (hasContact === hasCase) throw httpError(422, `Step ${id} needs exactly one of contact_id or case_id`);
+    if (hasContact) {
+      const contactId = Number(query.contact_id);
+      if (!Number.isSafeInteger(contactId) || contactId < 1) throw httpError(422, `Step ${id} needs a positive contact_id`);
+      return { id, kind, purpose, contact_id: contactId };
+    }
+    const caseId = typeof query.case_id === 'string' ? query.case_id.trim() : '';
+    if (!/^[A-Za-z0-9_-]{1,20}$/.test(caseId)) throw httpError(422, `Step ${id} needs the case's exact case_id`);
+    return { id, kind, purpose, case_id: caseId };
+  }
   // A13 — ONE message's headers and plain-text excerpt for the asking user.
   if (kind === 'mail.message') {
     const raw = query.mail_message_id;
@@ -9421,6 +9663,7 @@ function stepFingerprint(step) {
   if (kind === 'mail.search') return `${kind}:${String(step.q || '').toLowerCase()}:${step.mailbox_id || ''}:${step.unread_only ? 1 : 0}:${step.from || ''}:${step.since || ''}:${step.folder || 'inbox'}:${Number(step.limit) || 10}`;
   if (kind === 'mail.message') return `${kind}:${Number(step.mail_message_id)}`;
   if (kind === 'document.relink.candidates') return `${kind}:${String(step.case_id || '')}`;
+  if (kind === 'esign.requests') return step.case_id != null ? `${kind}:case:${String(step.case_id)}` : `${kind}:contact:${Number(step.contact_id)}`;
   if (kind === 'automation.definition') return `${kind}:${recordFingerprint(step)}:${step.version === undefined ? 'current' : Number(step.version)}`;
   if (kind === 'automation.run') {
     if (step.execution_id !== undefined) return `${kind}:x${Number(step.execution_id)}`;
@@ -9716,6 +9959,13 @@ async function executeReadStep(db, query, { auth, userId }) {
     // A11.1: on the app pool (case_folder_cache stays outside the report
     // manifest); the panel's own read, never with weak matches.
     const out = await relinkCandidatesRead(db, query.case_id);
+    rows = out.rows;
+    rowCount = rows.length;
+    truncated = out.truncated;
+  } else if (query.kind === 'esign.requests') {
+    // A18.4d: on the app pool (the pointer and the reminder contact are not in
+    // the report manifest); an allow-listed column set, never a link.
+    const out = await esignRequestsRead(db, { contact_id: query.contact_id, case_id: query.case_id });
     rows = out.rows;
     rowCount = rows.length;
     truncated = out.truncated;
@@ -10291,7 +10541,7 @@ module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
-  normalizeActionDraft, contactRelationsRead, formTemplateRead, mailSearchRead, mailMessageRead, relinkCandidatesRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
+  normalizeActionDraft, contactRelationsRead, formTemplateRead, mailSearchRead, mailMessageRead, relinkCandidatesRead, esignRequestsRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
   repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan, answerSystemAppend, answerMaxTokens,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,

@@ -1074,22 +1074,23 @@ COMMENTs.)
 
 ## From the Ask Casey arc — A18.4b sequence enroll (2026-10-28) — deferred
 
-- **E-sign-scoped and user-bound Casey enrollments (the ids with no evidence
-  shape).** A18.4c takes a reviewed `trigger_data` with evidence-bound
-  `appt_id` / `case_id`, but refuses by name the ids no Casey read can cite
-  today: `signing_request_id` (no read returns a row carrying it —
-  `signing_requests` exposes `id` — and the e-sign birth path also writes
-  `signing_requests.seq_instance_id`, the pointer `applyStatus` cancels the
-  reminders through when the document completes, which `POST
-  /sequences/enroll` never writes, so a chat-born e-sign enrollment would keep
-  reminding after signing), and `user` / `user_id` (bind `{{users.*}}`; no
-  evidence row shape cites a user by id — an appointment's provider binds
-  through `appt_id` + `appt_with` instead). An e-sign slice needs a typed read
-  returning `signing_request_id` with its debtor1 contact (the
-  `esignPrefillService.buildContext` resolution the send uses) and the
-  seq_instance_id write-back; a user slice needs a cited staff-row shape.
-  `task_id` (binds `{{tasks.*}}`) is refused for the same reason as a binding
-  not yet reviewed.
+- **User-bound Casey enrollments (the ids with no evidence shape).** A18.4c
+  takes a reviewed `trigger_data` with evidence-bound `appt_id` / `case_id`
+  (and A18.4d an evidence-bound `signing_request_id`), but refuses by name
+  `user` / `user_id` (bind `{{users.*}}`; no evidence row shape cites a user by
+  id — an appointment's provider binds through `appt_id` + `appt_with`
+  instead); a user slice needs a cited staff-row shape. `task_id` (binds
+  `{{tasks.*}}`) is refused for the same reason as a binding not yet reviewed.
+- **E-sign pointer for the other direct enroll callers.** A18.4d makes `POST
+  /sequences/enroll` write `signing_requests.seq_instance_id` for an
+  e-sign-scoped enroll (or cancel it), but the `enroll_sequence` internal
+  function and hook / trigger enroll targets (`lib/actionDispatchers.js`) call
+  the engine directly: a `signing_request_id` handed to them still enrolls with
+  no pointer, so the document's completion never cancels that chain (only an
+  `esign_remind` step's lazy cancel, and only of the pointed enrollment).
+  Moving the write-back into a shared helper they all call is the fix; whether
+  any live workflow / hook passes one was not measured (A18.4d had no read-only
+  key).
 - **Opt-out is not on the enroll card.** A sequence send step refuses an
   opted-out recipient at fire time (`optoutService.assertNotOptedOut`, in the
   `send_sms` / `send_email` internal functions), so on an opted-out contact

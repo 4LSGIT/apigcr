@@ -1838,6 +1838,105 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     }
   });
 
+  // A18.4d: the e-sign scope. Pinned: the scope disclosure names the request,
+  // its status and the reminder contact, and says the enrollment is cancelled
+  // when the document completes (true because the route records it as the
+  // request's reminder enrollment — the twin proves it); the bounced and
+  // prior-pointer lines; the POST carries the payload exactly; the click-time
+  // re-check reads the request (still awaiting signature, pointer unchanged)
+  // and uses the e-sign identity; the route's e-sign codes read as refusals /
+  // a known cancelled failure; a payload that does not match the disclosed
+  // scope sends nothing.
+  const esignPayload = { trigger_data: { signing_request_id: 44, document_name: 'Retainer – Client', case_id: 'CASE1' } };
+  const esignTrigger = {
+    reads: [{ key: 'signing_request_id', read_by: [{ step_number: 1, via: 'placeholder' }, { step_number: null, via: 'esign_scope' }] },
+      { key: 'document_name', read_by: [{ step_number: 1, via: 'placeholder' }] }, { key: 'case_id', read_by: [{ step_number: 1, via: 'binds_cases' }] }],
+    scope: 'esign', appointment: null,
+    case: { case_id: 'CASE1', label: '26-12345', caption: 'In re Client', relate_type: 'Primary' },
+    esign: { signing_request_id: 44, document_name: 'Retainer – Client', kind: 'retainer_prepetition', status: 'viewed',
+      sent_text: 'Mon, Nov 2, 2026, 10:00 AM firm time', case_id: 'CASE1', pointer_base: null, prior_enrollment: null },
+  };
+  const esignReads = ({ rows = [], request = { id: 44, status: 'viewed', seq_instance_id: null } } = {}) => (path) => {
+    if (path === '/api/esign/44') return request ? { request } : {};
+    return enrollReads({ rows })(path);
+  };
+
+  test('sequence enroll card (A18.4d): the e-sign scope is disclosed and the payload is exactly what is POSTed after the request re-read', async () => {
+    const m = enrollMessage({ payload: esignPayload, trigger: esignTrigger });
+    const { writes, gets, P } = await runEnroll(m, { read: esignReads() });
+    expect(gets).toEqual(['/sequences/templates/12', '/sequences/enrollments?contact_id=77&status=active&limit=100', '/api/esign/44']);
+    expect(writes).toEqual([{ path: '/sequences/enroll', method: 'POST', body: { contact_id: 77, template_id: 12, trigger_data: esignPayload.trigger_data },
+      headers: { 'Idempotency-Key': m.action_draft.draft_id } }]);
+    const text = P.Swal.fire.mock.calls[0][0].text;
+    expect(text).toContain('Trigger signing_request_id: 44\n  read by: step 1 (a {{trigger_data}} placeholder), the engine (it makes the enrollment e-sign-scoped: its duplicate identity, and the signing request\'s reminder enrollment)');
+    expect(text).toContain('Scope: E-SIGN-scoped — tied to signing request #44 "Retainer – Client" (retainer_prepetition), status viewed, sent Mon, Nov 2, 2026, 10:00 AM firm time, case CASE1; its reminder contact is Dana Client (checked — the contact the send itself enrolls). It neither blocks nor is blocked by a contact-scoped or appointment-scoped enrollment of this contact in this template. Once enrolled it is recorded as the request\'s reminder enrollment, so it is cancelled automatically when the document is signed, declined, expires, is recalled, or is marked satisfied outside e-sign.');
+    expect(text).toContain('Already enrolled: no — this contact has no active enrollment in this template for signing request #44, and the request has no active reminder enrollment (both re-checked when you apply).');
+    expect(text).toContain('Signing request check: if the request finishes or its reminder enrollment changes before you apply, nothing is enrolled;');
+    expect(text).not.toContain('Earlier reminders:');
+    expect(text).not.toContain('Bounced:');
+    // A bounced request and a finished earlier pointer each get their line.
+    const later = enrollMessage({ payload: esignPayload, trigger: { ...esignTrigger, esign: { ...esignTrigger.esign, status: 'bounced', pointer_base: 700, prior_enrollment: { enrollment_id: 700, status: 'cancelled' } } } });
+    const r = await runEnroll(later, { confirm: false });
+    expect(r.P.Swal.fire.mock.calls[0][0].text).toContain('Bounced: the request\'s email bounced — an esign_remind step skips a bounced request until it is re-sent');
+    expect(r.P.Swal.fire.mock.calls[0][0].text).toContain('Earlier reminders: the request\'s reminder enrollment #700 is cancelled — this enrollment replaces it as the request\'s reminder enrollment.');
+    // The no-payload and appointment cards carry no signing-request line.
+    for (const msg of [enrollMessage(), enrollMessage({ payload: apptPayload, trigger: apptTrigger })]) {
+      const plain = await runEnroll(msg, { confirm: false });
+      expect(plain.P.Swal.fire.mock.calls[0][0].text).not.toContain('Signing request check');
+    }
+  });
+
+  test('sequence enroll card (A18.4d): the click-time re-read refuses a finished, re-pointed or same-identity request BEFORE the claim', async () => {
+    const row = (id, appt, sr) => ({ id, contact_id: 77, template_id: 12, appt_id: appt, signing_request_id: sr, status: 'active' });
+    const cases = [
+      [esignReads({ request: { id: 44, status: 'signed', seq_instance_id: null } }),
+        'Signing request #44 is now signed — no longer awaiting signature, so reminders tied to it would never be cancelled by its completion. Nothing was enrolled.'],
+      [esignReads({ request: { id: 44, status: 'viewed', seq_instance_id: 901 } }),
+        'Signing request #44\'s reminder enrollment changed since this card was prepared (none → #901). Nothing was enrolled. Ask Casey to prepare it again.'],
+      [esignReads({ request: null }), 'Signing request #44 no longer exists. Nothing was enrolled.'],
+      [esignReads({ rows: [row(5601, null, 44)] }), 'Dana Client is already enrolled in this sequence for signing request #44 (active enrollment #5601). Nothing was enrolled.'],
+    ];
+    for (const [read, why] of cases) {
+      const m = enrollMessage({ payload: esignPayload, trigger: esignTrigger });
+      const { writes, ledger } = await runEnroll(m, { read });
+      expect({ why, writes, ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(m.action_draft.refusal_error).toContain(why);
+    }
+    // Contact-scoped, appointment-scoped and another request's rows are other identities.
+    const ok = await runEnroll(enrollMessage({ payload: esignPayload, trigger: esignTrigger }), { read: esignReads({ rows: [row(1, null, null), row(2, 900, null), row(3, null, 45)] }) });
+    expect(ok.writes).toHaveLength(1);
+    // … and an e-sign-scoped row blocks neither the contact-scoped nor the appointment card.
+    for (const msg of [enrollMessage(), enrollMessage({ payload: apptPayload, trigger: apptTrigger })]) {
+      const r = await runEnroll(msg, { read: enrollReads({ rows: [row(4, null, 44)] }) });
+      expect(r.writes).toHaveLength(1);
+    }
+    // A payload that does not match the disclosed scope sends nothing and claims nothing.
+    for (const [payload, trigger] of [
+      [esignPayload, apptTrigger],
+      [{ trigger_data: { signing_request_id: 45 } }, esignTrigger],
+      [{ trigger_data: { signing_request_id: 44, appt_id: 900 } }, esignTrigger],
+      [{ trigger_data: { signing_request_id: '44' } }, esignTrigger],
+    ]) {
+      const bad = enrollMessage({ payload, trigger });
+      const r = await runEnroll(bad, { read: esignReads() });
+      expect([r.writes, r.ledger]).toEqual([[], []]);
+    }
+  });
+
+  test('sequence enroll card (A18.4d): the route\'s e-sign refusals and its cancelled write-back failure are known outcomes; an uncancelled one stays unknown', async () => {
+    for (const code of ['SIGNING_REQUEST_NOT_FOUND', 'SIGNING_REQUEST_NOT_LIVE', 'SIGNING_REQUEST_CLAIMED']) {
+      const m = enrollMessage({ payload: esignPayload, trigger: esignTrigger });
+      await runEnroll(m, { read: esignReads(), write: async () => { throw coded(409, { error: 'Failed to enroll contact', code }, 'request changed'); } });
+      expect(m.action_draft.refusal_error).toBe('Refused — nothing enrolled (request changed): the signing request changed since this card was reviewed. Ask Casey to prepare the enrollment again.');
+    }
+    const failed = enrollMessage({ payload: esignPayload, trigger: esignTrigger });
+    await runEnroll(failed, { read: esignReads(), write: async () => { throw coded(500, { code: 'SIGNING_REQUEST_WRITEBACK_FAILED', enrollment_id: 820, cancelled: true }, 'pointer not written'); } });
+    expect(failed.action_draft.refusal_error).toBe('Failed — enrollment #820 was created, but it could not be recorded as the signing request\'s reminder enrollment, so it was cancelled and no further step runs (pointer not written). Ask Casey to prepare the enrollment again.');
+    const unknown = enrollMessage({ payload: esignPayload, trigger: esignTrigger });
+    await runEnroll(unknown, { read: esignReads(), write: async () => { throw coded(500, { code: 'SIGNING_REQUEST_WRITEBACK_FAILED', enrollment_id: 821, cancelled: false }, 'cancel failed'); } });
+    expect(unknown.action_draft.ambiguous_error).toMatch(/^Outcome unknown/);
+  });
+
   test('sequence enroll card: a reopened card restores from the ledger, and an applied card offers only the enrollment', () => {
     const { JSDOM } = require('jsdom');
     const dom = new JSDOM('<!doctype html><div></div>');

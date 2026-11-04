@@ -1106,7 +1106,10 @@ signed-in user's readable mailboxes, never message text) and `mail.message`
 (one message's headers and the start of its plain text, read as the sender's
 words) — the typed `document.relink.candidates` read (one case's Dropbox folder
 suggestions, the Documents re-link panel's own strict list, and the folder the
-case points at now) — and the typed automation reads —
+case points at now), the typed `esign.requests` read (one contact's or one
+case's e-signature requests — status, document, dates, the person the
+reminders go to and whether reminders are running; never the signers' email
+addresses, the provider's records or any signing link) — and the typed automation reads —
 `automation.list`, `automation.definition`, `automation.run`, and
 `automation.references` — which let Casey explain a workflow or sequence, one
 of its runs or enrollments, and what can start or enroll it. Those projections redact webhook URLs to method + host + credential
@@ -1231,8 +1234,17 @@ to the appointment — it does not block, and is not blocked by, the contact's
 ordinary enrollment in the same sequence, and it is cancelled when the
 appointment is marked attended or no-show, cancelled, or rescheduled. The
 appointment time must be that appointment's own (Casey is told the exact
-value). E-signature reminder enrollments still come only from sending the
-document. A template whose first step needs data the enrollment does not carry
+value). An e-signature request can ride along too, for reminders about one
+document: Casey first reads the contact's (or case's) signature requests —
+it can also answer "did they sign?" from that read — and only a request that
+is still awaiting signature, has no reminders running, and whose reminder
+contact (the case's first client, the person the send itself would remind) is
+that contact can be used. The enrollment is then tied to the request: it is
+recorded as the request's reminder enrollment, so it is cancelled
+automatically when the document is signed, declined, expires, is recalled or
+is marked satisfied outside e-signature. If it cannot be recorded that way at
+the moment you confirm, the new enrollment is cancelled at once and the card
+says so. A template whose first step needs data the enrollment does not carry
 is refused (the enrollment would fail), and placeholders the data does not
 fill stay unfilled; the card lists them per step. The card shows every value
 exactly as it will be sent and which steps read it, and names the appointment
@@ -1244,8 +1256,10 @@ sender and wording — plus what normally enrolls the template and how many
 enrollments are running, and it is styled as a warning: every text and email
 step messages the client as it comes due, and cancelling the enrollment
 later stops only the steps not yet reached. A contact already enrolled in the
-template the same way (ordinarily, or for the same appointment) is refused. If the template is deactivated or a new version is
-published before you confirm, or the contact becomes enrolled, nothing is
+template the same way (ordinarily, for the same appointment, or for the same
+signature request) is refused. If the template is deactivated or a new version is
+published before you confirm, or the contact becomes enrolled — or the
+signature request finishes or gets other reminders — nothing is
 enrolled. If the outcome cannot be confirmed, the card says so and offers no
 second enrollment; check the sequence's enrollments. Once applied, the card
 opens the new enrollment. Its off switch is the `casey_sequence_enroll_enabled`

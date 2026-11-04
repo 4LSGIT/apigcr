@@ -484,7 +484,7 @@ describe('both read-planning prompts teach every read kind (the S3b lesson, read
   // The validator is the authority on which kinds exist; both prompts must
   // name each one, or the stage that is blind will refuse what the other runs.
   const READ_KINDS = ['sql.read', 'manual.search', 'comms.search', 'weather.lookup', 'contact.relations',
-    'mail.search', 'mail.message', 'document.relink.candidates', 'automation.list', 'automation.definition', 'automation.run', 'automation.references',
+    'mail.search', 'mail.message', 'document.relink.candidates', 'esign.requests', 'automation.list', 'automation.definition', 'automation.run', 'automation.references',
     'automation.preview_step', 'automation.preview_ingest_rule'];
 
   test('the inventory matches the validator', () => {
@@ -494,6 +494,7 @@ describe('both read-planning prompts teach every read kind (the S3b lesson, read
       'manual.search': { query: 'xx' }, 'comms.search': { query: 'xx' }, 'weather.lookup': { location: 'xx' },
       'contact.relations': { contact_id: 1 },
       'mail.search': {}, 'mail.message': { mail_message_id: 1 }, 'document.relink.candidates': { case_id: '7KQ2M9XA' },
+      'esign.requests': { contact_id: 1 },
       'automation.list': {}, 'automation.definition': { workflow_id: 1 },
       'automation.run': { execution_id: 1 }, 'automation.references': { workflow_id: 1 },
       'automation.preview_step': { step_type: 'internal_function', config: { function_name: 'noop' } },
