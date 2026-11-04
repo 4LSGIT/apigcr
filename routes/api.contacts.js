@@ -21,6 +21,7 @@ const router         = express.Router();
 const jwtOrApiKey    = require('../lib/auth.jwtOrApiKey');
 const contactService = require('../services/contactService');
 const optoutService  = require('../services/optoutService');
+const fieldDefs      = require('../services/fieldDefService');
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -70,12 +71,19 @@ router.get("/api/contacts", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ status: "error",
       message: `birthdays must be one of ${contactService.BIRTHDAY_WINDOWS.join(", ")}` });
   }
+  // Custom-field columns (custom_table_view C1): same shape check and 400 as
+  // GET /api/cases — the registry's parseCfParam, undefined means malformed.
+  const cfKeys = fieldDefs.parseCfParam(req.query.cf);
+  if (cfKeys === undefined) {
+    return res.status(400).json({ status: "error", message: "cf must be a JSON array of cf_ field keys" });
+  }
   try {
     const result = await contactService.listContacts(req.db, {
       query: req.query.q || req.query.query || "",
       type: req.query.type,
       tags: req.query.tags,
       role: req.query.role,
+      cf: cfKeys,
       birthdays,
       sort_by: req.query.sort_by || "contact_lname",
       sort_dir: req.query.sort_dir || "ASC",

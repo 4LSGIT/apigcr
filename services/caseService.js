@@ -53,10 +53,6 @@ const { captionAddsInfo } = require('../lib/caseCaption');
 // listCases
 // ─────────────────────────────────────────────────────────────
 
-// cf keys already warned about (flagged def, no virtual column) — once per
-// key per instance; see the 1054 retry in listCases.
-const _cfColumnWarned = new Set();
-
 /**
  * List cases with search, filters, and pagination.
  *
@@ -230,23 +226,10 @@ async function listCases(db, {
   const orderDir = sort_dir === "ASC" ? "ASC" : "DESC";
 
   // ── Custom-field columns (custom_table_view S4, Fred-ruled 2026-11-05) ──
-  // The requested keys ∩ the ACTIVE case defs carrying list_column (the
-  // Config builder's "Offer as a list column" checkbox). The REGISTRY —
-  // never the client — supplies every identifier that reaches SQL: the
-  // surviving names are field_defs.field_key values, which satisfy
-  // ^cf_[a-z][a-z0-9_]{1,56}$ by the defs API's own validation. A requested
-  // key the registry no longer offers is silently dropped (another window's
-  // stale picker), never an error. Recomposed on the ER 1054 retry below.
-  const wantCf = Array.isArray(cf) ? cf.filter((k) => typeof k === 'string') : [];
-  const composeCf = async () => {
-    if (!wantCf.length) return [];
-    const defs = await fieldDefs.listActive(db, 'case');
-    // KEY_RE re-check: rows the API wrote always satisfy it, but a hand-
-    // written field_defs row (a script, a migration) is not shape-checked at
-    // write time, and field_key lands inside backticks below.
-    return defs.filter((d) => d.list_column && wantCf.includes(d.field_key)
-      && fieldDefs.KEY_RE.test(d.field_key));
-  };
+  // Composition (requested ∩ active+flagged registry defs) and the ER 1054
+  // retry live in fieldDefs.composeListCf / queryListWithCf, shared with
+  // listContacts since C1 — the registry, never the client, supplies every
+  // identifier that reaches SQL.
   // cf sort: scalar types only (a multiselect has no single value to order
   // by), and only a key this request also selects — again the registry's own
   // string, never the client's, reaches the ORDER BY.
@@ -280,42 +263,10 @@ async function listCases(db, {
    LIMIT ? OFFSET ?`;
   };
 
-  let cfDefs = await composeCf();
-  let cases;
-  try {
-    [cases] = await db.query(selectSql(cfDefs), [...params, parseInt(limit), parseInt(offset)]);
-  } catch (err) {
-    // ER 1054 with cf columns in the SELECT — the list must never 500 over a
-    // cf column (design memo D3); anything else rethrows untouched. Two ways
-    // a composed key can lack its column: the ≤60s stale-cache window after
-    // a def drop (bump + recompose clears it), and a def that is ACTIVE and
-    // flagged while its virtual column never materialized — createDef's
-    // reconcile is post-commit and can lose its lock with no sweep behind it
-    // (review-caught). The registry cannot see that state, so the retry
-    // composes against the COLUMNS THAT ACTUALLY EXIST; the missing one
-    // renders blank on the client until a reconcile lands it.
-    if (err.code !== 'ER_BAD_FIELD_ERROR' || !cfDefs.length) throw err;
-    fieldDefs.bump();
-    cfDefs = await composeCf();
-    if (cfDefs.length) {
-      const [cols] = await db.query(
-        `SELECT COLUMN_NAME FROM information_schema.COLUMNS
-          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cases' AND COLUMN_NAME LIKE 'cf\\_%'`);
-      const have = new Set(cols.map((r) => r.COLUMN_NAME));
-      cfDefs = cfDefs.filter((d) => {
-        if (have.has(d.field_key)) return true;
-        // Degraded but alive: every request pays the failed query + retry
-        // until a reconcile lands the column. Once per key per instance,
-        // so a lingering gap shows up beyond the original reconcile alert.
-        if (!_cfColumnWarned.has(d.field_key)) {
-          _cfColumnWarned.add(d.field_key);
-          console.warn(`[listCases] flagged cf def "${d.field_key}" has no virtual column on cases — rendering blank until a reconcile lands it`);
-        }
-        return false;
-      });
-    }
-    [cases] = await db.query(selectSql(cfDefs), [...params, parseInt(limit), parseInt(offset)]);
-  }
+  const cases = await fieldDefs.queryListWithCf(db, {
+    entity: 'case', cf, buildSql: selectSql,
+    params: [...params, parseInt(limit), parseInt(offset)], caller: 'listCases',
+  });
 
   for (const c of cases) {
     const contacts = typeof c.contacts === 'string' ? JSON.parse(c.contacts) : c.contacts;

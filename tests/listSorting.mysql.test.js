@@ -587,7 +587,10 @@ d('list sorts on a real engine', () => {
         ('case', 'cf_notes', 'Internal Notes', 'text', NULL, 0, 1),
         ('case', 'cf_multi', 'Tags', 'multiselect', '[{"value":"a","label":"A"},{"value":"z","label":"Z"}]', 1, 1),
         ('case', 'cf_drop',  'Dropped Soon', 'text', NULL, 1, 1)`);
-      for (const k of ['cf_multi', 'cf_drop']) {
+      // cf_notes gets a column too although UNFLAGGED: with no column, a
+      // list_column-gate mutant would be masked by the 1054 retry's
+      // column-intersect dropping it anyway.
+      for (const k of ['cf_multi', 'cf_drop', 'cf_notes']) {
         await q(`ALTER TABLE cases ADD COLUMN \`${k}\` varchar(255)
           GENERATED ALWAYS AS (json_value(custom, '$.${k}' RETURNING CHAR(255))) VIRTUAL`);
       }
@@ -611,7 +614,7 @@ d('list sorts on a real engine', () => {
       expect('cf_court' in bare.cases[0]).toBe(false);
     });
 
-    test('the list_column gate holds: an unflagged def never reaches SQL (its column does not even exist)', async () => {
+    test('the list_column gate holds: an unflagged def never reaches SQL (its column exists and must stay unread)', async () => {
       const r = await caseService.listCases(pool, { cf: ['cf_notes', 'cf_court'] });
       expect('cf_notes' in r.cases[0]).toBe(false);
       expect('cf_court' in r.cases[0]).toBe(true);
@@ -741,6 +744,155 @@ d('list sorts on a real engine', () => {
         await q('DELETE FROM field_defs WHERE field_key = ?', ['cf_rt']);
         fieldDefs.bump();
       }
+    });
+  });
+
+  describe('contacts cf columns (C1 — the listCases machinery, shared)', () => {
+    beforeAll(async () => {
+      // Contact-entity defs beside the S4 case ones (same field_defs table;
+      // same key on both entities is allowed, UNIQUE is (entity, field_key)).
+      // cf_lang / cf_cmulti / cf_cdrop need their virtual columns by hand —
+      // the reconciler is mocked. cf_cnotes is UNFLAGGED but gets a real
+      // column: with no column, a list_column-gate mutant would be masked by
+      // the 1054 retry's column-intersect dropping it anyway.
+      await q(`INSERT INTO field_defs (entity, field_key, label, field_type, options, list_column, active) VALUES
+        ('contact', 'cf_lang', 'Preferred Language', 'select',
+         '[{"value":"en","label":"English"},{"value":"es","label":"Spanish"},{"value":"yi","label":"Yiddish"}]', 1, 1),
+        ('contact', 'cf_cnotes', 'Contact Notes', 'text', NULL, 0, 1),
+        ('contact', 'cf_cmulti', 'Contact Tags', 'multiselect', '[{"value":"a","label":"A"},{"value":"z","label":"Z"}]', 1, 1),
+        ('contact', 'cf_cdrop', 'Dropped Soon', 'text', NULL, 1, 1)`);
+      // cf_court gets a CONTACTS column too although its def is case-entity:
+      // with no column, an entity-crossing mutant would be masked by the 1054
+      // retry's column-intersect dropping it anyway (review-caught — the
+      // reviewer's crossing mutant survived the twin without this line).
+      for (const k of ['cf_lang', 'cf_cnotes', 'cf_cmulti', 'cf_cdrop', 'cf_court']) {
+        await q(`ALTER TABLE contacts ADD COLUMN \`${k}\` varchar(255)
+          GENERATED ALWAYS AS (json_value(custom, '$.${k}' RETURNING CHAR(255))) VIRTUAL`);
+      }
+      await q(`UPDATE contacts SET custom = JSON_OBJECT('cf_lang', 'es') WHERE contact_id = 1`);
+      await q(`UPDATE contacts SET custom = JSON_OBJECT('cf_lang', 'en', 'cf_cmulti', 'z') WHERE contact_id = 2`);
+      await q(`UPDATE contacts SET custom = JSON_OBJECT('cf_lang', 'yi', 'cf_cdrop', 'x') WHERE contact_id = 4`);
+      // every other contact keeps custom at its default {} — cf_lang rides null
+      fieldDefs.bump();
+    });
+    afterAll(() => fieldDefs.bump());
+
+    const byId = (r) => Object.fromEntries(r.contacts.map((c) => [c.contact_id, c]));
+    const list = (o) => contactService.listContacts(pool, { limit: 100, ...o });
+
+    test('requested flagged keys ride on every row; unrequested rows carry no cf keys', async () => {
+      const r = await list({ cf: ['cf_lang'] });
+      const rows = byId(r);
+      expect(rows[1].cf_lang).toBe('es');
+      expect(rows[2].cf_lang).toBe('en');
+      expect(rows[3].cf_lang).toBeNull();                 // default {} custom
+      const bare = await list({});
+      expect('cf_lang' in bare.contacts[0]).toBe(false);
+    });
+
+    test('the list_column gate holds; unknown and hostile keys drop; a CASE def never crosses the entity', async () => {
+      const r = await list({ cf: ['cf_cnotes', 'cf_nope', 'cf_x` , (SELECT 1)', 'cf_court', 'cf_lang'] });
+      expect(r.total).toBe(9);
+      expect('cf_cnotes' in r.contacts[0]).toBe(false);   // unflagged (its column exists and must stay unread)
+      expect('cf_nope' in r.contacts[0]).toBe(false);
+      // cf_court is a flagged CASE def (S4 section) — entity scoping drops it here
+      expect('cf_court' in r.contacts[0]).toBe(false);
+      expect('cf_lang' in r.contacts[0]).toBe(true);
+    });
+
+    test('a hand-written registry row with a malformed key is dropped too (KEY_RE re-check)', async () => {
+      await q(`INSERT INTO field_defs (entity, field_key, label, field_type, list_column, active)
+               VALUES ('contact', 'cf_cbad\`x', 'Hand Written', 'text', 1, 1)`);
+      fieldDefs.bump();
+      try {
+        const r = await list({ cf: ['cf_cbad\`x', 'cf_lang'] });
+        expect(r.total).toBe(9);
+        expect('cf_lang' in r.contacts[0]).toBe(true);
+      } finally {
+        await q('DELETE FROM field_defs WHERE label = ?', ['Hand Written']);
+        fieldDefs.bump();
+      }
+    });
+
+    test('sort by a requested scalar cf works; the contact_id tiebreak stays ASC (house order)', async () => {
+      const asc = await list({ cf: ['cf_lang'], sort_by: 'cf_lang', sort_dir: 'ASC' });
+      expect(ids(asc.contacts, 'contact_id')).toEqual([3, 5, 6, 7, 8, 9, 2, 1, 4]);
+      const desc = await list({ cf: ['cf_lang'], sort_by: 'cf_lang', sort_dir: 'DESC' });
+      expect(ids(desc.contacts, 'contact_id')).toEqual([4, 1, 2, 3, 5, 6, 7, 8, 9]);
+    });
+
+    test('a multiselect cf never sorts; an unrequested cf never sorts — both fall to the default', async () => {
+      const multi = await list({ cf: ['cf_cmulti'], sort_by: 'cf_cmulti', sort_dir: 'ASC' });
+      // default: contact_lname ASC, contact_fname ASC, contact_id ASC
+      expect(ids(multi.contacts, 'contact_id').slice(0, 3)).toEqual([6, 3, 7]);
+      const unreq = await list({ sort_by: 'cf_lang', sort_dir: 'ASC' });
+      expect(ids(unreq.contacts, 'contact_id').slice(0, 3)).toEqual([6, 3, 7]);
+    });
+
+    test('birthdays still outranks a cf sort (FIELD order wins, params aligned across the retry shape)', async () => {
+      const r = await list({ cf: ['cf_lang'], sort_by: 'cf_lang', sort_dir: 'DESC',
+        birthdays: 'next7', today: '2026-10-27' });
+      // Window Oct 27–Nov 2: Di (10-27), Pat (10-29), Abe (11-02) — FIELD order,
+      // not cf_lang DESC (which would put Pat/es before Di/null).
+      expect(ids(r.contacts, 'contact_id')).toEqual([9, 1, 2]);
+    });
+
+    test('the ER 1054 stale-cache window: bust, recompose, retry once — the list never 500s', async () => {
+      await fieldDefs.listActive(pool, 'contact');             // warm the cache WITH cf_cdrop
+      await q('ALTER TABLE contacts DROP COLUMN cf_cdrop');
+      await q(`UPDATE field_defs SET active = 0 WHERE entity = 'contact' AND field_key = 'cf_cdrop'`);
+      try {
+        const r = await list({ cf: ['cf_cdrop', 'cf_lang'] });
+        expect(r.total).toBe(9);
+        expect('cf_cdrop' in r.contacts[0]).toBe(false);
+        expect(byId(r)[1].cf_lang).toBe('es');
+        const again = await list({ cf: ['cf_cdrop', 'cf_lang'] });
+        expect(again.total).toBe(9);
+      } finally {
+        await q(`UPDATE field_defs SET active = 1 WHERE entity = 'contact' AND field_key = 'cf_cdrop'`);
+        await q(`ALTER TABLE contacts ADD COLUMN cf_cdrop varchar(255)
+          GENERATED ALWAYS AS (json_value(custom, '$.cf_cdrop' RETURNING CHAR(255))) VIRTUAL`);
+        fieldDefs.bump();
+      }
+    });
+
+    test('an ACTIVE flagged def whose column never materialized cannot 500 the list', async () => {
+      await fieldDefs.createDef(pool, {
+        entity: 'contact', field_key: 'cf_cnocol', label: 'No Column', field_type: 'text', list_column: true,
+      });
+      try {
+        const r = await list({ cf: ['cf_cnocol', 'cf_lang'] });
+        expect(r.total).toBe(9);
+        expect('cf_cnocol' in r.contacts[0]).toBe(false);  // blank until a reconcile lands it
+        expect(byId(r)[2].cf_lang).toBe('en');             // the healthy column still rides
+      } finally {
+        await q('DELETE FROM field_defs WHERE field_key = ?', ['cf_cnocol']);
+        fieldDefs.bump();
+      }
+    });
+
+    test('a non-1054 error is rethrown untouched, never retried', async () => {
+      let selects = 0;
+      const wrapped = { query: async (sql, p) => {
+        if (typeof sql === 'string' && sql.includes('JSON_ARRAYAGG')) {
+          selects++;
+          const e = new Error('boom'); e.code = 'ER_NO_SUCH_TABLE'; throw e;
+        }
+        return pool.query(sql, p);
+      } };
+      await expect(contactService.listContacts(wrapped, { cf: ['cf_lang'] })).rejects.toThrow('boom');
+      expect(selects).toBe(1);
+    });
+
+    test('the route: shape-checked cf, 400 on anything else', async () => {
+      const ok = await get(`/api/contacts?limit=50&cf=${encodeURIComponent('["cf_lang"]')}`);
+      expect(ok.status).toBe(200);
+      expect(ok.body.contacts.every((c) => 'cf_lang' in c)).toBe(true);
+      expect((await get('/api/contacts?cf=not-json')).status).toBe(400);
+      expect((await get(`/api/contacts?cf=${encodeURIComponent('["CF_LANG"]')}`)).status).toBe(400);
+      expect((await get(`/api/contacts?cf=${encodeURIComponent('["cf_x` (SELECT 1)"]')}`)).status).toBe(400);
+      expect((await get(`/api/contacts?cf=${encodeURIComponent(JSON.stringify(Array(31).fill('cf_lang')))}`)).status).toBe(400);
+      expect((await get(`/api/contacts?cf=${encodeURIComponent('[]')}`)).status).toBe(200);
     });
   });
 });

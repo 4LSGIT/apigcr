@@ -51,20 +51,11 @@ function parseTypesParam(raw) {
 }
 
 // Custom-field columns (custom_table_view S4): `cf` is a JSON array of cf
-// keys the client wants as columns. Shape-checked here (the service then
-// intersects with the registry, which alone supplies SQL identifiers); the
-// cap keeps a hostile body from inflating the SELECT. Same return contract
-// as parseTypesParam.
-const CF_MAX = 30;
-const CF_KEY_RE = /^cf_[a-z][a-z0-9_]{1,56}$/;
-function parseCfParam(raw) {
-  if (raw == null || raw === '') return null;
-  let parsed;
-  try { parsed = JSON.parse(raw); } catch { return undefined; }
-  if (!Array.isArray(parsed) || parsed.length > CF_MAX) return undefined;
-  if (!parsed.length) return null;
-  return parsed.every((k) => typeof k === 'string' && CF_KEY_RE.test(k)) ? parsed : undefined;
-}
+// keys the client wants as columns. Shape-checked by the registry's own
+// parseCfParam (same return contract as parseTypesParam; shared with
+// routes/api.contacts.js since C1); the service then intersects with the
+// registry, which alone supplies SQL identifiers.
+const { parseCfParam } = require('../services/fieldDefService');
 
 // "Other (unlisted)" (F3b): `types_not` is a JSON array of the type names the
 // client's tree displayed; the service matches its complement. An EMPTY array

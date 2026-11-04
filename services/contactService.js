@@ -2039,6 +2039,7 @@ async function listContacts(db, {
   type   = null,
   tags   = null,
   role   = null,
+  cf     = null,      // custom_table_view C1: cf_ keys wanted as columns
   birthdays = null,
   today  = null,      // tests: the firm-local date the birthday window counts from
   sort_by  = 'c.contact_lname',
@@ -2183,20 +2184,34 @@ async function listContacts(db, {
     "contact_dob DESC": "c.contact_dob IS NULL, c.contact_dob DESC",
   };
   const orderParams = [];
-  let orderClause =
-    SORT_WHITELIST[`${sort_by} ${sort_dir}`] ||
-    SORT_WHITELIST[sort_by] ||
-    SORT_WHITELIST["contact_lname ASC"];
-  if (bdays) {
-    // BIRTHDAYS — upcoming first, whatever the sort controls say.
-    orderClause = `FIELD(DATE_FORMAT(c.contact_dob, '%m%d'), ${bdays.map(() => '?').join(',')}), `
-      + SORT_WHITELIST["contact_lname ASC"];
-    orderParams.push(...bdays);
-  }
-  orderClause += ", c.contact_id ASC";
+  if (bdays) orderParams.push(...bdays);
 
-  const [contacts] = await db.query(
-    `SELECT
+  // ── Custom-field columns (custom_table_view C1) ──
+  // Composition (requested ∩ active+flagged contact defs) and the ER 1054
+  // retry are fieldDefs.composeListCf / queryListWithCf, shared with
+  // listCases — the registry, never the client, supplies every identifier
+  // that reaches SQL. The ORDER BY depends on the composition (a scalar
+  // requested cf may be the sort; a multiselect never), so it is built per
+  // attempt inside selectSql; orderParams are bdays-only and fixed across
+  // the retry. With no cf the SQL is byte-identical to the pre-C1 text
+  // (pinned in tests/contactRoles.roleForms.test.js).
+  const selectSql = (cfDefs) => {
+    let orderClause =
+      SORT_WHITELIST[`${sort_by} ${sort_dir}`] ||
+      SORT_WHITELIST[sort_by];
+    if (!orderClause) {
+      const d = cfDefs.find((x) => x.field_key === sort_by && x.field_type !== 'multiselect');
+      orderClause = d
+        ? `c.\`${d.field_key}\` ${sort_dir === 'DESC' ? 'DESC' : 'ASC'}`
+        : SORT_WHITELIST["contact_lname ASC"];
+    }
+    if (bdays) {
+      // BIRTHDAYS — upcoming first, whatever the sort controls say.
+      orderClause = `FIELD(DATE_FORMAT(c.contact_dob, '%m%d'), ${bdays.map(() => '?').join(',')}), `
+        + SORT_WHITELIST["contact_lname ASC"];
+    }
+    orderClause += ", c.contact_id ASC";
+    return `SELECT
      c.contact_id, c.contact_type, c.contact_name,
      c.contact_fname, c.contact_mname, c.contact_lname,
      c.contact_phone, c.contact_email,
@@ -2210,16 +2225,22 @@ async function listContacts(db, {
          'case_type',    ca.case_type,
          'case_subtype', ca.case_subtype
        )
-     ) AS cases
+     ) AS cases${cfDefs.map((d) => `,
+     c.\`${d.field_key}\``).join('')}
    FROM contacts c
    LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id
    LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id
    ${whereSQL}
    GROUP BY c.contact_id
    ORDER BY ${orderClause}
-   LIMIT ? OFFSET ?`,
-    [...params, ...orderParams, parseInt(limit), parseInt(offset)],
-  );
+   LIMIT ? OFFSET ?`;
+  };
+
+  const contacts = await fieldDefs.queryListWithCf(db, {
+    entity: 'contact', cf, buildSql: selectSql,
+    params: [...params, ...orderParams, parseInt(limit), parseInt(offset)],
+    caller: 'listContacts',
+  });
 
   const [[{ total }]] = await db.query(
     `SELECT COUNT(DISTINCT c.contact_id) AS total

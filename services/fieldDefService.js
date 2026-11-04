@@ -1109,6 +1109,96 @@ async function writableColumns(db, entity) {
   return set;
 }
 
+// ─────────────────────────────────────────────────────────────
+// List-tab cf columns (custom_table_view S4; shared here in C1)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Route-level shape check for the list tabs' `cf` query param: a JSON array
+ * of cf_ field keys the client's Columns picker wants as columns, capped so a
+ * hostile body cannot inflate the SELECT. Returns the array, null for
+ * "no cf" (absent/empty), or undefined for a malformed value the route turns
+ * into a 400. The service then intersects with the registry, which ALONE
+ * supplies SQL identifiers — this check is shape, not authority.
+ */
+const CF_MAX = 30;
+function parseCfParam(raw) {
+  if (raw == null || raw === '') return null;
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return undefined; }
+  if (!Array.isArray(parsed) || parsed.length > CF_MAX) return undefined;
+  if (!parsed.length) return null;
+  return parsed.every((k) => typeof k === 'string' && KEY_RE.test(k)) ? parsed : undefined;
+}
+
+/**
+ * The requested keys ∩ the ACTIVE defs carrying list_column (the Config
+ * builder's "Offer as a list column" checkbox). The REGISTRY — never the
+ * client — supplies every identifier that reaches SQL: the surviving names
+ * are field_defs.field_key values. KEY_RE re-check: rows the API wrote always
+ * satisfy it, but a hand-written field_defs row (a script, a migration) is
+ * not shape-checked at write time, and field_key lands inside backticks in
+ * the callers' SELECTs. A requested key the registry no longer offers is
+ * silently dropped (another window's stale picker), never an error.
+ */
+async function composeListCf(db, entity, cf) {
+  const wantCf = Array.isArray(cf) ? cf.filter((k) => typeof k === 'string') : [];
+  if (!wantCf.length) return [];
+  const defs = await listActive(db, entity);
+  return defs.filter((d) => d.list_column && wantCf.includes(d.field_key)
+    && KEY_RE.test(d.field_key));
+}
+
+const _cfColumnWarned = new Set();
+
+/**
+ * Run a list SELECT whose text depends on the composed cf defs, with the
+ * ER 1054 retry both list tabs need (one home so it can never diverge):
+ * the list must never 500 over a cf column (design memo D3); anything else
+ * rethrows untouched, unretried. Two ways a composed key can lack its
+ * column: the ≤60s stale-cache window after a def drop (bump + recompose
+ * clears it), and a def that is ACTIVE and flagged while its virtual column
+ * never materialized — createDef's reconcile is post-commit and can lose its
+ * lock with no sweep behind it. The registry cannot see that state, so the
+ * retry composes against the COLUMNS THAT ACTUALLY EXIST; the missing one
+ * renders blank on the client until a reconcile lands it (warned once per
+ * key per instance — degraded but alive, every request pays the failed
+ * query + retry until then).
+ *
+ * `buildSql(cfDefs)` returns the SELECT for that composition (the caller's
+ * ORDER BY may also read cfDefs — a scalar requested cf may be the sort);
+ * `params` is fixed across the retry. Returns the rows.
+ */
+async function queryListWithCf(db, { entity, cf, buildSql, params, caller }) {
+  const table = ENTITY_TABLES[_assertEntity(entity)];
+  let cfDefs = await composeListCf(db, entity, cf);
+  let rows;
+  try {
+    [rows] = await db.query(buildSql(cfDefs), params);
+  } catch (err) {
+    if (err.code !== 'ER_BAD_FIELD_ERROR' || !cfDefs.length) throw err;
+    bump();
+    cfDefs = await composeListCf(db, entity, cf);
+    if (cfDefs.length) {
+      const [cols] = await db.query(
+        `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME LIKE 'cf\\_%'`,
+        [table]);
+      const have = new Set(cols.map((r) => r.COLUMN_NAME));
+      cfDefs = cfDefs.filter((d) => {
+        if (have.has(d.field_key)) return true;
+        if (!_cfColumnWarned.has(`${entity}.${d.field_key}`)) {
+          _cfColumnWarned.add(`${entity}.${d.field_key}`);
+          console.warn(`[${caller}] flagged cf def "${d.field_key}" has no virtual column on ${table} — rendering blank until a reconcile lands it`);
+        }
+        return false;
+      });
+    }
+    [rows] = await db.query(buildSql(cfDefs), params);
+  }
+  return rows;
+}
+
 module.exports = {
   ENTITIES,
   ENTITY_TABLES,
@@ -1137,4 +1227,9 @@ module.exports = {
   defaultsObject,
   customCreateValue,
   assertNoCustomAtCreate,
+  // custom_table_view — list-tab cf columns
+  CF_MAX,
+  parseCfParam,
+  composeListCf,
+  queryListWithCf,
 };
