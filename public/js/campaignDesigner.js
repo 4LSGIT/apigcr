@@ -443,30 +443,32 @@
 
     // Images: every image flow goes to the shared AssetPicker — never the
     // GrapesJS asset manager, never base64 (the asset store is the home).
-    editor.Commands.add('open-assets', {
-      run: function (ed, sender, opts) {
-        opts = opts || {};
-        var target = opts.target || ed.getSelected();
-        Promise.resolve(ctx.pickImage ? ctx.pickImage() : null).then(function (url) {
-          if (!url) return;
-          if (!/^https?:\/\//i.test(String(url))) {
-            if (ctx.notify) ctx.notify('Images must come from the asset library (an http(s) address).', 'warning');
-            return;
-          }
-          if (target && target.get && target.get('type') === 'mj-image') {
-            target.addAttributes({ src: url });
-            target.set('src', url);
-          } else if (typeof opts.select === 'function') {
-            var asset = ed.AssetManager.add({ src: url });
-            opts.select(Array.isArray(asset) ? asset[0] : asset, true);
-          } else if (target && target.get && target.get('type') === 'image') {
-            target.set('src', url);
-          }
-        }).catch(function (err) {
-          if (ctx.notify) ctx.notify((err && err.message) || 'Image picker failed', 'error');
-        });
-      },
-      stop: function () {},
+    // Registered as a bare function: with a `stop` member GrapesJS treats the
+    // command as STATEFUL — after one run it stays active and every later
+    // runCommand (each image double-click) is silently a no-op, so the picker
+    // opened exactly once per editor (Fred's hand-check, 2026-11-04). A
+    // function-form command is stateless and re-runs every time.
+    editor.Commands.add('open-assets', function (ed, sender, opts) {
+      opts = opts || {};
+      var target = opts.target || ed.getSelected();
+      Promise.resolve(ctx.pickImage ? ctx.pickImage() : null).then(function (url) {
+        if (!url) return;
+        if (!/^https?:\/\//i.test(String(url))) {
+          if (ctx.notify) ctx.notify('Images must come from the asset library (an http(s) address).', 'warning');
+          return;
+        }
+        if (target && target.get && target.get('type') === 'mj-image') {
+          target.addAttributes({ src: url });
+          target.set('src', url);
+        } else if (typeof opts.select === 'function') {
+          var asset = ed.AssetManager.add({ src: url });
+          opts.select(Array.isArray(asset) ? asset[0] : asset, true);
+        } else if (target && target.get && target.get('type') === 'image') {
+          target.set('src', url);
+        }
+      }).catch(function (err) {
+        if (ctx.notify) ctx.notify((err && err.message) || 'Image picker failed', 'error');
+      });
     });
   }
 

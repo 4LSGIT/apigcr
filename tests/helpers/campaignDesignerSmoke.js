@@ -100,6 +100,10 @@ const SHELL = `<!doctype html><html><head><meta charset="utf-8"><title>shell sta
     if (url === '/api/campaigns/preview') return { subject: body.subject, body: body.body, unresolved: [] };
     if (url === '/api/campaigns' && method === 'POST') return { campaignId: 501, status: 'sending' };
     if (url.indexOf('/api/campaigns') === 0 && method === 'GET') return { campaigns: [] };
+    if (url.indexOf('/api/assets') === 0 && method === 'GET') return { total: 2, assets: [
+      { id: 1, url: 'https://storage.example.test/comms-images/a.png', mime: 'image/png', title: 'a' },
+      { id: 2, url: 'https://storage.example.test/comms-images/b.png', mime: 'image/png', title: 'b' },
+    ] };
     if (url === '/api/email-designs' && method === 'POST') {
       if (body.name === 'REJECT ME') throw apiErr(400, { error: 'Design rejected', code: 'design_rejected', rule: 6, detail: 'href "javascript:x" is not an allowed URL' });
       seq += 1;
@@ -650,6 +654,43 @@ async function main() {
     checks.paste_synthetic_reduced_to_plain_text = rte3 && syn === true && pasteOut.html.includes('Synthetic plain paste') && !pasteOut.html.includes('TBLPASTE') && !pasteOut.json.includes('data:image');
     checks.paste_real_clipboard_reduced_to_plain_text = realPaste.wrote === 'ok' && realPaste.seen >= 1 && pasteOut.html.includes('Real clipboard plain') && !pasteOut.html.includes('REALTABLE') && !pasteOut.json.includes('REALTABLE');
     info.realPaste = realPaste;
+
+    // ── 12b. The REAL picker, twice: styles follow the popup's DOCUMENT, and a
+    // dismissal never jams the command (both from Fred's hand-check, 2026-11-04).
+    // campaign.html's Swal is the SHELL's (`const Swal = P.Swal`), so the popup
+    // renders in the shell document — assetpicker must style THAT document or the
+    // grid is an unstyled stack. And `open-assets` must be STATELESS: registered
+    // with a `stop` member, GrapesJS marks it active after the first run and
+    // silently no-ops every later double-click, so the picker opens once per editor.
+    r = await rectOf("ed.getWrapper().findType('mj-image')[1]");
+    await page.mouse.click(r.x, r.y); await sleep(250);
+    await page.mouse.click(r.x, r.y, { count: 2 });
+    await bounded(page.waitForSelector('.swal2-container .ap-popup', { visible: true, timeout: 9000 }), 10000, 'real picker open 1');
+    await sleep(500);
+    const pickerStyle = await page.evaluate(() => {
+      const p = document.querySelector('.swal2-container .ap-popup');
+      const grid = p && p.querySelector('#ap-grid');
+      const g = grid && getComputedStyle(grid);
+      return { styles: !!document.getElementById('assetpicker-styles'), display: g ? g.display : null,
+        cols: g ? g.gridTemplateColumns.split(' ').filter(Boolean).length : 0 };
+    });
+    info.pickerStyle = pickerStyle;
+    checks.picker_styles_follow_the_popup_document = pickerStyle.styles === true && pickerStyle.display === 'grid' && pickerStyle.cols > 1;
+    await page.keyboard.press('Escape');
+    await sleep(500);
+    const pickerJammed = await ev(() => designer.editor.Commands.isActive('open-assets'));
+    r = await rectOf("ed.getWrapper().findType('mj-image')[1]");
+    await page.mouse.click(r.x, r.y); await sleep(250);
+    await page.mouse.click(r.x, r.y, { count: 2 });
+    let pickerReopened = false;
+    try {
+      await bounded(page.waitForSelector('.swal2-container .ap-popup', { visible: true, timeout: 6000 }), 7000, 'real picker open 2');
+      pickerReopened = true;
+    } catch (_) { /* stays false */ }
+    info.pickerReopen = { jammed: pickerJammed, reopened: pickerReopened };
+    checks.image_picker_reopens_after_dismissal = pickerReopened === true && pickerJammed !== true;
+    await page.keyboard.press('Escape');
+    await sleep(400);
 
     // ── 13. Images go through the shared AssetPicker (stubbed here: it is the existing, tested widget) ──
     await ev(() => { window.__picks = 0; AssetPicker.pick = async () => { window.__picks++; return 'https://storage.example.test/comms-images/pic.png'; }; });

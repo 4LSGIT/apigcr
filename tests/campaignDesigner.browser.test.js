@@ -92,6 +92,8 @@ const EXPECTED = [
   'paste_synthetic_reduced_to_plain_text',
   'paste_real_clipboard_reduced_to_plain_text',
   'image_dblclick_uses_assetpicker',
+  'picker_styles_follow_the_popup_document',
+  'image_picker_reopens_after_dismissal',
   'file_drop_on_canvas_refused',
   'preview_renders_designer_body_sandboxed',
   'create_sends_compiled_body_and_design_id',

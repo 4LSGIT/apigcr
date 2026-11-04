@@ -1765,6 +1765,11 @@ ref/YISRAMAIL_DESIGN.md §6.3 "As built (C3b)" says what shipped.
   rather than mapped onto allowed tags (b / i / a / lists).
 - **Native block drag is hand-checked**, not tested: headless Chrome never
   starts an HTML5 drag from mouse input (CDP drag interception included).
+- **An AI builder slice** (Fred, 2026-11-04: "we need to do a slice with an AI
+  builder... something to bear in mind"): generate / edit a design from a
+  prompt. Natural shape: produce MJML or design_json server-side and load it
+  through the SAME save validator (rules 1–10) — the AI is a design author
+  like any other, never a bypass. Scope and timing are Fred's call.
 
 ## From the contact-intake safety slices (2026-10-27) — deferred
 

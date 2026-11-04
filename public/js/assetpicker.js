@@ -70,9 +70,15 @@
     return 'fa-file';
   }
 
-  // ── Inject scoped styles once ──
-  function ensureStyles() {
-    if (document.getElementById(STYLE_ID)) return;
+  // ── Inject scoped styles once per DOCUMENT ──
+  // `doc` is the document the popup renders in. A pane whose `Swal` is the
+  // shell's (campaign.html: `const Swal = P.Swal`) gets its popup in the SHELL
+  // document, so styling only this page's document leaves the picker an
+  // unstyled stack there (Fred's hand-check, 2026-11-04). willOpen below
+  // injects into popup.ownerDocument, whichever document that is.
+  function ensureStyles(doc) {
+    doc = doc || document;
+    if (doc.getElementById(STYLE_ID)) return;
     var css =
       // The picker lives in a SweetAlert2 popup, and SweetAlert2 paints that
       // popup white with #545454 text regardless of theme. No consumer page
@@ -126,10 +132,10 @@
       '.ap-divider{border:none;border-top:1px solid var(--border);margin:10px 0 0;}' +
       '.ap-url{display:flex;gap:8px;margin-top:10px;align-items:center;}' +
       '.ap-url input{flex:1;min-width:0;}';
-    var el = document.createElement('style');
+    var el = doc.createElement('style');
     el.id = STYLE_ID;
     el.textContent = css;
-    document.head.appendChild(el);
+    doc.head.appendChild(el);
   }
 
   // ── File helpers ──
@@ -461,6 +467,11 @@
         // without the deprecated `allowEnterKey`. Our own Enter handlers below do the work.
         preConfirm: function () { return false; },
         focusConfirm: false,
+        // The popup may live in ANOTHER document (a pane using the shell's
+        // Swal) — style the document it actually renders in, before paint.
+        willOpen: function (popup) {
+          if (popup && popup.ownerDocument) ensureStyles(popup.ownerDocument);
+        },
         didOpen: function () {
           var p = Swal.getPopup();
           grid       = p.querySelector('#ap-grid');

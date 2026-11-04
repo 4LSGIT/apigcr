@@ -185,6 +185,13 @@ describe('the /api/email-designs contract (C3a)', () => {
   });
 });
 
+describe('open-assets — the image-picker command is stateless', () => {
+  test('registered as a bare function: a stop member makes GrapesJS mark it active after one run and silently no-op every later image double-click (picker opened once per editor, 2026-11-04)', () => {
+    expect(DESIGNER_SRC).toMatch(/Commands\.add\('open-assets', function \(/);
+    expect(DESIGNER_SRC).not.toMatch(/'open-assets',\s*\{/);
+  });
+});
+
 describe('merge tags — the compose list is the only list', () => {
   test('placeholdersFrom reads #c-placeholder-email (optgroups kept, the empty option skipped)', () => {
     const dom = new JSDOM(HTML);
