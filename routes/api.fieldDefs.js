@@ -15,9 +15,11 @@
  *                                               (CFG-1: the Fields editor's badges)
  *   POST /api/field-defs                        create { entity, field_key, label,
  *                                               field_type, options?, validation?,
- *                                               show_when?, sort_order?, active? }
+ *                                               show_when?, sort_order?, list_column?,
+ *                                               active? }
  *   PATCH /api/field-defs/:id                   label / field_type / options /
- *                                               validation / show_when / sort_order
+ *                                               validation / show_when / sort_order /
+ *                                               list_column (S4: offer as a list column)
  *                                               (entity + field_key IMMUTABLE → 400)
  *   POST /api/field-defs/:id/deactivate         active = 0 — retirement
  *   POST /api/field-defs/:id/reactivate         active = 1

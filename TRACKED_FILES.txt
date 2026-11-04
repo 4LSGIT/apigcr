@@ -646,6 +646,7 @@ ref/migrations/2026-11-02_yisramail_t2_campaign_results_delivery.sql
 ref/migrations/2026-11-02_yisramail_t2_hook_ses_events.console.js
 ref/migrations/2026-11-03_yisramail_c1_campaign_class.sql
 ref/migrations/2026-11-04_yisramail_c2_marketing_send.sql
+ref/migrations/2026-11-05_custom_table_s4_field_defs_list_column.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -869,6 +870,7 @@ scripts/courtTitleMatchTest.js
 scripts/customFieldsS5Seed.js
 scripts/customFieldsS5Wf37Repoint.js
 scripts/customFieldsS5bDrop.js
+scripts/customTableS4ListColumnFlag.js
 scripts/dbkq_convert.js
 scripts/dbkq_v12_polish.js
 scripts/dbkq_verify.js

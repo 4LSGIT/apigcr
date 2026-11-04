@@ -457,7 +457,7 @@ describe('S6 — a def cannot store a default its own field would reject', () =>
 describe('S6 — a patch is validated against the STORED default', () => {
   test('default_value is patchable', () => {
     expect(read('services/fieldDefService.js'))
-      .toMatch(/const PATCHABLE = \['label', 'field_type', 'options', 'validation', 'show_when',\s*'default_value', 'sort_order'\]/);
+      .toMatch(/const PATCHABLE = \['label', 'field_type', 'options', 'validation', 'show_when',\s*'default_value', 'sort_order', 'list_column'\]/);
   });
 
   test('a retype whose stored default no longer fits is REFUSED, naming the default', async () => {

@@ -50,6 +50,22 @@ function parseTypesParam(raw) {
   return ok ? parsed : undefined;
 }
 
+// Custom-field columns (custom_table_view S4): `cf` is a JSON array of cf
+// keys the client wants as columns. Shape-checked here (the service then
+// intersects with the registry, which alone supplies SQL identifiers); the
+// cap keeps a hostile body from inflating the SELECT. Same return contract
+// as parseTypesParam.
+const CF_MAX = 30;
+const CF_KEY_RE = /^cf_[a-z][a-z0-9_]{1,56}$/;
+function parseCfParam(raw) {
+  if (raw == null || raw === '') return null;
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return undefined; }
+  if (!Array.isArray(parsed) || parsed.length > CF_MAX) return undefined;
+  if (!parsed.length) return null;
+  return parsed.every((k) => typeof k === 'string' && CF_KEY_RE.test(k)) ? parsed : undefined;
+}
+
 // "Other (unlisted)" (F3b): `types_not` is a JSON array of the type names the
 // client's tree displayed; the service matches its complement. An EMPTY array
 // is meaningful (nothing listed → every case is "other"), so unlike `types`
@@ -74,12 +90,17 @@ router.get('/api/cases', jwtOrApiKey, async (req, res) => {
     if (typesNot === undefined) {
       return res.status(400).json({ status: 'error', message: 'types_not must be a JSON array of type names' });
     }
+    const cfKeys = parseCfParam(req.query.cf);
+    if (cfKeys === undefined) {
+      return res.status(400).json({ status: 'error', message: 'cf must be a JSON array of cf_ field keys' });
+    }
     const result = await caseService.listCases(req.db, {
       query: req.query.q || req.query.query || "",
       type: req.query.type || "%",
       subtype: req.query.subtype || "",
       types,
       typesNot,
+      cf: cfKeys,
       stage: req.query.stage || "%",
       status: req.query.status || "%",
       sort_by: req.query.sort_by || "c.case_open_date",

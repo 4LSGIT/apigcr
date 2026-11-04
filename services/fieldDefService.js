@@ -122,7 +122,7 @@ const TTL_MS = 60 * 1000;
 
 const SELECT_COLS =
   `SELECT id, entity, field_key, label, field_type, options, validation,
-          show_when, default_value, indexed, sort_order, active,
+          show_when, default_value, indexed, list_column, sort_order, active,
           created_at, updated_at
      FROM field_defs`;
 
@@ -180,6 +180,7 @@ function _shape(r) {
     show_when:     _parseJson(r.show_when),
     default_value: _defaultIn(r.default_value),   // S6 — scalar, read as-is
     indexed:       r.indexed ? 1 : 0,
+    list_column:   r.list_column ? 1 : 0,         // custom_table_view S4
     active:        r.active ? 1 : 0,
   };
 }
@@ -512,6 +513,9 @@ async function validateDef(db, def = {}, { isCreate = true, priorOptions = null 
     show_when:  showWhen == null ? null : showWhen,
     default_value: defaultValue,
     sort_order: sortOrder,
+    // custom_table_view S4: boolean-ish, defaults OFF — the Config builder's
+    // "Offer as a list column" checkbox is the only writer that sets it.
+    list_column: d.list_column === undefined ? 0 : (d.list_column ? 1 : 0),
     active:     d.active === undefined ? 1 : (d.active ? 1 : 0),
   };
 }
@@ -544,11 +548,11 @@ async function createDef(db, body = {}, { actor = null } = {}) {
     const [result] = await db.query(
       `INSERT INTO field_defs
          (entity, field_key, label, field_type, options, validation, show_when,
-          default_value, sort_order, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          default_value, sort_order, list_column, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [def.entity, def.field_key, def.label, def.field_type, _json(def.options),
        _json(def.validation), _json(def.show_when), _json(def.default_value),
-       def.sort_order, def.active]
+       def.sort_order, def.list_column, def.active]
     );
     bump();
     _reconcileSoon(db, 'create', actor);
@@ -563,7 +567,7 @@ async function createDef(db, body = {}, { actor = null } = {}) {
 }
 
 const PATCHABLE = ['label', 'field_type', 'options', 'validation', 'show_when',
-                   'default_value', 'sort_order'];
+                   'default_value', 'sort_order', 'list_column'];
 
 /** The PATCHABLE keys stored as JSON text rather than a bare bind. */
 const JSON_COLS = ['options', 'validation', 'show_when', 'default_value'];

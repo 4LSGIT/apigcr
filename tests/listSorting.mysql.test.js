@@ -40,7 +40,12 @@ const d = URL_ ? describe : describe.skip;
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
-const TABLES = ['users', 'contacts', 'cases', 'case_relate', 'appts', 'events', 'tasks', 'contact_roles'];
+const TABLES = ['users', 'contacts', 'cases', 'case_relate', 'appts', 'events', 'tasks', 'contact_roles', 'field_defs'];
+
+// createDef/updateDef schedule the S3 reconciler post-commit (fire-and-forget
+// ALTERs); on this twin that would race the tests' own DDL — stub it out.
+jest.mock('../services/fieldDefReconciler', () => ({ scheduleReconcile: jest.fn() }));
+const fieldDefs = require('../services/fieldDefService');
 const NOW = Date.parse('2026-10-27T16:00:00Z');   // noon, America/Detroit (EDT)
 
 function dumpBlocks(dumpLines, table) {
@@ -154,6 +159,7 @@ d('list sorts on a real engine', () => {
     app.use(require('../routes/api.tasks'));
     app.use(require('../routes/api.appts'));
     app.use(require('../routes/api.contacts'));
+    app.use(require('../routes/api.cases'));
     server = http.createServer(app);
     await new Promise((r) => server.listen(0, '127.0.0.1', r));
     base = `http://127.0.0.1:${server.address().port}`;
@@ -556,6 +562,185 @@ d('list sorts on a real engine', () => {
       expect(r.status).toBe(200);
       expect(ids(r.body.data, 'id')).toEqual([308, 303, 302, 301, 305, 307, 306, 304]);
       expect(ids((await get('/api/tasks?status=All&limit=50')).body.data, 'id')).toEqual(DEFAULT);
+    });
+  });
+
+  // ── Custom-field columns in the list query (custom_table_view S4) ────────
+  // The cases twin (cloned from ref/database.sql) already carries the live
+  // cf_court VIRTUAL column; cf_multi and cf_drop get twins of the same shape
+  // here. cf_notes deliberately has NO column: its def exists but is not
+  // flagged, so the list_column gate — not luck — must keep it out of SQL.
+  describe('cases cf columns (S4)', () => {
+    beforeAll(async () => {
+      // ref/database.sql regenerates from the LIVE schema at each land, so
+      // once the S4 migration's commit lands this guard finds the column in
+      // the clone and skips; until then the twin needs the migration's ALTER.
+      const [has] = await q(
+        `SELECT 1 FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'field_defs' AND COLUMN_NAME = 'list_column'`);
+      if (!has) {
+        await q(`ALTER TABLE field_defs ADD COLUMN list_column tinyint(1) NOT NULL DEFAULT 0 AFTER indexed`);
+      }
+      await q(`INSERT INTO field_defs (entity, field_key, label, field_type, options, list_column, active) VALUES
+        ('case', 'cf_court', 'Court', 'select',
+         '[{"value":"MIEB","label":"Michigan Eastern"},{"value":"MIWB","label":"Michigan Western"}]', 1, 1),
+        ('case', 'cf_notes', 'Internal Notes', 'text', NULL, 0, 1),
+        ('case', 'cf_multi', 'Tags', 'multiselect', '[{"value":"a","label":"A"},{"value":"z","label":"Z"}]', 1, 1),
+        ('case', 'cf_drop',  'Dropped Soon', 'text', NULL, 1, 1)`);
+      for (const k of ['cf_multi', 'cf_drop']) {
+        await q(`ALTER TABLE cases ADD COLUMN \`${k}\` varchar(255)
+          GENERATED ALWAYS AS (json_value(custom, '$.${k}' RETURNING CHAR(255))) VIRTUAL`);
+      }
+      await q(`UPDATE cases SET custom = JSON_OBJECT('cf_court', 'MIWB', 'cf_multi', 'z') WHERE case_id = 'CASEAAAA'`);
+      await q(`UPDATE cases SET custom = JSON_OBJECT('cf_court', 'MIEB', 'cf_drop', 'x') WHERE case_id = 'CASEBBBB'`);
+      await q(`UPDATE cases SET custom = JSON_OBJECT('cf_court', 'MIEB', 'cf_multi', 'a') WHERE case_id = 'CASECCCC'`);
+      // CASEDDDD keeps custom NULL — its cf_court must ride as null, not vanish.
+      fieldDefs.bump();
+    });
+    afterAll(() => fieldDefs.bump());
+
+    const byId = (r) => Object.fromEntries(r.cases.map((c) => [c.case_id, c]));
+
+    test('requested flagged keys ride on every row; unrequested rows carry no cf keys', async () => {
+      const r = await caseService.listCases(pool, { cf: ['cf_court'], sort_by: 'c.case_id', sort_dir: 'ASC' });
+      const rows = byId(r);
+      expect(rows.CASEAAAA.cf_court).toBe('MIWB');
+      expect(rows.CASEBBBB.cf_court).toBe('MIEB');
+      expect(rows.CASEDDDD.cf_court).toBeNull();            // no custom JSON at all
+      const bare = await caseService.listCases(pool, { sort_by: 'c.case_id', sort_dir: 'ASC' });
+      expect('cf_court' in bare.cases[0]).toBe(false);
+    });
+
+    test('the list_column gate holds: an unflagged def never reaches SQL (its column does not even exist)', async () => {
+      const r = await caseService.listCases(pool, { cf: ['cf_notes', 'cf_court'] });
+      expect('cf_notes' in r.cases[0]).toBe(false);
+      expect('cf_court' in r.cases[0]).toBe(true);
+    });
+
+    test('an unknown key drops silently', async () => {
+      const r = await caseService.listCases(pool, { cf: ['cf_nope'] });
+      expect(r.total).toBe(4);
+      expect('cf_nope' in r.cases[0]).toBe(false);
+    });
+
+    test('a hostile key never reaches SQL — the registry, not the client, names identifiers', async () => {
+      const r = await caseService.listCases(pool, { cf: ['cf_x` , (SELECT 1)'] });
+      expect(r.total).toBe(4);
+    });
+
+    test('a hand-written registry row with a malformed key is dropped too (KEY_RE re-check)', async () => {
+      // The API shape-checks field_key at create, but a script or migration
+      // writes rows without it — and field_key lands inside backticks.
+      await q(`INSERT INTO field_defs (entity, field_key, label, field_type, list_column, active)
+               VALUES ('case', 'cf_bad\`x', 'Hand Written', 'text', 1, 1)`);
+      fieldDefs.bump();
+      try {
+        const r = await caseService.listCases(pool, { cf: ['cf_bad\`x', 'cf_court'] });
+        expect(r.total).toBe(4);
+        expect('cf_court' in r.cases[0]).toBe(true);
+      } finally {
+        await q('DELETE FROM field_defs WHERE label = ?', ['Hand Written']);
+        fieldDefs.bump();
+      }
+    });
+
+    test('sort by a requested scalar cf works, NULLs grouping per engine order', async () => {
+      const asc = await caseService.listCases(pool, { cf: ['cf_court'], sort_by: 'cf_court', sort_dir: 'ASC' });
+      expect(ids(asc.cases, 'case_id')).toEqual(['CASEDDDD', 'CASEBBBB', 'CASECCCC', 'CASEAAAA']);
+      const desc = await caseService.listCases(pool, { cf: ['cf_court'], sort_by: 'cf_court', sort_dir: 'DESC' });
+      expect(ids(desc.cases, 'case_id')).toEqual(['CASEAAAA', 'CASECCCC', 'CASEBBBB', 'CASEDDDD']);
+    });
+
+    test('a multiselect cf never sorts; an unrequested cf never sorts — both fall to the default', async () => {
+      // cf_multi values (z, -, a, -) would reorder if the sort ran; the
+      // default (open date, all equal → case_id) must come back instead.
+      const multi = await caseService.listCases(pool, { cf: ['cf_multi'], sort_by: 'cf_multi', sort_dir: 'ASC' });
+      expect(ids(multi.cases, 'case_id')).toEqual(['CASEAAAA', 'CASEBBBB', 'CASECCCC', 'CASEDDDD']);
+      const unreq = await caseService.listCases(pool, { sort_by: 'cf_court', sort_dir: 'ASC' });
+      expect(ids(unreq.cases, 'case_id')).toEqual(['CASEAAAA', 'CASEBBBB', 'CASECCCC', 'CASEDDDD']);
+    });
+
+    test('the ER 1054 stale-cache window: bust, recompose, retry once — the list never 500s', async () => {
+      await fieldDefs.listActive(pool, 'case');              // warm the cache WITH cf_drop
+      await q('ALTER TABLE cases DROP COLUMN cf_drop');      // the reconciler's drop…
+      await q(`UPDATE field_defs SET active = 0 WHERE field_key = 'cf_drop'`);  // …after the def retired
+      try {
+        // The stale cache still offers cf_drop → the first SELECT throws 1054
+        // → bump + recompose (fresh read: inactive, dropped) → retry carries
+        // cf_court only.
+        const r = await caseService.listCases(pool, { cf: ['cf_drop', 'cf_court'], sort_by: 'c.case_id', sort_dir: 'ASC' });
+        expect(r.total).toBe(4);
+        expect('cf_drop' in r.cases[0]).toBe(false);
+        expect(byId(r).CASEBBBB.cf_court).toBe('MIEB');
+        // And the cache really was busted: a second call works first try.
+        const again = await caseService.listCases(pool, { cf: ['cf_drop', 'cf_court'] });
+        expect(again.total).toBe(4);
+      } finally {
+        await q(`UPDATE field_defs SET active = 1 WHERE field_key = 'cf_drop'`);
+        await q(`ALTER TABLE cases ADD COLUMN cf_drop varchar(255)
+          GENERATED ALWAYS AS (json_value(custom, '$.cf_drop' RETURNING CHAR(255))) VIRTUAL`);
+        fieldDefs.bump();
+      }
+    });
+
+    test('an ACTIVE flagged def whose column never materialized cannot 500 the list', async () => {
+      // createDef's reconcile is post-commit and can lose its lock with no
+      // sweep behind it (CLAUDE.md) — the def then exists, flagged, while
+      // its virtual column does not. Both the first SELECT and a registry-
+      // only recompose would 1054; the retry must intersect with the columns
+      // that actually exist (review-caught blocker).
+      await fieldDefs.createDef(pool, {
+        entity: 'case', field_key: 'cf_nocol', label: 'No Column', field_type: 'text', list_column: true,
+      });
+      try {
+        const r = await caseService.listCases(pool, { cf: ['cf_nocol', 'cf_court'], sort_by: 'c.case_id', sort_dir: 'ASC' });
+        expect(r.total).toBe(4);
+        expect('cf_nocol' in r.cases[0]).toBe(false);   // blank until a reconcile lands it
+        expect(byId(r).CASEBBBB.cf_court).toBe('MIEB'); // the healthy column still rides
+      } finally {
+        await q('DELETE FROM field_defs WHERE field_key = ?', ['cf_nocol']);
+        fieldDefs.bump();
+      }
+    });
+
+    test('a non-1054 error is rethrown untouched, never retried', async () => {
+      let selects = 0;
+      const wrapped = { query: async (sql, p) => {
+        if (typeof sql === 'string' && sql.includes('JSON_ARRAYAGG')) {
+          selects++;
+          const e = new Error('boom'); e.code = 'ER_NO_SUCH_TABLE'; throw e;
+        }
+        return pool.query(sql, p);
+      } };
+      await expect(caseService.listCases(wrapped, { cf: ['cf_court'] })).rejects.toThrow('boom');
+      expect(selects).toBe(1);                           // one attempt, no retry
+    });
+
+    test('the route: shape-checked cf, 400 on anything else', async () => {
+      const ok = await get(`/api/cases?limit=50&cf=${encodeURIComponent('["cf_court"]')}`);
+      expect(ok.status).toBe(200);
+      expect(ok.body.cases.every((c) => 'cf_court' in c)).toBe(true);
+      expect((await get('/api/cases?cf=not-json')).status).toBe(400);
+      expect((await get(`/api/cases?cf=${encodeURIComponent('["CF_COURT"]')}`)).status).toBe(400);
+      expect((await get(`/api/cases?cf=${encodeURIComponent('["cf_x` (SELECT 1)"]')}`)).status).toBe(400);
+      expect((await get(`/api/cases?cf=${encodeURIComponent(JSON.stringify(Array(31).fill('cf_court')))}`)).status).toBe(400);
+      expect((await get(`/api/cases?cf=${encodeURIComponent('[]')}`)).status).toBe(200);
+    });
+
+    test('the def write path: list_column is patchable and round-trips', async () => {
+      const made = await fieldDefs.createDef(pool, {
+        entity: 'case', field_key: 'cf_rt', label: 'Round Trip', field_type: 'text', list_column: true,
+      });
+      try {
+        let defs = await fieldDefs.listActive(pool, 'case');
+        expect(defs.find((d) => d.field_key === 'cf_rt').list_column).toBe(1);
+        await fieldDefs.updateDef(pool, made.id, { list_column: 0 });
+        defs = await fieldDefs.listActive(pool, 'case');
+        expect(defs.find((d) => d.field_key === 'cf_rt').list_column).toBe(0);
+      } finally {
+        await q('DELETE FROM field_defs WHERE field_key = ?', ['cf_rt']);
+        fieldDefs.bump();
+      }
     });
   });
 });

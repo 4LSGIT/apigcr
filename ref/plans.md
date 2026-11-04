@@ -2467,3 +2467,12 @@ which never shows it). Two steps:
 - **A token holder who hand-posts the label of a hidden `{{ca}}` button still
   fires `video.cta_clicked`.** They hold a real token, so the only harm is a click
   record on a button they didn't see.
+
+## Gated mysql twins — per-family test databases
+
+Three builder-family twins (listSorting.mysql — which S4 extended with
+`field_defs` — and the consent and intake twins) rebuild overlapping tables
+in one shared `*_test` DB. Builder families are compatible under the drop-in-
+before-hook rule, but the overlap grows with every twin; giving each family
+its own `*_test` database (the yisramail pattern) removes the hazard class.
+Flagged in the S4-server review, 2026-11-05.
