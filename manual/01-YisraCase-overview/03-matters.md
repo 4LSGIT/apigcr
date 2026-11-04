@@ -181,6 +181,8 @@ The **Caption** control in the filter bar sets how the table shows captions: **C
 
 **Columns** in the filter bar picks which columns the table shows. Untick a column to hide it (at least one always stays). The choice is saved in your browser per user — each device keeps its own view, and a column added in a later release shows up on every device automatically. Printing prints the table as shown. Caption and Columns are independent: Caption decides how captions are presented, Columns decides whether the Caption column exists at all — hide it and captions appear only in **In name** mode (which itself needs the Client Name column visible).
 
+Custom fields can join the picker too: a case field whose definition has **Offer as a list column** ticked (More → YisraCase Config → Fields) appears at the bottom of the Columns menu, **off** until you turn it on — the firm's **Court** field ships that way. These columns show the stored value, sort like any other column (multiselects excepted), and ride along in "As shown on screen" exports.
+
 **Export** in the footer asks which columns to export: **All columns** (the full export set — more than the table shows, including subtype, chapter, judge and trustee) or **As shown on screen** (exactly your visible columns, in their on-screen order; the file name carries `-view`).
 
 Results sort by open date descending by default.

@@ -73,7 +73,13 @@ a report".
 7. Optional **Default** — a value stamped onto **new** records of that kind as
    they are created. See *Defaults* below; the one thing to know here is that
    it never changes a record that already exists.
-8. **+ Add Field.** If something's wrong, the message under the button names
+8. Optional **Offer as a list column** (case fields only) — ticks the field
+   into the **Cases tab's Columns picker**, where each person can turn the
+   column on for themselves. It starts hidden for everyone; the list shows the
+   stored value (for a select, the option's value, not its label), and it can
+   be sorted like any column except a multiselect. Untick it and the column
+   leaves the picker again. The firm's **Court** field ships with this on.
+9. **+ Add Field.** If something's wrong, the message under the button names
    every problem at once.
 
 ### Using a field
