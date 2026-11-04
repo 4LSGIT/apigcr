@@ -851,6 +851,14 @@ async function walk(page, W, record) {
       ['deadline-cancel', 'eventCancelDeadline(8000)'],
       ['adopt-docket', "CaseAdoptDialog('2:26-bk-41234')"],
       ['adopt-phone', "OrphanAdoptDialog('3135550100', 'phone')"],
+      // The Columns modals (R1) — cases and contacts as the representatives
+      // (the four tabs share ycColsDialog; only the row lists differ). Each
+      // first turns its fixture cf column ON (fixtures/api/field-defs.json
+      // flags cf_court / cf_referral_source_detail), so the shot carries the
+      // modal over a table whose header includes a custom column — the
+      // long-label row and the grown header both face the width check.
+      ['cases-columns', "openMainTab('tabCases'); setTimeout(() => { casesColsSave({ orderedKeys: CASES_COLUMNS.map((c) => c.key), checkedKeys: [...new Set(casesColsVis.map((c) => c.key).concat('cf_court'))] }); casesColsDialog(); }, 500)"],
+      ['contacts-columns', "openMainTab('tabContacts'); setTimeout(() => { contactsColsSave({ orderedKeys: CONTACT_COLUMNS.map((c) => c.key), checkedKeys: [...new Set(contactsColsVis.map((c) => c.key).concat('cf_referral_source_detail'))] }); contactsColsDialog(); }, 500)"],
     ];
     for (const [key, js] of DIALOGS) {
       await page.evaluate(() => Swal.close()); await sleep(300);

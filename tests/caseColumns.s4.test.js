@@ -92,16 +92,15 @@ const ROWS = [
     case_status: 'Active', open: '', file: '', close: '', caption_adds_info: 0, contacts: [] },
 ];
 
-const PICKER_FNS = ['casesColsKey', 'casesColsOnKey', 'casesCfEnsure', 'casesColsVisible',
-  'casesRenderRows', 'casesColsRender', 'casesColsApply', 'casesColsChanged',
+const PICKER_FNS = ['casesColsKey', 'casesColsOnKey', 'casesColsOrderKey', 'casesCfEnsure',
+  'casesColsVisible', 'casesRenderRows', 'casesColsRender', 'casesColsApply',
+  'casesColsDialog', 'casesColsSave',
   'casesColsInit', 'casesCfColumns', 'casesCfInit', 'casesViewColumns', 'tabCasesGet'];
 
 function page({ userId = 6, storedOff, storedOn, defs = DEFS } = {}) {
   const jsd = new JSDOM(`<!DOCTYPE html><body><div id="tabCases" class="tab-main">
     <input id="tabCasesQuery"><div id="tabCasesLoad"></div>
     <input id="tabCasesStatus">
-    <details id="tabCasesCols"><summary><span id="tabCasesColsLabel">All</span></summary>
-      <div id="tabCasesColsMenu"></div></details>
     <select id="tabCasesOrder" data-type="sortBy">
       <option value="co.contact_lname" selected>Client</option>
     </select>
@@ -165,6 +164,7 @@ function page({ userId = 6, storedOff, storedOn, defs = DEFS } = {}) {
     window.__cols = CASES_COLUMNS;
     window.__vis = () => casesColsVis;
     window.__view = casesViewColumns;
+    window.__save = casesColsSave;
   `);
   return w;
 }
@@ -173,24 +173,26 @@ const cfReady = async (w) => { await w.__cfInit(); };
 const cells = (w) => [...w.document.querySelectorAll('#casesTable tr')].slice(1)
   .map((tr) => [...tr.cells].map((td) => td.innerHTML));
 const headTexts = (w) => [...w.document.querySelectorAll('#casesTable th')].map((th) => th.textContent.trim());
-const boxFor = (w, key) => [...w.document.querySelectorAll('#tabCasesColsMenu input')].find((b) => b.value === key);
-const setBox = (w, key, on) => { const b = boxFor(w, key); b.checked = on; b.dispatchEvent(new w.Event('change', { bubbles: true })); };
-const label = (w) => w.document.getElementById('tabCasesColsLabel').textContent;
+/* The modal's Apply, driven directly (R1) — see caseColumns.s3a. */
+const setBox = (w, key, on) => {
+  const checked = new Set(w.__vis().map((c) => c.key));
+  if (on) checked.add(key); else checked.delete(key);
+  w.__save({ orderedKeys: w.__cols.map((c) => c.key), checkedKeys: [...checked] });
+};
 const settle = (w) => new Promise((r) => w.setTimeout(r, 0));
 const STATIC_N = 10;
 
 describe('the registry append', () => {
-  test('flagged active defs join the picker, hidden by default; the rest never do', async () => {
+  test('flagged active defs join the model (the modal lists it), hidden by default; the rest never do', async () => {
     const w = page();
     await cfReady(w);
-    const boxes = [...w.document.querySelectorAll('#tabCasesColsMenu input')].map((b) => b.value);
-    expect(boxes).toHaveLength(STATIC_N + 5);           // court, filed, rush, tags, hostile-label
-    for (const k of ['cf_court', 'cf_filed', 'cf_rush', 'cf_tags', 'cf_hostile']) expect(boxes).toContain(k);
-    for (const k of ['cf_retired', 'cf_unflagged', 'cf_bad`key']) expect(boxes).not.toContain(k);
+    const keys = w.__cols.map((c) => c.key);
+    expect(keys).toHaveLength(STATIC_N + 5);            // court, filed, rush, tags, hostile-label
+    for (const k of ['cf_court', 'cf_filed', 'cf_rush', 'cf_tags', 'cf_hostile']) expect(keys).toContain(k);
+    for (const k of ['cf_retired', 'cf_unflagged', 'cf_bad`key']) expect(keys).not.toContain(k);
     expect(headTexts(w)).toHaveLength(STATIC_N);        // all cf hidden by default
-    expect(label(w)).toBe(`${STATIC_N} of ${STATIC_N + 5}`);
     expect(w.__pwn).toBeUndefined();                    // hostile label never executed
-    expect(w.document.querySelectorAll('#tabCasesColsMenu img')).toHaveLength(0);
+    expect(w.document.querySelectorAll('img')).toHaveLength(0);
   });
 
   test('the Order By select gains scalar cf options only, labeled from the def', async () => {
@@ -207,12 +209,11 @@ describe('the registry append', () => {
     w.__defsFail = true;
     await cfReady(w);
     expect(headTexts(w)).toHaveLength(STATIC_N);
-    expect(label(w)).toBe('All');
     await w.__go(0);
     expect(cells(w)).toHaveLength(2);                   // the tab still works
     const w2 = page({ defs: [] });
     await cfReady(w2);
-    expect(label(w2)).toBe('All');
+    expect(w2.__cols).toHaveLength(STATIC_N);
   });
 
   test('a second init is a no-op — no duplicate columns', async () => {

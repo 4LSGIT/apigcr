@@ -70,16 +70,14 @@ function constSrc(src, name) {
 const ALL_KEYS = ['contact_id', 'contact_name', 'contact_phone', 'contact_email', 'contact_address', 'cases', 'dob'];
 const hideAllBut = (keep) => ALL_KEYS.filter((k) => k !== keep).join(',');
 
-const PICKER_FNS = ['contactsRoleValues', 'contactsColsKey', 'contactsColsOnKey', 'contactsCfEnsure',
-  'contactsColsVisible', 'contactsRenderRows', 'contactsColsRender', 'contactsColsApply',
-  'contactsColsChanged', 'contactsColsInit', 'tabContactsGet'];
+const PICKER_FNS = ['contactsRoleValues', 'contactsColsKey', 'contactsColsOnKey', 'contactsColsOrderKey',
+  'contactsCfEnsure', 'contactsColsVisible', 'contactsRenderRows', 'contactsColsRender', 'contactsColsApply',
+  'contactsColsDialog', 'contactsColsSave', 'contactsColsInit', 'tabContactsGet'];
 
 function page({ userId = 6, storedOff, storageThrows = false, failFetch = false } = {}) {
   const jsd = new JSDOM(`<!DOCTYPE html><body><div id="tabContacts" class="tab-main">
     <input id="tabContactsQuery"><div id="tabContactsLoad"></div>
     <div id="tabContactsRole"></div>
-    <details id="tabContactsCols"><summary><span id="tabContactsColsLabel">All</span></summary>
-      <div id="tabContactsColsMenu"></div></details>
     <select id="tabContactsSort" data-type="sortBy">
       <option value="contact_lname">Last</option><option value="contact_dob">DOB</option>
     </select>
@@ -120,6 +118,7 @@ function page({ userId = 6, storedOff, storageThrows = false, failFetch = false 
     window.__cols = CONTACT_COLUMNS;
     window.__vis = () => contactsColsVis;
     window.__apply = contactsColsApply;
+    window.__save = contactsColsSave;
   `);
   return w;
 }
@@ -127,9 +126,12 @@ function page({ userId = 6, storedOff, storageThrows = false, failFetch = false 
 const cells = (w) => [...w.document.querySelectorAll('#contactsTable tr')].slice(1)
   .map((tr) => [...tr.cells].map((td) => td.innerHTML));
 const headTexts = (w) => [...w.document.querySelectorAll('#contactsTable th')].map((th) => th.textContent.trim());
-const boxFor = (w, key) => [...w.document.querySelectorAll('#tabContactsColsMenu input')].find((b) => b.value === key);
-const setBox = (w, key, on) => { const b = boxFor(w, key); b.checked = on; b.dispatchEvent(new w.Event('change', { bubbles: true })); };
-const label = (w) => w.document.getElementById('tabContactsColsLabel').textContent;
+/* The modal's Apply, driven directly (R1) — see caseColumns.s3a. */
+const setBox = (w, key, on) => {
+  const checked = new Set(w.__vis().map((c) => c.key));
+  if (on) checked.add(key); else checked.delete(key);
+  w.__save({ orderedKeys: w.__cols.map((c) => c.key), checkedKeys: [...checked] });
+};
 // Headers and rows must always agree — the review-caught blocker's invariant.
 const expectAligned = (w) => {
   const ths = w.document.querySelectorAll('#contactsTable th').length;
@@ -137,12 +139,9 @@ const expectAligned = (w) => {
 };
 
 describe('default state — the picker changes nothing until used', () => {
-  test('menu from the model, all on, label All, no boot marks, frozen cells', async () => {
+  test('all columns on by default, no boot marks, frozen cells', async () => {
     const w = page();
-    const boxes = [...w.document.querySelectorAll('#tabContactsColsMenu input')];
-    expect(boxes.map((b) => b.value)).toEqual(ALL_KEYS);
-    expect(boxes.every((b) => b.checked)).toBe(true);
-    expect(label(w)).toBe('All');
+    expect(w.__vis().map((c) => c.key)).toEqual(ALL_KEYS);
     expect(headTexts(w).join(' ')).not.toMatch(/[↑↓⇅]/);
     await w.__go(0);
     expect(cells(w)).toEqual(FROZEN.cells);
@@ -158,8 +157,8 @@ describe('choosing columns', () => {
     setBox(w, 'contact_phone', false);
     expect(w.fetches).toBe(1);                              // no refetch
     expect(w.localStorage.getItem('yc.contacts.cols_off.6')).toBe('contact_phone');
+    expect(w.localStorage.getItem('yc.contacts.cols_order.6')).toBe(ALL_KEYS.join(','));
     expect(headTexts(w)).toEqual(['ID', 'Name', 'Email', 'Address', 'Cases', 'Date of Birth']);
-    expect(label(w)).toBe('6 of 7');
     expect(cells(w)).toEqual(FROZEN.cells.map((r) => r.filter((_, i) => i !== 2)));
     expectAligned(w);
     setBox(w, 'contact_phone', true);                       // and back
@@ -195,12 +194,12 @@ describe('choosing columns', () => {
     expect(headTexts(w).at(-1)).toBe('Date of Birth ↑');
   });
 
-  test('the last checked box cannot be cleared', () => {
-    const w = page({ storedOff: hideAllBut('contact_id') });
-    expect(label(w)).toBe('1 of 7');
-    setBox(w, 'contact_id', false);
-    expect(boxFor(w, 'contact_id').checked).toBe(true);     // reverted
-    expect(w.localStorage.getItem('yc.contacts.cols_off.6')).toBe(hideAllBut('contact_id'));
+  test('a save that leaves nothing visible falls back to every default_on column', () => {
+    // The dialog refuses zero checked boxes (listColsModal.r1); this is the
+    // fallback behind it.
+    const w = page();
+    w.__save({ orderedKeys: ALL_KEYS, checkedKeys: ['retired_column'] });
+    expect(headTexts(w)).toEqual(['ID', 'Name', 'Phone', 'Email', 'Address', 'Cases', 'Date of Birth']);
   });
 
   test('the screen follows the click even when storage throws', async () => {
@@ -217,12 +216,10 @@ describe('the stored choice', () => {
   test('hidden keys hide; unknown hidden keys drop; hiding everything falls back', () => {
     const w1 = page({ storedOff: 'contact_phone,retired_column' });
     expect(headTexts(w1)).toEqual(['ID', 'Name', 'Email', 'Address', 'Cases', 'Date of Birth']);
-    expect(label(w1)).toBe('6 of 7');
     const w2 = page({ storedOff: 'retired_column' });
-    expect(label(w2)).toBe('All');
+    expect(w2.__vis().map((c) => c.key)).toEqual(ALL_KEYS);
     const w3 = page({ storedOff: ALL_KEYS.join(',') });      // hand-edited to hide all
-    expect(label(w3)).toBe('All');                           // default_on fallback
-    expect(headTexts(w3)).toEqual(['ID', 'Name', 'Phone', 'Email', 'Address', 'Cases', 'Date of Birth']);
+    expect(headTexts(w3)).toEqual(['ID', 'Name', 'Phone', 'Email', 'Address', 'Cases', 'Date of Birth']);  // default_on fallback
   });
 
   test('a column a later slice ADDS is visible without touching the pref', () => {
@@ -235,13 +232,65 @@ describe('the stored choice', () => {
     expect(headTexts(w)).toContain('New');
   });
 
+  test('a stored cols_order reorders headers AND cells together; later-added columns append', () => {
+    const w = page();
+    const rev = [...ALL_KEYS].reverse();
+    w.localStorage.setItem('yc.contacts.cols_order.6', rev.join(','));
+    w.eval('contactsColsApply()');
+    expect(w.__vis().map((c) => c.key)).toEqual(rev);
+    expect(headTexts(w)).toEqual([...['ID', 'Name', 'Phone', 'Email', 'Address', 'Cases', 'Date of Birth']].reverse());
+    // a column the stored order lacks (added later) appends at the end
+    w.localStorage.setItem('yc.contacts.cols_order.6', 'dob,contact_id');
+    w.__cols.push({ key: 'cf_new', label: 'New', default_on: true, render: () => '' });
+    w.eval('contactsColsApply()');
+    const h = headTexts(w);
+    expect(h.slice(0, 2)).toEqual(['Date of Birth', 'ID']);
+    expect(h.at(-1)).toBe('New');
+  });
+
+  test("the modal's Apply with a REORDERED answer repaints headers and cells in that order", async () => {
+    const w = page();
+    await w.__go(0);
+    const rev = [...ALL_KEYS].reverse();
+    w.__save({ orderedKeys: rev, checkedKeys: [...ALL_KEYS] });
+    expect(headTexts(w)).toEqual([...['ID', 'Name', 'Phone', 'Email', 'Address', 'Cases', 'Date of Birth']].reverse());
+    expect(cells(w)[0]).toEqual([...FROZEN.cells[0]].reverse());
+    expect(w.localStorage.getItem('yc.contacts.cols_order.6')).toBe(rev.join(','));
+    expectAligned(w);
+  });
+
+  test("another window's cols_order save re-applies through the storage listener", async () => {
+    const w = page();
+    await w.__go(0);
+    const rev = [...ALL_KEYS].reverse();
+    w.localStorage.setItem('yc.contacts.cols_order.6', rev.join(','));
+    w.dispatchEvent(new w.StorageEvent('storage', { key: 'yc.contacts.cols_order.6' }));
+    expect(headTexts(w)).toEqual([...['ID', 'Name', 'Phone', 'Email', 'Address', 'Cases', 'Date of Birth']].reverse());
+    expectAligned(w);
+  });
+
+  test('the footer carries the Columns entry point on success, empty and error outcomes', async () => {
+    const w = page();
+    w.eval(`
+      window.__footOpts = [];
+      YcPager.renderFooter = (foot, opts) => { window.__footOpts.push(opts); foot.textContent = 'pager'; };
+    `);
+    await w.__go(0);                                        // success
+    w.__rows = [];
+    await w.__go(0);                                        // empty
+    w.eval('window.__fail = true');
+    await w.__go(0);                                        // error
+    expect(w.__footOpts).toHaveLength(3);
+    for (const o of w.__footOpts) expect(typeof o.onColumns).toBe('function');
+  });
+
   test('the key carries the user id', () => {
     const w = page({ userId: 22, storedOff: hideAllBut('contact_id') });
-    expect(label(w)).toBe('1 of 7');
+    expect(headTexts(w)).toEqual(['ID']);
     const other = page({ userId: 22 });
     other.localStorage.setItem('yc.contacts.cols_off.6', hideAllBut('contact_id'));  // another user's pref
     other.eval('contactsColsApply()');
-    expect(label(other)).toBe('All');
+    expect(other.__vis().map((c) => c.key)).toEqual(ALL_KEYS);
   });
 
   test("another window's save re-applies here (the shipped storage listener)", async () => {
@@ -253,8 +302,6 @@ describe('the stored choice', () => {
     const tableAt = INDEX.indexOf('<table id="contactsTable"');
     const tableMarkup = INDEX.slice(tableAt, INDEX.indexOf('</table>', tableAt) + '</table>'.length);
     const jsd = new JSDOM(`<!DOCTYPE html><body><div id="tabContacts" class="tab-main">${tableMarkup}
-      <details id="tabContactsCols"><summary><span id="tabContactsColsLabel">All</span></summary>
-        <div id="tabContactsColsMenu"></div></details>
       <select id="tabContactsSort" data-type="sortBy"><option value="contact_lname">L</option></select>
       <select id="tabContactsSort2" data-type="sortDi"><option value="ASC">A</option></select>
       </div></body>`, { url: 'https://app.4lsg.com/', runScripts: 'dangerously' });
@@ -366,11 +413,15 @@ describe('failure paths stay aligned', () => {
   });
 });
 
-describe('the filter counter ignores the picker (data-nocount)', () => {
-  test('shipped markup: checked picker boxes count 0, a real filter counts', () => {
+describe('the picker left the filter bar (R1)', () => {
+  test('shipped markup: no Columns dropdown in the bar; the counter still counts a real filter', () => {
     const tabAt = INDEX.indexOf('<div id="tabContacts"');
     const bar = INDEX.slice(INDEX.indexOf('<div class="yc-filters">', tabAt),
       INDEX.indexOf('<table id="contactsTable"', tabAt));
+    // The dropdown and its menu are gone — the modal (footer button) is the
+    // only picker now.
+    expect(bar).not.toContain('tabContactsColsMenu');
+    expect(bar).not.toContain('id="tabContactsCols"');
     const jsd = new JSDOM(`<!DOCTYPE html><body><div id="tabContacts">${bar}
       <table id="contactsTable"><tr></tr></table></div></body>`,
       { url: 'https://app.4lsg.com/', runScripts: 'dangerously' });
@@ -378,17 +429,9 @@ describe('the filter counter ignores the picker (data-nocount)', () => {
     w.eval(`
       window.Swal = { mixin: () => ({ fire: () => Promise.resolve({}) }), fire: () => Promise.resolve({}) };
       ${SCRIPTS}
-      var user = { user: 6 }, contacts = null;
-      ${constSrc(INDEX, 'CONTACT_COLUMNS')}
-      var contactsColsVis = CONTACT_COLUMNS, contactsEverSorted = false, contactsCfFetched = [];
-      ${['contactsColsKey', 'contactsColsOnKey', 'contactsCfEnsure', 'contactsColsVisible',
-         'contactsRenderRows', 'contactsColsRender',
-         'contactsColsApply', 'contactsColsChanged', 'contactsColsInit'].map((f) => fnSrc(INDEX, f)).join('\n')}
-      contactsColsInit();
       window.__active = (sel) => ycFiltersActive(document.querySelector(sel));
     `);
-    expect(w.document.querySelectorAll('#tabContactsColsMenu input:checked').length).toBe(7);
-    expect(w.__active('.yc-filters')).toBe(0);               // picker never counts
+    expect(w.__active('.yc-filters')).toBe(0);
     const role = w.document.querySelector('#tabContactsRoleMenu input');
     role.checked = true;
     expect(w.__active('.yc-filters')).toBe(1);               // a real filter still does

@@ -367,14 +367,32 @@ describe('renderFooter DOM', () => {
     const el = host();
     renderFooter(el, {
       total: 0, limit: 50, offset: 0, shown: 0,
-      onPage: () => {}, onLimit: () => {}, onPrint: true,
+      onPage: () => {}, onLimit: () => {}, onPrint: true, onColumns: () => {},
     });
     expect(el.querySelector('.yc-page')).toBeNull();
     expect(el.querySelector('.yc-pager-range').textContent).toBe('0 of 0');
-    // An empty filter result must keep the size select and Print reachable —
-    // the logs footer always did, and losing them strands the user.
+    // An empty filter result must keep the size select, Columns and Print
+    // reachable — since R1 the Columns button is the ONLY way to the column
+    // picker, so losing the footer strands the user.
     expect(el.querySelector('.yc-pager-size')).not.toBeNull();
     expect(el.querySelector('.yc-pager-print')).not.toBeNull();
+    expect(el.querySelector('.yc-pager-columns')).not.toBeNull();
+  });
+
+  test('the Columns button renders when passed, before Print, and fires its callback (R1)', () => {
+    const el = host();
+    let opened = 0;
+    renderFooter(el, {
+      total: 10, limit: 50, offset: 0, shown: 10,
+      onPage: () => {}, onPrint: true, onExport: () => {}, onColumns: () => { opened++; },
+    });
+    const btns = [...el.querySelectorAll('.yc-pager-btn')].map((b) => b.textContent);
+    expect(btns).toEqual(['Columns', 'Print', 'Export']);
+    el.querySelector('.yc-pager-columns').onclick();
+    expect(opened).toBe(1);
+    // and absent when the tab passes nothing — only column-model tabs get it
+    renderFooter(el, { total: 10, limit: 50, offset: 0, shown: 10, onPage: () => {} });
+    expect(el.querySelector('.yc-pager-columns')).toBeNull();
   });
 
   test('the size select persists per surface, then hands off at page 0', () => {

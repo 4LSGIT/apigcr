@@ -2544,3 +2544,15 @@ Both list SORT_WHITELISTs are plain object literals, so a `sort_by` of
 into the ORDER BY and 500s with a SQL parse error. Staff-JWT only, not
 injectable, pre-existing. The fix is `Object.hasOwn` lookups or null-prototype
 maps at both sites. Flagged in the C1 review, 2026-11-04.
+
+## Columns modal — model growth while the dialog is open
+
+A narrow race (R1 review): the Cases/Contacts Columns dialog opened BEFORE the
+field-defs fetch resolves lists the old, shorter model; Apply then writes
+checkedKeys without the user's turned-on cf column, and keptOn cannot keep a
+key the model now knows. The defs fetch runs at login and is fast, so the
+window is a boot-instant dialog click. Fix shape if it ever bites: snapshot
+the model at didOpen and merge unknown-to-the-dialog keys on save the way
+keptOn does. Related: after a FAILED defs fetch, a save keeps the turned-on
+cf keys (keptOn) but drops them from cols_order — they reappear at the right
+edge; position-only loss, accepted.

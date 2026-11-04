@@ -270,7 +270,9 @@ describe('the tabs send what the routes read', () => {
   const run = async (fn, prelude, fields, extra = []) => {
     const html = Object.entries(fields).map(([id, v]) => (v === 'table' ? `<table id="${id}"><tr><th>h</th></tr></table>`
       : v === 'div' ? `<div id="${id}"></div>` : v === 'check' ? `<input type="checkbox" id="${id}">` : input(id, v))).join('');
-    const w = page(html, `${prelude} ${extra.map((f) => fnSrc(INDEX, f)).join('\n')} ${fnSrc(INDEX, fn)}`,
+    const w = page(html, `var casesColsDialog = () => {}, contactsColsDialog = () => {},
+        apptsColsDialog = () => {}, eventsColsDialog = () => {};   // footRender's onColumns (R1)
+      ${prelude} ${extra.map((f) => fnSrc(INDEX, f)).join('\n')} ${fnSrc(INDEX, fn)}`,
       async () => ({ total: 0, counter: 0, data: [], appts: [], contacts: [] }));
     await w[fn](0);
     return w.calls[0].params;

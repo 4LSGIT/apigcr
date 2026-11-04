@@ -286,7 +286,7 @@ describe('csvFilterOf: a fetch\'s params as an export filter', () => {
 
 const TABS = {
   cases: {
-    fn: 'tabCasesGet', kind: 'cases', prelude: 'var offsets = {}, cases; function casesTypeTreeBuild() {}',
+    fn: 'tabCasesGet', kind: 'cases', prelude: 'var offsets = {}, cases; function casesTypeTreeBuild() {} var casesColsDialog = () => {};',
     consts: ['CASES_COLUMNS'],                   // S3a: rows render via the model
     post: 'var casesColsVis = CASES_COLUMNS; var casesCfFetched = [];',
     extra: ['casesStageValues', 'casesTypeValues', 'casesTypeOtherChecked', 'casesTypeListed', 'casesRenderRows', 'casesViewColumns', 'casesCfEnsure'],
@@ -300,7 +300,7 @@ const TABS = {
     list: { total: 1, cases: [{ case_id: 'ABCD2345', contacts: [] }] },
   },
   contacts: {
-    fn: 'tabContactsGet', kind: 'contacts', prelude: 'var offsets = {}, contacts, user;',
+    fn: 'tabContactsGet', kind: 'contacts', prelude: 'var offsets = {}, contacts, user; var contactsColsDialog = () => {};',
     consts: ['CONTACT_COLUMNS'],                 // S1: rows render via the model
     // S2: the rows render through the picker's on-screen set (default = all).
     post: 'var contactsColsVis = CONTACT_COLUMNS; var contactsCfFetched = [];',
@@ -315,7 +315,7 @@ const TABS = {
     list: { total: 1, contacts: [{ contact_id: 1, cases: [] }] },
   },
   events: {
-    fn: 'tabEventsGet', kind: 'events', prelude: 'var offsets = {}, events;',
+    fn: 'tabEventsGet', kind: 'events', prelude: 'var offsets = {}, events; var eventsColsDialog = () => {};',
     consts: ['EVENTS_COLUMNS'],                  // S3b: rows render via the model
     post: 'var eventsColsVis = EVENTS_COLUMNS;',
     extra: ['escHtml', 'escAttrJSON', 'eventsRenderRows'],
@@ -326,7 +326,7 @@ const TABS = {
     list: { total: 1, data: [{ event_id: 9, event_all_day: 1 }] },
   },
   appts: {
-    fn: 'tabApptsGet', kind: 'appts', prelude: 'var offsets = {}, appts, apptsLastLoad = 0; function tabApptsTypesLoad() {}',
+    fn: 'tabApptsGet', kind: 'appts', prelude: 'var offsets = {}, appts, apptsLastLoad = 0; function tabApptsTypesLoad() {} var apptsColsDialog = () => {};',
     consts: ['APPTS_COLUMNS'],                   // S3b: rows render via the model
     post: 'var apptsColsVis = APPTS_COLUMNS;',
     extra: ['apptsStatusValues', 'apptsRenderRows'],

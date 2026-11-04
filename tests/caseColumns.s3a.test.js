@@ -87,15 +87,14 @@ const ALL_KEYS = ['case_id', 'contacts', 'case_caption', 'case_number', 'case_ty
 const hideAllBut = (keep) => ALL_KEYS.filter((k) => k !== keep).join(',');
 const drop = (labels, i) => labels.filter((_, n) => n !== i);
 
-const PICKER_FNS = ['casesColsKey', 'casesColsOnKey', 'casesCfEnsure', 'casesColsVisible', 'casesRenderRows',
-  'casesColsRender', 'casesColsApply', 'casesColsChanged', 'casesColsInit', 'tabCasesGet'];
+const PICKER_FNS = ['casesColsKey', 'casesColsOnKey', 'casesColsOrderKey', 'casesCfEnsure',
+  'casesColsVisible', 'casesRenderRows', 'casesColsRender', 'casesColsApply',
+  'casesColsDialog', 'casesColsSave', 'casesColsInit', 'tabCasesGet'];
 
 function page({ userId = 6, storedOff, storageThrows = false, failFetch = false } = {}) {
   const jsd = new JSDOM(`<!DOCTYPE html><body><div id="tabCases" class="tab-main">
     <input id="tabCasesQuery"><div id="tabCasesLoad"></div>
     <input id="tabCasesStatus">
-    <details id="tabCasesCols"><summary><span id="tabCasesColsLabel">All</span></summary>
-      <div id="tabCasesColsMenu"></div></details>
     <select id="tabCasesOrder" data-type="sortBy">
       <option value="co.contact_lname">Client</option><option value="c.case_close_date">Close</option>
     </select>
@@ -139,6 +138,7 @@ function page({ userId = 6, storedOff, storageThrows = false, failFetch = false 
     window.__cols = CASES_COLUMNS;
     window.__vis = () => casesColsVis;
     window.__apply = casesColsApply;
+    window.__save = casesColsSave;
   `);
   return w;
 }
@@ -146,9 +146,17 @@ function page({ userId = 6, storedOff, storageThrows = false, failFetch = false 
 const cells = (w) => [...w.document.querySelectorAll('#casesTable tr')].slice(1)
   .map((tr) => [...tr.cells].map((td) => td.innerHTML));
 const headTexts = (w) => [...w.document.querySelectorAll('#casesTable th')].map((th) => th.textContent.trim());
-const boxFor = (w, key) => [...w.document.querySelectorAll('#tabCasesColsMenu input')].find((b) => b.value === key);
-const setBox = (w, key, on) => { const b = boxFor(w, key); b.checked = on; b.dispatchEvent(new w.Event('change', { bubbles: true })); };
-const label = (w) => w.document.getElementById('tabCasesColsLabel').textContent;
+/* The modal's Apply, driven directly (R1): toggle one key against the
+   CURRENT visible set and hand casesColsSave the whole model order — exactly
+   what ycColsDialog's preConfirm produces for a plain checkbox change. The
+   modal's own UI (checkboxes, drag, arrows, reset, zero-column refusal) is
+   covered in tests/listColsModal.r1.test.js. */
+const setBox = (w, key, on) => {
+  const checked = new Set(w.__vis().map((c) => c.key));
+  if (on) checked.add(key); else checked.delete(key);
+  w.__save({ orderedKeys: w.__cols.map((c) => c.key), checkedKeys: [...checked] });
+};
+const visKeys = (w) => w.__vis().map((c) => c.key);
 // Headers and rows must always agree — the S2-review invariant, kept here.
 const expectAligned = (w) => {
   const ths = w.document.querySelectorAll('#casesTable th').length;
@@ -211,8 +219,8 @@ describe('choosing columns', () => {
     setBox(w, 'case_stage', false);
     expect(w.fetches).toBe(1);                              // no refetch
     expect(w.localStorage.getItem('yc.cases.cols_off.6')).toBe('case_stage');
+    expect(w.localStorage.getItem('yc.cases.cols_order.6')).toBe(ALL_KEYS.join(','));
     expect(headTexts(w)).toEqual(drop(ALL_LABELS, 5));
-    expect(label(w)).toBe('9 of 10');
     expect(cells(w)).toEqual(FROZEN.cells.map((r) => r.filter((_, i) => i !== 5)));
     expectAligned(w);
     setBox(w, 'case_stage', true);                          // and back
@@ -264,12 +272,13 @@ describe('choosing columns', () => {
     expect(headTexts(w).at(-1)).toBe('Close Date ↑');
   });
 
-  test('the last checked box cannot be cleared', () => {
-    const w = page({ storedOff: hideAllBut('case_id') });
-    expect(label(w)).toBe('1 of 10');
-    setBox(w, 'case_id', false);
-    expect(boxFor(w, 'case_id').checked).toBe(true);        // reverted
-    expect(w.localStorage.getItem('yc.cases.cols_off.6')).toBe(hideAllBut('case_id'));
+  test('a save that leaves nothing visible falls back to every default_on column', () => {
+    // The dialog refuses zero checked boxes (listColsModal.r1), so this is
+    // the belt-and-suspenders fallback behind it: checked keys the model
+    // does not know cannot blank the screen.
+    const w = page();
+    w.__save({ orderedKeys: ALL_KEYS, checkedKeys: ['retired_column'] });
+    expect(headTexts(w)).toEqual(ALL_LABELS);
   });
 
   test('the screen follows the click even when storage throws', async () => {
@@ -286,12 +295,10 @@ describe('the stored choice', () => {
   test('hidden keys hide; unknown hidden keys drop; hiding everything falls back', () => {
     const w1 = page({ storedOff: 'case_stage,retired_column' });
     expect(headTexts(w1)).toEqual(drop(ALL_LABELS, 5));
-    expect(label(w1)).toBe('9 of 10');
     const w2 = page({ storedOff: 'retired_column' });
-    expect(label(w2)).toBe('All');
+    expect(headTexts(w2)).toEqual(ALL_LABELS);
     const w3 = page({ storedOff: ALL_KEYS.join(',') });      // hand-edited to hide all
-    expect(label(w3)).toBe('All');                           // default_on fallback
-    expect(headTexts(w3)).toEqual(ALL_LABELS);
+    expect(headTexts(w3)).toEqual(ALL_LABELS);               // default_on fallback
   });
 
   test('a column a later slice ADDS is visible without touching the pref', () => {
@@ -302,13 +309,54 @@ describe('the stored choice', () => {
     expect(headTexts(w)).toContain('New');
   });
 
+  test("the modal's Apply with a REORDERED answer repaints headers and cells in that order", async () => {
+    const w = page();
+    await w.__go(0);
+    const rev = [...ALL_KEYS].reverse();
+    w.__save({ orderedKeys: rev, checkedKeys: [...ALL_KEYS] });
+    expect(headTexts(w)).toEqual([...ALL_LABELS].reverse());
+    expect(cells(w)[0]).toEqual([...FROZEN.cells[0]].reverse());
+    expect(w.localStorage.getItem('yc.cases.cols_order.6')).toBe(rev.join(','));
+    expectAligned(w);
+  });
+
+  test("another window's cols_order save re-applies through the storage listener", async () => {
+    const w = page();
+    await w.__go(0);
+    const rev = [...ALL_KEYS].reverse();
+    w.localStorage.setItem('yc.cases.cols_order.6', rev.join(','));
+    w.dispatchEvent(new w.StorageEvent('storage', { key: 'yc.cases.cols_order.6' }));
+    expect(headTexts(w)).toEqual([...ALL_LABELS].reverse());
+    expectAligned(w);
+  });
+
   test('the key carries the user id', () => {
     const w = page({ userId: 22, storedOff: hideAllBut('case_id') });
-    expect(label(w)).toBe('1 of 10');
+    expect(headTexts(w)).toEqual(['Lead ID']);
     const other = page({ userId: 22 });
     other.localStorage.setItem('yc.cases.cols_off.6', hideAllBut('case_id'));  // another user's pref
     other.eval('casesColsApply()');
-    expect(label(other)).toBe('All');
+    expect(headTexts(other)).toEqual(ALL_LABELS);
+  });
+
+  test('a stored cols_order reorders headers AND cells together; later-added columns land in their natural spot', () => {
+    const w = page({});
+    w.localStorage.setItem('yc.cases.cols_order.6',
+      ['case_type', 'case_id', 'contacts', 'case_caption', 'case_number',
+        'case_stage', 'case_status', 'open', 'file', 'close'].join(','));
+    w.eval('casesColsApply()');
+    expect(headTexts(w)).toEqual(['Case Type', ...drop(ALL_LABELS, 4)]);
+    // Unknown stored keys drop out; model columns the CSV lacks append at
+    // the END in model order (ycColsOrder) — a later-added column shows at
+    // the right edge until the user places it.
+    w.localStorage.setItem('yc.cases.cols_order.6', 'close,retired_column,case_id');
+    w.__cols.splice(1, 0, { key: 'inserted', label: 'Inserted', default_on: true, render: () => '' });
+    w.eval('casesColsApply()');
+    const h = headTexts(w);
+    expect(h[0]).toBe('Close Date');
+    expect(h[1]).toBe('Lead ID');
+    expect(h[2]).toBe('Inserted');           // appended keys keep model order
+    expect(h).toHaveLength(11);
   });
 });
 
@@ -414,8 +462,6 @@ function evalCasesBlock(ycStub) {
   const tableAt = INDEX.indexOf('<table id="casesTable"');
   const tableMarkup = INDEX.slice(tableAt, INDEX.indexOf('</table>', tableAt) + '</table>'.length);
   const jsd = new JSDOM(`<!DOCTYPE html><body><div id="tabCases" class="tab-main">${tableMarkup}
-    <details id="tabCasesCols"><summary><span id="tabCasesColsLabel">All</span></summary>
-      <div id="tabCasesColsMenu"></div></details>
     <select id="tabCasesOrder" data-type="sortBy"><option value="co.contact_lname">C</option></select>
     <select id="tabCasesOrder2" data-type="sortDi"><option value="ASC">A</option></select>
     </div></body>`, { url: 'https://app.4lsg.com/', runScripts: 'dangerously' });
@@ -477,11 +523,15 @@ describe('the shipped block', () => {
   });
 });
 
-describe('the filter counter ignores the picker (data-nocount)', () => {
-  test('shipped markup: checked picker boxes count 0, a real filter counts', () => {
+describe('the picker left the filter bar (R1)', () => {
+  test('shipped markup: no Columns dropdown in the bar; the counter still counts a real filter', () => {
     const tabAt = INDEX.indexOf('<div id="tabCases"');
     const bar = INDEX.slice(INDEX.indexOf('<div class="yc-filters">', tabAt),
       INDEX.indexOf('<table id="casesTable"', tabAt));
+    // The dropdown and its menu are gone — the modal (footer button) is the
+    // only picker now.
+    expect(bar).not.toContain('tabCasesColsMenu');
+    expect(bar).not.toContain('id="tabCasesCols"');
     const jsd = new JSDOM(`<!DOCTYPE html><body><div id="tabCases">${bar}
       <table id="casesTable"><tr></tr></table></div></body>`,
       { url: 'https://app.4lsg.com/', runScripts: 'dangerously' });
@@ -489,19 +539,27 @@ describe('the filter counter ignores the picker (data-nocount)', () => {
     w.eval(`
       window.Swal = { mixin: () => ({ fire: () => Promise.resolve({}) }), fire: () => Promise.resolve({}) };
       ${SCRIPTS}
-      var user = { user: 6 }, cases = null;
-      ${constSrc(INDEX, 'CASES_COLUMNS')}
-      var casesColsVis = CASES_COLUMNS, casesEverSorted = false, casesCfFetched = [];
-      ${['casesColsKey', 'casesColsOnKey', 'casesCfEnsure', 'casesColsVisible', 'casesRenderRows', 'casesColsRender',
-         'casesColsApply', 'casesColsChanged', 'casesColsInit'].map((f) => fnSrc(INDEX, f)).join('\n')}
-      casesColsInit();
       window.__active = (sel) => ycFiltersActive(document.querySelector(sel));
     `);
-    expect(w.document.querySelectorAll('#tabCasesColsMenu input:checked').length).toBe(10);
-    expect(w.__active('.yc-filters')).toBe(0);               // picker never counts
+    expect(w.__active('.yc-filters')).toBe(0);
     const stage = w.document.querySelector('#tabCasesStage input');
     stage.checked = true;
-    expect(w.__active('.yc-filters')).toBe(1);               // a real filter still does
+    expect(w.__active('.yc-filters')).toBe(1);               // a real filter still counts
+  });
+
+  test('the footer carries the Columns entry point on success, empty and error outcomes', async () => {
+    const w = page();
+    w.eval(`
+      window.__footOpts = [];
+      YcPager.renderFooter = (foot, opts) => { window.__footOpts.push(opts); foot.textContent = 'pager'; };
+    `);
+    await w.__go(0);                                        // success
+    w.__rows = [];
+    await w.__go(0);                                        // empty
+    w.__fail = true;
+    await w.__go(0);                                        // error
+    expect(w.__footOpts).toHaveLength(3);
+    for (const o of w.__footOpts) expect(typeof o.onColumns).toBe('function');
   });
 });
 

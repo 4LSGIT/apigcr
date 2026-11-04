@@ -88,6 +88,7 @@ function page(rows) {
     ${constSrc(INDEX, 'CONTACT_COLUMNS')}
     var contactsColsVis = CONTACT_COLUMNS;   // the picker's on-screen set (S2)
     var contactsCfFetched = [];              // the cf keys on hand (C2)
+    var contactsColsDialog = () => {};       // footRender's onColumns (R1)
     ${['contactsRoleValues', 'contactsColsKey', 'contactsColsOnKey', 'contactsCfEnsure',
     'contactsColsVisible', 'contactsRenderRows']
       .map((f) => fnSrc(INDEX, f)).join('\n')}

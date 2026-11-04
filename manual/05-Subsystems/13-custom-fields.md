@@ -73,12 +73,13 @@ a report".
 7. Optional **Default** — a value stamped onto **new** records of that kind as
    they are created. See *Defaults* below; the one thing to know here is that
    it never changes a record that already exists.
-8. Optional **Offer as a list column** (case fields only) — ticks the field
-   into the **Cases tab's Columns picker**, where each person can turn the
-   column on for themselves. It starts hidden for everyone; the list shows the
-   stored value (for a select, the option's value, not its label), and it can
-   be sorted like any column except a multiselect. Untick it and the column
-   leaves the picker again. The firm's **Court** field ships with this on.
+8. Optional **Offer as a list column** — ticks the field into its tab's
+   **Columns picker** (the Cases tab for case fields, the Contacts tab for
+   contact fields), where each person can turn the column on for themselves.
+   It starts hidden for everyone; the list shows the stored value (for a
+   select, the option's value, not its label), and it can be sorted like any
+   column except a multiselect. Untick it and the column leaves the picker
+   again. The firm's **Court** field ships with this on.
 9. **+ Add Field.** If something's wrong, the message under the button names
    every problem at once.
 
@@ -347,7 +348,7 @@ Envelope `{ status: 'success', … }` / `{ status: 'error', message }`.
 | `GET /api/field-defs?entity=` | Every def for the entity (`case` or `contact`), inactive included, ordered `sort_order, id`. |
 | `GET /api/field-defs/usage?entity=` | `{ field_key: count }` of records holding a value, every def incl. inactive. Shares the type-lock's data-exists predicate, so the editor's badges and the 409s below always agree. |
 | `POST /api/field-defs` | Create → `201 { id, entity, field_key }`. Duplicate key → `409`. |
-| `PATCH /api/field-defs/:id` | `label`, `field_type`, `options`, `validation`, `show_when`, `default_value`, `sort_order`, `list_column` (S4 — the "offer as a list column" flag the Cases Columns picker and list query honor). The **merged** row is validated whole, so select → text needs `options: null` in the same patch — and a patch that leaves `default_value` out still re-validates the STORED default against the new type and options (S6). |
+| `PATCH /api/field-defs/:id` | `label`, `field_type`, `options`, `validation`, `show_when`, `default_value`, `sort_order`, `list_column` (S4/C1 — the "offer as a list column" flag both list tabs' Columns pickers and list queries honor). The **merged** row is validated whole, so select → text needs `options: null` in the same patch — and a patch that leaves `default_value` out still re-validates the STORED default against the new type and options (S6). |
 | `POST /api/field-defs/:id/deactivate` · `/reactivate` | `active` 0 / 1. Idempotent. |
 | `POST /api/field-defs/reconcile` | Runs the column reconciler now and waits: `200 { result }` (`status` `ok` / `noop` / `dry_run`, `plan`, `executed`, `skipped`, `conflicts`); `409` another run held the lock through the retry; `500` a statement failed — `result.failed` names it with MySQL's error code, the full message is in the system alert. Body `{ "dry_run": true }` plans without executing. |
 

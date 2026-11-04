@@ -70,7 +70,7 @@ const DATE_TH = (key) => `<th onclick="sort(this, '${key}')"${DATE_TH_EXTRA}>Dat
 const TABS = {
   appts: {
     constName: 'APPTS_COLUMNS', fnPrefix: 'appts', tabId: 'tabAppts', tableId: 'apptsTable',
-    menuId: 'tabApptsColsMenu', labelId: 'tabApptsColsLabel', storageNs: 'appts',
+    storageNs: 'appts',
     sortSelId: 'tabApptsSort', sortSel2Id: 'tabApptsSort2', rowsGlobal: 'appts',
     fetchFn: 'tabApptsGet', frozen: APPT_FROZEN, cellCount: 9,
     oldHeader: [
@@ -94,18 +94,16 @@ const TABS = {
       <select id="tabApptsSort" data-type="sortBy">
         <option value="upcoming" selected>Upcoming first</option><option value="client">Contact Name</option>
       </select>
-      <select id="tabApptsSort2" data-type="sortDi"><option value="ASC" selected>A</option><option value="DESC">D</option></select>
-      <details id="tabApptsCols"><summary><span id="tabApptsColsLabel">All</span></summary>
-        <div id="tabApptsColsMenu"></div></details>`,
+      <select id="tabApptsSort2" data-type="sortDi"><option value="ASC" selected>A</option><option value="DESC">D</option></select>`,
     prelude: `var offsets = {}, appts = null, apptsLastLoad = 0;
       var tabApptsTypesLoad = () => {}, apptsStatusValues = () => [];`,
     apiBody: `({ counter: window.__rows.length, appts: JSON.parse(JSON.stringify(window.__rows)) })`,
-    fns: ['apptsColsKey', 'apptsColsVisible', 'apptsRenderRows', 'apptsColsRender',
-      'apptsColsApply', 'apptsColsChanged', 'apptsColsInit', 'tabApptsGet'],
+    fns: ['apptsColsKey', 'apptsColsOrderKey', 'apptsColsVisible', 'apptsRenderRows', 'apptsColsRender',
+      'apptsColsApply', 'apptsColsDialog', 'apptsColsSave', 'apptsColsInit', 'tabApptsGet'],
   },
   events: {
     constName: 'EVENTS_COLUMNS', fnPrefix: 'events', tabId: 'tabEvents', tableId: 'eventsTable',
-    menuId: 'tabEventsColsMenu', labelId: 'tabEventsColsLabel', storageNs: 'events',
+    storageNs: 'events',
     sortSelId: 'tabEventsSort', sortSel2Id: 'tabEventsSort2', rowsGlobal: 'events',
     fetchFn: 'tabEventsGet', frozen: EVENT_FROZEN, cellCount: 10,
     oldHeader: [
@@ -129,14 +127,12 @@ const TABS = {
       <select id="tabEventsSort" data-type="sortBy">
         <option value="upcoming" selected>Upcoming first</option><option value="title">Title</option>
       </select>
-      <select id="tabEventsSort2" data-type="sortDi"><option value="ASC" selected>A</option><option value="DESC">D</option></select>
-      <details id="tabEventsCols"><summary><span id="tabEventsColsLabel">All</span></summary>
-        <div id="tabEventsColsMenu"></div></details>`,
+      <select id="tabEventsSort2" data-type="sortDi"><option value="ASC" selected>A</option><option value="DESC">D</option></select>`,
     prelude: `var offsets = {}, events = null;
       window.firmData = { users: [{ user: 6, user_name: 'Fred' }, { user: 1, user_name: 'Stuart' }] };`,
     apiBody: `({ total: window.__rows.length, data: JSON.parse(JSON.stringify(window.__rows)) })`,
-    fns: ['escHtml', 'escAttrJSON', 'eventsColsKey', 'eventsColsVisible', 'eventsRenderRows',
-      'eventsColsRender', 'eventsColsApply', 'eventsColsChanged', 'eventsColsInit', 'tabEventsGet'],
+    fns: ['escHtml', 'escAttrJSON', 'eventsColsKey', 'eventsColsOrderKey', 'eventsColsVisible', 'eventsRenderRows',
+      'eventsColsRender', 'eventsColsApply', 'eventsColsDialog', 'eventsColsSave', 'eventsColsInit', 'tabEventsGet'],
   },
 };
 // escHtml/escAttrJSON live in index.html and the appts picker never needs
@@ -175,6 +171,7 @@ function page(cfg, { userId = 6, storedOff, storageThrows = false } = {}) {
     window.__cols = ${cfg.constName};
     window.__vis = () => ${cfg.fnPrefix}ColsVis;
     window.__apply = ${cfg.fnPrefix}ColsApply;
+    window.__save = ${cfg.fnPrefix}ColsSave;
   `);
   return w;
 }
@@ -183,9 +180,12 @@ const cells = (w, cfg) => [...w.document.querySelectorAll(`#${cfg.tableId} tr`)]
   .map((tr) => [...tr.cells].map((td) => td.innerHTML));
 const heads = (w, cfg) => [...w.document.querySelectorAll(`#${cfg.tableId} th`)];
 const headTexts = (w, cfg) => heads(w, cfg).map((th) => th.textContent.trim());
-const boxFor = (w, cfg, key) => [...w.document.querySelectorAll(`#${cfg.menuId} input`)].find((b) => b.value === key);
-const setBox = (w, cfg, key, on) => { const b = boxFor(w, cfg, key); b.checked = on; b.dispatchEvent(new w.Event('change', { bubbles: true })); };
-const label = (w, cfg) => w.document.getElementById(cfg.labelId).textContent;
+/* The modal's Apply, driven directly (R1) — see caseColumns.s3a. */
+const setBox = (w, cfg, key, on) => {
+  const checked = new Set(w.__vis().map((c) => c.key));
+  if (on) checked.add(key); else checked.delete(key);
+  w.__save({ orderedKeys: w.__cols.map((c) => c.key), checkedKeys: [...checked] });
+};
 const expectAligned = (w, cfg) => {
   const ths = heads(w, cfg).length;
   for (const r of cells(w, cfg)) expect(r.length).toBe(ths);
@@ -221,12 +221,8 @@ describe.each(Object.keys(TABS))('%s — model, picker, marks', (name) => {
     }
   });
 
-  test('the picker menu names columns without sort glyphs', () => {
-    const w = page(cfg);
-    const texts = [...w.document.querySelectorAll(`#${cfg.menuId} label`)].map((l) => l.textContent.trim());
-    expect(texts).toContain('Date');                        // not "Date ⇅"
-    expect(texts.join(' ')).not.toMatch(/[↑↓⇅]/);
-  });
+  // The modal names columns without sort glyphs (ycColsDialog strips them) —
+  // covered in tests/listColsModal.r1.test.js over this very model.
 
   test('a change saves the HIDDEN keys, re-renders in memory, never refetches', async () => {
     const w = page(cfg);
@@ -235,8 +231,8 @@ describe.each(Object.keys(TABS))('%s — model, picker, marks', (name) => {
     setBox(w, cfg, cfg.hideKey, false);
     expect(w.fetches).toBe(1);                              // no refetch
     expect(w.localStorage.getItem(`yc.${cfg.storageNs}.cols_off.6`)).toBe(cfg.hideKey);
+    expect(w.localStorage.getItem(`yc.${cfg.storageNs}.cols_order.6`)).toBe(cfg.keys.join(','));
     expect(headTexts(w, cfg)).toEqual(drop(cfg.labels, cfg.hideIdx));
-    expect(label(w, cfg)).toBe(`${cfg.keys.length - 1} of ${cfg.keys.length}`);
     expect(cells(w, cfg)).toEqual(cfg.frozen.cells.map((r) => r.filter((_, i) => i !== cfg.hideIdx)));
     expectAligned(w, cfg);
     setBox(w, cfg, cfg.hideKey, true);                      // and back
@@ -278,19 +274,69 @@ describe.each(Object.keys(TABS))('%s — model, picker, marks', (name) => {
     expect(headTexts(w, cfg)).toContain(`${cfg.sortCol.label} ↑`);
   });
 
-  test('stored choice: unknown keys drop, hide-all falls back, last box holds, per-user', () => {
+  test('stored choice: unknown keys drop, hide-all falls back, empty save falls back, per-user', () => {
     const w1 = page(cfg, { storedOff: `${cfg.hideKey},retired_column` });
     expect(headTexts(w1, cfg)).toEqual(drop(cfg.labels, cfg.hideIdx));
     const w2 = page(cfg, { storedOff: cfg.keys.join(',') });
-    expect(label(w2, cfg)).toBe('All');                     // default_on fallback
-    const w3 = page(cfg, { storedOff: hideAllBut(cfg, cfg.keys[0]) });
-    expect(label(w3, cfg)).toBe(`1 of ${cfg.keys.length}`);
-    setBox(w3, cfg, cfg.keys[0], false);
-    expect(boxFor(w3, cfg, cfg.keys[0]).checked).toBe(true);  // reverted
+    expect(headTexts(w2, cfg)).toEqual(cfg.labels);         // default_on fallback
+    // The dialog refuses zero checked boxes (listColsModal.r1); the save's
+    // own fallback holds behind it.
+    const w3 = page(cfg);
+    w3.__save({ orderedKeys: cfg.keys, checkedKeys: ['retired_column'] });
+    expect(headTexts(w3, cfg)).toEqual(cfg.labels);
     const other = page(cfg, { userId: 22 });
     other.localStorage.setItem(`yc.${cfg.storageNs}.cols_off.6`, hideAllBut(cfg, cfg.keys[0]));
     other.eval(`${cfg.fnPrefix}ColsApply()`);
-    expect(label(other, cfg)).toBe('All');                  // another user's pref ignored
+    expect(headTexts(other, cfg)).toEqual(cfg.labels);      // another user's pref ignored
+  });
+
+  test('a stored cols_order reorders headers AND cells together', () => {
+    const w = page(cfg);
+    const rev = [...cfg.keys].reverse();
+    w.localStorage.setItem(`yc.${cfg.storageNs}.cols_order.6`, rev.join(','));
+    w.eval(`${cfg.fnPrefix}ColsApply()`);
+    expect(w.__vis().map((c) => c.key)).toEqual(rev);
+    expect(headTexts(w, cfg)).toEqual([...cfg.labels].reverse());
+  });
+
+  test("the modal's Apply with a REORDERED answer repaints headers and cells in that order", async () => {
+    // The save must follow the dialog's orderedKeys, not the model order —
+    // the review's surviving mutant on the three twin tabs.
+    const w = page(cfg);
+    await w.__go(0);
+    const rev = [...cfg.keys].reverse();
+    w.__save({ orderedKeys: rev, checkedKeys: [...cfg.keys] });
+    expect(headTexts(w, cfg)).toEqual([...cfg.labels].reverse());
+    const firstRow = cells(w, cfg)[0];
+    const straight = cfg.frozen.cells[0];
+    expect(firstRow).toEqual([...straight].reverse());
+    expect(w.localStorage.getItem(`yc.${cfg.storageNs}.cols_order.6`)).toBe(rev.join(','));
+    expectAligned(w, cfg);
+  });
+
+  test("another window's cols_order save re-applies through the storage listener", async () => {
+    const w = page(cfg);
+    await w.__go(0);
+    const rev = [...cfg.keys].reverse();
+    w.localStorage.setItem(`yc.${cfg.storageNs}.cols_order.6`, rev.join(','));
+    w.dispatchEvent(new w.StorageEvent('storage', { key: `yc.${cfg.storageNs}.cols_order.6` }));
+    expect(headTexts(w, cfg)).toEqual([...cfg.labels].reverse());
+    expectAligned(w, cfg);
+  });
+
+  test('the footer carries the Columns entry point on success, empty and error outcomes', async () => {
+    const w = page(cfg);
+    w.eval(`
+      window.__footOpts = [];
+      YcPager.renderFooter = (foot, opts) => { window.__footOpts.push(opts); foot.textContent = 'pager'; };
+    `);
+    await w.__go(0);                                        // success
+    w.__rows = [];
+    await w.__go(0);                                        // empty
+    w.__fail = true;
+    await w.__go(0);                                        // error
+    expect(w.__footOpts).toHaveLength(3);
+    for (const o of w.__footOpts) expect(typeof o.onColumns).toBe('function');
   });
 
   test('a column a later slice ADDS is visible without touching the pref', () => {
@@ -427,12 +473,8 @@ function evalBlock(ycStub) {
   }).join('\n');
   const jsd = new JSDOM(`<!DOCTYPE html><body>
     <div id="tabAppts" class="tab-main">${markup}
-      <details id="tabApptsCols"><summary><span id="tabApptsColsLabel">All</span></summary>
-        <div id="tabApptsColsMenu"></div></details>
       <select id="tabApptsSort" data-type="sortBy"><option value="upcoming" selected>U</option></select>
       <select id="tabApptsSort2" data-type="sortDi"><option value="ASC" selected>A</option></select>
-      <details id="tabEventsCols"><summary><span id="tabEventsColsLabel">All</span></summary>
-        <div id="tabEventsColsMenu"></div></details>
       <select id="tabEventsSort" data-type="sortBy"><option value="upcoming" selected>U</option></select>
       <select id="tabEventsSort2" data-type="sortDi"><option value="ASC" selected>A</option></select>
     </div></body>`, { url: 'https://app.4lsg.com/', runScripts: 'dangerously' });
@@ -496,36 +538,27 @@ describe('the shipped block', () => {
   });
 });
 
-describe('the filter counters ignore the pickers (data-nocount)', () => {
+describe('the pickers left the filter bars (R1)', () => {
   test.each([
     ['appts', 'tabAppts', 'tabApptsColsMenu', 'apptsTable'],
     ['events', 'tabEvents', 'tabEventsColsMenu', 'eventsTable'],
-  ])('%s: shipped markup counts picker 0, a real filter counts', (name, tabId, menuId, tableId) => {
-    const cfg = TABS[name];
+  ])('%s: no Columns dropdown in the bar; the counter still counts a real filter', (name, tabId, menuId, tableId) => {
     const tabAt = INDEX.indexOf(`<div id="${tabId}"`);
     const bar = INDEX.slice(INDEX.indexOf('<div class="yc-filters">', tabAt),
       INDEX.indexOf(`<table id="${tableId}"`, tabAt));
+    // The dropdown and its menu are gone — the modal (footer button) is the
+    // only picker now.
+    expect(bar).not.toContain(menuId);
     const jsd = new JSDOM(`<!DOCTYPE html><body><div id="${tabId}">${bar}
       <table id="${tableId}"><tr></tr></table></div></body>`,
       { url: 'https://app.4lsg.com/', runScripts: 'dangerously' });
     const w = jsd.window;
-    Object.defineProperty(w.HTMLElement.prototype, 'innerText', {
-      get() { return this.textContent; }, set(v) { this.textContent = v; }, configurable: true,
-    });
     w.eval(`
       window.Swal = { mixin: () => ({ fire: () => Promise.resolve({}) }), fire: () => Promise.resolve({}) };
       ${SCRIPTS}
-      var user = { user: 6 }, ${cfg.rowsGlobal} = null;
-      ${name === 'events' ? fnSrc(INDEX, 'escHtml') + '\n' + fnSrc(INDEX, 'escAttrJSON') : ''}
-      ${constSrc(INDEX, cfg.constName)}
-      var ${cfg.fnPrefix}ColsVis = ${cfg.constName};
-      ${['ColsKey', 'ColsVisible', 'RenderRows', 'ColsRender', 'ColsApply', 'ColsChanged', 'ColsInit']
-        .map((s) => fnSrc(INDEX, cfg.fnPrefix + s)).join('\n')}
-      ${cfg.fnPrefix}ColsInit();
       window.__active = (sel) => ycFiltersActive(document.querySelector(sel));
     `);
-    expect(w.document.querySelectorAll(`#${menuId} input:checked`).length).toBe(cfg.keys.length);
-    expect(w.__active('.yc-filters')).toBe(0);              // picker never counts
+    expect(w.__active('.yc-filters')).toBe(0);
     const date1 = w.document.querySelector(`#${tabId === 'tabAppts' ? 'tabApptsDate1' : 'tabEventsDate1'}`);
     w.document.querySelector(`#${tabId === 'tabAppts' ? 'tabApptsTime' : 'tabEventsTime'}`).value = 'After';
     date1.value = '2026-11-01';

@@ -103,6 +103,7 @@ function page() {
     ${constSrc(INDEX, 'CASES_COLUMNS')}
     var casesColsVis = CASES_COLUMNS;   // S3b: the empty branch renders too
     var casesCfFetched = [];            // + the cf fetch ledger (S4)
+    var casesColsDialog = () => {};     // footRender's onColumns (R1)
     ${fnSrc(INDEX, 'casesRenderRows')}
     ${fnSrc(INDEX, 'casesCfEnsure')}
     ${LIFTED.map((f) => fnSrc(INDEX, f)).join('\n')}

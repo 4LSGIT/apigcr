@@ -92,16 +92,14 @@ const ROWS = [
     contact_city: '', contact_state: '', contact_zip: '', contact_tags: '', dob: '', cases: [] },
 ];
 
-const PICKER_FNS = ['contactsRoleValues', 'contactsColsKey', 'contactsColsOnKey', 'contactsCfEnsure',
-  'contactsColsVisible', 'contactsRenderRows', 'contactsColsRender', 'contactsColsApply',
-  'contactsColsChanged', 'contactsColsInit', 'contactsCfColumns', 'contactsCfInit', 'tabContactsGet'];
+const PICKER_FNS = ['contactsRoleValues', 'contactsColsKey', 'contactsColsOnKey', 'contactsColsOrderKey',
+  'contactsCfEnsure', 'contactsColsVisible', 'contactsRenderRows', 'contactsColsRender', 'contactsColsApply',
+  'contactsColsDialog', 'contactsColsSave', 'contactsColsInit', 'contactsCfColumns', 'contactsCfInit', 'tabContactsGet'];
 
 function page({ userId = 6, storedOff, storedOn, defs = DEFS } = {}) {
   const jsd = new JSDOM(`<!DOCTYPE html><body><div id="tabContacts" class="tab-main">
     <input id="tabContactsQuery"><div id="tabContactsLoad"></div>
     <div id="tabContactsRole"></div>
-    <details id="tabContactsCols"><summary><span id="tabContactsColsLabel">All</span></summary>
-      <div id="tabContactsColsMenu"></div></details>
     <select id="tabContactsSort" data-type="sortBy">
       <option value="contact_lname" selected>Last</option>
     </select>
@@ -162,6 +160,7 @@ function page({ userId = 6, storedOff, storedOn, defs = DEFS } = {}) {
     window.__go = tabContactsGet;
     window.__cols = CONTACT_COLUMNS;
     window.__vis = () => contactsColsVis;
+    window.__save = contactsColsSave;
   `);
   return w;
 }
@@ -170,24 +169,26 @@ const cfReady = async (w) => { await w.__cfInit(); };
 const cells = (w) => [...w.document.querySelectorAll('#contactsTable tr')].slice(1)
   .map((tr) => [...tr.cells].map((td) => td.innerHTML));
 const headTexts = (w) => [...w.document.querySelectorAll('#contactsTable th')].map((th) => th.textContent.trim());
-const boxFor = (w, key) => [...w.document.querySelectorAll('#tabContactsColsMenu input')].find((b) => b.value === key);
-const setBox = (w, key, on) => { const b = boxFor(w, key); b.checked = on; b.dispatchEvent(new w.Event('change', { bubbles: true })); };
-const label = (w) => w.document.getElementById('tabContactsColsLabel').textContent;
+/* The modal's Apply, driven directly (R1) — see caseColumns.s3a. */
+const setBox = (w, key, on) => {
+  const checked = new Set(w.__vis().map((c) => c.key));
+  if (on) checked.add(key); else checked.delete(key);
+  w.__save({ orderedKeys: w.__cols.map((c) => c.key), checkedKeys: [...checked] });
+};
 const settle = (w) => new Promise((r) => w.setTimeout(r, 0));
 const STATIC_N = 7;
 
 describe('the registry append', () => {
-  test('flagged active CONTACT defs join the picker, hidden by default; the rest never do', async () => {
+  test('flagged active CONTACT defs join the model (the modal lists it), hidden by default; the rest never do', async () => {
     const w = page();
     await cfReady(w);
-    const boxes = [...w.document.querySelectorAll('#tabContactsColsMenu input')].map((b) => b.value);
-    expect(boxes).toHaveLength(STATIC_N + 5);           // lang, since, vip, ctags, hostile-label
-    for (const k of ['cf_lang', 'cf_since', 'cf_vip', 'cf_ctags', 'cf_hostile']) expect(boxes).toContain(k);
-    for (const k of ['cf_retired', 'cf_unflagged', 'cf_bad`key', 'cf_court']) expect(boxes).not.toContain(k);
+    const keys = w.__cols.map((c) => c.key);
+    expect(keys).toHaveLength(STATIC_N + 5);            // lang, since, vip, ctags, hostile-label
+    for (const k of ['cf_lang', 'cf_since', 'cf_vip', 'cf_ctags', 'cf_hostile']) expect(keys).toContain(k);
+    for (const k of ['cf_retired', 'cf_unflagged', 'cf_bad`key', 'cf_court']) expect(keys).not.toContain(k);
     expect(headTexts(w)).toHaveLength(STATIC_N);        // all cf hidden by default
-    expect(label(w)).toBe(`${STATIC_N} of ${STATIC_N + 5}`);
     expect(w.__pwn).toBeUndefined();                    // hostile label never executed
-    expect(w.document.querySelectorAll('#tabContactsColsMenu img')).toHaveLength(0);
+    expect(w.document.querySelectorAll('img')).toHaveLength(0);
   });
 
   test('the Order By select gains scalar cf options only, labeled from the def', async () => {
@@ -204,12 +205,11 @@ describe('the registry append', () => {
     w.__defsFail = true;
     await cfReady(w);
     expect(headTexts(w)).toHaveLength(STATIC_N);
-    expect(label(w)).toBe('All');
     await w.__go(0);
     expect(cells(w)).toHaveLength(2);                   // the tab still works
     const w2 = page({ defs: [] });
     await cfReady(w2);
-    expect(label(w2)).toBe('All');
+    expect(w2.__cols).toHaveLength(STATIC_N);
   });
 
   test('a second init is a no-op — no duplicate columns', async () => {

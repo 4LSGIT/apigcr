@@ -3625,18 +3625,11 @@
         <option value="name">In name</option>
         <option value="off">Off</option>
       </select></label>
-      <span class="yc-f" data-nocount><span class="yc-f-l">Columns</span>
-      <details class="yc-multi" id="tabCasesCols">
-        <summary><span id="tabCasesColsLabel">All</span></summary>
-        <div class="yc-multi-menu" id="tabCasesColsMenu">
-          <!-- One checkbox per CASES_COLUMNS entry (casesColsInit). Saved
-               per browser and per user (localStorage, the Caption control's
-               pattern); data-nocount — showing fewer columns is not a
-               filter. Independent of the Caption control: that one CSS-hides
-               the col-caption cells by mode, this one decides whether the
-               column renders at all. -->
-        </div>
-      </details></span>
+      <!-- The Columns picker lives in the table FOOTER since R1 (the shared
+           ycColsDialog modal, opened from renderFooter's Columns button) —
+           visibility AND order, saved per browser and per user. Independent
+           of the Caption control: that one CSS-hides the col-caption cells
+           by mode, the picker decides whether the column renders at all. -->
       <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
       <select id="tabCasesOrder" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
         <option value="co.contact_lname">Client Last Name</option>
@@ -3722,20 +3715,21 @@
     // the marks via sortMarksSync.)
     ycColsHeadRender(E('casesTable'), CASES_COLUMNS);
 
-    /* ── Column picker (S3a) ─────────────────────────────────────────────
+    /* ── Column picker (S3a; the modal since R1) ─────────────────────────
        The Contacts picker's structural twin (S2's block, above its
        tabContactsGet, holds the full reasoning): casesColsVis is the ONE
-       visible set — headers, rows, boxes, label all render from it, never
-       from storage directly; only casesColsApply (storage → vis) and
-       casesColsChanged (click → vis, storage best-effort) assign it.
+       visible set — headers and rows render from it, never from storage
+       directly; only casesColsApply (storage → vis) and casesColsSave (the
+       modal's answer → vis, storage best-effort) assign it.
        Storage: localStorage yc.cases.cols_off.<uid>, a CSV of the HIDDEN
-       model keys (code literals, never free text). Unknown stored keys drop
-       out by model intersection; a value that would hide everything falls
-       back to every default_on column. data-nocount: fewer columns is not
-       a filter. The Caption CONTROL stays its own 3-mode control: its CSS
-       hides col-caption cells by mode, the picker decides whether the
-       column renders at all — both read the same class, neither reads the
-       other. */
+       model keys (code literals, never free text), + cols_on (S4) and
+       cols_order (R1). Unknown stored keys drop out by model intersection;
+       a value that would hide everything falls back to every default_on
+       column. The picker opens from the footer's Columns button
+       (ycColsDialog, scripts.js). The Caption CONTROL stays its own 3-mode
+       control: its CSS hides col-caption cells by mode, the picker decides
+       whether the column renders at all — both read the same class, neither
+       reads the other. */
     let casesColsVis = CASES_COLUMNS;
     let casesEverSorted = false;   // marks repaint only after a real sort
 
@@ -3744,12 +3738,17 @@
     // are governed by a TURNED-ON set — cols_off alone would show every
     // later-added cf column to everyone, the opposite of their default.
     function casesColsOnKey() { return `cols_on.${(user && user.user) || 0}`; }
+    // The R1 extension: the user's DISPLAY order, a CSV of model keys
+    // (ycColsOrder composes it over the model; order never decides
+    // visibility — cols_off / cols_on keep doing that).
+    function casesColsOrderKey() { return `cols_order.${(user && user.user) || 0}`; }
 
     function casesColsVisible() {
+      const ordered = ycColsOrder(CASES_COLUMNS, getTabPref('cases', casesColsOrderKey(), ''));
       const off = getTabPref('cases', casesColsKey(), '').split(',');
       const on = getTabPref('cases', casesColsOnKey(), '').split(',');
-      const vis = CASES_COLUMNS.filter((c) => (c.default_on ? !off.includes(c.key) : on.includes(c.key)));
-      return vis.length ? vis : CASES_COLUMNS.filter((c) => c.default_on);
+      const vis = ordered.filter((c) => (c.default_on ? !off.includes(c.key) : on.includes(c.key)));
+      return vis.length ? vis : ordered.filter((c) => c.default_on);
     }
 
     /* Clears the data rows and renders them again from the rows already
@@ -3777,12 +3776,6 @@
         || !!(table.rows.length && /[↑↓⇅]/.test(table.rows[0].textContent));
       ycColsHeadRender(table, casesColsVis);
       if (casesEverSorted) sortMarksSync(E('tabCases'), table);
-      document.querySelectorAll('#tabCasesColsMenu input').forEach((b) => {
-        b.checked = casesColsVis.some((c) => c.key === b.value);
-      });
-      E('tabCasesColsLabel').textContent =
-        casesColsVis.length === CASES_COLUMNS.length ? 'All'
-          : `${casesColsVis.length} of ${CASES_COLUMNS.length}`;
       casesRenderRows();   // unconditional: the screen is render(vis, cache), whatever the cache
     }
 
@@ -3792,22 +3785,38 @@
       casesCfEnsure();
     }
 
-    function casesColsChanged(box) {
-      const checked = [...document.querySelectorAll('#tabCasesColsMenu input:checked')];
-      if (!checked.length) { box.checked = true; return; }   // never zero columns
-      const keys = checked.map((b) => b.value);
-      casesColsVis = CASES_COLUMNS.filter((c) => keys.includes(c.key));
+    /* The Columns modal (R1) and its save. The screen follows the DIALOG's
+       answer directly — vis is rebuilt from orderedKeys/checkedKeys, never
+       read back from storage, so it follows the click even when storage
+       throws (the S2 invariant, kept). Order saves whole (every model key,
+       in chosen order); visibility saves split per the S4 halves + keptOn. */
+    function casesColsDialog() {
+      ycColsDialog({
+        title: 'Cases columns',
+        cols: ycColsOrder(CASES_COLUMNS, getTabPref('cases', casesColsOrderKey(), '')),
+        defaultKeys: CASES_COLUMNS.map((c) => c.key),
+        visibleKeys: casesColsVis.map((c) => c.key),
+        onSave: casesColsSave,
+      });
+    }
+
+    function casesColsSave({ orderedKeys, checkedKeys }) {
+      const byKey = new Map(CASES_COLUMNS.map((c) => [c.key, c]));
+      const vis = orderedKeys.filter((k) => checkedKeys.includes(k))
+        .map((k) => byKey.get(k)).filter(Boolean);
+      casesColsVis = vis.length ? vis : CASES_COLUMNS.filter((c) => c.default_on);
+      setTabPref('cases', casesColsOrderKey(), orderedKeys.join(','));
       setTabPref('cases', casesColsKey(),
-        CASES_COLUMNS.filter((c) => c.default_on && !keys.includes(c.key)).map((c) => c.key).join(','));
+        CASES_COLUMNS.filter((c) => c.default_on && !checkedKeys.includes(c.key)).map((c) => c.key).join(','));
       // Keep stored turned-on keys the CURRENT model doesn't know: before
       // casesCfInit resolves (or when the defs fetch failed) the model is
       // static, and rewriting cols_on from it would erase the user's Court
-      // choice on any unrelated toggle (review-caught).
+      // choice on any unrelated save (review-caught).
       const known = new Set(CASES_COLUMNS.map((c) => c.key));
       const keptOn = getTabPref('cases', casesColsOnKey(), '').split(',')
         .filter((k) => k && !known.has(k));
       setTabPref('cases', casesColsOnKey(),
-        CASES_COLUMNS.filter((c) => !c.default_on && keys.includes(c.key)).map((c) => c.key)
+        CASES_COLUMNS.filter((c) => !c.default_on && checkedKeys.includes(c.key)).map((c) => c.key)
           .concat(keptOn).join(','));
       casesColsRender();
       casesCfEnsure();
@@ -3893,26 +3902,14 @@
        which is also why the listeners register HERE, once (a storage event
        during page parse would otherwise hit an unbound `user`). */
     function casesColsInit() {
-      const menu = E('tabCasesColsMenu');
-      if (!menu) return;
-      menu.innerHTML = '';
-      CASES_COLUMNS.forEach((c) => {
-        const lab = document.createElement('label');
-        const box = document.createElement('input');
-        box.type = 'checkbox';
-        box.value = c.key;
-        box.addEventListener('change', () => casesColsChanged(box));
-        lab.appendChild(box);
-        lab.appendChild(document.createTextNode(' ' + c.label));
-        menu.appendChild(lab);
-      });
       if (!casesColsInit.wired) {
         casesColsInit.wired = true;
         // Another window of this browser saving a new choice re-applies
         // here, so every window of the same user agrees with its own screen.
         window.addEventListener('storage', (e) => {
           if (e.key === `yc.cases.${casesColsKey()}`
-            || e.key === `yc.cases.${casesColsOnKey()}`) casesColsApply();
+            || e.key === `yc.cases.${casesColsOnKey()}`
+            || e.key === `yc.cases.${casesColsOrderKey()}`) casesColsApply();
         });
         // A sort chosen from the selects while its column is HIDDEN paints
         // no mark, so the header latch in casesColsRender would miss it
@@ -3989,6 +3986,22 @@
       if (stages.length) params.stage = stages.join(',');   // CSV → IN on the server
       if (status) params.status = `%${status}%`;
 
+      // The shared footer (js/ycPager.js), rendered on EVERY outcome since
+      // R1 — the Columns button lives here now, and an empty or failed page
+      // must keep its levers (size, Columns, Print, Export), or there is no
+      // way to open the picker from an empty list. The print-every-page loop
+      // this replaced also rendered a phantom empty page whenever the total
+      // was an exact multiple of the page size.
+      const footRender = (total, shown) => YcPager.renderFooter(foot, {
+        total, limit, offset, shown,
+        onPage: (p) => tabCasesGet(p * limit),
+        persistKey: 'cases',
+        onLimit: () => tabCasesGet(0),   // refetch re-reads the store
+        onColumns: casesColsDialog,
+        onPrint: true,
+        onExport: () => exportListCsv('cases', () => csvFilterOf(params), { viewColumns: casesViewColumns }),
+      });
+
       try {
         const data = await apiSend("/api/cases", "GET", params);
         cases = data.cases;
@@ -4004,23 +4017,13 @@
             C.contacts = typeof C.contacts === "string" ? JSON.parse(C.contacts) : C.contacts;
           });
           casesRenderRows();
-
-          // Pagination — the shared footer (js/ycPager.js). The print-every-
-          // page loop this replaces also rendered a phantom empty page
-          // whenever the total was an exact multiple of the page size.
-          YcPager.renderFooter(foot, {
-            total: data.total, limit, offset, shown: cases.length,
-            onPage: (p) => tabCasesGet(p * limit),
-            persistKey: 'cases',
-            onLimit: () => tabCasesGet(0),   // refetch re-reads the store
-            onPrint: true,
-            onExport: () => exportListCsv('cases', () => csvFilterOf(params), { viewColumns: casesViewColumns }),
-          });
+          footRender(data.total, cases.length);
         } else {
           // The cache is the empty page — render it, clearing any rows a
           // picker change painted while this fetch was in flight (review
           // S3b: the empty branch needs this as much as the catch does).
           casesRenderRows();
+          footRender(data.total, 0);
           if (!silent) Toast.fire({ icon: "error", title: "No cases found!" });
         }
       } catch (err) {
@@ -4030,6 +4033,7 @@
         // picker change painted WHILE this fetch was in flight.
         cases = null;
         casesRenderRows();
+        footRender(0, 0);
         if (silent) console.warn("[cases] background refetch failed:", err);
         else Toast.fire({ icon: "error", title: "Error loading cases", text: err.message });
       }
@@ -4295,16 +4299,9 @@
         <option value="this_month">This month</option>
         <option value="next_month">Next month</option>
       </select></label>
-      <span class="yc-f" data-nocount><span class="yc-f-l">Columns</span>
-      <details class="yc-multi" id="tabContactsCols">
-        <summary><span id="tabContactsColsLabel">All</span></summary>
-        <div class="yc-multi-menu" id="tabContactsColsMenu">
-          <!-- One checkbox per CONTACT_COLUMNS entry (contactsColsInit).
-               Saved per browser and per user (localStorage, the Caption
-               control's pattern); data-nocount — showing fewer columns is
-               not a filter. -->
-        </div>
-      </details></span>
+      <!-- The Columns picker lives in the table FOOTER since R1 (the shared
+           ycColsDialog modal, opened from renderFooter's Columns button) —
+           visibility AND order, saved per browser and per user. -->
       <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
       <select id="tabContactsSort" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
         <option value="contact_lname">Last Name</option>
@@ -4378,24 +4375,25 @@
     // the marks via sortMarksSync.)
     ycColsHeadRender(E('contactsTable'), CONTACT_COLUMNS);
 
-    /* ── Column picker (S2) ──────────────────────────────────────────────
+    /* ── Column picker (S2; the modal since R1) ──────────────────────────
        contactsColsVis is the ONE visible set, and everything on screen —
-       headers, rows, boxes, label — renders from it, never from storage
-       directly: rows re-reading localStorage per fetch let another window's
-       save plus a sync-bus refetch here put data under the wrong headers
-       (caught in review). Only contactsColsApply (storage → vis, at boot
-       and on another window's storage event) and contactsColsChanged (the
-       click → vis, storage best-effort — the screen follows the click even
+       headers and rows — renders from it, never from storage directly: rows
+       re-reading localStorage per fetch let another window's save plus a
+       sync-bus refetch here put data under the wrong headers (caught in
+       review). Only contactsColsApply (storage → vis, at boot and on
+       another window's storage event) and contactsColsSave (the modal's
+       answer → vis, storage best-effort — the screen follows the click even
        when storage throws) assign it.
        Storage: localStorage yc.contacts.cols_off.<uid>, per browser AND per
        user, a CSV of the HIDDEN model keys (keys are code literals, never
        free text, so CSV is safe HERE and nowhere near the free-text
-       filters). Hidden, not visible: "turned off" is the durable intent, so
-       a column a later slice ADDS shows up for everyone automatically.
-       Unknown stored keys drop out by model intersection (a later slice may
-       retire a column); a value that would hide everything falls back to
-       every default_on column. The control is data-nocount: fewer columns
-       is not a filter. */
+       filters) + cols_on (C2) and cols_order (R1). Hidden, not visible:
+       "turned off" is the durable intent, so a column a later slice ADDS
+       shows up for everyone automatically. Unknown stored keys drop out by
+       model intersection (a later slice may retire a column); a value that
+       would hide everything falls back to every default_on column. The
+       picker opens from the footer's Columns button (ycColsDialog,
+       scripts.js). */
     let contactsColsVis = CONTACT_COLUMNS;
     let contactsEverSorted = false;   // marks repaint only after a real sort
 
@@ -4405,12 +4403,15 @@
     // alone would show every later-added cf column to everyone, the opposite
     // of their default.
     function contactsColsOnKey() { return `cols_on.${(user && user.user) || 0}`; }
+    // The R1 extension: the user's DISPLAY order (see the Cases block).
+    function contactsColsOrderKey() { return `cols_order.${(user && user.user) || 0}`; }
 
     function contactsColsVisible() {
+      const ordered = ycColsOrder(CONTACT_COLUMNS, getTabPref('contacts', contactsColsOrderKey(), ''));
       const off = getTabPref('contacts', contactsColsKey(), '').split(',');
       const on = getTabPref('contacts', contactsColsOnKey(), '').split(',');
-      const vis = CONTACT_COLUMNS.filter((c) => (c.default_on ? !off.includes(c.key) : on.includes(c.key)));
-      return vis.length ? vis : CONTACT_COLUMNS.filter((c) => c.default_on);
+      const vis = ordered.filter((c) => (c.default_on ? !off.includes(c.key) : on.includes(c.key)));
+      return vis.length ? vis : ordered.filter((c) => c.default_on);
     }
 
     /* Clears the data rows and renders them again from the rows already
@@ -4438,12 +4439,6 @@
         || !!(table.rows.length && /[↑↓⇅]/.test(table.rows[0].textContent));
       ycColsHeadRender(table, contactsColsVis);
       if (contactsEverSorted) sortMarksSync(E('tabContacts'), table);
-      document.querySelectorAll('#tabContactsColsMenu input').forEach((b) => {
-        b.checked = contactsColsVis.some((c) => c.key === b.value);
-      });
-      E('tabContactsColsLabel').textContent =
-        contactsColsVis.length === CONTACT_COLUMNS.length ? 'All'
-          : `${contactsColsVis.length} of ${CONTACT_COLUMNS.length}`;
       contactsRenderRows();   // unconditional: the screen is render(vis, cache), whatever the cache
     }
 
@@ -4453,22 +4448,36 @@
       contactsCfEnsure();
     }
 
-    function contactsColsChanged(box) {
-      const checked = [...document.querySelectorAll('#tabContactsColsMenu input:checked')];
-      if (!checked.length) { box.checked = true; return; }   // never zero columns
-      const keys = checked.map((b) => b.value);
-      contactsColsVis = CONTACT_COLUMNS.filter((c) => keys.includes(c.key));
+    /* The Columns modal (R1) and its save — the Cases block's twin: vis is
+       rebuilt from the dialog's answer, never read back from storage, so
+       the screen follows the click even when storage throws. */
+    function contactsColsDialog() {
+      ycColsDialog({
+        title: 'Contacts columns',
+        cols: ycColsOrder(CONTACT_COLUMNS, getTabPref('contacts', contactsColsOrderKey(), '')),
+        defaultKeys: CONTACT_COLUMNS.map((c) => c.key),
+        visibleKeys: contactsColsVis.map((c) => c.key),
+        onSave: contactsColsSave,
+      });
+    }
+
+    function contactsColsSave({ orderedKeys, checkedKeys }) {
+      const byKey = new Map(CONTACT_COLUMNS.map((c) => [c.key, c]));
+      const vis = orderedKeys.filter((k) => checkedKeys.includes(k))
+        .map((k) => byKey.get(k)).filter(Boolean);
+      contactsColsVis = vis.length ? vis : CONTACT_COLUMNS.filter((c) => c.default_on);
+      setTabPref('contacts', contactsColsOrderKey(), orderedKeys.join(','));
       setTabPref('contacts', contactsColsKey(),
-        CONTACT_COLUMNS.filter((c) => c.default_on && !keys.includes(c.key)).map((c) => c.key).join(','));
+        CONTACT_COLUMNS.filter((c) => c.default_on && !checkedKeys.includes(c.key)).map((c) => c.key).join(','));
       // Keep stored turned-on keys the CURRENT model doesn't know: before
       // contactsCfInit resolves (or when the defs fetch failed) the model is
       // static, and rewriting cols_on from it would erase the user's cf
-      // choice on any unrelated toggle (the Cases review caught this).
+      // choice on any unrelated save (the Cases review caught this).
       const known = new Set(CONTACT_COLUMNS.map((c) => c.key));
       const keptOn = getTabPref('contacts', contactsColsOnKey(), '').split(',')
         .filter((k) => k && !known.has(k));
       setTabPref('contacts', contactsColsOnKey(),
-        CONTACT_COLUMNS.filter((c) => !c.default_on && keys.includes(c.key)).map((c) => c.key)
+        CONTACT_COLUMNS.filter((c) => !c.default_on && checkedKeys.includes(c.key)).map((c) => c.key)
           .concat(keptOn).join(','));
       contactsColsRender();
       contactsCfEnsure();
@@ -4535,26 +4544,14 @@
        which is also why the listeners register HERE, once (a storage event
        during page parse would otherwise hit an unbound `user`). */
     function contactsColsInit() {
-      const menu = E('tabContactsColsMenu');
-      if (!menu) return;
-      menu.innerHTML = '';
-      CONTACT_COLUMNS.forEach((c) => {
-        const lab = document.createElement('label');
-        const box = document.createElement('input');
-        box.type = 'checkbox';
-        box.value = c.key;
-        box.addEventListener('change', () => contactsColsChanged(box));
-        lab.appendChild(box);
-        lab.appendChild(document.createTextNode(' ' + c.label));
-        menu.appendChild(lab);
-      });
       if (!contactsColsInit.wired) {
         contactsColsInit.wired = true;
         // Another window of this browser saving a new choice re-applies
         // here, so every window of the same user agrees with its own screen.
         window.addEventListener('storage', (e) => {
           if (e.key === `yc.contacts.${contactsColsKey()}`
-            || e.key === `yc.contacts.${contactsColsOnKey()}`) contactsColsApply();
+            || e.key === `yc.contacts.${contactsColsOnKey()}`
+            || e.key === `yc.contacts.${contactsColsOrderKey()}`) contactsColsApply();
         });
         // A sort chosen from the selects while its column is HIDDEN paints
         // no mark, so the header latch in contactsColsRender would miss it
@@ -4619,6 +4616,18 @@
       }
       if (cfKeys.length) params.cf = JSON.stringify(cfKeys);
 
+      // The shared footer, rendered on EVERY outcome since R1 (the Cases
+      // block says why: the Columns button lives here now).
+      const footRender = (total, shown) => YcPager.renderFooter(foot, {
+        total, limit, offset, shown,
+        onPage: (p) => tabContactsGet(p * limit),
+        persistKey: 'contacts',
+        onLimit: () => tabContactsGet(0),
+        onColumns: contactsColsDialog,
+        onPrint: true,
+        onExport: () => exportListCsv('contacts', () => csvFilterOf(params), { viewColumns: () => contactsColsVis }),
+      });
+
       try {
         const data = await apiSend("/api/contacts", "GET", params);
         contacts = data.contacts;
@@ -4629,22 +4638,13 @@
 
         if (data.total > 0) {
           contactsRenderRows();           // through the picker's visible set
-
-          // Pagination — the shared footer (js/ycPager.js), same shape and
-          // same off-by-one fix as the Cases tab's.
-          YcPager.renderFooter(foot, {
-            total: data.total, limit, offset, shown: contacts.length,
-            onPage: (p) => tabContactsGet(p * limit),
-            persistKey: 'contacts',
-            onLimit: () => tabContactsGet(0),
-            onPrint: true,
-            onExport: () => exportListCsv('contacts', () => csvFilterOf(params), { viewColumns: () => contactsColsVis }),
-          });
+          footRender(data.total, contacts.length);
         } else {
           // The cache is the empty page — render it, clearing any rows a
           // picker change painted while this fetch was in flight (review
           // S3b: the empty branch needs this as much as the catch does).
           contactsRenderRows();
+          footRender(data.total, 0);
           if (!silent) Toast.fire({ icon: "error", title: "No contacts found!" });
         }
       } catch (err) {
@@ -4655,6 +4655,7 @@
         // was in flight (S3a review nit, both tabs).
         contacts = null;
         contactsRenderRows();
+        footRender(0, 0);
         if (silent) console.warn("[contacts] background refetch failed:", err);
         else Toast.fire({ icon: "error", title: "Error loading contacts", text: err.message });
       }
@@ -4815,15 +4816,8 @@
       <input id="tabApptsDate1" type="date" style="width: auto; display: none" />
       <label id="tabApptsDateLabel"></label>
       <input id="tabApptsDate2" type="date" style="width: auto; display: none" /></span>
-      <span class="yc-f" data-nocount><span class="yc-f-l">Columns</span>
-      <details class="yc-multi" id="tabApptsCols">
-        <summary><span id="tabApptsColsLabel">All</span></summary>
-        <div class="yc-multi-menu" id="tabApptsColsMenu">
-          <!-- One checkbox per APPTS_COLUMNS entry (apptsColsInit). Saved
-               per browser and per user (localStorage); data-nocount —
-               showing fewer columns is not a filter. -->
-        </div>
-      </details></span>
+      <!-- The Columns picker lives in the table FOOTER since R1 (the shared
+           ycColsDialog modal, opened from renderFooter's Columns button). -->
       <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
       <select id="tabApptsSort" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
         <option value="upcoming">Upcoming first</option>
@@ -4901,15 +4895,8 @@
       <input id="tabEventsDate1" type="date" style="width: auto; display: none" />
       <label id="tabEventsDateLabel"></label>
       <input id="tabEventsDate2" type="date" style="width: auto; display: none" /></span>
-      <span class="yc-f" data-nocount><span class="yc-f-l">Columns</span>
-      <details class="yc-multi" id="tabEventsCols">
-        <summary><span id="tabEventsColsLabel">All</span></summary>
-        <div class="yc-multi-menu" id="tabEventsColsMenu">
-          <!-- One checkbox per EVENTS_COLUMNS entry (eventsColsInit). Saved
-               per browser and per user (localStorage); data-nocount —
-               showing fewer columns is not a filter. -->
-        </div>
-      </details></span>
+      <!-- The Columns picker lives in the table FOOTER since R1 (the shared
+           ycColsDialog modal, opened from renderFooter's Columns button). -->
       <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
       <select id="tabEventsSort" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
         <option value="upcoming">Upcoming first</option>
@@ -5857,11 +5844,14 @@
     let apptsColsVis = APPTS_COLUMNS;
 
     function apptsColsKey() { return `cols_off.${(user && user.user) || 0}`; }
+    // The R1 extension: the user's DISPLAY order (see the Cases block).
+    function apptsColsOrderKey() { return `cols_order.${(user && user.user) || 0}`; }
 
     function apptsColsVisible() {
+      const ordered = ycColsOrder(APPTS_COLUMNS, getTabPref('appts', apptsColsOrderKey(), ''));
       const off = getTabPref('appts', apptsColsKey(), '').split(',');
-      const vis = APPTS_COLUMNS.filter((c) => !off.includes(c.key));
-      return vis.length ? vis : APPTS_COLUMNS.filter((c) => c.default_on);
+      const vis = ordered.filter((c) => !off.includes(c.key));
+      return vis.length ? vis : ordered.filter((c) => c.default_on);
     }
 
     /* Clears the data rows and renders them again from the rows already
@@ -5892,12 +5882,6 @@
       const table = E('apptsTable');
       ycColsHeadRender(table, apptsColsVis);
       sortMarksSync(E('tabAppts'), table);
-      document.querySelectorAll('#tabApptsColsMenu input').forEach((b) => {
-        b.checked = apptsColsVis.some((c) => c.key === b.value);
-      });
-      E('tabApptsColsLabel').textContent =
-        apptsColsVis.length === APPTS_COLUMNS.length ? 'All'
-          : `${apptsColsVis.length} of ${APPTS_COLUMNS.length}`;
       apptsRenderRows();   // unconditional: the screen is render(vis, cache), whatever the cache
     }
 
@@ -5906,38 +5890,39 @@
       apptsColsRender();
     }
 
-    function apptsColsChanged(box) {
-      const checked = [...document.querySelectorAll('#tabApptsColsMenu input:checked')];
-      if (!checked.length) { box.checked = true; return; }   // never zero columns
-      const keys = checked.map((b) => b.value);
-      apptsColsVis = APPTS_COLUMNS.filter((c) => keys.includes(c.key));
+    /* The Columns modal (R1) and its save — the Cases block's twin, minus
+       the cf halves (no cols_on here): vis is rebuilt from the dialog's
+       answer, never read back from storage, so the screen follows the click
+       even when storage throws. */
+    function apptsColsDialog() {
+      ycColsDialog({
+        title: 'Appointments columns',
+        cols: ycColsOrder(APPTS_COLUMNS, getTabPref('appts', apptsColsOrderKey(), '')),
+        defaultKeys: APPTS_COLUMNS.map((c) => c.key),
+        visibleKeys: apptsColsVis.map((c) => c.key),
+        onSave: apptsColsSave,
+      });
+    }
+
+    function apptsColsSave({ orderedKeys, checkedKeys }) {
+      const byKey = new Map(APPTS_COLUMNS.map((c) => [c.key, c]));
+      const vis = orderedKeys.filter((k) => checkedKeys.includes(k))
+        .map((k) => byKey.get(k)).filter(Boolean);
+      apptsColsVis = vis.length ? vis : APPTS_COLUMNS.filter((c) => c.default_on);
+      setTabPref('appts', apptsColsOrderKey(), orderedKeys.join(','));
       setTabPref('appts', apptsColsKey(),
-        APPTS_COLUMNS.filter((c) => !keys.includes(c.key)).map((c) => c.key).join(','));
+        APPTS_COLUMNS.filter((c) => !checkedKeys.includes(c.key)).map((c) => c.key).join(','));
       apptsColsRender();
     }
 
-    /* Menu from the model + first apply. Runs in loadUserContext, not at
-       parse: the storage key carries the user id, which auth supplies. */
+    /* Wiring + first apply. Runs in loadUserContext, not at parse: the
+       storage key carries the user id, which auth supplies. */
     function apptsColsInit() {
-      const menu = E('tabApptsColsMenu');
-      if (!menu) return;
-      menu.innerHTML = '';
-      APPTS_COLUMNS.forEach((c) => {
-        const lab = document.createElement('label');
-        const box = document.createElement('input');
-        box.type = 'checkbox';
-        box.value = c.key;
-        box.addEventListener('change', () => apptsColsChanged(box));
-        lab.appendChild(box);
-        // sortMarkStrip: the Date label carries the header's static "⇅",
-        // which is a sort mark, not part of the column's name.
-        lab.appendChild(document.createTextNode(' ' + sortMarkStrip(c.label)));
-        menu.appendChild(lab);
-      });
       if (!apptsColsInit.wired) {
         apptsColsInit.wired = true;
         window.addEventListener('storage', (e) => {
-          if (e.key === `yc.appts.${apptsColsKey()}`) apptsColsApply();
+          if (e.key === `yc.appts.${apptsColsKey()}`
+            || e.key === `yc.appts.${apptsColsOrderKey()}`) apptsColsApply();
         });
       }
       apptsColsApply();
@@ -5946,11 +5931,14 @@
     let eventsColsVis = EVENTS_COLUMNS;
 
     function eventsColsKey() { return `cols_off.${(user && user.user) || 0}`; }
+    // The R1 extension: the user's DISPLAY order (see the Cases block).
+    function eventsColsOrderKey() { return `cols_order.${(user && user.user) || 0}`; }
 
     function eventsColsVisible() {
+      const ordered = ycColsOrder(EVENTS_COLUMNS, getTabPref('events', eventsColsOrderKey(), ''));
       const off = getTabPref('events', eventsColsKey(), '').split(',');
-      const vis = EVENTS_COLUMNS.filter((c) => !off.includes(c.key));
-      return vis.length ? vis : EVENTS_COLUMNS.filter((c) => c.default_on);
+      const vis = ordered.filter((c) => !off.includes(c.key));
+      return vis.length ? vis : ordered.filter((c) => c.default_on);
     }
 
     /* The `events` global is "" (not null) after an empty page — both are
@@ -5968,12 +5956,6 @@
       const table = E('eventsTable');
       ycColsHeadRender(table, eventsColsVis);
       sortMarksSync(E('tabEvents'), table);
-      document.querySelectorAll('#tabEventsColsMenu input').forEach((b) => {
-        b.checked = eventsColsVis.some((c) => c.key === b.value);
-      });
-      E('tabEventsColsLabel').textContent =
-        eventsColsVis.length === EVENTS_COLUMNS.length ? 'All'
-          : `${eventsColsVis.length} of ${EVENTS_COLUMNS.length}`;
       eventsRenderRows();   // unconditional: the screen is render(vis, cache), whatever the cache
     }
 
@@ -5982,36 +5964,34 @@
       eventsColsRender();
     }
 
-    function eventsColsChanged(box) {
-      const checked = [...document.querySelectorAll('#tabEventsColsMenu input:checked')];
-      if (!checked.length) { box.checked = true; return; }   // never zero columns
-      const keys = checked.map((b) => b.value);
-      eventsColsVis = EVENTS_COLUMNS.filter((c) => keys.includes(c.key));
+    /* The Columns modal (R1) and its save — the Appts block's twin. */
+    function eventsColsDialog() {
+      ycColsDialog({
+        title: 'Events columns',
+        cols: ycColsOrder(EVENTS_COLUMNS, getTabPref('events', eventsColsOrderKey(), '')),
+        defaultKeys: EVENTS_COLUMNS.map((c) => c.key),
+        visibleKeys: eventsColsVis.map((c) => c.key),
+        onSave: eventsColsSave,
+      });
+    }
+
+    function eventsColsSave({ orderedKeys, checkedKeys }) {
+      const byKey = new Map(EVENTS_COLUMNS.map((c) => [c.key, c]));
+      const vis = orderedKeys.filter((k) => checkedKeys.includes(k))
+        .map((k) => byKey.get(k)).filter(Boolean);
+      eventsColsVis = vis.length ? vis : EVENTS_COLUMNS.filter((c) => c.default_on);
+      setTabPref('events', eventsColsOrderKey(), orderedKeys.join(','));
       setTabPref('events', eventsColsKey(),
-        EVENTS_COLUMNS.filter((c) => !keys.includes(c.key)).map((c) => c.key).join(','));
+        EVENTS_COLUMNS.filter((c) => !checkedKeys.includes(c.key)).map((c) => c.key).join(','));
       eventsColsRender();
     }
 
     function eventsColsInit() {
-      const menu = E('tabEventsColsMenu');
-      if (!menu) return;
-      menu.innerHTML = '';
-      EVENTS_COLUMNS.forEach((c) => {
-        const lab = document.createElement('label');
-        const box = document.createElement('input');
-        box.type = 'checkbox';
-        box.value = c.key;
-        box.addEventListener('change', () => eventsColsChanged(box));
-        lab.appendChild(box);
-        // sortMarkStrip: the Date label carries the header's static "⇅",
-        // which is a sort mark, not part of the column's name.
-        lab.appendChild(document.createTextNode(' ' + sortMarkStrip(c.label)));
-        menu.appendChild(lab);
-      });
       if (!eventsColsInit.wired) {
         eventsColsInit.wired = true;
         window.addEventListener('storage', (e) => {
-          if (e.key === `yc.events.${eventsColsKey()}`) eventsColsApply();
+          if (e.key === `yc.events.${eventsColsKey()}`
+            || e.key === `yc.events.${eventsColsOrderKey()}`) eventsColsApply();
         });
       }
       eventsColsApply();
@@ -6103,6 +6083,20 @@
       const rows = table.getElementsByTagName("tr");
       for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
 
+      // Footer — the shared pager (js/ycPager.js), page size remembered
+      // under this tab's own key instead of moving the shared global.
+      // Rendered on EVERY outcome since R1 (the Cases block says why: the
+      // Columns button lives here now).
+      const footRender = (total, shown) => YcPager.renderFooter(foot, {
+        total, limit, offset, shown,
+        onPage: (p) => tabEventsGet(p * limit),
+        persistKey: 'events',
+        onLimit: () => tabEventsGet(0),
+        onColumns: eventsColsDialog,
+        onPrint: true,
+        onExport: () => exportListCsv('events', () => csvFilterOf(params), { viewColumns: () => eventsColsVis }),
+      });
+
       try {
         const data = await apiSend("/api/events", "GET", params);
         const total = data.total || 0;
@@ -6110,23 +6104,13 @@
         if (total > 0 && data.data && data.data.length) {
           events = data.data;
           eventsRenderRows();
-
-          // Footer — the shared pager (js/ycPager.js), page size remembered
-          // under this tab's own key instead of moving the shared global.
-          YcPager.renderFooter(foot, {
-            total, limit, offset, shown: events.length,
-            onPage: (p) => tabEventsGet(p * limit),
-            persistKey: 'events',
-            onLimit: () => tabEventsGet(0),
-            onPrint: true,
-            onExport: () => exportListCsv('events', () => csvFilterOf(params), { viewColumns: () => eventsColsVis }),
-          });
+          footRender(total, events.length);
         } else {
           events = "";
           // Render the empty cache: rows a picker change painted while this
           // fetch was in flight must not survive an empty result (review S3b).
           eventsRenderRows();
-          foot.innerHTML = "";
+          footRender(total, 0);
           if (!silent) Toast.fire({ icon: "info", title: "No events found." });
         }
       } catch (err) {
@@ -6135,6 +6119,7 @@
         // a picker change painted mid-flight don't outlive the failure.
         events = null;
         eventsRenderRows();
+        footRender(0, 0);
         if (silent) console.warn("[events] background refetch failed:", err);
         else Toast.fire({ icon: "error", title: "Error loading events", text: err.message });
       }
@@ -6419,6 +6404,21 @@
       const rows = table.getElementsByTagName("tr");
       for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
 
+      // Footer — the shared pager (js/ycPager.js), same shape and same
+      // off-by-one fix as the Cases tab's. This list's total arrives as
+      // `counter`, not `total` — the endpoint's own name for it. Rendered on
+      // EVERY outcome since R1 (the Cases block says why: the Columns button
+      // lives here now).
+      const footRender = (total, shown) => YcPager.renderFooter(foot, {
+        total, limit, offset, shown,
+        onPage: (p) => tabApptsGet(p * limit),
+        persistKey: 'appts',
+        onLimit: () => tabApptsGet(0),
+        onColumns: apptsColsDialog,
+        onPrint: true,
+        onExport: () => exportListCsv('appts', () => csvFilterOf(params), { viewColumns: () => apptsColsVis }),
+      });
+
       try {
         const data = await apiSend("/api/appts", "GET", params);
         // Assigned on EVERY outcome (the Cases/Contacts shape): an empty
@@ -6435,22 +6435,12 @@
           // status" lives in the model's Update render; backend blocks
           // same-state transitions (apptUpdate's confirmCorrection()).
           apptsRenderRows();
-
-          // Pagination — the shared footer (js/ycPager.js), same shape and
-          // same off-by-one fix as the Cases tab's. This list's total arrives
-          // as `counter`, not `total` — the endpoint's own name for it.
-          YcPager.renderFooter(foot, {
-            total: data.counter, limit, offset, shown: appts.length,
-            onPage: (p) => tabApptsGet(p * limit),
-            persistKey: 'appts',
-            onLimit: () => tabApptsGet(0),
-            onPrint: true,
-            onExport: () => exportListCsv('appts', () => csvFilterOf(params), { viewColumns: () => apptsColsVis }),
-          });
+          footRender(data.counter, appts.length);
         } else {
           // Render the empty cache: clears rows a picker change painted
           // while this fetch was in flight (review S3b).
           apptsRenderRows();
+          footRender(data.counter || 0, 0);
           if (!silent) Toast.fire({ icon: "error", title: "No appointments found!" });
         }
       } catch (err) {
@@ -6459,6 +6449,7 @@
         // a picker change painted mid-flight don't outlive the failure.
         appts = null;
         apptsRenderRows();
+        footRender(0, 0);
         if (silent) console.warn("[appts] background refetch failed:", err);
         else Toast.fire({ icon: "error", title: "Error loading appointments", text: err.message });
       }

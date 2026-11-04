@@ -1658,6 +1658,7 @@ tests/launcherS6c4.test.js
 tests/launcherS6c5.test.js
 tests/launcherS6c5editor.test.js
 tests/likeEscapeSites.test.js
+tests/listColsModal.r1.test.js
 tests/listColumns.s3b.test.js
 tests/listCsvExport.test.js
 tests/listSorting.mysql.test.js

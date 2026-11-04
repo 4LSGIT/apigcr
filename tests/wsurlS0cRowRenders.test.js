@@ -122,7 +122,10 @@ function expectClean(w) {
   expect(d.querySelectorAll('[onmouseover]')).toHaveLength(0);
 }
 
-const PAGER = 'var YcPager = { getLimit: (k, d) => d, renderFooter() {} };';
+const PAGER = `var YcPager = { getLimit: (k, d) => d, renderFooter() {} };
+  var casesColsDialog = () => {}, apptsColsDialog = () => {}, eventsColsDialog = () => {};`;
+// (contactsColsDialog is stubbed beside the contacts cf vars below; the
+// other three Gets reference theirs through footRender's onColumns — R1.)
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
@@ -160,6 +163,7 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
     }, `${PAGER} var offsets = {}, contacts, user; ${constSrc(INDEX, 'CONTACT_COLUMNS')}
         var contactsColsVis = CONTACT_COLUMNS;   // the picker's on-screen set (S2)
         var contactsCfFetched = [];              // the cf keys on hand (C2)
+        var contactsColsDialog = () => {};       // footRender's onColumns (R1)
         ${['contactsRoleValues', 'contactsColsKey', 'contactsColsOnKey', 'contactsCfEnsure',
         'contactsColsVisible', 'contactsRenderRows', 'tabContactsGet']
           .map((f) => fnSrc(INDEX, f)).join('\n')}`,

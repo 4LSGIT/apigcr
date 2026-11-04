@@ -1490,6 +1490,135 @@ function ycViewCsvColumns(modelCols, csvCols) {
     });
 }
 
+/* ── Column order + the Columns modal (custom_table_view R1) ────────────────
+   Fred-ruled 2026-11-05: the four list tabs' filter-bar Columns dropdowns
+   move to ONE modal, opened from a Columns button in the table footer
+   (ycPager renderFooter's onColumns), and gain reordering. Storage adds a
+   third per-tab key, yc.<tab>.cols_order.<uid> — a CSV of model keys in the
+   user's chosen DISPLAY order. cols_off / cols_on keep their exact S4
+   semantics; order composes with them, it never decides visibility. */
+
+/* Reorder a copy of `cols` by a stored CSV of keys. Keys the model lacks
+   drop out (a retired column); model columns the CSV lacks APPEND AT THE
+   END, in model order — a column a later slice adds, or a cf column the
+   defs fetch appends after the order was saved, shows up at the right edge
+   until the user places it. (An anchor-insert rule — "after its model
+   predecessor" — was tried first and scrambles the saved order whenever
+   several trailing columns chain off a predecessor the user moved.) An
+   empty or all-unknown CSV returns the model order. */
+function ycColsOrder(cols, csv) {
+  const byKey = new Map(cols.map((c) => [c.key, c]));
+  const placed = String(csv || '').split(',').filter((k) => byKey.has(k));
+  if (!placed.length) return cols.slice();
+  const have = new Set(placed);
+  return placed.map((k) => byKey.get(k)).concat(cols.filter((c) => !have.has(c.key)));
+}
+
+/* The shared Columns modal. `cols` arrive in DISPLAY order (the caller runs
+   ycColsOrder first); `defaultKeys` is the model's natural order (Reset);
+   `visibleKeys` seeds the checkboxes. Rows reorder by drag (desktop) or the
+   ↑/↓ buttons (touch — HTML5 DnD does not fire there). Save hands the
+   caller { orderedKeys, checkedKeys }; at least one box must stay checked.
+   Labels are free text once cf columns exist, so every label is built with
+   textContent, never interpolated markup. Styling is inline on the rows —
+   scripts.js's injected CSS loses specificity ties to style.css (CLAUDE.md),
+   and inline styles sidestep that class of bug entirely. */
+async function ycColsDialog({ title, cols, defaultKeys, visibleKeys, onSave }) {
+  const visible = new Set(visibleKeys);
+  const result = await Swal.fire({
+    customClass: { popup: 'yc-popup' },
+    title: title || 'Columns',
+    html: `<div id="ycColsList" style="text-align:left;max-height:55vh;overflow-y:auto"></div>
+      <div style="text-align:left;margin-top:0.6em">
+        <a href="#" id="ycColsReset" style="font-size:0.85em">Reset order</a>
+      </div>`,
+    showCancelButton: true,
+    confirmButtonText: 'Apply',
+    cancelButtonText: 'Cancel',
+    focusConfirm: false,
+    didOpen: (popup) => {
+      const list = popup.querySelector('#ycColsList');
+      const rowOf = (c) => {
+        const row = document.createElement('div');
+        row.className = 'yc-cols-row';
+        row.dataset.key = c.key;
+        row.draggable = true;
+        row.style.cssText = 'display:flex;align-items:center;gap:0.5em;padding:0.25em 0.2em;border-bottom:1px solid rgba(128,128,128,0.25)';
+        const grip = document.createElement('span');
+        grip.textContent = '≡';
+        grip.style.cssText = 'cursor:grab;opacity:0.6;user-select:none';
+        const lab = document.createElement('label');
+        lab.style.cssText = 'display:flex;align-items:center;gap:0.5em;flex:1 1 auto;min-width:0;margin:0';
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = visible.has(c.key);
+        box.style.cssText = 'width:auto;flex:0 0 auto';
+        const txt = document.createElement('span');
+        txt.textContent = sortMarkStrip(c.label);         // free text — never markup
+        txt.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        lab.appendChild(box);
+        lab.appendChild(txt);
+        const nav = document.createElement('span');
+        nav.style.cssText = 'display:flex;gap:0.2em;flex:0 0 auto';
+        [['↑', -1], ['↓', 1]].forEach(([glyph, dir]) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = glyph;
+          b.title = dir < 0 ? 'Move up' : 'Move down';
+          b.style.cssText = 'width:2em;padding:0.1em 0;line-height:1.2';
+          b.onclick = () => {
+            const sib = dir < 0 ? row.previousElementSibling : row.nextElementSibling;
+            if (!sib) return;
+            list.insertBefore(row, dir < 0 ? sib : sib.nextElementSibling);
+          };
+          nav.appendChild(b);
+        });
+        row.appendChild(grip);
+        row.appendChild(lab);
+        row.appendChild(nav);
+        return row;
+      };
+      cols.forEach((c) => list.appendChild(rowOf(c)));
+      // Drag reorder: drop the dragged row before/after the row under the
+      // cursor by its vertical midpoint. Touch never fires these — the
+      // arrows are the touch path.
+      let dragging = null;
+      list.addEventListener('dragstart', (e) => {
+        dragging = e.target.closest('.yc-cols-row');
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+      });
+      list.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        const over = e.target.closest('.yc-cols-row');
+        if (!dragging || !over || over === dragging) return;
+        const r = over.getBoundingClientRect();
+        list.insertBefore(dragging, e.clientY < r.top + r.height / 2 ? over : over.nextElementSibling);
+      });
+      list.addEventListener('drop', (e) => e.preventDefault());
+      list.addEventListener('dragend', () => { dragging = null; });
+      popup.querySelector('#ycColsReset').onclick = (e) => {
+        e.preventDefault();
+        defaultKeys.forEach((k) => {
+          const row = list.querySelector(`.yc-cols-row[data-key="${k}"]`);
+          if (row) list.appendChild(row);
+        });
+      };
+    },
+    preConfirm: () => {
+      const popup = Swal.getPopup();
+      const rows = [...popup.querySelectorAll('.yc-cols-row')];
+      const orderedKeys = rows.map((r) => r.dataset.key);
+      const checkedKeys = rows.filter((r) => r.querySelector('input').checked).map((r) => r.dataset.key);
+      if (!checkedKeys.length) {
+        Swal.showValidationMessage('Keep at least one column');
+        return false;
+      }
+      return { orderedKeys, checkedKeys };
+    },
+  });
+  if (result && result.isConfirmed && result.value) onSave(result.value);
+}
+
 // Every column the list query returns. Only the PRIMARY phone and email \u2014
 // a contact's other numbers and addresses are not in the list query (a
 // backend change; ref/plans.md). Reports exports those today.

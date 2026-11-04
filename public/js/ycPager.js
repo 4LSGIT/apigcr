@@ -55,6 +55,8 @@
  *     expand: {label, checked, inputId, onChange}   the logs "Expand rows"
  *                                        switch; presentation only, the caller
  *                                        owns what expanding MEANS
+ *     onColumns                          function → a Columns button (the
+ *                                        tab's column modal, R1)
  *     onPrint                            true → window.print(), or a function
  *     onExport                           function → an Export button
  */
@@ -460,6 +462,18 @@
       sizeWrap.appendChild(size);
       sizeWrap.appendChild(doc.createTextNode('per page'));
       right.appendChild(sizeWrap);
+    }
+
+    // Columns opens the tab's column modal (custom_table_view R1) — the
+    // picker lives HERE, in the footer, since the filter-bar dropdowns were
+    // retired. Rendered like Print/Export: only when the tab passes it.
+    if (opts.onColumns) {
+      var co = doc.createElement('button');
+      co.type = 'button';
+      co.className = 'yc-pager-btn yc-pager-columns';
+      co.textContent = 'Columns';
+      co.onclick = function () { opts.onColumns(); };
+      right.appendChild(co);
     }
 
     if (opts.onPrint) {
