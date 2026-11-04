@@ -139,6 +139,12 @@ function page({ userId = 6, storedOff, storedOn, defs = DEFS } = {}) {
         return { defs: window.__defs };
       }
       window.listFetches++;
+      // Bounded fuse (C2 hardening, both tabs' suites): a mutant that breaks
+      // the ensure/fetched handshake loops ensure→fetch→ensure as pure
+      // microtasks and WEDGES the run instead of failing it. The throw lands
+      // in tabCasesGet's catch, which nulls the cache; ensure's !cases guard
+      // stops the loop, and the fetch-count assertions fail loudly.
+      if (window.listFetches > 25) throw new Error('refetch runaway');
       window.lastListParams = params;
       const cfKeys = params && params.cf ? JSON.parse(params.cf) : [];
       const rows = window.__rows.map((r) => {
@@ -431,8 +437,9 @@ describe('the Fields editor carries list_column (S4)', () => {
     expect(CFG).toMatch(/d\.cfListcol !== undefined[\s\S]{0,120}list_column = el\.checked \? 1 : 0;[\s\S]{0,80}cfMarkDirty\(d\.cfListcol\)/);
   });
 
-  test('the checkbox renders for the case entity only (nothing reads a contact flag yet)', () => {
-    expect(CFG).toMatch(/const listCol = cfEntity !== 'case' \? '' :/);
+  test('the checkbox renders for both entities since C2 (the contacts list reads the flag too)', () => {
+    expect(CFG).not.toMatch(/const listCol = cfEntity !== 'case' \? '' :/);
+    expect(CFG).toMatch(/const listTab = cfEntityPlural\(\);/);
   });
 
   test('a new def starts unflagged', () => {

@@ -1366,6 +1366,7 @@ tests/consentGapRetry.test.js
 tests/consentReads.mysql.test.js
 tests/consentRoutes.test.js
 tests/consentUi.test.js
+tests/contactColumns.c2.test.js
 tests/contactColumns.s1.test.js
 tests/contactColumns.s2.test.js
 tests/contactOrgKind.test.js

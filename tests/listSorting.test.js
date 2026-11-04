@@ -280,8 +280,9 @@ describe('the tabs send what the routes read', () => {
   // tabContactsGet renders through the column model since S1, and through
   // the picker's visible set (default = all) since S2.
   const CONTACTS_PRE = `var offsets = {}, contacts, user; ${constSrc(INDEX, 'CONTACT_COLUMNS')}
-    var contactsColsVis = CONTACT_COLUMNS;
-    ${['contactsColsKey', 'contactsColsVisible', 'contactsRenderRows'].map((f) => fnSrc(INDEX, f)).join('\n')}`;
+    var contactsColsVis = CONTACT_COLUMNS, contactsCfFetched = [];
+    ${['contactsColsKey', 'contactsColsOnKey', 'contactsCfEnsure', 'contactsColsVisible', 'contactsRenderRows']
+      .map((f) => fnSrc(INDEX, f)).join('\n')}`;
   test('contacts: the two sort selects and the birthday window', async () => {
     const p = await run('tabContactsGet', CONTACTS_PRE,
       { ...CONTACTS, tabContactsSort: 'contact_dob', tabContactsSort2: 'DESC', tabContactsBirthdays: 'next30' },

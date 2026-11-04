@@ -70,9 +70,9 @@ function constSrc(src, name) {
 const ALL_KEYS = ['contact_id', 'contact_name', 'contact_phone', 'contact_email', 'contact_address', 'cases', 'dob'];
 const hideAllBut = (keep) => ALL_KEYS.filter((k) => k !== keep).join(',');
 
-const PICKER_FNS = ['contactsRoleValues', 'contactsColsKey', 'contactsColsVisible',
-  'contactsRenderRows', 'contactsColsRender', 'contactsColsApply', 'contactsColsChanged',
-  'contactsColsInit', 'tabContactsGet'];
+const PICKER_FNS = ['contactsRoleValues', 'contactsColsKey', 'contactsColsOnKey', 'contactsCfEnsure',
+  'contactsColsVisible', 'contactsRenderRows', 'contactsColsRender', 'contactsColsApply',
+  'contactsColsChanged', 'contactsColsInit', 'tabContactsGet'];
 
 function page({ userId = 6, storedOff, storageThrows = false, failFetch = false } = {}) {
   const jsd = new JSDOM(`<!DOCTYPE html><body><div id="tabContacts" class="tab-main">
@@ -112,7 +112,7 @@ function page({ userId = 6, storedOff, storageThrows = false, failFetch = false 
       return { total: window.__rows.length, contacts: window.__rows };
     };
     ${constSrc(INDEX, 'CONTACT_COLUMNS')}
-    var contactsColsVis = CONTACT_COLUMNS, contactsEverSorted = false;
+    var contactsColsVis = CONTACT_COLUMNS, contactsEverSorted = false, contactsCfFetched = [];
     ${PICKER_FNS.map((f) => fnSrc(INDEX, f)).join('\n')}
     ycColsHeadRender(E('contactsTable'), CONTACT_COLUMNS);   // the parse-time build
     contactsColsInit();                                      // the loadUserContext build
@@ -380,8 +380,9 @@ describe('the filter counter ignores the picker (data-nocount)', () => {
       ${SCRIPTS}
       var user = { user: 6 }, contacts = null;
       ${constSrc(INDEX, 'CONTACT_COLUMNS')}
-      var contactsColsVis = CONTACT_COLUMNS, contactsEverSorted = false;
-      ${['contactsColsKey', 'contactsColsVisible', 'contactsRenderRows', 'contactsColsRender',
+      var contactsColsVis = CONTACT_COLUMNS, contactsEverSorted = false, contactsCfFetched = [];
+      ${['contactsColsKey', 'contactsColsOnKey', 'contactsCfEnsure', 'contactsColsVisible',
+         'contactsRenderRows', 'contactsColsRender',
          'contactsColsApply', 'contactsColsChanged', 'contactsColsInit'].map((f) => fnSrc(INDEX, f)).join('\n')}
       contactsColsInit();
       window.__active = (sel) => ycFiltersActive(document.querySelector(sel));

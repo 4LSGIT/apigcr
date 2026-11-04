@@ -303,8 +303,9 @@ const TABS = {
     fn: 'tabContactsGet', kind: 'contacts', prelude: 'var offsets = {}, contacts, user;',
     consts: ['CONTACT_COLUMNS'],                 // S1: rows render via the model
     // S2: the rows render through the picker's on-screen set (default = all).
-    post: 'var contactsColsVis = CONTACT_COLUMNS;',
-    extra: ['contactsRoleValues', 'contactsColsKey', 'contactsColsVisible', 'contactsRenderRows'],
+    post: 'var contactsColsVis = CONTACT_COLUMNS; var contactsCfFetched = [];',
+    extra: ['contactsRoleValues', 'contactsColsKey', 'contactsColsOnKey', 'contactsCfEnsure',
+      'contactsColsVisible', 'contactsRenderRows'],
     // The role control is a .yc-multi (F2): an empty stub div = nothing
     // checked = no role param. Role filter coverage lives in
     // contactRoles.roleForms + listSorting.mysql.

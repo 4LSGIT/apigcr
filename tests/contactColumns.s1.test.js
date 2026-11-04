@@ -87,7 +87,9 @@ function page(rows) {
     var apiSend = async () => ({ total: window.__rows.length, contacts: window.__rows });
     ${constSrc(INDEX, 'CONTACT_COLUMNS')}
     var contactsColsVis = CONTACT_COLUMNS;   // the picker's on-screen set (S2)
-    ${['contactsRoleValues', 'contactsColsKey', 'contactsColsVisible', 'contactsRenderRows']
+    var contactsCfFetched = [];              // the cf keys on hand (C2)
+    ${['contactsRoleValues', 'contactsColsKey', 'contactsColsOnKey', 'contactsCfEnsure',
+    'contactsColsVisible', 'contactsRenderRows']
       .map((f) => fnSrc(INDEX, f)).join('\n')}
     ${fnSrc(INDEX, 'tabContactsGet')}
     ycColsHeadRender(E('contactsTable'), CONTACT_COLUMNS);   // the parse-time build

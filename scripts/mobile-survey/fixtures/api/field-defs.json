@@ -14,6 +14,36 @@
    "indexed": 0,
    "sort_order": 10,
    "active": 1
+  },
+  {
+   "id": 2,
+   "entity": "case",
+   "field_key": "cf_court",
+   "label": "Court",
+   "field_type": "select",
+   "options": [{"value": "MIEB", "label": "Michigan Eastern"}, {"value": "MIWB", "label": "Michigan Western"}],
+   "validation": null,
+   "show_when": null,
+   "default_value": null,
+   "indexed": 0,
+   "sort_order": 20,
+   "active": 1,
+   "list_column": 1
+  },
+  {
+   "id": 3,
+   "entity": "contact",
+   "field_key": "cf_referral_source_detail",
+   "label": "Referral Source and First-Contact Detail",
+   "field_type": "text",
+   "options": null,
+   "validation": null,
+   "show_when": null,
+   "default_value": null,
+   "indexed": 0,
+   "sort_order": 10,
+   "active": 1,
+   "list_column": 1
   }
  ]
 }

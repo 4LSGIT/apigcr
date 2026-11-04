@@ -405,14 +405,15 @@ function cfEditorBody(t, i) {
     valid.push(`<span class="cf-vf">Pattern <input type="text" class="mono cf-pattern" data-cf-v="${i}:pattern" value="${esc(v.pattern ?? '')}" placeholder="regex (optional)"></span>`);
   }
   if (t.field_type === 'number') { valid.push(numIn('min', 'Min')); valid.push(numIn('max', 'Max')); }
-  // "Offer as a list column" (custom_table_view S4) — today only the Cases
-  // list reads the flag, so the checkbox renders on the case entity only;
-  // the API accepts it for every entity (registry-generic).
-  const listCol = cfEntity !== 'case' ? '' : `
+  // "Offer as a list column" (custom_table_view S4; contacts since C2) —
+  // both list tabs read the flag now, so the checkbox renders on both
+  // entities, named for the tab the entity feeds.
+  const listTab = cfEntityPlural();
+  const listCol = `
     <div class="cf-valid"><label class="toggle-row">
       <input type="checkbox" data-cf-listcol="${i}" ${t.list_column ? 'checked' : ''}>
       <span>Offer as a list column</span></label>
-    <span class="fmini">Shows this field in the Cases tab's Columns picker. Off for everyone until each
+    <span class="fmini">Shows this field in the ${listTab} tab's Columns picker. Off for everyone until each
       person turns the column on; values appear once the field holds data.</span></div>`;
   return `${opts}<div class="cf-valid">${valid.join('')}</div>${listCol}${cfDefaultBody(t, i)}${cfShowWhenBody(t, i)}`;
 }

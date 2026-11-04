@@ -4400,10 +4400,16 @@
     let contactsEverSorted = false;   // marks repaint only after a real sort
 
     function contactsColsKey() { return `cols_off.${(user && user.user) || 0}`; }
+    // The C2 extension (the Cases tab's S4 shape): default_on:false columns
+    // (the custom-field columns) are governed by a TURNED-ON set — cols_off
+    // alone would show every later-added cf column to everyone, the opposite
+    // of their default.
+    function contactsColsOnKey() { return `cols_on.${(user && user.user) || 0}`; }
 
     function contactsColsVisible() {
       const off = getTabPref('contacts', contactsColsKey(), '').split(',');
-      const vis = CONTACT_COLUMNS.filter((c) => !off.includes(c.key));
+      const on = getTabPref('contacts', contactsColsOnKey(), '').split(',');
+      const vis = CONTACT_COLUMNS.filter((c) => (c.default_on ? !off.includes(c.key) : on.includes(c.key)));
       return vis.length ? vis : CONTACT_COLUMNS.filter((c) => c.default_on);
     }
 
@@ -4444,6 +4450,7 @@
     function contactsColsApply() {          // storage → the on-screen set
       contactsColsVis = contactsColsVisible();
       contactsColsRender();
+      contactsCfEnsure();
     }
 
     function contactsColsChanged(box) {
@@ -4452,8 +4459,75 @@
       const keys = checked.map((b) => b.value);
       contactsColsVis = CONTACT_COLUMNS.filter((c) => keys.includes(c.key));
       setTabPref('contacts', contactsColsKey(),
-        CONTACT_COLUMNS.filter((c) => !keys.includes(c.key)).map((c) => c.key).join(','));
+        CONTACT_COLUMNS.filter((c) => c.default_on && !keys.includes(c.key)).map((c) => c.key).join(','));
+      // Keep stored turned-on keys the CURRENT model doesn't know: before
+      // contactsCfInit resolves (or when the defs fetch failed) the model is
+      // static, and rewriting cols_on from it would erase the user's cf
+      // choice on any unrelated toggle (the Cases review caught this).
+      const known = new Set(CONTACT_COLUMNS.map((c) => c.key));
+      const keptOn = getTabPref('contacts', contactsColsOnKey(), '').split(',')
+        .filter((k) => k && !known.has(k));
+      setTabPref('contacts', contactsColsOnKey(),
+        CONTACT_COLUMNS.filter((c) => !c.default_on && keys.includes(c.key)).map((c) => c.key)
+          .concat(keptOn).join(','));
       contactsColsRender();
+      contactsCfEnsure();
+    }
+
+    /* ── Custom-field columns (custom_table_view C2) ─────────────────────
+       Contact defs flagged "Offer as a list column" (the Config fields
+       builder's checkbox, field_defs.list_column) join CONTACT_COLUMNS at
+       runtime — the Cases tab's S4 block is the template and holds the full
+       reasoning: default_on false so the cols_on half governs them, KEY_RE
+       before a key rides as a sort key, label escaped, values through
+       ycCfCellText (select shows the stored VALUE). A fetch sends the
+       VISIBLE cf keys (params.cf); revealing a cf column whose data the
+       cached rows lack triggers ONE silent refetch — the flagged exception
+       to "a picker change never fetches". */
+    let contactsCfFetched = [];   // the cf keys the current `contacts` rows carry
+    const CONTACTS_CF_KEY_RE = /^cf_[a-z][a-z0-9_]{1,56}$/;
+
+    function contactsCfColumns(defs) {
+      return (defs || [])
+        .filter((d) => d && d.entity === 'contact' && d.active && d.list_column
+          && CONTACTS_CF_KEY_RE.test(String(d.field_key)))
+        .map((d) => ({
+          key: d.field_key,
+          label: String(d.label || d.field_key),
+          sort: d.field_type === 'multiselect' ? undefined : d.field_key,
+          default_on: false,
+          csv: (r) => ycCfCellText(d.field_type, r[d.field_key]),
+          render: (r) => escText(ycCfCellText(d.field_type, r[d.field_key])),
+        }));
+    }
+
+    /* Fetch the defs once per page load (they are firm-global; a flag change
+       reaches open tabs on their next reload). A failed fetch costs only the
+       cf columns — the tab keeps working on the static model. */
+    async function contactsCfInit() {
+      if (contactsCfInit.done) return;
+      contactsCfInit.done = true;
+      try {
+        const data = await apiSend('/api/field-defs', 'GET', { entity: 'contact' });
+        const cols = contactsCfColumns(data && data.defs);
+        if (!cols.length) return;
+        CONTACT_COLUMNS.push(...cols);
+        const order = E('tabContactsSort');
+        cols.filter((c) => c.sort).forEach((c) => order.add(new Option(c.label, c.sort)));
+        contactsColsInit();            // menu + apply over the grown model
+      } catch (err) {
+        console.warn('[contacts] cf columns unavailable:', err);
+      }
+    }
+
+    /* A newly revealed cf column has no data in the cached rows — refetch
+       the current page silently, once; hiding needs nothing. */
+    function contactsCfEnsure() {
+      if (!contacts) return;
+      if (contactsColsVis.some((c) => !c.default_on && /^cf_/.test(c.key)
+          && !contactsCfFetched.includes(c.key))) {
+        tabContactsGet(offsets.contacts, true);
+      }
     }
 
     /* Menu from the model + first apply. Runs in loadUserContext, not at
@@ -4479,7 +4553,8 @@
         // Another window of this browser saving a new choice re-applies
         // here, so every window of the same user agrees with its own screen.
         window.addEventListener('storage', (e) => {
-          if (e.key === `yc.contacts.${contactsColsKey()}`) contactsColsApply();
+          if (e.key === `yc.contacts.${contactsColsKey()}`
+            || e.key === `yc.contacts.${contactsColsOnKey()}`) contactsColsApply();
         });
         // A sort chosen from the selects while its column is HIDDEN paints
         // no mark, so the header latch in contactsColsRender would miss it
@@ -4531,10 +4606,26 @@
       else if (roles.length) params.role = roles.join(',');
       const bdaySel = E("tabContactsBirthdays");     // BIRTHDAYS
       if (bdaySel && bdaySel.value) params.birthdays = bdaySel.value;
+      // Custom-field columns (C2): the VISIBLE cf keys ride as a JSON array;
+      // the server honors only registry-flagged ones. Nothing visible sends
+      // nothing — the default request stays byte-identical to pre-C2.
+      const cfKeys = contactsColsVis.filter((c) => !c.default_on && /^cf_/.test(c.key)).map((c) => c.key);
+      // Sorting by a HIDDEN cf column still needs the server to SELECT that
+      // key — the C1 gate honors a cf sort_by only when the same request
+      // asks for it. Ride it along (the Cases review caught this).
+      if (/^cf_/.test(sort_by) && !cfKeys.includes(sort_by)
+          && CONTACT_COLUMNS.some((c) => !c.default_on && c.key === sort_by && c.sort)) {
+        cfKeys.push(sort_by);
+      }
+      if (cfKeys.length) params.cf = JSON.stringify(cfKeys);
 
       try {
         const data = await apiSend("/api/contacts", "GET", params);
         contacts = data.contacts;
+
+        // The rows now on hand carry exactly the cf keys this fetch asked
+        // for — contactsCfEnsure compares against this, success or empty alike.
+        contactsCfFetched = cfKeys;
 
         if (data.total > 0) {
           contactsRenderRows();           // through the picker's visible set
@@ -4568,6 +4659,12 @@
         else Toast.fire({ icon: "error", title: "Error loading contacts", text: err.message });
       }
 
+      // The boot race (the Cases review caught it): a fetch dispatched BEFORE
+      // contactsCfInit grew the model carries no cf keys, and if the defs
+      // answered while it was in flight, the grown visible set now renders
+      // blank cf cells from rows that never carried the data. A gap costs one
+      // more silent refetch, which sends the visible keys and so cannot loop.
+      contactsCfEnsure();
       E("tabContactsLoad").style.display = "none";
     }
 
@@ -8926,7 +9023,8 @@ async function initAuth() {
       casesColsInit();
       apptsColsInit();
       eventsColsInit();
-      casesCfInit();   // async: appends flagged cf columns, then re-inits Cases
+      casesCfInit();      // async: appends flagged cf columns, then re-inits Cases
+      contactsCfInit();   // async: same, for the Contacts tab (C2)
     }
 
     initAuth();

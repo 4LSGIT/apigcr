@@ -2536,3 +2536,11 @@ column blank until the next refetch). Pre-existing race class, widened
 slightly by S4's reveal-refetch; a monotonic request token that drops stale
 responses would close it for every caller. Flagged in the S4-client review,
 2026-11-05.
+
+## List sorts — prototype-key sort_by 500s
+
+Both list SORT_WHITELISTs are plain object literals, so a `sort_by` of
+`constructor` / `__proto__` reads an inherited property, composes garbage
+into the ORDER BY and 500s with a SQL parse error. Staff-JWT only, not
+injectable, pre-existing. The fix is `Object.hasOwn` lookups or null-prototype
+maps at both sites. Flagged in the C1 review, 2026-11-04.
