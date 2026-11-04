@@ -55,6 +55,7 @@ lib/customCodeRunner.js
 lib/dbTarget.js
 lib/domainEventDrain.js
 lib/domainEvents.js
+lib/emailDesignRules.js
 lib/errorMiddleware.js
 lib/escapeLike.js
 lib/firmConfig.js
@@ -646,6 +647,7 @@ ref/migrations/2026-11-02_yisramail_t2_campaign_results_delivery.sql
 ref/migrations/2026-11-02_yisramail_t2_hook_ses_events.console.js
 ref/migrations/2026-11-03_yisramail_c1_campaign_class.sql
 ref/migrations/2026-11-04_yisramail_c2_marketing_send.sql
+ref/migrations/2026-11-04_yisramail_c3_email_designs.sql
 ref/migrations/2026-11-05_custom_table_s4_field_defs_list_column.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
@@ -708,6 +710,7 @@ routes/api.cta.js
 routes/api.documents.js
 routes/api.dropbox.js
 routes/api.emailCredentials.js
+routes/api.emailDesigns.js
 routes/api.emailIngest.js
 routes/api.entitlements.js
 routes/api.entityComms.js
@@ -1007,6 +1010,7 @@ scripts/verifyTrusteeReadthrough.js
 scripts/verify_strictstring_live.js
 scripts/yisramailC1Migrate.js
 scripts/yisramailC2Migrate.js
+scripts/yisramailC3Migrate.js
 scripts/yisramailP1MigrateConsent.js
 scripts/yisramailP2CheckInbound.js
 scripts/yisramailP3Migrate.js
@@ -1079,6 +1083,7 @@ services/documentSourceService.js
 services/documentSyncService.js
 services/dropboxService.js
 services/dropboxServiceLegacy.js
+services/emailDesignService.js
 services/emailIngestExecutionsService.js
 services/emailIngestMetaService.js
 services/emailIngestRuleService.js
@@ -1416,6 +1421,10 @@ tests/documentsUpload.routes.test.js
 tests/domainEventQueue.test.js
 tests/dropboxService.normalizePath.test.js
 tests/dropboxService.retry.test.js
+tests/emailDesignRules.test.js
+tests/emailDesignRules.timing.test.js
+tests/emailDesigns.mysql.test.js
+tests/emailDesigns.routes.test.js
 tests/emailIngestSurrogate.mysql.test.js
 tests/emailIngestSurrogate.test.js
 tests/emailNoFileAccess.test.js
@@ -1482,6 +1491,7 @@ tests/fixtures/comms_s2_audio/tiny_1s.mp3.head
 tests/fixtures/comms_s2_audio/vbr_xing.mp3.head
 tests/fixtures/comms_s2_audio/vm.wav.head
 tests/fixtures/contactColumns.s1.json
+tests/fixtures/emailDesign/newsletter.html
 tests/fixtures/eventColumns.s3b.json
 tests/fixtures/ingestNativeGolden.json
 tests/fixtures/ingestRuleTestRoutes.golden.json
@@ -1543,6 +1553,7 @@ tests/helpers/commsArchiveSchema.js
 tests/helpers/consentSchema.js
 tests/helpers/contactConsentWorld.js
 tests/helpers/ctaWorld.js
+tests/helpers/emailDesignFixture.js
 tests/helpers/fakeGcs.js
 tests/helpers/homeLayoutBrowser.js
 tests/helpers/hubPages.js
@@ -1925,6 +1936,7 @@ tests/ycSettingRows.test.js
 tests/ycSync.test.js
 tests/yisramailC1Migrate.mysql.test.js
 tests/yisramailC2Migrate.mysql.test.js
+tests/yisramailC3Migrate.mysql.test.js
 tests/yisramailP2CheckInbound.test.js
 tests/yisramailT1.adapters.test.js
 tests/yisramailT1.fences.routes.test.js

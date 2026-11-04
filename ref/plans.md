@@ -1720,6 +1720,29 @@ ref/YISRAMAIL_DESIGN.md §6.4 / §6.5 "As built (C2)" says what shipped (dark).
   fetch from the server's network position). Restrict it to
   `{filename, content}` / https URLs if internal callers allow.
 
+## YisraMail C3a (designs library, server, 2026-11-04) — deferred
+
+ref/YISRAMAIL_DESIGN.md §6.3 "As built (C3a)" says what shipped.
+- **A marketing create with a `design_id` does not re-run the html rules on
+  `body`** (the body is whatever the caller sent; C2's post-render assert is
+  the send-time guarantee). Proposal: re-run `validateDesign`'s html leg (rules
+  7–10) on `body` when a marketing campaign names a design — Fred's call.
+- **Nothing writes `email_designs.thumbnail_asset_id`** (the API contract has
+  no thumbnail); add it to PUT when the library UI wants previews.
+- **`firm.*` has no URL-valued key**, so a design URL may start only with
+  `{{send.unsubscribe_url}}` / `{{send.preferences_url}}`. A future firm URL
+  (website, booking page) joins `emailDesignRules.URL_LEADING_TAGS`.
+- **Rule 8 reads the style mirror grapesjs-mjml writes** (`attributes.style`
+  repeats every mj attribute, alt text included), so an alt text containing
+  `javascript:` or `url(` is refused as CSS. Harmless today; narrow it to
+  real CSS properties if it ever bites.
+- **Legacy CSS script vectors** (`behavior:`, `-moz-binding:`) are not
+  refused by rule 8 as written (dead in current clients; an https `url()`
+  passes). Add them if a client that honours them matters.
+- **`symbols` / `dataSources` must be empty** and `mj-style` / `mj-font` /
+  `mj-raw` are refused; widening the block set means widening rule 2 with a
+  review of what the new type renders.
+
 ## From the contact-intake safety slices (2026-10-27) — deferred
 
 - **A transfer's donor isn't announced on the sync bus.** "Create a separate

@@ -1450,6 +1450,82 @@ with no token, footer or headers.
   full HTML document can't take a `<br><br>` + signature after `</html>`).
 - Builder pick: §7.
 
+**As built (C3a — server).** `lib/emailDesignRules.js` (the validator),
+`services/emailDesignService.js`, `routes/api.emailDesigns.js`,
+`campaignService.createCampaign` (`design_id`); schema by
+`scripts/yisramailC3Migrate.js`
+(`ref/migrations/2026-11-04_yisramail_c3_email_designs.sql`): table
+`email_designs` + `campaigns.design_id`. Lands dark in effect: nothing calls
+the routes until the Designer editor (C3b).
+- **API** (`jwtOrApiKey`): `GET /api/email-designs?q=&include_archived=` →
+  `{designs:[{id, name, builder, updated_at, archived}]}` (no bodies, newest
+  first, ≤ 500; `q` matched literally); `GET /api/email-designs/:id` →
+  `{design}` (full row, `design_json` an object); `POST` / `PUT :id`
+  `{name, design_json, html, text}` → `{success, id, warning?}`;
+  `PATCH :id` `{archived: true|false}` → `{success}`. A rule failure → 400
+  `{error, code:'design_rejected', rule, detail}`; bad name / text → 400
+  `invalid_input`; a missing id → 404 `not_found`. No delete route.
+- **Who:** plain staff, no capability — an operational campaign create (any
+  staff) already takes an arbitrary html body, and a design is that body
+  pre-validated; the validator, not the role, is the boundary. Sending a
+  design as marketing still needs `campaigns.bulk` at create.
+- **Validation (every create and update, on the raw payload, before any
+  write):** the C3 spike's server rules 1–10, `design_json` and `html` each on
+  its own — the html is never assumed to be the design's compile. Refused,
+  never stripped. Readings taken where the rules leave room:
+  - the footer slot (rule 9) is the `mj-section` whose `css-class` holds
+    `yc-footer`, the LAST child of the one `mj-body`; the marker is a GrapesJS
+    `comment` component with content ` yc:footer-slot ` (it exports exactly
+    `campaignService.FOOTER_SLOT`), inside that slot; the slot holds columns /
+    texts / whitespace and the marker — any visible text, image, button or
+    background image (`background-url`, a CSS `url()`) is refused;
+    `yc:footer-slot` appears once in the whole design. In the html: exactly one
+    exact marker, a real comment inside `<body>` and inside the one element of
+    class `yc-footer`, nothing visible in that element (its Outlook conditional
+    branches included; no `background` attribute or `url()` in a style), and
+    `campaignService.injectFooter` must inject AT it — C2's own string reading
+    decides, not only the parser's. No stylesheet (the project's, a component's
+    `styles`, an html `<style>`) may use generated content (`content:`) or name
+    the `yc-footer` class;
+  - rule 2 admits `mj-title` / `mj-preview` / `mj-attributes` / `mj-all` as
+    GrapesJS stores them (type `text` or default carrying the tagName —
+    grapesjs-mjml 1.0.8 registers no type for them); an `<img>` / `image`
+    inside mj-text is refused (not in the inline list);
+  - properties GrapesJS renders in the PANE, outside the canvas CSP — a
+    stored `toolbar`, `traits`, an `icon` / `name` with markup — are refused
+    (rules 4 / 5; `Component.toJSON` of the pinned 0.23.8 never writes
+    `toolbar` or `traits`); `symbols` / `dataSources` must be empty, pages carry
+    only `id` / `type` / `frames` and frames only `id` / `component` / numeric
+    `width` / `height` (a frame's `name` renders raw in the pane, its `styles`
+    bypass rule 8), and no key anywhere may be `__proto__` / `constructor` /
+    `prototype` (rule 1); attribute values must be plain (no data bindings); the
+    image model's top-level `src` is checked like the attribute (rule 6);
+  - a URL may start with a merge tag only as `{{send.unsubscribe_url}}` /
+    `{{send.preferences_url}}` — `firm.*` has no URL-valued key; an empty URL
+    passes; relative URLs are refused;
+  - html tags (rule 7): rule 2's list minus `meta` / `style` (MJML emits both:
+    only `meta http-equiv=refresh` is refused, every `<style>` goes through
+    rule 8), plus frame / frameset / applet; `<noscript>` content is parsed as
+    markup; every `<!--[if …]>` comment's content is parsed and checked;
+  - rule 10: a warning string over 95 KB of html; a hard ceiling at 512 KB
+    (refused, rule 10) bounds the parse.
+- **Linear on hostile bodies:** parse5 is quadratic on deep nesting (scope
+  walks) and on many attributes in one tag (its duplicate check), so the
+  html is refused past 128 levels of nesting (a tree-adapter cap), 256
+  attributes on a tag (a pre-parse scan that mirrors the tokenizer — exact
+  because `<script>` / `<svg>` / `<math>` / `<select>` / `<frameset>` are
+  refused BEFORE the parse: script data's escape states, foreign content and
+  the select / frameset modes would desynchronise it) or 400 conditional
+  comments; worst cases pinned in
+  `tests/emailDesignRules.timing.test.js`. Prod dependency: `parse5` 7.3.0
+  (already in the tree under jsdom).
+- **`createCampaign` `design_id`** (body `design_id`): EMAIL only (400
+  `design_not_email`), an existing (400 `unknown_design`), non-archived (400
+  `design_archived`) design; stored as provenance — the body stays exactly
+  what the caller sent and is not re-validated against the rules.
+- Not built here: anything writing `thumbnail_asset_id` (the contract carries
+  no thumbnail), the editor (C3b).
+
 ### 6.4 Send pipeline changes
 
 - **Send reservation — at most once.** Today `executeSend` sends, then

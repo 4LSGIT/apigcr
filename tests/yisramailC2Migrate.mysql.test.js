@@ -59,7 +59,7 @@ maybe('the C2 migration on real MySQL', () => {
   async function fresh() {
     await schema.build(pool, BUILT);
     for (const [t, cols] of Object.entries(m.ADDED)) {
-      const present = (await colsOf(t)).filter((n) => cols[n]);
+      const present = (await colsOf(t)).filter((n) => cols[n] || m.LATER_COLUMNS[t].includes(n));
       if (present.length) await q(`ALTER TABLE ${t} ${present.map((n) => `DROP COLUMN ${n}`).join(', ')}`);
     }
     await q("INSERT INTO campaigns (campaign_id, type, sender, body, status, contact_count) VALUES (1, 'email', 'a@x.test', 'b', 'sent', 2)");

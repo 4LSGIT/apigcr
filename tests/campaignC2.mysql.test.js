@@ -74,6 +74,7 @@ d('C2 marketing send path on real MySQL', () => {
   const complianceFooter = require('../lib/complianceFooter');
   const c1Migrate = require('../scripts/yisramailC1Migrate');
   const c2Migrate = require('../scripts/yisramailC2Migrate');
+  const c3Migrate = require('../scripts/yisramailC3Migrate');
   const campaignService = require('../services/campaignService');
   const emailService = require('../services/emailService');
   const optout = require('../services/optoutService');
@@ -147,6 +148,8 @@ d('C2 marketing send path on real MySQL', () => {
     try {
       expect((await c1Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true);
       expect((await c2Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true);
+      // C3's campaigns.design_id (createCampaign INSERTs it) + email_designs — idempotent.
+      expect((await c3Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true);
     } finally { c.release(); }
     await q(`INSERT INTO contacts (contact_id, contact_name, contact_fname, contact_lname, contact_phone, contact_email) VALUES
       (1, 'Pat One', 'Pat', 'One', '3135550001', 'pat@example.com'),

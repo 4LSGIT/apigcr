@@ -55,10 +55,10 @@ const BASE_COLUMNS = Object.freeze({
 /**
  * Columns a LATER slice adds to these tables — tolerated when present (never
  * checked or touched here), so this CHECK and its twins keep passing once the
- * dump carries them: C2 (scripts/yisramailC2Migrate.js).
+ * dump carries them: C2 (scripts/yisramailC2Migrate.js), C3 (scripts/yisramailC3Migrate.js).
  */
 const LATER_COLUMNS = Object.freeze({
-  campaigns: Object.freeze(['send_snapshot']),
+  campaigns: Object.freeze(['send_snapshot', 'design_id']),
   campaign_results: Object.freeze([]),
   email_credentials: Object.freeze(['held_at', 'held_reason']),
 });

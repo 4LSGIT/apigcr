@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-04T00:32:08.576Z_  
-_835 routes total — DELETE: 68, GET: 348, PATCH: 59, POST: 319, PUT: 38, _ALL: 3_
+_Generated 2026-11-04T03:56:06.853Z_  
+_840 routes total — DELETE: 68, GET: 350, PATCH: 60, POST: 320, PUT: 39, _ALL: 3_
 
 ## Global middleware chain
 
@@ -294,6 +294,11 @@ _835 routes total — DELETE: 68, GET: 348, PATCH: 59, POST: 319, PUT: 38, _ALL:
 | GET | `/api/email-credentials/:id/reveal` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/email-credentials/:id/test` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/email-credentials/:id/verify-aliases` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| GET | `/api/email-designs` | `jwtOrApiKey` | — |
+| POST | `/api/email-designs` | `jwtOrApiKey` | — |
+| GET | `/api/email-designs/:id` | `jwtOrApiKey` | — |
+| PATCH | `/api/email-designs/:id` | `jwtOrApiKey` | — |
+| PUT | `/api/email-designs/:id` | `jwtOrApiKey` | — |
 | GET | `/api/email-from` | `jwtOrApiKey` | — |
 | GET | `/api/email-ingest/executions` | `jwtOrApiKey` | — |
 | GET | `/api/email-ingest/executions/:id` | `jwtOrApiKey` | — |
@@ -1115,4 +1120,4 @@ _835 routes total — DELETE: 68, GET: 348, PATCH: 59, POST: 319, PUT: 38, _ALL:
 
 ---
 
-_835 routes total — DELETE: 68, GET: 348, PATCH: 59, POST: 319, PUT: 38, _ALL: 3_
+_840 routes total — DELETE: 68, GET: 350, PATCH: 60, POST: 320, PUT: 39, _ALL: 3_

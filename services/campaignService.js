@@ -425,12 +425,13 @@ async function assertMarketingTopic(db, topicKey) {
  * @param {number}   [opts.confirmCount] — the typed recipient count (over the cap)
  * @param {object}   [opts.auth]       — req.auth (capability checks)
  * @param {object}   [opts.request]    — { route, method, ip, userAgent } for the audit row
+ * @param {number}   [opts.designId]   — email_designs.id the body was composed from (C3; provenance only)
  *
  * @returns {{ campaignId, contactCount, jobsCreated, status, class, overCap, paced }}
  */
 async function createCampaign(db, {
   type, sender, subject, body, contactIds, scheduledTime, createdBy, attachmentUrl, includeSignature,
-  klass = 'operational', topicKey = null, confirmCount = null, auth = null, request = null,
+  klass = 'operational', topicKey = null, confirmCount = null, auth = null, request = null, designId = null,
 }) {
   if (!type || !sender || !body) {
     throw new Error('Missing required fields: type, sender, body');
@@ -526,6 +527,22 @@ async function createCampaign(db, {
   // rows created before C2 are not re-checked).
   if (attachmentUrl && type === 'email') assertHttpsAttachment(attachmentUrl);
 
+  // C3 (§6.3): the Designer design the body was composed from — PROVENANCE
+  // only ("duplicate last month's"). It must name an existing, non-archived
+  // design; the body stays exactly what the caller sent (the send renders
+  // campaigns.body, never the design), and nothing is re-validated here.
+  let designIdValue = null;
+  if (designId !== null && designId !== undefined && designId !== '') {
+    if (type !== 'email') throw new CampaignError(400, 'design_not_email', 'A design applies to email campaigns only.');
+    const { toId } = require('./emailDesignService'); // lazy require (convention)
+    const n = toId(designId);
+    if (!n) throw new CampaignError(400, 'unknown_design', `design_id must be a design id (got ${JSON.stringify(String(designId)).slice(0, 40)})`);
+    const [[design]] = await db.query('SELECT id, archived FROM email_designs WHERE id = ?', [n]);
+    if (!design) throw new CampaignError(400, 'unknown_design', `Design ${n} does not exist.`);
+    if (Number(design.archived)) throw new CampaignError(400, 'design_archived', `Design ${n} is archived — unarchive it to compose from it.`);
+    designIdValue = n;
+  }
+
   // MMS validation: attachment requires an MMS-capable line.
   // (Capability lives on phone_lines.mms_capable; checked at send time too.)
   if (attachmentUrl && type === 'sms') {
@@ -579,9 +596,9 @@ async function createCampaign(db, {
   const { campaignId, pumpJobId } = await db.withTransaction(async (conn) => {
     // 1. INSERT campaign
     const [campaignResult] = await conn.query(
-      `INSERT INTO campaigns (type, class, topic_key, bulk_confirmed_count, sender, subject, body, attachment_url, include_signature, status, scheduled_time, contact_count, created_by, created)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [type, klass, topic, overCap ? count : null, sender, subject || null, body, attachmentUrl || null, includeSignature ? 1 : 0, initialStatus, scheduledTime || null, count, createdBy]
+      `INSERT INTO campaigns (type, class, topic_key, bulk_confirmed_count, sender, subject, body, attachment_url, include_signature, status, scheduled_time, contact_count, created_by, design_id, created)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [type, klass, topic, overCap ? count : null, sender, subject || null, body, attachmentUrl || null, includeSignature ? 1 : 0, initialStatus, scheduledTime || null, count, createdBy, designIdValue]
     );
     const campaignId = campaignResult.insertId;
 

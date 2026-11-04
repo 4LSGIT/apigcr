@@ -192,6 +192,20 @@ body. Governing migrations in `ref/migrations/`.*
   stays ORPHANED in `mysql.columns_priv` (inert; it re-attaches to a later
   column of the same name) until a re-provision or targeted REVOKE clears it.
 - **Hook credential headers are stripped before storage (2026-11-02):** `lib/hookCredentialHeaders` (static names + the hook's own `auth_config.header` + every hook's configured header, cached 30 s; any case) is applied by the receiver, `recordExecution` and `executeHook`'s entry, so new raw_input, captured_sample, spool, transform_output, delivery, workflow and sequence copies are clean. Older rows still hold x-hook-key / RingCentral's Verification-Token (~32.8k) until `scripts/hookExecutionsHeaderScrub.js --apply` runs AFTER the deploy. A new header-borne hook auth adds its default name there.
+- **Designs library (YisraMail C3a, 2026-11-04 — §17 below; ref/YISRAMAIL_DESIGN.md §6.3
+  "As built (C3a)"):** `email_designs` + `/api/email-designs` (list / get / create /
+  update / archive; plain staff) and `campaigns.design_id` (provenance, email only,
+  existing + non-archived). EVERY save runs `lib/emailDesignRules.validateDesign` —
+  the C3 spike's rules 1–10 on `design_json` AND `html` independently, REFUSED
+  (400 `design_rejected` + rule + detail), never stripped; the footer slot = the last
+  `mj-section` (css-class `yc-footer`) holding only the `<!-- yc:footer-slot -->`
+  comment, which `campaignService.injectFooter` must inject at. Invariants: the
+  validator is the security boundary (the editor's canvas CSP is defence in depth —
+  a crafted request skips the editor); it stays linear (parse5 guarded: nesting ≤ 128,
+  ≤ 256 attributes per tag by a pre-parse scan that is exact only because `<script>`,
+  `<svg>`, `<math>`, `<select>` and `<frameset>` are refused first — never admit one
+  without revisiting the scan; ≤ 400 conditional comments, html ≤ 512 KB); a new
+  URL-valued merge tag a design may START a URL with joins `URL_LEADING_TAGS` there.
 - **Marketing send path (YisraMail C2, 2026-11-04 — §17 below; ref/YISRAMAIL_DESIGN.md
   §6.4 / §6.5 "As built (C2)"), DARK until G1:** `executeSend`'s marketing
   branch mints one unsub token per send (after the reservation, `send_ref` =
@@ -2120,6 +2134,12 @@ same transaction); resume refuses a marketing campaign on a held transport. **Te
 (campaigns.bulk, works with the switch off) — the same render + transport +
 headers to the caller's `users.email`, `[TEST]` subject, a dead placeholder
 token, no rows written.
+**Designs (YisraMail C3a, ref/YISRAMAIL_DESIGN.md §6.3 "As built (C3a)"):**
+`email_designs` (design_json + html + text, `archived` flag, no delete) behind
+`/api/email-designs` (`emailDesignService`); every save validated by
+`lib/emailDesignRules` (rules 1–10, reject never strip, both legs). `createCampaign`
+takes `design_id` (email only; existing, non-archived) as provenance — the send
+still renders `campaigns.body`.
 **At most once:** the row is INSERTed `sending` (attempt id
 `<job id>:<attempt>`) before the provider call; a later attempt finding it
 `sending` records `unknown` and never resends; a DEFINITE provider error (a

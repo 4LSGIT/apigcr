@@ -181,6 +181,8 @@ router.post('/api/campaigns', jwtOrApiKey, async (req, res) => {
       klass: req.body.class === undefined ? 'operational' : req.body.class,
       topicKey: req.body.topic_key ?? null,
       confirmCount: confirmCount ?? null,
+      // C3: the Designer design the body came from (provenance; createCampaign validates it).
+      designId: req.body.design_id ?? null,
       auth: req.auth,
       request: {
         route: req.originalUrl,
