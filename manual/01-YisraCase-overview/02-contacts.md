@@ -159,6 +159,8 @@ be on at once; **No roles** (which clears the other boxes, and they clear it)
 lists only the contacts holding no active role; nothing checked means
 everyone. **Order By** sorts by last name, first name, ID or date of birth, either direction — or click the **ID**, **Name** (last name) or **Date of Birth** header; contacts with no date of birth sort last either way. The **Birthdays** filter lists only the contacts whose birthday falls in the next 7 days, the next 30 days, this month or next month, soonest first (a Feb 29 birthday counts as Feb 28 in other years) — **Export** in the footer turns that into a greeting list.
 
+**Columns** in the filter bar picks which columns the table shows. Untick a column to hide it (at least one always stays). The choice is saved in your browser per user — each device keeps its own view, and a column added in a later release shows up on every device automatically. Printing prints the table as shown. **Export** asks which columns to export: **All columns** (the full export set — more than the table shows, including first/middle/last name, city, state, zip and tags) or **As shown on screen** (exactly your visible columns, in their on-screen order; the file name carries `-view`).
+
 > **You cannot search by date of birth or SSN.** Neither is a search key
 > anywhere in the system. If you only have a birth date, narrow by name first.
 

@@ -179,4 +179,8 @@ From the Cases tab, you can filter by:
 
 The **Caption** control in the filter bar sets how the table shows captions: **Column** gives them their own column, **In name** adds a line under the client only when the caption says something the client's name does not, and **Off** leaves them out. The choice is saved in your browser, so each device keeps its own.
 
+**Columns** in the filter bar picks which columns the table shows. Untick a column to hide it (at least one always stays). The choice is saved in your browser per user — each device keeps its own view, and a column added in a later release shows up on every device automatically. Printing prints the table as shown. Caption and Columns are independent: Caption decides how captions are presented, Columns decides whether the Caption column exists at all — hide it and captions appear only in **In name** mode (which itself needs the Client Name column visible).
+
+**Export** in the footer asks which columns to export: **All columns** (the full export set — more than the table shows, including subtype, chapter, judge and trustee) or **As shown on screen** (exactly your visible columns, in their on-screen order; the file name carries `-view`).
+
 Results sort by open date descending by default.

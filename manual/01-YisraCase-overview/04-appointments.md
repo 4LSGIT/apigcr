@@ -74,6 +74,8 @@ Status changes are made from the appointment list or detail view. Each change up
 
 The **Status** filter on the tab is a dropdown of checkboxes — check any combination of statuses; nothing checked means all. The Appointments tab lists **upcoming first**: today's appointments (all of today, including the ones already past), then the future soonest first, then the past newest first. **Order By** — or a click on the Date, Contact Name, Case, Appt Type, Status or With header — sorts by that column instead; the Date header steps through upcoming → oldest first → newest first.
 
+**Columns** in the filter bar picks which columns the table shows — the status Update buttons are a column too, so they can be hidden on a cramped screen. Untick a column to hide it (at least one always stays). The choice is saved in your browser per user — each device keeps its own view, and a column added in a later release shows up on every device automatically. Printing prints the table as shown. **Export** in the footer asks which columns to export: **All columns** (the full export set, including client and case IDs, length, platform and note) or **As shown on screen** (exactly your visible columns, in their on-screen order; the Update buttons never export; the file name carries `-view`).
+
 ---
 
 ## How Appointments Connect to Contacts and Cases
