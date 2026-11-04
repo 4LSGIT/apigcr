@@ -14,8 +14,8 @@ update and link), A11.1 (a case's Dropbox folder — candidates-only relink),
 A12 (form drafts and submission links), A13 (mail triage —
 read state and case link; no drafts exist, no SMS triage), A14 (direct email /
 SMS send), A16 (reports), A17.0–A17.4, A17.6, A17.7 + A17.7b (workflows — explain,
-preview, draft, step, publish, start with an optional reviewed input), A18.2, A18.3, A18.4a/b (sequences — step,
-publish, enroll), A19.0/A19.1 (inbound hooks), A20.0–A20.3 (email and phone
+preview, draft, step, publish, start with an optional reviewed input), A18.2, A18.3, A18.4a/b/c (sequences — step,
+publish, enroll with an optional reviewed trigger_data), A19.0/A19.1 (inbound hooks), A20.0–A20.3 (email and phone
 ingest rules), R1 (read-loop continuation) and P13. A15 (e-signature) is not
 built. Each slice's section below carries its shipped contract. No general
 action executor is introduced.
@@ -2907,23 +2907,113 @@ card:
   `NEVER_PUBLISHED`, `EMPTY_SEQUENCE` are 409; the body keeps the old
   `error` / `message` pair and adds `code`.
 
-**A18.4b: the Casey enroll card. SHIPPED 2026-10-28** — kind
+**A18.4b: the Casey enroll card. SHIPPED 2026-10-28; reviewed trigger_data
+(A18.4c) 2026-11-04** — kind
 `sequence.enroll.v1`, through the hardened `POST /sequences/enroll` (the card's
-`draft_id` is the `Idempotency-Key`, scope `sequences.enroll`). Contact-scoped
-only: direct mode by `template_id` with `trigger_data` pinned `{}` by the fixed
-builder; `trigger_data`, `triggerData`, `payload`, `input`, `appt_id`,
-`signing_request_id`, `case_id` and `template_type` are refused by name —
-appointment and e-sign reminder enrollments are born from automations
-(`apptService`, `esignSendService`), not from a chat request; a reviewed
-`trigger_data` slice is filed in `ref/plans.md`. The model supplies only
-`{sequence_template_id, contact_id, evidence}`; evidence must carry the exact
+`draft_id` is the `Idempotency-Key`, scope `sequences.enroll`). Direct mode by
+`template_id`; `triggerData`, `payload`, `input`, `template_type` and the
+TOP-LEVEL `appt_id`, `signing_request_id` and `case_id` are refused by name
+(the ids ride inside `trigger_data` only). The model supplies
+`{sequence_template_id, contact_id, trigger_data?, evidence}`; evidence must carry the exact
 template id (an `automation.definition` row, as A18.2/A18.3) AND the exact
 contact id (a row with `contact_id`, the A14 / contact-subrecord convention).
 The normalizer refuses an inactive, never-published, empty or
 unreviewed-action-type template, a missing contact, and an active
-contact-scoped enrollment of that contact in that template (the engine's own
-duplicate predicate, `appt_id <=> NULL AND signing_request_id <=> NULL`,
-named by id). **The preview is the engine's**: `previewEnrollmentSteps` (POST
+enrollment of that contact in that template IN THE SAME SCOPE (the engine's own
+duplicate predicate, `appt_id <=> ? AND signing_request_id <=> NULL` — the
+payload's `appt_id`, or NULL for a contact-scoped enrollment — named by id).
+
+- **No trigger data** — `trigger_data` absent or `{}` — is the shipped
+  enroll, unchanged: the same card envelope (no `payload` / `trigger` keys,
+  no extra read beyond the capture arm) and the same `trigger_data: {}` body.
+- **A reviewed trigger_data (A18.4c**; Fred, 2026-11-04 — appointment-scoped
+  enrollment by chat is wanted: "I think we should allow everything!").
+  - **Closed key set** (`sequenceEnrollAllowedKeys`): what the PUBLISHED
+    version reads from trigger data — `{{trigger_data.X}}` in a step's
+    `action_config` or a placeholder `delay.at`; a step or template
+    condition's params (`trigger_data.X`); `appt_time` (with `appt_id`) where
+    the scheduler or fire guard reads it — `before_appt` /
+    `before_appt_fixed` timing, `min_hours_before_appt` — because those ids
+    feed the SCHEDULER, not a placeholder, and an appointment-dated
+    enrollment must be tied to its appointment; and the ids
+    `buildRefsForStep` binds tables from, wherever a step reads that table
+    (`{{appts.*}}` → `appt_id`, `{{cases.*}}` → `case_id`, `{{users.*}}` →
+    `appt_with`) — ∪ the keys of the template's `test_input` and
+    `captured_input` samples. Keys are `[A-Za-z_]\w{0,63}` (what a
+    `{{trigger_data.X}}` path can name). Any other key is refused with the
+    allowed set in the message. **What the set cannot see:** what a
+    `start_workflow` step's target workflow does with the values it hands on,
+    a webhook's receiver, and an internal function reading trigger data by a
+    name no placeholder spells — so a key can be under-listed; a sample key no
+    step reads is allowed and the card says it is read by no step. The
+    engine-implied keys make the set independent of whether a sample was ever
+    captured (live templates were not measured for this slice: the worker had
+    no read-only key — the derivation covers every appointment-anchored
+    template by construction).
+  - **Scalar values only**, A17.7b's caps reused as-is
+    (`WORKFLOW_START_MAX_KEYS` 20, `WORKFLOW_START_MAX_STRING` 500, the
+    one-line control/bidi refusal): every value is shown verbatim and whole.
+  - **Refused by name inside trigger_data**, each with the engine's reason:
+    `signing_request_id` (no Casey read cites a signing request — the
+    evidence vocabulary has no such row shape — and `esignSendService` also
+    writes `signing_requests.seq_instance_id`, the pointer that cancels the
+    reminders when the document completes, which the enroll route never
+    writes; e-sign reminders stay born from the send, filed in
+    `ref/plans.md`); `user` / `user_id` (they bind `{{users.*}}`, and no
+    evidence row shape cites a user by id); `task_id` (binds `{{tasks.*}}`, a
+    binding this card does not review); `contact_id` / `contact` (the
+    enrollment's contact is the card's; a step reading the trigger-data value —
+    a `start_workflow` contact override, a function param — would act on
+    another contact); prototype names.
+  - **Ids from evidence, consistent with the contact** — what the automation
+    birth paths guarantee by construction (`apptService` builds trigger data
+    FROM the appointment row and enrolls its own client): `case_id` (text) in a
+    cited row, existing, and linked to the contact through `case_relate` (a
+    `{{cases.*}}` placeholder would otherwise put another client's case in this
+    contact's messages — the A14 rule); `appt_id` (a positive number) in a
+    cited row (`evidenceSupportsAppt`), existing, and its `appt_client_id` IS
+    the enrollment's contact — a mismatch (or a client-less appointment) is
+    refused with both named. With `appt_id`: `appt_time`, when sent, must be
+    that appointment's own instant (the firm-local naive `appt_date` read with
+    `DATE_FORMAT` and converted in the firm zone; any spelling of the same
+    instant passes, the refusal names the exact UTC value `apptService`
+    sends); `appt_with`, when sent, must be its provider (so `{{users.*}}`
+    binds through the cited appointment, the only user-binding route); a
+    `case_id` must be the appointment's own case when it has one. `appt_time`
+    or `appt_with` without `appt_id` is refused. **Deliberately not
+    mirrored:** the appointment's status and whether it is in the future (a
+    `no_show` sequence is born for a past No Show appointment — the card
+    discloses both), and the `no_show` path's phone and one-active-no_show
+    checks (that path's template-type policy, not a property of an
+    enrollment).
+  - **Scope.** A truthy `appt_id` makes the enrollment APPOINTMENT-scoped
+    (the engine's own rule): it neither blocks nor is blocked by a
+    contact-scoped enrollment of the same template + contact, the duplicate
+    check and the click-time re-check use that scoped identity, and it is
+    cancelled by `cancelByApptId` when the appointment is marked attended or
+    no-show, cancelled or rescheduled — the card says so, or, for an
+    appointment already in a terminal status, that no later status change
+    cancels it.
+  - **The preview and the walk run WITH the payload**, so a template dating
+    step 1 from `{{trigger_data.X}}` or anchoring it to the appointment
+    becomes enrollable when the payload feeds it; the unresolved list shrinks
+    by what it feeds; a payload that still cannot place step 1 is refused as
+    shipped. The card adds `payload` (`{trigger_data}`, the exact object sent)
+    and `trigger` (per key where it is read; the scope; the appointment —
+    firm time, type, status, past, provider, case; the case — label, caption,
+    the contact's relation); the review warning says "with exactly the
+    trigger data listed above". The browser builder sends `payload` as
+    reviewed — re-checked (only `trigger_data`, placeholder-readable keys,
+    none of the refused names, scalar values, a positive `appt_id`), never
+    rebuilt; a malformed payload sends nothing.
+- **Capture disclosure — both cards.** An armed template
+  (`sequence_templates.capture_mode` `'capturing'`; sequences have no
+  intercept mode) stores THIS enrollment's trigger data as its
+  `captured_input` at ingress — even when the enrollment is then refused as a
+  duplicate — and disarms; the card carries `capture` and says so. An unarmed
+  template's card carries no key.
+
+**The preview is the engine's**: `previewEnrollmentSteps` (POST
 `/sequences/preview`'s seam) with the additive option `version: 'published'` —
 without it the editor's preview shows the DRAFT when one exists, and an enroll
 never runs a draft (Fred, 2026-10-28: enrolling while someone is mid-edit is
@@ -2934,22 +3024,24 @@ normalizer asserts equals `current_version`. Per step the card shows the
 timing in words, its placement (when it runs / skipped, window passed /
 timing error), the RESOLVED recipient, sender and wording for this contact,
 and the placeholders the engine's `strict:false` resolution leaves as written
-(no trigger data means no `{{trigger_data.*}}`, appointment, case or user
+(with no trigger data no `{{trigger_data.*}}`, appointment, case or user
 placeholder can resolve). The normalizer replays the enroll's own
 first-placement walk (`scheduleFromStep` from step 1): a timing error before
 any step places is the enroll failing — `SCHEDULING_FAILED`, the new row
 cancelled, IT alerted — so the card is REFUSED rather than knowingly creating
-that (Fred's ruling, 2026-10-28); this is what keeps appointment-anchored and
-placeholder-dated templates off the card. A later step's timing error is
+that (Fred's ruling, 2026-10-28); without the trigger data they need, this is
+what keeps appointment-anchored and placeholder-dated templates off the card.
+A later step's timing error is
 disclosed as a STALL (danger styling), and every absolute `delay.at` holding a
 `{{placeholder}}` is named. Also on the card: the template condition's
 verdict, effects (`sequenceStepEffects`, shared with A18.3), what normally
 enrolls it, the running-enrollment count, and the fan-out statement.
 Click-time precheck: `GET /sequences/templates/:id` (gone / deactivated /
-`current_version` moved refuses — a published version is immutable, and with
-`trigger_data` `{}` the walk verdict depends on nothing else, so an unchanged
-version is an unchanged preview) and `GET /sequences/enrollments?contact_id=…
-&status=active&limit=100` (an active contact-scoped row of this template
+`current_version` moved refuses — a published version is immutable, and the
+trigger data is frozen on the card, so the walk verdict depends on nothing
+else and an unchanged version is an unchanged preview) and `GET
+/sequences/enrollments?contact_id=…&status=active&limit=100` (an active row of
+this template in the card's scope — contact-scoped, or this appointment's —
 refuses; a list it cannot read in full fails the re-check, nothing claimed).
 **Outcomes** in A14's vocabulary via a family `knownOutcome` hook on the card
 engine, keyed on exact status + `code` pairs (an idempotency body or anything

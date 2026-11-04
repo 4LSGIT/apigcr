@@ -3298,14 +3298,18 @@ function sequencePublishResult(draft, result) {
 
 // Sequence enroll (A18.4b): ONE contact into ONE template's PUBLISHED
 // version, NOW, through POST /sequences/enroll (A18.4a's hardened route).
-// The request is pinned here — direct mode by template_id (never
-// template_type), trigger_data {} — and the draft_id rides as
+// The request is fixed here — direct mode by template_id (never
+// template_type); with no reviewed trigger data the body carries
+// `trigger_data: {}`, and with one (A18.4c) it carries the card's
+// server-computed `payload.trigger_data` EXACTLY as reviewed (frozen at
+// proposal, re-checked here, never rebuilt) — and the draft_id rides as
 // Idempotency-Key (scope sequences.enroll): the route keeps the claim once a
 // row can exist, so an unknown outcome can never enroll twice. The card is the
 // server-computed preview from the engine itself; an enrollment is immediate
 // fan-out, so it is danger-styled. Click-time freshness re-reads the template
 // (deactivated, or a different published version, refuses) and the contact's
-// active enrollments (already enrolled refuses) before the ledger claim. The
+// active enrollments of the SAME scope (contact-scoped, or this appointment —
+// the engine's duplicate identity) before the ledger claim. The
 // route's coded outcomes are read by knownOutcome: a coded 409 / 503 is a
 // refusal written before any row; SCHEDULING_FAILED is a known FAILURE whose
 // row the engine cancelled; anything else after the claim stays unknown.
@@ -3331,14 +3335,72 @@ function sequenceEnrollStepLine(step) {
   return `  ${parts.join('; ')}`;
 }
 
+// A18.4c: where a published version reads one trigger-data key (server-computed).
+function sequenceEnrollReadText(r) {
+  const at = r.step_number == null ? 'the template condition' : `step ${r.step_number}`;
+  switch (r.via) {
+    case 'placeholder': return `${at} (a {{trigger_data}} placeholder)`;
+    case 'delay_at': return `${at} (its fixed date, delay.at)`;
+    case 'appt_timing': return `${at} (its appointment-anchored timing)`;
+    case 'fire_guard': return `${at} (its fire guard)`;
+    case 'condition': return `${at} (its condition)`;
+    case 'template_condition': return 'the template condition';
+    case 'binds_appts': return `${at} (binds {{appts.*}} to the appointment)`;
+    case 'binds_cases': return `${at} (binds {{cases.*}} to the case)`;
+    case 'binds_users': return `${at} (binds {{users.*}} to the provider)`;
+    default: return at;
+  }
+}
+
+function sequenceEnrollTriggerLines(draft) {
+  const payload = draft.payload && typeof draft.payload === 'object' ? draft.payload : null;
+  const c = draft.contact || {};
+  if (!payload) {
+    return ['Trigger data: NONE — a contact-scoped enrollment: no appointment, case, user or e-sign request rides with it, so no {{trigger_data.*}}, appointment, case or user placeholder can resolve (each step below lists any it leaves unresolved).',
+      'Already enrolled: no — this contact has no active contact-scoped enrollment in this template (re-checked when you apply).'];
+  }
+  // Every value verbatim (text in quotes, so "12" and 12 differ), one key per
+  // line, then where the published version reads it.
+  const data = payload.trigger_data && typeof payload.trigger_data === 'object' ? payload.trigger_data : {};
+  const trig = draft.trigger || {};
+  const reads = new Map((trig.reads || []).map((r) => [r.key, r]));
+  const keys = Object.keys(data);
+  const lines = [`Trigger data: ${keys.length} value(s), sent exactly as shown — each step reads {{trigger_data.key}} from them`];
+  for (const key of keys) {
+    const v = data[key];
+    lines.push(`Trigger ${key}: ${typeof v === 'string' ? `"${v}"` : String(v)}`);
+    const r = reads.get(key);
+    lines.push(`  read by: ${r && (r.read_by || []).length ? r.read_by.map(sequenceEnrollReadText).join(', ')
+      : 'no step — the template\'s test_input or captured sample names it (a step may still read it in a way the scan cannot see)'}`);
+  }
+  const a = trig.appointment;
+  if (trig.scope === 'appointment' && a) {
+    lines.push(`Scope: APPOINTMENT-scoped — tied to appointment #${a.appt_id}${a.appt_type ? ` (${a.appt_type})` : ''} on ${a.when_text}, status ${a.status}${a.past ? ' — this appointment is in the PAST' : ''}${a.case_id ? `, case ${a.case_id}` : ''}; it belongs to ${c.contact_name} (checked). It neither blocks nor is blocked by a contact-scoped enrollment of this contact in this template. ${a.status === 'Scheduled'
+      ? 'It is cancelled automatically when the appointment is marked attended or no-show, cancelled, or rescheduled.'
+      : `The appointment is already ${a.status}, so no later status change of it cancels this enrollment automatically.`}`);
+    if (a.provider) lines.push(`Provider: {{users.*}} reads ${a.provider.name} (user #${a.provider.user_id}) — appointment #${a.appt_id}'s provider (appt_with).`);
+    lines.push(`Already enrolled: no — this contact has no active enrollment in this template for appointment #${a.appt_id} (re-checked when you apply).`);
+  } else {
+    lines.push('Scope: contact-scoped — no appointment rides with it.');
+    lines.push('Already enrolled: no — this contact has no active contact-scoped enrollment in this template (re-checked when you apply).');
+  }
+  if (trig.case) {
+    lines.push(`Case: {{cases.*}} reads case ${trig.case.label}${trig.case.caption ? ` "${trig.case.caption}"` : ''} — ${c.contact_name} is ${trig.case.relate_type} on it (case_id, from the evidence).`);
+  }
+  return lines;
+}
+
 function sequenceEnrollText(draft) {
   const t = draft.template || {};
   const c = draft.contact || {};
   const lines = ['Sequence enrollment proposal — not enrolled',
     `Template: #${t.sequence_template_id} "${t.name}"${t.type ? ` (type ${t.type})` : ''} — active, runs published v${t.version} (${t.step_count} steps)${t.has_draft ? `; it also has an unpublished draft — this enrollment runs v${t.version}, NOT the draft` : ''}`,
     `Contact: ${c.contact_name} (#${c.contact_id})`,
-    'Trigger data: NONE — a contact-scoped enrollment: no appointment, case, user or e-sign request rides with it, so no {{trigger_data.*}}, appointment, case or user placeholder can resolve (each step below lists any it leaves unresolved).',
-    'Already enrolled: no — this contact has no active contact-scoped enrollment in this template (re-checked when you apply).'];
+    ...sequenceEnrollTriggerLines(draft)];
+  // An armed capture (server-read capture_mode) keeps this enrollment's trigger data.
+  if (draft.capture === 'capturing') {
+    lines.push(`Capture: this template is armed to capture — this enrollment's trigger data (${draft.payload ? 'the values above' : 'its empty trigger data'}) will be stored as the template's captured sample, replacing any earlier one, visible to automation staff in the sequence editor, and the arm turns off; the enrollment proceeds (unless another enrollment reaches the arm first).`);
+  }
   if (draft.verdict && draft.verdict !== 'would_proceed') {
     lines.push(`Template condition: ${draft.verdict}${draft.template_condition_error ? ` (${draft.template_condition_error})` : ''} — the enrollment is created, then stopped at its first step.`);
   }
@@ -3351,7 +3413,9 @@ function sequenceEnrollText(draft) {
     lines.push(`STALL: step ${draft.stall_step}'s timing cannot be computed for this enrollment — the enrollment stops there, active with nothing further sent, until someone recovers or cancels it.`);
   }
   if ((draft.placeholder_at_steps || []).length) {
-    lines.push(`Placeholder dates: step${draft.placeholder_at_steps.length > 1 ? 's' : ''} ${draft.placeholder_at_steps.join(', ')} use a {{placeholder}} as a fixed delay.at — with no trigger data it resolves EMPTY and that step cannot be scheduled.`);
+    lines.push(`Placeholder dates: step${draft.placeholder_at_steps.length > 1 ? 's' : ''} ${draft.placeholder_at_steps.join(', ')} use a {{placeholder}} as a fixed delay.at — ${draft.payload
+      ? 'resolved from the trigger data above (each step below shows when it runs); one the trigger data does not set resolves EMPTY and that step cannot be scheduled.'
+      : 'with no trigger data it resolves EMPTY and that step cannot be scheduled.'}`);
   }
   lines.push(`Steps (the engine's own preview, resolved for this contact${draft.steps_truncated ? `; first ${(draft.steps || []).length} shown` : ''}):`);
   for (const step of draft.steps || []) lines.push(sequenceEnrollStepLine(step));
@@ -3378,13 +3442,46 @@ function sequenceEnrollRequest(draft) {
   if (!Number.isSafeInteger(tplId) || tplId < 1 || !Number.isSafeInteger(contactId) || contactId < 1) {
     throw new Error('This enrollment has no usable template or contact.');
   }
-  return { path: '/sequences/enroll', method: 'POST', body: { contact_id: contactId, template_id: tplId, trigger_data: {} }, idempotent: true };
+  return { path: '/sequences/enroll', method: 'POST', body: { contact_id: contactId, template_id: tplId, trigger_data: sequenceEnrollTriggerBody(draft) }, idempotent: true };
+}
+
+// A18.4c: the reviewed trigger data, re-checked (never rebuilt): only
+// payload.trigger_data, keys a placeholder can name and none the server
+// refuses by name, scalar values, a positive appointment id — else nothing is
+// sent. No payload is the shipped `{}`.
+function sequenceEnrollTriggerBody(draft) {
+  const payload = draft.payload;
+  const out = {};
+  if (payload == null) return out;
+  const data = payload && payload.trigger_data;
+  if (typeof payload !== 'object' || Array.isArray(payload) || !data || typeof data !== 'object' || Array.isArray(data)
+    || Object.keys(payload).some((k) => k !== 'trigger_data')) throw new Error('This enrollment carries unusable trigger data.');
+  const refused = ['signing_request_id', 'user', 'user_id', 'task_id', 'contact_id', 'contact', '__proto__', 'constructor', 'prototype'];
+  for (const key of Object.keys(data)) {
+    const v = data[key];
+    if (refused.includes(key) || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(key)
+      || !(v === null || typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)))
+      || (key === 'appt_id' && v !== null && !(Number.isSafeInteger(v) && v > 0))) {
+      throw new Error('This enrollment carries unusable trigger data.');
+    }
+    out[key] = v;
+  }
+  return out;
+}
+
+// The scope an enrollment is born with (the engine's own rule: a truthy
+// trigger_data.appt_id makes it appointment-scoped).
+function sequenceEnrollApptScope(draft) {
+  const data = draft.payload && draft.payload.trigger_data;
+  const id = data && data.appt_id ? Number(data.appt_id) : null;
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
 async function sequenceEnrollPrecheck(draft) {
   const tplId = Number(draft.template && draft.template.sequence_template_id);
   const contactId = Number(draft.contact && draft.contact.contact_id);
   const reviewed = Number(draft.expected && draft.expected.current_version);
+  const apptId = sequenceEnrollApptScope(draft);
   const read = await api(`/sequences/templates/${tplId}`, null, 'GET');
   const tpl = read && read.template;
   if (!tpl) return 'The sequence template no longer exists. Nothing was enrolled.';
@@ -3397,8 +3494,8 @@ async function sequenceEnrollPrecheck(draft) {
   const total = Number(list && list.pagination && list.pagination.total);
   if (!rows || !Number.isFinite(total) || total > rows.length) throw new Error('the contact\'s active enrollments could not be read in full');
   const dup = rows.find((e) => Number(e.contact_id) === contactId && Number(e.template_id) === tplId
-    && e.appt_id == null && e.signing_request_id == null && e.status === 'active');
-  if (dup) return `${draft.contact.contact_name} is already enrolled in this sequence (active enrollment #${Number(dup.id)}). Nothing was enrolled.`;
+    && (apptId == null ? e.appt_id == null : Number(e.appt_id) === apptId) && e.signing_request_id == null && e.status === 'active');
+  if (dup) return `${draft.contact.contact_name} is already enrolled in this sequence${apptId == null ? '' : ` for appointment #${apptId}`} (active enrollment #${Number(dup.id)}). Nothing was enrolled.`;
   return '';
 }
 
@@ -4568,7 +4665,7 @@ const ACTION_FAMILIES = [
       warning: `Enrollment #${draft.result_enrollment_id} of ${draft.contact ? draft.contact.contact_name : 'the contact'} in "${draft.template ? draft.template.name : 'the sequence'}" was made using your signed-in account. Its steps run as they come due; steps already run cannot be undone.`,
       button: `Open enrollment #${draft.result_enrollment_id}`,
     }),
-    reviewWarning: 'This ENROLLS THE CONTACT NOW in the published version, with no trigger data — every text, email, webhook and chained start listed above happens as its step comes due, and none can be recalled. Cancelling the enrollment later stops only the steps it has not reached. Canceling the dialog enrolls nothing.',
+    reviewWarning: (draft) => `This ENROLLS THE CONTACT NOW in the published version, ${draft && draft.payload ? 'with exactly the trigger data listed above' : 'with no trigger data'} — every text, email, webhook and chained start listed above happens as its step comes due, and none can be recalled. Cancelling the enrollment later stops only the steps it has not reached. Canceling the dialog enrolls nothing.`,
     open: (draft) => openAutomationRecord('automations.sequence', draft.result_enrollment_id,
       `Enrollment #${draft.result_enrollment_id}`,
       'Find it under More → Automations → Sequences, on the template\'s Enrollments tab.', 'enrollment'),

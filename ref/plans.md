@@ -1074,19 +1074,22 @@ COMMENTs.)
 
 ## From the Ask Casey arc — A18.4b sequence enroll (2026-10-28) — deferred
 
-- **A reviewed trigger_data payload for Casey enrollments.** A18.4b enrolls
-  contact-scoped only, `trigger_data` pinned `{}`: no `appt_id`,
-  `signing_request_id`, `case_id` or `user`, so templates whose first step is
-  appointment-anchored or dates itself from `{{trigger_data.*}}` are refused
-  (the enroll would fail `SCHEDULING_FAILED`), and `{{users.*}}` /
-  `{{cases.*}}` / `{{trigger_data.*}}` placeholders stay unresolved on the
-  card. A payload slice would need: a closed key set per template (its
-  `test_input` / `captured_input` sample, or the placeholders its published
-  steps read), values shown verbatim on the card and fed to the same
-  `previewEnrollmentSteps(…, {version: 'published'})` call, ids
-  (`appt_id`, `case_id`, `user`) only from evidence rows, and a ruling on
-  whether an appointment-scoped enrollment by chat is wanted at all (today
-  those are born from `apptService` / `esignSendService`). Fred's call.
+- **E-sign-scoped and user-bound Casey enrollments (the ids with no evidence
+  shape).** A18.4c takes a reviewed `trigger_data` with evidence-bound
+  `appt_id` / `case_id`, but refuses by name the ids no Casey read can cite
+  today: `signing_request_id` (no read returns a row carrying it —
+  `signing_requests` exposes `id` — and the e-sign birth path also writes
+  `signing_requests.seq_instance_id`, the pointer `applyStatus` cancels the
+  reminders through when the document completes, which `POST
+  /sequences/enroll` never writes, so a chat-born e-sign enrollment would keep
+  reminding after signing), and `user` / `user_id` (bind `{{users.*}}`; no
+  evidence row shape cites a user by id — an appointment's provider binds
+  through `appt_id` + `appt_with` instead). An e-sign slice needs a typed read
+  returning `signing_request_id` with its debtor1 contact (the
+  `esignPrefillService.buildContext` resolution the send uses) and the
+  seq_instance_id write-back; a user slice needs a cited staff-row shape.
+  `task_id` (binds `{{tasks.*}}`) is refused for the same reason as a binding
+  not yet reviewed.
 - **Opt-out is not on the enroll card.** A sequence send step refuses an
   opted-out recipient at fire time (`optoutService.assertNotOptedOut`, in the
   `send_sms` / `send_email` internal functions), so on an opted-out contact

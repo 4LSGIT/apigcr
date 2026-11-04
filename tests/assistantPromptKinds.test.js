@@ -193,16 +193,30 @@ describe('A17.7 — every stage teaches workflow start, published-only, with an 
 // A18.4b: the sequence family marker is the step bullet, which used to say
 // "enrolling a contact are not available" — a stage still saying so refuses
 // the new kind (the job lesson), so the exclusion must be gone everywhere.
-describe('A18.4b — every stage teaches sequence enroll, contact-scoped and dataless', () => {
-  test('the plan carries its own enroll bullet and drops the old exclusion', () => {
+// A18.4c moved the trigger-data pins: the stages taught "CONTACT-SCOPED ONLY,
+// NO TRIGGER DATA" and refused trigger_data by name; they now teach the
+// reviewed scalar trigger_data with evidence-bound ids (appointment scope), and
+// the old exclusion must be gone everywhere (a stage still saying so refuses
+// the widened kind — the job lesson).
+describe('A18.4b — every stage teaches sequence enroll, with an optional reviewed trigger_data (A18.4c)', () => {
+  test('the plan carries its own enroll bullet and drops the old exclusions', () => {
     expect(planPrompt).toContain('A reviewed sequence enroll action is available');
+    expect(planPrompt).toContain('or with a reviewed scalar trigger_data — appointment-scoped when it carries the');
     expect(planPrompt).not.toContain('enrolling a contact are not available');
+    expect(planPrompt).not.toContain('enrolling with\n  data are not available');
   });
-  test('the answer and repair stages teach both evidence ids, no trigger data, and the published version', () => {
+  test('the answer and repair stages teach both evidence ids, the closed scalar trigger_data, its evidence-bound ids, and the published version', () => {
     expect(answerPrompt).toContain('Sequence enroll rules (A18.4b');
     expect(answerPrompt).toContain('Evidence is REQUIRED and must carry BOTH ids');
-    expect(answerPrompt).toContain('CONTACT-SCOPED ONLY, NO TRIGGER DATA');
-    expect(repairPrompt).toContain('no trigger_data, payload, input, appt_id,\n  signing_request_id, case_id or template_type key');
+    expect(answerPrompt).toContain('OPTIONAL REVIEWED TRIGGER DATA (A18.4c)');
+    expect(answerPrompt).toContain('it makes the enrollment APPOINTMENT-scoped');
+    expect(answerPrompt).toContain('signing_request_id, user, user_id, task_id, contact_id\n    and contact are refused inside trigger_data');
+    expect(repairPrompt).toContain('optional trigger_data (keys ONLY from the refusal\'s allowed list;');
+    expect(repairPrompt).toContain('no top-level appt_id, signing_request_id or case_id');
+    for (const p of [planPrompt, answerPrompt, repairPrompt]) {
+      expect(p).not.toContain('CONTACT-SCOPED ONLY, NO TRIGGER DATA');
+      expect(p).not.toContain('no trigger_data, payload, input, appt_id,');
+    }
   });
 });
 

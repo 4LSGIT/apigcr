@@ -269,16 +269,36 @@ const WORKFLOW_PUBLISH_EFFECT_FNS = new Set(['enroll_sequence', 'start_workflow'
 // its own off switch (casey_sequence_enroll_enabled, on unless '0' — one
 // polarity for every Casey flag, Fred 2026-10-28; a family that must START
 // dark gets an explicit '0' row seeded at land time instead).
-// Contact-scoped only: direct mode by template_id, trigger_data pinned {} —
-// appointment and e-sign reminder enrollments are born from automations
-// (apptService, esignSendService), not from a chat request.
+// Direct mode by template_id; trigger_data {} unless the draft carries a
+// reviewed trigger_data (A18.4c): a closed key set, scalar values, ids bound
+// by evidence — an appt_id makes the enrollment appointment-scoped.
 const SEQUENCE_ACTION_KINDS = new Set(['sequence.step_insert.v1', 'sequence.publish.v1', 'sequence.enroll.v1']);
 const SEQUENCE_PUBLISH_KEYS = new Set(['kind', 'sequence_template_id', 'evidence']);
-const SEQUENCE_ENROLL_KEYS = new Set(['kind', 'sequence_template_id', 'contact_id', 'evidence']);
-// Refused BY NAME (the A17.7 payload-key pattern): every way of handing the
-// enrollment data, and the cascade mode.
-const SEQUENCE_ENROLL_PAYLOAD_KEYS = ['trigger_data', 'triggerData', 'payload', 'input', 'appt_id', 'signing_request_id', 'case_id'];
+const SEQUENCE_ENROLL_KEYS = new Set(['kind', 'sequence_template_id', 'contact_id', 'trigger_data', 'evidence']);
+// Refused BY NAME at the top level of the draft (the A17.7 payload-key
+// pattern): the other spellings of the enrollment data, and the ids that ride
+// INSIDE trigger_data only (where they are evidence-bound or refused).
+const SEQUENCE_ENROLL_PAYLOAD_KEYS = ['triggerData', 'payload', 'input', 'appt_id', 'signing_request_id', 'case_id'];
 const SEQUENCE_ENROLL_MAX_PREVIEW_STEPS = 40;
+// A18.4c: a reviewed trigger_data. Keys are the identifiers a
+// {{trigger_data.X}} placeholder can name (the engine's resolvers read
+// [\w.] paths, and a dotted key would be a nested read); values are scalars,
+// with A17.7b's caps reused as-is (WORKFLOW_START_MAX_KEYS / _MAX_STRING /
+// _VALUE_CONTROL): a value too long to show whole on one line is too long to
+// review. Refused BY NAME inside trigger_data, each for a reason the engine
+// gives (lib/sequenceEngine buildRefsForStep / _enrollWithTemplate):
+const SEQUENCE_TRIGGER_KEY_OK = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const SEQUENCE_TRIGGER_REFUSED = new Map([
+  ['signing_request_id', 'an e-sign-scoped enrollment needs a cited signing request, and no Casey read carries a signing_request_id yet — and esignSendService also writes the enrollment back to signing_requests.seq_instance_id, the pointer that cancels the reminders when the document completes, which POST /sequences/enroll never writes; e-sign reminders are enrolled by the send itself'],
+  ['user', 'it binds {{users.*}} to a staff member, and no Casey read cites a user by id — an appointment\'s provider binds through appt_id + appt_with instead'],
+  ['user_id', 'it binds {{users.*}} to a staff member, and no Casey read cites a user by id — an appointment\'s provider binds through appt_id + appt_with instead'],
+  ['task_id', 'it binds {{tasks.*}} to a task, a binding this card does not review'],
+  ['contact_id', 'the enrollment\'s contact is the card\'s contact_id; a step reading trigger_data.contact_id (a start_workflow contact override, a function param) would act on a different contact'],
+  ['contact', 'the enrollment\'s contact is the card\'s contact_id; a step reading trigger_data.contact would act on a different contact'],
+  ['__proto__', 'a prototype name is never a key'],
+  ['constructor', 'a prototype name is never a key'],
+  ['prototype', 'a prototype name is never a key'],
+]);
 // Every sequence_steps.action_type this card has been reviewed against — the
 // route's ALLOWED_ACTION_TYPES (pinned by tests/caseySequencePublish.test.js).
 // None carries a runnable code body (see normalizeSequencePublishAction), so
@@ -6921,18 +6941,42 @@ function sequenceEnrollPreviewStep(entry, stored) {
 //     2026-10-28). A later step's timing error is disclosed: the enrollment
 //     stalls there, active with nothing further sent;
 //   * the already-enrolled state, with the engine's own duplicate predicate
-//     (same contact + template, appt_id / signing_request_id both NULL,
-//     status active) — an existing enrollment refuses the card by id;
+//     (same contact + template + appt_id, signing_request_id NULL, status
+//     active) — an existing enrollment of the SAME scope refuses the card by
+//     id; a contact-scoped and an appointment-scoped enrollment never block
+//     each other;
 //   * what the version sends, calls and starts, what normally enrolls it, and
 //     how many enrollments are already running.
 // Fixed rules, none model-chosen: direct mode by template_id (never the type
-// cascade), trigger_data pinned {} (every payload key refused by name — a
-// reviewed trigger_data is its own decision, ref/plans.md), and the browser
-// re-reads the template (active, current_version unchanged) and the contact's
-// active enrollments at click time before the ledger claim. A published
-// version is immutable, so an unchanged current_version is an unchanged step
-// set, template condition and walk verdict (trigger_data {} makes the walk
-// independent of anything else).
+// cascade); top-level trigger-data spellings and ids refused by name. The
+// browser re-reads the template (active, current_version unchanged) and the
+// contact's active enrollments (same scope) at click time before the ledger
+// claim. A published version is immutable and the trigger data is frozen on
+// the card, so an unchanged current_version is an unchanged step set,
+// template condition and walk verdict.
+//
+// A18.4c — a REVIEWED trigger_data (Fred, 2026-11-04: appointment-scoped
+// enrollment by chat is wanted). Absent or {} is the shipped enroll: the same
+// card envelope and the same `trigger_data: {}` body. Otherwise:
+//   * a CLOSED key set (sequenceEnrollAllowedKeys): what the published
+//     version reads from trigger_data — {{trigger_data.X}} in a step config or
+//     a placeholder delay.at, a condition param, the appointment keys the
+//     scheduler and fire guard read (before_appt timing / min_hours_before_appt
+//     → appt_time + appt_id), the ids the resolver binds tables from
+//     ({{appts.*}} → appt_id, {{cases.*}} → case_id, {{users.*}} → appt_with)
+//     — ∪ the keys of the template's test_input and captured_input samples;
+//   * scalar values only (sequenceEnrollTriggerData), shown verbatim;
+//   * ids from evidence and consistent with the enrollment's contact, as the
+//     automation birth paths guarantee structurally (apptService builds
+//     trigger_data FROM the appointment row): appt_id cited, and the
+//     appointment's client IS this contact; appt_time, when sent, is that
+//     appointment's own instant; appt_with is its provider; case_id cited,
+//     linked to the contact, and the appointment's own case when it has one;
+//   * signing_request_id, user / user_id, task_id, contact_id / contact
+//     refused by name (SEQUENCE_TRIGGER_REFUSED says why);
+//   * the preview and the walk run WITH the payload, so a template dating
+//     step 1 from the payload becomes enrollable; the card's `payload` is the
+//     exact trigger_data the browser sends.
 async function normalizeSequenceEnrollAction(db, value, evidence) {
   if (require('../lib/firmConfig').cfg('casey_sequence_enroll_enabled') === '0') {
     throw httpError(422, 'Action kind is unavailable');
@@ -6940,14 +6984,14 @@ async function normalizeSequenceEnrollAction(db, value, evidence) {
   const isObj = value && typeof value === 'object';
   const payloadKeys = isObj ? Object.keys(value).filter((k) => SEQUENCE_ENROLL_PAYLOAD_KEYS.includes(k)) : [];
   if (payloadKeys.length) {
-    throw httpError(422, `Sequence enroll takes no enrollment data (${payloadKeys.join(', ')}) — Casey enrolls a contact with empty trigger data (contact-scoped); appointment and e-sign reminder enrollments come from their own automations`);
+    throw httpError(422, `Sequence enroll takes its enrollment data as trigger_data only (${payloadKeys.join(', ')}) — one spelling, and appt_id / case_id ride INSIDE trigger_data as evidence-bound ids`);
   }
   if (isObj && Object.prototype.hasOwnProperty.call(value, 'template_type')) {
     throw httpError(422, 'Sequence enroll never picks a template by type (template_type) — Casey enrolls in the exact sequence_template_id the user named');
   }
   const unknown = isObj ? Object.keys(value).filter((k) => !SEQUENCE_ENROLL_KEYS.has(k)) : [];
   if (unknown.length) {
-    throw httpError(422, `Sequence enroll carries unsupported fields: ${unknown.join(', ')} — it takes sequence_template_id, contact_id and evidence only`);
+    throw httpError(422, `Sequence enroll carries unsupported fields: ${unknown.join(', ')} — it takes sequence_template_id, contact_id, trigger_data and evidence only`);
   }
   const templateId = Number(value.sequence_template_id);
   if (!Number.isSafeInteger(templateId) || templateId < 1) throw httpError(422, 'Sequence enroll needs a positive sequence_template_id');
@@ -6960,6 +7004,12 @@ async function normalizeSequenceEnrollAction(db, value, evidence) {
   if (!contactEvidenceSupports(refs, evidence, contactId, null)) {
     throw httpError(422, 'Sequence enroll evidence does not identify the contact — cite a row carrying the exact contact_id (read the contact first)');
   }
+  // A18.4c: the payload's shape and its ids' evidence, before anything is read.
+  const triggerData = sequenceEnrollTriggerData(value);
+  if (triggerData) sequenceEnrollTriggerEvidence(triggerData, refs, evidence);
+  // The engine's own scope rule (_enrollWithTemplate): a truthy appt_id makes
+  // the enrollment appointment-scoped; signing_request_id is refused above.
+  const apptScope = triggerData && triggerData.appt_id ? Number(triggerData.appt_id) : null;
 
   const [[tpl]] = await db.query(
     'SELECT id, name, type, active, current_version, draft_version FROM sequence_templates WHERE id = ?', [templateId]);
@@ -6982,8 +7032,21 @@ async function normalizeSequenceEnrollAction(db, value, evidence) {
   if (!contact) throw httpError(422, `Contact ${contactId} is unavailable`);
   const contactName = String(contact.contact_name || '').trim().slice(0, 200) || `Contact ${contactId}`;
 
+  // A18.4c: the closed key set and the ids' bindings — read only when the
+  // draft carries trigger data, so the shipped enroll reads what it did.
+  const trigger = triggerData
+    ? await sequenceEnrollTrigger(db, templateId, version, steps, triggerData, contactId, contactName)
+    : null;
+  // An armed capture stores THIS enrollment's trigger_data as the template's
+  // captured sample (lib/sequenceEngine _enrollWithTemplate, at ingress, even
+  // when the enrollment is then refused as a duplicate) and disarms. Sequence
+  // capture has no intercept mode (capture_mode is 'off' | 'capturing') — the
+  // enrollment always proceeds. An unarmed template's card carries no key.
+  const [[cap]] = await db.query('SELECT capture_mode FROM sequence_templates WHERE id = ?', [templateId]);
+  const captureMode = cap && cap.capture_mode === 'capturing' ? 'capturing' : null;
+
   // The engine's duplicate guard (lib/sequenceEngine _enrollWithTemplate),
-  // exactly, for a contact-scoped enrollment: appt / signing ids both NULL.
+  // exactly: this scope's appt id (or NULL), signing request id NULL.
   const [existing] = await db.query(
     `SELECT id FROM sequence_enrollments
       WHERE contact_id = ?
@@ -6992,13 +7055,13 @@ async function normalizeSequenceEnrollAction(db, value, evidence) {
         AND (signing_request_id <=> ?)
         AND status = 'active'
       LIMIT 1`,
-    [contactId, templateId, null, null]);
+    [contactId, templateId, apptScope, null]);
   if (existing.length) {
-    throw httpError(422, `${contactName} (contact ${contactId}) is already enrolled in "${String(tpl.name || `Template ${templateId}`).slice(0, 200)}" — active enrollment #${existing[0].id}; nothing is proposed (an enroll would be refused ALREADY_ENROLLED)`);
+    throw httpError(422, `${contactName} (contact ${contactId}) is already enrolled in "${String(tpl.name || `Template ${templateId}`).slice(0, 200)}"${apptScope ? ` for appointment #${apptScope}` : ''} — active enrollment #${existing[0].id}; nothing is proposed (an enroll would be refused ALREADY_ENROLLED)`);
   }
 
   const preview = await require('../lib/sequenceEngine').previewEnrollmentSteps(db, {
-    template_id: templateId, contact_id: contactId, trigger_data: {}, version: 'published',
+    template_id: templateId, contact_id: contactId, trigger_data: triggerData || {}, version: 'published',
   });
   if (!preview || Number(preview.version) !== version || !Array.isArray(preview.steps) || preview.steps.length !== steps.length) {
     throw httpError(422, `Sequence template ${templateId}'s preview did not cover its published version v${version} — nothing is proposed`);
@@ -7012,8 +7075,9 @@ async function normalizeSequenceEnrollAction(db, value, evidence) {
     const n = Number(entry.step_number);
     if (firstStep == null) {
       if (entry.timing_error) {
-        throw httpError(422, `Sequence template ${templateId}: step ${n}'s timing cannot be computed for an enrollment with no trigger data (${seqEnrollText(entry.timing_error, 300)}) — ` +
-          'the enroll would FAIL (SCHEDULING_FAILED): its new enrollment cancelled and IT alerted, nothing sent. Nothing is proposed; appointment-anchored or placeholder-dated sequences are enrolled by their own automations');
+        throw httpError(422, `Sequence template ${templateId}: step ${n}'s timing cannot be computed for ${triggerData ? 'this enrollment\'s trigger data' : 'an enrollment with no trigger data'} (${seqEnrollText(entry.timing_error, 300)}) — ` +
+          'the enroll would FAIL (SCHEDULING_FAILED): its new enrollment cancelled and IT alerted, nothing sent. Nothing is proposed; ' +
+          (triggerData ? 'send the trigger data that step needs (an appointment-anchored step needs the appointment: appt_id and its appt_time)' : 'appointment-anchored or placeholder-dated sequences need trigger_data (an appointment-anchored one needs appt_id and its appt_time)'));
       }
       if (entry.computed_time) firstStep = n; else skippedLeading.push(n);
     } else if (entry.timing_error && stallStep == null) {
@@ -7045,6 +7109,8 @@ async function normalizeSequenceEnrollAction(db, value, evidence) {
       has_draft: tpl.draft_version != null ? 1 : 0,
     },
     contact: { contact_id: contactId, contact_name: contactName },
+    ...(trigger ? { payload: { trigger_data: triggerData }, trigger } : {}),
+    ...(captureMode ? { capture: captureMode } : {}),
     verdict: String(preview.enrollment_verdict || 'would_proceed'),
     ...(preview.template_condition_error ? { template_condition_error: seqEnrollText(preview.template_condition_error, 300) } : {}),
     first_step: firstStep,
@@ -7059,6 +7125,256 @@ async function normalizeSequenceEnrollAction(db, value, evidence) {
     active_enrollments: Number(running && running.n) || 0,
     expected: { current_version: version },
     evidence: refs,
+  };
+}
+
+// A18.4c: the shape of a reviewed trigger_data, checked before anything is
+// read. Returns the object to send (its own keys, values verbatim), or null
+// when the draft carries none (absent, or `{}` — the shipped enroll).
+function sequenceEnrollTriggerData(value) {
+  if (!Object.prototype.hasOwnProperty.call(value, 'trigger_data')) return null;
+  const data = value.trigger_data;
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    throw httpError(422, 'Sequence enroll trigger_data must be an object of key → scalar value (or left out for an enrollment with no trigger data)');
+  }
+  const keys = Object.keys(data);
+  if (!keys.length) return null;
+  if (keys.length > WORKFLOW_START_MAX_KEYS) {
+    throw httpError(422, `Sequence enroll trigger_data has ${keys.length} keys — one card reviews at most ${WORKFLOW_START_MAX_KEYS}`);
+  }
+  const out = {};
+  for (const key of keys) {
+    const k = String(key).slice(0, 64);
+    if (SEQUENCE_TRIGGER_REFUSED.has(key)) {
+      throw httpError(422, `Sequence enroll trigger_data.${k} is refused — ${SEQUENCE_TRIGGER_REFUSED.get(key)}`);
+    }
+    if (!SEQUENCE_TRIGGER_KEY_OK.test(key)) {
+      throw httpError(422, `Sequence enroll trigger_data key "${k}" is not a name a {{trigger_data.…}} placeholder can read (letters, digits and _ only, up to 64)`);
+    }
+    const v = data[key];
+    if (v !== null && typeof v === 'object') {
+      throw httpError(422, `Sequence enroll trigger_data.${k} is ${Array.isArray(v) ? 'an array' : 'an object'} — Casey sends scalar values only (text, number, true/false, null); a nested value cannot be reviewed whole on the card`);
+    }
+    if (typeof v === 'number' && !Number.isFinite(v)) throw httpError(422, `Sequence enroll trigger_data.${k} is not a finite number`);
+    if (v !== null && !['string', 'number', 'boolean'].includes(typeof v)) {
+      throw httpError(422, `Sequence enroll trigger_data.${k} must be text, a number, true/false or null`);
+    }
+    if (typeof v === 'string') {
+      if (v.length > WORKFLOW_START_MAX_STRING) {
+        throw httpError(422, `Sequence enroll trigger_data.${k} is ${v.length} characters — over ${WORKFLOW_START_MAX_STRING}: a value too long to show whole on the card is too long to review`);
+      }
+      if (WORKFLOW_START_VALUE_CONTROL.test(v)) {
+        throw httpError(422, `Sequence enroll trigger_data.${k} contains a line break, tab, control or text-direction character — the card shows every value on one line exactly as it is sent`);
+      }
+    }
+    out[key] = v;
+  }
+  // The ids' own types: the engine binds appts / cases from them and Numbers
+  // appt_id into the enrollment's scope column.
+  if (has(out, 'appt_id') && out.appt_id !== null && !(Number.isSafeInteger(out.appt_id) && out.appt_id > 0)) {
+    throw httpError(422, 'Sequence enroll trigger_data.appt_id must be a positive appointment id (a number) or null');
+  }
+  if (has(out, 'case_id') && out.case_id !== null && !(typeof out.case_id === 'string' && /^[A-Za-z0-9_-]{1,20}$/.test(out.case_id))) {
+    throw httpError(422, 'Sequence enroll trigger_data.case_id must be a case id as text (letters, digits, _ or -) or null');
+  }
+  const apptBound = !!out.appt_id;
+  if (has(out, 'appt_time') && !apptBound) {
+    throw httpError(422, 'Sequence enroll trigger_data.appt_time needs the appointment it belongs to (appt_id) — an enrollment dated from an appointment it is not tied to is never cancelled when that appointment is cancelled or rescheduled');
+  }
+  if (has(out, 'appt_with') && !apptBound) {
+    throw httpError(422, 'Sequence enroll trigger_data.appt_with binds {{users.*}} to a staff member, and only an appointment (appt_id) proves which one — send it with the appointment, as its provider');
+  }
+  return out;
+}
+
+function has(obj, key) { return Object.prototype.hasOwnProperty.call(obj, key); }
+
+// A18.4c: the evidence rule for the ids inside trigger_data (the A14 / A13
+// convention: a cited row carrying that exact id).
+function sequenceEnrollTriggerEvidence(data, refs, evidence) {
+  if (data.appt_id && !evidenceSupportsAppt(refs, evidence, data.appt_id)) {
+    throw httpError(422, `Sequence enroll trigger_data.appt_id ${data.appt_id} is not in the evidence — cite a row carrying that exact appt_id (read the appointment first)`);
+  }
+  if (data.case_id) {
+    const cited = refs.some((ref) => {
+      const query = evidence.find((item) => item && item.id === ref.query_id);
+      const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+      return row && row.case_id != null && String(row.case_id) === data.case_id;
+    });
+    if (!cited) throw httpError(422, `Sequence enroll trigger_data.case_id "${data.case_id}" is not in the evidence — cite a row carrying that exact case_id (read the case first)`);
+  }
+}
+
+// A18.4c: what a published version reads from trigger_data → the places
+// reading it, in step order. Reads seen: {{trigger_data.X}} in a step's
+// action_config (the resolver's pseudo-table) or a placeholder delay.at
+// (resolveTriggerDataPlaceholders); a step or template condition's params
+// ("trigger_data.X", read by getNestedValue — a path without the prefix reads
+// trigger_data too); appt_time where the scheduler or fire guard reads it
+// (before_appt / before_appt_fixed timing, min_hours_before_appt) — with
+// appt_id, since an appointment-dated enrollment must be tied to its
+// appointment; and the ids buildRefsForStep binds tables from, wherever a
+// step reads that table ({{appts.*}} → appt_id, {{cases.*}} → case_id,
+// {{users.*}} → appt_with; user / user_id / task_id are refused by name).
+function sequenceTriggerReads(steps, templateCondition) {
+  const { parseMaybeJson } = require('../lib/versionDiff');
+  const reads = new Map();
+  const add = (key, step, via) => {
+    if (!key) return;
+    if (!reads.has(key)) reads.set(key, []);
+    const at = reads.get(key);
+    if (!at.some((x) => x.step_number === step && x.via === via)) at.push({ step_number: step, via });
+  };
+  const condReads = (cond, step, via) => {
+    const c = parseMaybeJson(cond);
+    const params = c && typeof c === 'object' && c.params && typeof c.params === 'object' ? c.params : {};
+    for (const p of Object.values(params)) {
+      if (typeof p !== 'string') continue;
+      add(p.replace('trigger_data.', '').split('.')[0], step, via);
+    }
+  };
+  condReads(templateCondition, null, 'template_condition');
+  for (const s of steps) {
+    const n = Number(s.step_number);
+    const cfgText = JSON.stringify(parseMaybeJson(s.action_config) || {});
+    for (const m of cfgText.matchAll(/\{\{\s*trigger_data\.([A-Za-z_]\w*)/g)) add(m[1], n, 'placeholder');
+    if (/\{\{\s*appts\./.test(cfgText)) add('appt_id', n, 'binds_appts');
+    if (/\{\{\s*cases\./.test(cfgText)) add('case_id', n, 'binds_cases');
+    if (/\{\{\s*users\./.test(cfgText)) add('appt_with', n, 'binds_users');
+    const timing = parseMaybeJson(s.timing);
+    if (timing && typeof timing === 'object') {
+      if (typeof timing.at === 'string') {
+        for (const m of timing.at.matchAll(/\{\{\s*trigger_data\.([A-Za-z_]\w*)/g)) add(m[1], n, 'delay_at');
+      }
+      if (timing.type === 'before_appt' || timing.type === 'before_appt_fixed') {
+        add('appt_time', n, 'appt_timing');
+        add('appt_id', n, 'appt_timing');
+      }
+    }
+    const guard = parseMaybeJson(s.fire_guard);
+    if (guard && typeof guard === 'object' && guard.min_hours_before_appt != null) {
+      add('appt_time', n, 'fire_guard');
+      add('appt_id', n, 'fire_guard');
+    }
+    condReads(s.condition, n, 'condition');
+  }
+  return reads;
+}
+
+// A18.4c: the CLOSED key set a reviewed enrollment may carry — what the
+// published version reads (sequenceTriggerReads) ∪ the keys of the template's
+// test_input (the author's documentation of the trigger_data shape) and
+// captured_input (the last real trigger_data an enrollment carried) samples.
+// What it cannot see: a start_workflow step hands its own init_data to a
+// workflow (scanned as a placeholder read here, but what that workflow does
+// with it is not chased), a webhook's receiver, and an internal function that
+// reads trigger_data by a name no placeholder spells — so a key can be
+// under-listed, and a sample key no step reads is allowed and disclosed as
+// read by no step. Names a placeholder cannot read, and the refused names,
+// are never allowed.
+function sequenceEnrollAllowedKeys(steps, templateCondition, testInput, capturedInput) {
+  const reads = sequenceTriggerReads(steps, templateCondition);
+  const usable = (k) => typeof k === 'string' && SEQUENCE_TRIGGER_KEY_OK.test(k) && !SEQUENCE_TRIGGER_REFUSED.has(k);
+  const sampleKeys = (sample) => {
+    let s = sample;
+    if (typeof s === 'string') { try { s = JSON.parse(s); } catch (_) { s = null; } }
+    return s && typeof s === 'object' && !Array.isArray(s) ? Object.keys(s).filter(usable) : [];
+  };
+  return { allowed: new Set([...[...reads.keys()].filter(usable), ...sampleKeys(testInput), ...sampleKeys(capturedInput)]), reads };
+}
+
+// A18.4c: check a reviewed trigger_data against the PUBLISHED version and
+// bind its ids; returns the card's `trigger` block. Consistency with the
+// enrollment's contact mirrors what the birth paths guarantee by construction
+// (apptService enrolls the appointment's own client, with that appointment's
+// time, provider and case). Deliberately NOT mirrored: the appointment's
+// status and whether it is in the future (a no_show sequence is born for a
+// past No Show appointment — the card discloses both instead), and the
+// no_show path's phone / one-active-no_show checks (template-type policy of
+// that path, not a property of the enrollment).
+async function sequenceEnrollTrigger(db, templateId, version, steps, data, contactId, contactName) {
+  const [[meta]] = await db.query('SELECT test_input, captured_input FROM sequence_templates WHERE id = ?', [templateId]);
+  const [[condRow]] = await db.query(
+    'SELECT template_condition FROM sequence_template_versions WHERE template_id = ? AND version = ?', [templateId, version]);
+  const { allowed, reads } = sequenceEnrollAllowedKeys(steps, condRow ? condRow.template_condition : null,
+    meta ? meta.test_input : null, meta ? meta.captured_input : null);
+  const unknown = Object.keys(data).filter((k) => !allowed.has(k));
+  if (unknown.length) {
+    const list = [...allowed].sort();
+    throw httpError(422, `Sequence enroll trigger_data key${unknown.length > 1 ? 's' : ''} ${unknown.map((k) => `"${String(k).slice(0, 64)}"`).join(', ')} ` +
+      `${unknown.length > 1 ? 'are' : 'is'} not read by template ${templateId}'s published version — ` +
+      (list.length ? `allowed: ${list.slice(0, 40).join(', ')}${list.length > 40 ? ', …' : ''}` : 'it reads no trigger data key, so enroll with no trigger_data') +
+      ' (what its steps, conditions, appointment timing and {{appts / cases / users}} bindings read, plus its test_input and captured_input samples\' keys)');
+  }
+
+  let appointment = null;
+  if (data.appt_id) {
+    const apptId = data.appt_id;
+    const [[a]] = await db.query(
+      `SELECT a.appt_id, a.appt_client_id, a.appt_case_id, a.appt_type, a.appt_status, a.appt_with,
+              DATE_FORMAT(a.appt_date, '%Y-%m-%d %H:%i:%s') AS appt_local, u.user_name
+         FROM appts a LEFT JOIN users u ON u.user = a.appt_with
+        WHERE a.appt_id = ? LIMIT 1`, [apptId]);
+    if (!a) throw httpError(422, `Appointment ${apptId} is unavailable — the enrollment cannot be tied to it`);
+    if (Number(a.appt_client_id) !== contactId) {
+      let owner = 'no contact (a client-less appointment)';
+      if (a.appt_client_id != null) {
+        const [[o]] = await db.query('SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1', [Number(a.appt_client_id)]);
+        owner = `${String((o && o.contact_name) || '').trim().slice(0, 200) || `Contact ${a.appt_client_id}`} (contact ${Number(a.appt_client_id)})`;
+      }
+      throw httpError(422, `Appointment #${apptId} belongs to ${owner}, not to ${contactName} (contact ${contactId}) — an appointment-scoped enrollment is the appointment's own client's (as apptService enrolls it); enroll that contact, or cite the appointment of this one`);
+    }
+    let instant = null;
+    try { instant = a.appt_local ? parseUserDateTime(String(a.appt_local)) : null; } catch (_) { instant = null; }
+    if (!instant || Number.isNaN(instant.getTime())) throw httpError(422, `Appointment ${apptId} has no usable date — the enrollment cannot be dated from it`);
+    if (has(data, 'appt_time')) {
+      const sent = typeof data.appt_time === 'string' ? new Date(data.appt_time) : null;
+      if (!sent || Number.isNaN(sent.getTime()) || sent.getTime() !== instant.getTime()) {
+        throw httpError(422, `Sequence enroll trigger_data.appt_time ${JSON.stringify(data.appt_time)} is not appointment #${apptId}'s time — send "${instant.toISOString()}" (its ${String(a.appt_local)} firm time, as UTC — what apptService sends)`);
+      }
+    }
+    if (has(data, 'appt_with') && Number(data.appt_with) !== Number(a.appt_with)) {
+      throw httpError(422, `Sequence enroll trigger_data.appt_with ${JSON.stringify(data.appt_with)} is not appointment #${apptId}'s provider (user ${Number(a.appt_with)}) — send ${Number(a.appt_with)}, or leave it out`);
+    }
+    const apptCase = a.appt_case_id != null && String(a.appt_case_id).trim() !== '' ? String(a.appt_case_id) : null;
+    if (data.case_id && apptCase && data.case_id !== apptCase) {
+      throw httpError(422, `Sequence enroll trigger_data.case_id "${data.case_id}" is not appointment #${apptId}'s case ("${apptCase}") — send the appointment's own case, or leave case_id out`);
+    }
+    appointment = {
+      appt_id: apptId,
+      when_text: seqFirmTime(instant),
+      appt_type: a.appt_type == null ? null : String(a.appt_type).slice(0, 60),
+      status: String(a.appt_status || ''),
+      past: instant.getTime() < Date.now() ? 1 : 0,
+      provider: has(data, 'appt_with') ? { user_id: Number(a.appt_with), name: String(a.user_name || '').trim().slice(0, 100) || `User ${a.appt_with}` } : null,
+      case_id: apptCase,
+    };
+  }
+
+  let caseBinding = null;
+  if (data.case_id) {
+    const [[c]] = await db.query(
+      `SELECT c.case_id, COALESCE(NULLIF(c.case_number_full, ''), NULLIF(c.case_number, ''), c.case_id) AS label, c.case_caption,
+              (SELECT cr.case_relate_type FROM case_relate cr
+                WHERE cr.case_relate_case_id = c.case_id AND cr.case_relate_client_id = ? LIMIT 1) AS relate_type
+         FROM cases c WHERE c.case_id = ? LIMIT 1`, [contactId, data.case_id]);
+    if (!c) throw httpError(422, `Case ${data.case_id} is unavailable — {{cases.*}} cannot be bound to it`);
+    if (c.relate_type == null) {
+      throw httpError(422, `Case ${data.case_id} is not linked to ${contactName} (contact ${contactId}) — a sequence's {{cases.*}} placeholders would put another client's case into this contact's messages; link the contact to the case first, or leave case_id out`);
+    }
+    caseBinding = {
+      case_id: String(c.case_id),
+      label: String(c.label || c.case_id).slice(0, 100),
+      caption: c.case_caption == null ? null : String(c.case_caption).slice(0, 150),
+      relate_type: String(c.relate_type),
+    };
+  }
+
+  return {
+    reads: Object.keys(data).map((key) => ({ key, read_by: (reads.get(key) || []).slice(0, 10) })),
+    scope: appointment ? 'appointment' : 'contact',
+    appointment,
+    case: caseBinding,
   };
 }
 

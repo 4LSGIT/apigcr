@@ -99,6 +99,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'sequencePublishLabel', 'sequencePublishChangeLine', 'sequencePublishText', 'sequencePublishRequest', 'sequencePublishResult',
   'sequenceEnrollLabel', 'sequenceEnrollStepLine', 'sequenceEnrollText', 'sequenceEnrollRequest', 'sequenceEnrollPrecheck',
   'sequenceEnrollResult', 'sequenceEnrollFirstText', 'sequenceEnrollKnownOutcome',
+  'sequenceEnrollReadText', 'sequenceEnrollTriggerLines', 'sequenceEnrollTriggerBody', 'sequenceEnrollApptScope',
   'ingestRulePath', 'ingestRuleId', 'ingestRuleLabel', 'ingestRuleValue', 'ingestRuleHead', 'ingestRuleSideText', 'ingestRuleActionLine',
   'ingestRuleText', 'ingestRuleRequest', 'ingestRuleDispatch', 'ingestRuleResult', 'ingestRulePrecheck', 'openIngestRuleRecord',
   'openAutomationRecord',
@@ -1763,6 +1764,78 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     const cancelled = await runEnroll(enrollMessage(), { confirm: false });
     expect([cancelled.writes, cancelled.gets, cancelled.ledger]).toEqual([[], [], []]);
     dom.window.close();
+  });
+
+  // A18.4c: the reviewed trigger data. Pinned: every value verbatim with where
+  // it is read, the scope (appointment named, firm-local), the provider and
+  // case bindings, the capture disclosure, the review warning naming the
+  // payload; the POST carries the server-computed payload EXACTLY; the
+  // click-time re-read uses the appointment's scoped identity; a malformed
+  // payload sends nothing and claims nothing.
+  const apptPayload = { trigger_data: { appt_id: 900, appt_time: '2026-12-10T19:00:00.000Z', appt_with: 3, room: '12', urgent: true } };
+  const apptTrigger = {
+    reads: [{ key: 'appt_id', read_by: [{ step_number: 1, via: 'appt_timing' }] }, { key: 'appt_time', read_by: [{ step_number: 1, via: 'appt_timing' }, { step_number: 1, via: 'placeholder' }] },
+      { key: 'appt_with', read_by: [{ step_number: 1, via: 'binds_users' }] }, { key: 'room', read_by: [{ step_number: null, via: 'template_condition' }] }, { key: 'urgent', read_by: [] }],
+    scope: 'appointment',
+    appointment: { appt_id: 900, when_text: 'Thu, Dec 10, 2026, 2:00 PM firm time', appt_type: '341 Meeting', status: 'Scheduled', past: 0, provider: { user_id: 3, name: 'Stuart' }, case_id: 'CASE1' },
+    case: { case_id: 'CASE1', label: '26-12345', caption: 'In re Client', relate_type: 'Primary' },
+  };
+
+  test('sequence enroll card (A18.4c): the reviewed trigger data is on the card verbatim and is exactly what is POSTed', async () => {
+    const m = enrollMessage({ payload: apptPayload, trigger: apptTrigger, capture: 'capturing', placeholder_at_steps: [2] });
+    const { writes, gets, P } = await runEnroll(m);
+    expect(gets).toEqual(['/sequences/templates/12', '/sequences/enrollments?contact_id=77&status=active&limit=100']);
+    expect(writes).toEqual([{ path: '/sequences/enroll', method: 'POST', body: { contact_id: 77, template_id: 12, trigger_data: apptPayload.trigger_data },
+      headers: { 'Idempotency-Key': m.action_draft.draft_id } }]);
+    const text = P.Swal.fire.mock.calls[0][0].text;
+    expect(text).not.toContain('Trigger data: NONE');
+    expect(text).toContain('Trigger data: 5 value(s), sent exactly as shown');
+    expect(text).toContain('Trigger appt_id: 900\n  read by: step 1 (its appointment-anchored timing)');
+    expect(text).toContain('Trigger appt_time: "2026-12-10T19:00:00.000Z"\n  read by: step 1 (its appointment-anchored timing), step 1 (a {{trigger_data}} placeholder)');
+    expect(text).toContain('Trigger appt_with: 3\n  read by: step 1 (binds {{users.*}} to the provider)');
+    expect(text).toContain('Trigger room: "12"\n  read by: the template condition');
+    expect(text).toContain("Trigger urgent: true\n  read by: no step — the template's test_input or captured sample names it");
+    expect(text).toContain('Scope: APPOINTMENT-scoped — tied to appointment #900 (341 Meeting) on Thu, Dec 10, 2026, 2:00 PM firm time, status Scheduled, case CASE1; it belongs to Dana Client (checked). It neither blocks nor is blocked by a contact-scoped enrollment of this contact in this template. It is cancelled automatically when the appointment is marked attended or no-show, cancelled, or rescheduled.');
+    expect(text).toContain("Provider: {{users.*}} reads Stuart (user #3) — appointment #900's provider (appt_with).");
+    expect(text).toContain('Already enrolled: no — this contact has no active enrollment in this template for appointment #900');
+    expect(text).toContain('Case: {{cases.*}} reads case 26-12345 "In re Client" — Dana Client is Primary on it (case_id, from the evidence).');
+    expect(text).toContain("Capture: this template is armed to capture — this enrollment's trigger data (the values above) will be stored as the template's captured sample");
+    expect(text).toContain('Placeholder dates: step 2 use a {{placeholder}} as a fixed delay.at — resolved from the trigger data above');
+    // A past or already-terminal appointment says so.
+    const past = enrollMessage({ payload: apptPayload, trigger: { ...apptTrigger, appointment: { ...apptTrigger.appointment, status: 'No Show', past: 1 } } });
+    const r = await runEnroll(past, { confirm: false });
+    expect(r.P.Swal.fire.mock.calls[0][0].text).toContain('status No Show — this appointment is in the PAST, case CASE1');
+    expect(r.P.Swal.fire.mock.calls[0][0].text).toContain('The appointment is already No Show, so no later status change of it cancels this enrollment automatically.');
+    // The no-payload card's capture line names its empty trigger data.
+    const plain = await runEnroll(enrollMessage({ capture: 'capturing' }), { confirm: false });
+    expect(plain.P.Swal.fire.mock.calls[0][0].text).toContain("this enrollment's trigger data (its empty trigger data) will be stored");
+    // The review warning names the payload; the shipped card's says none.
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    for (const [msg, phrase] of [[enrollMessage({ payload: apptPayload, trigger: apptTrigger }), 'with exactly the trigger data listed above'], [enrollMessage(), 'with no trigger data']]) {
+      const host = dom.window.document.createElement('div');
+      box.hydrateActionDraft(box.actionFamily(msg.action_draft), host, msg, msg.action_draft);
+      expect(host.querySelector('.action-draft-next-warning').textContent).toContain(`This ENROLLS THE CONTACT NOW in the published version, ${phrase} —`);
+    }
+    dom.window.close();
+  });
+
+  test('sequence enroll card (A18.4c): the re-read uses the appointment\'s scoped identity; a malformed payload sends nothing', async () => {
+    const row = (id, appt) => ({ id, contact_id: 77, template_id: 12, appt_id: appt, signing_request_id: null, status: 'active' });
+    // A contact-scoped row does not block the appointment-scoped card …
+    const ok = await runEnroll(enrollMessage({ payload: apptPayload, trigger: apptTrigger }), { read: enrollReads({ rows: [row(5501, null), row(5503, 901)] }) });
+    expect(ok.writes).toHaveLength(1);
+    // … this appointment's row does.
+    const m = enrollMessage({ payload: apptPayload, trigger: apptTrigger });
+    const blocked = await runEnroll(m, { read: enrollReads({ rows: [row(5502, 900)] }) });
+    expect([blocked.writes, blocked.ledger]).toEqual([[], []]);
+    expect(m.action_draft.refusal_error).toContain('Dana Client is already enrolled in this sequence for appointment #900 (active enrollment #5502). Nothing was enrolled.');
+    for (const payload of [{ trigger_data: { a: { b: 1 } } }, { trigger_data: { signing_request_id: 4 } }, { trigger_data: {}, extra: 1 }, { trigger_data: { appt_id: '900' } }]) {
+      const bad = enrollMessage({ payload, trigger: apptTrigger });
+      const r = await runEnroll(bad);
+      expect([r.writes, r.ledger]).toEqual([[], []]);
+    }
   });
 
   test('sequence enroll card: a reopened card restores from the ledger, and an applied card offers only the enrollment', () => {

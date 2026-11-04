@@ -518,14 +518,37 @@ body. Governing migrations in `ref/migrations/`.*
   writes are server-side). Tests: `tests/caseyWorkflowStart.test.js`, gated
   `tests/caseyWorkflowStart.mysql.test.js`; plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A17.7.
-- **Casey enroll card (A18.4b, 10-28):** kind `sequence.enroll.v1` over the
+- **Casey enroll card (A18.4b, 10-28; reviewed trigger_data A18.4c,
+  11-04):** kind `sequence.enroll.v1` over the
   A18.4a-hardened `POST /sequences/enroll` (`Idempotency-Key` = draft_id,
-  scope `sequences.enroll`). Contact-scoped only: the fixed builder pins
-  `{contact_id, template_id, trigger_data: {}}`; every enrollment-data key and
-  `template_type` are refused by name. Evidence must carry the template id
+  scope `sequences.enroll`). No `trigger_data` (or `{}`) = the shipped card
+  and body `{contact_id, template_id, trigger_data: {}}`, byte-identical.
+  A18.4c: `trigger_data` only (`triggerData` / `payload` / `input` and
+  top-level `appt_id` / `signing_request_id` / `case_id` / `template_type`
+  refused by name); a CLOSED key set (`sequenceEnrollAllowedKeys`: what the
+  published version reads — `{{trigger_data.X}}` in configs / placeholder
+  `delay.at`, condition params, `appt_time` + `appt_id` where `before_appt*`
+  timing or `min_hours_before_appt` reads it, `appt_id` / `case_id` /
+  `appt_with` where a step reads `{{appts|cases|users.*}}` — ∪ the
+  template's `test_input` and `captured_input` keys; it cannot see what a
+  started workflow, a webhook receiver or an internal function does with a
+  value); scalar values, A17.7b's caps reused; refused inside it by name:
+  `signing_request_id` (no read cites one; the e-sign birth path also writes
+  `signing_requests.seq_instance_id`, the route does not), `user` /
+  `user_id` (no user-id evidence row shape), `task_id`, `contact_id` /
+  `contact`, prototype names. Ids are evidence-bound and contact-consistent:
+  `case_id` cited + linked to the contact (`case_relate`); `appt_id` cited +
+  the appointment's `appt_client_id` IS the contact (both named on a
+  mismatch) — it makes the enrollment APPOINTMENT-scoped; with it,
+  `appt_time` must be that appointment's instant (firm-local naive
+  `appt_date` → UTC), `appt_with` its provider, `case_id` its case. The
+  preview and walk run WITH the payload; the duplicate predicate and the
+  click-time re-check use the scoped identity (`appt_id <=> ?`). An armed
+  `capture_mode` (sequences have no intercept) puts `capture` on both cards.
+  Evidence must carry the template id
   (`automation.definition`) AND the contact id. Refused: inactive /
   never-published / empty / unreviewed-type template, missing contact, an
-  active contact-scoped enrollment (the engine's `appt_id <=> NULL AND
+  active enrollment of the same scope (the engine's `appt_id <=> ? AND
   signing_request_id <=> NULL` predicate), and a first-placement walk that
   hits a timing error (the enroll would fail `SCHEDULING_FAILED`). The preview
   is `sequenceEngine.previewEnrollmentSteps(db, {…, version: 'published'})` —

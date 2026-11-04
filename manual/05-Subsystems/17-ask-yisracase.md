@@ -1219,18 +1219,32 @@ draft — a step or the template condition — after the card was prepared, the
 publish is refused and nothing changes. The off switch for both sequence cards
 is the `casey_sequence_authoring_enabled` setting. It may instead be one
 `sequence.enroll.v1` proposal: enrolling ONE contact in ONE active sequence
-template's published version now, with no extra data — no appointment, case
-or signature request rides with it, so a template whose first step needs an
-appointment time or a date from that data is refused (the enrollment would
-fail), and placeholders that need it stay unfilled; the card lists them per
-step. Casey reads both the template and the contact first. The card shows
+template's published version now — with no extra data, or with the
+enrollment data you give it. Data values must be for names the template's
+published steps actually read (or that its test or captured sample lists);
+Casey refuses any other name and says which names are allowed. Each value is
+plain text (up to 500 characters, one line), a number, true/false or empty.
+A case can ride along only when Casey has read it in the conversation and the
+contact is linked to it. An appointment can ride along only when Casey has
+read it and it is that contact's own appointment; the enrollment is then tied
+to the appointment — it does not block, and is not blocked by, the contact's
+ordinary enrollment in the same sequence, and it is cancelled when the
+appointment is marked attended or no-show, cancelled, or rescheduled. The
+appointment time must be that appointment's own (Casey is told the exact
+value). E-signature reminder enrollments still come only from sending the
+document. A template whose first step needs data the enrollment does not carry
+is refused (the enrollment would fail), and placeholders the data does not
+fill stay unfilled; the card lists them per step. The card shows every value
+exactly as it will be sent and which steps read it, and names the appointment
+(firm time and status) and the case. Casey reads both the template and the
+contact first. The card shows
 every step as the sequence would run it for that contact — when it runs or
 that it would be skipped, and for a text or email the actual recipient,
 sender and wording — plus what normally enrolls the template and how many
 enrollments are running, and it is styled as a warning: every text and email
 step messages the client as it comes due, and cancelling the enrollment
 later stops only the steps not yet reached. A contact already enrolled in the
-template is refused. If the template is deactivated or a new version is
+template the same way (ordinarily, or for the same appointment) is refused. If the template is deactivated or a new version is
 published before you confirm, or the contact becomes enrolled, nothing is
 enrolled. If the outcome cannot be confirmed, the card says so and offers no
 second enrollment; check the sequence's enrollments. Once applied, the card

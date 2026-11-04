@@ -146,7 +146,7 @@ const KINDS = [
   { kind: 'hook.create.v1', method: 'POST', path: '/api/hooks' },
   { kind: 'sequence.step_insert.v1', method: 'POST', path: '/sequences/templates/1/steps' },
   { kind: 'sequence.publish.v1', method: 'POST', path: '/sequences/templates/1/publish' },
-  // A18.4b: the native enroll route (direct template_id, trigger_data {}).
+  // A18.4b: the native enroll route (direct template_id; trigger_data {} or, A18.4c, the reviewed payload).
   { kind: 'sequence.enroll.v1', method: 'POST', path: '/sequences/enroll' },
   { kind: 'sms.send.v1', method: 'POST', path: '/api/phone-lines/3/sms' },
   { kind: 'email.send.v1', method: 'POST', path: '/api/mail/send' },
