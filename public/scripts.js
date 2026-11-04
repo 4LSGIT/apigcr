@@ -1208,7 +1208,12 @@ async function exportListCsv(kind, getFilterParams, opts) {
     return;
   }
 
-  // ── Step 2: ask user — range vs all
+  // "As shown on screen" columns (D7, S3c) — computed NOW, from the live
+  // visible set, so the export matches the table the user is looking at.
+  // Tabs without a column model pass no viewColumns and see no choice.
+  const viewCols = opts.viewColumns ? ycViewCsvColumns(opts.viewColumns(), spec.columns) : null;
+
+  // ── Step 2: ask user — range vs all, and (model tabs) which columns
   const defaultTo = Math.min(total, MAX_EXPORT_ROWS);
   const showLargeWarning = total > MAX_EXPORT_ROWS;
   const totalStr = total.toLocaleString();
@@ -1238,6 +1243,17 @@ async function exportListCsv(kind, getFilterParams, opts) {
               : ''
           }</span>
         </label>
+        ${viewCols ? `
+        <div style="margin-top:0.9em">
+          <label style="display:flex;align-items:center;gap:0.5em;margin-bottom:0.4em">
+            <input type="radio" name="exp_cols" value="all" checked>
+            <span>All columns (${spec.columns.length})</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:0.5em">
+            <input type="radio" name="exp_cols" value="view">
+            <span>As shown on screen (${viewCols.length})</span>
+          </label>
+        </div>` : ''}
       </div>
     `,
     showCancelButton: true,
@@ -1245,9 +1261,11 @@ async function exportListCsv(kind, getFilterParams, opts) {
     cancelButtonText: 'Cancel',
     focusConfirm: false,
     preConfirm: () => {
-      const modeEl = document.querySelector('input[name="exp_mode"]:checked');
-      if (!modeEl) { Swal.showValidationMessage('Choose an option'); return false; }
-      if (modeEl.value === 'all') return { from: 1, to: total };
+      const modeEl = document.querySelector('input[name="exp_cols"]:checked');
+      const view = !!(modeEl && modeEl.value === 'view');   // absent radios = full
+      const rangeEl = document.querySelector('input[name="exp_mode"]:checked');
+      if (!rangeEl) { Swal.showValidationMessage('Choose an option'); return false; }
+      if (rangeEl.value === 'all') return { from: 1, to: total, view };
       const from = parseInt(document.getElementById('exp_from').value, 10);
       const to   = parseInt(document.getElementById('exp_to').value, 10);
       if (isNaN(from) || isNaN(to)) {
@@ -1266,12 +1284,12 @@ async function exportListCsv(kind, getFilterParams, opts) {
         Swal.showValidationMessage('From must be ≤ To');
         return false;
       }
-      return { from, to };
+      return { from, to, view };
     },
   });
 
   if (!result.isConfirmed) return;
-  const { from, to } = result.value;
+  const { from, to, view } = result.value;
   const limit  = to - from + 1;
   const offset = from - 1;
 
@@ -1288,10 +1306,12 @@ async function exportListCsv(kind, getFilterParams, opts) {
       return;
     }
 
-    const csv = buildCsv(spec.columns, entries);
+    const asView = !!(viewCols && view);
+    const csv = buildCsv(asView ? viewCols : spec.columns, entries);
     const ts = new Date().toISOString().slice(0, 10);
+    const viewSuffix = asView ? '-view' : '';
     const rangeSuffix = (from === 1 && to === total) ? '' : `-${from}-${to}`;
-    downloadFile(csv, `${filenamePrefix}${rangeSuffix}-${ts}.csv`, 'text/csv;charset=utf-8;');
+    downloadFile(csv, `${filenamePrefix}${viewSuffix}${rangeSuffix}-${ts}.csv`, 'text/csv;charset=utf-8;');
     Toast.fire({ icon: 'success', title: `Exported ${entries.length} rows` });
   } catch (err) {
     Swal.close();
@@ -1392,7 +1412,9 @@ const CASE_CSV_COLUMNS = [
    after onclick — how the Appts/Events Date columns keep their
    data-sort-upcoming + title attributes (their labels carry the static
    "⇅", a boot no-op for sortMarksSync because those tabs default to the
-   upcoming sort). Model fields are STATIC CODE LITERALS only — `sort`,
+   upcoming sort). `csv` (optional) is the column's export-view text
+   producer, or false to exclude it from exports — see ycViewCsvColumns
+   below. Model fields are STATIC CODE LITERALS only — `sort`,
    `label`, `cls` and `th_extra` are interpolated into header/cell markup,
    so no model value may ever come from settings or user data. default_on
    is, for now, only the FALLBACK set (what shows when nothing or garbage
@@ -1415,6 +1437,22 @@ function ycColsHeadRender(table, cols) {
 function ycColsRowHtml(cols, row) {
   return cols.map((c) =>
     `<td${c.cls ? ` class="${c.cls}"` : ''}>${c.render ? c.render(row) : escText(row[c.key] ?? '')}</td>`).join('');
+}
+/* "As shown on screen" CSV columns (custom_table_view S3c): the visible
+   model columns, in screen order, as buildCsv column specs. Each model
+   column may carry `csv` — a plain-TEXT producer for its export value
+   (needed where the cell is a composite the per-key CSV constants split or
+   lack), or `false` to keep it out of exports (action/button columns).
+   Without `csv`, the tab's *_CSV_COLUMNS twin with the same key supplies
+   the value; without a twin, the raw row field. Labels come from the model
+   (the screen), sort glyphs stripped. */
+function ycViewCsvColumns(modelCols, csvCols) {
+  return modelCols
+    .filter((c) => c.csv !== false)
+    .map((c) => {
+      const twin = csvCols.find((x) => x.key === c.key);
+      return { key: c.key, label: sortMarkStrip(c.label), get: c.csv || (twin && twin.get) };
+    });
 }
 
 // Every column the list query returns. Only the PRIMARY phone and email \u2014

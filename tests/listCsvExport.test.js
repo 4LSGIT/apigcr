@@ -289,7 +289,7 @@ const TABS = {
     fn: 'tabCasesGet', kind: 'cases', prelude: 'var offsets = {}, cases; function casesTypeTreeBuild() {}',
     consts: ['CASES_COLUMNS'],                   // S3a: rows render via the model
     post: 'var casesColsVis = CASES_COLUMNS;',
-    extra: ['casesStageValues', 'casesTypeValues', 'casesTypeOtherChecked', 'casesTypeListed', 'casesRenderRows'],
+    extra: ['casesStageValues', 'casesTypeValues', 'casesTypeOtherChecked', 'casesTypeListed', 'casesRenderRows', 'casesViewColumns'],
     // Type is a .yc-multi tree (F3): the empty stub div = nothing checked =
     // no types param. Type coverage lives in caseTypeMultiFilter +
     // listSorting.mysql.
@@ -495,5 +495,253 @@ describe('tasks.html footer: Export', () => {
     calls.length = 0;
     await exports[0].opts.send('/api/tasks', 'GET', { limit: 1 });
     expect(calls).toEqual([{ url: '/api/tasks', params: { limit: 1 } }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Export view (custom_table_view S3c): the export dialog offers "All columns"
+// (the default — every full-export test above runs unchanged) and "As shown
+// on screen", which exports the picker's VISIBLE model columns in screen
+// order: model labels (sort glyphs stripped), each value from the column's
+// own `csv` producer, else its *_CSV_COLUMNS twin by key, else the raw
+// field; `csv: false` (the two action columns) stays out of the file.
+
+describe('export view — "As shown on screen" (S3c)', () => {
+  const VIEW_TABS = {
+    cases: {
+      constName: 'CASES_COLUMNS', vis: 'casesColsVis',
+      row: { case_id: 101, case_number: '24-10001', case_caption: 'In re Smith',
+        case_type: 'Bankruptcy', case_subtype: 'Chapter 7', case_stage: 'Open',
+        case_status: 'Active', open: '01/02/2024', file: '', close: '',
+        caption_adds_info: 0,
+        contacts: [{ contact_id: 7, contact_name: 'John Smith', contact_relate: 'Primary' }] },
+      header: ['Lead ID', 'Client Name', 'Caption', 'Case Number', 'Case Type',
+        'Case Stage', 'Case Status', 'Open Date', 'File Date', 'Close Date'],
+      want: { 'Case Type': 'Bankruptcy: Chapter 7', 'Client Name': 'John Smith (Primary)', 'Lead ID': '101' },
+      hide: 'case_stage',
+      list: (rows) => ({ total: rows.length, cases: rows }),
+    },
+    contacts: {
+      constName: 'CONTACT_COLUMNS', vis: 'contactsColsVis',
+      row: { contact_id: 7, contact_name: 'John Smith', contact_phone: '2485551234',
+        contact_email: 'j@x.com', contact_address: '1 Main St', contact_city: 'Troy',
+        contact_state: 'MI', contact_zip: '48084', dob: '01/02/1980',
+        cases: [{ case_id: 101, case_number: '24-10001' }] },
+      header: ['ID', 'Name', 'Phone', 'Email', 'Address', 'Cases', 'Date of Birth'],
+      want: { 'Address': '1 Main St, Troy, MI 48084', 'Phone': '248-555-1234', 'Cases': '24-10001' },
+      hide: 'contact_email',
+      list: (rows) => ({ total: rows.length, contacts: rows }),
+    },
+    appts: {
+      constName: 'APPTS_COLUMNS', vis: 'apptsColsVis',
+      row: { id: 501, format_date: 'Nov. 12, 2026', time: '10:30 AM', contact_name: 'John Smith',
+        appt_client_id: 7, case_number: null, appt_case_id: 'ABCD2345', appt_type: 'Consultation',
+        status: 'Scheduled', user_name: 'Fred', appt_datetime_local: '2026-11-12T10:30' },
+      header: ['ID', 'Date', 'Time', 'Contact Name', 'Case', 'Appt Type', 'Status', 'With'],
+      want: { 'Case': 'ABCD2345', 'Date': 'Nov. 12, 2026' },
+      absent: 'Update',
+      hide: 'time',
+      list: (rows) => ({ counter: rows.length, appts: rows }),
+    },
+    events: {
+      constName: 'EVENTS_COLUMNS', vis: 'eventsColsVis',
+      row: { event_id: 71, event_type: 'Hearing', event_title: 'Confirmation',
+        event_date: '2026-11-20T00:00:00.000Z', event_all_day: 0, event_time: '09:30:00',
+        event_with: null, event_status: 'Scheduled', event_link_type: 'case_number',
+        event_link_id: 55, link_label: '26-99999', resolved_case_id: 505, event_location: 'Courtroom 1' },
+      header: ['ID', 'Type', 'Title', 'Date', 'Time', 'Blocks', 'Status', 'Linked', 'Location'],
+      want: { 'Linked': 'Case #: 26-99999', 'Date': '2026-11-20', 'Time': '09:30', 'Blocks': 'Everyone' },
+      absent: 'Action',
+      hide: 'event_location',
+      list: (rows) => ({ total: rows.length, data: rows }),
+    },
+  };
+
+  const viewPage = (t, rows) => page(
+    (url, params, n) => (n === 0 ? { total: rows.length, counter: rows.length } : t.list(rows)),
+    `${constSrc(INDEX, t.constName)} var ${t.vis} = ${t.constName};`);
+
+  // Quote-aware CSV rows (the shared `parse` splits raw commas; view rows
+  // carry quoted commas — dates, combined addresses).
+  const parseq = (f) => f.content.replace(/^﻿/, '').split('\r\n').map((line) => {
+    const out = []; let cur = ''; let q = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (q) {
+        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+        else if (ch === '"') q = false;
+        else cur += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === ',') { out.push(cur); cur = ''; }
+      else cur += ch;
+    }
+    out.push(cur);
+    return out;
+  });
+  const stripGlyph = (s) => s.replace(/\s*[↑↓⇅]\s*$/, '');
+
+  test.each(Object.keys(VIEW_TABS))('%s: screen columns, screen order, composite values, no action column', async (name) => {
+    const t = VIEW_TABS[name];
+    const w = viewPage(t, [t.row]);
+    w.__swalValue = { from: 1, to: 1, view: true };
+    await w.exportListCsv(name, () => ({}), { viewColumns: () => w.__lex(t.vis) });
+    expect(w.__files).toHaveLength(1);
+    expect(w.__files[0].filename).toContain('-view');
+    const got = parseq(w.__files[0]);
+    expect(got[0]).toEqual(t.header);
+    const col = (label) => got[0].indexOf(label);
+    for (const [label, val] of Object.entries(t.want)) expect(got[1][col(label)]).toBe(val);
+    if (t.absent) expect(got[0]).not.toContain(t.absent);
+  });
+
+  test.each(Object.keys(VIEW_TABS))('%s: a hidden column stays out of the view export', async (name) => {
+    const t = VIEW_TABS[name];
+    const w = viewPage(t, [t.row]);
+    const cols = w.__lex(t.constName);
+    w[t.vis] = cols.filter((c) => c.key !== t.hide);        // the picker hid one
+    w.__swalValue = { from: 1, to: 1, view: true };
+    await w.exportListCsv(name, () => ({}), { viewColumns: () => w.__lex(t.vis) });
+    const got = parseq(w.__files[0]);
+    const hiddenLabel = stripGlyph(cols.find((c) => c.key === t.hide).label);
+    expect(got[0]).toEqual(t.header.filter((h) => h !== hiddenLabel));
+  });
+
+  test('view false (or absent) keeps today\'s full export byte-identical', async () => {
+    const t = VIEW_TABS.cases;
+    const w = viewPage(t, [t.row]);
+    w.__swalValue = { from: 1, to: 1, view: false };
+    await w.exportListCsv('cases', () => ({}), { viewColumns: () => w.__lex(t.vis) });
+    const withChoice = parse(w.__files[0]);
+    const w2 = viewPage(t, [t.row]);
+    w2.__swalValue = { from: 1, to: 1 };
+    await w2.exportListCsv('cases', () => ({}));             // a tab with no model
+    const without = parse(w2.__files[0]);
+    expect(withChoice).toEqual(without);
+    expect(withChoice[0]).toEqual(LISTS.cases.header);       // today's full header
+    expect(w.__files[0].filename).not.toContain('-view');
+  });
+
+  test('the shipped dialog: radios present only with viewColumns, preConfirm carries the choice', async () => {
+    const t = VIEW_TABS.cases;
+    const w = viewPage(t, [t.row]);
+    // Capture only the real dialog (it alone carries preConfirm) — the
+    // processing swal fires before and after it.
+    w.eval(`Swal.fire = (o) => { if (o && o.preConfirm) window.__swalCfg = o; return Promise.resolve({ isConfirmed: true, value: window.__swalValue }); };`);
+    w.__swalValue = { from: 1, to: 1, view: false };
+    await w.exportListCsv('cases', () => ({}), { viewColumns: () => w.__lex(t.vis) });
+    const cfg = w.__swalCfg;
+    expect(cfg.html).toContain('name="exp_cols"');
+    expect(cfg.html).toContain('As shown on screen (10)');
+    expect(cfg.html).toContain('All columns (14)');          // CASE_CSV_COLUMNS
+    // Drive the REAL preConfirm against the dialog's own markup.
+    const host = w.document.createElement('div');
+    host.innerHTML = cfg.html;
+    w.document.body.appendChild(host);
+    host.querySelector('input[name="exp_cols"][value="view"]').checked = true;
+    host.querySelector('input[name="exp_mode"][value="all"]').checked = true;
+    expect(cfg.preConfirm()).toEqual({ from: 1, to: 1, view: true });
+    host.querySelector('input[name="exp_cols"][value="all"]').checked = true;
+    expect(cfg.preConfirm()).toEqual({ from: 1, to: 1, view: false });
+    host.remove();
+    // And without viewColumns, the dialog carries no columns choice at all.
+    const w2 = viewPage(t, [t.row]);
+    w2.eval(`Swal.fire = (o) => { if (o && o.preConfirm) window.__swalCfg = o; return Promise.resolve({ isConfirmed: true, value: { from: 1, to: 1 } }); };`);
+    await w2.exportListCsv('cases', () => ({}));
+    expect(w2.__swalCfg.html).not.toContain('exp_cols');
+    const host2 = w2.document.createElement('div');
+    host2.innerHTML = w2.__swalCfg.html;
+    w2.document.body.appendChild(host2);
+    host2.querySelector('input[name="exp_mode"][value="all"]').checked = true;
+    expect(w2.__swalCfg.preConfirm()).toEqual({ from: 1, to: 1, view: false });
+    host2.remove();
+  });
+
+  test('the four shipped footers pass their live visible set as viewColumns', () => {
+    // The callsites are inside tabXGet success branches; pin them as source
+    // statements + the option name, then prove the adapter they feed works
+    // on each tab's real model (the tests above run the full path). Cases
+    // goes through casesViewColumns — the Caption-mode-aware set.
+    for (const [tab, vis] of [['cases', 'casesViewColumns'], ['contacts', '\\(\\) => contactsColsVis'],
+      ['events', '\\(\\) => eventsColsVis'], ['appts', '\\(\\) => apptsColsVis']]) {
+      const call = new RegExp(`exportListCsv\\('${tab}', \\(\\) => csvFilterOf\\(params\\), \\{ viewColumns: ${vis} \\}\\)`);
+      expect(INDEX).toMatch(call);
+    }
+  });
+
+  describe('the Cases view export follows the Caption CONTROL too (review blocker)', () => {
+    // Two rows: one whose caption says more than the client's name
+    // (caption_adds_info — In name mode shows it in the Client Name cell),
+    // one whose caption adds nothing.
+    const ROWS = [
+      { ...VIEW_TABS.cases.row },
+      { ...VIEW_TABS.cases.row, case_id: 102, case_caption: 'Schneyer v. Childs', caption_adds_info: 1 },
+    ];
+    const capPage = (mode) => {
+      const t = VIEW_TABS.cases;
+      const w = page(
+        (url, params, n) => (n === 0 ? { total: ROWS.length } : t.list(ROWS)),
+        `${constSrc(INDEX, t.constName)} var ${t.vis} = ${t.constName};
+         ${fnSrc(INDEX, 'casesViewColumns')}`,
+        { casesTable: 'table' });
+      if (mode != null) w.document.getElementById('casesTable').dataset.caption = mode;
+      w.__swalValue = { from: 1, to: ROWS.length, view: true };
+      return w;
+    };
+    const run = async (w) =>
+      w.exportListCsv('cases', () => ({}), { viewColumns: () => w.__lex('casesViewColumns')() });
+
+    test('Column mode exports the Caption column (the screen shows it)', async () => {
+      const w = capPage('column');
+      await run(w);
+      const got = parseq(w.__files[0]);
+      expect(got[0]).toEqual(VIEW_TABS.cases.header);
+      expect(got[1][got[0].indexOf('Caption')]).toBe('In re Smith');
+    });
+
+    test('Off mode: no Caption column — the file matches the 9 columns on screen', async () => {
+      const w = capPage('off');
+      await run(w);
+      const got = parseq(w.__files[0]);
+      expect(got[0]).toEqual(VIEW_TABS.cases.header.filter((h) => h !== 'Caption'));
+      expect(got.flat().join(' ')).not.toContain('In re Smith');
+    });
+
+    test('In name mode: no Caption column; the caption rides in Client Name only where the cell shows it', async () => {
+      const w = capPage('name');
+      await run(w);
+      const got = parseq(w.__files[0]);
+      expect(got[0]).toEqual(VIEW_TABS.cases.header.filter((h) => h !== 'Caption'));
+      const col = got[0].indexOf('Client Name');
+      expect(got[1][col]).toBe('John Smith (Primary)');                       // adds nothing
+      expect(got[2][col]).toBe('John Smith (Primary) — Schneyer v. Childs'); // the cell's line
+    });
+
+    test('a missing data-caption attribute reads as the default mode', async () => {
+      const w = capPage(null);                                // no attribute at all
+      await run(w);
+      expect(parseq(w.__files[0])[0]).toEqual(VIEW_TABS.cases.header);
+    });
+  });
+
+  test('the dialog defaults to All columns, and a ROW RANGE carries the view choice too', async () => {
+    const t = VIEW_TABS.cases;
+    const w = viewPage(t, [t.row]);
+    w.eval(`Swal.fire = (o) => { if (o && o.preConfirm) window.__swalCfg = o; return Promise.resolve({ isConfirmed: true, value: window.__swalValue }); };`);
+    w.__swalValue = { from: 1, to: 1, view: false };
+    await w.exportListCsv('cases', () => ({}), { viewColumns: () => w.__lex(t.vis) });
+    const cfg = w.__swalCfg;
+    // "All columns" is the shipped default — pinned on the markup itself.
+    expect(cfg.html).toMatch(/name="exp_cols" value="all" checked/);
+    expect(cfg.html).not.toMatch(/name="exp_cols" value="view"[^>]*checked/);
+    // preConfirm with the ROW-RANGE option (the checked default) + view.
+    const host = w.document.createElement('div');
+    host.innerHTML = cfg.html;
+    w.document.body.appendChild(host);
+    host.querySelector('input[name="exp_mode"][value="range"]').checked = true;
+    host.querySelector('input[name="exp_cols"][value="view"]').checked = true;
+    w.document.getElementById('exp_from').value = '1';
+    w.document.getElementById('exp_to').value = '1';
+    expect(cfg.preConfirm()).toEqual({ from: 1, to: 1, view: true });
+    host.remove();
   });
 });

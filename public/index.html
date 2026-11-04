@@ -3699,6 +3699,9 @@
       { key: 'case_number', label: 'Case Number', sort: 'c.case_number', default_on: true,
         render: (C) => escText(C.case_number) },
       { key: 'case_type', label: 'Case Type', sort: 'c.case_type', default_on: true,
+        // csv: the cell shows "Type: Subtype"; the per-key CSV twin holds the
+        // bare type, so export-view needs its own text (S3c).
+        csv: (C) => fmtCaseType(C),
         render: (C) => escText(fmtCaseType(C)) },
       { key: 'case_stage', label: 'Case Stage', sort: 'c.case_stage', default_on: true,
         render: (C) => escText(C.case_stage) },
@@ -3791,6 +3794,23 @@
       setTabPref('cases', casesColsKey(),
         CASES_COLUMNS.filter((c) => !keys.includes(c.key)).map((c) => c.key).join(','));
       casesColsRender();
+    }
+
+    /* The view-export column set (S3c). The Caption CONTROL hides the
+       Caption column with CSS (data-caption off/name), without touching
+       casesColsVis — so "As shown on screen" must apply the mode itself or
+       it would export a column the screen hides (review-caught). Off drops
+       the column; In name drops it AND appends the caption to the Client
+       Name text on exactly the rows whose cell shows it (caption_adds_info). */
+    function casesViewColumns() {
+      const mode = E('casesTable').dataset.caption || 'column';
+      if (mode === 'column') return casesColsVis;
+      const vis = casesColsVis.filter((c) => c.key !== 'case_caption');
+      if (mode !== 'name') return vis;                       // off
+      return vis.map((c) => (c.key === 'contacts'
+        ? { ...c, csv: (C) => CASE_CSV_COLUMNS.find((x) => x.key === 'contacts').get(C)
+            + (C.caption_adds_info && C.case_caption ? ` — ${C.case_caption}` : '') }
+        : c));
     }
 
     /* Menu from the model + first apply. Runs in loadUserContext, not at
@@ -3901,7 +3921,7 @@
             persistKey: 'cases',
             onLimit: () => tabCasesGet(0),   // refetch re-reads the store
             onPrint: true,
-            onExport: () => exportListCsv('cases', () => csvFilterOf(params)),
+            onExport: () => exportListCsv('cases', () => csvFilterOf(params), { viewColumns: casesViewColumns }),
           });
         } else {
           // The cache is the empty page — render it, clearing any rows a
@@ -4229,6 +4249,12 @@
       { key: 'contact_email', label: 'Email', default_on: true,
         render: (r) => escText(r.contact_email || '') },
       { key: 'contact_address', label: 'Address', default_on: true,
+        // csv: the cell shows the WHOLE address; the per-key CSV twin holds
+        // the street line only (city/state/zip are separate full-export
+        // columns), so export-view combines them the way the screen does.
+        csv: (r) => (r.contact_address
+          ? `${r.contact_address}, ${r.contact_city || ''}, ${r.contact_state || ''} ${r.contact_zip || ''}`
+          : ''),
         render: (r) => (r.contact_address
           ? `${escText(r.contact_address)}<br>${escText(r.contact_city)}, ${escText(r.contact_state)} ${escText(r.contact_zip)}`
           : '') },
@@ -4421,7 +4447,7 @@
             persistKey: 'contacts',
             onLimit: () => tabContactsGet(0),
             onPrint: true,
-            onExport: () => exportListCsv('contacts', () => csvFilterOf(params)),
+            onExport: () => exportListCsv('contacts', () => csvFilterOf(params), { viewColumns: () => contactsColsVis }),
           });
         } else {
           // The cache is the empty page — render it, clearing any rows a
@@ -5502,6 +5528,9 @@
       { key: 'contact_name', label: 'Contact Name', sort: 'client', default_on: true,
         render: (a) => { const name = a.contact_name || ''; return fileLinkHtml(name, 'client', a.appt_client_id, name); } },
       { key: 'case_number', label: 'Case', sort: 'case', default_on: true,
+        // csv: the cell falls back to the case id when there is no docket;
+        // the per-key CSV twin is the bare case_number (S3c).
+        csv: (a) => a.case_number || a.appt_case_id || '',
         render: (a) => {
           const caseName = a.case_number || a.appt_case_id || '';
           return fileLinkHtml(caseName, 'case', a.appt_case_id || '', caseName);
@@ -5513,6 +5542,7 @@
       { key: 'user_name', label: 'With', sort: 'with', default_on: true,
         render: (a) => escText(a.user_name) },
       { key: 'update', label: 'Update', default_on: true,
+        csv: false,   // buttons, not data — excluded from export-view (S3c)
         // Buttons only — their click listeners are bound per row in
         // apptsRenderRows, AFTER the innerHTML write (wsurl S0c: status and
         // dates are server text and must never be quoted into onclick).
@@ -5565,6 +5595,17 @@
       { key: 'event_status', label: 'Status', sort: 'status', default_on: true,
         render: (ev) => escHtml(ev.event_status == null ? "" : String(ev.event_status)) },
       { key: 'linked', label: 'Linked', default_on: true,
+        // csv: the cell's own text, link markup dropped — no single CSV twin
+        // holds the noun + label the screen shows (S3c).
+        csv: (ev) => {
+          if (ev.event_link_type === 'case_number' && ev.event_link_id != null) {
+            return `Case #: ${String(ev.link_label || ev.event_link_id)}`;
+          }
+          if (ev.link_label && ev.event_link_id != null) {
+            return `${ev.event_link_type === 'case' ? 'Case' : 'Contact'}: ${String(ev.link_label)}`;
+          }
+          return '';
+        },
         // addFile link (matches the rest of the page). case_number rows:
         // docket verbatim; clickable only when the docket currently resolves
         // to a case (resolved_case_id from the API's query-side resolution).
@@ -5587,6 +5628,7 @@
       { key: 'event_location', label: 'Location', default_on: true,
         render: (ev) => escHtml(ev.event_location == null ? "" : String(ev.event_location)) },
       { key: 'action', label: 'Action', default_on: true,
+        csv: false,   // buttons, not data — excluded from export-view (S3c)
         // Inline onclicks (escAttrJSON-quoted), no listeners: each write goes
         // through the shell's apiSend and the tab's own `event:*` subscriber
         // refetches — a callback would be a second fetch of the same page.
@@ -5880,7 +5922,7 @@
             persistKey: 'events',
             onLimit: () => tabEventsGet(0),
             onPrint: true,
-            onExport: () => exportListCsv('events', () => csvFilterOf(params)),
+            onExport: () => exportListCsv('events', () => csvFilterOf(params), { viewColumns: () => eventsColsVis }),
           });
         } else {
           events = "";
@@ -6206,7 +6248,7 @@
             persistKey: 'appts',
             onLimit: () => tabApptsGet(0),
             onPrint: true,
-            onExport: () => exportListCsv('appts', () => csvFilterOf(params)),
+            onExport: () => exportListCsv('appts', () => csvFilterOf(params), { viewColumns: () => apptsColsVis }),
           });
         } else {
           // Render the empty cache: clears rows a picker change painted

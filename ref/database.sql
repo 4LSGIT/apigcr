@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-04T00:32:17.039Z
+-- Generated: 2026-11-04T03:38:12.781Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:6ae54a205281a92c4e73f5813da8a71d
+-- Fingerprint: sha256:946645d60af095cf99ba8d928b77563a
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -504,7 +504,8 @@ CREATE TABLE `campaigns` (
   `class` enum('operational','marketing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'operational' COMMENT 'the send class chosen at compose (C1, ref/YISRAMAIL_DESIGN.md §6.1), enforced by campaignService.createCampaign (every caller, API keys included): operational = about the recipient''s case, appointment or account; email asks NO consent (D18), SMS asks scope all (D19); capped at campaign_operational_cap unless confirmed over the cap (bulk_confirmed_count). marketing = email only (D1), topic required, a bulk_ok sender, the campaigns.bulk capability, and refused while app_settings marketing_send_enabled is not exactly 1 (create 422; executeSend records skipped marketing_disabled — and marketing_path_unbuilt until C2 builds the marketing send path)',
   `topic_key` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'marketing campaigns only (NULL for operational): the comm_topics.topic_key recipients are sent under and can unsubscribe from — shape [a-z0-9_]{1,40} (interpolated into SQL by optoutService), validated at create as an existing, active email topic; executeSend asks consent for scope marketing + this topic',
   `bulk_confirmed_count` int unsigned DEFAULT NULL COMMENT 'operational campaigns over the cap only (D16): the recipient count a campaigns.bulk holder typed to confirm the send (equals contact_count; audited as admin_audit_log tool campaign_over_cap). NOT NULL marks the campaign over-cap: paced (staggered jobs + a campaign_pump job) and allowed to send through a bulk_ok email row (bulk:true, no footer, no headers). NULL = within the cap, or marketing',
-  `send_snapshot` json DEFAULT NULL COMMENT 'marketing campaigns only (C2, MRPC 7.2(b) — keep >= 2 years): written ONCE by the first marketing send (conditional UPDATE ... WHERE send_snapshot IS NULL; a concurrent first send reads the winner back) — {v, taken_at, firm (complianceFooter.firmValues at send start), topic {topic_key,label,consent_model}, reply_to, list_id, sender, subject, html, text (the template copy with the footer injected; token_placeholder names the per-recipient token)}. Every recipient renders its footer and refs.firm FROM it, so a settings edit mid-send cannot split the campaign. NULL = no marketing send has started (and every operational campaign)'
+  `send_snapshot` json DEFAULT NULL COMMENT 'marketing campaigns only (C2, MRPC 7.2(b) — keep >= 2 years): written ONCE by the first marketing send (conditional UPDATE ... WHERE send_snapshot IS NULL; a concurrent first send reads the winner back) — {v, taken_at, firm (complianceFooter.firmValues at send start), topic {topic_key,label,consent_model}, reply_to, list_id, sender, subject, html, text (the template copy with the footer injected; token_placeholder names the per-recipient token)}. Every recipient renders its footer and refs.firm FROM it, so a settings edit mid-send cannot split the campaign. NULL = no marketing send has started (and every operational campaign)',
+  `design_id` int unsigned DEFAULT NULL COMMENT 'email_designs.id the body was composed from (C3, FK by convention, no constraint): provenance for "duplicate last month''s" — never re-read at send. createCampaign accepts it only for an EMAIL campaign naming an existing, non-archived design (400 unknown_design / design_archived / design_not_email); the body stays exactly what the caller sent (the send renders campaigns.body, not the design). NULL = composed without the Designer'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1918,6 +1919,27 @@ CREATE TABLE `email_credentials` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `email_designs`
+--
+
+DROP TABLE IF EXISTS `email_designs`;
+CREATE TABLE `email_designs` (
+  `id` int unsigned NOT NULL COMMENT 'the design id; campaigns.design_id points here',
+  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'staff-chosen library name (trimmed, 1-255 chars, emailDesignService); not unique — the id is the identity',
+  `builder` varchar(32) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'grapesjs-mjml' COMMENT 'the editor that wrote design_json (D9: GrapesJS + grapesjs-mjml); the only value written today. A design_json is meaningful only to its builder',
+  `design_json` json NOT NULL COMMENT 'the builder''s project data (GrapesJS getProjectData: assets, styles, pages, symbols, dataSources). REJECTED on save unless it passes lib/emailDesignRules rules 1-9 (the C3 spike findings'' server rules) — validated, never stripped or repaired. MySQL re-orders JSON object keys on write: compare key-order-insensitively',
+  `html` mediumtext COLLATE utf8mb4_general_ci NOT NULL COMMENT 'the compiled email HTML (MJML output) the editor sent alongside design_json; validated INDEPENDENTLY of design_json (rules 7-10 — never assumed to equal compile(design_json)); holds exactly one <!-- yc:footer-slot --> marker inside <body>, where C2 injects the compliance footer (campaignService.injectFooter)',
+  `text` mediumtext COLLATE utf8mb4_general_ci NOT NULL COMMENT 'the plain-text part the editor derived; stored as sent (no rule applies). A campaign''s send derives its own text part (campaignService.textPartFor) — this copy is the library''s',
+  `thumbnail_asset_id` int unsigned DEFAULT NULL COMMENT 'image_library.id of a preview image (FK by convention, no constraint — image_library soft-deletes, so a reader checks deleted_at). Nothing writes it in C3a: the API contract carries no thumbnail. NULL = none',
+  `created_by` tinyint unsigned DEFAULT NULL COMMENT 'users.user of the creator (req.auth.userId; NULL for an API key without a user). Same type as campaigns.created_by',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'UTC create time',
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'UTC last change (a save or an archive toggle); the library list sorts by it, newest first',
+  `archived` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = hidden from the default library list (GET /api/email-designs without include_archived) and refused as a new campaign''s design_id (400 design_archived); still readable by id and still the provenance of campaigns that used it. Toggled by PATCH /api/email-designs/:id {archived}. Never deleted (no delete route)'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='YisraMail designs library (C3, ref/YISRAMAIL_DESIGN.md §6.3): reusable newsletter designs from the Designer editor. Written only by services/emailDesignService.js, which validates design_json AND html on every save (reject, never strip)';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `email_ingest_executions`
 --
 
@@ -2178,6 +2200,7 @@ CREATE TABLE `field_defs` (
   `validation` json DEFAULT NULL COMMENT 'v1 keys: required, max_len, pattern (text), min, max (number). Enforced at write time from S2; S1 only stores it.',
   `show_when` json DEFAULT NULL COMMENT 'Conditional display, evaluated CLIENT-SIDE since S4 (2026-09-25): public/js/yc-custom-fields.js parseShowWhen/evalShowWhen; authored in the caseconfig fields builder. v1 vocabulary: ONE condition object {field, op, value?} — op eq|ne (scalar value) | in (non-empty scalar array) | not_empty|empty (no value). Any other shape VOIDS the condition (field always shown, stored value left untouched, console warning). NULL = always shown',
   `indexed` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Promotion flag for the S3 reconciler (secondary index on the virtual column). Not writable through the v1 API.',
+  `list_column` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'custom_table_view S4 (2026-11-05): offer this def as a list-tab column — written by the Config fields builder checkbox "Offer as a list column"; only ACTIVE defs with this flag reach the listCases cf SELECT and the Cases Columns picker. Off by default.',
   `sort_order` smallint NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'active=0 is RETIREMENT — there is no hard delete. Values already stored under the key persist in the JSON by design.',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -4820,6 +4843,13 @@ ALTER TABLE `email_credentials`
   ADD KEY `fk_email_credentials_credential` (`credential_id`);
 
 --
+-- Indexes for table `email_designs`
+--
+ALTER TABLE `email_designs`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `ix_archived_updated` (`archived`,`updated_at`);
+
+--
 -- Indexes for table `email_ingest_executions`
 --
 ALTER TABLE `email_ingest_executions`
@@ -5939,6 +5969,12 @@ ALTER TABLE `domain_event_queue`
 -- AUTO_INCREMENT for table `email_credentials`
 --
 ALTER TABLE `email_credentials`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `email_designs`
+--
+ALTER TABLE `email_designs`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
