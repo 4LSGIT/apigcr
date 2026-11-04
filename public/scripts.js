@@ -1385,8 +1385,11 @@ const CASE_CSV_COLUMNS = [
    old positional template produced byte for byte; a column without render
    shows escText(row[key]). `sort` is the tab's existing sort-whitelist key
    (nothing from the model ever reaches SQL except through those
-   whitelists); absent = unsortable header. Model fields are STATIC CODE
-   LITERALS only — `sort` and `label` are interpolated into header markup,
+   whitelists); absent = unsortable header. `cls` (optional) is a CSS class
+   stamped on the column's <th> AND every <td> — how the Cases Caption
+   column keeps the `col-caption` class the caption-mode CSS selects on.
+   Model fields are STATIC CODE LITERALS only — `sort`, `label` and `cls`
+   are interpolated into header/cell markup,
    so no model value may ever come from settings or user data. default_on
    is, for now, only the FALLBACK set (what shows when nothing or garbage
    is stored): the picker stores the HIDDEN keys, so a later-added column
@@ -1400,14 +1403,14 @@ const CASE_CSV_COLUMNS = [
    sort()/sortSelect() select on (th[onclick^="sort("]). */
 function ycColsHeadRender(table, cols) {
   if (!table) return;
-  const html = cols.map((c) => (c.sort
-    ? `<th onclick="sort(this, '${c.sort}')">${escText(c.label)}</th>`
-    : `<th>${escText(c.label)}</th>`)).join('');
+  const html = cols.map((c) =>
+    `<th${c.cls ? ` class="${c.cls}"` : ''}${c.sort ? ` onclick="sort(this, '${c.sort}')"` : ''}>${escText(c.label)}</th>`).join('');
   if (table.rows.length) table.rows[0].innerHTML = html;
   else table.insertRow().innerHTML = html;
 }
 function ycColsRowHtml(cols, row) {
-  return cols.map((c) => `<td>${c.render ? c.render(row) : escText(row[c.key] ?? '')}</td>`).join('');
+  return cols.map((c) =>
+    `<td${c.cls ? ` class="${c.cls}"` : ''}>${c.render ? c.render(row) : escText(row[c.key] ?? '')}</td>`).join('');
 }
 
 // Every column the list query returns. Only the PRIMARY phone and email \u2014

@@ -301,6 +301,24 @@ describe('failure paths stay aligned', () => {
     expectAligned(w);
   });
 
+  test('a picker change during an in-flight fetch cannot outlive its failure', async () => {
+    // Same race, Contacts flavor (S3a review nit, fixed on both tabs): rows
+    // a picker click painted from the cache while a fetch hung must not
+    // survive that fetch's failure.
+    const w = page();
+    await w.__go(0);
+    let reject;
+    w.__hang = new Promise((res, rej) => { reject = rej; });
+    w.eval('apiSend = () => window.__hang');
+    const pending = w.__go(0);
+    setBox(w, 'contact_phone', false);
+    expect(cells(w)).toHaveLength(FROZEN.rows.length);      // stale rows ARE back
+    reject(new Error('down'));
+    await pending;
+    expect(cells(w)).toEqual([]);                           // and the catch cleared them
+    expectAligned(w);
+  });
+
   test('a picker change mid-page re-renders the page in memory and leaves the footer', async () => {
     const w = page();
     await w.__go(100);                                      // some offset

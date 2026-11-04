@@ -1,0 +1,189 @@
+{
+  "frozen_from": "tabCasesGet @ s3 worktree base (pre-S3a)",
+  "rows": [
+    {
+      "case_id": 101,
+      "case_number": "24-10001",
+      "case_caption": "In re Smith",
+      "case_type": "Bankruptcy",
+      "case_subtype": "Chapter 7",
+      "case_stage": "Open",
+      "case_status": "Active",
+      "open": "01/02/2024",
+      "file": "02/03/2024",
+      "close": "03/04/2024",
+      "caption_adds_info": 0,
+      "contacts": [
+        {
+          "contact_id": 7,
+          "contact_name": "John Smith",
+          "contact_relate": "Primary"
+        }
+      ]
+    },
+    {
+      "case_id": 102,
+      "case_number": "24-20002",
+      "case_caption": "Smith v. Jones & Co <LLC>",
+      "case_type": "Civil Litigation",
+      "case_subtype": "Business",
+      "case_stage": "Filed",
+      "case_status": "Discovery",
+      "open": "05/06/2024",
+      "file": "06/07/2024",
+      "close": "",
+      "caption_adds_info": 1,
+      "contacts": [
+        {
+          "contact_id": 8,
+          "contact_name": "Jane \"JJ\" Jones",
+          "contact_relate": "Primary"
+        },
+        {
+          "contact_id": null,
+          "contact_name": "Ghost NoId",
+          "contact_relate": "Other"
+        },
+        {
+          "contact_id": 9,
+          "contact_name": "O'Brien <b>Bold</b>",
+          "contact_relate": "Co-Debtor & Spouse"
+        }
+      ]
+    },
+    {
+      "case_id": 103,
+      "case_number": "<img src=x onerror=\"window.__pwn=1\">",
+      "case_caption": "<script>window.__pwn=2</script>\"quoted\"",
+      "case_type": "<b>BK</b>",
+      "case_subtype": "100% 'Business'",
+      "case_stage": "<i>Open</i>",
+      "case_status": "a&b<c>",
+      "open": "<u>01/01/2024</u>",
+      "file": "",
+      "close": "",
+      "caption_adds_info": 1,
+      "contacts": [
+        {
+          "contact_id": 11,
+          "contact_name": "<img src=x onerror=alert(1)>",
+          "contact_relate": "<&>"
+        }
+      ]
+    },
+    {
+      "case_id": 104,
+      "case_number": null,
+      "case_caption": null,
+      "case_type": "Bankruptcy",
+      "case_subtype": null,
+      "case_stage": null,
+      "case_status": null,
+      "open": null,
+      "file": null,
+      "close": null,
+      "caption_adds_info": 0,
+      "contacts": []
+    }
+  ],
+  "cells": [
+    [
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"case\" data-file-id=\"101\" data-file-label=\"24-10001\">101</a>",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"client\" data-file-id=\"7\" data-file-label=\"John Smith\">John Smith</a> (Primary)<br>",
+      "In re Smith",
+      "24-10001",
+      "Bankruptcy: Chapter 7",
+      "Open",
+      "Active",
+      "01/02/2024",
+      "02/03/2024",
+      "03/04/2024"
+    ],
+    [
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"case\" data-file-id=\"102\" data-file-label=\"24-20002\">102</a>",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"client\" data-file-id=\"8\" data-file-label=\"Jane &quot;JJ&quot; Jones\">Jane \"JJ\" Jones</a> (Primary)<br><a href=\"#\" class=\"yc-file-link\" data-file-kind=\"client\" data-file-id=\"9\" data-file-label=\"O'Brien <b>Bold</b>\">O'Brien &lt;b&gt;Bold&lt;/b&gt;</a> (Co-Debtor &amp; Spouse)<br><div class=\"caption-in-name\">Smith v. Jones &amp; Co &lt;LLC&gt;</div>",
+      "Smith v. Jones &amp; Co &lt;LLC&gt;",
+      "24-20002",
+      "Civil Litigation: Business",
+      "Filed",
+      "Discovery",
+      "05/06/2024",
+      "06/07/2024",
+      ""
+    ],
+    [
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"case\" data-file-id=\"103\" data-file-label=\"<img src=x onerror=&quot;window.__pwn=1&quot;>\">103</a>",
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"client\" data-file-id=\"11\" data-file-label=\"<img src=x onerror=alert(1)>\">&lt;img src=x onerror=alert(1)&gt;</a> (&lt;&amp;&gt;)<br><div class=\"caption-in-name\">&lt;script&gt;window.__pwn=2&lt;/script&gt;\"quoted\"</div>",
+      "&lt;script&gt;window.__pwn=2&lt;/script&gt;\"quoted\"",
+      "&lt;img src=x onerror=\"window.__pwn=1\"&gt;",
+      "&lt;b&gt;BK&lt;/b&gt;: 100% 'Business'",
+      "&lt;i&gt;Open&lt;/i&gt;",
+      "a&amp;b&lt;c&gt;",
+      "&lt;u&gt;01/01/2024&lt;/u&gt;",
+      "",
+      ""
+    ],
+    [
+      "<a href=\"#\" class=\"yc-file-link\" data-file-kind=\"case\" data-file-id=\"104\" data-file-label=\"104\">104</a>",
+      "",
+      "",
+      "",
+      "Bankruptcy",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ]
+  ],
+  "tdAttrs": [
+    [
+      "",
+      "",
+      "col-caption",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "",
+      "",
+      "col-caption",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "",
+      "",
+      "col-caption",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "",
+      "",
+      "col-caption",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ]
+  ]
+}

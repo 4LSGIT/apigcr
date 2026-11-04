@@ -1245,6 +1245,7 @@ tests/caseCaption.readers.test.js
 tests/caseCaption.stamp.test.js
 tests/caseCaption.test.js
 tests/caseCaptionBackfill.test.js
+tests/caseColumns.s3a.test.js
 tests/caseEventService.test.js
 tests/caseId.test.js
 tests/caseMergeShapes.test.js
@@ -1468,6 +1469,7 @@ tests/firmConfig.test.js
 tests/firmConfigCoverage.test.js
 tests/firmTab.test.js
 tests/fixtures/calendar_item_types.seed.json
+tests/fixtures/caseColumns.s3a.json
 tests/fixtures/comms_s2_audio/meta.json
 tests/fixtures/comms_s2_audio/quo_cbr_info.mp3.head
 tests/fixtures/comms_s2_audio/quo_cbr_js_64k.mp3.head

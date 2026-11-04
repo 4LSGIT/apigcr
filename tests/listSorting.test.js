@@ -333,11 +333,12 @@ describe('the tabs send what the routes read', () => {
       const sel = INDEX.slice(INDEX.indexOf(`<select id="${selId}"`), INDEX.indexOf('</select>', INDEX.indexOf(`<select id="${selId}"`)));
       const values = [...sel.matchAll(/value="([^"]+)"/g)].map((m) => m[1]);
       let keys; let ups = [];
-      if (thead === 'contactsTable') {
-        // S1: the Contacts headers are generated from the column model, so
-        // the static-markup scan below would come back empty. Read the
-        // model's sort keys instead — building the array runs no render.
-        const cols = new Function(`${constSrc(INDEX, 'CONTACT_COLUMNS')} return CONTACT_COLUMNS;`)();
+      const MODEL = { contactsTable: 'CONTACT_COLUMNS', casesTable: 'CASES_COLUMNS' };
+      if (MODEL[thead]) {
+        // S1/S3a: these headers are generated from the column model, so the
+        // static-markup scan below would come back empty. Read the model's
+        // sort keys instead — building the array runs no render.
+        const cols = new Function(`${constSrc(INDEX, MODEL[thead])} return ${MODEL[thead]};`)();
         keys = cols.filter((c) => c.sort).map((c) => c.sort);
       } else {
         const tStart = INDEX.indexOf(`<table id="${thead}"`);

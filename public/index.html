@@ -3625,6 +3625,18 @@
         <option value="name">In name</option>
         <option value="off">Off</option>
       </select></label>
+      <span class="yc-f" data-nocount><span class="yc-f-l">Columns</span>
+      <details class="yc-multi" id="tabCasesCols">
+        <summary><span id="tabCasesColsLabel">All</span></summary>
+        <div class="yc-multi-menu" id="tabCasesColsMenu">
+          <!-- One checkbox per CASES_COLUMNS entry (casesColsInit). Saved
+               per browser and per user (localStorage, the Caption control's
+               pattern); data-nocount — showing fewer columns is not a
+               filter. Independent of the Caption control: that one CSS-hides
+               the col-caption cells by mode, this one decides whether the
+               column renders at all. -->
+        </div>
+      </details></span>
       <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
       <select id="tabCasesOrder" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
         <option value="co.contact_lname">Client Last Name</option>
@@ -3647,19 +3659,12 @@
       <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
       <button class="yc-f-go" onclick="tabCasesGet(0)" data-type="goButton">Search</button>
     </div>
+    <!-- Headers are generated from CASES_COLUMNS (the tab's column model,
+         in the script block below) by ycColsHeadRender — same cells, same
+         sort() onclicks, same col-caption class as the static row this
+         replaces (S3a). -->
     <table id="casesTable" class="logTable" data-caption="column">
-      <tr>
-        <th onclick="sort(this, 'c.case_id')">Lead ID</th>
-        <th onclick="sort(this, 'co.contact_lname')">Client Name</th>
-        <th class="col-caption" onclick="sort(this, 'c.case_caption')">Caption</th>
-        <th onclick="sort(this, 'c.case_number')">Case Number</th>
-        <th onclick="sort(this, 'c.case_type')">Case Type</th>
-        <th onclick="sort(this, 'c.case_stage')">Case Stage</th>
-        <th onclick="sort(this, 'c.case_status')">Case Status</th>
-        <th onclick="sort(this, 'c.case_open_date')">Open Date</th>
-        <th onclick="sort(this, 'c.case_file_date')">File Date</th>
-        <th onclick="sort(this, 'c.case_close_date')">Close Date</th>
-      </tr>
+      <tr></tr>
     </table>
     <div id="casesTableFoot"></div>
     <div id="tabCasesLoad" style="display: none">
@@ -3668,6 +3673,160 @@
   </div>
 
   <script>
+    /* The Cases tab's column model (custom_table_view S3a) — rendered by
+       ycColsHeadRender / ycColsRowHtml (scripts.js, the model's contract is
+       documented there). Each render reproduces the old positional
+       template's cell byte for byte; tests/caseColumns.s3a.test.js pins
+       that against the frozen pre-S3a fixture. The Caption column carries
+       cls 'col-caption' so the Caption control's mode CSS keeps selecting
+       it on th and td alike. */
+    const CASES_COLUMNS = [
+      { key: 'case_id', label: 'Lead ID', sort: 'c.case_id', default_on: true,
+        render: (C) => fileLinkHtml(C.case_id, 'case', C.case_id, C.case_number || C.case_id) },
+      { key: 'contacts', label: 'Client Name', sort: 'co.contact_lname', default_on: true,
+        render: (C) => {
+          const list = typeof C.contacts === 'string' ? JSON.parse(C.contacts) : (C.contacts || []);
+          let html = '';
+          list.forEach((client) => {
+            if (client.contact_id) {
+              html += `${fileLinkHtml(client.contact_name, 'client', client.contact_id, client.contact_name || '')} (${escText(client.contact_relate)})<br>`;
+            }
+          });
+          return html + (C.caption_adds_info ? `<div class="caption-in-name">${escText(C.case_caption)}</div>` : '');
+        } },
+      { key: 'case_caption', label: 'Caption', sort: 'c.case_caption', cls: 'col-caption', default_on: true,
+        render: (C) => escText(C.case_caption || '') },
+      { key: 'case_number', label: 'Case Number', sort: 'c.case_number', default_on: true,
+        render: (C) => escText(C.case_number) },
+      { key: 'case_type', label: 'Case Type', sort: 'c.case_type', default_on: true,
+        render: (C) => escText(fmtCaseType(C)) },
+      { key: 'case_stage', label: 'Case Stage', sort: 'c.case_stage', default_on: true,
+        render: (C) => escText(C.case_stage) },
+      { key: 'case_status', label: 'Case Status', sort: 'c.case_status', default_on: true,
+        render: (C) => escText(C.case_status) },
+      { key: 'open', label: 'Open Date', sort: 'c.case_open_date', default_on: true,
+        render: (C) => escText(C.open) },
+      { key: 'file', label: 'File Date', sort: 'c.case_file_date', default_on: true,
+        render: (C) => escText(C.file) },
+      { key: 'close', label: 'Close Date', sort: 'c.case_close_date', default_on: true,
+        render: (C) => escText(C.close) },
+    ];
+    // Headers from the model, HERE, the statement after the declaration —
+    // the table markup sits above this block, and nothing runs between that
+    // could fail and leave the tab headerless. Once, at parse time, never on
+    // fetch: sort()/sortSelect() paint the sort marks into these <th>s.
+    // (The column picker below re-renders them deliberately, and repaints
+    // the marks via sortMarksSync.)
+    ycColsHeadRender(E('casesTable'), CASES_COLUMNS);
+
+    /* ── Column picker (S3a) ─────────────────────────────────────────────
+       The Contacts picker's structural twin (S2's block, above its
+       tabContactsGet, holds the full reasoning): casesColsVis is the ONE
+       visible set — headers, rows, boxes, label all render from it, never
+       from storage directly; only casesColsApply (storage → vis) and
+       casesColsChanged (click → vis, storage best-effort) assign it.
+       Storage: localStorage yc.cases.cols_off.<uid>, a CSV of the HIDDEN
+       model keys (code literals, never free text). Unknown stored keys drop
+       out by model intersection; a value that would hide everything falls
+       back to every default_on column. data-nocount: fewer columns is not
+       a filter. The Caption CONTROL stays its own 3-mode control: its CSS
+       hides col-caption cells by mode, the picker decides whether the
+       column renders at all — both read the same class, neither reads the
+       other. */
+    let casesColsVis = CASES_COLUMNS;
+    let casesEverSorted = false;   // marks repaint only after a real sort
+
+    function casesColsKey() { return `cols_off.${(user && user.user) || 0}`; }
+
+    function casesColsVisible() {
+      const off = getTabPref('cases', casesColsKey(), '').split(',');
+      const vis = CASES_COLUMNS.filter((c) => !off.includes(c.key));
+      return vis.length ? vis : CASES_COLUMNS.filter((c) => c.default_on);
+    }
+
+    /* Clears the data rows and renders them again from the rows already
+       fetched (the `cases` global), through the ON-SCREEN visible set.
+       Shared by the fetch path and the picker (which must not refetch). */
+    function casesRenderRows() {
+      const table = E('casesTable');
+      for (let i = table.rows.length - 1; i > 0; i--) table.deleteRow(i);
+      (cases || []).forEach((C) => {
+        table.insertRow().innerHTML = ycColsRowHtml(casesColsVis, C);
+      });
+    }
+
+    /* Everything on screen, from casesColsVis: headers (then the sort marks
+       the rebuild cleared), checkbox states, summary label, and — when rows
+       are in memory — the rows. */
+    function casesColsRender() {
+      const table = E('casesTable');
+      // Marks exist only once the user has sorted (the selects always hold
+      // a value, so an unconditional sync would paint a mark at boot — a
+      // visible change). Latch on any mark seen: the sorted column may be
+      // HIDDEN right now, and re-showing it must bring its mark back.
+      casesEverSorted = casesEverSorted
+        || !!(table.rows.length && /[↑↓⇅]/.test(table.rows[0].textContent));
+      ycColsHeadRender(table, casesColsVis);
+      if (casesEverSorted) sortMarksSync(E('tabCases'), table);
+      document.querySelectorAll('#tabCasesColsMenu input').forEach((b) => {
+        b.checked = casesColsVis.some((c) => c.key === b.value);
+      });
+      E('tabCasesColsLabel').textContent =
+        casesColsVis.length === CASES_COLUMNS.length ? 'All'
+          : `${casesColsVis.length} of ${CASES_COLUMNS.length}`;
+      if (cases) casesRenderRows();
+    }
+
+    function casesColsApply() {          // storage → the on-screen set
+      casesColsVis = casesColsVisible();
+      casesColsRender();
+    }
+
+    function casesColsChanged(box) {
+      const checked = [...document.querySelectorAll('#tabCasesColsMenu input:checked')];
+      if (!checked.length) { box.checked = true; return; }   // never zero columns
+      const keys = checked.map((b) => b.value);
+      casesColsVis = CASES_COLUMNS.filter((c) => keys.includes(c.key));
+      setTabPref('cases', casesColsKey(),
+        CASES_COLUMNS.filter((c) => !keys.includes(c.key)).map((c) => c.key).join(','));
+      casesColsRender();
+    }
+
+    /* Menu from the model + first apply. Runs in loadUserContext, not at
+       parse: the storage key carries the user id, which auth supplies —
+       which is also why the listeners register HERE, once (a storage event
+       during page parse would otherwise hit an unbound `user`). */
+    function casesColsInit() {
+      const menu = E('tabCasesColsMenu');
+      if (!menu) return;
+      menu.innerHTML = '';
+      CASES_COLUMNS.forEach((c) => {
+        const lab = document.createElement('label');
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.value = c.key;
+        box.addEventListener('change', () => casesColsChanged(box));
+        lab.appendChild(box);
+        lab.appendChild(document.createTextNode(' ' + c.label));
+        menu.appendChild(lab);
+      });
+      if (!casesColsInit.wired) {
+        casesColsInit.wired = true;
+        // Another window of this browser saving a new choice re-applies
+        // here, so every window of the same user agrees with its own screen.
+        window.addEventListener('storage', (e) => {
+          if (e.key === `yc.cases.${casesColsKey()}`) casesColsApply();
+        });
+        // A sort chosen from the selects while its column is HIDDEN paints
+        // no mark, so the header latch in casesColsRender would miss it
+        // and re-showing the column would lose the mark: latch here too.
+        ['tabCasesOrder', 'tabCasesOrder2'].forEach((id) => {
+          E(id).addEventListener('change', () => { casesEverSorted = true; });
+        });
+      }
+      casesColsApply();
+    }
+
     /**
      * @param {number}  offset
      * @param {boolean} silent  TRUE for a BUS-TRIGGERED background refetch.
@@ -3700,6 +3859,9 @@
       const sort_dir = E("tabCasesOrder2").value;
 
       const table = E("casesTable");
+      // Headers are built ONCE, at parse time (just under CASES_COLUMNS) —
+      // never here: sort()/sortSelect() paint the sort marks into the <th>s,
+      // and a rebuild on fetch would wipe the mark the click just painted.
       const foot = E("casesTableFoot");
       foot.innerHTML = "";
       const rows = table.getElementsByTagName("tr");
@@ -3722,27 +3884,12 @@
         cases = data.cases;
 
         if (data.total > 0) {
+          // Parse once here (downstream readers of the `cases` global expect
+          // arrays); the model's Client Name render guards for both shapes.
           cases.forEach((C) => {
             C.contacts = typeof C.contacts === "string" ? JSON.parse(C.contacts) : C.contacts;
-            const row = table.insertRow();
-            let clientsHTML = "";
-            C.contacts.forEach((client) => {
-              if (client.contact_id) {
-                clientsHTML += `${fileLinkHtml(client.contact_name, 'client', client.contact_id, client.contact_name || '')} (${escText(client.contact_relate)})<br>`;
-              }
-            });
-            row.innerHTML = `
-        <td>${fileLinkHtml(C.case_id, 'case', C.case_id, C.case_number || C.case_id)}</td>
-        <td>${clientsHTML}${C.caption_adds_info ? `<div class="caption-in-name">${escText(C.case_caption)}</div>` : ''}</td>
-        <td class="col-caption">${escText(C.case_caption || '')}</td>
-        <td>${escText(C.case_number)}</td>
-        <td>${escText(fmtCaseType(C))}</td>
-        <td>${escText(C.case_stage)}</td>
-        <td>${escText(C.case_status)}</td>
-        <td>${escText(C.open)}</td>
-        <td>${escText(C.file)}</td>
-        <td>${escText(C.close)}</td>`;
           });
+          casesRenderRows();
 
           // Pagination — the shared footer (js/ycPager.js). The print-every-
           // page loop this replaces also rendered a phantom empty page
@@ -3759,6 +3906,12 @@
           Toast.fire({ icon: "error", title: "No cases found!" });
         }
       } catch (err) {
+        // The rows were already cleared above; null the cache too, or a
+        // picker change would redraw the stale page from memory (the S2
+        // review blocker, same shape) — and re-render, which clears rows a
+        // picker change painted WHILE this fetch was in flight.
+        cases = null;
+        casesRenderRows();
         if (silent) console.warn("[cases] background refetch failed:", err);
         else Toast.fire({ icon: "error", title: "Error loading cases", text: err.message });
       }
@@ -4270,8 +4423,11 @@
       } catch (err) {
         // The rows were cleared before the fetch, so the cache no longer
         // matches the screen — null it, or a picker change would redraw the
-        // stale page (and the next tab open must refetch anyway).
+        // stale page (and the next tab open must refetch anyway). Re-render
+        // too, which clears rows a picker change painted WHILE this fetch
+        // was in flight (S3a review nit, both tabs).
         contacts = null;
+        contactsRenderRows();
         if (silent) console.warn("[contacts] background refetch failed:", err);
         else Toast.fire({ icon: "error", title: "Error loading contacts", text: err.message });
       }
@@ -8388,9 +8544,10 @@ async function initAuth() {
       // restore-don't-clobber behavior as the event-type selects above.
       casesTypeTreeBuild();
 
-      // Contacts column picker: menu from the model + the stored choice,
-      // here because its storage key carries the authed user's id.
+      // Column pickers: menu from the model + the stored choice, here
+      // because their storage keys carry the authed user's id.
       contactsColsInit();
+      casesColsInit();
     }
 
     initAuth();

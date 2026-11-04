@@ -132,10 +132,13 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
       tabCasesStatus: 'input', tabCasesOrder: 'input', tabCasesOrder2: 'input',
       casesTable: 'table', casesTableFoot: 'div',
     }, `${PAGER} var offsets = {}, cases; function casesTypeTreeBuild() {}
+        ${constSrc(INDEX, 'CASES_COLUMNS')}
+        var casesColsVis = CASES_COLUMNS;   // the picker's on-screen set (S3a)
         ${fnSrc(INDEX, 'casesStageValues')}
         ${fnSrc(INDEX, 'casesTypeValues')}
         ${fnSrc(INDEX, 'casesTypeOtherChecked')}
         ${fnSrc(INDEX, 'casesTypeListed')}
+        ${fnSrc(INDEX, 'casesRenderRows')}
         ${fnSrc(INDEX, 'tabCasesGet')}`,
     async () => ({ total: 1, cases: [{
       case_id: 'ABCD2345', case_number: V, case_caption: V, caption_adds_info: true, case_type: V,
