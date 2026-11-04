@@ -345,7 +345,7 @@ When `/process-jobs` picks up a `campaign_send` job, `job_executor.js` delegates
 What a marketing send adds, per recipient:
 
 - **An unsubscribe link of its own** — a token row (`comm_unsub_tokens`) minted with the send. The link opens the unsubscribe page (unsubscribe from this topic, stop all marketing email, preferences); mail clients' one-click unsubscribe uses the same link. If a send is retried after the provider refused it, the same link is reused.
-- **The compliance footer** — the advertisement label (topics without opt-in consent), why they got it + the unsubscribe link + "Manage preferences", the firm's name, postal address and phone, the responsible attorney and the debt-relief-agency statement (Config → Firm → Identity and Marketing email & consent). It goes before `</body>` — or wherever the body has the marker `<!-- yc:footer-slot -->` (for designs that want it inside a layout). If the firm's name, address or attorney is missing, the recipient is recorded `failed` (`footer_missing`) and nothing is sent; after rendering, the send checks that the footer and the unsubscribe link really are in both the HTML and the plain-text version, and refuses to send otherwise.
+- **The compliance footer** — the advertisement label (topics without opt-in consent), why they got it + the unsubscribe link + "Manage preferences", the firm's name, postal address and phone, the responsible attorney and the debt-relief-agency statement (Config → Firm → Identity and Marketing email & consent). It goes before `</body>` — or wherever the body has the marker `<!-- yc:footer-slot -->` (every Designer email has it, in its locked footer block — see "Designer" below). If the firm's name, address or attorney is missing, the recipient is recorded `failed` (`footer_missing`) and nothing is sent; after rendering, the send checks that the footer and the unsubscribe link really are in both the HTML and the plain-text version, and refuses to send otherwise.
 - **A plain-text version** written from the HTML, links kept as visible URLs, the footer at the end.
 - **Headers** — `List-Unsubscribe` (the link), `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, `List-Id` (`<topic.sending-domain>`, e.g. `<newsletter.news.4lsg.com>`), and the **Reply-To**: *Marketing reply-to address* (Config → Firm → Marketing email & consent), or the firm email when blank. No signature is appended.
 - **The send log** (`email_log`) keeps who / when / the provider's reply, not the body — the campaign's snapshot is the copy.
@@ -407,12 +407,21 @@ Filter controls for channel, tags, case type, case stage, and case open date ran
 - **Sender** — dropdown from the shell's firm data: phone lines (SMS) or the email senders (email; never a marketing transport), or the marketing senders for a marketing campaign (a held one reads "— HELD")
 - **Subject** (email only) — with placeholder inserter and character count hint
 - **Body** — channel-dependent:
-  - **Email:** Dual editor (Rich Text via Quill / HTML Code via textarea). Quill syncs to the textarea on every change; textarea is always the source of truth. Swal warns when switching HTML → Rich Text (may simplify complex formatting). Image button opens upload/URL/library dialog with size picker.
+  - **Email:** three editor modes — Rich Text (Quill) / HTML Code (textarea) / **Designer** (a drag-and-drop newsletter builder, below). Quill syncs to the textarea on every change; the textarea is the body for those two. Swal warns when switching HTML → Rich Text (may simplify complex formatting). Image button opens upload/URL/library dialog with size picker. In Designer the body is the designed email; the Rich Text / HTML content is left as it was.
   - **SMS:** Plain textarea with placeholder inserter
 - **Schedule** — Send Now or datetime picker (firm local time), at most 366 days ahead
 - **Preview** — resolves placeholders against first selected contact, shows in Swal
 - **Send test to me** (marketing, campaigns.bulk) — the real marketing email for the first selected contact to your own address, `[TEST]` subject ("Marketing email" above)
 - **Create** — over the cap, the page asks you to type the recipient count and resends; a refusal (no capability, marketing switched off) shows its message
+
+### Designer
+
+Pick **Designer** in the editor-mode list beside the placeholder list (it takes a few seconds the first time — the builder loads only when you pick it). It opens on a starter newsletter: a header, a greeting, two columns, a button, and the **locked footer block** at the bottom.
+
+- **Building:** drag blocks in from the Blocks panel (one or two columns, text, button, image, divider, spacer, and a Header block). Double-click text to edit it (bold, italic, underline, link — there is no strike-through); the text toolbar has a **{{ }}** list of merge tags (the same list as "Insert placeholder…", which also inserts into the text you are editing). Select a button or image and open its settings to set the link — the same merge-tag list sits under the link box. A link must be a full address starting with `https://` (or `mailto:` / `tel:`); a merge tag can go after the start, never in place of it. Double-click an image to replace it from the image library (upload, link or browse — the same picker as everywhere else). Pasting into a text block keeps the words and line breaks only; formatting is dropped.
+- **The locked footer:** the bottom block cannot be deleted, moved, copied, edited or styled, and nothing can be placed below it. It holds an invisible marker: when the campaign is sent as **marketing**, the compliance footer (unsubscribe link, firm details, attorney, statements) is put exactly there, inside the email. The dashed lines in the editor only **preview** it — they are never saved or sent. To see the real footer with the firm's details, use **Send test to me** (marketing type). An operational campaign built in Designer gets no footer; the marker is invisible.
+- **Designs library:** **Save design** saves it (name it in the box beside the buttons); **Save as new** saves a copy; **New** starts again from the starter newsletter; **Designs…** lists saved designs — search, Open, Duplicate (opens a copy to save under a new name), Archive / Restore. If you open or start another design with unsaved changes, it asks first. If the server refuses a design, the message names the rule and the reason (for example a link that is not an `http(s)`, `mailto:` or `tel:` address).
+- **Sending:** Preview, Send test to me and Create use the designed email. **Append sender's signature** is greyed out in Designer — put the sign-off in the design. **Insert Video Link** is not available in Designer (link a button or image to the video page instead). When you create a campaign from a saved, unchanged design, the campaign remembers which design it came from, and **Dup** on that campaign later reopens the design in Designer; if the design has unsaved changes, Create asks whether to save it first or send without linking it.
 
 ### Tab 3: View Campaigns
 
@@ -420,11 +429,11 @@ Campaign list with status filter (Paused included). Shows inline progress bar fo
 
 ### Image Handling
 
-The Quill image button provides three insertion methods:
+The Quill image button opens the shared **AssetPicker** (`/js/assetpicker.js`, collection `comms-images`, images only, 10 MB), which offers three ways in:
 
-1. **Upload file** — reads as base64, sends to `POST /api/upload`, auto-saves to image library
-2. **Enter URL** — inserts a hosted image directly
-3. **Browse Library** — thumbnail grid of previously uploaded images with delete option
+1. **Upload file** — read as base64 and sent to `POST /api/assets`; "Save to library for reuse" (on by default) registers it in the library
+2. **Paste an image URL** — inserts a hosted image directly (nothing is uploaded or registered)
+3. **Browse the library** — thumbnail grid of earlier uploads (`GET /api/assets`); remove hides one from the picker (`DELETE /api/assets/:id`, a soft delete — the file stays hosted)
 
 All paths lead to a size picker (600px full / 400px medium / 200px small / original) before inserting. Images are inserted with email-safe inline styles (`display:block; max-width:100%; height:auto`).
 
@@ -456,6 +465,7 @@ A custom Quill Image blot preserves `width`, `style`, and `alt` attributes that 
 | `services/campaignService.js` | All business logic |
 | `routes/campaign.js` | Thin HTTP wrappers, JWT auth |
 | `routes/api.assets.js` | The shared [asset store](../05-Subsystems/08-asset-manager.md), reached through `/js/assetpicker.js` |
+| `public/js/campaignDesigner.js` | The Designer editor mode (GrapesJS + MJML, loaded on first use): locked footer slot, merge tags, images, export, the designs-library calls |
 | `lib/job_executor.js` | `campaign_send` / `campaign_pump` dispatch; a deferral sentinel (`deferJob`) |
 | `routes/process_jobs.js` | The claim (campaign-send quota) and the deferral handling |
 | `scripts/yisramailC1Migrate.js` | The C1 schema migration (class, topic_key, bulk_confirmed_count, paused, sending / unknown, the kill-switch row) |

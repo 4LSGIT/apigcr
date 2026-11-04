@@ -224,6 +224,24 @@ body. Governing migrations in `ref/migrations/`.*
   duplicate); an email attachment is `https://` only and no adapter reads a
   local file (`disableFileAccess` in smtp + gmail — nodemailer reads any
   non-URL `path` from disk); a campaign attachment is passed ONCE.
+- **Designer editor mode (YisraMail C3b, 2026-11-04 — ref/YISRAMAIL_DESIGN.md
+  §6.3 "As built (C3b)"; manual 11-campaign-manager.md "Designer"):**
+  `campaign.html`'s third editor mode, `public/js/campaignDesigner.js`
+  (`YcDesigner`). GrapesJS 0.23.8 + grapesjs-mjml 1.0.8 load from jsdelivr
+  with pinned SRI ONLY when Designer is picked. Invariants: the canvas keeps the
+  CSP `frameContent` (stored markup must not run in a same-origin frame that
+  reaches `parent.apiSend` — test it by behaviour, the meta is rewritten away);
+  the footer block holds ONLY the `<!-- yc:footer-slot -->` comment (C2 injects
+  AT it; visible text there would ship), is re-normalized + locked after every
+  load, stays last in `mj-body`, and its preview is a VIEW of the comment —
+  never in the model or the export; `mjml-import` / `core:canvas-clear` refuse
+  and history is cleared after every load (else undo / import remove the
+  footer); the RTE toolbar has no strike-through (Chrome writes `<strike>`, which
+  the save validator refuses — a new RTE action must emit only allowed tags);
+  rich-text editing is ended before every export; images go only
+  through `AssetPicker.pick` (never the GrapesJS asset manager / base64). The
+  editor is NOT a security boundary (C3a's save rules + C2's assert are).
+  `getBody()` is async in campaign.html. Native block drag is a hand check.
 - **Campaign hardening (YisraMail C1, 2026-11-03 — §17 below; ref/YISRAMAIL_DESIGN.md
   §6.1 / §6.4 "As built (C1)"):** campaigns have a class (operational |
   marketing), an operational cap with an audited `campaigns.bulk` over-cap

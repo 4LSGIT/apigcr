@@ -8,7 +8,8 @@ built"; T1 (transport contract) built — §5.2 "As built"; T2 (events) built �
 DeliveryDelay / Rendering Failure); C1 (campaign hardening) built — §6.1 and
 §6.4 "As built (C1)"; C2 (the marketing send path) built, landing dark —
 §6.4 / §6.5 "As built (C2)" (the SES account-pause reply shapes are
-`VERIFY(live)`); nothing else built.** Ruled 2026-10-29 (Fred):
+`VERIFY(live)`); C3 (designs library + the Designer editor) built — §6.3
+"As built (C3a — server)" / "As built (C3b)"; nothing else built.** Ruled 2026-10-29 (Fred):
 D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
 Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
 later; D15 no RC push in v1, D16 over-cap operational sends with
@@ -1526,6 +1527,98 @@ the routes until the Designer editor (C3b).
 - Not built here: anything writing `thumbnail_asset_id` (the contract carries
   no thumbnail), the editor (C3b).
 
+**As built (C3b) — the Designer editor mode.** `public/js/campaignDesigner.js`
+(`window.YcDesigner`; require()-able for the unit tests) + `public/campaign.html`.
+Spec: the C3 spike findings (`local/2026-11-03_YISRAMAIL_C3_SPIKE_FINDINGS.md`),
+implemented by item. The editor is not a security boundary — the server's save
+rules (C3a) and C2's post-render assert are; the editor's job is that normal
+use never produces a design they refuse.
+- **Loading:** GrapesJS 0.23.8 + grapesjs-mjml 1.0.8 + the GrapesJS CSS from
+  jsdelivr with the findings' sha384 `integrity` (and `crossorigin`), injected
+  the first time Designer is picked — a plain compose fetches none of it
+  (~650 KB gz). A failed or mismatched file refuses to load and the mode falls
+  back. `campaignDesigner.js` itself (no library code) loads with the page.
+- **Canvas:** Mitigation A — `canvas.frameContent` carries the CSP
+  (`script-src 'none'`, …); `allowExternalDrop:false` and a capture-phase drop
+  guard keep a dropped file from becoming a base64 image; a paste into a text
+  block is inserted as PLAIN TEXT (rich paste would bring tables / data: images
+  the server refuses).
+- **Blocks:** the plugin's set cut to `mj-1-column`, `mj-2-columns`, `mj-text`,
+  `mj-button`, `mj-image`, `mj-divider`, `mj-spacer` (no `mj-raw`), plus a
+  Header block (logo + title). New designs start from a starter newsletter
+  (adapted from the spike's).
+- **The footer slot:** an `mj-section css-class="yc-footer"` → `mj-column` →
+  `mj-text` holding ONLY a `comment` component whose content is
+  ` yc:footer-slot ` — it exports as exactly one `<!-- yc:footer-slot -->` inside
+  the card, no visible text (Fred's rule: C2 injects at the marker and deletes
+  nothing around it). After every load (`normalizeFooter`) the footer is made
+  canonical: one section, marker-only content, last child of `mj-body`, locked
+  — `removable / draggable / droppable / copyable / editable:false`,
+  `stylable:['yc-locked-footer']` (a list naming no property: grapesjs-mjml's
+  column view throws on `false`; an empty list measures the same, 0
+  properties — the named list only says what it is for),
+  `toolbar` = select-parent only, `traits:[]`, on the section and every child.
+  The six "Not blocked" items: `mjml-import` button removed and the command
+  refuses; `UndoManager.clear()` after every load; `core:canvas-clear` refuses;
+  `mj-body`'s `droppable` refuses an index below the footer and a
+  `component:add` guard moves anything that lands there back above it;
+  toolbar and traits as above.
+- **Footer preview (display only):** the marker comment's VIEW renders a
+  dashed block of static sample lines styled like `lib/complianceFooter`
+  ("Compliance footer preview — added here when the email is sent", the ad
+  label, why / unsubscribe, firm line, attorney, §528 statement). It exists
+  only in the canvas DOM — the model holds the comment, so `getProjectData()`,
+  `getHtml()` and the compiled html carry the marker alone. The real footer:
+  "Send test to me".
+- **Export:** rich-text editing is ended explicitly (`view.disableEditing()`)
+  before every read (Q1 risk); then `getProjectData()` (design_json),
+  `mjml-code-to-html` (html) and a client-side `deriveText` (text: comments /
+  head / hidden preheader dropped, links as `label (url)`, blank line between
+  blocks) — the design row's text only; C2 builds a campaign's text part from
+  the body itself. `checkExport` refuses a save (and a Designer Create) with
+  ≠ 1 marker, a `data:` image, an image inside a text block, a URL attribute
+  that is relative or starts with a merge tag other than
+  `{{send.unsubscribe_url}}` / `{{send.preferences_url}}` (C3a's rule 6), or a
+  footer that is not the last block / not marker-only — the same shapes the
+  server refuses, caught first with a plain message.
+- **Merge tags:** ONE list — `#c-placeholder-email`'s options feed the text
+  toolbar's `{{ }}` select (`RichTextEditor.add`, `insertHTML`, caret moved
+  after the tag), the compose list itself (inserts into the text being
+  edited), and a `yc-url` trait on `href` (`mj-button`, `mj-image`, `link`)
+  with the same list beside the input — it refuses a tag at the START of an
+  address (a contact value there could become `javascript:`). No type has a
+  `src` trait: image addresses come from the AssetPicker only.
+- **Text toolbar:** bold `<b>`, italic `<i>`, underline `<u>`, link `<a>`,
+  wrap-for-style (a span) and the merge-tag list — every one inside the
+  server's allowed inline set (a browser test runs each on a selection and
+  feeds the export to the real validator). Strike-through is REMOVED: Chrome
+  writes `<strike>`, which the server refuses (rule 2 allows `<s>`), so one
+  click would make every later save fail.
+- **Images:** `open-assets` is replaced: every image flow (double-click an
+  image, the image block) goes to the shared `AssetPicker.pick`; only an
+  http(s) URL is applied. No GrapesJS asset-manager upload, no base64.
+- **Save / load (`/api/email-designs`, C3a's contract):** Save = POST (new) or
+  PUT `:id` with exactly `{name, design_json (object), html, text}`; "Save as
+  new" POSTs; a `warning` is shown and the save stands; a 400
+  `design_rejected` shows "Rule N (name): detail". The Designs dialog lists
+  (search, archived too), opens (GET `:id` → `loadProjectData` → footer
+  normalized → history cleared), duplicates (opens a copy, unsaved, "Copy of …")
+  and archives / restores (PATCH). Unsaved changes are confirmed before
+  another design replaces them.
+- **Compose:** Designer is the third `#c-editor-mode` option; its body is the
+  compiled html (`getBody` is async — Preview, the test send and Create await
+  it). Create sends `design_id` only when the body IS the open design's saved
+  html; otherwise it asks: save first, or send with no `design_id`. Signature
+  append is greyed out in Designer with the reason, and Create never appends
+  it to a Designer body. Video links are not offered in Designer (a toast
+  says so). Duplicate on a campaign with `design_id` reopens that design in
+  Designer.
+- Tests: `tests/campaignDesigner.test.js` (no browser) and
+  `tests/campaignDesigner.browser.test.js` (real Chromium, gated on
+  `PUPPETEER_EXECUTABLE_PATH`, driver `tests/helpers/campaignDesignerSmoke.js`).
+  Native drag of a block from the panel is not automatable headless — a hand
+  check.
+
 ### 6.4 Send pipeline changes
 
 - **Send reservation — at most once.** Today `executeSend` sends, then
@@ -2037,7 +2130,7 @@ is ruled for that list (ruled 2026-10-30 for SS's own lead lists).
 | T2 | Events — **built** (§5.4 As built; Reject / DeliveryDelay / Rendering Failure still documented-shape) | SES → EventBridge API destination (+ SQS DLQ and a tested replay procedure) → YisraHook hook (`api_key` auth, `dedup_path` on the event id) → `mail_event_ingest` internal function (added to `CTA_FN_DENYLIST` — engine plumbing) → ledger (bounce/complaint/unsub) + `campaign_results` delivery columns by `result_id` tag + the per-transport complaint/bounce tally (§6.5); SES suppression-list removal on re-opt-in | T1, P1 |
 | C1 | Campaign hardening — **built** (§6.1, §6.4 "As built (C1)") | `campaigns.class` / `topic_key`; 50 cap in `createCampaign` + D16 over-cap path; `campaigns.bulk` capability; `bulk_ok` refused for operational; **`marketing_send_enabled` kill switch (`'0'`): marketing refused 422 at create and skipped at send**; **send reservation / at-most-once for every campaign** (`sending` / `unknown` statuses); per-transport rate window at dispatch; per-campaign pump with bounded catch-up; cron per-tick `campaign_send` quota; `paused` status with defer semantics (§6.4 table); operational-class honesty prompt | P1, T1 |
 | C2 | Marketing send path — **built, dark** (§6.4 / §6.5 "As built (C2)"; account-pause shapes `VERIFY(live)`) | executeSend marketing branch: scope check, token mint, explicit text part, footer inject/lock + post-render assert, headers/tags, transport, send-start snapshot (MRPC 7.2(b)), `email_log` without body; **complaint/bounce transport hold enforced before every send** (§6.5); account-pause detection; test send (HTML escaping + the sandboxed preview already shipped — §6.3) | P1, **P2**, P3, C1, T2 |
-| C3 | Designs + builder | spike first (§7, incl. a malicious `design_json`); then `email_designs` with server-side validation on save; Designer editor mode (GrapesJS + MJML); merge-tag picker; locked footer block; asset upload via AssetPicker/`apiSend` | C2 (can build in parallel, lands after) |
+| C3 | Designs + builder — **built** (§6.3 "As built (C3a — server)", "As built (C3b)" Designer) | spike first (§7, incl. a malicious `design_json`); then `email_designs` with server-side validation on save; Designer editor mode (GrapesJS + MJML); merge-tag picker; locked footer block; asset upload via AssetPicker/`apiSend` | C2 (can build in parallel, lands after) |
 | C4 | Segments + reporting | saved segments; campaign stats incl. `unknown`; transport-rate display; bounce digest | C2 |
 | C5 | Outside-list import | provenance-recording import; hygiene check; first-send warm-up order | G2, C2 |
 | C6 | Open/click tracking (v2, D11) | SES config-set open + click events on a **custom tracking domain** under the sending subdomain (not the provider's shared one); `campaign_results.opened_at` / `clicked_at` + per-link click counts; campaign stats; clicks are the primary metric, opens shown as approximate (Apple Mail Privacy Protection pre-fetches images); a per-campaign toggle; one line on the preference page that marketing mail is tracked | C2, C4 |

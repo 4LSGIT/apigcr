@@ -1723,7 +1723,7 @@ ref/YISRAMAIL_DESIGN.md §6.4 / §6.5 "As built (C2)" says what shipped (dark).
 
 ## YisraMail C3a (designs library, server, 2026-11-04) — deferred
 
-ref/YISRAMAIL_DESIGN.md §6.3 "As built (C3a)" says what shipped.
+ref/YISRAMAIL_DESIGN.md §6.3 "As built (C3a — server)" says what shipped.
 - **A marketing create with a `design_id` does not re-run the html rules on
   `body`** (the body is whatever the caller sent; C2's post-render assert is
   the send-time guarantee). Proposal: re-run `validateDesign`'s html leg (rules
@@ -1743,6 +1743,28 @@ ref/YISRAMAIL_DESIGN.md §6.3 "As built (C3a)" says what shipped.
 - **`symbols` / `dataSources` must be empty** and `mj-style` / `mj-font` /
   `mj-raw` are refused; widening the block set means widening rule 2 with a
   review of what the new type renders.
+
+## YisraMail C3b (Designer editor mode, 2026-11-04) — deferred
+
+ref/YISRAMAIL_DESIGN.md §6.3 "As built (C3b)" says what shipped.
+- **Revisit grapesjs-mjml 1.1.x once it is a stable release** (1.1.1-rc.1 drops
+  the bundled mjml-browser 4.x and targets grapesjs ^0.23.8; 1.0.8 is a
+  0.21-era build): re-pin both with new SRI hashes, re-run
+  `tests/campaignDesigner.browser.test.js`, and re-check the `stylable` list
+  workaround (1.0.8's mj-column view throws on `stylable:false`).
+- **The footer preview is static sample text.** A preview with the firm's live
+  values needs a read of `complianceFooter.firmValues()` the editor can call
+  (no such route today); "Send test to me" shows the real footer meanwhile.
+- **No video insert in Designer** (the YisraVideo picker emits Quill / textarea
+  HTML); a Designer variant would insert a linked image or button.
+- **Strike-through is off in the text toolbar** (Chrome's execCommand writes
+  `<strike>`, which the save validator refuses — rule 2 allows `<s>`; the
+  validator is not widened, ruling 2026-11-04). Re-add it as a custom RTE
+  action that wraps the selection in `<s>` if staff want it (price strikes).
+- **Paste is plain text only.** Formatting from Word / web pages is dropped
+  rather than mapped onto allowed tags (b / i / a / lists).
+- **Native block drag is hand-checked**, not tested: headless Chrome never
+  starts an HTML5 drag from mouse input (CDP drag interception included).
 
 ## From the contact-intake safety slices (2026-10-27) — deferred
 

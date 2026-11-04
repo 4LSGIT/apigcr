@@ -352,6 +352,7 @@ public/forms/submissionsWidget.html
 public/index.html
 public/issueReports.html
 public/js/assetpicker.js
+public/js/campaignDesigner.js
 public/js/csvSafe.js
 public/js/diag.js
 public/js/faIcons-6.5.0.json
@@ -1242,6 +1243,8 @@ tests/campaignC2.mysql.test.js
 tests/campaignC2.test.js
 tests/campaignC2.ui.test.js
 tests/campaignCaseTypeFilter.test.js
+tests/campaignDesigner.browser.test.js
+tests/campaignDesigner.test.js
 tests/campaignPreviewEscape.test.js
 tests/capabilities.test.js
 tests/captureBeforePublish.test.js
@@ -1551,6 +1554,7 @@ tests/genTypeKeyBackfill.test.js
 tests/guestCode.test.js
 tests/guestCodeLanes.test.js
 tests/helpers/bcPolyfill.js
+tests/helpers/campaignDesignerSmoke.js
 tests/helpers/caseySendProposalDb.js
 tests/helpers/commsArchiveSchema.js
 tests/helpers/consentSchema.js

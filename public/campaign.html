@@ -7,6 +7,9 @@
   <script src="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.min.js"></script>
   <script src="/js/videoInsert.js"></script>
   <script src="/js/assetpicker.js"></script>
+  <!-- Designer mode (YisraMail C3b): this small file only; it injects the
+       pinned GrapesJS + MJML libraries (SRI) when Designer is picked. -->
+  <script src="/js/campaignDesigner.js"></script>
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
   <style>
@@ -109,6 +112,17 @@
     .class-picker label { font-weight: 400; display: inline-flex; align-items: center; gap: 6px; }
     .class-note { display: block; margin-top: 2px; }
     #class-marketing { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+
+    /* ── Designer mode (YisraMail C3b) ── */
+    .designer-bar { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; margin-bottom: 6px; }
+    .designer-bar #d-name { flex: 1 1 180px; min-width: 0; }
+    #designer-host { height: 680px; max-height: 80vh; border: 1px solid var(--border-strong); border-radius: 3px; overflow: hidden; }
+    #designer-canvas { height: 100%; }
+    /* the page's input/select min-width must not reach GrapesJS's own panels */
+    #designer-host input, #designer-host select { min-width: 0; }
+    .yc-url-trait { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+    .yc-url-trait input, .yc-url-trait select { width: 100%; padding: 4px 6px; font-size: 12px; }
+    .yc-rte-merge { max-width: 110px; padding: 2px; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -252,6 +266,7 @@
         <select id="c-editor-mode" onchange="toggleEditorMode()" style="min-width:auto;">
           <option value="richtext">Rich Text</option>
           <option value="html">HTML Code</option>
+          <option value="designer">Designer</option>
         </select>
         <select id="c-placeholder-email" onchange="insertPlaceholderBody(this)" style="min-width:auto;">
           <option value="">Insert placeholder...</option>
@@ -274,6 +289,24 @@
     </div>
     <div id="quill-wrap" class="editor-wrap"><div id="quill-editor"></div></div>
     <textarea id="html-editor" placeholder="Paste or type HTML here..."></textarea>
+
+    <!-- Designer (YisraMail C3b, design §6.3): GrapesJS + MJML, loaded only
+         when picked. The compiled HTML is the campaign body; the design itself
+         is saved to the designs library (/api/email-designs). -->
+    <div id="designer-wrap" class="hidden">
+      <div class="designer-bar">
+        <input type="text" id="d-name" maxlength="190" placeholder="Design name" aria-label="Design name">
+        <button type="button" class="btn btn-outline btn-sm" onclick="openDesignsPicker()">Designs&hellip;</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="startNewDesign()">New</button>
+        <button type="button" class="btn btn-primary btn-sm" id="d-save" onclick="saveCurrentDesign(false)">Save design</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="saveCurrentDesign(true)">Save as new</button>
+        <span id="d-status" class="text-muted" aria-live="polite"></span>
+      </div>
+      <!-- GrapesJS sets its container's height inline (100%), so the fixed
+           height lives on this wrapper and the editor fills it. -->
+      <div id="designer-host"><div id="designer-canvas"></div></div>
+      <span class="text-muted" style="display:block; margin-top:6px;">The footer block at the bottom is locked: the compliance footer (unsubscribe link, firm details) is added there when the email is sent — the dashed lines only preview it. Use "Send test to me" to see the real one.</span>
+    </div>
 
     <!-- Signature block — kept OUTSIDE the editors on purpose. Quill's
          document model drops <table> markup, so pulling the signature into
@@ -409,6 +442,10 @@ let pollTimer = null;
 let mmsAttachmentUrl = null;
 let emailAttachmentUrl = null;
 let caseTypeFacets = null;   // { Type: [Subtype, ...] } of types that EXIST
+let currentEditorMode = 'richtext';
+// Designer (C3b): the editor (booted on first use), the open design's id /
+// name, and the html it had when last saved or opened (dirty check).
+const designer = { editor: null, booting: null, id: null, name: '', savedHtml: null, dirty: false, cleanJson: null, dirtyTimer: null };
 // GET /api/campaigns/compose-options (C1): marketing senders (bulk rows —
 // never in firmData.emailFrom), active email topics, the operational cap, the
 // kill switch state, whether this user holds campaigns.bulk. Display only.
@@ -931,6 +968,28 @@ function toggleEditorMode() {
   const mode = document.getElementById('c-editor-mode').value;
   const quillWrap = document.getElementById('quill-wrap');
   const htmlEditor = document.getElementById('html-editor');
+  const designerWrap = document.getElementById('designer-wrap');
+  const from = currentEditorMode;
+  currentEditorMode = mode;
+
+  // Designer (C3b): its own body; the Rich Text / HTML content is left as it
+  // was (a full designed document would not survive Quill). Switching back
+  // keeps the open design in this page, unsaved changes included.
+  if (mode === 'designer') {
+    quillWrap.style.display = 'none';
+    htmlEditor.style.display = 'none';
+    designerWrap.classList.remove('hidden');
+    syncCampaignSig();
+    ensureDesigner().catch(err => {
+      Swal.fire('Designer unavailable', err.message || 'The designer could not load.', 'error');
+      designerWrap.classList.add('hidden');
+      document.getElementById('c-editor-mode').value = from === 'designer' ? 'richtext' : from;
+      toggleEditorMode();
+    });
+    return;
+  }
+  designerWrap.classList.add('hidden');
+  syncCampaignSig();
 
   if (mode === 'html') {
     // Switching TO html — just show textarea (already synced from Quill)
@@ -956,7 +1015,12 @@ function toggleEditorMode() {
           quillWrap.style.display = '';
           htmlEditor.style.display = 'none';
         } else {
+          // Stay in HTML — show it explicitly: coming from Designer, neither
+          // editor is visible yet.
           document.getElementById('c-editor-mode').value = 'html';
+          currentEditorMode = 'html';
+          quillWrap.style.display = 'none';
+          htmlEditor.style.display = 'block';
         }
       });
     } else {
@@ -991,6 +1055,12 @@ function insertPlaceholderBody(selectEl) {
   selectEl.value = '';
 
   const mode = document.getElementById('c-editor-mode').value;
+  if (mode === 'designer') {
+    if (!YcDesigner.insertMergeTag(designer.editor, ph)) {
+      Toast.fire({ icon: 'info', title: 'Double-click a text block first — or use the {{ }} list in its toolbar' });
+    }
+    return;
+  }
   if (mode === 'richtext') {
     quill.focus();
     const range = quill.getSelection(true);
@@ -1017,11 +1087,17 @@ function updateSubjectHint() {
   else { hint.textContent = `${len}/150 — high risk of truncation`; hint.style.color = 'var(--danger)'; }
 }
 
-function getBody() {
+async function getBody() {
   const ch = document.getElementById('f-channel').value;
   if (ch === 'sms') return document.getElementById('c-sms-body').value;
+  // Designer (C3b): the compiled html, rich-text editing ended first.
+  if (editorMode() === 'designer') return (await designerExport()).html;
   // Email: textarea is always the source of truth (synced from Quill)
   return document.getElementById('html-editor').value;
+}
+
+function editorMode() {
+  return document.getElementById('c-editor-mode').value;
 }
 
 // ─── MMS ATTACHMENT ───────────────────────────────────────────
@@ -1128,6 +1204,9 @@ async function insertVideoEmail() {
   if (!quill) {
     return Toast.fire({ icon: 'warning', title: 'Editor not ready' });
   }
+  if (editorMode() === 'designer') {
+    return Toast.fire({ icon: 'info', title: 'Video links are not available in Designer — add an image or button that links to the video page' });
+  }
   const result = await YisraVideoInsert.openVideoPicker({
     contactId: null,        // campaign template mode
     context: 'email',
@@ -1193,7 +1272,8 @@ function insertAtTextareaCursor(ta, text) {
 async function previewCampaign() {
   if (!selectedContacts.length) return Toast.fire({ icon: 'warning', title: 'No contacts selected' });
 
-  const body = getBody();
+  let body;
+  try { body = await getBody(); } catch (err) { return Toast.fire({ icon: 'warning', title: err.message || 'The designer is not ready' }); }
   const channel = document.getElementById('f-channel').value;
   const subject = channel === 'email' ? document.getElementById('c-subject').value.trim() : null;
   const bodyEmpty = channel === 'sms' ? !body.trim() : !body.replace(/<[^>]*>/g, '').trim() && !/<img\b/i.test(body);
@@ -1252,7 +1332,8 @@ async function sendMarketingTest() {
   if (!selectedContacts.length) return Toast.fire({ icon: 'warning', title: 'Select a contact first — the test renders for the first one' });
   const sender = document.getElementById('c-sender').value;
   const subject = document.getElementById('c-subject').value.trim();
-  const body = getBody();
+  let body;
+  try { body = await getBody(); } catch (err) { return Toast.fire({ icon: 'warning', title: err.message || 'The designer is not ready' }); }
   if (!sender) return Toast.fire({ icon: 'warning', title: 'Select a sender' });
   if (!campaignTopic()) return Toast.fire({ icon: 'warning', title: 'Choose a topic for a marketing campaign' });
   if (!subject) return Toast.fire({ icon: 'warning', title: 'Subject is required for email' });
@@ -1289,6 +1370,15 @@ function syncCampaignSig() {
   wrap.classList.toggle('hidden', isSms);
   if (isSms) { block.style.display = 'none'; return; }
 
+  // Designer (C3b, design §6.3): no signature append — greyed out with the reason.
+  if (editorMode() === 'designer') {
+    chk.checked = false;
+    chk.disabled = true;
+    note.textContent = 'Not appended to Designer emails — put the sign-off in the design itself.';
+    block.style.display = 'none';
+    return;
+  }
+
   const em = emailAddresses.find(e => e.email === document.getElementById('c-sender').value);
   const has = !!(em && em.signature_html);
   if (!has) {
@@ -1313,7 +1403,12 @@ async function createCampaign() {
   const channel = document.getElementById('f-channel').value;
   const sender = document.getElementById('c-sender').value;
   const subject = document.getElementById('c-subject').value.trim();
-  const body = getBody();
+  const designerBody = channel === 'email' && editorMode() === 'designer';
+  let body;
+  let designOut = null;
+  try {
+    if (designerBody) { designOut = await designerExport(); body = designOut.html; } else body = await getBody();
+  } catch (err) { return Toast.fire({ icon: 'warning', title: err.message || 'The designer is not ready' }); }
   const sendNow = document.getElementById('c-send-now').checked;
   const schedule = document.getElementById('c-schedule').value;
 
@@ -1324,6 +1419,16 @@ async function createCampaign() {
   if (channel === 'sms' && !body.trim()) return Toast.fire({ icon: 'warning', title: 'Message body is empty' });
   if (channel === 'email' && !body.replace(/<[^>]*>/g, '').trim() && !/<img\b/i.test(body)) return Toast.fire({ icon: 'warning', title: 'Message body is empty' });
   if (!sendNow && !schedule) return Toast.fire({ icon: 'warning', title: 'Select a schedule date or check Send Now' });
+  // Designer (C3b): the editor's own export check, then which saved design
+  // (if any) this body is — design_id is provenance, so it is only sent when
+  // the body IS that design's html.
+  let designId = null;
+  if (designerBody) {
+    const problems = YcDesigner.checkExport(designOut);
+    if (problems.length) return Swal.fire('Design problem', problems.join(' '), 'error');
+    designId = await designIdForCreate(designOut.html);
+    if (designId === undefined) return;   // backed out
+  }
 
   const confirm = await Swal.fire({
     title: 'Send Campaign?',
@@ -1347,6 +1452,7 @@ async function createCampaign() {
       class: klass
     };
     if (klass === 'marketing') payload.topic_key = campaignTopic();
+    if (designId != null) payload.design_id = designId;
     const attachment = channel === 'sms' ? mmsAttachmentUrl : emailAttachmentUrl;
     if (attachment) payload.attachmentUrl = attachment;
     // Signature is baked into the stored body (block contents, edits included)
@@ -1355,7 +1461,8 @@ async function createCampaign() {
     // include_signature flag remains available to API callers.
     const sigChk = document.getElementById('c-include-sig');
     const sigBlock = document.getElementById('c-sig-block');
-    if (channel === 'email' && sigChk && sigChk.checked && !sigChk.disabled && sigBlock && sigBlock.innerHTML.trim()) {
+    // Never for a Designer body (§6.3): a full document can't take a signature after </html>.
+    if (channel === 'email' && !designerBody && sigChk && sigChk.checked && !sigChk.disabled && sigBlock && sigBlock.innerHTML.trim()) {
       payload.body = payload.body + '<br><br>' + sigBlock.innerHTML;
     }
 
@@ -1402,6 +1509,269 @@ async function postCampaign(payload) {
     }
   }
   throw new Error('The recipient count kept changing — search again and retry.');
+}
+
+
+// ─── DESIGNER (YisraMail C3b — design §6.3 "As built (C3b)") ─────────────
+// GrapesJS + MJML through public/js/campaignDesigner.js (YcDesigner). The
+// libraries load the first time Designer is picked — never on a plain
+// compose. The compiled html is the campaign body; designs are saved to the
+// library at /api/email-designs. The server validates every save; the editor
+// is not the security boundary.
+
+function setDesignerStatus(text) {
+  const el = document.getElementById('d-status');
+  if (el) el.textContent = text || '';
+}
+
+function designerStatusText() {
+  const what = designer.id != null ? `Design #${designer.id}` : 'New design';
+  return designer.dirty ? `${what} — unsaved changes` : (designer.id != null ? `${what} — saved` : `${what} — not saved yet`);
+}
+
+/** Boots the editor once (the libraries load here). */
+function ensureDesigner() {
+  if (designer.editor) return Promise.resolve(designer.editor);
+  if (!designer.booting) {
+    setDesignerStatus('Loading the designer…');
+    designer.booting = YcDesigner.createEditor(document.getElementById('designer-canvas'), {
+      win: window,
+      placeholders: YcDesigner.placeholdersFrom(document.getElementById('c-placeholder-email')),
+      pickImage: designerPickImage,
+      notify: (title, icon) => Toast.fire({ icon: icon || 'info', title }),
+    }).then((ed) => {
+      designer.editor = ed;
+      markDesignerClean();
+      // "Unsaved changes" = the design differs from the snapshot taken at the
+      // last load / save — not "an update event fired": GrapesJS emits late
+      // update events for a load itself.
+      ed.on('update', () => {
+        clearTimeout(designer.dirtyTimer);
+        designer.dirtyTimer = setTimeout(() => {
+          const d = isDesignerDirty();
+          if (d !== designer.dirty) { designer.dirty = d; setDesignerStatus(designerStatusText()); }
+        }, 300);
+      });
+      setDesignerStatus(designerStatusText());
+      return ed;
+    }).catch((err) => {
+      designer.booting = null;
+      setDesignerStatus('');
+      throw err;
+    });
+  }
+  return designer.booting;
+}
+
+/** The editor's image flows → the shared AssetPicker (asset store; never base64). */
+function designerPickImage() {
+  return AssetPicker.pick({
+    collection: 'comms-images',
+    accept: 'image/png,image/jpeg,image/gif,image/webp',
+    mimeFilter: 'image/',
+    maxMB: 10,
+    title: 'Insert Image',
+    apiSend: P.apiSend
+  });
+}
+
+function designSnapshot() {
+  return designer.editor ? JSON.stringify(designer.editor.getProjectData()) : null;
+}
+
+function markDesignerClean() {
+  designer.cleanJson = designSnapshot();
+  designer.dirty = false;
+}
+
+function isDesignerDirty() {
+  return !!designer.editor && designSnapshot() !== designer.cleanJson;
+}
+
+/** Ends rich-text editing, then → { design_json, html, text, … }. */
+async function designerExport() {
+  if (!designer.editor) throw new Error('The designer is still loading');
+  return YcDesigner.exportDesign(designer.editor);
+}
+
+/** The open design has edits since it was saved / opened? Asks first. → true to go on. */
+async function confirmDiscardDesign(action) {
+  if (!designer.editor) return true;
+  await YcDesigner.endRte(designer.editor);
+  if (!isDesignerDirty()) return true;
+  const r = await Swal.fire({
+    title: 'Discard unsaved changes?',
+    text: `The open design has changes that are not saved. ${action} anyway?`,
+    icon: 'warning', showCancelButton: true, confirmButtonText: action, cancelButtonText: 'Keep editing'
+  });
+  return !!r.isConfirmed;
+}
+
+function afterDesignerLoad(result, { id, name, html }) {
+  designer.id = id;
+  designer.name = name || '';
+  designer.savedHtml = html;
+  markDesignerClean();
+  document.getElementById('d-name').value = designer.name;
+  setDesignerStatus(designerStatusText());
+  if (result && result.repaired) {
+    Toast.fire({ icon: 'info', title: 'The footer block was restored to the locked footer slot' });
+  }
+}
+
+async function startNewDesign() {
+  const ed = await ensureDesigner();
+  if (!(await confirmDiscardDesign('Start a new design'))) return;
+  const r = YcDesigner.newDesign(ed);
+  afterDesignerLoad(r, { id: null, name: '', html: null });
+}
+
+/**
+ * Save (PUT the open design) or Save as new (POST). → true when saved.
+ * A 400 design_rejected shows its rule and detail; a warning (Gmail clips
+ * past ~102 KB) is shown but the save stands.
+ */
+async function saveCurrentDesign(asNew) {
+  let ed;
+  try { ed = await ensureDesigner(); } catch (err) { Swal.fire('Designer unavailable', err.message, 'error'); return false; }
+  let name = document.getElementById('d-name').value.trim();
+  if (!name) {
+    const r = await Swal.fire({ title: 'Name this design', input: 'text', inputAttributes: { maxlength: '190', 'aria-label': 'Design name' }, showCancelButton: true, confirmButtonText: 'Save', inputValidator: (v) => (String(v || '').trim() ? undefined : 'A name is required') });
+    if (!r.isConfirmed) return false;
+    name = String(r.value).trim();
+    document.getElementById('d-name').value = name;
+  }
+  const out = await YcDesigner.exportDesign(ed);
+  const problems = YcDesigner.checkExport(out);
+  if (problems.length) { Swal.fire('Design problem', problems.join(' '), 'error'); return false; }
+  const id = asNew ? null : designer.id;
+  try {
+    const res = await YcDesigner.saveDesign(P.apiSend, id, YcDesigner.designPayload(name, out));
+    designer.id = (res && res.id != null) ? res.id : id;
+    designer.name = name;
+    designer.savedHtml = out.html;
+    designer.cleanJson = JSON.stringify(out.design_json);
+    designer.dirty = isDesignerDirty();
+    setDesignerStatus(designerStatusText());
+    if (res && res.warning) Swal.fire('Saved — with a warning', String(res.warning), 'warning');
+    else Toast.fire({ icon: 'success', title: `Design #${designer.id} saved` });
+    return true;
+  } catch (err) {
+    const m = YcDesigner.rejectionMessage(err);
+    Swal.fire(m.title, m.text, 'error');
+    return false;
+  }
+}
+
+/**
+ * Which design_id a Designer campaign carries: the open design, only when
+ * the body IS its saved html. Otherwise ask: save first, or send without a
+ * link to the library. → id | null (no link) | undefined (backed out).
+ */
+async function designIdForCreate(html) {
+  if (designer.id != null && designer.savedHtml === html) return designer.id;
+  const r = await Swal.fire({
+    title: designer.id != null ? 'Unsaved design changes' : 'Design not saved',
+    text: 'Save the design to the library first, so this campaign can be duplicated from it later?',
+    icon: 'question', showCancelButton: true, showDenyButton: true,
+    confirmButtonText: 'Save design', denyButtonText: 'Send without saving', cancelButtonText: 'Cancel'
+  });
+  if (r.isDenied) return null;
+  if (!r.isConfirmed) return undefined;
+  if (!(await saveCurrentDesign(false))) return undefined;
+  const again = (await designerExport()).html;
+  return designer.savedHtml === again ? designer.id : undefined;
+}
+
+/** GET a design and open it (asCopy: opened unsaved, as a new design named "Copy of …"). */
+async function openDesignById(id, asCopy) {
+  const ed = await ensureDesigner();
+  if (!(await confirmDiscardDesign('Open another design'))) return false;
+  const res = await YcDesigner.getDesign(P.apiSend, id);
+  const d = res && res.design;
+  if (!d) throw new Error(`Design #${id} not found`);
+  const r = YcDesigner.loadDesign(ed, d.design_json);
+  const html = (await designerExport()).html;
+  if (asCopy) afterDesignerLoad(r, { id: null, name: `Copy of ${d.name || 'design'}`, html: null });
+  else afterDesignerLoad(r, { id: d.id != null ? d.id : id, name: d.name, html });
+  return true;
+}
+
+/**
+ * The designs library: search, open, duplicate (opens a copy), archive /
+ * restore. One SweetAlert dialog — feedback stays inline in it (Swal is
+ * single-instance). It renders in the SHELL document, so it is styled
+ * inline; no page CSS reaches it.
+ */
+async function openDesignsPicker() {
+  try { await ensureDesigner(); } catch (err) { return Swal.fire('Designer unavailable', err.message, 'error'); }
+  const IN = 'width:100%;box-sizing:border-box;padding:6px 8px;font-size:13px;';
+  const BTN = 'padding:3px 8px;font-size:12px;margin-left:4px;cursor:pointer;border-radius:3px;';
+  let picked = null;
+  await Swal.fire({
+    title: 'Designs',
+    width: 720,
+    showConfirmButton: false,
+    showCloseButton: true,
+    html: `<div style="text-align:left;">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;">
+        <input type="text" data-d="q" placeholder="Search by name" aria-label="Search designs" style="${IN}flex:1 1 auto;">
+        <label style="white-space:nowrap;font-size:13px;"><input type="checkbox" data-d="arch"> Archived too</label>
+      </div>
+      <div data-d="msg" style="font-size:12px;min-height:16px;margin-bottom:4px;"></div>
+      <div data-d="list" style="max-height:50vh;overflow:auto;font-size:13px;"></div>
+    </div>`,
+    didOpen: (popup) => {
+      const q = popup.querySelector('[data-d="q"]');
+      const arch = popup.querySelector('[data-d="arch"]');
+      const msg = popup.querySelector('[data-d="msg"]');
+      const list = popup.querySelector('[data-d="list"]');
+      let seq = 0;
+      let timer = null;
+      const render = async () => {
+        const my = ++seq;
+        try {
+          const res = await YcDesigner.listDesigns(P.apiSend, q.value.trim(), arch.checked);
+          if (my !== seq) return;
+          const rows = (res && res.designs) || [];
+          list.innerHTML = rows.length ? rows.map((d) => `<div style="display:flex;align-items:center;gap:6px;padding:6px 2px;border-bottom:1px solid rgba(128,128,128,.25);">
+              <span style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(d.name || '(unnamed)')}${d.archived ? ' <em style="opacity:.7;">(archived)</em>' : ''}</span>
+              <span style="opacity:.7;white-space:nowrap;font-size:12px;">${esc(d.updated_at ? new Date(d.updated_at).toLocaleDateString() : '')}</span>
+              <button type="button" data-act="open" data-id="${esc(d.id)}" style="${BTN}">Open</button>
+              <button type="button" data-act="copy" data-id="${esc(d.id)}" style="${BTN}">Duplicate</button>
+              <button type="button" data-act="${d.archived ? 'restore' : 'archive'}" data-id="${esc(d.id)}" style="${BTN}">${d.archived ? 'Restore' : 'Archive'}</button>
+            </div>`).join('') : '<div style="opacity:.7;padding:8px 2px;">No designs yet — build one and click Save design.</div>';
+        } catch (err) {
+          if (my === seq) msg.textContent = err.message || 'Could not load designs';
+        }
+      };
+      q.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(render, 300); });
+      arch.addEventListener('change', render);
+      list.addEventListener('click', async (e) => {
+        const b = e.target.closest && e.target.closest('button[data-act]');
+        if (!b) return;
+        const id = b.getAttribute('data-id');
+        const act = b.getAttribute('data-act');
+        msg.textContent = '';
+        if (act === 'open' || act === 'copy') { picked = { id, asCopy: act === 'copy' }; Swal.close(); return; }
+        try {
+          await YcDesigner.setArchived(P.apiSend, id, act === 'archive');
+          msg.textContent = act === 'archive' ? 'Archived.' : 'Restored.';
+          render();
+        } catch (err) {
+          msg.textContent = err.message || 'Failed';
+        }
+      });
+      render();
+      q.focus();
+    }
+  });
+  if (!picked) return;
+  try {
+    await openDesignById(picked.id, picked.asCopy);
+  } catch (err) {
+    Swal.fire('Could not open the design', err.message || '', 'error');
+  }
 }
 
 
@@ -1588,9 +1958,22 @@ async function duplicateCampaign(id) {
       document.getElementById('c-editor-mode').value = 'richtext';
       document.getElementById('quill-wrap').style.display = '';
       document.getElementById('html-editor').style.display = 'none';
+      document.getElementById('designer-wrap').classList.add('hidden');
+      currentEditorMode = 'richtext';
+      syncCampaignSig();
       // Restore email attachment if present
       if (campaign.attachment_url) {
         setEmailAttachment(campaign.attachment_url);
+      }
+      // Built in Designer (C3b): reopen its design there — "duplicate last month's".
+      if (campaign.design_id != null) {
+        document.getElementById('c-editor-mode').value = 'designer';
+        toggleEditorMode();
+        try {
+          await openDesignById(campaign.design_id, false);
+        } catch (err) {
+          Toast.fire({ icon: 'warning', title: `Design #${campaign.design_id} could not be opened — the body was copied to Rich Text` });
+        }
       }
     }
 
