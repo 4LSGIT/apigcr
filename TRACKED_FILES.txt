@@ -1253,6 +1253,7 @@ tests/caseCaption.stamp.test.js
 tests/caseCaption.test.js
 tests/caseCaptionBackfill.test.js
 tests/caseColumns.s3a.test.js
+tests/caseColumns.s4.test.js
 tests/caseEventService.test.js
 tests/caseId.test.js
 tests/caseMergeShapes.test.js

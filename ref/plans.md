@@ -2500,3 +2500,12 @@ in one shared `*_test` DB. Builder families are compatible under the drop-in-
 before-hook rule, but the overlap grows with every twin; giving each family
 its own `*_test` database (the yisramail pattern) removes the hazard class.
 Flagged in the S4-server review, 2026-11-05.
+
+## Cases list — request sequencing
+
+`tabCasesGet` has no request sequencing: an older silent refetch resolving
+after a newer one can paint stale rows (and, since S4, leave a newer cf
+column blank until the next refetch). Pre-existing race class, widened
+slightly by S4's reveal-refetch; a monotonic request token that drops stale
+responses would close it for every caller. Flagged in the S4-client review,
+2026-11-05.

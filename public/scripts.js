@@ -1416,13 +1416,17 @@ const CASE_CSV_COLUMNS = [
    producer, or false to exclude it from exports — see ycViewCsvColumns
    below. Model fields are STATIC CODE LITERALS only — `sort`,
    `label`, `cls` and `th_extra` are interpolated into header/cell markup,
-   so no model value may ever come from settings or user data. default_on
-   is, for now, only the FALLBACK set (what shows when nothing or garbage
-   is stored): the picker stores the HIDDEN keys, so a later-added column
-   shows for everyone — a column that should ship OFF by default needs the
-   storage extended to carry turned-on keys too, in its own slice, before
-   any model entry sets default_on: false. min_width and the rest are
-   read by the coming picker slices — today every shipped column is on.
+   so no model value may ever come from settings or user data — with ONE
+   carve-out (custom_table_view S4): a custom-field column built from the
+   field_defs registry may join a model at runtime when its key has passed
+   KEY_RE (^cf_[a-z][a-z0-9_]{1,56}$ — the safe charset is what lets it
+   ride as `sort` inside the onclick), its label flows through escText like
+   every label, and it sets no `cls`/`th_extra`. default_on decides which
+   half of the picker's storage governs a column: a default_on column shows
+   unless its key is in the stored HIDDEN set (cols_off — so a later-added
+   default column shows for everyone), a default_on:false column (the cf
+   columns) shows only when its key is in the stored TURNED-ON set
+   (cols_on, the S4 Cases extension). min_width is still unread.
    Definitions live next to their tabs in index.html (CONTACT_COLUMNS is
    the first); these renderers are the whole mechanism. The header carries
    the same inline onclick="sort(this, …)" as the old static markup, which
@@ -1438,6 +1442,37 @@ function ycColsRowHtml(cols, row) {
   return cols.map((c) =>
     `<td${c.cls ? ` class="${c.cls}"` : ''}>${c.render ? c.render(row) : escText(row[c.key] ?? '')}</td>`).join('');
 }
+/* A custom-field cell's display text per field type (custom_table_view S4 /
+   design memo D4): text as-is; number with DECIMAL(18,4)'s trailing zeros
+   trimmed ("1234.5000" shows as "1234.5"); select shows the stored VALUE
+   (labels are picker vocabulary); boolean Yes / blank; multiselect comma-
+   joined (the live column is JSON, so mysql2 hands over a real ARRAY —
+   handled first — while a string shape still parses); date in the lists'
+   house format ('%b. %e, %Y' — 'Nov. 20, 2026', and yes 'May.' with the
+   dot, matching the SQL-formatted date columns), computed from the 10-char
+   prefix, never through new Date() (a UTC shift would move the calendar
+   date). Used by the cf column renders AND their export-view csv
+   producers, so the file always matches the cell. */
+function ycCfCellText(type, v) {
+  if (v == null || v === '') return '';
+  if (type === 'boolean') return (v === true || v === 1 || v === '1' || v === 'true') ? 'Yes' : '';
+  if (type === 'date') {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v));
+    if (!m) return String(v);
+    const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${MON[+m[2] - 1]}. ${+m[3]}, ${m[1]}`;
+  }
+  if (type === 'multiselect') {
+    if (Array.isArray(v)) return v.join(', ');
+    try { const a = JSON.parse(v); if (Array.isArray(a)) return a.join(', '); } catch (_) { /* raw */ }
+  }
+  if (type === 'number') {
+    // Lossless trim (no Number() — DECIMAL(18,4) can exceed double precision).
+    return String(v).replace(/^(-?\d+)\.(\d*?)0+$/, (_, a, b) => (b ? `${a}.${b}` : a));
+  }
+  return String(v);
+}
+
 /* "As shown on screen" CSV columns (custom_table_view S3c): the visible
    model columns, in screen order, as buildCsv column specs. Each model
    column may carry `csv` — a plain-TEXT producer for its export value

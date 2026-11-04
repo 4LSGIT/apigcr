@@ -288,8 +288,8 @@ const TABS = {
   cases: {
     fn: 'tabCasesGet', kind: 'cases', prelude: 'var offsets = {}, cases; function casesTypeTreeBuild() {}',
     consts: ['CASES_COLUMNS'],                   // S3a: rows render via the model
-    post: 'var casesColsVis = CASES_COLUMNS;',
-    extra: ['casesStageValues', 'casesTypeValues', 'casesTypeOtherChecked', 'casesTypeListed', 'casesRenderRows', 'casesViewColumns'],
+    post: 'var casesColsVis = CASES_COLUMNS; var casesCfFetched = [];',
+    extra: ['casesStageValues', 'casesTypeValues', 'casesTypeOtherChecked', 'casesTypeListed', 'casesRenderRows', 'casesViewColumns', 'casesCfEnsure'],
     // Type is a .yc-multi tree (F3): the empty stub div = nothing checked =
     // no types param. Type coverage lives in caseTypeMultiFilter +
     // listSorting.mysql.

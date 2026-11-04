@@ -344,6 +344,7 @@ const CF_SW_NOVALUE = ['empty', 'not_empty'];
 function cfBlank() {
   return {
     label: '', field_key: '', _keyTouched: false, field_type: 'text', options: [], validation: {},
+    list_column: 0,   // custom_table_view S4 — "Offer as a list column"
     // show_when: the parsed v1 condition, or null for "always show".
     // _swOpaque: the stored value is a shape this builder can't represent —
     // it is shown read-only and Save omits the key so the server keeps it.
@@ -404,7 +405,16 @@ function cfEditorBody(t, i) {
     valid.push(`<span class="cf-vf">Pattern <input type="text" class="mono cf-pattern" data-cf-v="${i}:pattern" value="${esc(v.pattern ?? '')}" placeholder="regex (optional)"></span>`);
   }
   if (t.field_type === 'number') { valid.push(numIn('min', 'Min')); valid.push(numIn('max', 'Max')); }
-  return `${opts}<div class="cf-valid">${valid.join('')}</div>${cfDefaultBody(t, i)}${cfShowWhenBody(t, i)}`;
+  // "Offer as a list column" (custom_table_view S4) — today only the Cases
+  // list reads the flag, so the checkbox renders on the case entity only;
+  // the API accepts it for every entity (registry-generic).
+  const listCol = cfEntity !== 'case' ? '' : `
+    <div class="cf-valid"><label class="toggle-row">
+      <input type="checkbox" data-cf-listcol="${i}" ${t.list_column ? 'checked' : ''}>
+      <span>Offer as a list column</span></label>
+    <span class="fmini">Shows this field in the Cases tab's Columns picker. Off for everyone until each
+      person turns the column on; values appear once the field holds data.</span></div>`;
+  return `${opts}<div class="cf-valid">${valid.join('')}</div>${listCol}${cfDefaultBody(t, i)}${cfShowWhenBody(t, i)}`;
 }
 
 /**
@@ -755,6 +765,9 @@ function cfBind() {
       else if (k === 'pattern') t.validation.pattern = el.value;
       else t.validation[k] = el.value.trim() === '' ? undefined : Number(el.value); // NaN → null on the wire → the route names it
       cfMarkDirty(i);
+    } else if (d.cfListcol !== undefined) {
+      cfTarget(d.cfListcol).list_column = el.checked ? 1 : 0;
+      cfMarkDirty(d.cfListcol);
     } else if (d.cfDv !== undefined) {
       // default_value (S6). Kept in the def's own shape as it is typed, so
       // cfDefaultOut has nothing to parse and the control repaints from truth.
@@ -915,6 +928,7 @@ async function cfSave(i) {
       label: t.label, field_type: t.field_type, sort_order: t.sort_order,
       options: cfOptionsOut(t), validation: cfValidationOut(t),
       default_value: cfDefaultOut(t),
+      list_column: t.list_column ? 1 : 0,
     };
     // OMITTED, not nulled, when the stored condition is one this builder
     // can't represent — updateDef only writes the keys a patch carries, so
@@ -962,7 +976,7 @@ async function cfCreate() {
     const r = await api('/api/field-defs', 'POST', {
       entity: cfEntity, field_key: t.field_key, label: t.label.trim(), field_type: t.field_type,
       sort_order: nextSort, options: cfOptionsOut(t), validation: cfValidationOut(t),
-      default_value: cfDefaultOut(t),
+      default_value: cfDefaultOut(t), list_column: t.list_column ? 1 : 0,
       ...(sw === undefined ? {} : { show_when: sw }),
     });
     cfNew = cfBlank();
@@ -997,7 +1011,8 @@ async function cfLoad() {
       // the JSON column as-is), so it needs no parse — undefined only if an
       // older backend is answering, and null is what "no default" means.
       default_value: d.default_value === undefined ? null : d.default_value,
-      indexed: d.indexed ? 1 : 0, sort_order: d.sort_order | 0, active: d.active ? 1 : 0,
+      indexed: d.indexed ? 1 : 0, list_column: d.list_column ? 1 : 0,
+      sort_order: d.sort_order | 0, active: d.active ? 1 : 0,
       _open: false, _dirty: false,
     }));
     cfLoaded = true;

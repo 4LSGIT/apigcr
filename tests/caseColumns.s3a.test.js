@@ -87,7 +87,7 @@ const ALL_KEYS = ['case_id', 'contacts', 'case_caption', 'case_number', 'case_ty
 const hideAllBut = (keep) => ALL_KEYS.filter((k) => k !== keep).join(',');
 const drop = (labels, i) => labels.filter((_, n) => n !== i);
 
-const PICKER_FNS = ['casesColsKey', 'casesColsVisible', 'casesRenderRows',
+const PICKER_FNS = ['casesColsKey', 'casesColsOnKey', 'casesCfEnsure', 'casesColsVisible', 'casesRenderRows',
   'casesColsRender', 'casesColsApply', 'casesColsChanged', 'casesColsInit', 'tabCasesGet'];
 
 function page({ userId = 6, storedOff, storageThrows = false, failFetch = false } = {}) {
@@ -131,7 +131,7 @@ function page({ userId = 6, storedOff, storageThrows = false, failFetch = false 
       return { total: window.__rows.length, cases: JSON.parse(JSON.stringify(window.__rows)) };
     };
     ${constSrc(INDEX, 'CASES_COLUMNS')}
-    var casesColsVis = CASES_COLUMNS, casesEverSorted = false;
+    var casesColsVis = CASES_COLUMNS, casesEverSorted = false, casesCfFetched = [];
     ${PICKER_FNS.map((f) => fnSrc(INDEX, f)).join('\n')}
     ycColsHeadRender(E('casesTable'), CASES_COLUMNS);   // the parse-time build
     casesColsInit();                                    // the loadUserContext build
@@ -491,8 +491,8 @@ describe('the filter counter ignores the picker (data-nocount)', () => {
       ${SCRIPTS}
       var user = { user: 6 }, cases = null;
       ${constSrc(INDEX, 'CASES_COLUMNS')}
-      var casesColsVis = CASES_COLUMNS, casesEverSorted = false;
-      ${['casesColsKey', 'casesColsVisible', 'casesRenderRows', 'casesColsRender',
+      var casesColsVis = CASES_COLUMNS, casesEverSorted = false, casesCfFetched = [];
+      ${['casesColsKey', 'casesColsOnKey', 'casesCfEnsure', 'casesColsVisible', 'casesRenderRows', 'casesColsRender',
          'casesColsApply', 'casesColsChanged', 'casesColsInit'].map((f) => fnSrc(INDEX, f)).join('\n')}
       casesColsInit();
       window.__active = (sel) => ycFiltersActive(document.querySelector(sel));

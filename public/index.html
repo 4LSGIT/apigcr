@@ -3740,10 +3740,15 @@
     let casesEverSorted = false;   // marks repaint only after a real sort
 
     function casesColsKey() { return `cols_off.${(user && user.user) || 0}`; }
+    // The S4 extension: default_on:false columns (the custom-field columns)
+    // are governed by a TURNED-ON set — cols_off alone would show every
+    // later-added cf column to everyone, the opposite of their default.
+    function casesColsOnKey() { return `cols_on.${(user && user.user) || 0}`; }
 
     function casesColsVisible() {
       const off = getTabPref('cases', casesColsKey(), '').split(',');
-      const vis = CASES_COLUMNS.filter((c) => !off.includes(c.key));
+      const on = getTabPref('cases', casesColsOnKey(), '').split(',');
+      const vis = CASES_COLUMNS.filter((c) => (c.default_on ? !off.includes(c.key) : on.includes(c.key)));
       return vis.length ? vis : CASES_COLUMNS.filter((c) => c.default_on);
     }
 
@@ -3784,6 +3789,7 @@
     function casesColsApply() {          // storage → the on-screen set
       casesColsVis = casesColsVisible();
       casesColsRender();
+      casesCfEnsure();
     }
 
     function casesColsChanged(box) {
@@ -3792,8 +3798,77 @@
       const keys = checked.map((b) => b.value);
       casesColsVis = CASES_COLUMNS.filter((c) => keys.includes(c.key));
       setTabPref('cases', casesColsKey(),
-        CASES_COLUMNS.filter((c) => !keys.includes(c.key)).map((c) => c.key).join(','));
+        CASES_COLUMNS.filter((c) => c.default_on && !keys.includes(c.key)).map((c) => c.key).join(','));
+      // Keep stored turned-on keys the CURRENT model doesn't know: before
+      // casesCfInit resolves (or when the defs fetch failed) the model is
+      // static, and rewriting cols_on from it would erase the user's Court
+      // choice on any unrelated toggle (review-caught).
+      const known = new Set(CASES_COLUMNS.map((c) => c.key));
+      const keptOn = getTabPref('cases', casesColsOnKey(), '').split(',')
+        .filter((k) => k && !known.has(k));
+      setTabPref('cases', casesColsOnKey(),
+        CASES_COLUMNS.filter((c) => !c.default_on && keys.includes(c.key)).map((c) => c.key)
+          .concat(keptOn).join(','));
       casesColsRender();
+      casesCfEnsure();
+    }
+
+    /* ── Custom-field columns (custom_table_view S4) ─────────────────────
+       Case defs flagged "Offer as a list column" (the Config fields
+       builder's checkbox, field_defs.list_column) join CASES_COLUMNS at
+       runtime: default_on false, so the cols_on half of the storage governs
+       them — hidden for everyone until a person turns one on. This is the
+       ONE sanctioned dynamic-model path (the contract carve-out in
+       scripts.js): the key must pass KEY_RE before it rides as a sort key,
+       the label is escaped like every label, and values render through
+       ycCfCellText (select shows the stored VALUE — design memo D4). A
+       fetch sends the VISIBLE cf keys (params.cf); revealing a cf column
+       whose data the cached rows lack triggers ONE silent refetch — the
+       flagged exception to "a picker change never fetches". */
+    let casesCfFetched = [];   // the cf keys the current `cases` rows carry
+    const CASES_CF_KEY_RE = /^cf_[a-z][a-z0-9_]{1,56}$/;
+
+    function casesCfColumns(defs) {
+      return (defs || [])
+        .filter((d) => d && d.entity === 'case' && d.active && d.list_column
+          && CASES_CF_KEY_RE.test(String(d.field_key)))
+        .map((d) => ({
+          key: d.field_key,
+          label: String(d.label || d.field_key),
+          sort: d.field_type === 'multiselect' ? undefined : d.field_key,
+          default_on: false,
+          csv: (r) => ycCfCellText(d.field_type, r[d.field_key]),
+          render: (r) => escText(ycCfCellText(d.field_type, r[d.field_key])),
+        }));
+    }
+
+    /* Fetch the defs once per page load (they are firm-global; a flag change
+       reaches open tabs on their next reload). A failed fetch costs only the
+       cf columns — the tab keeps working on the static model. */
+    async function casesCfInit() {
+      if (casesCfInit.done) return;
+      casesCfInit.done = true;
+      try {
+        const data = await apiSend('/api/field-defs', 'GET', { entity: 'case' });
+        const cols = casesCfColumns(data && data.defs);
+        if (!cols.length) return;
+        CASES_COLUMNS.push(...cols);
+        const order = E('tabCasesOrder');
+        cols.filter((c) => c.sort).forEach((c) => order.add(new Option(c.label, c.sort)));
+        casesColsInit();               // menu + apply over the grown model
+      } catch (err) {
+        console.warn('[cases] cf columns unavailable:', err);
+      }
+    }
+
+    /* A newly revealed cf column has no data in the cached rows — refetch
+       the current page silently, once; hiding needs nothing. */
+    function casesCfEnsure() {
+      if (!cases) return;
+      if (casesColsVis.some((c) => !c.default_on && /^cf_/.test(c.key)
+          && !casesCfFetched.includes(c.key))) {
+        tabCasesGet(offsets.cases, true);
+      }
     }
 
     /* The view-export column set (S3c). The Caption CONTROL hides the
@@ -3836,7 +3911,8 @@
         // Another window of this browser saving a new choice re-applies
         // here, so every window of the same user agrees with its own screen.
         window.addEventListener('storage', (e) => {
-          if (e.key === `yc.cases.${casesColsKey()}`) casesColsApply();
+          if (e.key === `yc.cases.${casesColsKey()}`
+            || e.key === `yc.cases.${casesColsOnKey()}`) casesColsApply();
         });
         // A sort chosen from the selects while its column is HIDDEN paints
         // no mark, so the header latch in casesColsRender would miss it
@@ -3897,12 +3973,29 @@
       // "Other (unlisted)": the complement of the list the tree displayed —
       // the server matches any type not on it, blank included.
       if (casesTypeOtherChecked()) params.types_not = JSON.stringify(casesTypeListed());
+      // Custom-field columns (S4): the VISIBLE cf keys ride as a JSON array;
+      // the server honors only registry-flagged ones. Nothing visible sends
+      // nothing — the default request stays byte-identical to pre-S4.
+      const cfKeys = casesColsVis.filter((c) => !c.default_on && /^cf_/.test(c.key)).map((c) => c.key);
+      // Sorting by a HIDDEN cf column (the hidden-sort contract, S3a) still
+      // needs the server to SELECT that key — the landed gate honors a cf
+      // sort_by only when the same request asks for it. Ride it along; the
+      // extra column on the rows is harmless (review-caught).
+      if (/^cf_/.test(sort_by) && !cfKeys.includes(sort_by)
+          && CASES_COLUMNS.some((c) => !c.default_on && c.key === sort_by && c.sort)) {
+        cfKeys.push(sort_by);
+      }
+      if (cfKeys.length) params.cf = JSON.stringify(cfKeys);
       if (stages.length) params.stage = stages.join(',');   // CSV → IN on the server
       if (status) params.status = `%${status}%`;
 
       try {
         const data = await apiSend("/api/cases", "GET", params);
         cases = data.cases;
+
+        // The rows now on hand carry exactly the cf keys this fetch asked
+        // for — casesCfEnsure compares against this, success or empty alike.
+        casesCfFetched = cfKeys;
 
         if (data.total > 0) {
           // Parse once here (downstream readers of the `cases` global expect
@@ -3941,6 +4034,13 @@
         else Toast.fire({ icon: "error", title: "Error loading cases", text: err.message });
       }
 
+      // The boot race (review-caught): a fetch dispatched BEFORE casesCfInit
+      // grew the model carries no cf keys, and if the defs answered while it
+      // was in flight, the grown visible set now renders blank cf cells from
+      // rows that never carried the data. Compare what this fetch brought
+      // against what the screen shows NOW; a gap costs one more silent
+      // refetch, which sends the visible keys and so cannot loop.
+      casesCfEnsure();
       E("tabCasesLoad").style.display = "none";
     }
 
@@ -8826,6 +8926,7 @@ async function initAuth() {
       casesColsInit();
       apptsColsInit();
       eventsColsInit();
+      casesCfInit();   // async: appends flagged cf columns, then re-inits Cases
     }
 
     initAuth();

@@ -85,7 +85,9 @@ async function boot({ userId = 6, stored, storageThrows = false } = {}) {
     function openMainTab() {}
     ${slice('const CASES_COLUMNS', '// Headers from the model')}
     var casesColsVis = CASES_COLUMNS;   // the picker's on-screen set (S3a)
+    var casesCfFetched = [];            // + the cf fetch ledger (S4)
     ${fnSrc(INDEX, 'casesRenderRows')}
+    ${fnSrc(INDEX, 'casesCfEnsure')}
     ${slice('const CASES_CAPTION_MODES', '/** Sole opener for the Cases tab')}
     ${fnSrc(INDEX, 'openCasesTab')}
     ${fnSrc(INDEX, 'tabCasesGet')}
