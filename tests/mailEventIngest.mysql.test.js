@@ -52,6 +52,7 @@ maybe('mail_event_ingest on real MySQL', () => {
   const schema = require('./helpers/commsArchiveSchema');
   const { buildConsentTables, CONSENT_TABLES } = require('./helpers/consentSchema');
   const migrate = require('../scripts/yisramailT2Migrate');
+  const migrateC6 = require('../scripts/yisramailC6Migrate');
   const { alert } = require('../lib/alerting');
   const { createTask } = require('../services/taskService');
   const svc = require('../services/mailEventService');
@@ -107,12 +108,20 @@ maybe('mail_event_ingest on real MySQL', () => {
     const t2 = (await q(`SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'campaign_results' AND COLUMN_NAME IN (?)`,
       [Object.keys(migrate.EXPECTED_COLUMNS)])).map((r) => r.n);
     if (t2.length) await q(`ALTER TABLE campaign_results ${t2.map((n) => `DROP COLUMN ${n}`).join(', ')}`);
+    // C6 (engagement): same treatment — drop whatever the dump carried, so the
+    // C6 migration script itself runs and verifies on the real engine below.
+    const c6 = (await q(`SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'campaign_results' AND COLUMN_NAME IN (?)`,
+      [Object.keys(migrateC6.EXPECTED_RESULT_COLUMNS)])).map((r) => r.n);
+    if (c6.length) await q(`ALTER TABLE campaign_results ${c6.map((n) => `DROP COLUMN ${n}`).join(', ')}`);
+    await q('DROP TABLE IF EXISTS campaign_clicks');
     await buildConsentTables(q);
     await q('SET FOREIGN_KEY_CHECKS = 1');
     const conn = await pool.getConnection();
     try {
       const r = await migrate.run(conn, { apply: true, say: () => {} });
       if (!r.ok) throw new Error(r.line);
+      const r6 = await migrateC6.run(conn, { apply: true, say: () => {} });
+      if (!r6.ok) throw new Error(r6.line);
     } finally { conn.release(); }
     await q("INSERT INTO email_credentials (id, email, smtp_host, smtp_port, smtp_user, smtp_pass, provider, from_name) VALUES (17, 'news@news.test', 'email-smtp.us-east-2.amazonaws.com', 587, 'AKIAX', 'x', 'smtp', 'News')");
     await q("INSERT INTO campaigns (campaign_id, type, sender, body, status) VALUES (7, 'email', 'news@news.test', 'b', 'sent'), (8, 'email', 'news@news.test', 'b', 'sent'), (9, 'email', 'other@firm.test', 'b', 'sent')");
@@ -150,7 +159,7 @@ maybe('mail_event_ingest on real MySQL', () => {
   afterAll(async () => {
     if (!pool) return;
     await q('SET FOREIGN_KEY_CHECKS = 0');
-    for (const t of [...TABLES, ...CONSENT_TABLES]) await q(`DROP TABLE IF EXISTS \`${t}\``);
+    for (const t of [...TABLES, ...CONSENT_TABLES, 'campaign_clicks']) await q(`DROP TABLE IF EXISTS \`${t}\``);
     await pool.end();
   });
 
@@ -368,5 +377,131 @@ maybe('mail_event_ingest on real MySQL', () => {
     expect(r).toMatchObject({ success: true, output: { parsed: 1, updated: 1 } });
     const bad = await fns.mail_event_ingest({ event: { source: 'aws.ses' } }, pool);
     expect(bad.output).toMatchObject({ parsed: 0, parse_errors: 1, updated: 0 });
+  });
+
+  // ── C6 engagement (SES Open / Click): its own axis ────────────────────────
+
+  test('an open sets opened_at once — delivery columns, ledger and alerts untouched; a later open never moves it', async () => {
+    const out = await svc.ingest(pool, ev('open', { to: 'x@example.com' }));
+    expect(out).toMatchObject({ parsed: 1, opens: 1, clicks: 0, updated: 0, unknown: 0, ledger: { recorded: 0, duplicate: 0 } });
+    const r = await row(41);
+    expect(r.opened_at).toBeInstanceOf(Date);
+    expect(r.opened_at.toISOString()).toBe('2026-11-05T16:00:00.000Z');
+    expect(r.clicked_at).toBeNull();
+    expect(r.delivery_status).toBe('unknown');
+    expect(r.delivered_at).toBeNull();
+    expect(await events()).toHaveLength(0);
+    expect(alert).not.toHaveBeenCalled();
+    const later = ev('open', { to: 'x@example.com', id: 'open-2' });
+    later.detail.open.timestamp = '2026-11-05T18:00:00.000Z';
+    await svc.ingest(pool, later);
+    expect((await row(41)).opened_at.toISOString()).toBe('2026-11-05T16:00:00.000Z');   // set once
+  });
+
+  test('a click sets clicked_at AND opened_at (a click proves an open) and writes ONE campaign_clicks row; a hook retry of the same event adds nothing', async () => {
+    const body = ev('click', { to: 'x@example.com' });
+    const out = await svc.ingest(pool, body);
+    expect(out).toMatchObject({ clicks: 1, opens: 0, updated: 0, unknown: 0 });
+    const r = await row(41);
+    expect(r.clicked_at.toISOString()).toBe('2026-11-05T16:05:00.000Z');
+    expect(r.opened_at.toISOString()).toBe('2026-11-05T16:05:00.000Z');
+    expect(r.delivery_status).toBe('unknown');
+    const clicks = await q('SELECT campaign_id, result_id, link, provider_event_id FROM campaign_clicks');
+    expect(clicks).toHaveLength(1);
+    expect(clicks[0]).toMatchObject({
+      campaign_id: 7, result_id: 41,
+      link: 'https://www.4lsg.com/news/fall-2026?utm=newsletter',
+      provider_event_id: `${body.id}:x@example.com`,
+    });
+    await svc.ingest(pool, body);                                     // the drain re-ran the event
+    expect(await q('SELECT COUNT(*) AS n FROM campaign_clicks')).toEqual([{ n: 1 }]);
+  });
+
+  test('an open then a click: opened_at keeps the open\'s earlier time; a second click on another link adds its own row, clicked_at stays first-click', async () => {
+    await svc.ingest(pool, ev('open', { to: 'x@example.com' }));
+    await svc.ingest(pool, ev('click', { to: 'x@example.com' }));
+    let r = await row(41);
+    expect(r.opened_at.toISOString()).toBe('2026-11-05T16:00:00.000Z');
+    expect(r.clicked_at.toISOString()).toBe('2026-11-05T16:05:00.000Z');
+    const second = ev('click', { to: 'x@example.com', id: 'click-2' });
+    second.detail.click.link = 'https://www.4lsg.com/contact';
+    second.detail.click.timestamp = '2026-11-05T17:00:00.000Z';
+    await svc.ingest(pool, second);
+    r = await row(41);
+    expect(r.clicked_at.toISOString()).toBe('2026-11-05T16:05:00.000Z');
+    const links = await q('SELECT link, COUNT(*) AS n FROM campaign_clicks GROUP BY link ORDER BY link');
+    expect(links).toEqual([
+      { link: 'https://www.4lsg.com/contact', n: 1 },
+      { link: 'https://www.4lsg.com/news/fall-2026?utm=newsletter', n: 1 },
+    ]);
+  });
+
+  test('an uncorrelated click (foreign tags, unknown message id — a C7 triggered send) stores nothing', async () => {
+    const out = await svc.ingest(pool, ev('click', { to: 'x@example.com', resultId: '999', campaignId: '77', messageId: 'no-such' }));
+    expect(out).toMatchObject({ clicks: 0, opens: 0, unknown: 1, updated: 0 });
+    expect(await q('SELECT COUNT(*) AS n FROM campaign_clicks')).toEqual([{ n: 0 }]);
+    expect((await row(41)).opened_at).toBeNull();
+  });
+
+  test('engagement never raises delivery_status and a delivery event never clears engagement', async () => {
+    await svc.ingest(pool, ev('click', { to: 'x@example.com' }));
+    await svc.ingest(pool, ev('delivery', { to: 'x@example.com', id: 'del-after' }));
+    const r = await row(41);
+    expect(r.delivery_status).toBe('delivered');
+    expect(r.clicked_at.toISOString()).toBe('2026-11-05T16:05:00.000Z');
+  });
+
+  test('engagement NEVER runs the transport-health sweep: over-threshold seeds + one open → no alert; the control delivery → the bounce-rate alert fires', async () => {
+    // Seed campaign 7's transport over the §6.5 line: 200 delivered + 20 hard
+    // bounces inside the window. If engagement joined the per-campaign sweep
+    // (the reviewer's surviving mutation M2), the OPEN alone would alert.
+    const values = [];
+    for (let i = 0; i < 220; i++) {
+      const rid = 1000 + i;
+      values.push(i < 200
+        ? `(${rid}, 7, ${rid}, 'sent', 'delivered', UTC_TIMESTAMP(3))`   // distinct contacts: uq_campaign_contact
+        : `(${rid}, 7, ${rid}, 'sent', 'bounced_hard', NULL)`);
+    }
+    await q(`INSERT INTO campaign_results (result_id, campaign_id, contact_id, status, delivery_status, delivered_at) VALUES ${values.join(',')}`);
+    await q(`UPDATE campaign_results SET bounced_at = UTC_TIMESTAMP(3) WHERE delivery_status = 'bounced_hard' AND result_id >= 1200`);
+
+    const o = await svc.ingest(pool, ev('open', { to: 'x@example.com' }));
+    expect(o).toMatchObject({ opens: 1, alerts: 0 });
+    expect(alert).not.toHaveBeenCalled();
+
+    const d = await svc.ingest(pool, ev('delivery', { to: 'x@example.com', id: 'ctl-delivery' }));
+    expect(d.alerts).toBe(1);
+    expect(alert).toHaveBeenCalledWith(pool, expect.objectContaining({ kind: 'mail_bounce_rate', severity: 'error' }));
+  });
+
+  test('the C6 migration resumes from a half state and NO-GOes on a misshapen column (review N1)', async () => {
+    await q('ALTER TABLE campaign_results DROP COLUMN clicked_at');
+    const conn = await pool.getConnection();
+    try {
+      let r = await migrateC6.run(conn, { say: () => {} });            // CHECK, read-only
+      expect(r).toMatchObject({ ok: true, applied: [] });
+      r = await migrateC6.run(conn, { apply: true, say: () => {} });   // resumes: exactly the missing ALTER
+      expect(r.ok).toBe(true);
+      expect(r.applied).toEqual(['campaign_results.clicked_at']);
+      await q("ALTER TABLE campaign_results MODIFY opened_at datetime NULL COMMENT 'wrong'");
+      r = await migrateC6.run(conn, { apply: true, say: () => {} });   // misshapen → NO-GO, nothing changed
+      expect(r.ok).toBe(false);
+      expect(r.applied).toEqual([]);
+    } finally { conn.release(); }                                      // reset() rebuilds before the next test
+  });
+
+  test('getCampaign (marketing email): delivery block counts opened/clicked; links aggregates clicks and distinct clickers', async () => {
+    await q("UPDATE campaigns SET class = 'marketing', type = 'email' WHERE campaign_id = 7");
+    await svc.ingest(pool, ev('open', { to: 'o@example.com', resultId: '42' }));
+    await svc.ingest(pool, ev('click', { to: 'x@example.com' }));
+    const second = ev('click', { to: 'x@example.com', id: 'click-2' });
+    second.detail.click.timestamp = '2026-11-05T17:00:00.000Z';
+    await svc.ingest(pool, second);                                   // same link, same clicker, new event
+    const { getCampaign } = require('../services/campaignService');   // lazy require (convention)
+    const c = await getCampaign(pool, 7);
+    expect(c.delivery).toMatchObject({ opened: 2, clicked: 1 });
+    expect(c.links).toEqual([
+      { link: 'https://www.4lsg.com/news/fall-2026?utm=newsletter', clicks: 2, clickers: 1 },
+    ]);
   });
 });

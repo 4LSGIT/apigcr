@@ -2055,6 +2055,9 @@ function seqRenderParamField(spec, value, visible) {
   if (spec.widget === 'email_from' && typeof P.fdEmailFromSelectHtml === 'function') {
     return `<div ${wrapperAttrs}>${labelHtml}${P.fdEmailFromSelectHtml(id, value || '')}${helpHtml}</div>`;
   }
+  if (spec.widget === 'email_design' && typeof P.fdEmailDesignSelectHtml === 'function') {
+    return `<div ${wrapperAttrs}>${labelHtml}${P.fdEmailDesignSelectHtml(id, value ?? '')}${helpHtml}</div>`;
+  }
 
   // Type-driven rendering.
   let inputHtml;

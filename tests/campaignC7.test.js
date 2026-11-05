@@ -28,7 +28,7 @@ describe('send_email meta (C7)', () => {
     expect(spec('promotional')).toMatchObject({ type: 'boolean', required: false, default: false });
     expect(spec('topic')).toMatchObject({ type: 'string', required: false });
     expect(spec('marketing_sender')).toMatchObject({ type: 'string', required: false });
-    expect(spec('design_id')).toMatchObject({ type: 'integer', required: false });
+    expect(spec('design_id')).toMatchObject({ type: 'integer', required: false, widget: 'email_design' });
     expect(spec('contact_id')).toMatchObject({ type: 'integer', required: false, placeholderAllowed: true });
   });
 

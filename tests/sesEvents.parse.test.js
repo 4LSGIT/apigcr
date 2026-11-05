@@ -89,6 +89,61 @@ describe('assumed shapes (documented, not producible from the simulator) → nor
     expect(ses.events.parse(body)).toEqual(r.events);
   });
 
+  // C6 engagement — shapes from AWS's event-publishing docs, producible only
+  // once the config set publishes Open/Click (VERIFY(c6-step0), like Reject).
+  test.each([
+    ['open', 'open'],
+    ['click', 'click'],
+  ])('%s: engagement event, no diagnostic, recipient from mail.destination lowercased', (name, type) => {
+    const body = load(name);
+    const r = parse(body);
+    expect(r).toMatchObject({ ignored: 0, unknown_shape: 0, errors: [] });
+    expect(r.events).toHaveLength(1);
+    const e = r.events[0];
+    expect(e).toMatchObject({
+      type, recipient: 'reader@example.com', diagnostic: null,
+      provider_message_id: '0100019a3c2b1a00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-000000',
+      provider_event_id: `${body.id}:reader@example.com`,
+      tags: { campaign_id: '7', result_id: '41' },
+    });
+    expect(ses.EVENT_TYPES).toContain(type);
+  });
+
+  test('open: at is the open timestamp; raw carries userAgent/ipAddress and the eventType', () => {
+    const e = parse(load('open')).events[0];
+    expect(e.at.toISOString()).toBe('2026-11-05T16:00:00.000Z');
+    expect(e.raw).toMatchObject({ eventType: 'Open', ipAddress: '203.0.113.9' });
+    expect(e.raw.userAgent).toMatch(/^Mozilla/);
+  });
+
+  test('click: at is the click timestamp; raw.link is the clicked URL (the campaign_clicks row)', () => {
+    const e = parse(load('click')).events[0];
+    expect(e.at.toISOString()).toBe('2026-11-05T16:05:00.000Z');
+    expect(e.raw).toMatchObject({ eventType: 'Click', link: 'https://www.4lsg.com/news/fall-2026?utm=newsletter' });
+  });
+
+  test('a click whose link exceeds 512 characters is clipped to the campaign_clicks column width', () => {
+    const body = load('click');
+    body.detail.click.link = 'https://www.4lsg.com/' + 'x'.repeat(600);
+    const e = parse(body).events[0];
+    expect(e.raw.link).toHaveLength(512);
+  });
+
+  test('Send and Subscription stay ignored; Open/Click no longer are', () => {
+    const send = load('send');
+    expect(parse(send)).toEqual({ events: [], ignored: 1, unknown_shape: 0, errors: [] });
+    const sub = load('send');
+    sub.detail = { ...sub.detail, eventType: 'Subscription' };
+    expect(parse(sub).ignored).toBe(1);
+    expect(parse(load('open')).ignored).toBe(0);
+    expect(parse(load('click')).ignored).toBe(0);
+  });
+
+  test('an Open/Click whose sub-object is missing is unknown_shape, never a throw', () => {
+    const body = load('open');
+    delete body.detail.open;
+    expect(parse(body)).toMatchObject({ events: [], unknown_shape: 1, errors: [] });
+  });
 });
 
 describe('fan-out, tags, ids', () => {

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-05T03:07:05.410Z
+-- Generated: 2026-11-05T15:21:42.847Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:a31ff514623f7dc4f7e6f69367bba480
+-- Fingerprint: sha256:1699d7345c3ee0fe197a3d161ce4313c
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -445,6 +445,22 @@ CREATE TABLE `calendar_type_options` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `campaign_clicks`
+--
+
+DROP TABLE IF EXISTS `campaign_clicks`;
+CREATE TABLE `campaign_clicks` (
+  `click_id` int unsigned NOT NULL,
+  `campaign_id` int NOT NULL COMMENT 'the campaign the clicked send belongs to (correlated like every SES event: result_id+campaign_id tags, provider_message_id second)',
+  `result_id` int NOT NULL COMMENT 'the campaign_results row of the recipient who clicked. Uncorrelated clicks (no row — e.g. a C7 triggered send) are not stored',
+  `link` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'the clicked URL as SES reports it (detail.click.link), truncated to 512 — grouping and display only. utf8mb4_bin: URL paths/queries are case-sensitive, GROUP BY must not merge case variants',
+  `clicked_at` datetime(3) NOT NULL COMMENT 'UTC event time (detail.click.timestamp)',
+  `provider_event_id` varchar(128) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'EventBridge event id + recipient (ses.js eventIdFor) — the idempotency key: a replayed or hook-retried event inserts nothing (uk_provider_event). The INSERT is INSERT IGNORE inside the event transaction'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='one row per SES Click event on a correlated marketing send (C6). getCampaign aggregates per link. Low volume: every click a recipient makes, firm-sized lists';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `campaign_contacts`
 --
 
@@ -476,7 +492,9 @@ CREATE TABLE `campaign_results` (
   `bounced_at` datetime(3) DEFAULT NULL COMMENT 'UTC time of the first SES Bounce / DeliveryDelay event for this send, hard or soft (mail_event_ingest)',
   `complained_at` datetime(3) DEFAULT NULL COMMENT 'UTC time of the first SES Complaint event for this send (mail_event_ingest)',
   `delivery_diag` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the provider diagnostic behind delivery_status (bounce diagnosticCode, complaint feedback type, reject reason, delay status), at most 255 characters; overwritten only when delivery_status changes',
-  `bounce_subtype` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the SES bounceSubType of the bounce behind delivery_status (mail_event_ingest; set when a bounce raises the status). OnAccountSuppressionList / EmailValidationSuppressed / OnTenantSuppressionList are SES refusing a known-bad address: still bounced_hard and an opt-out, but NOT counted in mailEventService.transportHealth bounce rate (AWS: they do not count toward the bounce rate)'
+  `bounce_subtype` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the SES bounceSubType of the bounce behind delivery_status (mail_event_ingest; set when a bounce raises the status). OnAccountSuppressionList / EmailValidationSuppressed / OnTenantSuppressionList are SES refusing a known-bad address: still bounced_hard and an opt-out, but NOT counted in mailEventService.transportHealth bounce rate (AWS: they do not count toward the bounce rate)',
+  `opened_at` datetime(3) DEFAULT NULL COMMENT 'UTC time of the first SES Open OR Click event for this send (mail_event_ingest — a click proves an open). Set once, engagement axis: never touches delivery_status. Apple MPP prefetch inflates opens; clicks are the honest signal (C6). NULL = no event (every send before C6, and every send while the config set did not publish Open/Click)',
+  `clicked_at` datetime(3) DEFAULT NULL COMMENT 'UTC time of the first SES Click event for this send (mail_event_ingest). Set once. Per-link detail in campaign_clicks. Footer unsubscribe/preference links carry ses:no-track, so an unsubscribe never counts as engagement (C6)'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -4458,6 +4476,14 @@ ALTER TABLE `calendar_type_options`
   ADD KEY `idx_cto_type_active` (`type_key`,`active`);
 
 --
+-- Indexes for table `campaign_clicks`
+--
+ALTER TABLE `campaign_clicks`
+  ADD PRIMARY KEY (`click_id`),
+  ADD UNIQUE KEY `uk_provider_event` (`provider_event_id`),
+  ADD KEY `ix_campaign` (`campaign_id`);
+
+--
 -- Indexes for table `campaign_contacts`
 --
 ALTER TABLE `campaign_contacts`
@@ -5772,6 +5798,12 @@ ALTER TABLE `booking_views`
 --
 ALTER TABLE `calendar_type_options`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `campaign_clicks`
+--
+ALTER TABLE `campaign_clicks`
+  MODIFY `click_id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `campaign_contacts`

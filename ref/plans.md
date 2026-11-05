@@ -1634,8 +1634,12 @@ ref/YISRAMAIL_DESIGN.md §5.4 "As built" says what shipped.
   a new dependency) with an IAM user/role allowed
   `ses:DeleteSuppressedDestination` on the account, called from the consent
   opt-in path for email scope `marketing`. Not built — Fred rules.
-- **Open / click tracking is C6** (D11): the SES event destination publishes no
-  Open/Click today.
+- **Open / click tracking is BUILT (C6, 2026-11-05)** — code side: parser,
+  engagement columns, campaign_clicks, stats, no-track footer links. Dark
+  until the config-set flip (custom redirect domain `r.news.4lsg.com`,
+  us-east-2, + Open/Click event types on the EventBridge destination) — the
+  step-0 snippet and its residue are in the YisraMail C7/C6 deferred block
+  below.
 - **transportHealth scans `campaign_results`** over the 24 h window (no index on
   the *_at columns). Fine at today's volume; when C2 calls it per send at 10k
   rows/day, add an index on `(delivered_at)` / `(bounced_at)` or measure first.
@@ -1794,20 +1798,39 @@ ref/YISRAMAIL_DESIGN.md §6.2 / §6.5 "As built (C4)" say what shipped.
 ## YisraMail C7 (promotional automations, 2026-11-05) — deferred
 
 ref/YISRAMAIL_DESIGN.md §6.4 "As built (C7)" says what shipped.
-- **The birthday default is an open ruling** (Fred, 2026-11-05: "I need to
-  think about the birthday default"): operational (no footer, reaches
-  everyone — D18's stand-in-for-a-person reading) vs promotional (unsubscribe
-  link, consent-gated). The step author picks per workflow meanwhile.
+- **The birthday default is RULED: operational** (Fred, 2026-11-05). A pure
+  greeting is relational mail — no footer, reaches opt-outs (D18's
+  stand-in-for-a-person reading). The line is CONTENT, not occasion: the
+  moment the design carries promotional material (an offer, a newsletter
+  plug) the workflow flips to `promotional: true`. The rule of thumb lives in
+  manual/03-YisraFlow/05-internal-functions.md.
 - **Triggered-send reporting.** sendPromotional writes no campaign_results
   row: its sends are invisible to transportHealth's rates, the §6.5 hold
   thresholds and the daily digest (bounces still suppress via the ledger —
   mail_event_ingest records them uncorrelated). Fine at a handful a day; if
   triggered volume grows, give these sends a results ledger of their own (or
   synthetic campaign rows) so the complaint/bounce math sees them.
-- **A design-picker widget for the step editor.** `design_id` is a bare
-  integer field (the author reads the id off the Designer's "Designs…"
-  list). A `widget: 'email_design'` dropdown needs a shell helper like
-  fdEmailFromSelectHtml.
+- **A per-campaign tracking toggle** (C6 left tracking global, Fred asked
+  2026-11-05, recommendation "not yet" stood): a real toggle is a SECOND SES
+  config set (`yisramail-marketing-notrack`, same EventBridge destination,
+  no trackingOptions) + a campaign column choosing the
+  `X-SES-CONFIGURATION-SET` header per send. The cheap variant — injecting
+  `ses:no-track` into every body link — kills only click wrapping, the open
+  pixel stays; confusing, don't. ~Half a slice when a campaign needs it.
+- **C6 step 0 residue (after the config-set flip;
+  local/2026-11-05_YISRAMAIL_C6_STEP0_RUNBOOK.md):** capture real Open/Click
+  events and promote the two `*.assumed.json` fixtures (the `VERIFY(c6-step0)`
+  markers in services/adapters/email/drivers/ses.js and
+  lib/complianceFooter.js); verify live that `ses:no-track` links (footer AND
+  an author-placed body unsub anchor) arrive UNWRAPPED — **the runbook's
+  stage-3 GO is the precondition for the first real campaign after the
+  flip**, because every "never tracked" claim rests on that attribute; if the
+  EventBridge rule `yisramail-ses-events` was ever tightened to explicit
+  detail-types, add "Email Opened" and "Email Clicked" to its pattern or the
+  hook never sees them; check the identity's custom MAIL FROM shows success
+  in the SES console (the MX pointed at us-east-1 until 2026-11-05 — wrong
+  region for the us-east-2 identity — and nobody recorded whether SES ever
+  flagged it).
 - **Relaxing the promotional-step gate** (campaigns.bulk at every writer —
   lib/promotionalSendGate.js) to "any automation author may send marketing"
   is Fred's call; until then an admin authors or blesses each promotional

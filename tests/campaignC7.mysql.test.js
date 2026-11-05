@@ -182,7 +182,11 @@ d('C7 triggered promotional sends on real MySQL', () => {
   // ─── P: the send itself ────────────────────────────────────
 
   test('the real thing: token (campaign NULL), footer + unsub URL in html AND text, headers, Reply-To, bulk from, email_log WITH body', async () => {
-    const r = await send();
+    // The body carries its OWN unsubscribe anchor (emailDesignRules allows
+    // {{send.unsubscribe_url}} in a body) — C6's addNoTrack must tag it, or
+    // SES click tracking wraps it and an unsubscribe counts as a click.
+    const r = await send({ body: '<html><body><p>Dear {{contacts.contact_fname}}, have a great day.</p>'
+      + '<p><a href="{{send.unsubscribe_url}}">stop these</a> · <a href="https://www.4lsg.com/news">our news</a></p></body></html>' });
     expect(r.sent).toBe(true);
     expect(r.to).toBe('sam@example.com');
     expect(r.providerMessageId).toBeTruthy();
@@ -208,6 +212,11 @@ d('C7 triggered promotional sends on real MySQL', () => {
     expect(h['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
     expect(h['List-Id']).toContain('newsletter.news.test');
     expect(m.html).not.toContain('SIGNATURE-MUST-NOT-APPEAR');
+    // C6: the author's unsub anchor AND the footer's two carry ses:no-track;
+    // the ordinary body link stays bare for click tracking.
+    expect(m.html).toContain(`<a ses:no-track href="${url}">stop these</a>`);
+    expect(m.html.match(/ses:no-track/g)).toHaveLength(3);
+    expect(m.html).toContain('<a href="https://www.4lsg.com/news">our news</a>');
 
     // No campaign snapshot exists, so the log keeps the body (MRPC 7.2(b)).
     for (let i = 0; i < 50 && !(await q("SELECT id FROM email_log WHERE source = 'outbound-smtp'")).length; i++) await new Promise((res) => setTimeout(res, 20));

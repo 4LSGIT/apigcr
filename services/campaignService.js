@@ -915,7 +915,9 @@ async function getCampaign(db, campaignId) {
       `SELECT
          SUM(delivered_at IS NOT NULL)            AS delivered,
          SUM(delivery_status = 'bounced_hard')    AS bounced,
-         SUM(complained_at IS NOT NULL)           AS complained
+         SUM(complained_at IS NOT NULL)           AS complained,
+         SUM(opened_at IS NOT NULL)               AS opened,
+         SUM(clicked_at IS NOT NULL)              AS clicked
        FROM campaign_results WHERE campaign_id = ?`,
       [campaignId]
     );
@@ -944,7 +946,21 @@ async function getCampaign(db, campaignId) {
       bounced:      Number(d.bounced      || 0),
       complained:   Number(d.complained   || 0),
       unsubscribed: Number(u.unsubscribed || 0),
+      // C6 engagement: opened counts opens AND clicks (a click proves an
+      // open); Apple MPP prefetch inflates opens — clicks are the honest
+      // signal, so the UI leads with them. Zero before the config-set flip.
+      opened:       Number(d.opened       || 0),
+      clicked:      Number(d.clicked      || 0),
     };
+    // Per-link clicks (campaign_clicks, one row per SES Click event): total
+    // events + distinct clickers per link, busiest first.
+    const [links] = await db.query(
+      `SELECT link, COUNT(*) AS clicks, COUNT(DISTINCT result_id) AS clickers
+         FROM campaign_clicks WHERE campaign_id = ?
+        GROUP BY link ORDER BY clicks DESC, link LIMIT 10`,
+      [campaignId]
+    );
+    campaign.links = links.map((l) => ({ link: l.link, clicks: Number(l.clicks), clickers: Number(l.clickers) }));
     // The transport's live 24 h rates + held state (the §6.5 hold) — display
     // only; the gate itself runs in executeSend. Sender row gone → null.
     const [[cred]] = await db.query(
@@ -1488,6 +1504,32 @@ async function topicRow(db, topicKey) {
 }
 
 /**
+ * ses:no-track on every anchor whose href is the send's unsubscribe or
+ * preferences URL. Authors may place {{send.unsubscribe_url}} in the BODY
+ * themselves (emailDesignRules allows it) — without this, SES click tracking
+ * wraps that anchor, so an unsubscribe counts as a click and the token rides
+ * the redirect, falsifying the /u/ page's "never tracked" line (C6 review
+ * S2). The footer's own anchors already carry the attribute
+ * (complianceFooter); one that has it is left alone. Matches the exact href
+ * value PREFIX, raw or html-escaped (the body resolves with escape:'html'),
+ * double- or single-quoted: emailDesignRules rule 6 lets a URL merely START
+ * with {{send.unsubscribe_url}}, so `…#x` / `…?a=1` forms are tagged too
+ * (review N8).
+ */
+function addNoTrack(html, urls) {
+  const escAttr = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const wanted = [];
+  for (const u of urls) if (u) { wanted.push(String(u), escAttr(u)); }
+  return String(html).replace(/<a\b([^>]*)>/gi, (m, attrs) => {
+    const h = /\bhref\s*=\s*("([^"]*)"|'([^']*)')/i.exec(attrs);
+    const val = h ? (h[2] !== undefined ? h[2] : h[3]) : null;
+    if (!val || !wanted.some((u) => val.startsWith(u))) return m;
+    if (/ses:no-track/i.test(attrs)) return m;
+    return `<a ses:no-track${attrs}>`;
+  });
+}
+
+/**
  * Render one marketing email (the campaign send AND the test send — one path).
  *   body / subject     the campaign's (unresolved) copy
  *   contactId          resolver refs.contacts
@@ -1519,7 +1561,7 @@ async function renderMarketing(db, { body, subject, contactId, unsubscribeUrl, p
   } catch (err) {
     return { status: 'footer_missing', detail: String(err.message || err) };
   }
-  const html = injectFooter(rb.text, footer.html);
+  const html = addNoTrack(injectFooter(rb.text, footer.html), [unsubscribeUrl, preferencesUrl]);
   const text = `${textPartFor(rb.text)}\n\n${footer.text}`;
   const holes = footerHoles({ html, text, footer, unsubscribeUrl });
   if (holes) return { status: 'footer_missing', detail: `post-render check failed: ${holes.join('; ')}` };
@@ -2731,6 +2773,7 @@ module.exports = {
   footerHoles,
   isAccountPausedError,
   renderMarketing,
+  addNoTrack,
   ensureSendSnapshot,
   holdTransport,
   transportHealthGate,

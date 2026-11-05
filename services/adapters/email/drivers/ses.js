@@ -129,7 +129,7 @@ function messageIdFromResponse(response) {
 const crypto = require('crypto');
 
 /** Normalized types (§5.2). `unsubscribe` is never produced: SES list management is not used (YC owns unsubscribe). */
-const EVENT_TYPES = Object.freeze(['delivered', 'bounce_hard', 'bounce_soft', 'complaint', 'reject', 'rendering_failure']);
+const EVENT_TYPES = Object.freeze(['delivered', 'bounce_hard', 'bounce_soft', 'complaint', 'reject', 'rendering_failure', 'open', 'click']);
 const PROVIDER_EVENT_ID_MAX = 128;   // comm_consent_events.provider_event_id
 const DIAGNOSTIC_MAX = 255;          // campaign_results.delivery_diag
 const TAG_KEYS = Object.freeze(['campaign_id', 'result_id']);
@@ -225,9 +225,28 @@ const SHAPES = Object.freeze({
     diagnostic: () => clip(str(d.failure.errorMessage) || 'rendering failure', DIAGNOSTIC_MAX),
     raw: () => ({ errorMessage: d.failure.errorMessage || null, templateName: d.failure.templateName || null }),
   } : null),
+  // C6 engagement events — produced only once the config set publishes
+  // Open/Click with the custom redirect domain. ENGAGEMENT axis: they never
+  // touch delivery_status or the ledger (mailEventService branches on type).
+  // Shapes from AWS's event-publishing docs; VERIFY(c6-step0) until a real
+  // one is captured after the config-set flip (ref/plans.md).
+  Open: (d) => (isObj(d.open) ? {                                                      // VERIFY(c6-step0)
+    type: () => 'open',
+    recipients: recipientsOf(d.mail && d.mail.destination),
+    at: d.open.timestamp,
+    diagnostic: () => null,
+    raw: () => ({ ipAddress: d.open.ipAddress || null, userAgent: clip(str(d.open.userAgent), DIAGNOSTIC_MAX) }),
+  } : null),
+  Click: (d) => (isObj(d.click) ? {                                                    // VERIFY(c6-step0)
+    type: () => 'click',
+    recipients: recipientsOf(d.mail && d.mail.destination),
+    at: d.click.timestamp,
+    diagnostic: () => null,
+    raw: () => ({ link: clip(str(d.click.link), 512), ipAddress: d.click.ipAddress || null, userAgent: clip(str(d.click.userAgent), DIAGNOSTIC_MAX) }),
+  } : null),
 });
-// Published but carrying no delivery outcome: counted as ignored.
-const IGNORED_EVENT_TYPES = Object.freeze(['Send', 'Open', 'Click', 'Subscription']);
+// Published but carrying no delivery outcome or engagement: counted as ignored.
+const IGNORED_EVENT_TYPES = Object.freeze(['Send', 'Subscription']);
 
 /**
  * body → { events, ignored, unknown_shape, errors }. Never throws.

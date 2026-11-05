@@ -398,6 +398,18 @@ Send a single email via the configured provider (smtp or pabbly).
 
 **Promotional sends (C7).** `promotional: true` makes the step MARKETING mail — the second kind of campaign email: not "send now to many" but "send to a person as something triggers it" (a birthday card, a re-engagement note). It takes the campaign compliance path: consent is checked for the topic and an **opted-out recipient is skipped** (output `{sent: false, skipped: "opted_out"}` — the automation goes on, it never fails on an opt-out); a real unsubscribe token and the compliance footer are added (at the design's locked footer slot); the marketing headers and Reply-To are set; it sends from the marketing transport and is refused while that transport is held or while marketing campaigns are switched off. `from` is ignored; `include_signature` is refused (the footer is the sign-off). **Saving or test-running a promotional step needs the campaigns.bulk capability** (admin role — the same right that sends marketing campaigns); the save is refused otherwise, a `{{placeholder}}` in the promotional field included. That covers EVERY edit of such a step — a non-admin cannot change even its name or position (fail-closed; ask an administrator). Default false = operational (a stand-in for a person, D18): no footer, reaches opt-outs. These sends create no campaign, so they appear in `email_log` (with the body — that is the record of what went out) but not in campaign stats or the daily digest. Two authoring rules: give a promotional step **no retry policy** (the default) — a provider error with no reply may still have sent, and a retry could send twice; and in a *workflow*, put merge tags (`{{contacts.x}}`) only in a **design** (`design_id`), not in inline html — the workflow engine blanks unknown tags to nothing before the send (sequences resolve them).
 
+**Operational or promotional? The line is the content, not the occasion**
+(ruled 2026-11-05). A pure greeting — a birthday card with nothing for sale —
+is operational: it reaches everyone, opt-outs included, with no footer, which
+is what you want from what is really a personal note. The moment the design
+carries promotional material (an offer, a newsletter plug, a call to book),
+set `promotional: true` so consent and the unsubscribe link apply. Since C6
+the `design_id` field is a dropdown of the saved designs by name (workflows
+and sequences; an archived or deleted design's stored id stays visible,
+labeled). The list is fetched once per Automations-page visit — a design
+saved moments ago shows as "#id (unknown design)" until the page reloads;
+the stored value is kept either way.
+
 **Attachment shapes** — `attachment_urls` accepts:
 
 ```json
@@ -1890,7 +1902,7 @@ Recurring-job plumbing, `uiHidden` and denied to CTA links (they spend provider,
 
 ### Email provider events (hidden)
 
-- `mail_event_ingest` — the target of hook `ses-events` only (params mapping `event` ← `body`): one Amazon SES event, delivered by EventBridge, updates the campaign result's delivery columns, records a hard bounce or a spam complaint as a marketing-email opt-out, opens one follow-up task when a client's address hard-bounces, and raises complaint / bounce-rate alerts. `uiHidden`, denied to CTA links. [Campaign manager](../01-YisraCase-overview/11-campaign-manager.md); `ref/YISRAMAIL_DESIGN.md` §5.4.
+- `mail_event_ingest` — the target of hook `ses-events` only (params mapping `event` ← `body`): one Amazon SES event, delivered by EventBridge, updates the campaign result's delivery columns, records a hard bounce or a spam complaint as a marketing-email opt-out, opens one follow-up task when a client's address hard-bounces, and raises complaint / bounce-rate alerts. Open and Click events (C6) stamp the result's `opened_at`/`clicked_at` and the per-link `campaign_clicks` instead — engagement only, never delivery state or opt-outs. `uiHidden`, denied to CTA links. [Campaign manager](../01-YisraCase-overview/11-campaign-manager.md); `ref/YISRAMAIL_DESIGN.md` §5.4.
 
 ### Dropbox
 

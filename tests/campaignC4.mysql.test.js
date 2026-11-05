@@ -40,6 +40,7 @@ d('C4 segments + reporting on real MySQL', () => {
   const c2Migrate = require('../scripts/yisramailC2Migrate');
   const c3Migrate = require('../scripts/yisramailC3Migrate');
   const c4Migrate = require('../scripts/yisramailC4Migrate');
+  const c6Migrate = require('../scripts/yisramailC6Migrate');
   const segService = require('../services/campaignSegmentService');
   const campaignService = require('../services/campaignService');
   const mailEvents = require('../services/mailEventService');
@@ -60,12 +61,15 @@ d('C4 segments + reporting on real MySQL', () => {
     await schema.build(pool, TABLES);
     await buildConsentTables(q);
     await q('DROP TABLE IF EXISTS campaign_segments');
+    await q('DROP TABLE IF EXISTS campaign_clicks');   // C6: ids restart with campaign_results — stale click rows would bleed into links
     const c = await pool.getConnection();
     try {
       expect((await c1Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true);
       expect((await c2Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true);
       expect((await c3Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true);
       expect((await c4Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true);
+      // C6: getCampaign reads opened_at/clicked_at + campaign_clicks now.
+      expect((await c6Migrate.run(c, { apply: true, say: () => {} })).ok).toBe(true);
     } finally { c.release(); }
     await q(`INSERT INTO users (username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, user, email, ringcentral, roles) VALUES
       ('fred', 1, 'Fred', 'Fred', 'F', 'FF', 'authorized', 6, 'fred@firm.test', 0, 'admin')`);
@@ -77,7 +81,7 @@ d('C4 segments + reporting on real MySQL', () => {
   afterAll(async () => { if (pool) await pool.end(); });
 
   beforeEach(async () => {
-    for (const t of ['campaign_segments', 'campaigns', 'campaign_contacts', 'campaign_results', 'comm_consent_events']) await q(`DELETE FROM ${t}`);
+    for (const t of ['campaign_segments', 'campaigns', 'campaign_contacts', 'campaign_results', 'comm_consent_events', 'campaign_clicks']) await q(`DELETE FROM ${t}`);
     await q("UPDATE email_credentials SET held_at = NULL, held_reason = NULL WHERE id = 17");
   });
 
@@ -196,9 +200,10 @@ d('C4 segments + reporting on real MySQL', () => {
       await optOut('other@example.com', String(other), { source: 'pref_page' });  // another campaign's — not here
 
       const c = await campaignService.getCampaign(pool, 70);
-      expect(c.delivery).toEqual({ delivered: 2, bounced: 1, complained: 1, unsubscribed: 1 });
+      // opened/clicked deliberately in the exact shape (C6): no event seeds here, so 0.
+      expect(c.delivery).toEqual({ delivered: 2, bounced: 1, complained: 1, unsubscribed: 1, opened: 0, clicked: 0 });
       const c2 = await campaignService.getCampaign(pool, 71);
-      expect(c2.delivery).toEqual({ delivered: 1, bounced: 0, complained: 0, unsubscribed: 1 });
+      expect(c2.delivery).toEqual({ delivered: 1, bounced: 0, complained: 0, unsubscribed: 1, opened: 0, clicked: 0 });
     });
 
     test('transport block: live rates + held carried; null when the sender row is gone; absent off the marketing-email path', async () => {

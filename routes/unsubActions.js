@@ -240,6 +240,7 @@ function preferencesPage(info, { notice = null } = {}) {
       </form>
       <p style="margin:14px 0 0;font-size:13px;color:${GREY};line-height:1.5">
         These choices cover marketing email only. Email about your case or your appointments is not affected.
+        Our marketing email uses standard open and click tracking; unsubscribe and preference links are never tracked.
       </p>`, f);
 }
 

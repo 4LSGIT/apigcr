@@ -259,6 +259,50 @@ function fdEmailFromSelectHtml(id, currentValue) {
   return _fdHybridLineWidget(id, currentValue, 'email');
 }
 
+// ── Saved Designer templates (C6) ──────────────────────────────
+// For the `widget: 'email_design'` param hint (send_email design_id): pick a
+// saved design by NAME instead of reading its id off the Designer's
+// "Designs…" list. One fetch per manager lifetime, at boot (the editors
+// render synchronously from the cache); until it lands — or if it fails, or
+// none are saved — the widget degrades to a plain id input. include_archived:
+// a stored archived id must label itself, not read as "(unknown)".
+let fdDesignsCache = null;
+function fdEmailDesigns() { return fdDesignsCache || []; }
+(function fdLoadEmailDesigns(attempt = 0) {
+  // FRAMED ONLY: unframed (window.parent === window) there is no shell relay
+  // to reach, and the page's own apiSend — a relay to window.parent.apiSend —
+  // would recurse into itself. The unframed boot must do no work and throw
+  // nothing (tests/wsurlS5ca.test.js pins it).
+  if (window.parent === window) return;
+  if (typeof window.parent.apiSend !== 'function') {
+    if (attempt < 50) setTimeout(() => fdLoadEmailDesigns(attempt + 1), 200);
+    return;
+  }
+  window.parent.apiSend('/api/email-designs?include_archived=1', 'GET')
+    .then((r) => { fdDesignsCache = Array.isArray(r && r.designs) ? r.designs : []; })
+    .catch(() => {});
+})();
+
+function fdEmailDesignSelectHtml(id, currentValue) {
+  // Values are design ids — the editors' integer coercion parses the select's
+  // string, and a blank select omits the param (design_id is optional). No
+  // {{}} toggle: design_id has no placeholderAllowed, a variable would be
+  // refused at save.
+  const designs = fdEmailDesigns();
+  const cur = String(currentValue ?? '');
+  if (!designs.length) {
+    return `<input id="${id}" type="text" value="${esc(cur)}" placeholder="design id (Designer → Designs…)" style="width:100%">`;
+  }
+  const curRow = cur ? designs.find(d => String(d.id) === cur) : null;
+  const customOpt = cur && !curRow
+    ? `<option value="${esc(cur)}" selected>#${esc(cur)} (unknown design)</option>`
+    : (curRow && curRow.archived ? `<option value="${esc(cur)}" selected>${esc(curRow.name)} (#${esc(cur)}, archived)</option>` : '');
+  const blankOpt = `<option value=""${cur ? '' : ' selected'}>— no design —</option>`;
+  const opts = designs.filter(d => !d.archived).map(d =>
+    `<option value="${d.id}" ${String(d.id) === cur ? 'selected' : ''}>${esc(d.name)} (#${d.id})</option>`).join('');
+  return `<select id="${id}" style="width:100%">${blankOpt}${customOpt}${opts}</select>`;
+}
+
 function _fdHybridLineWidget(id, currentValue, kind) {
   const cur = String(currentValue || '');
   const isPlaceholder = /\{\{[^}]+\}\}/.test(cur);
@@ -698,6 +742,8 @@ window.fdUsers             = fdUsers;
 window.fdCurrentUser       = fdCurrentUser;
 window.fdPhoneLineSelectHtml   = fdPhoneLineSelectHtml;
 window.fdEmailFromSelectHtml   = fdEmailFromSelectHtml;
+window.fdEmailDesigns          = fdEmailDesigns;
+window.fdEmailDesignSelectHtml = fdEmailDesignSelectHtml;
 window.fdToggleLineWidget      = fdToggleLineWidget;
 window.fdParamSourceDatalistHtml = fdParamSourceDatalistHtml;
 window.setTopbarButtons    = setTopbarButtons;

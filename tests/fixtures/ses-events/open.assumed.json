@@ -1,0 +1,60 @@
+{
+  "version": "0",
+  "id": "77777777-7777-7777-7777-777777777777",
+  "detail-type": "Email Opened",
+  "source": "aws.ses",
+  "account": "123456789012",
+  "time": "2026-11-05T16:00:05Z",
+  "region": "us-east-2",
+  "resources": [
+    "arn:aws:ses:us-east-2:123456789012:configuration-set/yisramail-marketing"
+  ],
+  "detail": {
+    "eventType": "Open",
+    "mail": {
+      "timestamp": "2026-11-05T15:58:00.000Z",
+      "source": "Legal Solutions Group <news@news.example.com>",
+      "sendingAccountId": "123456789012",
+      "messageId": "0100019a3c2b1a00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-000000",
+      "destination": [
+        "Reader@example.com"
+      ],
+      "headersTruncated": false,
+      "commonHeaders": {
+        "from": [
+          "Legal Solutions Group <news@news.example.com>"
+        ],
+        "to": [
+          "Reader@example.com"
+        ],
+        "messageId": "0100019a3c2b1a00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-000000",
+        "subject": "News"
+      },
+      "tags": {
+        "ses:configuration-set": [
+          "yisramail-marketing"
+        ],
+        "ses:source-ip": [
+          "192.0.2.1"
+        ],
+        "ses:from-domain": [
+          "news.example.com"
+        ],
+        "ses:caller-identity": [
+          "ses-smtp-user"
+        ],
+        "campaign_id": [
+          "7"
+        ],
+        "result_id": [
+          "41"
+        ]
+      }
+    },
+    "open": {
+      "ipAddress": "203.0.113.9",
+      "timestamp": "2026-11-05T16:00:00.000Z",
+      "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"
+    }
+  }
+}

@@ -96,7 +96,7 @@ const SOURCES = [
  * Build a jsdom sandbox holding the real render + gather, wired to a fake
  * editor DOM. Returns a harness that mimics one open-edit-save cycle.
  */
-function makeEditor(fnName, storedParams) {
+function makeEditor(fnName, storedParams, parentHelpers = {}) {
   const meta = internalFunctions.__getMeta(fnName);
   if (!meta) throw new Error(`no __meta for ${fnName}`);
 
@@ -107,7 +107,7 @@ function makeEditor(fnName, storedParams) {
   const ctx = vm.createContext({
     document: window.document,
     window,
-    P: {},                                   // parent shell helpers — no widget specs in play
+    P: parentHelpers,                        // parent shell helpers — default: no widget specs in play
     Swal: { fire: (...a) => swalCalls.push(a) },
     FUNCTIONS: { meta: { [fnName]: meta } },
     WF: {
@@ -549,5 +549,45 @@ describe('workflows.html editor — hand-rolled branches keep-then-overwrite', (
     expect(cfg.url).toBeUndefined();
     expect(cfg._comment).toBeUndefined();
     expect(cfg.code).toBe('');
+  });
+});
+
+// ── C6: the email_design picker (send_email design_id) ─────────────────────
+
+describe('C6: design_id routes through P.fdEmailDesignSelectHtml and round-trips', () => {
+  const STORED = { from: 'office@4lsg.com', to: 'x@y.test', subject: 'S', html: '<p>H</p>', design_id: 3, contact_id: 7 };
+  const PH = {
+    // The manager helper's contract: a select carrying the field id, option
+    // values are design ids, blank means "no design".
+    fdEmailDesignSelectHtml: (id, v) => {
+      const cur = String(v ?? '');
+      return `<select id="${id}">` +
+        `<option value=""${cur ? '' : ' selected'}>— no design —</option>` +
+        `<option value="3"${cur === '3' ? ' selected' : ''}>Birthday card (#3)</option>` +
+        `<option value="9"${cur === '9' ? ' selected' : ''}>Newsletter (#9)</option></select>`;
+    },
+  };
+
+  test('with the helper: a SELECT renders, the stored id is selected, gather returns the integer', () => {
+    const ed = makeEditor('send_email', STORED, PH);
+    const el = ed.field('design_id');
+    expect(el.tagName).toBe('SELECT');
+    expect(el.value).toBe('3');
+    expect(ed.gather().params.design_id).toBe(3);
+    expect(ed.swalCalls).toEqual([]);
+  });
+
+  test('picking another design round-trips it; blanking the select deletes the param', () => {
+    const ed = makeEditor('send_email', STORED, PH);
+    ed.field('design_id').value = '9';
+    expect(ed.gather().params.design_id).toBe(9);
+    ed.field('design_id').value = '';
+    expect(ed.gather().params.design_id).toBeUndefined();
+  });
+
+  test('without the helper the field falls back to the type-driven control and still round-trips', () => {
+    const ed = makeEditor('send_email', STORED);
+    expect(ed.field('design_id').tagName).toBe('INPUT');
+    expect(ed.gather().params.design_id).toBe(3);
   });
 });

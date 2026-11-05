@@ -81,7 +81,8 @@ past leads, prospects and clients. That needs, in order:
 4. **Campaign engine changes** — send class, topics, rate, events, reporting.
 
 Out of scope for v1: marketing SMS (D1), drips/journeys (sequence enrollment
-later), A/B testing, open/click tracking (D11), YC3 provisioning.
+later), A/B testing, YC3 provisioning. Open/click tracking shipped after v1
+as C6 (§6.5 "As built (C6)").
 
 ## 2. Volume assumptions
 
@@ -1105,7 +1106,7 @@ the simulator cannot produce stay on AWS's documented shape, marked
 `VERIFY(step0)`.
 - **Path.** Configuration set `yisramail-marketing` → event destination
   EventBridge (Send, Rendering failure, Reject, Delivery, Hard bounce,
-  Complaint, Delivery delay — no Open/Click, D11) → rule
+  Complaint, Delivery delay; Open/Click join at the C6 config-set flip) → rule
   `yisramail-ses-events` (`source: aws.ses`) → API destination
   `yisramail-hook` (Connection `yisramail-hook-conn`, API key) → hook
   `ses-events` (api_key auth, header **`x-api-key`** — the receiver strips
@@ -1125,7 +1126,8 @@ the simulator cannot produce stay on AWS's documented shape, marked
   `bounce_soft` (an undetermined bounce never opts anyone out); Complaint →
   `complaint` — except a `not-spam` feedback report, which retracts one and is
   ignored (no opt-out, alert or status change); Reject → `reject`; Rendering
-  Failure → `rendering_failure`; Send / Open / Click / Subscription → ignored; a known type without its
+  Failure → `rendering_failure`; Open → `open`, Click → `click` (engagement,
+  C6); Send / Subscription → ignored; a known type without its
   sub-object, or an unknown eventType → `unknown_shape` (counted); not an
   `aws.ses` event → an error (counted). `unsubscribe` is never produced (SES
   list management is not used). `verify` is `true`: the hook's api_key auth
@@ -2140,12 +2142,44 @@ campaign row — reached from a workflow / sequence `send_email` step with
   promotional?)`. Whether the firm's birthday default is operational (no
   footer, reaches everyone) or promotional is an open ruling (`ref/plans.md`).
 
+**As built (C6) — open/click tracking.** Engagement is its OWN AXIS, never
+the delivery one: SES `Open` / `Click` (published only once the config set
+carries the custom tracking domain + the two event types) parse in the ses.js
+driver like every event, correlate identically (result_id+campaign_id tags,
+provider_message_id second), and then branch in mailEventService BEFORE the
+delivery/ledger path — `campaign_results.opened_at` / `clicked_at` are
+set-once (a click proves an open, so a click stamps both), `delivery_status`,
+the consent ledger and the transport-health sweep are untouched. Each
+correlated Click also writes one `campaign_clicks` row, idempotent on
+`provider_event_id` (INSERT IGNORE — a hook-retried event re-runs and a
+counter would double-count where set-once columns cannot). An uncorrelated
+open/click (a C7 triggered send has no results row) stores nothing. Stats
+(getCampaign → the Stats dialog) leads with clicks — opens are approximate,
+Apple MPP prefetches — plus a top-10 per-link list (clicks + distinct
+clickers). `ses:no-track` keeps unsubscribe/preferences URLs out of the tracking
+redirect wherever they appear — the compliance footer's anchors carry it, and
+`campaignService.addNoTrack` tags any BODY anchor whose href resolves to the
+send's unsub/prefs URL (authors may place `{{send.unsubscribe_url}}`
+themselves) — so an unsubscribe never counts as engagement and the /u/ link
+never rides the redirect; the /u/ page discloses the tracking in one line.
+SCOPE: tracking is config-set-wide — over-cap OPERATIONAL campaigns send on
+the same bulk transport, so they carry the pixel and wrapped links too (no
+footer; their engagement surfaces nowhere today). Routing them to a no-track
+config set is the plans.md toggle — Fred's call.
+The step editors gained `widget: 'email_design'` (send_email `design_id`
+picked by name; archived/unknown stored ids label themselves; blank omits).
+Shapes are `VERIFY(c6-step0)` until real events are captured after the flip
+(ref/plans.md). A per-campaign toggle is NOT built — deferred with its sketch
+in ref/plans.md (a second config set, Fred may call for it). Deploy order:
+`scripts/yisramailC6Migrate.js` → backend → frontend → the config-set flip
+(us-east-2; events arriving earlier are ignored by the old parser, harmless).
+
 ### 6.6 What stays out (later, `ref/plans.md`)
 
 Drips/journeys = sequence enrollment from a campaign audience (the existing
 YisraMail direction — no third flow engine); A/B subjects; send-time
-optimization; dynamic content blocks. Open/click tracking is not "out" — it is
-slice C6, after v1 (D11).
+optimization; dynamic content blocks. Open/click tracking is built — §6.5
+"As built (C6)".
 
 ## 7. Builder (DECISION D9)
 
@@ -2261,7 +2295,7 @@ is ruled for that list (ruled 2026-10-30 for SS's own lead lists).
 | C3 | Designs + builder — **built** (§6.3 "As built (C3a — server)", "As built (C3b)" Designer) | spike first (§7, incl. a malicious `design_json`); then `email_designs` with server-side validation on save; Designer editor mode (GrapesJS + MJML); merge-tag picker; locked footer block; asset upload via AssetPicker/`apiSend` | C2 (can build in parallel, lands after) |
 | C4 | Segments + reporting — **built** (§6.2 / §6.5 "As built (C4)") | saved segments (`campaign_segments` + the Select-tab picker); campaign stats incl. `unknown` + delivered / bounced / complained / unsubscribed + transport rates in the Stats dialog; the daily marketing-mail digest (`mail_bounce_digest` recurring job) | C2 |
 | C5 | Outside-list import | provenance-recording import; hygiene check; first-send warm-up order | G2, C2 |
-| C6 | Open/click tracking (v2, D11) | SES config-set open + click events on a **custom tracking domain** under the sending subdomain (not the provider's shared one); `campaign_results.opened_at` / `clicked_at` + per-link click counts; campaign stats; clicks are the primary metric, opens shown as approximate (Apple Mail Privacy Protection pre-fetches images); a per-campaign toggle; one line on the preference page that marketing mail is tracked | C2, C4 |
+| C6 | Open/click tracking — **built** (§6.5 "As built (C6)") | SES config-set open + click events on a **custom tracking domain** under the sending subdomain (`r.news.4lsg.com`, us-east-2); `campaign_results.opened_at` / `clicked_at` + `campaign_clicks` per-link counts; campaign stats lead with clicks, opens shown as approximate (Apple Mail Privacy Protection pre-fetches images); footer unsub/preference links `ses:no-track`; the preference page names the tracking; the design_id picker (`widget: 'email_design'`). The per-campaign toggle moved to ref/plans.md (not built) | C2, C4 |
 | C7 | Promotional automations — **built** (§6.4 "As built (C7)") | `send_email` / `send_sms` gain `promotional` (default false) + `topic`: a promotional automation send takes the marketing path (consent by topic, token, footer, headers, transport rules) and SKIPS opted-out recipients; `design_id` + `contact_id` send a saved Designer template from any automation (both classes); SMS `promotional` refused while D1 stands; the step editors render the new params from __meta | C2, C3 |
 | — | Deferred | marketing SMS (D1), drips via sequences, provider domain provisioning (YC3) | — |
 

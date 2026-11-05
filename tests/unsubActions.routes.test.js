@@ -147,6 +147,9 @@ describe('GET /u/:token — the page', () => {
     expect(html).toContain('name="action" value="all"');
     expect(html).toContain('name="note"');
     expect(html).toContain('Email about your case or your appointments is not affected');
+    // C6 disclosure: tracking is named, and the no-track promise on unsub links is stated
+    expect(html).toContain('standard open and click tracking');
+    expect(html).toContain('unsubscribe and preference links are never tracked');
     expect(html).toContain('100 Main St., #2, Springfield, MI 48000');
     expect(html).toContain('(248) 555-0100');
     expect(html).toContain('id="prefs"');

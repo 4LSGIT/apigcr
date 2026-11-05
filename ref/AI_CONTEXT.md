@@ -289,6 +289,23 @@ body. Governing migrations in `ref/migrations/`.*
   may become a clicker input without review. Account-level SES refusal holds
   the transport and fails the step; promotional steps carry no retry policy
   (an ambiguous failure may have sent; no reservation row to dedupe).
+- **Open/click tracking (YisraMail C6, 2026-11-05 — ref/YISRAMAIL_DESIGN.md
+  §6.5 "As built (C6)"):** SES Open/Click events are ENGAGEMENT, a separate
+  axis from delivery: mailEventService branches on them before the
+  delivery/ledger path — `campaign_results.opened_at`/`clicked_at` set once
+  (a click stamps both), one `campaign_clicks` row per correlated Click
+  (idempotent on provider_event_id — INSERT IGNORE, hook retries double
+  nothing), never delivery_status / the consent ledger / the health sweep.
+  Uncorrelated engagement (C7 triggered sends) stores nothing. Stats lead
+  with clicks (opens are Apple-MPP-inflated). Unsub/preference links carry
+  `ses:no-track` wherever they appear — the footer's, and body anchors via
+  campaignService.addNoTrack — so an unsubscribe is never a click. Over-cap
+  OPERATIONAL campaigns ride the same config set: tracked too (Fred may order
+  the plans.md no-track toggle). Dark until the SES
+  config-set flip (custom tracking domain r.news.4lsg.com, us-east-2);
+  `VERIFY(c6-step0)` markers + the step-0 residue live in ref/plans.md.
+  `widget: 'email_design'` renders send_email's design_id as a named dropdown
+  in both step editors (automationManager caches /api/email-designs once).
 - **Campaign hardening (YisraMail C1, 2026-11-03 — §17 below; ref/YISRAMAIL_DESIGN.md
   §6.1 / §6.4 "As built (C1)"):** campaigns have a class (operational |
   marketing), an operational cap with an audited `campaigns.bulk` over-cap

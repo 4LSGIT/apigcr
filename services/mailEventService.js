@@ -40,6 +40,9 @@
  *      send_ref = the result_id when correlated. No rowId: recordConsent takes
  *      the destination's row lock itself. Soft bounces, delays, deliveries,
  *      rejects and rendering failures write no ledger event.
+ *   4. engagement (C6, SES Open / Click): its own branch BEFORE 2–3 — see
+ *      the ENGAGEMENT constant below. opened_at / clicked_at set once +
+ *      campaign_clicks per click; no status, no ledger, no health sweep.
  * AFTER the commit (never inside the transaction, never failing the event):
  *   - D17: a newly RECORDED hard bounce whose address is an active row of a
  *     contact with an open Primary/Secondary case (phoneConsentService's
@@ -80,6 +83,17 @@ const RANK = Object.freeze({ unknown: 0, bounced_soft: 1, delivered: 2, rejected
 const AT_COLUMN = Object.freeze({ delivered: 'delivered_at', bounce_hard: 'bounced_at', bounce_soft: 'bounced_at', complaint: 'complained_at' });
 /** Normalized event type → the ledger source (no entry = no ledger event). */
 const LEDGER_SOURCE = Object.freeze({ bounce_hard: 'provider_bounce', complaint: 'provider_complaint' });
+/**
+ * C6 engagement events (SES Open / Click): a separate axis — set-once
+ * timestamps only, never delivery_status, never the ledger, never the
+ * transport-health alerts. A click proves an open (clicked_at AND opened_at).
+ * Clicks also land one row each in campaign_clicks, idempotent on
+ * provider_event_id (INSERT IGNORE — a hook-retried event may re-run after
+ * other events failed, and a counter would double-count where the set-once
+ * columns cannot). An uncorrelated open/click (a C7 triggered send has no
+ * campaign_results row) is counted unknown and stores nothing.
+ */
+const ENGAGEMENT = Object.freeze({ open: 'opened_at', click: 'clicked_at' });
 
 const SQL = Object.freeze({
   byResult: 'SELECT result_id, campaign_id, contact_id, delivery_status, provider_message_id FROM campaign_results WHERE result_id = ? FOR UPDATE',
@@ -167,6 +181,26 @@ async function applyEvent(db, ev) {
   const optout = require('./optoutService');   // lazy require (convention)
   return eventTx(db, async (conn) => {
     const hit = await correlate(conn, ev);
+    if (ENGAGEMENT[ev.type]) {
+      // Open/Click fan out over mail.destination (ses.js), so an N-recipient
+      // message would write N rows per click. Latent: campaign sends are
+      // single-recipient, and cc/bcc mail never rides a bulk transport.
+      if (!hit) return { matched: false, by: null, campaign_id: null, ledger: null, engagement: ev.type };
+      const at = ev.at || new Date();
+      const sets = ev.type === 'click'
+        ? 'clicked_at = COALESCE(clicked_at, ?), opened_at = COALESCE(opened_at, ?)'
+        : 'opened_at = COALESCE(opened_at, ?)';
+      await conn.query(`UPDATE campaign_results SET ${sets} WHERE result_id = ?`,
+        ev.type === 'click' ? [at, at, hit.row.result_id] : [at, hit.row.result_id]);
+      if (ev.type === 'click') {
+        await conn.query(
+          'INSERT IGNORE INTO campaign_clicks (campaign_id, result_id, link, clicked_at, provider_event_id) VALUES (?, ?, ?, ?, ?)',
+          [hit.row.campaign_id, hit.row.result_id,
+            (ev.raw && ev.raw.link ? String(ev.raw.link) : '(unknown)').slice(0, 512),
+            at, ev.provider_event_id]);
+      }
+      return { matched: true, by: hit.by, campaign_id: Number(hit.row.campaign_id), ledger: null, engagement: ev.type };
+    }
     if (hit) {
       // Fill the row's message id (correlated by tag, row has none) only when
       // no other row already carries it — never make the second key ambiguous.
@@ -272,8 +306,10 @@ async function transportHealth(db, { credentialId = null, campaignId = null } = 
 
 /**
  * The hook body → everything above. → { parsed, ignored, unknown_shape,
- * parse_errors, updated, unknown, invalid, ledger: {recorded, duplicate},
- * tasks, alerts }
+ * parse_errors, updated, unknown, invalid, opens, clicks,
+ * ledger: {recorded, duplicate}, tasks, alerts }
+ * (opens/clicks count CORRELATED engagement events, C6; an uncorrelated one
+ * counts as unknown.)
  */
 async function ingest(db, body, { driver = 'ses' } = {}) {
   const drivers = { ses: require('./adapters/email/drivers/ses') };
@@ -282,7 +318,7 @@ async function ingest(db, body, { driver = 'ses' } = {}) {
   const p = d.events.parseDetailed(body);
   const out = {
     parsed: p.events.length, ignored: p.ignored, unknown_shape: p.unknown_shape, parse_errors: p.errors.length,
-    updated: 0, unknown: 0, invalid: 0, ledger: { recorded: 0, duplicate: 0 }, tasks: 0, alerts: 0,
+    updated: 0, unknown: 0, invalid: 0, opens: 0, clicks: 0, ledger: { recorded: 0, duplicate: 0 }, tasks: 0, alerts: 0,
   };
   if (p.errors.length) console.warn(`[mail_event_ingest] ${p.errors.length} unparseable event(s): ${p.errors.join('; ').slice(0, 300)}`);
   const campaigns = new Set();
@@ -297,7 +333,10 @@ async function ingest(db, body, { driver = 'ses' } = {}) {
       console.error(`[mail_event_ingest] ${ev.provider_event_id} failed: ${err.message}`);
       continue;
     }
-    if (r.matched) { out.updated += 1; campaigns.add(r.campaign_id); } else out.unknown += 1;
+    // Engagement never joins `campaigns` — the transport-health sweep is a
+    // delivery-outcome concern, and a burst of opens would re-run it for nothing.
+    if (r.engagement) { if (r.matched) out[r.engagement === 'click' ? 'clicks' : 'opens'] += 1; else out.unknown += 1; }
+    else if (r.matched) { out.updated += 1; campaigns.add(r.campaign_id); } else out.unknown += 1;
     if (r.ledger === 'invalid') {
       out.invalid += 1;
       console.warn(`[mail_event_ingest] ${ev.provider_event_id}: "${ev.recipient}" is not an address the ledger can hold — delivery recorded, no opt-out`);
@@ -418,4 +457,4 @@ async function bounceDigestData(db) {
   return { window_h: WINDOW_H, campaigns: rows, transports };
 }
 
-module.exports = { ingest, transportHealth, bounceDigestData, correlate, deliveryUpdate, STATUS_FOR, RANK, AT_COLUMN, LEDGER_SOURCE, SUPPRESSION_SUBTYPES, WINDOW_H, MIN_DELIVERED, HARD_BOUNCE_ALERT_RATE, SQL };
+module.exports = { ingest, transportHealth, bounceDigestData, correlate, deliveryUpdate, STATUS_FOR, RANK, AT_COLUMN, LEDGER_SOURCE, ENGAGEMENT, SUPPRESSION_SUBTYPES, WINDOW_H, MIN_DELIVERED, HARD_BOUNCE_ALERT_RATE, SQL };

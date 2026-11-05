@@ -47,7 +47,7 @@ const ALLOWED_TYPES = new Set([
   'enum', 'iso_datetime', 'duration', 'object', 'array',
 ]);
 
-const ALLOWED_WIDGETS = new Set(['phone_line', 'phone_line_mms', 'email_from']);
+const ALLOWED_WIDGETS = new Set(['phone_line', 'phone_line_mms', 'email_from', 'email_design']);
 
 // Functions that intentionally carry NO __meta. Each entry must have a
 // comment at its definition in lib/internal_functions/ explaining why.

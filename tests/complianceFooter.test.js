@@ -46,9 +46,11 @@ describe('buildComplianceFooter', () => {
     expect(html).toContain('Smith &amp; Jones &lt;Law&gt;');
     expect(html).not.toContain('<Law>');
     expect(html).toContain('Ann &quot;A.&quot; Smith');
-    expect(html).toContain(`<a href="${UNSUB}"`);
+    // ses:no-track on both footer links (C6): the tracking redirect must
+    // never wrap the unsubscribe or preferences URL.
+    expect(html).toContain(`<a ses:no-track href="${UNSUB}"`);
     expect(html).toContain(`>${UNSUB}</a>`);
-    expect(html).toContain(`<a href="${PREFS}"`);
+    expect(html).toContain(`<a ses:no-track href="${PREFS}"`);
     expect(html).toContain('Manage preferences');
     expect(html).toContain('100 Main St., #2, Springfield, MI 48000');
     expect(html).toContain('(248) 555-0100');
