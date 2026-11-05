@@ -228,23 +228,29 @@ const SHAPES = Object.freeze({
   // C6 engagement events — produced only once the config set publishes
   // Open/Click with the custom redirect domain. ENGAGEMENT axis: they never
   // touch delivery_status or the ledger (mailEventService branches on type).
-  // Shapes from AWS's event-publishing docs; VERIFY(c6-step0) until a real
-  // one is captured after the config-set flip (ref/plans.md).
-  Open: (d) => (isObj(d.open) ? {                                                      // VERIFY(c6-step0)
+  // Shapes confirmed on captured events (open.json / click.json, campaign
+  // 120, 2026-11-05). isBotEvent is a STRING on the wire ("Unlikely" on the
+  // captured pair) — a Likely-bot open/click is ignored like a not-spam
+  // complaint: a scanner's click must not stamp engagement (clicks are the
+  // honest metric). Anything that is not Likely/true counts: fail OPEN here,
+  // an over-filtered click can never be recovered.
+  Open: (d) => (isObj(d.open) ? (isBotEngagement(d.open.isBotEvent) ? { ignore: true } : {   // captured: open.json
     type: () => 'open',
     recipients: recipientsOf(d.mail && d.mail.destination),
     at: d.open.timestamp,
     diagnostic: () => null,
-    raw: () => ({ ipAddress: d.open.ipAddress || null, userAgent: clip(str(d.open.userAgent), DIAGNOSTIC_MAX) }),
-  } : null),
-  Click: (d) => (isObj(d.click) ? {                                                    // VERIFY(c6-step0)
+    raw: () => ({ ipAddress: d.open.ipAddress || null, userAgent: clip(str(d.open.userAgent), DIAGNOSTIC_MAX), isBotEvent: d.open.isBotEvent ?? null }),
+  }) : null),
+  Click: (d) => (isObj(d.click) ? (isBotEngagement(d.click.isBotEvent) ? { ignore: true } : {   // captured: click.json
     type: () => 'click',
     recipients: recipientsOf(d.mail && d.mail.destination),
     at: d.click.timestamp,
     diagnostic: () => null,
-    raw: () => ({ link: clip(str(d.click.link), 512), ipAddress: d.click.ipAddress || null, userAgent: clip(str(d.click.userAgent), DIAGNOSTIC_MAX) }),
-  } : null),
+    raw: () => ({ link: clip(str(d.click.link), 512), ipAddress: d.click.ipAddress || null, userAgent: clip(str(d.click.userAgent), DIAGNOSTIC_MAX), isBotEvent: d.click.isBotEvent ?? null }),
+  }) : null),
 });
+/** SES bot verdict on an engagement event → ignore? true / 'true' / 'Likely' only; anything else counts (fail open). */
+function isBotEngagement(v) { return v === true || /^(likely|true)$/i.test(String(v)); }
 // Published but carrying no delivery outcome or engagement: counted as ignored.
 const IGNORED_EVENT_TYPES = Object.freeze(['Send', 'Subscription']);
 

@@ -1,0 +1,129 @@
+{
+  "id": "bfce5f75-8fcb-bcd6-a746-af9cfee3fced",
+  "time": "2026-11-05T18:30:25Z",
+  "detail": {
+    "mail": {
+      "tags": {
+        "result_id": [
+          "297"
+        ],
+        "campaign_id": [
+          "120"
+        ],
+        "ses:operation": [
+          "SendSmtpEmail"
+        ],
+        "ses:source-ip": [
+          "34.34.225.33"
+        ],
+        "ses:from-domain": [
+          "news.4lsg.com"
+        ],
+        "ses:caller-identity": [
+          "yisramail-smtp-2"
+        ],
+        "ses:configuration-set": [
+          "yisramail-marketing"
+        ],
+        "ses:source-tls-version": [
+          "TLSv1.3"
+        ]
+      },
+      "source": "news@news.4lsg.com",
+      "headers": [
+        {
+          "name": "Received",
+          "value": "from [127.0.0.1] ([34.34.225.33]) by email-smtp.amazonaws.com with SMTP (SimpleEmailService-d-I0V705ECL) id TQed7Di7KXzJQFj7YCbN for it@4lsg.com; Thu, 05 Nov 2026 15:46:31 +0000 (UTC)"
+        },
+        {
+          "name": "List-Unsubscribe",
+          "value": "<https://4lsg.com/u/C6CAPTURE0000000000000>"
+        },
+        {
+          "name": "List-Unsubscribe-Post",
+          "value": "List-Unsubscribe=One-Click"
+        },
+        {
+          "name": "List-ID",
+          "value": "<newsletter.news.4lsg.com>"
+        },
+        {
+          "name": "X-Ses-Configuration-Set",
+          "value": "yisramail-marketing"
+        },
+        {
+          "name": "X-Ses-Message-Tags",
+          "value": "campaign_id=120, result_id=297"
+        },
+        {
+          "name": "From",
+          "value": "Legal Solutions Group <news@news.4lsg.com>"
+        },
+        {
+          "name": "To",
+          "value": "it@4lsg.com"
+        },
+        {
+          "name": "Reply-To",
+          "value": "office@4lsg.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Hello Mr.Fred"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<81f73053-c956-3bfe-ba58-1b392667e826@news.4lsg.com>"
+        },
+        {
+          "name": "Date",
+          "value": "Thu, 05 Nov 2026 15:46:31 +0000"
+        },
+        {
+          "name": "MIME-Version",
+          "value": "1.0"
+        },
+        {
+          "name": "Content-Type",
+          "value": "multipart/alternative; boundary=\"--_NmP-706d0d3ea52697ec-Part_1\""
+        }
+      ],
+      "messageId": "010f01a1ac63f088-24bc77e4-7a10-4821-a9ad-78a629730295-000000",
+      "timestamp": "2026-11-05T15:46:33.224Z",
+      "destination": [
+        "it@4lsg.com"
+      ],
+      "commonHeaders": {
+        "to": [
+          "it@4lsg.com"
+        ],
+        "date": "Thu, 05 Nov 2026 15:46:31 +0000",
+        "from": [
+          "Legal Solutions Group <news@news.4lsg.com>"
+        ],
+        "replyTo": [
+          "office@4lsg.com"
+        ],
+        "subject": "Hello Mr.Fred",
+        "messageId": "010f01a1ac63f088-24bc77e4-7a10-4821-a9ad-78a629730295-000000"
+      },
+      "headersTruncated": false,
+      "sendingAccountId": "216822717350"
+    },
+    "open": {
+      "ipAddress": "66.249.93.34",
+      "timestamp": "2026-11-05T18:30:25.538Z",
+      "userAgent": "Mozilla/5.0 (Windows NT 5.1; rv:11.0) Gecko Firefox/11.0 (via ggpht.com GoogleImageProxy)",
+      "isBotEvent": "Unlikely"
+    },
+    "eventType": "Open"
+  },
+  "region": "us-east-2",
+  "source": "aws.ses",
+  "account": "216822717350",
+  "version": "0",
+  "resources": [
+    "arn:aws:ses:us-east-2:216822717350:configuration-set/yisramail-marketing"
+  ],
+  "detail-type": "Email Opened"
+}

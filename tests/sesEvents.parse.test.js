@@ -89,37 +89,56 @@ describe('assumed shapes (documented, not producible from the simulator) → nor
     expect(ses.events.parse(body)).toEqual(r.events);
   });
 
-  // C6 engagement — shapes from AWS's event-publishing docs, producible only
-  // once the config set publishes Open/Click (VERIFY(c6-step0), like Reject).
+  // C6 engagement — CAPTURED events (campaign 120, 2026-11-05, hook_executions
+  // 37185/37186), sanitized only in click.json's ipAddress (the firm's
+  // network) and the link's c= token (it was live); open.json is verbatim —
+  // its 66.249.* IP + ancient-Firefox UA is Gmail's image proxy fetching the
+  // pixel, the "opens are approximate" phenomenon on the record.
   test.each([
     ['open', 'open'],
     ['click', 'click'],
-  ])('%s: engagement event, no diagnostic, recipient from mail.destination lowercased', (name, type) => {
+  ])('%s (captured): engagement event, no diagnostic, recipient from mail.destination', (name, type) => {
     const body = load(name);
     const r = parse(body);
     expect(r).toMatchObject({ ignored: 0, unknown_shape: 0, errors: [] });
     expect(r.events).toHaveLength(1);
     const e = r.events[0];
     expect(e).toMatchObject({
-      type, recipient: 'reader@example.com', diagnostic: null,
-      provider_message_id: '0100019a3c2b1a00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-000000',
-      provider_event_id: `${body.id}:reader@example.com`,
-      tags: { campaign_id: '7', result_id: '41' },
+      type, recipient: 'it@4lsg.com', diagnostic: null,
+      provider_message_id: '010f01a1ac63f088-24bc77e4-7a10-4821-a9ad-78a629730295-000000',
+      provider_event_id: `${body.id}:it@4lsg.com`,
+      tags: { campaign_id: '120', result_id: '297' },
     });
     expect(ses.EVENT_TYPES).toContain(type);
+    expect(body.resources).toEqual(['arn:aws:ses:us-east-2:216822717350:configuration-set/yisramail-marketing']);
   });
 
-  test('open: at is the open timestamp; raw carries userAgent/ipAddress and the eventType', () => {
+  test('open (captured): at is the open timestamp; raw carries userAgent/ipAddress/isBotEvent', () => {
     const e = parse(load('open')).events[0];
-    expect(e.at.toISOString()).toBe('2026-11-05T16:00:00.000Z');
-    expect(e.raw).toMatchObject({ eventType: 'Open', ipAddress: '203.0.113.9' });
+    expect(e.at.toISOString()).toBe('2026-11-05T18:30:25.538Z');
+    expect(e.raw).toMatchObject({ eventType: 'Open', ipAddress: '66.249.93.34', isBotEvent: 'Unlikely' });
     expect(e.raw.userAgent).toMatch(/^Mozilla/);
   });
 
-  test('click: at is the click timestamp; raw.link is the clicked URL (the campaign_clicks row)', () => {
+  test('click (captured): at is the click timestamp; raw.link is the clicked URL (the campaign_clicks row)', () => {
     const e = parse(load('click')).events[0];
-    expect(e.at.toISOString()).toBe('2026-11-05T16:05:00.000Z');
-    expect(e.raw).toMatchObject({ eventType: 'Click', link: 'https://www.4lsg.com/news/fall-2026?utm=newsletter' });
+    expect(e.at.toISOString()).toBe('2026-11-05T18:30:29.347Z');
+    expect(e.raw).toMatchObject({ eventType: 'Click', link: 'https://4lsg.com/b/your-booking-slug?c=00000000000000000000000000000000', isBotEvent: 'Unlikely' });
+  });
+
+  test("a Likely-bot open/click is IGNORED (isBotEvent 'Likely' or true) — a scanner must not stamp engagement; anything else counts", () => {
+    for (const [name, sub] of [['open', 'open'], ['click', 'click']]) {
+      for (const bot of ['Likely', true, 'true']) {
+        const b = load(name);
+        b.detail[sub].isBotEvent = bot;
+        expect(parse(b)).toMatchObject({ events: [], ignored: 1, unknown_shape: 0, errors: [] });
+      }
+      for (const notBot of ['Unlikely', false, undefined, null]) {
+        const b = load(name);
+        if (notBot === undefined) delete b.detail[sub].isBotEvent; else b.detail[sub].isBotEvent = notBot;
+        expect(parse(b).events).toHaveLength(1);
+      }
+    }
   });
 
   test('a click whose link exceeds 512 characters is clipped to the campaign_clicks column width', () => {

@@ -301,9 +301,13 @@ body. Governing migrations in `ref/migrations/`.*
   `ses:no-track` wherever they appear — the footer's, and body anchors via
   campaignService.addNoTrack — so an unsubscribe is never a click. Over-cap
   OPERATIONAL campaigns ride the same config set: tracked too (Fred may order
-  the plans.md no-track toggle). Dark until the SES
-  config-set flip (custom tracking domain r.news.4lsg.com, us-east-2);
-  `VERIFY(c6-step0)` markers + the step-0 residue live in ref/plans.md.
+  the plans.md no-track toggle). LIVE since 2026-11-05: shapes captured
+  (fixtures open.json/click.json); an open/click SES flags as a likely bot
+  (`isBotEvent`, a STRING on the wire — Likely/true ignored, anything else
+  counts) never stamps engagement. The
+  tracking domain is a CNAME to CloudFront (origin r.us-east-2.awstrack.me,
+  Host forwarded, ACM cert in us-east-1) — HTTPS needs the CDN, a bare
+  awstrack CNAME serves the wrong cert (design doc §6.5 As-built C6).
   `widget: 'email_design'` renders send_email's design_id as a named dropdown
   in both step editors (automationManager caches /api/email-designs once).
 - **Campaign hardening (YisraMail C1, 2026-11-03 — §17 below; ref/YISRAMAIL_DESIGN.md

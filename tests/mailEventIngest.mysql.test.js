@@ -386,16 +386,16 @@ maybe('mail_event_ingest on real MySQL', () => {
     expect(out).toMatchObject({ parsed: 1, opens: 1, clicks: 0, updated: 0, unknown: 0, ledger: { recorded: 0, duplicate: 0 } });
     const r = await row(41);
     expect(r.opened_at).toBeInstanceOf(Date);
-    expect(r.opened_at.toISOString()).toBe('2026-11-05T16:00:00.000Z');
+    expect(r.opened_at.toISOString()).toBe('2026-11-05T18:30:25.538Z');
     expect(r.clicked_at).toBeNull();
     expect(r.delivery_status).toBe('unknown');
     expect(r.delivered_at).toBeNull();
     expect(await events()).toHaveLength(0);
     expect(alert).not.toHaveBeenCalled();
     const later = ev('open', { to: 'x@example.com', id: 'open-2' });
-    later.detail.open.timestamp = '2026-11-05T18:00:00.000Z';
+    later.detail.open.timestamp = '2026-11-05T20:00:00.000Z';
     await svc.ingest(pool, later);
-    expect((await row(41)).opened_at.toISOString()).toBe('2026-11-05T16:00:00.000Z');   // set once
+    expect((await row(41)).opened_at.toISOString()).toBe('2026-11-05T18:30:25.538Z');   // set once
   });
 
   test('a click sets clicked_at AND opened_at (a click proves an open) and writes ONE campaign_clicks row; a hook retry of the same event adds nothing', async () => {
@@ -403,14 +403,14 @@ maybe('mail_event_ingest on real MySQL', () => {
     const out = await svc.ingest(pool, body);
     expect(out).toMatchObject({ clicks: 1, opens: 0, updated: 0, unknown: 0 });
     const r = await row(41);
-    expect(r.clicked_at.toISOString()).toBe('2026-11-05T16:05:00.000Z');
-    expect(r.opened_at.toISOString()).toBe('2026-11-05T16:05:00.000Z');
+    expect(r.clicked_at.toISOString()).toBe('2026-11-05T18:30:29.347Z');
+    expect(r.opened_at.toISOString()).toBe('2026-11-05T18:30:29.347Z');
     expect(r.delivery_status).toBe('unknown');
     const clicks = await q('SELECT campaign_id, result_id, link, provider_event_id FROM campaign_clicks');
     expect(clicks).toHaveLength(1);
     expect(clicks[0]).toMatchObject({
       campaign_id: 7, result_id: 41,
-      link: 'https://www.4lsg.com/news/fall-2026?utm=newsletter',
+      link: 'https://4lsg.com/b/your-booking-slug?c=00000000000000000000000000000000',
       provider_event_id: `${body.id}:x@example.com`,
     });
     await svc.ingest(pool, body);                                     // the drain re-ran the event
@@ -421,18 +421,18 @@ maybe('mail_event_ingest on real MySQL', () => {
     await svc.ingest(pool, ev('open', { to: 'x@example.com' }));
     await svc.ingest(pool, ev('click', { to: 'x@example.com' }));
     let r = await row(41);
-    expect(r.opened_at.toISOString()).toBe('2026-11-05T16:00:00.000Z');
-    expect(r.clicked_at.toISOString()).toBe('2026-11-05T16:05:00.000Z');
+    expect(r.opened_at.toISOString()).toBe('2026-11-05T18:30:25.538Z');
+    expect(r.clicked_at.toISOString()).toBe('2026-11-05T18:30:29.347Z');
     const second = ev('click', { to: 'x@example.com', id: 'click-2' });
     second.detail.click.link = 'https://www.4lsg.com/contact';
-    second.detail.click.timestamp = '2026-11-05T17:00:00.000Z';
+    second.detail.click.timestamp = '2026-11-05T19:00:00.000Z';
     await svc.ingest(pool, second);
     r = await row(41);
-    expect(r.clicked_at.toISOString()).toBe('2026-11-05T16:05:00.000Z');
+    expect(r.clicked_at.toISOString()).toBe('2026-11-05T18:30:29.347Z');
     const links = await q('SELECT link, COUNT(*) AS n FROM campaign_clicks GROUP BY link ORDER BY link');
     expect(links).toEqual([
+      { link: 'https://4lsg.com/b/your-booking-slug?c=00000000000000000000000000000000', n: 1 },
       { link: 'https://www.4lsg.com/contact', n: 1 },
-      { link: 'https://www.4lsg.com/news/fall-2026?utm=newsletter', n: 1 },
     ]);
   });
 
@@ -448,7 +448,7 @@ maybe('mail_event_ingest on real MySQL', () => {
     await svc.ingest(pool, ev('delivery', { to: 'x@example.com', id: 'del-after' }));
     const r = await row(41);
     expect(r.delivery_status).toBe('delivered');
-    expect(r.clicked_at.toISOString()).toBe('2026-11-05T16:05:00.000Z');
+    expect(r.clicked_at.toISOString()).toBe('2026-11-05T18:30:29.347Z');
   });
 
   test('engagement NEVER runs the transport-health sweep: over-threshold seeds + one open → no alert; the control delivery → the bounce-rate alert fires', async () => {
@@ -495,13 +495,13 @@ maybe('mail_event_ingest on real MySQL', () => {
     await svc.ingest(pool, ev('open', { to: 'o@example.com', resultId: '42' }));
     await svc.ingest(pool, ev('click', { to: 'x@example.com' }));
     const second = ev('click', { to: 'x@example.com', id: 'click-2' });
-    second.detail.click.timestamp = '2026-11-05T17:00:00.000Z';
+    second.detail.click.timestamp = '2026-11-05T19:00:00.000Z';
     await svc.ingest(pool, second);                                   // same link, same clicker, new event
     const { getCampaign } = require('../services/campaignService');   // lazy require (convention)
     const c = await getCampaign(pool, 7);
     expect(c.delivery).toMatchObject({ opened: 2, clicked: 1 });
     expect(c.links).toEqual([
-      { link: 'https://www.4lsg.com/news/fall-2026?utm=newsletter', clicks: 2, clickers: 1 },
+      { link: 'https://4lsg.com/b/your-booking-slug?c=00000000000000000000000000000000', clicks: 2, clickers: 1 },
     ]);
   });
 });

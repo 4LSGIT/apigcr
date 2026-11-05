@@ -1523,11 +1523,11 @@ tests/fixtures/ses-events/bounce-multi.assumed.json
 tests/fixtures/ses-events/bounce-permanent.json
 tests/fixtures/ses-events/bounce-suppressed.json
 tests/fixtures/ses-events/bounce-transient.json
-tests/fixtures/ses-events/click.assumed.json
+tests/fixtures/ses-events/click.json
 tests/fixtures/ses-events/complaint.json
 tests/fixtures/ses-events/delivery-delay.assumed.json
 tests/fixtures/ses-events/delivery.json
-tests/fixtures/ses-events/open.assumed.json
+tests/fixtures/ses-events/open.json
 tests/fixtures/ses-events/reject.assumed.json
 tests/fixtures/ses-events/rendering-failure.assumed.json
 tests/fixtures/ses-events/send.json

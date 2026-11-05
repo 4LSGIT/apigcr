@@ -1634,12 +1634,11 @@ ref/YISRAMAIL_DESIGN.md §5.4 "As built" says what shipped.
   a new dependency) with an IAM user/role allowed
   `ses:DeleteSuppressedDestination` on the account, called from the consent
   opt-in path for email scope `marketing`. Not built — Fred rules.
-- **Open / click tracking is BUILT (C6, 2026-11-05)** — code side: parser,
-  engagement columns, campaign_clicks, stats, no-track footer links. Dark
-  until the config-set flip (custom redirect domain `r.news.4lsg.com`,
-  us-east-2, + Open/Click event types on the EventBridge destination) — the
-  step-0 snippet and its residue are in the YisraMail C7/C6 deferred block
-  below.
+- **Open / click tracking is LIVE (C6 + flip, 2026-11-05)** — parser,
+  engagement columns, campaign_clicks, stats, no-track links, and the SES
+  config set carries `r.news.4lsg.com` (HTTPS via CloudFront + us-east-1 ACM
+  cert — design doc §6.5 As-built C6) with Open/Click published. Bot-flagged
+  engagement (`isBotEvent` Likely/true) is ignored.
 - **transportHealth scans `campaign_results`** over the 24 h window (no index on
   the *_at columns). Fine at today's volume; when C2 calls it per send at 10k
   rows/day, add an index on `(delivered_at)` / `(bounced_at)` or measure first.
@@ -1817,20 +1816,15 @@ ref/YISRAMAIL_DESIGN.md §6.4 "As built (C7)" says what shipped.
   `X-SES-CONFIGURATION-SET` header per send. The cheap variant — injecting
   `ses:no-track` into every body link — kills only click wrapping, the open
   pixel stays; confusing, don't. ~Half a slice when a campaign needs it.
-- **C6 step 0 residue (after the config-set flip;
-  local/2026-11-05_YISRAMAIL_C6_STEP0_RUNBOOK.md):** capture real Open/Click
-  events and promote the two `*.assumed.json` fixtures (the `VERIFY(c6-step0)`
-  markers in services/adapters/email/drivers/ses.js and
-  lib/complianceFooter.js); verify live that `ses:no-track` links (footer AND
-  an author-placed body unsub anchor) arrive UNWRAPPED — **the runbook's
-  stage-3 GO is the precondition for the first real campaign after the
-  flip**, because every "never tracked" claim rests on that attribute; if the
-  EventBridge rule `yisramail-ses-events` was ever tightened to explicit
-  detail-types, add "Email Opened" and "Email Clicked" to its pattern or the
-  hook never sees them; check the identity's custom MAIL FROM shows success
-  in the SES console (the MX pointed at us-east-1 until 2026-11-05 — wrong
-  region for the us-east-2 identity — and nobody recorded whether SES ever
-  flagged it).
+- **C6 step 0 residue — CLOSED 2026-11-05** (runbook
+  local/2026-11-05_YISRAMAIL_C6_STEP0_RUNBOOK.md, all stages GO): fixtures
+  captured and promoted (campaign 120), `ses:no-track` verified live on the
+  FOOTER links (body links wrapped, footer unsubscribe bare and working;
+  the author-placed body-anchor path — addNoTrack — is proven by the C7
+  twin, campaign 120's body carried no such anchor), EventBridge rule checked,
+  custom MAIL FROM shows success after the MX region fix. The CloudFront/ACM
+  cert layer the flip turned out to need is recorded in the design doc §6.5
+  As-built (C6).
 - **Relaxing the promotional-step gate** (campaigns.bulk at every writer —
   lib/promotionalSendGate.js) to "any automation author may send marketing"
   is Fred's call; until then an admin authors or blesses each promotional

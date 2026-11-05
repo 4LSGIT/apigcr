@@ -1106,7 +1106,7 @@ the simulator cannot produce stay on AWS's documented shape, marked
 `VERIFY(step0)`.
 - **Path.** Configuration set `yisramail-marketing` → event destination
   EventBridge (Send, Rendering failure, Reject, Delivery, Hard bounce,
-  Complaint, Delivery delay; Open/Click join at the C6 config-set flip) → rule
+  Complaint, Delivery delay; Open/Click since the C6 flip, 2026-11-05) → rule
   `yisramail-ses-events` (`source: aws.ses`) → API destination
   `yisramail-hook` (Connection `yisramail-hook-conn`, API key) → hook
   `ses-events` (api_key auth, header **`x-api-key`** — the receiver strips
@@ -2168,11 +2168,26 @@ footer; their engagement surfaces nowhere today). Routing them to a no-track
 config set is the plans.md toggle — Fred's call.
 The step editors gained `widget: 'email_design'` (send_email `design_id`
 picked by name; archived/unknown stored ids label themselves; blank omits).
-Shapes are `VERIFY(c6-step0)` until real events are captured after the flip
-(ref/plans.md). A per-campaign toggle is NOT built — deferred with its sketch
-in ref/plans.md (a second config set, Fred may call for it). Deploy order:
+LIVE since 2026-11-05 (flip + stage-3 verify, campaign 120): shapes confirmed
+on captured events (tests/fixtures/ses-events/open.json / click.json), and
+they carry `isBotEvent` — a STRING ("Unlikely" observed) — so an open/click
+SES flags Likely (or `true`) is IGNORED like a not-spam complaint; anything
+else counts, the Gmail image-proxy open included (fail open — an
+over-filtered click is unrecoverable, and only SES's own verdict is used). INFRA the docs hide: an HTTPS tracking domain cannot be a
+bare CNAME to awstrack (no cert for your name — ERR_CERT_COMMON_NAME_INVALID,
+found live) — `r.news.4lsg.com` is a CNAME to a CloudFront distribution
+(origin `r.us-east-2.awstrack.me`, HTTPS-only, CachingDisabled + AllViewer so
+the Host header forwards — SES requires it) carrying an ACM cert that lives
+in us-east-1 (CloudFront's rule, the one deliberate us-east-1 piece). TWO
+PERMANENT Namecheap records: `r.news.4lsg.com` → the CloudFront domain, and
+the ACM validation CNAME (`_….r.news.4lsg.com` → `….acm-validations.aws`) —
+ACM re-checks the latter to AUTO-RENEW the cert, so deleting it in a DNS
+cleanup kills every tracking link in every email ever sent, silently, about
+a year later. A cert-expiry watchdog job is the planned guard (C6c). A
+per-campaign toggle is NOT built — deferred with its sketch in ref/plans.md
+(a second config set, Fred may call for it). Deploy order was:
 `scripts/yisramailC6Migrate.js` → backend → frontend → the config-set flip
-(us-east-2; events arriving earlier are ignored by the old parser, harmless).
+(us-east-2; events arriving earlier were ignored by the old parser, harmless).
 
 ### 6.6 What stays out (later, `ref/plans.md`)
 
