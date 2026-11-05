@@ -1771,6 +1771,26 @@ ref/YISRAMAIL_DESIGN.md §6.3 "As built (C3b)" says what shipped.
   through the SAME save validator (rules 1–10) — the AI is a design author
   like any other, never a bypass. Scope and timing are Fred's call.
 
+## YisraMail C4 (segments + reporting, 2026-11-05) — deferred
+
+ref/YISRAMAIL_DESIGN.md §6.2 / §6.5 "As built (C4)" say what shipped.
+- **`comm_consent_events.send_ref` has no index.** The per-campaign
+  unsubscribe count (Stats) and the nightly digest join it by a collation-
+  pinned CAST — one hash-join ledger scan per call, fine at today's size.
+  When the ledger grows past ~100k rows, add `KEY ix_send_ref (send_ref)`
+  (ALGORITHM=INPLACE, the live-ALTER script pattern) and drop this note.
+- **The segments picker is a flat select.** Fine at a handful; at dozens it
+  wants the search the API already takes (`q`) and maybe per-user favourites.
+- **Digest timing is fixed at 12:00 UTC** in the recurring job's cron. A
+  firm-local setting would need the job row rewritten on change — not worth
+  it for one firm; edit the row by hand if the hour ever matters.
+- **The Select-tab picker applies only UI-authorable segment shapes.** A
+  segment saved through the API with a subtype and no type, several case
+  stages, a stage outside the static options, or a tag containing a comma
+  loses that part silently when picked (review N2, 2026-11-05). The UI never
+  saves these; fix `ycSegApply` (and the contacts route's comma-split) if
+  API-authored segments become a thing.
+
 ## From the contact-intake safety slices (2026-10-27) — deferred
 
 - **A transfer's donor isn't announced on the sync bus.** "Create a separate

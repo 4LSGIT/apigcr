@@ -902,6 +902,64 @@ async function getCampaign(db, campaignId) {
     pending: campaign.contact_count - Number(summary.results_total || 0)
   };
 
+  // C4 reporting (§6.5): delivery outcomes + the transport's current rates —
+  // marketing email only (operational sends carry no result_id tag, so their
+  // delivery columns never populate; zeros there would read as "nothing
+  // arrived", which is false).
+  if (campaign.class === 'marketing' && campaign.type === 'email') {
+    // Set-once timestamps, not delivery_status alone: a complaint OUTRANKS
+    // delivered (mailEventService RANK), so a complained row still counts as
+    // delivered — the complaint came from a delivered mail. Hard bounces are
+    // terminal, so delivery_status is the honest count there.
+    const [[d]] = await db.query(
+      `SELECT
+         SUM(delivered_at IS NOT NULL)            AS delivered,
+         SUM(delivery_status = 'bounced_hard')    AS bounced,
+         SUM(complained_at IS NOT NULL)           AS complained
+       FROM campaign_results WHERE campaign_id = ?`,
+      [campaignId]
+    );
+    // Unsubscribes from the ledger by send_ref (§6.5): every email opt-out
+    // whose send_ref names one of this campaign's result rows AND came
+    // through an unsubscribe surface — one-click, the /u/ page or the
+    // preferences form (unsubService's three sources). The source filter is
+    // load-bearing: mail_event_ingest writes provider_bounce /
+    // provider_complaint opt-outs with the SAME send_ref, which would count
+    // every bounce and complaint as an unsubscribe too (review B1,
+    // 2026-11-05). No index on send_ref: one hash-join scan of the ledger
+    // per Stats click, fine at today's ledger size. The explicit COLLATE
+    // pins the CAST to send_ref's utf8mb4_general_ci — a bare CAST takes the
+    // connection default and can refuse the join as an illegal collation mix.
+    const [[u]] = await db.query(
+      `SELECT COUNT(DISTINCT e.destination) AS unsubscribed
+         FROM comm_consent_events e
+         JOIN campaign_results cr
+           ON e.send_ref = CAST(cr.result_id AS CHAR) COLLATE utf8mb4_general_ci
+        WHERE cr.campaign_id = ? AND e.channel = 'email' AND e.action = 'opt_out'
+          AND e.source IN ('one_click', 'unsub_page', 'pref_page')`,
+      [campaignId]
+    );
+    campaign.delivery = {
+      delivered:    Number(d.delivered    || 0),
+      bounced:      Number(d.bounced      || 0),
+      complained:   Number(d.complained   || 0),
+      unsubscribed: Number(u.unsubscribed || 0),
+    };
+    // The transport's live 24 h rates + held state (the §6.5 hold) — display
+    // only; the gate itself runs in executeSend. Sender row gone → null.
+    const [[cred]] = await db.query(
+      'SELECT id, held_at, held_reason FROM email_credentials WHERE email = ? LIMIT 1',
+      [campaign.sender]
+    );
+    if (cred) {
+      const mailEvents = require('./mailEventService'); // lazy require (convention)
+      const health = await mailEvents.transportHealth(db, { credentialId: cred.id });
+      campaign.transport = { ...health, held: cred.held_at != null, held_reason: cred.held_at != null ? cred.held_reason : null };
+    } else {
+      campaign.transport = null;
+    }
+  }
+
   return campaign;
 }
 

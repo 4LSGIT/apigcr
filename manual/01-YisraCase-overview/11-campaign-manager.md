@@ -207,12 +207,23 @@ All routes require JWT auth via `jwtOrApiKey`.
 |--------|----------|-------------|
 | `GET` | `/api/campaigns` | List campaigns (paginated). Query: `status`, `page`, `limit` |
 | `POST` | `/api/campaigns` | Create campaign + contacts + jobs |
-| `GET` | `/api/campaigns/:id` | Single campaign with results summary (`results`: sent, failed, skipped, sending, unknown, pending) |
+| `GET` | `/api/campaigns/:id` | Single campaign with results summary (`results`: sent, failed, skipped, sending, unknown, pending). Marketing email campaigns also carry `delivery` (delivered, bounced, complained, unsubscribed — from the provider's events and the consent ledger) and `transport` (the sender's 24 h rates + held state; null when the sender row is gone) |
 | `GET` | `/api/campaigns/:id/results` | Per-contact result details |
 | `PATCH` | `/api/campaigns/:id` | `{ status: "canceled" }` (from scheduled / sending / paused), `{ status: "paused" }` (from scheduled / sending), `{ status: "sending" }` = resume (from paused). 404 missing, 409 not allowed from the current status |
 | `GET` | `/api/campaigns/compose-options` | What the Compose tab offers: marketing senders (each with `held` / `held_reason`), active email topics, the cap, whether marketing is switched on, whether you hold campaigns.bulk, the footer-slot marker |
 | `POST` | `/api/campaigns/test-send` | Marketing "send a test to me": `{ sender, subject, body, topic_key, contactId, attachmentUrl? }` → `{ sent, to, messageId }`. campaigns.bulk; works while marketing is switched off; 422 `transport_held` |
 | `POST` | `/api/campaigns/transports/:id/release` | Lift a marketing transport's hold. Superuser + step-up, audited (`mail_transport_release`); 404 unknown, 409 not held |
+
+### Saved segments
+
+A segment is a **named filter** — exactly the contact-selection filters below, saved under a name and re-run whenever it is picked. It is never a frozen contact list: the campaign's recipients are chosen when the campaign is created, and consent is re-checked per recipient at send, so "Newsletter — everyone" picked next month finds next month's people. A segment never stores the campaign type or topic.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/campaigns/segments` | List (newest first). Query: `q` (name search), `include_archived=1` |
+| `POST` | `/api/campaigns/segments` | `{ name, filter }` → `{ success, id }`. An unknown filter key or wrong shape is a 400 `segment_rejected` |
+| `PUT` | `/api/campaigns/segments/:id` | Rename / re-point in place |
+| `PATCH` | `/api/campaigns/segments/:id` | `{ archived: true\|false }` — archived segments leave the picker, nothing is deleted |
 
 ### Contact Selection
 
@@ -362,6 +373,12 @@ The marketing transport is **held** (stopped) automatically when, over the last 
 
 Only a **superuser** releases it, through the API — `POST /api/campaigns/transports/:id/release` with step-up (there is no button); recorded in the admin audit log. Fix the cause first. Paused campaigns stay paused after the release; resume each one (Resume is refused while the transport is still held).
 
+### Daily digest
+
+Every morning (12:00 UTC — 7 am/8 am Detroit) the **Marketing Mail Digest** job emails a summary of the last 24 hours of marketing email: per campaign, how many were sent, delivered, hard-bounced, complained about and unsubscribed; per marketing sender, the current bounce and complaint rates and whether it is held. It sends **only on a day that saw marketing activity** — quiet days send nothing. A hold or any bounce/complaint/unsubscribe marks the subject `[attention]`.
+
+It goes to *Marketing digest recipient(s)* (Config → System → Alerts), or to the IT alert list when that is blank. *Marketing mail digest* in the same section turns it off (`0`). The job is engine plumbing (`mail_bounce_digest`), not offered in the Scheduled Jobs picker. A held transport on a day with no marketing activity sends no digest — the hold raised its own error alert when it was set.
+
 ## Pause and resume
 
 **Pause** (`{ status: "paused" }`, the Pause button) stops a `scheduled` or `sending` campaign without losing anything: its pending sends stay queued but are set aside (their scheduled time moved 1,000 years out, so a paused campaign never holds up other campaigns' sends), and the pump stops. A send already being processed when you pause finishes normally, or waits 5 minutes and is picked up again on resume. **Resume** (`{ status: "sending" }`, the Resume button) brings every waiting send back — spread out from now at the paced rate (within-cap campaigns: all at once); a campaign paused before its scheduled start keeps its start — and restarts the pump. Cancel works on a paused campaign too.
@@ -401,6 +418,8 @@ Loaded as an iframe in the main app. Uses `P.apiSend()` for all API calls and `P
 
 Filter controls for channel, tags, case type, case stage, and case open date range. Results display in a checkbox table. Info banner shows eligible count and excluded count (opt-out or missing contact info). Beside "N selected", a line says how many of the checked contacts the send will skip for consent (see "What consent removes from a selection" above). Selected contacts are stored in memory for the Compose tab.
 
+**Segment** (the picker at the end of the filter bar) applies a saved filter and searches at once — "Newsletter — everyone" is one pick each month. **Save segment** stores the current filter under a name (keep a picked segment's name to update it, change it to save a new one); **Archive** retires the picked one. If a saved case type no longer exists in the data, the pick warns and searches without it rather than silently matching nothing.
+
 ### Tab 2: Compose
 
 - **Campaign type** — Operational (default; shows the honesty line and the cap) or Marketing (email only; a Topic select appears and the sender list switches to the marketing transports from `/api/campaigns/compose-options`)
@@ -425,7 +444,7 @@ Pick **Designer** in the editor-mode list beside the placeholder list (it takes 
 
 ### Tab 3: View Campaigns
 
-Campaign list with status filter (Paused included). Shows inline progress bar for `sending` and `paused` campaigns ("N in flight" while sends are reserved; auto-polls every 8 seconds while any is sending). Marketing and over-cap campaigns carry a badge. Stats opens per-contact results with the class, topic and the sent / failed / skipped / unknown / in-flight counts. Pause (scheduled / sending), Resume (paused), Cancel and Duplicate actions.
+Campaign list with status filter (Paused included). Shows inline progress bar for `sending` and `paused` campaigns ("N in flight" while sends are reserved; auto-polls every 8 seconds while any is sending). Marketing and over-cap campaigns carry a badge. Stats opens per-contact results with the class, topic and the sent / failed / skipped / unknown / in-flight counts — and, for a marketing email campaign, the delivered / bounced / complaints / unsubscribed counts plus the sender's 24-hour bounce and complaint rates (marked "low volume — rates not decisive" under 200 delivered, and "HELD" with the reason when the transport is held). Pause (scheduled / sending), Resume (paused), Cancel and Duplicate actions.
 
 ### Image Handling
 

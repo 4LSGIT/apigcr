@@ -94,6 +94,7 @@ lib/internal_functions/index.js
 lib/internal_functions/intake.js
 lib/internal_functions/log.js
 lib/internal_functions/mail.js
+lib/internal_functions/mailDigest.js
 lib/internal_functions/pdf.js
 lib/internal_functions/pipeline.js
 lib/internal_functions/portalCallback.js
@@ -650,6 +651,8 @@ ref/migrations/2026-11-03_yisramail_c1_campaign_class.sql
 ref/migrations/2026-11-04_yisramail_c2_marketing_send.sql
 ref/migrations/2026-11-04_yisramail_c3_email_designs.sql
 ref/migrations/2026-11-05_custom_table_s4_field_defs_list_column.sql
+ref/migrations/2026-11-05_yisramail_c4_campaign_segments.sql
+ref/migrations/2026-11-05_yisramail_c4_mail_digest_job.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -1012,6 +1015,7 @@ scripts/verify_strictstring_live.js
 scripts/yisramailC1Migrate.js
 scripts/yisramailC2Migrate.js
 scripts/yisramailC3Migrate.js
+scripts/yisramailC4Migrate.js
 scripts/yisramailP1MigrateConsent.js
 scripts/yisramailP2CheckInbound.js
 scripts/yisramailP3Migrate.js
@@ -1046,6 +1050,7 @@ services/calendarService.js
 services/calendarTypeAdminService.js
 services/calendarTypeService.js
 services/calendarWriteService.js
+services/campaignSegmentService.js
 services/campaignService.js
 services/caseEventService.js
 services/caseService.js
@@ -1242,6 +1247,9 @@ tests/campaignC1.ui.test.js
 tests/campaignC2.mysql.test.js
 tests/campaignC2.test.js
 tests/campaignC2.ui.test.js
+tests/campaignC4.mysql.test.js
+tests/campaignC4.test.js
+tests/campaignC4.ui.test.js
 tests/campaignCaseTypeFilter.test.js
 tests/campaignDesigner.browser.test.js
 tests/campaignDesigner.test.js

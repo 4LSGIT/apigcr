@@ -142,6 +142,10 @@ const CTA_FN_DENYLIST = Object.freeze([
   // opt-outs and campaign delivery state from a provider payload — engine
   // plumbing that only the ses-events hook may run, never a public link.
   'mail_event_ingest',
+  // YisraMail C4 (ref/YISRAMAIL_DESIGN.md §6.5): emails the firm's alert
+  // recipients — engine plumbing driven by its recurring job, never a
+  // public link.
+  'mail_bounce_digest',
 ]);
 
 /** Chromium-backed functions: eligible, but a public repeatable link fans out load. */

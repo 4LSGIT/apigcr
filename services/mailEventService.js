@@ -348,4 +348,74 @@ async function ingest(db, body, { driver = 'ses' } = {}) {
   return out;
 }
 
-module.exports = { ingest, transportHealth, correlate, deliveryUpdate, STATUS_FOR, RANK, AT_COLUMN, LEDGER_SOURCE, SUPPRESSION_SUBTYPES, WINDOW_H, MIN_DELIVERED, HARD_BOUNCE_ALERT_RATE, SQL };
+/**
+ * C4's daily digest data: the last WINDOW_H hours of marketing email, read
+ * only — per campaign with activity (a sent / delivered / bounced /
+ * complained timestamp, or an opt-out whose send_ref names one of its
+ * results, inside the window) and per bulk transport (transportHealth + the
+ * §6.5 held state). Zero activity → { campaigns: [], ... } — the digest
+ * sends nothing.
+ */
+async function bounceDigestData(db) {
+  const W = 'UTC_TIMESTAMP(3) - INTERVAL ? HOUR';
+  const [campaigns] = await db.query(
+    `SELECT cr.campaign_id, c.subject, c.status, c.sender,
+            COALESCE(SUM(cr.status = 'sent' AND cr.sent_at >= ${W}), 0) AS sent,
+            COALESCE(SUM(cr.delivered_at >= ${W}), 0)  AS delivered,
+            COALESCE(SUM(cr.delivery_status = 'bounced_hard' AND cr.bounced_at >= ${W}), 0) AS bounced_hard,
+            COALESCE(SUM(cr.complained_at >= ${W}), 0) AS complained
+       FROM campaign_results cr
+       JOIN campaigns c ON c.campaign_id = cr.campaign_id
+      WHERE c.class = 'marketing' AND c.type = 'email'
+        AND (cr.sent_at >= ${W} OR cr.delivered_at >= ${W} OR cr.bounced_at >= ${W} OR cr.complained_at >= ${W})
+      GROUP BY cr.campaign_id, c.subject, c.status, c.sender
+      ORDER BY cr.campaign_id DESC`,
+    [WINDOW_H, WINDOW_H, WINDOW_H, WINDOW_H, WINDOW_H, WINDOW_H, WINDOW_H, WINDOW_H]);
+
+  // Unsubscribes in the window, by send_ref (the token rides every /u/ path)
+  // and SOURCE — unsubService's three surfaces only: mail_event_ingest writes
+  // provider_bounce / provider_complaint opt-outs with the same send_ref,
+  // which would double-count every bounce and complaint as an unsubscribe
+  // (review B1, 2026-11-05). occurred_at, not created_at: provider time when
+  // known. No send_ref index — one hash-join ledger scan per nightly run.
+  const [unsubs] = await db.query(
+    `SELECT cr.campaign_id, COUNT(DISTINCT e.destination) AS unsubscribed
+       FROM comm_consent_events e
+       JOIN campaign_results cr
+         ON e.send_ref = CAST(cr.result_id AS CHAR) COLLATE utf8mb4_general_ci
+      WHERE e.channel = 'email' AND e.action = 'opt_out' AND e.occurred_at >= ${W}
+        AND e.source IN ('one_click', 'unsub_page', 'pref_page')
+      GROUP BY cr.campaign_id`,
+    [WINDOW_H]);
+  const unsubByCampaign = new Map(unsubs.map((r) => [Number(r.campaign_id), Number(r.unsubscribed)]));
+
+  const rows = campaigns.map((r) => ({
+    campaign_id: Number(r.campaign_id),
+    subject: r.subject,
+    status: r.status,
+    sender: r.sender,
+    sent: Number(r.sent),
+    delivered: Number(r.delivered),
+    bounced_hard: Number(r.bounced_hard),
+    complained: Number(r.complained),
+    unsubscribed: unsubByCampaign.get(Number(r.campaign_id)) || 0,
+  }));
+  // A window-only unsub can reach a campaign whose other timestamps are older.
+  for (const [cid, n] of unsubByCampaign) {
+    if (!rows.some((r) => r.campaign_id === cid)) {
+      const [[c]] = await db.query('SELECT subject, status, sender FROM campaigns WHERE campaign_id = ?', [cid]);
+      rows.push({ campaign_id: cid, subject: c ? c.subject : null, status: c ? c.status : null, sender: c ? c.sender : null,
+        sent: 0, delivered: 0, bounced_hard: 0, complained: 0, unsubscribed: n });
+    }
+  }
+
+  const [creds] = await db.query('SELECT id, email, held_at, held_reason FROM email_credentials WHERE bulk_ok = 1');
+  const transports = [];
+  for (const cred of creds) {
+    const health = await transportHealth(db, { credentialId: cred.id });
+    transports.push({ id: cred.id, email: cred.email, held: cred.held_at != null, held_reason: cred.held_at != null ? cred.held_reason : null, ...health });
+  }
+  return { window_h: WINDOW_H, campaigns: rows, transports };
+}
+
+module.exports = { ingest, transportHealth, bounceDigestData, correlate, deliveryUpdate, STATUS_FOR, RANK, AT_COLUMN, LEDGER_SOURCE, SUPPRESSION_SUBTYPES, WINDOW_H, MIN_DELIVERED, HARD_BOUNCE_ALERT_RATE, SQL };

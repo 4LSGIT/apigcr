@@ -242,6 +242,26 @@ body. Governing migrations in `ref/migrations/`.*
   through `AssetPicker.pick` (never the GrapesJS asset manager / base64). The
   editor is NOT a security boundary (C3a's save rules + C2's assert are).
   `getBody()` is async in campaign.html. Native block drag is a hand check.
+- **Segments + reporting (YisraMail C4, 2026-11-05 — ref/YISRAMAIL_DESIGN.md
+  §6.2 / §6.5 "As built (C4)"; manual 11-campaign-manager.md "Saved segments" /
+  "Daily digest"):** `campaign_segments` = a NAMED compose filter
+  (`campaignSegmentService` validates every save against exactly the
+  GET /campaigns/contacts keys, unknown key = 400 `segment_rejected`, `{}` =
+  everyone; never class/topic), re-run at pick — recipients still freeze at
+  create, consent re-asked at send. `getCampaign` adds `delivery` +
+  `transport` for marketing EMAIL only (delivered by set-once `delivered_at` —
+  a complaint OUTRANKS delivered in `delivery_status`, so never count
+  delivered by status; unsubs from the ledger by `send_ref` AND source ∈
+  one_click/unsub_page/pref_page — provider_bounce/provider_complaint rows
+  carry the SAME send_ref and are not unsubs; the join CAST pinned
+  `COLLATE utf8mb4_general_ci` or it is an illegal mix). Daily digest:
+  `mail_bounce_digest` (uiHidden, CTA-denied) over
+  `mailEventService.bounceDigestData`, recurring job 12:00 UTC
+  (`ref/migrations/2026-11-05_yisramail_c4_mail_digest_job.sql` — SU console,
+  AFTER the backend deploy); sends only on activity; kill
+  `campaign_bounce_digest_enabled`='0' (fresh read); recipient
+  `campaign_bounce_digest_email` → `alert_recipients`; activity with no
+  recipient THROWS (failed-job sweep visibility).
 - **Campaign hardening (YisraMail C1, 2026-11-03 — §17 below; ref/YISRAMAIL_DESIGN.md
   §6.1 / §6.4 "As built (C1)"):** campaigns have a class (operational |
   marketing), an operational cap with an audited `campaigns.bulk` over-cap

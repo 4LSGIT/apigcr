@@ -12,6 +12,10 @@
  * Routes:
  *   GET    /campaigns/contacts      — filter contacts for selection
  *   GET    /campaigns/compose-options — marketing senders, topics, cap, switch state (C1)
+ *   GET    /campaigns/segments      — saved segments for the Select tab (C4)
+ *   POST   /campaigns/segments      — save the current filter as a segment (C4)
+ *   PUT    /campaigns/segments/:id  — rename / re-point a segment (C4)
+ *   PATCH  /campaigns/segments/:id  — archive / unarchive (C4)
  *   POST   /campaigns/preview       — resolve placeholders for preview
  *   POST   /campaigns               — create campaign + jobs
  *   GET    /campaigns               — list campaigns (paginated)
@@ -31,6 +35,7 @@ const express       = require('express');
 const router        = express.Router();
 const jwtOrApiKey   = require('../lib/auth.jwtOrApiKey');
 const campaignService = require('../services/campaignService');
+const segmentService  = require('../services/campaignSegmentService');
 const { superuserOnlyFor } = require('../lib/auth.superuser');
 
 /** { route, method, ip, userAgent } for an audit row. */
@@ -127,6 +132,57 @@ router.get('/api/campaigns/compose-options', jwtOrApiKey, async (req, res) => {
     res.json(await campaignService.getComposeOptions(req.db, req.auth));
   } catch (err) {
     console.error('[GET /campaigns/compose-options]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Saved segments (C4, §6.2) — a named compose filter, re-run when
+// picked; validation (unknown keys refused) in campaignSegmentService.
+// MUST stay above /campaigns/:id, or 'segments' is captured as an id.
+// ─────────────────────────────────────────────────────────────
+router.get('/api/campaigns/segments', jwtOrApiKey, async (req, res) => {
+  try {
+    const segments = await segmentService.listSegments(req.db, {
+      q: req.query.q, includeArchived: req.query.include_archived === '1',
+    });
+    res.json({ segments });
+  } catch (err) {
+    console.error('[GET /campaigns/segments]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/api/campaigns/segments', jwtOrApiKey, async (req, res) => {
+  try {
+    res.json({ success: true, ...(await segmentService.createSegment(req.db, req.body, { userId: req.auth.userId })) });
+  } catch (err) {
+    const known = segmentService.segmentErrorBody(err);
+    if (known) return res.status(known.status).json(known.body);
+    console.error('[POST /campaigns/segments]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/api/campaigns/segments/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    res.json({ success: true, ...(await segmentService.updateSegment(req.db, req.params.id, req.body)) });
+  } catch (err) {
+    const known = segmentService.segmentErrorBody(err);
+    if (known) return res.status(known.status).json(known.body);
+    console.error('[PUT /campaigns/segments/:id]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/api/campaigns/segments/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    await segmentService.setArchived(req.db, req.params.id, req.body ? req.body.archived : undefined);
+    res.json({ success: true });
+  } catch (err) {
+    const known = segmentService.segmentErrorBody(err);
+    if (known) return res.status(known.status).json(known.body);
+    console.error('[PATCH /campaigns/segments/:id]', err);
     res.status(500).json({ error: err.message });
   }
 });

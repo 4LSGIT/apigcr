@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-04T03:38:12.781Z
+-- Generated: 2026-11-05T03:07:05.410Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:946645d60af095cf99ba8d928b77563a
+-- Fingerprint: sha256:a31ff514623f7dc4f7e6f69367bba480
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -478,6 +478,23 @@ CREATE TABLE `campaign_results` (
   `delivery_diag` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the provider diagnostic behind delivery_status (bounce diagnosticCode, complaint feedback type, reject reason, delay status), at most 255 characters; overwritten only when delivery_status changes',
   `bounce_subtype` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the SES bounceSubType of the bounce behind delivery_status (mail_event_ingest; set when a bounce raises the status). OnAccountSuppressionList / EmailValidationSuppressed / OnTenantSuppressionList are SES refusing a known-bad address: still bounced_hard and an opt-out, but NOT counted in mailEventService.transportHealth bounce rate (AWS: they do not count toward the bounce rate)'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `campaign_segments`
+--
+
+DROP TABLE IF EXISTS `campaign_segments`;
+CREATE TABLE `campaign_segments` (
+  `id` int unsigned NOT NULL,
+  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Display name ("Newsletter — everyone"). Not unique: archive keeps the old row, a re-save may reuse the name.',
+  `filter_json` json NOT NULL COMMENT 'The saved contact filter: exactly the GET /api/campaigns/contacts keys (tags[], case_type, case_subtype, case_stage[], case_open_after, case_open_before, channel). {} = everyone. Validated on every save by campaignSegmentService (unknown key refused); RE-RUN when picked in compose — never a frozen contact list, and never class/topic (those belong to the campaign being composed).',
+  `created_by` tinyint unsigned DEFAULT NULL COMMENT 'users.user of the author; NULL when the user is gone.',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `archived` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = hidden from the compose picker; rows are archived, never deleted (a campaign may have been built from one).'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='YisraMail C4 (§6.2): saved audience filters for campaign compose. The filter is re-evaluated at pick time; campaign recipients still freeze at create and consent is re-checked per recipient at send.';
 
 -- --------------------------------------------------------
 
@@ -4457,6 +4474,13 @@ ALTER TABLE `campaign_results`
   ADD KEY `ix_provider_message_id` (`provider_message_id`);
 
 --
+-- Indexes for table `campaign_segments`
+--
+ALTER TABLE `campaign_segments`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `ix_archived_updated` (`archived`,`updated_at`);
+
+--
 -- Indexes for table `campaigns`
 --
 ALTER TABLE `campaigns`
@@ -5760,6 +5784,12 @@ ALTER TABLE `campaign_contacts`
 --
 ALTER TABLE `campaign_results`
   MODIFY `result_id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `campaign_segments`
+--
+ALTER TABLE `campaign_segments`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `campaigns`

@@ -9,7 +9,8 @@ DeliveryDelay / Rendering Failure); C1 (campaign hardening) built — §6.1 and
 §6.4 "As built (C1)"; C2 (the marketing send path) built, landing dark —
 §6.4 / §6.5 "As built (C2)" (the SES account-pause reply shapes are
 `VERIFY(live)`); C3 (designs library + the Designer editor) built — §6.3
-"As built (C3a — server)" / "As built (C3b)"; nothing else built.** Ruled 2026-10-29 (Fred):
+"As built (C3a — server)" / "As built (C3b)"; C4 (segments + reporting)
+built — §6.2 / §6.5 "As built (C4)"; nothing else built.** Ruled 2026-10-29 (Fred):
 D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
 Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
 later; D15 no RC push in v1, D16 over-cap operational sends with
@@ -1415,6 +1416,23 @@ with no token, footer or headers.
   MX check in-app (free); optional paid list verification for cold slices
   (vendor not surveyed). Hard bounces suppress automatically afterwards (§4.2).
 
+**As built (C4) — saved segments.** `campaign_segments` (name + `filter_json`,
+archive flag, no delete; `scripts/yisramailC4Migrate.js` +
+`ref/migrations/2026-11-05_yisramail_c4_campaign_segments.sql`).
+`services/campaignSegmentService.js` validates EVERY save against exactly the
+GET /api/campaigns/contacts filter keys (tags / case_type / case_subtype /
+case_stage / case_open_after / case_open_before / channel) — an unknown key or
+wrong shape is a 400 `segment_rejected`, never stored; `{}` is valid
+("everyone" — the topic's consent state is the list). A segment never carries
+class/topic (those belong to the campaign being composed). Routes
+`GET/POST /api/campaigns/segments`, `PUT/PATCH …/:id` (any staff JWT, above
+`/campaigns/:id` so 'segments' is not captured as an id). The Select tab's
+picker applies the filter to the bar and RE-RUNS the search when picked —
+recipients still freeze at campaign create and consent is re-asked per
+recipient at send, so a stale segment cannot bypass an opt-out; a case type
+the vocabulary no longer offers falls back to "Any" with a visible warning.
+Save updates the picked segment when the name is kept, saves new otherwise.
+
 ### 6.3 Designs library + builder
 
 - New `email_designs` (id, name, builder, design_json, html, text, thumbnail
@@ -1981,6 +1999,37 @@ unchanged. `marketing_send_enabled` stays `'0'` until gate G1.
   unsubscribed / unknown counts (unsubscribes from the ledger by
   `send_ref`) and the transport's current rates.
 
+**As built (C4) — reporting + the daily digest.** `getCampaign` carries a
+`delivery` block for marketing EMAIL campaigns only (operational sends have no
+delivery events — zeros there would lie): delivered by the set-once
+`delivered_at` stamp (a complaint OUTRANKS delivered in the status column, and
+that mail WAS delivered), bounced by terminal `delivery_status =
+'bounced_hard'`, complaints by `complained_at`, unsubscribes from the ledger
+by `send_ref` = the campaign's `result_id`s AND source ∈ one_click /
+unsub_page / pref_page (unsubService's surfaces; mail_event_ingest writes
+provider_bounce / provider_complaint opt-outs with the SAME send_ref, which
+without the source filter count every bounce and complaint as an unsubscribe
+too — review B1, 2026-11-05; the join CAST is pinned
+`COLLATE utf8mb4_general_ci` — send_ref's collation — or the connection
+default makes it an illegal mix). Deliberate asymmetry: the per-campaign
+`bounced` count INCLUDES SES suppression-subtype bounces (the recipient did
+not get the mail) while transportHealth's rates exclude them (they say
+nothing about the transport) — the digest's two tables can differ by that.
+Plus a `transport` block (transportHealth + the §6.5 held state; null when
+the sender row is gone). The Stats dialog renders both; below-volume rates
+say "low volume — rates not decisive" instead of pretending precision.
+The DIGEST: `mail_bounce_digest` (`lib/internal_functions/mailDigest.js`,
+CTA-denied, uiHidden) over `mailEventService.bounceDigestData` — the last
+24 h per campaign + per bulk transport, emailed only when the window saw
+activity; recipient `campaign_bounce_digest_email` → `alert_recipients`,
+sender `alert_from_email` → `email_automations` (the alerting email path's
+resolution); off only when `campaign_bounce_digest_enabled` = `'0'` (fresh
+read each run, never the cfg cache); activity with no recipient THROWS so
+the failed-job sweep sees it. Driven by the daily "Marketing Mail Digest"
+recurring job, 12:00 UTC
+(`ref/migrations/2026-11-05_yisramail_c4_mail_digest_job.sql`, applied
+through the SU console AFTER the C4 backend deploy).
+
 **As built (C2).** The HOLD is `email_credentials.held_at` / `held_reason`
 (per transport, survives restarts, visible in compose — the marketing sender
 reads "— HELD"). `transportHealth` stays computed (no counter table).
@@ -2131,7 +2180,7 @@ is ruled for that list (ruled 2026-10-30 for SS's own lead lists).
 | C1 | Campaign hardening — **built** (§6.1, §6.4 "As built (C1)") | `campaigns.class` / `topic_key`; 50 cap in `createCampaign` + D16 over-cap path; `campaigns.bulk` capability; `bulk_ok` refused for operational; **`marketing_send_enabled` kill switch (`'0'`): marketing refused 422 at create and skipped at send**; **send reservation / at-most-once for every campaign** (`sending` / `unknown` statuses); per-transport rate window at dispatch; per-campaign pump with bounded catch-up; cron per-tick `campaign_send` quota; `paused` status with defer semantics (§6.4 table); operational-class honesty prompt | P1, T1 |
 | C2 | Marketing send path — **built, dark** (§6.4 / §6.5 "As built (C2)"; account-pause shapes `VERIFY(live)`) | executeSend marketing branch: scope check, token mint, explicit text part, footer inject/lock + post-render assert, headers/tags, transport, send-start snapshot (MRPC 7.2(b)), `email_log` without body; **complaint/bounce transport hold enforced before every send** (§6.5); account-pause detection; test send (HTML escaping + the sandboxed preview already shipped — §6.3) | P1, **P2**, P3, C1, T2 |
 | C3 | Designs + builder — **built** (§6.3 "As built (C3a — server)", "As built (C3b)" Designer) | spike first (§7, incl. a malicious `design_json`); then `email_designs` with server-side validation on save; Designer editor mode (GrapesJS + MJML); merge-tag picker; locked footer block; asset upload via AssetPicker/`apiSend` | C2 (can build in parallel, lands after) |
-| C4 | Segments + reporting | saved segments; campaign stats incl. `unknown`; transport-rate display; bounce digest | C2 |
+| C4 | Segments + reporting — **built** (§6.2 / §6.5 "As built (C4)") | saved segments (`campaign_segments` + the Select-tab picker); campaign stats incl. `unknown` + delivered / bounced / complained / unsubscribed + transport rates in the Stats dialog; the daily marketing-mail digest (`mail_bounce_digest` recurring job) | C2 |
 | C5 | Outside-list import | provenance-recording import; hygiene check; first-send warm-up order | G2, C2 |
 | C6 | Open/click tracking (v2, D11) | SES config-set open + click events on a **custom tracking domain** under the sending subdomain (not the provider's shared one); `campaign_results.opened_at` / `clicked_at` + per-link click counts; campaign stats; clicks are the primary metric, opens shown as approximate (Apple Mail Privacy Protection pre-fetches images); a per-campaign toggle; one line on the preference page that marketing mail is tracked | C2, C4 |
 | C7 | Promotional automations | `send_email` / `send_sms` internal functions gain `promotional` (default false) + `topic`: a promotional automation send takes the marketing path (consent check by topic, token, footer, headers, transport rules) and skips opted-out recipients; SMS `promotional` refused while D1 stands. Workflow/sequence editors show the checkbox | C2 |

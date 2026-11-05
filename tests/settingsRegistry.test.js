@@ -89,6 +89,8 @@ describe('classification snapshot', () => {
     "court_ingest_live": "system system switches ui bool",
     "cta_default_timeout_once": "firm cta cta ui duration",
     "cta_default_timeout_repeatable": "firm cta cta ui duration",
+    "campaign_bounce_digest_email": "system system alerts ui string",
+    "campaign_bounce_digest_enabled": "system system alerts ui bool",
     "campaign_marketing_rate": "firm firm consent ui number",
     "campaign_operational_cap": "firm firm consent ui number",
     "consent_task_user_id": "firm firm consent ui user",

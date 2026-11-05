@@ -189,6 +189,17 @@
     </div>
     <button class="btn btn-primary" onclick="searchContacts()">Search</button>
     <button class="btn btn-outline" onclick="clearFilters()">Clear</button>
+    <!-- C4 (§6.2): saved segments — a named filter, re-run when picked.
+         Recipients still freeze at campaign create; consent is re-checked
+         per recipient at send. -->
+    <div class="filter-group">
+      <label>Segment</label>
+      <select id="f-segment" onchange="ycSegApply()">
+        <option value="">—</option>
+      </select>
+    </div>
+    <button class="btn btn-outline" onclick="ycSegSave()">Save segment</button>
+    <button class="btn btn-outline hidden" id="f-segment-archive" onclick="ycSegArchive()">Archive</button>
   </div>
 
   <div id="contact-banner" class="info-banner muted">Select filters and click Search to find contacts.</div>
@@ -544,6 +555,7 @@ async function init() {
   await loadCaseTypeFacets();
   fillCaseTypeFilter();
   await loadComposeOptions();
+  await ycSegLoad();
 
   // Quill — custom image handler uploads to GCS instead of base64 embed
   quill = new Quill('#quill-editor', {
@@ -894,6 +906,134 @@ function clearFilters() {
   document.getElementById('contact-results').classList.add('hidden');
   selectedContacts = [];
   clearConsentPreview();
+  const seg = document.getElementById('f-segment');
+  seg.value = '';
+  document.getElementById('f-segment-archive').classList.add('hidden');
+}
+
+// ─── SAVED SEGMENTS (C4, §6.2) ───────────────────────────────
+// A segment is a NAMED FILTER (the bar above), re-run when picked — never a
+// frozen contact list. Names prefixed yc* so no document/element member can
+// shadow them from an inline handler.
+let segments = [];
+
+async function ycSegLoad(selectId = null) {
+  const sel = document.getElementById('f-segment');
+  try {
+    const r = await P.apiSend('/api/campaigns/segments', 'GET');
+    segments = (r && r.segments) || [];
+  } catch (err) {
+    console.warn('segments unavailable:', err.message);
+    segments = [];
+  }
+  const keep = selectId != null ? String(selectId) : sel.value;
+  sel.innerHTML = '<option value="">—</option>' +
+    segments.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  sel.value = segments.some(s => String(s.id) === keep) ? keep : '';
+  document.getElementById('f-segment-archive').classList.toggle('hidden', !sel.value);
+}
+
+function ycSegPicked() {
+  const v = document.getElementById('f-segment').value;
+  return v ? segments.find(s => String(s.id) === v) || null : null;
+}
+
+/** The filter bar as a segment filter object (only set fields; channel always). */
+function ycSegCurrentFilter() {
+  const f = {};
+  f.channel = document.getElementById('f-channel').value === 'sms' ? 'sms' : 'email';
+  const tags = document.getElementById('f-tags').value.split(',').map(t => t.trim()).filter(Boolean);
+  if (tags.length) f.tags = tags;
+  const typeOpt = document.getElementById('f-case-type').selectedOptions[0];
+  if (typeOpt && typeOpt.dataset.type) f.case_type = typeOpt.dataset.type;
+  if (typeOpt && typeOpt.dataset.subtype) f.case_subtype = typeOpt.dataset.subtype;
+  const stage = document.getElementById('f-case-stage').value;
+  if (stage) f.case_stage = [stage];
+  const after = document.getElementById('f-open-after').value;
+  if (after) f.case_open_after = after;
+  const before = document.getElementById('f-open-before').value;
+  if (before) f.case_open_before = before;
+  return f;
+}
+
+/** Picked segment → the filter bar, then search. A case type the vocabulary
+ *  no longer offers falls back to "Any" with a warning (the search would
+ *  otherwise silently drop that filter). */
+function ycSegApply() {
+  const seg = ycSegPicked();
+  document.getElementById('f-segment-archive').classList.toggle('hidden', !seg);
+  if (!seg) return;
+  const f = seg.filter || {};
+  const chSel = document.getElementById('f-channel');
+  const wantCh = f.channel === 'sms' ? 'sms' : 'email';
+  if (chSel.value !== wantCh) {
+    // Only on a real change: onChannelChange clears the compose attachments
+    // and repopulates senders — applying a same-channel segment must not.
+    chSel.value = wantCh;
+    onChannelChange();
+  }
+  document.getElementById('f-tags').value = (f.tags || []).join(', ');
+  fillCaseTypeFilter();
+  const typeSel = document.getElementById('f-case-type');
+  typeSel.selectedIndex = 0;
+  if (f.case_type) {
+    const want = [...typeSel.options].find(o =>
+      (o.dataset.type || '') === f.case_type && (o.dataset.subtype || '') === (f.case_subtype || ''));
+    if (want) want.selected = true;
+    else Toast.fire({ icon: 'warning', title: `Case type "${f.case_type}${f.case_subtype ? ' / ' + f.case_subtype : ''}" no longer exists — searching without it` });
+  }
+  document.getElementById('f-case-stage').value = Array.isArray(f.case_stage) && f.case_stage.length ? f.case_stage[0] : '';
+  document.getElementById('f-open-after').value = f.case_open_after || '';
+  document.getElementById('f-open-before').value = f.case_open_before || '';
+  searchContacts();
+}
+
+async function ycSegSave() {
+  const picked = ycSegPicked();
+  const r = await Swal.fire({
+    title: 'Save segment',
+    input: 'text',
+    inputValue: picked ? picked.name : '',
+    inputLabel: 'Segment name' + (picked ? ` — keep "${picked.name}" to update it, change it to save a new one` : ''),
+    inputAttributes: { maxlength: 255 },
+    showCancelButton: true,
+    confirmButtonText: 'Save',
+    preConfirm: (v) => { if (!v || !v.trim()) { Swal.showValidationMessage('A name is required'); return false; } return v.trim(); }
+  });
+  if (!r.isConfirmed) return;
+  const name = r.value;
+  const body = { name, filter: ycSegCurrentFilter() };
+  try {
+    let saved;
+    if (picked && picked.name === name) {
+      saved = await P.apiSend(`/api/campaigns/segments/${picked.id}`, 'PUT', body);
+    } else {
+      saved = await P.apiSend('/api/campaigns/segments', 'POST', body);
+    }
+    await ycSegLoad(saved.id);
+    Toast.fire({ icon: 'success', title: `Segment "${name}" saved` });
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: err.message || 'Save failed' });
+  }
+}
+
+async function ycSegArchive() {
+  const picked = ycSegPicked();
+  if (!picked) return;
+  const r = await Swal.fire({
+    title: `Archive "${picked.name}"?`,
+    text: 'It leaves this list; nothing else changes.',
+    icon: 'question', showCancelButton: true, confirmButtonText: 'Archive'
+  });
+  if (!r.isConfirmed) return;
+  try {
+    await P.apiSend(`/api/campaigns/segments/${picked.id}`, 'PATCH', { archived: true });
+    document.getElementById('f-segment').value = '';
+    await ycSegLoad();
+    Toast.fire({ icon: 'success', title: 'Segment archived' });
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: err.message || 'Archive failed' });
+  }
 }
 
 
@@ -1861,10 +2001,18 @@ async function viewStats(id) {
     ]);
 
     const r = campaign.results;
+    // C4 (§6.5): delivery outcomes + the transport's live rates — present on
+    // marketing email campaigns only (operational sends carry no delivery
+    // events, so zeros there would lie).
+    const d = campaign.delivery;
+    const t = campaign.transport;
+    const ratePct = (v) => v == null ? '—' : (v * 100).toFixed(2) + '%';
     let html = `
       <p><strong>Type:</strong> ${campaign.type.toUpperCase()} &nbsp; <strong>Class:</strong> ${esc(campaign.class || 'operational')}${campaign.topic_key ? ` (${esc(campaign.topic_key)})` : ''}${campaign.bulk_confirmed_count != null ? ` — over the cap, ${Number(campaign.bulk_confirmed_count)} confirmed` : ''} &nbsp; <strong>Sender:</strong> ${esc(campaign.sender)}</p>
       <p><strong>Sent:</strong> ${r.sent} &nbsp; <strong>Failed:</strong> ${r.failed} &nbsp; <strong>Skipped:</strong> ${r.skipped} &nbsp; <strong>Unknown:</strong> ${r.unknown || 0} &nbsp; <strong>In flight:</strong> ${r.sending || 0} &nbsp; <strong>Pending:</strong> ${r.pending}</p>
       ${r.unknown ? '<p class="text-muted">Unknown: the provider stopped answering mid-send, so the message may or may not have gone out. It is never resent automatically — check with the recipient if it matters.</p>' : ''}
+      ${d ? `<p><strong>Delivered:</strong> ${d.delivered} &nbsp; <strong>Bounced:</strong> ${d.bounced} &nbsp; <strong>Complaints:</strong> ${d.complained} &nbsp; <strong>Unsubscribed:</strong> ${d.unsubscribed}</p>` : ''}
+      ${t ? `<p class="text-muted">Transport (24 h): bounce ${ratePct(t.bounce_rate)} · complaints ${ratePct(t.complaint_rate)} · ${t.delivered} delivered${t.enough ? '' : ' — low volume, rates not decisive'}${t.held ? ` · <span style="color:var(--danger)">HELD — ${esc(t.held_reason || '')}</span>` : ''}</p>` : ''}
     `;
 
     if (results.length) {

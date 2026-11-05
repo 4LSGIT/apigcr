@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-04T03:56:06.853Z_  
-_840 routes total — DELETE: 68, GET: 350, PATCH: 60, POST: 320, PUT: 39, _ALL: 3_
+_Generated 2026-11-05T03:06:58.463Z_  
+_844 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 321, PUT: 40, _ALL: 3_
 
 ## Global middleware chain
 
@@ -137,6 +137,10 @@ _840 routes total — DELETE: 68, GET: 350, PATCH: 60, POST: 320, PUT: 39, _ALL:
 | GET | `/api/campaigns/compose-options` | `jwtOrApiKey` | — |
 | GET | `/api/campaigns/contacts` | `jwtOrApiKey` | — |
 | POST | `/api/campaigns/preview` | `jwtOrApiKey` | — |
+| GET | `/api/campaigns/segments` | `jwtOrApiKey` | — |
+| POST | `/api/campaigns/segments` | `jwtOrApiKey` | — |
+| PATCH | `/api/campaigns/segments/:id` | `jwtOrApiKey` | — |
+| PUT | `/api/campaigns/segments/:id` | `jwtOrApiKey` | — |
 | POST | `/api/campaigns/test-send` | `jwtOrApiKey` | — |
 | POST | `/api/campaigns/transports/:id/release` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/case-events/audit` | `jwtOrApiKey` | — |
@@ -1120,4 +1124,4 @@ _840 routes total — DELETE: 68, GET: 350, PATCH: 60, POST: 320, PUT: 39, _ALL:
 
 ---
 
-_840 routes total — DELETE: 68, GET: 350, PATCH: 60, POST: 320, PUT: 39, _ALL: 3_
+_844 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 321, PUT: 40, _ALL: 3_
