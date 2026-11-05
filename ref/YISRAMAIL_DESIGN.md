@@ -2192,6 +2192,12 @@ campaign_clicks count, scoped by campaign AND result), and its Full report
 button opens the richer view: the sent→delivered→opened→clicked funnel, the
 top-links table, and a sortable, filterable per-recipient table — all
 client-side over the two fetches Stats already made, no new endpoint. The
+link stats group by the URL's PATH (C6d — merge-tag-personalized query
+strings put one URL per recipient in campaign_clicks, so a literal GROUP BY
+split one logical link into N rows; clickers stay COUNT(DISTINCT result_id)
+across the variants; a SINGLE-variant group keeps its full URL, a merged one
+renders "(N URL variants)" — never "personalized", which the data cannot
+prove: differing ?v= targets merge on one path too, review B1 round 2). The
 daily watchdog `tracking_domain_check` (uiHidden, CTA-denied) probes the
 tracking domain the way AWS's doc verifies it (favicon GET: 200,
 x-amz-ses-region, https protocol) and reads the TLS cert's days-to-expiry

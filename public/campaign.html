@@ -2013,7 +2013,7 @@ async function viewStats(id) {
       ${r.unknown ? '<p class="text-muted">Unknown: the provider stopped answering mid-send, so the message may or may not have gone out. It is never resent automatically — check with the recipient if it matters.</p>' : ''}
       ${d ? `<p><strong>Delivered:</strong> ${d.delivered} &nbsp; <strong>Bounced:</strong> ${d.bounced} &nbsp; <strong>Complaints:</strong> ${d.complained} &nbsp; <strong>Unsubscribed:</strong> ${d.unsubscribed}</p>` : ''}
       ${d && (d.clicked || d.opened) ? `<p><strong>Clicked:</strong> ${d.clicked} &nbsp; <strong>Opened:</strong> ${d.opened} <span class="text-muted">(opens are approximate — mail apps prefetch; clicks are the honest signal)</span></p>` : ''}
-      ${campaign.links && campaign.links.length ? `<p class="text-muted" style="margin:4px 0 0;word-break:break-all">${campaign.links.map(l => `${esc(l.link.length > 90 ? l.link.slice(0, 90) + '…' : l.link)} — ${l.clickers} clicker${l.clickers === 1 ? '' : 's'}, ${l.clicks} click${l.clicks === 1 ? '' : 's'}`).join('<br>')}</p>` : ''}
+      ${campaign.links && campaign.links.length ? `<p class="text-muted" style="margin:4px 0 0;word-break:break-all">${campaign.links.map(l => `${esc(l.link.length > 90 ? l.link.slice(0, 90) + '…' : l.link)}${l.variants > 1 ? ` (${l.variants} URL variants)` : ''} — ${l.clickers} clicker${l.clickers === 1 ? '' : 's'}, ${l.clicks} click${l.clicks === 1 ? '' : 's'}`).join('<br>')}</p>` : ''}
       ${t ? `<p class="text-muted">Transport (24 h): bounce ${ratePct(t.bounce_rate)} · complaints ${ratePct(t.complaint_rate)} · ${t.delivered} delivered${t.enough ? '' : ' — low volume, rates not decisive'}${t.held ? ` · <span style="color:var(--danger)">HELD — ${esc(t.held_reason || '')}</span>` : ''}</p>` : ''}
     `;
 
@@ -2115,7 +2115,7 @@ function ycRepOpen() {
   const funnel = [['Sent', r.sent], ['Delivered', d.delivered], ['Opened', d.opened], ['Clicked', d.clicked]]
     .map(([k, v]) => `<strong>${k}</strong> ${Number(v || 0)}`).join(' <span class="text-muted">→</span> ');
   const linksHtml = (campaign.links || []).map(l =>
-    `<tr><td style="word-break:break-all">${esc(l.link)}</td><td>${l.clickers}</td><td>${l.clicks}</td></tr>`).join('');
+    `<tr><td style="word-break:break-all">${esc(l.link)}${l.variants > 1 ? ` <span class="text-muted">(${l.variants} URL variants — per-recipient tokens or differing parameters)</span>` : ''}</td><td>${l.clickers}</td><td>${l.clicks}</td></tr>`).join('');
   const COLS = [['contact', 'Contact'], ['email', 'Email'], ['status', 'Status'], ['delivery', 'Delivery'], ['opened', 'Opened'], ['clicked', 'Clicked'], ['sent', 'Sent']];
   const SORTABLE = new Set(['contact', 'status', 'delivery', 'opened', 'clicked', 'sent']);
   Swal.fire({

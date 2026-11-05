@@ -952,15 +952,29 @@ async function getCampaign(db, campaignId) {
       opened:       Number(d.opened       || 0),
       clicked:      Number(d.clicked      || 0),
     };
-    // Per-link clicks (campaign_clicks, one row per SES Click event): total
-    // events + distinct clickers per link, busiest first.
+    // Per-link clicks (campaign_clicks, one row per SES Click event), grouped
+    // by the URL's PATH — everything before '?': merge tags personalize the
+    // query per recipient ({{send.*}}, booking c= tokens), so the raw link
+    // column holds one URL per clicker and a literal GROUP BY splits one
+    // logical link into N rows (Fred, campaign 120, 2026-11-05). A group with
+    // ONE variant keeps its FULL URL (C6d review B1 — hiding a lone ?id= was
+    // a display regression); a multi-variant group shows the path and its
+    // variant count, labeled "(N URL variants)" — NOT "personalized": two
+    // ?v= videos on one path merge too, and the label must not guess which.
+    // clickers is COUNT(DISTINCT result_id) across the variants — exact, not
+    // a per-variant sum. The full per-variant URLs stay in campaign_clicks.
     const [links] = await db.query(
-      `SELECT link, COUNT(*) AS clicks, COUNT(DISTINCT result_id) AS clickers
+      `SELECT CASE WHEN COUNT(DISTINCT link) = 1 THEN MIN(link)
+                   ELSE SUBSTRING_INDEX(MIN(link), '?', 1) END AS link,
+              COUNT(*) AS clicks,
+              COUNT(DISTINCT result_id) AS clickers,
+              COUNT(DISTINCT link) AS variants
          FROM campaign_clicks WHERE campaign_id = ?
-        GROUP BY link ORDER BY clicks DESC, link LIMIT 10`,
+        GROUP BY SUBSTRING_INDEX(link, '?', 1)
+        ORDER BY clicks DESC, link LIMIT 10`,
       [campaignId]
     );
-    campaign.links = links.map((l) => ({ link: l.link, clicks: Number(l.clicks), clickers: Number(l.clickers) }));
+    campaign.links = links.map((l) => ({ link: l.link, clicks: Number(l.clicks), clickers: Number(l.clickers), variants: Number(l.variants) }));
     // The transport's live 24 h rates + held state (the §6.5 hold) — display
     // only; the gate itself runs in executeSend. Sender row gone → null.
     const [[cred]] = await db.query(

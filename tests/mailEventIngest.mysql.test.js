@@ -497,21 +497,35 @@ maybe('mail_event_ingest on real MySQL', () => {
     const second = ev('click', { to: 'x@example.com', id: 'click-2' });
     second.detail.click.timestamp = '2026-11-05T19:00:00.000Z';
     await svc.ingest(pool, second);                                   // same link, same clicker, new event
+    // C6d: a PERSONALIZED variant of the same path (another recipient's c=
+    // token, result 42) must group under one logical link — clickers counted
+    // DISTINCT across variants, variants reported.
+    const third = ev('click', { to: 'o@example.com', id: 'click-3', resultId: '42' });
+    third.detail.click.link = 'https://4lsg.com/b/your-booking-slug?c=ffffffffffffffffffffffffffffffff';
+    third.detail.click.timestamp = '2026-11-05T19:30:00.000Z';
+    await svc.ingest(pool, third);
+    // …while a SINGLE-variant query link keeps its FULL URL (C6d review B1 —
+    // the path-only form hid a lone ?id=).
+    const fourth = ev('click', { to: 'x@example.com', id: 'click-4' });
+    fourth.detail.click.link = 'https://x.test/page?id=1';
+    fourth.detail.click.timestamp = '2026-11-05T19:45:00.000Z';
+    await svc.ingest(pool, fourth);
     const { getCampaign, getCampaignResults } = require('../services/campaignService');   // lazy require (convention)
     const c = await getCampaign(pool, 7);
-    expect(c.delivery).toMatchObject({ opened: 2, clicked: 1 });
+    expect(c.delivery).toMatchObject({ opened: 2, clicked: 2 });
     // C6c: per-recipient engagement rides the results rows — clicks counted
     // for THIS recipient only (the subquery is scoped by campaign AND result).
     const rows = await getCampaignResults(pool, 7);
     const byId = Object.fromEntries(rows.map((x) => [x.result_id, x]));
-    expect(Number(byId[41].clicks)).toBe(2);
+    expect(Number(byId[41].clicks)).toBe(3);   // 2× booking variants + the ?id=1 single
     expect(byId[41].clicked_at).toBeInstanceOf(Date);
     expect(byId[41].opened_at).toBeInstanceOf(Date);
-    expect(Number(byId[42].clicks)).toBe(0);
+    expect(Number(byId[42].clicks)).toBe(1);        // the personalized-variant click (C6d)
     expect(byId[42].opened_at).toBeInstanceOf(Date);
-    expect(byId[42].clicked_at).toBeNull();
+    expect(byId[42].clicked_at).toBeInstanceOf(Date);
     expect(c.links).toEqual([
-      { link: 'https://4lsg.com/b/your-booking-slug?c=00000000000000000000000000000000', clicks: 2, clickers: 1 },
+      { link: 'https://4lsg.com/b/your-booking-slug', clicks: 3, clickers: 2, variants: 2 },   // multi-variant → path + count
+      { link: 'https://x.test/page?id=1', clicks: 1, clickers: 1, variants: 1 },               // single variant → FULL URL
     ]);
   });
 });
