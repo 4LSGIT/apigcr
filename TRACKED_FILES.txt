@@ -1756,6 +1756,7 @@ tests/pageLanding.originsep.test.js
 tests/pageService.hostBinding.test.js
 tests/paramsMappingBareScalar.test.js
 tests/paramsMappingCsvList.test.js
+tests/passwordAutofill.test.js
 tests/pdfRender.test.js
 tests/pdfRenderIntegration.test.js
 tests/phoneConsent.classify.test.js

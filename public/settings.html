@@ -214,12 +214,24 @@
     <div class="section collapsed">
       <div class="sec-head"><h2><span class="chev">▸</span>Change Password</h2></div>
       <div class="sec-body">
-        <div class="grid2">
-          <div><label class="fld">Current Password</label><input type="password" id="pwCurrent" autocomplete="current-password"></div>
-          <div></div>
-          <div><label class="fld">New Password</label><input type="password" id="pwNew" autocomplete="new-password"></div>
-          <div><label class="fld">Confirm New Password</label><input type="password" id="pwConfirm" autocomplete="new-password"></div>
-        </div>
+        <!-- A REAL <form> around the password fields, with a hidden username
+             in it (filled by renderProfile). Nothing else on this page is a
+             form, so without it Chrome's password manager treats the whole
+             document as one login form: it pairs this password with the
+             nearest visible text input before it — the My Account Username
+             box (#pUsername) — and fills the saved login name into it, so a
+             profile save can write a value nobody typed. The form scopes the
+             pair. onsubmit is refused: the change only goes through the
+             Change Password button. -->
+        <form id="pwForm" onsubmit="return false">
+          <input type="text" id="pwUser" autocomplete="username" hidden>
+          <div class="grid2">
+            <div><label class="fld">Current Password</label><input type="password" id="pwCurrent" autocomplete="current-password"></div>
+            <div></div>
+            <div><label class="fld">New Password</label><input type="password" id="pwNew" autocomplete="new-password"></div>
+            <div><label class="fld">Confirm New Password</label><input type="password" id="pwConfirm" autocomplete="new-password"></div>
+          </div>
+        </form>
         <div class="btn-row">
           <button class="btn primary" id="pwSave">Change Password</button>
           <span class="status" id="pwStatus"></span>
@@ -319,6 +331,7 @@ function renderProfile() {
   E('pFname').value    = u.user_fname || '';
   E('pLname').value    = u.user_lname || '';
   E('pUsername').value = u.username   || '';
+  E('pwUser').value    = u.username   || '';   // the password manager's pair (see the Change Password form)
   E('pEmail').value    = u.email      || '';
   E('pPhone').value    = u.phone      || '';
   const sms = String(u.allow_sms) === '1' ? '1' : '0';

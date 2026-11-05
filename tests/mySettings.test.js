@@ -384,6 +384,36 @@ describe('personal sections still work', () => {
     expect(t.text('#pwStatus')).toBe('Current password is incorrect');
   });
 
+  /*
+   * AUTOFILL CONTAINMENT (the comms.html report, 2026-11-05). Nothing else on
+   * this page is a form, so a password field outside one lets Chrome's
+   * password manager read the whole document as one login form and fill the
+   * saved login name into the nearest visible text input before it — here the
+   * My Account Username box, whose value a profile save would then write.
+   * The three password fields carry their own form with its own username.
+   */
+  test('Change Password: its fields are in their own form, paired with a hidden username, and #pUsername is outside it', async () => {
+    const t = await boot(SB, { personal: {} });
+    const form = t.$('#pwCurrent').closest('form');
+    expect(form).toBeTruthy();
+    expect(t.$('#pwNew').closest('form')).toBe(form);
+    expect(t.$('#pwConfirm').closest('form')).toBe(form);
+    const unames = t.$$('input[autocomplete="username"]');
+    expect(unames.map((i) => i.id)).toEqual(['pwUser']);
+    expect(unames[0].closest('form')).toBe(form);
+    expect(unames[0].hidden).toBe(true);
+    expect(t.w.getComputedStyle(unames[0]).display).toBe('none');   // never a stray empty box
+    expect(unames[0].value).toBe('sb');           // filled by renderProfile
+    expect(t.$('#pUsername').closest('form')).toBe(null);
+    // A manager's fill-and-submit must not change the password.
+    const n = t.calls.length;
+    const ev = new t.w.Event('submit', { bubbles: true, cancelable: true });
+    form.dispatchEvent(ev);
+    await t.idle();
+    expect(ev.defaultPrevented).toBe(true);
+    expect(t.calls.length).toBe(n);
+  });
+
   test('Email Signature: the owned sender loads, edits PUT to its id, the preview follows the HTML', async () => {
     const t = await boot(SB, { personal: { signatures: [{ id: 12, email: 'sb@mdbl.com', from_name: 'Shoshana', signature_html: '<b>SB</b>', signature_text: 'SB' }] } });
     expect(t.$('#sigEditor').style.display).toBe('');

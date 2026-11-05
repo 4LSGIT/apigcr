@@ -903,7 +903,7 @@ function pwField(inputId, currentValue, isNew) {
   }
   return `
     <div class="pw-row">
-      <input id="${inputId}" type="password" placeholder="(unchanged — leave empty to keep current)">
+      <input id="${inputId}" type="password" placeholder="(unchanged — leave empty to keep current)" autocomplete="new-password">
       <button class="btn" id="${inputId}-show" type="button">Show</button>
     </div>
   `;
@@ -1021,14 +1021,14 @@ function renderOauthStatusCard(e) {
           <div class="row" style="flex-direction: column; align-items: stretch; gap: 4px">
             <span class="k">Access token (decrypted)</span>
             <div class="pw-row">
-              <input id="cred-pw-atoken" type="password" placeholder="(hidden — click Show)" readonly>
+              <input id="cred-pw-atoken" type="password" placeholder="(hidden — click Show)" autocomplete="new-password" readonly>
               <button class="btn" id="cred-pw-atoken-show" type="button">Show</button>
             </div>
           </div>
           <div class="row" style="flex-direction: column; align-items: stretch; gap: 4px; margin-top: 8px">
             <span class="k">Refresh token (decrypted)</span>
             <div class="pw-row">
-              <input id="cred-pw-rtoken" type="password" placeholder="(hidden — click Show)" readonly>
+              <input id="cred-pw-rtoken" type="password" placeholder="(hidden — click Show)" autocomplete="new-password" readonly>
               <button class="btn" id="cred-pw-rtoken-show" type="button">Show</button>
             </div>
           </div>

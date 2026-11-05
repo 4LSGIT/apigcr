@@ -406,6 +406,17 @@ The rest, in no particular order:
 - `scripts.js` injects its dialog CSS from `<head>`, BEFORE `style.css`'s `<link>` — an injected rule that only TIES a style.css rule loses. The usual winner is style.css's global `input:not([type=radio]):not([type=checkbox])` (0,2,1, 200px wide). Win on specificity (scope through `.swal2-html-container` or the dialog's container), never by load order. Bit four dialogs in the Oct 2026 mobile arc.
 - On a page loading `style.css`, dark mode's global `button` rule (0,10,2) outranks any class rule: a selected state (`.active`, `.on`) keeps its class and paints nothing, in dark only. Nine controls shipped that way, the new-appointment slot picker the last one found (2026-11-01). A new button with a selected state joins that rule's exclusion and `tests/darkButtonStates.test.js`; a page's own theme test proves nothing unless it runs with `style.css` loaded.
 - Form labels and hints have one look each, set by CLASS, never inline font/colour: labels `.input-label` / `.yc-flabel` / the dialog label rules, hints `.sub-label` / `.yc-hint`. Where each is defined: AI_CONTEXT §12.
+- A `type="password"` input OUTSIDE a `<form>` hands the page to Chrome's
+  password manager, which ignores `autocomplete="off"`: with no form it reads
+  the whole document as one login form, pairs the password with the nearest
+  VISIBLE text input before it and fills the saved USERNAME there — a search
+  box, a profile field — dropdown and all, even when the password itself is
+  hidden in a modal nobody opened (comms.html's purge dialog put 'IT' in the
+  Phone search box, 2026-11-05). Every password field is contained: inside a
+  real `<form>` holding its own hidden `autocomplete="username"` input (the
+  SU elevate dialog is the oldest example), or — for a field that is not the
+  signed-in user's own password, like a stored credential secret —
+  `autocomplete="new-password"`. Swept by `tests/passwordAutofill.test.js`.
 - An inline handler (`onclick="…"`) resolves names against the element, its form and `document` BEFORE `window`: a page function named `write`, `open`, `close`, `clear`… is shadowed by the document member. The Theme page's Advanced tab called `write(…)` → `document.write` and blanked the page for seven weeks (fixed ui-custom S5d, 2026-10-16). Name handler functions so no document/element member can shadow them; a test that calls the function directly cannot catch this — dispatch on the rendered control.
 - Validator regexes run on request bodies any staff JWT can send: keep them linear. An optional separator between repeated groups (`(?:\s*[,/]?\s*ARG){2,3}`) backtracks super-linearly — one 52 KB theme body blocked the event loop ~5 s (ui-custom S5d review, caught before landing). Make separators mandatory, bound every repeat, and pin the worst case with a timing test.
 - `overflow: hidden|auto` on a direct child of a flex column drops that child's min-height floor: once the column is taller than its box, the child is squashed and clipped. Bit the Comms tab and the sidebar section labels (b10fedb). Pair it with `flex: 0 0 auto`, or don't put overflow on the flex child.

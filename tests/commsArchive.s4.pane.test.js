@@ -15,7 +15,8 @@
  *     tombstone; the old note only when the archive holds nothing;
  *   - archive admins only: the ⋯ → Restrict / Unrestrict / Purge dialog —
  *     reason required, purge needs the item number AND the password, the
- *     password is cleared after every send.
+ *     password is cleared after every send, and the password field is
+ *     CONTAINED in its own form (autofill reached #ph-q without it).
  */
 
 'use strict';
@@ -513,6 +514,54 @@ describe('comms.html — restrict / purge (archive admins)', () => {
     ]);
     expect(dlg.classList.contains('open')).toBe(false);
     expect(doc.getElementById('ca-act-pw').value).toBe('');
+    expect(env.errors).toEqual([]);
+  });
+
+  /*
+   * AUTOFILL CONTAINMENT (reported 2026-11-05). comms.html has no other form,
+   * so Chrome's password manager read the whole document as one login form:
+   * it paired this always-in-the-DOM password field with the nearest VISIBLE
+   * text input before it — the Phone search box — and filled the saved
+   * username ('IT') into it, dropdown and all. autocomplete="off" does not
+   * help there; a real <form> holding its own username field does.
+   */
+  test('the purge password sits in its own form with a hidden username; nothing outside it is a fill candidate', async () => {
+    const env = await boot(handler({ thread: THREAD({ archive_admin: true }) }), {
+      before: (w) => { w.firmData.currentUser.username = 'IT'; },
+    });
+    await openThread(env);
+    const { doc, window } = env;
+    const pw = doc.getElementById('ca-act-pw');
+    const form = pw.closest('form');
+    expect(form).toBeTruthy();
+    // The pair the manager needs is INSIDE the form, and the hidden field is
+    // the only username candidate there — so neither the search box nor the
+    // dialog's own confirm box can be chosen as one.
+    const unames = [...doc.querySelectorAll('input[autocomplete="username"]')];
+    expect(unames.map((i) => i.id)).toEqual(['ca-act-user']);
+    expect(unames[0].closest('form')).toBe(form);
+    expect(unames[0].hidden).toBe(true);
+    expect(window.getComputedStyle(unames[0]).display).toBe('none');   // never a stray empty box
+    expect([...form.querySelectorAll('input')].map((i) => i.id)).toEqual(['ca-act-user', 'ca-act-pw']);
+    expect(doc.getElementById('ca-act-confirm').closest('form')).toBe(null);
+    expect(doc.getElementById('ph-q').closest('form')).toBe(null);
+    // Opening the dialog fills the username and leaves the password empty.
+    bub(doc, 12).querySelector('.ca-att[data-media="602"] [aria-label="Manage attachment in the archive"]').click();
+    expect(unames[0].value).toBe('IT');
+    expect(pw.value).toBe('');
+    // A fill that landed while the field was hidden does not survive the
+    // step that makes it visible.
+    pw.value = 'filled while hidden';
+    btn(doc.getElementById('ca-act-backdrop'), 'Purge…').click();
+    expect(doc.getElementById('ca-purge-fields').hidden).toBe(false);
+    expect(pw.value).toBe('');
+    // A manager's fill-and-submit must not act: the form refuses submission.
+    const before = env.calls.length;
+    const ev = new window.Event('submit', { bubbles: true, cancelable: true });
+    form.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    expect(env.calls.length).toBe(before);
+    expect(doc.getElementById('ca-act-backdrop').classList.contains('open')).toBe(true);
     expect(env.errors).toEqual([]);
   });
 

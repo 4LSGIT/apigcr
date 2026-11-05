@@ -903,8 +903,25 @@
     <div class="ca-pw-row" id="ca-purge-fields" hidden>
       <label class="yc-flabel" for="ca-act-confirm" style="margin-top:10px" id="ca-act-confirm-l">Type the item number to confirm</label>
       <input type="text" id="ca-act-confirm" inputmode="numeric" maxlength="20" autocomplete="off">
-      <label class="yc-flabel" for="ca-act-pw" style="margin-top:10px">Your password</label>
-      <input type="password" id="ca-act-pw" maxlength="200" autocomplete="current-password">
+      <!-- A REAL <form> around the password, holding its own hidden username
+           (filled at open from firmData). Nothing else on this page is a
+           form, so without it Chrome's password manager read the whole
+           document as ONE login form: it paired this always-in-the-DOM
+           password with the nearest VISIBLE text input before it — the Phone
+           search box (#ph-q) — filled the saved username there and hung the
+           saved-logins dropdown on it. autocomplete="off" does not help; the
+           manager ignores it. The form scopes the pair, and the only
+           username candidate inside it is the hidden field.
+           The confirm box stays OUTSIDE: a visible text input sharing the
+           form is what the manager fills next if it skips an invisible
+           username, which would only move the misfill into this dialog.
+           onsubmit is refused — a manager's fill-and-submit must not act;
+           the purge only ever goes through the Purge button. -->
+      <form id="ca-pw-form" onsubmit="return false">
+        <label class="yc-flabel" for="ca-act-pw" style="margin-top:10px">Your password</label>
+        <input type="text" id="ca-act-user" autocomplete="username" hidden>
+        <input type="password" id="ca-act-pw" maxlength="200" autocomplete="current-password">
+      </form>
       <span class="yc-hint">Purge deletes this item from the archive for good, with anything made from it (transcript, summary). The record that the call or text happened stays.</span>
     </div>
     <div class="modal-actions">
@@ -4536,6 +4553,10 @@ function openCaAct(item, label) {
   E('ca-act-reason').value = '';
   E('ca-act-confirm').value = '';
   E('ca-act-pw').value = '';
+  // The hidden username that gives the password manager its pair (see the
+  // form's comment). '' when firmData has not landed — the field is never
+  // sent and the server never reads it.
+  E('ca-act-user').value = (P.firmData && P.firmData.currentUser && P.firmData.currentUser.username) || '';
   caActPaint();
   E('ca-act-backdrop').classList.add('open');
   E('ca-act-reason').focus();
@@ -4749,7 +4770,16 @@ function wirePhone() {
   E('ca-tx-close').addEventListener('click', closeTranscript);
   E('ca-tx-backdrop').addEventListener('click', (e) => { if (e.target === E('ca-tx-backdrop')) closeTranscript(); });
   E('ca-act-cancel').addEventListener('click', closeCaAct);
-  E('ca-act-purge').addEventListener('click', () => { if (ca.act) { ca.act.mode = 'purge'; caActPaint(); E('ca-act-confirm').focus(); } });
+  E('ca-act-purge').addEventListener('click', () => {
+    if (!ca.act) return;
+    ca.act.mode = 'purge';
+    caActPaint();
+    // The password field has been in the DOM, hidden, since page load — long
+    // enough for the browser to have filled it. It is emptied as it becomes
+    // visible, so what is sent is what is in front of the reader.
+    E('ca-act-pw').value = '';
+    E('ca-act-confirm').focus();
+  });
   E('ca-act-go').addEventListener('click', caActGo);
   E('ca-act-backdrop').addEventListener('click', (e) => { if (e.target === E('ca-act-backdrop')) closeCaAct(); });
 }
