@@ -14,6 +14,10 @@
  *                            "_<stamp>" suffix may follow). No character-class
  *                            requirement: a random 22-char body sometimes lacks
  *                            a digit or a case, and the prefix is the signal.
+ *   Unsubscribe-token URLs — /u/ + 22 base62 chars MIXING cases and digits
+ *     (a real random token; all-upper placeholders pass — the convention).
+ *     Captured production data (SES events, logs) is scrubbed BEFORE staging
+ *     (CLAUDE.md, Two one-way doors); this rule is the net, not the gate.
  *   Common provider secrets: private-key blocks, AWS access key ids, Anthropic
  *   (sk-ant-…) and OpenAI (sk-…/sk-proj-…) keys, Google API keys (AIza…),
  *   GitHub tokens (ghp_/gho_/ghu_/ghs_/ghr_, github_pat_), Slack tokens
@@ -59,6 +63,16 @@ const RULES = [
   { name: 'Slack webhook URL', re: /hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]+/ },
   { name: 'Stripe live key', re: /\b(?:sk|rk)_live_[A-Za-z0-9]{20,}/ },
   { name: 'JWT', re: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}/ },
+  // Unsubscribe-token URL (C6c, after a live one rode a captured SES event's
+  // List-Unsubscribe header to within one reviewer of the public repo —
+  // 2026-11-05). A real comm_unsub_tokens token is 22 RANDOM base62 chars, so
+  // it virtually always mixes lower AND upper case (a miss is (36/62)^22-ish
+  // per case; NO digit requirement — a digit-less random token is ~2% of real
+  // mints, review S1); fixture placeholders (T1ACCEPTANCE000000000,
+  // C6CAPTURE0000000000000) carry no lowercase BY CONVENTION and pass. Keep
+  // minting placeholders that way, or ride the allow marker. Bounded
+  // lookaheads over one 22-char window — linear (the validator-regex rule).
+  { name: 'unsubscribe token URL', re: /\/u\/(?=[A-Za-z0-9]{22}(?![A-Za-z0-9]))(?=[A-Za-z0-9]{0,21}[a-z])(?=[A-Za-z0-9]{0,21}[A-Z])[A-Za-z0-9]{22}/ },
 ];
 
 /** Show enough of a hit to find it, never the whole secret. */

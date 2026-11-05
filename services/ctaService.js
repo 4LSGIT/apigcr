@@ -146,6 +146,7 @@ const CTA_FN_DENYLIST = Object.freeze([
   // recipients — engine plumbing driven by its recurring job, never a
   // public link.
   'mail_bounce_digest',
+  'tracking_domain_check',
 ]);
 
 /** Chromium-backed functions: eligible, but a public repeatable link fans out load. */

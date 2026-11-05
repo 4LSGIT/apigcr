@@ -1044,8 +1044,13 @@ async function listCampaigns(db, { status, page = 1, limit = 20 } = {}) {
  * @returns {object[]} result rows with contact info
  */
 async function getCampaignResults(db, campaignId) {
+  // C6c: delivery + engagement ride each row (NULL columns for pre-C6 sends
+  // and SMS); clicks = this recipient's campaign_clicks events, so the Stats
+  // table can answer "who clicked, and how often" without a second fetch.
   const [results] = await db.query(
     `SELECT cr.result_id, cr.contact_id, cr.status, cr.error, cr.sent_at, cr.result_meta,
+            cr.delivery_status, cr.delivered_at, cr.opened_at, cr.clicked_at,
+            (SELECT COUNT(*) FROM campaign_clicks cc WHERE cc.campaign_id = cr.campaign_id AND cc.result_id = cr.result_id) AS clicks,
             c.contact_name, c.contact_phone, c.contact_email
      FROM campaign_results cr
      JOIN contacts c ON c.contact_id = cr.contact_id

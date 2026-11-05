@@ -2018,21 +2018,152 @@ async function viewStats(id) {
     `;
 
     if (results.length) {
-      html += `<table class="logTable" style="margin-top:12px;font-size:12px;">
-        <tr><th>Contact</th><th>Status</th><th>Error</th><th>Time</th></tr>
+      // C6c quick view: tracked campaigns (campaign.delivery present) carry
+      // Delivery / Opened / Clicked per recipient; untracked ones keep the
+      // old four columns — blanks there would read as "nobody engaged".
+      // The wrapper contains the 7-column table's overflow on a phone the
+      // same way the full report does (campaign.html has no survey surface).
+      html += `<div style="max-height:45vh;overflow:auto;margin-top:12px"><table class="logTable" style="font-size:12px;">
+        <tr><th>Contact</th><th>Status</th>${d ? '<th>Delivery</th><th>Opened</th><th>Clicked</th>' : ''}<th>Error</th><th>Time</th></tr>
         ${results.map(r => `<tr>
           <td>${esc(r.contact_name || '#' + r.contact_id)}</td>
           <td><span class="badge badge-${r.status}">${r.status}</span></td>
+          ${d ? `<td>${ycRepDeliveryCell(r)}</td><td>${r.opened_at ? '✓' : ''}</td><td>${ycRepClickCell(r)}</td>` : ''}
           <td>${esc(r.error || '-')}</td>
           <td>${r.sent_at ? new Date(r.sent_at).toLocaleString() : '-'}</td>
         </tr>`).join('')}
-      </table>`;
+      </table></div>`;
     }
 
-    Swal.fire({ title: `Campaign #${id} Stats`, html, width: 700, confirmButtonText: 'Close' });
+    ycRepData = { campaign, results };
+    Swal.fire({
+      title: `Campaign #${id} Stats`, html, width: 760, confirmButtonText: 'Close',
+      showDenyButton: !!d, denyButtonText: 'Full report', denyButtonColor: 'var(--accent, #6366f1)',
+    }).then((res) => { if (res.isDenied) ycRepOpen(); });
   } catch (err) {
     Toast.fire({ icon: 'error', title: 'Failed to load stats' });
   }
+}
+
+// ─── C6c: the full campaign report (client-side over the Stats fetches) ────
+// Named ycRep* — an inline handler resolves names against document members
+// first, so nothing here may be called open/close/write/filter (the Theme
+// page's seven-week document.write lesson).
+
+let ycRepData = null;   // { campaign, results } of the last-opened Stats dialog
+
+function ycRepDeliveryCell(r) {
+  const s = r.delivery_status;
+  if (!s || s === 'unknown') return '';
+  const bad = s === 'bounced_hard' || s === 'complained' || s === 'rejected';
+  return `<span${bad ? ' style="color:var(--danger)"' : ''}>${esc(s.replace('_', ' '))}</span>`;
+}
+function ycRepClickCell(r) {
+  const n = Number(r.clicks || 0);
+  return n > 1 ? `${n}×` : (n === 1 || r.clicked_at ? '✓' : '');
+}
+
+/** filter ('all'|'clicked'|'opened'|'bounced'|'failed') + name search → rows. */
+function ycRepFilterRows(results, filter, q) {
+  const needle = String(q || '').trim().toLowerCase();
+  return results.filter((r) => {
+    if (filter === 'clicked' && !(Number(r.clicks) > 0 || r.clicked_at)) return false;
+    if (filter === 'opened' && !r.opened_at) return false;
+    if (filter === 'bounced' && !(r.delivery_status === 'bounced_hard' || r.delivery_status === 'bounced_soft')) return false;
+    if (filter === 'failed' && r.status !== 'failed' && r.status !== 'unknown') return false;
+    if (needle && !String(r.contact_name || '').toLowerCase().includes(needle)
+      && !String(r.contact_email || '').toLowerCase().includes(needle)) return false;
+    return true;
+  });
+}
+
+/** Stable sort by key; engagement keys descend first (the interesting rows up top). */
+function ycRepSortRows(rows, key, dir) {
+  const val = (r) => {
+    if (key === 'contact') return String(r.contact_name || '').toLowerCase();
+    if (key === 'clicked') return (Number(r.clicks) || 0) * 1e15 + (r.clicked_at ? Date.parse(r.clicked_at) : 0);
+    if (key === 'opened') return r.opened_at ? Date.parse(r.opened_at) : -1;
+    if (key === 'delivery') return String(r.delivery_status || '');
+    if (key === 'status') return String(r.status || '');
+    return r.sent_at ? Date.parse(r.sent_at) : 0;
+  };
+  return rows.slice().sort((a, b) => {
+    const x = val(a), y = val(b);
+    return (x < y ? -1 : x > y ? 1 : 0) * (dir === 'asc' ? 1 : -1);
+  });
+}
+
+function ycRepRowsHtml(rows) {
+  if (!rows.length) return '<tr><td colspan="7" class="text-muted">No recipients match.</td></tr>';
+  return rows.map((r) => `<tr>
+    <td>${esc(r.contact_name || '#' + r.contact_id)}</td>
+    <td style="word-break:break-all">${esc(r.contact_email || '')}</td>
+    <td><span class="badge badge-${r.status}">${r.status}</span></td>
+    <td>${ycRepDeliveryCell(r)}</td>
+    <td>${r.opened_at ? new Date(r.opened_at).toLocaleString() : ''}</td>
+    <td>${r.clicked_at ? `${new Date(r.clicked_at).toLocaleString()}${Number(r.clicks) > 1 ? ` (${r.clicks}×)` : ''}` : ''}</td>
+    <td>${r.sent_at ? new Date(r.sent_at).toLocaleString() : ''}</td>
+  </tr>`).join('');
+}
+
+function ycRepOpen() {
+  if (!ycRepData) return;
+  const { campaign, results } = ycRepData;
+  const d = campaign.delivery || {};
+  const r = campaign.results || {};
+  const state = { filter: 'all', q: '', key: 'clicked', dir: 'desc' };
+  const funnel = [['Sent', r.sent], ['Delivered', d.delivered], ['Opened', d.opened], ['Clicked', d.clicked]]
+    .map(([k, v]) => `<strong>${k}</strong> ${Number(v || 0)}`).join(' <span class="text-muted">→</span> ');
+  const linksHtml = (campaign.links || []).map(l =>
+    `<tr><td style="word-break:break-all">${esc(l.link)}</td><td>${l.clickers}</td><td>${l.clicks}</td></tr>`).join('');
+  const COLS = [['contact', 'Contact'], ['email', 'Email'], ['status', 'Status'], ['delivery', 'Delivery'], ['opened', 'Opened'], ['clicked', 'Clicked'], ['sent', 'Sent']];
+  const SORTABLE = new Set(['contact', 'status', 'delivery', 'opened', 'clicked', 'sent']);
+  Swal.fire({
+    title: `Campaign #${campaign.campaign_id} — full report`,
+    width: 950,
+    confirmButtonText: 'Close',
+    html: `
+      <div style="text-align:left;font-size:13px">
+        <p style="margin:0 0 4px">${funnel}</p>
+        <p class="text-muted" style="margin:0 0 10px">Bounced ${Number(d.bounced || 0)} · Complaints ${Number(d.complained || 0)} · Unsubscribed ${Number(d.unsubscribed || 0)} · opens are approximate (mail apps prefetch) — clicks are the honest signal</p>
+        ${linksHtml ? `<table class="logTable" style="font-size:12px;margin:0 0 12px"><tr><th>Top links</th><th>Clickers</th><th>Clicks</th></tr>${linksHtml}</table>` : ''}
+        <div style="display:flex;gap:8px;margin:0 0 8px;align-items:center;flex-wrap:wrap">
+          <select id="ycRepFilter" style="width:auto">
+            <option value="all">Everyone</option><option value="clicked">Clicked</option><option value="opened">Opened</option>
+            <option value="bounced">Bounced</option><option value="failed">Failed / unknown</option>
+          </select>
+          <input id="ycRepSearch" type="text" placeholder="name or email…" style="width:200px">
+          <span class="text-muted" id="ycRepCount"></span>
+        </div>
+        <div style="max-height:45vh;overflow:auto">
+          <table class="logTable" style="font-size:12px;width:100%">
+            <tr>${COLS.map(([k, label]) => SORTABLE.has(k)
+              ? `<th data-yc-sort="${k}" style="cursor:pointer" title="Sort">${label}<span data-yc-arrow="${k}"></span></th>`
+              : `<th>${label}</th>`).join('')}</tr>
+            <tbody id="ycRepRows"></tbody>
+          </table>
+        </div>
+      </div>`,
+    didOpen: (pop) => {
+      const paint = () => {
+        const rows = ycRepSortRows(ycRepFilterRows(results, state.filter, state.q), state.key, state.dir);
+        pop.querySelector('#ycRepRows').innerHTML = ycRepRowsHtml(rows);
+        pop.querySelector('#ycRepCount').textContent = `${rows.length} of ${results.length}`;
+        pop.querySelectorAll('[data-yc-arrow]').forEach((el) => {
+          el.textContent = el.getAttribute('data-yc-arrow') === state.key ? (state.dir === 'asc' ? ' ▲' : ' ▼') : '';
+        });
+      };
+      pop.querySelector('#ycRepFilter').addEventListener('change', (e) => { state.filter = e.target.value; paint(); });
+      pop.querySelector('#ycRepSearch').addEventListener('input', (e) => { state.q = e.target.value; paint(); });
+      pop.querySelectorAll('[data-yc-sort]').forEach((th) => th.addEventListener('click', () => {
+        const k = th.getAttribute('data-yc-sort');
+        if (state.key === k) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+        else { state.key = k; state.dir = k === 'contact' ? 'asc' : 'desc'; }
+        paint();
+      }));
+      paint();
+    },
+  });
 }
 
 async function cancelCampaign(id) {

@@ -73,6 +73,8 @@ describe('real secrets are refused', () => {
       'Slack webhook URL': 'https://hooks.slack.com/services/T0ABCDEF/B0ABCDEF/' + base62(24),
       'Stripe live key': 'sk_live_' + base62(24),
       'JWT': 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.' + base62(43),
+      // fixed, not base62(22): a random body can lack a class and miss by design
+      'unsubscribe token URL': '/u/aB3dEf7hIj9kLm1nOp5qRs',   // secret-scan: allow
     };
     expect(Object.keys(samples).sort()).toEqual(RULES.map(r => r.name).filter(n => !n.startsWith('YisraCase')).sort());
     for (const [rule, s] of Object.entries(samples)) expect(rulesHit(`x = "${s}"`)).toContain(rule);
@@ -104,6 +106,26 @@ describe('fixtures pass', () => {
     const key = `yck_${hex(64)}`;
     expect(scanLine(`const k = '${key}'; // ${ALLOW_MARKER}`)).toEqual([]);
     expect(scanLine(`const k = '${key}';`)).toHaveLength(1);
+  });
+
+  test('unsubscribe token URLs: a real-shaped token trips; the all-upper placeholder convention and the allow marker pass (C6c)', () => {
+    // real shape: 22 random base62 mixing cases and digits — secret-scan: allow
+    expect(rulesHit('"List-Unsubscribe": "<https://4lsg.com/u/jNl9j35NeYnFcqlzBLJQtb>"')).toEqual(['unsubscribe token URL']);   // secret-scan: allow
+    expect(rulesHit('href="https://app.4lsg.com/u/aB3dEf7hIj9kLm1nOp5qRs"')).toEqual(['unsubscribe token URL']);   // secret-scan: allow
+    // a DIGIT-LESS random token still trips — ~2% of real mints lack one (S1) — secret-scan: allow
+    expect(rulesHit('"/u/aBcDeFgHiJkLmNoPqRsTuV"')).toEqual(['unsubscribe token URL']);   // secret-scan: allow
+    // the fixture-placeholder convention: no lowercase → passes.
+    // C6CAPTURE… is EXACTLY 22 chars (the convention at the matching length);
+    // T1ACCEPTANCE… is the real 21-char fixture value (short of the window).
+    expect('C6CAPTURE0000000000000').toHaveLength(22);
+    expect(rulesHit('"/u/C6CAPTURE0000000000000"')).toEqual([]);
+    expect(rulesHit('"/u/T1ACCEPTANCE000000000"')).toEqual([]);
+    // not 22 clean base62 (too short, too long, or broken by punctuation) → passes
+    expect(rulesHit('/u/aB3dEf7hIj9kLm1nOp5q')).toEqual([]);
+    expect(rulesHit('/u/aB3dEf7hIj9kLm1nOp5qRsTu')).toEqual([]);
+    expect(rulesHit('POST /u/${TOKEN_PATTERN}/prefs')).toEqual([]);
+    // the marker exempts a deliberate fixture line
+    expect(scanLine('const u = "/u/zX8cVb6nMq2wEr4tYu1iOp"; // secret-scan: allow')).toEqual([]);
   });
 
   test('a refusal never prints the whole secret', () => {

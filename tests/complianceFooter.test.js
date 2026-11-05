@@ -20,7 +20,9 @@
 const firmConfig = require('../lib/firmConfig');
 const { buildComplianceFooter, firmValues, DEFAULTS, formatPhone } = require('../lib/complianceFooter');
 
-const UNSUB = 'https://4lsg.com/u/Ab3dEfGh1jKlMn0pQr5tUv';
+// All-upper placeholder, the secret-scan convention: a lowercase-bearing
+// 22-char token reads as a REAL unsubscribe token (C6c rule).
+const UNSUB = 'https://4lsg.com/u/FOOTERTEST00000000000A';
 const PREFS = `${UNSUB}#prefs`;
 const NEWS = { topic_key: 'newsletter', label: 'Newsletter', consent_model: 'opt_out' };
 

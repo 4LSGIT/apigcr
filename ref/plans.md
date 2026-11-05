@@ -1809,6 +1809,14 @@ ref/YISRAMAIL_DESIGN.md §6.4 "As built (C7)" says what shipped.
   mail_event_ingest records them uncorrelated). Fine at a handful a day; if
   triggered volume grows, give these sends a results ledger of their own (or
   synthetic campaign rows) so the complaint/bounce math sees them.
+- **The mobile survey has no campaign-manager surfaces.** campaign.html is an
+  iframe pane, not a More tile panel, so compose, the Stats dialog and the
+  C6c Full report are outside the 188-surface sweep — campaign UI has now
+  shipped three times (C4 picker, C6 stats lines, C6c report) on the standard
+  survey alone. Adding them needs campaign mock-API routes in
+  scripts/mobile-survey/server.js + a pane navigator. The C6c report table
+  contains its own overflow (max-height + overflow:auto wrapper), which is
+  why this is debt, not a blocker.
 - **A per-campaign tracking toggle** (C6 left tracking global, Fred asked
   2026-11-05, recommendation "not yet" stood): a real toggle is a SECOND SES
   config set (`yisramail-marketing-notrack`, same EventBridge destination,

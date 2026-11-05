@@ -2183,7 +2183,25 @@ PERMANENT Namecheap records: `r.news.4lsg.com` → the CloudFront domain, and
 the ACM validation CNAME (`_….r.news.4lsg.com` → `….acm-validations.aws`) —
 ACM re-checks the latter to AUTO-RENEW the cert, so deleting it in a DNS
 cleanup kills every tracking link in every email ever sent, silently, about
-a year later. A cert-expiry watchdog job is the planned guard (C6c). A
+a year later. The guard is the daily `tracking_domain_check` job (C6c).
+
+**As built (C6c) — the report UI + the watchdog.** The Stats dialog's
+recipient table carries per-person Delivery / Opened / Clicked on tracked
+campaigns (getCampaignResults rides the engagement columns + a per-recipient
+campaign_clicks count, scoped by campaign AND result), and its Full report
+button opens the richer view: the sent→delivered→opened→clicked funnel, the
+top-links table, and a sortable, filterable per-recipient table — all
+client-side over the two fetches Stats already made, no new endpoint. The
+daily watchdog `tracking_domain_check` (uiHidden, CTA-denied) probes the
+tracking domain the way AWS's doc verifies it (favicon GET: 200,
+x-amz-ses-region, https protocol) and reads the TLS cert's days-to-expiry
+off the socket — under 21 days (ACM renews ~60 out) or a broken response is
+an error alert once per UTC day; a transient fetch failure is a warning
+(lib/trackingDomainCheck.js probe/verdict split, the verdict pure and
+mutation-tested). The C6b near-miss also taught the secret scanner
+real-shaped `/u/` unsubscribe tokens (scripts/secret-scan.js; fixture
+placeholders stay all-upper by convention), with the scrub-before-fixture
+rule written into CLAUDE.md's one-way doors. A
 per-campaign toggle is NOT built — deferred with its sketch in ref/plans.md
 (a second config set, Fred may call for it). Deploy order was:
 `scripts/yisramailC6Migrate.js` → backend → frontend → the config-set flip

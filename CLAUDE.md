@@ -421,5 +421,13 @@ The rest, in no particular order:
 
 ## Two one-way doors
 
-- Never commit API keys (`yci_`/`ycro_`/`yck_` prefixes — the only three that exist; portal tokens are unprefixed JWTs) or secrets — including unprefixed ones (ingest keys, hook keys, webhook URLs). Enforced since access B4 by a pre-commit scan (`scripts/secret-scan.js`, step 0 of the hook): staged ADDED lines, key prefixes (both body shapes: legacy 64-hex and the B3 22-char base62) + common secret shapes; a deliberate fake in a test rides with a `secret-scan: allow` line marker; `SKIP_SECRET_SCAN=1` skips with a warning. A refusal names file:line and never prints the whole secret. Reference copies of code deployed elsewhere (`ref/gas.js`) read secrets from that host's secret store (Apps Script Script Properties), never a CONFIG literal, so repo == deployed stays safe to round-trip. The gmail-firm ingest key sat in `ref/gas.js` in this public repo from 2026-06-03 to its 2026-10 rotation.
+- Never commit API keys (`yci_`/`ycro_`/`yck_` prefixes — the only three that exist; portal tokens are unprefixed JWTs) or secrets — including unprefixed ones (ingest keys, hook keys, webhook URLs). Enforced since access B4 by a pre-commit scan (`scripts/secret-scan.js`, step 0 of the hook): staged ADDED lines, key prefixes (both body shapes: legacy 64-hex and the B3 22-char base62) + common secret shapes; a deliberate fake in a test rides with a `secret-scan: allow` line marker; `SKIP_SECRET_SCAN=1` skips with a warning. A refusal names file:line and never prints the whole secret.
+  **Captured PRODUCTION data (SES events, hook bodies, logs) is SCRUBBED before
+  it becomes a fixture** — unsubscribe tokens, CTA/booking tokens, client IPs —
+  and the sanitization is named in the test header. Most captured secrets have
+  no prefix, so the scrub is the gate and the scan only the net: the scanner
+  knows real-shaped `/u/` unsubscribe tokens since C6c (22 base62 chars mixing
+  LOWER and UPPER case; keep fixture placeholders all-upper — the convention
+  that passes), but a live List-Unsubscribe token still got within one
+  reviewer of this public repo (2026-11-05). Reference copies of code deployed elsewhere (`ref/gas.js`) read secrets from that host's secret store (Apps Script Script Properties), never a CONFIG literal, so repo == deployed stays safe to round-trip. The gmail-firm ingest key sat in `ref/gas.js` in this public repo from 2026-06-03 to its 2026-10 rotation.
 - Never reverse the SQL → backend → frontend deploy order. It is the only mistake here that takes production down rather than merely breaking a build.

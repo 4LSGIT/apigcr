@@ -497,9 +497,19 @@ maybe('mail_event_ingest on real MySQL', () => {
     const second = ev('click', { to: 'x@example.com', id: 'click-2' });
     second.detail.click.timestamp = '2026-11-05T19:00:00.000Z';
     await svc.ingest(pool, second);                                   // same link, same clicker, new event
-    const { getCampaign } = require('../services/campaignService');   // lazy require (convention)
+    const { getCampaign, getCampaignResults } = require('../services/campaignService');   // lazy require (convention)
     const c = await getCampaign(pool, 7);
     expect(c.delivery).toMatchObject({ opened: 2, clicked: 1 });
+    // C6c: per-recipient engagement rides the results rows — clicks counted
+    // for THIS recipient only (the subquery is scoped by campaign AND result).
+    const rows = await getCampaignResults(pool, 7);
+    const byId = Object.fromEntries(rows.map((x) => [x.result_id, x]));
+    expect(Number(byId[41].clicks)).toBe(2);
+    expect(byId[41].clicked_at).toBeInstanceOf(Date);
+    expect(byId[41].opened_at).toBeInstanceOf(Date);
+    expect(Number(byId[42].clicks)).toBe(0);
+    expect(byId[42].opened_at).toBeInstanceOf(Date);
+    expect(byId[42].clicked_at).toBeNull();
     expect(c.links).toEqual([
       { link: 'https://4lsg.com/b/your-booking-slug?c=00000000000000000000000000000000', clicks: 2, clickers: 1 },
     ]);

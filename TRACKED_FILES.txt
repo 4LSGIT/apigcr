@@ -103,6 +103,7 @@ lib/internal_functions/sequences.js
 lib/internal_functions/system.js
 lib/internal_functions/tasks.js
 lib/internal_functions/timing.js
+lib/internal_functions/trackingCheck.js
 lib/internal_functions/trustee.js
 lib/internal_functions/users.js
 lib/internal_functions/variables.js
@@ -137,6 +138,7 @@ lib/sqlGuard.js
 lib/ssrfGuard.js
 lib/taskQueue.js
 lib/token.js
+lib/trackingDomainCheck.js
 lib/triggerCodeGate.js
 lib/trusteeMatch.js
 lib/trusteeRoster.js
@@ -655,6 +657,7 @@ ref/migrations/2026-11-05_custom_table_s4_field_defs_list_column.sql
 ref/migrations/2026-11-05_yisramail_c4_campaign_segments.sql
 ref/migrations/2026-11-05_yisramail_c4_mail_digest_job.sql
 ref/migrations/2026-11-05_yisramail_c6_open_click.sql
+ref/migrations/2026-11-05_yisramail_c6c_tracking_watchdog_job.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -1255,6 +1258,7 @@ tests/campaignC4.test.js
 tests/campaignC4.ui.test.js
 tests/campaignC6.test.js
 tests/campaignC6.ui.test.js
+tests/campaignC6c.ui.test.js
 tests/campaignC7.mysql.test.js
 tests/campaignC7.test.js
 tests/campaignCaseTypeFilter.test.js
@@ -1870,6 +1874,7 @@ tests/themePrefsS5d.test.js
 tests/token.test.js
 tests/toolManagerVisibility.test.js
 tests/toolShellS33.test.js
+tests/trackingDomainCheck.test.js
 tests/triggerCodeGate.routes.test.js
 tests/triggerService.matchFailure.test.js
 tests/triggerService.test.js
