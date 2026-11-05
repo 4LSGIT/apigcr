@@ -10,7 +10,8 @@ DeliveryDelay / Rendering Failure); C1 (campaign hardening) built — §6.1 and
 §6.4 / §6.5 "As built (C2)" (the SES account-pause reply shapes are
 `VERIFY(live)`); C3 (designs library + the Designer editor) built — §6.3
 "As built (C3a — server)" / "As built (C3b)"; C4 (segments + reporting)
-built — §6.2 / §6.5 "As built (C4)"; nothing else built.** Ruled 2026-10-29 (Fred):
+built — §6.2 / §6.5 "As built (C4)"; C7 (promotional automations) built —
+§6.4 "As built (C7)"; nothing else built.** Ruled 2026-10-29 (Fred):
 D0 build, D1 no marketing SMS in v1, D2 (a) destination-keyed consent, D6
 Amazon SES, D9 GrapesJS + MJML (spike first), D11 no tracking in v1 / C6
 later; D15 no RC push in v1, D16 over-cap operational sends with
@@ -2061,6 +2062,84 @@ reads "— HELD"). `transportHealth` stays computed (no counter table).
 - The hold gates the MARKETING class only; an over-cap operational (D16)
   campaign on the same `bulk_ok` row is not held (`ref/plans.md`).
 
+**As built (C7) — promotional automations, the second kind of campaign email.**
+Fred (2026-11-05): "there are two kinds of campaign emails, send now to many
+people and send to people as something triggers it. I didn't think about the
+second when I designed campaigns." The campaign engine stays blast-shaped;
+the triggered kind is `campaignService.sendPromotional` — ONE recipient, no
+campaign row — reached from a workflow / sequence `send_email` step with
+`promotional: true` + `topic` (+ optional `design_id` / `contact_id` /
+`marketing_sender`).
+- **Same compliance plumbing as a campaign send:** the kill switch (not '1' →
+  422, a loud configuration error), consent by topic with opted-out →
+  `{ sent:false, skipped:'opted_out' }` (the automation goes on — a birthday
+  sweep must not die on one opt-out), a REAL unsub token (`campaign_id` NULL,
+  contact attributed, fresh each send — the reuse path needs a campaign),
+  renderMarketing + footer at the slot + the post-render assert, marketing
+  headers + Reply-To, bulk transport only (named via `marketing_sender`, or
+  the firm's ONLY bulk row — refused when none or several), held → 422.
+  `from` and `include_signature` are ignored on a promotional step.
+- **Deliberately absent** (triggered volume is a handful a day — the
+  reporting gap is in `ref/plans.md`): no campaign_results row, so no
+  reservation (the engine's step retry owns retries), no delivery
+  correlation (a bounce still suppresses — mail_event_ingest records the
+  ledger event uncorrelated), invisible to transportHealth and the digest;
+  no rate window and no transportHealthGate (both are campaign-traffic
+  measures); email_log KEEPS the body — with no campaign snapshot the log is
+  the MRPC 7.2(b) record.
+- **Designs from any automation (both classes):** `design_id` loads the
+  Designer template at RUN time (the engine resolves only the step config,
+  never the design), so its merge tags resolve in the function against
+  `contact_id` — promotional inside renderMarketing, operational through the
+  same resolver with no footer (D18: it reaches opt-outs). Archived designs
+  refused, as at campaign create.
+- **Who may author one — the D13 gate (review B1):** a send_email step whose
+  `promotional` is anything but a literal falsy needs `campaigns.bulk`, at
+  EVERY writer (`lib/promotionalSendGate.js`, the codeStepGate pattern):
+  the workflow step writers + test-step + Casey's dry-run preview, sequence
+  steps — ALL FOUR function-carrying action types, since sequences run
+  'sms'/'email'/'task' through executeJob as internal functions too
+  (re-review B1a) — scheduled jobs POST/PATCH, trigger-rule actions,
+  email + phone ingest rule actions (inline on create, add, update —
+  re-review B1b) and hook targets
+  (those two map `params_mapping`, whose values resolve from the event at
+  dispatch — so the PRESENCE of the promotional KEY is what is gated, fail
+  closed on indirection; a {{placeholder}} in a step's promotional is refused
+  the same way). Relaxing this to "any automation author" is Fred's call
+  (`ref/plans.md`). A CTA plan may NOT carry promotional at all (review S1):
+  the marketing path re-resolves merge tags over the FINAL text, so clicker
+  input substituted into html/subject would resolve ({{contacts.contact_ssn}}
+  against the plan's frozen contact) — refused at mint. The same second
+  resolve applies to engine-substituted variable text in a promotional
+  step's inline html: authors keep merge tags OUT of values they interpolate.
+- **Casey (the argued default — vision says yes):** Casey keeps authoring
+  promotional steps (risk: a misdescribed marketing send; mitigation: the
+  impact card now reports the MARKETING semantics — the bulk transport as
+  sender, the consent skip, the topic, the campaigns.bulk save requirement —
+  and the save gate binds whoever publishes, Casey drafts included, since
+  every workflow_steps INSERT lives in the gated routes). ONE exclusion,
+  argued like attachments: model-invented `design_id` is refused (content
+  Casey cannot inspect; a human picks the design in the editor; a stored
+  design left unchanged is kept).
+- **Account-level pause (review S4):** a definite SES account-refusal from a
+  promotional send HOLDS the transport (holdTransport — campaigns on it pause
+  at their next send) and fails the step 502 `account_paused`. An ambiguous
+  provider error fails the step as-is and MAY have sent: promotional steps
+  carry no retry policy (the engine default; the manual says so) — a retry
+  could double-send, and there is no reservation row to dedupe on.
+- **Guards kept:** SMS `promotional` is refused loudly (D1); `from` is
+  save-required UNLESS promotional is the literal true (`requiredUnless` in
+  the params validator — the editor's from-list never offers marketing
+  transports, which is why `marketing_sender` is its own field);
+  include_signature on a promotional step is REFUSED (the footer is the
+  sign-off); send_email's CTA clicker-input set is pinned unchanged
+  (to / subject / html) — no C7 param is clicker-writable.
+- The step editors render the new params from `__meta` — no editor code.
+  A birthday workflow is: a daily recurring job → query today's
+  `contacts.contact_dob` matches → `send_email(design_id, contact_id,
+  promotional?)`. Whether the firm's birthday default is operational (no
+  footer, reaches everyone) or promotional is an open ruling (`ref/plans.md`).
+
 ### 6.6 What stays out (later, `ref/plans.md`)
 
 Drips/journeys = sequence enrollment from a campaign audience (the existing
@@ -2183,7 +2262,7 @@ is ruled for that list (ruled 2026-10-30 for SS's own lead lists).
 | C4 | Segments + reporting — **built** (§6.2 / §6.5 "As built (C4)") | saved segments (`campaign_segments` + the Select-tab picker); campaign stats incl. `unknown` + delivered / bounced / complained / unsubscribed + transport rates in the Stats dialog; the daily marketing-mail digest (`mail_bounce_digest` recurring job) | C2 |
 | C5 | Outside-list import | provenance-recording import; hygiene check; first-send warm-up order | G2, C2 |
 | C6 | Open/click tracking (v2, D11) | SES config-set open + click events on a **custom tracking domain** under the sending subdomain (not the provider's shared one); `campaign_results.opened_at` / `clicked_at` + per-link click counts; campaign stats; clicks are the primary metric, opens shown as approximate (Apple Mail Privacy Protection pre-fetches images); a per-campaign toggle; one line on the preference page that marketing mail is tracked | C2, C4 |
-| C7 | Promotional automations | `send_email` / `send_sms` internal functions gain `promotional` (default false) + `topic`: a promotional automation send takes the marketing path (consent check by topic, token, footer, headers, transport rules) and skips opted-out recipients; SMS `promotional` refused while D1 stands. Workflow/sequence editors show the checkbox | C2 |
+| C7 | Promotional automations — **built** (§6.4 "As built (C7)") | `send_email` / `send_sms` gain `promotional` (default false) + `topic`: a promotional automation send takes the marketing path (consent by topic, token, footer, headers, transport rules) and SKIPS opted-out recipients; `design_id` + `contact_id` send a saved Designer template from any automation (both classes); SMS `promotional` refused while D1 stands; the step editors render the new params from __meta | C2, C3 |
 | — | Deferred | marketing SMS (D1), drips via sequences, provider domain provisioning (YC3) | — |
 
 Per-slice obligations (CLAUDE.md): settings-registry entries for every new

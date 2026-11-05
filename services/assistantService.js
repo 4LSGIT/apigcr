@@ -6316,7 +6316,30 @@ async function workflowSendAnnotation(db, fn, params, priorSteps, at, stored = n
       !(stored && canonical(stored.attachment_urls) === canonical(p.attachment_urls))) {
     throw httpError(422, `${at}: Casey does not author email attachments (attachment_urls are fetched at send time) — tell the user to add them by hand in the workflow editor`);
   }
+  // C7: a stored-design reference Casey cannot inspect — same rule as
+  // attachments (a design left as a human stored it is kept, not re-litigated).
+  if (channel === 'email' && p.design_id !== undefined &&
+      !(stored && canonical(stored.design_id) === canonical(p.design_id))) {
+    throw httpError(422, `${at}: Casey does not pick email designs (design_id) — tell the user to choose the design by hand in the workflow editor`);
+  }
   const recipient = typeof p.to === 'string' ? p.to : JSON.stringify(p.to === undefined ? null : p.to);
+  // C7: a promotional step is MARKETING mail — it ignores `from` and goes out
+  // from the marketing transport, consent-checked per recipient. Describe
+  // THAT, or the approving user reads the wrong sender off the impact card.
+  // Saving it still needs campaigns.bulk (lib/promotionalSendGate.js), which
+  // the save routes enforce with the requesting user's own auth.
+  const promo = p.promotional === true || p.promotional === 1 || /^(true|1|yes)$/i.test(String(p.promotional ?? ''));
+  if (channel === 'email' && promo) {
+    const sender = typeof p.marketing_sender === 'string' && p.marketing_sender.trim()
+      ? `${p.marketing_sender.trim()} (the marketing transport)`
+      : "the firm's marketing transport (its only bulk sender)";
+    return {
+      side_effect: 'external-send',
+      sender,
+      recipient,
+      sender_note: `MARKETING (topic ${p.topic == null ? '(none set — the save will refuse it)' : JSON.stringify(String(p.topic))}): consent is checked per recipient and opted-out recipients are skipped; the compliance footer and an unsubscribe link are added; saving this step requires the campaigns.bulk capability.`,
+    };
+  }
   const from = String(p.from);
   if (stored && stored.from === p.from) {
     return { side_effect: 'external-send', sender: `${p.from == null ? '(none set)' : from} (unchanged — as stored on this step)`, recipient };

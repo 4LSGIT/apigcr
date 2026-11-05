@@ -381,15 +381,22 @@ Send a single email via the configured provider (smtp or pabbly).
 
 | Param | Type | Required | Widget | Description |
 |---|---|---|---|---|
-| `from` | string | yes | `email_from` | Must match a row in `email_credentials`. |
+| `from` | string | unless promotional | `email_from` | Must match a row in `email_credentials`. Ignored on a promotional send (see below); its absence on an operational step fails at run/test time, not at save. |
 | `to` | string | yes (placeholderAllowed) | — | Recipient address. |
 | `subject` | string | yes (placeholderAllowed) | — | |
 | `text` | string | conditional (placeholderAllowed, multiline) | — | Plain text body. |
 | `html` | string | conditional (placeholderAllowed, multiline) | — | HTML body. |
+| `design_id` | integer | conditional | — | Send a saved Designer template (Campaigns → Designer → "Designs…") as the body; its merge tags resolve against `contact_id` at send time. Overrides `text`/`html`; archived designs refused. Requires `contact_id`. |
+| `contact_id` | integer | with design_id / promotional (placeholderAllowed) | — | The recipient's contact — merge tags and the unsubscribe token resolve against it. |
+| `promotional` | boolean | optional, default false | — | **Marketing mail from an automation** (below). |
+| `topic` | string | with promotional | — | The marketing topic (`comm_topics` key, e.g. `newsletter`). |
+| `marketing_sender` | string | optional | — | Promotional only: the marketing transport's address. Blank = the firm's only marketing transport (refused if several). |
 | `attachment_urls` | array | optional | — | JSON array. Either URL strings or `{url, name}` objects. Single `{url, name}` also accepted at runtime but rejected by the workflow editor (must be wrapped in an array there — see pitfall #7). |
 | `attachment_names` | array | optional | — | Parallel array of display names. Usually unnecessary — names are inferred from URL or the `{name}` field. |
 
-`requiredWith: [['text', 'html']]` — at least one of `text` / `html` required.
+`requiredWith: [['text', 'html', 'design_id']]` — at least one of the three.
+
+**Promotional sends (C7).** `promotional: true` makes the step MARKETING mail — the second kind of campaign email: not "send now to many" but "send to a person as something triggers it" (a birthday card, a re-engagement note). It takes the campaign compliance path: consent is checked for the topic and an **opted-out recipient is skipped** (output `{sent: false, skipped: "opted_out"}` — the automation goes on, it never fails on an opt-out); a real unsubscribe token and the compliance footer are added (at the design's locked footer slot); the marketing headers and Reply-To are set; it sends from the marketing transport and is refused while that transport is held or while marketing campaigns are switched off. `from` is ignored; `include_signature` is refused (the footer is the sign-off). **Saving or test-running a promotional step needs the campaigns.bulk capability** (admin role — the same right that sends marketing campaigns); the save is refused otherwise, a `{{placeholder}}` in the promotional field included. That covers EVERY edit of such a step — a non-admin cannot change even its name or position (fail-closed; ask an administrator). Default false = operational (a stand-in for a person, D18): no footer, reaches opt-outs. These sends create no campaign, so they appear in `email_log` (with the body — that is the record of what went out) but not in campaign stats or the daily digest. Two authoring rules: give a promotional step **no retry policy** (the default) — a provider error with no reply may still have sent, and a retry could send twice; and in a *workflow*, put merge tags (`{{contacts.x}}`) only in a **design** (`design_id`), not in inline html — the workflow engine blanks unknown tags to nothing before the send (sequences resolve them).
 
 **Attachment shapes** — `attachment_urls` accepts:
 

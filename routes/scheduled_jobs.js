@@ -5,6 +5,7 @@ const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const ms = require("ms"); //  for parsing "5m", "2h", etc.
 const { CronExpressionParser } = require("cron-parser"); // resume → next future tick
 const internalFunctions = require("../lib/internal_functions"); // __validateFunctionParams (Slice 5)
+const { refusePromotionalWithoutCapability } = require('../lib/promotionalSendGate'); // C7
 const { can } = require("../lib/capabilities");
 const { escapeLike } = require("../lib/escapeLike");
 const { idempotentRequest, sendIdempotencyError } = require("../lib/requestIdempotency");
@@ -185,6 +186,8 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
     // Slice 5 — metadata-driven param validation, shared with the workflow
     // routes via lib/internal_functions. Functions without __meta pass
     // through (engine validates at run time).
+    const promo = refusePromotionalWithoutCapability(req.auth, function_name, params);
+    if (promo) return res.status(promo.status).json({ error: promo.error, message: promo.message });
     const v = internalFunctions.__validateFunctionParams(function_name, params);
     if (v) return res.status(v.status || 400).json({ error: v.error });
   } else if (job_type === "custom_code") {
@@ -645,6 +648,8 @@ router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
         if (!fn || typeof fn !== 'string' || !fn.trim()) {
           return res.status(400).json({ error: "internal_function job: function_name is required (non-empty string)" });
         }
+        const promo = refusePromotionalWithoutCapability(req.auth, fn, data.params);
+        if (promo) return res.status(promo.status).json({ error: promo.error, message: promo.message });
         const pv = internalFunctions.__validateFunctionParams(fn, data.params);
         if (pv) return res.status(pv.status || 400).json({ error: pv.error });
       }

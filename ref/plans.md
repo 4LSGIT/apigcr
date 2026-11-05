@@ -1791,6 +1791,32 @@ ref/YISRAMAIL_DESIGN.md §6.2 / §6.5 "As built (C4)" say what shipped.
   saves these; fix `ycSegApply` (and the contacts route's comma-split) if
   API-authored segments become a thing.
 
+## YisraMail C7 (promotional automations, 2026-11-05) — deferred
+
+ref/YISRAMAIL_DESIGN.md §6.4 "As built (C7)" says what shipped.
+- **The birthday default is an open ruling** (Fred, 2026-11-05: "I need to
+  think about the birthday default"): operational (no footer, reaches
+  everyone — D18's stand-in-for-a-person reading) vs promotional (unsubscribe
+  link, consent-gated). The step author picks per workflow meanwhile.
+- **Triggered-send reporting.** sendPromotional writes no campaign_results
+  row: its sends are invisible to transportHealth's rates, the §6.5 hold
+  thresholds and the daily digest (bounces still suppress via the ledger —
+  mail_event_ingest records them uncorrelated). Fine at a handful a day; if
+  triggered volume grows, give these sends a results ledger of their own (or
+  synthetic campaign rows) so the complaint/bounce math sees them.
+- **A design-picker widget for the step editor.** `design_id` is a bare
+  integer field (the author reads the id off the Designer's "Designs…"
+  list). A `widget: 'email_design'` dropdown needs a shell helper like
+  fdEmailFromSelectHtml.
+- **Relaxing the promotional-step gate** (campaigns.bulk at every writer —
+  lib/promotionalSendGate.js) to "any automation author may send marketing"
+  is Fred's call; until then an admin authors or blesses each promotional
+  step. The CTA mint refusal (no promotional in plans) stays either way —
+  it guards clicker-input re-resolution, not authorship.
+- **A birthday trigger primitive.** The worked shape today is a daily
+  recurring job + a query step over `contacts.contact_dob` + foreach. A
+  first-class "on date-of-year" trigger would make it one click.
+
 ## From the contact-intake safety slices (2026-10-27) — deferred
 
 - **A transfer's donor isn't announced on the sync bus.** "Create a separate

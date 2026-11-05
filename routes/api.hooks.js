@@ -60,6 +60,13 @@ const hookReceiveLimiter = rateLimit({
 // Allowed target types — kept in one place so we can validate and expose
 // them via /api/hooks/meta for the UI.
 const VALID_TARGET_TYPES = ['http', 'workflow', 'sequence', 'internal_function'];
+const { refusePromotionalMapping } = require('../lib/promotionalSendGate'); // C7
+
+/** C7: a target mapping send_email's `promotional` needs campaigns.bulk (any writer shape). */
+function refusePromotionalTarget(auth, payload) {
+  if (!payload || payload.target_type !== 'internal_function' || !payload.config || typeof payload.config !== 'object') return null;
+  return refusePromotionalMapping(auth, payload.config.function_name, payload.config.params_mapping);
+}
 
 // ─────────────────────────────────────────────────────────────
 // SENSITIVE HEADER STRIPPING
@@ -534,6 +541,8 @@ router.post('/api/hooks', manageHooks, async (req, res) => {
     for (let i = 0; i < inlineTargets.length; i++) {
       const vErr = validateTargetPayload(inlineTargets[i], { isUpdate: false });
       if (vErr) return res.status(400).json({ status: 'error', message: `targets[${i}]: ${vErr}` });
+      const promo = refusePromotionalTarget(req.auth, inlineTargets[i]);
+      if (promo) return res.status(promo.status).json({ status: 'error', message: promo.message });
     }
 
     const data = {};
@@ -774,6 +783,8 @@ router.post('/api/hooks/:hookId/targets', manageHooks, async (req, res) => {
     if (validationError) {
       return res.status(400).json({ status: 'error', message: validationError });
     }
+    const promoT = refusePromotionalTarget(req.auth, req.body);
+    if (promoT) return res.status(promoT.status).json({ status: 'error', message: promoT.message });
 
     const { name, position, target_type, method, url, headers, credential_id,
             body_mode, body_template, config, conditions,
@@ -817,6 +828,22 @@ router.put('/api/hooks/targets/:id', manageHooks, async (req, res) => {
     const validationError = validateTargetPayload(req.body, { isUpdate: true });
     if (validationError) {
       return res.status(400).json({ status: 'error', message: validationError });
+    }
+    // C7 round 3: gate the EFFECTIVE target — the stored row merged with the
+    // body — or a type flip with no config slips a smuggled mapping through
+    // (the same shape as the ingest-action bypass; manageHooks holders are
+    // near-admin, the merge is for consistency and depth).
+    {
+      const [[beforeT]] = await req.db.query('SELECT target_type, config FROM hook_targets WHERE id = ?', [req.params.id]);
+      const prevCfg = beforeT && typeof beforeT.config === 'string' ? JSON.parse(beforeT.config) : (beforeT ? beforeT.config : null);
+      const eff = {
+        target_type: req.body && req.body.target_type !== undefined ? req.body.target_type : (beforeT ? beforeT.target_type : undefined),
+        config: req.body && req.body.config !== undefined ? req.body.config : prevCfg,
+      };
+      if (eff.target_type === 'internal_function' && eff.config && typeof eff.config === 'object') {
+        const promoU = refusePromotionalMapping(req.auth, eff.config.function_name, eff.config.params_mapping);
+        if (promoU) return res.status(promoU.status).json({ status: 'error', message: promoU.message });
+      }
     }
 
     const data = {};

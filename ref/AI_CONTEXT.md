@@ -262,6 +262,33 @@ body. Governing migrations in `ref/migrations/`.*
   `campaign_bounce_digest_enabled`='0' (fresh read); recipient
   `campaign_bounce_digest_email` → `alert_recipients`; activity with no
   recipient THROWS (failed-job sweep visibility).
+- **Promotional automations (YisraMail C7, 2026-11-05 — ref/YISRAMAIL_DESIGN.md
+  §6.4 "As built (C7)"; manual 03-YisraFlow/05-internal-functions.md
+  "Promotional sends"):** `campaignService.sendPromotional` = ONE recipient,
+  NO campaign row — a `send_email` step with `promotional:true` + `topic`
+  takes the full marketing path (kill switch 422, consent by topic with
+  opted-out → `{sent:false, skipped:'opted_out'}` — skip, never fail; real
+  token with `campaign_id` NULL; footer + post-render assert; marketing
+  headers/Reply-To; bulk transport only, named via `marketing_sender` or the
+  firm's ONLY bulk row; held → 422). Invariants: no campaign_results row →
+  invisible to transportHealth/digest, bounces still suppress via the
+  uncorrelated ledger write; email_log keeps the body (the MRPC record);
+  `design_id` loads a Designer template at RUN time and resolves its merge
+  tags against `contact_id` IN the function (operational: same resolver, no
+  footer, reaches opt-outs — D18); SMS promotional refused (D1). AUTHORING is
+  D13-gated: `lib/promotionalSendGate.js` (campaigns.bulk) at EVERY writer —
+  workflow steps/test-step/preview, sequence steps, scheduled jobs, trigger
+  actions + hook targets (params_mapping: the KEY's presence is gated, fail
+  closed); a new internal-function writer joins it in the same slice. CTA
+  plans refuse promotional at mint (clicker text would be re-resolved by
+  renderMarketing). Casey authors promotional (impact card states the
+  marketing semantics; save gate still binds) but never invents design_id.
+  `from` is save-required unless promotional is the literal true
+  (`requiredUnless`); include_signature on promotional is REFUSED;
+  send_email's ctaInputParams stays exactly to/subject/html — no C7 param
+  may become a clicker input without review. Account-level SES refusal holds
+  the transport and fails the step; promotional steps carry no retry policy
+  (an ambiguous failure may have sent; no reservation row to dedupe).
 - **Campaign hardening (YisraMail C1, 2026-11-03 — §17 below; ref/YISRAMAIL_DESIGN.md
   §6.1 / §6.4 "As built (C1)"):** campaigns have a class (operational |
   marketing), an operational cap with an audited `campaigns.bulk` over-cap

@@ -1222,6 +1222,18 @@ function validatePlan(plan, label, reg, decls = [], { allowInline = true } = {})
     const ph = findPlaceholder(params, `${sl}.params`);
     if (ph) throw bad(`${ph}: unresolved {{...}} placeholder — CTA params are frozen literals at mint`);
 
+    // C7: no promotional send_email in a CTA plan, whatever the value — a
+    // promotional send runs renderMarketing over the FINAL text, so clicker
+    // input substituted into html/subject would be re-resolved there
+    // ({{contacts.contact_ssn}} typed by a clicker resolves against the
+    // plan's frozen contact_id). Refusing the flag outright is simpler and
+    // safer than tracking which params are bound; an SU wanting a marketing
+    // send has campaigns anyway (C7 review S1, 2026-11-05).
+    if (step.fn === 'send_email' && params.promotional !== undefined && params.promotional !== false
+        && params.promotional !== 'false' && params.promotional !== '0' && params.promotional !== 0 && params.promotional !== '') {
+      throw bad(`${sl}.params.promotional: promotional sends are not mintable as CTA plans — the marketing path re-resolves merge tags over the final text, which must never include clicker input`);
+    }
+
     // §12 bindings, naming a declared input, into an opened param:
     //   whole   "[[input:name]]" as the param's WHOLE top-level value (S1i)
     //   inline  the marker inside the text of a kind:'content' param, any

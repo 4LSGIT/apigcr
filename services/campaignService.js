@@ -1768,6 +1768,118 @@ async function testSendMarketing(db, { auth = null, sender, subject, body, topic
 }
 
 
+/**
+ * A TRIGGERED promotional send (C7): ONE recipient, NO campaign row — the
+ * second kind of campaign email (Fred, 2026-11-05: "send now to many" vs
+ * "send to people as something triggers it"). Driven by a workflow/sequence
+ * send_email step with promotional:true; same compliance plumbing as a
+ * campaign send: the kill switch (not '1' → 422 marketing_disabled — a
+ * promotional automation with marketing off is a configuration error, not a
+ * silent skip), consent by topic (opted out → { sent:false,
+ * skipped:'opted_out' }, the C7 contract: skip, never fail), a REAL unsub
+ * token (campaign_id NULL — the reuse path needs a campaign, so each send
+ * mints fresh), renderMarketing (live firm values — no snapshot, single
+ * send) + footer + post-render assert, marketing headers + Reply-To, bulk
+ * transport only, held transport refused 422.
+ *
+ * Deliberately NOT here (triggered volume is a handful a day — ref/plans.md
+ * "triggered-send reporting"):
+ *   - no campaign_results row: no reservation / at-most-once (the engine's
+ *     step retry policy owns retries), no delivery correlation (a bounce
+ *     still suppresses — mail_event_ingest records the ledger event
+ *     uncorrelated), invisible to transportHealth rates and the digest;
+ *   - no rate window (it counts campaign_results, which this never writes)
+ *     and no transportHealthGate (its rates come from campaign traffic);
+ *   - email_log KEEPS the body: there is no campaign snapshot, so the log is
+ *     the MRPC 7.2(b) record of what went out.
+ *
+ * sender: a bulk row's address; null → the ONLY bulk row (refused when none
+ * or several — never a silent pick among transports).
+ * → { sent:true, to, messageId, providerMessageId }
+ *   | { sent:false, skipped:'opted_out' }
+ */
+async function sendPromotional(db, { sender = null, to, subject, body, topicKey, contactId, attachmentUrls = null, attachmentNames = null } = {}) {
+  const dest = typeof to === 'string' ? to.trim() : '';
+  if (!dest) throw new CampaignError(400, 'missing_fields', 'to is required');
+  if (!subject || !body) throw new CampaignError(400, 'missing_fields', 'subject and body are required');
+  const cid = Number(contactId);
+  if (!Number.isSafeInteger(cid) || cid < 1) throw new CampaignError(400, 'contact_required', 'A promotional send needs contact_id — merge tags and the unsubscribe token resolve against it.');
+  await assertMarketingTopic(db, topicKey);
+
+  const settings = await readCampaignSettings(db);
+  if (!settings.marketingEnabled) {
+    throw new CampaignError(422, 'marketing_disabled', 'Marketing sends are switched off (marketing_send_enabled is not 1) — a promotional automation send is a marketing send.');
+  }
+
+  let row;
+  if (sender != null && sender !== '') {
+    [[row]] = await db.query('SELECT * FROM email_credentials WHERE email = ? LIMIT 1', [sender]);
+    if (!row) throw new CampaignError(400, 'unknown_sender', `Email sender ${sender} is not a configured sender`);
+    if (!emailService.isBulkRow(row)) throw new CampaignError(400, 'marketing_requires_bulk_sender', `A promotional send goes out only from a marketing transport — ${sender} is not one.`);
+  } else {
+    const [rows] = await db.query('SELECT * FROM email_credentials WHERE bulk_ok = 1');
+    if (rows.length !== 1) {
+      throw new CampaignError(400, rows.length ? 'ambiguous_sender' : 'no_bulk_sender',
+        rows.length ? `There are ${rows.length} marketing transports — name one in marketing_sender.` : 'No marketing transport (bulk_ok sender) is configured.');
+    }
+    row = rows[0];
+  }
+  if (row.held_at != null) throw new CampaignError(422, 'transport_held', `Transport ${row.email} is held: ${row.held_reason || 'no reason recorded'}. A superuser release lifts it.`, { held_reason: row.held_reason || null });
+
+  const [[contact]] = await db.query('SELECT contact_id FROM contacts WHERE contact_id = ?', [cid]);
+  if (!contact) throw new CampaignError(404, 'contact_not_found', `Contact ${cid} not found`);
+  if (attachmentUrls != null && attachmentUrls !== '') {
+    for (const u of Array.isArray(attachmentUrls) ? attachmentUrls : [attachmentUrls]) {
+      assertHttpsAttachment(typeof u === 'object' && u ? u.url : u);
+    }
+  }
+
+  // The C7 contract: an opted-out recipient is SKIPPED, never a failure —
+  // the workflow goes on (a birthday sweep must not die on one opt-out).
+  const hits = await optout.findOptedOut(db, 'email', [dest], { klass: 'marketing', topic: topicKey });
+  if (hits.length) return { sent: false, skipped: 'opted_out' };
+
+  const unsub = require('./unsubService'); // lazy require (convention)
+  const { token } = await unsub.mintOrReuseUnsubToken(db, {
+    destination: dest, topicKey, campaignId: null, contactId: cid, sendRef: null,
+  });
+  const unsubscribeUrl = unsub.urlFor(token);
+  const t = await topicRow(db, topicKey);
+  const topic = { topic_key: String(t.topic_key), label: String(t.label), consent_model: String(t.consent_model) };
+  const r = await renderMarketing(db, {
+    body, subject, contactId: cid, unsubscribeUrl, preferencesUrl: unsub.preferencesUrlFor(token),
+    topic, firm: complianceFooter.firmValues(),
+  });
+  if (r.status === 'unresolved') throw new CampaignError(400, 'body_unresolved', r.detail);
+  if (r.status !== 'ok') throw new CampaignError(422, 'footer_missing', r.detail);
+
+  const replyTo = marketingReplyTo();
+  const opts = {
+    from: row.email, to: dest, subject: r.subject, html: r.html, text: r.text,
+    bulk: true, headers: marketingHeaders(unsubscribeUrl, listIdFor(topicKey, row.email)),
+    ...(replyTo ? { reply_to: replyTo } : {}),
+    ...(attachmentUrls ? { attachment_urls: attachmentUrls } : {}),
+    ...(attachmentNames ? { attachment_names: attachmentNames } : {}),
+  };
+  let res;
+  try {
+    res = await emailService.sendEmailDirect(db, row, opts);
+  } catch (sendErr) {
+    // The provider refused at the ACCOUNT level (§6.4): hold the transport —
+    // every campaign on it pauses at its next send — then fail THIS step (the
+    // engine's error policy owns retries; the default is no retry). Mirrors
+    // executeSend's classification: an ambiguous error (no reply) is NOT a
+    // pause signal, and the send may have gone out — never auto-resend
+    // (promotional steps should carry no retry policy; the manual says so).
+    if (!isAmbiguousSendError(sendErr) && isAccountPausedError(sendErr)) {
+      await holdTransport(db, row, `the provider refused at the account level: ${String(sendErr.response || sendErr.message || '').slice(0, 180)}`);
+      throw new CampaignError(502, 'account_paused', `The provider paused the account — transport ${row.email} is held, every marketing campaign on it pauses, and this send did NOT go out: ${String(sendErr.message || '').slice(0, 300)}`);
+    }
+    throw sendErr;
+  }
+  return { sent: true, to: dest, messageId: res?.messageId || null, providerMessageId: res?.providerMessageId || null };
+}
+
 /** Delete THIS attempt's 'sending' row (nothing reached the provider). */
 async function clearReservation(db, campaignId, contactId, attemptId) {
   await db.query(
@@ -2589,6 +2701,8 @@ module.exports = {
   CampaignError,
   // C2
   testSendMarketing,
+  // C7
+  sendPromotional,
   releaseTransport,
   RELEASE_TOOL,
   FOOTER_SLOT,

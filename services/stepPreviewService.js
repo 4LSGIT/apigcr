@@ -19,6 +19,7 @@
 const { resolvePlaceholders, resolveSingle } = require('../lib/workflow_engine');
 const internalFunctions = require('../lib/internal_functions');
 const { refuseCodeStepWithoutCapability } = require('../lib/codeStepGate');
+const { refusePromotionalStep } = require('../lib/promotionalSendGate');
 
 const STEP_TYPES = new Set(['webhook', 'internal_function', 'custom_code']);
 
@@ -83,6 +84,8 @@ function previewRows({ auth, step_type, config, variables = {} }) {
   }
   const refusal = refuseCodeStepWithoutCapability(auth, step_type, config);
   if (refusal) throw previewError(refusal.status, refusal.error);
+  const promoRefusal = refusePromotionalStep(auth, step_type, config);
+  if (promoRefusal) throw previewError(promoRefusal.status, promoRefusal.error);
   const { preview } = buildStepPreview({ step: { type: step_type }, config, variables: vars });
   return [{
     row: 'step_preview',

@@ -286,7 +286,10 @@ describe('ruling 15 — send steps in a workflow draft', () => {
   test('the answer prompt teaches the senders without attachment_urls', () => {
     const system = require(path.join(__dirname, '..', 'lib', 'aiPrompts', 'assistantAnswer')).system;
     const line = system.split('\n').find((l) => /^  send_email \(external-send\)/.test(l));
-    expect(line).toMatch(/from!:string, to!:string, subject!:string/);
+    // C7: from became optional (required unless promotional — enforced at run time,
+    // the step editor's dropdown never offers marketing transports).
+    expect(line).toMatch(/from\?:string, to!:string, subject!:string/);
+    expect(line).toMatch(/promotional\?:boolean/);
     expect(line).not.toMatch(/attachment_urls/);
     expect(system).toMatch(/\n  send_sms \(external-send\) — params: from!:string, to!:string, message!:string/);
     expect(system).toMatch(/\n  get_setting \(read\) — params: key!:string, output_var\?:string/);

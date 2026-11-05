@@ -38,6 +38,18 @@ const jwtOrApiKey    = require('../lib/auth.jwtOrApiKey');
 const triggerService = require('../services/triggerService');
 const domainEvents   = require('../lib/domainEvents');
 const triggerCodeGate = require('../lib/triggerCodeGate');
+const { refusePromotionalMapping } = require('../lib/promotionalSendGate'); // C7: promotional send_email actions need campaigns.bulk
+
+/** C7: refuse any internal_function send_email action mapping `promotional` without campaigns.bulk. */
+function refusePromotionalActions(auth, body) {
+  for (const a of Array.isArray(body && body.actions) ? body.actions : []) {
+    if (a && a.action_type === 'internal_function' && a.config && typeof a.config === 'object') {
+      const r = refusePromotionalMapping(auth, a.config.function_name, a.config.params_mapping);
+      if (r) return r;
+    }
+  }
+  return null;
+}
 // Code-mode bodies run in the QuickJS guest engine in the sandbox child
 // (lib/guestCode.js) — every writer and tester that accepts one still refuses
 // it without automations.manage (lib/triggerCodeGate.js; CLAUDE.md, the
@@ -126,6 +138,8 @@ router.post('/api/triggers/rules', jwtOrApiKey, async (req, res) => {
   try {
     if (triggerCodeGate.sendRefusal(res, triggerCodeGate.refuseTriggerCodeWithoutCapability(
       req.auth, triggerCodeGate.ruleWriteCarriesCode(req.body, null)))) return;
+    const promo = refusePromotionalActions(req.auth, req.body);
+    if (promo) return res.status(promo.status).json({ status: 'error', error: promo.error, message: promo.message });
     const rule = await triggerService.createRule(req.db, req.body || {}, {
       userId: actingUserId(req),
     });
@@ -140,6 +154,8 @@ router.put('/api/triggers/rules/:id', jwtOrApiKey, async (req, res) => {
     const before = await triggerService.getRule(req.db, req.params.id);
     if (triggerCodeGate.sendRefusal(res, triggerCodeGate.refuseTriggerCodeWithoutCapability(
       req.auth, triggerCodeGate.ruleWriteCarriesCode(req.body, before)))) return;
+    const promo = refusePromotionalActions(req.auth, req.body);
+    if (promo) return res.status(promo.status).json({ status: 'error', error: promo.error, message: promo.message });
     const rule = await triggerService.updateRule(req.db, req.params.id, req.body || {}, {
       userId: actingUserId(req),
     });

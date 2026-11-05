@@ -44,6 +44,7 @@ const metaService            = require('../services/emailIngestMetaService');
 const sampleService          = require('../services/emailIngestSampleService');
 const rulePreview            = require('../services/ingestRulePreviewService');
 const ingestCodeGate = require('../lib/ingestCodeGate');
+const { refusePromotionalIngestRule, refusePromotionalIngestAction, refusePromotionalIngestActionUpdate } = require('../lib/promotionalSendGate'); // C7 re-review B1b + round 3
 // The rule edit stamp + change log + stale-edit precondition (A20 slice 1):
 // services/ingestRuleChangeLog.js. Every rule / rule-action writer passes the
 // actor, and an OPTIONAL `expected_base: { definition_updated_at }` (P11's
@@ -405,6 +406,8 @@ router.post('/api/email-ingest/rules', jwtOrApiKey, async (req, res) => {
   try {
     if (ingestCodeGate.sendRefusal(res, ingestCodeGate.refuseIngestCodeWithoutCapability(
       req.auth, ingestCodeGate.ruleWriteCarriesCode(req.body, null)))) return;
+    const promo = refusePromotionalIngestRule(req.auth, req.body);
+    if (promo) return res.status(promo.status).json({ status: 'error', message: promo.message });
     // Optional Idempotency-Key (A20.2 — Ask Casey's rule card sends its
     // draft_id): a retry replays the first create instead of minting a second
     // rule. No key = the native editor's create, unchanged. A refusal (400)
@@ -484,6 +487,8 @@ router.post('/api/email-ingest/rules/:id/duplicate', jwtOrApiKey, async (req, re
 
 router.post('/api/email-ingest/rules/:id/actions', jwtOrApiKey, async (req, res) => {
   try {
+    const promoA = refusePromotionalIngestAction(req.auth, req.body);
+    if (promoA) return res.status(promoA.status).json({ status: 'error', message: promoA.message });
     const opts = _ruleWriteOpts(req, res);
     if (!opts) return;
     const action = await ruleService.addAction(req.db, req.params.id, req.body, opts);
@@ -502,6 +507,10 @@ router.put('/api/email-ingest/rule-actions/:id', jwtOrApiKey, async (req, res) =
   try {
     const before = await ruleService.getActionById(req.db, req.params.id);
     if (!before) return res.status(404).json({ status: 'error', message: 'Action not found' });
+    // The gate judges the EFFECTIVE action (stored + body merged): a type flip
+    // with no config, or a config change with no type, both land here.
+    const promoU = refusePromotionalIngestActionUpdate(req.auth, before, req.body);
+    if (promoU) return res.status(promoU.status).json({ status: 'error', message: promoU.message });
     const opts = _ruleWriteOpts(req, res);
     if (!opts) return;
 

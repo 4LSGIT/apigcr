@@ -226,6 +226,7 @@ const validateInternalFunctionParams = internalFunctions.__validateFunctionParam
 // custom_code — see ref/plans.md.
 // ─────────────────────────────────────────────────────────────
 const { refuseCodeStepWithoutCapability } = require("../lib/codeStepGate");
+const { refusePromotionalStep } = require("../lib/promotionalSendGate");
 const { idempotentRequest, sendIdempotencyError, releaseOnRefusalOnly } = require("../lib/requestIdempotency");
 
 function validateInternalFunctionConfig(stepType, config) {
@@ -1754,6 +1755,8 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
   {
     const codeRefusal = refuseCodeStepWithoutCapability(req.auth, type, config);
     if (codeRefusal) return res.status(codeRefusal.status).json(codeRefusal);
+    const promoRefusal = refusePromotionalStep(req.auth, type, config);
+    if (promoRefusal) return res.status(promoRefusal.status).json(promoRefusal);
     const v = validateInternalFunctionConfig(type, config);
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
@@ -1929,6 +1932,8 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
     {
       const codeRefusal = refuseCodeStepWithoutCapability(req.auth, step.type, step.config);
       if (codeRefusal) return res.status(codeRefusal.status).json(codeRefusal);
+      const promoRefusal = refusePromotionalStep(req.auth, step.type, step.config);
+      if (promoRefusal) return res.status(promoRefusal.status).json(promoRefusal);
       const v = validateInternalFunctionConfig(step.type, step.config);
       if (v) return res.status(v.status).json({
         error: `Step ${i + 1}: ${v.error}`,
@@ -2492,6 +2497,8 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
   {
     const codeRefusal = refuseCodeStepWithoutCapability(req.auth, type, config);
     if (codeRefusal) return res.status(codeRefusal.status).json(codeRefusal);
+    const promoRefusal = refusePromotionalStep(req.auth, type, config);
+    if (promoRefusal) return res.status(promoRefusal.status).json(promoRefusal);
     const v = validateInternalFunctionConfig(type, config);
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
@@ -2667,6 +2674,10 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
       // Inside the transaction callback, so it returns the route's `respond`
       // shape rather than touching res — the surrounding validators do the
       // same, and calling res here would double-respond after `outcome`.
+      const promoRefusal = refusePromotionalStep(req.auth, typeToCheck, configToCheck);
+      if (promoRefusal) {
+        return { respond: { status: promoRefusal.status, body: { error: promoRefusal.error, message: promoRefusal.message } } };
+      }
       const codeRefusal = refuseCodeStepWithoutCapability(req.auth, typeToCheck, configToCheck);
       if (codeRefusal) {
         return { respond: { status: codeRefusal.status, body: { error: codeRefusal.error, message: codeRefusal.message } } };
@@ -3151,6 +3162,8 @@ router.post("/workflows/test-step", jwtOrApiKey, async (req, res) => {
   // string-bodied safe step must not be refused as standard.
   const codeRefusal = refuseCodeStepWithoutCapability(req.auth, step.type, config);
   if (codeRefusal) return res.status(codeRefusal.status).json(codeRefusal);
+  const promoTestRefusal = refusePromotionalStep(req.auth, step.type, config);
+  if (promoTestRefusal) return res.status(promoTestRefusal.status).json(promoTestRefusal);
 
   // Parse error_policy if present
   let errorPolicy = step.error_policy || { strategy: "ignore" };

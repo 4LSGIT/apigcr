@@ -117,6 +117,7 @@ lib/noteLimits.js
 lib/parseName.js
 lib/portalCardEngine.js
 lib/processAlertMeta.js
+lib/promotionalSendGate.js
 lib/rateLimiter.js
 lib/rawBodyFallback.js
 lib/reportSchema/customFieldsAppendix.js
@@ -1250,6 +1251,8 @@ tests/campaignC2.ui.test.js
 tests/campaignC4.mysql.test.js
 tests/campaignC4.test.js
 tests/campaignC4.ui.test.js
+tests/campaignC7.mysql.test.js
+tests/campaignC7.test.js
 tests/campaignCaseTypeFilter.test.js
 tests/campaignDesigner.browser.test.js
 tests/campaignDesigner.test.js

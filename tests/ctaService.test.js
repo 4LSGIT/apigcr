@@ -235,6 +235,11 @@ describe('mint validation', () => {
       }] }],
     })), /options\[0\]\.plan\[0\]\.params\.init_data\.lead\.email: unresolved \{\{/);
     await expect400(cta.mintCta(db, baseMint({ options: [{ value: 'a', label: 'A', plan: [LOOKUP('{{cid}}')] }] })), /unresolved/);
+    // C7: promotional send_email is never mintable — the marketing path
+    // re-resolves merge tags over the final text (clicker input included).
+    await expect400(cta.mintCta(db, baseMint({ options: [{ value: 'a', label: 'A',
+      plan: [{ fn: 'send_email', params: { to: 'x@y.test', subject: 's', html: '<p>x</p>', promotional: true, topic: 'newsletter', contact_id: 2 } }] }] })),
+      /promotional sends are not mintable/);
   });
 
   test('runs __validateFunctionParams per step — dry_run included', async () => {

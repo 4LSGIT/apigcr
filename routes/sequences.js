@@ -29,6 +29,7 @@ const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
 const { enrollContact, enrollContactByTemplateId, previewEnrollmentSteps, cancelSequences, validateTemplateFilters, scheduleFromStep, logStep, CONDITION_ERROR_REASONS, HELD_STEP_SKIPPED } = require('../lib/sequenceEngine');
 const { diffSequenceSteps, validateSequenceDraftShape, canonical, parseMaybeJson, sequenceStepFingerprint, sequenceDraftFingerprint } = require('../lib/versionDiff');
 const internalFunctions = require('../lib/internal_functions'); // __validateSequenceFunctionStep (P11)
+const { refusePromotionalStep } = require('../lib/promotionalSendGate'); // C7: promotional send_email needs campaigns.bulk
 const { idempotentRequest, sendIdempotencyError, releaseOnRefusalOnly } = require('../lib/requestIdempotency'); // POST steps (A18.2), POST enroll (A18.4a)
 const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
@@ -1321,6 +1322,8 @@ router.post('/sequences/templates/:id/steps', jwtOrApiKey, async (req, res) => {
   // internal-function contract (validateStepWrite). The whole step is being
   // written, so it is validated whole.
   {
+    const promoRefusal = refusePromotionalStep(req.auth, action_type, action_config);
+    if (promoRefusal) return res.status(promoRefusal.status).json(promoRefusal);
     const v = await validateStepWrite(db, action_type, action_config);
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
@@ -1417,6 +1420,8 @@ router.put('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (req
   // internal-function contract (validateStepWrite). The whole step is being
   // written, so it is validated whole.
   {
+    const promoRefusal = refusePromotionalStep(req.auth, action_type, action_config);
+    if (promoRefusal) return res.status(promoRefusal.status).json(promoRefusal);
     const v = await validateStepWrite(db, action_type, action_config);
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
@@ -1658,6 +1663,8 @@ router.patch('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (r
       }
     }
 
+    const promoRefusal = refusePromotionalStep(req.auth, typeToCheck, configToCheck);
+    if (promoRefusal) return res.status(promoRefusal.status).json(promoRefusal);
     const v = await validateStepWrite(db, typeToCheck, configToCheck);
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
