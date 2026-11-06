@@ -596,17 +596,9 @@ showed and the slice left alone:
   emitted (the error execution row is the only trace). Re-key windows only,
   rare. Fix: in backfill, also re-emit a present row with `log_id` NULL whose
   date is past `backfill_emit_after` (the new pass's crash-window rule).
-- **docs@ attachments → Dropbox** (wanted, Fred 2026-10-26; NOT a retirement
-  prerequisite). The Pabbly docs@ workflow only ever sent a digest email —
-  replaced by the `docs@ digest (replaces Pabbly)` ingest rule
-  (`ref/MAILBOX_GMAIL_PARITY.md` §5). Uploading the files needs their bytes:
-  the worker stores attachment STRUCTURE only (design D1); the on-demand part
-  route already streams one from IMAP. Shape: a rule action that, per
-  attachment, fetches the part and files it into the case's Dropbox folder —
-  the case from the sender's contact or an id in the subject (the digest
-  transform already parses one), unmatched → a review queue. The envelope's
-  attachment `url` is null from both feeders, so the action keys on the
-  stored row (mailbox, folder, uid, part) — worker-fed mail only.
+- **docs@ attachments → Dropbox** — IN PROGRESS as its own arc:
+  `ref/EMAIL_ATTACHMENTS_DESIGN.md` (S1 plumbing built 2026-11-06; S2 = the
+  docs@ workflow, S3 = Comms UI). Its deferred items live in that doc §8.
 - **hookService stores a 512 KB SLICE of JSON TEXT in a JSON column.**
   `hook_executions.raw_input` and `hooks.captured_sample` are `json`; the
   oversized-payload path (`rawInputStr.slice(0, 512 * 1024)`, both the
@@ -2055,7 +2047,6 @@ Active surfaces with known next steps.
 - **Comms polish — after S2P (2026-10-13; design §4.4 "As built (S2P)").** Left out on purpose:
   - **Task → email deep link**: the task created from an email (§E) does not link back to the message; needs a task link type or a URL scheme into the hub (and the hub's side: open-by-message-id deep link). Decide with the chat/deep-link work.
   - **Shared-inbox assignment / "done"** — design doc FIRST (coordinate with phone read state: both are "conversation state", per-user vs per-box semantics must be decided together). OQ4's attribution (mail_sends) is built; assignment is not.
-  - **A.4 retirement item — the one-time bridge UPDATE**: 57 live mailbox-2 rows (2026-10-13) are on the log through the Apps Script source but carry no `mail_messages.log_id` stamp, so `has_case`/`no_case` filters and viewCounts miss them while the S2P log-status line shows them bridged. At the Apps Script retirement (deferred by the 2026-10-25 close check — `ref/MAILBOX_GMAIL_PARITY.md` §4–§5), run the one-time stamp backfill (`UPDATE mail_messages m JOIN email_ingest_executions e ... SET m.log_id = e.log_id WHERE m.log_id IS NULL` keyed the priorLogId way) — then the filters agree with the display. Window rule forbade it in S2P.
 - **Comms phone tab — after v1 (S-PH, 2026-10-12; design §4.4 "As built (S-PH)").** Left out of v1 on purpose:
   - **Shell gate for phone-only users** (ruling 2026-10-12): the sidebar Comms entry and Home button show only when the user can read ≥ 1 mailbox or holds a mail `can_send` (`index.html` `commsBadgeSet` / `commsBadgeRefresh`, fed by `GET /api/mail/mailboxes`). A person whose only grant is on a PHONE line never sees Comms. Every phone user at launch already reads a mailbox. Fix with the phone unread/badge work below (same shell code): count readable lines (`GET /api/phone-lines/readable`) into the show decision.
   - **Unread / badge counts** for texts and calls (per-user read state, like `mail_read_state`); the Phone tab shows no counts today.

@@ -386,6 +386,27 @@ describe('contact / appt / unlinked', () => {
     expect(none.placement_note).toContain('nothing yet');
     expect(taskService.createTask).not.toHaveBeenCalled();
   });
+
+  // Email attachments S1: a caller-named folder INSIDE the bin for the loose
+  // rung ("Emailed 261105 - Doe, Jane"). One segment, sanitized: a "/" in it
+  // can never climb out of the bin, and no trailing '.'/' ' (Windows sync).
+  test('unsortedSubfolder: one sanitized folder inside the bin, loose rung only', async () => {
+    await call({ linkType: 'contact', linkId: '1001', unsortedSubfolder: 'Emailed 261105 - Legacy Props, Inc.' });
+    expect(uploadedPath()).toBe(
+      '/  Law Office/   Cases/  Unsorted Generated Documents/Emailed 261105 - Legacy Props, Inc/' +
+      '2026-09-01 Discharge Notice.pdf'
+    );
+    dropboxService.uploadFile.mockClear();
+    await call({ linkType: null, linkId: null, unsortedSubfolder: '../../etc/x' });
+    expect(uploadedPath()).toBe(
+      '/  Law Office/   Cases/  Unsorted Generated Documents/..-..-etc-x/2026-09-01 Discharge Notice.pdf'
+    );
+  });
+
+  test('unsortedSubfolder is ignored on the case rungs', async () => {
+    await call({ linkType: 'case', linkId: 'hjSFMabb', unsortedSubfolder: 'Emailed 261105 - x' });
+    expect(uploadedPath()).not.toContain('Emailed 261105');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

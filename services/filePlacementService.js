@@ -56,6 +56,12 @@
  *   subfolder                under the case folder, CASE RUNG ONLY ('Forms')
  *   unsortedPathKey/Default  which app_settings bin this caller degrades into
  *   unsortedFilenamePrefix   applied ONLY on the loose (non-case) rung
+ *   unsortedSubfolder        optional folder under the bin root for the loose
+ *                            (non-case) rung — one generated segment,
+ *                            sanitized here. Default '' = the bin root, the
+ *                            behaviour every existing caller relies on. The
+ *                            case rungs ignore it (rung 3 already has its
+ *                            per-case folder).
  *   eventSource / taskSource the documents envelope source, and tasks.task_source
  *   logTag                   console prefix, e.g. '[FORM PDF]' / '[DOC GEN]'
  *   artifactLabel            a noun phrase for prose: 'form PDF', 'generated
@@ -282,7 +288,7 @@ async function _unsortedCaseFolderPath(db, caseId, opts) {
  */
 async function _preparePlacement(db, {
   linkType, linkId, subfolder,
-  unsortedPathKey, unsortedDefault, unsortedFilenamePrefix = '',
+  unsortedPathKey, unsortedDefault, unsortedFilenamePrefix = '', unsortedSubfolder = '',
   artifactLabel, binLabel, taskSource, logTag,
 }) {
   const credentialId = await dropboxService._resolveCredential(db, {});
@@ -368,7 +374,17 @@ async function _preparePlacement(db, {
   }
 
   // ── contact / appt / unlinked: the bin root, loose file w/ identity ──────
-  const base = await _unsortedBasePath(db, binOpts);
+  const root = await _unsortedBasePath(db, binOpts);
+  // A caller-named folder inside the bin (email attachments: one per day and
+  // sender). One generated segment — sanitized, never a path the caller can
+  // steer outside the bin.
+  // A FOLDER segment may not end in '.' or ' ': Windows drops both and the
+  // Dropbox desktop client then loops its sync (uploadTargetService
+  // _sanitizeSegment — an org sender's "…, Inc." is the live case).
+  const sub = unsortedSubfolder
+    ? (sanitizeNameFragment(unsortedSubfolder, MAX_NAME_FRAGMENT, 'Unsorted').replace(/[. ]+$/, '') || 'Unsorted')
+    : '';
+  const base = sub ? dropboxService.joinPath(root, sub) : root;
   const what = linkType === 'contact' ? `a contact (id ${linkId})`
     : linkType === 'appt' ? `an appointment (id ${linkId})`
       : 'nothing yet';
@@ -399,7 +415,7 @@ async function _preparePlacement(db, {
  */
 async function placeAndRegister(db, {
   linkType, linkId, content, fileName, subfolder,
-  unsortedPathKey, unsortedDefault, unsortedFilenamePrefix = '',
+  unsortedPathKey, unsortedDefault, unsortedFilenamePrefix = '', unsortedSubfolder = '',
   eventSource, taskSource, logTag = DEFAULT_LOG_TAG,
   artifactLabel = 'file', binLabel = 'unsorted folder',
   createdBy = null,
@@ -408,7 +424,7 @@ async function placeAndRegister(db, {
 } = {}) {
   const prep = await _preparePlacement(db, {
     linkType, linkId, subfolder,
-    unsortedPathKey, unsortedDefault, unsortedFilenamePrefix,
+    unsortedPathKey, unsortedDefault, unsortedFilenamePrefix, unsortedSubfolder,
     artifactLabel, binLabel, taskSource, logTag,
   });
 
@@ -516,6 +532,11 @@ async function placeAndRegister(db, {
 
 module.exports = {
   placeAndRegister,
+  // The ladder WITHOUT the upload: resolve (and, on rung 2, create) where a
+  // file belongs. emailAttachmentFilingService's refile moves files that are
+  // already in Dropbox to that destination. Same function as _preparePlacement
+  // (still exported below for the existing tests).
+  preparePlacement: _preparePlacement,
   casePrimaryName,
   identityPrefixFor,
   sanitizeNameFragment,

@@ -1,9 +1,11 @@
 # MAILBOX_GMAIL_PARITY — Gmail IMAP pilot (S1-G): checklist, gate, parity window, retirement
 
-Status: LIVING RUNBOOK — 2026-10-09; All-Mail ruling 2026-10-11; first close check 2026-10-25: NOT retired,
-the window re-opens at the poison-message slice's deploy (§4). Opened by slice S1-G of the mailbox arc
-(`ref/MAILBOX_SYSTEM_DESIGN.md`); moves to `ref/archive/` when the Apps Script
-source retires (step 6). Companion script: `ref/MAILBOX_GMAIL_PARITY.console.js`.
+Status: LIVING RUNBOOK — 2026-10-09; All-Mail ruling 2026-10-11; first close check 2026-10-25: NOT retired;
+**Apps Script RETIRED 2026-11-06** (§4, close record) — step 6 items 1–4 done; the
+step-6 kit (*/2 cadence + time-based failure streaks, AI_CONTEXT §27 wording,
+this file + the console script → `ref/archive/`) is ruled and not built. Opened
+by slice S1-G of the mailbox arc (`ref/MAILBOX_SYSTEM_DESIGN.md`). Companion
+script: `ref/MAILBOX_GMAIL_PARITY.console.js`.
 
 The Workspace account is ingested over Gmail IMAP by the mailbox worker and,
 once verified, emits under the **`gmail-firm`** source keyed by
@@ -604,6 +606,28 @@ Script). Since that slice the 13:01Z failure would cost one message, not the
 folder: on its third failing tick it is quarantined (error alert
 `mailbox_ingest_quarantined`) and All Mail moves on, and a folder feeding the
 rules pages as an `error` after 3 failed runs, not a warning after 5.
+
+### Close 2026-11-06 — RETIRED
+
+Window 2026-10-26 08:30Z (the poison-message slice, 1ca57ed) → 2026-11-06
+~00:30Z, eleven days. W1: 0 failures either feeder. W2: 1,455 both feeders,
+class 2 = 0, class 3 = 4 (Fred's 10-26 `-test-` replays to docs@ —
+synthetic keys, firm-to-firm), class 5 = 1 (a Quo notice only the worker
+logged). W2b 0. W5 (a) 0, (b) 0. Box 2: no alert, nothing quarantined. The
+worker logged first for 1,004 of 1,460 messages (69%). W4 waived by Fred: no
+slice since the accepted 10-12 run touched text derivation, and court rules
+had run on the worker's text for most mail since 10-11. Unrelated and open:
+alerts 2170/2171 (SiteGround boxes 1 and 3, 10-29).
+
+Done by Fred 2026-11-06: step 6 item 1 (the digest rule already sent to
+shoshana@mdbl since 10-26), item 2 (the `forwardEmailsToIngest` trigger
+deleted; last Apps Script post 2026-11-05 23:41Z), item 3 (Pabbly docs@
+workflow disabled), item 4 (A.4 bridge: 57 rows stamped, ids 4…105), the YC
+task closed; the followup scratch key deleted. Still owed (the step-6 kit,
+ruled 2026-10-26): `mailbox-ingest` at */2 with elapsed-time failure streaks,
+AI_CONTEXT §27's feeder wording, and moving this file + its console script to
+`ref/archive/`. Until the kit, the worker stays at */5: mail the Apps Script
+used to log first now reaches the rules up to one tick later.
 
 ## 5. Decisions
 

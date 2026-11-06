@@ -101,6 +101,9 @@ describe('emission identity', () => {
       headers: { message_id: hex(1) },
       mailbox: { id, folder: 'INBOX', uid: 1, id_kind: 'provider', provider_id: hex(1), rfc_message_id: 'm1@example.com' },
     });
+    // The stored copy's row id rides along (email_attachments_* functions'
+    // mail_message_id): stored BEFORE emission, so it is always the real row.
+    expect(env.mailbox.message_row_id).toBe(W.rows(id, 'INBOX')[0].id);
     expect(W.T.email_ingest_executions[0]).toMatchObject({ source_id: 1, message_id: hex(1), status: 'logged' });
     const row = W.rows(id, 'INBOX')[0];
     expect(row).toMatchObject({ provider_id: hex(1), message_id: 'm1@example.com' });

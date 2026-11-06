@@ -118,7 +118,8 @@ const EXPECTED_ELIGIBLE = [
   'documents_attribution_report', 'documents_refresh_case_cache', 'documents_sync',
   'dropbox_create_folder', 'dropbox_delete', 'dropbox_ensure_case_folder',
   'dropbox_get_shared_link', 'dropbox_list_folder', 'dropbox_move', 'dropbox_rename',
-  'dropbox_save_url', 'emit_calendar_approaching', 'emit_stage_aged', 'enroll_sequence',
+  'dropbox_save_url', 'email_attachments_file', 'email_attachments_refile',
+  'emit_calendar_approaching', 'emit_stage_aged', 'enroll_sequence',
   'esign_get_status', 'esign_recall', 'esign_reconcile', 'esign_remind',
   'esign_send_from_template', 'find_contact', 'find_live_calendar_item', 'format_string',
   'forward_as_email', 'forward_as_sms', 'gcal_create_event', 'gcal_delete_event',
@@ -145,12 +146,12 @@ describe('eligibility — layered filter (§4)', () => {
     expect(registry.start_workflow.__meta.workflowOnly).toBe(true);
     expect(cta.isCtaEligible('start_workflow')).toBe(true);
     // the seeded denylist (+ the S2 ruling's three)
-    expect(cta.CTA_FN_DENYLIST).toEqual(['wait_until_time', 'cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'create_cta', 'comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify', 'phone_outbound_sync', 'comms_transcribe_sweep', 'comms_summarize_sweep', 'sms_consent_sync', 'video_watch_status', 'mail_event_ingest', 'mail_bounce_digest', 'tracking_domain_check']);
+    expect(cta.CTA_FN_DENYLIST).toEqual(['wait_until_time', 'cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'create_cta', 'comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify', 'phone_outbound_sync', 'comms_transcribe_sweep', 'comms_summarize_sweep', 'sms_consent_sync', 'video_watch_status', 'mail_event_ingest', 'mail_bounce_digest', 'tracking_domain_check', 'email_case_match']);
     expect(registry.wait_until_time.__meta.controlFlow).toBeUndefined(); // flagless by design
     expect(cta.isCtaEligible('wait_until_time')).toBe(false);
     // S2 ruling: each is a real meta-bearing registry function that ONLY the
     // denylist keeps out (so dropping one from the list re-exposes it).
-    for (const f of ['cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify', 'comms_transcribe_sweep', 'comms_summarize_sweep', 'sms_consent_sync', 'video_watch_status', 'mail_event_ingest', 'mail_bounce_digest', 'tracking_domain_check']) {
+    for (const f of ['cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify', 'comms_transcribe_sweep', 'comms_summarize_sweep', 'sms_consent_sync', 'video_watch_status', 'mail_event_ingest', 'mail_bounce_digest', 'tracking_domain_check', 'email_case_match']) {
       expect(typeof registry[f]).toBe('function');
       expect(registry[f].__meta).toBeTruthy();
       expect(registry[f].__meta.controlFlow).not.toBe(true);

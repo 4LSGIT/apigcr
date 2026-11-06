@@ -33,8 +33,10 @@ Reference material that lives next to the code. Three tiers:
 - Design docs of arcs still open (each moves to `archive/` when its arc closes,
   unless it becomes the shipped subsystem's contract): `ACCESS_CONTROL_DESIGN.md`,
   `COMMS_ARCHIVE_DESIGN.md`, `MAILBOX_SYSTEM_DESIGN.md`,
-  `MAILBOX_GMAIL_PARITY.md` + its `.console.js` (living runbook; retires with the
-  Apps Script source), `EMAIL_PROVIDER_PLAN.md` (draft), `CHAT_DESIGN.md`
+  `MAILBOX_GMAIL_PARITY.md` + its `.console.js` (the Apps Script retired
+  2026-11-06; both move to `archive/` with the step-6 kit),
+  `EMAIL_ATTACHMENTS_DESIGN.md` (email attachments → Dropbox, docs@ first),
+  `EMAIL_PROVIDER_PLAN.md` (draft), `CHAT_DESIGN.md`
   (design only), `YISRAMAIL_DESIGN.md` (draft — consent, bulk email,
   campaigns v2), and `AUDIT_TENANCY.md` (the tenancy arc's input inventory).
 - `gas.js` — deployed Apps Script source, kept byte-identical to the live

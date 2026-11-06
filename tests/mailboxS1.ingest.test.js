@@ -622,7 +622,7 @@ describe('row + envelope builders (pure)', () => {
     expect(e.text).toMatch(/Case Name[^A-Za-z]+([A-Za-z. ]+[A-Za-z])/);
     expect(e.text.match(/Case Name[^A-Za-z]+([A-Za-z. ]+[A-Za-z])/)[1]).toBe('John Q. Public');
     expect(e.text).toMatch(/Trustee[^A-Za-z]+([A-Z][A-Za-z. ]+?[A-Za-z]) with/);
-    expect(e.attachments).toEqual([{ filename: null, mime: 'image/png', size: 9, url: null, content_id: 'img1@x' }]);
+    expect(e.attachments).toEqual([{ filename: null, mime: 'image/png', size: 9, url: null, content_id: 'img1@x', part: '3' }]);
     expect(e.headers.all['delivered-to']).toBe('billing+court@4lsg.com');
   });
 

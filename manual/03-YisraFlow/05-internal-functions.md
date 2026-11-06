@@ -39,9 +39,9 @@ Each function carries a `__meta` block — a JSON description of its params (nam
 
 ### The function registry
 
-**107 callable functions**, grouped by `__meta` category. Counts in this chapter go stale the moment somebody adds a file, so treat `GET /workflows/functions` as the live source of truth — it serves the registry's own metadata. The meta test (`tests/internal_functions.meta.test.js`) derives its coverage from the registry itself, so a new function without a `__meta` block fails the build rather than appearing here silently.
+**112 callable functions**, grouped by `__meta` category. Counts in this chapter go stale the moment somebody adds a file, so treat `GET /workflows/functions` as the live source of truth — it serves the registry's own metadata. The meta test (`tests/internal_functions.meta.test.js`) derives its coverage from the registry itself, so a new function without a `__meta` block fails the build rather than appearing here silently.
 
-Of the 107: **15** are `uiHidden` (internal plumbing and the recurring sweepers, marked † below), leaving 92 in the workflow picker; **15** are `workflowOnly` (marked *), 13 of them visible, so the sequence picker offers 79.
+Of the 112: **17** are `uiHidden` (internal plumbing and the recurring sweepers, marked † below), leaving 95 in the workflow picker; **17** are `workflowOnly` (marked *), 15 of them visible, so the sequence picker offers 80.
 
 | Category | Functions |
 |---|---|
@@ -64,6 +64,7 @@ Of the 107: **15** are `uiHidden` (internal plumbing and the recurring sweepers,
 | documents | `documents_sync`, `documents_refresh_case_cache`, `documents_attribution_report`, `document_generate_from_template`* |
 | esign | `esign_send_from_template`, `esign_get_status`, `esign_recall` |
 | dropbox | `dropbox_create_folder`, `dropbox_get_shared_link`, `dropbox_list_folder`, `dropbox_move`, `dropbox_rename`, `dropbox_delete`, `dropbox_save_url`, `dropbox_ensure_case_folder` |
+| email | `email_case_match`, `email_attachments_file`*, `email_attachments_refile`* |
 | pdf | `parse_pdf`, `render_submission_pdf`* |
 | connections | `refresh_expiring_oauth_credentials`, `rc_renew_subscriptions`, `gcontacts_sync_pending` |
 | general | `query_db`, `update_db`, `insert_db` |
@@ -1903,6 +1904,44 @@ Recurring-job plumbing, `uiHidden` and denied to CTA links (they spend provider,
 ### Email provider events (hidden)
 
 - `mail_event_ingest` — the target of hook `ses-events` only (params mapping `event` ← `body`): one Amazon SES event, delivered by EventBridge, updates the campaign result's delivery columns, records a hard bounce or a spam complaint as a marketing-email opt-out, opens one follow-up task when a client's address hard-bounces, and raises complaint / bounce-rate alerts. Open and Click events (C6) stamp the result's `opened_at`/`clicked_at` and the per-link `campaign_clicks` instead — engagement only, never delivery state or opt-outs. `uiHidden`, denied to CTA links. [Campaign manager](../01-YisraCase-overview/11-campaign-manager.md); `ref/YISRAMAIL_DESIGN.md` §5.4.
+
+### Email attachments
+
+Three functions in `lib/internal_functions/emailAttachments.js` that turn an
+email's attachments into case documents. They read the **YisraCase mailbox
+store**, not Gmail, so they work for any IMAP mailbox. Design and rules:
+`ref/EMAIL_ATTACHMENTS_DESIGN.md`.
+
+Each names its message one of three ways — `mail_message_id` (from an email
+rule: `{{mailbox.message_row_id}}`), or `mailbox_id` + `folder` + `uid`, or
+`source` + `message_id` (the ingest identity).
+
+- **`email_case_match`** (both engines) — which case an email belongs to.
+  A new-style case id typed in the subject (or "case &lt;id&gt;" in the
+  message) wins when it agrees with the sender; otherwise the sender's one
+  open case (Open, Pending or Filed; with several, the one retained case).
+  A typed id that is not one of a known client's open cases is a **conflict**
+  — no case is chosen. Read-only; output `case_id` (null = undecided),
+  `method`, `flag`, `reason`, `contact`, `candidates`. Denied to CTA links.
+- **`email_attachments_file`** (workflow only) — files the attachments to
+  Dropbox, **once each**: a re-run files only what is missing. With a case:
+  `<case folder>/Client Uploads/Emailed YYMMDD` (the email's date,
+  Detroit time). Without one: the unsorted client-uploads folder, in
+  `Emailed YYMMDD - <sender>`, registered to the sender's contact when there
+  is one. Every file is registered in Documents. Skipped and listed:
+  signature-size inline images, file types the client-upload page refuses,
+  files over 40 MB. Output: `placement`, `case_id`, `match`, `folder_path`,
+  `folder_link`, `files`, `skipped`, `counts`, `needs_decision` +
+  `decision_options` (ready for `request_decision`), and a finished staff
+  email — `notice_subject`, `notice_html`, `notice_text` — for `send_email`.
+- **`email_attachments_refile`** (workflow only) — moves everything filed for
+  one message into a case's `Client Uploads/Emailed YYMMDD`, following any
+  rename or move staff made since, and links each file to the case. The
+  answer to a `request_decision` on `decision_options`.
+
+Once filed, the files are ordinary Dropbox documents: `parse_pdf`
+(`dropbox_path`), `query_ai` file inputs and `send_email` `attachment_urls`
+use them from there.
 
 ### Dropbox
 

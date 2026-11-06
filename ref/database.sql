@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-05T15:21:42.847Z
+-- Generated: 2026-11-06T01:41:21.625Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:1699d7345c3ee0fe197a3d161ce4313c
+-- Fingerprint: sha256:1e686d37ee16da81ef86ce00445d3add
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2595,6 +2595,33 @@ CREATE TABLE `log` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `mail_attachment_filings`
+--
+
+DROP TABLE IF EXISTS `mail_attachment_filings`;
+CREATE TABLE `mail_attachment_filings` (
+  `id` bigint unsigned NOT NULL,
+  `mail_message_id` bigint unsigned NOT NULL COMMENT 'mail_messages.id (no FK on purpose: the filing record outlives a purged or pruned mail copy)',
+  `part` varchar(64) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'IMAP body part id, as mail_messages.attachments[].part (e.g. 2, 1.2)',
+  `status` varchar(12) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'filing' COMMENT 'filing = claimed, upload in flight (a claim older than 15 min is stale and may be re-claimed); filed = in Dropbox. App-validated (sql_mode is not strict)',
+  `claimed_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'UTC. When the current claim was taken; the stale-claim clock',
+  `filename` varchar(255) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT 'name as the mail carried it (before sanitizing); the filed name is the last segment of dropbox_path',
+  `size` bigint unsigned DEFAULT NULL COMMENT 'bytes actually filed (decoded); NULL while filing',
+  `link_type` varchar(12) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'case | contact | NULL (unknown sender, unsorted) — what the file was registered to',
+  `link_id` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'cases.case_id or contacts.contact_id per link_type',
+  `placement` varchar(12) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'case = under the case folder; unsorted = in the unsorted client-uploads bin',
+  `match_method` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'how the case was chosen: case_id_in_subject | case_id_in_body | sender_open_case | sender_retained_case | explicit | refiled | none (emailCaseMatchService)',
+  `dropbox_path` text COLLATE utf8mb4_general_ci COMMENT 'path_display Dropbox returned (post-autorename truth); may go stale when staff move the file — dropbox_id does not',
+  `dropbox_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'utf8mb4_bin ON PURPOSE — Dropbox ids are case-sensitive (id:...). The refile handle; never normalize this collation',
+  `document_id` bigint unsigned DEFAULT NULL COMMENT 'documents.id from write-time registration; NULL when registration failed (the sync picks the file up later)',
+  `filed_by` int DEFAULT NULL COMMENT 'users.user who caused it; NULL = automation',
+  `filed_at` datetime DEFAULT NULL COMMENT 'UTC. When the upload landed',
+  `refiled_at` datetime DEFAULT NULL COMMENT 'UTC. Last email_attachments_refile move'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Email attachments filed to Dropbox (ref/EMAIL_ATTACHMENTS_DESIGN.md): the per-part idempotency claim, the audit of where each went, and the refile handle';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `mail_image_senders`
 --
 
@@ -5125,6 +5152,14 @@ ALTER TABLE `log`
   ADD KEY `idx_log_about` (`log_about_type`,`log_about_id`);
 
 --
+-- Indexes for table `mail_attachment_filings`
+--
+ALTER TABLE `mail_attachment_filings`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_mail_attachment_part` (`mail_message_id`,`part`),
+  ADD KEY `idx_mail_attachment_link` (`link_type`,`link_id`);
+
+--
 -- Indexes for table `mail_image_senders`
 --
 ALTER TABLE `mail_image_senders`
@@ -6212,6 +6247,12 @@ ALTER TABLE `legacy_route_log`
 --
 ALTER TABLE `log`
   MODIFY `log_id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `mail_attachment_filings`
+--
+ALTER TABLE `mail_attachment_filings`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `mail_image_senders`

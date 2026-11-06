@@ -582,7 +582,7 @@ function emitText(text, html) {
  * (same shape the Apps Script adapter posts — ref/gas.js
  * buildCanonicalEnvelope), plus a `mailbox` provenance block.
  */
-function buildEnvelope({ source, mailbox, folder, uidValidity, m, receivedAt, idKind = 'rfc' }) {
+function buildEnvelope({ source, mailbox, folder, uidValidity, m, receivedAt, idKind = 'rfc', rowId = null }) {
   const hdr = parseHeaderBlock(m.headerBlock);
   const env = m.envelope || {};
   const warnings = [];
@@ -641,8 +641,13 @@ function buildEnvelope({ source, mailbox, folder, uidValidity, m, receivedAt, id
     date: firstHeader(hdr, 'date') || (date ? date.toUTCString() : null),
     text,
     html,
+    // `part` (+ mailbox.message_row_id below) let an automation address one
+    // attachment's bytes through mailAttachmentService — the url stays null:
+    // bytes are never in the envelope (design D1). Additive; the Apps Script
+    // envelope has neither.
     attachments: (m.attachments || []).map(a => ({
       filename: a.filename, mime: a.mime, size: a.size, url: null, content_id: a.cid || '',
+      part: a.part != null ? String(a.part) : null,
     })),
     auth: {
       spf: parseAuthMethod(authRaw, 'spf'),
@@ -668,6 +673,9 @@ function buildEnvelope({ source, mailbox, folder, uidValidity, m, receivedAt, id
     mailbox: {
       id: mailbox.id, address: mailbox.address, folder, uid: m.uid, uidvalidity: uidValidity,
       id_kind: idKind, provider_id: m.providerId || null, rfc_message_id: env.messageId || null,
+      // mail_messages.id of the stored copy (stored BEFORE emission, so always
+      // known here) — the email_attachments_* functions' mail_message_id.
+      message_row_id: rowId != null ? Number(rowId) : null,
     },
     _parse_warnings: warnings,
   };
@@ -1033,7 +1041,7 @@ async function processMessage(ctx, mb, folder, cfg, st, m, pass, existing) {
   if (emit) {
     const envelope = buildEnvelope({
       source, mailbox: mb, folder, uidValidity: st.uidvalidity, m,
-      receivedAt: new Date(ctx.now()).toISOString(), idKind: em.kind,
+      receivedAt: new Date(ctx.now()).toISOString(), idKind: em.kind, rowId,
     });
     let result;
     try {

@@ -147,6 +147,11 @@ const CTA_FN_DENYLIST = Object.freeze([
   // public link.
   'mail_bounce_digest',
   'tracking_domain_check',
+  // Email attachments S1 (ref/EMAIL_ATTACHMENTS_DESIGN.md §6): a public link has
+  // no use for a read, and this one returns a client's cases. Its two siblings
+  // (email_attachments_file / _refile) stay ELIGIBLE on purpose — an SU-minted
+  // "file these to case X" link is what refile is for.
+  'email_case_match',
 ]);
 
 /** Chromium-backed functions: eligible, but a public repeatable link fans out load. */

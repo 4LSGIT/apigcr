@@ -2823,10 +2823,12 @@ contact_unlinked/court_processed/trustee_validated`,
 ### Entry
 `POST /api/email/ingest` (`routes/api.emailIngest.js`, rate-limited),
 api-key auth against `email_ingest_sources`. Adapters normalize and push:
-SiteGround PHP (domain mailboxes) and Google Apps Script for the Gmail firm
-account — the deployed GAS source is tracked at `ref/gas.js` and code
-comments cite it by FUNCTION name, never line number. It carries no secrets —
-the ingest key and Pabbly URL live in its Script Properties (`INGEST_API_KEY`,
+SiteGround PHP (domain mailboxes). The Google Apps Script that fed the Gmail
+firm account (`gmail-firm`) is RETIRED (trigger deleted 2026-11-06,
+`ref/MAILBOX_GMAIL_PARITY.md` §4): `gmail-firm` is fed by the IMAP worker
+alone (mailbox 2, below). Its source stays at `ref/gas.js` (code comments
+cite it by FUNCTION name, never line number) and carries no secrets — the
+ingest key and Pabbly URL live in its Script Properties (`INGEST_API_KEY`,
 `PABBLY_DOCS_RELAY_URL`); the key was committed here 2026-06-03 → rotated 2026-10-08.
 
 **In-process source `mailbox-imap` (mailbox S1, 2026-10-08):** the IMAP worker
@@ -2947,6 +2949,23 @@ shape 400 → service). Native callers send none and are unchanged (golden:
 A20.3, §0) send it on every edit, and `automation.definition` carries the
 stamp and the latest five change rows. §28 shares all of this.
 
+### Attachments as automation material (email attachments S1, 2026-11)
+Bytes are never in the envelope (url null); the worker's envelope names its
+stored row instead — `mailbox.message_row_id` (= `mail_messages.id`, stored
+before emission) and `attachments[].part`. `services/mailbox/
+mailAttachmentService.js` resolves a message (`mail_message_id` |
+`mailbox_id`+`folder`+`uid` | `source`+`message_id`) and fetches a part over
+IMAP through `imapTransport.fetchPart`'s identity guard — provider-neutral.
+`services/emailCaseMatchService.js` picks the case (typed new-style id vs
+the sender's open client cases; a conflict picks none);
+`services/emailAttachmentFilingService.js` files through
+`filePlacementService.placeAndRegister` with a per-(message, part) claim in
+`mail_attachment_filings` (re-runs file only what is missing; stale claims
+re-claimed after 15 min) and renders the staff notice
+(`services/emailAttachmentNotice.js`, `[[…]]`-safe for request_decision).
+Functions `email_case_match` (CTA-denied), `email_attachments_file`,
+`email_attachments_refile`. Contract: `ref/EMAIL_ATTACHMENTS_DESIGN.md`.
+
 ### Direction & firm-to-firm
 `from.email` domain ∈ `EMAIL_DOMAINS` → `outgoing`, else `incoming`.
 All addresses on firm domains → firm-to-firm: forensic row yes, structured
@@ -2956,7 +2975,8 @@ log no.
 `email_log`, `email_ingest_sources`, `email_ingest_rules`,
 `email_ingest_rule_actions`, `email_ingest_rule_changes`,
 `email_ingest_log_suppressions`,
-`email_ingest_executions`. The `email_router_*` tables are DEAD (tear-out
+`email_ingest_executions`, `mail_attachment_filings` (attachments filed from
+stored mail — above). The `email_router_*` tables are DEAD (tear-out
 pending). Collation: `court_ai_log.message_id` and `email_log.message_id`
 are both `utf8mb4_general_ci` live (verified 2026-10-05) — the explicit
 `COLLATE` clauses on the court-side joins are no-ops kept as insurance
