@@ -1,7 +1,8 @@
 # EMAIL_ATTACHMENTS_DESIGN — email attachments → Dropbox (docs@ first)
 
-Status: S1 (plumbing) built 2026-11-06, pending deploy; S2 (the docs@
-workflow) and S3 (Comms UI) not started. Rulings: Fred, 2026-11-06 (§1).
+Status: S1 (plumbing) landed 2026-11-06 (cdf2050). S2 (the docs@ workflow)
+built 2026-11-06: code + the two console scripts, shadow not yet run. S3
+(Comms UI) not started. Rulings: Fred, 2026-11-06 (§1).
 Living design doc — edit claims in place when a slice changes them.
 
 ## 1. Goal and rulings
@@ -147,37 +148,68 @@ Reference params on all three: `mail_message_id` | `mailbox_id`+`folder`+`uid`
 Operator reference: `manual/03-YisraFlow/05-internal-functions.md` → Email
 attachments.
 
-## 7. S2 — the docs@ workflow (next)
+## 7. S2 — the docs@ workflow
 
-Data only, by an assert-first console script (CLAUDE.md conventions), shadowed
-first:
-1. **Workflow "docs@ intake"**, init `{mail_message_id, source, message_id}`:
-   1. `email_attachments_file` — `mail_message_id`, `source`, `message_id`,
-      `notice_subject_prefix: 'New email to Docs@4LSG.com — '`,
-      `notice_title: 'docs@4lsg.com'`, `output_var: filing`.
-   2. `evaluate_condition` `filing.needs_decision` → 4, else 3.
-   3. `send_email` to SB: `{{filing.notice_subject}}` / `notice_html` /
-      `notice_text`. End.
-   4. `request_decision` → user 5, `options: {{filing.decision_options}}`,
-      `email_html: {{filing.notice_html_decision}}`, subject
-      `{{filing.notice_subject}}`, timeout ~7d → `unsorted`; result var
-      `chosen_case`.
-   5. `evaluate_condition` `chosen_case == 'unsorted'` → end.
-   6. `email_attachments_refile` `{{filing.mail_message_id}}` → `{{chosen_case}}`.
-2. **Rule 24** (`docs@ digest (replaces Pabbly)`): transform → code returning
-   `{mail_message_id: input.mailbox.message_row_id, source: input.source,
-   message_id: input.headers.message_id}`; action → the workflow. Widen the
-   match to docs@ in ANY To/Cc (message 931, 2026-10-19: docs@ third in To),
-   keeping the two firm-domain exclusions.
-3. **Shadow**: add the workflow action beside the live digest with the
-   workflow's recipient = it@ (Fred, user 6), compare a few days, then drop the
-   digest action and repoint to SB.
+Data, written by two assert-first console scripts (CLAUDE.md conventions),
+plus one code change: `request_decision.options` takes a single
+`{{placeholder}}` (`placeholderAllowed`; the engine's single-placeholder path
+hands the step the ARRAY, and request_decision still refuses at run time
+anything but 1–10 `{label, value}` objects — an unset variable resolves to
+`''` and fails the step).
+
+**Workflow "docs@ intake"** — init data = rule 24's transform output
+(`mail_message_id`, `source`, `message_id`; the shadow adds the digest
+fields):
+
+| # | Step | Notes |
+|---|---|---|
+| 1 | `noop` set_vars `notify_email`, `notify_user_id` | THE recipient setting — every message below reads it. Shadow: it@4lsg.com / 6. |
+| 2 | `email_attachments_file` → `filing` | ref = all three forms (row id, else source + message_id); prefix `New email to Docs@4LSG.com — ` (SB's mail filters key on it), title `docs@4lsg.com`; set_vars `needs_decision` = `'true'`/`'false'` (a STRING: evaluate_condition's loose `==` makes `"true" == true` false). retry_then_abort ×2 |
+| 3 | `evaluate_condition` `needs_decision == 'true'` → 6, else 4 | |
+| 4 | `send_email` notice → `{{notify_email}}` | `notice_subject` / `notice_html` / `notice_text`. retry_then_abort ×2 |
+| 5 | `set_next end` | |
+| 6 | `request_decision` → user `{{notify_user_id}}` | options `{{filing.decision_options}}` (candidates + "Leave it in Unsorted"), email_html `{{filing.notice_html_decision}}`, subject `notice_subject`, 7d → `unsorted`, no task, result `chosen_case`, resumes at 7. retry_then_abort ×1 |
+| 7 | `evaluate_condition` `chosen_case != 'unsorted'` → 8, else end | |
+| 8 | `email_attachments_refile` `{{filing.mail_message_id}}` → `{{chosen_case}}` → `refiled` | set_vars `refile_failed` = `{{this.output.failed.length}}`. retry_then_abort ×1 |
+| 9 | `evaluate_condition` `refile_failed > 0` → 10, else end | |
+| 10 | `send_email` "NOT MOVED — …" → `{{notify_email}}` | plain text only: no email-derived string goes into HTML. retry_then_abort ×2 |
+
+Every side-effect step aborts the run on failure (the error sweep pages IT
+for a failed execution); the default `ignore` would carry on to a notice
+built from nothing.
+
+**Rule 24** (`docs@ digest (replaces Pabbly)`, live state captured in
+`ref/migrations/2026-10-26_docs_digest_transform.json`): match widened from
+`envelope.recipient` / `to.0` to docs@ in any of the first ten To and Cc
+slots (hookFilter's `equals` String()s an array, so slots are enumerated;
+both feeders lowercase addresses). It never had a firm-domain exclusion and
+still has none: staff can forward client mail to docs@, and a typed
+`case XXXXXXXX` files it — the cost is that firm mail cc'ing docs@ gets filed
+too (unsorted, sender = staff).
+
+**Shadow** — `ref/migrations/2026-11-06_docs_intake_shadow.console.js`:
+creates + publishes the workflow (step 1 → it@ / user 6), extends the
+transform's last line with the reference (digest fields proven unchanged on
+a real execution), adds the `workflow` action beside the digest action 27.
+NOT dry: from the first docs@ email the files are filed for real while SB
+still gets the old digest. **Cutover** —
+`ref/migrations/2026-11-06_docs_intake_cutover.console.js`, after 3–5 days:
+refuses while no shadow run exists or one failed; step 1 → SB / user 5
+(draft, only step 1 changed, publish), then deletes action 27, cuts the
+transform to the reference, renames the rule "docs@ intake". Recipient
+first, so a stop mid-run duplicates one email rather than losing one.
+
+Tests: `tests/emailAttachments.workflow.test.js` reads the JSON blocks out of
+both scripts and runs the workflow on the real engine (stubbed filing
+service, mail and request_decision; the decision params then pass the real
+request_decision's checks), the save + publish validators, MATCH on the
+production matcher, and both transforms in the guest — the shadow edit
+against the captured live code. Both scripts were dry-run verbatim through
+the real shell `apiSend` against the real routers on a local MySQL holding
+the prod schema and the live rule/executions, with refusal controls.
 
 ## 8. Deferred / follow-ups
 
-- After the migration runs and the hook regenerates `ref/database.sql`: add
-  `['mail_attachment_filings', 'dropbox_id']` to
-  `tests/schemaCollationBin.test.js` BIN_COLUMNS.
 - **S3, Comms UI**: an attachment chip shows "Filed → case X" from
   `mail_attachment_filings`; a "File all to case" action for unsorted mail.
 - **One notice per burst** (parked, Fred 2026-11-06): add `notified_at`; the

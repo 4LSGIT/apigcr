@@ -632,6 +632,7 @@ ref/migrations/2026-10-21_phone_delivery_s1_delivery_columns.sql
 ref/migrations/2026-10-22_request_idempotency.sql
 ref/migrations/2026-10-26_docs_digest_repoint.console.js
 ref/migrations/2026-10-26_docs_digest_rule.console.js
+ref/migrations/2026-10-26_docs_digest_transform.json
 ref/migrations/2026-10-27_hook_dedup_key.sql
 ref/migrations/2026-10-27_ingest_rule_edit_stamp_change_log.sql
 ref/migrations/2026-10-27_mailboxes_ingest_state_comment.sql
@@ -660,6 +661,8 @@ ref/migrations/2026-11-05_yisramail_c4_campaign_segments.sql
 ref/migrations/2026-11-05_yisramail_c4_mail_digest_job.sql
 ref/migrations/2026-11-05_yisramail_c6_open_click.sql
 ref/migrations/2026-11-05_yisramail_c6c_tracking_watchdog_job.sql
+ref/migrations/2026-11-06_docs_intake_cutover.console.js
+ref/migrations/2026-11-06_docs_intake_shadow.console.js
 ref/migrations/2026-11-06_mail_attachment_filings.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
@@ -1456,6 +1459,7 @@ tests/dropboxService.normalizePath.test.js
 tests/dropboxService.retry.test.js
 tests/emailAttachments.mysql.test.js
 tests/emailAttachments.unit.test.js
+tests/emailAttachments.workflow.test.js
 tests/emailDesignRules.test.js
 tests/emailDesignRules.timing.test.js
 tests/emailDesigns.mysql.test.js

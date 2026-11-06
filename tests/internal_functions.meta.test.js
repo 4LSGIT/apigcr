@@ -444,6 +444,12 @@ describe('validateParamsAgainstMeta — behavior fixtures', () => {
     ['create_log.direction placeholder',  'create_log', { type: 'sms', direction: '{{direction}}' }, null],
     ['phone_log.direction placeholder',   'phone_log',  { type: 'sms', direction: '{{direction}}' }, null],
     ['phone_log.link_type placeholder',   'phone_log',  { type: 'sms', link_type: '{{link_type}}' }, null],
+    // request_decision.options (array): the docs@ intake workflow offers the
+    // options a previous step built — {{filing.decision_options}}.
+    ['request_decision.options placeholder', 'request_decision', { question: 'Which case?', options: '{{filing.decision_options}}', result_var: 'chosen_case', timeout: '7d', timeout_value: 'unsorted', recipient_kind: 'user', recipient_id: '{{notify_user_id}}' }, null],
+    ['request_decision.options literal array', 'request_decision', { question: 'Approve?', options: [{ label: 'Yes', value: 'yes' }], result_var: 'd', timeout: '3d', timeout_value: 'no_response', recipient_kind: 'user', recipient_id: 1 }, null],
+    ['request_decision.options plain string still rejected', 'request_decision', { question: 'Approve?', options: 'yes,no', result_var: 'd', timeout: '3d', timeout_value: 'no_response', recipient_kind: 'user', recipient_id: 1 }, 'options: must be a JSON array'],
+    ['request_decision.options object still rejected', 'request_decision', { question: 'Approve?', options: { label: 'Yes', value: 'yes' }, result_var: 'd', timeout: '3d', timeout_value: 'no_response', recipient_kind: 'user', recipient_id: 1 }, 'options: must be a JSON array'],
     // A real LITERAL is still enum-checked — the bypass only skips {{tokens}},
     // which are unresolvable at save time by definition.
     ['create_log.link_type bad literal',  'create_log', { type: 'sms', link_type: 'nonsense' }, 'must be one of'],

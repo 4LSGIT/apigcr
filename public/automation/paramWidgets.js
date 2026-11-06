@@ -32,8 +32,9 @@
 // text input (integer/number) or a "(custom)" option (enum), so existing
 // configs round-trip — but there was no way to AUTHOR one except Edit-as-JSON.
 //
-// 14 params across 10 functions are affected (everything with
-// placeholderAllowed on a non-string type):
+// Every param with placeholderAllowed on a non-string type is affected — 14
+// across 10 functions when this module landed, 41 across 23 by 2026-11-06
+// (the registry is the list). The ones it was built for:
 //
 //   integer  query_ai.file_asset_id, create_appointment.appt_with,
 //            request_decision.recipient_id, esign_send_from_template.template_id,
@@ -41,7 +42,7 @@
 //            create_task.assigned_to, create_task.assigned_by
 //   enum     create_log.link_type, create_log.direction,
 //            phone_log.link_type, phone_log.direction, create_task.link_type
-//   array    foreach.list
+//   array    foreach.list, request_decision.options
 //
 // ─────────────────────────────────────────────────────────────
 // THE WIDGET

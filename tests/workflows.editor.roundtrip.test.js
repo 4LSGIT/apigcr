@@ -404,6 +404,25 @@ describe('paramWidgets — authoring a placeholder where one could not be typed'
     expect(internalFunctions.__validateFunctionParams('foreach', cfg.params)).toBeNull();
   });
 
+  test('request_decision.options: a stored {{token}} opens as one, round-trips, and saves', () => {
+    // The docs@ intake workflow (ref/migrations/2026-11-06_docs_intake_shadow.console.js
+    // step 6) offers options a previous step built. Without placeholderAllowed
+    // on the spec, this field rendered as a JSON textarea and gather's
+    // JSON.parse refused the step on every save, whatever was edited.
+    const params = {
+      question: 'Which case?', options: '{{filing.decision_options}}', result_var: 'chosen_case',
+      timeout: '7d', timeout_value: 'unsorted', nextStep: 7, recipient_kind: 'user', recipient_id: '{{notify_user_id}}',
+    };
+    const ed = makeEditor('request_decision', params);
+    expect(ed.field('options').tagName).toBe('INPUT');
+    expect(ed.field('options').value).toBe('{{filing.decision_options}}');
+    expect(ed.tog('options').style.color).toBe('var(--blue)');
+    const cfg = ed.gather();
+    expect(ed.swalCalls).toEqual([]);
+    expect(cfg.params.options).toBe('{{filing.decision_options}}');
+    expect(internalFunctions.__validateFunctionParams('request_decision', cfg.params)).toBeNull();
+  });
+
   test('a stored placeholder opens in placeholder mode with the toggle lit', () => {
     const ed = makeEditor('foreach', WF39_S4);
     expect(ed.field('list').tagName).toBe('INPUT');

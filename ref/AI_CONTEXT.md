@@ -2914,7 +2914,8 @@ the sandbox child (`*IngestRuleService._evaluateMatch` / `_runTransform`,
 live bodies run in lane `events`, every preview / test endpoint in `preview`;
 failure semantics unchanged (match/suppression → non-match + console warning,
 transform → matched + synthetic failed `transform` outcome, no actions). No
-`Intl`: email rule 24 (docs@ digest) computes Detroit time from UTC. The
+`Intl`: rule 24's docs@ digest transform computed Detroit time from UTC
+(`ref/migrations/2026-10-26_docs_digest_transform.json`). The
 previews run the same engine — `test-match` batches its corpus into one child
 (`guestCode.batchRunner`), and Casey's preview captures warnings through a
 per-call `warn` sink, not a console patch. Every route that ACCEPTS a code
@@ -2965,6 +2966,11 @@ re-claimed after 15 min) and renders the staff notice
 (`services/emailAttachmentNotice.js`, `[[…]]`-safe for request_decision).
 Functions `email_case_match` (CTA-denied), `email_attachments_file`,
 `email_attachments_refile`. Contract: `ref/EMAIL_ATTACHMENTS_DESIGN.md`.
+First user (S2): rule 24 starts the "docs@ intake" workflow (§7 there) —
+file, then a notice, or a `request_decision` whose `options` is
+`{{filing.decision_options}}` (request_decision.options takes one
+placeholder since S2; the array is checked at run time). Its step 1 is the
+one place the notice recipient is set.
 
 ### Direction & firm-to-firm
 `from.email` domain ∈ `EMAIL_DOMAINS` → `outgoing`, else `incoming`.

@@ -230,7 +230,7 @@ Human-in-the-loop gate: pause the workflow, email/SMS a person clickable options
 | Param | Type | Required | Description |
 |---|---|---|---|
 | `question` | string | yes (placeholderAllowed, multiline) | The question shown on the decision page, in the default email, and in the outcome log. Max 2000 chars. |
-| `options` | array | yes | JSON array of 1–10 {"label","value"} objects. label ≤100 chars; value url-safe [a-zA-Z0-9_-]{1,64}, unique. The chosen value is written to result_var. |
+| `options` | array | yes (placeholderAllowed) | JSON array of 1–10 {"label","value"} objects. label ≤100 chars; value url-safe [a-zA-Z0-9_-]{1,64}, unique. The chosen value is written to result_var. Or one {{placeholder}} naming an array a previous step built (e.g. {{filing.decision_options}}) — checked when the step runs. |
 | `result_var` | string | yes | Workflow variable that receives the chosen value (or timeout_value). |
 | `timeout` | duration | yes (placeholderAllowed) | How long to wait — "2h", "3d", "30m", or milliseconds. Max 365d. |
 | `timeout_value` | string | yes (placeholderAllowed) | Written to result_var when nobody responds in time. Need not be one of the option values — branch on it like any other. |

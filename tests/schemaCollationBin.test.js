@@ -44,6 +44,9 @@ const BIN_COLUMNS = [
   // Its write history — ref/migrations/2026-10-28_shared_values_history.sql.
   ['shared_values_history', 'ns'],
   ['shared_values_history', 'k'],
+  // Email attachments (2026-11-06) — the refile handle; Dropbox ids are
+  // case-sensitive. ref/migrations/2026-11-06_mail_attachment_filings.sql.
+  ['mail_attachment_filings', 'dropbox_id'],
 ];
 
 /**
