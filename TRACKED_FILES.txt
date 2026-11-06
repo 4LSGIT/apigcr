@@ -1465,6 +1465,7 @@ tests/entityCommsService.list.test.js
 tests/entityCommsService.test.js
 tests/entityCommunications.integration.test.js
 tests/entityCommunications.widget.test.js
+tests/errorMiddleware.clientBody.test.js
 tests/escapeLike.test.js
 tests/esignActionsUi.test.js
 tests/esignAlert.test.js
