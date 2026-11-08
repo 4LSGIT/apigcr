@@ -17,6 +17,10 @@
  * passes its prefix ("New email to Docs@4LSG.com — "), so a mail filter keyed
  * on the old digest still matches.
  *
+ * Each filed file's name links to it (`files[].link`, the folder link opened on
+ * the file), and a case with a Docs Needed list gets its link, its open items
+ * and "check them off" in the instructions (`docs_checklist`).
+ *
  * withOptions: the request_decision variant. The where-box carries the literal
  * token [[options_html]], which request_decision replaces with one button per
  * option. Because request_decision expands [[…]] tokens in its email_html and
@@ -111,6 +115,7 @@ function render({ result, subjectPrefix = 'Emailed files — ', title = 'Emailed
   const caseId = r.case_id || null;
   const unsorted = r.placement === 'unsorted';
   const nAll = files.length + skipped.length;
+  const dl = r.docs_checklist && r.docs_checklist.link ? r.docs_checklist : null;   // the client's Docs Needed list
 
   // ── subject ──
   const oneLine = (v) => String(v).replace(/\s+/g, ' ').trim().slice(0, 120);
@@ -145,15 +150,20 @@ function render({ result, subjectPrefix = 'Emailed files — ', title = 'Emailed
   } else if (caseId && !unsorted) {
     tone = ['#e7f5ec', '#b7e1c6', '#14532d'];
     whereHead = `Filed to case ${caseId}`;
-    whereBody = `${match.reason || ''} Review the files, rename them, and move them where they belong in the case folder.`.trim();
+    whereBody = `${match.reason || ''} Review the files, rename them, ` +
+      (dl ? 'move them where they belong in the case folder, and check them off the Docs Needed list.'
+        : 'and move them where they belong in the case folder.');
+    whereBody = whereBody.trim();
   } else {
     tone = ['#fff4e5', '#f5d5a8', '#7a4a06'];
     whereHead = 'Filed to Unsorted — needs a case';
-    whereBody = `${match.reason || 'No case could be chosen.'} Move the files to the right case folder.`;
+    whereBody = `${match.reason || 'No case could be chosen.'} Move the files to the right case folder.` +
+      (dl ? ' Then check them off the Docs Needed list.' : '');
   }
   const links = [];
   if (r.folder_link) links.push(button(r.folder_link, 'Open the Dropbox folder', true));
   if (caseId && r.case_link) links.push(button(r.case_link, `Open case ${caseId} in YisraCase`));
+  if (dl) links.push(button(dl.link, 'Open the Docs Needed list'));
   if (!caseId && r.contact_link && match.contact) links.push(button(r.contact_link, `Open ${match.contact.name || 'the contact'} in YisraCase`));
   const cands = (!caseId || unsorted) && Array.isArray(match.candidates) ? match.candidates : [];
   const candHtml = cands.length
@@ -165,22 +175,34 @@ function render({ result, subjectPrefix = 'Emailed files — ', title = 'Emailed
   const folderLine = r.folder_path
     ? `<div style="${F}font-size:12px;color:#475467;margin-top:8px;word-break:break-all;">Dropbox: ${esc(r.folder_path)}</div>`
     : '';
+  const more = dl ? dl.open_count - dl.open.length : 0;
+  const dlHead = dl ? (dl.open_count
+    ? `Docs Needed list — ${dl.open_count} of ${dl.items} still needed:`
+    : `Docs Needed list — ${dl.items ? `all ${dl.items} items checked off` : 'no items yet'}`) : '';
+  const dlHtml = dl
+    ? `<div style="${F}font-size:13px;color:#1d2433;margin-top:10px;"><a href="${esc(dl.link)}" style="color:#1f3a5f;">${esc(dlHead)}</a></div>` +
+      (dl.open.length
+        ? `<ul style="margin:4px 0 0 18px;padding:0;">${dl.open.map(n => `<li style="${F}font-size:13px;color:#1d2433;margin:2px 0;">${esc(n)}</li>`).join('')}` +
+          (more > 0 ? `<li style="${F}font-size:13px;color:#6b7385;margin:2px 0;list-style:none;">${esc(`+ ${more} more`)}</li>` : '') + '</ul>'
+        : '')
+    : '';
 
   // files
   const statusText = (f) => (f.status === 'already_filed' ? 'filed earlier'
     : f.status === 'in_progress' ? 'being filed by another run'
       : f.status === 'failed' ? `NOT filed — ${f.error || 'error'}` : '');
-  const fileRow = (name, size, note, noteColor) => {
+  const fileRow = (name, size, note, noteColor, href) => {
     const t = typeOf(name);
     return '<tr>' +
       `<td width="52" style="padding:7px 0;vertical-align:middle;"><span style="display:inline-block;min-width:38px;text-align:center;${F}font-size:10px;font-weight:700;letter-spacing:.04em;color:${t[1]};background:${t[2]};border-radius:4px;padding:3px 5px;">${t[0]}</span></td>` +
-      `<td style="padding:7px 8px 7px 0;${F}font-size:14px;color:#1d2433;word-break:break-all;">${esc(name)}` +
+      `<td style="padding:7px 8px 7px 0;${F}font-size:14px;color:#1d2433;word-break:break-all;">` +
+        (href ? `<a href="${esc(href)}" style="color:#1f3a5f;">${esc(name)}</a>` : esc(name)) +
       (note ? `<div style="${F}font-size:12px;color:${noteColor};margin-top:2px;">${esc(note)}</div>` : '') + '</td>' +
       `<td align="right" style="padding:7px 0;${F}font-size:12px;color:#6b7385;white-space:nowrap;">${esc(fmtBytes(size))}</td></tr>`;
   };
   const sep = '<tr><td colspan="3" style="border-top:1px solid #eef0f4;font-size:0;line-height:0;">&nbsp;</td></tr>';
   const rows = [
-    ...landed.map(f => fileRow(f.filed_name || f.filename, f.bytes, statusText(f), '#6b7385')),
+    ...landed.map(f => fileRow(f.filed_name || f.filename, f.bytes, statusText(f), '#6b7385', f.link)),
     ...failed.map(f => fileRow(f.filename, f.bytes, statusText(f), '#b42318')),
     ...skipped.map(s => fileRow(s.filename, null, `not filed — ${SKIP_REASON[s.reason] || s.reason}`, '#8a92a3')),
   ];
@@ -204,7 +226,7 @@ function render({ result, subjectPrefix = 'Emailed files — ', title = 'Emailed
     `<tr><td style="padding:20px 24px 4px;"><div style="background:${tone[0]};border:1px solid ${tone[1]};border-radius:8px;padding:12px 14px;">` +
       `<div style="${F}font-size:15px;font-weight:700;color:${tone[2]};">${esc(whereHead)}</div>` +
       `<div style="${F}font-size:13px;line-height:1.5;color:#1d2433;margin-top:4px;">${esc(whereBody)}</div>` +
-      candHtml + folderLine +
+      candHtml + folderLine + dlHtml +
       (withOptions
         ? `<div style="${F}font-size:13px;font-weight:600;color:#1d2433;margin:12px 0 6px;">Which case? The files move there when you choose.</div>[[options_html]]`
         : '') +
@@ -246,6 +268,11 @@ function render({ result, subjectPrefix = 'Emailed files — ', title = 'Emailed
   if (r.folder_path) t.push(`Dropbox: ${r.folder_path}`);
   if (r.folder_link) t.push(`Folder: ${r.folder_link}`);
   if (caseId && r.case_link) t.push(`Case: ${r.case_link}`);
+  if (dl) {
+    t.push(`${dlHead} ${dl.link}`);
+    for (const n of dl.open) t.push(`  - ${n}`);
+    if (more > 0) t.push(`  + ${more} more`);
+  }
   t.push('');
   t.push(`From: ${who}${from.email && who !== from.email ? ` <${from.email}>` : ''}`);
   if (when) t.push(`Received: ${when}`);

@@ -20,9 +20,11 @@
  *                                   bytes over IMAP → filePlacementService
  *                                   .placeAndRegister (the client-upload
  *                                   ladder + documents registry) → COMPLETE
- *   4. one Dropbox folder link, the notice (emailAttachmentNotice), and — when
- *      no case was chosen but candidates exist — ready request_decision
- *      options so a workflow can ask staff which case.
+ *   4. one Dropbox folder link (each file's own link = that link opened on
+ *      it), the case's Docs Needed list when it has one, the notice
+ *      (emailAttachmentNotice), and — when no case was chosen but candidates
+ *      exist — ready request_decision options so a workflow can ask staff
+ *      which case.
  *
  * ── WHERE FILES LAND (ladder: filePlacementService) ─────────────────────────
  *   case chosen        <case folder>/<subfolder>, default
@@ -427,6 +429,16 @@ async function fileMessageAttachments(db, o = {}) {
     }
   }
 
+  // One link per file: the folder's link opened on that file (Dropbox's own
+  // `preview=` — no new shared link per file). Only for a file in THAT folder
+  // (a part filed by an earlier run may sit elsewhere); a file renamed since
+  // just opens the folder.
+  if (folderLink) {
+    for (const f of landed) {
+      if (f.path && parentOf(f.path) === folderPath) f.link = previewLink(folderLink, f.path.slice(folderPath.length + 1));
+    }
+  }
+
   const unsorted = placements.has('unsorted') || (!dest.caseId && landed.length > 0);
   const base = appUrl();
   const shell = require('../lib/shellLinks');   // lazy (convention)
@@ -457,6 +469,9 @@ async function fileMessageAttachments(db, o = {}) {
       skipped: skipped.length,
     },
     warnings,
+    // The client's Docs Needed list, when the case has one — the job is
+    // "review, rename, move, and check it off their list" (Fred 2026-11-09).
+    docs_checklist: dest.caseId && landed.length ? await _docsChecklist(db, dest.caseId, base, warnings) : null,
   };
 
   // A person should pick the case when none was chosen but some are plausible.
@@ -493,6 +508,47 @@ async function fileMessageAttachments(db, o = {}) {
     : null;
   delete result.text;   // the notice carries the excerpt; the raw body stays in the store
   return result;
+}
+
+/** A Dropbox shared FOLDER link opened on one file inside it. */
+function previewLink(folderLink, name) {
+  return `${folderLink}${String(folderLink).includes('?') ? '&' : '?'}preview=${encodeURIComponent(name)}`;
+}
+
+/** Open items the notice names, at most; the count covers the rest. */
+const CHECKLIST_ITEMS_MAX = 12;
+
+/**
+ * The case's client-facing Docs Needed list(s) — portalDocsService.listDocs'
+ * scope (tag 'docs_needed', or the legacy title 'Docs Needed'), items in
+ * position order. null when the case has none. Best-effort: a failed read is
+ * a warning, never a failed filing.
+ * @returns {Promise<{link, lists, items, open_count, open}|null>}
+ */
+async function _docsChecklist(db, caseId, base, warnings) {
+  try {
+    const [rows] = await db.query(
+      `SELECT cl.id AS list_id, ci.name, ci.status
+         FROM checklists cl
+         LEFT JOIN checkitems ci ON ci.checklist_id = cl.id
+        WHERE cl.link_type = 'case' AND cl.link = ?
+          AND (cl.tag = 'docs_needed' OR cl.title = 'Docs Needed')
+        ORDER BY cl.id, ci.position, ci.id`,
+      [caseId]);
+    if (!rows.length) return null;
+    const items = rows.filter(r => r.name != null);
+    const open = items.filter(r => r.status !== 'complete').map(r => r.name);
+    return {
+      link: require('../lib/shellLinks').caseLink(base, caseId, 'checklists'),   // lazy (convention)
+      lists: new Set(rows.map(r => r.list_id)).size,
+      items: items.length,
+      open_count: open.length,
+      open: open.slice(0, CHECKLIST_ITEMS_MAX),
+    };
+  } catch (err) {
+    warnings.push(`The case's Docs Needed list could not be read: ${err.message}`);
+    return null;
+  }
 }
 
 /** Copy documents.external_id (the Dropbox id) onto this message's filed rows. Best-effort. */

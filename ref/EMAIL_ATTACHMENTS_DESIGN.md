@@ -157,6 +157,24 @@ tables). Outputs `notice_subject`, `notice_html`, `notice_text`, and — when
 Subject: `<prefix><who> (N files) — filed to case X` / `— UNSORTED, needs a
 case` / `— NOT FILED` / `(no files)`; S2 passes the old digest's prefix
 (`New email to Docs@4LSG.com — `) so SB's mail filters still match.
+
+The job it hands staff is "review, rename, move, and check it off their list"
+(Fred, 2026-11-09):
+- **Each file links to itself**: `files[].link` = the folder's shared link +
+  `&preview=<name>` — Dropbox opens that file inside the folder view. No
+  shared link per file: the folder links are PUBLIC (`dropboxService.
+  getOrCreateSharedLink`, as `cases.case_dropbox` always was), and one per file
+  would multiply capability URLs. Only for files in that folder; a file
+  renamed since just opens the folder.
+- **The Docs Needed list** (`docs_checklist`), when a case was chosen, a file
+  landed and the case has one — `portalDocsService.listDocs`' scope
+  (`checklists` tag `docs_needed`, or the legacy title `Docs Needed`): a link
+  to the case's Checklists tab (`lib/shellLinks.caseLink(base, id,
+  'checklists')` → `/?files=c<id>~checklists&open=file:0`), "N of M still
+  needed" with the first 12 open items, and "check them off the Docs Needed
+  list" in the instructions. The pick-the-case path sends no notice after the
+  move, so it carries no list link (the candidates' case links open the case).
+  Live 2026-11-09: 280 cases carry a docs list.
 Every email-derived string is HTML-escaped, square brackets included
 (`&#91;`): request_decision expands `[[…]]` tokens in email_html and subject
 and throws on an unknown `[[respond_url:X]]`, so mail text must never carry

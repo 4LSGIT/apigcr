@@ -175,7 +175,7 @@ maybe('email attachments S1/S2 on real MySQL', () => {
   beforeEach(async () => {
     jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'warn').mockImplementation(() => {});
-    for (const t of ['mail_attachment_filings', 'mail_messages', 'mailboxes', 'case_relate', 'contact_emails', 'contacts', 'cases', 'documents']) {
+    for (const t of ['mail_attachment_filings', 'mail_messages', 'mailboxes', 'case_relate', 'contact_emails', 'contacts', 'cases', 'documents', 'checkitems', 'checklists']) {
       await q(`DELETE FROM ${t}`);
     }
     await q(`INSERT INTO mailboxes (id, address, domain, imap_host, imap_user, emit_source_name, emit_id_kind, ingest_state)
@@ -364,6 +364,78 @@ maybe('email attachments S1/S2 on real MySQL', () => {
       expect(mockDbx.uploads).toHaveLength(2);
       expect(again.files.map(f => f.status)).toEqual(['already_filed', 'already_filed']);
       expect(again.counts).toMatchObject({ filed: 0, already_filed: 2 });
+    });
+
+    test('each filed file links to itself (the folder link opened on it); the case\'s Docs Needed list is linked, its open items named', async () => {
+      const c = await contact('Kiara', 'Bentley', 'kiara@x.com');
+      await kase('PVXC1RMM', 'Open', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' }); await relate('PVXC1RMM', c);
+      await kase('CF8ZT7VE', 'Open', 'case');
+      const list = async (link, title, tag, items) => {
+        const r = await q(`INSERT INTO checklists (title, kind, created_by, link, link_type, tag) VALUES (?, 'checklist', 1, ?, 'case', ?)`, [title, link, tag]);
+        let pos = 0;
+        for (const [name, status] of items) {
+          await q('INSERT INTO checkitems (checklist_id, name, status, position) VALUES (?, ?, ?, ?)', [r.insertId, name, status, ++pos]);
+        }
+      };
+      await list('PVXC1RMM', 'Docs Needed', 'docs_needed', [['Paystubs <6 mo>', 'incomplete'], ['Tax return 2025', 'complete'], ['Bank statements', 'incomplete']]);
+      await list('PVXC1RMM', 'Staff notes', null, [['call trustee', 'incomplete']]);          // not the client's docs list
+      await list('CF8ZT7VE', 'Docs Needed', 'docs_needed', [['Other client item', 'incomplete']]);   // another case's
+      const dbx = require('../services/dropboxService');
+      dbx.getOrCreateSharedLink.mockImplementationOnce(async () => 'https://www.dropbox.com/scl/fo/a/b?rlkey=k&dl=0');
+      const mid = await message({ from: 'Kiara Bentley <kiara@x.com>', attachments: [pdf(2, 'stub 1.pdf'), pdf(3, 'w2 & 1099.pdf')] });
+      const r = await filing.fileMessageAttachments(pool, { ref: { mail_message_id: mid } });
+      expect(r.files.map(f => f.link)).toEqual([
+        'https://www.dropbox.com/scl/fo/a/b?rlkey=k&dl=0&preview=stub%201.pdf',
+        'https://www.dropbox.com/scl/fo/a/b?rlkey=k&dl=0&preview=w2%20%26%201099.pdf',
+      ]);
+      expect(r.docs_checklist).toEqual({
+        link: `${r.app_url}/?files=cPVXC1RMM~checklists&open=file:0`,
+        lists: 1, items: 3, open_count: 2, open: ['Paystubs <6 mo>', 'Bank statements'],
+      });
+      expect(r.notice_html).toContain('move them where they belong in the case folder, and check them off the Docs Needed list.');
+      expect(r.notice_html).toContain(`href="${r.app_url}/?files=cPVXC1RMM~checklists&amp;open=file:0"`);
+      expect(r.notice_html).toContain('Docs Needed list — 2 of 3 still needed:');
+      expect(r.notice_html).toContain('>Paystubs &lt;6 mo&gt;</li>');
+      expect(r.notice_html).not.toContain('Tax return 2025');
+      expect(r.notice_html).not.toContain('call trustee');
+      expect(r.notice_html).not.toContain('Other client item');
+      expect(r.notice_html).toContain('href="https://www.dropbox.com/scl/fo/a/b?rlkey=k&amp;dl=0&amp;preview=w2%20%26%201099.pdf"');
+      expect(r.notice_text).toContain(`Docs Needed list — 2 of 3 still needed: ${r.app_url}/?files=cPVXC1RMM~checklists&open=file:0\n  - Paystubs <6 mo>\n  - Bank statements`);
+
+      // a run that finds the files already there keeps their links
+      dbx.getOrCreateSharedLink.mockImplementationOnce(async () => 'https://www.dropbox.com/scl/fo/a/b?rlkey=k&dl=0');
+      const again = await filing.fileMessageAttachments(pool, { ref: { mail_message_id: mid } });
+      expect(again.files.map(f => [f.status, f.link])).toEqual(r.files.map(f => ['already_filed', f.link]));
+
+      // more open items than the notice names → the count covers them
+      await q(`INSERT INTO checkitems (checklist_id, name, status, position)
+               SELECT id, CONCAT('item ', n), 'incomplete', 10 + n FROM checklists,
+                      (SELECT 1 n UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6
+                       UNION SELECT 7 UNION SELECT 8 UNION SELECT 9 UNION SELECT 10 UNION SELECT 11 UNION SELECT 12) k
+                WHERE link = 'PVXC1RMM' AND tag = 'docs_needed'`);
+      const mid2 = await message({ from: 'Kiara Bentley <kiara@x.com>', attachments: [pdf(2, 'more.pdf')] });
+      const r2 = await filing.fileMessageAttachments(pool, { ref: { mail_message_id: mid2 } });
+      expect(r2.docs_checklist).toMatchObject({ items: 15, open_count: 14 });
+      expect(r2.docs_checklist.open).toHaveLength(12);
+      expect(r2.notice_html).toContain('+ 2 more');
+      expect(r2.notice_text).toContain('  - item 10\n  + 2 more');
+
+      // nothing filed (only a refused type) → no list: there is nothing to check off
+      const r3 = await filing.fileMessageAttachments(pool, { ref: { mail_message_id: await message({ from: 'kiara@x.com', attachments: [{ part: '2', filename: 'x.exe', size: 10 }] }) } });
+      expect(r3).toMatchObject({ case_id: 'PVXC1RMM', docs_checklist: null });
+      expect(r3.notice_html).not.toContain('Docs Needed');
+    });
+
+    test('no Docs Needed list, or no case → no list link and no "check them off"', async () => {
+      const c = await contact('Kiara', 'Bentley', 'kiara@x.com');
+      await kase('PVXC1RMM', 'Open', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' }); await relate('PVXC1RMM', c);
+      const r = await filing.fileMessageAttachments(pool, { ref: { mail_message_id: await message({ from: 'kiara@x.com', attachments: [pdf(2)] }) } });
+      expect(r).toMatchObject({ placement: 'case', docs_checklist: null });
+      expect(r.notice_html).toContain('Review the files, rename them, and move them where they belong in the case folder.');
+      expect(r.notice_html).not.toContain('Docs Needed');
+      const u = await filing.fileMessageAttachments(pool, { ref: { mail_message_id: await message({ from: 'stranger@x.com', attachments: [pdf(2)] }) } });
+      expect(u).toMatchObject({ placement: 'unsorted', docs_checklist: null });
+      expect(u.files[0].link).toBe(`https://dbx/sh${BIN}/Emailed 261105 - stranger@x.com?preview=doc2.pdf`);
     });
 
     test('unknown sender → the unsorted bin, "Emailed YYMMDD - <address>", not linked', async () => {

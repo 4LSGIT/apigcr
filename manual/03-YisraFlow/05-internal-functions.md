@@ -1932,9 +1932,14 @@ rule: `{{mailbox.message_row_id}}`), or `mailbox_id` + `folder` + `uid`, or
   is one. Every file is registered in Documents. Skipped and listed:
   signature-size inline images, file types the client-upload page refuses,
   files over 40 MB. Output: `placement`, `case_id`, `match`, `folder_path`,
-  `folder_link`, `files`, `skipped`, `counts`, `needs_decision` +
-  `decision_options` (ready for `request_decision`), and a finished staff
-  email — `notice_subject`, `notice_html`, `notice_text` — for `send_email`.
+  `folder_link`, `files` (each filed file with a `link` that opens it in
+  Dropbox), `skipped`, `counts`, `docs_checklist` (the case's Docs Needed
+  list — a link to the case's Checklists tab and its open items; null when the
+  case has none), `needs_decision` + `decision_options` (ready for
+  `request_decision`), and a finished staff email — `notice_subject`,
+  `notice_html`, `notice_text` — for `send_email`. The email links each file,
+  and on a case with a Docs Needed list links the list, names what is still
+  open, and asks staff to check off what arrived.
 - **`email_attachments_refile`** (workflow only) — moves everything filed for
   one message into a case's `Client Uploads/Emailed YYMMDD`, following any
   rename or move staff made since, and links each file to the case. The

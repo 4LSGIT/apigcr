@@ -30,6 +30,14 @@ describe('lib/shellLinks', () => {
     expect(shellLinks.contactLink(null, 7)).toBe(`${APP}/?files=p7&open=file:0`);
   });
 
+  test('a case link may open a tab (~<tab>, the shell\'s ycSubTabOk shape); anything else is dropped', () => {
+    expect(shellLinks.caseLink(APP, 'MY0PZ04I', 'checklists')).toBe(`${APP}/?files=cMY0PZ04I~checklists&open=file:0`);
+    for (const bad of ['', 'a~b', 'x"><b>', 'a&b', 'a b', 'x'.repeat(33)]) {
+      expect([bad, shellLinks.caseLink(APP, 'MY0PZ04I', bad)]).toEqual([bad, `${APP}/?files=cMY0PZ04I&open=file:0`]);
+    }
+    expect(shellLinks.caseLink(APP, 'a b', 'checklists')).toBe(`${APP}/?case=a b`);   // the legacy form carries no tab
+  });
+
   test('an id of the wrong shape falls back to the LEGACY form, unchanged', () => {
     for (const bad of ['', null, undefined, 'AB CD', 'x"><b>', 'a,b', 'a~b', 'a&b=c']) {
       expect(shellLinks.caseLink(APP, bad)).toBe(`${APP}/?case=${bad == null ? '' : bad}`);
