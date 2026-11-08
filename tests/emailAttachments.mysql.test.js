@@ -108,7 +108,7 @@ const maybe = URL_ ? describe : describe.skip;
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
 const BIN = '/  Law Office/   Cases/  Unsorted Client Uploads';
 
-maybe('email attachments S1 on real MySQL', () => {
+maybe('email attachments S1/S2 on real MySQL', () => {
   const mysql = require('mysql2/promise');
   const transport = require('../services/mailbox/imapTransport');
   const match = require('../services/emailCaseMatchService');
@@ -147,9 +147,10 @@ maybe('email attachments S1 on real MySQL', () => {
     contactSeq++;
     return id;
   }
-  async function kase(id, stage, phase, { dropbox = null, opened = '2026-10-01' } = {}) {
-    await q(`INSERT INTO cases (case_id, case_stage, pipeline_phase, case_type, case_number_full, case_dropbox, case_open_date)
-             VALUES (?, ?, ?, 'Bankruptcy', ?, ?, ?)`, [id, stage, phase, `26-${id.slice(0, 5)}`, dropbox, opened]);
+  async function kase(id, stage, phase, { dropbox = null, opened = '2026-10-01', number = null, numberFull } = {}) {
+    await q(`INSERT INTO cases (case_id, case_stage, pipeline_phase, case_type, case_number, case_number_full, case_dropbox, case_open_date)
+             VALUES (?, ?, ?, 'Bankruptcy', ?, ?, ?, ?)`,
+    [id, stage, phase, number, numberFull === undefined ? `26-${id.slice(0, 5)}` : numberFull, dropbox, opened]);
   }
   const relate = (caseId, contactId, type = 'Primary') =>
     q('INSERT INTO case_relate (case_relate_case_id, case_relate_client_id, case_relate_type) VALUES (?, ?, ?)', [caseId, contactId, type]);
@@ -229,10 +230,61 @@ maybe('email attachments S1 on real MySQL', () => {
         .toMatchObject({ case_id: 'CF8ZT7VE', method: 'case_id_in_body' });
     });
 
-    test('an id that only matches a LEGACY id case-insensitively is not an id', async () => {
-      await kase('abcd2345', 'Filed', 'case');      // legacy base62 — general_ci makes ABCD2345 = abcd2345
-      const m = await match.matchCase(pool, { fromEmail: 'nobody@x.com', subject: 'ABCD2345' });
-      expect(m).toMatchObject({ case_id: null, flag: 'unknown_sender', ids_found: [] });
+    test('legacy ids match too (Fred 2026-11-08): all-caps bare or after "case"; mixed-case after "case", canonical id back', async () => {
+      await kase('MY0PZ04I', 'Pending', 'case');      // legacy, all caps — the I is not Crockford
+      await kase('tLfSP42H', 'Filed', 'case');        // legacy, mixed case
+      for (const subject of ['docs for case MY0PZ04I', 'MY0PZ04I and other such gibberish', 'case my0pz04i']) {
+        expect([subject, await match.matchCase(pool, { fromEmail: 'nobody@x.com', subject })])
+          .toMatchObject([subject, { case_id: 'MY0PZ04I', method: 'case_id_in_subject', ids_found: ['MY0PZ04I'] }]);
+      }
+      expect(await match.matchCase(pool, { fromEmail: 'nobody@x.com', subject: 'case TLFSP42H' }))
+        .toMatchObject({ case_id: 'tLfSP42H', method: 'case_id_in_subject' });
+      // bare, only an all-caps token is tried — never an ordinary mixed-case word
+      expect(await match.matchCase(pool, { fromEmail: 'nobody@x.com', subject: 'tLfSP42H' }))
+        .toMatchObject({ case_id: null, flag: 'unknown_sender' });
+    });
+
+    test('a case number (case_number or case_number_full) names its case — equality, any letter case', async () => {
+      await kase('CF8ZT7VE', 'Filed', 'case', { number: '12-34567', numberFull: '12-34567-abc' });
+      await kase('PVXC1RMM', 'Open', 'intake', { number: '1:26-cv-00546-JLR', numberFull: '1:26-cv-00546 (JLR)' });
+      for (const subject of ['case 12-34567', 'case number 12-34567-ABC documents', 're: 12-34567-abc, paystubs']) {
+        expect([subject, await match.matchCase(pool, { fromEmail: 'nobody@x.com', subject })])
+          .toMatchObject([subject, { case_id: 'CF8ZT7VE', method: 'case_number_in_subject', flag: null }]);
+      }
+      expect(await match.matchCase(pool, { fromEmail: 'nobody@x.com', subject: 'motion (1:26-cv-00546-JLR)' }))
+        .toMatchObject({ case_id: 'PVXC1RMM', method: 'case_number_in_subject' });
+      const m = await match.matchCase(pool, { fromEmail: 'nobody@x.com', subject: 'docs', text: 'This is for case number 12-34567.\nCall 248-555-1234.' });
+      expect(m).toMatchObject({ case_id: 'CF8ZT7VE', method: 'case_number_in_body' });
+      expect(m.reason).toBe('The message names case number 12-34567 (case CF8ZT7VE).');
+      // a prefix or a near miss is not equality
+      for (const subject of ['case 12-3456', 'case 12-34567-ab', 'case 2-34567', '248-555-1234']) {
+        expect([subject, await match.matchCase(pool, { fromEmail: 'nobody@x.com', subject })])
+          .toMatchObject([subject, { case_id: null, flag: 'unknown_sender' }]);
+      }
+    });
+
+    test('id and number naming the SAME case → that case, by id; DIFFERENT cases → flagged; the subject beats the body', async () => {
+      await kase('CF8ZT7VE', 'Filed', 'case', { number: '12-34567' });
+      await kase('PVXC1RMM', 'Open', 'intake', { number: '26-52011' });
+      expect(await match.matchCase(pool, { fromEmail: 'a@x.com', subject: 'case 12-34567 / CF8ZT7VE' }))
+        .toMatchObject({ case_id: 'CF8ZT7VE', method: 'case_id_in_subject' });
+      const m = await match.matchCase(pool, { fromEmail: 'a@x.com', subject: 'CF8ZT7VE and 26-52011' });
+      expect(m).toMatchObject({ case_id: null, flag: 'multiple_case_ids' });
+      expect(m.candidates.map(c => [c.case_id, c.from])).toEqual([['CF8ZT7VE', 'id'], ['PVXC1RMM', 'id']]);
+      expect(await match.matchCase(pool, { fromEmail: 'a@x.com', subject: 'case 26-52011', text: 'for case CF8ZT7VE' }))
+        .toMatchObject({ case_id: 'PVXC1RMM', method: 'case_number_in_subject' });
+    });
+
+    test('a named case that is one of the sender\'s CLOSED cases → that case, not a conflict', async () => {
+      const c = await contact('Ruth', 'Old', 'ruth@x.com');
+      await kase('AAAA1111', 'Open', 'intake'); await relate('AAAA1111', c);
+      await kase('BBBB2222', 'Closed', 'case', { number: '19-41000' }); await relate('BBBB2222', c);
+      expect(await match.matchCase(pool, { fromEmail: 'ruth@x.com', subject: 'case 19-41000' }))
+        .toMatchObject({ case_id: 'BBBB2222', method: 'case_number_in_subject', flag: null });
+      await kase('CCCC3333', 'Filed', 'case', { number: '26-52012' });
+      const m = await match.matchCase(pool, { fromEmail: 'ruth@x.com', subject: 'case 26-52012' });
+      expect(m).toMatchObject({ case_id: null, flag: 'conflict' });
+      expect(m.candidates.map(x => [x.case_id, x.from])).toEqual([['CCCC3333', 'id'], ['AAAA1111', 'sender']]);
     });
 
     test('two different typed ids → flagged', async () => {

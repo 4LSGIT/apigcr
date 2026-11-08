@@ -3,7 +3,7 @@
 /**
  * Email attachments S1 (ref/EMAIL_ATTACHMENTS_DESIGN.md) — the PURE parts and
  * the byte fetch, no database:
- *   emailCaseMatchService   extractCaseIds / ownText (the id grammar)
+ *   emailCaseMatchService   extractCaseIds / extractCaseNumbers / ownText (the grammar)
  *   mailAttachmentService   fileableParts (what gets filed), fetchPartBuffer
  *                           (the coded errors, the byte cap) over a stubbed
  *                           transport
@@ -32,7 +32,7 @@ const filing = require('../services/emailAttachmentFilingService');
 const notice = require('../services/emailAttachmentNotice');
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('extractCaseIds — new-style ids only (ruling 2026-11-06)', () => {
+describe('extractCaseIds — case ids of any vintage (Fred, 2026-11-08)', () => {
   test('a bare uppercase id in the subject', () => {
     expect(match.extractCaseIds({ subject: '- PVXC1RMM', text: '' })).toEqual({ subject: ['PVXC1RMM'], body: [] });
   });
@@ -40,17 +40,26 @@ describe('extractCaseIds — new-style ids only (ruling 2026-11-06)', () => {
     const r = match.extractCaseIds({ subject: 'paystubs for case pvxc1rmm', text: 'Case: CF8ZT7VE\nalso 1T71WG3Z here' });
     expect(r).toEqual({ subject: ['PVXC1RMM'], body: ['CF8ZT7VE'] });
   });
-  test('prefix variants: "case #", "case id", "case no."', () => {
-    for (const s of ['case #PVXC1RMM', 'case id PVXC1RMM', 'Case No. PVXC1RMM', 'CASE-PVXC1RMM']) {
-      expect(match.extractCaseIds({ subject: s }).subject).toEqual(['PVXC1RMM']);
+  test('prefix variants: "case #", "case id", "case no.", "case-", nbsp', () => {
+    for (const s of ['case #PVXC1RMM', 'case id PVXC1RMM', 'Case No. PVXC1RMM', 'CASE-PVXC1RMM', 'case PVXC1RMM']) {
+      expect([s, match.extractCaseIds({ subject: s }).subject]).toEqual([s, ['PVXC1RMM']]);
     }
   });
-  test('legacy mixed-case ids and lowercase bare tokens are not ids', () => {
-    expect(match.extractCaseIds({ subject: 'tLfSP42H wgGoqqv0 pvxc1rmm' }).subject).toEqual([]);
-    expect(match.extractCaseIds({ subject: 'case tLfSP42H' }).subject).toEqual([]);   // has L — not Crockford
+  test('Fred\'s examples: a legacy id that happens to be all caps (I is not Crockford), bare or after "case"', () => {
+    expect(match.extractCaseIds({ subject: 'docs for case MY0PZ04I' }).subject).toEqual(['MY0PZ04I']);
+    expect(match.extractCaseIds({ subject: 'MY0PZ04I and other such gibberish' }).subject).toEqual(['MY0PZ04I']);
   });
-  test('Crockford excludes I L O U; all-digit runs are never ids', () => {
-    expect(match.extractCaseIds({ subject: 'PAYSTUBS DOCUMENT 12345678 case 12345678' }).subject).toEqual([]);
+  test('a mixed-case legacy id counts after "case" (any letter case, legacy - and _ too); bare, a mixed-case word never does', () => {
+    expect(match.extractCaseIds({ subject: 'case tLfSP42H' }).subject).toEqual(['TLFSP42H']);
+    expect(match.extractCaseIds({ subject: 're: case: a_b-Cd12' }).subject).toEqual(['A_B-CD12']);
+    expect(match.extractCaseIds({ subject: 'tLfSP42H wgGoqqv0 pvxc1rmm Document' }).subject).toEqual([]);
+  });
+  test('ids hold a letter: a docket ("case 12-34567") or a digit run is never an id', () => {
+    expect(match.extractCaseIds({ subject: 'case 12-34567 12345678 case 12345678' }).subject).toEqual([]);
+  });
+  test('"case" starts a word ("showcase" is no prefix); the gap may cross a line', () => {
+    expect(match.extractCaseIds({ subject: 're: docs', text: 'showcase pvxc1rmm' }).body).toEqual([]);
+    expect(match.extractCaseIds({ subject: 're: docs', text: 'Case ID:\n cf8zt7ve' }).body).toEqual(['CF8ZT7VE']);
   });
   test('word-bounded on letters and digits: a token inside a longer run is not an id', () => {
     expect(match.extractCaseIds({ subject: 'XPVXC1RMM PVXC1RMMX 9PVXC1RMM' }).subject).toEqual([]);
@@ -68,6 +77,55 @@ describe('extractCaseIds — new-style ids only (ruling 2026-11-06)', () => {
   test('a forward with no note keeps its text (marker at offset 0 is not a cut)', () => {
     const text = '---------- Forwarded message ---------\nfrom the bank, case PVXC1RMM';
     expect(match.extractCaseIds({ subject: 'Fwd:', text }).body).toEqual(['PVXC1RMM']);
+  });
+});
+
+describe('extractCaseNumbers — docket candidates, compared later by equality', () => {
+  const subj = (s) => match.extractCaseNumbers({ subject: s }).subject;
+  test('Fred\'s examples', () => {
+    expect(subj('case 12-34567')).toEqual(['12-34567']);
+    expect(subj('case number 12-34567-abc documents')).toEqual(['12-34567-abc']);
+  });
+  test('any subject token with 4+ digits, ends cleaned — no docket shape is assumed', () => {
+    expect(subj('re: 26-52011-MAR, (1:26-cv-00546-JLR) #18-LV02229 354887.')).toEqual(['26-52011-MAR', '1:26-cv-00546-JLR', '18-LV02229', '354887']);
+  });
+  test('too short, too few digits, addresses and links are not candidates', () => {
+    expect(subj('2026 a1b2c3 x@12345.com https://x.com/12345678 ' + '1'.repeat(41))).toEqual([]);
+  });
+  test('a form-style label: "Case number:" on one line, the number on the next; "casenumber" run together', () => {
+    expect(match.extractCaseNumbers({ subject: '', text: 'Case number:\n26-52011\ncasenumber 26-52012, showcase 26-52013' }).body)
+      .toEqual(['26-52011', '26-52012']);
+  });
+  test('the body counts only after "case" — and only the sender\'s own text', () => {
+    const text = 'Hi, call 248-555-1234. This is for case number 26-52011.\nCase No. 26-52012-mar; case #26-52013, case: 26-52014, Case Num. 26-52015\n\n' +
+      'On Mon, Nov 2, 2026 at 9:00 AM Office <office@4lsg.com> wrote:\n> case 26-99999';
+    expect(match.extractCaseNumbers({ subject: '', text }).body).toEqual(['26-52011', '26-52012-mar', '26-52013', '26-52014', '26-52015']);
+  });
+  test('de-duplicated case-insensitively, capped at 10 per source', () => {
+    expect(subj('26-52011-MAR 26-52011-mar')).toEqual(['26-52011-MAR']);
+    expect(subj(Array.from({ length: 30 }, (_, i) => `26-${50000 + i}`).join(' '))).toHaveLength(10);
+  });
+});
+
+describe('the prefix and quote patterns are linear (they read any email anyone sends)', () => {
+  // The 2026-11-06 patterns were quadratic in a whitespace run: "case" +
+  // 32,000 spaces took 1.9 s, 32,000 blank lines 0.9 s. 128,000 characters of
+  // each worst case now run in a few ms; the bound leaves room for a slow CI.
+  test.each([
+    ['"case" + spaces', 'case' + ' '.repeat(128000) + '\n'],
+    ['"case" + nbsp', 'case' + ' '.repeat(128000)],
+    ['"case number" + spaces', 'case number' + ' '.repeat(128000)],
+    ['"case:" + spaces', 'case:' + ' '.repeat(128000) + '!'],
+    ['"case" + newlines', 'case' + '\n'.repeat(128000)],
+    ['blank lines', '\n'.repeat(128000)],
+    ['space lines', ' \n'.repeat(64000)],
+    ['"--" lines', '--\n'.repeat(42000)],
+    ['a 100,000-token subject', Array.from({ length: 100000 }, (_, i) => `ZZ${100000 + i}`).join(' ')],
+  ])('%s', (_label, t) => {
+    const t0 = Date.now();
+    match.extractCaseIds({ subject: t, text: t });
+    match.extractCaseNumbers({ subject: t, text: 'case ' + t });
+    expect(Date.now() - t0).toBeLessThan(400);
   });
 });
 

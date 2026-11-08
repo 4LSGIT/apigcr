@@ -1917,11 +1917,12 @@ rule: `{{mailbox.message_row_id}}`), or `mailbox_id` + `folder` + `uid`, or
 `source` + `message_id` (the ingest identity).
 
 - **`email_case_match`** (both engines) — which case an email belongs to.
-  A new-style case id typed in the subject (or "case &lt;id&gt;" in the
-  message) wins when it agrees with the sender; otherwise the sender's one
-  open case (Open, Pending or Filed; with several, the one retained case).
-  A typed id that is not one of a known client's open cases is a **conflict**
-  — no case is chosen. Read-only; output `case_id` (null = undecided),
+  A case id or case number (`case_number` / `case_number_full`, matched
+  exactly) named in the subject — or after "case" in the message — wins when
+  it agrees with the sender; otherwise the sender's one open case (Open,
+  Pending or Filed; with several, the one retained case). A named case that
+  is none of a known client's cases while they have open ones is a
+  **conflict** — no case is chosen. Read-only; output `case_id` (null = undecided),
   `method`, `flag`, `reason`, `contact`, `candidates`. Denied to CTA links.
 - **`email_attachments_file`** (workflow only) — files the attachments to
   Dropbox, **once each**: a re-run files only what is missing. With a case:

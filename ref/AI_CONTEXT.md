@@ -2957,8 +2957,9 @@ before emission) and `attachments[].part`. `services/mailbox/
 mailAttachmentService.js` resolves a message (`mail_message_id` |
 `mailbox_id`+`folder`+`uid` | `source`+`message_id`) and fetches a part over
 IMAP through `imapTransport.fetchPart`'s identity guard — provider-neutral.
-`services/emailCaseMatchService.js` picks the case (typed new-style id vs
-the sender's open client cases; a conflict picks none);
+`services/emailCaseMatchService.js` picks the case (a case id or case
+number named in the email, matched by equality, vs the sender's client cases;
+a conflict picks none);
 `services/emailAttachmentFilingService.js` files through
 `filePlacementService.placeAndRegister` with a per-(message, part) claim in
 `mail_attachment_filings` (re-runs file only what is missing; stale claims

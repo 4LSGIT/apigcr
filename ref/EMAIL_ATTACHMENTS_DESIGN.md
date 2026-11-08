@@ -1,8 +1,9 @@
 # EMAIL_ATTACHMENTS_DESIGN — email attachments → Dropbox (docs@ first)
 
 Status: S1 (plumbing) landed 2026-11-06 (cdf2050). S2 (the docs@ workflow)
-built 2026-11-06: code + the two console scripts, shadow not yet run. S3
-(Comms UI) not started. Rulings: Fred, 2026-11-06 (§1).
+landed 2026-11-06 (367d8b3); shadow live since 2026-11-06 (workflow 55, rule
+24 action 28). S2b (2026-11-08): case numbers and legacy ids name the case.
+S3 (Comms UI) not started. Rulings: Fred, 2026-11-06 and 2026-11-08 (§1).
 Living design doc — edit claims in place when a slice changes them.
 
 ## 1. Goal and rulings
@@ -22,10 +23,15 @@ Rulings (2026-11-06):
   `gmail-firm` envelope now comes from the worker and names its stored row.
 - **Open case** = stage Open, Pending or Filed. Several open → the one retained
   (`pipeline_phase = 'case'`) case, else undecided.
-- **Typed case id vs sender** — a typed id that is not one of a known client's
-  open cases is a **conflict**: unsorted + flagged, never the id's case.
-- **New-style case ids only** (8 uppercase Crockford). The 1,057 legacy
-  mixed-case ids are not recognized; old cases fade out.
+- **The email names the case first** (Fred, 2026-11-08): a case id — any
+  vintage, new Crockford or legacy — or a case number (`case_number` /
+  `case_number_full`) in the subject wins over the sender's own cases; the
+  body only when the subject names none. (Replaces the 2026-11-06 ruling
+  "new-style ids only": MY0PZ04I, a legacy id, went unsorted.)
+- **Named case vs sender** — a named case that is none of a known client's
+  cases while that client has open ones is a **conflict**: unsorted +
+  flagged, never the named case; the notice offers both as buttons. One of
+  the client's own cases at any stage (a closed one too) is not a conflict.
 - **One folder per day**: `Client Uploads/Emailed YYMMDD`.
 - **Notice by email only** (no task), recipient in the workflow's config.
 - Idea, parked: one notice per burst of emails from a sender (§8).
@@ -63,26 +69,48 @@ always set) and `attachments[].part`. Envelope `url` stays null.
 
 ## 3. Which case — `emailCaseMatchService`
 
-E = typed ids (subject first; the body only when the subject has none, quoted
-history cut). S = the sender's OPEN client cases (active `contact_emails` →
-`case_relate` Primary/Secondary — the Comms `related()` rule).
+E = the cases the email names, by case id or case number (subject first; the
+body only when the subject names none, quoted history cut). S = the sender's
+OPEN client cases (active `contact_emails` → `case_relate` Primary/Secondary —
+the Comms `related()` rule).
 
 | Situation | Result |
 |---|---|
 | \|E\| > 1 | none, `multiple_case_ids` |
 | \|E\| = 1, S empty | E (a relative or employer with the id; a client with no open case) |
 | \|E\| = 1, E ∈ S | E |
-| \|E\| = 1, E ∉ S | none, `conflict` |
+| \|E\| = 1, E is another of the sender's cases (any stage) | E |
+| \|E\| = 1, otherwise | none, `conflict` |
 | no id, \|S\| = 1 | S |
 | no id, \|S\| > 1 | the one retained case, else none, `multiple_open_cases` |
 | no id, S empty | none, `no_open_case` (known contact) / `unknown_sender` |
 
-Id grammar: "case <id>" (any letter case; also `case:`, `case #`, `case id`,
-`case no.`) in subject or body; a bare uppercase token in the subject only.
-Every token is checked in the DB and counts only when the stored `case_id` is
-itself new-style (`cases.case_id` is general_ci — a legacy `abcD2345` would
-otherwise match `ABCD2345`). Live data (2026-11-06): of contacts with an email
-and an open case, 728 have exactly one, 11 have two or more.
+Case ids: "case <id>" (any letter case; also `case:`, `case #`, `case id`,
+`case no.`) in subject or body; a bare token of uppercase letters and digits in
+the subject only. 8 base64url characters with at least one letter — new
+Crockford ids and the legacy ones (13 legacy ids are all caps, e.g. MY0PZ04I).
+Looked up case-insensitively, which is exact: `cases.case_id` is the general_ci
+primary key, so no two ids differ only in case.
+
+Case numbers: dockets are opaque (`26-52011`, `26-52011-mar`,
+`1:26-cv-00546-JLR`, `18-LV02229`), so nothing parses their shape. Every
+subject token, and in the body the token after `case` / `case number` /
+`case no.` / `case #` (the gap may cross a line: "Case number:\n26-52011"),
+is cleaned of end punctuation and, if 5–40 characters with 4+ digits and not
+an address or URL, compared for EQUALITY with `case_number` and
+`case_number_full` (trimmed, case-insensitive). The floor bounds the lookup;
+equality does the deciding. ≤ 10 candidates per kind and source. When an id
+and a number name the same case the method says `case_id_*`.
+
+Methods: `case_id_in_subject`, `case_number_in_subject`, `case_id_in_body`,
+`case_number_in_body`, `sender_open_case`, `sender_retained_case`. The
+patterns read any email anyone sends, so they are linear (the 2026-11-06
+prefix and quote patterns were quadratic in a whitespace run — 1.9 s at 32 K
+spaces); the unit test pins 128 K-character worst cases.
+
+Live data (2026-11-06): of contacts with an email and an open case, 728 have
+exactly one, 11 have two or more. Of 1,425 cases, 453 carry a case number
+(none shared, 2026-11-08).
 
 ## 4. Filing — `emailAttachmentFilingService`
 
@@ -217,5 +245,3 @@ the prod schema and the live rule/executions, with refusal controls.
   claims, and one email covers the burst. Conflicts with per-message decision
   buttons — revisit after S2 has run.
 - Refile leaves the emptied unsorted day folder behind.
-- Legacy mixed-case case ids are never matched (ruling) — revisit only if
-  misses show up.
