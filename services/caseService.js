@@ -241,7 +241,7 @@ async function listCases(db, {
       })();
     return `SELECT
      c.case_id,
-     COALESCE(c.case_number_full, c.case_number, c.case_id) AS case_number,
+     COALESCE(NULLIF(c.case_number_full, ''), NULLIF(c.case_number, ''), c.case_id) AS case_number,
      c.case_caption,
      c.case_type, c.case_subtype, c.case_stage, c.case_status,
      c.case_judge, c.case_trustee, c.case_chapter,

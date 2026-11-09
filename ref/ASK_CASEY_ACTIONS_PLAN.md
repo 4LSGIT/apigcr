@@ -750,8 +750,9 @@ user's words, opaque server-side; the card shows them verbatim, quoted.
 - **The card** names the case, both columns before → after (NULL vs empty text
   shown), and every reader that changes, each by its own rule read off the
   code: the case header (`full || number || 'Not Filed'`); the Cases list
-  (`COALESCE(full, number, case_id)` — NULL only, so a full number stored as
-  `''` keeps the Case Number column BLANK, said in so many words); the client
+  (`COALESCE(NULLIF(full, ''), NULLIF(number, ''), case_id)` since
+  2026-11-09 — before that NULL only, so a full number stored as `''` kept
+  the Case Number column blank); the client
   portal docket line (`deriveDocket`, for the Primary / Secondary contacts
   named) and portal cards; the Documents tabs' case badge
   (`_labelTargets`, blank-skipping) and the Dropbox relink panel's docket lane;

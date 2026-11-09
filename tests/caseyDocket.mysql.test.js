@@ -295,9 +295,9 @@ d('the Casey docket card on real MySQL (A7c)', () => {
     expect(res.body.changes.case_judge_contact_id).toEqual({ from: 7102, to: 7101 });
   });
 
-  test('a blank stored as \'\' is fillable; THE CASES LIST GAP — its Case Number stays \'\' after a short-number adopt, as the card says', async () => {
+  test('a blank stored as \'\' is fillable; the Cases list reads the adopted short number past the empty-text full number (NULLIF, 2026-11-09), as the card says', async () => {
     const c = await card({ case_id: C4, case_number: '25-70004', evidence: row(4) });
-    expect(c.effects[1]).toBe('Cases list: its Case Number column keeps showing BLANK — it reads the full case number whenever that is not NULL, and this case\'s full case number is stored as empty text. Searching the Cases list by "25-70004" does find the case.');
+    expect(c.effects[1]).toBe(`Cases list: the Case Number column reads "25-70004" (was "${C4}"), and searching by the number finds the case.`);
     expect(c.expected).toEqual({ case_number: null, case_number_full: '', case_type: 'Bankruptcy' });
     // THE ROWS FILED UNDER IT: counted on the card, and the real readers attach exactly those after the write.
     expect(c.effects).toContain('Joins this case now: 1 event calendared against this number and 2 log entries filed under it (court mail that arrived before the case had the number, for example) — they show on this case\'s Events tab and log from now on.');
@@ -309,13 +309,18 @@ d('the Casey docket card on real MySQL (A7c)', () => {
     expect([res.status, res.body.changes]).toEqual([200, { case_number: { from: null, to: '25-70004' } }]);
     expect([await caseLog(), await caseEvents()]).toEqual([[901, 902], [801]]);
     const listed = await caseService.listCases(pool, { query: '25-70004' });
-    expect(listed.cases.map((x) => [x.case_id, x.case_number])).toEqual([[C4, '']]);
+    expect(listed.cases.map((x) => [x.case_id, x.case_number])).toEqual([[C4, '25-70004']]);
   });
 
-  test('THE SILENT CLIP — a 25-character number is stored cut to 20 and answered 200; the normalizer refuses > 20', async () => {
+  test('THE SILENT CLIP, closed — a 25-character number is refused 400 by the route and nothing is stored (relaxed sql_mode WOULD cut it to 20); the normalizer refuses > 20 too', async () => {
     const long = '25-70004-' + 'x'.repeat(16);
+    const before = (await docket(C4)).case_number;
     const res = await call(app, 'PATCH', `/api/cases/${C4}/docket`, { case_number: long });
-    expect([res.status, (await docket(C4)).case_number]).toEqual([200, long.slice(0, 20)]);
+    expect([res.status, (await docket(C4)).case_number]).toEqual([400, before]);
+    expect(res.body.message).toBe('case_number is 25 characters — the column keeps 20');
+    // The hole the guard closes, on the engine: the column really does cut silently.
+    await q('UPDATE cases SET case_number = ? WHERE case_id = ?', [long, C4]);
+    expect((await docket(C4)).case_number).toBe(long.slice(0, 20));
     await q('UPDATE cases SET case_number = NULL WHERE case_id = ?', [C4]);
     await expect(card({ case_id: C4, case_number: long, evidence: row(4) })).rejects.toThrow(`is 25 characters — the column keeps 20`);
   });

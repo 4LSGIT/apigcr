@@ -173,6 +173,14 @@ const WF15_S5 = { variable: 'matchCount', operator: '==', value: 1, then: 6, els
 const WF17_S1_DATA = { direction: 'incoming', attachments: '{{attachments}}' };
 
 describe('workflows.html editor — the render step itself', () => {
+  test('the Run dialog sends ONE Idempotency-Key per open (scope workflows.start) and tells a replay apart from a start (2026-11-09)', () => {
+    const run = extractFn(fs.readFileSync(HTML_PATH, 'utf8'), 'wfRunWorkflow');
+    expect(run).toContain('const idemKey = crypto.randomUUID();');
+    expect(run).toContain("'POST', body, { 'Idempotency-Key': idemKey })");
+    expect(run).toContain('res.value.replayed');
+    expect(run).toContain('was already started — not started again');
+  });
+
   test('a {{placeholder}} on an integer param is NOT rendered into a number input', () => {
     // The bug, stated precisely: <input type="number" value="{{attorney_user_id}}">
     // reports .value === '' because of HTML value sanitization. Assert both that

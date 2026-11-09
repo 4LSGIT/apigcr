@@ -378,6 +378,15 @@ router.post('/api/court-review/adopt-rerun', jwtOrApiKey, async (req, res) => {
     const { short, full } = splitDocket(docket);
     const caseNumber     = short || null;
     const caseNumberFull = full  || null;
+    // Width — the same guard as PATCH /api/cases/:id/docket: both columns are
+    // varchar(20) under a relaxed sql_mode, so a longer value (a court email's
+    // docket is opaque text) would be stored cut and could duplicate another
+    // case's docket (fixed 2026-11-09).
+    const tooLong = [['case_number', caseNumber], ['case_number_full', caseNumberFull]]
+      .filter(([, v]) => v != null && [...v].length > 20);
+    if (tooLong.length) {
+      return res.status(400).json({ ok: false, error: `${tooLong.map(([k, v]) => `${k} is ${[...v].length} characters`).join(', ')} — the column keeps 20` });
+    }
 
     // Target must exist; fetch current docket for the same-vs-different guard.
     const [targetRows] = await req.db.query(

@@ -74,6 +74,12 @@ function adopt() {
 
 const written = () => updateCase.mock.calls[0][2];
 
+test('a docket over 20 characters is refused 400 before any write (the column would cut it silently; 2026-11-09)', async () => {
+  queued.case_number = '26-49875-' + 'x'.repeat(16);
+  expect(await adopt()).toBe(400);
+  expect(updateCase).not.toHaveBeenCalled();
+});
+
 test('a bankruptcy case gets the court\'s name with "In re"', async () => {
   expect(await adopt()).toBe(200);
   expect(written().case_caption).toBe('In re Jane Quincy Smith');

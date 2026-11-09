@@ -194,7 +194,7 @@ describe('the card: values, readers, the judge link, automation, expected', () =
     expect(calls.resolve).toEqual([]);
     expect(c.effects).toEqual([
       'Case page header: "Not Filed" → "25-12345" (it shows the full case number, else the case number).',
-      'Cases list: the Case Number column reads "25-12345" (was blank), and searching by the number finds the case.',
+      `Cases list: the Case Number column reads "25-12345" (was "${CASE_ID}"), and searching by the number finds the case.`,
       'Client portal: the case\'s docket line reads "25-12345" for Dana Debtor (its Primary / Secondary contacts) once they sign in; portal cards that show the case number read it too.',
       `Documents: each Documents tab badges this case's documents "case 25-12345" (was "case ${CASE_ID}"), and the Dropbox relink panel's docket match looks for folders whose name contains the number.`,
       'Court email: the court-email pipeline matches incoming court mail to cases by these two columns, so court mail carrying this number is filed on THIS case from now on — the hearings, deadlines and docket entries it extracts land here.',
@@ -205,11 +205,12 @@ describe('the card: values, readers, the judge link, automation, expected', () =
     ]);
     expect([c.warnings, c.case]).toEqual([[], { case_id: CASE_ID, label: CASE_ID, case_type: 'Bankruptcy', case_subtype: 'Chapter 7', clients: ['Dana Debtor'] }]);
   });
-  test('THE CASES LIST GAP: a full number stored as empty text keeps the Case Number column blank — the card says so', async () => {
+  test('a full number stored as empty text no longer hides the Case Number (listCases NULLIFs both columns since 2026-11-09) — the card reads it the same way', async () => {
     const c = await run(adopt(), { caseRow: { case_number_full: '' }, clients: [] });
-    expect(c.effects[1]).toBe('Cases list: its Case Number column keeps showing BLANK — it reads the full case number whenever that is not NULL, and this case\'s full case number is stored as empty text. Searching the Cases list by "25-12345" does find the case.');
+    expect(c.effects[1]).toBe(`Cases list: the Case Number column reads "25-12345" (was "${CASE_ID}"), and searching by the number finds the case.`);
     expect(c.effects[2]).toBe('Client portal: no Primary or Secondary contact is on this case, so no client sees it in the portal.');
-    expect(c.displays.after).toEqual({ header: '25-12345', cases_list: '', portal: '25-12345', documents: '25-12345' });
+    expect(c.displays.after).toEqual({ header: '25-12345', cases_list: '25-12345', portal: '25-12345', documents: '25-12345' });
+    expect(c.displays.before.cases_list).toBe(CASE_ID);
   });
   test('rows already filed under the number (events by docket, log entries) are counted over exactly the numbers sent', async () => {
     const c = await run(adopt({ case_number_full: '25-12345-abc' }), { filed: { events: 2, log: 1 } });

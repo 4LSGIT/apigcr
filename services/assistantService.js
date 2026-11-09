@@ -3856,7 +3856,8 @@ function caseDocketDisplays(row) {
   const id = String(row.case_id);
   return {
     header: js(row.case_number_full) || js(row.case_number) || 'Not Filed',
-    cases_list: row.case_number_full != null ? String(row.case_number_full) : row.case_number != null ? String(row.case_number) : id,
+    // listCases: COALESCE(NULLIF(full, ''), NULLIF(number, ''), case_id) (since 2026-11-09 — before, NULL only, so '' showed blank).
+    cases_list: nullif(row.case_number_full) || nullif(row.case_number) || id,
     portal: js(row.case_number_full) || js(row.case_number),
     documents: nullif(row.case_number_full) || nullif(row.case_number) || id,
   };
@@ -3960,11 +3961,7 @@ async function normalizeCaseDocketAction(db, value, evidence, { currentUserId = 
   const effects = []; const warnings = [];
   for (const k of kept) effects.push(`${CASE_DOCKET_LABEL[k.column][0].toUpperCase()}${CASE_DOCKET_LABEL[k.column].slice(1)}: already "${k.value}" — not sent.`);
   effects.push(`Case page header: ${before.header === 'Not Filed' ? '"Not Filed"' : `"${before.header}"`} → "${now.header}" (it shows the full case number, else the case number).`);
-  if (now.cases_list === '') {
-    effects.push(`Cases list: its Case Number column keeps showing BLANK — it reads the full case number whenever that is not NULL, and this case's full case number is stored as empty text. Searching the Cases list by "${Object.values(writes)[0].to}" does find the case.`);
-  } else {
-    effects.push(`Cases list: the Case Number column reads "${now.cases_list}"${before.cases_list !== now.cases_list ? ` (was ${before.cases_list === '' ? 'blank' : `"${before.cases_list}"`})` : ' (unchanged)'}, and searching by the number finds the case.`);
-  }
+  effects.push(`Cases list: the Case Number column reads "${now.cases_list}"${before.cases_list !== now.cases_list ? ` (was "${before.cases_list}")` : ' (unchanged)'}, and searching by the number finds the case.`);
   const clients = (Array.isArray(found.clients) ? found.clients : [])
     .filter((c) => c && (c.relate_type === 'Primary' || c.relate_type === 'Secondary'))
     .map((c) => String(c.contact_name || '').trim().slice(0, 200)).filter(Boolean);

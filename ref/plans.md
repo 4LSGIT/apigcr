@@ -1053,10 +1053,9 @@ COMMENTs.)
 
 ## From the Ask Casey arc — A17.7 workflow start (2026-10-28) — deferred
 
-- **The editor's Run button and native starts send no `Idempotency-Key`.**
-  The route honours one (scope `workflows.start`); a double-clicked Run or a
-  retried x-api-key start still creates two runs. Wiring the editor would be
-  a one-line header plus an "already started" message on replay.
+- **Native x-api-key starts send no `Idempotency-Key`** (the editor's Run
+  button does since 2026-11-09): a retried API start still creates two runs
+  unless the caller sends one (scope `workflows.start`).
 
 ## From the Ask Casey arc — A18.4b sequence enroll (2026-10-28) — deferred
 
@@ -1202,16 +1201,6 @@ COMMENTs.)
 - **The other scalar case fields** (A7 groups B/C: `case_source`, dates,
   status-like fields …) — each its own group with its own refusal table.
 - **Native gaps found while tracing (not Casey's):**
-  - The adopt route (and the court-review `adopt-rerun`) checks no width:
-    relaxed sql_mode stores a value over varchar(20) cut to 20 and answers
-    200 — and the collision check compares the UNCUT value, so a long value
-    whose first 20 characters equal another case's docket stores a duplicate
-    docket. Refuse > 20 in the route.
-  - `caseService.listCases` shows `COALESCE(case_number_full, case_number,
-    case_id)` with no NULLIF, so a case whose full number is stored as `''`
-    shows a BLANK Case Number in the Cases list even when its case number is
-    set (the header, the portal and the Documents labels skip the blank).
-    `NULLIF(…, '')` on both would fix it; measure how many rows hold `''`.
   - The route's adopt-only guard compares in JS (exact), its collision guard
     in SQL (general_ci): a value differing from the case's own stored number
     only in capitalisation is refused as a "replacement".

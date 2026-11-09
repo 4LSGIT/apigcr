@@ -3955,6 +3955,10 @@ async function wfRunWorkflow(prefill) {
   }
   const seedJson = JSON.stringify(seedObj || {}, null, 2);
   const seedContact = (prefill && prefill.contactId != null) ? String(prefill.contactId) : '';
+  // One Idempotency-Key per dialog (scope workflows.start on the route): a
+  // double-clicked Start, or a retry after a lost response, replays the first
+  // run's answer (`replayed: true`) instead of starting a second execution.
+  const idemKey = crypto.randomUUID();
 
   const res = await Swal.fire({
     title: runDraft
@@ -4008,7 +4012,7 @@ async function wfRunWorkflow(prefill) {
       }
 
       try {
-        return await api(`/workflows/${WF.activeWfId}/start${runDraft ? '?use_draft=1' : ''}`, 'POST', body);
+        return await api(`/workflows/${WF.activeWfId}/start${runDraft ? '?use_draft=1' : ''}`, 'POST', body, { 'Idempotency-Key': idemKey });
       } catch (err) {
         // ApiError carries server message — covers 409 inactive & 400 contact.
         Swal.showValidationMessage(err.message || String(err));
@@ -4018,7 +4022,9 @@ async function wfRunWorkflow(prefill) {
   });
 
   if (res.isConfirmed && res.value && res.value.executionId) {
-    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Execution #${res.value.executionId} started`, timer: 2000, showConfirmButton: false });
+    Swal.fire({ toast: true, position: 'top-end', icon: res.value.replayed ? 'info' : 'success',
+      title: res.value.replayed ? `Execution #${res.value.executionId} was already started — not started again` : `Execution #${res.value.executionId} started`,
+      timer: res.value.replayed ? 3500 : 2000, showConfirmButton: false });
     WFEX.offset = 0;
     // wfSwitchEditorTab('executions') calls loadWorkflowExecutions() itself —
     // verified; do not call it again here or it double-fires.

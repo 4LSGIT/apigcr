@@ -221,6 +221,9 @@ router.post('/api/cases/:id/merge', jwtOrApiKey, async (req, res) => {
 //
 // This is a distinct segment-count path from /api/cases/:id, so registration
 // order relative to it does not matter; placed here for locality.
+// cases.case_number / case_number_full are varchar(20) (ref/database.sql).
+const DOCKET_MAX_CHARS = 20;
+
 router.patch('/api/cases/:id/docket', jwtOrApiKey, async (req, res) => {
   const caseId = req.params.id;
 
@@ -236,6 +239,19 @@ router.patch('/api/cases/:id/docket', jwtOrApiKey, async (req, res) => {
     return res.status(400).json({
       status: 'error',
       message: 'At least one of case_number / case_number_full is required',
+    });
+  }
+  // Width: both columns are varchar(20) and the session sql_mode is relaxed,
+  // so a longer value would be stored CUT to 20 and answered 200 — while the
+  // collision check below compared the uncut text, so a long value whose first
+  // 20 characters equal another case's docket stored a duplicate docket
+  // (A7c native finding, fixed 2026-11-09). Refuse before anything is read.
+  const tooLong = [['case_number', caseNumber], ['case_number_full', caseNumberFull]]
+    .filter(([, v]) => v != null && [...v].length > DOCKET_MAX_CHARS);
+  if (tooLong.length) {
+    return res.status(400).json({
+      status: 'error',
+      message: `${tooLong.map(([k, v]) => `${k} is ${[...v].length} characters`).join(', ')} — the column keeps ${DOCKET_MAX_CHARS}`,
     });
   }
 
