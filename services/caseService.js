@@ -1009,13 +1009,12 @@ async function getCaseContacts(db, caseId) {
  * case_number OR the case_number_full column. Returns the first conflicting
  * row, or null when the docket is free to adopt.
  *
- * NOTE: this is a separate, route-facing guard — it is deliberately NOT folded
- * into updateCase (a generic column setter used by many callers, the
- * automation `update_case` function among them). Its callers run it first and
- * write via updateCase only on a clean check: PATCH /api/cases/:id/docket,
- * court review's adopt-rerun and, since 2026-11-09, PATCH /api/cases/:id
- * whenever the body carries a docket column (routes/api.cases.js
- * docketWriteRefusal).
+ * NOTE: this is a separate, caller-facing guard — it is deliberately NOT folded
+ * into updateCase (a generic column setter used by many callers). Its callers
+ * run it first and write via updateCase only on a clean check: PATCH
+ * /api/cases/:id/docket, court review's adopt-rerun and, since 2026-11-09,
+ * docketWriteRefusal below (PATCH /api/cases/:id and the automation
+ * `update_case` function, whenever the write carries a docket column).
  *
  * @param {object} db
  * @param {string} caseId            - the target case (excluded from the search)
@@ -1048,6 +1047,50 @@ async function checkCaseNumberCollision(db, caseId, { case_number = null, case_n
   );
 
   return rows.length ? rows[0] : null;
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// docketWriteRefusal  (2026-11-09 — the docket guard on generic writers)
+// ─────────────────────────────────────────────────────────────
+
+// cases.case_number / case_number_full are varchar(20) (ref/database.sql);
+// the session sql_mode is relaxed, so a longer value is stored CUT to 20 and
+// the write answers success — while a collision check compares the uncut
+// text. Refuse the width first.
+const DOCKET_MAX_CHARS = 20;
+const DOCKET_FIELDS = ['case_number', 'case_number_full'];
+const docketTooLongMessage = (tooLong) =>
+  `${tooLong.map(([k, v]) => `${k} is ${[...v].length} characters`).join(', ')} — the column keeps ${DOCKET_MAX_CHARS}`;
+const docketConflictMessage = (conflict) =>
+  `That docket already belongs to case ${conflict.case_id} (${conflict.case_number_full || conflict.case_number || conflict.case_id}).`;
+
+/**
+ * The docket guard for a generic column write (PATCH /api/cases/:id, the
+ * automation update_case function). Looks only at the docket columns the
+ * write carries: a null / '' (a clear) is checked by nothing; a value over
+ * DOCKET_MAX_CHARS code points → { status: 400, message }; a value another
+ * case holds in either column (checkCaseNumberCollision — whole-text equality,
+ * general_ci + PAD SPACE, no shape parse) → { status: 409, message, conflict }.
+ * null when the write may proceed. Nothing is written here, and `fields` is
+ * not changed (the caller writes what it was given). The adopt-only guard
+ * (refusing to REPLACE a number the case has) is /docket's alone.
+ */
+async function docketWriteRefusal(db, caseId, fields) {
+  if (!fields || typeof fields !== 'object') return null;
+  const vals = {};
+  for (const k of DOCKET_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(fields, k)) continue;
+    const s = fields[k] == null ? '' : String(fields[k]).trim();
+    vals[k] = s === '' ? null : s;
+  }
+  const entries = Object.entries(vals).filter(([, v]) => v != null);
+  if (!entries.length) return null;
+  const tooLong = entries.filter(([, v]) => [...v].length > DOCKET_MAX_CHARS);
+  if (tooLong.length) return { status: 400, message: docketTooLongMessage(tooLong) };
+  const conflict = await checkCaseNumberCollision(db, caseId, vals);
+  if (conflict) return { status: 409, message: docketConflictMessage(conflict), conflict };
+  return null;
 }
 
 
@@ -2517,6 +2560,10 @@ module.exports = {
   getCaseContacts,
   searchCases,
   checkCaseNumberCollision,
+  docketWriteRefusal,
+  DOCKET_MAX_CHARS,
+  docketTooLongMessage,
+  docketConflictMessage,
   ensureCaseDropboxFolder,
   listCaseSequences,
   listCaseWorkflows,

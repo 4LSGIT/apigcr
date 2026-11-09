@@ -145,40 +145,21 @@ router.get('/api/cases/:id', jwtOrApiKey, async (req, res) => {
 // short (relaxed sql_mode), answering 200 to both — court-email matching and
 // the events / log docket joins then resolved to whichever row MySQL returned
 // first. When the body carries either column: over-width → 400; a value another
-// case holds in either column → 409 {conflict} (caseService.checkCaseNumberCollision:
-// whole-text equality, general_ci + PAD SPACE, no shape parse) — both before
-// any write, worded as /docket's refusals. A null / '' (a clear) is checked by
-// neither. The adopt-only guard (refusing a REPLACE) stays on /docket alone:
-// replacing a number is this route's job.
-// cases.case_number / case_number_full are varchar(20) (ref/database.sql).
-const DOCKET_MAX_CHARS = 20;
-const DOCKET_FIELDS = ['case_number', 'case_number_full'];
-const docketTooLongMessage = (tooLong) =>
-  `${tooLong.map(([k, v]) => `${k} is ${[...v].length} characters`).join(', ')} — the column keeps ${DOCKET_MAX_CHARS}`;
-const docketConflictMessage = (conflict) =>
-  `That docket already belongs to case ${conflict.case_id} (${conflict.case_number_full || conflict.case_number || conflict.case_id}).`;
-
-async function docketWriteRefusal(db, caseId, body) {
-  if (!body || typeof body !== 'object') return null;
-  const vals = {};
-  for (const k of DOCKET_FIELDS) {
-    if (!Object.prototype.hasOwnProperty.call(body, k)) continue;
-    const s = body[k] == null ? '' : String(body[k]).trim();
-    vals[k] = s === '' ? null : s;
-  }
-  const entries = Object.entries(vals).filter(([, v]) => v != null);
-  if (!entries.length) return null;
-  const tooLong = entries.filter(([, v]) => [...v].length > DOCKET_MAX_CHARS);
-  if (tooLong.length) return { status: 400, body: { status: 'error', message: docketTooLongMessage(tooLong) } };
-  const conflict = await caseService.checkCaseNumberCollision(db, caseId, vals);
-  if (conflict) return { status: 409, body: { status: 'error', message: docketConflictMessage(conflict), conflict } };
-  return null;
-}
+// case holds in either column → 409 {conflict} — both before any write, worded
+// as /docket's refusals. caseService.docketWriteRefusal holds the rule (the
+// automation update_case function runs the same one); a null / '' (a clear) is
+// checked by neither. The adopt-only guard (refusing a REPLACE) stays on
+// /docket alone: replacing a number is this route's job.
+const { DOCKET_MAX_CHARS, docketTooLongMessage, docketConflictMessage } = caseService;
 
 router.patch('/api/cases/:id', jwtOrApiKey, async (req, res) => {
   try {
-    const refusal = await docketWriteRefusal(req.db, req.params.id, req.body);
-    if (refusal) return res.status(refusal.status).json(refusal.body);
+    const refusal = await caseService.docketWriteRefusal(req.db, req.params.id, req.body);
+    if (refusal) {
+      return res.status(refusal.status).json(refusal.conflict
+        ? { status: 'error', message: refusal.message, conflict: refusal.conflict }
+        : { status: 'error', message: refusal.message });
+    }
     const updated = await caseService.updateCase(req.db, req.params.id, req.body, {
       userId: actingUserId(req),
       source: 'manual',
@@ -244,7 +225,7 @@ router.post('/api/cases/:id/merge', jwtOrApiKey, async (req, res) => {
 //
 // Dedicated writer for the docket-adopt flow. Deliberately SEPARATE from the
 // generic PATCH /api/cases/:id: since 2026-11-09 that route runs the same
-// width and cross-case collision refusals (docketWriteRefusal above), but
+// width and cross-case collision refusals (caseService.docketWriteRefusal), but
 // Guard 2 below — refusing to REPLACE a number the case already has — is this
 // route's alone; replacing is the generic route's job.
 //

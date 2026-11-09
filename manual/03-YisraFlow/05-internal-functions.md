@@ -1261,7 +1261,7 @@ fires twice does not double-log.
 
 #### `update_case`
 
-Update one or more fields on a case row. Whitelisted columns only — non-whitelisted columns are rejected at runtime with the blocked names (see ALLOWED in update_case: docket, dates, stage/status/chapter, 341 fields, docs/forms, judge/trustee, notes). Also accepts the case's ACTIVE custom fields by key (cf_…) — the Clio matter id is one, cf_clio_matter; each value is validated against its field type — unknown or retired keys are rejected; null or "" clears one. case_number / case_number_full are opaque strings — no shape validation.
+Update one or more fields on a case row. Whitelisted columns only — non-whitelisted columns are rejected at runtime with the blocked names (see ALLOWED in update_case: docket, dates, stage/status/chapter, 341 fields, docs/forms, judge/trustee, notes). Also accepts the case's ACTIVE custom fields by key (cf_…) — the Clio matter id is one, cf_clio_matter; each value is validated against its field type — unknown or retired keys are rejected; null or "" clears one. case_number / case_number_full are opaque strings — no shape validation — but the step fails rather than store a case number another case already holds in either column, or one longer than 20 characters (the same rule the case routes apply); a null or "" clear is not checked.
 
 | Param | Type | Required | Description |
 |---|---|---|---|

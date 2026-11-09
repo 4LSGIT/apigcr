@@ -31,9 +31,10 @@ body. Governing migrations in `ref/migrations/`.*
   column (`caseService.checkCaseNumberCollision` — whole-text, general_ci +
   PAD SPACE), before any write; a null / '' clear is checked by neither, and
   the adopt-only "no replace" guard stays on `/docket`. `routes/api.cases.js`
-  `docketWriteRefusal`; `tests/caseDocketGuard.test.js`, the real engine in
-  `tests/caseyCaseFields.mysql.test.js`. The automation `update_case` function
-  still writes these columns unguarded (`ref/plans.md`).
+  calls `caseService.docketWriteRefusal`, which the automation `update_case`
+  function runs too (the step fails, `err.code` `DOCKET_COLLISION` /
+  `DOCKET_WIDTH`, instead of writing); `tests/caseDocketGuard.test.js`, the
+  real engine in `tests/caseyCaseFields.mysql.test.js`.
 - **Casey's workflow definition read carries the start contract (A17.7c, 11-09):**
   every workflow row of `automation.definition` (`services/automationReadService.js`)
   has `test_input_keys` (keys of `workflows.test_input`, sorted — never its

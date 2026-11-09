@@ -1227,13 +1227,6 @@ COMMENTs.)
   - Nothing server-side guards `case_341_current` / `341_appt_id`: the
     generic PATCH writes them, though apptService is their declared single
     writer and the portal shows the date.
-  - The automation `update_case` function writes `case_number` /
-    `case_number_full` through `caseService.updateCase` directly, so a
-    workflow step can still store a docket another case holds, or one over
-    20 characters cut short (the three routes refuse both since 2026-11-09:
-    `PATCH /api/cases/:id`, `/docket`, court review's adopt-rerun). Run
-    `checkCaseNumberCollision` + the width rule in the function (or in
-    updateCase for these two columns) and fail the step.
   - `domainEvents.buildChanges`' `_diffNorm` reads a datetime-local value
     (`2026-12-01T09:30`) as `2026-12-01 09:30` and the stored DATETIME as
     `2026-12-01 09:30:00` (or a bare date at midnight), so re-sending an
