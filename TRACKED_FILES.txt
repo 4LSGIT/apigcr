@@ -664,6 +664,8 @@ ref/migrations/2026-11-05_yisramail_c6c_tracking_watchdog_job.sql
 ref/migrations/2026-11-06_docs_intake_cutover.console.js
 ref/migrations/2026-11-06_docs_intake_shadow.console.js
 ref/migrations/2026-11-06_mail_attachment_filings.sql
+ref/migrations/2026-11-09_docs_intake_digest.console.js
+ref/migrations/2026-11-09_mail_attachment_notices.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -1101,6 +1103,7 @@ services/documentSourceService.js
 services/documentSyncService.js
 services/dropboxService.js
 services/dropboxServiceLegacy.js
+services/emailAttachmentDigestService.js
 services/emailAttachmentFilingService.js
 services/emailAttachmentNotice.js
 services/emailCaseMatchService.js
@@ -1460,6 +1463,7 @@ tests/dropboxService.retry.test.js
 tests/emailAttachments.mysql.test.js
 tests/emailAttachments.unit.test.js
 tests/emailAttachments.workflow.test.js
+tests/emailAttachmentsDigest.unit.test.js
 tests/emailDesignRules.test.js
 tests/emailDesignRules.timing.test.js
 tests/emailDesigns.mysql.test.js

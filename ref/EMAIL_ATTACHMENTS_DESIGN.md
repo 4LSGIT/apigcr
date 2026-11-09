@@ -2,8 +2,10 @@
 
 Status: S1 (plumbing) landed 2026-11-06 (cdf2050). S2 (the docs@ workflow)
 landed 2026-11-06 (367d8b3); shadow live since 2026-11-06 (workflow 55, rule
-24 action 28). S2b (2026-11-08): case numbers and legacy ids name the case.
-S3 (Comms UI) not started. Rulings: Fred, 2026-11-06 and 2026-11-08 (§1).
+24 action 28); cut over to SB 2026-11-08. S2b (2026-11-08): case numbers and
+legacy ids name the case. S2c (2026-11-09): per-file links, the Docs Needed
+list. S2d (2026-11-09): one notice per burst (§8). S3 (Comms UI) not started.
+Rulings: Fred, 2026-11-06, 2026-11-08 and 2026-11-09 (§1).
 Living design doc — edit claims in place when a slice changes them.
 
 ## 1. Goal and rulings
@@ -34,7 +36,11 @@ Rulings (2026-11-06):
   the client's own cases at any stage (a closed one too) is not a conflict.
 - **One folder per day**: `Client Uploads/Emailed YYMMDD`.
 - **Notice by email only** (no task), recipient in the workflow's config.
-- Idea, parked: one notice per burst of emails from a sender (§8).
+- **One notice per burst** (Fred, 2026-11-09; parked 2026-11-06): files are
+  still filed the moment each email arrives; the NOTICE waits until the
+  sender has been quiet for 5 minutes (measured at ingest), or 30 minutes
+  after the burst's first un-notified email. One pick-the-case email per
+  burst, whose answer moves all of the burst's unsorted files (§8).
 - Idea, adopted for S2: when no case is chosen but candidates exist, the email
   carries one button per candidate case (`request_decision`) that moves the
   files there.
@@ -186,9 +192,10 @@ one in. The subject breaks `[[`/`]]` apart.
 |---|---|---|
 | `email_case_match` | both | **denied** — a read returning a client's cases |
 | `email_attachments_file` | workflow only | eligible (SU-minted, frozen plans) |
-| `email_attachments_refile` | workflow only | eligible — "file these to case X" is its point |
+| `email_attachments_digest` | workflow only | **denied** — plumbing: claims a sender's queued notices (§8) |
+| `email_attachments_refile` | workflow only | eligible — "file these to case X" is its point; a burst by `digest_key` + `digest_of` |
 
-Reference params on all three: `mail_message_id` | `mailbox_id`+`folder`+`uid`
+Reference params on the first three: `mail_message_id` | `mailbox_id`+`folder`+`uid`
 | `source`+`message_id`. Once filed, files are ordinary Dropbox documents for
 `parse_pdf`, `query_ai` file inputs and `send_email` `attachment_urls`.
 Operator reference: `manual/03-YisraFlow/05-internal-functions.md` → Email
@@ -205,7 +212,8 @@ anything but 1–10 `{label, value}` objects — an unset variable resolves to
 
 **Workflow "docs@ intake"** — init data = rule 24's transform output
 (`mail_message_id`, `source`, `message_id`; the shadow adds the digest
-fields):
+fields). The table is **v2**, the notice-per-email version S2 shipped; v3
+(§8) wraps steps 3–6 around it for the burst digest:
 
 | # | Step | Notes |
 |---|---|---|
@@ -254,12 +262,95 @@ against the captured live code. Both scripts were dry-run verbatim through
 the real shell `apiSend` against the real routers on a local MySQL holding
 the prod schema and the live rule/executions, with refusal controls.
 
-## 8. Deferred / follow-ups
+## 8. S2d — one notice per burst (`emailAttachmentDigestService`)
+
+**Why** (live 2026-11-08): a client emailed docs@ 26 times in 43 minutes, one
+phone photo at a time — 26 notices to SB. The files must still be filed at
+once (staff may open the case meanwhile); only the notice waits.
+
+**The rule** (Fred, 2026-11-09). A burst = a sender's emails (From address,
+lowercased; an email without one is never grouped) whose notice has not gone
+out yet, under one `digest_key`. It ends when the sender has sent nothing new
+for **5 minutes** — measured on `mail_messages.ingested_at`, when the worker
+stored the mail, not the sender's Date header — or **30 minutes** after its
+oldest email, whichever comes first. Then one notice covers the burst; a
+burst of one is the single-email notice of §5, byte for byte. The mailbox
+worker's 2-minute tick (2026-11, `ref/INFRA_GCP.md`) is what makes a 5-minute
+quiet time meaningful: at the old 5-minute tick the next email of a burst
+could land just past the window.
+
+**State** — `mail_attachment_notices` (`ref/migrations/2026-11-09_mail_attachment_notices.sql`),
+one row per (digest, email): `sender`, `ingested_at`, `result` (MEDIUMTEXT
+JSON — not a JSON column: email-derived text cut at fixed lengths can split a
+surrogate pair, which a JSON column refuses), `digest_of` + `notified_at`
+once claimed. Rows sharing `digest_of` (the claiming email) ARE the burst.
+
+**Mechanics** — no scheduler of its own; every email's own execution does it:
+- `email_attachments_file` with `digest_key` writes a **placeholder** (result
+  NULL) before fetching the files, then the result (plus the sender's words
+  cut as the notice cuts them, and the notice wording). A placeholder counts
+  as the newest email — a burst still being filed holds its notice back — for
+  15 minutes at most (a dead filing must not hold a sender's notices).
+- `email_attachments_digest` → `wait` (`wait` = a duration string, never under
+  65 s — over the engine's 60-s pause floor, so the loop is never a
+  pause-free loop), `send` (this execution sends the burst's notice) or `done`
+  (another execution's notice covers this email). Everyone waits until the
+  burst should end — the sooner of the newest email's quiet time and the
+  oldest's cap; the first to ask after that claims every pending row with a
+  result. The newest email's execution normally sends; if it died, the next
+  one to wake does — no burst depends on one execution surviving.
+- The claim: one transaction; the sender's pending rows are locked FOR UPDATE
+  in ONE statement (index order — two checks cannot deadlock), then stamped.
+  A re-check of a row this same email claimed (a retried step) sends the
+  same burst again; the claim never moves.
+- Several emails: `emailAttachmentNotice.renderDigest` — one where-box per
+  destination (each case, with its Docs Needed list read at digest time;
+  Unsorted; what could not be filed), then every email oldest first with its
+  files and a short excerpt (600 chars). Subject `<prefix><who> (N files from
+  M emails) — filed to case X` / `— filed to cases X, Y` / `— UNSORTED, needs
+  a case` / `— NOT FILED` / `(M emails, no files)`.
+- One decision per burst: options = every candidate any unsorted email
+  offered, once, then "Leave them in Unsorted". The answer goes to
+  `email_attachments_refile` with `digest_key` + `digest_of`: every UNSORTED
+  email of the burst moves; its case-filed emails stay where they are.
+
+**Workflow "docs@ intake" v3** — `ref/migrations/2026-11-09_docs_intake_digest.console.js`
+(assert-first: the published v2 exactly, or a draft that already is v3;
+preflight = a test-step of the digest on a never-queued message must answer
+NOT_QUEUED, i.e. the backend and the table are live; PUT 1–10, append
+11–14, verify, publish, re-read):
+
+| # | Step | Notes |
+|---|---|---|
+| 1 | `noop` recipient | unchanged (SB / user 5) |
+| 2 | `email_attachments_file` → `filing` | + `digest_key: 'docs@'`; no set_vars. retry_then_abort ×2 |
+| 3 | `email_attachments_digest` → `digest` | `{{filing.mail_message_id}}`, `docs@`, quiet `5m`, cap `30m`; set_vars `digest_action`, `needs_decision`. retry_then_abort ×2 |
+| 4 | `evaluate_condition` `digest_action == 'wait'` → 5, else 6 | |
+| 5 | `wait_for` `{{digest.wait}}` → 3 | the loop's pause |
+| 6 | `evaluate_condition` `digest_action == 'send'` → 7, else end | `done`: another execution sends |
+| 7–10 | as v2 3–6, on `digest.*` | notice / request_decision with `{{digest.decision_options}}`, `{{digest.notice_html_decision}}`, question names `{{digest.from.email}}` |
+| 11 | `chosen_case != 'unsorted'` → 12, else end | |
+| 12 | `email_attachments_refile` `digest_key` + `{{digest.digest_of}}` → `{{chosen_case}}` | set_vars `refile_failed`. retry_then_abort ×1 |
+| 13–14 | as v2 9–10 | "NOT MOVED" names `{{digest.unsorted_folder_path}}` / `_link` and notice `{{digest.digest_of}}` |
+
+Executions already running on v2 (an open pick-the-case) finish on v2.
+
+Tests: `tests/emailAttachments.mysql.test.js` "burst digest" (the rule on
+real MySQL — rows aged in SQL: quiet, cap, placeholders live and stale,
+senders/digests never mixed, a six-way race → one send, the burst decision
+and refile, Docs Needed read late); `tests/emailAttachmentsDigest.unit.test.js`
+(renderDigest, the passthrough, option merging); `tests/emailAttachments.workflow.test.js`
+"v3" (the loop, send/done, the burst decision on the real engine; v3's base
+= the v2 the two S2 scripts left live; save + publish gates). The console
+script was dry-run verbatim through the real shell `apiSend` against the
+real routers on a local MySQL holding live workflow 55: GO, re-run = nothing
+to do, NO-GO without the table, stop-before-publish → re-run publishes,
+stop-mid-draft → re-run refuses until the draft is discarded.
+
+## 9. Deferred / follow-ups
 
 - **S3, Comms UI**: an attachment chip shows "Filed → case X" from
   `mail_attachment_filings`; a "File all to case" action for unsorted mail.
-- **One notice per burst** (parked, Fred 2026-11-06): add `notified_at`; the
-  first email from a sender opens a ~15-min window that one atomic UPDATE
-  claims, and one email covers the burst. Conflicts with per-message decision
-  buttons — revisit after S2 has run.
 - Refile leaves the emptied unsorted day folder behind.
+- A burst's notice names a sender's emails only; mail from the same client's
+  second address is its own burst.

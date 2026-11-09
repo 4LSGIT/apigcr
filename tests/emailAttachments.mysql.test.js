@@ -17,9 +17,12 @@
  *   mysql -uroot -e 'CREATE DATABASE yc_eatt_test'
  *   mysql -uroot yc_eatt_test < ref/database.sql
  *   mysql -uroot yc_eatt_test < ref/migrations/2026-11-06_mail_attachment_filings.sql
+ *   mysql -uroot yc_eatt_test < ref/migrations/2026-11-09_mail_attachment_notices.sql
  *   YC_TEST_MYSQL_URL=mysql://user:pw@127.0.0.1:3307/yc_eatt_test \
  *     npx jest tests/emailAttachments.mysql.test.js
  * Run 2026-11-06: MySQL 8.0.46, production sql_mode, session time zone UTC.
+ * The burst digest (S2d, design §8) runs here too: its clock is ingested_at
+ * against UTC_TIMESTAMP(), so the tests age rows in SQL — no fake timers.
  */
 
 'use strict';
@@ -130,6 +133,8 @@ maybe('email attachments S1/S2 on real MySQL', () => {
     pool.pool.on('connection', (c) => c.query(`SET SESSION sql_mode = '${PROD_SQL_MODE}', time_zone = '+00:00'`));
     const [[t]] = await pool.query("SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mail_attachment_filings'");
     if (!Number(t.n)) throw new Error('apply ref/migrations/2026-11-06_mail_attachment_filings.sql to the test database first');
+    const [[t2]] = await pool.query("SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mail_attachment_notices'");
+    if (!Number(t2.n)) throw new Error('apply ref/migrations/2026-11-09_mail_attachment_notices.sql to the test database first');
   });
   afterAll(async () => { if (pool) await pool.end(); });
 
@@ -175,7 +180,7 @@ maybe('email attachments S1/S2 on real MySQL', () => {
   beforeEach(async () => {
     jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'warn').mockImplementation(() => {});
-    for (const t of ['mail_attachment_filings', 'mail_messages', 'mailboxes', 'case_relate', 'contact_emails', 'contacts', 'cases', 'documents', 'checkitems', 'checklists']) {
+    for (const t of ['mail_attachment_notices', 'mail_attachment_filings', 'mail_messages', 'mailboxes', 'case_relate', 'contact_emails', 'contacts', 'cases', 'documents', 'checkitems', 'checklists']) {
       await q(`DELETE FROM ${t}`);
     }
     await q(`INSERT INTO mailboxes (id, address, domain, imap_host, imap_user, emit_source_name, emit_id_kind, ingest_state)
@@ -562,6 +567,239 @@ maybe('email attachments S1/S2 on real MySQL', () => {
       const r = await filing.refileMessageAttachments(pool, { mailMessageId: mid, caseId: 'PVXC1RMM' });
       expect(r.moved.map(m => m.part)).toEqual(['3']);
       expect(r.failed.map(f => f.part)).toEqual(['2']);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe('burst digest (S2d, design §8)', () => {
+    const digest = require('../services/emailAttachmentDigestService');
+    const KEY = 'docs@';
+    const PREFIX = 'New email to Docs@4LSG.com — ';
+    /** File one email into the digest queue, the way the workflow's step 2 does. */
+    const fileQ = (mid, over = {}) => filing.fileMessageAttachments(pool, {
+      ref: { mail_message_id: mid }, digestKey: KEY, noticeSubjectPrefix: PREFIX, noticeTitle: 'docs@4lsg.com', ...over });
+    /** Set a queued email's ingest time to `s` seconds ago. */
+    const ago = (mid, s) => q('UPDATE mail_attachment_notices SET ingested_at = UTC_TIMESTAMP() - INTERVAL ? SECOND WHERE mail_message_id = ?', [s, mid]);
+    const check = (mid, o = {}) => digest.check(pool, { digestKey: KEY, mailMessageId: mid, ...o });
+    const rowsOf = () => q('SELECT digest_key, mail_message_id, sender, digest_of, notified_at IS NOT NULL AS notified, result IS NOT NULL AS has_result FROM mail_attachment_notices ORDER BY mail_message_id');
+
+    test('the filing step queues the email (placeholder first, result after); the burst clock is the message\'s ingest time', async () => {
+      const mid = await message({ from: 'Dawn Sims <Dawn.Sims@X.com>', attachments: [pdf(2)] });
+      await q("UPDATE mail_messages SET ingested_at = UTC_TIMESTAMP() - INTERVAL 90 SECOND WHERE id = ?", [mid]);
+      let duringFetch;
+      const serve = transport.fetchPart.getMockImplementation();
+      transport.fetchPart.mockImplementationOnce(async (...a) => {
+        duringFetch = await rowsOf();                               // the placeholder is there WHILE the files are fetched
+        return serve(...a);
+      });
+      const r = await fileQ(mid);
+      expect(duringFetch).toEqual([expect.objectContaining({ mail_message_id: mid, sender: 'dawn.sims@x.com', has_result: 0, notified: 0 })]);
+      expect(r.digest_key).toBe(KEY);
+      const [row] = await q('SELECT sender, TIMESTAMPDIFF(SECOND, ingested_at, UTC_TIMESTAMP()) AS age, result FROM mail_attachment_notices WHERE mail_message_id = ?', [mid]);
+      expect(row.sender).toBe('dawn.sims@x.com');
+      expect(row.age).toBeGreaterThanOrEqual(89);
+      const stored = JSON.parse(row.result);
+      expect(stored).toMatchObject({ mail_message_id: mid, notice_subject: r.notice_subject, notice_html: r.notice_html,
+        notice_prefix: PREFIX, notice_title: 'docs@4lsg.com', excerpt: { body: '', trimmed: false, cut: 0 } });
+      expect(stored.text).toBeUndefined();                          // the raw body stays in the mail store
+      // without digest_key nothing is queued
+      await filing.fileMessageAttachments(pool, { ref: { mail_message_id: await message({ from: 'x@x.com', attachments: [pdf(2)] }) } });
+      expect((await rowsOf()).map(x => x.mail_message_id)).toEqual([mid]);
+    });
+
+    test('one email: wait out the quiet time, then ITS OWN notice, byte for byte; asked again (a retried step) → the same notice', async () => {
+      const mid = await message({ from: 'stranger@x.com', subject: 'w2', attachments: [pdf(2)] });
+      const r = await fileQ(mid);
+      await ago(mid, 100);
+      const w = await check(mid);
+      expect(w).toMatchObject({ action: 'wait', pending: 1, digest_of: null });
+      expect(w.wait_ms).toBeGreaterThanOrEqual((300 - 101) * 1000);   // until 5 min after ingest …
+      expect(w.wait_ms).toBeLessThanOrEqual((300 - 100) * 1000 + digest.WAIT_SLACK_MS + 1000);   // … plus the slack
+      expect(w.wait).toBe(`${w.wait_ms / 1000}s`);
+      await ago(mid, 299);
+      expect((await check(mid)).wait_ms).toBe(digest.MIN_WAIT_MS);  // never under the engine's pause floor
+      await ago(mid, 300);
+      const s = await check(mid);
+      expect(s).toMatchObject({ action: 'send', ended_by: 'quiet', digest_of: mid, count: 1, mail_message_ids: [mid],
+        notice_subject: r.notice_subject, notice_html: r.notice_html, notice_text: r.notice_text,
+        needs_decision: false, decision_options: [], notice_html_decision: null, unsorted_ids: [mid] });
+      expect(await rowsOf()).toEqual([expect.objectContaining({ digest_of: mid, notified: 1 })]);
+      const again = await check(mid);
+      expect(again).toMatchObject({ action: 'send', digest_of: mid, notice_html: r.notice_html });
+    });
+
+    test('a burst: everyone waits for the newest email\'s quiet time; the first to ask after it claims all; the rest are done', async () => {
+      const c = await contact('Dawn', 'Sims', 'dawn@x.com');
+      await kase('DZ8G0HYT', 'Open', 'intake', { dropbox: 'https://dbx/case-PVXC1RMM' }); await relate('DZ8G0HYT', c);
+      const ids = [];
+      for (const n of [1, 2, 3]) ids.push(await message({ from: 'Dawn Sims <dawn@x.com>', subject: `photo ${n}`, text: `pic ${n}`, attachments: [pdf(2, `IMG_${n}.jpg`)] }));
+      for (const id of ids) await fileQ(id);
+      await ago(ids[0], 400); await ago(ids[1], 200); await ago(ids[2], 30);
+      for (const id of ids) {
+        const w = await check(id);
+        expect(w.action).toBe('wait');
+        expect(w.pending).toBe(3);
+        expect(Math.abs(w.wait_ms - ((300 - 30) * 1000 + digest.WAIT_SLACK_MS))).toBeLessThanOrEqual(2000);   // the NEWEST one's quiet time
+      }
+      await ago(ids[0], 700); await ago(ids[1], 500); await ago(ids[2], 330);
+      const s = await check(ids[1]);                                // not the newest: whoever asks first after the burst ends
+      expect(s).toMatchObject({ action: 'send', digest_of: ids[1], count: 3, mail_message_ids: ids, case_ids: ['DZ8G0HYT'],
+        files_filed: 3, unsorted_ids: [], needs_decision: false });
+      expect(s.notice_subject).toBe(`${PREFIX}Dawn Sims (3 files from 3 emails) — filed to case DZ8G0HYT`);
+      expect(s.notice_html).toContain('Filed to case DZ8G0HYT — 3 files from 3 emails');
+      for (const n of [1, 2, 3]) expect(s.notice_html).toContain(`>IMG_${n}.jpg</a>`);
+      expect(s.notice_text).toContain('   > pic 2');
+      expect(await check(ids[0])).toEqual({ action: 'done', digest_of: ids[1], digest_key: KEY, mail_message_id: ids[0] });
+      expect((await check(ids[2])).action).toBe('done');
+      expect((await rowsOf()).map(x => [x.digest_of, x.notified])).toEqual([[ids[1], 1], [ids[1], 1], [ids[1], 1]]);
+
+      // the next email starts a NEW burst
+      const later = await message({ from: 'dawn@x.com', attachments: [pdf(2, 'IMG_4.jpg')] });
+      await fileQ(later);
+      expect(await check(later)).toMatchObject({ action: 'wait', pending: 1 });
+    });
+
+    test('the cap: 30 minutes after the burst\'s first email the notice goes, though the sender is still sending', async () => {
+      const ids = [];
+      for (const n of [1, 2, 3]) ids.push(await message({ from: 'stream@x.com', attachments: [pdf(2, `p${n}.pdf`)] }));
+      for (const id of ids) await fileQ(id);
+      await ago(ids[0], 1790); await ago(ids[1], 900); await ago(ids[2], 20);
+      const w = await check(ids[2]);
+      expect(w.action).toBe('wait');
+      expect(Math.abs(w.wait_ms - digest.MIN_WAIT_MS)).toBeLessThanOrEqual(1000);   // the cap is 10 s away: the floor wins
+      await ago(ids[0], 1800);
+      const s = await check(ids[2]);
+      expect(s).toMatchObject({ action: 'send', ended_by: 'cap', count: 3, digest_of: ids[2] });
+    });
+
+    test('an email still being filed (placeholder) holds the burst open — and is left out of the claim; a STALE placeholder is ignored', async () => {
+      const a = await message({ from: 'p@x.com', attachments: [pdf(2)] });
+      const b = await message({ from: 'p@x.com', attachments: [pdf(2)] });
+      const dead = await message({ from: 'p@x.com', attachments: [pdf(2)] });
+      await fileQ(a);
+      await digest.enqueue(pool, { digestKey: KEY, mailMessageId: b, senderEmail: 'P@x.com' });        // b: filing in flight
+      await digest.enqueue(pool, { digestKey: KEY, mailMessageId: dead, senderEmail: 'p@x.com' });     // dead: a filing that died
+      await q('UPDATE mail_attachment_notices SET created_at = UTC_TIMESTAMP() - INTERVAL 16 MINUTE, ingested_at = UTC_TIMESTAMP() - INTERVAL 5 SECOND WHERE mail_message_id = ?', [dead]);
+      await ago(a, 600); await ago(b, 60);
+      expect(await check(a)).toMatchObject({ action: 'wait', pending: 2 });   // b holds it; dead does not count
+      await ago(b, 400);
+      const s = await check(a);
+      expect(s).toMatchObject({ action: 'send', count: 1, mail_message_ids: [a] });
+      expect((await rowsOf()).map(x => [x.mail_message_id, x.notified])).toEqual([[a, 1], [b, 0], [dead, 0]]);
+      await expect(check(b)).rejects.toMatchObject({ code: 'NOT_FILED' });
+      await fileQ(b);                                               // b's filing completes: its own burst
+      await ago(b, 400);
+      expect(await check(b)).toMatchObject({ action: 'send', count: 1, mail_message_ids: [b] });
+    });
+
+    test('bursts never mix senders or digests; an email with no sender is never grouped', async () => {
+      const a = await message({ from: 'one@x.com', attachments: [pdf(2)] });
+      const b = await message({ from: 'two@x.com', attachments: [pdf(2)] });
+      const c = await message({ from: 'one@x.com', attachments: [pdf(2)] });
+      const n1 = await message({ from: '', attachments: [pdf(2)] });
+      const n2 = await message({ from: '', attachments: [pdf(2)] });
+      const both = await message({ from: 'one@x.com', attachments: [pdf(2)] });
+      for (const id of [a, b, n1, n2]) await fileQ(id);
+      await fileQ(c, { digestKey: 'other' });
+      await fileQ(both); await fileQ(both, { digestKey: 'other' });   // one email in two digests
+      for (const id of [a, b, n1, n2]) await ago(id, 400);
+      await q('UPDATE mail_attachment_notices SET ingested_at = UTC_TIMESTAMP() - INTERVAL 30 SECOND WHERE mail_message_id IN (?)', [[c, both]]);
+      await q("UPDATE mail_attachment_notices SET ingested_at = UTC_TIMESTAMP() - INTERVAL 400 SECOND WHERE mail_message_id = ? AND digest_key = 'docs@'", [both]);
+      // c (same sender, fresh, OTHER digest) holds nothing here
+      expect(await check(both)).toMatchObject({ action: 'send', digest_of: both, mail_message_ids: [a, both] });
+      expect(await check(a)).toMatchObject({ action: 'done', digest_of: both });
+      expect(await check(b)).toMatchObject({ action: 'send', mail_message_ids: [b] });
+      expect(await digest.check(pool, { digestKey: 'other', mailMessageId: c })).toMatchObject({ action: 'wait', pending: 2 });
+      await q("UPDATE mail_attachment_notices SET ingested_at = UTC_TIMESTAMP() - INTERVAL 400 SECOND WHERE digest_key = 'other'");
+      // the same email claims in BOTH digests (digest_of = both twice): each notice is its own digest's
+      expect(await digest.check(pool, { digestKey: 'other', mailMessageId: both })).toMatchObject({ action: 'send', digest_of: both, count: 2, mail_message_ids: [c, both] });
+      expect(await check(n1)).toMatchObject({ action: 'send', mail_message_ids: [n1] });
+      expect(await check(n2)).toMatchObject({ action: 'send', mail_message_ids: [n2] });
+      const senders = (await q("SELECT sender FROM mail_attachment_notices WHERE digest_key = 'docs@' ORDER BY mail_message_id")).map(x => x.sender);
+      expect(senders).toEqual(['one@x.com', 'two@x.com', `#${n1}`, `#${n2}`, 'one@x.com']);
+    });
+
+    test('two checks racing on a ripe burst: exactly one sends, the other is done (one locking read, no deadlock)', async () => {
+      const ids = [];
+      for (let n = 0; n < 6; n++) ids.push(await message({ from: 'race@x.com', attachments: [pdf(2)] }));
+      for (const id of ids) await fileQ(id);
+      for (const id of ids) await ago(id, 400);
+      const out = await Promise.all(ids.map(id => check(id)));
+      const sends = out.filter(o => o.action === 'send');
+      expect(sends).toHaveLength(1);
+      expect(sends[0].count).toBe(6);
+      expect(out.filter(o => o.action === 'done').every(o => o.digest_of === sends[0].digest_of)).toBe(true);
+    });
+
+    test('the burst\'s one decision: options merged across its unsorted emails; the answer moves only the unsorted ones', async () => {
+      const c = await contact('Tristan', 'Sims', 'sims@x.com');
+      await kase('PVXC1RMM', 'Open', 'intake', { dropbox: 'https://dbx/case-PVXC1RMM' }); await relate('PVXC1RMM', c);
+      await kase('CF8ZT7VE', 'Filed', 'case');
+      const u1 = await message({ from: 'sims@x.com', subject: 'case CF8ZT7VE', attachments: [pdf(2, 'a.pdf')] });    // conflict → unsorted
+      const ok = await message({ from: 'sims@x.com', subject: 'paystub', attachments: [pdf(2, 'b.pdf')] });           // his case → filed there
+      const u2 = await message({ from: 'sims@x.com', subject: 'case CF8ZT7VE again', attachments: [pdf(2, 'c.pdf'), pdf(3, 'd.pdf')] });
+      for (const id of [u1, ok, u2]) { await fileQ(id); await ago(id, 400); }
+      const s = await check(u2);
+      expect(s).toMatchObject({ action: 'send', count: 3, needs_decision: true, unsorted_ids: [u1, u2], case_ids: ['PVXC1RMM'] });
+      expect(s.decision_options.map(o => o.value)).toEqual(['CF8ZT7VE', 'PVXC1RMM', 'unsorted']);
+      expect(s.decision_options[2].label).toBe('Leave them in Unsorted');
+      expect(s.notice_subject).toBe(`${PREFIX}sims@x.com (4 files from 3 emails) — UNSORTED, needs a case`);
+      expect(s.notice_html_decision.match(/\[\[options_html\]\]/g)).toHaveLength(1);
+      expect(s.notice_html_decision).toContain('Every unsorted file in this notice moves there when you choose.');
+      expect(s.unsorted_folder_path).toBe(`${BIN}/Emailed 261105 - Sims, Tristan`);
+
+      mockDbx.moves.length = 0;
+      const r = await fns.email_attachments_refile({ digest_key: KEY, digest_of: s.digest_of, case_id: 'CF8ZT7VE', output_var: 'refiled' }, pool);
+      const out = r.output;
+      expect(out).toMatchObject({ case_id: 'CF8ZT7VE', mail_message_ids: [u1, u2], failed: [] });
+      expect(out.moved.map(m => [m.mail_message_id, m.filename])).toEqual([[u1, 'a.pdf'], [u2, 'c.pdf'], [u2, 'd.pdf']]);
+      expect(mockDbx.moves).toHaveLength(3);                        // b.pdf (filed to his case) stays put
+      expect(r.set_vars.refiled).toBe(out);
+      const moved = await q("SELECT DISTINCT mail_message_id FROM mail_attachment_filings WHERE match_method = 'refiled' ORDER BY mail_message_id");
+      expect(moved.map(x => Number(x.mail_message_id))).toEqual([u1, u2]);
+      await expect(fns.email_attachments_refile({ digest_of: s.digest_of, case_id: 'CF8ZT7VE' }, pool)).rejects.toThrow('digest_of needs digest_key');
+      await expect(fns.email_attachments_refile({ digest_key: KEY, digest_of: 999999, case_id: 'CF8ZT7VE' }, pool)).rejects.toThrow(/DIGEST_NOT_FOUND|no notice 999999/);
+    });
+
+    test('several emails to a case with a Docs Needed list: the list is read when the notice goes, not when each was filed', async () => {
+      const c = await contact('Kiara', 'Bentley', 'kiara@x.com');
+      await kase('PVXC1RMM', 'Open', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' }); await relate('PVXC1RMM', c);
+      const r = await q(`INSERT INTO checklists (title, kind, created_by, link, link_type, tag) VALUES ('Docs Needed', 'checklist', 1, 'PVXC1RMM', 'case', 'docs_needed')`);
+      await q("INSERT INTO checkitems (checklist_id, name, status, position) VALUES (?, 'Paystubs', 'incomplete', 1), (?, 'W2', 'incomplete', 2)", [r.insertId, r.insertId]);
+      const a = await message({ from: 'kiara@x.com', attachments: [pdf(2, 'stub.pdf')] });
+      const b = await message({ from: 'kiara@x.com', attachments: [pdf(2, 'w2.pdf')] });
+      for (const id of [a, b]) { await fileQ(id); await ago(id, 400); }
+      await q("UPDATE checkitems SET status = 'complete' WHERE name = 'Paystubs'");     // checked off in between
+      const s = await check(a);
+      expect(s.notice_html).toContain('Docs Needed list — 1 of 2 still needed:');
+      expect(s.notice_html).toContain('check them off the Docs Needed list.');
+      expect(s.notice_text).toContain('  - W2');
+      expect(s.notice_text).not.toContain('  - Paystubs');
+    });
+
+    test('refusals: not queued, no result yet, a bad key; record never rewrites a row already in a notice', async () => {
+      const mid = await message({ from: 'z@x.com', attachments: [pdf(2)] });
+      await expect(check(mid)).rejects.toMatchObject({ code: 'NOT_QUEUED' });
+      await expect(digest.check(pool, { digestKey: 'bad key!', mailMessageId: mid })).rejects.toMatchObject({ code: 'BAD_DIGEST_KEY' });
+      await expect(digest.check(pool, { digestKey: KEY, mailMessageId: mid, quietMs: 600_000, capMs: 300_000 })).rejects.toMatchObject({ code: 'BAD_WINDOW' });
+      await expect(fns.email_attachments_digest({ mail_message_id: mid, digest_key: KEY }, pool)).rejects.toThrow(/^email_attachments_digest: message \d+ is not queued under digest "docs@"/);
+      await expect(fns.email_attachments_digest({ mail_message_id: mid, digest_key: KEY, quiet: 'soon' }, pool)).rejects.toThrow(/^email_attachments_digest: quiet must be a duration like "5m" \(got "soon"\)$/);
+      const r = await fileQ(mid);
+      await ago(mid, 400);
+      const s = await check(mid);
+      expect(s.action).toBe('send');
+      await digest.record(pool, { digestKey: KEY, mailMessageId: mid, result: { overwritten: true } });
+      const [row] = await q('SELECT result FROM mail_attachment_notices WHERE mail_message_id = ?', [mid]);
+      expect(JSON.parse(row.result).notice_html).toBe(r.notice_html);
+    });
+
+    test('through the registry: quiet / cap as durations, output_var', async () => {
+      const mid = await message({ from: 'y@x.com', attachments: [pdf(2)] });
+      await fns.email_attachments_file({ mail_message_id: mid, digest_key: KEY }, pool);
+      await ago(mid, 61);
+      const w = await fns.email_attachments_digest({ mail_message_id: String(mid), digest_key: KEY, quiet: '1m', cap: '10m', output_var: 'digest' }, pool);
+      expect(w.output.action).toBe('send');                         // 61 s ≥ a 1-minute quiet
+      expect(w.set_vars.digest).toBe(w.output);
     });
   });
 });

@@ -25,6 +25,10 @@
  *      (emailAttachmentNotice), and — when no case was chosen but candidates
  *      exist — ready request_decision options so a workflow can ask staff
  *      which case.
+ *   digestKey: the email also joins its sender's BURST (a row in
+ *      mail_attachment_notices before step 3, its result after step 4) and
+ *      the workflow sends the burst's one notice later —
+ *      emailAttachmentDigestService, design §8.
  *
  * ── WHERE FILES LAND (ladder: filePlacementService) ─────────────────────────
  *   case chosen        <case folder>/<subfolder>, default
@@ -103,6 +107,7 @@ const placement = () => require('./filePlacementService');
 const dropbox = () => require('./dropboxService');
 const docIngest = () => require('./documentIngestService');
 const uploadTarget = () => require('./uploadTargetService');
+const digest = () => require('./emailAttachmentDigestService');
 
 function appUrl() {
   return (require('../lib/firmConfig').cfg('app_url') || 'https://app.4lsg.com').replace(/\/+$/, '');
@@ -324,6 +329,7 @@ async function fileMessageAttachments(db, o = {}) {
   if (target === 'contact' && !o.contactId) throw codedError('BAD_TARGET', "target 'contact' needs contact_id");
   const maxBytes = Number(o.maxBytes) > 0 ? Number(o.maxBytes) : attachments.DEFAULT_MAX_BYTES;
   const filedBy = o.filedBy == null || o.filedBy === '' ? null : Number(o.filedBy);
+  const digestKey = o.digestKey == null || o.digestKey === '' ? null : String(o.digestKey);
 
   const msg = await attachments.resolveMessage(db, o.ref);
   if (!msg) {
@@ -336,6 +342,9 @@ async function fileMessageAttachments(db, o = {}) {
   const dest = await _destination(db, {
     target, caseId: o.caseId, contactId: o.contactId, msg, fromEmail, text,
   });
+  // BURST DIGEST (design §8): in the sender's burst from now — before the
+  // files, so a burst still being filed holds its notice back.
+  if (digestKey) await digest().enqueue(db, { digestKey, mailMessageId: msg.id, senderEmail: fromEmail });
 
   const date = msg.date instanceof Date ? msg.date : (msg.date ? new Date(msg.date) : null);
   const senderLabel = (dest.contact && (dest.contact.lfm_name || dest.contact.name)) || fromEmail || 'unknown sender';
@@ -506,6 +515,22 @@ async function fileMessageAttachments(db, o = {}) {
       withOptions: true,
     }).html
     : null;
+  result.digest_key = digestKey;
+  if (digestKey) {
+    // What the burst's notice is built from: this result, the sender's words
+    // (cut as the notice cuts them) instead of the raw body, and the wording.
+    await digest().record(db, {
+      digestKey,
+      mailMessageId: msg.id,
+      result: {
+        ...result,
+        text: undefined,
+        excerpt: notice.messageExcerpt(text),
+        notice_prefix: o.noticeSubjectPrefix != null ? String(o.noticeSubjectPrefix) : undefined,
+        notice_title: o.noticeTitle != null && o.noticeTitle !== '' ? String(o.noticeTitle) : undefined,
+      },
+    });
+  }
   delete result.text;   // the notice carries the excerpt; the raw body stays in the store
   return result;
 }
@@ -676,6 +701,8 @@ async function refileMessageAttachments(db, o = {}) {
 module.exports = {
   fileMessageAttachments,
   refileMessageAttachments,
+  docsChecklist: _docsChecklist,
+  appUrl,
   DEFAULT_CASE_SUBFOLDER,
   DEFAULT_UNSORTED_SUBFOLDER,
   STALE_CLAIM_MIN,

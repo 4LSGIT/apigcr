@@ -19,6 +19,11 @@
  *   2. Every step passes the save-time validator and the publish validator.
  *   3. MATCH on the production matcher; the shadow transform's new return
  *      and the cutover transform in the production runner (QuickJS guest).
+ *   4. v3, the BURST DIGEST (S2d, design §8; ref/migrations/
+ *      2026-11-09_docs_intake_digest.console.js): its base is the v2 the two
+ *      scripts above left live; the wait loop, the send / done split and the
+ *      burst's one decision on the real engine (the digest service stubbed —
+ *      its SQL runs in tests/emailAttachments.mysql.test.js).
  *
  *   npx jest tests/emailAttachments.workflow.test.js
  */
@@ -30,6 +35,7 @@ jest.mock('../lib/alerting', () => ({ alert: jest.fn(async () => {}) }));
 jest.mock('../services/emailAttachmentFilingService', () => ({
   fileMessageAttachments: jest.fn(), refileMessageAttachments: jest.fn(),
 }));
+jest.mock('../services/emailAttachmentDigestService', () => ({ check: jest.fn(), refileDigest: jest.fn() }));
 jest.mock('../services/emailService', () => ({ sendEmail: jest.fn(async () => ({ ok: true })) }));
 jest.mock('../services/optoutService', () => ({
   ...jest.requireActual('../services/optoutService'),
@@ -41,6 +47,7 @@ const path = require('path');
 const { advanceWorkflow } = require('../lib/workflow_engine');
 const registry = require('../lib/internal_functions');
 const filingSvc = require('../services/emailAttachmentFilingService');
+const digestSvc = require('../services/emailAttachmentDigestService');
 const emailService = require('../services/emailService');
 const notice = require('../services/emailAttachmentNotice');
 const ruleSvc = require('../services/emailIngestRuleService');
@@ -49,6 +56,7 @@ const { validateWorkflowDraft, BRANCH_TARGET_PARAMS, isTerminalSentinel } = requ
 const MIG = path.join(__dirname, '..', 'ref', 'migrations');
 const SHADOW = fs.readFileSync(path.join(MIG, '2026-11-06_docs_intake_shadow.console.js'), 'utf8');
 const CUTOVER = fs.readFileSync(path.join(MIG, '2026-11-06_docs_intake_cutover.console.js'), 'utf8');
+const DIGEST = fs.readFileSync(path.join(MIG, '2026-11-09_docs_intake_digest.console.js'), 'utf8');
 function block(src, name) {
   const open = `/* JSON:${name} */`;
   const close = `/* /JSON:${name} */`;
@@ -64,6 +72,8 @@ const SHADOW_STEP1 = block(CUTOVER, 'SHADOW_STEP1');
 const LIVE_STEP1 = block(CUTOVER, 'LIVE_STEP1');
 // The workflow as the cutover leaves it: step 1 edited, nothing else.
 const CUT_STEPS = STEPS.map((s, i) => (i === 0 ? { ...s, config: LIVE_STEP1 } : s));
+const V2_STEPS = block(DIGEST, 'V2_STEPS');
+const V3_STEPS = block(DIGEST, 'V3_STEPS');
 
 // ── In-memory execution row (the cancelAndLoopGuard harness, trimmed) ───────
 const EXEC_ID = 901;
@@ -185,6 +195,8 @@ beforeEach(() => {
   filingSvc.refileMessageAttachments.mockReset();
   emailService.sendEmail.mockReset();
   emailService.sendEmail.mockImplementation(async () => ({ ok: true }));
+  digestSvc.check.mockReset();
+  digestSvc.refileDigest.mockReset();
 });
 
 // The real request_decision, run until its first DB read: reaching the DB
@@ -369,6 +381,158 @@ describe('docs@ intake — the definitions pass the save and publish gates', () 
     // the cutover recognises the shadow transform by this line of NEW_RETURN
     expect(NEW_RETURN).toContain('  // docs@ intake workflow (ref/EMAIL_ATTACHMENTS_DESIGN.md §7): the stored message it files from\n');
     expect(CUTOVER).toContain("'  // docs@ intake workflow (ref/EMAIL_ATTACHMENTS_DESIGN.md §7): the stored message it files from\\n'");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('v3 — one notice per burst (S2d)', () => {
+  // A burst's notice as email_attachments_digest hands it over (here: the
+  // single-email notice — a burst of one — or that notice with options).
+  function digestSend(filing, over = {}) {
+    return {
+      action: 'send', ended_by: 'quiet', digest_key: 'docs@', digest_of: 3305, mail_message_id: filing.mail_message_id,
+      mail_message_ids: [3301, 3305], count: 2, from: filing.from, files_filed: 2,
+      unsorted_ids: filing.placement === 'unsorted' ? [3301, 3305] : [],
+      unsorted_folder_path: filing.placement === 'unsorted' ? filing.folder_path : null,
+      unsorted_folder_link: filing.placement === 'unsorted' ? filing.folder_link : null,
+      case_ids: filing.case_id ? [filing.case_id] : [],
+      needs_decision: filing.needs_decision, decision_options: filing.decision_options,
+      notice_subject: filing.notice_subject + ' [digest]', notice_html: filing.notice_html.replace('</body>', 'digest</body>'),
+      notice_text: filing.notice_text + '\n(digest)', notice_html_decision: filing.notice_html_decision,
+      warnings: [], ...over,
+    };
+  }
+  const waitOut = (secs) => ({ action: 'wait', wait: `${secs}s`, wait_ms: secs * 1000, pending: 2, digest_of: null, digest_key: 'docs@', mail_message_id: 3301 });
+  /** Run, then resume every wait the way process_jobs does (status active, current_step = nextStep). */
+  async function runToEnd(variables = INIT, steps = V3_STEPS) {
+    const { W, db } = makeWorld(steps, variables);
+    await advanceWorkflow(EXEC_ID, db);
+    for (let i = 0; i < 10 && W.exec.status === 'delayed'; i++) {
+      const job = W.jobs[W.jobs.length - 1];
+      W.exec.status = 'active';
+      W.exec.current_step_number = job.data.nextStep;
+      await advanceWorkflow(EXEC_ID, db);
+    }
+    return W;
+  }
+
+  test('its base is exactly the v2 the shadow + cutover scripts left live', () => {
+    expect(V2_STEPS).toEqual(CUT_STEPS);
+  });
+
+  test('the sender is still sending: file at once, wait, ask again — then ONE notice (the burst\'s) to SB', async () => {
+    const filing = filingOutput();
+    filingSvc.fileMessageAttachments.mockResolvedValue(filing);
+    const sent = digestSend(filing);
+    digestSvc.check.mockResolvedValueOnce(waitOut(275)).mockResolvedValueOnce(waitOut(65)).mockResolvedValueOnce(sent);
+    const t0 = Date.now();
+    const W = await runToEnd();
+    expect(ranSteps(W)).toEqual([1, 2, 3, 4, 5, 3, 4, 5, 3, 4, 6, 7, 8, 9]);
+    expect(W.exec.status).toBe('completed');
+    expect(filingSvc.fileMessageAttachments).toHaveBeenCalledTimes(1);           // the files go in at once
+    expect(filingSvc.fileMessageAttachments.mock.calls[0][1]).toMatchObject({ digestKey: 'docs@', noticeSubjectPrefix: 'New email to Docs@4LSG.com — ' });
+    expect(digestSvc.check).toHaveBeenCalledTimes(3);
+    expect(digestSvc.check.mock.calls.map(c => c[1])).toEqual(Array(3).fill({ digestKey: 'docs@', mailMessageId: '3301', quietMs: 300_000, capMs: 1_800_000 }));
+    // each wait is a real pause of the computed length, resuming at the digest step
+    expect(W.jobs.map(j => j.data.nextStep)).toEqual([3, 3]);
+    const delays = W.jobs.map(j => (new Date(j.at).getTime() - t0) / 1000);
+    expect(delays[0]).toBeGreaterThanOrEqual(274);
+    expect(delays[0]).toBeLessThan(290);
+    expect(delays[1]).toBeGreaterThanOrEqual(64);
+    expect(delays[1]).toBeLessThan(80);
+    expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
+    expect(emailService.sendEmail.mock.calls[0][1]).toEqual({
+      from: 'automations@4lsg.com', to: 'shoshana@metrodetroitbankruptcylaw.com',
+      subject: sent.notice_subject, html: sent.notice_html, text: sent.notice_text,
+    });
+    expect(W.exec.variables.needs_decision).toBe('false');
+  });
+
+  test('another email\'s execution covers this one: end, no notice, no decision', async () => {
+    filingSvc.fileMessageAttachments.mockResolvedValue(filingOutput());
+    digestSvc.check.mockResolvedValueOnce(waitOut(200)).mockResolvedValueOnce({ action: 'done', digest_of: 3305, digest_key: 'docs@', mail_message_id: 3301 });
+    const W = await runToEnd();
+    expect(ranSteps(W)).toEqual([1, 2, 3, 4, 5, 3, 4, 6]);
+    expect(W.exec.status).toBe('completed');
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+    expect(decisionCalls).toEqual([]);
+  });
+
+  test('the burst\'s ONE decision: the burst\'s options and notice; the answer moves the burst', async () => {
+    const filing = filingOutput({ decision: true });
+    filingSvc.fileMessageAttachments.mockResolvedValue(filing);
+    const sent = digestSend(filing, { decision_options: [...filing.decision_options.slice(0, -1), { label: 'Leave them in Unsorted', value: 'unsorted' }],
+      notice_html_decision: filing.notice_html_decision.replace('</body>', 'digest</body>') });
+    digestSvc.check.mockResolvedValueOnce(sent);
+    digestSvc.refileDigest.mockResolvedValue({ case_id: 'CF8ZT7VE', mail_message_ids: [3301, 3305], warnings: [],
+      moved: [{ part: '2', mail_message_id: 3301 }], already_there: [], failed: [{ part: '2', filename: 'b.pdf', error: 'x', mail_message_id: 3305 }],
+      folder_path: '/Clients/Client, Jane/Client Uploads/Emailed 261106', folder_link: 'https://www.dropbox.com/m', folders: [] });
+    choice = 'CF8ZT7VE';
+    const W = await runToEnd();
+    expect(ranSteps(W)).toEqual([1, 2, 3, 4, 6, 7, 10, 11, 12, 13, 14]);
+    expect(W.exec.status).toBe('completed');
+    expect(decisionCalls).toHaveLength(1);
+    const d = decisionCalls[0];
+    expect(d.options).toEqual(sent.decision_options);                            // the ARRAY
+    expect(d.email_html).toBe(sent.notice_html_decision);
+    expect(d.email_subject).toBe(sent.notice_subject);
+    expect(d).toMatchObject({ recipient_kind: 'user', result_var: 'chosen_case', timeout: '7d', timeout_value: 'unsorted', nextStep: 11 });
+    expect(String(d.recipient_id)).toBe('5');
+    expect(d.question).toBe('Which case do the files emailed by client@example.com belong to?');
+    await expect(realDecisionAccepts(d)).rejects.toThrow('SENTINEL_DB');
+    expect(digestSvc.refileDigest).toHaveBeenCalledTimes(1);
+    expect(digestSvc.refileDigest.mock.calls[0][1]).toMatchObject({ digestKey: 'docs@', digestOf: '3305', caseId: 'CF8ZT7VE' });
+    expect(filingSvc.refileMessageAttachments).not.toHaveBeenCalled();
+    const m = emailService.sendEmail.mock.calls.map(c => c[1]);
+    expect(m).toHaveLength(1);                                                   // the left-behind note only
+    expect(m[0]).toMatchObject({ to: 'shoshana@metrodetroitbankruptcylaw.com', subject: 'NOT MOVED — ' + sent.notice_subject });
+    expect(m[0].html).toBeUndefined();
+    expect(m[0].text).toContain('1 of the files emailed by client@example.com could not be moved to case CF8ZT7VE');
+    expect(m[0].text).toContain(`still in the unsorted folder:\n${filing.folder_path}\n${filing.folder_link}`);
+    expect(m[0].text).toContain(`workflow execution ${EXEC_ID}, notice 3305`);
+  });
+
+  test('"Leave them in Unsorted" (or the timeout): nothing moves', async () => {
+    const filing = filingOutput({ decision: true });
+    filingSvc.fileMessageAttachments.mockResolvedValue(filing);
+    digestSvc.check.mockResolvedValueOnce(digestSend(filing));
+    choice = 'unsorted';
+    const W = await runToEnd();
+    expect(ranSteps(W)).toEqual([1, 2, 3, 4, 6, 7, 10, 11]);
+    expect(digestSvc.refileDigest).not.toHaveBeenCalled();
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+  });
+
+  test('a digest step that keeps failing aborts the run (the error sweep pages IT) — no notice from nothing', async () => {
+    const st = jest.spyOn(global, 'setTimeout').mockImplementation((fn) => { fn(); return 0; });
+    try {
+      filingSvc.fileMessageAttachments.mockResolvedValue(filingOutput());
+      digestSvc.check.mockRejectedValue(new Error('NOT_QUEUED'));
+      const W = await runToEnd();
+      expect(digestSvc.check).toHaveBeenCalledTimes(3);
+      expect(W.exec.status).toBe('failed');
+      expect(ranSteps(W)).toEqual([1, 2, 3]);
+      expect(emailService.sendEmail).not.toHaveBeenCalled();
+    } finally { st.mockRestore(); }
+  });
+
+  test('every v3 step passes the save-time validator; the draft passes publish validation (no pause-free loop)', () => {
+    for (const st of V3_STEPS) {
+      expect([st.config.function_name, registry.__validateFunctionParams(st.config.function_name, st.config.params)])
+        .toEqual([st.config.function_name, null]);
+    }
+    const rows = V3_STEPS.map((st, i) => ({ step_number: i + 1, type: st.type, config: JSON.stringify(st.config),
+      error_policy: st.error_policy ? JSON.stringify(st.error_policy) : null }));
+    const v = validateWorkflowDraft(rows, { branchTargetParams: BRANCH_TARGET_PARAMS, isTerminalSentinel });
+    expect(v.errors).toEqual([]);
+    expect(v.warnings).toEqual([]);
+    expect(new Set(V3_STEPS.map(st => st.label)).size).toBe(V3_STEPS.length);
+    // every step that names the digest uses ONE key
+    const keys = V3_STEPS.map(st => st.config.params && st.config.params.digest_key).filter(Boolean);
+    expect(keys).toEqual(['docs@', 'docs@', 'docs@']);
+    // the preflight's expected refusal is the service's own words
+    // (the service's own wording is pinned in tests/emailAttachments.mysql.test.js "refusals")
+    expect(DIGEST).toContain('/is not queued under digest "preflight"/');
   });
 });
 

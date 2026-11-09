@@ -2971,12 +2971,22 @@ a conflict picks none);
 re-claimed after 15 min) and renders the staff notice
 (`services/emailAttachmentNotice.js`, `[[…]]`-safe for request_decision).
 Functions `email_case_match` (CTA-denied), `email_attachments_file`,
-`email_attachments_refile`. Contract: `ref/EMAIL_ATTACHMENTS_DESIGN.md`.
+`email_attachments_digest` (CTA-denied), `email_attachments_refile`.
+Contract: `ref/EMAIL_ATTACHMENTS_DESIGN.md`.
 First user (S2): rule 24 starts the "docs@ intake" workflow (§7 there) —
-file, then a notice, or a `request_decision` whose `options` is
-`{{filing.decision_options}}` (request_decision.options takes one
-placeholder since S2; the array is checked at run time). Its step 1 is the
-one place the notice recipient is set.
+file, then a notice, or a `request_decision` whose `options` is the
+decision_options array (request_decision.options takes one placeholder
+since S2; the array is checked at run time). Its step 1 is the one place the
+notice recipient is set. **One notice per burst** (S2d, v3, §8 there):
+files go in at once; `email_attachments_file` with `digest_key` queues the
+notice in `mail_attachment_notices`, and each email's execution loops on
+`email_attachments_digest` (wait → `wait_for {{digest.wait}}` → ask again)
+until the sender has been quiet 5 min by `mail_messages.ingested_at` (cap 30
+min); the first execution to ask after that claims every pending row of that
+sender (one FOR UPDATE read, `digest_of` = the claimer) and sends ONE notice
+and at most ONE pick-the-case, whose answer refiles the burst's unsorted
+emails (`email_attachments_refile` `digest_key` + `digest_of`). A burst of
+one = the single-email notice unchanged.
 
 ### Direction & firm-to-firm
 `from.email` domain ∈ `EMAIL_DOMAINS` → `outgoing`, else `incoming`.
@@ -2988,7 +2998,8 @@ log no.
 `email_ingest_rule_actions`, `email_ingest_rule_changes`,
 `email_ingest_log_suppressions`,
 `email_ingest_executions`, `mail_attachment_filings` (attachments filed from
-stored mail — above). The `email_router_*` tables are DEAD (tear-out
+stored mail — above), `mail_attachment_notices` (the burst digest's queue —
+above). The `email_router_*` tables are DEAD (tear-out
 pending). Collation: `court_ai_log.message_id` and `email_log.message_id`
 are both `utf8mb4_general_ci` live (verified 2026-10-05) — the explicit
 `COLLATE` clauses on the court-side joins are no-ops kept as insurance

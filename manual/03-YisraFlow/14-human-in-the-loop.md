@@ -67,7 +67,7 @@ no answer.
 | param | req | notes |
 |---|---|---|
 | `question` | ✓ | Shown on the decision pages, default email, and log. ≤2000 chars. `{{variables}}` work. |
-| `options` | ✓ | 1–10 of `{"label","value"}`. `value` is url-safe `[a-zA-Z0-9_-]{1,64}`, unique; it's what lands in `result_var`. Or a single `{{placeholder}}` naming an array an earlier step built — the docs@ intake workflow offers `{{filing.decision_options}}`, one button per candidate case. That array is checked when the step runs (not at save), and a bad one fails the step. |
+| `options` | ✓ | 1–10 of `{"label","value"}`. `value` is url-safe `[a-zA-Z0-9_-]{1,64}`, unique; it's what lands in `result_var`. Or a single `{{placeholder}}` naming an array an earlier step built — the docs@ intake workflow offers `{{digest.decision_options}}`, one button per candidate case for a whole burst of emails. That array is checked when the step runs (not at save), and a bad one fails the step. |
 | `result_var` | ✓ | Variable receiving the chosen value (or `timeout_value`). |
 | `timeout` | ✓ | `"2h"`, `"3d"`, `"30m"`, or ms. Max 365d. |
 | `timeout_value` | ✓ | Written to `result_var` on no-response. Doesn't have to be an option value. |

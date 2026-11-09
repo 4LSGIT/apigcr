@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-06T01:41:21.625Z
+-- Generated: 2026-11-09T01:40:31.608Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:1e686d37ee16da81ef86ce00445d3add
+-- Fingerprint: sha256:000fb19271b51bb9da03136d45b49ecc
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2622,6 +2622,24 @@ CREATE TABLE `mail_attachment_filings` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `mail_attachment_notices`
+--
+
+DROP TABLE IF EXISTS `mail_attachment_notices`;
+CREATE TABLE `mail_attachment_notices` (
+  `digest_key` varchar(40) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'which digest: the workflow step''s digest_key (docs@ intake: docs@). A burst never spans two keys',
+  `mail_message_id` bigint unsigned NOT NULL COMMENT 'mail_messages.id (no FK on purpose: outlives a purged or pruned mail copy)',
+  `sender` varchar(255) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'the From address, lowercased — the burst key; #<mail_message_id> when the email had none (never grouped)',
+  `ingested_at` datetime NOT NULL COMMENT 'UTC. mail_messages.ingested_at — the burst clock (quiet time and cap are measured on it)',
+  `result` mediumtext COLLATE utf8mb4_general_ci COMMENT 'JSON: the email_attachments_file result the notice is built from. NULL while the email''s files are being filed (a placeholder: holds the digest back for 15 minutes at most)',
+  `digest_of` bigint unsigned DEFAULT NULL COMMENT 'the mail_message_id whose workflow sent the notice covering this email; rows sharing it are one burst. NULL = not notified yet',
+  `notified_at` datetime DEFAULT NULL COMMENT 'UTC. When the row was claimed into a notice',
+  `created_at` datetime NOT NULL COMMENT 'UTC. When the filing step queued it (the placeholder''s staleness clock)'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Email attachments burst digest (ref/EMAIL_ATTACHMENTS_DESIGN.md §8): one row per email whose notice waits for its sender''s burst to end';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `mail_image_senders`
 --
 
@@ -5158,6 +5176,14 @@ ALTER TABLE `mail_attachment_filings`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `uq_mail_attachment_part` (`mail_message_id`,`part`),
   ADD KEY `idx_mail_attachment_link` (`link_type`,`link_id`);
+
+--
+-- Indexes for table `mail_attachment_notices`
+--
+ALTER TABLE `mail_attachment_notices`
+  ADD PRIMARY KEY (`digest_key`,`mail_message_id`),
+  ADD KEY `idx_mail_attachment_notice_pending` (`digest_key`,`sender`,`notified_at`),
+  ADD KEY `idx_mail_attachment_notice_digest` (`digest_key`,`digest_of`);
 
 --
 -- Indexes for table `mail_image_senders`

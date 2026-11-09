@@ -64,7 +64,7 @@ Of the 112: **17** are `uiHidden` (internal plumbing and the recurring sweepers,
 | documents | `documents_sync`, `documents_refresh_case_cache`, `documents_attribution_report`, `document_generate_from_template`* |
 | esign | `esign_send_from_template`, `esign_get_status`, `esign_recall` |
 | dropbox | `dropbox_create_folder`, `dropbox_get_shared_link`, `dropbox_list_folder`, `dropbox_move`, `dropbox_rename`, `dropbox_delete`, `dropbox_save_url`, `dropbox_ensure_case_folder` |
-| email | `email_case_match`, `email_attachments_file`*, `email_attachments_refile`* |
+| email | `email_case_match`, `email_attachments_file`*, `email_attachments_digest`*, `email_attachments_refile`* |
 | pdf | `parse_pdf`, `render_submission_pdf`* |
 | connections | `refresh_expiring_oauth_credentials`, `rc_renew_subscriptions`, `gcontacts_sync_pending` |
 | general | `query_db`, `update_db`, `insert_db` |
@@ -1907,12 +1907,12 @@ Recurring-job plumbing, `uiHidden` and denied to CTA links (they spend provider,
 
 ### Email attachments
 
-Three functions in `lib/internal_functions/emailAttachments.js` that turn an
+Four functions in `lib/internal_functions/emailAttachments.js` that turn an
 email's attachments into case documents. They read the **YisraCase mailbox
 store**, not Gmail, so they work for any IMAP mailbox. Design and rules:
 `ref/EMAIL_ATTACHMENTS_DESIGN.md`.
 
-Each names its message one of three ways — `mail_message_id` (from an email
+The first two name their message one of three ways — `mail_message_id` (from an email
 rule: `{{mailbox.message_row_id}}`), or `mailbox_id` + `folder` + `uid`, or
 `source` + `message_id` (the ingest identity).
 
@@ -1939,11 +1939,32 @@ rule: `{{mailbox.message_row_id}}`), or `mailbox_id` + `folder` + `uid`, or
   `request_decision`), and a finished staff email — `notice_subject`,
   `notice_html`, `notice_text` — for `send_email`. The email links each file,
   and on a case with a Docs Needed list links the list, names what is still
-  open, and asks staff to check off what arrived.
+  open, and asks staff to check off what arrived. With **`digest_key`** the
+  files are still filed at once, but the notice waits for
+  `email_attachments_digest` (next).
+- **`email_attachments_digest`** (workflow only) — **one notice per burst**
+  of emails from the same sender. Run it after `email_attachments_file`
+  (same `digest_key`) and loop on its `action`: `wait` → a `wait_for` of
+  `{{digest.wait}}` back to this step; `send` → this run sends the burst's
+  notice (`notice_subject` / `notice_html` / `notice_text`; for a decision
+  `needs_decision`, `decision_options`, `notice_html_decision`); `done` →
+  another email's run already covers this one, so stop. The burst ends when
+  the sender has sent nothing new for `quiet` (default `5m`, by when the
+  mail arrived in YisraCase) or `cap` after its first email (default `30m`).
+  A burst of one gets the ordinary single-email notice. Several get one
+  email: a box per place the files went (each case with its Docs Needed list
+  as it stands now, Unsorted, anything not filed), then each email with its
+  files. Output also `digest_of` (the burst, for refile), `count`,
+  `mail_message_ids`, `unsorted_ids`, `unsorted_folder_path` / `_link`.
+  Denied to CTA links. The docs@ intake workflow (steps 3–6) is the worked
+  example.
 - **`email_attachments_refile`** (workflow only) — moves everything filed for
   one message into a case's `Client Uploads/Emailed YYMMDD`, following any
   rename or move staff made since, and links each file to the case. The
-  answer to a `request_decision` on `decision_options`.
+  answer to a `request_decision` on `decision_options`. With `digest_key` +
+  `digest_of` (from `email_attachments_digest`) instead of
+  `mail_message_id`, it moves every **unsorted** email of that burst; the
+  burst's emails already filed to a case stay put.
 
 Once filed, the files are ordinary Dropbox documents: `parse_pdf`
 (`dropbox_path`), `query_ai` file inputs and `send_email` `attachment_urls`

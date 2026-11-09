@@ -152,6 +152,9 @@ const CTA_FN_DENYLIST = Object.freeze([
   // (email_attachments_file / _refile) stay ELIGIBLE on purpose — an SU-minted
   // "file these to case X" link is what refile is for.
   'email_case_match',
+  // Email attachments S2d (design §8): workflow plumbing — it claims a
+  // sender's queued notices, and only that email's own execution may.
+  'email_attachments_digest',
 ]);
 
 /** Chromium-backed functions: eligible, but a public repeatable link fans out load. */
