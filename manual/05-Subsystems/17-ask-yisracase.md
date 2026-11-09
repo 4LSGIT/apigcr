@@ -448,7 +448,9 @@ It saves through the same route the Case Details forms use.
   the case will resolve to afterwards — when that changes it warns that the
   case's current stage may not exist there (the Pipeline widget and board
   then show it off the pipeline) and that, unlike "Move to another
-  pipeline…", nothing is logged and no step is checked.
+  pipeline…", nothing is logged and no step is checked. To put the case on a
+  named stage of the other pipeline as well, ask for the pipeline transfer
+  card instead (below).
 - **Values are checked against the field.** A date is a calendar date; the
   show cause date and time is in firm time; a choice field takes one of its
   own options; a checkbox field takes any of its own options; text must fit
@@ -564,8 +566,8 @@ this lead dead", "move the case back to Docs requested").
     requirement** — mark the step done or N/A on the case's Steps panel
     yourself, then ask again. (The case page's own Advance does not check
     requirements; Casey does.)
-  - move a case onto **another pipeline** (another chapter, or back to
-    intake) — use "Move to another pipeline…" on the case page;
+  - move a case onto **another pipeline** on these cards — that is the
+    pipeline transfer card, below;
   - enter a chapter pipeline at any stage but its first, or enter one the
     case's subtype does not name exactly (set the subtype first);
   - advance a case sitting on an off-ramp (name the stage instead), or past
@@ -595,6 +597,51 @@ current stage, or upcoming. It names the required steps that would stop a
 move, and for an intake lead it can show the chapter pipeline the case's
 subtype points to. A retained case shown on the Intake pipeline, or a case no
 pipeline fits, is said plainly. This read is always on; it changes nothing.
+
+#### Moving a case to another pipeline
+
+Casey can move a case onto **another pipeline** at one stage — the case page's
+"Move to another pipeline…" — one case per card: "move the Smith case to
+Chapter 13 at Filed", "put this lead back on Intake". Name the pipeline, and
+the stage if you want a particular one; with no stage the card uses the case
+page's own default (the stage the case is on now, when the new pipeline has
+it; otherwise the new pipeline's first stage). A case staying on its own
+pipeline uses the stage cards above; a type or subtype change with no stage
+goes on the case fields card.
+
+- **Two writes.** As on the case page, the case's type and subtype are set to
+  the new pipeline's own (an Intake destination changes neither and keeps the
+  subtype), then the case is moved to the stage. The card shows the type and
+  subtype before → after and who reads them (the client portal's case title
+  among them), the stage, status and next step it overwrites, the phase when it
+  changes (a lead retained, or a retained case back to intake — both in warning
+  style), and the stage-log note (the route's own "Moved to …" when you give
+  none). The two writes are **not one transaction**: if the stage move fails
+  after the type and subtype were written (someone else moving the case at the
+  same moment), the case is left on the new pipeline at its old stage, and the
+  card says **Failed — partly written** rather than applied. Ask Casey to read
+  the case's pipeline and finish the move.
+- **Steps.** The card lists every **required** step on the new pipeline's
+  stages before the destination that is not done or N/A, word for word, in a
+  warning — they read "skipped" once the case is there. The case page's move
+  allows this, so Casey does too, but it never marks a step done or N/A. It
+  also lists the required steps left open on the pipeline the case leaves.
+- **Automation.** Both events are dry-run: the type / subtype change
+  (case.updated) and the stage change (case.stage_advanced), each rule that
+  would run listed with what it does.
+- **What Casey refuses, and says so:** the pipeline the case is already on
+  (use the stage cards), an inactive or unknown pipeline or stage, and a move
+  the case would not stay on — when, after the move, the case's type and
+  subtype would still pick a different pipeline (for example, a duplicate
+  pipeline for the same chapter, or one with no case type), which would leave
+  the case shown off its pipeline's stages.
+- **Freshness.** When you confirm, the card re-reads the case, its pipeline
+  and position, the new pipeline and its stages, and the list of active
+  pipelines; if any changed, nothing is written. Whether a step on the new
+  pipeline has been finished since is not re-read.
+- The card is always warning-styled; there is no undo (moving it back is
+  another transfer). Open case pages and the pipeline board refresh on their
+  own. It shares the `casey_case_pipeline_enabled` off switch.
 
 ### A case's number (docket)
 

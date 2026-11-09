@@ -1801,6 +1801,185 @@ function casePipelineKnownOutcome(e) {
   return null;
 }
 
+// The cross-pipeline transfer (A9.3): ONE case onto ANOTHER pipeline at ONE
+// stage through the case page's own "Move to another pipeline…" route, POST
+// /api/cases/:id/pipeline/move {template_id, stage_id, note?} — a type /
+// subtype write (case.updated) then the stage advance. The server resolved the
+// destination template and stage (refusing the pipeline the case is on now,
+// an inactive or foreign template / stage, and any destination the post-state
+// would not resolve to), dry-ran both events' trigger rules, projected the
+// destination's passed-over steps and baked the case, its position, the
+// destination and the resolver's inputs into `expected`. The click re-reads
+// GET /api/cases/:id, GET …/pipeline, and the two pipeline-admin reads the
+// page's move dialog uses, and refuses on ANY difference before the claim.
+// NOT ATOMIC: a torn state (type / subtype written, the advance refused) comes
+// back as the route's own error and reads here as a FAILURE naming it, never
+// as applied or as "nothing written". The route is on the yc-sync bus (its
+// `changes` carry the stage columns and the type / subtype). Receipt: the
+// STRING case_id.
+const CASE_PIPELINE_TRANSFER_ACTION_KINDS = new Set(['case.pipeline.transfer.v1']);
+const CASE_TRANSFER_TORN = /^case type\/subtype updated for "([\s\S]*)" but the stage advance failed \(([\s\S]*)\) — retry the move$/;
+
+function caseTransferText(draft) {
+  const c = draft.case || {}; const p = draft.pipeline; const f = draft.from; const t = draft.to || {};
+  const w = draft.writes || {}; const m = draft.membership || {}; const r = draft.requirements || {}; const a = draft.automation || {};
+  const quote = (v) => (v == null || v === '' ? 'blank' : `"${v}"`);
+  const step = (x) => `"${x.internal_label}" (${x.stage_label}, ${x.status}${x.owner ? `, ${x.owner}` : ''})`;
+  const lines = ['Pipeline transfer proposal — not applied', 'Action: Move to another pipeline',
+    `Case: ${casePipelineCaseLabel(draft)} (case ${c.case_id}${c.case_type ? `, ${c.case_type}` : ''}${c.case_subtype ? ` / ${c.case_subtype}` : ''})${(c.clients || []).length ? ` — ${c.clients.join(', ')}` : ''}`,
+    `From pipeline: ${p ? p.name : 'none'}`,
+    `From stage: ${f ? `${casePipelineStageName(f)}${f.on_pipeline === false ? ' — not a stage of that pipeline' : ''}` : 'no stage yet'}`,
+    `To pipeline: ${t.template_name} (#${t.template_id}, ${t.template_role})`,
+    `To stage: ${casePipelineStageName(t)}${t.lane === 'offramp' ? ' — off-ramp' : ''}${draft.stage_defaulted ? ' — the case page\'s default' : ''}`,
+    `Pipeline phase: ${w.pipeline_phase && w.pipeline_phase.from !== w.pipeline_phase.to ? `${w.pipeline_phase.from} → ${w.pipeline_phase.to}` : `stays ${w.pipeline_phase ? w.pipeline_phase.to : 'unchanged'}`}`];
+  const mk = Object.keys(m);
+  lines.push(mk.length ? `Type / subtype written: ${mk.map((k) => `${k} ${quote(m[k].from)} → ${quote(m[k].to)}`).join('; ')}` : 'Type / subtype written: none');
+  (draft.warnings || []).forEach((x) => lines.push(`Warning: ${x}`));
+  const passed = (r.passed_required || []).map(step);
+  const done = (r.satisfied || []).map(step);
+  lines.push(passed.length
+    ? `Required steps it passes over on ${t.template_name}: ${passed.length} not done or N/A (they will read skipped): ${passed.join('; ')}${done.length ? ` — done or N/A: ${done.join('; ')}` : ''}`
+    : `Required steps it passes over on ${t.template_name}: none left unmet${done.length ? ` — done or N/A: ${done.join('; ')}` : ''}`);
+  (r.optional_skipped || []).forEach((x) => lines.push(`Optional step passed over unfinished (it will read skipped): ${step(x)}`));
+  const dest = (r.destination || []).map((x) => `"${x.internal_label}" (${x.required ? 'required' : 'optional'}${x.status ? `, ${x.status}` : ''})`);
+  lines.push(`Steps at ${t.internal_label || 'the destination'}: ${dest.join('; ') || 'none'}`);
+  const leaving = (r.leaving_open || []).map(step);
+  if (leaving.length) lines.push(`Required steps left open on ${p ? p.name : 'the old pipeline'}: ${leaving.join('; ')}`);
+  lines.push(`Case fields overwritten: stage ${quote(w.case_stage && w.case_stage.from)} → ${quote(w.case_stage && w.case_stage.to)}; status ${quote(w.case_status && w.case_status.from)} → ${quote(w.case_status && w.case_status.to)}; next step ${quote(w.case_rec && w.case_rec.from)} → ${quote(w.case_rec && w.case_rec.to)}`);
+  (draft.effects || []).forEach((x) => lines.push(`Effect: ${x}`));
+  const block = (auto, what) => {
+    if (!auto) { lines.push(`Automation (${what}): the event does not fire.`); return; }
+    const acting = auto.lines || [];
+    lines.push(acting.length
+      ? `Automation (${what}): ${Number(auto.rules_checked) || 0} active trigger rule(s) checked; ${acting.length} would act:`
+      : `Automation (${what}): no active trigger rule acts (${Number(auto.rules_checked) || 0} checked).`);
+    acting.forEach((x) => lines.push(`Automation (${what}): ${x}`));
+  };
+  block(a.case_updated, 'case.updated — the type / subtype write');
+  block(a.stage_advanced, 'case.stage_advanced — the stage change');
+  lines.push('Automation: what those actions cause in turn (another rule, a workflow\'s own steps) is not followed here.',
+    `Note: ${draft.note ? `"${draft.note}"` : `none (the stage log reads "${draft.log_note || ''}")`}`,
+    'Writes: the case\'s type / subtype (when listed above), then one stage-log entry and the case\'s stage, status, next step and phase — through the case page\'s own "Move to another pipeline…", in two steps that are not one transaction.',
+    'Overrides: none — this card cannot mark a step done or N/A.',
+    'Stale check: if the case\'s type, subtype, phase, stage or pipeline position, the destination pipeline or its stages, or any active pipeline the resolver reads changes before you apply, nothing is written. A step\'s done / not-done status on the destination is not re-read at the click (no page shows another pipeline\'s steps for a case).',
+    'Other open pages: the case page and the pipeline board refresh on their own.',
+    'Notification: Casey sends nothing itself; the trigger rules above are the only follow-on effects.');
+  return lines.join('\n');
+}
+
+function caseTransferRequest(draft) {
+  const c = draft.case || {}; const t = draft.to || {};
+  const caseId = actionStringReceipt(typeof c.case_id === 'string' ? c.case_id : '');
+  if (!caseId) throw new Error('This card has no usable case id.');
+  const templateId = Number(t.template_id); const stageId = Number(t.stage_id);
+  if (!Number.isSafeInteger(templateId) || templateId <= 0 || !Number.isSafeInteger(stageId) || stageId <= 0) throw new Error('This card has no usable destination.');
+  const note = typeof draft.note === 'string' ? draft.note.trim() : '';
+  if (note.length > 255) throw new Error('This card\'s note is longer than the stage log keeps.');
+  const body = { template_id: templateId, stage_id: stageId };
+  if (note) body.note = note;
+  return { path: `/api/cases/${encodeURIComponent(caseId)}/pipeline/move`, method: 'POST', body };
+}
+
+async function caseTransferPrecheck(draft) {
+  const req = caseTransferRequest(draft); // a card that cannot be written is never read
+  const caseId = actionStringReceipt(draft.case.case_id);
+  const t = draft.to || {}; const x = draft.expected || {};
+  const name = `case ${casePipelineCaseLabel(draft)}`;
+  const again = 'Nothing was written. Ask Casey to prepare it again.';
+  const gone = `Case ${casePipelineCaseLabel(draft)} no longer exists. Nothing was written.`;
+  let got;
+  try { got = await api(`/api/cases/${encodeURIComponent(caseId)}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return gone; throw e; }
+  const row = got && got.case;
+  if (!row || typeof row !== 'object' || !('pipeline_phase' in row)) throw new Error('the case could not be read');
+  const s = (v) => String(v == null ? '' : v);
+  const phase = s(row.pipeline_phase).trim().toLowerCase() === 'case' ? 'case' : 'intake';
+  if (phase !== x.pipeline_phase || s(row.case_type) !== s(x.case_type) || s(row.case_subtype) !== s(x.case_subtype) || s(row.case_stage) !== s(x.case_stage)) {
+    return `The type, subtype, phase or stage of ${name} changed since this card was prepared, which changes what the transfer writes. ${again}`;
+  }
+  let pipe;
+  try { pipe = await api(`/api/cases/${encodeURIComponent(caseId)}/pipeline`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return gone; throw e; }
+  if (!pipe || !Array.isArray(pipe.history)) throw new Error('the case\'s pipeline could not be read');
+  const tplNow = pipe.template ? Number(pipe.template.id) : null;
+  const curNow = pipe.current ? String(pipe.current.stage_key) : null;
+  if (tplNow === Number(t.template_id) && curNow === t.stage_key) {
+    return `${name} is already on ${t.template_name} at ${casePipelineStageName(t)}. Nothing was written and no automation ran.`;
+  }
+  if (tplNow !== (x.template_id == null ? null : Number(x.template_id)) || curNow !== (x.stage_key == null ? null : String(x.stage_key)) || pipe.history.length !== Number(x.history_count)) {
+    return `The pipeline or stage of ${name} changed since this card was prepared. ${again}`;
+  }
+  const list = await api('/api/pipeline-admin/templates', null, 'GET');
+  if (!list || !Array.isArray(list.templates)) throw new Error('the pipelines could not be read');
+  const tplSig = (tp) => `${Number(tp.id)}:${s(tp.role)}:${s(tp.case_type)}:${s(tp.case_subtype)}:${Number(tp.is_default) ? 1 : 0}`;
+  const activeSig = list.templates.filter((tp) => !!Number(tp.active)).map(tplSig).sort();
+  if (JSON.stringify(activeSig) !== JSON.stringify((x.templates || []).slice().sort())) {
+    return `The active pipelines changed since this card was prepared, which can change the pipeline ${name} resolves to after the move. ${again}`;
+  }
+  let st;
+  try { st = await api(`/api/pipeline-admin/templates/${encodeURIComponent(String(req.body.template_id))}/stages`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `The ${t.template_name} pipeline no longer exists. Nothing was written.`; throw e; }
+  const tp = st && st.template;
+  if (!tp || !Array.isArray(st.stages)) throw new Error('the destination pipeline could not be read');
+  if (!Number(tp.active) || s(tp.role === 'case' ? 'case' : 'intake') !== s(x.dest_role) || s(tp.case_type) !== s(x.dest_case_type) || s(tp.case_subtype) !== s(x.dest_case_subtype)) {
+    return `The ${t.template_name} pipeline changed or was deactivated since this card was prepared. ${again}`;
+  }
+  const lane = (row2) => (String(row2 && row2.lane != null ? row2.lane : '').trim().toLowerCase() === 'offramp' ? 'offramp' : 'main');
+  const stage = st.stages.find((row2) => Number(row2.id) === Number(req.body.stage_id));
+  if (!stage || !Number(stage.active) || stage.stage_key !== t.stage_key || Number(stage.stage_number) !== Number(t.stage_number) || lane(stage) !== t.lane
+    || Number(stage.id) !== Number(x.dest_stage_id)) {
+    return `The destination stage ${casePipelineStageName(t)} changed or is no longer active on ${t.template_name}. ${again}`;
+  }
+  const stageSig = st.stages.filter((row2) => !!Number(row2.active))
+    .sort((a, b) => Number(a.stage_number) - Number(b.stage_number) || Number(a.id) - Number(b.id))
+    .map((row2) => `${Number(row2.id)}:${String(row2.stage_key)}:${Number(row2.stage_number)}:${lane(row2)}:${Number(row2.req_count) || 0}`);
+  if (JSON.stringify(stageSig) !== JSON.stringify(x.dest_stages || [])) {
+    return `The stages or steps of the ${t.template_name} pipeline changed since this card was prepared. ${again}`;
+  }
+  return '';
+}
+
+function caseTransferResult(draft, result) {
+  if (!result || result.status !== 'success') throw new Error('The move route did not confirm the transfer');
+  const t = draft.to || {};
+  const moved = result.moved && typeof result.moved === 'object' ? result.moved : null;
+  // The advance's noop with no type / subtype write: nothing changed at all.
+  if (result.noop === true && !(moved && moved.fields_updated === true)) throw Object.assign(new Error('already there'), { caseTransferNoop: true });
+  // The route answered success: anything but the case resolving to the
+  // destination at the destination stage is a write that landed elsewhere.
+  if (!moved || Number(moved.template_id) !== Number(t.template_id) || !result.template || Number(result.template.id) !== Number(t.template_id)
+    || !result.current || String(result.current.stage_key) !== String(t.stage_key)) {
+    throw Object.assign(new Error('the case is not on the destination'), { caseTransferOff: true, resolved: result.template ? String(result.template.name || '') : '' });
+  }
+  return { case_id: actionStringReceipt(draft.case.case_id) };
+}
+
+// The route's outcomes the shared rules would misread: the torn state (the
+// type / subtype written, the advance refused — the route rewrites the
+// advance's error and keeps ITS status, so a 409 or a 400 here may have
+// written), a success that did not land on the destination, the noop, and the
+// lock 409 with no torn prefix (no type / subtype write happened, so nothing
+// was written).
+function caseTransferKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const refused = 'Refused — nothing written';
+  const message = String((e && e.message) || (e && e.body && e.body.message) || '');
+  const torn = CASE_TRANSFER_TORN.exec(message);
+  if (torn) {
+    return { status: 'Failed — partly written', text: `Failed — partly written: the case's type / subtype were changed for the "${torn[1]}" pipeline, but the stage advance was refused (${torn[2]}). The case now resolves to "${torn[1]}" while its stage position is still the old one, so the case page and the board show it off that pipeline's stages. The route says to retry the move: ask Casey to read the case's pipeline and finish it — a stage move on "${torn[1]}" when the case already resolves to it (a retained case does), otherwise this transfer again (its type / subtype write is then empty and only the advance runs). Do not apply this card again.` };
+  }
+  if (e && e.caseTransferOff === true) {
+    return { status: 'Failed — not on the destination', text: `Failed — the move route answered success, but the case is not on the destination pipeline at the destination stage afterwards (it resolves to ${e.resolved ? `"${e.resolved}"` : 'another pipeline'}). Something was written: open the case and check its pipeline before asking Casey again. Do not apply this card again.` };
+  }
+  if (e && e.caseTransferNoop === true) {
+    return { status: refused, text: 'Refused — nothing written: the case was already on that pipeline at that stage when this was applied (someone moved it there first), so no stage-log entry was made, no type / subtype was written and no automation ran. Ask Casey to read the case again.' };
+  }
+  if (e && e.status === 409 && /already in progress/.test(message)) {
+    return { status: refused, text: 'Refused — nothing written: another stage change for this case was running at the same moment, and no type / subtype was written. Ask Casey to read the case again before preparing it again.' };
+  }
+  return null;
+}
+
 // Checklists and checklist items (A10). Make ONE checklist or note, add ONE
 // item, or rename / complete / reopen ONE item through the Notes & Lists tab's
 // own routes — which live at the ROOT, not under /api: POST /checklists
@@ -4655,6 +4834,28 @@ const ACTION_FAMILIES = [
       button: `Open ${casePipelineCaseLabel(draft)}`,
     }),
     reviewWarning: 'Review the from and to stages, every step it passes over, the case fields it overwrites and every trigger rule it runs — they start the moment it is saved. Nothing is sent by Casey itself. Canceling writes nothing.',
+    open: (draft) => openEntity('case', String(draft.case && draft.case.case_id), casePipelineCaseLabel(draft)),
+  },
+  {
+    // A9.3: the receipt is the STRING case_id — the move route answers the
+    // advance's payload plus `moved`, never a row id of its own.
+    id: 'case_pipeline_transfer', kinds: CASE_PIPELINE_TRANSFER_ACTION_KINDS, title: 'Pipeline transfer', noun: 'case', errorNoun: 'pipeline transfer',
+    label: () => 'Move to another pipeline', text: caseTransferText, request: caseTransferRequest, result: caseTransferResult,
+    idField: 'case_id', appliedKey: 'result_transfer_case_id', stringReceipt: true,
+    // Always: it rewrites which pipeline the case is on (and, for a matter pipeline, its type / subtype) and has no undo.
+    danger: () => true,
+    precheck: caseTransferPrecheck,
+    knownOutcome: caseTransferKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `case ${payload.case_id}`,
+    entity: (draft) => ({ kind: 'case', id: String(draft.case && draft.case.case_id), label: casePipelineCaseLabel(draft) }),
+    failure: 'The pipeline transfer could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — now on ${draft.to ? draft.to.template_name : 'the new pipeline'} at ${draft.to ? draft.to.internal_label : 'the new stage'}`,
+      warning: `Case ${casePipelineCaseLabel(draft)} was moved to ${draft.to ? draft.to.template_name : 'the new pipeline'} at ${casePipelineStageName(draft.to)} using your signed-in account. The trigger rules listed above run from this change.`,
+      button: `Open ${casePipelineCaseLabel(draft)}`,
+    }),
+    reviewWarning: 'Review the pipeline it leaves and the one it enters, the type / subtype it rewrites, every step it passes over or leaves open and every trigger rule it runs — they start the moment it is saved, in two steps that are not one transaction. Nothing is sent by Casey itself. Canceling writes nothing.',
     open: (draft) => openEntity('case', String(draft.case && draft.case.case_id), casePipelineCaseLabel(draft)),
   },
   {

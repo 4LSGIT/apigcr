@@ -1195,13 +1195,12 @@ COMMENTs.)
 - **What the case fields card still refuses by name.** `case_341_current` /
   `341_appt_id` (apptService's single-writer mirror of the live 341
   appointment; no UI writes them either — the 341 is moved by rescheduling the
-  appointment, which Casey's appointment cards do; manager ruling 2026-11-09,
-  pending Fred's word). `case_type` / `case_subtype` are editable since A7d
-  (2026-11-09) — a raw type/subtype edit re-resolves the pipeline WITHOUT a
-  stage-log row or a step check, exactly as the case page's own selects do;
-  the card discloses the before → after pipeline. The reviewed
-  cross-pipeline MOVE (`/pipeline/move`, with passed-over steps) stays a
-  separate deferred card (A9 section).
+  appointment, which Casey's appointment cards do; Fred's "ok" 2026-11-09).
+  `case_type` / `case_subtype` are editable since A7d (2026-11-09) — a raw
+  type/subtype edit re-resolves the pipeline WITHOUT a stage-log row or a
+  step check, exactly as the case page's own selects do; the card discloses
+  the before → after pipeline. The reviewed cross-pipeline MOVE onto a named
+  stage is the A9.3 transfer card (`case.pipeline.transfer.v1`, 2026-11-09).
 - **A7 ruling 2 — a conditional write on `PATCH /api/cases/:id`.** The card
   now writes portal-visible columns (`case_chapter`, `case_341_link`,
   `case_open_date`) with only the read-then-write freshness check (baked
@@ -1312,15 +1311,12 @@ COMMENTs.)
   must never ride along with a transition. A9's cards refuse every
   override-shaped key by name; this sub-slice decides who may override what,
   the required reason, and how the card discloses what the override unblocks.
-- **Cross-pipeline moves (`POST /pipeline/move`).** A matter-type change
-  (Ch7 → Ch13, a case back to intake) writes case_type / case_subtype through
-  caseService (a `case.updated` event as well as `case.stage_advanced`), is
-  non-atomic (the documented torn state), and the requirements it passes over
-  on the destination pipeline cannot be computed until the membership write
-  has happened — so a fail-closed card cannot be built from reads alone. Also
-  entering a chapter pipeline PAST its first stage (same reason). Needs a
-  resolver dry-run over a hypothetical case row (requirementService takes the
-  case row from the DB today).
+- **Native: `movePipeline`'s torn-state message says "retry the move", but
+  the case page's move dialog (`pwMoveOpen`) filters out the template the
+  case currently resolves to** (A9.3 worker, 2026-11-09). After a torn move a
+  retained case already resolves to the destination, so the UI cannot retry
+  it; finishing means Advance on the widget. Either let the dialog offer the
+  current template when the case's position is off it, or word the error so.
 - **Native: the case page's Advance and the board's drag do not warn on unmet
   requirements.** Only Casey's cards refuse them; the native confirm says
   "Move this case to X?" with no mention of open required steps. A warning

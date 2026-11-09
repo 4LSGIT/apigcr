@@ -9,7 +9,7 @@ reschedule-later; one phone/email/address subrecord create, narrow update or
 history-preserving end. Since then: A6 (contact relations and roles — create and
 update), A7 group A (case notes, case alerts, contact notes), A7 groups B/C (any
 other case field, 2026-11-09; the docket's replace / clear, A7e), A7c (case docket adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
-advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read), A10 (checklists and items), A11 (documents —
+advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer), A10 (checklists and items), A11 (documents —
 update and link), A11.1 (a case's Dropbox folder — candidates-only relink),
 A12 (form drafts and submission links), A13 (mail triage —
 read state and case link; no drafts exist, no SMS triage), A14 (direct email /
@@ -1019,7 +1019,8 @@ chapter pipeline's FIRST active main-lane stage, reached by the route's own
 cross-phase key search, and only when the R2.5 projection names that pipeline
 by subtype (a blank or unmatched subtype under an is_default template is
 refused — the route would file it there). The cases PATCH is never used;
-`/pipeline/move` (cross-pipeline membership) is refused by name.
+these two kinds never send `/pipeline/move` (cross-pipeline membership) — a
+cross-pipeline key refuses by name and points at A9.3's transfer card.
 - **Unmet requirements** are the normalizer's gate, fail closed: every
   REQUIRED step in status active / upcoming that the move would turn
   'skipped' — the resolver's rule 3 (a stage numbered below the destination
@@ -1090,11 +1091,8 @@ refused — the route would file it there). The cases PATCH is never used;
 
 **Deferred.** The requirement-override sub-slice (set / clear an override, its
 reason and permission contract — `POST/DELETE
-…/pipeline/requirements/:key/override`); cross-pipeline moves (`/pipeline/move`,
-a matter-type change — non-atomic, writes case_type / case_subtype, fires
-case.updated too, and its passed-over requirements cannot be computed before
-the membership write); entering a chapter pipeline past its first stage.
-`ref/plans.md`.
+…/pipeline/requirements/:key/override`). `ref/plans.md`. Cross-pipeline moves
+— and with them entering a chapter pipeline past its first stage — are A9.3.
 
 #### A9.2: Typed `case.pipeline` read — shipped 2026-11-09
 
@@ -1173,6 +1171,108 @@ done / skipped / N/A override / active / upcoming, both lanes, read = route,
 projection, mismatch, no pipeline, 404, mis-cased id, the A9 refusal over the
 step the read shows), `tests/assistantPromptKinds.test.js`,
 `tests/automationRead.test.js` READ_KINDS.
+
+#### A9.3: Cross-pipeline transfer — shipped 2026-11-09
+
+Fred (2026-11-09): "Casey can do *at least* anything the user can do in the
+UI." The case page's "Move to another pipeline…" (`public/case.html`
+`pwMoveOpen` → POST `/api/cases/:id/pipeline/move` {template_id, stage_id,
+note?} → `pipelineService.movePipeline`) now has a card. What A9 deferred as
+reasons not to build it (non-atomic, writes case_type / case_subtype, fires
+case.updated, passed-over requirements not computable before the membership
+write) are its disclosures.
+
+**What the route does.** `movePipeline` validates (unknown template / stage
+404, inactive template / stage or a stage of another template 400), then
+writes the membership through `caseService.updateCase` — for a role 'case'
+template with a case_type, only the columns that differ by an exact String
+compare (a blank-subtype template clears the subtype; an intake template
+writes none and the case KEEPS its subtype) — emitting case.updated (source
+`pipeline_move`), then `advanceStage` by NUMERIC stage id (no key resolution,
+no active filter, the per-case lock, the noop when the latest log row is
+already that stage of that template — no phase write either). The two writes
+are separate transactions: an advance failure after the membership write
+rethrows with "case type/subtype updated for "<name>" but the stage advance
+failed (<reason>) — retry the move" and the advance's own status (409 lock,
+500 …). The route checks no requirement and does not ask whether the case
+will resolve to the destination afterwards — the phantom its own header warns
+of (pinned on a real engine).
+
+**Shipped contract.** One kind, `case.pipeline.transfer.v1` {case_id,
+pipeline (template id or name), stage? (key or label on the DESTINATION),
+note?, evidence} → that route, behind A9's `casey_case_pipeline_enabled` (no
+new key). `normalizeCasePipelineTransferAction`:
+- **Refused by name:** an override-shaped key (no override pathway); any other
+  key (template_id, stage_id, case_type, case_subtype … — the server derives
+  them); the pipeline the case resolves to now ("a move along it is not a
+  transfer: propose case.pipeline.move.v1"); an unknown, ambiguous (two
+  templates of one name) or inactive template; an unknown, ambiguous or
+  inactive stage (the active ones listed); a destination with no active stage;
+  and **PIPELINE DOES NOT RESOLVE** — `pipelineService.resolveTemplate` on the
+  post-state (phase = the destination's role, or unchanged when the advance
+  would noop; type / subtype after the membership write) must name the
+  destination, else the card refuses with the reason (a second intake
+  template never resolves; a matter template with no case type writes nothing;
+  a duplicate loses to a lower id). The A9 cards' cross-pipeline-key refusal
+  now points at this kind.
+- **The stage when unnamed:** `pwMoveOpen`'s own default — the case's current
+  stage key when the destination has it active (any lane), else its first
+  active main-lane stage, else its first active stage (an off-ramp); the card
+  says which.
+- **Disclosed, never refused** (danger warnings): PIPELINE TRANSFER (no
+  undo); LIFECYCLE when the phase flips (retained, or back to intake); CASE
+  TYPE / SUBTYPE REWRITTEN (from → to, A7d's `CASE_FIELDS_SURFACES` readers as
+  effects) and NOT ATOMIC (the torn state and how to finish it); PASSED-OVER
+  REQUIRED STEPS — every REQUIRED step on the destination's active stages
+  numbered below the destination stage that is not done / N/A, word for word
+  with stage and owner. The statuses are PROJECTED the resolver's way
+  (`casePipelineTransferSteps`: the case's override, else the requirement's
+  detector satisfied through the same `requirementDetectors` batch, else
+  skipped below / active on / upcoming after the destination) because the
+  resolver only reads the pipeline a case resolves to now. A9.1 fails closed on
+  these for same-template moves; the case page's move allows them, and the A9
+  ruling text governs A9's two kinds, so this card discloses. REQUIRED STEPS
+  LEFT ON <old pipeline> — its open required steps (read skipped on intake →
+  case, else they leave the case's step list); OFF-RAMP; AUTOMATION when a
+  rule cannot be evaluated. Optional steps passed over, satisfied ones and the
+  destination stage's own steps are listed.
+- **Automation:** both events dry-run on their exact envelopes through A9's
+  `casePipelineAutomation` — case.updated (updateCase's: source
+  `pipeline_move`, `buildChanges` over the membership fields; skipped when
+  nothing is written) and case.stage_advanced (advanceStage's: the
+  post-membership type / subtype, `extra.from_*` from the latest log row, the
+  note or the route's default `Moved to "<name>"`; skipped on the noop).
+- **The card:** both pipelines and stages, the type / subtype before → after,
+  the four columns advanceStage overwrites (unchanged on the noop), the
+  client-portal visibility of the stage, the stage-log line.
+- **Freshness:** `expected` = the case's type / subtype / phase / case_stage,
+  its resolved template, current stage_key and history count, the
+  destination's id / role / type / subtype / active, the stage id, the
+  destination's active-stage signature (id, key, number, lane, req_count) and
+  the active-template signature (id, role, type, subtype, is_default — the
+  resolver's inputs). The click re-reads GET `/api/cases/:id`, GET
+  `…/pipeline`, GET `/api/pipeline-admin/templates` and GET
+  `/api/pipeline-admin/templates/:id/stages` (the page's own move-dialog
+  reads) and refuses on any difference before the claim. Not re-read: a
+  destination step's done / not-done status (no route projects another
+  pipeline's steps for a case) — the card says so.
+- **Outcomes** (`caseTransferKnownOutcome`): the torn message → `Failed —
+  partly written` (whatever its status; never applied, never "nothing
+  written"); a success whose fresh pipeline is not the destination at the
+  destination stage → `Failed — not on the destination`; the noop with no
+  membership write and a lock 409 without the torn prefix → refusals; other
+  4xx refusals, 5xx ambiguous. **Receipt:** the STRING case_id. **Sync:** the
+  `/pipeline/move` matcher already carries `changes` (stage columns + type /
+  subtype). Nothing added.
+- Tests: `tests/caseyPipelineTransfer.test.js` (normalizer + the browser
+  functions lifted by name), gated `tests/caseyPipelineTransfer.mysql.test.js`
+  (the projection = the real resolver after the real route, the intake
+  destination, the resolver refusal beside the route's real phantom, the torn
+  state under a held lock, the precheck over the real GETs),
+  `tests/assistantUi.test.js`, `tests/assistantPromptKinds.test.js`,
+  `tests/caseyActionPermissions.test.js`.
+
+**Still deferred:** the requirement-override sub-slice (A9).
 
 #### A10: Checklists and checklist items — create, item add and item update shipped 2026-11-01
 

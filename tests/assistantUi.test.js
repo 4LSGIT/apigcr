@@ -73,6 +73,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'caseContactSignature', 'caseContactPrecheck', 'caseContactResult', 'caseContactKnownOutcome',
   'casePipelineLabel', 'casePipelineCaseLabel', 'casePipelineStageName', 'casePipelineText', 'casePipelineRequest',
   'casePipelinePassed', 'casePipelinePrecheck', 'casePipelineResult', 'casePipelineKnownOutcome',
+  'caseTransferText', 'caseTransferRequest', 'caseTransferPrecheck', 'caseTransferResult', 'caseTransferKnownOutcome',
   'checklistFoldTitle', 'checklistLabel', 'checklistParentLabel', 'checklistListLine', 'checklistText', 'checklistCreateBody',
   'checklistRequest', 'checkitemRequest', 'checklistCreatePrecheck', 'checklistListPrecheck', 'checklistPrecheck', 'checkitemPrecheck',
   'checklistResult', 'checkitemResult', 'checklistKnownOutcome', 'checklistOpenPersonal', 'checklistEntity', 'checklistOpen',
@@ -127,6 +128,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'RECORD_TEXT_CONTEXT'), constSrc(html, 'RECORD_TEXT_PART_MAX'), constSrc(html, 'RECORD_TEXT_WORD_MAX'),
     constSrc(html, 'CASE_CONTACT_ACTION_KINDS'), constSrc(html, 'CASE_CONTACT_TYPES'),
     constSrc(html, 'CASE_PIPELINE_ACTION_KINDS'), constSrc(html, 'CASE_PIPELINE_STAGE_KEY'), constSrc(html, 'CASE_PIPELINE_OPEN'),
+    constSrc(html, 'CASE_PIPELINE_TRANSFER_ACTION_KINDS'), constSrc(html, 'CASE_TRANSFER_TORN'),
     constSrc(html, 'CHECKLIST_ACTION_KINDS'), constSrc(html, 'CHECKITEM_ACTION_KINDS'), constSrc(html, 'CHECKLIST_LINK_TYPES'),
     constSrc(html, 'DOCUMENT_ACTION_KINDS'), constSrc(html, 'DOCLINK_ACTION_KINDS'), constSrc(html, 'DOCUMENT_FIELD_MAX'),
     constSrc(html, 'CASE_DOCKET_ACTION_KINDS'), constSrc(html, 'CASE_DOCKET_FIELDS'), constSrc(html, 'CASE_DOCKET_NAMES'),
@@ -3537,6 +3539,84 @@ describe('A9 case pipeline cards (case.pipeline.advance / move)', () => {
       .toEqual([['case.pipeline.advance.v1', 'case.pipeline.move.v1'], 'case_id', 'result_pipeline_case_id', true]);
     for (const kind of ['case.pipeline.override.v1', 'case.stage.advance.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
+  });
+});
+
+// A9.3: the cross-pipeline transfer through the SHARED engine (its builder,
+// precheck, result check and outcome map are pinned function by function in
+// tests/caseyPipelineTransfer.test.js). Pinned here: the family is wired —
+// one kind, a STRING receipt, always danger-styled — the four click-time reads
+// run before the claim, the write is ONE POST to /pipeline/move, and the torn
+// state the route answers reaches the card as "Failed — partly written",
+// never as applied and never as "may have been applied".
+describe('A9.3 case pipeline transfer card (case.pipeline.transfer.v1)', () => {
+  const CASE_ID = '7KQ2M9XA';
+  const T = (id, name, role, type, sub, isDefault = 0) => ({ id, name, role, case_type: type, case_subtype: sub, is_default: isDefault, active: 1 });
+  const TEMPLATES = [T(1, 'Intake', 'intake', '', ''), T(2, 'Chapter 7', 'case', 'Bankruptcy', 'Chapter 7', 1), T(3, 'Chapter 13', 'case', 'Bankruptcy', 'Chapter 13')];
+  const STAGES = [{ id: 31, stage_key: 'retained', stage_number: 1, lane: 'main', active: 1, req_count: 1 }, { id: 33, stage_key: 'filed', stage_number: 3, lane: 'main', active: 1, req_count: 0 }];
+  const draft = () => ({ action_draft: {
+    draft_id: '5e5e5e5e-1b2c-4d3e-8f40-123456789abc', kind: 'case.pipeline.transfer.v1', status: 'draft', received_at: Date.now(),
+    case: { case_id: CASE_ID, case_number: '25-12345-abc', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', clients: ['Dana Debtor'] },
+    pipeline: { template_id: 2, name: 'Chapter 7', role: 'case' },
+    from: { stage_key: 'filed', stage_id: 23, label: 'Filed', lane: 'main', on_pipeline: true },
+    to: { template_id: 3, template_name: 'Chapter 13', template_role: 'case', stage_id: 33, stage_key: 'filed', stage_number: 3, internal_label: 'Filed', client_label: 'Filed', client_visible: 1, lane: 'main' },
+    stage_defaulted: null, note: null, log_note: 'Moved to "Chapter 13"', noop_expected: false,
+    membership: { case_subtype: { from: 'Chapter 7', to: 'Chapter 13' } },
+    writes: { case_stage: { from: 'Filed', to: 'Filed' }, case_status: { from: 'Filed', to: 'Filed' }, case_rec: { from: '', to: '' }, pipeline_phase: { from: 'case', to: 'case' } },
+    requirements: { passed_required: [{ internal_label: 'Retainer fee paid', stage_label: 'Retained', status: 'skipped', owner: 'client' }], optional_skipped: [], satisfied: [], destination: [], leaving_open: [] },
+    automation: { case_updated: { lines: [], rules_checked: 0, quiet: 0 }, stage_advanced: { lines: [], rules_checked: 1, quiet: 1 } },
+    effects: [], warnings: ['PIPELINE TRANSFER: case 25-12345-abc leaves the Chapter 7 pipeline for Chapter 13, at Filed (filed) — there is no undo (moving it back is another transfer).'],
+    expected: { case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case', case_stage: 'Filed', template_id: 2, stage_key: 'filed', history_count: 2,
+      dest_template_id: 3, dest_active: 1, dest_role: 'case', dest_case_type: 'Bankruptcy', dest_case_subtype: 'Chapter 13', dest_stage_id: 33,
+      dest_stages: ['31:retained:1:main:1', '33:filed:3:main:0'], templates: ['1:intake:::0', '2:case:Bankruptcy:Chapter 7:1', '3:case:Bankruptcy:Chapter 13:0'] },
+    evidence: [],
+    // Model-shaped junk that must never reach the request.
+    template_id: 9, stage_id: 99, case_type: 'Litigation',
+  } });
+  const read = (p) => {
+    if (p === `/api/cases/${CASE_ID}`) return { case: { case_id: CASE_ID, case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case', case_stage: 'Filed' } };
+    if (p === `/api/cases/${CASE_ID}/pipeline`) return { status: 'success', template: { id: 2 }, current: { stage_key: 'filed' }, history: [{}, {}] };
+    if (p === '/api/pipeline-admin/templates') return { status: 'success', templates: TEMPLATES };
+    if (p === '/api/pipeline-admin/templates/3/stages') return { status: 'success', template: TEMPLATES[2], stages: STAGES };
+    throw new Error(`unexpected read ${p}`);
+  };
+  function runTransfer(message, write) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (p, body, method, headers) => {
+      if (method === 'GET') { gets.push(p); return read(p); }
+      writes.push({ path: p, body, method, headers }); return write();
+    });
+    const ledgerApi = jest.fn(async (p, body) => { ledger.push(p.endsWith('/claim') ? 'claim' : { receipt: body }); return p.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a93' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) } };
+    const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history: [], openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, openEntity, sandbox }));
+  }
+
+  test('applied: four reads, ONE POST of {template_id, stage_id}, the STRING receipt, a danger-styled review', async () => {
+    const m = draft();
+    const ok = async () => ({ status: 'success', noop: false, moved: { template_id: 3, template_name: 'Chapter 13', fields_updated: true }, template: { id: 3 }, current: { stage_key: 'filed' } });
+    const { writes, gets, ledger, P, openEntity, sandbox } = await runTransfer(m, ok);
+    const fam = sandbox.actionFamily(m.action_draft);
+    expect([fam.id, [...fam.kinds], fam.idField, fam.appliedKey, !!fam.stringReceipt]).toEqual(['case_pipeline_transfer', ['case.pipeline.transfer.v1'], 'case_id', 'result_transfer_case_id', true]);
+    expect(gets).toEqual([`/api/cases/${CASE_ID}`, `/api/cases/${CASE_ID}/pipeline`, '/api/pipeline-admin/templates', '/api/pipeline-admin/templates/3/stages']);
+    expect(writes).toEqual([{ path: `/api/cases/${CASE_ID}/pipeline/move`, method: 'POST', headers: undefined, body: { template_id: 3, stage_id: 33 } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a93', result: { case_id: CASE_ID } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_transfer_case_id: CASE_ID });
+    expect(P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning', confirmButtonText: 'Move to another pipeline' });
+    expect(openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345-abc');
+  });
+
+  test('THE TORN STATE: the route\'s torn 409 reads "Failed — partly written" — not applied, not ambiguous; a plain lock 409 is a refusal', async () => {
+    const torn = draft();
+    await runTransfer(torn, async () => { throw Object.assign(new Error('case type/subtype updated for "Chapter 13" but the stage advance failed (Pipeline advance already in progress for case 7KQ2M9XA — retry) — retry the move'), { status: 409, body: { status: 'error' } }); });
+    expect(torn.action_draft.status).toBe('draft');
+    expect(torn.action_draft.ambiguous_error).toBeUndefined();
+    expect(torn.action_draft.refusal_status).toBe('Failed — partly written');
+    expect(torn.action_draft.refusal_error).toMatch(/^Failed — partly written: the case's type \/ subtype were changed for the "Chapter 13" pipeline/);
+    const lock = draft();
+    await runTransfer(lock, async () => { throw Object.assign(new Error('Pipeline advance already in progress for case 7KQ2M9XA — retry'), { status: 409, body: { status: 'error' } }); });
+    expect([lock.action_draft.refusal_status, lock.action_draft.ambiguous_error]).toEqual(['Refused — nothing written', undefined]);
   });
 });
 

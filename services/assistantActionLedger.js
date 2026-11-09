@@ -32,6 +32,9 @@ const KINDS = new Map([
   // but the advance route never returns it (getPipeline's history projection
   // omits the id), so there is no integer to receipt without a route change.
   ...['advance', 'move'].map(k => [`case.pipeline.${k}.v1`, 'case_id']),
+  // A9.3: the cross-pipeline transfer — the same case, the same STRING receipt
+  // (the move route answers the advance's payload plus `moved`, no row id).
+  ['case.pipeline.transfer.v1', 'case_id'],
   // A7c: the receipt is the case whose docket was adopted — the STRING case_id
   // path (the docket route returns the case; a case has no integer id).
   ['case.docket.adopt.v1', 'case_id'],

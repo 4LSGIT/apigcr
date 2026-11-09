@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 69 shipped kinds:
+ * These tests ask that claim two questions for all 70 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 69 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 70 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -124,6 +124,8 @@ const KINDS = [
   // A9: both pipeline kinds POST the case page's own advance (routes/api.pipeline.js).
   { kind: 'case.pipeline.advance.v1', method: 'POST', path: '/api/cases/1/pipeline/advance' },
   { kind: 'case.pipeline.move.v1', method: 'POST', path: '/api/cases/1/pipeline/advance' },
+  // A9.3: the cross-pipeline transfer POSTs the case page's own "Move to another pipeline…".
+  { kind: 'case.pipeline.transfer.v1', method: 'POST', path: '/api/cases/1/pipeline/move' },
   // A7c: the court-review adopt flow's own docket route (routes/api.cases.js).
   { kind: 'case.docket.adopt.v1', method: 'PATCH', path: '/api/cases/1/docket' },
   // A11.1: the Documents relink panel's own confirm (routes/api.documents.js).
@@ -251,19 +253,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 69 kinds (no database)
+// SECTION 1 — the route-level gate, for all 70 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 69 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 70 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 69 kinds cover 61 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(69);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(61);
+  test('the 70 kinds cover 62 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(70);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(62);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -271,7 +273,7 @@ describe('P2 — what the canonical write route gates on (all 69 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 69', async () => {
+  test('no token: every kind is 401 — authentication is required for all 70', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -349,6 +351,8 @@ describe('P2 — what the canonical write route gates on (all 69 shipped kinds)'
       ['case contact remove', 'services/caseService', 'removeCaseContact', { method: 'DELETE', path: '/api/cases/1/contacts/2' }, {}, () => ({ removed: true })],
       // A9: the pipeline advance behind the same bare gate.
       ['case pipeline', 'services/pipelineService', 'advanceStage', { method: 'POST', path: '/api/cases/1/pipeline/advance' }, { stage: 'docs' }, () => ({ noop: false, skipped: false })],
+      // A9.3: the cross-pipeline move behind the same bare gate.
+      ['case pipeline transfer', 'services/pipelineService', 'movePipeline', { method: 'POST', path: '/api/cases/1/pipeline/move' }, { template_id: 3, stage_id: 31 }, () => ({ noop: false, skipped: false, moved: { template_id: 3 } })],
     ];
     test.each(cases)('%s family', async (_family, modPath, fnName, route, body, result, created = 200) => {
       const mod = require(path.join(REPO, modPath));

@@ -1328,6 +1328,8 @@ tests/caseyPipeline.mysql.test.js
 tests/caseyPipeline.test.js
 tests/caseyPipelineRead.mysql.test.js
 tests/caseyPipelineRead.test.js
+tests/caseyPipelineTransfer.mysql.test.js
+tests/caseyPipelineTransfer.test.js
 tests/caseyRecordText.test.js
 tests/caseyRelink.mysql.test.js
 tests/caseyRelink.test.js

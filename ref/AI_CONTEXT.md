@@ -24,6 +24,26 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey's cross-pipeline transfer card (A9.3, 11-09):** kind
+  `case.pipeline.transfer.v1` {case_id, pipeline (template id or name), stage?
+  (key/label on the destination; unnamed = `pwMoveOpen`'s default), note?} →
+  POST `/api/cases/:id/pipeline/move` (`movePipeline`: updateCase type /
+  subtype — only what differs, intake destination writes none — then
+  advanceStage by numeric id). `normalizeCasePipelineTransferAction`
+  (services/assistantService.js) refuses the pipeline the case resolves to now
+  (→ the A9 move card), unknown / inactive template or stage, and any
+  destination `pipelineService.resolveTemplate` on the post-state does not
+  name (phase from the destination role, unchanged on the advance's noop) —
+  the route would leave a phantom. DISCLOSES, never refuses, the destination's
+  REQUIRED steps below the destination stage not done / N/A, projected the
+  resolver's way (override → `requirementDetectors` batch → position;
+  `casePipelineTransferSteps`), plus the old pipeline's open required steps;
+  dry-runs case.updated (source `pipeline_move`) and case.stage_advanced (post
+  type / subtype, the route's default note). NOT ATOMIC: the route's torn
+  message ("case type/subtype updated … but the stage advance failed …") reads
+  in the browser as `Failed — partly written` (`caseTransferKnownOutcome`).
+  Same switch `casey_case_pipeline_enabled`; tests
+  `tests/caseyPipelineTransfer{,.mysql}.test.js`; plan ASK_CASEY_ACTIONS_PLAN A9.3.
 - **`PATCH /api/cases/:id` refuses a docket another case holds (11-09):** when
   the body carries `case_number` / `case_number_full`, the route (the Case
   Details forms' and Casey's case-fields card's writer) answers 400 over 20

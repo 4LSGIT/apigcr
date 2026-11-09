@@ -467,7 +467,8 @@ describe('A7 groups B/C — every stage teaches the case fields card, value shap
     expect(answerPrompt).toContain('contact-relation/case-fields/case-and-contact-notes/');
     expect(repairPrompt).toContain('case.fields.update.v1: kind,case_id,changes,evidence — changes maps 1-10 cases columns');
     expect(repairPrompt).toContain('a checkbox set an ARRAY of options ([] none)');
-    expect(repairPrompt).toContain('case_type / case_subtype, custom, case_341_current or 341_appt_id (each refused by name — use its own card)');
+    // A7d (2026-11-09) put case_type / case_subtype ON the card; A9.3 took them out of every stage's refusal list.
+    expect(repairPrompt).toContain('case_judge_contact_id / case_trustee_contact_id,\n  custom, case_341_current or 341_appt_id (each refused by name — use its own card)');
   });
 });
 
@@ -848,5 +849,39 @@ describe('A9.2 — every stage teaches the case.pipeline read', () => {
     expect(answerPrompt).toContain('a REQUIRED step that is active or\n    upcoming is what blocks a move past its stage');
     expect(answerPrompt).toContain('A head row that says NO PIPELINE or RETAINED CASE ON THE INTAKE PIPELINE is the answer: say so.');
     expect(repairPrompt).toContain('stage is the destination stage\'s key or label exactly as\n  a case.pipeline read, the refusal or the card lists it');
+  });
+});
+
+// A9.3: the cross-pipeline transfer joins the case family (its plan marker is
+// the case notes bullet), so it carries its own pins. A stage that does not
+// know it refuses "move this case to Chapter 13" (the A9 text called that
+// unavailable), or proposes a move card with template_id the server refuses;
+// a stage that still lists case_type / case_subtype as refused strips the A7d
+// type change. Every stage must pick the right card: own pipeline = move,
+// type / subtype with no stage = case fields, another pipeline's stage = transfer.
+describe('A9.3 — every stage teaches the transfer card, which card to pick, and drops the A7d type refusal', () => {
+  test('the plan names the transfer in the pipeline bullet, the type / subtype on the case fields bullet, and no longer refuses either', () => {
+    expect(planPrompt).toContain('Moving ONE case onto ANOTHER pipeline at a stage (Chapter 7 → Chapter 13 at\n  filed');
+    expect(planPrompt).toContain('pipeline transfer action, also available');
+    expect(planPrompt).toContain('DISCLOSES (does not refuse) the required steps it passes over');
+    expect(planPrompt).toContain('its type / subtype (a type\n  change with no stage named: the card says which pipeline the case then resolves to');
+    expect(planPrompt).not.toContain('notes, alerts, the type / subtype, the 341');
+    expect(planPrompt).not.toContain('Steps panel), moving a case onto ANOTHER pipeline,');
+  });
+  test('the answer teaches the kind, the card choice, the refusals and the disclosures, and the case fields card keeps the type', () => {
+    expect(answerPrompt).toContain('{"kind":"case.pipeline.transfer.v1","case_id":"7KQ2M9XA","pipeline":"Chapter 13","stage":"filed"');
+    expect(answerPrompt).toContain('Case pipeline transfer rules (A9.3');
+    expect(answerPrompt).toContain('a stage on the case\'s OWN pipeline is\n    case.pipeline.move.v1; a type / subtype change with no stage named is the case fields kind');
+    expect(answerPrompt).toContain('a destination the case would NOT resolve to afterwards (PIPELINE DOES NOT RESOLVE');
+    expect(answerPrompt).toContain('Disclosed, NOT refused: the destination\'s REQUIRED steps');
+    expect(answerPrompt).toContain('the card reports the\n    half-done move as a failure');
+    expect(answerPrompt).toContain('case_type / case_subtype ARE on this card, as on the case page');
+    expect(answerPrompt).not.toContain('case_type / case_subtype (moving a case onto another pipeline is not available');
+    expect(answerPrompt).not.toContain('(template_id, case type /\n    subtype — the user\'s "Move to another pipeline…" on the case page)');
+  });
+  test('the repair stage carries the shape and no longer strips a type change', () => {
+    expect(repairPrompt).toContain('- case.pipeline.transfer.v1: kind,case_id,pipeline,stage?,note?,evidence — pipeline is the destination pipeline\'s id or\n  name');
+    expect(repairPrompt).toContain('move onto a stage of ANOTHER pipeline is case.pipeline.transfer.v1, never this kind');
+    expect(repairPrompt).not.toContain('case_type / case_subtype, custom');
   });
 });
