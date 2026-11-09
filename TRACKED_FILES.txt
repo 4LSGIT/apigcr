@@ -1304,6 +1304,8 @@ tests/caseyApptConfirm.mysql.test.js
 tests/caseyApptConfirm.test.js
 tests/caseyCaseContacts.mysql.test.js
 tests/caseyCaseContacts.test.js
+tests/caseyCaseFields.mysql.test.js
+tests/caseyCaseFields.test.js
 tests/caseyChecklists.mysql.test.js
 tests/caseyChecklists.test.js
 tests/caseyContactRelations.mysql.test.js

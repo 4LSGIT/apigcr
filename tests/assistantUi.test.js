@@ -82,6 +82,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'documentOpenInfo', 'documentEntity', 'documentOpen',
   'caseDocketLabel', 'caseDocketCaseLabel', 'caseDocketAfterLabel', 'caseDocketShown', 'caseDocketText', 'caseDocketBody', 'caseDocketRequest',
   'caseDocketPrecheck', 'caseDocketResult', 'caseDocketKnownOutcome',
+  'caseFieldsLabel', 'caseFieldsCaseLabel', 'caseFieldsCanon', 'caseFieldsText', 'caseFieldsDanger', 'caseFieldsBody', 'caseFieldsRequest',
+  'caseFieldsPrecheck', 'caseFieldsResult',
   'caseFolderLabel', 'caseFolderCaseLabel', 'caseFolderText', 'caseFolderRequest', 'caseFolderPrecheck', 'caseFolderResult',
   'caseFolderKnownOutcome', 'caseFolderAppliedMessage',
   'formCanonical', 'formDataHash', 'formIso', 'formRecordLabel', 'formLabel', 'formTitle', 'formText', 'formRecordPath', 'formDraftRequest',
@@ -129,6 +131,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'DOCUMENT_ACTION_KINDS'), constSrc(html, 'DOCLINK_ACTION_KINDS'), constSrc(html, 'DOCUMENT_FIELD_MAX'),
     constSrc(html, 'CASE_DOCKET_ACTION_KINDS'), constSrc(html, 'CASE_DOCKET_FIELDS'), constSrc(html, 'CASE_DOCKET_NAMES'),
     constSrc(html, 'CASE_DOCKET_MAX'), constSrc(html, 'CASE_DOCKET_CONTROL'),
+    constSrc(html, 'CASE_FIELDS_ACTION_KINDS'), constSrc(html, 'CASE_FIELDS_MAX'), constSrc(html, 'CASE_FIELDS_REFUSED_NAMES'), constSrc(html, 'CASE_FIELDS_COLUMN'),
     constSrc(html, 'CASE_FOLDER_ACTION_KINDS'), constSrc(html, 'CASE_FOLDER_PATH_MAX'), constSrc(html, 'CASE_FOLDER_CONTROL'),
     constSrc(html, 'FORM_DRAFT_ACTION_KINDS'), constSrc(html, 'FORM_LINK_ACTION_KINDS'), constSrc(html, 'FORM_DATA_MAX_BYTES'),
     constSrc(html, 'MAIL_READ_ACTION_KINDS'), constSrc(html, 'MAIL_LINK_ACTION_KINDS'),
@@ -4145,6 +4148,191 @@ describe('A7c docket card (case.docket.adopt)', () => {
     expect([[...fam.kinds], fam.idField, fam.appliedKey, !!fam.stringReceipt]).toEqual([['case.docket.adopt.v1'], 'case_id', 'result_docket_case_id', true]);
     for (const kind of ['case.docket.replace.v1', 'case.docket.clear.v1', 'case.field.update.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
+  });
+});
+
+describe('A7 groups B/C case fields card (case.fields.update)', () => {
+  const CASE_ID = '7KQ2M9XA';
+  // Model-shaped junk that must never reach a request.
+  const JUNK = { case_status: 'Filed', changes: { case_stage: 'Closed' }, body: { case_id: 'X' } };
+  const write = (over = {}) => ({ column: 'case_file_date', label: 'case_file_date', kind: 'date', send: '2026-05-05', clears: false, removes: false,
+    before: '2026-01-02', after: '2026-05-05', from: '2026-01-02', to: '2026-05-05',
+    readers: ['Court email fills it only while it is blank.', 'Pipeline step #7 "Petition filed (stage "Filed")" names it.'], client_visible: false, ...over });
+  const card = (over = {}) => ({ action_draft: {
+    draft_id: '7a7a7a7a-1b2c-4d3e-8f40-123456789abc', kind: 'case.fields.update.v1', status: 'draft', received_at: Date.now(),
+    case: { case_id: CASE_ID, label: '25-12345-mex', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', clients: ['Dana Debtor'] },
+    writes: [write(), write({ column: 'case_chapter', label: 'case_chapter', kind: 'string', send: '13', before: '7', after: '13', from: '"7"', to: '"13"',
+      readers: ['CLIENT PORTAL — the client sees this: the portal titles the case "Chapter <chapter> <type>" (blank chapter: the type alone).'], client_visible: true })],
+    kept: [{ column: 'case_source', label: 'case_source', shown: '"Web"' }], judge: null, trustee: null,
+    automation: { events: ['case.updated'], lines: ['Trigger rule #5 "Filed date set" runs: starts workflow #12'], rules_checked: 2, quiet: 1 },
+    effects: ['Trigger event: case.updated fires (source "manual", as a hand edit does) — every active rule on it that would act is listed below.'], warnings: [],
+    expected: { case_type: 'Bankruptcy', case_subtype: 'Chapter 7', case_file_date: '2026-01-02', case_chapter: '7' },
+    expected_kinds: { case_type: 'string', case_subtype: 'string', case_file_date: 'date', case_chapter: 'string' },
+    evidence: [], ...JUNK, ...over } });
+  const caseGet = (over = {}) => ({ case: { case_id: CASE_ID, case_type: 'Bankruptcy', case_subtype: 'Chapter 7', case_file_date: '2026-01-02T00:00:00.000Z',
+    case_chapter: '7', show_cause: null, custom: { cf_court: 'EDMI' }, ...over } });
+  const reads = (over = {}) => (path) => {
+    if (path === `/api/cases/${CASE_ID}`) { if (over.gone) throw Object.assign(new Error('Case not found'), { status: 404 }); return over.got || caseGet(); }
+    throw new Error(`unexpected read ${path}`);
+  };
+  function runFields(message, { read = reads(), write: w, confirm = true } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); return read(path, body); }
+      writes.push({ path, body, method, headers }); return w(path, body, method);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a7bc' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) } };
+    const history = []; const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, openEntity, sandbox }));
+  }
+  const saved = async (p, body) => ({ status: 'success', data: { case_id: CASE_ID, updated_fields: Object.keys(body), changes: Object.fromEntries(Object.keys(body).map((k) => [k, { from: null, to: body[k] }])) } });
+
+  test('re-reads the case; ONE PATCH of exactly the reviewed columns (no kept column, no junk); the STRING case_id receipt', async () => {
+    const m = card();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runFields(m, { write: saved });
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('case_fields');
+    expect(gets).toEqual([`/api/cases/${CASE_ID}`]);
+    expect(writes).toEqual([{ path: `/api/cases/${CASE_ID}`, method: 'PATCH', headers: undefined, body: { case_file_date: '2026-05-05', case_chapter: '13' } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a7bc', result: { case_id: CASE_ID } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_fields_case_id: CASE_ID });
+    expect(history[0].text).toBe(`Change 2 case fields applied to case ${CASE_ID}.`);
+    expect(openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345-mex');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'question', confirmButtonText: 'Change 2 case fields' });
+    for (const line of [`Case: 25-12345-mex (case ${CASE_ID}, Bankruptcy / Chapter 7) — Dana Debtor`,
+      'Change — case_file_date: 2026-01-02 → 2026-05-05', 'Read by — case_file_date: Court email fills it only while it is blank.',
+      'Read by — case_file_date: Pipeline step #7 "Petition filed (stage "Filed")" names it.',
+      'Change — case_chapter: "7" → "13"', 'Read by — case_chapter: CLIENT PORTAL — the client sees this: the portal titles the case',
+      'Unchanged — case_source: already "Web" — not sent',
+      'Automation: 2 active trigger rule(s) on case.updated checked; 1 would act:', 'Automation: Trigger rule #5 "Filed date set" runs: starts workflow #12',
+      'Writes: only the 2 columns above, through the case page\'s own save — no other case field.',
+      'Stale check: if any of these fields, the case type or subtype (or what a re-resolved link rests on) changes before you apply, nothing is written.']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+  });
+
+  test('a clear, a removal and a warning danger-style the card; a TEXT edit shows only the changed region', async () => {
+    const clear = card({ writes: [write({ send: null, clears: true, removes: true, after: null, to: 'blank' })] });
+    const rc = await runFields(clear, { write: saved });
+    expect(rc.writes[0].body).toEqual({ case_file_date: null });
+    const dc = rc.P.Swal.fire.mock.calls[0][0];
+    expect(dc).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Clear case field' });
+    expect(dc.text).toContain('Clears — case_file_date: 2026-01-02 → blank (the stored value is removed)');
+    const warned = card({ warnings: ['JUDGE LINK CHANGES: …'] });
+    const rw = await runFields(warned, { write: saved });
+    expect(rw.P.Swal.fire.mock.calls[0][0].icon).toBe('warning');
+    const long = `${'a'.repeat(900)} keep this line`;
+    const text = card({ writes: [write({ column: 'docs_missing', label: 'docs_missing', kind: 'text', send: `${long} and bank statements`, before: long, after: `${long} and bank statements`,
+      from: '914 characters', to: '934 characters', readers: [] })], expected: { case_type: 'Bankruptcy', case_subtype: 'Chapter 7', docs_missing: long }, expected_kinds: { docs_missing: 'text' } });
+    const rt = await runFields(text, { write: saved, read: reads({ got: caseGet({ docs_missing: long }) }) });
+    const dt = rt.P.Swal.fire.mock.calls[0][0];
+    expect(dt.icon).toBe('question');
+    expect(dt.text).toContain('Change — docs_missing: 914 characters → 934 characters');
+    expect(dt.text).toContain('Removed — docs_missing: nothing');
+    expect(dt.text).toContain('Added — docs_missing:  and bank statements');
+    expect(dt.text).not.toContain('a'.repeat(200));
+  });
+
+  test('the builder sends only `writes`; a refused or malformed column never reaches a read, the claim or the route', async () => {
+    for (const [message, why] of [
+      [card({ writes: [] }), 'changes nothing'],
+      [card({ writes: Array.from({ length: 11 }, (_, i) => write({ column: `bk_x${i}` })) }), 'more than the 10 fields'],
+      [card({ writes: [write({ column: 'case_stage', send: 'Closed' })] }), 'a field Casey never writes'],
+      [card({ writes: [write({ column: 'CASE_TYPE', send: 'Civil' })] }), 'a field Casey never writes'],
+      [card({ writes: [write({ column: 'case_341_current', send: '2026-12-01T09:00' })] }), 'a field Casey never writes'],
+      [card({ writes: [write({ column: 'custom', kind: 'custom', send: '{}' })] }), 'a field Casey never writes'],
+      [card({ writes: [write({ column: 'case_file_date`; DROP', send: 'x' })] }), 'a field Casey never writes'],
+      [card({ writes: [write(), write()] }), 'names a field twice'],
+      [card({ writes: [write({ send: { $gt: '' } })] }), 'value for case_file_date is unusable'],
+      [card({ writes: [write({ send: ['a'] })] }), 'value for case_file_date is unusable'],
+      [card({ writes: [write({ column: 'cf_court', kind: 'custom', send: { x: 1 } })] }), 'value for cf_court is unusable'],
+      [card({ case: { case_id: 'bad id!' } }), 'no usable case id'],
+    ]) {
+      const x = await runFields(message, { write: saved });
+      expect({ why, gets: x.gets, ledger: x.ledger, writes: x.writes }).toEqual({ why, gets: [], ledger: [], writes: [] });
+      expect(message.action_draft.action_error).toContain(why);
+    }
+    // A custom multiselect / boolean value is a legal body value.
+    const cf = card({ writes: [write({ column: 'cf_tags', kind: 'custom', send: ['A', 'B'] }), write({ column: 'cf_rush', kind: 'custom', send: true })],
+      expected: { case_type: 'Bankruptcy', case_subtype: 'Chapter 7', cf_tags: null, cf_rush: null }, expected_kinds: { cf_tags: 'custom', cf_rush: 'custom' } });
+    const rcf = await runFields(cf, { write: saved });
+    expect(rcf.writes[0].body).toEqual({ cf_tags: ['A', 'B'], cf_rush: true });
+  });
+
+  test('click-time freshness refuses BEFORE the claim on ANY difference, comparing as stored (DATE by day, custom by JSON)', async () => {
+    for (const [message, read, why] of [
+      [card(), reads({ gone: true }), `Case 25-12345-mex no longer exists. Nothing was written.`],
+      [card(), reads({ got: caseGet({ case_file_date: '2026-01-03T00:00:00.000Z' }) }), 'case_file_date of case 25-12345-mex changed since this card was prepared. Nothing was written.'],
+      [card(), reads({ got: caseGet({ case_file_date: null }) }), 'case_file_date of case'],
+      [card(), reads({ got: caseGet({ case_chapter: '13' }) }), 'case_chapter of case'],
+      [card(), reads({ got: caseGet({ case_subtype: 'Chapter 13' }) }), 'case_subtype of case'],
+      [card(), reads({ got: caseGet({ case_type: 'Civil', case_chapter: '' }) }), 'case_type, case_chapter of case'],
+      [card({ writes: [write({ column: 'cf_court', kind: 'custom', send: 'WDMI' })], expected: { case_type: 'Bankruptcy', case_subtype: 'Chapter 7', cf_court: '"EDMI"' }, expected_kinds: { cf_court: 'custom' } }),
+        reads({ got: caseGet({ custom: { cf_court: 'WDMI' } }) }), 'cf_court of case'],
+      [card({ writes: [write({ column: 'show_cause', kind: 'datetime', send: '2026-12-01T09:30' })], expected: { case_type: 'Bankruptcy', case_subtype: 'Chapter 7', show_cause: '2026-11-30 14:00:00' }, expected_kinds: { show_cause: 'datetime' } }),
+        reads({ got: caseGet({ show_cause: '2026-11-30T14:05:00.000Z' }) }), 'show_cause of case'],
+    ]) {
+      const x = await runFields(message, { read, write: saved });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(message.action_draft.refusal_error).toContain(why);
+    }
+    // The same values in the GET's own shapes pass: a DATE as an ISO instant, a DATETIME, a custom bag.
+    const ok = card({ writes: [write({ column: 'show_cause', kind: 'datetime', send: '2026-12-01T09:30' }), write({ column: 'cf_court', kind: 'custom', send: 'WDMI' })],
+      expected: { case_type: 'Bankruptcy', case_subtype: 'Chapter 7', show_cause: '2026-11-30 14:00:00', cf_court: '"EDMI"', case_file_date: '2026-01-02' },
+      expected_kinds: { show_cause: 'datetime', cf_court: 'custom', case_file_date: 'date' } });
+    const rok = await runFields(ok, { read: reads({ got: caseGet({ show_cause: '2026-11-30T14:00:00.000Z' }) }), write: saved });
+    expect(rok.writes.length).toBe(1);
+    // An unreadable answer (a touched column absent) leaves the card retryable (nothing claimed).
+    const u = card();
+    const ur = await runFields(u, { read: reads({ got: { case: { case_id: CASE_ID, case_type: 'Bankruptcy', case_subtype: 'Chapter 7' } } }), write: saved });
+    expect([ur.writes, ur.ledger]).toEqual([[], []]);
+    expect(u.action_draft.action_error).toMatch(/^Could not re-check the record before applying \(the case could not be read\)/);
+  });
+
+  test('outcomes: the route\'s 400 and 404 are refusals that wrote nothing; a 500 and an unconfirmed answer stay ambiguous', async () => {
+    const bad = card();
+    await runFields(bad, { write: async () => { throw Object.assign(new Error('updateCase: unknown column(s): case_chapter'), { status: 400 }); } });
+    expect(bad.action_draft.refusal_error).toBe('Refused — nothing written (updateCase: unknown column(s): case_chapter). Ask Casey to prepare it again.');
+    const gone = card();
+    await runFields(gone, { write: async () => { throw Object.assign(new Error(`Case ${CASE_ID} not found`), { status: 404 }); } });
+    expect(gone.action_draft.refusal_error).toMatch(/^Refused — nothing written \(Case 7KQ2M9XA not found\)/);
+    const lost = card();
+    await runFields(lost, { write: async () => { throw Object.assign(new Error('boom'), { status: 500 }); } });
+    expect(lost.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    const other = card();
+    await runFields(other, { write: async (p, body) => ({ ...(await saved(p, body)), data: { case_id: 'OTHER123', updated_fields: Object.keys(body) } }) });
+    expect(other.action_draft.ambiguous_error).toMatch(/did not confirm the case/);
+    const partial = card();
+    await runFields(partial, { write: async () => ({ status: 'success', data: { case_id: CASE_ID, updated_fields: ['case_file_date'], changes: {} } }) });
+    expect(partial.action_draft.ambiguous_error).toMatch(/did not confirm every reviewed field/);
+  });
+
+  test('a reopened card restores from the ledger with the STRING receipt; one family, one kind', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    const m = card();
+    box.applyActionResults([m], [{ draft_id: m.action_draft.draft_id, kind: 'case.fields.update.v1', outcome: 'applied', result: { case_id: CASE_ID } }]);
+    expect([m.action_draft.status, m.action_draft.result_fields_case_id]).toEqual(['applied', CASE_ID]);
+    const host = dom.window.document.createElement('div');
+    box.hydrateActionDraft(box.actionFamily(m.action_draft), host, m, m.action_draft);
+    expect(host.querySelector('.action-draft-status').textContent).toBe('Applied — 2 case fields saved');
+    expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open 25-12345-mex', 'Copy details']);
+    const fam = box.actionFamily({ kind: 'case.fields.update.v1' });
+    expect([[...fam.kinds], fam.idField, fam.appliedKey, !!fam.stringReceipt]).toEqual([['case.fields.update.v1'], 'case_id', 'result_fields_case_id', true]);
+    for (const kind of ['case.field.update.v1', 'case.fields.replace.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    dom.window.close();
+  });
+
+  test('the browser\'s refused set is exactly the server\'s', () => {
+    const svcSrc = fs.readFileSync(path.join(ROOT, 'services/assistantService.js'), 'utf8');
+    const block = /const CASE_FIELDS_REFUSED = Object\.freeze\(\{([\s\S]*?)\n\}\);/.exec(svcSrc)[1];
+    const server = [...block.matchAll(/^\s{2}'?([0-9a-z_]+)'?:/gm)].map((m) => m[1]).sort();
+    const browser = [...new Function(`${constSrc(html, 'CASE_FIELDS_REFUSED_NAMES')} return CASE_FIELDS_REFUSED_NAMES;`)()].sort(); // eslint-disable-line no-new-func
+    expect(server.length).toBe(17);
+    expect(browser).toEqual(server);
   });
 });
 

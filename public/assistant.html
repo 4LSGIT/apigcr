@@ -1218,6 +1218,168 @@ function recordTextOpenTarget(draft) {
     : { kind: 'contact', id: Number(t.contact_id), label: String(t.contact_name || 'Contact') };
 }
 
+// Any other case field (A7 groups B/C). Change up to CASE_FIELDS_MAX columns
+// of ONE case through the case page's own save route, PATCH /api/cases/:id
+// {<column>: <value>, …} — the route the Case Details forms and the Overview
+// boxes save through (updateCase: unknown column 400, notes length 400, cf_
+// keys through the custom-field validator). The server refused every column
+// another card owns (docket, pipeline stage / status / next step / phase,
+// folder, notes, alerts), the derived judge / trustee links, type / subtype,
+// the raw custom bag and the 341 appointment's projection — by name; normalized
+// each value to its column's type (an over-width varchar is refused: relaxed
+// sql_mode would cut it short and answer 200); left out a column already
+// holding the value; named who reads each column (the client portal among
+// them) and the judge / trustee link updateCase re-resolves; dry-ran
+// case.updated; and baked each touched column as stored, the case type and
+// subtype (and what a re-resolved link rests on) into `expected`. The body is
+// built HERE from `writes` and nothing else, and a refused column name never
+// leaves the page. The click re-reads GET /api/cases/:id and refuses on ANY
+// difference BEFORE the claim (the route has no precondition — A7 ruling 2,
+// deferred). No Idempotency-Key: setting values is idempotent and the ledger
+// allows one claim per draft. The route is on the sync bus (yc-sync MATCHERS:
+// data.changes), so case pages repaint. Receipt: the STRING case_id.
+const CASE_FIELDS_ACTION_KINDS = new Set(['case.fields.update.v1']);
+const CASE_FIELDS_MAX = 10;
+// The server's refused-by-name columns (lower-cased): the builder refuses them too.
+const CASE_FIELDS_REFUSED_NAMES = new Set(['case_id', 'case_number', 'case_number_full', 'case_stage', 'case_status', 'case_rec', 'pipeline_phase',
+  'case_dropbox', 'case_notes', 'case_alerts', 'case_judge_contact_id', 'case_trustee_contact_id', 'case_type', 'case_subtype', 'custom',
+  'case_341_current', '341_appt_id']);
+const CASE_FIELDS_COLUMN = /^[A-Za-z0-9_]{1,64}$/;
+
+function caseFieldsLabel(draft) {
+  const n = Array.isArray(draft && draft.writes) ? draft.writes.length : 0;
+  if (n === 1 && draft.writes[0].clears) return 'Clear case field';
+  return n === 1 ? 'Change case field' : `Change ${n} case fields`;
+}
+
+function caseFieldsCaseLabel(draft) {
+  const c = (draft && draft.case) || {};
+  return String(c.label || c.case_id || 'Case');
+}
+
+// A stored value as the server baked it (services/assistantService
+// caseFieldsCanon — the same rules): DATE yyyy-mm-dd, DATETIME
+// 'yyyy-mm-dd hh:mm:ss', a custom value as JSON, anything else as text.
+function caseFieldsCanon(kind, value) {
+  if (value == null) return null;
+  if (kind === 'custom') return JSON.stringify(value);
+  const s = String(value);
+  if (kind === 'date') { const m = /^(\d{4}-\d{2}-\d{2})/.exec(s); return m ? m[1] : s; }
+  if (kind === 'datetime') {
+    const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(:\d{2})?/.exec(s);
+    return m ? `${m[1]} ${m[2]}${m[3] || ':00'}` : s;
+  }
+  return s;
+}
+
+function caseFieldsText(draft) {
+  const c = draft.case || {};
+  const lines = ['Case fields proposal — not applied', `Action: ${caseFieldsLabel(draft)}`,
+    `Case: ${caseFieldsCaseLabel(draft)} (case ${c.case_id}${c.case_type ? `, ${c.case_type}` : ''}${c.case_subtype ? ` / ${c.case_subtype}` : ''})${(c.clients || []).length ? ` — ${c.clients.join(', ')}` : ''}`];
+  for (const w of draft.writes || []) {
+    const name = String(w.label || w.column);
+    if (w.clears) lines.push(`Clears — ${name}: ${w.from} → ${w.kind === 'set' ? 'none checked' : 'blank'}${w.removes ? ' (the stored value is removed)' : ''}`);
+    else lines.push(`Change — ${name}: ${w.from} → ${w.to}`);
+    if (w.kind === 'text' && !w.clears) {
+      const d = recordTextDiff(w.before, w.after);
+      if (d.lead) lines.push(`Unchanged before — ${name}: ${recordTextShow(d.lead)}`);
+      lines.push(`Removed — ${name}: ${d.removed ? recordTextShow(d.removed) : 'nothing'}`, `Added — ${name}: ${d.added ? recordTextShow(d.added) : 'nothing'}`);
+      if (d.trail) lines.push(`Unchanged after — ${name}: ${recordTextShow(d.trail)}`);
+    } else if (w.kind === 'text' && w.removes) {
+      lines.push(`Removed — ${name}: ${recordTextShow(w.before)}`);
+    }
+    (w.readers || []).forEach((x) => lines.push(`Read by — ${name}: ${x}`));
+  }
+  (draft.kept || []).forEach((k) => lines.push(`Unchanged — ${k.label || k.column}: already ${k.shown} — not sent`));
+  (draft.warnings || []).forEach((x) => lines.push(`Warning: ${x}`));
+  (draft.effects || []).forEach((x) => lines.push(`Effect: ${x}`));
+  const a = draft.automation || {}; const acting = a.lines || [];
+  if ((a.events || []).length) {
+    lines.push(acting.length
+      ? `Automation: ${Number(a.rules_checked) || 0} active trigger rule(s) on case.updated checked; ${acting.length} would act:`
+      : `Automation: no active trigger rule acts on this case.updated (${Number(a.rules_checked) || 0} checked).`);
+    acting.forEach((x) => lines.push(`Automation: ${x}`));
+    if (acting.length) lines.push('Automation: what those actions cause in turn is not followed here.');
+  }
+  const n = (draft.writes || []).length;
+  lines.push(`Writes: only the ${n === 1 ? 'column' : `${n} columns`} above${draft.judge || draft.trustee ? ' (and the link the server re-resolves)' : ''}, through the case page's own save — no other case field.`,
+    'Stale check: if any of these fields, the case type or subtype (or what a re-resolved link rests on) changes before you apply, nothing is written.',
+    'Other open pages: case pages showing these fields update on their own.',
+    'Notification: Casey sends nothing itself; the trigger rules above are the only follow-on effects.');
+  return lines.join('\n');
+}
+
+// Danger: a warning (a link that changes or clears, a 341 link left behind, a
+// rule that could not be evaluated) or a column whose stored value is removed.
+function caseFieldsDanger(draft) {
+  return (draft.warnings || []).length > 0 || (draft.writes || []).some((w) => !!w.removes);
+}
+
+function caseFieldsBody(draft) {
+  const writes = draft.writes;
+  if (!Array.isArray(writes) || !writes.length) throw new Error('This card changes nothing.');
+  if (writes.length > CASE_FIELDS_MAX) throw new Error(`This card changes more than the ${CASE_FIELDS_MAX} fields one card may.`);
+  const body = {}; const seen = new Set();
+  for (const w of writes) {
+    const col = w && typeof w.column === 'string' ? w.column : '';
+    if (!CASE_FIELDS_COLUMN.test(col) || CASE_FIELDS_REFUSED_NAMES.has(col.toLowerCase())) throw new Error('This card carries a field Casey never writes.');
+    if (seen.has(col.toLowerCase())) throw new Error('This card names a field twice.');
+    seen.add(col.toLowerCase());
+    const v = w.send;
+    const custom = w.kind === 'custom' && /^cf_[a-z][a-z0-9_]{1,56}$/.test(col);
+    if (w.kind === 'custom' && !custom) throw new Error('This card carries a field Casey never writes.');
+    const ok = v === null || typeof v === 'string'
+      || (custom && (typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)) || (Array.isArray(v) && v.every((x) => typeof x === 'string'))));
+    if (!ok) throw new Error(`This card's value for ${col} is unusable.`);
+    body[col] = v;
+  }
+  return body;
+}
+
+function caseFieldsRequest(draft) {
+  const caseId = actionStringReceipt(draft.case && typeof draft.case.case_id === 'string' ? draft.case.case_id : '');
+  if (!caseId) throw new Error('This card has no usable case id.');
+  return { path: `/api/cases/${encodeURIComponent(caseId)}`, method: 'PATCH', body: caseFieldsBody(draft) };
+}
+
+async function caseFieldsPrecheck(draft) {
+  caseFieldsRequest(draft); // a card that cannot be written is never read
+  const caseId = actionStringReceipt(draft.case.case_id);
+  const x = draft.expected || {}; const kinds = draft.expected_kinds || {};
+  if (!Object.keys(x).length) throw new Error('This card has no stale check.');
+  let got;
+  try { got = await api(`/api/cases/${encodeURIComponent(caseId)}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `Case ${caseFieldsCaseLabel(draft)} no longer exists. Nothing was written.`; throw e; }
+  const row = got && got.case;
+  if (!row || typeof row !== 'object') throw new Error('the case could not be read');
+  let bag = row.custom;
+  if (typeof bag === 'string') { try { bag = JSON.parse(bag); } catch (_) { bag = null; } }
+  const changed = [];
+  for (const [k, want] of Object.entries(x)) {
+    const kind = kinds[k] || 'string';
+    let now;
+    if (kind === 'custom') now = bag && typeof bag === 'object' && Object.prototype.hasOwnProperty.call(bag, k) ? bag[k] : null;
+    else if (Object.prototype.hasOwnProperty.call(row, k)) now = row[k];
+    else throw new Error('the case could not be read');
+    if (caseFieldsCanon(kind, now) !== (want == null ? null : String(want))) changed.push(k);
+  }
+  if (changed.length) {
+    return `${changed.join(', ')} of case ${caseFieldsCaseLabel(draft)} changed since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function caseFieldsResult(draft, result) {
+  const data = result && result.status === 'success' && result.data;
+  const caseId = actionStringReceipt(draft.case && draft.case.case_id);
+  if (!data || !caseId || String(data.case_id).toLowerCase() !== caseId.toLowerCase()) throw new Error('The case route did not confirm the case');
+  const written = new Set((Array.isArray(data.updated_fields) ? data.updated_fields : []).map((f) => String(f).toLowerCase()));
+  for (const w of draft.writes || []) {
+    if (!written.has(String(w.column).toLowerCase())) throw new Error('The case route did not confirm every reviewed field');
+  }
+  return { case_id: caseId };
+}
+
 // Case-contact membership (A8). Add ONE contact to a case, change ONE
 // membership's role, or remove ONE, through the case page's own routes:
 // POST /api/cases/:id/contacts {contact_id, relate_type}, PATCH
@@ -4372,6 +4534,25 @@ const ACTION_FAMILIES = [
     }),
     reviewWarning: 'This is the CONTACT\'s note, not a case note — review the contact and the change; applying replaces the stored text with exactly the new text. Nothing is sent. Canceling writes nothing.',
     open: (draft) => { const t = recordTextOpenTarget(draft); openEntity('contact', t.id, t.label); },
+  },
+  {
+    // A7 groups B/C: the receipt is the STRING case_id — the PATCH answers {case_id, updated_fields, changes}.
+    id: 'case_fields', kinds: CASE_FIELDS_ACTION_KINDS, title: 'Case fields', noun: 'case', errorNoun: 'case fields edit',
+    label: caseFieldsLabel, text: caseFieldsText, request: caseFieldsRequest, result: caseFieldsResult,
+    idField: 'case_id', appliedKey: 'result_fields_case_id', stringReceipt: true,
+    danger: caseFieldsDanger,
+    precheck: caseFieldsPrecheck,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `case ${payload.case_id}`,
+    entity: (draft) => ({ kind: 'case', id: String(draft.case && draft.case.case_id), label: caseFieldsCaseLabel(draft) }),
+    failure: 'The case fields could not be saved.',
+    appliedCopy: (draft) => ({
+      status: `Applied — ${(draft.writes || []).length === 1 ? 'case field' : `${(draft.writes || []).length} case fields`} saved`,
+      warning: `${(draft.writes || []).map((w) => String(w.label || w.column)).join(', ')} of case ${caseFieldsCaseLabel(draft)} ${(draft.writes || []).length === 1 ? 'was' : 'were'} saved using your signed-in account.${(draft.automation || {}).lines && draft.automation.lines.length ? ' The trigger rules listed above run from this change.' : ''}`,
+      button: `Open ${caseFieldsCaseLabel(draft)}`,
+    }),
+    reviewWarning: 'Review every field before and after, who reads each one (the client portal among them) and every trigger rule it runs — they start the moment it is saved. Nothing is sent by Casey itself. Canceling writes nothing.',
+    open: (draft) => openEntity('case', String(draft.case && draft.case.case_id), caseFieldsCaseLabel(draft)),
   },
   {
     // A8: the receipt is the integer case_relate_id (never the case's string id).

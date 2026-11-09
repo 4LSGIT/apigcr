@@ -1190,6 +1190,44 @@ COMMENTs.)
     — a staff draft included — to whoever holds the case link (the accepted
     D1 trade; worth a line in the form builder's server-drafts toggle).
 
+## From the Ask Casey arc — A7 groups B/C case fields (2026-11-09) — deferred
+
+- **What the case fields card still refuses by name.** Replacing or clearing a
+  docket (the A7c bullets below — the next slice); `case_type` /
+  `case_subtype` (they choose the pipeline: `pipelineService.resolveTemplate`
+  re-projects the case, so a change is the cross-pipeline move, whose
+  passed-over steps a card cannot yet review); `case_341_current` /
+  `341_appt_id` (apptService's single-writer mirror of the live 341
+  appointment — worker's addition, awaiting Fred's ruling).
+- **A7 ruling 2 — a conditional write on `PATCH /api/cases/:id`.** The card
+  now writes portal-visible columns (`case_chapter`, `case_341_link`,
+  `case_open_date`) with only the read-then-write freshness check (baked
+  `expected` + the click-time GET). A precondition in the route (expected
+  values compared in the UPDATE's own statement, 409 on a miss) closes the gap
+  between the re-read and the write.
+- **Native gaps found while tracing (not Casey's):**
+  - `PATCH /api/cases/:id` checks no width: relaxed sql_mode stores any
+    over-width varchar cut short and answers 200 (pinned for case_caption in
+    `tests/caseyCaseFields.mysql.test.js`). Every writer but the forms'
+    maxlength is exposed; refuse over-width in updateCase from
+    information_schema's CHARACTER_MAXIMUM_LENGTH.
+  - The route maps updateCase's own refusals `blocked columns: case_id` and
+    `invalid column name` (plain Errors, no `err.status`) to 500 — a caller
+    cannot tell them from a failure. Give them `status = 400`.
+  - A raw `case_trustee` write leaves `case_341_link` on the old trustee's
+    meeting link: only the Case Details form re-points it (client-side
+    `onTrusteeChange` from the trustee roster), so court email, workflows and
+    any API writer leave the client's 341 card linking to the previous
+    trustee. Re-point it server-side next to the trustee link re-resolution.
+  - Nothing server-side guards `case_341_current` / `341_appt_id`: the
+    generic PATCH writes them, though apptService is their declared single
+    writer and the portal shows the date.
+  - `domainEvents.buildChanges`' `_diffNorm` reads a datetime-local value
+    (`2026-12-01T09:30`) as `2026-12-01 09:30` and the stored DATETIME as
+    `2026-12-01 09:30:00` (or a bare date at midnight), so re-sending an
+    unchanged `show_cause` reports a phantom change — in `changes` and in
+    `case.updated`.
+
 ## From the Ask Casey arc — A7c docket adopt (2026-11-02) — deferred
 
 - **Replacing a docket.** The adopt route refuses it by design (a
@@ -1198,8 +1236,6 @@ COMMENTs.)
   case with the old number, the judge link it re-resolves — and probably a
   conditional write rather than the read-then-write the adopt does.
 - **Clearing a number.** Not an adopt; same readers leave the case at once.
-- **The other scalar case fields** (A7 groups B/C: `case_source`, dates,
-  status-like fields …) — each its own group with its own refusal table.
 - **Native gaps found while tracing (not Casey's):**
   - The route's adopt-only guard compares in JS (exact), its collision guard
     in SQL (general_ci): a value differing from the case's own stored number
@@ -1338,10 +1374,6 @@ COMMENTs.)
   A longer note saved through the case Overview, checklistView's pinned card
   or a Casey card shows in those forms but cannot be extended there by typing.
   One limit, read from the same constant, would end it.
-- **Later A7 groups.** `case_source` (Fred, 2026-10-28: allowed, not
-  intake-excluded) and other low-impact descriptive fields; the first
-  client-facing group brings a conditional-write precondition on the PATCH
-  (ruling 2 of the A7 record).
 
 ## From the Ask Casey arc — A6 contact relations and roles (2026-10-28) — deferred
 

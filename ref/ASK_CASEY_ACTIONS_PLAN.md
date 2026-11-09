@@ -7,8 +7,8 @@ the Task lifecycle; reviewed Event create/update/complete/cancel; Appointment
 create, narrow update, attended, no-show, cancel, reschedule-now and
 reschedule-later; one phone/email/address subrecord create, narrow update or
 history-preserving end. Since then: A6 (contact relations and roles — create and
-update), A7 group A (case notes, case alerts, contact notes), A7c (case docket
-adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
+update), A7 group A (case notes, case alerts, contact notes), A7 groups B/C (any
+other case field, 2026-11-09), A7c (case docket adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
 advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read), A10 (checklists and items), A11 (documents —
 update and link), A11.1 (a case's Dropbox folder — candidates-only relink),
 A12 (form drafts and submission links), A13 (mail triage —
@@ -64,8 +64,8 @@ them:
   rollback criteria, and controlled live smoke tests.
 
 Decisions requested in the upcoming review are: confirm the A6-A18 ordering;
-(A7's first field group is decided and shipped: case notes, case alerts and
-contact notes, see A7; A6 removal is decided: a later sub-slice, see A6); set the P1
+(A7's field groups are decided and shipped: case notes, case alerts and
+contact notes, then every other case field except case_id, see A7; A6 removal is decided: a later sub-slice, see A6); set the P1
 extraction point; and define the rollout bar for the first external-send or
 fan-out action. Destructive/admin/access/credential work, arbitrary tools,
 multi-action plans, and unattended execution remain outside this roadmap.
@@ -652,13 +652,17 @@ class as remove; manager ruling 2026-10-28), role removal and deactivation
 (PATCH `active=0`, the native "remove"), reactivation of either, a relation
 type change, and editing an ended relation. Each is refused by name today.
 
-#### A7: Narrow scalar contact and case edits — group A shipped 2026-10-28
+#### A7: Scalar contact and case edits — group A shipped 2026-10-28, groups B/C 2026-11-09
 
-Expose small field groups rather than the broad bodies accepted by
-`PATCH /api/contacts/:id` and `PATCH /api/cases/:id`. Every proposal shows
-before and after values and carries a server-owned stale-value/version check
-through confirmation. Start with low-impact descriptive fields. Identity,
-access, merge, docket (a BLANK one is filled only through A7c's adopt), intake ownership, and pipeline state (A9)
+Every proposal shows before and after values and carries a server-owned
+stale-value check through confirmation. A contact exposes its notes only
+(group A); a case exposes every column except case_id (groups B/C, Fred's
+ruling below) — except the columns another card owns or derives, each refused
+by name with a pointer: the docket (a BLANK one is filled through A7c's adopt;
+replacing or clearing one is not available yet), pipeline state (A9), the
+Dropbox folder (A11.1), the notes and alerts (group A), the judge / trustee
+links (derived), the type / subtype (a cross-pipeline move, deferred) and the
+341 appointment's projection. Contact identity and access, and case merge,
 remain excluded.
 
 **Fred's rulings (2026-10-28, recorded by the manager).**
@@ -704,9 +708,10 @@ ingest rule reacts to these three columns. Their readers are the casedetails
 and bk_worksheet form templates, reports 10 and 13, and the case-merge
 workflows — all deliberate consumers of the text.
 
-**Later groups.** `case_source` (ruling 3) and the other low-impact
-descriptive fields, each as its own group with its own refusal table; a
-client-facing group brings the conditional-write precondition (ruling 2).
+**Groups B/C.** Every other case column is one kind, `case.fields.update.v1`
+(below). Ruling 2's route precondition is still not built: the card keeps the
+baked-expected + click-time re-read even for the portal-visible columns it
+now writes (`ref/plans.md`).
 
 #### A7c: Case docket adopt — shipped 2026-11-02
 
@@ -788,8 +793,91 @@ user's words, opaque server-side; the card shows them verbatim, quoted.
   63). Tests: `tests/caseyDocket.test.js`, gated `tests/caseyDocket.mysql.test.js`,
   `tests/assistantUi.test.js`.
 
-**Deferred** (`ref/plans.md`): replacing a docket; clearing one; the other
-scalar case fields (A7 groups B/C).
+**Deferred** (`ref/plans.md`): replacing a docket; clearing one.
+
+#### A7 groups B/C: Any other case field — shipped 2026-11-09
+
+Fred's ruling (2026-11-09): "Casey can edit any field except case_id, just
+like the user." The user's surface is `PATCH /api/cases/:id` →
+`caseService.updateCase`, whose BLOCKED set is exactly `case_id`; it 400s an
+unknown column (`fieldDefService.writableColumns`), an over-long notes column
+(`lib/noteLimits`) and a bad cf_ value (`splitCustomFields`), maps a blank
+date to NULL (`lib/blankDateToNull`), re-resolves `case_judge_contact_id` /
+`case_trustee_contact_id` when case_judge / case_number_full / case_trustee is
+written (a miss writes NULL), and emits `case.updated` (source `manual`) when
+its `buildChanges` sees a change. It checks no width: relaxed sql_mode stores
+an over-width varchar cut short and answers 200 (pinned on a real engine,
+`tests/caseyCaseFields.mysql.test.js`).
+
+**Manager rulings within Fred's** (flagged to Fred). Refused BY NAME, with a
+pointer, because the raw PATCH skips the work the owning card does:
+`case_number` / `case_number_full` (A7c; replacing an existing docket is the
+next slice); `case_stage`, `case_status`, `case_rec`, `pipeline_phase` (A9);
+`case_dropbox` (A11.1); `case_notes`, `case_alerts` (group A — append
+semantics live there); `case_judge_contact_id`, `case_trustee_contact_id`
+(derived — the card for case_judge / case_trustee discloses the re-resolution
+instead); `case_type`, `case_subtype` (`pipelineService.resolveTemplate`
+re-projects the case onto another pipeline — the deferred cross-pipeline move);
+`custom` (cf_ keys only). The worker added `case_341_current` and
+`341_appt_id` (flagged for a ruling): apptService is their single writer —
+they mirror the live 341 appointment, and the client portal shows the date —
+so the 341 moves by rescheduling its appointment.
+
+**Shipped contract.** One kind, `case.fields.update.v1` {case_id, changes:
+{<column>: <value>, …}, evidence} → that route, behind
+`casey_record_edits_enabled` (the A7 family switch; no new key).
+- **Shape:** 1–10 columns per card (one review per card); every column inside
+  `changes`; two keys naming one column (capitalisation aside) refuse; evidence
+  cites a row carrying the exact case_id.
+- **Column map:** the live information_schema (the same read as the route's
+  unknown-column check), so the card never trusts a frozen copy: an unknown
+  column, a computed one and a type with no reviewed rule refuse.
+- **Values by type:** DATE one ISO date, `''` / null clears (sent null —
+  "Clears"); DATETIME (show_cause) firm-local wall time, sent as the Case
+  Details form's datetime-local value `YYYY-MM-DDTHH:MM`; ENUM an exact member
+  (a NOT NULL enum cannot be cleared); SET an array of members, sent
+  comma-joined in MEMBER order (MySQL's own read-back order); CHAR / VARCHAR
+  one line, trimmed, at most the column width in code points (a NOT NULL
+  column clears to `''`, a nullable one to NULL); TEXT keeps tabs and line
+  breaks, folds CRLF, at most noteLimits' cap (341_notes), the form's maxlength
+  (docs_missing 2,000) or 10,000. cf_ keys go through the route's own
+  `splitCustomFields` — its 400 message is the refusal.
+- **No-op:** compared the way MySQL stores the value (SET order-insensitive,
+  DATE as yyyy-mm-dd, NULL and `''` alike); a column already holding it is not
+  sent and says so; nothing left refuses.
+- **The card** names, per column: before → after (TEXT as the changed region),
+  "Clears" (danger-styled when stored data is removed); who reads it — the
+  code-measured surfaces (the client portal reads `case_chapter` — the case
+  title —, `case_341_link` — the 341 card's link — and `case_open_date` — the
+  order of the client's case list; the header, Cases list and court email read
+  the caption; court email fills or overwrites the dates, judge, trustee and
+  chapter it knows) plus a live word-bounded scan of every stored definition
+  naming it (active reports, form templates, active portal cards, active
+  pipeline requirements, sequence and workflow steps, active ingest actions);
+  the judge / trustee link updateCase re-resolves (an existing link that
+  changes or clears is a danger warning); the 341 link a raw trustee change
+  does NOT re-point (the Case Details form does it client-side — a warning
+  when the case has one); and every active `case.updated` rule that would run /
+  fail / MAY run on updateCase's exact envelope (A9's `listActiveRulesForEvent`
+  + `evaluateDraft`, preview lane, nothing dispatched) — or that no event fires
+  when `buildChanges` sees no change. A card over 60,000 characters refuses.
+- **Freshness:** `expected` = each touched column as stored, `case_type`,
+  `case_subtype`, and with a judge / trustee change what the link rests on
+  (`case_number_full` / the judge link; `case_chapter` / `case_341_link` / the
+  trustee link); the click re-reads GET `/api/cases/:id` and refuses on any
+  difference before the claim.
+- **Outcomes:** a 4xx (unknown column, notes length, cf_ value, 404) is a
+  refusal; 5xx stays ambiguous. **Receipt:** the STRING case_id. **Sync:** the
+  case PATCH matcher already carries `data.changes`; case.html merges it,
+  repaints the Overview / header columns it shows and pushes the rest into the
+  Case Details forms. Nothing added.
+- Tests: `tests/caseyCaseFields.test.js`, gated
+  `tests/caseyCaseFields.mysql.test.js`, `tests/assistantUi.test.js`,
+  `tests/assistantPromptKinds.test.js`.
+
+**Still excluded** (`ref/plans.md`): replacing or clearing a docket (A7c's
+deferred card); the type / subtype (the cross-pipeline move); ruling 2's route
+precondition; the owned columns above stay with their cards.
 
 #### A8: Case-contact membership — shipped 2026-10-28
 
@@ -4125,8 +4213,8 @@ slice if explain-answers should link back to a specific record.
    the ordinary roadmap until separately approved.
 
 For the upcoming review, the key decisions are whether this ordering is right,
-which scalar fields A7's later groups take (the first group is decided — see
-A7), whether delete variants in A6 should be deferred entirely, and what operational bar must be met before the
+which scalar fields A7 takes (decided — every case field except case_id, see
+A7 groups B/C), whether delete variants in A6 should be deferred entirely, and what operational bar must be met before the
 first external-send or fan-out action. A5 deliberately excluded hard delete;
 after the fix package, P1 extraction and minimal P4/P5, the next action slice
 is A6 contact relations and roles.

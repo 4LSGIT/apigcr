@@ -747,7 +747,8 @@ body. Governing migrations in `ref/migrations/`.*
   `contactService.getContact` (no SQL of its own, so no twin). The case
   receipt is the STRING `case_id` (varchar(20) PK): the ledger's
   `STRING_RECEIPT_FIELDS` and the engine's family `stringReceipt` flag carry it
-  — the ONLY string receipt; every other family stays a positive integer. No
+  — the case families' receipt (A7c, A9, A11.1 and A7 groups B/C share it); every
+  other family stays a positive integer. No
   Idempotency-Key (setting a value is idempotent; one ledger claim per draft;
   a contact replay re-pushes Google Contacts, harmless). Both routes are
   already on the sync bus and case.html / contact.html / checklistView repaint
@@ -947,6 +948,41 @@ body. Governing migrations in `ref/migrations/`.*
   docket matcher. Off switch `casey_case_docket_enabled` (on unless '0'). Tests:
   `tests/caseyDocket.test.js`, gated `tests/caseyDocket.mysql.test.js`; plan:
   ASK_CASEY_ACTIONS_PLAN A7c.
+- **Casey case fields (A7 groups B/C, 11-09):** kind `case.fields.update.v1`
+  → PATCH `/api/cases/:id` {<column>: <value>, …} (updateCase, whose BLOCKED
+  set is exactly case_id — Fred: "any field except case_id, just like the
+  user"), 1–10 columns per card, behind `casey_record_edits_enabled`. Refused
+  BY NAME before any read (`CASE_FIELDS_REFUSED`, any capitalisation; the
+  browser builder holds the same set, pinned equal): case_id; the columns
+  another card owns — docket (A7c; replacing one is the next slice), stage /
+  status / rec / pipeline_phase (A9), case_dropbox (A11.1), case_notes /
+  case_alerts (group A); the derived `*_contact_id` links; case_type /
+  case_subtype (re-projects the pipeline — the deferred cross-pipeline move);
+  `custom` (cf_ keys only); case_341_current + 341_appt_id (apptService's
+  single-writer projection of the live 341 appointment, portal-visible). The
+  column map is LIVE information_schema; each value is normalized to its type
+  (DATE ISO, '' → NULL; DATETIME firm wall time sent as the form's
+  'YYYY-MM-DDTHH:MM'; ENUM exact; SET an array joined in member order; CHAR /
+  VARCHAR one line ≤ width in code points — the route clips silently and
+  answers 200; TEXT ≤ noteLimits / form maxlength / 10,000); another type
+  refuses. cf_ keys go through the route's own `splitCustomFields` (its 400
+  is the refusal). A column already holding the value is not sent; none left =
+  no-op. Disclosed per column: before → after, Clears (a removal of stored data
+  danger-styles), readers (code-measured surfaces — the CLIENT PORTAL reads
+  case_chapter, case_341_link, case_open_date — plus a live word-bounded REGEXP
+  scan of report / form-template / portal-card / pipeline-requirement /
+  sequence / workflow / ingest-action definitions; a JSON cast CONCAT_WS'd
+  with a general_ci column must COLLATE general_ci or REGEXP refuses the mix), the judge / trustee link updateCase
+  re-resolves (a miss writes NULL — a warning when a link existed), the 341
+  link a raw trustee change does NOT re-point (the Case Details form does it
+  client-side), and updateCase's exact case.updated envelope (source
+  'manual') dry-run — only when its buildChanges sees a change. Freshness
+  (A7 ruling 2's route precondition still deferred): touched columns as stored
+  + case_type / case_subtype (+ what a re-resolved link rests on) in
+  `expected` / `expected_kinds`, re-read via GET `/api/cases/:id`. A 4xx is
+  a refusal; 5xx ambiguous. Receipt: STRING case_id. Sync: the existing case
+  PATCH matcher. Tests: `tests/caseyCaseFields.test.js`, gated
+  `tests/caseyCaseFields.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A7 groups B/C.
 - **Casey forms (A12, 11-02):** kinds `form.draft.v1` → POST
   `/api/forms/draft` {form_key, link_type, link_id, schema_version, data} and
   `form.submission.link.v1` → PATCH `/api/forms/submissions/:id/link`

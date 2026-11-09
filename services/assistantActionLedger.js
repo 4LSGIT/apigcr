@@ -20,6 +20,9 @@ const KINDS = new Map([
   ['case.notes.update.v1', 'case_id'],
   ['case.alerts.update.v1', 'case_id'],
   ['contact.notes.update.v1', 'contact_id'],
+  // A7 groups B/C: the receipt is the case whose columns were written — the
+  // STRING case_id path (the PATCH answers {case_id, updated_fields, changes}).
+  ['case.fields.update.v1', 'case_id'],
   // A8: the receipt is the case_relate row — an integer PK, so not the
   // case_id string path: the new row for an add, the reviewed row for a role
   // change (UPDATE keeps it), the removed row for a remove (DELETE echoes none).

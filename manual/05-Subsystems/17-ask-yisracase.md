@@ -385,11 +385,11 @@ setting (on unless set to 0).
 Casey can edit three text fields, one per card: a case's **notes**, a case's
 **alerts** (the banner at the top of the case), and a contact's **notes**.
 Ask it to add a line ("add a note to the case that the client is sending pay
-stubs Friday") or to rewrite, replace or clear the field. Nothing else on a
-case or contact — status, dates, names, trustee, judge, source, tags — is
-available to Casey; edit those on the case or contact page. A case's pipeline
-stage moves only through the pipeline cards below, and a blank case number is
-filled only through the case number card below.
+stubs Friday") or to rewrite, replace or clear the field. A case's other
+fields go on the case fields card below; nothing else on a contact (names,
+dates of birth, tags) is available to Casey — edit those on the contact page. A
+case's pipeline stage moves only through the pipeline cards below, and a blank
+case number is filled only through the case number card below.
 
 - **Adding keeps what is there.** An added line goes at the end, on its own
   line; the existing text is kept exactly as it is. A rewrite replaces the
@@ -415,6 +415,55 @@ filled only through the case number card below.
 
 The off switch for these cards is the `casey_record_edits_enabled` setting (on
 unless set to 0).
+
+### Any other case field
+
+Casey can change **any other field of one case** — up to 10 per card — just
+as you can on the case page: its dates (open, file, close, discharge, 341
+initial, objection, docs due …), judge, trustee, chapter, caption, our role,
+source, the checkboxes (garnishment, fee agreements, credit counseling,
+matrix, schedules, filing fee, docs), the bankruptcy (bk) and 341 fields, and
+its custom fields. Ask in plain words ("set the file date on the Smith case to
+March 2", "change her trustee to Jane Trustee", "clear the show cause date").
+It saves through the same route the Case Details forms use.
+
+- **Not on this card — each has its own card, or is not available:** the case
+  number (the case number card fills a blank one; changing or clearing one is
+  not available to Casey yet); the stage, status and next step (the pipeline
+  cards); the Dropbox folder (the case folder card); notes and alerts (their
+  own cards above); the judge and trustee contact links (set from the judge
+  and trustee names — change the name); the case type and subtype (they choose
+  the case's pipeline — use "Move to another pipeline…" on the case page); the
+  341 meeting date (it follows the 341 appointment — reschedule the
+  appointment); and the case's id. Casey says so and names the right card.
+- **Values are checked against the field.** A date is a calendar date; the
+  show cause date and time is in firm time; a choice field takes one of its
+  own options; a checkbox field takes any of its own options; text must fit
+  the field — Casey refuses a value too long for the field rather than let it
+  be cut short, and refuses a line break where the field holds one line.
+- **The card** shows each field before and after, and says **Clears** for a
+  field it empties (in warning style when something stored is removed). For
+  each field it lists who reads it: the client portal (the chapter is in the
+  case's title there, the 341 link is on the client's 341 meeting card, and
+  the open date orders the client's list of cases — "the client sees this");
+  the case header and Cases list; court email; and every saved report, form,
+  portal card, pipeline step, sequence or workflow step and ingest action that
+  names the field. A new judge or trustee name re-links the case's judge or
+  trustee contact — the card shows the link before and after, and a name that
+  matches nobody leaves the link empty (a warning when there was one).
+  Changing the trustee here does **not** update the 341 meeting link the way
+  the Case Details form does — the card warns, and you can ask for the link
+  too.
+- **Automation.** A change is a "case updated" event, as an edit on the page
+  is. The card checks every active rule on it and lists each that would run,
+  and any whose test could not run — that one **may** run.
+- **Freshness.** When you confirm, the card re-reads the case. If any of the
+  fields, or the case's type or subtype, changed since the card was prepared,
+  nothing is written; ask Casey to prepare it again.
+- Once applied, the card opens the case. Open case pages refresh on their own.
+
+The off switch for this card is the same `casey_record_edits_enabled` setting
+as the notes and alerts cards (on unless set to 0).
 
 ### A case's contacts
 
@@ -562,7 +611,8 @@ out one form from the other.
   - add a number another case already has, in either field (the card names
     that case; if they are the same matter, merge the cases on the case page);
   - save a number longer than 20 characters, or one with a line break;
-  - change any other field of the case.
+  - change any other field of the case on this card (other fields go on the
+    case fields card).
 - **Freshness.** When you confirm, the card re-reads the case. If either
   number, the case type or (for a full case number) the judge changed since the
   card was prepared, nothing is written; ask Casey to prepare it again. If

@@ -328,7 +328,7 @@ describe('A9 — every stage teaches the pipeline cards, the unmet-requirement r
   test('the plan carries its own bullet and no longer lists stage as a field edit', () => {
     expect(planPrompt).toContain('Reviewed case pipeline actions are available');
     expect(planPrompt).toContain('refuses — and the answer says why — any move that would pass over a REQUIRED step not done or N/A (Casey cannot\n  override a requirement');
-    expect(planPrompt).toContain('No other case or contact field is editable by Casey (status, dates,');
+    expect(planPrompt).toContain('no other CONTACT field is editable by Casey');
     expect(planPrompt).toContain("a case's pipeline STAGE moves only through the pipeline actions below, never as a field edit");
     // Off-ramp = exit (Fred, 2026-11-01): the planner must not refuse "mark this lead dead" over open steps.
     expect(planPrompt).toContain('A move onto an OFF-RAMP stage is an exit, not a\n  continuation: open required steps do not refuse it');
@@ -438,6 +438,39 @@ describe('A7c — every stage teaches the docket card, verbatim numbers and its 
   });
 });
 
+// A7 groups B/C: the 'case' prefix again (case.fields), so this block pins its
+// own bullet and that every stage teaches what a stage that does not know it
+// gets wrong: the exact column names inside "changes", the per-type value
+// shapes (a SET is an array, a DATETIME firm time), the owned columns refused
+// by name with their own cards — and that no stage still says every other case
+// field is out of reach.
+describe('A7 groups B/C — every stage teaches the case fields card, value shapes and the owned-column refusals', () => {
+  test('the plan carries its own bullet with the read of the current values, and no longer excludes case fields', () => {
+    expect(planPrompt).toContain('Reviewed case field actions are available: change up to 10 other fields of ONE case');
+    expect(planPrompt).toContain('the CURRENT values of the\n  columns being changed');
+    expect(planPrompt).toContain('the 341 meeting date (its appointment)');
+    expect(planPrompt).not.toContain('No other case or contact field is editable by Casey');
+  });
+  test('the investigate stage names the proposal family', () => {
+    expect(investigatePrompt).toContain('and case field proposals, which need a row carrying the exact\n  case_id with the current values of the fields being changed');
+  });
+  test('the answer and repair stages teach the shape, the value rules and every refusal', () => {
+    expect(answerPrompt).toContain('Case fields rules (A7 groups B/C');
+    expect(answerPrompt).toContain('{"kind":"case.fields.update.v1","case_id":"7KQ2M9XA","changes":{"case_file_date":"2026-03-02"');
+    expect(answerPrompt).toContain('is an ARRAY\n    of the checked options ([] for none)');
+    expect(answerPrompt).toContain('a date-time (show_cause) is "YYYY-MM-DD HH:MM" in FIRM time');
+    expect(answerPrompt).toContain('a longer value is refused,\n    never cut');
+    expect(answerPrompt).toContain('case_341_current and 341_appt_id (the 341 moves by rescheduling its\n    appointment)');
+    expect(answerPrompt).toContain('changing the trustee here does NOT re-point the 341 link');
+    expect(answerPrompt).toContain('Every other CASE field goes on\n    the case fields kind below');
+    expect(answerPrompt).not.toContain('No other case or contact field\n    (status, dates, names, trustee');
+    expect(answerPrompt).toContain('contact-relation/case-fields/case-and-contact-notes/');
+    expect(repairPrompt).toContain('case.fields.update.v1: kind,case_id,changes,evidence — changes maps 1-10 cases columns');
+    expect(repairPrompt).toContain('a checkbox set an ARRAY of options ([] none)');
+    expect(repairPrompt).toContain('case_type / case_subtype, custom, case_341_current or 341_appt_id (each refused by name — use its own card)');
+  });
+});
+
 // A12: the form family — the typed form.template read must be taught to the
 // plan and investigate stages (a draft without it is refused), and every stage
 // must teach the never-submit rule, the field-key rule and the refusals.
@@ -515,9 +548,12 @@ describe('a job request forces the draft-required path like the other families',
       expect({ q, forced: svc.taskDraftRequested(q) }).toEqual({ q, forced: true });
     }
     for (const q of ['Who is Dana\'s spouse?', 'Is Acme the employer of Dana?', 'Show me Dana\'s relationships',
-      'Update the trustee on case 25-12345', 'What roles does Jane have?']) {
+      'What roles does Jane have?']) {
       expect({ q, forced: svc.taskDraftRequested(q) }).toEqual({ q, forced: false });
     }
+    // A7 groups B/C (Fred, 2026-11-09): a bare trustee case edit is no longer
+    // outside every family — it is a case-fields card request now.
+    expect(svc.taskDraftRequested('Update the trustee on case 25-12345')).toBe(true);
   });
 });
 

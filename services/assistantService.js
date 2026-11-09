@@ -392,6 +392,103 @@ const RECORD_TEXT_FIELDS = Object.freeze({
 });
 const RECORD_TEXT_CASE_KEYS = new Set(['kind', 'case_id', 'value', 'append', 'evidence']);
 const RECORD_TEXT_CONTACT_KEYS = new Set(['kind', 'contact_id', 'value', 'append', 'evidence']);
+// A7 groups B/C: any other column of ONE case (case.fields.update.v1 → PATCH
+// /api/cases/:id {<column>: <value>, …}). Fred, 2026-11-09: "Casey can edit
+// any field except case_id, just like the user" — the user's surface is that
+// route → caseService.updateCase, whose own BLOCKED set is exactly case_id, so
+// the card writes through it with its validation (unknown column 400, notes
+// length 400, cf_ keys through fieldDefService.splitCustomFields). On top:
+//   * columns ANOTHER Casey card owns are refused BY NAME with a pointer to it
+//     (the raw PATCH skips the work those cards do), and so are the derived
+//     judge / trustee links, the type / subtype (a cross-pipeline move, still
+//     deferred), the raw `custom` bag and the 341 appointment's projection
+//     (CASE_FIELDS_REFUSED);
+//   * the column map is the LIVE information_schema (the same read the
+//     route's own unknown-column check makes): every value is normalized to
+//     its column's type — DATE one ISO date ('' / null clears → NULL, the
+//     route's blankDateToNull), DATETIME firm-local wall time sent the way
+//     the Case Details form sends it, ENUM an exact member, SET members
+//     joined in member order, CHAR/VARCHAR one line within the column width
+//     (relaxed sql_mode would cut a longer value short and answer 200), TEXT
+//     within the native cap; a type with no reviewed rule refuses;
+//   * at most CASE_FIELDS_MAX columns per card (one review per card); a
+//     column already holding the value is not sent; nothing left is a no-op.
+// The card names, per column, before → after, "Clears", who READS it (code-
+// measured surfaces + a live scan of reports, form templates, portal cards,
+// pipeline steps, sequence / workflow steps and ingest actions naming it),
+// the judge / trustee link re-resolution, and dry-runs updateCase's exact
+// case.updated envelope against the active rules (preview lane, nothing
+// dispatched). Freshness: the touched columns as stored + case_type /
+// case_subtype in `expected`; the click re-reads GET /api/cases/:id (cases
+// has no updated_at; the route has no precondition — A7 ruling 2, deferred).
+// Receipt: the STRING case_id. Flag: casey_record_edits_enabled (the A7
+// family switch, on unless '0').
+const CASE_FIELDS_ACTION_KINDS = new Set(['case.fields.update.v1']);
+const CASE_FIELDS_KEYS = new Set(['kind', 'case_id', 'changes', 'evidence']);
+const CASE_FIELDS_MAX = 10;
+// TEXT columns: lib/noteLimits' cap for its columns (341_notes), the native
+// form's maxlength where one exists, else this.
+const CASE_FIELDS_TEXT_MAX = 10000;
+const CASE_FIELDS_TEXT_CAPS = Object.freeze({ docs_missing: 2000 });
+// The whole card (it carries TEXT before / after): the chat keeps a message's
+// details up to 100,000 characters (assistantChatService MAX_PAYLOAD).
+const CASE_FIELDS_CARD_MAX_CHARS = 60000;
+const CASE_FIELDS_DOCKET = 'the docket has its own card — case.docket.adopt.v1 fills a BLANK case number / full case number. Replacing or clearing a docket the case already has is not available to Casey yet (it is the next slice); the user changes it in Case Details';
+const CASE_FIELDS_PIPELINE = 'the pipeline cards own it — case.pipeline.advance.v1 / case.pipeline.move.v1 move the stage and write stage, status, next step and phase together (the raw edit skips the stage log and the step checks)';
+const CASE_FIELDS_TYPE = 'a case\'s type and subtype choose its pipeline (pipelineService.resolveTemplate re-projects the case onto another one), and that cross-pipeline move is deferred — its passed-over steps cannot be reviewed yet. The user changes it with "Move to another pipeline…" on the case page';
+// Refused BY NAME (lower-cased: MySQL column names are case-insensitive).
+const CASE_FIELDS_REFUSED = Object.freeze({
+  case_id: 'a case\'s id never changes (the route refuses it too)',
+  case_number: CASE_FIELDS_DOCKET,
+  case_number_full: CASE_FIELDS_DOCKET,
+  case_stage: CASE_FIELDS_PIPELINE,
+  case_status: CASE_FIELDS_PIPELINE,
+  case_rec: CASE_FIELDS_PIPELINE,
+  pipeline_phase: CASE_FIELDS_PIPELINE,
+  case_dropbox: 'the case folder has its own card — case.folder.relink.v1 (it re-points the documents with the link)',
+  case_notes: 'case notes have their own card — case.notes.update.v1 (append a line or rewrite)',
+  case_alerts: 'case alerts have their own card — case.alerts.update.v1 (append a line or rewrite)',
+  case_judge_contact_id: 'the judge LINK is derived — the server re-resolves it from case_judge and the full case number, and writing it directly stops that. Change case_judge instead (the card shows the link it re-resolves)',
+  case_trustee_contact_id: 'the trustee LINK is derived — the server re-resolves it from case_trustee, and writing it directly stops that. Change case_trustee instead (the card shows the link it re-resolves)',
+  case_type: CASE_FIELDS_TYPE,
+  case_subtype: CASE_FIELDS_TYPE,
+  custom: 'custom fields are written one at a time by their cf_ keys, never as the whole custom bag',
+  case_341_current: 'it mirrors the live 341 APPOINTMENT (apptService is its single writer, and the client portal shows it) — move the 341 by rescheduling that appointment (appt.reschedule.v1), never by writing the column',
+  '341_appt_id': 'it is the id of the live 341 appointment, written only with it (apptService) — not plain data',
+});
+// Code-measured readers of an allowed column (grep, 2026-11-09): the client
+// portal (services/portalCaseService + lib/portalCardEngine's whitelist), the
+// case header and Cases list (case.html updateHeader, caseService.listCases),
+// court email (courtExecutor CASE_FIELD_POLICY, lib/courtResolve) and the
+// Case Details form's own coupling. The live scan adds every stored definition.
+const CASE_FIELDS_SURFACES = Object.freeze({
+  case_chapter: [
+    'CLIENT PORTAL — the client sees this: the portal titles the case "Chapter <chapter> <type>" (blank chapter: the type alone).',
+    'Court email overwrites it when a court notice states the chapter.',
+    'Trustee link: a chapter change alone does NOT re-resolve the trustee link (the server re-resolves it only when case_trustee is written).',
+  ],
+  case_341_link: ['CLIENT PORTAL — the client sees this: the portal\'s 341 meeting card links to it (only an http(s) address is shown).'],
+  case_open_date: [
+    'CLIENT PORTAL: it orders the client\'s list of cases (newest open date first); the date itself is not shown.',
+    'Cases list: its default sort.',
+  ],
+  case_caption: [
+    'Case page header: the caption line under the case number (hidden when blank).',
+    'Cases list and the phone hub\'s case search: searched by it.',
+    'Court email: case matching reads it, and a blank caption is stamped from the first court email that names the case.',
+  ],
+  case_file_date: ['Court email fills it only while it is blank.'],
+  case_close_date: ['Court email fills it only while it is blank (dismissal or final decree — never a discharge date).'],
+  case_discharge_date: ['Court email fills it only while it is blank.'],
+  case_judge: ['Court email fills it only while it is blank.'],
+  case_trustee: [
+    'Court email overwrites it when a notice names the trustee.',
+    'The trustee roster feeds the Case Details trustee picker; a name not on the roster shows there flagged.',
+  ],
+  case_objection: ['Court email overwrites it when a notice sets the objection deadline.'],
+  show_cause: ['Court email overwrites it when a show-cause hearing is set or moved.'],
+  case_source: ['Case page Overview: the Lead source box.'],
+});
 // A8: case-contact membership — add ONE contact to a case, change ONE
 // membership's role, or remove ONE membership, through the case page's own
 // routes (POST /api/cases/:id/contacts, PATCH / DELETE
@@ -2480,6 +2577,477 @@ async function normalizeRecordTextAction(db, value, evidence) {
     : normalizeRecordTextContact(db, value, evidence, spec);
 }
 
+// ── A7 groups B/C: any other case column ──────────────────────────────────
+// The column map is information_schema (fieldDefService.writableColumns' own
+// read, with the types); the case through caseService.getCase (GET
+// /api/cases/:id — the read the click re-runs); cf_ keys through the route's
+// own fieldDefService.splitCustomFields; the judge / trustee links through
+// lib/caseRoleResolver, the resolvers updateCase runs; the envelope through
+// lib/domainEvents' buildChanges / buildEnvelope. The SQL of this family's
+// own — the column map, the link names, the readers scan — is pinned with the
+// route on a real engine in tests/caseyCaseFields.mysql.test.js.
+
+function caseFieldsError(message) { return httpError(422, message); }
+
+// C0 / DEL / C1 and the Unicode line separators; TEXT keeps tab and newline.
+const CASE_FIELDS_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+const CASE_FIELDS_TEXT_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/;
+
+// enum('a','b') / set('a','b') → ['a', 'b'] (MySQL doubles a quote inside a member).
+function caseFieldsMembers(columnType) {
+  const text = String(columnType == null ? '' : columnType);
+  const body = text.slice(text.indexOf('(') + 1, text.lastIndexOf(')'));
+  return [...body.matchAll(/'((?:[^']|'')*)'/g)].map((m) => m[1].replace(/''/g, "'"));
+}
+
+async function caseFieldsColumns(db) {
+  const [rows] = await db.query(
+    `SELECT COLUMN_NAME AS name, DATA_TYPE AS data_type, COLUMN_TYPE AS column_type,
+            CHARACTER_MAXIMUM_LENGTH AS width, IS_NULLABLE AS nullable, GENERATION_EXPRESSION AS gen_expr
+       FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cases'`);
+  const map = new Map();
+  for (const r of (Array.isArray(rows) ? rows : [])) {
+    const name = String(r.name);
+    const type = String(r.data_type || '').toLowerCase();
+    map.set(name.toLowerCase(), {
+      name, type,
+      nullable: String(r.nullable).toUpperCase() === 'YES',
+      generated: String(r.gen_expr == null ? '' : r.gen_expr) !== '',
+      width: r.width == null ? null : Number(r.width),
+      members: type === 'enum' || type === 'set' ? caseFieldsMembers(r.column_type) : null,
+    });
+  }
+  if (!map.has('case_id')) throw caseFieldsError('The cases column list could not be read — nothing is proposed');
+  return map;
+}
+
+// The card's class of a column: what the browser re-reads and compares by.
+function caseFieldsKind(col) {
+  return col.type === 'char' || col.type === 'varchar' ? 'string' : col.type;
+}
+
+// A stored value as the card and the click compare it: DATE yyyy-mm-dd,
+// DATETIME 'yyyy-mm-dd hh:mm:ss' (the pool reads both as fake-UTC Dates whose
+// components ARE the stored wall clock), a custom value as its JSON, anything
+// else as text; NULL stays null. The browser copy is caseFieldsCanon too.
+function caseFieldsCanon(kind, value) {
+  if (value == null) return null;
+  if (kind === 'custom') return JSON.stringify(value);
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    const iso = value.toISOString();
+    return kind === 'date' ? iso.slice(0, 10) : iso.slice(0, 19).replace('T', ' ');
+  }
+  const s = String(value);
+  if (kind === 'date') { const m = /^(\d{4}-\d{2}-\d{2})/.exec(s); return m ? m[1] : s; }
+  if (kind === 'datetime') {
+    const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(:\d{2})?/.exec(s);
+    return m ? `${m[1]} ${m[2]}${m[3] || ':00'}` : s;
+  }
+  return s;
+}
+
+function caseFieldsBlank(canon) { return canon == null || canon === ''; }
+
+function caseFieldsRealDate(y, mo, d) {
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return y >= 1000 && dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
+// One proposed value → { send, canon } as the route will store it, or a
+// refusal naming the column and its rule. The reviewed types are exactly the
+// cases below (date, datetime, enum, set, char, varchar, text); any other
+// type refuses in the default branch.
+function caseFieldsValue(col, raw) {
+  const name = col.name;
+  if (raw === undefined) throw caseFieldsError(`${name}: give the new value ("" or null clears it)`);
+  const blank = raw === null || (typeof raw === 'string' && raw.trim() === '') || (col.type === 'set' && Array.isArray(raw) && !raw.length);
+  switch (col.type) {
+    case 'date': {
+      if (blank) return { send: null, canon: null };
+      const m = typeof raw === 'string' ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw.trim()) : null;
+      if (!m) throw caseFieldsError(`${name} is a date — give it as YYYY-MM-DD, or "" to clear it`);
+      if (!caseFieldsRealDate(+m[1], +m[2], +m[3])) throw caseFieldsError(`${name}: "${raw.trim()}" is not a real calendar date`);
+      return { send: raw.trim(), canon: raw.trim() };
+    }
+    case 'datetime': {
+      if (blank) return { send: null, canon: null };
+      const m = typeof raw === 'string' ? /^(\d{4})-(\d{2})-(\d{2})[T ]([01]\d|2[0-3]):([0-5]\d)(?::00)?$/.exec(raw.trim()) : null;
+      if (!m) throw caseFieldsError(`${name} is a date and time in FIRM time — give it as YYYY-MM-DD HH:MM (24-hour), or "" to clear it`);
+      if (!caseFieldsRealDate(+m[1], +m[2], +m[3])) throw caseFieldsError(`${name}: "${raw.trim()}" is not a real calendar date`);
+      const day = `${m[1]}-${m[2]}-${m[3]}`;
+      // Sent the way the Case Details form's datetime-local input sends it.
+      return { send: `${day}T${m[4]}:${m[5]}`, canon: `${day} ${m[4]}:${m[5]}:00` };
+    }
+    case 'enum': {
+      if (blank) {
+        if (col.nullable) return { send: null, canon: null };
+        throw caseFieldsError(`${name} cannot be cleared — it always holds one of: ${col.members.join(', ')}`);
+      }
+      if (typeof raw !== 'string' || !col.members.includes(raw)) {
+        throw caseFieldsError(`${name} must be exactly one of: ${col.members.join(', ')} (got ${JSON.stringify(raw).slice(0, 60)})`);
+      }
+      return { send: raw, canon: raw };
+    }
+    case 'set': {
+      const list = blank ? [] : raw;
+      if (!Array.isArray(list)) {
+        throw caseFieldsError(`${name} is a set of checkboxes — give an array of the checked options (any of: ${col.members.join(', ')}), or [] for none`);
+      }
+      const picked = new Set();
+      for (const item of list) {
+        if (typeof item !== 'string' || !col.members.includes(item)) {
+          throw caseFieldsError(`${name}: ${JSON.stringify(item).slice(0, 60)} is not one of its options (${col.members.join(', ')})`);
+        }
+        if (picked.has(item)) throw caseFieldsError(`${name}: "${item}" is listed twice`);
+        picked.add(item);
+      }
+      // Stored comma-joined in MEMBER order (MySQL's own order on read-back).
+      const joined = col.members.filter((m) => picked.has(m)).join(',');
+      return { send: joined, canon: joined };
+    }
+    case 'char':
+    case 'varchar': {
+      if (blank) return col.nullable ? { send: null, canon: null } : { send: '', canon: '' };
+      const s = typeof raw === 'number' && Number.isFinite(raw) ? String(raw) : raw;
+      if (typeof s !== 'string') throw caseFieldsError(`${name} must be text`);
+      if (CASE_FIELDS_CONTROL.test(s)) throw caseFieldsError(`${name} contains a line break or another control character — it is one line of plain text. Nothing is proposed`);
+      const text = s.trim();
+      const n = Array.from(text).length;
+      if (col.width != null && n > col.width) {
+        throw caseFieldsError(`${name} "${text.slice(0, 40)}${n > 40 ? '…' : ''}" is ${n} characters — the column keeps ${col.width}, and the database would save it cut short while the route answers success. Nothing is proposed — shorten it`);
+      }
+      return { send: text, canon: text };
+    }
+    case 'text': {
+      if (blank) return col.nullable ? { send: null, canon: null } : { send: '', canon: '' };
+      if (typeof raw !== 'string') throw caseFieldsError(`${name} must be text`);
+      const s = raw.replace(/\r\n?/g, '\n');
+      if (CASE_FIELDS_TEXT_CONTROL.test(s)) throw caseFieldsError(`${name} contains a control character — only plain text, tabs and line breaks. Nothing is proposed`);
+      const text = s.trim();
+      const limits = require('../lib/noteLimits');
+      const max = limits.NOTE_COLUMNS.has(name) ? limits.NOTE_MAX_CHARS : (CASE_FIELDS_TEXT_CAPS[name] || CASE_FIELDS_TEXT_MAX);
+      if (text.length > max) {
+        throw caseFieldsError(`${name} would be ${text.length.toLocaleString('en-US')} characters — the limit is ${max.toLocaleString('en-US')}. Nothing is proposed — shorten it`);
+      }
+      return { send: text, canon: text };
+    }
+    default:
+      throw caseFieldsError(`${name} is a ${col.type} column — Casey has no reviewed rule for that type. Nothing is proposed; the user edits it on the case page`);
+  }
+}
+
+function caseFieldsShown(kind, canon) {
+  if (kind === 'custom') {
+    if (canon == null) return 'blank';
+    const v = JSON.parse(canon);
+    if (Array.isArray(v)) return v.length ? v.join(', ') : 'none';
+    if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+    return typeof v === 'string' ? `"${v}"` : String(v);
+  }
+  if (canon == null || canon === '') return kind === 'set' ? 'none checked' : 'blank';
+  // TEXT: the card shows the changed region from before / after, never the whole text twice more.
+  if (kind === 'text') return `${canon.length.toLocaleString('en-US')} character${canon.length === 1 ? '' : 's'}`;
+  if (kind === 'datetime') return `${canon.slice(0, 16)} (firm time)`;
+  if (kind === 'set') return canon.split(',').join(', ');
+  if (kind === 'date' || kind === 'enum') return canon;
+  return `"${canon}"`;
+}
+
+// Whether a TEXT change drops stored characters (anything but a pure insert).
+function caseFieldsTextRemoves(before, after) {
+  const a = String(before); const b = String(after);
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p += 1;
+  let s = 0;
+  while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s += 1;
+  return a.length - p - s > 0;
+}
+
+// Every stored definition that names a column (word-bounded, any case): the
+// live half of "who reads it". One read per table, at most 50 rows each.
+// Step tables are VERSIONED: only a workflow's / template's published version
+// and its draft are live readers (an older version's step is history), so
+// both scans join the parent on `version IN (current_version, draft_version)`
+// — tests/versionPredicateCoverage.test.js pins the predicate.
+// A JSON column CASTs to utf8mb4_bin; CONCAT_WS of it with a general_ci column
+// has no collation, and REGEXP then refuses it ("Illegal mix of collations",
+// measured on 8.4 — the portal-card and sequence-step scans). Every cast names
+// general_ci, the tables' own, so no scan depends on which one is concatenated.
+const CASE_FIELDS_READER_SCANS = [
+  ['Report', `SELECT id, title AS name, sql_text AS body FROM report_definitions
+      WHERE is_active = 1 AND sql_text REGEXP ? ORDER BY id LIMIT 50`],
+  ['Form template', `SELECT id, CONCAT(form_key, ' — ', title) AS name, CAST(definition AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci AS body FROM form_templates
+      WHERE definition IS NOT NULL AND CAST(definition AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci REGEXP ? ORDER BY id LIMIT 50`],
+  ['CLIENT PORTAL card', `SELECT id, CONCAT(card_key, ' — ', title) AS name, CONCAT_WS(' ', body_template, CAST(conditions AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci) AS body FROM portal_cards
+      WHERE active = 1 AND CONCAT_WS(' ', body_template, CAST(conditions AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci) REGEXP ? ORDER BY id LIMIT 50`],
+  ['Pipeline step', `SELECT r.id, CONCAT(r.internal_label, ' (stage "', s.internal_label, '")') AS name, CAST(r.detector_config AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci AS body
+      FROM pipeline_stage_requirements r JOIN pipeline_stages s ON s.id = r.stage_id
+      WHERE r.active = 1 AND CAST(r.detector_config AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci REGEXP ? ORDER BY r.id LIMIT 50`],
+  ['Sequence step', `SELECT s.id, CONCAT('template #', s.template_id, ' v', s.version, ' step ', s.step_number) AS name, CONCAT_WS(' ', CAST(s.action_config AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci, CAST(s.\`condition\` AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci) AS body
+      FROM sequence_steps s JOIN sequence_templates t ON t.id = s.template_id AND s.version IN (t.current_version, t.draft_version)
+      WHERE CONCAT_WS(' ', CAST(s.action_config AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci, CAST(s.\`condition\` AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci) REGEXP ? ORDER BY s.id LIMIT 50`],
+  ['Workflow step', `SELECT s.id, CONCAT('workflow #', s.workflow_id, ' v', s.version, ' step ', s.step_number, IFNULL(CONCAT(' "', s.label, '"'), '')) AS name, CAST(s.config AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci AS body
+      FROM workflow_steps s JOIN workflows w ON w.id = s.workflow_id AND s.version IN (w.current_version, w.draft_version)
+      WHERE CAST(s.config AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci REGEXP ? ORDER BY s.id LIMIT 50`],
+  ['Email ingest action', `SELECT id, CONCAT('rule #', rule_id, IFNULL(CONCAT(' "', name, '"'), '')) AS name, CAST(config AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci AS body FROM email_ingest_rule_actions
+      WHERE active = 1 AND CAST(config AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci REGEXP ? ORDER BY id LIMIT 50`],
+  ['Phone ingest action', `SELECT id, CONCAT('rule #', rule_id, IFNULL(CONCAT(' "', name, '"'), '')) AS name, CAST(config AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci AS body FROM phone_ingest_rule_actions
+      WHERE active = 1 AND CAST(config AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci REGEXP ? ORDER BY id LIMIT 50`],
+];
+
+async function caseFieldsReaders(db, columns) {
+  const out = new Map(columns.map((c) => [c, []]));
+  if (!columns.length) return out;
+  // Names are information_schema columns or fieldDefService KEY_RE keys: \w only.
+  const alt = columns.join('|');
+  const pattern = `(^|[^A-Za-z0-9_])(${alt})([^A-Za-z0-9_]|$)`;
+  const per = new Map(columns.map((c) => [c, new RegExp(`(^|[^A-Za-z0-9_])${c}([^A-Za-z0-9_]|$)`, 'i')]));
+  for (const [what, sql] of CASE_FIELDS_READER_SCANS) {
+    const [rows] = await db.query(sql, [pattern]);
+    for (const r of (Array.isArray(rows) ? rows : [])) {
+      for (const c of columns) {
+        if (per.get(c).test(String(r.body == null ? '' : r.body))) out.get(c).push(`${what} #${Number(r.id)} "${String(r.name || '').slice(0, 100)}"`);
+      }
+    }
+  }
+  return out;
+}
+
+async function caseFieldsLinkNames(db, ids) {
+  const want = [...new Set(ids.filter((n) => n != null))];
+  const names = new Map();
+  if (want.length) {
+    const [rows] = await db.query('SELECT contact_id, contact_name FROM contacts WHERE contact_id IN (?)', [want]);
+    for (const r of (Array.isArray(rows) ? rows : [])) names.set(Number(r.contact_id), String(r.contact_name || '').trim().slice(0, 120) || `contact #${r.contact_id}`);
+  }
+  return (n) => (n == null ? 'none' : `${names.get(n) || 'a contact'} (contact #${n})`);
+}
+
+async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = null } = {}) {
+  // The A7 family switch: '0' and every A7 kind does not exist.
+  if (require('../lib/firmConfig').cfg('casey_record_edits_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const extra = Object.keys(value).filter((k) => !CASE_FIELDS_KEYS.has(k));
+  if (extra.length) {
+    throw caseFieldsError(`A case fields edit carries unsupported fields: ${extra.join(', ')} — it takes case_id, changes ({"<column>": <new value>, …}) and evidence only; every column goes inside "changes"`);
+  }
+  const caseId = String(value.case_id == null ? '' : value.case_id).trim();
+  if (!caseId || caseId.length > 20 || !/^[A-Za-z0-9_-]+$/.test(caseId)) throw caseFieldsError("A case fields edit needs the case's exact case_id");
+  const changes = value.changes;
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes) || !Object.keys(changes).length) {
+    throw caseFieldsError('A case fields edit needs "changes": an object of {"<column>": <new value>} — the columns as the cases table names them');
+  }
+  const keys = Object.keys(changes);
+  if (keys.length > CASE_FIELDS_MAX) {
+    throw caseFieldsError(`A case fields card changes at most ${CASE_FIELDS_MAX} columns (one review per card) — this one has ${keys.length}. Split it into smaller cards`);
+  }
+  // Refused BY NAME before anything is read.
+  const refused = keys.filter((k) => Object.prototype.hasOwnProperty.call(CASE_FIELDS_REFUSED, k.toLowerCase()));
+  if (refused.length) {
+    throw caseFieldsError(`NOT ON THIS CARD — ${refused.map((k) => `${k}: ${CASE_FIELDS_REFUSED[k.toLowerCase()]}`).join('; ')}. Nothing is proposed`);
+  }
+  const seen = new Map();
+  for (const k of keys) {
+    const low = k.toLowerCase();
+    if (seen.has(low)) throw caseFieldsError(`${seen.get(low)} and ${k} name the same column (column names ignore capitalisation) — give it once`);
+    seen.set(low, k);
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  const cited = refs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return row && String(row.case_id) === caseId;
+  });
+  if (!cited) throw caseFieldsError(`The case fields evidence does not identify case ${caseId} — cite a row carrying its exact case_id (read the case first)`);
+
+  // Core columns: the live map, then each value by its column's rule.
+  const fieldDefs = require('./fieldDefService'); // lazy (convention)
+  const cfKeys = keys.filter((k) => /^cf_/i.test(k));
+  const coreKeys = keys.filter((k) => !/^cf_/i.test(k));
+  const proposed = []; // { column, kind, col?, send, canon, label }
+  if (coreKeys.length) {
+    const columns = await caseFieldsColumns(db);
+    const unknown = coreKeys.filter((k) => !columns.has(k.toLowerCase()));
+    if (unknown.length) {
+      throw caseFieldsError(`Not a column of cases: ${unknown.join(', ')} — use the column names exactly as the cases table has them (a custom field is its cf_ key)`);
+    }
+    for (const k of coreKeys) {
+      const col = columns.get(k.toLowerCase());
+      if (col.generated) throw caseFieldsError(`${col.name} is computed by the database from another column — it cannot be written`);
+      const v = caseFieldsValue(col, changes[k]);
+      proposed.push({ column: col.name, kind: caseFieldsKind(col), col, send: v.send, canon: v.canon, label: col.name });
+    }
+  }
+
+  const caseSvc = require('./caseService');
+  const found = await caseSvc.getCase(db, caseId, 'contacts');
+  if (!found || !found.case) throw caseFieldsError(`Case ${caseId} no longer exists`);
+  const row = found.case;
+  const id = String(row.case_id);
+  const number = String(row.case_number_full || row.case_number || '').trim();
+  const caseLabel = number || id;
+
+  // cf_ keys: the route's OWN splitter validates them (unknown / inactive /
+  // a value its definition refuses → its 400, read here as the refusal).
+  let split = { customSets: {}, customRemoves: [], customKeys: [] };
+  if (cfKeys.length) {
+    try {
+      split = await fieldDefs.splitCustomFields(db, 'case', Object.fromEntries(cfKeys.map((k) => [k, changes[k]])));
+    } catch (e) {
+      if (e && e.status === 400) throw caseFieldsError(`CUSTOM FIELD refused — ${e.message}. Nothing is proposed`);
+      throw e;
+    }
+    let bag = row.custom;
+    if (typeof bag === 'string') { try { bag = JSON.parse(bag); } catch (_) { bag = {}; } }
+    bag = bag && typeof bag === 'object' && !Array.isArray(bag) ? bag : {};
+    for (const k of split.customKeys) {
+      const def = await fieldDefs.getByKey(db, 'case', k);
+      const to = Object.prototype.hasOwnProperty.call(split.customSets, k) ? split.customSets[k] : null;
+      proposed.push({
+        column: k, kind: 'custom', send: to, canon: caseFieldsCanon('custom', to),
+        label: def && def.label ? `${String(def.label).slice(0, 100)} (${k})` : k,
+        stored: Object.prototype.hasOwnProperty.call(bag, k) ? bag[k] : null,
+      });
+    }
+  }
+
+  // Before → after per column; a column already holding the value is not sent.
+  const writes = []; const kept = [];
+  for (const p of proposed) {
+    const before = p.kind === 'custom' ? caseFieldsCanon('custom', p.stored) : caseFieldsCanon(p.kind, row[p.column]);
+    const same = before === p.canon || (caseFieldsBlank(before) && caseFieldsBlank(p.canon));
+    if (same) { kept.push({ column: p.column, label: p.label, shown: caseFieldsShown(p.kind, before) }); continue; }
+    const clears = caseFieldsBlank(p.canon);
+    const w = {
+      column: p.column, label: p.label, kind: p.kind, send: p.send, clears,
+      removes: !caseFieldsBlank(before) && (clears || (p.kind === 'text' && caseFieldsTextRemoves(before, p.canon))),
+      before, after: p.canon,
+      from: caseFieldsShown(p.kind, before), to: caseFieldsShown(p.kind, p.canon),
+    };
+    if (p.kind === 'set' && p.col) w.options = p.col.members.slice();
+    writes.push(w);
+  }
+  if (!writes.length) {
+    throw caseFieldsError(`That changes nothing on case ${caseLabel} — ${kept.map((k) => `${k.column} is already ${k.shown}`).join('; ')}`);
+  }
+
+  // The post-state exactly as updateCase builds it: blank dates → NULL, then
+  // the judge / trustee links re-resolved from the overlaid row.
+  const core = writes.filter((w) => w.kind !== 'custom');
+  const coreSend = {}; for (const w of core) coreSend[w.column] = w.send;
+  const nextFields = require('../lib/blankDateToNull').blankDatesToNull('cases', coreSend);
+  const updatedFields = core.map((w) => w.column);
+  const effects = []; const warnings = [];
+  const resolver = require('../lib/caseRoleResolver'); // lazy (convention)
+  const effective = { ...row, ...nextFields };
+  let judge = null; let trustee = null;
+  const touched = (c) => Object.prototype.hasOwnProperty.call(nextFields, c);
+  if (touched('case_judge')) {
+    const to = await resolver.resolveJudge(db, { case_number_full: effective.case_number_full, case_judge: effective.case_judge });
+    judge = { from: row.case_judge_contact_id == null ? null : Number(row.case_judge_contact_id), to: to == null ? null : Number(to) };
+    nextFields.case_judge_contact_id = judge.to; updatedFields.push('case_judge_contact_id');
+  }
+  if (touched('case_trustee')) {
+    const to = await resolver.resolveTrustee(db, { case_trustee: effective.case_trustee, case_chapter: effective.case_chapter });
+    trustee = { from: row.case_trustee_contact_id == null ? null : Number(row.case_trustee_contact_id), to: to == null ? null : Number(to) };
+    nextFields.case_trustee_contact_id = trustee.to; updatedFields.push('case_trustee_contact_id');
+  }
+  if (judge || trustee) {
+    const who = await caseFieldsLinkNames(db, [judge && judge.from, judge && judge.to, trustee && trustee.from, trustee && trustee.to]);
+    const link = (l, noun, source) => {
+      Object.assign(l, { from_label: who(l.from), to_label: who(l.to) });
+      const Noun = noun[0].toUpperCase() + noun.slice(1);
+      if (l.from === l.to) {
+        effects.push(l.to == null
+          ? `${Noun} link: re-resolved from ${source} — it matches no ${noun} contact, so the link stays empty (a failed match writes no link).`
+          : `${Noun} link: re-resolved from ${source} — unchanged (${who(l.to)}).`);
+      } else if (l.to == null) {
+        warnings.push(`${noun.toUpperCase()} LINK CLEARS: the server re-resolves the ${noun} contact from ${source} and finds no match, so the link is written EMPTY — ${who(l.from)} → none. A failed match writes no link; it is never an error.`);
+      } else if (l.from != null) {
+        warnings.push(`${noun.toUpperCase()} LINK CHANGES: re-resolved from ${source} — ${who(l.from)} → ${who(l.to)}.`);
+      } else {
+        effects.push(`${Noun} link: re-resolved from ${source} — none → ${who(l.to)}.`);
+      }
+    };
+    if (judge) link(judge, 'judge', 'the full case number\'s judge suffix, else the new judge text');
+    if (trustee) link(trustee, 'trustee', `the new trustee text and the case's chapter (${String(effective.case_chapter || '').trim() || 'blank'})`);
+  }
+  // The Case Details form re-points the 341 link when the trustee changes; this
+  // raw edit does not.
+  if (touched('case_trustee') && !touched('case_341_link')) {
+    const linkNow = String(row.case_341_link == null ? '' : row.case_341_link).trim();
+    (linkNow ? warnings : effects).push(linkNow
+      ? `341 LINK STAYS: the Case Details form rewrites the 341 meeting link from the trustee roster when the trustee changes; this card does not — the client portal's 341 card keeps linking to "${linkNow.slice(0, 200)}". Add case_341_link to the card if the link should follow the new trustee.`
+      : '341 link: the case has none, and this card does not set one (the Case Details form fills it from the trustee roster when the trustee changes there).');
+  }
+
+  // Who reads each column: the code-measured surfaces, then every stored
+  // definition naming it, then templates.
+  const scanned = await caseFieldsReaders(db, writes.map((w) => w.column));
+  for (const w of writes) {
+    w.readers = [
+      ...(CASE_FIELDS_SURFACES[w.column] || []),
+      ...scanned.get(w.column).map((x) => `${x} names it.`),
+      `Templates: {{cases.${w.column}}} in letters, forms, emails and texts resolves to the new value.`,
+    ];
+    w.client_visible = w.readers.some((x) => /^CLIENT PORTAL/.test(x));
+  }
+
+  // Downstream automation: the case.updated envelope updateCase emits — only
+  // when its own comparison (buildChanges: blank and NULL alike, ends trimmed)
+  // finds a change.
+  const { buildEnvelope, buildChanges } = require('../lib/domainEvents');
+  const customPost = {}; for (const k of split.customKeys) customPost[k] = Object.prototype.hasOwnProperty.call(split.customSets, k) ? split.customSets[k] : null;
+  const sentCustom = split.customKeys.filter((k) => writes.some((w) => w.column === k));
+  const sets = {}; for (const k of sentCustom) if (Object.prototype.hasOwnProperty.call(split.customSets, k)) sets[k] = split.customSets[k];
+  const removes = split.customRemoves.filter((k) => sentCustom.includes(k));
+  const envChanges = { ...buildChanges(row, nextFields, updatedFields), ...fieldDefs.buildCustomChanges(row.custom, sets, removes) };
+  let automation = { lines: [], rules_checked: 0, quiet: 0 };
+  if (Object.keys(envChanges).length) {
+    automation = await casePipelineAutomation(db, buildEnvelope('case.updated', {
+      case_id: id, ...(currentUserId != null ? { actor: { user_id: currentUserId } } : {}), source: 'manual',
+      data: { ...row, ...nextFields, ...customPost }, changes: envChanges, extra: { updated_fields: [...updatedFields, ...sentCustom] },
+    }), 'case.updated', 'this edit');
+    if (automation.lines.some((l) => l.outcome === 'unknown')) warnings.push('AUTOMATION: at least one trigger rule could not be evaluated for this edit — read its line; it may run.');
+    effects.push('Trigger event: case.updated fires (source "manual", as a hand edit does) — every active rule on it that would act is listed below.');
+  } else {
+    effects.push('Trigger event: none — updateCase emits case.updated only when a value changes by its own comparison (blank and empty alike, spaces at the ends ignored).');
+  }
+
+  const clients = (Array.isArray(found.clients) ? found.clients : [])
+    .filter((c) => c && (c.relate_type === 'Primary' || c.relate_type === 'Secondary'))
+    .map((c) => String(c.contact_name || '').trim().slice(0, 200)).filter(Boolean);
+  const expected = { case_type: caseFieldsCanon('string', row.case_type), case_subtype: caseFieldsCanon('string', row.case_subtype) };
+  const expectedKinds = { case_type: 'string', case_subtype: 'string' };
+  for (const w of writes) { expected[w.column] = w.before; expectedKinds[w.column] = w.kind; }
+  if (judge) {
+    expected.case_number_full = caseFieldsCanon('string', row.case_number_full); expectedKinds.case_number_full = 'string';
+    expected.case_judge_contact_id = caseFieldsCanon('string', row.case_judge_contact_id); expectedKinds.case_judge_contact_id = 'string';
+  }
+  if (trustee) {
+    for (const c of ['case_chapter', 'case_341_link', 'case_trustee_contact_id']) {
+      if (!(c in expected)) { expected[c] = caseFieldsCanon('string', row[c]); expectedKinds[c] = 'string'; }
+    }
+  }
+  const draft = {
+    draft_id: crypto.randomUUID(), kind: 'case.fields.update.v1', status: 'draft',
+    case: {
+      case_id: id, label: caseLabel, case_type: String(row.case_type || '').slice(0, 40), case_subtype: String(row.case_subtype || '').slice(0, 40),
+      clients: clients.slice(0, 4),
+    },
+    writes: writes.map((w) => ({ ...w })), kept, judge, trustee,
+    automation: { events: Object.keys(envChanges).length ? ['case.updated'] : [], lines: automation.lines.map((l) => l.text), rules_checked: automation.rules_checked, quiet: automation.quiet },
+    effects, warnings, expected, expected_kinds: expectedKinds, evidence: refs,
+  };
+  const size = JSON.stringify(draft).length;
+  if (size > CASE_FIELDS_CARD_MAX_CHARS) {
+    throw caseFieldsError(`This card would be ${size.toLocaleString('en-US')} characters — more than one card can carry (${CASE_FIELDS_CARD_MAX_CHARS.toLocaleString('en-US')}); its long text columns do not fit beside each other. Split it into smaller cards`);
+  }
+  return draft;
+}
+
 // ── A8: case-contact membership ───────────────────────────────────────────
 // The case and its membership set are read through the services behind the
 // case page's own GETs (caseService.getCase, caseService.getCaseContacts — the
@@ -4012,7 +4580,7 @@ async function normalizeCaseDocketAction(db, value, evidence, { currentUserId = 
   }
   const fieldKeys = extra.filter((k) => CASE_DOCKET_OTHER_FIELD_KEY.test(k));
   if (fieldKeys.length) {
-    throw caseDocketError(`OTHER CASE FIELDS refused (${fieldKeys.join(', ')}): a docket card sets only case_number and case_number_full. A case's status, stage, dates, trustee, judge, tags, type and other fields are not editable by Casey (the stage moves through the pipeline cards) — the user edits them in Case Details`);
+    throw caseDocketError(`OTHER CASE FIELDS refused (${fieldKeys.join(', ')}): a docket card sets only case_number and case_number_full. A case's dates, trustee, judge and other fields go on a case fields card (case.fields.update.v1); the stage and status move through the pipeline cards`);
   }
   if (extra.length) {
     throw caseDocketError(`A docket card carries unsupported fields: ${extra.join(', ')} — it takes case_id, case_number, case_number_full and evidence only`);
@@ -9217,6 +9785,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && CONTACT_SUBRECORD_ACTION_KINDS.has(value.kind)) return normalizeContactSubrecordAction(db, value, evidence);
   if (value && CONTACT_RELATION_ACTION_KINDS.has(value.kind)) return normalizeContactRelationAction(db, value, evidence);
   if (value && RECORD_TEXT_ACTION_KINDS.has(value.kind)) return normalizeRecordTextAction(db, value, evidence);
+  if (value && CASE_FIELDS_ACTION_KINDS.has(value.kind)) return normalizeCaseFieldsAction(db, value, evidence, { currentUserId });
   if (value && CASE_CONTACT_ACTION_KINDS.has(value.kind)) return normalizeCaseContactAction(db, value, evidence);
   if (value && CASE_PIPELINE_ACTION_KINDS.has(value.kind)) return normalizeCasePipelineAction(db, value, evidence, { currentUserId });
   if (value && CHECKLIST_ACTION_KINDS.has(value.kind)) return normalizeChecklistAction(db, value, evidence, { currentUserId });
@@ -9420,7 +9989,13 @@ function taskDraftRequested(question, history = []) {
   // case", "relink the case's Dropbox folder", "point the case at that folder").
   const folderRelink = /\b(?:dropbox|folders?)\b/i.test(text) &&
     /\b(?:draft|propose|prepare|re-?link|link|attach|connect|associate|point|claim|assign|set|fix|repair|change|switch|update)\b/i.test(request);
-  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || checklist || documentEdit || docketAdopt || formWork || mailTriage || folderRelink || job || workflow || hook || sequence || send || ingestRule ||
+  // A7 groups B/C: another case field set, changed or cleared ("set the file
+  // date on the Smith case", "change her trustee to …", "clear the show cause
+  // date"). A case-field noun with a case noun and an edit verb.
+  const caseFields = /\b(?:(?:open|file|filing|close|closing|discharge|objection|preference|341|show[ -]?cause|due|confirmation|hearing)\s+dates?|dates? (?:filed|opened|closed|discharged)|judge|trustee|chapter|caption|our role|lead source|case source|source ref|primary reason|341 (?:link|status|docs|amend\w*|notes)|show[ -]?cause|objection|preference|180|matrix|schedules|filing fee|final installment|docs (?:due|missing)|garnish\w*|reaffirm\w*|redemption|(?:1st|2nd|first|second) course|pre-?petition|post-?petition|fee (?:application|order|amounts?|due)|funding app|plan (?:filed|cos)|dismissal notice|outcome|follow-?up email|7 ?steps|custom fields?|case fields?|cf_\w+)\b/i.test(text) &&
+    /\b(?:case|file|matter|debtor|client)s?\b/i.test(text) &&
+    /\b(?:draft|propose|prepare|set|change|update|edit|correct|fix|enter|record|put|fill|mark|check|uncheck|clear|empty|remove|blank|switch|assign)\b/i.test(request);
+  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || checklist || documentEdit || docketAdopt || caseFields || formWork || mailTriage || folderRelink || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 
