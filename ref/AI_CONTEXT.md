@@ -956,9 +956,12 @@ body. Governing migrations in `ref/migrations/`.*
   browser builder holds the same set, pinned equal): case_id; the columns
   another card owns — docket (A7c; replacing one is the next slice), stage /
   status / rec / pipeline_phase (A9), case_dropbox (A11.1), case_notes /
-  case_alerts (group A); the derived `*_contact_id` links; case_type /
-  case_subtype (re-projects the pipeline — the deferred cross-pipeline move);
-  `custom` (cf_ keys only); case_341_current + 341_appt_id (apptService's
+  case_alerts (group A); the derived `*_contact_id` links; `custom` (cf_ keys
+  only); case_type / case_subtype are ALLOWED since A7d (11-09): a type change
+  clears the subtype as the case page does, the firm's `fe-case_types` list is
+  checked (unlisted = warning), and the pipeline the case resolves to before →
+  after is disclosed (`pipelineService.resolveTemplate`, a danger warning when
+  it changes — no stage-log row, no step check); case_341_current + 341_appt_id (apptService's
   single-writer projection of the live 341 appointment, portal-visible). The
   column map is LIVE information_schema; each value is normalized to its type
   (DATE ISO, '' → NULL; DATETIME firm wall time sent as the form's

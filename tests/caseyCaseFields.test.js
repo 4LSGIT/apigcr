@@ -52,6 +52,7 @@ const caseService = require(path.join(REPO, 'services', 'caseService'));
 const fieldDefs = require(path.join(REPO, 'services', 'fieldDefService'));
 const triggerService = require(path.join(REPO, 'services', 'triggerService'));
 const roleResolver = require(path.join(REPO, 'lib', 'caseRoleResolver'));
+const pipelineService = require(path.join(REPO, 'services', 'pipelineService'));
 const { normalizeActionDraft, taskDraftRequested } = svc;
 
 const CASE_ID = '7KQ2M9XA';
@@ -83,11 +84,20 @@ const DEFS = [
   { id: 3, entity: 'case', field_key: 'cf_old', label: 'Old', field_type: 'text', options: null, validation: null, show_when: null, default_value: null, indexed: 0, list_column: 0, sort_order: 3, active: 0 },
 ];
 
+// A7d fixtures: the firm's pipelines (intake #1; Chapter 7 #2 and Chapter 13 #3 by exact type/subtype) and their stage keys.
+const TEMPLATES = [
+  { id: 1, name: 'Intake', role: 'intake', case_type: null, case_subtype: null, is_default: 0, active: 1 },
+  { id: 2, name: 'Chapter 7', role: 'case', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', is_default: 0, active: 1 },
+  { id: 3, name: 'Chapter 13', role: 'case', case_type: 'Bankruptcy', case_subtype: 'Chapter 13', is_default: 0, active: 1 },
+];
+const STAGES = { 2: ['retained', 'filed', 'discharged'], 3: ['retained', 'filed', 'confirmed'] };
+const CASE_TYPES = { Bankruptcy: ['Chapter 7', 'Chapter 13'], 'Civil Litigation': [], Adversary: ['Preference'] };
+
 let spies = [];
 let calls;
 function setup({ caseRow = {}, clients, missing = false, judge = null, trustee = null, names = { 41: 'Hon. Mark Example', 42: 'Hon. Ann Other', 51: 'Tom Trustee', 52: 'Una Trustee' },
-  rules = [], evaluate, scans = {}, extraColumns = [] } = {}) {
-  calls = { getCase: 0, resolveJudge: [], resolveTrustee: [], rules: [], scans: [], queries: 0 };
+  rules = [], evaluate, scans = {}, extraColumns = [], caseTypes = CASE_TYPES } = {}) {
+  calls = { getCase: 0, resolveJudge: [], resolveTrustee: [], rules: [], scans: [], queries: 0, stageLookups: [] };
   const row = {
     case_id: CASE_ID, case_number: '25-12345', case_number_full: '25-12345-mex', case_type: 'Bankruptcy', case_subtype: 'Chapter 7',
     case_caption: 'In re Dana Debtor', case_chapter: '7', case_judge: 'Mark Example', case_judge_contact_id: 41,
@@ -119,6 +129,12 @@ function setup({ caseRow = {}, clients, missing = false, judge = null, trustee =
     }
     const scan = /FROM (report_definitions|form_templates|portal_cards|pipeline_stage_requirements|sequence_steps|workflow_steps|email_ingest_rule_actions|phone_ingest_rule_actions)\b/.exec(flat);
     if (scan) { calls.scans.push([scan[1], params[0]]); return [scans[scan[1]] || []]; }
+    // A7d: pipelineService.resolveTemplate's own read, and the new pipeline's stage lookup.
+    if (flat === 'SELECT * FROM pipeline_templates WHERE active = 1 ORDER BY id ASC') return [TEMPLATES.map((t) => ({ ...t }))];
+    if (flat === 'SELECT `value` FROM app_settings WHERE `key` = ? LIMIT 1' && params[0] === 'fe-case_types') return [caseTypes === null ? [] : [{ value: JSON.stringify(caseTypes) }]];
+    if (flat === 'SELECT stage_key FROM pipeline_stages WHERE template_id = ? AND active = 1 AND stage_key = ? LIMIT 1') {
+      calls.stageLookups.push(params); return [(STAGES[params[0]] || []).includes(params[1]) ? [{ stage_key: params[1] }] : []];
+    }
     throw new Error(`unexpected query: ${flat}`);
   });
   return { query };
@@ -182,8 +198,6 @@ describe('refused BY NAME before anything is read', () => {
     ['case_alerts', /case\.alerts\.update\.v1/],
     ['case_judge_contact_id', /the judge LINK is derived .* Change case_judge instead/],
     ['case_trustee_contact_id', /the trustee LINK is derived .* Change case_trustee instead/],
-    ['case_type', /cross-pipeline move is deferred/],
-    ['case_subtype', /cross-pipeline move is deferred/],
     ['custom', /by their cf_ keys, never as the whole custom bag/],
     ['case_341_current', /mirrors the live 341 APPOINTMENT \(apptService is its single writer.*appt\.reschedule\.v1/],
     ['341_appt_id', /the id of the live 341 appointment/],
@@ -326,6 +340,63 @@ describe('the judge and trustee links updateCase re-resolves', () => {
     const none = await run(edit({ case_trustee: 'Una Trustee' }), { trustee: 52, caseRow: { case_341_link: '' } });
     expect(none.warnings.join('\n')).not.toMatch(/341 LINK/);
     expect(none.effects.join('\n')).toMatch(/341 link: the case has none, and this card does not set one/);
+  });
+});
+
+describe('A7d — case type and subtype, as the case page edits them', () => {
+  let pipeSpy;
+  beforeEach(() => { pipeSpy = jest.spyOn(pipelineService, 'getPipeline').mockImplementation(async () => ({ current: { stage_key: 'filed' } })); });
+  afterEach(() => { pipeSpy.mockRestore(); });
+  const retained = { pipeline_phase: 'case' };
+
+  test('they are no longer refused; a subtype change inside the same type re-resolves to another pipeline — a danger warning names both and says the current stage exists there', async () => {
+    const d = await run(edit({ case_subtype: 'Chapter 13' }), { caseRow: retained });
+    expect(w(d, 'case_subtype')).toMatchObject({ from: '"Chapter 7"', to: '"Chapter 13"', clears: false });
+    expect(d.warnings).toEqual([expect.stringMatching(/^PIPELINE CHANGES: the case resolves to Chapter 7 \(case\) → Chapter 13 \(case\) \(type \/ subtype pick the pipeline\)\. Its current stage "filed" exists on Chapter 13 too, so it keeps its position there\. No stage-log row is written and no step is checked — the case page's "Move to another pipeline…" does both; this edit does neither\.$/)]);
+    expect(calls.stageLookups).toEqual([[3, 'filed']]);
+    expect(d.expected).toMatchObject({ case_type: 'Bankruptcy', case_subtype: 'Chapter 7' });
+    expect(w(d, 'case_subtype').readers[0]).toMatch(/^Pipeline: with case_type it picks the chapter pipeline/);
+  });
+
+  test('a stage the new pipeline lacks is said to go unstaged; an intake case says the change moves its projection', async () => {
+    pipeSpy.mockImplementation(async () => ({ current: { stage_key: 'discharged' } }));
+    const d = await run(edit({ case_subtype: 'Chapter 13' }), { caseRow: retained });
+    expect(d.warnings[0]).toMatch(/Its current stage "discharged" is NOT a stage of Chapter 13: the case page's Pipeline widget and the board show it off the pipeline \(unstaged\) until someone moves it onto a stage of Chapter 13\./);
+    // Intake: resolveTemplate answers Intake either way, so the pipeline line is an effect, not a warning.
+    const lead = await run(edit({ case_subtype: 'Chapter 13' }), { caseRow: { pipeline_phase: 'intake' } });
+    expect(lead.warnings).toEqual([]);
+    expect(lead.effects).toContain('Pipeline: still resolves to Intake (intake) after the change.');
+  });
+
+  test('a type change without a subtype on the card clears the subtype too — the case page\'s own coupling — and says so; naming a subtype keeps it', async () => {
+    const d = await run(edit({ case_type: 'Civil Litigation' }), { caseRow: retained });
+    expect(d.writes.map((x) => [x.column, x.send, !!x.implied])).toEqual([['case_type', 'Civil Litigation', false], ['case_subtype', '', true]]);
+    expect(d.effects).toContain('Subtype cleared with the type: "Chapter 7" → blank — a refinement never carries across types (the case page does the same when the type changes). Name case_subtype on the card to set one instead.');
+    expect(d.warnings).toEqual([expect.stringMatching(/^PIPELINE CHANGES: the case resolves to Chapter 7 \(case\) → Intake \(intake\)/)]);
+    expect(w(d, 'case_type').readers[0]).toMatch(/^CLIENT PORTAL — the client sees this: the portal titles the case "Chapter <chapter> <type>"/);
+    expect(w(d, 'case_type').client_visible).toBe(true);
+    const both = await run(edit({ case_type: 'Adversary', case_subtype: 'Preference' }), { caseRow: retained });
+    expect(both.writes.map((x) => [x.column, x.send])).toEqual([['case_type', 'Adversary'], ['case_subtype', 'Preference']]);
+    expect(both.writes.some((x) => x.implied)).toBe(false);
+    // A type change onto a case with no subtype implies nothing.
+    const bare = await run(edit({ case_type: 'Adversary' }), { caseRow: { ...retained, case_subtype: null } });
+    expect(bare.writes.map((x) => x.column)).toEqual(['case_type']);
+  });
+
+  test('an unlisted type or subtype is a WARNING, never a refusal (the create forms allow a free-typed one); an unreadable list says so', async () => {
+    const d = await run(edit({ case_type: 'potato hunting' }), { caseRow: retained });
+    expect(d.warnings).toEqual(expect.arrayContaining([
+      'UNLISTED TYPE: "potato hunting" is not one of the firm\'s case types (Bankruptcy, Civil Litigation, Adversary) — the create forms allow a free-typed type, so the case page\'s Type select will show it as an extra option, Types & Subtypes does not know it, and no chapter pipeline can match it.',
+    ]));
+    const s = await run(edit({ case_subtype: 'Chapter 11' }), { caseRow: retained });
+    expect(s.warnings).toEqual(expect.arrayContaining([
+      'UNLISTED SUBTYPE: "Chapter 11" is not a subtype of Bankruptcy (Chapter 7, Chapter 13) — the Subtype select will show it as an extra option, and no chapter pipeline can match it.',
+      expect.stringMatching(/^PIPELINE CHANGES: the case resolves to Chapter 7 \(case\) → Intake \(intake\)/),
+    ]));
+    const cleared = await run(edit({ case_type: '' }), { caseRow: retained });
+    expect(cleared.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/^TYPE CLEARS: the case will have no type/)]));
+    const blind = await run(edit({ case_subtype: 'Chapter 13' }), { caseRow: retained, caseTypes: null });
+    expect(blind.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/^CASE TYPE LIST UNREADABLE/)]));
   });
 });
 

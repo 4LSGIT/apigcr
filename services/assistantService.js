@@ -400,9 +400,13 @@ const RECORD_TEXT_CONTACT_KEYS = new Set(['kind', 'contact_id', 'value', 'append
 // length 400, cf_ keys through fieldDefService.splitCustomFields). On top:
 //   * columns ANOTHER Casey card owns are refused BY NAME with a pointer to it
 //     (the raw PATCH skips the work those cards do), and so are the derived
-//     judge / trustee links, the type / subtype (a cross-pipeline move, still
-//     deferred), the raw `custom` bag and the 341 appointment's projection
-//     (CASE_FIELDS_REFUSED);
+//     judge / trustee links, the raw `custom` bag and the 341 appointment's
+//     projection (CASE_FIELDS_REFUSED). case_type / case_subtype are ALLOWED
+//     (Fred, 2026-11-09: "at least anything the user can do in the UI" — the
+//     case page PATCHes them raw): a type change clears the subtype as the
+//     page does, the firm's list (fe-case_types) is checked (unlisted = a
+//     warning, as the create forms' "Other" allows), and the pipeline the
+//     case resolves to before → after is disclosed (A7d);
 //   * the column map is the LIVE information_schema (the same read the
 //     route's own unknown-column check makes): every value is normalized to
 //     its column's type — DATE one ISO date ('' / null clears → NULL, the
@@ -435,7 +439,6 @@ const CASE_FIELDS_TEXT_CAPS = Object.freeze({ docs_missing: 2000 });
 const CASE_FIELDS_CARD_MAX_CHARS = 60000;
 const CASE_FIELDS_DOCKET = 'the docket has its own card — case.docket.adopt.v1 fills a BLANK case number / full case number. Replacing or clearing a docket the case already has is not available to Casey yet (it is the next slice); the user changes it in Case Details';
 const CASE_FIELDS_PIPELINE = 'the pipeline cards own it — case.pipeline.advance.v1 / case.pipeline.move.v1 move the stage and write stage, status, next step and phase together (the raw edit skips the stage log and the step checks)';
-const CASE_FIELDS_TYPE = 'a case\'s type and subtype choose its pipeline (pipelineService.resolveTemplate re-projects the case onto another one), and that cross-pipeline move is deferred — its passed-over steps cannot be reviewed yet. The user changes it with "Move to another pipeline…" on the case page';
 // Refused BY NAME (lower-cased: MySQL column names are case-insensitive).
 const CASE_FIELDS_REFUSED = Object.freeze({
   case_id: 'a case\'s id never changes (the route refuses it too)',
@@ -450,8 +453,6 @@ const CASE_FIELDS_REFUSED = Object.freeze({
   case_alerts: 'case alerts have their own card — case.alerts.update.v1 (append a line or rewrite)',
   case_judge_contact_id: 'the judge LINK is derived — the server re-resolves it from case_judge and the full case number, and writing it directly stops that. Change case_judge instead (the card shows the link it re-resolves)',
   case_trustee_contact_id: 'the trustee LINK is derived — the server re-resolves it from case_trustee, and writing it directly stops that. Change case_trustee instead (the card shows the link it re-resolves)',
-  case_type: CASE_FIELDS_TYPE,
-  case_subtype: CASE_FIELDS_TYPE,
   custom: 'custom fields are written one at a time by their cf_ keys, never as the whole custom bag',
   case_341_current: 'it mirrors the live 341 APPOINTMENT (apptService is its single writer, and the client portal shows it) — move the 341 by rescheduling that appointment (appt.reschedule.v1), never by writing the column',
   '341_appt_id': 'it is the id of the live 341 appointment, written only with it (apptService) — not plain data',
@@ -462,6 +463,14 @@ const CASE_FIELDS_REFUSED = Object.freeze({
 // court email (courtExecutor CASE_FIELD_POLICY, lib/courtResolve) and the
 // Case Details form's own coupling. The live scan adds every stored definition.
 const CASE_FIELDS_SURFACES = Object.freeze({
+  case_type: [
+    'CLIENT PORTAL — the client sees this: the portal titles the case "Chapter <chapter> <type>" (no chapter: the type alone).',
+    'Case page header and its Type / Subtype selects; the Cases list column and its type filter; the pipeline board files the case under the pipeline its type / subtype resolve to.',
+    'Campaign and comms case filters, and the appointment form\'s new-case type list, read it.',
+  ],
+  case_subtype: [
+    'Pipeline: with case_type it picks the chapter pipeline (an exact match on both; a blank subtype matches none); the case page\'s Subtype select.',
+  ],
   case_chapter: [
     'CLIENT PORTAL — the client sees this: the portal titles the case "Chapter <chapter> <type>" (blank chapter: the type alone).',
     'Court email overwrites it when a court notice states the chapter.',
@@ -2867,8 +2876,9 @@ async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = 
   const cfKeys = keys.filter((k) => /^cf_/i.test(k));
   const coreKeys = keys.filter((k) => !/^cf_/i.test(k));
   const proposed = []; // { column, kind, col?, send, canon, label }
+  let columns = null;
   if (coreKeys.length) {
-    const columns = await caseFieldsColumns(db);
+    columns = await caseFieldsColumns(db);
     const unknown = coreKeys.filter((k) => !columns.has(k.toLowerCase()));
     if (unknown.length) {
       throw caseFieldsError(`Not a column of cases: ${unknown.join(', ')} — use the column names exactly as the cases table has them (a custom field is its cf_ key)`);
@@ -2886,6 +2896,15 @@ async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = 
   if (!found || !found.case) throw caseFieldsError(`Case ${caseId} no longer exists`);
   const row = found.case;
   const id = String(row.case_id);
+  // A7d: the case page's own coupling — a type change CLEARS the subtype ("a
+  // refinement never carries across types", case.html caseTypeChanged sends
+  // both in one PATCH). A card that changes the type without naming the
+  // subtype sends case_subtype '' too, and says so.
+  const typeP = proposed.find((p) => p.column === 'case_type');
+  if (typeP && !proposed.some((p) => p.column === 'case_subtype') && caseFieldsCanon('string', row.case_type) !== typeP.canon
+      && !caseFieldsBlank(caseFieldsCanon('string', row.case_subtype))) {
+    proposed.push({ column: 'case_subtype', kind: 'string', col: columns.get('case_subtype'), send: '', canon: '', label: 'case_subtype', implied: true });
+  }
   const number = String(row.case_number_full || row.case_number || '').trim();
   const caseLabel = number || id;
 
@@ -2927,6 +2946,7 @@ async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = 
       from: caseFieldsShown(p.kind, before), to: caseFieldsShown(p.kind, p.canon),
     };
     if (p.kind === 'set' && p.col) w.options = p.col.members.slice();
+    if (p.implied) w.implied = true;
     writes.push(w);
   }
   if (!writes.length) {
@@ -2981,6 +3001,58 @@ async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = 
     (linkNow ? warnings : effects).push(linkNow
       ? `341 LINK STAYS: the Case Details form rewrites the 341 meeting link from the trustee roster when the trustee changes; this card does not — the client portal's 341 card keeps linking to "${linkNow.slice(0, 200)}". Add case_341_link to the card if the link should follow the new trustee.`
       : '341 link: the case has none, and this card does not set one (the Case Details form fills it from the trustee roster when the trustee changes there).');
+  }
+
+  // A7d: type / subtype — the firm's list, and the pipeline the case resolves
+  // to afterwards (pipelineService.resolveTemplate is a pure function of the
+  // row; the board, the Pipeline widget and the A9 cards all read it).
+  const typeW = writes.find((x) => x.column === 'case_type');
+  const subW = writes.find((x) => x.column === 'case_subtype');
+  if (typeW || subW) {
+    if (subW && subW.implied) effects.push(`Subtype cleared with the type: ${subW.from} → blank — a refinement never carries across types (the case page does the same when the type changes). Name case_subtype on the card to set one instead.`);
+    // The firm's list is the fe-case_types app setting (the Types & Subtypes
+    // editor's own key; read the way other services read a setting row).
+    const [vrows] = await db.query('SELECT `value` FROM app_settings WHERE `key` = ? LIMIT 1', ['fe-case_types']);
+    let raw = vrows && vrows.length ? vrows[0].value : null;
+    if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch (_) { raw = null; } }
+    const vocab = raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? Object.fromEntries(Object.entries(raw).map(([t, s]) => [String(t).trim(), Array.isArray(s) ? s.map((x) => String(x).trim()).filter(Boolean) : []]).filter(([t]) => t))
+      : null;
+    const typeAfter = String(effective.case_type == null ? '' : effective.case_type).trim();
+    const subAfter = String(effective.case_subtype == null ? '' : effective.case_subtype).trim();
+    if (!vocab) {
+      warnings.push('CASE TYPE LIST UNREADABLE: the firm\'s case types (fe-case_types) could not be read, so the type / subtype were not checked against it.');
+    } else {
+      const listed = Object.prototype.hasOwnProperty.call(vocab, typeAfter);
+      if (typeW && typeAfter && !listed) {
+        warnings.push(`UNLISTED TYPE: "${typeAfter}" is not one of the firm's case types (${Object.keys(vocab).join(', ')}) — the create forms allow a free-typed type, so the case page's Type select will show it as an extra option, Types & Subtypes does not know it, and no chapter pipeline can match it.`);
+      }
+      if (subAfter && listed && !vocab[typeAfter].includes(subAfter)) {
+        warnings.push(`UNLISTED SUBTYPE: "${subAfter}" is not a subtype of ${typeAfter} (${vocab[typeAfter].length ? vocab[typeAfter].join(', ') : 'it has none'}) — the Subtype select will show it as an extra option, and no chapter pipeline can match it.`);
+      }
+    }
+    if (typeW && typeW.clears) warnings.push('TYPE CLEARS: the case will have no type — the portal titles it "Your Case", the Cases list shows a blank type, and the pipeline board files it under the intake pipeline or nowhere.');
+    const pipelineSvc = require('./pipelineService'); // lazy (convention)
+    const tplBefore = await pipelineSvc.resolveTemplate(db, row);
+    const tplAfter = await pipelineSvc.resolveTemplate(db, effective);
+    const name = (t) => (t ? `${t.name} (${t.role})` : 'no pipeline');
+    const retained = String(row.pipeline_phase == null ? '' : row.pipeline_phase).trim().toLowerCase() === 'case';
+    if ((tplBefore ? Number(tplBefore.id) : null) !== (tplAfter ? Number(tplAfter.id) : null)) {
+      let stageLine = '';
+      try {
+        const pipe = await pipelineSvc.getPipeline(db, id);
+        const cur = pipe && pipe.current ? String(pipe.current.stage_key) : null;
+        if (cur && tplAfter) {
+          const [st] = await db.query('SELECT stage_key FROM pipeline_stages WHERE template_id = ? AND active = 1 AND stage_key = ? LIMIT 1', [Number(tplAfter.id), cur]);
+          stageLine = st.length
+            ? ` Its current stage "${cur}" exists on ${tplAfter.name} too, so it keeps its position there.`
+            : ` Its current stage "${cur}" is NOT a stage of ${tplAfter.name}: the case page's Pipeline widget and the board show it off the pipeline (unstaged) until someone moves it onto a stage of ${tplAfter.name}.`;
+        }
+      } catch (_) { stageLine = ' Its stage position could not be read.'; }
+      warnings.push(`PIPELINE CHANGES: the case resolves to ${name(tplBefore)} → ${name(tplAfter)} (type / subtype pick the pipeline${retained ? '' : '; the case is still in intake, so this changes the pipeline it is projected onto'}).${stageLine} No stage-log row is written and no step is checked — the case page's "Move to another pipeline…" does both; this edit does neither.`);
+    } else {
+      effects.push(`Pipeline: still resolves to ${name(tplAfter)} after the change.`);
+    }
   }
 
   // Who reads each column: the code-measured surfaces, then every stored

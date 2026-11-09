@@ -4240,7 +4240,7 @@ describe('A7 groups B/C case fields card (case.fields.update)', () => {
       [card({ writes: [] }), 'changes nothing'],
       [card({ writes: Array.from({ length: 11 }, (_, i) => write({ column: `bk_x${i}` })) }), 'more than the 10 fields'],
       [card({ writes: [write({ column: 'case_stage', send: 'Closed' })] }), 'a field Casey never writes'],
-      [card({ writes: [write({ column: 'CASE_TYPE', send: 'Civil' })] }), 'a field Casey never writes'],
+      [card({ writes: [write({ column: 'CASE_JUDGE_CONTACT_ID', send: '5' })] }), 'a field Casey never writes'],
       [card({ writes: [write({ column: 'case_341_current', send: '2026-12-01T09:00' })] }), 'a field Casey never writes'],
       [card({ writes: [write({ column: 'custom', kind: 'custom', send: '{}' })] }), 'a field Casey never writes'],
       [card({ writes: [write({ column: 'case_file_date`; DROP', send: 'x' })] }), 'a field Casey never writes'],
@@ -4331,7 +4331,7 @@ describe('A7 groups B/C case fields card (case.fields.update)', () => {
     const block = /const CASE_FIELDS_REFUSED = Object\.freeze\(\{([\s\S]*?)\n\}\);/.exec(svcSrc)[1];
     const server = [...block.matchAll(/^\s{2}'?([0-9a-z_]+)'?:/gm)].map((m) => m[1]).sort();
     const browser = [...new Function(`${constSrc(html, 'CASE_FIELDS_REFUSED_NAMES')} return CASE_FIELDS_REFUSED_NAMES;`)()].sort(); // eslint-disable-line no-new-func
-    expect(server.length).toBe(17);
+    expect(server.length).toBe(15); // A7d un-refused case_type / case_subtype
     expect(browser).toEqual(server);
   });
 });

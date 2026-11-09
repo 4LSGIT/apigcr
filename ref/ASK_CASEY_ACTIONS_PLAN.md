@@ -661,8 +661,8 @@ ruling below) — except the columns another card owns or derives, each refused
 by name with a pointer: the docket (a BLANK one is filled through A7c's adopt;
 replacing or clearing one is not available yet), pipeline state (A9), the
 Dropbox folder (A11.1), the notes and alerts (group A), the judge / trustee
-links (derived), the type / subtype (a cross-pipeline move, deferred) and the
-341 appointment's projection. Contact identity and access, and case merge,
+links (derived) and the 341 appointment's projection (the type / subtype are
+editable since A7d, 2026-11-09). Contact identity and access, and case merge,
 remain excluded.
 
 **Fred's rulings (2026-10-28, recorded by the manager).**
@@ -816,9 +816,22 @@ next slice); `case_stage`, `case_status`, `case_rec`, `pipeline_phase` (A9);
 `case_dropbox` (A11.1); `case_notes`, `case_alerts` (group A — append
 semantics live there); `case_judge_contact_id`, `case_trustee_contact_id`
 (derived — the card for case_judge / case_trustee discloses the re-resolution
-instead); `case_type`, `case_subtype` (`pipelineService.resolveTemplate`
-re-projects the case onto another pipeline — the deferred cross-pipeline move);
-`custom` (cf_ keys only). The worker added `case_341_current` and
+instead); `custom` (cf_ keys only). **`case_type` / `case_subtype` are
+ALLOWED (A7d, 2026-11-09 — Fred: "casey can do at least anything the user can
+do in the UI"; the case page PATCHes them raw):** a type change without a
+subtype on the card sends `case_subtype: ''` too, as the case page's
+`caseTypeChanged` does ("a refinement never carries across types"), and the
+card says so; both values are checked against the firm's list
+(`fe-case_types`, via `firmConfig.cfgJson`) — an unlisted type or subtype is a
+WARNING, not a refusal, because every create form offers a free-typed "Other";
+and the card discloses the pipeline the case resolves to before → after
+(`pipelineService.resolveTemplate` on the stored row and on the post-state):
+when it changes, a danger warning names both pipelines, says whether the
+case's current stage exists on the new one (else the widget and board show it
+unstaged), and that no stage-log row is written and no step checked — the
+case page's "Move to another pipeline…" does both, this edit neither. The
+portal title ("Chapter <chapter> <type>"), header, Cases list, board and
+filters are the code-measured readers. The worker added `case_341_current` and
 `341_appt_id` (flagged for a ruling): apptService is their single writer —
 they mirror the live 341 appointment, and the client portal shows the date —
 so the 341 moves by rescheduling its appointment.
@@ -876,8 +889,8 @@ so the 341 moves by rescheduling its appointment.
   `tests/assistantPromptKinds.test.js`.
 
 **Still excluded** (`ref/plans.md`): replacing or clearing a docket (A7c's
-deferred card); the type / subtype (the cross-pipeline move); ruling 2's route
-precondition; the owned columns above stay with their cards.
+deferred card, in flight as A7e); ruling 2's route precondition; the owned
+columns above stay with their cards.
 
 #### A8: Case-contact membership — shipped 2026-10-28
 

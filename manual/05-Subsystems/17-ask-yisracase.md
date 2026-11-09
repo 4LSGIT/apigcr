@@ -432,10 +432,17 @@ It saves through the same route the Case Details forms use.
   not available to Casey yet); the stage, status and next step (the pipeline
   cards); the Dropbox folder (the case folder card); notes and alerts (their
   own cards above); the judge and trustee contact links (set from the judge
-  and trustee names — change the name); the case type and subtype (they choose
-  the case's pipeline — use "Move to another pipeline…" on the case page); the
-  341 meeting date (it follows the 341 appointment — reschedule the
-  appointment); and the case's id. Casey says so and names the right card.
+  and trustee names — change the name); the 341 meeting date (it follows the
+  341 appointment — reschedule the appointment); and the case's id. Casey says
+  so and names the right card.
+- **Case type and subtype are editable, as on the case page.** Changing the
+  type clears the subtype (as the case page does) unless the card sets one;
+  a type or subtype not on the firm's list is allowed with a warning (the
+  create forms allow a free-typed one too); and the card says which pipeline
+  the case will resolve to afterwards — when that changes it warns that the
+  case's current stage may not exist there (the Pipeline widget and board
+  then show it off the pipeline) and that, unlike "Move to another
+  pipeline…", nothing is logged and no step is checked.
 - **Values are checked against the field.** A date is a calendar date; the
   show cause date and time is in firm time; a choice field takes one of its
   own options; a checkbox field takes any of its own options; text must fit

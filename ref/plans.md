@@ -1193,12 +1193,16 @@ COMMENTs.)
 ## From the Ask Casey arc — A7 groups B/C case fields (2026-11-09) — deferred
 
 - **What the case fields card still refuses by name.** Replacing or clearing a
-  docket (the A7c bullets below — the next slice); `case_type` /
-  `case_subtype` (they choose the pipeline: `pipelineService.resolveTemplate`
-  re-projects the case, so a change is the cross-pipeline move, whose
-  passed-over steps a card cannot yet review); `case_341_current` /
+  docket (the A7c bullets below — in flight as A7e); `case_341_current` /
   `341_appt_id` (apptService's single-writer mirror of the live 341
-  appointment — worker's addition, awaiting Fred's ruling).
+  appointment; no UI writes them either — the 341 is moved by rescheduling the
+  appointment, which Casey's appointment cards do; manager ruling 2026-11-09,
+  pending Fred's word). `case_type` / `case_subtype` are editable since A7d
+  (2026-11-09) — a raw type/subtype edit re-resolves the pipeline WITHOUT a
+  stage-log row or a step check, exactly as the case page's own selects do;
+  the card discloses the before → after pipeline. The reviewed
+  cross-pipeline MOVE (`/pipeline/move`, with passed-over steps) stays a
+  separate deferred card (A9 section).
 - **A7 ruling 2 — a conditional write on `PATCH /api/cases/:id`.** The card
   now writes portal-visible columns (`case_chapter`, `case_341_link`,
   `case_open_date`) with only the read-then-write freshness check (baked

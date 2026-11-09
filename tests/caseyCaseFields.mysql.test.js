@@ -62,6 +62,7 @@ const domainEvents = require('../lib/domainEvents');
 const fieldDefs = require('../services/fieldDefService');
 const triggerService = require('../services/triggerService');
 const { normalizeActionDraft } = require('../services/assistantService');
+const pipelineService = require('../services/pipelineService');
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const d = URL_ ? describe : describe.skip;
@@ -71,7 +72,9 @@ const TABLES = ['cases', 'contacts', 'case_relate', 'contact_roles', 'field_defs
   'report_definitions', 'form_templates', 'portal_cards', 'pipeline_stages', 'pipeline_stage_requirements', 'sequence_steps',
   'workflow_steps', 'email_ingest_rule_actions', 'phone_ingest_rule_actions',
   // The readers scan joins the step tables' parents on the live versions.
-  'workflows', 'sequence_templates'];
+  'workflows', 'sequence_templates',
+  // A7d: the pipeline a type / subtype resolves to, the case's stage history, the firm's case-type list.
+  'pipeline_templates', 'case_stage_log', 'app_settings'];
 
 function schemaFor(tables) {
   const lines = fs.readFileSync(path.join(__dirname, '..', 'ref', 'database.sql'), 'utf8').split('\n');
@@ -192,7 +195,11 @@ d('the Casey case fields card on real MySQL (A7 groups B/C)', () => {
     await q(`INSERT INTO report_definitions (id, report_key, title, sql_text, is_active) VALUES
       (10, 'filed', 'Filed cases', 'SELECT case_id, case_file_date FROM cases', 1),
       (11, 'old', 'Retired', 'SELECT case_file_date FROM cases', 0)`);
-    await q(`INSERT INTO pipeline_stages (id, template_id, stage_number, stage_key, internal_label, case_stage) VALUES (5, 1, 3, 'filed', 'Filed', 'Filed')`);
+    await q(`INSERT INTO pipeline_templates (id, name, role, case_type, case_subtype, is_default, active) VALUES
+      (1, 'Chapter 7', 'case', 'Bankruptcy', 'Chapter 7', 0, 1), (2, 'Chapter 13', 'case', 'Bankruptcy', 'Chapter 13', 0, 1), (3, 'Intake', 'intake', NULL, NULL, 0, 1)`);
+    await q(`INSERT INTO pipeline_stages (id, template_id, stage_number, stage_key, internal_label, case_stage) VALUES (5, 1, 3, 'filed', 'Filed', 'Filed'),
+      (6, 2, 3, 'filed', 'Filed', 'Filed'), (7, 1, 5, 'discharged', 'Discharged', 'Concluded')`);
+    await q(`INSERT INTO app_settings (\`key\`, \`value\`) VALUES ('fe-case_types', ?)`, [JSON.stringify({ Bankruptcy: ['Chapter 7', 'Chapter 13'], 'Civil Litigation': [] })]);
     await q(`INSERT INTO pipeline_stage_requirements (id, stage_id, requirement_key, internal_label, detector, detector_config, active) VALUES
       (7, 5, 'petition_filed', 'Petition filed', 'case_field', '{"field":"case_file_date"}', 1)`);
     // Workflow 4: published v3 with a draft v4; a v1 step still names case_chapter
@@ -329,6 +336,33 @@ d('the Casey case fields card on real MySQL (A7 groups B/C)', () => {
     const r2 = await patch(C2, sendOf(other));
     expect(r2.body.data.updated_fields).toEqual(['case_caption']);
     expect((await q('SELECT case_judge_contact_id AS id FROM cases WHERE case_id = ?', [C2]))[0].id).toBe(7101);
+  });
+
+  test('A7d — a subtype change re-resolves the pipeline on the real resolver (Chapter 7 → Chapter 13), the stage check reads the real stages, the PATCH stores it and resolveTemplate agrees; a type change clears the subtype through the route', async () => {
+    await q("UPDATE cases SET pipeline_phase = 'case' WHERE case_id = ?", [C1]);
+    await q("INSERT INTO case_stage_log (case_id, template_id, stage_id, stage_key, case_stage, status_label, entered_at, source) VALUES (?, 1, 5, 'filed', 'Filed', 'Filed', NOW(), 'manual')", [C1]);
+    try {
+      const c = await card(C1, { case_subtype: 'Chapter 13' });
+      expect(c.warnings).toEqual([expect.stringMatching(/^PIPELINE CHANGES: the case resolves to Chapter 7 \(case\) → Chapter 13 \(case\).*Its current stage "filed" exists on Chapter 13 too/)]);
+      const r = await patch(C1, sendOf(c));
+      expect(r.status).toBe(200);
+      const [[after]] = await pool.query('SELECT * FROM cases WHERE case_id = ?', [C1]);
+      expect((await pipelineService.resolveTemplate(pool, after)).id).toBe(2);
+      // Discharged exists on Chapter 7 only: moving back is said to leave the case unstaged there.
+      await q("UPDATE case_stage_log SET stage_id = 7, stage_key = 'discharged', status_label = 'Discharged' WHERE case_id = ?", [C1]);
+      const back = await card(C1, { case_subtype: 'Chapter 7' });
+      expect(back.warnings[0]).toMatch(/Chapter 13 \(case\) → Chapter 7 \(case\).*Its current stage "discharged" exists on Chapter 7 too/);
+      const tc = await card(C1, { case_type: 'Civil Litigation' });
+      expect(tc.writes.map((x) => [x.column, x.send, !!x.implied])).toEqual([['case_type', 'Civil Litigation', false], ['case_subtype', '', true]]);
+      expect(tc.warnings).toEqual([expect.stringMatching(/^PIPELINE CHANGES: the case resolves to Chapter 13 \(case\) → Intake \(intake\)/)]);
+      const r2 = await patch(C1, sendOf(tc));
+      expect(r2.status).toBe(200);
+      const [[typed]] = await pool.query('SELECT case_type, case_subtype FROM cases WHERE case_id = ?', [C1]);
+      expect(typed).toEqual({ case_type: 'Civil Litigation', case_subtype: '' });
+    } finally {
+      await q("UPDATE cases SET case_type = 'Bankruptcy', case_subtype = 'Chapter 7', pipeline_phase = 'intake' WHERE case_id = ?", [C1]);
+      await q('DELETE FROM case_stage_log WHERE case_id = ?', [C1]);
+    }
   });
 
   test('THE READERS SCAN — every definition table is read; each hit lands on the column it names; an inactive report and a near miss do not', async () => {
