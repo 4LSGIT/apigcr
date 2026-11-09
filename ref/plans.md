@@ -1077,11 +1077,12 @@ COMMENTs.)
   Moving the write-back into a shared helper they all call is the fix; whether
   any live workflow / hook passes one was not measured (A18.4d had no read-only
   key).
-- **Opt-out is not on the enroll card.** A sequence send step refuses an
-  opted-out recipient at fire time (`optoutService.assertNotOptedOut`, in the
-  `send_sms` / `send_email` internal functions), so on an opted-out contact
-  that step fails without sending — and the card does not warn.
-  The card could read the contact's active phone/email rows and say so.
+- **Consent re-check at click covers the contact's own rows only.** A18.4e
+  discloses every send step's recipient consent on the enroll card and re-reads
+  it at click through the contact's phone / email list routes; a destination
+  that is not one of this contact's active rows (a fixed office number, a
+  related contact's address) is checked at proposal only — the send itself
+  re-checks at fire time either way (the engine skips the step).
 
 ## From the Ask Casey arc — A11.1 case folder relink (2026-11-03) — deferred
 

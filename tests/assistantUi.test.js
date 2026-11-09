@@ -1688,6 +1688,65 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     expect(r.P.Swal.fire.mock.calls[0][0].text).toContain('Placement: the first step to run is step 3 — steps 1, 2 SKIPPED (window already passed).');
   });
 
+  test('A18.4e: an opted-out recipient is on its step line and the Sends line; the click re-reads this contact\'s rows and refuses on a consent change (version OR opted_out), passes when unchanged, skips a destination that is not the contact\'s own', async () => {
+    const reviewed = { step_number: 1, channel: 'sms', destination: '3135551234', opted_out: true, version: '41' };
+    const stepped = (over = {}) => enrollMessage({
+      steps: [{ ...enrollMessage().action_draft.steps[0], consent: reviewed }, enrollMessage().action_draft.steps[1]],
+      optout_steps: [1], expected: { current_version: 3, consent: [reviewed] }, ...over });
+    const withPhones = (phones, over = {}) => (path) => (path === '/api/contacts/77/phones'
+      ? { success: true, phones }
+      : path === '/api/contacts/77/emails' ? { success: true, emails: [] } : enrollReads(over)(path));
+    const row = (consent, extra = {}) => ({ id: 300, phone: '3135551234', end_date: null, consent, ...extra });
+    // The text.
+    const shown = await runEnroll(stepped(), { confirm: false, read: withPhones([row({ opted_out: true, version: '41' })]) });
+    const text = shown.P.Swal.fire.mock.calls[0][0].text;
+    expect(text).toContain('OPTED OUT — 3135551234 has opted out of texts: the engine SKIPS this step (logged "skipped — recipient opted out") and goes on to the next');
+    expect(text).toContain('Sends: 1 step text or email the client — step 1 would be SKIPPED (recipient opted out — the sequence goes on past it); each of the rest goes out as its step comes due, and none can be recalled.');
+    expect(text).toContain('or the consent of a recipient above changes (re-read through this contact\'s own numbers and addresses), before you apply');
+    // A card with nothing to re-check reads no rows (the precheck runs on confirm) and keeps the shipped Sends / Stale lines.
+    const plain = await runEnroll(enrollMessage());
+    const ptext = plain.P.Swal.fire.mock.calls[0][0].text;
+    expect(ptext).toContain('Sends: 1 step text or email the client — each goes out as its step comes due, and none can be recalled.');
+    expect(ptext).toContain('Stale check: if the template is deactivated or its published version changes, or the contact becomes enrolled, before you apply, nothing is enrolled.');
+    expect(plain.gets.some((p) => p.startsWith('/api/contacts/'))).toBe(false);
+    expect(plain.writes).toHaveLength(1);
+    // Unchanged → the enroll proceeds, after re-reading only the channel it needs.
+    const ok = await runEnroll(stepped(), { read: withPhones([row({ opted_out: true, version: '41' })]) });
+    expect(ok.writes).toHaveLength(1);
+    expect(ok.gets).toContain('/api/contacts/77/phones');
+    expect(ok.gets).not.toContain('/api/contacts/77/emails');
+    // Changed → refused before the claim.
+    const refusals = [
+      [[row({ opted_out: true, version: '42' })], 'version moved'],
+      [[row({ opted_out: false, version: '41' })], 'opted back in'],
+      [[row(undefined)], 'no consent on the row'],
+    ];
+    for (const [phones, why] of refusals) {
+      const m = stepped();
+      const r = await runEnroll(m, { read: withPhones(phones) });
+      expect({ why, writes: r.writes, ledger: r.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(m.action_draft.refusal_error).toMatch(why === 'no consent on the row'
+        ? /Could not re-check the consent of 3135551234 \(step 1\)/ : /The consent of 3135551234 \(step 1\) changed since this card was prepared/);
+    }
+    // An ended row, or a number that is not this contact's: not re-checkable here — proceeds.
+    const other = await runEnroll(stepped(), { read: withPhones([row({ opted_out: false, version: '9' }, { end_date: '2026-01-01' }), { id: 301, phone: '2485550000', end_date: null, consent: { opted_out: false, version: '3' } }]) });
+    expect(other.writes).toHaveLength(1);
+    // A promotional (marketing-scoped) entry compares the version only — row.consent is operational.
+    const promoReviewed = { step_number: 1, channel: 'email', destination: 'dana@example.com', opted_out: true, version: '7' };
+    // (a fresh message per run — an applied one shows no dialog again)
+    const promoMsg = () => enrollMessage({ steps: [{ ...enrollMessage().action_draft.steps[0], action_type: 'email', function_name: 'send_email', to: 'dana@example.com',
+      consent: { ...promoReviewed, klass: 'marketing', topic: 'newsletter' } }], optout_steps: [1], expected: { current_version: 3, consent: [promoReviewed] } });
+    const emails = (rows) => (path) => (path === '/api/contacts/77/emails' ? { success: true, emails: rows } : enrollReads()(path));
+    const pOk = await runEnroll(promoMsg(), { read: emails([{ id: 400, email: 'dana@example.com', end_date: null, consent: { opted_out: false, version: '7' } }]) });
+    expect(pOk.writes).toHaveLength(1);
+    const pText = (await runEnroll(promoMsg(), { confirm: false, read: emails([{ id: 400, email: 'dana@example.com', end_date: null, consent: { opted_out: false, version: '7' } }]) })).P.Swal.fire.mock.calls[0][0].text;
+    expect(pText).toContain('OPTED OUT — dana@example.com has opted out of marketing email on topic "newsletter"');
+    const promo2 = promoMsg();
+    const pBad = await runEnroll(promo2, { read: emails([{ id: 400, email: 'dana@example.com', end_date: null, consent: { opted_out: false, version: '8' } }]) });
+    expect(pBad.writes).toEqual([]);
+    expect(promo2.action_draft.refusal_error).toMatch(/consent of dana@example.com \(step 1\) changed/);
+  });
+
   test('sequence enroll card: a deactivated template, a new published version, or an existing enrollment refuses BEFORE the claim', async () => {
     const cases = [
       [enrollReads({ template: { active: 0 } }), 'The sequence template was deactivated since this card was prepared. Nothing was enrolled.'],

@@ -30,6 +30,14 @@ body. Governing migrations in `ref/migrations/`.*
   values) and `default_contact_id_from`, the two facts A17.7b's start card
   builds its allowed `init_data` set and contact binding from. The read's
   prompt stages name them; the card's own check is unchanged.
+- **Casey's enroll card shows which send steps an opt-out will skip (A18.4e, 11-09):**
+  `sequenceEnrollConsent` (services/assistantService.js) reads each resolved
+  send recipient's consent exactly as the step's send will (optoutService —
+  operational SMS; operational email is never blocked, D18; a promotional
+  step reads marketing + its topic). The engine SKIPS such a step and
+  advances (lib/sequenceEngine `recipient_opted_out`), so the card discloses,
+  never refuses; `expected.consent` carries the consent versions the click
+  re-reads through the contact's phone / email list routes.
 - **Casey model calls cache their registered prompt (cspeed, 10-28):** the
   five assistant stages (`assistant_plan`, plan repair, `assistant_investigate`,
   `assistant_answer`, `assistant_task_draft_repair`) call

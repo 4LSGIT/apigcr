@@ -62,13 +62,16 @@ jest.mock('../services/automationReadService', () => ({
 
 const seq = require('../lib/sequenceEngine');
 const { normalizeActionDraft } = require('../services/assistantService');
+const optout = require('../services/optoutService');
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const d = URL_ ? describe : describe.skip;
 // Production SESSION sql_mode (verified live 2026-09-25; CLAUDE.md "SQL mode is relaxed").
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
 const TABLES = ['contacts', 'sequence_templates', 'sequence_template_versions', 'sequence_steps', 'sequence_enrollments', 'scheduled_jobs',
-  'users', 'appts', 'cases', 'case_relate'];
+  'users', 'appts', 'cases', 'case_relate',
+  // A18.4e: optoutService's reads for the sends' recipients.
+  'contact_phones', 'contact_emails', 'comm_consent_state', 'comm_topics'];
 const SIBLING_CHILDREN = ['sequence_step_log'];
 
 // Line-based extraction (column COMMENTs may hold ';'). Constraint clauses
@@ -178,6 +181,40 @@ d('the Casey sequence-enroll card on real MySQL (A18.4b)', () => {
     // JSON timing comes back from mysql2 as an object and renders in words.
     expect(out.steps[1].timing_text).toBe('2 days after the previous step (or after enrollment for step 1)');
     expect(JSON.stringify(out)).not.toContain('DRAFT TEXT');
+  });
+
+  test('A18.4e: the card\'s opt-out disclosure IS the send\'s consent read — an SMS STOP on the contact\'s own number flags step 1 and assertNotOptedOut refuses that destination; an email opt-out flags no operational email step (D18)', async () => {
+    await q("INSERT INTO contact_phones (contact_id, phone, label, is_primary, sms_optout) VALUES (1983, '3135551234', 'Mobile', 1, 0)");
+    await q("INSERT INTO contact_emails (contact_id, email, label, is_primary, email_optout) VALUES (1983, 'dana@example.com', 'Personal', 1, 1)");
+    await q(`INSERT INTO comm_consent_state (channel, destination, scope, state, occurred_at, last_event_id, updated_at) VALUES
+      ('sms', '3135551234', 'all', 'opted_out', NOW(3), 41, NOW(3)), ('email', 'dana@example.com', 'marketing', 'opted_out', NOW(3), 7, NOW(3))`);
+    await q("UPDATE contacts SET contact_email = 'dana@example.com' WHERE contact_id = 1983");
+    await q(`INSERT INTO sequence_steps (template_id, version, step_number, action_type, action_config, timing) VALUES (21, 1, 3, 'email', ?, ?)`,
+      [JSON.stringify({ function_name: 'send_email', params: { from: 'office@4lsg.com', to: '{{contacts.contact_email}}', subject: 'Welcome', text: 'Hi' } }), JSON.stringify({ type: 'delay', value: 1, unit: 'hours' })]);
+    try {
+      const out = await normalizeActionDraft(pool, draft(), EVIDENCE);
+      expect(out.steps[0].consent).toEqual({ step_number: 1, channel: 'sms', destination: '3135551234', opted_out: true, version: '41' });
+      expect(out.steps[2].consent).toEqual({ step_number: 3, channel: 'email', destination: 'dana@example.com', opted_out: false, version: '7' });
+      expect(out.optout_steps).toEqual([1]);
+      expect(out.status).toBe('draft');
+      // The very read send_sms makes at fire time (communication.js → assertNotOptedOut) refuses this destination …
+      let refused = null;
+      try { await optout.assertNotOptedOut(pool, 'sms', '3135551234'); } catch (e) { refused = e; }
+      expect(refused && optout.isOptOutRefusal(refused)).toBe(true);
+      // … and the engine turns exactly that refusal into a SKIP (lib/sequenceEngine), while the operational email send is never refused (D18).
+      await expect(optout.assertNotOptedOut(pool, 'email', 'dana@example.com')).resolves.toBeUndefined();
+      // The STOP lifted: the card follows the ledger (and the version moves — the click's stale signal).
+      await q("UPDATE comm_consent_state SET state = 'opted_in', last_event_id = 42 WHERE channel = 'sms' AND destination = '3135551234'");
+      const lifted = await normalizeActionDraft(pool, draft(), EVIDENCE);
+      expect(lifted.steps[0].consent).toEqual({ step_number: 1, channel: 'sms', destination: '3135551234', opted_out: false, version: '42' });
+      expect(lifted.optout_steps).toEqual([]);
+    } finally {
+      await q('DELETE FROM sequence_steps WHERE template_id = 21 AND version = 1 AND step_number = 3');
+      await q('DELETE FROM comm_consent_state');
+      await q('DELETE FROM contact_emails');
+      await q('DELETE FROM contact_phones');
+      await q('UPDATE contacts SET contact_email = NULL WHERE contact_id = 1983');
+    }
   });
 
   test('the already-enrolled predicate is the engine\'s: only an ACTIVE CONTACT-SCOPED row of this contact refuses', async () => {
@@ -291,8 +328,9 @@ d('the Casey sequence-enroll card with a reviewed trigger_data, on real MySQL (A
   });
 
   test('the no-payload card is the shipped envelope', async () => {
+    // A18.4e widened the envelope by optout_steps (and expected.consent) — deliberate, pinned.
     const SHIPPED = ['draft_id', 'kind', 'status', 'template', 'contact', 'verdict', 'first_step', 'skipped_leading', 'stall_step',
-      'placeholder_at_steps', 'send_steps', 'steps', 'steps_truncated', 'effects', 'starters', 'active_enrollments', 'expected', 'evidence'];
+      'placeholder_at_steps', 'send_steps', 'optout_steps', 'steps', 'steps_truncated', 'effects', 'starters', 'active_enrollments', 'expected', 'evidence'];
     for (const td of [undefined, {}]) {
       const card = await normalizeActionDraft(pool, draft(33, td), EVIDENCE);
       expect(Object.keys(card)).toEqual(SHIPPED);

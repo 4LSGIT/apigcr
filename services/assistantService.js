@@ -6914,7 +6914,7 @@ function seqEnrollText(value, max) {
 // One previewEnrollmentSteps entry → one card line set. Webhook URLs are
 // reduced to method + host (publishWebhookEffect); everything else is the
 // RESOLVED value the contact would receive, truncated for the card.
-function sequenceEnrollPreviewStep(entry, stored) {
+function sequenceEnrollPreviewStep(entry, stored, consent = null) {
   const summary = entry.action_summary && typeof entry.action_summary === 'object' ? entry.action_summary : {};
   const fn = typeof summary.function_name === 'string' ? summary.function_name : null;
   const out = {
@@ -6932,6 +6932,7 @@ function sequenceEnrollPreviewStep(entry, stored) {
   if (entry.resolution_error) out.resolution_error = seqEnrollText(entry.resolution_error, 300);
   const unresolved = Array.isArray(entry.unresolved) ? entry.unresolved.slice(0, 10).map((u) => seqEnrollText(u, 100)) : [];
   if (unresolved.length) out.unresolved = unresolved;
+  if (consent) out.consent = consent; // A18.4e: the recipient's consent as the send will read it
   if (fn === 'send_sms') {
     Object.assign(out, { to: seqEnrollText(summary.to, 200), from: seqEnrollText(summary.from, 200), message: seqEnrollText(summary.message, 300) });
   } else if (fn === 'send_email') {
@@ -7013,6 +7014,53 @@ function sequenceEnrollPreviewStep(entry, stored) {
 // request's own — and refuse appt_id beside it (no birth path makes both
 // scopes at once). POST /sequences/enroll writes the pointer back (or cancels
 // the enrollment): see routes/sequences.js esignPointerBase / writeEsignPointer.
+// A18.4e: each send step's recipient consent, read the way the step's own
+// send reads it at fire time (lib/internal_functions/communication.js →
+// optoutService): send_sms / send_mms → operational SMS (an SMS STOP blocks);
+// send_email → operational email, which NO opt-out blocks (D18) — unless the
+// step is promotional (C7: params.promotional, truthy the way communication.js
+// reads it), then marketing klass + the step's topic. An opted-out recipient
+// is not a refusal: the engine SKIPS that step and advances (lib/sequenceEngine
+// "Recipient opted out → SKIP and advance", logged recipient_opted_out), so the
+// card discloses it. The destination is the preview's RESOLVED `to`; one still
+// holding a {{placeholder}} or blank cannot be checked (the step line already
+// says UNRESOLVED / BLANK). `version` is optoutService's consent version — it
+// moves on ANY consent change for the destination — so the click re-reads it.
+// A check that throws (a promotional step whose topic the service refuses)
+// is disclosed as `error`: the send would meet the same at fire time.
+// Returns Map step_number → entry.
+async function sequenceEnrollConsent(db, previewSteps, byNumber) {
+  const optout = require('./optoutService'); // lazy require (convention)
+  const { parseMaybeJson } = require('../lib/versionDiff'); // lazy require (convention)
+  const out = new Map();
+  for (const entry of previewSteps) {
+    const summary = entry.action_summary && typeof entry.action_summary === 'object' ? entry.action_summary : {};
+    const fn = typeof summary.function_name === 'string' ? summary.function_name : null;
+    if (!fn || !/^send_(sms|mms|email)$/.test(fn)) continue;
+    const dest = summary.to == null ? '' : String(summary.to).trim();
+    if (!dest || dest.includes('{{')) continue;
+    const n = Number(entry.step_number);
+    const channel = fn === 'send_email' ? 'email' : 'sms';
+    const stored = byNumber.get(n);
+    const cfg = parseMaybeJson(stored && stored.action_config);
+    const params = cfg && typeof cfg === 'object' && cfg.params && typeof cfg.params === 'object' ? cfg.params : {};
+    const p = params.promotional;
+    const promotional = channel === 'email' && (p === true || p === 1 || /^(true|1|yes)$/i.test(String(p ?? '')));
+    const opts = promotional ? { klass: 'marketing', topic: params.topic == null || params.topic === '' ? null : String(params.topic) } : {};
+    const base = { step_number: n, channel, destination: seqEnrollText(dest, 200), ...(promotional ? { klass: 'marketing', topic: opts.topic } : {}) };
+    try {
+      if (promotional && !opts.topic) throw new Error('send_email: promotional requires topic (the consent question is asked per topic)');
+      const hits = await optout.findOptedOut(db, channel, dest, opts);
+      const versions = await optout.consentVersions(db, channel, [dest]);
+      const v = versions.get(optout.normalizeDestination(channel, dest));
+      out.set(n, { ...base, opted_out: hits.length > 0, version: v && v.version != null ? String(v.version) : '0' });
+    } catch (err) {
+      out.set(n, { ...base, error: seqEnrollText(err && err.message ? err.message : String(err), 200) });
+    }
+  }
+  return out;
+}
+
 async function normalizeSequenceEnrollAction(db, value, evidence) {
   if (require('../lib/firmConfig').cfg('casey_sequence_enroll_enabled') === '0') {
     throw httpError(422, 'Action kind is unavailable');
@@ -7131,8 +7179,13 @@ async function normalizeSequenceEnrollAction(db, value, evidence) {
     "SELECT COUNT(*) AS n FROM sequence_enrollments WHERE template_id = ? AND status = 'active'", [templateId]);
   const starters = workflowStarters(await require('./automationReadService').references(db, { sequence_template_id: templateId }));
   const byNumber = new Map(steps.map((s) => [Number(s.step_number), s]));
+  // A18.4e: the sends' recipients' consent (disclosed, never a refusal).
+  const consent = await sequenceEnrollConsent(db, preview.steps, byNumber);
   const shown = preview.steps.slice(0, SEQUENCE_ENROLL_MAX_PREVIEW_STEPS)
-    .map((entry) => sequenceEnrollPreviewStep(entry, byNumber.get(Number(entry.step_number))));
+    .map((entry) => sequenceEnrollPreviewStep(entry, byNumber.get(Number(entry.step_number)), consent.get(Number(entry.step_number)) || null));
+  const optoutSteps = [...consent.values()].filter((c) => c.opted_out === true).map((c) => c.step_number).sort((a, b) => a - b);
+  const expectedConsent = [...consent.values()].filter((c) => !c.error)
+    .map(({ step_number, channel, destination, opted_out, version }) => ({ step_number, channel, destination, opted_out, version }));
 
   return {
     draft_id: crypto.randomUUID(),
@@ -7156,12 +7209,13 @@ async function normalizeSequenceEnrollAction(db, value, evidence) {
     stall_step: stallStep,
     placeholder_at_steps: placeholderAt,
     send_steps: preview.steps.filter((e) => e.action_summary && /^send_/.test(String(e.action_summary.function_name || ''))).length,
+    optout_steps: optoutSteps,
     steps: shown,
     steps_truncated: preview.steps.length > SEQUENCE_ENROLL_MAX_PREVIEW_STEPS ? 1 : 0,
     effects: sequenceStepEffects(steps, 'when this enrollment reaches it'),
     starters,
     active_enrollments: Number(running && running.n) || 0,
-    expected: { current_version: version },
+    expected: { current_version: version, consent: expectedConsent },
     evidence: refs,
   };
 }

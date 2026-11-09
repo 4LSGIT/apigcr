@@ -3184,6 +3184,50 @@ slice closes both.
   enroll targets call the engine directly, so a signing_request_id handed to
   them still gets no pointer (filed in `ref/plans.md`).
 
+**A18.4e: the sends' recipients' consent on the card. SHIPPED 2026-11-09**
+(manager pick, Fred's overnight standing go). No new kind, flag, route or
+refusal. The engine never fails a send step on an opt-out: `send_sms` /
+`send_mms` / `send_email` call `optoutService.assertNotOptedOut` and
+`lib/sequenceEngine` turns that refusal into a SKIP that advances whatever
+the error policy says (`sequence_step_log` status `skipped`, reason
+`recipient_opted_out`) — so the card now says which step that will be.
+- **The read is the send's own.** For every preview step whose
+  `action_summary.function_name` is `send_sms` / `send_mms` / `send_email`
+  with a RESOLVED recipient (`to` without a `{{placeholder}}`, not blank),
+  `sequenceEnrollConsent` asks `optoutService.findOptedOut` the way the
+  step's send will: operational SMS for the text functions (an SMS STOP
+  blocks), operational email for `send_email` — which NO opt-out blocks
+  (D18) — unless the stored params mark the step promotional (C7:
+  `params.promotional`, truthy the way `communication.js` reads it), then
+  marketing klass with the step's `params.topic`. Each such step carries
+  `consent: {step_number, channel, destination, opted_out, version
+  [, klass:'marketing', topic]}`; `version` is `optoutService.consentVersions`'
+  consent version (it moves on ANY consent change for the destination). A
+  check that throws — a promotional step with no topic, which the send
+  itself refuses — carries `error` instead and is not re-checked at click.
+  The card lists the flagged steps in `optout_steps`.
+- **The card.** A flagged step line reads "OPTED OUT — <destination> has
+  opted out of texts | marketing email [on topic "…"]: the engine SKIPS this
+  step (logged "skipped — recipient opted out") and goes on to the next"; the
+  Sends line names the steps that would be skipped; the stale-check line
+  says consent is re-read. A card with no checkable recipient is
+  byte-identical to A18.4d's (pinned).
+- **Freshness.** `expected.consent` carries the checked entries; the click
+  re-reads `/api/contacts/:id/phones` and `/emails` (only the channels it
+  needs — `row.consent` is the server's own read) and refuses before the
+  claim when a reviewed destination's version moved or, for an operational
+  entry, its opted_out flipped (a marketing-scoped entry compares the
+  version only: `row.consent` is operational). A destination that is not one
+  of this contact's active rows cannot be re-read there and is checked at
+  proposal only (`ref/plans.md`).
+- Tests: `tests/caseySequenceEnroll.test.js` (the dual read, D18, the
+  promotional branch, the unresolved recipient), `tests/assistantUi.test.js`
+  (card text, the re-check's refusals and passes), and the real-engine twin
+  `tests/caseySequenceEnroll.mysql.test.js`, which proves the disclosure IS
+  the send's read: the flagged destination is the one
+  `assertNotOptedOut` refuses on the engine, the operational email one is
+  not, and a lifted STOP clears the flag and moves the version.
+
 Also note for any later enrollment work: step firing has no "already sent this
 step" check, and `recoverStuckJobs` resets a job sitting in `running` for over
 15 minutes back to pending, so an SMS or email **can** re-send. Only

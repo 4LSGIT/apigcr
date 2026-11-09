@@ -3332,6 +3332,13 @@ function sequenceEnrollStepLine(step) {
   if (step.would_skip) parts.push(`would skip at fire time (${step.would_skip})`);
   if (step.condition_error) parts.push(`condition error — the step would HOLD (${step.condition_error})`);
   if (step.to != null || step.from != null) parts.push(`to ${step.to == null || step.to === '' ? '(BLANK)' : step.to} from ${step.from == null || step.from === '' ? '(BLANK)' : step.from}`);
+  // A18.4e: the recipient's consent as the step's own send reads it (server-read).
+  if (step.consent && step.consent.opted_out === true) {
+    const what = step.consent.channel === 'sms' ? 'texts' : step.consent.topic ? `marketing email on topic "${step.consent.topic}"` : 'marketing email';
+    parts.push(`OPTED OUT — ${step.consent.destination} has opted out of ${what}: the engine SKIPS this step (logged "skipped — recipient opted out") and goes on to the next`);
+  } else if (step.consent && step.consent.error) {
+    parts.push(`recipient consent could not be checked (${step.consent.error}) — the send would meet the same at fire time`);
+  }
   if (step.subject != null) parts.push(`subject "${step.subject}"`);
   if (step.message != null) parts.push(`"${step.message}"`);
   if (step.body != null) parts.push(`body "${step.body}"`);
@@ -3433,7 +3440,10 @@ function sequenceEnrollText(draft) {
   }
   lines.push(`Steps (the engine's own preview, resolved for this contact${draft.steps_truncated ? `; first ${(draft.steps || []).length} shown` : ''}):`);
   for (const step of draft.steps || []) lines.push(sequenceEnrollStepLine(step));
-  lines.push(`Sends: ${draft.send_steps} step${draft.send_steps === 1 ? '' : 's'} text or email the client — each goes out as its step comes due, and none can be recalled.`);
+  const optoutSteps = Array.isArray(draft.optout_steps) ? draft.optout_steps : [];
+  lines.push(`Sends: ${draft.send_steps} step${draft.send_steps === 1 ? '' : 's'} text or email the client — ${optoutSteps.length
+    ? `step${optoutSteps.length === 1 ? '' : 's'} ${optoutSteps.join(', ')} would be SKIPPED (recipient opted out — the sequence goes on past ${optoutSteps.length === 1 ? 'it' : 'them'}); each of the rest goes out`
+    : 'each goes out'} as its step comes due, and none can be recalled.`);
   if ((draft.effects || []).length) {
     lines.push('External and chaining effects this enrollment can produce:');
     for (const e of draft.effects) lines.push(`  ${e}`);
@@ -3446,7 +3456,9 @@ function sequenceEnrollText(draft) {
   }
   lines.push(`Running enrollments of this template: ${draft.active_enrollments}.`);
   lines.push('Effect: enrolls NOW. An enrollment is immediate fan-out — every step above runs as it comes due. The enrollment can be cancelled from the sequence\'s enrollments, but steps already run stay run.');
-  lines.push('Stale check: if the template is deactivated or its published version changes, or the contact becomes enrolled, before you apply, nothing is enrolled.');
+  const reviewedConsent = Array.isArray(draft.expected && draft.expected.consent) ? draft.expected.consent : [];
+  lines.push(`Stale check: if the template is deactivated or its published version changes, or the contact becomes enrolled,${reviewedConsent.length
+    ? ' or the consent of a recipient above changes (re-read through this contact\'s own numbers and addresses),' : ''} before you apply, nothing is enrolled.`);
   if (draft.trigger && draft.trigger.scope === 'esign') {
     lines.push('Signing request check: if the request finishes or its reminder enrollment changes before you apply, nothing is enrolled; if the new enrollment cannot then be recorded as the request\'s reminder enrollment, it is cancelled at once and the card says so.');
   }
@@ -3527,6 +3539,33 @@ async function sequenceEnrollPrecheck(draft) {
     && (apptId == null ? e.appt_id == null : Number(e.appt_id) === apptId)
     && (srId == null ? e.signing_request_id == null : Number(e.signing_request_id) === srId) && e.status === 'active');
   if (dup) return `${draft.contact.contact_name} is already enrolled in this sequence${apptId != null ? ` for appointment #${apptId}` : srId != null ? ` for signing request #${srId}` : ''} (active enrollment #${Number(dup.id)}). Nothing was enrolled.`;
+  // A18.4e: the send recipients' consent as reviewed. The list routes' row.consent
+  // is the server's own read (optoutService; its version moves on ANY consent
+  // change for the destination). Only this contact's own active rows can be
+  // re-read here — a destination that is not one of them is not re-checked
+  // (the send route re-checks itself at fire time either way). A promotional
+  // step's opted_out is marketing-scoped while row.consent is operational, so
+  // for every entry the VERSION is what has to hold; opted_out is compared for
+  // the operational ones only.
+  const consent = Array.isArray(draft.expected && draft.expected.consent) ? draft.expected.consent : [];
+  if (consent.length) {
+    const digits = (v) => String(v || '').replace(/\D/g, '').slice(-10);
+    const lists = {};
+    if (consent.some((e) => e.channel === 'sms')) lists.sms = (((await api(`/api/contacts/${contactId}/phones`, null, 'GET')) || {}).phones) || [];
+    if (consent.some((e) => e.channel === 'email')) lists.email = (((await api(`/api/contacts/${contactId}/emails`, null, 'GET')) || {}).emails) || [];
+    const stepsOf = (draft.steps || []);
+    for (const e of consent) {
+      const row = (lists[e.channel] || []).find((r) => !r.end_date && (e.channel === 'sms'
+        ? digits(r.phone) === digits(e.destination) : String(r.email || '').toLowerCase() === String(e.destination).toLowerCase()));
+      if (!row) continue;
+      if (!row.consent || typeof row.consent.opted_out !== 'boolean') return `Could not re-check the consent of ${e.destination} (step ${e.step_number}). Nothing was enrolled. Ask Casey to prepare it again.`;
+      const shown = stepsOf.find((s) => Number(s.step_number) === Number(e.step_number));
+      const marketing = !!(shown && shown.consent && shown.consent.klass === 'marketing');
+      if (String(row.consent.version) !== String(e.version) || (!marketing && row.consent.opted_out !== (e.opted_out === true))) {
+        return `The consent of ${e.destination} (step ${e.step_number}) changed since this card was prepared. Nothing was enrolled. Ask Casey to prepare it again — the new card shows the current state.`;
+      }
+    }
+  }
   if (srId != null) {
     // Still awaiting signature (esignService.OUTSTANDING_STATUSES), and its
     // reminder pointer still the one the card reviewed (none, or a finished one).

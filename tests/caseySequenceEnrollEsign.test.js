@@ -393,7 +393,7 @@ describe('A18.4d — the normalizer: an e-sign-scoped enrollment', () => {
 
 describe('A18.4d — the shipped paths do not move', () => {
   const SHIPPED = ['draft_id', 'kind', 'status', 'template', 'contact', 'verdict', 'first_step', 'skipped_leading', 'stall_step',
-    'placeholder_at_steps', 'send_steps', 'steps', 'steps_truncated', 'effects', 'starters', 'active_enrollments', 'expected', 'evidence'];
+    'placeholder_at_steps', 'send_steps', 'optout_steps' /* A18.4e */, 'steps', 'steps_truncated', 'effects', 'starters', 'active_enrollments', 'expected', 'evidence'];
   test('the no-payload card: the shipped envelope, the dup predicate with both scopes NULL, no signing_requests read', async () => {
     for (const td of [undefined, {}]) {
       const { db, state } = makeDb();

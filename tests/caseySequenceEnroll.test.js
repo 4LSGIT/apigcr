@@ -141,6 +141,25 @@ function makeDb(over = {}) {
     if (/FROM workflow_steps s JOIN workflows w/.test(flat)) return [[]];
     if (/FROM cta_links/.test(flat)) return [[]];
     if (/FROM (?:email|phone)_ingest_rule_actions a JOIN/.test(flat)) return [[]];
+    // A18.4e: optoutService's own reads (FIND_SQL) for the sends' recipients.
+    // over.optout = { smsRows: {dest: cache_optout}, emailRows: {dest: cache_optout},
+    //   states: [{channel, destination, scope, state}], versions: [{channel, destination, version}], topics: [{topic_key, channel, consent_model, active}] }
+    const oo = over.optout || {};
+    if (/FROM contact_phones r LEFT JOIN contacts ct/.test(flat)) {
+      return [(params[0] || []).filter((k) => (oo.smsRows || {})[k] !== undefined).map((k, i) => ({ row_id: 300 + i, contact_id: 77, destination: k, contact_name: 'Dana Client', cache_optout: oo.smsRows[k] }))];
+    }
+    if (/FROM contact_emails r LEFT JOIN contacts ct/.test(flat)) {
+      return [(params[0] || []).filter((k) => (oo.emailRows || {})[k] !== undefined).map((k, i) => ({ row_id: 400 + i, contact_id: 77, destination: k, contact_name: 'Dana Client', cache_optout: oo.emailRows[k] }))];
+    }
+    if (/^SELECT destination, scope, state FROM comm_consent_state WHERE channel = \? AND destination IN \(\?\) AND scope IN \(\?\)$/.test(flat)) {
+      return [(oo.states || []).filter((s) => s.channel === params[0] && params[1].includes(s.destination) && params[2].includes(s.scope)).map(({ channel, ...s }) => s)];
+    }
+    if (/^SELECT destination, MAX\(last_event_id\) AS version FROM comm_consent_state WHERE channel = \? AND destination IN \(\?\) GROUP BY destination$/.test(flat)) {
+      return [(oo.versions || []).filter((v) => v.channel === params[0] && params[1].includes(v.destination)).map(({ channel, ...v }) => v)];
+    }
+    if (/^SELECT channel, consent_model, active FROM comm_topics WHERE topic_key = \?$/.test(flat)) {
+      return [(oo.topics || []).filter((t) => t.topic_key === params[0]).map(({ topic_key, ...t }) => t)];
+    }
     throw new Error(`unscripted query: ${flat}`);
   });
   return { state, db: { query } };
@@ -453,11 +472,75 @@ const EVIDENCE_X = [...EVIDENCE,
   { id: 'q4', label: 'Cases', rows: [{ case_id: 'CASE1' }, { case_id: 'CASE2' }] }];
 const REFS_X = [...REFS, { query_id: 'q3', row_number: 1 }, { query_id: 'q3', row_number: 2 }, { query_id: 'q4', row_number: 1 }, { query_id: 'q4', row_number: 2 }];
 const xDraft = (trigger_data, over = {}) => enrollDraft({ evidence: REFS_X, trigger_data, ...over });
+// A18.4e added optout_steps (and expected.consent) to the shipped envelope — a deliberate widening, pinned here.
 const SHIPPED_ENROLL_KEYS = ['draft_id', 'kind', 'status', 'template', 'contact', 'verdict', 'first_step', 'skipped_leading', 'stall_step',
-  'placeholder_at_steps', 'send_steps', 'steps', 'steps_truncated', 'effects', 'starters', 'active_enrollments', 'expected', 'evidence'];
+  'placeholder_at_steps', 'send_steps', 'optout_steps', 'steps', 'steps_truncated', 'effects', 'starters', 'active_enrollments', 'expected', 'evidence'];
 // Step 1 reads {{trigger_data.court_date}} as its date and in its text.
 const dated = (over = {}) => [sms(1, { type: 'delay', at: '{{trigger_data.court_date}}' }, { message: 'Court on {{trigger_data.court_date}} in {{trigger_data.room}}' }), task(2), ...(over.more || [])];
 const FUTURE = '2027-01-15T15:00:00Z';
+
+describe('A18.4e — the sends\' recipients\' consent is on the card, as the step\'s own send will read it', () => {
+  const SMS = { step_number: 1, channel: 'sms', destination: '3135551234' };
+  const EMAIL = { step_number: 3, channel: 'email', destination: 'dana@example.com' };
+
+  test('with nothing opted out: every send step carries consent (not opted out, version 0), the task step none; expected.consent lists them for the click re-read', async () => {
+    const out = await normalizeActionDraft(makeDb().db, enrollDraft(), EVIDENCE);
+    expect(out.steps[0].consent).toEqual({ ...SMS, opted_out: false, version: '0' });
+    expect(out.steps[1]).not.toHaveProperty('consent');
+    expect(out.steps[2].consent).toEqual({ ...EMAIL, opted_out: false, version: '0' });
+    expect(out.optout_steps).toEqual([]);
+    expect(out.expected).toEqual({ current_version: 3, consent: [{ ...SMS, opted_out: false, version: '0' }, { ...EMAIL, opted_out: false, version: '0' }] });
+  });
+
+  test('an SMS STOP — the ledger state or the row cache alone (optoutService\'s dual read) — flags the text step as SKIPPED-at-fire, with the consent version the click compares', async () => {
+    const byState = { states: [{ channel: 'sms', destination: '3135551234', scope: 'all', state: 'opted_out' }], versions: [{ channel: 'sms', destination: '3135551234', version: 41 }] };
+    const out = await normalizeActionDraft(makeDb({ optout: byState }).db, enrollDraft(), EVIDENCE);
+    expect(out.steps[0].consent).toEqual({ ...SMS, opted_out: true, version: '41' });
+    expect(out.optout_steps).toEqual([1]);
+    expect(out.expected.consent[0]).toEqual({ ...SMS, opted_out: true, version: '41' });
+    // Email untouched.
+    expect(out.steps[2].consent).toEqual({ ...EMAIL, opted_out: false, version: '0' });
+    const byCache = { smsRows: { 3135551234: 1 } };
+    const out2 = await normalizeActionDraft(makeDb({ optout: byCache }).db, enrollDraft(), EVIDENCE);
+    expect(out2.steps[0].consent).toMatchObject({ opted_out: true });
+    expect(out2.optout_steps).toEqual([1]);
+    // Still a proposal — an opt-out is disclosed, never refused.
+    expect(out2.status).toBe('draft');
+  });
+
+  test('D18: an email opt-out never flags an OPERATIONAL email step (its version still rides); a PROMOTIONAL step reads marketing consent by its topic, and one without a topic discloses the send\'s own fire-time error', async () => {
+    const emailOut = { emailRows: { 'dana@example.com': 1 },
+      states: [{ channel: 'email', destination: 'dana@example.com', scope: 'marketing', state: 'opted_out' }],
+      versions: [{ channel: 'email', destination: 'dana@example.com', version: 7 }],
+      topics: [{ topic_key: 'newsletter', channel: 'email', consent_model: 'opt_out', active: 1 }] };
+    const out = await normalizeActionDraft(makeDb({ optout: emailOut }).db, enrollDraft(), EVIDENCE);
+    expect(out.steps[2].consent).toEqual({ ...EMAIL, opted_out: false, version: '7' });
+    expect(out.optout_steps).toEqual([]);
+    const promo = (params) => ({ ...email(3), action_config: JSON.stringify({ function_name: 'send_email',
+      params: { to: '{{contacts.contact_email}}', subject: 'News', html: '<p>Hi</p>', promotional: true, ...params } }) });
+    const out2 = await normalizeActionDraft(makeDb({ optout: emailOut, published: [sms(1), task(2), promo({ topic: 'newsletter' })] }).db, enrollDraft(), EVIDENCE);
+    expect(out2.steps[2].consent).toEqual({ ...EMAIL, klass: 'marketing', topic: 'newsletter', opted_out: true, version: '7' });
+    expect(out2.optout_steps).toEqual([3]);
+    // The string spelling communication.js accepts counts as promotional too.
+    const out3 = await normalizeActionDraft(makeDb({ optout: emailOut, published: [sms(1), task(2), promo({ topic: 'newsletter', promotional: 'yes' })] }).db, enrollDraft(), EVIDENCE);
+    expect(out3.steps[2].consent).toMatchObject({ klass: 'marketing', opted_out: true });
+    const out4 = await normalizeActionDraft(makeDb({ optout: emailOut, published: [sms(1), task(2), promo({})] }).db, enrollDraft(), EVIDENCE);
+    expect(out4.steps[2].consent).toEqual({ ...EMAIL, klass: 'marketing', topic: null, error: 'send_email: promotional requires topic (the consent question is asked per topic)' });
+    expect(out4.optout_steps).toEqual([]);
+    expect(out4.expected.consent.map((c) => c.step_number)).toEqual([1]);
+  });
+
+  test('a recipient the preview could not resolve (placeholder left, or blank) is not checked — no consent key, no read, no crash', async () => {
+    const published = [sms(1, { type: 'immediate' }, { to: '{{contacts.contact_mobile}}' }), task(2), { ...email(3), action_config: JSON.stringify({ function_name: 'send_email', params: { from: 'office@4lsg.com', to: '', subject: 'x', text: 'y' } }) }];
+    const { db, state } = makeDb({ published, optout: { smsRows: { 3135551234: 1 } } });
+    const out = await normalizeActionDraft(db, enrollDraft(), EVIDENCE);
+    expect(out.steps[0]).not.toHaveProperty('consent');
+    expect(out.steps[2]).not.toHaveProperty('consent');
+    expect(out.optout_steps).toEqual([]);
+    expect(out.expected.consent).toEqual([]);
+    expect(state.reads.some(([sql]) => /contact_phones r|comm_consent_state/.test(sql))).toBe(false);
+  });
+});
 
 describe('A18.4c — the no-payload enroll is unchanged', () => {
   test('no trigger_data and trigger_data {} produce the SHIPPED envelope, reads and request', async () => {

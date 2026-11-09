@@ -1261,7 +1261,12 @@ template the same way (ordinarily, for the same appointment, or for the same
 signature request) is refused. If the template is deactivated or a new version is
 published before you confirm, or the contact becomes enrolled — or the
 signature request finishes or gets other reminders — nothing is
-enrolled. If the outcome cannot be confirmed, the card says so and offers no
+enrolled. For every text or email step the card also says whether its
+recipient has opted out (texts: an SMS STOP; email: a marketing opt-out, and
+only for a promotional step — an ordinary email step is never blocked): such
+a step is skipped when its turn comes and the sequence goes on to the next
+step, so the card marks it OPTED OUT up front; if that consent changes before
+you confirm, nothing is enrolled and Casey prepares the card again. If the outcome cannot be confirmed, the card says so and offers no
 second enrollment; check the sequence's enrollments. Once applied, the card
 opens the new enrollment. Its off switch is the `casey_sequence_enroll_enabled`
 setting (on unless set to 0, like every Casey switch). The card
