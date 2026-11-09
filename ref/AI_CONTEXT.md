@@ -2833,7 +2833,7 @@ ingest key and Pabbly URL live in its Script Properties (`INGEST_API_KEY`,
 
 **In-process source `mailbox-imap` (mailbox S1, 2026-10-08):** the IMAP worker
 (`services/mailbox/mailboxIngestService.js`, `ALL /mailbox-ingest`, Cloud
-Scheduler every 5 min) calls `ingestEmail` directly — no HTTP, no key (the
+Scheduler every 2 min — every 5 until the step-6 kit, 2026-11) calls `ingestEmail` directly — no HTTP, no key (the
 row's key is unpresentable by construction; ref/migrations/2026-10-08_mailbox_s1.sql).
 It emits only folders flagged `emit_to_rules`, and only mail arriving after a
 folder's first poll (history is stored, never emitted). Its
@@ -2855,7 +2855,7 @@ stamps `last_used_at` (that column = last HTTP post). Feeder tell in
 **Gmail = `[Gmail]/All Mail` as the ONLY folder** (ruling 2026-10-11): one
 copy of inbound, sent and label-filed mail; never All Mail ALONGSIDE other
 folders (double store — `GET /api/mailboxes/:id/folders` warns). A
-provider-id mailbox emits its sent mail too (the Apps Script posts it — design
+provider-id mailbox emits its sent mail too (as the Apps Script did — design
 §4.1 amendment). **Drafts are never stored nor emitted** (worker DRAFT
 GUARD: the `\Draft` flag OR the Gmail `\Draft` label — Gmail does not flag
 drafts in All Mail — and Gmail re-creates drafts per autosave). Gmail labels
@@ -2871,15 +2871,20 @@ stored, the next tick fetches it again. Never key imapflow rows last-wins.
 **Poison messages are quarantined** (mailboxIngestService header, 2026-10-26):
 at-least-once retries a failing message every tick, so a DETERMINISTIC
 failure would hold its folder for good; the new pass counts consecutive
-failures per UID (`ingest_state.<folder>.poison`) and on the 3rd skips it for
-good (`.quarantined`, error alert `mailbox_ingest_quarantined`). An outage
+failures per UID (`ingest_state.<folder>.poison`) and, once one has failed 3
+runs in a row AND 10 min since its first failure, skips it for good
+(`.quarantined`, error alert `mailbox_ingest_quarantined`). An outage
 (socket / DB-connection codes, `isOutage`) never counts — it must not cost
 mail; backfill never quarantines. THE BRAKE: a failure with the same
 signature (error code, else class + text) as a quarantine of that folder in
 the last 24 h is HELD, not quarantined — a bad deploy or missed migration
-fails every message alike and would otherwise skip one per 15 min. Streaks: a folder feeding the rules pages
-(`mailbox_ingest_failing`, error) after 3 failed runs, store-only folders
-warn after 5.
+fails every message alike and would otherwise skip one per 10 min. Streaks
+(`ingest_state.<folder>.errors` + `errors_since` + `errors_alerted_at`; the
+`backfill_errors*` trio for backfill): a folder feeding the rules pages
+(`mailbox_ingest_failing`, error) after 3 failed runs spanning 10 min,
+store-only folders and backfill warn after 5 runs spanning 20 min. Every
+threshold is runs AND time (`limits.*Ms`, 2026-11-08), so the scheduler
+cadence and staff Refresh runs page and quarantine no sooner.
 Pilot, gate and retirement runbook: `ref/MAILBOX_GMAIL_PARITY.md`.
 Operators: manual/08-Admin-Tools/08-mailboxes.md.
 
@@ -2902,7 +2907,7 @@ surrogates become U+FFFD, because MySQL refuses an escaped lone surrogate
 anywhere in a JSON value and `_truncateRawInput`'s fixed-offset cut can split
 an emoji (2026-10-25). A refused execution row throws out of `ingestEmail`
 AFTER Layer 3 ran — the mailbox worker retries that message and, failing on
-it three ticks running, quarantines it (above).
+it 3+ ticks running over 10 min, quarantines it (above).
 
 ### Code mode — QuickJS guest, capability-gated
 Rule match/transform and suppression `code` bodies run in the QuickJS guest in

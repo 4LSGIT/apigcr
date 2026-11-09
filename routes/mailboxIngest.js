@@ -7,7 +7,7 @@
  *                          (services/mailbox/mailboxIngestService.runIngest)
  *
  * Shaped like /process-jobs (routes/process_jobs.js) on purpose — design D4 +
- * §6: a cron-fired entry, ticked every 5 min by Cloud Scheduler with an
+ * §6: a cron-fired entry, ticked every 2 min by Cloud Scheduler with an
  * x-api-key, auth by jwtOrApiKey, router.all (GET or POST). A signed-in
  * staff JWT may also run it (apiSend('/mailbox-ingest','POST') from a
  * console) — it is idempotent and lock-guarded, so a manual run is a no-op
@@ -32,8 +32,11 @@
  *
  * The work happens INSIDE the request on purpose: Cloud Run allocates CPU to
  * in-flight requests only. The run's budget (MAILBOX_INGEST_BUDGET_MS,
- * default 240 s) sits well inside the service's 900 s request timeout and the
- * scheduler job's attempt deadline.
+ * default 100 s — under the 2-minute tick, so runs do not overlap into lock
+ * skips) sits well inside the service's 900 s request timeout and the
+ * scheduler job's attempt deadline. A staff Refresh is a run like any other:
+ * it adds to a failing folder's streak, but alerts and quarantines need a
+ * span of time as well as runs, so extra runs page no sooner.
  *
  * YC3 (tenancy invariant 6): like /process-jobs, this entry will need explicit
  * tenant identity — it rides P0-8, not a special case here.

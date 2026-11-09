@@ -73,6 +73,13 @@ const DEC2 = dec(HEX2);
 let clients;
 let script;
 const realCreate = T.factory.create;
+// The time half of FAILURE STREAKS / POISON MESSAGES is off here, so the run
+// counts alone decide; tests/mailboxStreakClock.test.js covers the clock.
+const TIME_GATES = ['alertAfterMs', 'alertAfterEmittingMs', 'quarantineAfterMs'];
+const savedGates = {};
+beforeAll(() => { for (const k of TIME_GATES) { savedGates[k] = svc.limits[k]; svc.limits[k] = 0; } });
+afterAll(() => { Object.assign(svc.limits, savedGates); });
+
 beforeEach(() => {
   clients = [];
   script = { uidNext: UID + 2 };

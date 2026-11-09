@@ -8,7 +8,7 @@ the comms hub (design: `ref/MAILBOX_SYSTEM_DESIGN.md`).
 asks for [elevation](README.md) like the other SU tools.
 
 > **Polling, reading and sending are live (S1–S3).** Every active mailbox with
-> **Ingest enabled** is read over IMAP every 5 minutes and stored in
+> **Ingest enabled** is read over IMAP every 2 minutes and stored in
 > YisraCase; people with **Read** see it in **Comms**, people with **Send**
 > write and reply from it there (both below).
 
@@ -176,20 +176,25 @@ mail server when someone opens it (anyone with **Read** on the box).
   attachments) downloads as a file.
 - "This mailbox is re-syncing" means the server renumbered the folder (a host
   move does this). The next poll re-matches stored mail by Message-ID; try
-  again in about five minutes.
+  again in a few minutes.
 
 ## When polling fails
 
 Each folder keeps its own record (`ingest_state` on the mailbox row): the
-last error, and how many runs in a row have failed. The streak clears itself
-on the next good run. One alert per streak, naming the box and folder:
+last error, how many runs in a row have failed, and since when. The streak
+clears itself on the next good run. One alert per streak, naming the box and
+folder:
 
 - a folder that **feeds rules** (emit to rules on, under an active source):
-  an **error** after **3 failed runs in a row** (about 15 minutes) — it emails
-  IT, because while it fails its mail reaches no rule from YisraCase;
-- a **store-only** folder, or the history backfill: a **warning** after **5**
-  (about 25 minutes) — warnings ride the alert digest and do not email on
-  their own.
+  an **error** once it has been failing for **10 minutes** (and at least 3
+  runs in a row) — it emails IT, because while it fails its mail reaches no
+  rule from YisraCase;
+- a **store-only** folder, or the history backfill: a **warning** after
+  **20 minutes** (and at least 5 runs) — warnings ride the alert digest and
+  do not email on their own.
+
+A short blip — a few failed polls that then recover — alerts no one. Pressing
+**Refresh** in Comms during an outage doesn't make the alert come sooner.
 
 Usual causes: a changed password (re-enter the secret), a misspelt folder, or
 the mail server down. An `INCOMPLETE_FETCH` error is usually harmless: the
@@ -201,8 +206,8 @@ it again.
 
 A failure that belongs to ONE message — the ingest pipeline refusing it, or
 the server never sending it — would hold its folder: nothing after it is
-stored or emitted. So after **3 runs in a row failing on the same message**,
-YisraCase **quarantines** it: skips it for good and moves on, and records one
+stored or emitted. So once the **same message has failed every run for 10
+minutes** (and at least 3 runs), YisraCase **quarantines** it: skips it for good and moves on, and records one
 **error** alert, *Mailbox ingest skipped a message*, naming the box, the
 folder, the message's UID and — when it got that far — its Message-ID. An
 outage (the mail server, the network or the database going away) never
@@ -211,7 +216,7 @@ quarantines anything: those failures don't belong to a message.
 If a **second** message in the same folder fails the same way within a day,
 it is **held, not quarantined**: a fault that hits message after message is
 YisraCase's, not the mail's, and skipping each in turn would lose mail every
-15 minutes. The folder waits, and its failing-folder error alert says *held,
+10 minutes. The folder waits, and its failing-folder error alert says *held,
 not quarantined*. That needs IT straight away.
 
 A quarantined message's trip through the rules never completed: it may be
@@ -489,7 +494,7 @@ anyone who may send from at least one box.
   is reloaded — nothing is saved on the server; **Discard** throws it away;
   leaving the page with unsent text asks first.
 - **Where it shows.** A sent email appears after the box's next check —
-  about 5 minutes — under **Sent**, already marked read for you; an open
+  about 2 minutes — under **Sent**, already marked read for you; an open
   conversation re-reads itself for a few minutes after you reply.
   - **The Google mailbox**: Google files the email in Sent itself and the
     poll of All Mail picks it up, exactly like mail sent from Gmail —

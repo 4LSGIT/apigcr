@@ -623,11 +623,14 @@ Done by Fred 2026-11-06: step 6 item 1 (the digest rule already sent to
 shoshana@mdbl since 10-26), item 2 (the `forwardEmailsToIngest` trigger
 deleted; last Apps Script post 2026-11-05 23:41Z), item 3 (Pabbly docs@
 workflow disabled), item 4 (A.4 bridge: 57 rows stamped, ids 4…105), the YC
-task closed; the followup scratch key deleted. Still owed (the step-6 kit,
-ruled 2026-10-26): `mailbox-ingest` at */2 with elapsed-time failure streaks,
-AI_CONTEXT §27's feeder wording, and moving this file + its console script to
-`ref/archive/`. Until the kit, the worker stays at */5: mail the Apps Script
-used to log first now reaches the rules up to one tick later.
+task closed; the followup scratch key deleted. The step-6 kit (ruled
+2026-10-26), built 2026-11-08: failure streaks and quarantine are runs AND
+time (`limits.alertAfterEmittingMs` 10 min, `alertAfterMs` 20 min,
+`quarantineAfterMs` 10 min — `tests/mailboxStreakClock.test.js`), run budget
+100 s, AI_CONTEXT §27's feeder wording; then, after that deploy,
+`gcloud scheduler jobs update http mailbox-ingest --location=us-east1
+--schedule="*/2 * * * *"` (Fred). Still owed: moving this file + its console
+script to `ref/archive/`.
 
 ## 5. Decisions
 

@@ -47,6 +47,13 @@ const { makeWorld, makeImapServer, makePipeline, msg, LOCK } = require('./helper
 
 let W; let S; let P;
 
+// The time half of FAILURE STREAKS / POISON MESSAGES is off here, so the run
+// counts alone decide; tests/mailboxStreakClock.test.js covers the clock.
+const TIME_GATES = ['alertAfterMs', 'alertAfterEmittingMs', 'quarantineAfterMs'];
+const savedGates = {};
+beforeAll(() => { for (const k of TIME_GATES) { savedGates[k] = svc.limits[k]; svc.limits[k] = 0; } });
+afterAll(() => { Object.assign(svc.limits, savedGates); });
+
 beforeEach(() => {
   // The worker narrates to the console by design; keep the test output readable.
   jest.spyOn(console, 'log').mockImplementation(() => {});

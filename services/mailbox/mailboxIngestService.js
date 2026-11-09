@@ -12,7 +12,8 @@
  *                                 rows (S2-L; GMAIL LABELS below)
  *
  * Spec: ref/MAILBOX_SYSTEM_DESIGN.md §4.1, D1/D4/D6. Driven by POST
- * /mailbox-ingest (routes/mailboxIngest.js), ticked by Cloud Scheduler.
+ * /mailbox-ingest (routes/mailboxIngest.js), ticked by Cloud Scheduler every
+ * 2 minutes (every 5 until 2026-11; ref/INFRA_GCP.md).
  *
  * ── TWO TIERS, ONE PASS ──────────────────────────────────────────────────────
  * Every message in every polled folder is stored in `mail_messages` (tier 1,
@@ -74,7 +75,8 @@
  *                         set only by a re-key (see below); null = store-only
  *   checked_at            last successful new pass (the re-key's emit horizon)
  *   drafts_skipped_total  drafts passed over (DRAFT GUARD: flag or Gmail label)
- *   errors / backfill_errors / last_error / last_error_at   failure streaks
+ *   errors / errors_since / errors_alerted_at (and backfill_*), last_error /
+ *   last_error_at                                         failure streaks
  *   rekeyed_at, backfill_done_at                            breadcrumbs
  *
  * ── HISTORY IS NEVER EMITTED ─────────────────────────────────────────────────
@@ -121,9 +123,11 @@
  * 2's All Mail for an hour, covered only by the Apps Script). So the NEW pass
  * remembers the UID it failed on — `ingest_state.<folder>.poison`
  * {uid, uidvalidity, attempts, first_at, last_at, last_error, message_id?,
- * held?} — and after `limits.quarantineAfter` consecutive failures on that
- * same UID it is QUARANTINED: appended to `quarantined` as {uid, uidvalidity,
- * attempts, first_at, at, error, signature, message_id} (the last
+ * held?} — and once that same UID has failed `limits.quarantineAfter` runs in
+ * a row AND `limits.quarantineAfterMs` has passed since its first failure it
+ * is QUARANTINED (both, so a faster tick does not quarantine faster) —
+ * appended to `quarantined` as {uid, uidvalidity, attempts, first_at, at,
+ * error, signature, message_id} (the last
  * `limits.quarantineKeep` kept; `quarantined_total` counts all), an ERROR
  * alert names it (`mailbox_ingest_quarantined`), and from the next run on the
  * pass skips it — no fetch, no store, no emission — and the cursor moves past. A row
@@ -139,19 +143,24 @@
  * streak warns.
  * THE BRAKE: a failure that is the code's or the schema's, not the message's
  * (a bad deploy, a missed migration) fails EVERY message the same way, and
- * would quarantine one per `quarantineAfter` ticks. So a UID whose failure has
+ * would quarantine one per `quarantineAfterMs`. So a UID whose failure has
  * the same signature (errSignature: the error code, else its text) as a
  * quarantine of this folder within `limits.quarantineBrakeMs` is HELD, not
  * quarantined: `poison.held` says why, the folder stops, and its failure
- * streak pages. A systemic failure costs one message, not one per 15 minutes.
+ * streak pages. A systemic failure costs one message, not one per 10 minutes.
  *
  * ── FAILURE STREAKS ──────────────────────────────────────────────────────────
- * Every failed run of a folder adds to its streak (`errors`, cleared by the
- * next good run). A folder that FEEDS THE RULES (emit_to_rules, under an
- * active source) alerts at `limits.alertAfterEmitting` runs as an ERROR: its
- * mail is reaching no rule from this worker. A store-only folder — and any
- * backfill — alerts at `limits.alertAfter` runs as a warning. One alert per
- * streak; a run that quarantines alerts as the quarantine instead.
+ * Every failed run of a folder adds to its streak (`errors` = runs,
+ * `errors_since` = its first failure, `errors_alerted_at`; `backfill_errors*`
+ * for the backfill pass — all cleared by the next good run). A folder that
+ * FEEDS THE RULES (emit_to_rules, under an active source) alerts as an ERROR
+ * once its streak has `limits.alertAfterEmitting` runs AND has lasted
+ * `limits.alertAfterEmittingMs`: its mail is reaching no rule from this
+ * worker. A store-only folder — and any backfill — warns at `limits.alertAfter`
+ * runs AND `limits.alertAfterMs`. Runs and time both, so the scheduler's
+ * cadence (every 2 min since 2026-11; it was 5) changes neither how soon nor how
+ * often anyone is paged. One alert per streak; a run that quarantines alerts
+ * as the quarantine instead.
  *
  * ── GMAIL LABELS (S2-L, design OQ5) ──────────────────────────────────────────
  * Every stored row carries `gmail_labels`: the X-GM-LABELS the transport
@@ -195,11 +204,17 @@ const DEFAULT_FOLDERS = Object.freeze({ INBOX: Object.freeze({ emit_to_rules: tr
 
 /** Knobs, read at call time (tests shrink them). Env overrides are platform knobs. */
 const limits = {
-  defaultBudgetMs: 240_000,   // MAILBOX_INGEST_BUDGET_MS; ~4 min under a 5-min tick
+  defaultBudgetMs: 100_000,   // MAILBOX_INGEST_BUDGET_MS; under a 2-min tick (Cloud Scheduler */2)
   batchSize: 25,              // MAILBOX_INGEST_BATCH_SIZE; messages per IMAP fetch
-  alertAfter: 5,              // consecutive failed runs of a store-only folder (or backfill) → one warning
-  alertAfterEmitting: 3,      // … of a folder feeding the rules → one ERROR (FAILURE STREAKS)
-  quarantineAfter: 3,         // consecutive new-pass failures on the SAME uid → quarantined (POISON MESSAGES)
+  // FAILURE STREAKS and POISON MESSAGES (header) need BOTH a number of runs and
+  // a span of time, so the tick cadence is a free knob: at */2, three runs is
+  // four minutes, and a Gmail blip that short pages no one and quarantines nothing.
+  alertAfter: 5,              // failed runs of a store-only folder (or backfill) in a row …
+  alertAfterMs: 20 * 60_000,  // … for at least this long → one warning
+  alertAfterEmitting: 3,      // … of a folder feeding the rules …
+  alertAfterEmittingMs: 10 * 60_000, // … for at least this long → one ERROR
+  quarantineAfter: 3,         // new-pass failures on the SAME uid in a row …
+  quarantineAfterMs: 10 * 60_000,    // … since its first → quarantined
   quarantineKeep: 20,         // quarantine records kept per folder in ingest_state
   quarantineBrakeMs: 24 * 3600_000, // same-signature quarantine within this window → HOLD instead (THE BRAKE)
   heartbeatMs: 20_000,        // lock-connection ping (SiteGround wait_timeout is 60 s)
@@ -914,19 +929,37 @@ function sendAlert(db, o) {
  */
 function markOk(state, folder, phase, checkedAt) {
   const st = state[folder] || (state[folder] = {});
-  if (phase === 'new') { delete st.errors; if (checkedAt) st.checked_at = checkedAt; }
-  else delete st.backfill_errors;
+  if (phase === 'new') { clearStreak(st, 'errors'); if (checkedAt) st.checked_at = checkedAt; }
+  else clearStreak(st, 'backfill_errors');
   if (!st.errors && !st.backfill_errors) { delete st.last_error; delete st.last_error_at; }
+}
+
+/** A streak is `<key>` (runs), `<key>_since` (its first failure) and `<key>_alerted_at` (its one alert). */
+function clearStreak(st, key) {
+  delete st[key];
+  delete st[`${key}_since`];
+  delete st[`${key}_alerted_at`];
 }
 
 /** @returns {number} the streak length after this failure */
 function markError(state, folder, phase, err, nowIso) {
   const st = state[folder] || (state[folder] = {});
   const key = phase === 'new' ? 'errors' : 'backfill_errors';
-  st[key] = (Number(st[key]) || 0) + 1;
+  const prev = Number(st[key]) || 0;
+  st[key] = prev + 1;
+  // The streak's start. A state written before streaks carried one has the
+  // count alone: its last failure stands in (read before it is overwritten).
+  if (!prev) st[`${key}_since`] = nowIso;
+  else if (!st[`${key}_since`]) st[`${key}_since`] = st.last_error_at || nowIso;
   st.last_error = errText(err);
   st.last_error_at = nowIso;
   return st[key];
+}
+
+/** Elapsed ms since an ISO time; an unreadable one counts as long ago (the run count still gates). */
+function elapsedSince(ctx, iso) {
+  const ms = ctx.now() - Date.parse(iso);
+  return Number.isFinite(ms) ? ms : Infinity;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1333,7 +1366,8 @@ function trackPoison(ctx, st, err) {
   next.last_at = nowIso;
   if (err.stuckMessageId) next.message_id = err.stuckMessageId;
   delete next.held;
-  if (next.attempts < limits.quarantineAfter) { st.poison = next; return null; }
+  const due = next.attempts >= limits.quarantineAfter && elapsedSince(ctx, next.first_at) >= limits.quarantineAfterMs;
+  if (!due) { st.poison = next; return null; }
 
   const kept = Array.isArray(st.quarantined) ? st.quarantined : [];
   const signature = errSignature(err);
@@ -1405,17 +1439,30 @@ async function runMailbox(ctx, mb, phase) {
   const emitsByFolder = new Map(targets.map(([f, c]) => [f, !!(c.emit_to_rules && src && src.active)]));
   const record = (folder, err) => {
     summary.errors++;
-    const n = markError(state, folder, phase, err, new Date(ctx.now()).toISOString());
+    const nowIso = new Date(ctx.now()).toISOString();
+    const key = phase === 'new' ? 'errors' : 'backfill_errors';
+    const pre = state[folder] || {};
+    const legacy = (Number(pre[key]) || 0) > 0 && !pre[`${key}_since`];
+    const n = markError(state, folder, phase, err, nowIso);
     const emits = phase === 'new' && !!emitsByFolder.get(folder);
+    const st = state[folder];
+    const floor = emits ? limits.alertAfterEmitting : limits.alertAfter;
+    // A streak already past its run count when streaks gained a start time was
+    // paged then, under the count-only rule (it fired at exactly the count).
+    if (legacy && n - 1 >= floor && !st[`${key}_alerted_at`]) st[`${key}_alerted_at`] = st[`${key}_since`];
     if (err && err.quarantined) {
       // Its own alert; and the quarantine settles this streak — a later failure starts a new one, and pages.
       quarantines.push({ folder, emits, ...err.quarantined });
-      delete state[folder].errors;
+      clearStreak(st, 'errors');
       return;
     }
-    if (n === (emits ? limits.alertAfterEmitting : limits.alertAfter)) {
-      const held = phase === 'new' && state[folder].poison && state[folder].poison.held;
-      alerts.push({ folder, phase, n, error: errText(err) + (held ? ` (UID ${state[folder].poison.uid} ${held})` : ''), emits });
+    const lasted = elapsedSince(ctx, st[`${key}_since`]);
+    const due = n >= floor && lasted >= (emits ? limits.alertAfterEmittingMs : limits.alertAfterMs);
+    if (due && !st[`${key}_alerted_at`]) {
+      st[`${key}_alerted_at`] = nowIso;   // one alert per streak
+      const held = phase === 'new' && st.poison && st.poison.held;
+      const minutes = Number.isFinite(lasted) ? Math.round(lasted / 60_000) : null;
+      alerts.push({ folder, phase, n, minutes, error: errText(err) + (held ? ` (UID ${st.poison.uid} ${held})` : ''), emits });
     }
   };
   const noPidBefore = summary.noProviderId;
@@ -1496,7 +1543,8 @@ async function runMailbox(ctx, mb, phase) {
       // precedent) → warning.
       severity: alerts.some(a => a.emits) ? 'error' : 'warning',
       title: `Mailbox ingest failing: ${mb.address}`,
-      message: alerts.map(a => `${a.folder} (${a.phase}): ${a.n} consecutive failed runs — ${a.error}`).join('\n'),
+      message: alerts.map(a => `${a.folder} (${a.phase}): ${a.n} consecutive failed runs` +
+        (a.minutes ? ` over ${a.minutes} min` : '') + ` — ${a.error}`).join('\n'),
       context: { mailbox_id: mb.id, folders: alerts },
       ref_table: 'mailboxes',
       ref_id: mb.id,

@@ -1748,6 +1748,7 @@ tests/mailboxS3.transport.test.js
 tests/mailboxS3R.mysql.test.js
 tests/mailboxS3R.pane.test.js
 tests/mailboxS3R.read.test.js
+tests/mailboxStreakClock.test.js
 tests/maintenanceGate.test.js
 tests/manageSelfService.policy.test.js
 tests/manualReadmeCoverage.test.js
