@@ -2564,7 +2564,11 @@ evidence}`; evidence must carry that exact workflow id from an
     blank-list's own scan, uncapped) ∪ the keys of the workflow's
     `test_input` sample (`workflows.test_input`, the author's documentation
     of the init_data shape; `captured_input` is not consulted — a captured
-    provider envelope documents what was sent, not what is read). Any other
+    provider envelope documents what was sent, not what is read). Since
+    A17.7c (2026-11-09) every workflow row of the `automation.definition`
+    read carries `test_input_keys` (sorted; never the sample's values) and
+    `default_contact_id_from`, so the plan stage names the keys before the
+    card has to refuse them. Any other
     key is refused with the allowed set in the message. Never allowed: a name
     that cannot be a placeholder root (`.` `[` `]` `|` braces `:`
     whitespace — a dotted key would shadow a nested read, since the engine

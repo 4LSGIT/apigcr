@@ -201,7 +201,7 @@ async function definition(db, { workflow_id, sequence_template_id, email_ingest_
   if (sequence_template_id !== undefined) return sequenceDefinition(db, { sequence_template_id, version });
   const id = posInt(workflow_id, 'workflow_id');
   const [[wf]] = await db.query(
-    'SELECT id, name, active, description, current_version, draft_version FROM workflows WHERE id = ?', [id]);
+    'SELECT id, name, active, description, current_version, draft_version, default_contact_id_from, test_input FROM workflows WHERE id = ?', [id]);
   if (!wf) throw err(404, `workflow ${id} does not exist`);
   // An UNPUBLISHED workflow has current_version 0 and its steps live at
   // draft_version — reading "version 0" returns nothing and misled a live
@@ -220,12 +220,22 @@ async function definition(db, { workflow_id, sequence_template_id, email_ingest_
     throw err(404, `workflow ${id} has no steps at version ${effective}` +
       (effective !== Number(wf.current_version) ? ` (current is ${wf.current_version})` : ''));
   }
+  // A17.7c: the start card (A17.7b) accepts init_data keys from the published
+  // version's unstored placeholders ∪ this sample's keys, and binds the run's
+  // contact through default_contact_id_from. Surfacing both on every row lets
+  // the model name the keys before the card has to refuse them. KEYS only —
+  // the sample's values are the author's test data, not part of the contract.
+  const testInputKeys = testInputKeysOf(wf.test_input);
+  const defaultContactKey = typeof wf.default_contact_id_from === 'string' && wf.default_contact_id_from.trim()
+    ? wf.default_contact_id_from.trim() : null;
   return steps.map((s) => ({
     workflow_id: id,
     workflow_name: wf.name,
     workflow_active: !!wf.active,
     version: effective,
     is_draft: wf.draft_version != null && effective === Number(wf.draft_version) ? 1 : 0,
+    default_contact_id_from: defaultContactKey,
+    test_input_keys: testInputKeys,
     step_number: s.step_number,
     label: s.label,
     note: s.note,
@@ -233,6 +243,16 @@ async function definition(db, { workflow_id, sequence_template_id, email_ingest_
     config: capJson(projectStepConfig(s.type, s.config, credentialNames), 4000),
     error_policy: capJson(parseJson(s.error_policy)),
   }));
+}
+
+// workflows.test_input is a JSON column: mysql2 hands it over parsed, a mock
+// or an older driver flag as a string. Keys of a plain object, sorted; any
+// other shape (null, array, scalar, unparsable) reads as "no sample".
+function testInputKeysOf(raw) {
+  let v = raw;
+  if (typeof v === 'string') { try { v = JSON.parse(v); } catch (_) { return []; } }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return [];
+  return Object.keys(v).sort();
 }
 
 // version 0 is a real value here (an unpublished workflow's draft steps).
@@ -1140,7 +1160,7 @@ async function ingestList(db, { ch, what }, { query, cap, since, until }) {
 }
 
 module.exports = {
-  list, definition, run, references, projectStepConfig,
+  list, definition, run, references, projectStepConfig, testInputKeysOf,
   projectIngestActionConfig, ingestConfigCell, windowBound, INGEST_LIST_TYPES, CODE_PART_CHARS, CODE_PARTS_MAX,
   changeDiff, CHANGE_ROWS,
 };

@@ -604,9 +604,9 @@ describe('assistant knowledge and prompts', () => {
   });
 
   test('all assistant prompts are registered JSON prompts', () => {
-    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '24', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '25', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_investigate')).toMatchObject({ output_type: 'json', version: '9', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '26', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '27', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '15', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);

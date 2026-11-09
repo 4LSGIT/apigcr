@@ -1053,12 +1053,6 @@ COMMENTs.)
 
 ## From the Ask Casey arc — A17.7 workflow start (2026-10-28) — deferred
 
-- **The `automation.definition` read does not return `test_input`** (or
-  `default_contact_id_from`). A17.7b's allowed init_data keys include the
-  workflow's test_input keys, so the model learns those only from the start
-  card's refusal message and fixes the draft in the repair stage. Returning
-  both on the workflow definition read would let it propose the right keys
-  the first time.
 - **The editor's Run button and native starts send no `Idempotency-Key`.**
   The route honours one (scope `workflows.start`); a double-clicked Run or a
   retried x-api-key start still creates two runs. Wiring the editor would be

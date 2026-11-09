@@ -24,6 +24,12 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey's workflow definition read carries the start contract (A17.7c, 11-09):**
+  every workflow row of `automation.definition` (`services/automationReadService.js`)
+  has `test_input_keys` (keys of `workflows.test_input`, sorted — never its
+  values) and `default_contact_id_from`, the two facts A17.7b's start card
+  builds its allowed `init_data` set and contact binding from. The read's
+  prompt stages name them; the card's own check is unchanged.
 - **Casey model calls cache their registered prompt (cspeed, 10-28):** the
   five assistant stages (`assistant_plan`, plan repair, `assistant_investigate`,
   `assistant_answer`, `assistant_task_draft_repair`) call

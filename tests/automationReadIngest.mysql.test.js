@@ -490,4 +490,29 @@ maybe('Casey ingest reads + preview on real MySQL', () => {
     expect(await stamp()).not.toBe('2026-01-01T00:00:00.000Z');
     await q("UPDATE email_ingest_rules SET match_count = 0, last_matched_at = NULL, updated_at = '2026-01-01 00:00:00' WHERE id = 24");
   });
+
+  test('A17.7c: a workflow definition row carries test_input KEYS off the real JSON column (mysql2 hands it over parsed) and the trimmed default key', async () => {
+    // The start card (A17.7b) allows init_data keys = unstored placeholders ∪
+    // these; the read must agree with what the JSON column really yields.
+    await q("UPDATE workflows SET test_input = ?, default_contact_id_from = ' contact_id ' WHERE id = 24",
+      [JSON.stringify({ source: 'daily', contact_id: 1309, phone: '+15555550100' })]);
+    await q(`INSERT INTO workflow_steps (id, workflow_id, step_number, version, type, label, config)
+             VALUES (9001, 24, 1, 3, 'internal_function', 'noop', '{"function_name":"noop","params":{}}')`);
+    try {
+      const rows = await automation.definition(db(), { workflow_id: 24 });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ workflow_id: 24, version: 3, test_input_keys: ['contact_id', 'phone', 'source'], default_contact_id_from: 'contact_id' });
+      expect(all(rows)).not.toContain('+15555550100');
+      // No sample, no default key → [] / null (workflow 26, draft fallback needs a step).
+      await q(`INSERT INTO workflow_steps (id, workflow_id, step_number, version, type, label, config)
+               VALUES (9002, 26, 1, 1, 'internal_function', 'noop', '{"function_name":"noop","params":{}}')`);
+      await q('UPDATE workflows SET draft_version = 1 WHERE id = 26');
+      const bare = await automation.definition(db(), { workflow_id: 26 });
+      expect(bare[0]).toMatchObject({ test_input_keys: [], default_contact_id_from: null });
+    } finally {
+      await q('DELETE FROM workflow_steps WHERE id IN (9001, 9002)');
+      await q('UPDATE workflows SET test_input = NULL, default_contact_id_from = NULL WHERE id = 24');
+      await q('UPDATE workflows SET draft_version = NULL WHERE id = 26');
+    }
+  });
 });

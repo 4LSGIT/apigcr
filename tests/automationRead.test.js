@@ -37,7 +37,8 @@ function dbOf(handlers) {
 
 describe('automation.definition — the step projection and its redaction', () => {
   const db = () => dbOf([
-    [/FROM workflows WHERE id/, [{ id: 27, name: 'Intake', active: 1, description: 'd', current_version: 6, draft_version: 7 }]],
+    [/FROM workflows WHERE id/, [{ id: 27, name: 'Intake', active: 1, description: 'd', current_version: 6, draft_version: 7,
+      default_contact_id_from: ' contact_id ', test_input: JSON.stringify({ source: 'daily', contact_id: 1309, phone: '+15555550100' }) }]],
     [/FROM credentials/, [{ id: 3, name: 'Clio OAuth' }]],
     [/FROM workflow_steps WHERE workflow_id/, [
       { step_number: 1, label: 'Call out', note: null, type: 'webhook',
@@ -77,6 +78,33 @@ describe('automation.definition — the step projection and its redaction', () =
     const rows = await automation.definition(db(), { workflow_id: 27 });
     expect(rows[0]).toMatchObject({ workflow_id: 27, workflow_name: 'Intake', version: 6, is_draft: 0, step_number: 1 });
     expect(rows).toHaveLength(3);
+  });
+
+  test('A17.7c: every row carries the start card\'s input contract — test_input KEYS (sorted, never the values) and default_contact_id_from (trimmed)', async () => {
+    // A17.7b's allowed init_data set is the unstored placeholders ∪ these keys;
+    // before this the model met them only in the card's refusal message.
+    const rows = await automation.definition(db(), { workflow_id: 27 });
+    for (const r of rows) {
+      expect(r.test_input_keys).toEqual(['contact_id', 'phone', 'source']);
+      expect(r.default_contact_id_from).toBe('contact_id');
+    }
+    expect(JSON.stringify(rows)).not.toContain('+15555550100'); // the sample's values stay home
+    // The JSON column arrives parsed from mysql2; a string shape is a mock or an older driver.
+    expect(automation.testInputKeysOf({ b: 1, a: 2 })).toEqual(['a', 'b']);
+    expect(automation.testInputKeysOf('{"z":1}')).toEqual(['z']);
+    for (const bad of [null, undefined, '', 'not json', '[1,2]', [1], 7, 'null']) expect(automation.testInputKeysOf(bad)).toEqual([]);
+  });
+
+  test('A17.7c: a workflow with no sample and no default key reads null / [] — never undefined', async () => {
+    const d = dbOf([
+      [/FROM workflows WHERE id/, [{ id: 56, name: 'Chase', active: 1, description: 'd', current_version: 1, draft_version: null, default_contact_id_from: null, test_input: null }]],
+      [/FROM credentials/, []],
+      [/FROM workflow_steps WHERE workflow_id/, [{ step_number: 1, label: null, note: null, type: 'internal_function',
+        config: JSON.stringify({ function_name: 'noop', params: {} }), error_policy: null }]],
+    ]);
+    const rows = await automation.definition(d, { workflow_id: 56 });
+    expect(rows[0].default_contact_id_from).toBeNull();
+    expect(rows[0].test_input_keys).toEqual([]);
   });
 
   test('an UNPUBLISHED workflow (current_version 0) falls back to its draft steps', async () => {
@@ -483,7 +511,7 @@ describe('both read-planning prompts teach every read kind (the S3b lesson, read
 
   // The validator is the authority on which kinds exist; both prompts must
   // name each one, or the stage that is blind will refuse what the other runs.
-  const READ_KINDS = ['sql.read', 'manual.search', 'comms.search', 'weather.lookup', 'contact.relations',
+  const READ_KINDS = ['sql.read', 'manual.search', 'comms.search', 'weather.lookup', 'contact.relations', 'form.template',
     'mail.search', 'mail.message', 'document.relink.candidates', 'esign.requests', 'automation.list', 'automation.definition', 'automation.run', 'automation.references',
     'automation.preview_step', 'automation.preview_ingest_rule'];
 
@@ -492,7 +520,7 @@ describe('both read-planning prompts teach every read kind (the S3b lesson, read
     // a shared bag with several ids would itself be invalid.
     const PARAMS = {
       'manual.search': { query: 'xx' }, 'comms.search': { query: 'xx' }, 'weather.lookup': { location: 'xx' },
-      'contact.relations': { contact_id: 1 },
+      'contact.relations': { contact_id: 1 }, 'form.template': { form_key: 'casedetails' },
       'mail.search': {}, 'mail.message': { mail_message_id: 1 }, 'document.relink.candidates': { case_id: '7KQ2M9XA' },
       'esign.requests': { contact_id: 1 },
       'automation.list': {}, 'automation.definition': { workflow_id: 1 },

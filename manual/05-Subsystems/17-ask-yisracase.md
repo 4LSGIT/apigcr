@@ -1161,8 +1161,9 @@ step and its recipient.
 It may instead be one `workflow.start.v1` proposal: starting ONE run of an
 active workflow's published version now — with no input, or with the input
 you give it. Input values must be for names the workflow's published steps
-actually read (or that its test input sample lists); Casey refuses any other
-name and says which names are allowed. Each value is plain text (up to 500
+actually read (or that its test input sample lists — Casey sees those names
+when it reads the workflow, so it can propose them without being refused
+first); Casey refuses any other name and says which names are allowed. Each value is plain text (up to 500
 characters, one line), a number, true/false or empty — never a nested
 structure, so workflows that handle provider events (incoming messages or
 calls) are not fed by hand. The card shows every value exactly as it will be
