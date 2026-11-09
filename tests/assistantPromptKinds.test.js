@@ -760,3 +760,30 @@ describe('A11.1 — every stage teaches the case folder card, the candidates rea
     expect(repairPrompt).toContain('never a dismiss / undo / unlink / weak / force key');
   });
 });
+
+// A9.2: the typed case.pipeline read. The plan and investigate stages must
+// name it (a stage that does not know it sql.reads the pipeline tables, which
+// the report grants refuse); the answer stage must teach the row shape and
+// that a head-row NO PIPELINE / RETAINED CASE ON THE INTAKE PIPELINE is the
+// answer; the repair stage names it as a source of the move's stage name.
+describe('A9.2 — every stage teaches the case.pipeline read', () => {
+  test('the plan carries the read kind and points the pipeline bullet at it', () => {
+    expect(planPrompt).toContain('case.pipeline\n  ({"case_id":"7KQ2M9XA"} — ONE case\'s pipeline as the case page shows it');
+    expect(planPrompt).toContain('status — done, na, skipped, active, upcoming — and any N/A or done override with its note');
+    expect(planPrompt).toContain('the pipeline tables are NOT in the\n  curated schema, so never sql.read them');
+    expect(planPrompt).toContain('add a case.pipeline read of the case to show its stages\n  and their steps before proposing.');
+  });
+  test('the investigate stage names the read kind and the proposal family points at it', () => {
+    expect(investigatePrompt).toContain('case.pipeline ({"case_id"} — one case\'s pipeline: phase, current\n  stage, history');
+    expect(investigatePrompt).toContain('never\n  sql.read the pipeline tables');
+    expect(investigatePrompt).toContain('(a\n  case.pipeline read shows them first when the user names a stage or asks what blocks a move)');
+  });
+  test('the answer and repair stages teach the rows and the read as the stage source', () => {
+    expect(answerPrompt).toContain('Name a stage from a case.pipeline read of the case (a stage row\'s stage_key or stage_label)');
+    expect(answerPrompt).toContain('A case.pipeline read ({"case_id"}) shows the case\'s pipeline');
+    expect(answerPrompt).toContain('the resolver\'s status (done, na, skipped, active, upcoming) and any override with its note');
+    expect(answerPrompt).toContain('a REQUIRED step that is active or\n    upcoming is what blocks a move past its stage');
+    expect(answerPrompt).toContain('A head row that says NO PIPELINE or RETAINED CASE ON THE INTAKE PIPELINE is the answer: say so.');
+    expect(repairPrompt).toContain('stage is the destination stage\'s key or label exactly as\n  a case.pipeline read, the refusal or the card lists it');
+  });
+});

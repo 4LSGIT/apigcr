@@ -2,14 +2,14 @@
 
 The destination is `ref/CASEY_VISION.md`; this document is the mechanics.
 
-Status (2026-11-03): A0/A0.1, A1, A2, A3, A4, A4.1 and A5 shipped 2026-10-20 —
+Status (2026-11-09): A0/A0.1, A1, A2, A3, A4, A4.1 and A5 shipped 2026-10-20 —
 the Task lifecycle; reviewed Event create/update/complete/cancel; Appointment
 create, narrow update, attended, no-show, cancel, reschedule-now and
 reschedule-later; one phone/email/address subrecord create, narrow update or
 history-preserving end. Since then: A6 (contact relations and roles — create and
 update), A7 group A (case notes, case alerts, contact notes), A7c (case docket
 adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
-advance and move; off-ramp = exit), A10 (checklists and items), A11 (documents —
+advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read), A10 (checklists and items), A11 (documents —
 update and link), A11.1 (a case's Dropbox folder — candidates-only relink),
 A12 (form drafts and submission links), A13 (mail triage —
 read state and case link; no drafts exist, no SMS triage), A14 (direct email /
@@ -953,10 +953,86 @@ reason and permission contract — `POST/DELETE
 …/pipeline/requirements/:key/override`); cross-pipeline moves (`/pipeline/move`,
 a matter-type change — non-atomic, writes case_type / case_subtype, fires
 case.updated too, and its passed-over requirements cannot be computed before
-the membership write); entering a chapter pipeline past its first stage; a
-typed `case.pipeline` read so Casey can SHOW a case's stages and steps before
-proposing (today it reads cases.case_stage / case_status and learns stage
-names from a refusal). `ref/plans.md`.
+the membership write); entering a chapter pipeline past its first stage.
+`ref/plans.md`.
+
+#### A9.2: Typed `case.pipeline` read — shipped 2026-11-09
+
+A read, not a card: Casey SHOWS a case's pipeline — where it is, every stage,
+each step's status and what blocks a move — before proposing one. The
+pipeline tables are outside `lib/reportSchema/manifest.js` (so `sql.read`
+cannot see them, and widening the manifest needs the production grant script
+re-run), so this is the typed-read-on-the-app-pool recipe (A6.0
+`contact.relations`, A11.1 `document.relink.candidates`). No flag, no route,
+no schema change, no settings key.
+
+**Shipped contract.** `case.pipeline` {case_id} (validator: one exact case_id,
+`^[A-Za-z0-9_-]{1,20}$`; fingerprint per case) →
+`assistantService.casePipelineRead`: `caseService.getCase` (the case row only)
+then `pipelineService.getPipeline(db, <the STORED case_id>, {requirements:
+true})` — the case page's own GET `/api/cases/:id/pipeline?requirements=1`,
+the read the A9 click re-runs. Passing the stored id matters: getPipeline
+finds the case case-insensitively but keys its steps by the id it is given,
+so a mis-cased id would read the case with no steps. Rows (cap 50, the
+per-step `MAX_ROWS`; a cut is stated in the head note, stage rows first):
+- **head** (`row_type: 'case'`): case id + label (full case number, else
+  number, else id — the A9 card's label), type / subtype, `pipeline_phase`
+  (anything not exactly 'case' reads intake, as the engine does), case_stage
+  / case_status / case_rec, the resolved template (id, name, role, matter
+  type / subtype), `phase_mismatch`, current stage (key, label, lane, number,
+  `current_on_pipeline`), `next_main_stage_key` (getPipeline's `upcoming[0]`),
+  history count, the last transition (entered_at, entered_by as a user id,
+  source, note), the row counts, and a note.
+- **stage** rows, one per active stage of the resolved pipeline, both lanes:
+  key, label, client label / visibility, lane (main / offramp — the A9
+  card's test), number, case_stage, is_terminal, default_rec, `is_current`,
+  `upcoming` (membership in getPipeline's upcoming — main lane only),
+  `times_entered` / `last_entered_at` (history matched by stage_key, the
+  engine's convention), requirement count.
+- **requirement** rows, one per step of those stages, the resolver's object
+  verbatim: key, label, client label / visibility, required (1/0), owner,
+  kind, `status` (done / na / skipped / active / upcoming — the resolver's
+  vocabulary; an override is not a status of its own), satisfied_at, detail,
+  progress, hint, and the override (`override_status` / `_note` / `_set_by`
+  / `_at`) when one is stored.
+- **projected_stage** rows, intake-resolved cases only: getPipeline's R2.5
+  projection (source subtype → the named chapter pipeline's main-lane
+  stages; generic → the Intake template's inactive `retained` row).
+
+**Not returned, on purpose:** stage_id (the cards name a stage by key or
+label; an all-digit target is a numeric id to the route); `is_default` (not
+in getPipeline's template projection); a name for `entered_by` (a users join
+the resolver does not make); the Intake pipeline's steps of a retained case
+(getPipeline is stage-anchored — they are history; GET
+`…/pipeline/requirements` has them); no server-side summary — the note states
+facts and the row vocabulary, the model summarises.
+
+**Refusal-shaped answers:** an unknown case → a `not_found` row with the
+route's 404 wording ("Case X not found"); no pipeline resolves (no active
+Intake template) → a NO PIPELINE head row with no stage rows; a retained case
+no chapter pipeline matches → RETAINED CASE ON THE INTAKE PIPELINE
+(`phase_mismatch` 1, the wording the A9 card refuses on); no history → NO
+STAGE YET. Any other failure of the pipeline read is the step's failure.
+
+**Permission posture:** the read runs inside POST `/api/assistant/execute`
+(`jwtOrApiKey` + `staffOnly`); the route it mirrors is bare `jwtOrApiKey`.
+Every caller that route refuses, the assistant refuses; an API key the route
+admits, the assistant refuses — narrower, never wider (pinned behind the real
+gate). Its rows carry case_id, so a head row satisfies the A9 cards' "a row
+carrying the exact case_id" evidence.
+
+**A9 touch:** the chapter-pipeline "not a stage" move refusal ends "A case.pipeline
+read shows each stage with its steps"; the prompts teach the read at every
+stage (plan / investigate kind lists, the A9 plan bullet, the answer's
+pipeline rules — name a stage from a stage row — and the repair shape).
+Nothing else in the cards changed.
+
+Tests: `tests/caseyPipelineRead.test.js` (validator, executor, cap, posture),
+gated `tests/caseyPipelineRead.mysql.test.js` (the real resolver: detector
+done / skipped / N/A override / active / upcoming, both lanes, read = route,
+projection, mismatch, no pipeline, 404, mis-cased id, the A9 refusal over the
+step the read shows), `tests/assistantPromptKinds.test.js`,
+`tests/automationRead.test.js` READ_KINDS.
 
 #### A10: Checklists and checklist items — create, item add and item update shipped 2026-11-01
 

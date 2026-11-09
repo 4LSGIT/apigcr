@@ -836,6 +836,21 @@ body. Governing migrations in `ref/migrations/`.*
   switch `casey_case_pipeline_enabled` (on unless '0'). Tests:
   `tests/caseyPipeline.test.js`, gated `tests/caseyPipeline.mysql.test.js`;
   plan: ASK_CASEY_ACTIONS_PLAN A9.
+- **Casey reads a case's pipeline (A9.2, 11-09):** typed read kind
+  `case.pipeline` {case_id} → `assistantService.casePipelineRead` on the app
+  pool (the pipeline tables are outside the report manifest): `caseService
+  .getCase` + `pipelineService.getPipeline(db, <stored case_id>, {requirements:
+  true})` — the case page's GET `…/pipeline?requirements=1`. Rows: a head
+  (phase, resolved template, current stage, `next_main_stage_key`, last
+  transition, `phase_mismatch`, note), one `stage` row per stage (both lanes,
+  is_current, upcoming, times_entered), one `requirement` row per step (the
+  resolver's status and override verbatim), `projected_stage` rows (R2.5,
+  intake-resolved only); cap 50, stated. Invariants: pass the STORED case_id —
+  getPipeline keys steps by the id it is given, so a mis-cased id reads no
+  steps; no stage_id in the rows; unknown case = a `not_found` row with the
+  route's 404 wording; posture never wider than the route (execute is
+  staff-JWT only). Tests: `tests/caseyPipelineRead.test.js`, gated
+  `tests/caseyPipelineRead.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A9.2.
 - **Casey checklist cards (A10, 11-01):** kinds `checklist.create.v1` (POST
   `/checklists` {title, kind, body?, link_type, link, items?}),
   `checklist.item.add.v1` (POST `/checklists/:id/items` {name}),

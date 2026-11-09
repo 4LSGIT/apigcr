@@ -523,6 +523,17 @@ this lead dead", "move the case back to Docs requested").
 The off switch for these cards is the `casey_case_pipeline_enabled` setting
 (on unless set to 0).
 
+Casey can also **show** a case's pipeline without proposing anything — ask
+"where is the Smith case in its pipeline?" or "what is left before it can be
+filed?". It reads the same pipeline the case page's Pipeline widget and Steps
+panel show: the pipeline the case is on, its current stage and when it got
+there, every stage (off-ramps included), and each step with its status —
+done, N/A (with the note left when it was marked), skipped, waiting at the
+current stage, or upcoming. It names the required steps that would stop a
+move, and for an intake lead it can show the chapter pipeline the case's
+subtype points to. A retained case shown on the Intake pipeline, or a case no
+pipeline fits, is said plainly. This read is always on; it changes nothing.
+
 ### A case's number (docket)
 
 Casey can **add a case number to a case that has none** — the case number,

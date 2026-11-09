@@ -219,7 +219,7 @@ describe('the destination', () => {
     await expect(run(move('contract sent'))).resolves.toMatchObject({ to: { stage_key: 'contract_sent' } });
     await refuse(move('Consult booked'), /^Case 25-12345-abc is already at Consult booked \(consult_booked\) — that changes nothing$/);
     await refuse(move('Filed'), /^"Filed" is not a stage of case 25-12345-abc's Intake pipeline \(its stages are: Consult booked \(consult_booked\), Consult done \(consult_done\), Contract sent \(contract_sent\), No show \(no_show\), Dead lead \(dead_lead\)\)\. The one other destination Casey can offer is its chapter pipeline's FIRST stage, Retained \(retained\) on Chapter 7/);
-    await refuse(move('Archived'), /^"Archived" is not a stage of case 25-12345-abc's Chapter 7 pipeline — its stages are: Retained \(retained\), Docs requested \(docs\), Filed \(filed\), Dismissed \(dismissed\)$/,
+    await refuse(move('Archived'), /^"Archived" is not a stage of case 25-12345-abc's Chapter 7 pipeline — its stages are: Retained \(retained\), Docs requested \(docs\), Filed \(filed\), Dismissed \(dismissed\)\. A case\.pipeline read shows each stage with its steps$/,
       { caseRow: { pipeline_phase: 'case' }, pipe: pipeOf({ template: CH7, at: 'docs' }) });
     const twins = INTAKE_STAGES().map((s) => (s.stage_key === 'no_show' ? { ...s, internal_label: 'Consult done' } : s));
     await refuse(move('Consult done'), /^"Consult done" names 2 stages of the Intake pipeline: Consult done \(consult_done\), Consult done \(no_show\) — name it by its key$/, { pipe: pipeOf({ stages: twins, at: 'consult_booked' }) });

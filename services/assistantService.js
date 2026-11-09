@@ -2814,6 +2814,124 @@ async function casePipelineAutomation(db, envelope, eventType = 'case.stage_adva
   return { lines, rules_checked: rules.length, quiet };
 }
 
+// The case.pipeline read (A9.2): ONE case's resolved pipeline, read through
+// the services behind the case page's own GETs — caseService.getCase (GET
+// /api/cases/:id, the case row only) and pipelineService.getPipeline with
+// requirements (GET /api/cases/:id/pipeline?requirements=1, the read the A9
+// click re-runs) — on the app pool: the pipeline tables are outside the report
+// manifest. Rows: a head row; one row per stage of the resolved pipeline, both
+// lanes; one row per requirement of those stages, with the resolver's own
+// status and override verbatim; and, for an intake-resolved case, the R2.5
+// projection's stages. No stage_id: the cards name a stage by key or label.
+// Real-engine twin: tests/caseyPipelineRead.mysql.test.js.
+async function casePipelineRead(db, caseId) {
+  const gone = () => ({ rows: [{ row_type: 'not_found', case_id: caseId, note: `Case ${caseId} not found` }], truncated: false });
+  const found = await require('./caseService').getCase(db, caseId);
+  if (!found || !found.case) return gone();
+  const row = found.case;
+  const id = String(row.case_id);
+  let pipe;
+  try {
+    pipe = await require('./pipelineService').getPipeline(db, id, { requirements: true });
+  } catch (err) {
+    if (err && err.status === 404) return gone();
+    throw err;
+  }
+  const number = String(row.case_number_full || row.case_number || '').trim().slice(0, 40);
+  // pipelineService.isCasePhase: anything not exactly 'case' reads as intake.
+  const phase = String(row.pipeline_phase == null ? '' : row.pipeline_phase).trim().toLowerCase() === 'case' ? 'case' : 'intake';
+  const tpl = pipe && pipe.template;
+  const stages = tpl && Array.isArray(pipe.stages) ? pipe.stages : [];
+  const history = Array.isArray(pipe && pipe.history) ? pipe.history : [];
+  const current = (pipe && pipe.current) || null;
+  const curStage = current ? stages.find((s) => s.stage_key === current.stage_key) || null : null;
+  const upcomingKeys = new Set((Array.isArray(pipe && pipe.upcoming) ? pipe.upcoming : []).map((s) => s.stage_key));
+  const next = Array.isArray(pipe && pipe.upcoming) && pipe.upcoming.length ? pipe.upcoming[0] : null;
+  const lane = (s) => (casePipelineOfframp(s) ? 'offramp' : 'main');
+  const mismatch = !!tpl && phase === 'case' && tpl.role === 'intake';
+  const projected = pipe && pipe.projected ? pipe.projected : null;
+
+  const stageRows = []; const reqRows = [];
+  for (const s of stages) {
+    // History is matched by stage_key, the engine's key-based convention.
+    const entered = history.filter((h) => h.stage_key === s.stage_key);
+    const reqs = Array.isArray(s.requirements) ? s.requirements : [];
+    const stageLabel = String(s.internal_label || s.stage_key);
+    stageRows.push({
+      row_type: 'stage', case_id: id, stage_key: s.stage_key, stage_label: stageLabel,
+      client_label: s.client_label == null ? null : s.client_label, client_visible: s.client_visible ? 1 : 0,
+      lane: lane(s), stage_number: Number(s.stage_number), case_stage: s.case_stage == null ? null : s.case_stage,
+      is_terminal: s.is_terminal ? 1 : 0, default_rec: s.default_rec == null ? '' : s.default_rec,
+      is_current: current && s.stage_key === current.stage_key ? 1 : 0, upcoming: upcomingKeys.has(s.stage_key) ? 1 : 0,
+      times_entered: entered.length, last_entered_at: entered.length ? entered[entered.length - 1].entered_at : null,
+      requirements: reqs.length,
+    });
+    for (const r of reqs) {
+      const ov = r.override || null;
+      reqRows.push({
+        row_type: 'requirement', case_id: id, stage_key: s.stage_key, stage_label: stageLabel,
+        requirement_key: r.requirement_key, requirement_label: String(r.internal_label || r.requirement_key),
+        client_label: r.client_label == null ? null : r.client_label, client_visible: r.client_visible ? 1 : 0,
+        required: r.required ? 1 : 0, owner: r.owner == null ? null : r.owner, kind: r.kind == null ? null : r.kind,
+        status: r.status, satisfied_at: r.satisfied_at == null ? null : r.satisfied_at,
+        detail: r.detail == null ? null : r.detail, progress: r.progress == null ? null : r.progress,
+        hint: r.hint == null ? null : r.hint,
+        override_status: ov ? ov.status : null, override_note: ov && ov.note != null ? ov.note : null,
+        override_set_by: ov && ov.set_by != null ? Number(ov.set_by) : null, override_at: ov && ov.at != null ? ov.at : null,
+      });
+    }
+  }
+  const projRows = (projected && Array.isArray(projected.stages) ? projected.stages : []).map((s) => ({
+    row_type: 'projected_stage', case_id: id, projected_source: projected.source,
+    projected_template: projected.template ? projected.template.name : null,
+    stage_key: s.stage_key, stage_label: String(s.internal_label || s.stage_key),
+    client_label: s.client_label == null ? null : s.client_label, stage_number: Number(s.stage_number), lane: lane(s),
+  }));
+
+  const notes = [];
+  if (!tpl) {
+    notes.push(`NO PIPELINE: no pipeline resolves for case ${number || id} (no active Intake pipeline exists), so it has no stages and no steps — there is nothing to advance or move it along.`);
+  } else {
+    notes.push(`The ${tpl.name} pipeline (${tpl.role}) as the case page's Pipeline widget and Steps panel read it: ${stageRows.length} stage${stageRows.length === 1 ? '' : 's'}, both lanes (main = the ordered path; offramp = an exit reachable from anywhere, never "next"), and ${reqRows.length} step${reqRows.length === 1 ? '' : 's'} with the resolver's status — done, na (marked N/A), skipped (passed over), active (the current stage's work), upcoming.`);
+    notes.push('A REQUIRED step that is active or upcoming blocks a move past its stage onto the main path or into the chapter pipeline (the pipeline cards refuse it; Casey cannot override one); a move onto an off-ramp is an exit and is not refused.');
+    if (tpl.role === 'case') notes.push('The Intake pipeline\'s steps of a retained case are history and are not listed.');
+    if (!current) notes.push('NO STAGE YET: the case has no pipeline history — every stage is upcoming and nothing is active.');
+    else if (!curStage) notes.push(`The case's latest stage, ${current.status_label || current.stage_key} (${current.stage_key}), is not a stage of the ${tpl.name} pipeline.`);
+    if (mismatch) {
+      notes.push(`RETAINED CASE ON THE INTAKE PIPELINE: the case's pipeline phase is "case" but no chapter pipeline matches its type/subtype (${row.case_type || 'no type'} / ${row.case_subtype || 'no subtype'}), so it shows the ${tpl.name} pipeline. Casey's pipeline cards refuse to move it there (that would put a retained case back into intake) — fix the case's type/subtype, or the user moves it on the case page.`);
+    }
+    if (projected) {
+      notes.push(projected.source === 'subtype' && projected.template
+        ? `PROJECTION: the case's subtype names the ${projected.template.name} pipeline; its main-lane stages (projected_stage rows) are a read-only look ahead — the case is not on that pipeline yet, carries no steps there, and only its FIRST stage can be entered from here.`
+        : 'PROJECTION: the case\'s subtype names no chapter pipeline exactly, so only the generic Retained row is projected (projected_stage rows); the chapter pipeline cannot be entered from here until the subtype names it.');
+    }
+  }
+  const all = [...stageRows, ...reqRows, ...projRows];
+  const truncated = all.length + 1 > MAX_ROWS;
+  if (truncated) notes.push(`MORE ROWS than listed: ${all.length + 1} rows, the read returns ${MAX_ROWS}.`);
+  const head = {
+    row_type: 'case', case_id: id, case_label: number || id, case_number: row.case_number == null ? null : row.case_number,
+    case_number_full: row.case_number_full == null ? null : row.case_number_full,
+    case_type: row.case_type == null ? null : row.case_type, case_subtype: row.case_subtype == null ? null : row.case_subtype,
+    pipeline_phase: phase, case_stage: row.case_stage == null ? null : row.case_stage,
+    case_status: row.case_status == null ? null : row.case_status, case_rec: row.case_rec == null ? null : row.case_rec,
+    template_id: tpl ? Number(tpl.id) : null, template_name: tpl ? tpl.name : null, template_role: tpl ? tpl.role : null,
+    template_case_type: tpl ? tpl.case_type : null, template_case_subtype: tpl ? tpl.case_subtype : null,
+    phase_mismatch: mismatch ? 1 : 0,
+    current_stage_key: current ? current.stage_key : null,
+    current_stage_label: curStage ? String(curStage.internal_label || curStage.stage_key) : (current ? current.status_label || null : null),
+    current_lane: curStage ? lane(curStage) : null, current_stage_number: curStage ? Number(curStage.stage_number) : null,
+    current_on_pipeline: current ? (curStage ? 1 : 0) : null,
+    next_main_stage_key: next ? next.stage_key : null,
+    history_count: history.length,
+    last_entered_at: current ? current.entered_at : null, last_entered_by: current && current.entered_by != null ? Number(current.entered_by) : null,
+    last_source: current ? current.source : null, last_note: current && current.note != null ? current.note : null,
+    stages: stageRows.length, requirements: reqRows.length, projected_stages: projRows.length,
+    note: notes.join(' '),
+  };
+  return { rows: [head, ...all].slice(0, MAX_ROWS), truncated };
+}
+
 async function normalizeCasePipelineAction(db, value, evidence, { currentUserId = null } = {}) {
   // The per-family switch: '0' and the A9 kinds do not exist.
   if (require('../lib/firmConfig').cfg('casey_case_pipeline_enabled') === '0') {
@@ -2907,7 +3025,7 @@ async function normalizeCasePipelineAction(db, value, evidence, { currentUserId 
     } else {
       const list = stages.map(casePipelineStageText).join(', ') || 'none';
       if (tpl.role !== 'intake') {
-        throw casePipelineError(`"${stageText}" is not a stage of case ${caseLabel}'s ${tpl.name} pipeline — its stages are: ${list}`);
+        throw casePipelineError(`"${stageText}" is not a stage of case ${caseLabel}'s ${tpl.name} pipeline — its stages are: ${list}. A case.pipeline read shows each stage with its steps`);
       }
       const entry = await casePipelineEntry(db, row, pipe, stages);
       const matchesEntry = !entry.refusal && (entry.stage.stage_key.toLowerCase() === want || entry.stage.internal_label.trim().toLowerCase() === want);
@@ -9531,6 +9649,14 @@ function validateStep(query, index) {
     if (!/^[A-Za-z0-9_-]{1,20}$/.test(caseId)) throw httpError(422, `Step ${id} needs the case's exact case_id`);
     return { id, kind, purpose, case_id: caseId };
   }
+  // A9.2 — ONE case's resolved pipeline: its stages (both lanes), their
+  // requirements with the resolver's statuses, its position and history
+  // (typed: the pipeline tables are outside the curated schema).
+  if (kind === 'case.pipeline') {
+    const caseId = typeof query.case_id === 'string' ? query.case_id.trim() : '';
+    if (!/^[A-Za-z0-9_-]{1,20}$/.test(caseId)) throw httpError(422, `Step ${id} needs the case's exact case_id`);
+    return { id, kind, purpose, case_id: caseId };
+  }
   // A18.4d — ONE contact's or ONE case's signing requests (typed: the reminder
   // pointer and the reminder contact are outside the curated schema).
   if (kind === 'esign.requests') {
@@ -9737,6 +9863,7 @@ function stepFingerprint(step) {
   if (kind === 'mail.search') return `${kind}:${String(step.q || '').toLowerCase()}:${step.mailbox_id || ''}:${step.unread_only ? 1 : 0}:${step.from || ''}:${step.since || ''}:${step.folder || 'inbox'}:${Number(step.limit) || 10}`;
   if (kind === 'mail.message') return `${kind}:${Number(step.mail_message_id)}`;
   if (kind === 'document.relink.candidates') return `${kind}:${String(step.case_id || '')}`;
+  if (kind === 'case.pipeline') return `${kind}:${String(step.case_id || '')}`;
   if (kind === 'esign.requests') return step.case_id != null ? `${kind}:case:${String(step.case_id)}` : `${kind}:contact:${Number(step.contact_id)}`;
   if (kind === 'automation.definition') return `${kind}:${recordFingerprint(step)}:${step.version === undefined ? 'current' : Number(step.version)}`;
   if (kind === 'automation.run') {
@@ -10033,6 +10160,13 @@ async function executeReadStep(db, query, { auth, userId }) {
     // A11.1: on the app pool (case_folder_cache stays outside the report
     // manifest); the panel's own read, never with weak matches.
     const out = await relinkCandidatesRead(db, query.case_id);
+    rows = out.rows;
+    rowCount = rows.length;
+    truncated = out.truncated;
+  } else if (query.kind === 'case.pipeline') {
+    // A9.2: on the app pool (the pipeline tables are not in the report
+    // manifest); the case page's own GET /api/cases/:id/pipeline?requirements=1.
+    const out = await casePipelineRead(db, query.case_id);
     rows = out.rows;
     rowCount = rows.length;
     truncated = out.truncated;
@@ -10615,7 +10749,7 @@ module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
-  normalizeActionDraft, contactRelationsRead, formTemplateRead, mailSearchRead, mailMessageRead, relinkCandidatesRead, esignRequestsRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
+  normalizeActionDraft, contactRelationsRead, formTemplateRead, mailSearchRead, mailMessageRead, relinkCandidatesRead, esignRequestsRead, casePipelineRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
   repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan, answerSystemAppend, answerMaxTokens,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,

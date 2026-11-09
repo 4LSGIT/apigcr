@@ -1286,17 +1286,19 @@ COMMENTs.)
   entering a chapter pipeline PAST its first stage (same reason). Needs a
   resolver dry-run over a hypothetical case row (requirementService takes the
   case row from the DB today).
-- **A typed `case.pipeline` read.** The pipeline tables are outside the
-  curated report schema, so Casey sees a case's stage only as
-  cases.case_stage / case_status and learns stage names and blockers from a
-  normalizer refusal. A read returning the resolved pipeline's stages, the
-  current position and each step's status (the A6.0 `contact.relations`
-  precedent) would let Casey answer "what is blocking this case" before
-  proposing anything.
 - **Native: the case page's Advance and the board's drag do not warn on unmet
   requirements.** Only Casey's cards refuse them; the native confirm says
   "Move this case to X?" with no mention of open required steps. A warning
   (or a gate) in the native confirm is a product decision.
+- **Native: `GET /api/cases/:id/pipeline?requirements=1` with a mis-cased id
+  returns the stages with EMPTY requirements** (A9.2 worker, 2026-11-09):
+  getPipeline finds the case case-insensitively but keys its steps by the id
+  it is given. Casey's read passes the stored id; a direct caller with a
+  mis-cased URL reads a stepless pipeline. Resolve the stored id first.
+- **Native: a read-only View-as session gets 403 `view_as_read_only` on POST
+  `/api/assistant/execute`**, so Casey cannot even READ under it while the GET
+  routes it mirrors still answer (observed in code by the A9.2 worker, not
+  tested).
 
 ## From the Ask Casey arc — A8 case-contact membership (2026-10-28) — deferred
 
