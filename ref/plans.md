@@ -1192,8 +1192,7 @@ COMMENTs.)
 
 ## From the Ask Casey arc — A7 groups B/C case fields (2026-11-09) — deferred
 
-- **What the case fields card still refuses by name.** Replacing or clearing a
-  docket (the A7c bullets below — in flight as A7e); `case_341_current` /
+- **What the case fields card still refuses by name.** `case_341_current` /
   `341_appt_id` (apptService's single-writer mirror of the live 341
   appointment; no UI writes them either — the 341 is moved by rescheduling the
   appointment, which Casey's appointment cards do; manager ruling 2026-11-09,
@@ -1208,7 +1207,8 @@ COMMENTs.)
   `case_open_date`) with only the read-then-write freshness check (baked
   `expected` + the click-time GET). A precondition in the route (expected
   values compared in the UPDATE's own statement, 409 on a miss) closes the gap
-  between the re-read and the write.
+  between the re-read and the write — for a docket replace (A7e) also the gap
+  between the click-time collision search and the write.
 - **Native gaps found while tracing (not Casey's):**
   - `PATCH /api/cases/:id` checks no width: relaxed sql_mode stores any
     over-width varchar cut short and answers 200 (pinned for case_caption in
@@ -1226,6 +1226,13 @@ COMMENTs.)
   - Nothing server-side guards `case_341_current` / `341_appt_id`: the
     generic PATCH writes them, though apptService is their declared single
     writer and the portal shows the date.
+  - `PATCH /api/cases/:id` has no docket collision guard (A7e, pinned on a
+    real engine in `tests/caseyCaseFields.mysql.test.js`): it stores a
+    case_number another case already holds and answers 200 — the Case Details
+    form and every API writer can make two cases share a docket, which
+    court-email matching and the events / log docket joins then resolve to
+    whichever row MySQL returns first. Only `PATCH /api/cases/:id/docket` and
+    court review check (`checkCaseNumberCollision`).
   - `domainEvents.buildChanges`' `_diffNorm` reads a datetime-local value
     (`2026-12-01T09:30`) as `2026-12-01 09:30` and the stored DATETIME as
     `2026-12-01 09:30:00` (or a bare date at midnight), so re-sending an
@@ -1234,12 +1241,6 @@ COMMENTs.)
 
 ## From the Ask Casey arc — A7c docket adopt (2026-11-02) — deferred
 
-- **Replacing a docket.** The adopt route refuses it by design (a
-  case-detail-form operation); a Casey replacement needs its own card — the
-  number it overwrites, every court-email / event / log row that leaves the
-  case with the old number, the judge link it re-resolves — and probably a
-  conditional write rather than the read-then-write the adopt does.
-- **Clearing a number.** Not an adopt; same readers leave the case at once.
 - **Native gaps found while tracing (not Casey's):**
   - The route's adopt-only guard compares in JS (exact), its collision guard
     in SQL (general_ci): a value differing from the case's own stored number

@@ -44,6 +44,17 @@
  *   - The browser's precheck passes on a fresh card — DATE, DATETIME and a
  *     custom value compared in the GET's own shapes — and refuses after a
  *     hand edit.
+ *   - A7e, THE DOCKET (case_number / case_number_full on this card): the plain
+ *     PATCH stores a REPLACED number, stores a number ANOTHER case holds
+ *     (no collision guard) and clips one over 20 — so the card's collision
+ *     and width refusals are load-bearing; a replace moves exactly the events
+ *     and log rows the card counted, measured with the real readers
+ *     (eventService.listEvents' case scope, logService._buildCaseLogWhere)
+ *     before and after; court email (lib/courtResolve) follows the numbers,
+ *     the bare-number fallback included; the judge link re-resolves from the
+ *     new suffix, and a clear drops it when the judge text matches no one;
+ *     the browser's click-time collision re-check over the real search route
+ *     refuses a number another case took after the card was prepared.
  */
 'use strict';
 
@@ -74,7 +85,9 @@ const TABLES = ['cases', 'contacts', 'case_relate', 'contact_roles', 'field_defs
   // The readers scan joins the step tables' parents on the live versions.
   'workflows', 'sequence_templates',
   // A7d: the pipeline a type / subtype resolves to, the case's stage history, the firm's case-type list.
-  'pipeline_templates', 'case_stage_log', 'app_settings'];
+  'pipeline_templates', 'case_stage_log', 'app_settings',
+  // A7e: the rows filed by number that leave / arrive with a docket.
+  'events', 'log'];
 
 function schemaFor(tables) {
   const lines = fs.readFileSync(path.join(__dirname, '..', 'ref', 'database.sql'), 'utf8').split('\n');
@@ -142,8 +155,10 @@ function constSrc(html, name) {
 }
 function browserChecks(api) {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'assistant.html'), 'utf8');
-  const consts = ['CASE_FIELDS_MAX', 'CASE_FIELDS_REFUSED_NAMES', 'CASE_FIELDS_COLUMN'].map((n) => constSrc(html, n));
-  const names = ['actionStringReceipt', 'caseFieldsCaseLabel', 'caseFieldsCanon', 'caseFieldsBody', 'caseFieldsRequest', 'caseFieldsPrecheck', 'caseFieldsResult'];
+  const consts = ['CASE_FIELDS_MAX', 'CASE_FIELDS_REFUSED_NAMES', 'CASE_FIELDS_COLUMN', 'CASE_FIELDS_DOCKET_SEARCH_MAX',
+    'CASE_DOCKET_FIELDS', 'CASE_DOCKET_MAX', 'CASE_DOCKET_CONTROL'].map((n) => constSrc(html, n));
+  const names = ['actionStringReceipt', 'caseFieldsCaseLabel', 'caseFieldsCanon', 'caseFieldsBody', 'caseFieldsRequest', 'caseFieldsPrecheck',
+    'caseFieldsDocketPrecheck', 'caseFieldsResult'];
   const src = `${consts.join('\n')}\n${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { caseFieldsRequest, caseFieldsPrecheck, caseFieldsResult };`;
   return new Function('api', src)(api); // eslint-disable-line no-new-func
 }
@@ -398,5 +413,120 @@ d('the Casey case fields card on real MySQL (A7 groups B/C)', () => {
     await expect(card(C1, { cf_court: 'XXMI' })).rejects.toThrow(/^CUSTOM FIELD refused — cf_court: "XXMI" is not one of its options \(EDMI, WDMI\)\. Nothing is proposed$/);
     const bad = await patch(C1, { cf_court: 'XXMI' });
     expect([bad.status, bad.body.message]).toEqual([400, 'cf_court: "XXMI" is not one of its options (EDMI, WDMI)']);
+  });
+
+  // ── A7e: the docket on this card ──────────────────────────────────────────
+  describe('A7e — THE DOCKET on the case fields card', () => {
+    const C3 = 'A7ECASE3'; const C4 = 'A7ECASE4';
+    const eventSvc = require('../services/eventService');
+    const logSvc = require('../services/logService');
+    const { resolveCase } = require('../lib/courtResolve');
+    const ev3 = [{ id: 'q1', rows: [{ case_id: C3 }] }];
+    const card3 = (changes) => normalizeActionDraft(pool, { kind: 'case.fields.update.v1', case_id: C3, changes, evidence: row(1) }, ev3, { currentUserId: 6 });
+    // The case's Events tab and log, by their own readers.
+    const eventIds = async () => (await eventSvc.listEvents(pool, { link_type: 'case', link_id: C3, status: 'all', includeSuperseded: true, limit: 500 })).data.map((e) => e.event_id).sort();
+    const logIds = async () => {
+      const { whereFragment, params } = await logSvc._buildCaseLogWhere(pool, C3, { relateFilter: 'none' });
+      return (await q(`SELECT l.log_id FROM log l WHERE ${whereFragment} ORDER BY l.log_id`, params)).map((r) => r.log_id);
+    };
+    const minus = (a, b) => a.filter((x) => !b.includes(x));
+
+    beforeEach(async () => {
+      // C3: a full number with the 'mex' suffix (judge link 7101 by suffix) and a judge
+      // text that matches no judge — so a clear of the full number drops the link.
+      // C4: another case holding a full number in other capitalisation.
+      await q(`INSERT INTO cases (case_id, case_number, case_number_full, case_type, case_subtype, case_judge, case_judge_contact_id, case_caption) VALUES
+        (?, '25-80003', '25-80003-mex', 'Bankruptcy', 'Chapter 13', 'Unknown Judge', 7101, 'In re Dana Debtor'),
+        (?, NULL, '25-80009-AOT', 'Bankruptcy', 'Chapter 7', '', NULL, '')`, [C3, C4]);
+      await q(`INSERT INTO case_relate (case_relate_id, case_relate_case_id, case_relate_client_id, case_relate_type) VALUES (962, ?, 7001, 'Primary')`, [C3]);
+      await q(`INSERT INTO events (event_id, event_link_type, event_link_id, event_title, event_date) VALUES
+        (9001, 'case_number', '25-80003-mex', 'Hearing filed under the old full number', '2026-12-01'),
+        (9002, 'case_number', '25-80003-aot', 'Hearing filed under the new full number', '2026-12-02'),
+        (9003, 'case_number', '25-80003', 'Deadline under the bare number (stays)', '2026-12-03'),
+        (9004, 'case', ?, 'Linked by case id (stays)', '2026-12-04'),
+        (9005, 'case_number', '25-99999', 'Unrelated', '2026-12-05')`, [C3]);
+      await q(`INSERT INTO log (log_id, log_type, log_date, log_link, log_link_type, log_link_id, log_about_type, log_about_id, log_by, log_data, log_message) VALUES
+        (8001, 'court email', '2026-11-01 10:00:00', '25-80003-mex', 'case', '25-80003-mex', NULL, NULL, 0, '', 'old full, typed'),
+        (8002, 'note', '2026-11-01 10:01:00', '25-80003-mex', NULL, NULL, NULL, NULL, 0, '', 'old full, legacy untyped'),
+        (8003, 'court email', '2026-11-01 10:02:00', 'x@example.com', 'email', 'x@example.com', 'case', '25-80003-aot', 0, '', 'new full, about'),
+        (8004, 'note', '2026-11-01 10:03:00', ?, 'case', ?, NULL, NULL, 0, '', 'by case id (stays)'),
+        (8005, 'note', '2026-11-01 10:04:00', '25-80003', 'case', '25-80003', NULL, NULL, 0, '', 'bare number (stays)'),
+        (8006, 'note', '2026-11-01 10:05:00', '25-80003-mex', 'case', '25-80003-mex', 'case', ?, 0, '', 'old full but about the case id (stays)')`, [C3, C3, C3]);
+    });
+
+    test('REPLACE — the card counts exactly the rows the real readers lose and gain; court email and the judge link follow; the PATCH stores it', async () => {
+      const ev0 = await eventIds(); const log0 = await logIds();
+      expect(ev0).toEqual([9001, 9003, 9004]);
+      expect(log0).toEqual([8001, 8002, 8004, 8005, 8006]);
+      const c = await card3({ case_number_full: '25-80003-aot' });
+      expect(c.docket.rows).toEqual({ events_leave: 1, log_leave: 2, events_arrive: 1, log_arrive: 1 });
+      expect(c.judge).toMatchObject({ from: 7101, to: 7102 });
+      expect(c.warnings).toContain('JUDGE LINK CHANGES: re-resolved from the new full case number\'s judge suffix, else the judge text — Hon. Mark Example (contact #7101) → Hon. Ann Other (contact #7102).');
+      expect(c.expected).toMatchObject({ case_number: '25-80003', case_number_full: '25-80003-mex', case_judge: 'Unknown Judge', case_judge_contact_id: '7101' });
+      expect(await browser.caseFieldsPrecheck(c)).toBe('');
+      const res = await patch(C3, browser.caseFieldsRequest(c).body);
+      expect(res.status).toBe(200);
+      expect(res.body.data.updated_fields).toEqual(['case_number_full', 'case_judge_contact_id']);
+      expect(browser.caseFieldsResult(c, res.body)).toEqual({ case_id: C3 });
+      // The generic PATCH really stores a replaced number, and the link the card predicted.
+      expect((await q('SELECT case_number_full AS f, case_judge_contact_id AS j FROM cases WHERE case_id = ?', [C3]))[0]).toEqual({ f: '25-80003-aot', j: 7102 });
+      // The real readers moved exactly what the card counted.
+      const ev1 = await eventIds(); const log1 = await logIds();
+      expect([minus(ev0, ev1), minus(ev1, ev0)]).toEqual([[9001], [9002]]);
+      expect([minus(log0, log1), minus(log1, log0)]).toEqual([[8001, 8002], [8003]]);
+      // Court email: the new number lands here; the old full number still does, through the bare-number fallback (the card said so).
+      expect((await resolveCase(pool, '25-80003-aot')).case_id).toBe(C3);
+      expect((await resolveCase(pool, '25-80003-mex')).case_id).toBe(C3);
+      expect(c.effects.find((x) => x.startsWith('Court email:'))).toMatch(/mail carrying "25-80003-mex" still reaches this case — with its judge letters stripped it is "25-80003"/);
+    });
+
+    test('CLEAR — the bare number gone: old mail stops resolving, its rows leave, the card counted them', async () => {
+      const ev0 = await eventIds(); const log0 = await logIds();
+      const c = await card3({ case_number: '' });
+      expect(c.writes[0]).toMatchObject({ column: 'case_number', send: null, clears: true, removes: true });
+      expect(c.docket.rows).toEqual({ events_leave: 1, log_leave: 1, events_arrive: 0, log_arrive: 0 });
+      expect(c.effects.find((x) => x.startsWith('Court email:'))).toMatch(/mail carrying "25-80003" no longer files on this case; a full docket that reduces to "25-80003" once its judge letters are stripped no longer falls back to this case/);
+      expect((await resolveCase(pool, '25-80003-zzz')).case_id).toBe(C3); // the bare fallback, before
+      expect((await patch(C3, browser.caseFieldsRequest(c).body)).status).toBe(200);
+      expect((await q('SELECT case_number FROM cases WHERE case_id = ?', [C3]))[0].case_number).toBeNull();
+      const ev1 = await eventIds(); const log1 = await logIds();
+      expect([minus(ev0, ev1), minus(ev1, ev0)]).toEqual([[9003], []]);
+      expect([minus(log0, log1), minus(log1, log0)]).toEqual([[8005], []]);
+      expect((await resolveCase(pool, '25-80003')).found).toBe(false);
+      expect((await resolveCase(pool, '25-80003-zzz')).found).toBe(false);
+    });
+
+    test('CLEAR the full number — the judge link drops when the judge text matches no one; the card predicted it', async () => {
+      const c = await card3({ case_number_full: null });
+      expect(c.judge).toMatchObject({ from: 7101, to: null });
+      expect(c.warnings.join('\n')).toMatch(/JUDGE LINK CLEARS: the server re-resolves the judge contact from the judge text alone \(the full case number is cleared, so it has no suffix\) and finds no match/);
+      expect(c.docket.after.header).toBe('25-80003');
+      const res = await patch(C3, browser.caseFieldsRequest(c).body);
+      expect(res.body.data.changes).toEqual({ case_number_full: { from: '25-80003-mex', to: null }, case_judge_contact_id: { from: 7101, to: null } });
+      expect((await q('SELECT case_number_full AS f, case_judge_contact_id AS j FROM cases WHERE case_id = ?', [C3]))[0]).toEqual({ f: null, j: null });
+    });
+
+    test('ANOTHER CASE HOLDS IT — the plain PATCH would store the duplicate; the card refuses it (the service\'s own equality), and the click re-checks it', async () => {
+      // The card: refused, naming the other case (capitalisation aside — general_ci).
+      await expect(card3({ case_number: '25-80009-aot' })).rejects.toThrow(`ANOTHER CASE HOLDS IT: "25-80009-aot" is already on case ${C4} (Bankruptcy) — its case number is blank, its full case number "25-80009-AOT"`);
+      // The route has no guard: it stores the duplicate and answers 200 (why the card checks).
+      const dup = await patch(C2, { case_number: '25-80009-aot' });
+      expect(dup.status).toBe(200);
+      expect((await q("SELECT COUNT(*) AS n FROM cases WHERE case_number = '25-80009-aot' OR case_number_full = '25-80009-aot'"))[0].n).toBe(2);
+      await patch(C2, { case_number: '25-80002' });
+      // A card prepared while the number was free; another case takes it before the click.
+      const c = await card3({ case_number: '25-80077' });
+      expect(await browser.caseFieldsPrecheck(c)).toBe('');
+      await patch(C4, { case_number: '25-80077 ' }); // stored with a trailing space — equal under PAD SPACE
+      expect(await browser.caseFieldsPrecheck(c)).toBe(`Case ${C4} now holds "25-80077" — another case took that number since this card was prepared. Nothing was written. Two cases cannot share a docket; if they are the same matter, merge the cases on the case page.`);
+      expect((await q('SELECT case_number FROM cases WHERE case_id = ?', [C3]))[0].case_number).toBe('25-80003');
+    });
+
+    test('WIDTH — the plain PATCH stores a 21-character number cut to 20 and answers 200; the card refuses it', async () => {
+      const res = await patch(C2, { case_number: '1'.repeat(21) });
+      expect(res.status).toBe(200);
+      expect((await q('SELECT CHAR_LENGTH(case_number) AS n FROM cases WHERE case_id = ?', [C2]))[0].n).toBe(20);
+      await expect(card3({ case_number: '2'.repeat(21) })).rejects.toThrow(/^case_number "2{21}" is 21 characters — the column keeps 20, and the database would save it cut short while the route answers success/);
+    });
   });
 });

@@ -416,7 +416,18 @@ const RECORD_TEXT_CONTACT_KEYS = new Set(['kind', 'contact_id', 'value', 'append
 //     (relaxed sql_mode would cut a longer value short and answer 200), TEXT
 //     within the native cap; a type with no reviewed rule refuses;
 //   * at most CASE_FIELDS_MAX columns per card (one review per card); a
-//     column already holding the value is not sent; nothing left is a no-op.
+//     column already holding the value is not sent; nothing left is a no-op;
+//   * the docket (case_number / case_number_full — A7e; Fred, 2026-11-09:
+//     "Casey can do at least anything the user can do in the UI") is filled,
+//     replaced or cleared here, as the Case Details form does it. The route
+//     checks no collision (the docket route does), so the card runs that
+//     route's own caseService.checkCaseNumberCollision first and refuses a
+//     number another case holds; the varchar rule (live width 20, one line, no
+//     control character) refuses the rest. caseFieldsDocketReview names what
+//     moves with the number: the events / log rows filed under the old and the
+//     new number, court-email matching, the header / Cases list / portal /
+//     Documents text (A7c's caseDocketDisplays), the judge link. The A7c adopt
+//     card stays as it was (its route refuses a replacement).
 // The card names, per column, before → after, "Clears", who READS it (code-
 // measured surfaces + a live scan of reports, form templates, portal cards,
 // pipeline steps, sequence / workflow steps and ingest actions naming it),
@@ -437,13 +448,10 @@ const CASE_FIELDS_TEXT_CAPS = Object.freeze({ docs_missing: 2000 });
 // The whole card (it carries TEXT before / after): the chat keeps a message's
 // details up to 100,000 characters (assistantChatService MAX_PAYLOAD).
 const CASE_FIELDS_CARD_MAX_CHARS = 60000;
-const CASE_FIELDS_DOCKET = 'the docket has its own card — case.docket.adopt.v1 fills a BLANK case number / full case number. Replacing or clearing a docket the case already has is not available to Casey yet (it is the next slice); the user changes it in Case Details';
 const CASE_FIELDS_PIPELINE = 'the pipeline cards own it — case.pipeline.advance.v1 / case.pipeline.move.v1 move the stage and write stage, status, next step and phase together (the raw edit skips the stage log and the step checks)';
 // Refused BY NAME (lower-cased: MySQL column names are case-insensitive).
 const CASE_FIELDS_REFUSED = Object.freeze({
   case_id: 'a case\'s id never changes (the route refuses it too)',
-  case_number: CASE_FIELDS_DOCKET,
-  case_number_full: CASE_FIELDS_DOCKET,
   case_stage: CASE_FIELDS_PIPELINE,
   case_status: CASE_FIELDS_PIPELINE,
   case_rec: CASE_FIELDS_PIPELINE,
@@ -2833,6 +2841,113 @@ async function caseFieldsLinkNames(db, ids) {
   return (n) => (n == null ? 'none' : `${names.get(n) || 'a contact'} (contact #${n})`);
 }
 
+// A7e: what moves with the docket when this card fills, replaces or clears
+// case_number / case_number_full. Each reader by its own rule, read off its
+// code, on the pre- and the post-state:
+//   * rows filed BY NUMBER — events calendared against a docket (eventService's
+//     case-scope expansion: event_link_type 'case_number', link id equal to
+//     either column, trimmed) and log rows (logService._buildCaseLogWhere's
+//     three case-scope clauses over case_id + both columns, blanks dropped).
+//     A row LEAVES when the pre-state matches it and the post-state does not;
+//     it ARRIVES the other way round — counted in SQL, so the database's own
+//     equality decides (general_ci: a capitalisation-only change moves nothing);
+//   * court email (lib/courtResolve: either column exactly, then the full
+//     docket with its judge letters stripped against case_number);
+//   * the header / Cases list / portal / Documents text (caseDocketDisplays).
+// The judge link is the caller's (updateCase re-resolves it from the full
+// number). Returns { before, after, rows, leaving, arriving, warnings, effects }.
+const CASE_FIELDS_LOG_CASE_SCOPE = `((log_link_type = 'case' AND log_link_id IN (?))
+      OR (log_link_type IS NULL AND log_link IN (?))
+      OR (log_about_type = 'case' AND log_about_id IN (?)))`;
+async function caseFieldsDocketReview(db, row, nextFields, found) {
+  const has = (f) => Object.prototype.hasOwnProperty.call(nextFields, f);
+  const post = { ...row };
+  for (const f of CASE_DOCKET_FIELDS) if (has(f)) post[f] = nextFields[f];
+  const before = caseDocketDisplays(row); const after = caseDocketDisplays(post);
+  const warnings = []; const effects = [];
+  const shown = (v) => (v == null ? 'blank' : v === '' ? 'blank (empty text)' : `"${v}"`);
+  for (const f of CASE_DOCKET_FIELDS) {
+    if (!has(f)) continue;
+    const from = caseDocketStored(row[f]); const to = caseDocketStored(nextFields[f]);
+    const Label = `${CASE_DOCKET_LABEL[f][0].toUpperCase()}${CASE_DOCKET_LABEL[f].slice(1)}`;
+    if (to == null || to === '') {
+      warnings.push(`DOCKET CLEARED: the ${CASE_DOCKET_LABEL[f]} ${shown(from)} → blank. Everything filed or matched under that number stops reaching this case (below).`);
+    } else if (from == null || from.trim() === '') {
+      effects.push(`${Label}: ${shown(from)} → "${to}" (fills a blank number).`);
+    } else {
+      warnings.push(`DOCKET REPLACED: the ${CASE_DOCKET_LABEL[f]} "${from}" → "${to}". Everything filed or matched under the old number stops reaching this case, and everything under the new one reaches it (below).`);
+    }
+  }
+  // Numbers by the readers' equality (general_ci: capitalisation and trailing spaces aside).
+  const fold = (v) => String(v == null ? '' : v).replace(/ +$/, '').toLowerCase();
+  const dockets = (r) => {
+    const out = [];
+    for (const v of [r.case_number, r.case_number_full]) {
+      const s = v == null ? '' : String(v).trim();
+      if (s && !out.some((x) => fold(x) === fold(s))) out.push(s);
+    }
+    return out;
+  };
+  const preD = dockets(row); const postD = dockets(post);
+  const leaving = preD.filter((v) => !postD.some((x) => fold(x) === fold(v)));
+  const arriving = postD.filter((v) => !preD.some((x) => fold(x) === fold(v)));
+  const ids = (r) => [r.case_id, r.case_number, r.case_number_full].filter((v) => v != null && String(v) !== '').map(String);
+  const preIds = ids(row); const postIds = ids(post);
+  const count = async (sql, params) => { const [[r]] = await db.query(sql, params); return Number(r && r.n) || 0; };
+  const evCount = (inSet, notSet) => (inSet.length
+    ? count(`SELECT COUNT(*) AS n FROM events WHERE event_link_type = 'case_number' AND event_link_id IN (?)${notSet.length ? ' AND event_link_id NOT IN (?)' : ''}`,
+      notSet.length ? [inSet, notSet] : [inSet])
+    : 0);
+  const logCount = (inIds, notIds) => count(
+    `SELECT COUNT(*) AS n FROM log WHERE ${CASE_FIELDS_LOG_CASE_SCOPE} AND NOT COALESCE(${CASE_FIELDS_LOG_CASE_SCOPE}, FALSE)`,
+    [inIds, inIds, inIds, notIds, notIds, notIds]);
+  const rows = {
+    events_leave: await evCount(preD, postD), log_leave: await logCount(preIds, postIds),
+    events_arrive: await evCount(postD, preD), log_arrive: await logCount(postIds, preIds),
+  };
+  const q = (list) => list.map((v) => `"${v}"`).join(' / ');
+  const evN = (n) => `${n} event${n === 1 ? '' : 's'}`; const logN = (n) => `${n} log entr${n === 1 ? 'y' : 'ies'}`;
+  if (rows.events_leave || rows.log_leave) {
+    warnings.push(`LEAVES THIS CASE: ${evN(rows.events_leave)} calendared against ${q(leaving) || 'the old number'} and ${logN(rows.log_leave)} filed under it stop showing on this case's Events tab and log (an entry also filed under one of the case's contacts still shows through that contact). They stay in the database under the old number, and court email updating a hearing calendared under it no longer finds it on this case.`);
+  } else if (leaving.length) {
+    effects.push(`Events and log: nothing is filed under ${q(leaving)} alone, so nothing leaves this case.`);
+  }
+  if (rows.events_arrive || rows.log_arrive) {
+    effects.push(`Joins this case now: ${evN(rows.events_arrive)} calendared against ${q(arriving) || 'the new number'} and ${logN(rows.log_arrive)} filed under it — they show on this case's Events tab and log from now on.`);
+  } else if (arriving.length) {
+    effects.push(`Events and log: nothing is filed under ${q(arriving)} yet.`);
+  }
+  // Court email (lib/courtResolve).
+  const mail = [];
+  // courtResolve's fallback: a docket with its judge letters stripped, against case_number.
+  const postBare = String(post.case_number == null ? '' : post.case_number).trim();
+  const viaBare = (v) => { const b = v.replace(/-[a-z]+$/i, ''); return b !== v && postBare !== '' && fold(b) === fold(postBare); };
+  const gone = leaving.filter((v) => !viaBare(v)); const kept = leaving.filter(viaBare);
+  if (gone.length) mail.push(`mail carrying ${q(gone)} no longer files on this case`);
+  if (kept.length) mail.push(`mail carrying ${q(kept)} still reaches this case — with its judge letters stripped it is "${postBare}", this case's case number`);
+  if (arriving.length) mail.push(`mail carrying ${q(arriving)} files on THIS case from now on — the hearings, deadlines and docket entries it extracts land here`);
+  if (has('case_number')) {
+    const oldBare = String(row.case_number == null ? '' : row.case_number).trim();
+    const newBare = String(post.case_number == null ? '' : post.case_number).trim();
+    if (oldBare && fold(oldBare) !== fold(newBare)) mail.push(`a full docket that reduces to "${oldBare}" once its judge letters are stripped no longer falls back to this case`);
+    if (newBare && fold(oldBare) !== fold(newBare)) mail.push(`one that reduces to "${newBare}" falls back to this case when no case holds the full docket`);
+  }
+  if (mail.length) effects.push(`Court email: the court-email pipeline matches court mail to cases by these two numbers — ${mail.join('; ')}.${postD.length ? '' : ' With no number left, no court mail is matched to this case.'}`);
+  effects.push(`Case page header: ${before.header === 'Not Filed' ? '"Not Filed"' : `"${before.header}"`} → ${after.header === 'Not Filed' ? '"Not Filed"' : `"${after.header}"`} (it shows the full case number, else the case number).`);
+  effects.push(`Cases list: the Case Number column reads "${after.cases_list}"${before.cases_list !== after.cases_list ? ` (was "${before.cases_list}")` : ' (unchanged)'}, and searching by a number finds the case only under the numbers it holds.`);
+  const clients = (Array.isArray(found && found.clients) ? found.clients : [])
+    .filter((c) => c && (c.relate_type === 'Primary' || c.relate_type === 'Secondary'))
+    .map((c) => String(c.contact_name || '').trim().slice(0, 200)).filter(Boolean);
+  const portal = (v) => (v == null ? 'no docket line' : `"${v}"`);
+  effects.push(clients.length
+    ? `Client portal: the case's docket line ${before.portal === after.portal ? `stays ${portal(after.portal)}` : `goes from ${portal(before.portal)} to ${portal(after.portal)}`} for ${clients.slice(0, 4).join(', ')}${clients.length > 4 ? ` (+${clients.length - 4} more)` : ''} (its Primary / Secondary contacts); portal cards that show the case number read it too.`
+    : 'Client portal: no Primary or Secondary contact is on this case, so no client sees it in the portal.');
+  effects.push(`Documents: each Documents tab badges this case's documents "case ${after.documents}"${before.documents !== after.documents ? ` (was "case ${before.documents}")` : ' (unchanged)'}, and the Dropbox relink panel's docket match looks for folders whose name contains ${postD.length ? q(postD) : 'a number (the case has none left, so that lane finds nothing)'}.`);
+  if (!has('case_number_full')) effects.push('Judge link: not re-resolved — only the full case number and the judge text feed it.');
+  effects.push('Caption: unchanged — this card does not touch it.');
+  return { before, after, rows, leaving, arriving, warnings, effects };
+}
+
 async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = null } = {}) {
   // The A7 family switch: '0' and every A7 kind does not exist.
   if (require('../lib/firmConfig').cfg('casey_record_edits_enabled') === '0') {
@@ -2952,6 +3067,15 @@ async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = 
   if (!writes.length) {
     throw caseFieldsError(`That changes nothing on case ${caseLabel} — ${kept.map((k) => `${k.column} is already ${k.shown}`).join('; ')}`);
   }
+  // A7e: a number this card writes that ANOTHER case holds, in either column —
+  // the docket route's own check (the plain PATCH has none), before any more is read.
+  const docketWrites = writes.filter((w) => CASE_DOCKET_FIELDS.includes(w.column));
+  const docketValues = docketWrites.filter((w) => !caseFieldsBlank(w.after));
+  if (docketValues.length) {
+    const val = (f) => { const x = docketValues.find((w) => w.column === f); return x ? x.after : null; };
+    const conflict = await caseSvc.checkCaseNumberCollision(db, id, { case_number: val('case_number'), case_number_full: val('case_number_full') });
+    if (conflict) throw caseFieldsError(caseDocketConflictMessage(conflict, docketValues.map((w) => w.after)));
+  }
 
   // The post-state exactly as updateCase builds it: blank dates → NULL, then
   // the judge / trustee links re-resolved from the overlaid row.
@@ -2964,7 +3088,10 @@ async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = 
   const effective = { ...row, ...nextFields };
   let judge = null; let trustee = null;
   const touched = (c) => Object.prototype.hasOwnProperty.call(nextFields, c);
-  if (touched('case_judge')) {
+  const docket = docketWrites.length ? await caseFieldsDocketReview(db, row, nextFields, found) : null;
+  if (docket) { warnings.push(...docket.warnings); effects.push(...docket.effects); delete docket.warnings; delete docket.effects; }
+  // updateCase re-resolves the judge link when case_judge OR case_number_full is written.
+  if (touched('case_judge') || touched('case_number_full')) {
     const to = await resolver.resolveJudge(db, { case_number_full: effective.case_number_full, case_judge: effective.case_judge });
     judge = { from: row.case_judge_contact_id == null ? null : Number(row.case_judge_contact_id), to: to == null ? null : Number(to) };
     nextFields.case_judge_contact_id = judge.to; updatedFields.push('case_judge_contact_id');
@@ -2991,7 +3118,12 @@ async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = 
         effects.push(`${Noun} link: re-resolved from ${source} — none → ${who(l.to)}.`);
       }
     };
-    if (judge) link(judge, 'judge', 'the full case number\'s judge suffix, else the new judge text');
+    if (judge) {
+      link(judge, 'judge', touched('case_judge') ? 'the full case number\'s judge suffix, else the new judge text'
+        : String(effective.case_number_full == null ? '' : effective.case_number_full).trim()
+          ? 'the new full case number\'s judge suffix, else the judge text'
+          : 'the judge text alone (the full case number is cleared, so it has no suffix)');
+    }
     if (trustee) link(trustee, 'trustee', `the new trustee text and the case's chapter (${String(effective.case_chapter || '').trim() || 'blank'})`);
   }
   // The Case Details form re-points the 341 link when the trustee changes; this
@@ -3097,6 +3229,13 @@ async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = 
   if (judge) {
     expected.case_number_full = caseFieldsCanon('string', row.case_number_full); expectedKinds.case_number_full = 'string';
     expected.case_judge_contact_id = caseFieldsCanon('string', row.case_judge_contact_id); expectedKinds.case_judge_contact_id = 'string';
+    if (!('case_judge' in expected)) { expected.case_judge = caseFieldsCanon('string', row.case_judge); expectedKinds.case_judge = 'string'; }
+  }
+  // A docket card rests on both numbers (the rows that move, the displays).
+  if (docket) {
+    for (const c of CASE_DOCKET_FIELDS) {
+      if (!(c in expected)) { expected[c] = caseFieldsCanon('string', row[c]); expectedKinds[c] = 'string'; }
+    }
   }
   if (trustee) {
     for (const c of ['case_chapter', 'case_341_link', 'case_trustee_contact_id']) {
@@ -3109,7 +3248,7 @@ async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = 
       case_id: id, label: caseLabel, case_type: String(row.case_type || '').slice(0, 40), case_subtype: String(row.case_subtype || '').slice(0, 40),
       clients: clients.slice(0, 4),
     },
-    writes: writes.map((w) => ({ ...w })), kept, judge, trustee,
+    writes: writes.map((w) => ({ ...w })), kept, judge, trustee, docket,
     automation: { events: Object.keys(envChanges).length ? ['case.updated'] : [], lines: automation.lines.map((l) => l.text), rules_checked: automation.rules_checked, quiet: automation.quiet },
     effects, warnings, expected, expected_kinds: expectedKinds, evidence: refs,
   };
@@ -4621,6 +4760,16 @@ function caseDocketDisplays(row) {
   };
 }
 
+// The refusal for a number another case holds (checkCaseNumberCollision's
+// row), naming the values that hit — the database's equality: capitalisation
+// and trailing spaces aside. Shared by the adopt card and the case fields card.
+function caseDocketConflictMessage(conflict, values) {
+  const fold = (v) => String(v == null ? '' : v).replace(/ +$/, '').toLowerCase();
+  const held = [conflict.case_number, conflict.case_number_full].map(fold).filter(Boolean);
+  const hit = values.filter((v) => held.includes(fold(v)));
+  return `ANOTHER CASE HOLDS IT: ${hit.length ? hit.map((v) => `"${v}"`).join(' and ') : 'that docket'} is already on case ${conflict.case_id}${conflict.case_type ? ` (${conflict.case_type})` : ''} — its case number is ${conflict.case_number ? `"${conflict.case_number}"` : 'blank'}, its full case number ${conflict.case_number_full ? `"${conflict.case_number_full}"` : 'blank'}. Two cases cannot share a docket (the server compares the whole text in either column, never its shape). If they are the same matter, merge the cases on the case page`;
+}
+
 // One submitted column: undefined / null / '' (after trimming) = not supplied
 // (the route's own reading); otherwise one line of plain text that fits.
 function caseDocketValue(value, field) {
@@ -4705,12 +4854,7 @@ async function normalizeCaseDocketAction(db, value, evidence, { currentUserId = 
     case_number: writes.case_number ? writes.case_number.to : null,
     case_number_full: writes.case_number_full ? writes.case_number_full.to : null,
   });
-  if (conflict) {
-    const fold = (v) => String(v == null ? '' : v).replace(/ +$/, '').toLowerCase();
-    const held = [conflict.case_number, conflict.case_number_full].map(fold).filter(Boolean);
-    const hit = Object.values(writes).map((w) => w.to).filter((v) => held.includes(fold(v)));
-    throw caseDocketError(`ANOTHER CASE HOLDS IT: ${hit.length ? hit.map((v) => `"${v}"`).join(' and ') : 'that docket'} is already on case ${conflict.case_id}${conflict.case_type ? ` (${conflict.case_type})` : ''} — its case number is ${conflict.case_number ? `"${conflict.case_number}"` : 'blank'}, its full case number ${conflict.case_number_full ? `"${conflict.case_number_full}"` : 'blank'}. Two cases cannot share a docket (the server compares the whole text in either column, never its shape). If they are the same matter, merge the cases on the case page`);
-  }
+  if (conflict) throw caseDocketError(caseDocketConflictMessage(conflict, Object.values(writes).map((w) => w.to)));
 
   // The post-state, exactly as the route writes it: only the columns sent.
   const after = { ...row };
@@ -10044,9 +10188,11 @@ function taskDraftRequested(question, history = []) {
   const documentEdit = /\b(?:documents?|pdfs?|scans?|scanned)\b/i.test(text) &&
     /\b(?:draft|propose|prepare|retitle|re-?title|rename|title|tag|re-?tag|untag|classify|categori[sz]e|label|link|attach|associate|connect|file\b[^.?!\n]{0,40}\b(?:to|under|on|with)|set (?:the|its) (?:title|type|tags?)|change (?:the|its) (?:title|type|tags?))\b/i.test(request);
   // A7c: a docket / case number being added to a case ("add the case number
-  // 25-12345 to the Smith case", "put the docket on it").
+  // 25-12345 to the Smith case", "put the docket on it"); A7e: replaced or
+  // cleared on the case fields card ("change the case number to …", "clear the
+  // full case number").
   const docketAdopt = /\b(?:dockets?|docket numbers?|case (?:numbers?|nos?\.?|#)|bankruptcy (?:numbers?|case numbers?)|court (?:numbers?|case numbers?)|full case numbers?)\b/i.test(text) &&
-    /\b(?:draft|propose|prepare|add|put|set|record|enter|fill|adopt|attach|save|store|give|assign|update|link)\b/i.test(request);
+    /\b(?:draft|propose|prepare|add|put|set|record|enter|fill|adopt|attach|save|store|give|assign|update|link|change|replace|correct|fix|edit|clear|remove|erase|blank|swap)\b/i.test(request);
   // A12: a form draft / prefill, or a submission linked to a case or contact
   // ("prefill the 341 notes for the Smith case", "link that intake submission
   // to her case").

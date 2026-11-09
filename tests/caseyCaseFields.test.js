@@ -14,9 +14,9 @@
  *   2. the shape: case_id, changes {column: value} with 1..10 keys, evidence
  *      citing the exact case_id; anything else refused by name;
  *   3. refused BY NAME before anything is read, any capitalisation: case_id,
- *      the columns another card owns (docket, pipeline, folder, notes,
- *      alerts), the derived judge / trustee links, type / subtype, the raw
- *      custom bag, the 341 appointment's projection;
+ *      the columns another card owns (pipeline, folder, notes, alerts), the
+ *      derived judge / trustee links, type / subtype, the raw custom bag, the
+ *      341 appointment's projection;
  *   4. the column map is information_schema (here: the CREATE TABLE in
  *      ref/database.sql, parsed) — unknown, computed and unreviewed-type
  *      columns refuse; each value normalized to its column's type: DATE ISO
@@ -33,7 +33,15 @@
  *      link), the 341 link the Case Details form would re-point;
  *   8. updateCase's case.updated envelope dry-run (only when its own
  *      buildChanges finds a change); `expected` / `expected_kinds`;
- *   9. the ledger's STRING receipt, the request detector, the card-size cap.
+ *   9. the ledger's STRING receipt, the request detector, the card-size cap;
+ *  10. A7e — the docket on this card (Fred, 2026-11-09: "at least anything the
+ *      user can do in the UI"): a number another case holds is refused through
+ *      the docket route's own checkCaseNumberCollision (the plain PATCH has
+ *      none), the width / one-line rule; the disclosure — replaced / cleared /
+ *      filled, the events and log rows that LEAVE and ARRIVE (counted in SQL),
+ *      court email, header / Cases list / portal / Documents before → after,
+ *      the judge link re-resolved from the full number; `expected` carries both
+ *      numbers.
  *
  * The route behaviour the refusals rest on (the silent varchar clip, '' →
  * NULL on a DATE, the SET read-back order, the judge twin, the `changes`
@@ -96,8 +104,8 @@ const CASE_TYPES = { Bankruptcy: ['Chapter 7', 'Chapter 13'], 'Civil Litigation'
 let spies = [];
 let calls;
 function setup({ caseRow = {}, clients, missing = false, judge = null, trustee = null, names = { 41: 'Hon. Mark Example', 42: 'Hon. Ann Other', 51: 'Tom Trustee', 52: 'Una Trustee' },
-  rules = [], evaluate, scans = {}, extraColumns = [], caseTypes = CASE_TYPES } = {}) {
-  calls = { getCase: 0, resolveJudge: [], resolveTrustee: [], rules: [], scans: [], queries: 0, stageLookups: [] };
+  rules = [], evaluate, scans = {}, extraColumns = [], caseTypes = CASE_TYPES, conflict = null, counts = () => 0 } = {}) {
+  calls = { getCase: 0, resolveJudge: [], resolveTrustee: [], rules: [], scans: [], queries: 0, stageLookups: [], collision: [], counts: [] };
   const row = {
     case_id: CASE_ID, case_number: '25-12345', case_number_full: '25-12345-mex', case_type: 'Bankruptcy', case_subtype: 'Chapter 7',
     case_caption: 'In re Dana Debtor', case_chapter: '7', case_judge: 'Mark Example', case_judge_contact_id: 41,
@@ -117,6 +125,7 @@ function setup({ caseRow = {}, clients, missing = false, judge = null, trustee =
     jest.spyOn(roleResolver, 'resolveJudge').mockImplementation(async (_db, args) => { calls.resolveJudge.push(args); return judge; }),
     jest.spyOn(roleResolver, 'resolveTrustee').mockImplementation(async (_db, args) => { calls.resolveTrustee.push(args); return trustee; }),
     jest.spyOn(triggerService, 'listActiveRulesForEvent').mockImplementation(async (_db, ev) => { calls.rules.push(ev); return rules.map((r) => ({ ...r })); }),
+    jest.spyOn(caseService, 'checkCaseNumberCollision').mockImplementation(async (_db, id, vals) => { calls.collision.push([id, vals]); return conflict; }),
   ];
   if (evaluate) spies.push(jest.spyOn(triggerService, 'evaluateDraft').mockImplementation(evaluate));
   const query = jest.fn(async (sql, params) => {
@@ -126,6 +135,12 @@ function setup({ caseRow = {}, clients, missing = false, judge = null, trustee =
     if (/FROM field_defs WHERE entity = \? ORDER BY sort_order ASC, id ASC$/.test(flat)) return [params[0] === 'case' ? DEFS.map((d) => ({ ...d })) : []];
     if (flat === 'SELECT contact_id, contact_name FROM contacts WHERE contact_id IN (?)') {
       return [params[0].filter((n) => names[n]).map((n) => ({ contact_id: n, contact_name: names[n] }))];
+    }
+    // A7e: the rows filed by number that leave / arrive (the SQL runs on a real engine in the twin).
+    if (/^SELECT COUNT\(\*\) AS n FROM (events|log) WHERE /.test(flat)) {
+      const table = /FROM (events|log)/.exec(flat)[1];
+      calls.counts.push([table, params]);
+      return [[{ n: counts(table, params) }]];
     }
     const scan = /FROM (report_definitions|form_templates|portal_cards|pipeline_stage_requirements|sequence_steps|workflow_steps|email_ingest_rule_actions|phone_ingest_rule_actions)\b/.exec(flat);
     if (scan) { calls.scans.push([scan[1], params[0]]); return [scans[scan[1]] || []]; }
@@ -187,8 +202,6 @@ describe('the shape', () => {
 describe('refused BY NAME before anything is read', () => {
   test.each([
     ['case_id', /a case's id never changes/],
-    ['case_number', /case\.docket\.adopt\.v1 fills a BLANK case number.*Replacing or clearing a docket the case already has is not available to Casey yet \(it is the next slice\)/],
-    ['case_number_full', /case\.docket\.adopt\.v1/],
     ['case_stage', /case\.pipeline\.advance\.v1 \/ case\.pipeline\.move\.v1/],
     ['case_status', /the pipeline cards own it/],
     ['case_rec', /the pipeline cards own it/],
@@ -483,5 +496,128 @@ describe('ledger and detector', () => {
     expect(taskDraftRequested('change the trustee on her case to Una Trustee')).toBe(true);
     expect(taskDraftRequested('clear the show cause date on this file')).toBe(true);
     expect(taskDraftRequested('what is the file date on the Smith case?')).toBe(false);
+  });
+});
+
+describe('A7e — the docket on this card (replace / clear / fill)', () => {
+  const NAMES = { 41: 'Hon. Mark Example', 42: 'Hon. Ann Other' };
+  test('the docket is no longer refused by name, in any capitalisation', async () => {
+    const d = await run(edit({ CASE_NUMBER: '25-99999' }));
+    expect(d.writes.map((x) => [x.column, x.send])).toEqual([['case_number', '25-99999']]);
+  });
+  test('REPLACE the full number: the collision check first, the disclosure, the judge re-resolved from the new suffix, expected carries both numbers', async () => {
+    let seen;
+    const d = await run(edit({ case_number_full: '25-12345-aot' }), { judge: 42, names: NAMES,
+      counts: (table, params) => (table === 'events' ? (params[0].includes('25-12345-mex') ? 2 : 3) : (params[0].includes('25-12345-mex') ? 1 : 4)),
+      rules: [{ id: 5, name: 'Docket changed', actions: [{ action_type: 'workflow', config: { workflow_id: 12 } }] }],
+      evaluate: async (_rule, env) => { seen = env; return { matched: true, transform_ok: true }; } });
+    expect(calls.collision).toEqual([[CASE_ID, { case_number: null, case_number_full: '25-12345-aot' }]]);
+    expect(w(d, 'case_number_full')).toMatchObject({ send: '25-12345-aot', before: '25-12345-mex', after: '25-12345-aot', clears: false });
+    expect(d.warnings[0]).toBe('DOCKET REPLACED: the full case number "25-12345-mex" → "25-12345-aot". Everything filed or matched under the old number stops reaching this case, and everything under the new one reaches it (below).');
+    expect(d.warnings).toContain('LEAVES THIS CASE: 2 events calendared against "25-12345-mex" and 1 log entry filed under it stop showing on this case\'s Events tab and log (an entry also filed under one of the case\'s contacts still shows through that contact). They stay in the database under the old number, and court email updating a hearing calendared under it no longer finds it on this case.');
+    expect(d.effects).toContain('Joins this case now: 3 events calendared against "25-12345-aot" and 4 log entries filed under it — they show on this case\'s Events tab and log from now on.');
+    // courtResolve's bare fallback: "25-12345-mex" stripped is this case's case number, so that mail still lands here.
+    expect(d.effects).toContain('Court email: the court-email pipeline matches court mail to cases by these two numbers — mail carrying "25-12345-mex" still reaches this case — with its judge letters stripped it is "25-12345", this case\'s case number; mail carrying "25-12345-aot" files on THIS case from now on — the hearings, deadlines and docket entries it extracts land here.');
+    expect(d.effects).toContain('Case page header: "25-12345-mex" → "25-12345-aot" (it shows the full case number, else the case number).');
+    expect(d.effects).toContain('Cases list: the Case Number column reads "25-12345-aot" (was "25-12345-mex"), and searching by a number finds the case only under the numbers it holds.');
+    expect(d.effects).toContain('Client portal: the case\'s docket line goes from "25-12345-mex" to "25-12345-aot" for Dana Debtor (its Primary / Secondary contacts); portal cards that show the case number read it too.');
+    expect(d.effects).toContain('Documents: each Documents tab badges this case\'s documents "case 25-12345-aot" (was "case 25-12345-mex"), and the Dropbox relink panel\'s docket match looks for folders whose name contains "25-12345" / "25-12345-aot".');
+    expect(d.effects).toContain('Caption: unchanged — this card does not touch it.');
+    expect(d.effects.join('\n')).not.toMatch(/Judge link: not re-resolved/);
+    // The judge link updateCase re-resolves from the new full number.
+    expect(calls.resolveJudge).toEqual([{ case_number_full: '25-12345-aot', case_judge: 'Mark Example' }]);
+    expect(d.warnings).toContain('JUDGE LINK CHANGES: re-resolved from the new full case number\'s judge suffix, else the judge text — Hon. Mark Example (contact #41) → Hon. Ann Other (contact #42).');
+    expect(d.docket).toEqual({
+      before: { header: '25-12345-mex', cases_list: '25-12345-mex', portal: '25-12345-mex', documents: '25-12345-mex' },
+      after: { header: '25-12345-aot', cases_list: '25-12345-aot', portal: '25-12345-aot', documents: '25-12345-aot' },
+      rows: { events_leave: 2, log_leave: 1, events_arrive: 3, log_arrive: 4 }, leaving: ['25-12345-mex'], arriving: ['25-12345-aot'],
+    });
+    // The SQL: events leave = pre dockets NOT IN post; log = the case scope of pre AND NOT the case scope of post.
+    expect(calls.counts).toEqual([
+      ['events', [['25-12345', '25-12345-mex'], ['25-12345', '25-12345-aot']]],
+      ['log', [[CASE_ID, '25-12345', '25-12345-mex'], [CASE_ID, '25-12345', '25-12345-mex'], [CASE_ID, '25-12345', '25-12345-mex'], [CASE_ID, '25-12345', '25-12345-aot'], [CASE_ID, '25-12345', '25-12345-aot'], [CASE_ID, '25-12345', '25-12345-aot']]],
+      ['events', [['25-12345', '25-12345-aot'], ['25-12345', '25-12345-mex']]],
+      ['log', [[CASE_ID, '25-12345', '25-12345-aot'], [CASE_ID, '25-12345', '25-12345-aot'], [CASE_ID, '25-12345', '25-12345-aot'], [CASE_ID, '25-12345', '25-12345-mex'], [CASE_ID, '25-12345', '25-12345-mex'], [CASE_ID, '25-12345', '25-12345-mex']]],
+    ]);
+    // updateCase's exact envelope: the number and the re-resolved link.
+    expect(seen.changes).toEqual({ case_number_full: { from: '25-12345-mex', to: '25-12345-aot' }, case_judge_contact_id: { from: 41, to: 42 } });
+    expect(seen.extra).toEqual({ updated_fields: ['case_number_full', 'case_judge_contact_id'] });
+    expect(seen.source).toBe('manual');
+    expect(d.expected).toEqual({ case_type: 'Bankruptcy', case_subtype: 'Chapter 7', case_number_full: '25-12345-mex', case_number: '25-12345',
+      case_judge_contact_id: '41', case_judge: 'Mark Example' });
+    expect(d.expected_kinds).toMatchObject({ case_number_full: 'string', case_number: 'string', case_judge: 'string', case_judge_contact_id: 'string' });
+  });
+  test('CLEAR the full number: no collision check (nothing to hold), Clears danger, the judge from its text alone, the readers that leave', async () => {
+    const d = await run(edit({ case_number_full: '' }), { judge: null, names: NAMES, counts: (table, p) => (table === 'events' && p[0].includes('25-12345-mex') ? 1 : 0) });
+    expect(calls.collision).toEqual([]);
+    expect(w(d, 'case_number_full')).toMatchObject({ send: null, clears: true, removes: true, to: 'blank' });
+    expect(d.warnings[0]).toBe('DOCKET CLEARED: the full case number "25-12345-mex" → blank. Everything filed or matched under that number stops reaching this case (below).');
+    expect(d.warnings).toContain('LEAVES THIS CASE: 1 event calendared against "25-12345-mex" and 0 log entries filed under it stop showing on this case\'s Events tab and log (an entry also filed under one of the case\'s contacts still shows through that contact). They stay in the database under the old number, and court email updating a hearing calendared under it no longer finds it on this case.');
+    expect(calls.resolveJudge).toEqual([{ case_number_full: null, case_judge: 'Mark Example' }]);
+    expect(d.warnings.join('\n')).toMatch(/^JUDGE LINK CLEARS: the server re-resolves the judge contact from the judge text alone \(the full case number is cleared, so it has no suffix\) and finds no match/m);
+    expect(d.effects).toContain('Case page header: "25-12345-mex" → "25-12345" (it shows the full case number, else the case number).');
+    expect(d.effects).toContain('Court email: the court-email pipeline matches court mail to cases by these two numbers — mail carrying "25-12345-mex" still reaches this case — with its judge letters stripped it is "25-12345", this case\'s case number.');
+    const off = await run(edit({ case_number_full: '' }), { judge: null, names: NAMES, caseRow: { case_number: '25-99999' } });
+    expect(off.effects).toContain('Court email: the court-email pipeline matches court mail to cases by these two numbers — mail carrying "25-12345-mex" no longer files on this case.');
+    expect(d.docket.rows).toEqual({ events_leave: 1, log_leave: 0, events_arrive: 0, log_arrive: 0 });
+    expect(d.docket.arriving).toEqual([]);
+    // Arrive: the remaining number is read too (the SQL, not the label, decides).
+    expect(calls.counts.map((c) => c[0])).toEqual(['events', 'log', 'events', 'log']);
+  });
+  test('CLEAR both: "Not Filed", no court mail matched, the relink lane finds nothing', async () => {
+    const d = await run(edit({ case_number: '', case_number_full: null }), { judge: 41, names: NAMES });
+    expect(d.docket.after).toEqual({ header: 'Not Filed', cases_list: CASE_ID, portal: null, documents: CASE_ID });
+    expect(d.effects).toContain('Case page header: "25-12345-mex" → "Not Filed" (it shows the full case number, else the case number).');
+    expect(d.effects.find((x) => x.startsWith('Court email:'))).toMatch(/a full docket that reduces to "25-12345" once its judge letters are stripped no longer falls back to this case\. With no number left, no court mail is matched to this case\.$/);
+    expect(d.effects).toContain('Client portal: the case\'s docket line goes from "25-12345-mex" to no docket line for Dana Debtor (its Primary / Secondary contacts); portal cards that show the case number read it too.');
+    expect(d.effects.find((x) => x.startsWith('Documents:'))).toMatch(/folders whose name contains a number \(the case has none left, so that lane finds nothing\)\.$/);
+    expect(d.effects).toContain('Events and log: nothing is filed under "25-12345" / "25-12345-mex" alone, so nothing leaves this case.');
+    expect(d.warnings.filter((x) => /^DOCKET CLEARED/.test(x)).length).toBe(2);
+    // Events: no post-state docket, so no NOT IN and no arrive read.
+    expect(calls.counts.map((c) => [c[0], c[1].length])).toEqual([['events', 1], ['log', 6], ['log', 6]]);
+  });
+  test('the case number alone: no judge re-resolution, the bare-docket fallback named', async () => {
+    const d = await run(edit({ case_number: '25-54321' }));
+    expect([calls.resolveJudge, d.judge]).toEqual([[], null]);
+    expect(d.effects).toContain('Judge link: not re-resolved — only the full case number and the judge text feed it.');
+    expect(d.effects.find((x) => x.startsWith('Court email:'))).toBe('Court email: the court-email pipeline matches court mail to cases by these two numbers — mail carrying "25-12345" no longer files on this case; mail carrying "25-54321" files on THIS case from now on — the hearings, deadlines and docket entries it extracts land here; a full docket that reduces to "25-12345" once its judge letters are stripped no longer falls back to this case; one that reduces to "25-54321" falls back to this case when no case holds the full docket.');
+    expect(d.expected).toEqual({ case_type: 'Bankruptcy', case_subtype: 'Chapter 7', case_number: '25-12345', case_number_full: '25-12345-mex' });
+    expect(d.effects).toContain('Events and log: nothing is filed under "25-12345" alone, so nothing leaves this case.');
+    expect(d.effects).toContain('Events and log: nothing is filed under "25-54321" yet.');
+  });
+  test('FILL a blank number: an effect, not a warning; nothing leaves', async () => {
+    const d = await run(edit({ case_number: '25-12345' }), { caseRow: { case_number: null }, counts: (t, p) => (t === 'log' && p[0].includes('25-12345') ? 2 : 0) });
+    expect(calls.collision).toEqual([[CASE_ID, { case_number: '25-12345', case_number_full: null }]]);
+    expect(d.warnings).toEqual([]);
+    expect(d.effects).toContain('Case number: blank → "25-12345" (fills a blank number).');
+    expect(d.docket.leaving).toEqual([]);
+    expect(d.docket.rows).toEqual({ events_leave: 0, log_leave: 0, events_arrive: 0, log_arrive: 2 });
+    expect(d.effects).toContain('Joins this case now: 0 events calendared against "25-12345" and 2 log entries filed under it — they show on this case\'s Events tab and log from now on.');
+    expect(d.effects.join('\n')).not.toMatch(/LEAVES|no longer files/);
+  });
+  test('a capitalisation-only change moves no number (the readers compare general_ci)', async () => {
+    const d = await run(edit({ case_number_full: '25-12345-MEX' }), { judge: 41, names: NAMES });
+    expect(d.warnings[0]).toMatch(/^DOCKET REPLACED: the full case number "25-12345-mex" → "25-12345-MEX"/);
+    expect([d.docket.leaving, d.docket.arriving]).toEqual([[], []]);
+    expect(d.effects.join('\n')).not.toMatch(/^Court email:/m);
+  });
+  test('ANOTHER CASE HOLDS IT — refused, naming the case and both its numbers, before the readers are read', async () => {
+    await refuse(edit({ case_number: '25-77777', case_number_full: '25-77777-mex' }),
+      /^ANOTHER CASE HOLDS IT: "25-77777-mex" is already on case ZZZ99999 \(Bankruptcy\) — its case number is blank, its full case number "25-77777-MEX"\. Two cases cannot share a docket .* merge the cases on the case page$/,
+      { conflict: { case_id: 'ZZZ99999', case_number: null, case_number_full: '25-77777-MEX', case_type: 'Bankruptcy' } });
+    expect(calls.collision).toEqual([[CASE_ID, { case_number: '25-77777', case_number_full: '25-77777-mex' }]]);
+    expect([calls.counts, calls.scans, calls.resolveJudge, calls.rules]).toEqual([[], [], [], []]);
+  });
+  test('width (21 code points) and a line break refuse before the collision check', async () => {
+    await refuse(edit({ case_number: '1'.repeat(21) }), /^case_number "1{21}" is 21 characters — the column keeps 20, and the database would save it cut short while the route answers success/);
+    await refuse(edit({ case_number_full: '25-1\n2345' }), /^case_number_full contains a line break or another control character — it is one line of plain text/);
+    expect(calls.collision).toEqual([]);
+    await expect(run(edit({ case_number: '\u{1F600}'.repeat(20) }))).resolves.toBeTruthy();
+  });
+  test('the request detector: replacing or clearing a docket forces the draft path', () => {
+    expect(taskDraftRequested('change the case number on the Smith case to 25-54321', [])).toBe(true);
+    expect(taskDraftRequested('clear the full case number on this case', [])).toBe(true);
+    expect(taskDraftRequested('replace the docket with 25-12345-abc', [])).toBe(true);
+    expect(taskDraftRequested('what is the case number for Dana?', [])).toBe(false);
   });
 });

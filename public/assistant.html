@@ -1223,8 +1223,8 @@ function recordTextOpenTarget(draft) {
 // {<column>: <value>, …} — the route the Case Details forms and the Overview
 // boxes save through (updateCase: unknown column 400, notes length 400, cf_
 // keys through the custom-field validator). The server refused every column
-// another card owns (docket, pipeline stage / status / next step / phase,
-// folder, notes, alerts), the derived judge / trustee links, type / subtype,
+// another card owns (pipeline stage / status / next step / phase, folder,
+// notes, alerts), the derived judge / trustee links, type / subtype,
 // the raw custom bag and the 341 appointment's projection — by name; normalized
 // each value to its column's type (an over-width varchar is refused: relaxed
 // sql_mode would cut it short and answer 200); left out a column already
@@ -1238,13 +1238,21 @@ function recordTextOpenTarget(draft) {
 // deferred). No Idempotency-Key: setting values is idempotent and the ledger
 // allows one claim per draft. The route is on the sync bus (yc-sync MATCHERS:
 // data.changes), so case pages repaint. Receipt: the STRING case_id.
+// A7e: the docket (case_number / case_number_full) is on this card too —
+// filled, replaced or cleared. The route checks no collision, so the server
+// refused a number another case held at proposal, and the click re-checks it
+// (caseFieldsDocketPrecheck) after the stale check, before the claim; the
+// builder holds each number to the docket rule (one trimmed line, at most
+// CASE_DOCKET_MAX characters, or null to clear).
 const CASE_FIELDS_ACTION_KINDS = new Set(['case.fields.update.v1']);
 const CASE_FIELDS_MAX = 10;
 // The server's refused-by-name columns (lower-cased): the builder refuses them too.
-const CASE_FIELDS_REFUSED_NAMES = new Set(['case_id', 'case_number', 'case_number_full', 'case_stage', 'case_status', 'case_rec', 'pipeline_phase',
+const CASE_FIELDS_REFUSED_NAMES = new Set(['case_id', 'case_stage', 'case_status', 'case_rec', 'pipeline_phase',
   'case_dropbox', 'case_notes', 'case_alerts', 'case_judge_contact_id', 'case_trustee_contact_id', 'custom',
   'case_341_current', '341_appt_id']);
 const CASE_FIELDS_COLUMN = /^[A-Za-z0-9_]{1,64}$/;
+// The click-time collision read: the case picker's search returns at most 50.
+const CASE_FIELDS_DOCKET_SEARCH_MAX = 50;
 
 function caseFieldsLabel(draft) {
   const n = Array.isArray(draft && draft.writes) ? draft.writes.length : 0;
@@ -1304,6 +1312,8 @@ function caseFieldsText(draft) {
   const n = (draft.writes || []).length;
   lines.push(`Writes: only the ${n === 1 ? 'column' : `${n} columns`} above${draft.judge || draft.trustee ? ' (and the link the server re-resolves)' : ''}, through the case page's own save — no other case field.`,
     'Stale check: if any of these fields, the case type or subtype (or what a re-resolved link rests on) changes before you apply, nothing is written.',
+    ...((draft.writes || []).some((w) => CASE_DOCKET_FIELDS.includes(String(w.column).toLowerCase()) && typeof w.send === 'string' && w.send)
+      ? ['Docket check: when you apply, the case numbers are searched again; if another case holds a number this card writes, nothing is written.'] : []),
     'Other open pages: case pages showing these fields update on their own.',
     'Notification: Casey sends nothing itself; the trigger rules above are the only follow-on effects.');
   return lines.join('\n');
@@ -1331,6 +1341,10 @@ function caseFieldsBody(draft) {
     const ok = v === null || typeof v === 'string'
       || (custom && (typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)) || (Array.isArray(v) && v.every((x) => typeof x === 'string'))));
     if (!ok) throw new Error(`This card's value for ${col} is unusable.`);
+    if (CASE_DOCKET_FIELDS.includes(col.toLowerCase()) && v !== null
+      && (!v || v !== v.trim() || CASE_DOCKET_CONTROL.test(v) || Array.from(v).length > CASE_DOCKET_MAX)) {
+      throw new Error(`This card's value for ${col} is unusable.`);
+    }
     body[col] = v;
   }
   return body;
@@ -1365,6 +1379,34 @@ async function caseFieldsPrecheck(draft) {
   }
   if (changed.length) {
     return `${changed.join(', ')} of case ${caseFieldsCaseLabel(draft)} changed since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return caseFieldsDocketPrecheck(draft, caseId);
+}
+
+// A7e: no OTHER case may hold a number this card writes — the plain PATCH
+// checks no collision. The read is the case picker's search (GET
+// /api/cases/search: raw case_number / case_number_full, a substring match
+// over both, at most CASE_FIELDS_DOCKET_SEARCH_MAX rows), compared the way
+// the server's check compares (general_ci: capitalisation and trailing spaces
+// aside). A full page without a hit proves nothing, so it refuses too.
+async function caseFieldsDocketPrecheck(draft, caseId) {
+  const fold = (v) => String(v == null ? '' : v).replace(/ +$/, '').toLowerCase();
+  const values = [];
+  for (const w of draft.writes || []) {
+    if (CASE_DOCKET_FIELDS.includes(String(w.column).toLowerCase()) && typeof w.send === 'string' && w.send && !values.some((x) => fold(x) === fold(w.send))) values.push(w.send);
+  }
+  for (const v of values) {
+    const got = await api(`/api/cases/search?q=${encodeURIComponent(v)}&limit=${CASE_FIELDS_DOCKET_SEARCH_MAX}`, null, 'GET');
+    const rows = got && Array.isArray(got.cases) ? got.cases : null;
+    if (!rows) throw new Error('the case search could not be read');
+    const hit = rows.find((r) => r && String(r.case_id).toLowerCase() !== caseId.toLowerCase()
+      && [r.case_number, r.case_number_full].some((x) => fold(x) !== '' && fold(x) === fold(v)));
+    if (hit) {
+      return `Case ${hit.case_id} now holds "${v}" — another case took that number since this card was prepared. Nothing was written. Two cases cannot share a docket; if they are the same matter, merge the cases on the case page.`;
+    }
+    if (rows.length >= CASE_FIELDS_DOCKET_SEARCH_MAX) {
+      return `Could not confirm that no other case holds "${v}" — the case search returned ${rows.length} cases, the most it returns. Nothing was written. Change the number in Case Details.`;
+    }
   }
   return '';
 }

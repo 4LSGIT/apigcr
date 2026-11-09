@@ -83,7 +83,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'caseDocketLabel', 'caseDocketCaseLabel', 'caseDocketAfterLabel', 'caseDocketShown', 'caseDocketText', 'caseDocketBody', 'caseDocketRequest',
   'caseDocketPrecheck', 'caseDocketResult', 'caseDocketKnownOutcome',
   'caseFieldsLabel', 'caseFieldsCaseLabel', 'caseFieldsCanon', 'caseFieldsText', 'caseFieldsDanger', 'caseFieldsBody', 'caseFieldsRequest',
-  'caseFieldsPrecheck', 'caseFieldsResult',
+  'caseFieldsPrecheck', 'caseFieldsDocketPrecheck', 'caseFieldsResult',
   'caseFolderLabel', 'caseFolderCaseLabel', 'caseFolderText', 'caseFolderRequest', 'caseFolderPrecheck', 'caseFolderResult',
   'caseFolderKnownOutcome', 'caseFolderAppliedMessage',
   'formCanonical', 'formDataHash', 'formIso', 'formRecordLabel', 'formLabel', 'formTitle', 'formText', 'formRecordPath', 'formDraftRequest',
@@ -132,6 +132,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CASE_DOCKET_ACTION_KINDS'), constSrc(html, 'CASE_DOCKET_FIELDS'), constSrc(html, 'CASE_DOCKET_NAMES'),
     constSrc(html, 'CASE_DOCKET_MAX'), constSrc(html, 'CASE_DOCKET_CONTROL'),
     constSrc(html, 'CASE_FIELDS_ACTION_KINDS'), constSrc(html, 'CASE_FIELDS_MAX'), constSrc(html, 'CASE_FIELDS_REFUSED_NAMES'), constSrc(html, 'CASE_FIELDS_COLUMN'),
+    constSrc(html, 'CASE_FIELDS_DOCKET_SEARCH_MAX'),
     constSrc(html, 'CASE_FOLDER_ACTION_KINDS'), constSrc(html, 'CASE_FOLDER_PATH_MAX'), constSrc(html, 'CASE_FOLDER_CONTROL'),
     constSrc(html, 'FORM_DRAFT_ACTION_KINDS'), constSrc(html, 'FORM_LINK_ACTION_KINDS'), constSrc(html, 'FORM_DATA_MAX_BYTES'),
     constSrc(html, 'MAIL_READ_ACTION_KINDS'), constSrc(html, 'MAIL_LINK_ACTION_KINDS'),
@@ -4331,8 +4332,84 @@ describe('A7 groups B/C case fields card (case.fields.update)', () => {
     const block = /const CASE_FIELDS_REFUSED = Object\.freeze\(\{([\s\S]*?)\n\}\);/.exec(svcSrc)[1];
     const server = [...block.matchAll(/^\s{2}'?([0-9a-z_]+)'?:/gm)].map((m) => m[1]).sort();
     const browser = [...new Function(`${constSrc(html, 'CASE_FIELDS_REFUSED_NAMES')} return CASE_FIELDS_REFUSED_NAMES;`)()].sort(); // eslint-disable-line no-new-func
-    expect(server.length).toBe(15); // A7d un-refused case_type / case_subtype
+    expect(server.length).toBe(13); // A7d un-refused case_type / case_subtype; A7e the docket
     expect(browser).toEqual(server);
+    // A7e: the docket is on this card now — on neither list.
+    expect(server).not.toContain('case_number');
+    expect(server).not.toContain('case_number_full');
+  });
+
+  // A7e: a card that writes a docket number re-checks, after the stale check
+  // and before the claim, that no OTHER case holds it (the plain PATCH checks
+  // no collision) — through the case picker's search.
+  describe('A7e — the docket on this card', () => {
+    const docketWrite = (over = {}) => write({ column: 'case_number_full', label: 'case_number_full', kind: 'string', send: '25-12345-aot', before: '25-12345-mex', after: '25-12345-aot',
+      from: '"25-12345-mex"', to: '"25-12345-aot"', readers: [], ...over });
+    const docketCard = (over = {}) => card({ writes: [docketWrite()], warnings: ['DOCKET REPLACED: the full case number "25-12345-mex" → "25-12345-aot".'],
+      expected: { case_type: 'Bankruptcy', case_subtype: 'Chapter 7', case_number_full: '25-12345-mex', case_number: '25-12345' },
+      expected_kinds: { case_type: 'string', case_subtype: 'string', case_number_full: 'string', case_number: 'string' }, ...over });
+    const fresh = caseGet({ case_number: '25-12345', case_number_full: '25-12345-mex' });
+    const SEARCH = `/api/cases/search?q=${encodeURIComponent('25-12345-aot')}&limit=50`;
+    const searching = (cases, over = {}) => (path) => {
+      if (path === `/api/cases/${CASE_ID}`) return over.got || fresh;
+      if (path === SEARCH) { if (over.fail) throw Object.assign(new Error('boom'), { status: 500 }); return cases === undefined ? { total: 0 } : { cases, total: cases.length }; }
+      throw new Error(`unexpected read ${path}`);
+    };
+    test('a free number: the case, then the search; ONE PATCH of the number; the dialog names the docket check and is danger-styled', async () => {
+      const m = docketCard();
+      // This case itself may already hold the number in its other column (any id capitalisation); a near miss is not a hit.
+      const r = await runFields(m, { write: saved, read: searching([{ case_id: CASE_ID.toLowerCase(), case_number: '25-12345-AOT', case_number_full: '25-12345-mex' }, { case_id: 'OTHER123', case_number: '25-12345', case_number_full: '25-12345-aotx' }]) });
+      expect(r.gets).toEqual([`/api/cases/${CASE_ID}`, SEARCH]);
+      expect(r.writes).toEqual([{ path: `/api/cases/${CASE_ID}`, method: 'PATCH', headers: undefined, body: { case_number_full: '25-12345-aot' } }]);
+      expect(r.ledger[0]).toBe('claim');
+      const dialog = r.P.Swal.fire.mock.calls[0][0];
+      expect(dialog.icon).toBe('warning');
+      expect(dialog.text).toContain('Docket check: when you apply, the case numbers are searched again; if another case holds a number this card writes, nothing is written.');
+      expect(dialog.text).toContain('Warning: DOCKET REPLACED: the full case number "25-12345-mex" → "25-12345-aot".');
+    });
+    test('another case holding it — in either column, capitalisation and trailing spaces aside — refuses before the claim', async () => {
+      for (const other of [{ case_id: 'OTHER123', case_number: null, case_number_full: '25-12345-AOT' }, { case_id: 'OTHER123', case_number: '25-12345-aot  ', case_number_full: '' }]) {
+        const m = docketCard();
+        const r = await runFields(m, { write: saved, read: searching([other]) });
+        expect([r.writes, r.ledger]).toEqual([[], []]);
+        expect(m.action_draft.refusal_error).toContain('Case OTHER123 now holds "25-12345-aot" — another case took that number since this card was prepared. Nothing was written.');
+      }
+    });
+    test('a full search page without a hit proves nothing — refused; an unreadable search leaves the card retryable', async () => {
+      const full = Array.from({ length: 50 }, (_, i) => ({ case_id: `C${i}`, case_number: `25-12345-aot${i}`, case_number_full: null }));
+      const m = docketCard();
+      const r = await runFields(m, { write: saved, read: searching(full) });
+      expect([r.writes, r.ledger]).toEqual([[], []]);
+      expect(m.action_draft.refusal_error).toContain('Could not confirm that no other case holds "25-12345-aot" — the case search returned 50 cases, the most it returns. Nothing was written.');
+      for (const read of [searching(undefined), searching([], { fail: true })]) {
+        const u = docketCard();
+        const ur = await runFields(u, { write: saved, read });
+        expect([ur.writes, ur.ledger]).toEqual([[], []]);
+        expect(u.action_draft.action_error).toMatch(/^Could not re-check the record before applying/);
+      }
+    });
+    test('the stale check comes first (no search on a changed case); a clear reads no search', async () => {
+      const m = docketCard();
+      const r = await runFields(m, { write: saved, read: searching([], { got: caseGet({ case_number: '25-12345', case_number_full: '25-12345-xyz' }) }) });
+      expect(r.gets).toEqual([`/api/cases/${CASE_ID}`]);
+      expect(m.action_draft.refusal_error).toContain('case_number_full of case 25-12345-mex changed since this card was prepared');
+      const clear = docketCard({ writes: [docketWrite({ send: null, clears: true, removes: true, after: null, to: 'blank' })] });
+      const rc = await runFields(clear, { write: saved, read: searching([]) });
+      expect(rc.gets).toEqual([`/api/cases/${CASE_ID}`]);
+      expect(rc.writes[0].body).toEqual({ case_number_full: null });
+      expect(rc.P.Swal.fire.mock.calls[0][0].text).not.toContain('Docket check:');
+    });
+    test('the builder holds a docket number to the docket rule — never read, claimed or sent otherwise', async () => {
+      for (const send of ['x'.repeat(21), ' 25-12345', '25-1\n2345', '25-12345\u2028', '']) {
+        const m = docketCard({ writes: [docketWrite({ send })] });
+        const x = await runFields(m, { write: saved, read: searching([]) });
+        expect({ send, gets: x.gets, ledger: x.ledger, writes: x.writes }).toEqual({ send, gets: [], ledger: [], writes: [] });
+        expect(m.action_draft.action_error).toContain("This card's value for case_number_full is unusable.");
+      }
+      const ok = docketCard({ writes: [docketWrite({ column: 'case_number', send: '\u{1F600}'.repeat(20) })] });
+      const rok = await runFields(ok, { write: saved, read: (p) => (p.startsWith('/api/cases/search') ? { cases: [], total: 0 } : fresh) });
+      expect(rok.writes.length).toBe(1);
+    });
   });
 });
 

@@ -8,7 +8,7 @@ create, narrow update, attended, no-show, cancel, reschedule-now and
 reschedule-later; one phone/email/address subrecord create, narrow update or
 history-preserving end. Since then: A6 (contact relations and roles — create and
 update), A7 group A (case notes, case alerts, contact notes), A7 groups B/C (any
-other case field, 2026-11-09), A7c (case docket adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
+other case field, 2026-11-09; the docket's replace / clear, A7e), A7c (case docket adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
 advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read), A10 (checklists and items), A11 (documents —
 update and link), A11.1 (a case's Dropbox folder — candidates-only relink),
 A12 (form drafts and submission links), A13 (mail triage —
@@ -657,10 +657,9 @@ type change, and editing an ended relation. Each is refused by name today.
 Every proposal shows before and after values and carries a server-owned
 stale-value check through confirmation. A contact exposes its notes only
 (group A); a case exposes every column except case_id (groups B/C, Fred's
-ruling below) — except the columns another card owns or derives, each refused
-by name with a pointer: the docket (a BLANK one is filled through A7c's adopt;
-replacing or clearing one is not available yet), pipeline state (A9), the
-Dropbox folder (A11.1), the notes and alerts (group A), the judge / trustee
+ruling below; the docket too — filled, replaced or cleared, A7e) — except the
+columns another card owns or derives, each refused by name with a pointer:
+pipeline state (A9), the Dropbox folder (A11.1), the notes and alerts (group A), the judge / trustee
 links (derived) and the 341 appointment's projection (the type / subtype are
 editable since A7d, 2026-11-09). Contact identity and access, and case merge,
 remain excluded.
@@ -718,7 +717,7 @@ now writes (`ref/plans.md`).
 Origin: a refused request (Fred, 2026-10-29): "can you add a case number to a
 given case?" — 887 of 1,130 non-closed cases had a blank `case_number`
 (measured 2026-11-02). One kind fills a BLANK docket; replacing or clearing one
-stays the user's Case Details edit.
+goes on the case fields card (A7e, in the A7 groups B/C section below).
 
 **What the route guards.** `PATCH /api/cases/:id/docket` {case_number?,
 case_number_full?} — the court-review adopt flow's dedicated writer, never the
@@ -733,9 +732,10 @@ parse); 404 for an unknown case. It writes only the submitted columns through
 `updateCase` (`source:'docket_adopt'`), which re-resolves the judge link
 (`case_judge_contact_id`, lib/caseRoleResolver) whenever case_number_full is
 written and emits `case.updated` (fire-and-forget) when something changed; it
-answers `{status, data:<getCase result>, changes:{field:{from,to}}}`. It checks
-no width: relaxed sql_mode stores a value over varchar(20) cut short, answered
-200. All pinned on a real engine (`tests/caseyDocket.mysql.test.js`).
+answers `{status, data:<getCase result>, changes:{field:{from,to}}}`. Since
+2026-11-09 it 400s a value over 20 characters (before, relaxed sql_mode stored
+it cut short, answered 200). All pinned on a real engine
+(`tests/caseyDocket.mysql.test.js`).
 
 **Shipped contract.** One kind, `case.docket.adopt.v1` {case_id,
 case_number?, case_number_full?, evidence} → that route. The values are the
@@ -793,7 +793,8 @@ user's words, opaque server-side; the card shows them verbatim, quoted.
   63). Tests: `tests/caseyDocket.test.js`, gated `tests/caseyDocket.mysql.test.js`,
   `tests/assistantUi.test.js`.
 
-**Deferred** (`ref/plans.md`): replacing a docket; clearing one.
+Replacing or clearing a docket is the case fields card's (A7e, below); this
+card is unchanged by it.
 
 #### A7 groups B/C: Any other case field — shipped 2026-11-09
 
@@ -811,8 +812,7 @@ an over-width varchar cut short and answers 200 (pinned on a real engine,
 
 **Manager rulings within Fred's** (flagged to Fred). Refused BY NAME, with a
 pointer, because the raw PATCH skips the work the owning card does:
-`case_number` / `case_number_full` (A7c; replacing an existing docket is the
-next slice); `case_stage`, `case_status`, `case_rec`, `pipeline_phase` (A9);
+`case_stage`, `case_status`, `case_rec`, `pipeline_phase` (A9);
 `case_dropbox` (A11.1); `case_notes`, `case_alerts` (group A — append
 semantics live there); `case_judge_contact_id`, `case_trustee_contact_id`
 (derived — the card for case_judge / case_trustee discloses the re-resolution
@@ -888,8 +888,46 @@ so the 341 moves by rescheduling its appointment.
   `tests/caseyCaseFields.mysql.test.js`, `tests/assistantUi.test.js`,
   `tests/assistantPromptKinds.test.js`.
 
-**Still excluded** (`ref/plans.md`): replacing or clearing a docket (A7c's
-deferred card, in flight as A7e); ruling 2's route precondition; the owned
+**A7e — the docket on this card (Fred, 2026-11-09: "Casey can do *at least*
+anything the user can do in the UI").** The Case Details form replaces and
+clears `case_number` / `case_number_full` through this same PATCH, so the card
+does too — fill, replace or clear (a blank one is filled here as well; the A7c
+adopt card stays, byte-identical, for the model's convenience). The PATCH has
+NO collision guard and NO width guard (the docket route has both; pinned on a
+real engine: it stores a number another case holds, and one over 20 cut short,
+answering 200), so the card adds them:
+- **Refused:** a number another case holds in either column — the docket
+  route's own `caseService.checkCaseNumberCollision` (general_ci + PAD SPACE
+  equality, no shape parse), run before anything else is read, the refusal
+  naming that case and both its numbers; over 20 code points / a line break or
+  control character (the varchar rule on the live width).
+- **The card** (`caseFieldsDocketReview`), danger-styled for a replace or a
+  clear: old → new or "DOCKET CLEARED"; the events (eventService's case-scope
+  docket expansion) and log rows (`_buildCaseLogWhere`'s three case-scope
+  clauses) that LEAVE the case — matched by the pre-state, not the post-state —
+  and that ARRIVE, counted in SQL so the database's equality decides (a
+  capitalisation-only change moves nothing); court email (`courtResolve`): mail
+  carrying a dropped number no longer files here unless its bare number (judge
+  letters stripped) is still this case's case number — said so — and mail
+  carrying the new one does, plus the bare-number fallback when `case_number`
+  changes; header / Cases list / portal / Documents text before → after
+  (A7c's `caseDocketDisplays`) and the relink panel's docket lane; the judge
+  link updateCase re-resolves when `case_number_full` is written (from the new
+  suffix, else the judge text — a clear re-resolves from the text alone and can
+  empty it); caption unchanged; the case.updated dry-run as for any column.
+- **Freshness:** `expected` carries both numbers (and, with a full-number
+  change, the judge text and link); the click re-checks the collision after
+  the stale check, before the claim, through the case picker's search (GET
+  `/api/cases/search?q=<number>&limit=50` — raw columns, substring LIKE over
+  both, compared general_ci-style); a full page of 50 without a hit proves
+  nothing and refuses. The gap between that read and the write stays (ruling
+  2's precondition). The builder holds each number to the docket rule.
+- Tests: `tests/caseyCaseFields.test.js` (A7e block), gated
+  `tests/caseyCaseFields.mysql.test.js` (A7e block: the real readers before /
+  after, `courtResolve`, the judge drop, the duplicate and the clip the PATCH
+  stores), `tests/assistantUi.test.js`, `tests/assistantPromptKinds.test.js`.
+
+**Still excluded** (`ref/plans.md`): ruling 2's route precondition; the owned
 columns above stay with their cards.
 
 #### A8: Case-contact membership — shipped 2026-10-28

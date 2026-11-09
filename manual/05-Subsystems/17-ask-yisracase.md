@@ -427,10 +427,16 @@ its custom fields. Ask in plain words ("set the file date on the Smith case to
 March 2", "change her trustee to Jane Trustee", "clear the show cause date").
 It saves through the same route the Case Details forms use.
 
-- **Not on this card — each has its own card, or is not available:** the case
-  number (the case number card fills a blank one; changing or clearing one is
-  not available to Casey yet); the stage, status and next step (the pipeline
-  cards); the Dropbox folder (the case folder card); notes and alerts (their
+- **The case number** is on this card too: Casey can change or clear the case
+  number or full case number, as you can in Case Details. It refuses a number
+  another case already has (and checks again when you confirm), and the card
+  warns what moves with the number — the events and log entries filed under
+  the old number that leave the case and those under the new one that join
+  it, which court mail is filed here, the header, Cases list, client portal and
+  Documents label before and after, and the judge link a new full case number
+  re-resolves.
+- **Not on this card — each has its own card, or is not available:** the stage,
+  status and next step (the pipeline cards); the Dropbox folder (the case folder card); notes and alerts (their
   own cards above); the judge and trustee contact links (set from the judge
   and trustee names — change the name); the 341 meeting date (it follows the
   341 appointment — reschedule the appointment); and the case's id. Casey says
@@ -600,9 +606,7 @@ Casey copies the number exactly as you give it; it never reformats it or works
 out one form from the other.
 
 - **The card** shows both numbers before and after, and everything that reads
-  them: the case page header; the Cases list (if the case's full case number
-  is stored as empty text, the Cases list's Case Number column stays blank
-  even after a case number is added — the card says so); the client portal,
+  them: the case page header; the Cases list; the client portal,
   for the case's Primary and Secondary contacts; the Documents tabs' case
   label; court email — court mail carrying the number is filed on this case
   from now on, and the first one that names the case can set its caption if it
@@ -614,7 +618,8 @@ out one form from the other.
   every active rule on it and lists each that would run, and any whose test
   could not run — that one **may** run.
 - **What Casey will not do, and says so:**
-  - change or clear a number the case already has — do that in Case Details;
+  - change or clear a number the case already has on this card — that goes on
+    the case fields card above;
   - add a number another case already has, in either field (the card names
     that case; if they are the same matter, merge the cases on the case page);
   - save a number longer than 20 characters, or one with a line break;

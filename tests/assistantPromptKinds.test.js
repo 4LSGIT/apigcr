@@ -430,11 +430,11 @@ describe('A7c — every stage teaches the docket card, verbatim numbers and its 
     expect(answerPrompt).toContain('REPLACING a number the case already has with\n    a different one, or clearing one');
     expect(answerPrompt).toContain('a\n    number ANOTHER case already holds in either column');
     expect(answerPrompt).toContain('court-email matching (court mail carrying the number is filed on this case)');
-    expect(answerPrompt).toContain('A BLANK case\n    number is filled only through the docket kind below.');
+    expect(answerPrompt).toContain('A BLANK case\n    number is filled through the docket kind below; a number the case already has is replaced or cleared through the\n    case fields kind.');
     expect(answerPrompt).not.toContain('names, docket, trustee');
     expect(answerPrompt).toContain('ingest-rule/report-draft/case-docket/');
     expect(repairPrompt).toContain('case.docket.adopt.v1: kind,case_id,case_number?,case_number_full?,evidence');
-    expect(repairPrompt).toContain('Only a BLANK number is filled: never replace or clear one, never a number another case holds');
+    expect(repairPrompt).toContain('Only a BLANK number is filled: never replace or clear one (that is case.fields.update.v1), never a\n  number another case holds');
   });
 });
 
@@ -468,6 +468,33 @@ describe('A7 groups B/C — every stage teaches the case fields card, value shap
     expect(repairPrompt).toContain('case.fields.update.v1: kind,case_id,changes,evidence — changes maps 1-10 cases columns');
     expect(repairPrompt).toContain('a checkbox set an ARRAY of options ([] none)');
     expect(repairPrompt).toContain('case_type / case_subtype, custom, case_341_current or 341_appt_id (each refused by name — use its own card)');
+  });
+});
+
+// A7e (Fred, 2026-11-09: "at least anything the user can do in the UI"): the
+// docket is replaced / cleared on the case fields card. Every stage must teach
+// it — the collision read, the verbatim copy, what moves with the number — and
+// no stage may still say replacing a docket is unavailable.
+describe('A7e — every stage teaches replacing / clearing the docket on the case fields card', () => {
+  test('no stage says a docket cannot be replaced by Casey', () => {
+    for (const p of [planPrompt, investigatePrompt, answerPrompt, repairPrompt]) {
+      expect(p).not.toMatch(/replacing an existing docket is not available|not available to Casey yet|the user's edit in Case Details/);
+      expect(p).not.toMatch(/Never case_id, case_number/);
+    }
+    expect(planPrompt).not.toContain('Not on this card — each has its own card or is not available: the docket');
+  });
+  test('the plan and investigate stages read the new number\'s holders', () => {
+    expect(planPrompt).toContain('its case number / full case number (replaced, cleared or filled — as Case Details does)');
+    expect(planPrompt).toContain("for a case number, also a sql.read of cases WHERE case_number = '<the new number>' OR\n  case_number_full = '<the new number>'");
+    expect(planPrompt).toContain('Replacing or clearing a number the case already has is the\n  case field action above.');
+    expect(investigatePrompt).toContain('(for a case number, also a read of any case already\n  holding the new number)');
+  });
+  test('the answer and repair stages teach the verbatim number, the refusals and what moves', () => {
+    expect(answerPrompt).toContain('The docket is on this card too: "case_number" / "case_number_full" REPLACED with another number, CLEARED ("") or\n    filled');
+    expect(answerPrompt).toContain('the events and log entries filed under the OLD number that leave the case');
+    expect(answerPrompt).toContain('a replace or clear goes on a\n    case fields card instead, case.fields.update.v1');
+    expect(repairPrompt).toContain('case_number / case_number_full a number exactly as the user gave it (≤ 20 characters, never one\n  another case holds) or "" to clear.');
+    expect(repairPrompt).toContain('never replace or clear one (that is case.fields.update.v1)');
   });
 });
 

@@ -930,12 +930,12 @@ body. Governing migrations in `ref/migrations/`.*
   exact — capitalisation counts) and a value another case holds in either
   column (`checkCaseNumberCollision`, general_ci + PAD SPACE equality, no shape
   parse) — the normalizer refuses both first, through the same rule / the same
-  function. The route checks NO width (varchar(20) cut short, 200) and no
+  function. The route 400s > 20 characters (since 11-09) and checks no
   control characters — the normalizer refuses > 20 code points and any
   C0/DEL/C1/U+2028-9. Refused by name before any read: replace / clear keys and
   any other case field. A column already holding the value is not sent.
   Disclosed, each reader by its own rule: header (`full || number`), Cases list
-  (`COALESCE(full, number, case_id)` — a `''` full number keeps it BLANK),
+  (`COALESCE(NULLIF(full,''), NULLIF(number,''), case_id)` since 11-09),
   portal `deriveDocket`, Documents badge (`_labelTargets`), court-email matching
   (`courtResolve`) + the empty-caption stamp, templates, the events / log rows
   already filed under the number that join the case, the judge link updateCase
@@ -954,7 +954,7 @@ body. Governing migrations in `ref/migrations/`.*
   user"), 1–10 columns per card, behind `casey_record_edits_enabled`. Refused
   BY NAME before any read (`CASE_FIELDS_REFUSED`, any capitalisation; the
   browser builder holds the same set, pinned equal): case_id; the columns
-  another card owns — docket (A7c; replacing one is the next slice), stage /
+  another card owns — stage /
   status / rec / pipeline_phase (A9), case_dropbox (A11.1), case_notes /
   case_alerts (group A); the derived `*_contact_id` links; `custom` (cf_ keys
   only); case_type / case_subtype are ALLOWED since A7d (11-09): a type change
@@ -986,6 +986,9 @@ body. Governing migrations in `ref/migrations/`.*
   a refusal; 5xx ambiguous. Receipt: STRING case_id. Sync: the existing case
   PATCH matcher. Tests: `tests/caseyCaseFields.test.js`, gated
   `tests/caseyCaseFields.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A7 groups B/C.
+  A7e (11-09): the docket is on this card too (fill / replace / clear); the PATCH has no collision guard, so the
+  card runs `checkCaseNumberCollision` and the click re-checks via GET `/api/cases/search`; `caseFieldsDocketReview`
+  discloses the events / log rows that leave and arrive (counted in SQL), court email, displays, judge link.
 - **Casey forms (A12, 11-02):** kinds `form.draft.v1` → POST
   `/api/forms/draft` {form_key, link_type, link_id, schema_version, data} and
   `form.submission.link.v1` → PATCH `/api/forms/submissions/:id/link`
