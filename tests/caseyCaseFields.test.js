@@ -36,8 +36,9 @@
  *   9. the ledger's STRING receipt, the request detector, the card-size cap;
  *  10. A7e — the docket on this card (Fred, 2026-11-09: "at least anything the
  *      user can do in the UI"): a number another case holds is refused through
- *      the docket route's own checkCaseNumberCollision (the plain PATCH has
- *      none), the width / one-line rule; the disclosure — replaced / cleared /
+ *      the docket route's own checkCaseNumberCollision (which the plain PATCH
+ *      runs too, at the write, since 2026-11-09 — tests/caseDocketGuard.test.js),
+ *      the width / one-line rule; the disclosure — replaced / cleared /
  *      filled, the events and log rows that LEAVE and ARRIVE (counted in SQL),
  *      court email, header / Cases list / portal / Documents before → after,
  *      the judge link re-resolved from the full number; `expected` carries both
@@ -609,7 +610,7 @@ describe('A7e — the docket on this card (replace / clear / fill)', () => {
     expect([calls.counts, calls.scans, calls.resolveJudge, calls.rules]).toEqual([[], [], [], []]);
   });
   test('width (21 code points) and a line break refuse before the collision check', async () => {
-    await refuse(edit({ case_number: '1'.repeat(21) }), /^case_number "1{21}" is 21 characters — the column keeps 20, and the database would save it cut short while the route answers success/);
+    await refuse(edit({ case_number: '1'.repeat(21) }), /^case_number "1{21}" is 21 characters — the column keeps 20, and the route refuses it\. Nothing is proposed — shorten it$/);
     await refuse(edit({ case_number_full: '25-1\n2345' }), /^case_number_full contains a line break or another control character — it is one line of plain text/);
     expect(calls.collision).toEqual([]);
     await expect(run(edit({ case_number: '\u{1F600}'.repeat(20) }))).resolves.toBeTruthy();

@@ -83,7 +83,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'caseDocketLabel', 'caseDocketCaseLabel', 'caseDocketAfterLabel', 'caseDocketShown', 'caseDocketText', 'caseDocketBody', 'caseDocketRequest',
   'caseDocketPrecheck', 'caseDocketResult', 'caseDocketKnownOutcome',
   'caseFieldsLabel', 'caseFieldsCaseLabel', 'caseFieldsCanon', 'caseFieldsText', 'caseFieldsDanger', 'caseFieldsBody', 'caseFieldsRequest',
-  'caseFieldsPrecheck', 'caseFieldsDocketPrecheck', 'caseFieldsResult',
+  'caseFieldsPrecheck', 'caseFieldsDocketPrecheck', 'caseFieldsResult', 'caseFieldsKnownOutcome',
   'caseFolderLabel', 'caseFolderCaseLabel', 'caseFolderText', 'caseFolderRequest', 'caseFolderPrecheck', 'caseFolderResult',
   'caseFolderKnownOutcome', 'caseFolderAppliedMessage',
   'formCanonical', 'formDataHash', 'formIso', 'formRecordLabel', 'formLabel', 'formTitle', 'formText', 'formRecordPath', 'formDraftRequest',
@@ -4323,6 +4323,15 @@ describe('A7 groups B/C case fields card (case.fields.update)', () => {
     expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open 25-12345-mex', 'Copy details']);
     const fam = box.actionFamily({ kind: 'case.fields.update.v1' });
     expect([[...fam.kinds], fam.idField, fam.appliedKey, !!fam.stringReceipt]).toEqual([['case.fields.update.v1'], 'case_id', 'result_fields_case_id', true]);
+    // The route's collision 409 (its docket guard, 2026-11-09) reads as a refusal written before any
+    // write; an idempotency body, an uncoded 409 and the width 400 stay with the shared rules.
+    const conflict = { case_id: 'OTHER001', case_number: '25-1', case_number_full: null, case_type: 'Bankruptcy' };
+    const outcome = (status, body) => fam.knownOutcome(Object.assign(new Error('x'), { status, body }));
+    expect(outcome(409, { status: 'error', message: 'That docket already belongs to case OTHER001 (25-1).', conflict }))
+      .toEqual({ status: 'Refused — nothing written', text: 'Refused — nothing written: That docket already belongs to case OTHER001 (25-1). Another case took that number after this card was prepared; two cases cannot share a docket. If they are the same matter, merge the cases on the case page.' });
+    expect(outcome(409, { message: 'That docket already belongs to case OTHER001 (25-1).', conflict, idempotency: { outcome: 'unknown' } })).toBeNull();
+    expect(outcome(409, { message: 'Case X already has a case number (25-1).', conflict })).toBeNull();
+    expect(outcome(400, { message: 'case_number is 21 characters — the column keeps 20' })).toBeNull();
     for (const kind of ['case.field.update.v1', 'case.fields.replace.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
   });
@@ -4340,8 +4349,9 @@ describe('A7 groups B/C case fields card (case.fields.update)', () => {
   });
 
   // A7e: a card that writes a docket number re-checks, after the stale check
-  // and before the claim, that no OTHER case holds it (the plain PATCH checks
-  // no collision) — through the case picker's search.
+  // and before the claim, that no OTHER case holds it (the plain PATCH refuses
+  // one at the write since 2026-11-09; this check names it before the claim is
+  // spent) — through the case picker's search.
   describe('A7e — the docket on this card', () => {
     const docketWrite = (over = {}) => write({ column: 'case_number_full', label: 'case_number_full', kind: 'string', send: '25-12345-aot', before: '25-12345-mex', after: '25-12345-aot',
       from: '"25-12345-mex"', to: '"25-12345-aot"', readers: [], ...over });

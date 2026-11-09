@@ -24,6 +24,16 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **`PATCH /api/cases/:id` refuses a docket another case holds (11-09):** when
+  the body carries `case_number` / `case_number_full`, the route (the Case
+  Details forms' and Casey's case-fields card's writer) answers 400 over 20
+  code points and 409 `{conflict}` when another case holds the value in either
+  column (`caseService.checkCaseNumberCollision` — whole-text, general_ci +
+  PAD SPACE), before any write; a null / '' clear is checked by neither, and
+  the adopt-only "no replace" guard stays on `/docket`. `routes/api.cases.js`
+  `docketWriteRefusal`; `tests/caseDocketGuard.test.js`, the real engine in
+  `tests/caseyCaseFields.mysql.test.js`. The automation `update_case` function
+  still writes these columns unguarded (`ref/plans.md`).
 - **Casey's workflow definition read carries the start contract (A17.7c, 11-09):**
   every workflow row of `automation.definition` (`services/automationReadService.js`)
   has `test_input_keys` (keys of `workflows.test_input`, sorted — never its
@@ -986,8 +996,9 @@ body. Governing migrations in `ref/migrations/`.*
   a refusal; 5xx ambiguous. Receipt: STRING case_id. Sync: the existing case
   PATCH matcher. Tests: `tests/caseyCaseFields.test.js`, gated
   `tests/caseyCaseFields.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A7 groups B/C.
-  A7e (11-09): the docket is on this card too (fill / replace / clear); the PATCH has no collision guard, so the
-  card runs `checkCaseNumberCollision` and the click re-checks via GET `/api/cases/search`; `caseFieldsDocketReview`
+  A7e (11-09): the docket is on this card too (fill / replace / clear); the card runs `checkCaseNumberCollision`
+  at proposal, the click re-checks via GET `/api/cases/search`, and the PATCH itself refuses a collision (409) and
+  an over-width number (400) since 11-09 — `caseFieldsKnownOutcome` reads that 409 as nothing written; `caseFieldsDocketReview`
   discloses the events / log rows that leave and arrive (counted in SQL), court email, displays, judge link.
 - **Casey forms (A12, 11-02):** kinds `form.draft.v1` → POST
   `/api/forms/draft` {form_key, link_type, link_id, schema_version, data} and

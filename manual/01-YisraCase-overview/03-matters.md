@@ -118,7 +118,7 @@ A database trigger blocks the exact same combination of case, contact **and** ro
 Beyond the type, stage, and linked contacts, a case record holds:
 
 - **Dates** — open date, file date, close date
-- **Court information** — case number (short `25-12345` and full `2:25-bk-12345` forms), judge and trustee (both stored by name, not ID)
+- **Court information** — case number (short `25-12345` and full `2:25-bk-12345` forms), judge and trustee (both stored by name, not ID). Two cases cannot share a case number: a save that would give a case a number another case already holds, in either form, is refused and names that case — if they are the same matter, merge the cases. A number longer than 20 characters is refused too.
 - **Bankruptcy-specific fields** — pre-petition garnishments, vehicle disposition elections (reaffirmation, redemption, replacement), pre-petition and post-petition course completion, 341 meeting date, and more
 - **Notes** — free-text notes visible on the case record
 - **Appointments** — all meetings tied to this case

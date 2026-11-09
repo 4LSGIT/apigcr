@@ -1010,8 +1010,12 @@ async function getCaseContacts(db, caseId) {
  * row, or null when the docket is free to adopt.
  *
  * NOTE: this is a separate, route-facing guard — it is deliberately NOT folded
- * into updateCase (a generic column setter used by many callers). The route
- * runs this first, then writes via updateCase only on a clean check.
+ * into updateCase (a generic column setter used by many callers, the
+ * automation `update_case` function among them). Its callers run it first and
+ * write via updateCase only on a clean check: PATCH /api/cases/:id/docket,
+ * court review's adopt-rerun and, since 2026-11-09, PATCH /api/cases/:id
+ * whenever the body carries a docket column (routes/api.cases.js
+ * docketWriteRefusal).
  *
  * @param {object} db
  * @param {string} caseId            - the target case (excluded from the search)

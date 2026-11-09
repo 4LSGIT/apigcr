@@ -1210,8 +1210,9 @@ COMMENTs.)
   between the re-read and the write — for a docket replace (A7e) also the gap
   between the click-time collision search and the write.
 - **Native gaps found while tracing (not Casey's):**
-  - `PATCH /api/cases/:id` checks no width: relaxed sql_mode stores any
-    over-width varchar cut short and answers 200 (pinned for case_caption in
+  - `PATCH /api/cases/:id` checks no width (the two docket columns excepted
+    since 2026-11-09): relaxed sql_mode stores any over-width varchar cut
+    short and answers 200 (pinned for case_caption in
     `tests/caseyCaseFields.mysql.test.js`). Every writer but the forms'
     maxlength is exposed; refuse over-width in updateCase from
     information_schema's CHARACTER_MAXIMUM_LENGTH.
@@ -1226,13 +1227,13 @@ COMMENTs.)
   - Nothing server-side guards `case_341_current` / `341_appt_id`: the
     generic PATCH writes them, though apptService is their declared single
     writer and the portal shows the date.
-  - `PATCH /api/cases/:id` has no docket collision guard (A7e, pinned on a
-    real engine in `tests/caseyCaseFields.mysql.test.js`): it stores a
-    case_number another case already holds and answers 200 — the Case Details
-    form and every API writer can make two cases share a docket, which
-    court-email matching and the events / log docket joins then resolve to
-    whichever row MySQL returns first. Only `PATCH /api/cases/:id/docket` and
-    court review check (`checkCaseNumberCollision`).
+  - The automation `update_case` function writes `case_number` /
+    `case_number_full` through `caseService.updateCase` directly, so a
+    workflow step can still store a docket another case holds, or one over
+    20 characters cut short (the three routes refuse both since 2026-11-09:
+    `PATCH /api/cases/:id`, `/docket`, court review's adopt-rerun). Run
+    `checkCaseNumberCollision` + the width rule in the function (or in
+    updateCase for these two columns) and fail the step.
   - `domainEvents.buildChanges`' `_diffNorm` reads a datetime-local value
     (`2026-12-01T09:30`) as `2026-12-01 09:30` and the stored DATETIME as
     `2026-12-01 09:30:00` (or a bare date at midnight), so re-sending an

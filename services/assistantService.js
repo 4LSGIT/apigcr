@@ -2732,7 +2732,9 @@ function caseFieldsValue(col, raw) {
       const text = s.trim();
       const n = Array.from(text).length;
       if (col.width != null && n > col.width) {
-        throw caseFieldsError(`${name} "${text.slice(0, 40)}${n > 40 ? '…' : ''}" is ${n} characters — the column keeps ${col.width}, and the database would save it cut short while the route answers success. Nothing is proposed — shorten it`);
+        // The route refuses an over-width docket column itself (400, since 2026-11-09); every other varchar it stores cut short.
+        const clip = CASE_DOCKET_FIELDS.includes(name) ? 'and the route refuses it' : 'and the database would save it cut short while the route answers success';
+        throw caseFieldsError(`${name} "${text.slice(0, 40)}${n > 40 ? '…' : ''}" is ${n} characters — the column keeps ${col.width}, ${clip}. Nothing is proposed — shorten it`);
       }
       return { send: text, canon: text };
     }
@@ -3068,7 +3070,7 @@ async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = 
     throw caseFieldsError(`That changes nothing on case ${caseLabel} — ${kept.map((k) => `${k.column} is already ${k.shown}`).join('; ')}`);
   }
   // A7e: a number this card writes that ANOTHER case holds, in either column —
-  // the docket route's own check (the plain PATCH has none), before any more is read.
+  // the docket route's own check (the plain PATCH runs it too, at the write, since 2026-11-09), before any more is read.
   const docketWrites = writes.filter((w) => CASE_DOCKET_FIELDS.includes(w.column));
   const docketValues = docketWrites.filter((w) => !caseFieldsBlank(w.after));
   if (docketValues.length) {

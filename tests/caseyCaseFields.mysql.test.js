@@ -45,9 +45,12 @@
  *     custom value compared in the GET's own shapes — and refuses after a
  *     hand edit.
  *   - A7e, THE DOCKET (case_number / case_number_full on this card): the plain
- *     PATCH stores a REPLACED number, stores a number ANOTHER case holds
- *     (no collision guard) and clips one over 20 — so the card's collision
- *     and width refusals are load-bearing; a replace moves exactly the events
+ *     PATCH stores a REPLACED number; since 2026-11-09 it refuses a number
+ *     ANOTHER case holds (409 {conflict}, caseService.checkCaseNumberCollision
+ *     on the real engine's general_ci + PAD SPACE equality) and one over 20
+ *     (400) before any write — the card's own refusals come first and read
+ *     friendlier, the route's are the floor and caseFieldsKnownOutcome reads
+ *     the 409 as "nothing written"; a replace moves exactly the events
  *     and log rows the card counted, measured with the real readers
  *     (eventService.listEvents' case scope, logService._buildCaseLogWhere)
  *     before and after; court email (lib/courtResolve) follows the numbers,
@@ -158,8 +161,8 @@ function browserChecks(api) {
   const consts = ['CASE_FIELDS_MAX', 'CASE_FIELDS_REFUSED_NAMES', 'CASE_FIELDS_COLUMN', 'CASE_FIELDS_DOCKET_SEARCH_MAX',
     'CASE_DOCKET_FIELDS', 'CASE_DOCKET_MAX', 'CASE_DOCKET_CONTROL'].map((n) => constSrc(html, n));
   const names = ['actionStringReceipt', 'caseFieldsCaseLabel', 'caseFieldsCanon', 'caseFieldsBody', 'caseFieldsRequest', 'caseFieldsPrecheck',
-    'caseFieldsDocketPrecheck', 'caseFieldsResult'];
-  const src = `${consts.join('\n')}\n${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { caseFieldsRequest, caseFieldsPrecheck, caseFieldsResult };`;
+    'caseFieldsDocketPrecheck', 'caseFieldsResult', 'caseFieldsKnownOutcome'];
+  const src = `${consts.join('\n')}\n${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { caseFieldsRequest, caseFieldsPrecheck, caseFieldsResult, caseFieldsKnownOutcome };`;
   return new Function('api', src)(api); // eslint-disable-line no-new-func
 }
 
@@ -506,14 +509,23 @@ d('the Casey case fields card on real MySQL (A7 groups B/C)', () => {
       expect((await q('SELECT case_number_full AS f, case_judge_contact_id AS j FROM cases WHERE case_id = ?', [C3]))[0]).toEqual({ f: null, j: null });
     });
 
-    test('ANOTHER CASE HOLDS IT — the plain PATCH would store the duplicate; the card refuses it (the service\'s own equality), and the click re-checks it', async () => {
+    test('ANOTHER CASE HOLDS IT — the card refuses it (the service\'s own equality), the click re-checks it, and the plain PATCH refuses the duplicate at the write (409, nothing stored)', async () => {
       // The card: refused, naming the other case (capitalisation aside — general_ci).
       await expect(card3({ case_number: '25-80009-aot' })).rejects.toThrow(`ANOTHER CASE HOLDS IT: "25-80009-aot" is already on case ${C4} (Bankruptcy) — its case number is blank, its full case number "25-80009-AOT"`);
-      // The route has no guard: it stores the duplicate and answers 200 (why the card checks).
+      // The route's own guard (2026-11-09): the duplicate is refused before any write, in either
+      // column, general_ci — and the browser reads that 409 as a refusal, never "may have been applied".
       const dup = await patch(C2, { case_number: '25-80009-aot' });
-      expect(dup.status).toBe(200);
-      expect((await q("SELECT COUNT(*) AS n FROM cases WHERE case_number = '25-80009-aot' OR case_number_full = '25-80009-aot'"))[0].n).toBe(2);
-      await patch(C2, { case_number: '25-80002' });
+      expect([dup.status, dup.body.message]).toEqual([409, `That docket already belongs to case ${C4} (25-80009-AOT).`]);
+      expect(dup.body.conflict).toMatchObject({ case_id: C4, case_number_full: '25-80009-AOT' });
+      expect((await q("SELECT COUNT(*) AS n FROM cases WHERE case_number = '25-80009-aot' OR case_number_full = '25-80009-aot'"))[0].n).toBe(1);
+      expect((await q('SELECT case_number FROM cases WHERE case_id = ?', [C2]))[0].case_number).toBe('25-80002');
+      const full = await patch(C2, { case_number: '25-80002', case_number_full: '25-80009-AOT ' }); // trailing space — equal under PAD SPACE
+      expect([full.status, full.body.conflict && full.body.conflict.case_id]).toEqual([409, C4]);
+      expect(browser.caseFieldsKnownOutcome(Object.assign(new Error(dup.body.message), { status: dup.status, body: dup.body })))
+        .toEqual({ status: 'Refused — nothing written', text: `Refused — nothing written: That docket already belongs to case ${C4} (25-80009-AOT). Another case took that number after this card was prepared; two cases cannot share a docket. If they are the same matter, merge the cases on the case page.` });
+      expect(browser.caseFieldsKnownOutcome(Object.assign(new Error('x'), { status: 409, body: { idempotency: { outcome: 'unknown' }, conflict: {}, message: dup.body.message } }))).toBeNull();
+      // A case's OWN number is no collision: re-sending it is a no-op write, not a 409.
+      expect((await patch(C2, { case_number: '25-80002' })).status).toBe(200);
       // A card prepared while the number was free; another case takes it before the click.
       const c = await card3({ case_number: '25-80077' });
       expect(await browser.caseFieldsPrecheck(c)).toBe('');
@@ -522,11 +534,16 @@ d('the Casey case fields card on real MySQL (A7 groups B/C)', () => {
       expect((await q('SELECT case_number FROM cases WHERE case_id = ?', [C3]))[0].case_number).toBe('25-80003');
     });
 
-    test('WIDTH — the plain PATCH stores a 21-character number cut to 20 and answers 200; the card refuses it', async () => {
+    test('WIDTH — the plain PATCH refuses a 21-character number (400, nothing stored; it used to store it cut to 20 and answer 200); the card refuses it first', async () => {
       const res = await patch(C2, { case_number: '1'.repeat(21) });
-      expect(res.status).toBe(200);
-      expect((await q('SELECT CHAR_LENGTH(case_number) AS n FROM cases WHERE case_id = ?', [C2]))[0].n).toBe(20);
-      await expect(card3({ case_number: '2'.repeat(21) })).rejects.toThrow(/^case_number "2{21}" is 21 characters — the column keeps 20, and the database would save it cut short while the route answers success/);
+      expect([res.status, res.body.message]).toEqual([400, 'case_number is 21 characters — the column keeps 20']);
+      expect((await q('SELECT case_number AS n FROM cases WHERE case_id = ?', [C2]))[0].n).toBe('25-80002');
+      // Exactly 20 is stored whole (code points, not UTF-16 units).
+      const twenty = '\u{1F4C4}'.repeat(20);
+      expect((await patch(C2, { case_number_full: twenty })).status).toBe(200);
+      expect((await q('SELECT CHAR_LENGTH(case_number_full) AS n FROM cases WHERE case_id = ?', [C2]))[0].n).toBe(20);
+      expect((await patch(C2, { case_number_full: null })).status).toBe(200);
+      await expect(card3({ case_number: '2'.repeat(21) })).rejects.toThrow(/^case_number "2{21}" is 21 characters — the column keeps 20, and the route refuses it\. Nothing is proposed — shorten it$/);
     });
   });
 });

@@ -892,10 +892,11 @@ so the 341 moves by rescheduling its appointment.
 anything the user can do in the UI").** The Case Details form replaces and
 clears `case_number` / `case_number_full` through this same PATCH, so the card
 does too — fill, replace or clear (a blank one is filled here as well; the A7c
-adopt card stays, byte-identical, for the model's convenience). The PATCH has
-NO collision guard and NO width guard (the docket route has both; pinned on a
-real engine: it stores a number another case holds, and one over 20 cut short,
-answering 200), so the card adds them:
+adopt card stays, byte-identical, for the model's convenience). The PATCH
+refuses a collision (409) and an over-width number (400) at the write since
+2026-11-09 (it used to store both, answering 200 — the native gap this slice
+found, closed the same day; pinned on a real engine); the card refuses them
+first, naming more:
 - **Refused:** a number another case holds in either column — the docket
   route's own `caseService.checkCaseNumberCollision` (general_ci + PAD SPACE
   equality, no shape parse), run before anything else is read, the refusal

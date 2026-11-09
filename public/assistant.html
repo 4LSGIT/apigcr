@@ -1239,11 +1239,13 @@ function recordTextOpenTarget(draft) {
 // allows one claim per draft. The route is on the sync bus (yc-sync MATCHERS:
 // data.changes), so case pages repaint. Receipt: the STRING case_id.
 // A7e: the docket (case_number / case_number_full) is on this card too —
-// filled, replaced or cleared. The route checks no collision, so the server
-// refused a number another case held at proposal, and the click re-checks it
-// (caseFieldsDocketPrecheck) after the stale check, before the claim; the
-// builder holds each number to the docket rule (one trimmed line, at most
-// CASE_DOCKET_MAX characters, or null to clear).
+// filled, replaced or cleared. The server refused a number another case held
+// at proposal (naming that case and both its numbers), the click re-checks it
+// (caseFieldsDocketPrecheck) after the stale check, before the claim, and the
+// route itself refuses one at the write (409 {conflict} — the docket guard it
+// gained 2026-11-09, read by caseFieldsKnownOutcome); the builder holds each
+// number to the docket rule (one trimmed line, at most CASE_DOCKET_MAX
+// characters, or null to clear).
 const CASE_FIELDS_ACTION_KINDS = new Set(['case.fields.update.v1']);
 const CASE_FIELDS_MAX = 10;
 // The server's refused-by-name columns (lower-cased): the builder refuses them too.
@@ -1420,6 +1422,21 @@ function caseFieldsResult(draft, result) {
     if (!written.has(String(w.column).toLowerCase())) throw new Error('The case route did not confirm every reviewed field');
   }
   return { case_id: caseId };
+}
+
+// The route's one coded refusal written before any write: a case number
+// another case holds answers 409 with body.conflict (the collision guard the
+// docket route has always had, on the plain PATCH since 2026-11-09), worded for
+// staff. An idempotency body or anything else returns null and falls through
+// to the shared rules (a 400 — the width rule — is a refusal; an uncoded 409
+// stays ambiguous).
+function caseFieldsKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const message = String((e && e.body && e.body.message) || (e && e.message) || '');
+  if (e && e.status === 409 && e.body && e.body.conflict && /^That docket already belongs to case /.test(message)) {
+    return { status: 'Refused — nothing written', text: `Refused — nothing written: ${message} Another case took that number after this card was prepared; two cases cannot share a docket. If they are the same matter, merge the cases on the case page.` };
+  }
+  return null;
 }
 
 // Case-contact membership (A8). Add ONE contact to a case, change ONE
@@ -4584,6 +4601,7 @@ const ACTION_FAMILIES = [
     idField: 'case_id', appliedKey: 'result_fields_case_id', stringReceipt: true,
     danger: caseFieldsDanger,
     precheck: caseFieldsPrecheck,
+    knownOutcome: caseFieldsKnownOutcome,
     refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
     resultText: (payload) => `case ${payload.case_id}`,
     entity: (draft) => ({ kind: 'case', id: String(draft.case && draft.case.case_id), label: caseFieldsCaseLabel(draft) }),
