@@ -2262,18 +2262,26 @@ Active surfaces with known next steps.
   (gitignored).
 
 - **Branch protection on main (remote-land-suite phase 2; Fred approved in
-  principle 2026-10-27, enable ~2026-11-03 after a week of green CI lands).**
-  Require status check `test`, "do not allow bypassing" — every session
-  pushes as the admin account 4LSGIT, so without no-bypass the rule binds
-  nobody. Before Fred clicks, three things ship: (1) a replacement for his
-  `git go` alias (add + commit + push to main) that pushes a `land/fred-<sha>`
-  branch, waits for green, then pushes main; (2) a written break-glass:
-  while the rule is on, an Actions outage blocks EVERY deploy — a
-  `land.sh --local-suite` green is invisible to GitHub and its push is
-  refused too — so the steps to lift the rule and restore it (`gh api -X
-  DELETE repos/4LSGIT/apigcr/branches/main/protection`, then the exact PUT
-  body to restore it) are dry-run and filed with it; (3) land.sh's
-  `--local-suite` NO-GO for a refused push names that break-glass. Flaky
+  principle 2026-10-27). Everything but the click shipped 2026-11-10; Fred
+  turns it on.** Require status check `test`, "do not allow bypassing" —
+  every session pushes as the admin account 4LSGIT, so without no-bypass the
+  rule binds nobody. The soak was clean: every red run since 2026-10-28 was a
+  deterministic code failure caught by the gate (none a flake), zero red runs
+  from 2026-10-30 on. Shipped, all in gitignored `local/` and all tested on a
+  stub `gh` with real output shapes plus a fake GitHub that refuses main
+  without a check (44 assertions, 10/10 mutations killed): (1) `local/go.sh`
+  behind Fred's `git go` alias — commit, push `land/fred-<sha>`, wait for the
+  green run, push main (the untested alias survives as `git go-untested`);
+  (2) `local/break-glass.sh` — `status` / `lift` / `restore` / `dry-run`: while
+  the rule is on, an Actions outage blocks EVERY deploy (a `land.sh
+  --local-suite` green is invisible to GitHub, its push refused with GH006),
+  so `lift` saves the live rule and deletes it, `restore` PUTs the canonical
+  body and reads it back; `dry-run` ran the whole cycle on a throwaway branch
+  against the real API on 2026-11-10; (3) land.sh refuses `--no-jest` and
+  `--local-suite` up front while the rule is on, and a GH006 refusal at the
+  push is a NO-GO naming the break-glass. Remaining: Fred runs
+  `bash /Users/FRED/apigcr/local/break-glass.sh restore` (the click), then
+  the Deploy section of CLAUDE.md says "enforced", not "planned". Flaky
   suites cost a rerun under the rule, not a blocked deploy.
 
 - **Twin red on main (found by the YisraMail P1 worker, 2026-10-29; MySQL
