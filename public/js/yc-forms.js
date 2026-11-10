@@ -13,6 +13,22 @@
  */
 
 class YCForm {
+  /**
+   * Whether a stored checkbox value means "ticked". A checkbox's value
+   * arrives as a boolean from collect() / a draft, as 0 / 1 from a tinyint
+   * column, or as the strings '0' / '1' / 'true' / 'false' from JSON or a
+   * query string — so plain truthiness is wrong for '0' and 'false' (both are
+   * non-empty strings), and so is `!!String(value)`, which is what populate()
+   * did through _formatForDisplay until 2026-11-11: a draft's Restore ticked
+   * every box the draft left unticked, and the next Save submitted true.
+   */
+  static checkboxOn(value) {
+    if (value === true || value === 1) return true;
+    if (value === false || value === 0 || value === null || value === undefined) return false;
+    const s = String(value).trim().toLowerCase();
+    return s === '1' || s === 'true' || s === 'on' || s === 'yes';
+  }
+
   constructor(config) {
     this.config = Object.assign({
       formKey:       '',
@@ -432,6 +448,13 @@ if (this.config.endpoints.load && !this.config.external) {
       let value = parsed[fieldName];
       if (value === undefined || value === null) value = '';
 
+      // A checkbox is read from the RAW value (checkboxOn): _formatForDisplay
+      // would turn false / 0 into a non-empty string and tick the box.
+      if (fieldConfig.type === 'checkbox') {
+        el.checked = YCForm.checkboxOn(value);
+        continue;
+      }
+
       // Format value for display
       value = this._formatForDisplay(value, fieldConfig);
 
@@ -440,8 +463,6 @@ if (this.config.endpoints.load && !this.config.external) {
       } else if (fieldConfig.type === 'radio') {
         const radios = this.el.querySelectorAll(`input[name="${el.getAttribute('name')}"]`);
         radios.forEach(r => { r.checked = r.value === String(value); });
-      } else if (fieldConfig.type === 'checkbox') {
-        el.checked = !!value;
       } else if (fieldConfig.type === 'tags') {
         this._setTags(fieldName, String(value));
       } else if (fieldConfig.type === 'checkgroup') {
@@ -1724,7 +1745,7 @@ if (this.config.endpoints.load && !this.config.external) {
         const input = itemEl.querySelector(`[name="${fName}"]`);
         if (input) {
           if (fConfig.type === 'checkbox') {
-            input.checked = !!data[fName];
+            input.checked = YCForm.checkboxOn(data[fName]);
           } else {
             input.value = data[fName] || '';
           }

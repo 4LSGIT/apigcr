@@ -1191,17 +1191,6 @@ submitting a stored draft in A12.3 (ASK_CASEY_ACTIONS_PLAN A12.2, A12.3).
   - `formPdfService.renderSubmissionPdf` throws plain Errors for a draft and a
     bad id, so POST `…/pdf/file` and GET `…/pdf` answer 500 where a 400 is
     meant.
-  - **A checkbox populated with `false` shows CHECKED** (found 2026-11-11):
-    yc-forms `populate()` runs every value through `_formatForDisplay`, which
-    returns `String(value)` for a checkbox, then sets `el.checked = !!value` — so
-    `false`, `0`, `'0'` and `'false'` all read as checked (only null / undefined /
-    '' read unchecked; a jsdom probe over the shipped file confirms each). A
-    draft's Restore therefore ticks every box the draft left unticked and the
-    next Save submits `true`; a snapshot form, the read-only submission view and
-    a checkbox bound to a 0 column show the same. The fix is a checkbox branch
-    ahead of the string conversion (yc-forms.js), with a test that populates
-    `false`. The server-side submit (`formSubmitService.pageValue`) reads a
-    checkbox by plain truthiness instead of copying this.
   - The D1 public draft GET returns whatever draft row exists for (form, case)
     — a staff draft included — to whoever holds the case link (the accepted
     D1 trade; worth a line in the form builder's server-drafts toggle).

@@ -2013,6 +2013,7 @@ tests/wsurlS2.test.js
 tests/wsurlS3.test.js
 tests/wsurlS5ca.test.js
 tests/wsurlSlinks.test.js
+tests/ycFormsCheckboxPopulate.test.js
 tests/ycFrameFit.test.js
 tests/ycIconS6a.test.js
 tests/ycPager.test.js
