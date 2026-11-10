@@ -89,6 +89,10 @@
   }
   .bar select { max-width: 100%; flex: 1 1 120px; }
   .bar input[type="search"] { flex: 1 1 140px; }
+  /* The list's search starts at 120px: search + Filters / Select + refresh +
+     views (+ Compose without the rail) share ONE row from 320px up — it still
+     grows to fill the row. Gated in Chromium by commsDensity.js (SELECT ROW). */
+  .bar #f-q { flex-basis: 120px; }
   /* the list's top bar: picker row, then search row (.brk forces the wrap; gone with the rail) */
   .bar .brk { flex-basis: 100%; height: 0; }
 
@@ -383,6 +387,11 @@
   .fd-confirm { background: var(--warn-soft); border: 1px solid var(--warn); color: var(--warn-on-soft); }
   .fd-summary { background: var(--surface-2); border: 1px solid var(--border); }
   #sel-btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-on-soft); font-weight: 700; }
+  /* Select wears its label only where the rail holds Compose (the rule that
+     hides #compose-btn); elsewhere the ☑ alone — title + aria-label carry the
+     name — or the labelled Compose wraps to a third row (1100–1200px shells). */
+  #sel-btn .cb-label { display: none; }
+  @media (min-width: 1000px) { .email:not(.rail-off) #sel-btn .cb-label { display: inline; } }
   .sel-bar { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 6px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--border); background: var(--accent-soft); color: var(--accent-on-soft); font-size: 12px; }
   .sel-bar[hidden] { display: none; }
   .sel-bar .sel-n { font-weight: 700; margin-right: auto; }
@@ -630,9 +639,9 @@
     #fbar-btn { display: inline-flex; }
     .fbar[data-collapsed="true"] { display: none; }
     .fbar { flex-wrap: wrap; overflow-x: visible; } /* the in-flow panel wraps (D.5) */
-    /* S2P density: the list starts high on a phone — Compose is its icon
-       (title + aria-label carry the name), the bar is two tight rows, the
-       status line one scrollable row (a scroll box, nothing hidden). */
+    /* S2P density: the list starts high on a phone — Compose and Select are
+       their icons (title + aria-label carry the name), the bar is two tight
+       rows, the status line one scrollable row (a scroll box, nothing hidden). */
     .cb-label { display: none; }
     .bar { padding: 5px 8px; gap: 4px; }
     .bar select, .bar input[type="search"], .bar input[type="text"], .bar .btn { padding-top: 5px; padding-bottom: 5px; }
@@ -704,6 +713,7 @@
         <span class="brk" aria-hidden="true"></span>
         <input type="search" id="f-q" placeholder="From or subject — from:court.gov for a domain" aria-label="Search from or subject; from:domain filters the sender domain" maxlength="200">
         <button class="btn" type="button" id="fbar-btn" aria-expanded="true" aria-controls="fbar" title="Show or hide the filters"><i class="fa-solid fa-filter" aria-hidden="true"></i> <span id="fbar-n">Filters</span></button>
+        <button class="btn icon" type="button" id="sel-btn" aria-pressed="false" aria-label="Select emails" title="Select emails — a click then ticks an email instead of opening it, to file the attachments of several together"><i class="fa-regular fa-square-check" aria-hidden="true"></i><span class="cb-label"> Select</span></button>
         <button class="btn icon" type="button" id="refresh-btn" title="Refresh — and check the mail servers now (they are checked every 5 minutes anyway)" aria-label="Refresh"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
         <button class="btn icon" type="button" id="views-btn" title="Saved views"><i class="fa-solid fa-bookmark"></i></button>
         <button class="btn primary" type="button" id="compose-btn" title="Write a new email from one of your mailboxes" aria-label="Compose" hidden><i class="fa-solid fa-pen" aria-hidden="true"></i><span class="cb-label"> Compose</span></button>
@@ -726,7 +736,7 @@
         <button class="fchip" type="button" id="f-files" aria-pressed="false" title="Has attachments (images drawn inside the message do not count)"><i class="fa-solid fa-paperclip" aria-hidden="true"></i> Has files</button>
         <button class="fchip" type="button" id="f-notfiled" aria-pressed="false" title="Has attachments and none of them filed yet — not by docs@ and not with File attachments"><i class="fa-solid fa-folder-open" aria-hidden="true"></i> Not filed</button>
       </div>
-      <div class="status-line"><button class="btn small" type="button" id="sel-btn" aria-pressed="false" title="Tick emails to file their attachments to a case together">Select</button><span id="status"></span><span id="sync-line" style="display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center;min-width:0"></span><button class="btn small" type="button" id="readall-btn" hidden>Mark all read</button></div>
+      <div class="status-line"><span id="status"></span><span id="sync-line" style="display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center;min-width:0"></span><button class="btn small" type="button" id="readall-btn" hidden>Mark all read</button></div>
       <div class="sel-bar" id="sel-bar" role="toolbar" aria-label="Selected emails" hidden>
         <span class="sel-n" id="sel-n">0 selected</span>
         <button class="btn small" type="button" id="sel-all" title="Tick every email in the list as it is shown">All shown</button>

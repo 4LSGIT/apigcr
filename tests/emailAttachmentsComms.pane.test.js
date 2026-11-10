@@ -169,6 +169,30 @@ describe('the list', () => {
     expect(errors).toEqual([]);
   });
 
+  test('Select lives in the list\'s top bar beside Filters (not the status line): icon + label, named, pressed while on, a second click leaves', async () => {
+    const { doc, errors } = await boot({ handler: standard() });
+    const btn = doc.getElementById('sel-btn');
+    expect(btn.parentElement).toBe(doc.querySelector('.list-col .bar'));
+    expect(btn.previousElementSibling.id).toBe('fbar-btn');
+    expect(doc.querySelector('.list-col .status-line #sel-btn')).toBeNull();
+    expect(btn.getAttribute('aria-label')).toBe('Select emails');
+    expect(btn.querySelector('i.fa-square-check')).not.toBeNull();
+    expect(btn.querySelector('.cb-label').textContent).toBe(' Select'); // shown only with the rail (CSS below); elsewhere the icon
+    expect(btn.getAttribute('aria-pressed')).toBe('false');
+    btn.click();
+    expect(btn.getAttribute('aria-pressed')).toBe('true');
+    expect(doc.getElementById('sel-bar').hidden).toBe(false);
+    btn.click();
+    expect(btn.getAttribute('aria-pressed')).toBe('false');
+    expect(doc.getElementById('sel-bar').hidden).toBe(true);
+    expect(doc.querySelectorAll('#msg-list .selbox')).toHaveLength(0);
+    // the CSS behind one search row (measured in real Chromium by scripts/mobile-survey/commsDensity.js's SELECT ROW
+    // gate): the search starts at 120px at every width; Select's label shows only where the rail holds Compose
+    expect(HTML).toMatch(/\n  \.bar #f-q \{ flex-basis: 120px; \}\n/);
+    expect(HTML).toMatch(/\n  #sel-btn \.cb-label \{ display: none; \}\n  @media \(min-width: 1000px\) \{ \.email:not\(\.rail-off\) #sel-btn \.cb-label \{ display: inline; \} \}\n/);
+    expect(errors).toEqual([]);
+  });
+
   test('select mode: a click ticks (never opens); Same sender; All shown; File attachments sends the ticked ids; Done', async () => {
     const { window, doc, calls, errors } = await boot({ handler: standard() });
     expect(doc.getElementById('sel-bar').hidden).toBe(true);

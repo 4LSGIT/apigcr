@@ -12,6 +12,14 @@
 //   1280×800     ≤ 239                   ≤ 420      (baseline: 750)
 //   390×844      ≤ 200 (filters closed)  ≤ 520      (baselines: 312 / 788)
 //
+// SELECT ROW gate (email attachments, 2026-11-10): the list's Select button
+// sits in the top bar beside Filters, visible, inside the right edge and on
+// the SEARCH row at 320 / 375 / 414 / 1100 / 1200 / 1280 / 1440 (shell
+// widths). Refresh and views share that row everywhere, and so does Compose
+// when it is in the bar (no rail) from 375 up — at 320 it wraps, as it always
+// did. Select shows its label only where the rail holds Compose (1100 / 1200
+// have no rail: a labelled Select pushed Compose to a third row there).
+//
 // Exit 1 when a target is missed. Also captures the S2P screenshot set
 // (list · opened thread with the ⋯ menu · the filters sheet · the Task modal
 // · a reply with the Case field · the case picker over New message) at
@@ -142,6 +150,47 @@ async function openComms(browser, { w, h, theme }) {
       if (!ok && !clippedRows.length) failed++;
       rows.push({ viewport: `${t.w}x${t.h}`, rowTop, rowTarget: t.rowTop, bodyTop, bodyTarget: t.bodyTop, clip: clippedRows.length ? 'CLIPPED' : 'ok', ok });
       await page.screenshot({ path: path.join(OUT, `density_${t.w}_thread.png`) });
+      await page.close();
+    }
+
+    // ── the SELECT ROW gate: Select on the search row, the bar's rows, the label ──
+    for (const w of [320, 375, 414, 1100, 1200, 1280, 1440]) {
+      const { page, frame } = await openComms(browser, { w, h: w < 700 ? 844 : 900, theme: 'light' });
+      for (const compose of [false, true]) {
+        const r = await frame.evaluate((compose) => {
+          const cb = document.getElementById('compose-btn');
+          const was = cb.hidden;
+          cb.hidden = !compose;
+          const q = document.getElementById('f-q').getBoundingClientRect();
+          const onRow = (id) => {
+            const el = document.getElementById(id);
+            if (!el || !el.offsetParent) return false;
+            const b = el.getBoundingClientRect();
+            const mid = (b.top + b.bottom) / 2;
+            return mid >= q.top && mid <= q.bottom;
+          };
+          const sb = document.getElementById('sel-btn');
+          const lab = sb && sb.querySelector('.cb-label');
+          const out = {
+            rail: getComputedStyle(document.querySelector('.rail')).display !== 'none',
+            inBar: !!(sb && sb.parentElement === document.querySelector('.list-col .bar')),
+            visible: !!(sb && sb.offsetParent),
+            inside: !!(sb && sb.getBoundingClientRect().right <= document.documentElement.clientWidth + 0.5),
+            label: !!(lab && lab.getBoundingClientRect().width > 0),
+            sel: onRow('sel-btn'), refresh: onRow('refresh-btn'), views: onRow('views-btn'),
+            compose: onRow('compose-btn'), composeInBar: !!cb.offsetParent,
+          };
+          cb.hidden = was;
+          return out;
+        }, compose);
+        const need = ['inBar', 'visible', 'inside', 'sel', 'refresh', 'views'];
+        if (r.composeInBar && w >= 375) need.push('compose');
+        const miss = need.filter((k) => !r[k]);
+        if (r.label !== r.rail) miss.push(r.rail ? 'label (the rail is on)' : 'icon only (no rail)');
+        if (miss.length) { failed++; console.error(`${w} SELECT ROW (compose ${compose ? 'shown' : 'hidden'}) — not: ${miss.join(', ')}`, JSON.stringify(r)); }
+        else console.log(`${w} select row (compose ${compose ? 'shown' : 'hidden'}, rail ${r.rail ? 'on' : 'off'}): ok`);
+      }
+      await page.screenshot({ path: path.join(OUT, `select_row_${w}.png`) });
       await page.close();
     }
 

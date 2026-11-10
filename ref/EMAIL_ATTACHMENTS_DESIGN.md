@@ -440,7 +440,8 @@ Routes (`routes/api.mail.js`, staff JWT):
 Comms (`public/comms.html`): a **File to case…** button under every email's
 attachments, an attachment's **Save** button (= the dialog with only that
 file ticked; the viewer's Save to case too), a link on a conversation with
-several emails with files, and the list's **Select** mode (a click ticks;
+several emails with files, and the list's **Select** mode (☑ Select in the
+list's top bar beside Filters, the icon alone without the rail; a click ticks;
 All shown; Same sender; ≤ 50 at a time). The dialog: the case (suggested,
 a candidate — "Suggested because the subject names …" for a name-based one —
 or the case picker over it), the folder (default, or another: the case

@@ -407,11 +407,13 @@ Comms](#phone-lines--comms), below).
   can read the email can file its files. Open it from **File to case…** under
   a message's attachments, from a file's folder button, from **File the
   attachments of its N emails…** at the top of a conversation, or for many
-  emails at once from the list: **Select** (above the list) — a click then
+  emails at once from the list: **Select** (☑ Select in the list's top bar,
+  beside Filters — just the ☑ on a phone, or when the views and mailboxes
+  column is hidden) — a click then
   ticks an email instead of opening it; **All shown** ticks the whole list,
   **Same sender** ticks every shown email from the ticked emails' senders
   (a client who sent ten separate emails: tick one, Same sender, File
-  attachments); at most 50 at a time; **Done** leaves Select.
+  attachments); at most 50 at a time; **Done** (or ☑ again) leaves Select.
   - **The case** is suggested when every email belongs to the same one (the
     docs@ rules: the case the email names, else the sender's open case). Else
     pick one of the suggested cases or **Search cases…**; **Change** picks
