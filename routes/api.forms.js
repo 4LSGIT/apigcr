@@ -19,9 +19,14 @@
  * POST   /api/forms/submissions/:id/pdf/file — render AND file to Dropbox on
  *                                      the X5 ladder; returns the verdict
  * PATCH  /api/forms/submissions/:id/link   — adopt onto a case/contact/appt (X4)
+ * POST   /api/forms/submissions/submit-draft — submit a stored DRAFT: the form
+ *                                      page's whole Submit chain, server-side
+ *                                      (services/formSubmitService.js); staff
+ *                                      JWT only
  *
- * All routes require JWT or API key auth. The Slice-4/X4 submissions routes
- * map service `.status` errors to 400/404/409 (the api.formTemplates pattern);
+ * All routes require JWT or API key auth (submit-draft: a JWT). The
+ * Slice-4/X4 submissions routes map service `.status` errors to 400/404/409
+ * (the api.formTemplates pattern);
  * the older handlers keep their original 500-everything mapping untouched.
  */
 
@@ -29,6 +34,7 @@ const express = require('express');
 const router = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const formService = require('../services/formService');
+const formSubmitService = require('../services/formSubmitService');
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -295,6 +301,50 @@ router.patch('/api/forms/submissions/:id/link', jwtOrApiKey, async (req, res) =>
     res.json({ status: 'success', ...result });
   } catch (err) {
     fail(res, 'linkSubmission', err);
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/forms/submissions/submit-draft — submit a stored draft in ONE
+// request: the form page's Submit chain (yc-forms save()), run server-side in
+// the page's order through the writers its calls reach — validate, PATCH the
+// record's apiColumn diff, record the submission, delete the draft, start the
+// onSubmit workflows, write the form_submit log entry. Contract, order and
+// every deliberate difference from the page: services/formSubmitService.js.
+//
+// Body: { submission_id, expected_updated_at? } — the DRAFT row's id; when
+// given, expected_updated_at must equal the draft's updated_at (409 otherwise).
+// A staff JWT only: the chain writes as a person (submitted_by, the log entry,
+// the record's case.updated actor), and an API key carries none — 403, the
+// api.mail.js requireJwt shape. (The other form routes here accept keys.)
+// Distinct segment count from /api/forms/submit and no other POST under
+// /api/forms/submissions/<one segment>, so registration order is immaterial.
+//
+// Statuses: 400 bad body / validation (body.fields names the field) / a patch
+// the writer refuses as invalid; 403 not a JWT; 404 unknown or non-draft id /
+// no published template / patch record gone; 409 precondition failed / link
+// type or schema_version mismatch / docket or contact conflict; 422 a patch or
+// load target the server cannot stand in for, or non-object draft data; 500 a
+// failure (after a patch, body.patched names what was written). A success
+// reports every post-submit outcome (draft_deleted, workflows[], log_id).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function requireJwt(req, res, next) {
+  if (!req.auth || req.auth.type !== 'jwt' || req.auth.userId == null) {
+    return res.status(403).json({ status: 'error', message: 'Submitting a draft requires a signed-in user' });
+  }
+  next();
+}
+
+router.post('/api/forms/submissions/submit-draft', jwtOrApiKey, requireJwt, async (req, res) => {
+  try {
+    const result = await formSubmitService.submitDraft(req.db, req.body, { auth: req.auth });
+    res.json({ status: 'success', ...result });
+  } catch (err) {
+    const status = err.status || 500;
+    if (status >= 500) console.error('[api.forms] submitDraft error:', err);
+    res.status(status).json({ status: 'error', message: err.message, ...(err.extra || {}) });
   }
 });
 

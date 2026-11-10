@@ -24,6 +24,22 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Server-side form submit (11-11):** `POST /api/forms/submissions/submit-draft`
+  {submission_id, expected_updated_at?} (`services/formSubmitService.js`, staff
+  JWT only — 403 for a key) runs the form page's Save chain for a STORED draft
+  in the page's order through the page's writers: `validateValues` (the external
+  route's validator) → the `onSubmit.patch` apiColumn diff (computed as yc-forms
+  getDiff + render.html `_buildPatchPayload` would, against the record read via
+  the `endpoints.load` GET's service and JSON round-tripped; snapshot forms
+  against the latest submission) through docketWriteRefusal + updateCase /
+  updateContact → `submitForm` → `deleteDraft` → `start_workflow` per entry (the
+  page's initData) → the `form_submit` log entry. Invariants: no transaction
+  (domain events never ride one); a refusal before `submitForm` writes nothing;
+  steps after it are reported, never fatal; an empty diff still submits; a draft
+  on another schema_version is 409, never re-shaped; only `/api/cases/{linkId}`
+  and `/api/contacts/{linkId}` load/patch targets (else 422). yc-sync announces
+  `form:<type>:<id>` plus the record's `changes`. Manual: 02-YisraForms Parts 8,
+  11. Tests: `formsSubmitDraft.test.js`, gated `formsSubmitDraft.mysql.test.js`.
 - **Casey's attachment filing card (A13b, 11-10):** kind
   `mail.attachments.file.v1` {mail_message_id, case_id, parts, confirm?, move?,
   link?, folder?, notify?} → ONE `POST /api/mail/messages/:id/attachments/file`

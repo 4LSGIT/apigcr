@@ -70,7 +70,11 @@ await apiSend("/api/forms/draft", "POST", {
 
 ## POST /api/forms/submit
 
-Record an explicit submission. Called on Save.
+Record an explicit submission. Called on Save. It records the row and emits
+`form.submitted` — nothing else: validation, the record PATCH, the draft delete,
+the workflows and the log entry are the form page's own calls (Part 8). To run
+all of them for a stored draft in one request, use
+`POST /api/forms/submissions/submit-draft` below.
 
 **Body:** Same as `/draft`.
 
@@ -93,7 +97,7 @@ await apiSend("/api/forms/submit", "POST", {
 
 ## DELETE /api/forms/draft
 
-Delete a draft (user clicked "Discard").
+Delete a draft — the user clicked "Discard", or a save just recorded the submission.
 
 **Query params:** `form_key`, `link_type`, `link_id` (all required)
 
@@ -272,6 +276,63 @@ Unlike the older handlers in this file, the Slice-4/X4 routes map service errors
 
 ---
 
+## POST /api/forms/submissions/submit-draft
+
+Submit a stored **draft** in one request: the form page's Save flow (Part 8),
+server-side, through the same writers (`services/formSubmitService.js` holds the
+contract and every deliberate difference from the page). **Staff JWT only** — an
+API key is refused 403 (the chain writes as a person: `submitted_by`, the log
+entry, the record's `case.updated` actor).
+
+**Body:** `{ "submission_id": 88, "expected_updated_at": "2026-11-10T15:04:05.000Z" }` —
+the draft row's id; `expected_updated_at` optional (the draft's `updated_at` as
+`GET /api/forms/latest` returns it; whole seconds).
+
+**In order:**
+1. The draft — 404 when unknown or not a draft.
+2. `expected_updated_at` ≠ the draft's → 409 (carries the current `updated_at`).
+3. The published template — 404 none; 409 another link type, or the draft saved
+   under another `schema_version` (carries both).
+4. Validation against the published definition (the external route's
+   validator) — 400 with `fields: [{ key, label, message }]` (the first failure).
+5. `onSubmit.patch`: the apiColumn changes the page would send, worked out against
+   the form as it would load (the record from `endpoints.load`; the latest
+   submission for a snapshot form), applied through the PATCH route's writer
+   (cases: the docket guard, then `updateCase`; contacts: `updateContact`, never
+   `force`). No change → skipped. The writer's refusals pass through (400 / 404 /
+   409 with `conflict` / `conflicts` / `errors`) and stop the chain. A load or
+   patch URL other than `/api/cases/{linkId}` or `/api/contacts/{linkId}` → 422,
+   before any write.
+6. `submitForm` — the submitted row, `form.submitted`. A failure here after a
+   patch is a 500 whose body names the columns already written (`patched`).
+7. The draft delete, each workflow start (the page's init data), the `form_submit`
+   log entry by the caller — each reported, none failing the request.
+
+**Response:**
+```json
+{ "status": "success",
+  "submission": { "id": 501, "version": 4, "updated_at": "2026-11-10T15:04:06.000Z" },
+  "form_key": "case_info", "link_type": "case", "link_id": "hjSFMabb",
+  "patch_target": { "type": "case", "id": "hjSFMabb" },
+  "patched": ["case_trustee"], "changes": { "case_trustee": { "from": "Old", "to": "New" } },
+  "draft_deleted": true,
+  "workflows": [{ "id": 41, "started": true, "execution_id": 9001 },
+                { "id": 42, "started": false, "error": "start_workflow: workflow #42 is inactive" }],
+  "log_id": 7001 }
+```
+`patch_target` is null when nothing was patched; `draft_delete_error` / `log_error`
+appear when those steps failed. A draft equal to the record still submits. Not
+idempotent: a second call for the same draft is a 404 (the draft is gone).
+
+**Console test:**
+```js
+const { draft } = await apiSend("/api/forms/latest?form_key=case_info&link_type=case&link_id=hjSFMabb", "GET");
+await apiSend("/api/forms/submissions/submit-draft", "POST",
+  { submission_id: draft.id, expected_updated_at: draft.updated_at });
+```
+
+---
+
 ## Service Layer
 
 ```js
@@ -284,6 +345,9 @@ formService.deleteDraft(db, formKey, linkType, linkId)
 formService.getHistory(db, formKey, linkType, linkId, limit)
 formService.browseSubmissions(db, { form_key, link_type, link_id, status, limit, before_id })
 formService.getSubmission(db, id)
+
+const formSubmitService = require('../services/formSubmitService');
+formSubmitService.submitDraft(db, { submission_id, expected_updated_at }, { auth })
 ```
 
 `userId` is set from `req.auth.userId` in the route handlers.

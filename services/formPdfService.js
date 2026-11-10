@@ -5,8 +5,12 @@
  * Dropbox. X5 (external-forms arc; supermanager charter 2026-08-13, Fred
  * amendments 2026-08-14).
  *
- * One consumer: the `render_submission_pdf` internal function
- * (lib/internal_functions/pdf.js, workflow-only). No route exposes this.
+ * Consumers: the `render_submission_pdf` internal function
+ * (lib/internal_functions/pdf.js, workflow-only) and two staff routes in
+ * routes/api.forms.js — GET /api/forms/submissions/:id/pdf
+ * (renderSubmissionPdf: the bytes, no Dropbox write) and
+ * POST /api/forms/submissions/:id/pdf/file (fileSubmissionPdf: render and
+ * file on the ladder below).
  *
  * ── WHAT THE PDF SHOWS ──────────────────────────────────────────────────────
  * Exactly what the submitter saw (Fred, Q5 2026-08-14):

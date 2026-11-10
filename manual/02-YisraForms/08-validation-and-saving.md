@@ -63,24 +63,30 @@ When the user clicks Save, `form.save()` runs:
       → field names mapped back via apiMap or _buildPatchPayload
  6. POST /api/forms/submit — record in form_submissions
       → always happens; version auto-increments
- 7. Trigger workflow (if onSubmit.workflow configured)
-      → fire-and-forget — doesn't block the save
- 8. POST /api/log — audit entry with change diff
+ 7. DELETE /api/forms/draft — remove the now-superseded draft row
+      → fire-and-forget — a failure doesn't fail the save
+ 8. Trigger workflow(s) (onSubmit.workflows, 1–3, or the legacy onSubmit.workflow)
+      → POST /workflows/:id/start per entry, fire-and-forget — doesn't block the save
+ 9. POST /api/log — audit entry with change diff
       → non-blocking — failure doesn't fail the save
- 9. Reset state — update snapshot, clear dirty markers
-10. Return to view mode (if form uses the view/edit toggle)
-11. Success toast
-12. Framework side-effects (fires last):
+10. Reset state — update snapshot, clear dirty markers
+11. Return to view mode (if form uses the view/edit toggle)
+12. Success toast
+13. Framework side-effects (fires last):
       a. Call user's onSave(submitResult) callback — for form-specific logic only
       b. Send postMessage({ type: 'form-saved', form, linkType, linkId }) to parent
          — unless external mode
          — this is the ONLY place this postMessage is sent
-13. finally: clear loading overlay and saving guard
+14. finally: clear loading overlay and saving guard
 ```
 
 If steps 5–6 fail: error toast, loading dismissed, guard cleared.
 
-**Important — postMessage ownership.** Step 12b is the framework's job. Forms must not send their own `form-saved` postMessage from within `onSave` — doing so causes the parent to run `refreshEntityData` twice in quick succession, which can clobber sibling forms' unsaved state during the push-back phase.
+External mode (public links) replaces steps 5–9 with one POST to the external
+submit route, which re-validates and starts the workflows server-side
+([15-external-forms.md](15-external-forms.md)).
+
+**Important — postMessage ownership.** Step 13b is the framework's job. Forms must not send their own `form-saved` postMessage from within `onSave` — doing so causes the parent to run `refreshEntityData` twice in quick succession, which can clobber sibling forms' unsaved state during the push-back phase.
 
 ---
 
@@ -105,11 +111,18 @@ Mask formatting is stripped — raw values sent (`3135551234`, not `(313) 555-12
 
 ```js
 onSubmit: {
-  workflow: { id: 12, initData: { source: 'form' } },
+  workflows: [{ id: 12, initData: { source: 'form' } }],   // 1–3 entries
+  pdf: true,                                              // optional
 }
 ```
 
-The workflow receives: `form_key`, `link_type`, `link_id`, `submission_id`, `data` (full payload), plus anything in `initData`. Fire-and-forget — doesn't block the save.
+Each workflow's init data is the form's field values (top level, so `{{fieldName}}`
+works), then that entry's `initData`, then the system fields, which win any name
+clash: `form_key`, `form_title` (the template's title), `link_type`, `link_id`,
+`submission_id`, `make_pdf` (`onSubmit.pdf`, always true or false) and `_values`
+(all the field values as one object). Each start is fire-and-forget and
+independent — one failing never fails the save or its siblings. The legacy
+singular `onSubmit.workflow` is one entry.
 
 ---
 
@@ -127,6 +140,30 @@ Every save writes to the `log` table:
 ```
 
 The `changes` field contains only modified fields as `{ fieldName: [oldValue, newValue] }`. Non-blocking.
+
+---
+
+## Submitting a Stored Draft from the Server
+
+`POST /api/forms/submissions/submit-draft` runs this whole flow on the server for a
+draft that is already saved — for Ask Casey and any caller without the form open.
+Body `{ submission_id, expected_updated_at? }` (the draft row's id; the optional
+`updated_at` refuses the submit with 409 when the draft was saved again since it
+was read). A signed-in user only — an API key gets 403.
+
+In the page's order: the published template's validation (the external route's
+validator — 400 naming the first failing field by key and label), the PATCH of
+the apiColumn changes, the submission row, the draft delete, the workflows, the
+log entry. The PATCH is worked out the way the page works it out — the draft
+against the form as it would load (the record's current row, or the latest
+submission for a snapshot form) — and written through the same writer as the
+PATCH route, so the docket guard, note limits and `case.updated` all apply. Two
+differences from the button: a draft equal to the record still submits (only the
+PATCH is skipped), and a draft saved under an older version of the form is
+refused (409) instead of re-rendered — re-save it on the current version first.
+The answer reports every outcome (`patched`, `draft_deleted`, `workflows[]`,
+`log_id`); a second call for the same draft is a 404, because the draft is gone.
+Details: [11-api-reference.md](11-api-reference.md).
 
 ---
 

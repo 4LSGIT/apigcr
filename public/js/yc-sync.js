@@ -1111,6 +1111,17 @@
                                                  service row has no link)
          PATCH /api/forms/submissions/:id/link   { id, link_type, link_id,
                                                  version, … } — the TARGET
+         POST  /api/forms/submissions/submit-draft  { link_type, link_id, … }
+                                                 — the submission landed and
+                                                 the draft is gone; PLUS the
+                                                 record's own field diff when
+                                                 the form patched it
+                                                 (`patch_target` {type, id} +
+                                                 `changes`, the shape PATCH
+                                                 /api/cases/:id and
+                                                 /api/contacts/:id announce —
+                                                 the page's chain announced
+                                                 that PATCH and nothing else)
        Fails closed without a link (an unlinked '' row belongs to no record).
        Not matched: POST /api/forms/submit (no Casey card sends it — no atomic
        route), DELETE /api/forms/draft (A12.2's discard card sends it, but the
@@ -1119,6 +1130,7 @@
        write announced by nothing today) (ref/plans.md). */
     [/^\/api\/forms\/draft$/,                         'form', formGetter, ['POST']],
     [/^\/api\/forms\/submissions\/(\d+)\/link$/, 'form', formGetter, ['PATCH']],
+    [/^\/api\/forms\/submissions\/submit-draft$/,   'form', submitDraftGetter, ['POST']],
     /* Mail triage (A13) — the comms hub's ONE-message writes, which the Ask
        Casey mail cards send and the hub itself sends (Mark unread, the case
        tag). Before A13 no /api/mail route had a matcher and neither reader
@@ -1225,6 +1237,22 @@
     if (typeof t !== 'string' || !t) return null;
     if (l == null || l === '') return null;
     return [{ addr: 'form:' + t + ':' + l, fields: { yc_refetch: 1 } }];
+  }
+
+  /**
+   * POST /api/forms/submissions/submit-draft — the form marker (formGetter),
+   * plus `case:<id>` / `contact:<id>` with the patch's `changes` when the
+   * submit wrote the record (an empty diff announces no record change).
+   */
+  function submitDraftGetter(r) {
+    var out = formGetter(r) || [];
+    var t = r && r.patch_target;
+    var ch = r && r.changes;
+    if (t && (t.type === 'case' || t.type === 'contact') && t.id != null && t.id !== '' &&
+        ch && typeof ch === 'object' && Object.keys(ch).length) {
+      out.push({ addr: t.type + ':' + t.id, fields: ch });
+    }
+    return out.length ? out : null;
   }
 
   /**

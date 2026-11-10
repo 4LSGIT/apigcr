@@ -1142,6 +1142,7 @@ services/filePlacementService.js
 services/firmBlocksService.js
 services/formPdfService.js
 services/formService.js
+services/formSubmitService.js
 services/formTemplateService.js
 services/gContactsService.js
 services/gcalService.js
@@ -1611,6 +1612,8 @@ tests/formrender.extappearance.test.js
 tests/formrender.extcode.test.js
 tests/formrender.x2external.test.js
 tests/formrender.x4view.test.js
+tests/formsSubmitDraft.mysql.test.js
+tests/formsSubmitDraft.test.js
 tests/formsubmissions.x4.test.js
 tests/formtemplates.d4schema.test.js
 tests/formtemplates.formdev.test.js

@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-10T03:53:36.569Z_  
-_848 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 325, PUT: 40, _ALL: 3_
+_Generated 2026-11-10T20:24:19.931Z_  
+_849 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 326, PUT: 40, _ALL: 3_
 
 ## Global middleware chain
 
@@ -400,6 +400,7 @@ _848 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 325, PUT: 40, _ALL:
 | GET | `/api/forms/submissions/:id/pdf` | `jwtOrApiKey` | — |
 | POST | `/api/forms/submissions/:id/pdf/file` | `jwtOrApiKey` | — |
 | GET | `/api/forms/submissions/:id/render` | `jwtOrApiKey` | — |
+| POST | `/api/forms/submissions/submit-draft` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/forms/submit` | `jwtOrApiKey` | — |
 | GET | `/api/gcal/calendars` | `jwtOrApiKey` | — |
 | GET | `/api/gcal/events` | `jwtOrApiKey` | — |
@@ -1128,4 +1129,4 @@ _848 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 325, PUT: 40, _ALL:
 
 ---
 
-_848 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 325, PUT: 40, _ALL: 3_
+_849 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 326, PUT: 40, _ALL: 3_

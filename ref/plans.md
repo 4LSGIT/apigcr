@@ -1162,19 +1162,14 @@ COMMENTs.)
 Draft discard, PDF filing and appointment-linked forms shipped in A12.2
 (ASK_CASEY_ACTIONS_PLAN A12.2).
 
-- **Submitting a form — no atomic route.** The form page's Submit is a
-  seven-call browser chain in yc-forms' save(): validate, PATCH the record's
-  apiColumn fields (`onSubmit.patch`), POST `/api/forms/submit`, DELETE the
-  draft, start up to 3 `onSubmit.workflows` (with `make_pdf`), POST
-  `/api/log`. POST `/api/forms/submit` alone inserts the row and emits
-  `form.submitted` — it patches nothing, starts nothing and leaves the draft.
-  A Casey submit card needs a native atomic internal submit route first: one
-  server call that runs the template's validation (extFormService.validateValues
-  exists), the apiColumn PATCH, the submission, the draft delete, the workflow
-  starts and the log, mirroring the external route's server-side chain. Fred's
-  call (manager ruling, 2026-11-11). The card would then disclose the record
-  columns it writes, every workflow it starts, the trigger rules on
-  `form.submitted`, and refuse each failing required answer.
+- **Submitting a form — the card (A12.3).** The native route exists: POST
+  `/api/forms/submissions/submit-draft` runs the page's whole Save chain for a
+  stored draft in one request (validation, the `onSubmit.patch` record write,
+  `form.submitted`, the draft delete, every `onSubmit.workflows` start, the log
+  entry — `services/formSubmitService.js`). The Casey card over it is still to
+  build: it must disclose the record columns the submit writes, every workflow
+  it starts, the trigger rules on `form.submitted`, and refuse on missing
+  required answers before the click (the route answers the first one as a 400).
 - **Template editing, publishing, visibility, version restore, deletion** —
   form-builder operations, not row controls.
 - **The hand-built form pages on the bus.** `casedetails.html`,
@@ -1204,6 +1199,17 @@ Draft discard, PDF filing and appointment-linked forms shipped in A12.2
   - `formPdfService.renderSubmissionPdf` throws plain Errors for a draft and a
     bad id, so POST `…/pdf/file` and GET `…/pdf` answer 500 where a 400 is
     meant.
+  - **A checkbox populated with `false` shows CHECKED** (found 2026-11-11):
+    yc-forms `populate()` runs every value through `_formatForDisplay`, which
+    returns `String(value)` for a checkbox, then sets `el.checked = !!value` — so
+    `false`, `0`, `'0'` and `'false'` all read as checked (only null / undefined /
+    '' read unchecked; a jsdom probe over the shipped file confirms each). A
+    draft's Restore therefore ticks every box the draft left unticked and the
+    next Save submits `true`; a snapshot form, the read-only submission view and
+    a checkbox bound to a 0 column show the same. The fix is a checkbox branch
+    ahead of the string conversion (yc-forms.js), with a test that populates
+    `false`. The server-side submit (`formSubmitService.pageValue`) reads a
+    checkbox by plain truthiness instead of copying this.
   - The D1 public draft GET returns whatever draft row exists for (form, case)
     — a staff draft included — to whoever holds the case link (the accepted
     D1 trade; worth a line in the form builder's server-drafts toggle).

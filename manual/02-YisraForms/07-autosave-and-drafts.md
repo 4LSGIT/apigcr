@@ -63,7 +63,12 @@ the older hand-built form pages, does not hear it and sees the draft on reload.
 
 ## What Happens on Submit
 
-The draft is NOT deleted on submit. It becomes stale — the next autosave overwrites it, and on next load the submission is newer so no banner appears.
+Once the submission is recorded, the form deletes the draft row
+(`DELETE /api/forms/draft`, fire-and-forget — a failed delete never fails the
+save; the leftover draft is older than the submission, so no banner appears on
+the next load). An external form deletes its server draft the same way, or
+clears its browser copy. Submitting a stored draft from the server
+(`POST /api/forms/submissions/submit-draft`, Part 8) deletes it too.
 
 ---
 
