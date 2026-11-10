@@ -194,6 +194,11 @@ Intake stage changes no fields (intake membership is the phase, which the advanc
 the subtype is kept, so the "typical next steps" projection still knows the chapter.
 `case_chapter` is **not** touched — that mapping is bankruptcy vocabulary and belongs to
 workflow 42, not the engine — so set the chapter by hand if it matters for the case.
+The move is two writes (type/subtype, then the stage). If the second fails — "case
+type/subtype updated … but the stage advance failed — retry the move" — the case already
+resolves to the new pipeline while its stage is still on the old one; the dialog then offers
+that pipeline first, marked *finish the move*, so retrying lands the stage (the board's ⇄ dialog
+does the same for an unstaged card).
 
 ### The board (Cases → Pipeline tab)
 

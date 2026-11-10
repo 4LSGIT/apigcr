@@ -2936,6 +2936,25 @@ async function pwApplyAdvanceResult(payload, successTitle, fields) {
 let pwMoveTemplates = null;     // active templates, fetched once per page
 const pwMoveStagesCache = {};   // template_id → active stages
 
+/* The pipelines the dialog offers: every active template but the one the case
+   resolves to — EXCEPT when the case's position is OFF that pipeline's stages
+   (the torn move: movePipeline wrote the type/subtype, then the advance
+   failed, so the case resolves to the new pipeline while its latest log row
+   is still on the old one). Then the resolved pipeline is offered FIRST,
+   flagged `pwFinish`, so the move can be finished here — the route's torn
+   error says "retry the move", and a same-template move is legal to it (the
+   type/subtype diff is empty; only the advance runs). Before 2026-11-10 the
+   dialog hid that pipeline and the only way out was Advance. */
+function pwMoveCandidates(templates, data) {
+  const curTplId = data && data.template ? Number(data.template.id) : null;
+  const cur = data && data.current ? data.current : null;
+  const stages = data && Array.isArray(data.stages) ? data.stages : [];
+  const offPipeline = !!(cur && curTplId != null && !stages.some(s => s.stage_key === cur.stage_key));
+  const others = (templates || []).filter(t => Number(t.id) !== curTplId);
+  const resolved = offPipeline ? (templates || []).find(t => Number(t.id) === curTplId) : null;
+  return resolved ? [Object.assign({}, resolved, { pwFinish: true }), ...others] : others;
+}
+
 async function pwMoveFetchStages(templateId) {
   if (!pwMoveStagesCache[templateId]) {
     const d = await P.apiSend(`/api/pipeline-admin/templates/${templateId}/stages`, 'GET');
@@ -2955,8 +2974,7 @@ async function pwMoveOpen() {
     return;
   }
 
-  const curTplId = pwData && pwData.template ? Number(pwData.template.id) : null;
-  const tpls = pwMoveTemplates.filter(t => Number(t.id) !== curTplId);
+  const tpls = pwMoveCandidates(pwMoveTemplates, pwData);
   if (!tpls.length) {
     Toast.fire({ icon: 'info', title: 'No other active pipelines' });
     return;
@@ -2999,7 +3017,8 @@ async function pwMoveOpen() {
     html:
       `<div class="pw-mv-row"><label for="pwMvTpl">Pipeline</label>
          <select id="pwMvTpl">${tpls.map(t =>
-           `<option value="${escAttr(t.id)}">${escAttr(t.name)}</option>`).join('')}</select>
+           `<option value="${escAttr(t.id)}">${escAttr(t.name)}${t.pwFinish
+             ? ' — finish the move: the case resolves here but its stage is not on this pipeline' : ''}</option>`).join('')}</select>
        </div>
        <div class="pw-mv-row"><label for="pwMvStage">Stage</label>
          <select id="pwMvStage"><option>Loading…</option></select>

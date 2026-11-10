@@ -488,6 +488,21 @@ async function xFetchStages(templateId) {
   return xStagesCache[templateId];
 }
 
+// The pipelines the dialog offers: every active template but this board's —
+// EXCEPT for an UNSTAGED card (no position on this pipeline: a day-one case,
+// or the torn move — movePipeline wrote the type/subtype, then the advance
+// failed, so the case resolves here while its latest stage-log row is on the
+// old pipeline). Then this pipeline is offered FIRST, flagged `xFinish`, so
+// the move can be finished from the board (the route's torn error says
+// "retry the move"; a same-template move is legal to it — the type/subtype
+// diff is empty and only the advance runs). Same rule as case.html's
+// pwMoveCandidates (2026-11-10).
+function xMoveCandidates(all, curTplId, unstaged) {
+  const others = (all || []).filter(t => Number(t.id) !== Number(curTplId));
+  const here = unstaged ? (all || []).find(t => Number(t.id) === Number(curTplId)) : null;
+  return here ? [Object.assign({}, here, { xFinish: true }), ...others] : others;
+}
+
 // Which column a card sits in — its current stage_key ('unstaged' → null).
 function findCardColumnKey(caseId) {
   for (const key of Object.keys(board.columns || {})) {
@@ -501,14 +516,14 @@ function findCardColumnKey(caseId) {
 async function xMovePrompt(e, caseId) {
   e.stopPropagation();
   const curTplId = Number(E('pb-template').value);
-  const tpls = templates.filter(t => Number(t.id) !== curTplId);
+  const curKey = findCardColumnKey(caseId);
+  const tpls = xMoveCandidates(templates, curTplId, curKey == null);
   if (!tpls.length) {
     Toast.fire({ icon: 'info', title: 'No other active pipelines' });
     return;
   }
   const card = findCard(caseId);
   const who = card ? (card.primary_contact_name || card.case_display || caseId) : caseId;
-  const curKey = findCardColumnKey(caseId);
 
   const stageOptionsHtml = (stages) => {
     const sameKey = curKey && stages.some(s => s.stage_key === curKey) ? curKey : null;
@@ -544,7 +559,8 @@ async function xMovePrompt(e, caseId) {
       `<p style="margin:0 0 4px">Move <b>${escText(who)}</b> to:</p>
        <div class="pb-mv-row"><label for="pbMvTpl">Pipeline</label>
          <select id="pbMvTpl">${tpls.map(t =>
-           `<option value="${escAttr(t.id)}">${escAttr(t.name)}</option>`).join('')}</select>
+           `<option value="${escAttr(t.id)}">${escAttr(t.name)}${t.xFinish
+             ? ' — finish the move: the case resolves here but has no stage on this pipeline' : ''}</option>`).join('')}</select>
        </div>
        <div class="pb-mv-row"><label for="pbMvStage">Stage</label>
          <select id="pbMvStage"><option>Loading…</option></select>

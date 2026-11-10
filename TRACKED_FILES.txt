@@ -1804,6 +1804,7 @@ tests/pipelineAdminService.test.js
 tests/pipelineBoard.test.js
 tests/pipelineBoardUi.sync.test.js
 tests/pipelineInternalFn.guard.test.js
+tests/pipelineMoveCandidates.test.js
 tests/pipelineR15RuleSeeds.test.js
 tests/pipelineRequirementsRoute.test.js
 tests/pipelineService.test.js
