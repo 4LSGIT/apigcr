@@ -1252,7 +1252,8 @@ function putEvents() {
 // Catalog shape (from listRelationTypes):
 //   { type_code, forward_label, reverse_label, is_symmetric,
 //     allowed_statuses: [], allowed_end_reasons: [], sort_order, active }
-// Uses P.apiSend. No polling — relations don't change without user action.
+// Uses P.apiSend. No polling: another frame's change arrives on the sync bus
+// (`relations:contact:<id>`, the subscriber at the foot of this file).
 // ═════════════════════════════════════════════════════════════════════════
 
 const CREL = {
@@ -1261,6 +1262,11 @@ const CREL = {
   types:   null,       // catalog cache, fetched lazily on first modal open
   loading: false,
 };
+/* Sync-bus state for the relations subscriber at the foot of this file.
+   Declared HERE, above loadContactRelations() and ycRefreshIfStale(), so no
+   caller can reach them in their temporal dead zone. */
+let crelLastLoad = 0;   // echo fence, stamped at the START of loadContactRelations
+let crelStale = false;  // a message arrived while this page was off screen
 
 // ── Shared helpers ────────────────────────────────────────────────────────
 function crelEsc(s) {
@@ -1333,6 +1339,7 @@ function getRelationTypeByCode(code) {
 async function loadContactRelations() {
   if (CREL.loading) return;
   CREL.loading = true;
+  crelLastLoad = Date.now();   // echo fence — stamped at START, see the relations subscriber
 
   const contactAtCall = clientID;
   const tbody = E('crel-tbody');
@@ -2154,6 +2161,10 @@ YC.on('event:*', '*', () => {
 function ycRefreshIfStale() {
   if (!pageVisible()) return;
 
+  if (crelStale) {
+    crelStale = false;
+    if (crelTabShown()) loadContactRelations();
+  }
   if (entityStale) {
     entityStale = false;
     window.ycRefreshEntity();
@@ -2166,5 +2177,37 @@ function ycRefreshIfStale() {
 }
 window.ycBecameVisible = ycRefreshIfStale;
 document.addEventListener('visibilitychange', ycRefreshIfStale);
+
+/* ── Relationships reader (sync bus) ─────────────────────────────────────────
+   public/js/yc-sync.js announces every relation write — POST / PATCH / DELETE
+   /api/contact-relations — as `relations:contact:<id>` for BOTH ends (a
+   marker: refetch, never read the fields). Another frame's write (above all an
+   Ask Casey relation card, or the other contact's own tab) used to leave this
+   tab showing the old list until it was re-entered.
+
+   FENCES, in order:
+     · the tab is not showing → nothing at all: openTab() reloads it on entry;
+     · the page is off screen → PARKED in crelStale, flushed by
+       ycRefreshIfStale() above (only if the tab is still the one showing);
+     · its own echo → this page's writers end in loadContactRelations(), which
+       stamps crelLastLoad at its START; the debounce lets that call start
+       before the timer reads the stamp, and CREL.loading drops a second call
+       while one is in flight.
+   §3.6: the handler ends in a GET and a table repaint — the sniff's gate drops
+   GET, so it cannot loop. */
+let crelBusDeb = null;
+function crelTabShown() {
+  const t = E('tabRels');
+  return !!t && t.style.display === 'block';
+}
+YC.on(`relations:contact:${clientID}`, '*', () => {
+  if (!crelTabShown()) return;
+  if (!pageVisible()) { crelStale = true; return; }
+  clearTimeout(crelBusDeb);
+  crelBusDeb = setTimeout(() => {
+    if (Date.now() - crelLastLoad < BUS_FRESH_MS) return;   // our own write
+    loadContactRelations();
+  }, 250);
+});
 
 </script>

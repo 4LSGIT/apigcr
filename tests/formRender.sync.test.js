@@ -89,6 +89,7 @@ function boot({ preview = false, latest } = {}) {
     if (u.startsWith('/api/form-templates/')) return { status: 'success', template: { form_key: '341_notes', title: '341 Notes', link_type: 'case', schema_version: 3, draft_definition: DEF } };
     if (u.startsWith('/api/forms/latest')) return state.latest;
     if (u === '/api/forms/draft' && method === 'POST') return { status: 'success', id: 88, updated_at: new Date().toISOString(), form_key: '341_notes', link_type: 'case', link_id: CASE_ID };
+    if (u.startsWith('/api/forms/draft') && method === 'DELETE') return { status: 'success', deleted: true, form_key: '341_notes', link_type: 'case', link_id: CASE_ID };
     if (u.startsWith('/api/forms/draft')) return { status: 'success' };
     throw new Error(`unstubbed apiSend: ${method} ${u}`);
   };
@@ -224,5 +225,44 @@ describe('a draft announced from another frame', () => {
     w.document.dispatchEvent(new w.Event('visibilitychange'));
     await sleep(40);
     expect(latestReads(p.calls)).toBe(before + 2);
+  });
+});
+
+// The draft DELETE is announced too (yc-sync matchers slice): the route echoes
+// its record, the matcher speaks only when a row was deleted.
+describe('a draft discarded', () => {
+  const discardFrom = (other, deleted = true) => other.YC._sniff('DELETE',
+    `/api/forms/draft?form_key=341_notes&link_type=case&link_id=${CASE_ID}`,
+    { status: 'success', deleted, form_key: '341_notes', link_type: 'case', link_id: CASE_ID });
+
+  test('in ANOTHER frame: this form re-reads latest and drops its stale draft banner; a no-op DELETE says nothing', async () => {
+    const p = boot({ latest: { status: 'success', submitted: null, draft: caseyDraft() } });
+    const w = await ready(p);
+    const other = otherWindow();
+    expect(w.document.getElementById('draftBanner').style.display).toBe('flex');
+    const before = latestReads(p.calls);
+    discardFrom(other, false);                   // matched no row: nothing changed
+    await sleep(60);
+    expect(latestReads(p.calls)).toBe(before);
+    p.state.latest = { status: 'success', submitted: null, draft: null };
+    discardFrom(other);
+    await sleep(60);
+    expect(latestReads(p.calls)).toBe(before + 1);
+    expect(w.document.getElementById('draftBanner').style.display).toBe('none');
+  });
+
+  test('HERE (the banner\'s Discard): its own DELETE, echoed back, is not re-read (_api stamps the DELETE too)', async () => {
+    const p = boot({ latest: { status: 'success', submitted: null, draft: caseyDraft() } });
+    const w = await ready(p);
+    const other = otherWindow();
+    w.document.getElementById('draftDiscard').click();
+    for (let i = 0; i < 50 && !p.calls.some((c) => c.method === 'DELETE'); i++) await sleep(10);
+    expect(p.calls.filter((c) => c.method === 'DELETE').map((c) => c.url))
+      .toEqual([`/api/forms/draft?form_key=341_notes&link_type=case&link_id=${CASE_ID}`]);
+    const before = latestReads(p.calls);
+    discardFrom(other);                          // the echo of that DELETE, landing right after it
+    await sleep(60);
+    expect(latestReads(p.calls)).toBe(before);
+    expect(w.document.getElementById('draftBanner').style.display).toBe('none');
   });
 });

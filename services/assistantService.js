@@ -764,8 +764,9 @@ const CASE_REQUIREMENT_NOTE_MAX = 255;
 // requirementDetectors `checklist` detector over the post-state (the real
 // resolver over a db wrapper) and name every pipeline step whose status moves.
 // Another user's personal list is refused, except that a SUPERUSER may delete
-// one (the route's mayDetachPersonal). None of the three routes is on the sync
-// bus — native behaviour kept, no matcher added.
+// one (the route's mayDetachPersonal). All three routes are on the sync bus
+// (`checklist:<link_type>:<link>`, public/js/yc-sync.js), so an open Notes &
+// Lists board for the record refreshes.
 const CHECKLIST_ACTION_KINDS = new Set(['checklist.create.v1', 'checklist.item.add.v1', 'checklist.item.update.v1',
   'checklist.update.v1', 'checklist.delete.v1', 'checklist.item.delete.v1']);
 const CHECKLIST_KEYS = {
@@ -928,9 +929,10 @@ const CASE_DOCKET_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 //   * form.draft.delete.v1 → DELETE /api/forms/draft?form_key&link_type&link_id
 //     (the draft banner's Discard, on every form page). The card names the
 //     DRAFT row by id; the request is built from that stored row, never from
-//     the model. The route answers {deleted} with no record, so yc-sync cannot
-//     announce it: an open copy keeps its banner and its next autosave
-//     re-creates the draft — the card says so.
+//     the model. The route echoes the record beside {deleted}, so yc-sync
+//     announces `form:<link_type>:<link_id>` when a row was deleted: an open
+//     copy on a page that listens (the form renderer) drops its banner, while
+//     a hand-built form page does not listen — the card says which.
 //   * form.pdf.file.v1 → POST /api/forms/submissions/:id/pdf/file {filename?}
 //     (the Form Inbox's File button). NOT idempotent by the route's design: a
 //     second filing is a second copy (Dropbox autorenames). Nothing records
@@ -5819,7 +5821,7 @@ async function checklistPipelineShift(db, list, parent, project) {
   return { changed, text: `PIPELINE: on ${parent.label}, ${lines.join('; ')} — the step's checklist detector reads this list${changed.length > 1 ? 's' : ''} by tag; the Steps panel, the board and Casey's pipeline cards follow it at once.` };
 }
 
-const CHECKLIST_NO_BUS = (route) => `Other open pages: ${route} is not on the sync bus — another open Notes & Lists board keeps showing the old list until it reloads (re-entering its tab reloads it).`;
+const CHECKLIST_ON_BUS = (route) => `Other open pages: ${route} is announced on the sync bus — another open Notes & Lists board for this record refreshes on its own (one with unsaved note text or the caret in a field refreshes once that is done); the global Notes & Lists page's Browse view does not listen and shows the old list until it reloads.`;
 
 async function normalizeChecklistUpdate(db, value, evidence, currentUserId) {
   const checklistId = Number(value.checklist_id);
@@ -5894,7 +5896,7 @@ async function normalizeChecklistUpdate(db, value, evidence, currentUserId) {
   if ('body' in changes) effects.push('Text: the new text REPLACES the stored text whole — exactly what is shown below is saved.');
   effects.push('Trigger event: none — this route emits no event (a note\'s done state deliberately emits none), so no trigger rule runs.');
   effects.push('Pipeline: no step changes — a step\'s checklist detector reads only a case\'s tagged CHECKLISTS and their derived status, never a note, a title or a note\'s text.');
-  effects.push(CHECKLIST_NO_BUS('PATCH /checklists/:id'));
+  effects.push(CHECKLIST_ON_BUS('PATCH /checklists/:id'));
   return {
     draft_id: crypto.randomUUID(), kind: 'checklist.update.v1', status: 'draft',
     list, parent, changes, before, items_total: items.length,
@@ -5938,7 +5940,7 @@ async function normalizeChecklistDelete(db, value, evidence, currentUserId) {
   (shift.changed.length ? warnings : effects).push(shift.text);
   effects.push(`Writes: one DELETE — the ${isNote ? 'note' : `list and its ${counts.total} item row${counts.total === 1 ? '' : 's'} (the items go with it by the database's cascade)`}; nothing else.`);
   effects.push('Trigger event: none — deleting a list emits no event, so no trigger rule runs.');
-  effects.push(CHECKLIST_NO_BUS('DELETE /checklists/:id'));
+  effects.push(CHECKLIST_ON_BUS('DELETE /checklists/:id'));
   return {
     draft_id: crypto.randomUUID(), kind: 'checklist.delete.v1', status: 'draft',
     list, parent, counts, items_before: checklistItemsCard(items), items_total: items.length,
@@ -6002,7 +6004,7 @@ async function normalizeChecklistItemDelete(db, value, evidence, currentUserId) 
     ? 'Trigger event: checklist.completed fires after the delete — every active rule on it is listed below.'
     : 'Trigger event: none — deleting an item emits checklist.completed only when it completes the list, and this one does not.');
   effects.push(`Writes: one DELETE of this item; the route then recomputes "${list.title}"'s derived status — nothing else.`);
-  effects.push(CHECKLIST_NO_BUS('DELETE /checkitems/:id'));
+  effects.push(CHECKLIST_ON_BUS('DELETE /checkitems/:id'));
   return {
     draft_id: crypto.randomUUID(), kind: 'checklist.item.delete.v1', status: 'draft',
     list, parent,
@@ -7568,7 +7570,9 @@ async function normalizeFormDiscard(db, value, evidence, currentUserId) {
     subRow
       ? `The latest SUBMITTED answers (version ${Number(subRow.version) || 0}, submission #${subRow.id}, ${formWhen(subRow.updated_at)}) are untouched — the form shows them when it opens.`
       : 'No submission of this form exists on this record: the form opens from the record\'s own data (or blank) once the draft is gone.',
-    'Other open pages: nothing announces the discard — the route answers only {deleted}, with no record for the sync bus to name. A copy of this form already open anywhere keeps showing its draft banner (Restore there still fills the form from the copy it loaded), and its next autosave after any typing saves a NEW draft from that screen.',
+    tpl
+      ? 'Other open pages: the discard is announced on the sync bus — a copy of this form already open for this record re-reads it and drops its draft banner; one with unsaved typing keeps that typing, and its next autosave saves a NEW draft from that screen.'
+      : 'Other open pages: the discard is announced on the sync bus, but this hand-built form page does not listen — a copy already open anywhere keeps showing its draft banner (Restore there still fills the form from the copy it loaded) until it reloads, and its next autosave after any typing saves a NEW draft from that screen.',
     'Trigger event: none — discarding a draft emits no event, and a draft satisfies no pipeline step.',
   ];
   if (!tpl) effects.push(`Form: "${row.form_key}" has no template (one of the hand-built form pages) — the answers are listed by their keys.`);

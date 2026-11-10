@@ -2608,11 +2608,12 @@ function checklistOpen(draft) {
 // steps the requirement detector moves and (item delete) the
 // checklist.completed rules; and it baked the list (title, kind, record, tag,
 // status, text) and every item into `expected`. The click re-reads GET
-// /checklists/:id and refuses on ANY difference BEFORE the claim. None of the
-// three routes is on the yc-sync bus — another open board stays stale until it
-// reloads (the card says so); no matcher is added here. Receipts: the integer
-// checklist_id (update, delete) or checkitem_id (item delete); both DELETEs
-// answer {status, message} with no id, so the receipt is the reviewed row.
+// /checklists/:id and refuses on ANY difference BEFORE the claim. All three
+// routes are on the yc-sync bus (`checklist:<link_type>:<link>`) — another open
+// board for the record refreshes (the card says so). Receipts: the integer
+// checklist_id (update, delete) or checkitem_id (item delete); the DELETEs
+// answer {status, message} plus only the record's address, so the receipt is
+// the reviewed row.
 const CHECKLIST_EDIT_ACTION_KINDS = new Set(['checklist.update.v1']);
 const CHECKLIST_DELETE_ACTION_KINDS = new Set(['checklist.delete.v1']);
 const CHECKITEM_DELETE_ACTION_KINDS = new Set(['checklist.item.delete.v1']);
@@ -2759,8 +2760,9 @@ function checklistUpdateResult(draft, result) {
   return { checklist_id: id };
 }
 
-// Both DELETEs answer {status:'success', message} and no id: the receipt is
-// the reviewed row (a removed row's id names what was removed).
+// Both DELETEs answer {status:'success', message} plus only the record's
+// address (for the sync bus): the receipt is the reviewed row (a removed row's
+// id names what was removed).
 function checklistDeleteResult(draft, result) {
   if (!result || result.status !== 'success') throw new Error('The checklist route did not confirm the delete');
   return { checklist_id: checklistEditListId(draft) };
@@ -6351,7 +6353,7 @@ const ACTION_FAMILIES = [
     open: checklistOpen,
   },
   {
-    // A10.2: the delete echoes no id; the receipt is the reviewed checklist_id.
+    // A10.2: the receipt is the reviewed checklist_id (the delete echoes only the record's address).
     id: 'checklist_delete', kinds: CHECKLIST_DELETE_ACTION_KINDS, title: 'Delete checklist', noun: 'checklist', errorNoun: 'list delete',
     label: checklistEditLabel, text: checklistEditText, request: checklistDeleteRequest, result: checklistDeleteResult,
     idField: 'checklist_id', appliedKey: 'result_checklist_delete_id',
@@ -6372,7 +6374,7 @@ const ACTION_FAMILIES = [
     open: checklistOpen,
   },
   {
-    // A10.2: the item delete echoes no id; the receipt is the reviewed checkitem_id.
+    // A10.2: the receipt is the reviewed checkitem_id (the item delete echoes only its list's address).
     id: 'checkitem_delete', kinds: CHECKITEM_DELETE_ACTION_KINDS, title: 'Delete checklist item', noun: 'checklist item', errorNoun: 'item delete',
     label: checklistEditLabel, text: checklistEditText, request: checkitemDeleteRequest, result: checkitemDeleteResult,
     idField: 'checkitem_id', appliedKey: 'result_checkitem_delete_id',

@@ -189,6 +189,8 @@ async function boot({ payloads = [contactPayload()] } = {}) {
     '  isStale: () => apptEventStale,' +
     '  isEntityStale: () => entityStale,' +
     '  ageRefetch: () => { entityLastRefetch = 0; },' +
+    '  isRelStale: () => crelStale,' +
+    '  ageRel: () => { crelLastLoad = 0; },' +
     '} });'
   );
 
@@ -628,5 +630,107 @@ describe('contact.html — entity refetch echo fence', () => {
                    { contact_lname: { from: 'Applebaum', to: 'Baum' } }, 'test');
     await tick(window, 100);
     expect(window.__t.header().lname).toBe('Baum');
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// Relationships tab — the relations:contact:<id> reader (yc-sync matchers
+// slice). Another frame's relation write (a Casey card, the other contact's
+// tab) announces `relations:contact:<id>` for both ends; this tab re-reads
+// its list. Fenced: tab not showing (entry reloads anyway), page off screen
+// (parked, flushed by ycBecameVisible), its own load (echo stamp).
+// ─────────────────────────────────────────────────────────────
+
+describe('contact.html — Relationships reader', () => {
+  const relGets = calls => calls.filter(c => c.url === `/api/contacts/${CLIENT_ID}/relations` && c.method === 'GET');
+  const ADDR = `relations:contact:${CLIENT_ID}`;
+
+  async function bootOnTab() {
+    const b = await boot();
+    b.window.openTab(null, 'tabRels');          // entry loads once (and stamps)
+    await tick(b.window, 50);
+    expect(relGets(b.calls).length).toBe(1);
+    b.window.__t.ageRel();                      // well past our own load
+    return b;
+  }
+
+  test('a remote change on the showing tab re-reads the list, once per burst', async () => {
+    const { window, calls } = await bootOnTab();
+    window.YC.emit(ADDR, { yc_refetch: 1 }, 'test');
+    window.YC.emit(ADDR, { yc_refetch: 1 }, 'test2');
+    await tick(window, 400);
+    expect(relGets(calls).length).toBe(2);
+  });
+
+  test('a message arriving over the wire (another window\'s write, through the real matcher) is honoured', async () => {
+    const { window, calls } = await bootOnTab();
+    const other = new JSDOM('<!DOCTYPE html><html><body></body></html>', { url: 'https://app.4lsg.com/', runScripts: 'dangerously' });
+    DOMS.push(other);
+    TEARDOWNS.push(bcPolyfill.install(other.window));
+    other.window.eval(YCSYNC);
+    other.window.YC._sniff('DELETE', '/api/contact-relations/44', { status: 'success', deleted_id: 44, contact_a_id: 1002, contact_b_id: 1001 });
+    await tick(window, 400);
+    expect(relGets(calls).length).toBe(2);
+  });
+
+  test('THE TAB IS NOT SHOWING: nothing — no GET and no stale flag (opening the tab reloads it)', async () => {
+    const { window, calls } = await boot();
+    window.YC.emit(ADDR, { yc_refetch: 1 }, 'test');
+    await tick(window, 400);
+    expect(relGets(calls).length).toBe(0);
+    expect(window.__t.isRelStale()).toBe(false);
+  });
+
+  test('OFF SCREEN: parked, then exactly one re-read when the page comes back', async () => {
+    const { window, calls } = await bootOnTab();
+    setHidden(window, true);
+    window.YC.emit(ADDR, { yc_refetch: 1 }, 'test');
+    await tick(window, 400);
+    expect(relGets(calls).length).toBe(1);
+    expect(window.__t.isRelStale()).toBe(true);
+
+    setHidden(window, false);
+    window.ycBecameVisible();
+    await tick(window, 50);
+    expect(relGets(calls).length).toBe(2);
+    window.ycBecameVisible();                   // spent once
+    await tick(window, 50);
+    expect(relGets(calls).length).toBe(2);
+    expect(window.__t.isRelStale()).toBe(false);
+  });
+
+  test('a parked message is dropped if the tab was left before the page came back', async () => {
+    const { window, calls } = await bootOnTab();
+    setHidden(window, true);
+    window.YC.emit(ADDR, { yc_refetch: 1 }, 'test');
+    await tick(window, 300);
+    window.openTab(null, 'tabViewClient');
+    setHidden(window, false);
+    window.ycBecameVisible();
+    await tick(window, 50);
+    expect(relGets(calls).length).toBe(1);
+    expect(window.__t.isRelStale()).toBe(false);
+  });
+
+  test('THE ECHO FENCE: this page\'s own reload (every writer ends in one) swallows the announcement', async () => {
+    const { window, calls } = await bootOnTab();
+    window.loadContactRelations();              // what a write's success path calls
+    await tick(window, 20);
+    window.YC.emit(ADDR, { yc_refetch: 1 }, 'test');
+    await tick(window, 400);
+    expect(relGets(calls).length).toBe(2);      // the page's own, nothing more
+  });
+
+  test('another contact\'s relations are ignored, and §3.6 holds — the re-read is a GET, nothing is announced', async () => {
+    const { window, calls } = await bootOnTab();
+    window.YC.emit('relations:contact:1002', { yc_refetch: 1 }, 'test');
+    await tick(window, 400);
+    expect(relGets(calls).length).toBe(1);
+    const before = window.YC._log.length;
+    window.YC.emit(ADDR, { yc_refetch: 1 }, 'test');
+    await tick(window, 400);
+    expect(relGets(calls).length).toBe(2);
+    expect(window.YC._log.length).toBe(before + 1);   // only the test's own emit
   });
 });

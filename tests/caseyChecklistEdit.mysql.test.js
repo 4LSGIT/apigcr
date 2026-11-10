@@ -237,6 +237,13 @@ d('the Casey list update / delete / item delete cards on real MySQL (A10.2)', ()
     // The route clips; the card refuses past the column's own width.
     const long = await call(app, 'PATCH', '/checklists/21', { title: 'y'.repeat(300) });
     expect([long.status, long.body.title.length]).toEqual([200, 255]);
+    // A rename names no old record; a RE-HOME names the record it left (the
+    // yc-sync matchers slice's additive moved_from — the bus tells that board).
+    expect('moved_from' in long.body).toBe(false);
+    const moved = await call(app, 'PATCH', '/checklists/22', { link_type: 'contact', link: '7001' });
+    expect([moved.status, moved.body.link_type, moved.body.link, moved.body.moved_from]).toEqual([200, 'contact', '7001', { link_type: 'case', link: C1 }]);
+    const back = await call(app, 'PATCH', '/checklists/22', { link_type: 'case', link: C1 });
+    expect(back.body.moved_from).toEqual({ link_type: 'contact', link: '7001' });
     await expect(card({ kind: 'checklist.update.v1', checklist_id: 21, title: 'z'.repeat(256), evidence: listEv(21) }))
       .rejects.toThrow('The list title is 256 characters — the column keeps 255');
     await q('ALTER TABLE checklists MODIFY title varchar(100) NOT NULL');
@@ -274,7 +281,8 @@ d('the Casey list update / delete / item delete cards on real MySQL (A10.2)', ()
     expect([c.counts, c.pipeline.map((p) => [p.requirement_key, p.from, p.to])]).toEqual([{ total: 1, done: 1, open: 0 }, [['forms_in', 'done', 'active']]]);
     expect(await browser.checklistEditPrecheck(c)).toBe('');
     const res = await apply(c, browser.checklistDeleteRequest(c));
-    expect([res.status, res.body]).toEqual([200, { status: 'success', message: 'Checklist deleted' }]);
+    // The record the list hung off rides the answer (the yc-sync matchers slice's additive echo).
+    expect([res.status, res.body]).toEqual([200, { status: 'success', message: 'Checklist deleted', id: 25, link_type: 'case', link: C1 }]);
     expect(browser.checklistDeleteResult(c, res.body)).toEqual({ checklist_id: 25 });
     expect([await q('SELECT id FROM checklists WHERE id = 25'), await q('SELECT id FROM checkitems WHERE checklist_id = 25')]).toEqual([[], []]);
     expect(await stepStatus('forms_in')).toBe(c.pipeline[0].to);
@@ -301,7 +309,7 @@ d('the Casey list update / delete / item delete cards on real MySQL (A10.2)', ()
       { from: 'incomplete', to: 'complete' }, ['checklist.completed'], ['Trigger rule #2 "Docs in" runs: starts workflow #42'], [['docs_in', 'active', 'done']]]);
     expect(await browser.checklistEditPrecheck(c)).toBe('');
     const res = await apply(c, browser.checkitemDeleteRequest(c));
-    expect([res.status, res.body]).toEqual([200, { status: 'success', message: 'Item deleted' }]);
+    expect([res.status, res.body]).toEqual([200, { status: 'success', message: 'Item deleted', checklist: { id: 24, link_type: 'case', link: C1 } }]);
     expect(browser.checkitemDeleteResult(c, res.body)).toEqual({ checkitem_id: 341 });
     expect((await q('SELECT status FROM checklists WHERE id = 24'))[0].status).toBe('complete');
     expect(await stepStatus('docs_in')).toBe('done');

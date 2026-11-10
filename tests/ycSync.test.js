@@ -2674,15 +2674,61 @@ describe('_sniff — checklist matchers (A10)', () => {
     expect(seen).toEqual([]);
   });
 
-  test('only the three writes: GET, the other list writes, upsert-items and an /api prefix are silent', () => {
+  test('the list PATCH / DELETE and the item DELETE announce the record too (their real answers)', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    // PATCH answers the whole list; the DELETEs echo the record (additive).
+    w.YC._sniff('PATCH',  '/checklists/12', { id: 12, title: 'New', kind: 'checklist', link_type: 'case', link: 'AAAA', items: [] });
+    w.YC._sniff('DELETE', '/checklists/12', { status: 'success', message: 'Checklist deleted', id: 12, link_type: 'contact', link: '77' });
+    w.YC._sniff('DELETE', '/checkitems/5',  { status: 'success', message: 'Item deleted', checklist: { id: 12, link_type: 'user', link: '6' } });
+    expect(seen).toEqual([
+      { addr: 'checklist:case:AAAA', fields: { yc_refetch: 1 }, origin: 'auto:PATCH /checklists/12' },
+      { addr: 'checklist:contact:77', fields: { yc_refetch: 1 }, origin: 'auto:DELETE /checklists/12' },
+      { addr: 'checklist:user:6', fields: { yc_refetch: 1 }, origin: 'auto:DELETE /checkitems/5' },
+    ]);
+  });
+
+  test('a RE-HOMING PATCH announces the board the list left as well as its new one; each side fails closed alone', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PATCH', '/checklists/12', { id: 12, link_type: 'contact', link: '77', items: [], moved_from: { link_type: 'case', link: 'AAAA' } });
+    // Detached to no record: only the board it left hears.
+    w.YC._sniff('PATCH', '/checklists/13', { id: 13, link_type: null, link: null, items: [], moved_from: { link_type: 'case', link: 'BBBB' } });
+    // Moved in from unlinked: only the new board.
+    w.YC._sniff('PATCH', '/checklists/14', { id: 14, link_type: 'case', link: 'CCCC', items: [], moved_from: { link_type: null, link: null } });
+    // A same-address moved_from is one message, not two.
+    w.YC._sniff('PATCH', '/checklists/15', { id: 15, link_type: 'case', link: 'DDDD', items: [], moved_from: { link_type: 'case', link: 'DDDD' } });
+    // The item routes never read moved_from.
+    w.YC._sniff('PATCH', '/checkitems/5', { id: 5, checklist: { id: 12, link_type: 'case', link: 'AAAA' }, moved_from: { link_type: 'case', link: 'ZZZZ' } });
+    expect(seen.map((x) => x.addr)).toEqual([
+      'checklist:contact:77', 'checklist:case:AAAA',
+      'checklist:case:BBBB',
+      'checklist:case:CCCC',
+      'checklist:case:DDDD',
+      'checklist:case:AAAA',
+    ]);
+  });
+
+  test('the list / item DELETEs fail closed on a missing or unlinked echo (the pre-slice answers)', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('DELETE', '/checklists/12', { status: 'success', message: 'Checklist deleted' });
+    w.YC._sniff('DELETE', '/checklists/12', { status: 'success', message: 'Checklist deleted', id: 12, link_type: null, link: null });
+    w.YC._sniff('DELETE', '/checkitems/5',  { status: 'success', message: 'Item deleted' });
+    w.YC._sniff('DELETE', '/checkitems/5',  { status: 'success', message: 'Item deleted', link_type: 'case', link: 'AAAA' });
+    expect(seen).toEqual([]);
+  });
+
+  test('only the matched writes: GET, other verbs, upsert-items, a non-numeric id and an /api prefix are silent', () => {
     const w = mkWindow();
     const seen = spy(w);
     const row = { id: 12, link_type: 'case', link: 'AAAA', checklist: { id: 12, link_type: 'case', link: 'AAAA' } };
     w.YC._sniff('GET',    '/checklists', row);
     w.YC._sniff('GET',    '/checklists/12', row);
-    w.YC._sniff('PATCH',  '/checklists/12', row);
-    w.YC._sniff('DELETE', '/checklists/12', row);
-    w.YC._sniff('DELETE', '/checkitems/5', row);
+    w.YC._sniff('POST',   '/checklists/12', row);
+    w.YC._sniff('PUT',    '/checklists/12', row);
+    w.YC._sniff('PATCH',  '/checklists/abc', row);
+    w.YC._sniff('DELETE', '/checklists/12/items', row);
     w.YC._sniff('POST',   '/checkitems/5', row);
     w.YC._sniff('PATCH',  '/checklists', row);
     w.YC._sniff('POST',   '/checklists/upsert-items', row);
@@ -2750,7 +2796,33 @@ describe('_sniff — form matchers (A12)', () => {
     expect(seen).toEqual([]);
   });
 
-  test('only the two writes: GET, submit, the draft DELETE, the PDF routes and other verbs are silent', () => {
+  test('the draft DELETE announces the record ONLY when a row was deleted (deleted === true, its real answer)', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    const echo = { form_key: '341_notes', link_type: 'case', link_id: 'AAAA' };
+    w.YC._sniff('DELETE', '/api/forms/draft?form_key=341_notes&link_type=case&link_id=AAAA', { status: 'success', deleted: true, ...echo });
+    // Matched nothing → changed nothing → silent. So is a truthy non-true.
+    w.YC._sniff('DELETE', '/api/forms/draft?form_key=341_notes&link_type=case&link_id=AAAA', { status: 'success', deleted: false, ...echo });
+    w.YC._sniff('DELETE', '/api/forms/draft', { status: 'success', deleted: 1, ...echo });
+    // The pre-slice answer (no echo) and an unlinked echo stay silent.
+    w.YC._sniff('DELETE', '/api/forms/draft', { status: 'success', deleted: true });
+    w.YC._sniff('DELETE', '/api/forms/draft', { status: 'success', deleted: true, form_key: 'k', link_type: '', link_id: 'AAAA' });
+    expect(seen).toEqual([
+      { addr: 'form:case:AAAA', fields: { yc_refetch: 1 }, origin: 'auto:DELETE /api/forms/draft?form_key=341_notes&link_type=case&link_id=AAAA' },
+    ]);
+  });
+
+  test('the draft POST and DELETE share a path: each verb reaches its own matcher (the verb miss continues the scan)', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    // A POST answer carrying deleted:false still announces — the POST entry
+    // never reads `deleted`; a DELETE answer without it is silent.
+    w.YC._sniff('POST',   '/api/forms/draft', { status: 'success', id: 1, deleted: false, form_key: 'k', link_type: 'case', link_id: 'AAAA' });
+    w.YC._sniff('DELETE', '/api/forms/draft', { status: 'success', id: 1, form_key: 'k', link_type: 'case', link_id: 'BBBB' });
+    expect(seen.map((x) => x.addr)).toEqual(['form:case:AAAA']);
+  });
+
+  test('only the matched writes: GET, submit, a DELETE without deleted:true, the PDF routes and other verbs are silent', () => {
     const w = mkWindow();
     const seen = spy(w);
     const row = { status: 'success', id: 1, form_key: 'k', link_type: 'case', link_id: 'AAAA' };
@@ -2774,6 +2846,103 @@ describe('_sniff — form matchers (A12)', () => {
     a.YC._sniff('POST', '/api/forms/draft?x=1', { status: 'success', id: 9, form_key: 'k', link_type: 'case', link_id: 'AAAA' });
     await settle();
     expect([seenB, records]).toEqual([[{ addr: 'form:case:AAAA', fields: { yc_refetch: 1 } }], []]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// _sniff — contact relations and roles (yc-sync matchers slice)
+//
+// A relation or role write announces the contact's SET as
+// `relations:contact:<id>` / `roles:contact:<id>`, a marker — never
+// `contact:<id>`: those rows are not the contacts row, and the contact page's
+// entity refetch would not even repaint them. A relation names BOTH ends.
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — contact relation / role matchers', () => {
+  function spy(w) {
+    const seen = [];
+    ['relations:*', 'roles:*', 'contact:*', 'case:*'].forEach((a) => w.YC.on(a, '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin })));
+    return seen;
+  }
+  const REL = { id: 44, type_code: 'spouse', contact_a_id: 1001, contact_b_id: 1002, active: 1 };
+
+  test('create / update / delete announce BOTH ends with a marker (their real answers)', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST',   '/api/contact-relations',    { status: 'success', relation: REL });
+    w.YC._sniff('PATCH',  '/api/contact-relations/44', { status: 'success', relation: { ...REL, active: 0 } });
+    w.YC._sniff('DELETE', '/api/contact-relations/44', { status: 'success', deleted_id: 44, contact_a_id: 1001, contact_b_id: 1002 });
+    expect(seen).toEqual([
+      { addr: 'relations:contact:1001', fields: { yc_refetch: 1 }, origin: 'auto:POST /api/contact-relations' },
+      { addr: 'relations:contact:1002', fields: { yc_refetch: 1 }, origin: 'auto:POST /api/contact-relations' },
+      { addr: 'relations:contact:1001', fields: { yc_refetch: 1 }, origin: 'auto:PATCH /api/contact-relations/44' },
+      { addr: 'relations:contact:1002', fields: { yc_refetch: 1 }, origin: 'auto:PATCH /api/contact-relations/44' },
+      { addr: 'relations:contact:1001', fields: { yc_refetch: 1 }, origin: 'auto:DELETE /api/contact-relations/44' },
+      { addr: 'relations:contact:1002', fields: { yc_refetch: 1 }, origin: 'auto:DELETE /api/contact-relations/44' },
+    ]);
+  });
+
+  test('relations FAIL CLOSED: the pre-slice DELETE answer, an error body, a one-sided row; ends never duplicate', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('DELETE', '/api/contact-relations/44', { status: 'success', deleted_id: 44 });
+    w.YC._sniff('DELETE', '/api/contact-relations/44', { status: 'success', deleted_id: 44, contact_a_id: null, contact_b_id: null });
+    w.YC._sniff('POST',   '/api/contact-relations',    { status: 'error', message: 'contact_a_id is required' });
+    w.YC._sniff('PATCH',  '/api/contact-relations/44', { status: 'success', relation: { id: 44, contact_a_id: 1001, contact_b_id: '' } });
+    w.YC._sniff('PATCH',  '/api/contact-relations/44', { status: 'success', relation: { id: 44, contact_a_id: 1001, contact_b_id: '1001' } });
+    expect(seen.map((x) => x.addr)).toEqual(['relations:contact:1001', 'relations:contact:1001']);
+  });
+
+  test('roles announce the contact the URL names; a DELETE that removed nothing is silent', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST',   '/api/contacts/1001/roles',    { status: 'success', id: 9 });
+    w.YC._sniff('PATCH',  '/api/contacts/1001/roles/9',  { status: 'success', id: 9 });
+    w.YC._sniff('DELETE', '/api/contacts/1001/roles/9',  { status: 'success', removed: 1 });
+    w.YC._sniff('DELETE', '/api/contacts/1002/roles/10', { status: 'success', removed: 0 });
+    expect(seen).toEqual([
+      { addr: 'roles:contact:1001', fields: { yc_refetch: 1 }, origin: 'auto:POST /api/contacts/1001/roles' },
+      { addr: 'roles:contact:1001', fields: { yc_refetch: 1 }, origin: 'auto:PATCH /api/contacts/1001/roles/9' },
+      { addr: 'roles:contact:1001', fields: { yc_refetch: 1 }, origin: 'auto:DELETE /api/contacts/1001/roles/9' },
+    ]);
+  });
+
+  test('GET, other verbs, non-numeric ids, the catalogs and the list routes are silent; the contact matchers are not poached', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('GET',    '/api/contacts/1001/roles',      { status: 'success', roles: [] });
+    w.YC._sniff('GET',    '/api/contacts/1001/relations',  { status: 'success', relations: [REL] });
+    w.YC._sniff('POST',   '/api/contacts/1001/relations',  { status: 'success', relation: REL });
+    w.YC._sniff('PUT',    '/api/contacts/1001/roles/9',    { status: 'success', id: 9 });
+    w.YC._sniff('POST',   '/api/contacts/1001/roles/9',    { status: 'success', id: 9 });
+    w.YC._sniff('PATCH',  '/api/contacts/1001/roles',      { status: 'success', id: 9 });
+    w.YC._sniff('PATCH',  '/api/contacts/abc/roles/9',     { status: 'success', id: 9 });
+    w.YC._sniff('PATCH',  '/api/contact-relations',        { status: 'success', relation: REL });
+    w.YC._sniff('POST',   '/api/contact-relations/44',     { status: 'success', relation: REL });
+    w.YC._sniff('PATCH',  '/api/contact-relations/abc',    { status: 'success', relation: REL });
+    w.YC._sniff('PUT',    '/api/contact-role-types/trustee', { status: 'success', role_code: 'trustee' });
+    w.YC._sniff('POST',   '/api/relation-types',           { status: 'success', relation: REL });
+    expect(seen).toEqual([]);
+    // The anchored contact matchers still own their paths.
+    w.YC._sniff('PATCH', '/api/contacts/1001', { data: { changes: { contact_lname: 'B' } } });
+    w.YC._sniff('POST',  '/api/contacts/1001/booking-link', { success: true, token: 't' });
+    expect(seen.map((x) => x.addr)).toEqual(['contact:1001', 'contact:1001']);
+  });
+
+  test('a relation write crosses windows — the other contact\'s open tab hears it — and never wakes a contact page', async () => {
+    const a = mkWindow();
+    const b = mkWindow();
+    const seenB = []; const records = [];
+    b.YC.on('relations:contact:1002', '*', (f, m) => seenB.push({ addr: m.addr, fields: f }));
+    b.YC.on('roles:contact:1002', '*', (f, m) => seenB.push({ addr: m.addr, fields: f }));
+    ['contact:*', 'case:*'].forEach((x) => b.YC.on(x, '*', (f, m) => records.push(m.addr)));
+    a.YC._sniff('POST', '/api/contact-relations?x=1', { status: 'success', relation: REL });
+    a.YC._sniff('PATCH', '/api/contacts/1002/roles/3?x=1', { status: 'success', id: 3 });
+    await settle();
+    expect([seenB, records]).toEqual([[
+      { addr: 'relations:contact:1002', fields: { yc_refetch: 1 } },
+      { addr: 'roles:contact:1002', fields: { yc_refetch: 1 } },
+    ], []]);
   });
 });
 

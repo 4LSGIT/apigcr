@@ -1181,10 +1181,8 @@ submitting a stored draft in A12.3 (ASK_CASEY_ACTIONS_PLAN A12.2, A12.3).
     it, and maps every failure to 500 (no 400 for a malformed `data`).
   - `linkSubmission`'s log entry says "linked … from the Form Inbox" whoever
     calls it.
-  - DELETE `/api/forms/draft` answers `{deleted}` with no record, so yc-sync
-    cannot announce a discard: an open copy keeps its banner and re-saves on
-    its next autosave. POST `…/pdf/file` is not announced either (no matcher;
-    the new document reaches a Documents tab on refresh).
+  - POST `…/pdf/file` is not announced on the sync bus (no matcher; the new
+    document reaches a Documents tab on refresh).
   - Nothing records that a submission's PDF was filed (no column on
     `form_submissions`, no link from `documents`): a re-file is caught only by
     the "(#id)" in the default file name, and not at all under a custom name.
@@ -1299,13 +1297,17 @@ Share and unlink shipped as A11.2 (ASK_CASEY_ACTIONS_PLAN).
   find-or-create the case's docs list, drop items matching the first 22
   characters, insert fresh; emits `checklist.items_upserted`, which trigger
   rule 14 listens to) — a fan-out onto the client-facing docs list.
-- **Sync gaps left on the native side.** Only A10's three routes (create, item
-  add, item update) are on the bus (`checklist:<link_type>:<link>`). PATCH / DELETE
-  `/checklists/:id`, DELETE `/checkitems/:id` (all three also Casey's since
-  A10.2, which kept the native behaviour) and POST
-  `/checklists/upsert-items` still announce nothing, so another open board
-  stays stale until its tab is re-entered; the global board (More → Notes &
-  Lists, `checklistsView.html`) does not subscribe to `checklist:*` at all.
+- **Sync gaps left on the native side.** Every list and item write a page
+  makes is on the bus (`checklist:<link_type>:<link>`) except POST
+  `/checklists/upsert-items`, which announces nothing (its callers are
+  server-side; an open docs board stays stale until its tab is re-entered).
+  The global board's **Browse** view (More → Notes & Lists,
+  `checklistsView.html`'s own `browseRow` renderer) has no bus listener at
+  all: a list created, edited or deleted anywhere shows there only on reload.
+  Its Mine and Unlinked views iframe `checklistView.html` and inherit that
+  page's `checklist:*` subscriber. A native gap (filed by the yc-sync matchers
+  slice, 2026-11-11): subscribe Browse to `checklist:*` with checklistView's
+  fences.
 - **The docs predicate's title fallback.** `portalDocsService.listDocs`,
   `_caseItemMap` and the public docs GET still match `title = 'Docs Needed'`
   (a transition fallback for untagged rows) and, unlike upsert-items, do not
@@ -1370,18 +1372,6 @@ Share and unlink shipped as A11.2 (ASK_CASEY_ACTIONS_PLAN).
 
 ## From the Ask Casey arc — A6 contact relations and roles (2026-10-28) — deferred
 
-- **Native sync-bus gap: relations and roles broadcast nothing.**
-  `public/js/yc-sync.js` has no matcher for `/api/contact-relations*` (POST,
-  PATCH, DELETE) or `/api/contacts/:id/roles*` (POST, PATCH, DELETE), and
-  neither route family's response carries a `changes` diff. The Relationships
-  tab (contact.html) and the contact form's Roles section each reload only
-  themselves, so every other open frame — the other contact of a relation, a
-  second tab, a roster consumer — stays stale until reloaded, whether the
-  write came from the native page or a Casey card. A canonical bus arc: a
-  matcher per route family addressing BOTH contacts of a relation (the
-  response carries `contact_a_id` / `contact_b_id`), a refetch marker for the
-  role rows, readers in the two panes, and the ycSync tests — never a
-  Casey-only emit (manager ruling 2026-10-28).
 - **Symmetric reverse race.** `contactRelationService.createRelation` refuses
   the reverse of a SYMMETRIC type with an application-level SELECT, not a key,
   so two concurrent creates of (A,B,spouse) and (B,A,spouse) can both store.

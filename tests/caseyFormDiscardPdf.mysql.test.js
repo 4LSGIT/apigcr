@@ -255,9 +255,10 @@ d('the Casey form discard and PDF cards on real MySQL (A12.2)', () => {
       (101, '341_notes', 'case', ?, 'draft', 0, '{"trustee_name":"A"}'), (102, '341_notes', 'case', ?, 'submitted', 1, '{}'),
       (103, 'intake', 'case', ?, 'draft', 0, '{}')`, [C1, C1, C1]);
     const del = (qs) => call(app, 'DELETE', `/api/forms/draft?${qs}`);
-    expect(await del(`form_key=341_NOTES&link_type=case&link_id=${C1.toLowerCase()}`)).toEqual({ status: 200, body: { status: 'success', deleted: true } });
+    // The record rides the answer as the query string spelled it (the yc-sync matchers slice's additive echo).
+    expect(await del(`form_key=341_NOTES&link_type=case&link_id=${C1.toLowerCase()}`)).toEqual({ status: 200, body: { status: 'success', deleted: true, form_key: '341_NOTES', link_type: 'case', link_id: C1.toLowerCase() } });
     expect((await q('SELECT id FROM form_submissions ORDER BY id')).map((r) => r.id)).toEqual([102, 103]);
-    expect(await del(`form_key=341_notes&link_type=case&link_id=${C1}`)).toEqual({ status: 200, body: { status: 'success', deleted: false } });
+    expect(await del(`form_key=341_notes&link_type=case&link_id=${C1}`)).toEqual({ status: 200, body: { status: 'success', deleted: false, form_key: '341_notes', link_type: 'case', link_id: C1 } });
     expect(await call(app, 'DELETE', '/api/forms/draft')).toEqual({ status: 400, body: { status: 'error', message: 'Missing required query params: form_key, link_type, link_id' } });
     expect((await q('SELECT COUNT(*) AS n FROM form_submissions'))[0].n).toBe(2);
   });

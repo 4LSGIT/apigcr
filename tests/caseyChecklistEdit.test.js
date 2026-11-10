@@ -229,7 +229,7 @@ describe('checklist.update.v1 — rename a list, a note\'s done state, a note\'s
       'Writes: this list\'s title — nothing else (no item, no tag, no record).',
       'Trigger event: none — this route emits no event (a note\'s done state deliberately emits none), so no trigger rule runs.',
       'Pipeline: no step changes — a step\'s checklist detector reads only a case\'s tagged CHECKLISTS and their derived status, never a note, a title or a note\'s text.',
-      'Other open pages: PATCH /checklists/:id is not on the sync bus — another open Notes & Lists board keeps showing the old list until it reloads (re-entering its tab reloads it).']);
+      'Other open pages: PATCH /checklists/:id is announced on the sync bus — another open Notes & Lists board for this record refreshes on its own (one with unsaved note text or the caret in a field refreshes once that is done); the global Notes & Lists page\'s Browse view does not listen and shows the old list until it reloads.']);
     expect(card.evidence).toEqual([expect.objectContaining(listRow(412)[0])]);
   });
 
@@ -324,7 +324,7 @@ describe('checklist.delete.v1 — a list or note, its items with it', () => {
       'Pipeline: every step of case 25-12345-abc keeps its status — its checklist steps were re-resolved over this change.',
       'Writes: one DELETE — the list and its 2 item rows (the items go with it by the database\'s cascade); nothing else.',
       'Trigger event: none — deleting a list emits no event, so no trigger rule runs.',
-      'Other open pages: DELETE /checklists/:id is not on the sync bus — another open Notes & Lists board keeps showing the old list until it reloads (re-entering its tab reloads it).']);
+      'Other open pages: DELETE /checklists/:id is announced on the sync bus — another open Notes & Lists board for this record refreshes on its own (one with unsaved note text or the caret in a field refreshes once that is done); the global Notes & Lists page\'s Browse view does not listen and shows the old list until it reloads.']);
     expect(card.items_before).toEqual([{ name: 'Pull credit report', status: 'incomplete' }, { name: 'Order transcripts', status: 'complete' }]);
     expect(card.pipeline).toEqual([]);
     expect(card.expected.items).toEqual(['5120:incomplete:Pull credit report', '5121:complete:Order transcripts']);
@@ -388,7 +388,7 @@ describe('checklist.item.delete.v1 — one item', () => {
       'Pipeline: every step of case 25-12345-abc keeps its status — its checklist steps were re-resolved over this change.',
       'Trigger event: none — deleting an item emits checklist.completed only when it completes the list, and this one does not.',
       'Writes: one DELETE of this item; the route then recomputes "Pre-filing to-dos"\'s derived status — nothing else.',
-      'Other open pages: DELETE /checkitems/:id is not on the sync bus — another open Notes & Lists board keeps showing the old list until it reloads (re-entering its tab reloads it).']);
+      'Other open pages: DELETE /checkitems/:id is announced on the sync bus — another open Notes & Lists board for this record refreshes on its own (one with unsaved note text or the caret in a field refreshes once that is done); the global Notes & Lists page\'s Browse view does not listen and shows the old list until it reloads.']);
   });
 
   test('the last OPEN item of the docs list: the list completes, checklist.completed is dry-run, its step goes done (danger)', async () => {

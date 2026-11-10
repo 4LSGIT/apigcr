@@ -764,3 +764,57 @@ describe('routes/api.checklists.js no longer advances the pipeline itself', () =
     expect(src).not.toContain('doc_request_advance_failed');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// yc-sync matchers slice — the record echoes the bus reads (additive fields)
+//
+// public/js/yc-sync.js announces `checklist:<link_type>:<link>` from these
+// answers: the DELETEs echo the record they took the row from, and a PATCH
+// that RE-HOMES a list also names the record it left (`moved_from`), so that
+// board drops it. A PATCH that does not move it adds nothing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('the sync-bus echoes — DELETE /checklists/:id, DELETE /checkitems/:id, a re-homing PATCH', () => {
+  test('DELETE /checklists/:id answers the deleted row\'s id and record beside its message', async () => {
+    db = stubDb([
+      [{ id: 12, link_type: 'case', link: 'AAAA' }],
+      ok(0, 1),
+    ]);
+    const res = await call('DELETE', '/checklists/12');
+    expect([res.status, res.body]).toEqual([200,
+      { status: 'success', message: 'Checklist deleted', id: 12, link_type: 'case', link: 'AAAA' }]);
+  });
+
+  test('DELETE /checkitems/:id answers its parent\'s record, the PATCH echo\'s shape', async () => {
+    db = stubDb([
+      [{ item_id: 5, item_status: 'incomplete', checklist_id: 12, checklist_status: 'incomplete', link_type: 'contact', link: '77', tag: null, title: 'T', kind: 'checklist' }],
+      ok(0, 1),
+    ]);
+    const res = await call('DELETE', '/checkitems/5');
+    expect([res.status, res.body]).toEqual([200,
+      { status: 'success', message: 'Item deleted', checklist: { id: 12, link_type: 'contact', link: '77' } }]);
+  });
+
+  test('a PATCH that moves the list names the record it left; one that does not adds nothing', async () => {
+    db = stubDb([
+      [{ id: 5, link_type: 'case', link: 'AAAA', kind: 'checklist' }],
+      ok(0, 1),
+      [{ id: 5, title: 'T', kind: 'checklist', link_type: 'contact', link: '77' }],
+      [],
+    ]);
+    const moved = await call('PATCH', '/checklists/5', { link_type: 'contact', link: '77' });
+    expect(moved.status).toBe(200);
+    expect(moved.body).toEqual({ id: 5, title: 'T', kind: 'checklist', link_type: 'contact', link: '77', items: [],
+      moved_from: { link_type: 'case', link: 'AAAA' } });
+
+    db = stubDb([
+      [{ id: 5, link_type: 'case', link: 'AAAA', kind: 'checklist' }],
+      ok(0, 1),
+      [{ id: 5, title: 'Renamed', kind: 'checklist', link_type: 'case', link: 'AAAA' }],
+      [],
+    ]);
+    const renamed = await call('PATCH', '/checklists/5', { title: 'Renamed', link: 'AAAA' });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body).toEqual({ id: 5, title: 'Renamed', kind: 'checklist', link_type: 'case', link: 'AAAA', items: [] });
+  });
+});

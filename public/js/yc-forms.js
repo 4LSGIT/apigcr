@@ -76,7 +76,7 @@ class YCForm {
     this._draftConflict = false;   // A12: a newer draft arrived over the bus while
                                    // this form held unsaved typing — autosave holds
                                    // until the banner's Restore / Discard (or a save).
-    this._lastDraftWrite = 0;      // A12: when this frame last POSTed a draft (echo fence).
+    this._lastDraftWrite = 0;      // A12: when this frame last POSTed / DELETEd a draft (echo fence).
     this._userEditSeq = 0;         // Bumped on every TRUSTED user input/change.
                                    // Lets refresh()/save() tell "onLoad wrote this
                                    // field" from "the user typed into it while we
@@ -1312,8 +1312,9 @@ if (this.config.endpoints.load && !this.config.external) {
   // SYNC BUS (A12) — another frame saved a draft of, or adopted a submission
   // onto, THIS record's forms
   //
-  // public/js/yc-sync.js announces POST /api/forms/draft and PATCH
-  // /api/forms/submissions/:id/link as `form:<link_type>:<link_id>` — above all
+  // public/js/yc-sync.js announces POST and DELETE /api/forms/draft, PATCH
+  // /api/forms/submissions/:id/link and POST /api/forms/submissions/submit-draft
+  // as `form:<link_type>:<link_id>` — above all
   // an Ask Casey card applied from the assistant pane, which an open form used
   // to stay blind to until it was reloaded. Active only when the host page
   // loads yc-sync.js (window.YC), in internal mode, with a record.
@@ -1323,8 +1324,8 @@ if (this.config.endpoints.load && !this.config.external) {
   // prevents, not one it makes.
   //
   // FENCES, in order:
-  //   · its own echo — this frame POSTed a draft within SYNC_ECHO_MS (_api
-  //     stamps it), so the message is its own autosave;
+  //   · its own echo — this frame POSTed or DELETEd a draft within
+  //     SYNC_ECHO_MS (_api stamps it), so the message is its own write;
   //   · hidden (its tab, or the browser tab), mid-save, or the caret in a field
   //     of the form: PARKED in _syncStale and re-run when the page becomes
   //     visible, the frame is shown again (a resize), or the focus leaves the
@@ -2535,8 +2536,11 @@ if (this.config.endpoints.load && !this.config.external) {
       // Internal mode: relay through parent iframe chain.
       // A12: stamp this frame's own draft writes at the start AND when they
       // settle — the bus announces a write when its response lands, and the
-      // form must not take its own autosave for someone else's draft.
-      if (method === 'POST' && String(url).split('?')[0] === '/api/forms/draft') {
+      // form must not take its own autosave for someone else's draft. The
+      // DELETE too (yc-sync matchers slice): the banner's Discard and the
+      // post-submit cleanup are announced as well, and this frame already
+      // shows their outcome.
+      if ((method === 'POST' || method === 'DELETE') && String(url).split('?')[0] === '/api/forms/draft') {
         this._lastDraftWrite = Date.now();
         const p = window.parent.apiSend(url, method, body);
         Promise.resolve(p).then(() => { this._lastDraftWrite = Date.now(); }, () => { this._lastDraftWrite = Date.now(); });
@@ -2552,7 +2556,7 @@ if (this.config.endpoints.load && !this.config.external) {
 // GLOBAL EXPORT
 // ═══════════════════════════════════════════════════════════════════════════
 
-// A12: how long after this frame's own draft POST settles a bus message for
+// A12: how long after this frame's own draft POST / DELETE settles a bus message for
 // the same record is taken as its echo (checklistView's CL_ECHO_MS).
 YCForm.SYNC_ECHO_MS = 1500;
 

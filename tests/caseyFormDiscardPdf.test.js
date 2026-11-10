@@ -212,7 +212,7 @@ describe('the discard', () => {
     expect(c.warnings).toEqual(['NO UNDO: draft #4530 is DELETED — its 5 saved answers (4 filled in) are gone for good; no screen restores a discarded draft.']);
     expect(c.effects[0]).toBe('Deletes draft #4530 of "341 Notes" for case 25-12345, saved by you at 2026-11-01 10:00 UTC (form version 4).');
     expect(c.effects[1]).toBe('The latest SUBMITTED answers (version 2, submission #4400, 2026-10-20 00:00 UTC) are untouched — the form shows them when it opens.');
-    expect(c.effects).toContain('Other open pages: nothing announces the discard — the route answers only {deleted}, with no record for the sync bus to name. A copy of this form already open anywhere keeps showing its draft banner (Restore there still fills the form from the copy it loaded), and its next autosave after any typing saves a NEW draft from that screen.');
+    expect(c.effects).toContain('Other open pages: the discard is announced on the sync bus — a copy of this form already open for this record re-reads it and drops its draft banner; one with unsaved typing keeps that typing, and its next autosave saves a NEW draft from that screen.');
     expect(c.effects).toContain('Trigger event: none — discarding a draft emits no event, and a draft satisfies no pipeline step.');
     expect(c.submitted).toEqual({ submission_id: 4400, version: 2, updated_at: '2026-10-20T00:00:00.000Z' });
     // The read the click re-runs, on the stored row's own key and record.
@@ -241,6 +241,7 @@ describe('the discard', () => {
     expect([hand.form, hand.answers[0]]).toEqual([{ form_key: 'casedetails', title: 'casedetails', link_type: 'case', visibility: null, has_template: false },
       { key: 'trustee_name', label: 'trustee_name', value: '"Jane Trustee"' }]);
     expect(hand.effects).toContain('Form: "casedetails" has no template (one of the hand-built form pages) — the answers are listed by their keys.');
+    expect(hand.effects).toContain('Other open pages: the discard is announced on the sync bus, but this hand-built form page does not listen — a copy already open anywhere keeps showing its draft banner (Restore there still fills the form from the copy it loaded) until it reloads, and its next autosave after any typing saves a NEW draft from that screen.');
     const raw = await run(discard(), { rows: { 4530: draftRow({ data: '[1,2]' }) } });
     expect([raw.answers, raw.raw, raw.warnings[0]]).toEqual([[], '[1,2]', 'NO UNDO: draft #4530 is DELETED — everything it holds are gone for good; no screen restores a discarded draft.']);
     const many = Object.fromEntries(Array.from({ length: 45 }, (_, i) => [`k${i}`, 'v']));

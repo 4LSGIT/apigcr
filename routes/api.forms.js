@@ -135,7 +135,11 @@ router.delete('/api/forms/draft', jwtOrApiKey, async (req, res) => {
 
   try {
     const result = await formService.deleteDraft(req.db, form_key, link_type, link_id);
-    res.json({ status: 'success', ...result });
+    // The record the draft belonged to rides the answer (additive — the
+    // service's { deleted } is unchanged), as on the draft POST: yc-sync
+    // announces `form:<link_type>:<link_id>` from it when a row was deleted,
+    // so an open copy of the form drops its stale draft banner.
+    res.json({ status: 'success', ...result, form_key, link_type, link_id });
   } catch (err) {
     console.error('[api.forms] deleteDraft error:', err);
     res.status(500).json({ status: 'error', message: err.message });

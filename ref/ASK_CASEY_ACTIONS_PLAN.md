@@ -642,8 +642,10 @@ key-order-insensitive) and refuses before the claim. Idempotency: no
 Idempotency-Key — the ledger allows one claim per draft and the routes'
 UNIQUE keys refuse a second card's duplicate (400, a refusal); residual race
 on record: two cards for the opposite orders of a SYMMETRIC pair (the
-route's reverse check is application-level). Neither route has a yc-sync
-matcher (a native gap, `ref/plans.md`); the cards keep native behaviour.
+route's reverse check is application-level). Both route families are on
+yc-sync (`relations:contact:<id>` for both ends, `roles:contact:<id>`), so
+the other contact's open tab and the open Roles section re-read; the cards
+add no emit of their own.
 Off switch `casey_contact_relations_enabled` (on unless '0'). Tests:
 `tests/caseyContactRelations.test.js`, gated
 `tests/caseyContactRelations.mysql.test.js`.
@@ -701,7 +703,8 @@ removed" (`contactLifecycleKnownOutcome`); a role DELETE answering removed:0
 throws in the result reader. Idempotency: none — one claim per draft; a second
 card's delete is a 404, a second end / reactivate is refused by the re-read
 (residual: two cards clicked in the same instant both pass and both PATCH — the
-second end rewrites the end fields). No yc-sync matcher (native gap kept).
+second end rewrites the end fields). On yc-sync like A6.1's writes (the
+relation DELETE answers both ends for it).
 Ledger rows, prompts (plan 27, answer 29, repair 17; the investigate stage had no
 refusal to drop), the request detector's lifecycle verbs, permissions matrix
 (76 kinds / 64 mounts). Same switch `casey_contact_relations_enabled`. Tests:
@@ -1450,8 +1453,8 @@ item; A10.2 adds the page's own edits of an existing list (rename, a note's
 done state and text) and its deletes (a list, an item). Template expansion and
 upsert-many stay separate because they create or affect many records; reorder
 does not exist on the page or as an atomic route. The parent record is resolved
-server-side, the card shows the item counts, and A10's three writes are on the
-sync bus (A10.2's three are not — the native gap, kept).
+server-side, the card shows the item counts, and A10's and A10.2's writes are
+all on the sync bus.
 
 **What the routes guard.** Little. The Notes & Lists routes
 (`routes/api.checklists.js`, mounted at the ROOT — `/checklists`,
@@ -1604,14 +1607,15 @@ handler, no position write) and the routes no atomic reorder — only one
   "someone already deleted it"). 404 "Checklist not found" / "Item not found"
   and the detach 403 are refusals (`knownOutcome`). Receipts: the integer
   checklist_id (update — the PATCH returns the list — and delete) or
-  checkitem_id (item delete); both DELETEs answer `{status, message}` with no
-  id, so the receipt is the reviewed row. Browser families `checklist_update`
+  checkitem_id (item delete); the DELETEs answer `{status, message}` plus only
+  the record's address (for the bus), so the receipt is the reviewed row. Browser families `checklist_update`
   (danger with a warning), `checklist_delete` and `checkitem_delete` (always
   danger).
-- **Sync — a native gap, kept.** PATCH and DELETE `/checklists/:id` and
-  DELETE `/checkitems/:id` have no yc-sync matcher; the page writes them without
-  announcing. The cards keep native behaviour and add none: another open board
-  stays stale until it reloads (each card says so). `ref/plans.md` carries it.
+- **Sync.** PATCH and DELETE `/checklists/:id` and DELETE `/checkitems/:id`
+  are on yc-sync (`checklist:<link_type>:<link>`; the DELETEs echo the record,
+  a re-homing PATCH adds `moved_from`), so another open board for the record
+  refreshes; the global page's Browse view does not listen (each card says
+  so; `ref/plans.md`).
 - Tests: `tests/caseyChecklistEdit.test.js` (mocked; the real resolver over a
   fake db; browser lifted by name), gated `tests/caseyChecklistEdit.mysql.test.js`
   (the real routes; the projection equals the real resolver after the real
@@ -2166,9 +2170,10 @@ dialog all accept them.
   its card is A12.3.
 - **Discard** → DELETE `/api/forms/draft?form_key&link_type&link_id`
   (`formService.deleteDraft`). It deletes the one draft row matched under
-  general_ci and answers `{deleted}` (false when nothing matched). There is no
-  record in the answer, so yc-sync has nothing to announce — a native gap.
-  Submit also calls it (step 5).
+  general_ci and answers `{deleted}` (false when nothing matched) plus its
+  query's `form_key` / `link_type` / `link_id`, which yc-sync announces as
+  `form:<link_type>:<link_id>` when a row was deleted. Submit also calls it
+  (step 5).
 - **File** → POST `/api/forms/submissions/:id/pdf/file` {filename?}
   (`formPdfService.fileSubmissionPdf` → `filePlacementService.placeAndRegister`).
   It renders the submitted row; a draft is a plain Error, so the route answers
@@ -2266,10 +2271,10 @@ Both A12 kinds also take `link_type` "appt" (link_id = the exact appt_id).
 - **Receipt:** the reviewed `submission_id` for both. The applied PDF card
   keeps the verdict's path, file name, placement, `document_id` and warnings,
   never its `temp_link`. Families `form_discard` and `form_pdf`.
-- **Sync:** yc-sync announces POST `/api/forms/draft` and PATCH
-  `…/link` (A12). It announces neither of these routes, and this slice adds no
-  matcher: the DELETE's answer names no record, and the filing's documents
-  are refreshed by hand.
+- **Sync:** yc-sync announces the discard (DELETE `/api/forms/draft`, only
+  when a row was deleted — an open render.html copy drops its banner; a
+  hand-built form page does not listen, and the card says which). The filing
+  is not announced: its documents are refreshed by hand.
 - Tests: `tests/caseyFormDiscardPdf.test.js` (mocked; browser lifted by name),
   gated `tests/caseyFormDiscardPdf.mysql.test.js` (real routes; Dropbox and
   the PDF renderer stubbed at their boundaries), `tests/caseyForms.test.js`,
@@ -2281,7 +2286,7 @@ Both A12 kinds also take `link_type` "appt" (link_id = the exact appt_id).
   deletion** — form-builder operations, not row controls.
 - **Unlinking a submission** — no screen does it.
 - **The hand-built form pages on the bus.**
-- **Native gaps:** the discard and the filing are silent on yc-sync; nothing
+- **Native gaps:** the filing is silent on yc-sync; nothing
   records that a submission's PDF was filed (so a re-file is caught only by
   name).
 

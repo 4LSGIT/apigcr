@@ -2476,6 +2476,21 @@
                                 // rows on a retired type still render their schema
     let roleRowsState   = null; // GET /api/contacts/:id/roles (attrs pre-parsed)
     let rolePendingRole = null; // role code of the unsaved "+ Role" card
+    // Sync bus (the Roles reader below). rolesLastLocal is the echo fence:
+    // stamped at the START of loadRoles() and around every role write.
+    let rolesLastLocal  = 0;
+    let rolesBusStale   = false;          // a message arrived while not safe to reload
+    const rolesDirtyCards = new Set();    // role card ids typed in and not yet saved
+
+    /** A role WRITE through the shell — stamped at the start AND when it
+     *  settles, so this frame never takes its own announcement for another
+     *  frame's change (checklistView's api() idiom). */
+    function roleApi(url, method, body) {
+      rolesLastLocal = Date.now();
+      const p = P.apiSend(url, method, body);
+      Promise.resolve(p).then(() => { rolesLastLocal = Date.now(); }, () => { rolesLastLocal = Date.now(); });
+      return p;
+    }
 
     function rolesReadonlyNow() {
       const f = document.querySelector('#contactForm');
@@ -2503,6 +2518,7 @@
     }
 
     async function loadRoles() {
+      rolesLastLocal = Date.now();   // echo fence — stamped at START
       try {
         const [typesResp, rowsResp] = await Promise.all([
           P.apiSend('/api/contact-role-types', 'GET', { include_inactive: 'true' }),
@@ -2603,6 +2619,7 @@
 
       if (!html) html = '<div class="ycr-empty">No roles. Use “+ Role” to add one.</div>';
       host.innerHTML = html;
+      rolesDirtyCards.clear();   // every card was just rebuilt from state
       // Inactive rows: visible for reference, never editable in either mode.
       host.querySelectorAll('.ycr-inactive input, .ycr-inactive select')
         .forEach(el => { el.disabled = true; });
@@ -2673,16 +2690,18 @@
           html: missing.map(escapeHtml).join('<br>') });
       }
       try {
-        await P.apiSend(`/api/contacts/${contactId}/roles/${rowId}`, 'PATCH', { attrs });
+        await roleApi(`/api/contacts/${contactId}/roles/${rowId}`, 'PATCH', { attrs });
         row.attrs = attrs;
+        rolesDirtyCards.delete(String(rowId));
         roleStatus(rowId, 'Saved');
+        rolesBusReload();
       } catch (err) { roleErr('Save failed', err); }
     }
 
     async function deactivateRole(rowId) {
       if (!confirm('Remove this role? It is kept in history and can be reactivated.')) return;
       try {
-        await P.apiSend(`/api/contacts/${contactId}/roles/${rowId}`, 'PATCH', { active: 0 });
+        await roleApi(`/api/contacts/${contactId}/roles/${rowId}`, 'PATCH', { active: 0 });
         const row = (roleRowsState || []).find(r => r.id === rowId);
         if (row) row.active = 0;
         renderRoles();
@@ -2691,7 +2710,7 @@
 
     async function reactivateRole(rowId) {
       try {
-        await P.apiSend(`/api/contacts/${contactId}/roles/${rowId}`, 'PATCH', { active: 1 });
+        await roleApi(`/api/contacts/${contactId}/roles/${rowId}`, 'PATCH', { active: 1 });
         const row = (roleRowsState || []).find(r => r.id === rowId);
         if (row) row.active = 1;
         renderRoles();
@@ -2701,7 +2720,7 @@
     async function hardDeleteRole(rowId) {
       if (!confirm('Permanently delete this role row? Only for roles added in error — use Remove otherwise.')) return;
       try {
-        await P.apiSend(`/api/contacts/${contactId}/roles/${rowId}`, 'DELETE');
+        await roleApi(`/api/contacts/${contactId}/roles/${rowId}`, 'DELETE');
         roleRowsState = (roleRowsState || []).filter(r => r.id !== rowId);
         renderRoles();
       } catch (err) { roleErr('Delete failed', err); }
@@ -2719,7 +2738,7 @@
           html: missing.map(escapeHtml).join('<br>') });
       }
       try {
-        await P.apiSend(`/api/contacts/${contactId}/roles`, 'POST', { role: code, attrs });
+        await roleApi(`/api/contacts/${contactId}/roles`, 'POST', { role: code, attrs });
         rolePendingRole = null;
         await loadRoles(); // canonical re-read: row id, label, created_at
       } catch (err) { roleErr('Add failed', err); }
@@ -2734,8 +2753,78 @@
       else if (d.roleReactivate) reactivateRole(+d.roleReactivate);
       else if (d.roleDelete)     hardDeleteRole(+d.roleDelete);
       else if (d.roleAttach)     attachPendingRole();
-      else if (d.roleCancel)     { rolePendingRole = null; renderRoles(); }
+      else if (d.roleCancel)     { rolePendingRole = null; renderRoles(); rolesBusReload(); }
     });
+
+    // ── Roles reader (sync bus) ─────────────────────────────────────
+    // public/js/yc-sync.js announces every role write — POST / PATCH /
+    // DELETE /api/contacts/:id/roles[/:rowId] — as `roles:contact:<id>` (a
+    // marker: re-read, never read the fields). Another frame's change (an
+    // Ask Casey role card, this contact open in another browser tab) used to
+    // leave this section showing the old roles until the page reloaded.
+    //
+    // SUBSCRIBED THROUGH THE HOST'S BUS (P.YC — contact.html loads
+    // yc-sync.js), not a <script> of our own: loading yc-sync.js HERE would
+    // also switch on YCForm's own form:<type>:<id> listener for contact_info
+    // (yc-forms.js _setupSync runs whenever window.YC exists), a change to the
+    // contact form's behaviour this reader has no business making. Unsubscribed
+    // on pagehide so a reloaded frame leaves no handler in the host.
+    //
+    // FENCES, in order:
+    //   · its own echo — roleApi() / loadRoles() stamped rolesLastLocal
+    //     within ROLES_ECHO_MS;
+    //   · not showing (the section, this frame, or the browser tab), or busy
+    //     (an unsaved "+ Role" card, a card typed in and not saved, the caret
+    //     in a role field — loadRoles() rebuilds every card and would eat the
+    //     typing): PARKED in rolesBusStale and re-run when the frame is shown
+    //     again (resize), the page becomes visible, the focus leaves a field,
+    //     or a save / cancel clears the busy state.
+    // §3.6: loadRoles() is two GETs and a repaint — never a write.
+    const ROLES_ECHO_MS = 1500;
+
+    function rolesShowing() {
+      const sec = document.getElementById('rolesSection');
+      if (!sec || sec.style.display === 'none') return false;
+      if (document.visibilityState === 'hidden') return false;
+      try { const f = window.frameElement; return !f || f.getClientRects().length > 0; }
+      catch (_) { return true; }
+    }
+
+    function rolesBusy() {
+      if (rolePendingRole || rolesDirtyCards.size) return true;
+      const a = document.activeElement;
+      const sec = document.getElementById('rolesSection');
+      return !!(a && sec && sec.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName));
+    }
+
+    function rolesBusReload() {
+      if (!rolesBusStale || !rolesShowing() || rolesBusy()) return;
+      rolesBusStale = false;
+      loadRoles();
+    }
+
+    const rolesListEl = document.getElementById('rolesList');
+    const markRoleDirty = (e) => {
+      const card = e.target && e.target.closest && e.target.closest('[data-role-card]');
+      if (card && card.dataset.roleCard !== 'new') rolesDirtyCards.add(card.dataset.roleCard);
+    };
+    rolesListEl.addEventListener('input', markRoleDirty);
+    rolesListEl.addEventListener('change', markRoleDirty);
+
+    (function subscribeRoles() {
+      const bus = P && P.YC;
+      if (!bus || typeof bus.on !== 'function' || !contactId) return;
+      const off = bus.on(`roles:contact:${contactId}`, '*', () => {
+        if (Date.now() - rolesLastLocal < ROLES_ECHO_MS) return;   // our own write, echoed
+        rolesBusStale = true;
+        rolesBusReload();
+      });
+      window.addEventListener('pagehide', off);
+      const later = () => setTimeout(rolesBusReload, 0);
+      document.addEventListener('visibilitychange', later);
+      document.addEventListener('focusout', later);
+      window.addEventListener('resize', later);
+    })();
 
 
     document.getElementById('roleAddBtn').addEventListener('click', async () => {

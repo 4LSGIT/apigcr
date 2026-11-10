@@ -24,6 +24,26 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Sync bus: relations, roles, checklist edits, draft discard (11-11):**
+  `public/js/yc-sync.js` matches POST / PATCH / DELETE `/api/contact-relations`
+  → `relations:contact:<a>` AND `<b>` (markers; the DELETE route reads the row
+  first and answers `contact_a_id` / `contact_b_id`); POST / PATCH / DELETE
+  `/api/contacts/:id/roles[/:rowId]` → `roles:contact:<id>` from the URL
+  (`{removed:0}` silent); PATCH / DELETE `/checklists/:id` and DELETE
+  `/checkitems/:id` → `checklist:<link_type>:<link>` (the DELETEs echo the
+  record; a re-homing PATCH adds `moved_from`, announced too); DELETE
+  `/api/forms/draft` → `form:<type>:<id>` only when `deleted === true` (the
+  route echoes its query). Readers: contact.html's Relationships tab (only
+  while showing; off screen parked for `ycRefreshIfStale`; echo stamp at the
+  start of `loadContactRelations`); contact-form.html's Roles section,
+  subscribed through the HOST's bus (`P.YC`) — loading yc-sync.js there would
+  switch on YCForm's `form:` listener for contact_info — parked while hidden
+  or while a card is typed in / a "+ Role" card is open (`roleApi` stamps every
+  write); YCForm stamps `_lastDraftWrite` on its draft DELETE too. Not on the
+  bus: POST `/checklists/upsert-items`; checklistsView.html's Browse view
+  listens to nothing (`ref/plans.md`). Tests: `tests/ycSync.test.js`,
+  `tests/contactUi.sync.test.js`, `tests/contactFormRoles.sync.test.js`,
+  `tests/formRender.sync.test.js`, `tests/contactRelations.routeEcho.test.js`.
 - **Server-side form submit (11-11):** `POST /api/forms/submissions/submit-draft`
   {submission_id, expected_updated_at?} (`services/formSubmitService.js`, staff
   JWT only — 403 for a key) runs the form page's Save chain for a STORED draft
@@ -852,8 +872,8 @@ body. Governing migrations in `ref/migrations/`.*
   normalizer reads both contacts. No Idempotency-Key (one ledger claim per
   draft + the routes' UNIQUE keys; residual race: two cards for the opposite
   orders of a SYMMETRIC pair, the reverse check being app-level). Click-time
-  precheck re-reads the native GETs. Neither route has a yc-sync matcher
-  (native gap, ref/plans.md). Receipts `relation_id` / `role_id`; card opens
+  precheck re-reads the native GETs. Both route families are on yc-sync
+  (`relations:contact:<id>` / `roles:contact:<id>`, the bullet below). Receipts `relation_id` / `role_id`; card opens
   the contact. Off switch `casey_contact_relations_enabled` (on unless '0').
   Tests: `tests/caseyContactRelations.test.js`, gated
   `tests/caseyContactRelations.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A6.
@@ -1036,8 +1056,9 @@ body. Governing migrations in `ref/migrations/`.*
   closed) and names each pipeline step whose status moves (danger). The
   click re-reads GET `/checklists/:id` incl. the note TEXT. Receipts:
   `checklist_id` (update, delete) / `checkitem_id` (item delete) — the
-  DELETEs echo no id, so the receipt is the reviewed row. SYNC: none of the
-  three routes is on yc-sync (native gap, kept — `ref/plans.md`). Tests:
+  reviewed row (the DELETEs echo only the record's address, for the bus).
+  SYNC: all three routes are on yc-sync (`checklist:<link_type>:<link>`, the
+  sync-bus bullet below). Tests:
   `tests/caseyChecklistEdit.test.js`, gated
   `tests/caseyChecklistEdit.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A10.
 - **Casey document cards (A11, 11-02):** kinds `document.update.v1` (PATCH
@@ -1198,9 +1219,11 @@ body. Governing migrations in `ref/migrations/`.*
 - **Casey form discard / PDF filing / appointment records (A12.2, 11-11):**
   same switch. `form.draft.delete.v1` {submission_id = the DRAFT row} → DELETE
   `/api/forms/draft?form_key&link_type&link_id` (the draft banner's Discard),
-  built from the stored row; the route answers `{deleted}` only (false = a
-  refusal), so yc-sync cannot announce it — an open copy keeps its banner and
-  re-saves on its next autosave. `form.pdf.file.v1` {submission_id, filename?}
+  built from the stored row; the route answers `{deleted}` (false = a
+  refusal) plus its query's `form_key` / `link_type` / `link_id`, and yc-sync
+  announces `form:<link_type>:<link_id>` only when a row was deleted — an
+  open render.html copy drops its banner; a hand-built form page does not
+  listen. `form.pdf.file.v1` {submission_id, filename?}
   → POST `/api/forms/submissions/:id/pdf/file` (the Form Inbox's File): NOT
   idempotent, and nothing records a filing, so the card counts active
   `documents` named `LIKE '%(#<id>)%.pdf'` (the default core) as an ALREADY

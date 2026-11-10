@@ -747,6 +747,11 @@ router.patch('/checklists/:id', jwtOrApiKey, async (req, res) => {
     await req.db.query(`UPDATE checklists SET ${fields.join(', ')} WHERE id = ?`, params);
     const checklist = await getChecklistWithItems(req.db, req.params.id);
     if (!checklist) return res.status(404).json({ status: 'error', message: 'Checklist not found' });
+    // A RE-HOME also names the record the list LEFT (additive, only then): the
+    // yc-sync matcher announces `checklist:<link_type>:<link>` for the new
+    // record from the row and for the old one from this, so the board the
+    // list left stops showing it.
+    if (detaching) checklist.moved_from = { link_type: current.link_type, link: current.link };
     res.json(checklist);
   } catch (err) {
     if (isDupTag(err)) {
@@ -774,7 +779,10 @@ router.delete('/checklists/:id', jwtOrApiKey, async (req, res) => {
 
     const [result] = await req.db.query('DELETE FROM checklists WHERE id = ?', [req.params.id]);
     if (!result.affectedRows) return res.status(404).json({ status: 'error', message: 'Checklist not found' });
-    res.json({ status: 'success', message: 'Checklist deleted' });
+    // The deleted row's address rides the answer (additive): the yc-sync
+    // matcher announces `checklist:<link_type>:<link>` from it.
+    res.json({ status: 'success', message: 'Checklist deleted',
+               id: current.id, link_type: current.link_type, link: current.link });
   } catch (err) {
     console.error('DELETE /checklists/:id error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to delete checklist' });
@@ -924,7 +932,10 @@ router.delete('/checkitems/:id', jwtOrApiKey, async (req, res) => {
     await req.db.query('DELETE FROM checkitems WHERE id = ?', [req.params.id]);
     const { status: newChecklistStatus, transitioned: checklistTransitioned } =
       await computeAndSaveStatus(req.db, parent.checklist_id);
-    res.json({ status: 'success', message: 'Item deleted' });
+    // The parent's address rides the answer (additive) — PATCH's `checklist`
+    // echo, same shape — so the yc-sync matcher can announce the record.
+    res.json({ status: 'success', message: 'Item deleted',
+               checklist: { id: parent.checklist_id, link_type: parent.link_type, link: parent.link } });
 
     // Trigger: checklist.completed (fire-and-forget, post-response) — deleting
     // the last incomplete item completes the list. Own try (R3/S8). Gated on

@@ -247,7 +247,10 @@ d('the Casey relation / role lifecycle cards on real MySQL, through the real rou
     const id = await relation({ contact_a_id: 7001, contact_b_id: 7002, type_code: 'spouse' });
     const card = await relCard('contact.relation.remove.v1', id);
     expect(card.warnings[0]).toMatch(/^NO UNDO: relation #\d+ is DELETED .* It is ACTIVE: ENDING it/);
-    expect((await apply(card)).receipt).toEqual({ relation_id: id });
+    const done = await apply(card);
+    expect(done.receipt).toEqual({ relation_id: id });
+    // Both ends ride the answer (the yc-sync matchers slice: the route reads the row first).
+    expect(done.out).toEqual({ status: 'success', deleted_id: id, contact_a_id: 7001, contact_b_id: 7002 });
     expect(await q('SELECT id FROM contact_relations WHERE id = ?', [id])).toEqual([]);
     let err;
     try { await api(`/api/contact-relations/${id}`, null, 'DELETE'); } catch (e) { err = e; }

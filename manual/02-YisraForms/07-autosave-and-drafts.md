@@ -59,6 +59,12 @@ The form's own autosave echo is ignored, and the refresh waits while the page
 is hidden or a field has the caret. A copy open in another browser, or one of
 the older hand-built form pages, does not hear it and sees the draft on reload.
 
+A draft **discarded** elsewhere (the banner's Discard, an Ask Casey discard
+card, or a submit's draft cleanup) is announced the same way when a draft was
+actually deleted: an open copy re-reads and its stale draft banner comes down.
+A copy with unsaved typing keeps that typing, and its next autosave saves a new
+draft. The form's own Discard is not re-read.
+
 ---
 
 ## What Happens on Submit

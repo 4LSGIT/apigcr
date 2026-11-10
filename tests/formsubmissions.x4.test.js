@@ -345,4 +345,20 @@ describe('X4 — routes (live router)', () => {
     assert.ok(c.sql.includes("fs.link_type = ''") && c.sql.includes('fs.data'),
       'query-string opt-ins reach the SQL');
   });
+
+  // yc-sync matchers slice: the draft DELETE echoes the record from its query
+  // string beside the service's { deleted } (additive), so the bus can
+  // announce form:<link_type>:<link_id> — and only when a row went.
+  test('DELETE /api/forms/draft answers { deleted } plus form_key / link_type / link_id', async () => {
+    dbHolder.db = stubDb([{ affectedRows: 1 }]);
+    let resp = await fetch(base + '/api/forms/draft?form_key=341_notes&link_type=case&link_id=hjSFMabb', { method: 'DELETE' });
+    expect([resp.status, await resp.json()]).toEqual([200,
+      { status: 'success', deleted: true, form_key: '341_notes', link_type: 'case', link_id: 'hjSFMabb' }]);
+    expect(dbHolder.db.calls[0].params).toEqual(['341_notes', 'case', 'hjSFMabb']);
+
+    dbHolder.db = stubDb([{ affectedRows: 0 }]);
+    resp = await fetch(base + '/api/forms/draft?form_key=341_notes&link_type=appt&link_id=812', { method: 'DELETE' });
+    expect([resp.status, await resp.json()]).toEqual([200,
+      { status: 'success', deleted: false, form_key: '341_notes', link_type: 'appt', link_id: '812' }]);
+  });
 });

@@ -8,7 +8,8 @@
  * GET    /api/contacts/:id/relations         list relations for one contact
  * POST   /api/contact-relations              create
  * PATCH  /api/contact-relations/:id          update lifecycle fields
- * DELETE /api/contact-relations/:id          hard delete
+ * DELETE /api/contact-relations/:id          hard delete (answers the row's
+ *                                            contact_a_id / contact_b_id too)
  *
  * NOTE: this file declares a route under /api/contacts/:id/...; this
  * coexists with routes/api.contacts.js — Express matches handlers across
@@ -127,8 +128,19 @@ router.patch('/api/contact-relations/:id', jwtOrApiKey, async (req, res) => {
 // ─── DELETE /api/contact-relations/:id ───
 router.delete('/api/contact-relations/:id', jwtOrApiKey, async (req, res) => {
   try {
+    // Read first (additive answer, yc-sync matchers slice): the row's two ends
+    // ride the answer so public/js/yc-sync.js can announce
+    // `relations:contact:<id>` for BOTH contacts — the sniff never sees a
+    // request body, and the service's {deleted_id} names neither. A row that
+    // is already gone leaves deleteRelation to answer its own 404.
+    const before = await relSvc.getRelation(req.db, req.params.id);
     const result = await relSvc.deleteRelation(req.db, req.params.id);
-    res.json({ status: 'success', ...result });
+    res.json({
+      status: 'success',
+      ...result,
+      contact_a_id: before ? before.contact_a_id : null,
+      contact_b_id: before ? before.contact_b_id : null,
+    });
   } catch (err) {
     console.error('DELETE /api/contact-relations/:id error:', err);
     const status = mapErrorStatus(err.message);

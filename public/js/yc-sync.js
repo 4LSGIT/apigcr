@@ -81,6 +81,9 @@
  *                               (the doclink split again — see its matchers)
  *   'form:case:AAAAAAAA'      ← A12: a record's form rows (drafts and
  *                               adopted submissions) — a refetch marker
+ *   'relations:contact:1001'  ← a contact's relation set (both ends of a
+ *                               contact_relations row) — a refetch marker
+ *   'roles:contact:1001'      ← a contact's role rows — a refetch marker
  *
  * Subscribe to a specific entity, or to `'case:*'` for every case (the Cases
  * tab's "something, somewhere, changed" subscription). The wildcard is a
@@ -504,11 +507,10 @@
         var methods = MATCHERS[i][3];
         /* CONTINUE, NOT RETURN (Slice 3c). A matcher that matches the PATH but
            rejects the VERB is not an answer — it is a matcher that does not
-           apply, and the scan should carry on to one that might. Inert today
-           (no two matchers share a path, so the next iteration finds nothing
-           either) and it is exactly that fact which makes changing it safe now
-           rather than on the day a second matcher is added to a path and the
-           first one silently eats its traffic. */
+           apply, and the scan should carry on to one that might. Live since
+           the draft DELETE matcher (yc-sync matchers slice) shares
+           /api/forms/draft with the draft POST matcher: without the continue,
+           the POST entry would eat every DELETE on that path. */
         if (methods && methods.indexOf(m) === -1) continue;
         var type = MATCHERS[i][1];
         // hit[1] is `undefined` for a capture-less matcher (POST /api/app-settings).
@@ -856,6 +858,36 @@
       return [{ addr: 'contact:' + id, fields: { yc_refetch: 1 } }];
     }, ['POST']],
 
+    /* CONTACT RELATIONS AND ROLES (yc-sync matchers slice, after A6). The
+       contact page's Relationships tab, the contact form's Roles section and
+       the Ask Casey relation / role cards write these; each announces the SET
+       on the contact that changed, never `contact:<id>` — a relation or a role
+       row is not the contacts row, and `contact:` would cost every open
+       contact file a full refetch (form push included) and the shell's
+       Contacts tab a reload, for tables neither reads. Markers: no route
+       answers a `{column: value}` form of "the relations of contact 77".
+
+         relations:contact:<id>  POST   /api/contact-relations       { relation }
+                                 PATCH  /api/contact-relations/:id   { relation }
+                                 DELETE /api/contact-relations/:id   { deleted_id,
+                                        contact_a_id, contact_b_id } — the route
+                                        reads the row first for this echo
+           BOTH ends: a relation shows on each contact's tab (projected to its
+           perspective). Reader: public/contact.html's Relationships tab.
+         roles:contact:<id>      POST   /api/contacts/:id/roles
+                                 PATCH  /api/contacts/:id/roles/:rowId
+                                 DELETE /api/contacts/:id/roles/:rowId
+           The URL names the contact (the route refuses a row of another
+           contact with a 404), so no echo is needed; a DELETE that removed no
+           row ({removed: 0}) is silent. Reader: public/forms/contact-form.html's
+           Roles section.
+       Fails closed without an id on either side. The role-type catalog
+       (/api/contact-role-types) is not matched — settings, not a contact. */
+    [/^\/api\/contact-relations$/,          'relations', relationsGetter, ['POST']],
+    [/^\/api\/contact-relations\/\d+$/,     'relations', relationsGetter, ['PATCH', 'DELETE']],
+    [/^\/api\/contacts\/(\d+)\/roles$/,       'roles',     rolesGetter, ['POST']],
+    [/^\/api\/contacts\/(\d+)\/roles\/\d+$/,  'roles',     rolesGetter, ['PATCH', 'DELETE']],
+
     /* ── APPOINTMENTS & EVENTS (Slice 3) ──────────────────────────────────
        These matchers RETIRE the `appt-updated` / `event-updated` postMessage
        system. That system worked by having each writer post to the shell,
@@ -1071,10 +1103,11 @@
        would be honest but half the change — never a partial). */
     [/^\/api\/documents\/relink$/, 'case', relinkGetter, ['POST']],
 
-    /* CHECKLISTS (A10). The three writes Ask Casey's checklist cards make —
-       which are also the Notes & Lists board's own new-list, add-item and
-       rename / check writes — announce the RECORD whose notes-and-lists set
-       changed, as `checklist:<link_type>:<link>`: the doclink split again. A
+    /* CHECKLISTS (A10). Every write Ask Casey's checklist cards make — which
+       are also the Notes & Lists board's own new-list, add-item, rename /
+       check, edit and delete writes — announces the RECORD whose
+       notes-and-lists set changed, as `checklist:<link_type>:<link>`: the
+       doclink split again. A
        list belongs to its record's board, not to the record's row, so
        `case:<id>` would cost every open case file a full refetch (header,
        tables, form push) for a table it does not read, and every Cases tab a
@@ -1085,15 +1118,24 @@
          PATCH /checkitems/:id        the item row + `checklist` {id,
                                       link_type, link}, which the route
                                       echoes for this (the row has no link)
+         DELETE /checkitems/:id       {status, message} + the same
+                                      `checklist` echo
+         PATCH /checklists/:id        the WHOLE list (its link AFTER the
+                                      write) + `moved_from` {link_type, link}
+                                      only when the PATCH re-homed it — the
+                                      board it left must hear too
+         DELETE /checklists/:id       {status, message} + the deleted row's
+                                      {id, link_type, link}, echoed for this
        Fails closed on an unlinked list (link NULL — no record's board shows
-       it) and on a missing echo. Not matched: PATCH / DELETE /checklists/:id,
-       DELETE /checkitems/:id and POST /checklists/upsert-items — no Casey card
-       sends them (ref/plans.md). The items capture is digits-only, so
-       /checklists/upsert-items can never match the add-item matcher. These
-       routes live at the ROOT (/checklists, not /api/checklists). */
+       it) and on a missing echo. Not matched: POST /checklists/upsert-items
+       (server-side Docs Needed upsert; no browser caller announces through
+       it). The id captures are digits-only, so /checklists/upsert-items can
+       never match the add-item or the per-list matcher. These routes live at
+       the ROOT (/checklists, not /api/checklists). */
     [/^\/checklists$/,               'checklist', checklistGetter(false), ['POST']],
     [/^\/checklists\/(\d+)\/items$/, 'checklist', checklistGetter(false), ['POST']],
-    [/^\/checkitems\/(\d+)$/,        'checklist', checklistGetter(true),  ['PATCH']],
+    [/^\/checkitems\/(\d+)$/,        'checklist', checklistGetter(true),  ['PATCH', 'DELETE']],
+    [/^\/checklists\/(\d+)$/,        'checklist', checklistGetter(false), ['PATCH', 'DELETE']],
 
     /* FORMS (A12). A saved draft and a submission adopted onto a record
        announce the RECORD whose form rows changed, as
@@ -1122,13 +1164,23 @@
                                                  /api/contacts/:id announce —
                                                  the page's chain announced
                                                  that PATCH and nothing else)
+         DELETE /api/forms/draft                 { deleted } + the additive
+                                                 { form_key, link_type,
+                                                 link_id } echo of its query
+                                                 string — the draft banner's
+                                                 Discard, the page's post-submit
+                                                 cleanup, A12.2's discard card.
+                                                 SILENT unless deleted === true:
+                                                 a DELETE that matched no row
+                                                 changed nothing. Its own entry
+                                                 on the POST's path — the verb
+                                                 miss continues the scan.
        Fails closed without a link (an unlinked '' row belongs to no record).
        Not matched: POST /api/forms/submit (no Casey card sends it — no atomic
-       route), DELETE /api/forms/draft (A12.2's discard card sends it, but the
-       route's {deleted} answer names no record to announce from — a native gap)
-       and the PDF routes (A12.2's filing card sends POST …/pdf/file, a document
-       write announced by nothing today) (ref/plans.md). */
+       route) and the PDF routes (A12.2's filing card sends POST …/pdf/file, a
+       document write announced by nothing today) (ref/plans.md). */
     [/^\/api\/forms\/draft$/,                         'form', formGetter, ['POST']],
+    [/^\/api\/forms\/draft$/,                         'form', formDiscardGetter, ['DELETE']],
     [/^\/api\/forms\/submissions\/(\d+)\/link$/, 'form', formGetter, ['PATCH']],
     [/^\/api\/forms\/submissions\/submit-draft$/,   'form', submitDraftGetter, ['POST']],
     /* Mail triage (A13) — the comms hub's ONE-message writes, which the Ask
@@ -1163,6 +1215,40 @@
        case, nothing landed and nothing linked. */
     [/^\/api\/mail\/messages\/(\d+)\/attachments\/file$/, 'mail', mailFileGetter, ['POST']],
   ];
+
+  /**
+   * Contact relation writes — both ends' relation sets.
+   *
+   * @param   {object} r  `{status, relation:{contact_a_id, contact_b_id, …}}`
+   *                      (POST / PATCH) or `{status, deleted_id, contact_a_id,
+   *                      contact_b_id}` (DELETE)
+   * @returns {Array|null}
+   */
+  function relationsGetter(r) {
+    if (!r || typeof r !== 'object') return null;
+    var row = (r.relation && typeof r.relation === 'object') ? r.relation : r;
+    var out = [];
+    var seen = Object.create(null);
+    [row.contact_a_id, row.contact_b_id].forEach(function (id) {
+      if (id == null || id === '' || seen[String(id)]) return;
+      seen[String(id)] = true;
+      out.push({ addr: 'relations:contact:' + id, fields: { yc_refetch: 1 } });
+    });
+    return out.length ? out : null;
+  }
+
+  /**
+   * Contact role writes — the contact's role set, addressed from the URL.
+   *
+   * @param   {object} r   `{status, id}` | `{status, removed}`
+   * @param   {string} id  the URL capture (the contact)
+   * @returns {Array|null}
+   */
+  function rolesGetter(r, id) {
+    if (!id || !r || typeof r !== 'object') return null;
+    if (Object.prototype.hasOwnProperty.call(r, 'removed') && Number(r.removed) < 1) return null;
+    return [{ addr: 'roles:contact:' + id, fields: { yc_refetch: 1 } }];
+  }
 
   /**
    * Mail read state (A13): the message, with the value the route answered.
@@ -1240,6 +1326,17 @@
   }
 
   /**
+   * DELETE /api/forms/draft — the form marker, only when a row was deleted.
+   *
+   * @param   {object} r  `{status, deleted, form_key, link_type, link_id}`
+   * @returns {Array|null}
+   */
+  function formDiscardGetter(r) {
+    if (!r || typeof r !== 'object' || r.deleted !== true) return null;
+    return formGetter(r);
+  }
+
+  /**
    * POST /api/forms/submissions/submit-draft — the form marker (formGetter),
    * plus `case:<id>` / `contact:<id>` with the patch's `changes` when the
    * submit wrote the record (an empty diff announces no record change).
@@ -1259,21 +1356,31 @@
    * Checklist writes — announce the RECORD whose notes-and-lists set changed.
    *
    * Array return (getter contract v2): the address is the list's link, which
-   * no URL names. `nested` reads it from the PATCH /checkitems echo
-   * (`r.checklist`); the two POSTs return the list row itself.
+   * no URL names. `nested` reads it from the /checkitems echo
+   * (`r.checklist`); the list routes answer the list row (or, for the DELETE,
+   * its echoed {id, link_type, link}) itself. A re-homing PATCH also names
+   * the board the list LEFT (`moved_from`), announced beside its new one.
+   * Each address fails closed on its own: an unlinked side is skipped.
    *
    * @param   {boolean} nested
    * @returns {function(object): (Array|null)}
    */
   function checklistGetter(nested) {
-    return function (r) {
-      var row = nested ? (r && r.checklist) : r;
+    function addrOf(row) {
       if (!row || typeof row !== 'object') return null;
       var t = row.link_type;
       var l = row.link;
       if (typeof t !== 'string' || !t) return null;
       if (l == null || l === '') return null;
-      return [{ addr: 'checklist:' + t + ':' + l, fields: { yc_refetch: 1 } }];
+      return 'checklist:' + t + ':' + l;
+    }
+    return function (r) {
+      var out = [];
+      var now = addrOf(nested ? (r && r.checklist) : r);
+      if (now) out.push({ addr: now, fields: { yc_refetch: 1 } });
+      var was = nested ? null : addrOf(r && r.moved_from);
+      if (was && was !== now) out.push({ addr: was, fields: { yc_refetch: 1 } });
+      return out.length ? out : null;
     };
   }
 

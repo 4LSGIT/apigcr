@@ -837,12 +837,11 @@ that list", "check off the credit report", "rename that list to Pre-filing
   anything changed since the card was prepared, nothing is written; ask Casey
   to prepare it again.
 - Once applied, the card opens the case or contact (a personal list points
-  you to More → Notes & Lists). After a new list, an added item or an item
-  change, an open Notes & Lists tab for that record refreshes on its own —
-  unless you are typing in it; then it refreshes when you click away. After a
-  list or note change or a delete it does **not** (the tab's own edits of
-  these do not announce themselves either): another open Notes & Lists tab
-  shows the old list until you reopen it.
+  you to More → Notes & Lists). After any of these cards — a new list, an
+  added item, an item change, a list or note change, a delete — an open Notes
+  & Lists tab for that record refreshes on its own, unless you are typing in
+  it; then it refreshes when you click away. The Browse view of More → Notes &
+  Lists does not, and shows the old list until you reopen it.
 
 The off switch for these cards is the `casey_checklists_enabled` setting (on
 unless set to 0).
@@ -1047,8 +1046,10 @@ and uses only those.
   no screen brings it back; the form's last submitted answers are untouched.
   It warns when the client saved the draft on the public form link (their
   saved progress is gone) or someone else saved it in the last 24 hours. A copy
-  of the form already open somewhere keeps showing its draft banner, and its
-  next autosave after any typing saves a new draft from that screen.
+  of the form already open in this browser drops its draft banner on its own
+  (one of the older hand-built form pages does not, until it reloads); a copy
+  with unsaved typing keeps it, and its next autosave saves a new draft from
+  that screen.
 - **A PDF card** names the folder and the file name: the case's Dropbox folder
   (its Forms subfolder) for a case form; the unsorted form-submissions folder,
   with the record's name in front, for a contact, appointment or unlinked
