@@ -35,6 +35,10 @@ describe('mobile survey — detached-frame retry', () => {
   test('classifies puppeteer\'s detached-frame error and nothing else', () => {
     expect(isDetachedFrameError(new Error("Attempted to use detached Frame '5467067F259C2670A2C3271D08F0A8BC'."))).toBe(true);
     expect(isDetachedFrameError("Attempted to use detached Frame 'X'")).toBe(true);
+    // Chromium going away shows as one of these next (2026-11-11: the retry's fresh page hit ConnectionClosedError).
+    expect(isDetachedFrameError(Object.assign(new Error('Connection closed.'), { name: 'ConnectionClosedError' }))).toBe(true);
+    expect(isDetachedFrameError(new Error('Protocol error (Target.createTarget): Target closed'))).toBe(true);
+    expect(isDetachedFrameError(new Error('Session closed. Most likely the page has been closed.'))).toBe(true);
     expect(isDetachedFrameError(new Error('Waiting for selector `.tab` failed: 23000ms'))).toBe(false);
     expect(isDetachedFrameError(new Error('Execution context was destroyed'))).toBe(false);
     expect(isDetachedFrameError(null)).toBe(false);
@@ -45,6 +49,12 @@ describe('mobile survey — detached-frame retry', () => {
     expect(SRC).toContain('const WIDTH_ATTEMPTS = 2;');
     expect(SRC).toContain('for (const W of WIDTHS) for (let attempt = 1; attempt <= WIDTH_ATTEMPTS; attempt++) {');
     expect(SRC).toContain('const mark = { rows: report.length, overflowCount, errorCount };');
+    // A dead browser is relaunched before the attempt's page is opened (2026-11-11: a fresh page on a closed connection threw).
+    expect(SRC).toContain('let browser = await launch();');
+    expect(SRC).toMatch(/if \(!browser\.connected\) \{\n[^\n]*RELAUNCH[^\n]*\n\s*try \{ await browser\.close\(\); \} catch \(_\) \{[^}]*\}\n\s*browser = await launch\(\);\n\s*\}/);
+    // The page is opened INSIDE the try, so an opening failure is one more retryable death, not an uncaught exit.
+    expect(SRC).toMatch(/let page = null;\n\s*try \{\n\s*page = await browser\.newPage\(\);/);
+    expect(SRC).toContain('try { if (page) await page.close(); } catch (_) { /* already gone */ }');
     // The happy path leaves the attempt loop after one walk.
     expect(SRC).toMatch(/await page\.close\(\);\n\s*break;\n\s*\} catch \(err\) \{/);
     // Any other error, or the last attempt, ends the run as before.

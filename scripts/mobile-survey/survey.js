@@ -924,7 +924,11 @@ async function walk(page, W, record) {
 // discarded); a second death, or any other error, still ends the run with
 // exit 2 as before. (2026-11-11)
 function isDetachedFrameError(err) {
-  return /Attempted to use detached Frame/i.test(String((err && err.message) || err || ''));
+  const m = String((err && err.message) || err || '');
+  // The detached frame is usually the first symptom of Chromium going away
+  // (2026-11-11: the retry's fresh page then failed with ConnectionClosedError),
+  // so a closed connection / target / session counts as the same death.
+  return /Attempted to use detached Frame|Connection closed|Target closed|Session closed/i.test(m);
 }
 const WIDTH_ATTEMPTS = 2;
 
@@ -932,15 +936,24 @@ const WIDTH_ATTEMPTS = 2;
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
   const { server, url } = await start(0);
-  const browser = await puppeteer.launch({ executablePath: findChrome(), headless: true, args: ['--no-sandbox'] });
+  const launch = () => puppeteer.launch({ executablePath: findChrome(), headless: true, args: ['--no-sandbox'] });
+  let browser = await launch();
   const report = [];
   let overflowCount = 0, errorCount = 0;
 
   try {
     for (const W of WIDTHS) for (let attempt = 1; attempt <= WIDTH_ATTEMPTS; attempt++) {
       const mark = { rows: report.length, overflowCount, errorCount };
-      const page = await browser.newPage();
+      // A death that took Chromium with it leaves `browser` disconnected: a
+      // fresh page cannot be opened on it, so the retry launches a new one.
+      if (!browser.connected) {
+        console.log(`${W}  RELAUNCH  the browser connection is closed — launching a new Chromium for this attempt`);
+        try { await browser.close(); } catch (_) { /* already gone */ }
+        browser = await launch();
+      }
+      let page = null;
       try {
+      page = await browser.newPage();
       await page.setViewport({ width: W, height: 812, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
       await page.evaluateOnNewDocument((jwt) => { try { localStorage.setItem('jwt', jwt); } catch (_) { } }, fakeJwt());
       let errors = [];
@@ -973,7 +986,7 @@ const WIDTH_ATTEMPTS = 2;
       await page.close();
       break;
       } catch (err) {
-        try { await page.close(); } catch (_) { /* already gone */ }
+        try { if (page) await page.close(); } catch (_) { /* already gone */ }
         if (!isDetachedFrameError(err) || attempt >= WIDTH_ATTEMPTS) throw err;
         report.length = mark.rows; overflowCount = mark.overflowCount; errorCount = mark.errorCount;
         console.log(`${W}  RETRY     detached frame mid-walk (${String(err.message || err).slice(0, 80)}) — walking this width once more from a fresh page`);
