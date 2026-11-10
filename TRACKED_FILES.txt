@@ -1337,6 +1337,8 @@ tests/caseyRelink.mysql.test.js
 tests/caseyRelink.test.js
 tests/caseyReportDraft.mysql.test.js
 tests/caseyReportDraft.test.js
+tests/caseyRequirementOverride.mysql.test.js
+tests/caseyRequirementOverride.test.js
 tests/caseySend.routes.test.js
 tests/caseySendAction.mysql.test.js
 tests/caseySendAction.test.js

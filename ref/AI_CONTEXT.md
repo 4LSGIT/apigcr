@@ -24,6 +24,26 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey's requirement override cards (A9.4, 11-10):** kinds
+  `case.requirement.override.v1` {case_id, requirement (key or label), status
+  'na' | 'done', note (REQUIRED, one line, ≤255 code points AND UTF-16 units —
+  setOverride clips by the latter)} → POST and
+  `case.requirement.override.clear.v1` {case_id, requirement} → DELETE
+  `/api/cases/:id/pipeline/requirements/:key/override` (the Steps panel's own
+  routes; bare jwtOrApiKey, no new gate). `normalizeCaseRequirementOverrideAction`
+  resolves the step through `getCaseRequirements` (both applicable templates —
+  intake history included; one override marks every step carrying the key),
+  refuses a set that changes nothing (detector-done, same override AND same note —
+  a new note on the same status is a NOTE-ONLY card) and a clear with no override, and DISCLOSES the derived status (for a
+  replace / clear: the REAL resolver re-run over `caseOverrideHiddenDb`, which
+  hides exactly this override from its one overrides read — any other read
+  shape refuses the card), the A9 gated moves it unblocks / re-blocks
+  (`caseOverrideGate`), the portal Next-steps effect (`buildNextSteps`'s rule),
+  the case-log line and the override replaced / dropped. Danger: a REQUIRED step
+  marked done / N/A the system does not see done, or a clear reopening one. The
+  A9 / A9.3 cards still refuse override-shaped keys and point here. Same switch
+  `casey_case_pipeline_enabled`; tests
+  `tests/caseyRequirementOverride{,.mysql}.test.js`; plan ASK_CASEY_ACTIONS_PLAN A9.4.
 - **Casey's relation / role lifecycle cards (A6.2, 11-10):** kinds
   `contact.relation.end.v1` {relation_id, end_date? (today), end_reason?} /
   `.reactivate.v1` / `.remove.v1` {relation_id} → PATCH / DELETE
@@ -865,9 +885,9 @@ body. Governing migrations in `ref/migrations/`.*
   `expected.required_open`; a RECOVERY (off-ramp → main lane) likewise warns
   on the required steps below its destination still 'skipped'
   (`expected.required_skipped`); optional ones are disclosed; a step back
-  passes none. NO override pathway: a draft key
+  passes none. NO override pathway on these cards: a draft key
   matching override/skip/force/requirement/… refuses by name before any read
-  (the override sub-slice is deferred, ref/plans.md). Refused too: a
+  and points at A9.4's own override card (§0). Refused too: a
   case-phase case resolving to Intake (would flip it back to intake), advance
   from an off-ramp / past the last stage, a later stage of a chapter pipeline
   not yet entered, an all-digit stage key (the route reads it as a numeric

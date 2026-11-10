@@ -229,7 +229,7 @@ d('the Casey pipeline cards on real MySQL (A9)', () => {
 
   test('THE ROUTE HAS NO REQUIREMENT GATE — the normalizer refuses the move the route would make, naming the step', async () => {
     await expect(card({ kind: 'case.pipeline.advance.v1', case_id: C1, evidence: cite(1) })).rejects.toThrow(
-      'UNMET REQUIREMENTS: moving case 25-50001 from Consult booked (consult_booked) to Consult done (consult_done) would pass over 1 required step that is not done: "Intake questionnaire submitted" (stage Consult booked, active, client). Casey never moves a case past an unmet requirement and cannot override one.');
+      'UNMET REQUIREMENTS: moving case 25-50001 from Consult booked (consult_booked) to Consult done (consult_done) would pass over 1 required step that is not done: "Intake questionnaire submitted" (stage Consult booked, active, client). Casey never moves a case past an unmet requirement on a pipeline card.');
     const res = await call(app, 'POST', `/api/cases/${C1}/pipeline/advance`, { stage: 'consult_done' });
     expect([res.status, res.body.noop, res.body.current.stage_key]).toEqual([200, false, 'consult_done']);
     expect((await logRows(C1)).map((r) => r.stage_key)).toEqual(['consult_booked', 'consult_done']);
@@ -277,7 +277,7 @@ d('the Casey pipeline cards on real MySQL (A9)', () => {
     expect(sig(browserPassed()(c, before.body).filter(OPEN))).toEqual(c.expected.required_open);
     // A main-lane move over the same open step is still refused (contract_sent's own step is its work list, not passed).
     await expect(card({ kind: 'case.pipeline.move.v1', case_id: C1, stage: 'contract_sent', evidence: cite(1) })).rejects.toThrow(
-      'UNMET REQUIREMENTS: moving case 25-50001 from Consult booked (consult_booked) to Contract sent (contract_sent) would pass over 1 required step that is not done: "Intake questionnaire submitted" (stage Consult booked, active, client). Casey never moves a case past an unmet requirement and cannot override one. Complete them, or the user marks them done / N/A on the case\'s Steps panel, then ask again');
+      'UNMET REQUIREMENTS: moving case 25-50001 from Consult booked (consult_booked) to Contract sent (contract_sent) would pass over 1 required step that is not done: "Intake questionnaire submitted" (stage Consult booked, active, client). Casey never moves a case past an unmet requirement on a pipeline card. Complete them, or mark them done / N/A — the user on the case\'s Steps panel, or Casey through a reviewed override card (case.requirement.override.v1) — then ask again');
     // The route moves it; the real resolver now reads exactly the disclosed steps 'skipped' and leaves nothing open behind.
     const res = await call(app, 'POST', `/api/cases/${C1}/pipeline/advance`, { stage: c.to.stage_key });
     expect([res.status, res.body.noop, res.body.current.stage_key]).toEqual([200, false, 'dead_lead']);

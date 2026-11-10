@@ -602,10 +602,10 @@ this lead dead", "move the case back to Docs requested").
 - **What Casey will not do, and says so:**
   - move a case past a **required step that is not done or N/A** (except onto
     an off-ramp, above). The answer
-    names every such step, word for word. Casey **cannot override a
-    requirement** — mark the step done or N/A on the case's Steps panel
-    yourself, then ask again. (The case page's own Advance does not check
-    requirements; Casey does.)
+    names every such step, word for word. A stage card **never overrides a
+    requirement** — mark the step done or N/A first, on the case's Steps
+    panel or with Casey's own card for it (below), then ask again. (The case
+    page's own Advance does not check requirements; Casey does.)
   - move a case onto **another pipeline** on these cards — that is the
     pipeline transfer card, below;
   - enter a chapter pipeline at any stage but its first, or enter one the
@@ -682,6 +682,53 @@ goes on the case fields card.
 - The card is always warning-styled; there is no undo (moving it back is
   another transfer). Open case pages and the pipeline board refresh on their
   own. It shares the `casey_case_pipeline_enabled` off switch.
+
+#### Marking a step N/A or done
+
+Casey can mark **one step** of a case's pipeline **N/A** or **done**, or
+**clear** a step's override so it goes back to what YisraCase works out — the
+Steps panel's own n/a / done / clear buttons, one step per card: "mark the
+retainer step N/A on the Smith case — she paid in cash at the consult",
+"clear the override on the W-2 step". Name the step as the Steps panel shows
+it (or ask Casey to show the case's pipeline first). The intake steps of a
+retained case can be marked too, as on the panel.
+
+- **A reason is required** when marking a step (the panel's note is optional;
+  Casey's is not): it is the only record of why the step was marked, and the
+  case log quotes it. One line, up to 255 characters. If you have not said
+  why, Casey asks.
+- **What the system sees.** The card shows the step's own status — what its
+  detector finds (or that it is a manual step only an override can complete),
+  with its detail, progress or hint — beside what the override declares. For
+  a clear, it shows the status the step goes back to. Marking a **required**
+  step done or N/A that the system does not see done, or clearing an override
+  so a required step is open again, is shown in warning style.
+- **What it unblocks.** Casey's stage cards refuse a move past an open
+  required step. The card names every move the override unblocks (or, for a
+  clear, blocks again), and any move still blocked by other steps. The case
+  page's own Advance does not check steps, so there the override only changes
+  what the Steps panel shows.
+- **The client portal.** If the step is client-visible and on the case's
+  current or next stages, the card says how the client's Next steps card
+  changes (an N/A step disappears from it; a done step shows as done).
+- **The case log** gets one line, by you — "Requirement fee: marked N/A
+  (override) - <your reason>" or "Requirement fee: override cleared" — and the
+  override records you as the one who set it. An override that already exists
+  is named with who set it, when, and its note; a new one replaces it. To
+  change only the reason, ask for the same status with the new reason: the
+  card says the status is unchanged and shows the old note → the new one.
+- **What Casey refuses, and says so:** a status other than N/A or done; a step
+  that already reads that way (done by its detector, or already overridden the
+  same way with the same reason); a clear
+  when the step has no override; an unknown step, or a name two steps share
+  (use its key). An override is never part of a stage card — it is always its
+  own card, which you ask for.
+- **Freshness.** When you confirm, the card re-reads the case's steps and
+  their overrides, its pipeline and position, and its phase, type and
+  subtype; if anything changed, nothing is written. If someone cleared the
+  override first, the clear says so and writes nothing.
+- Open case pages reload their pipeline on their own. No automation runs. It
+  shares the `casey_case_pipeline_enabled` off switch.
 
 ### A case's number (docket)
 

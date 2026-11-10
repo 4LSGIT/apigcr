@@ -9,7 +9,7 @@ reschedule-later; one phone/email/address subrecord create, narrow update or
 history-preserving end. Since then: A6 (contact relations and roles — create and
 update), A7 group A (case notes, case alerts, contact notes), A7 groups B/C (any
 other case field, 2026-11-09; the docket's replace / clear, A7e), A7c (case docket adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
-advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer), A10 (checklists and items), A11 (documents —
+advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer) + A9.4 (requirement override set / clear), A10 (checklists and items), A11 (documents —
 update and link), A11.1 (a case's Dropbox folder — candidates-only relink),
 A12 (form drafts and submission links), A13 (mail triage —
 read state and case link; no drafts exist, no SMS triage), A14 (direct email /
@@ -1055,7 +1055,7 @@ any native guard on the case page (`ref/plans.md`).
 Add advance and explicit move as different proposal kinds. The proposal must
 show the current and destination stages, unmet requirements, downstream
 automation, and any note or notification effect. Requirement override and
-override removal are a later sub-slice with their own reason and permission
+override removal are A9.4's own cards, with their own reason and permission
 contract; Casey must never manufacture or conceal a blocker.
 
 **What the route guards.** `POST /api/cases/:id/pipeline/advance` →
@@ -1096,9 +1096,11 @@ cross-pipeline key refuses by name and points at A9.3's transfer card.
   them either: every REQUIRED step below its destination still reading
   'skipped' gets a danger warning after the RECOVERY line ("they stay skipped
   at <dest>") and rides `expected.required_skipped`, which the click compares
-  like `required_open`. There is NO override pathway (an
+  like `required_open`. There is NO override pathway on these cards (an
   off-ramp is not one): a draft key naming an override / skip / force /
-  waive / requirement refuses by name before anything is read.
+  waive / requirement refuses by name before anything is read, and the
+  refusal points at A9.4's `case.requirement.override.v1` — one step, its
+  reason, its own card, never folded into a move.
 - **Refused by name, besides:** a case-phase case that resolves to Intake (no
   chapter pipeline matches — advancing it there would flip a retained case
   back to intake); advance from an off-ramp or past the last stage; a later
@@ -1147,10 +1149,10 @@ cross-pipeline key refuses by name and points at A9.3's transfer card.
   `tests/caseyPipeline.test.js`, gated `tests/caseyPipeline.mysql.test.js`,
   `tests/assistantUi.test.js`.
 
-**Deferred.** The requirement-override sub-slice (set / clear an override, its
-reason and permission contract — `POST/DELETE
-…/pipeline/requirements/:key/override`). `ref/plans.md`. Cross-pipeline moves
-— and with them entering a chapter pipeline past its first stage — are A9.3.
+**Elsewhere.** Setting and clearing a requirement override (`POST/DELETE
+…/pipeline/requirements/:key/override`, its reason and permission contract) is
+A9.4. Cross-pipeline moves — and with them entering a chapter pipeline past its
+first stage — are A9.3.
 
 #### A9.2: Typed `case.pipeline` read — shipped 2026-11-09
 
@@ -1260,7 +1262,7 @@ of (pinned on a real engine).
 pipeline (template id or name), stage? (key or label on the DESTINATION),
 note?, evidence} → that route, behind A9's `casey_case_pipeline_enabled` (no
 new key). `normalizeCasePipelineTransferAction`:
-- **Refused by name:** an override-shaped key (no override pathway); any other
+- **Refused by name:** an override-shaped key (no override pathway on a pipeline card — the refusal points at A9.4's card); any other
   key (template_id, stage_id, case_type, case_subtype … — the server derives
   them); the pipeline the case resolves to now ("a move along it is not a
   transfer: propose case.pipeline.move.v1"); an unknown, ambiguous (two
@@ -1330,7 +1332,114 @@ new key). `normalizeCasePipelineTransferAction`:
   `tests/assistantUi.test.js`, `tests/assistantPromptKinds.test.js`,
   `tests/caseyActionPermissions.test.js`.
 
-**Still deferred:** the requirement-override sub-slice (A9).
+#### A9.4: Requirement overrides — set and clear shipped 2026-11-10
+
+Fred (2026-11-09): "Casey can do *at least* anything the user can do in the
+UI." The case page's Steps panel marks any step N/A or done (an optional note)
+and clears an override (`public/case.html` `pwOverride` / `pwClearOverride` →
+POST / DELETE `/api/cases/:id/pipeline/requirements/:key/override` →
+`requirementService.setOverride` / `clearOverride`). This is the
+"requirement-override sub-slice" A9 deferred; its reason and permission
+contract is below.
+
+**What the routes do.** Bare `jwtOrApiKey` (any staff, any API key). POST
+{status 'na' | 'done', note?}: 400 for any other status, and for a key no
+ACTIVE requirement carries anywhere (any template — overrides bind by key);
+404 for an unknown case; otherwise an upsert on (case_id, requirement_key)
+with `set_by` = the JWT user (0 for an API key) and the note clipped to 255
+by JS string length (UTF-16 units — an emoji note is cut mid-character), then
+a fire-and-forget case-log row (`type 'status'`, `link_type 'case'`, by the
+user or 0): `Requirement <key>: marked N/A (override) - <note>` (or `marked
+done`; no ` - …` without a note). DELETE: 404 when no override row exists
+("No override on requirement …"), else the row is deleted and the log reads
+`Requirement <key>: override cleared`. Neither emits a domain event. The
+resolver's precedence is override → detector → position, so an override wins
+over everything until it is cleared. All pinned on a real engine
+(`tests/caseyRequirementOverride.mysql.test.js`).
+
+**Shipped contract.** Two kinds behind A9's `casey_case_pipeline_enabled` (no
+new key): `case.requirement.override.v1` {case_id, requirement (key or
+label), status, note, evidence} → POST {status, note};
+`case.requirement.override.clear.v1` {case_id, requirement, evidence} →
+DELETE. `normalizeCaseRequirementOverrideAction`:
+- **The step** resolves through `requirementService.getCaseRequirements` —
+  the route's own FULL read, BOTH applicable templates, so a retained case's
+  intake-history steps (which the panel's "Intake steps" section also offers)
+  resolve too — by key (case-insensitive), else by label. A label two keys
+  share is refused naming both; an unknown step lists the case's steps. Every
+  step carrying the key is marked at once (an override binds by key); the
+  card says so when there are two.
+- **The reason (manager ruling, flagged to Fred):** `note` is REQUIRED on a
+  set (the panel's is optional) — the card comes out of a conversation where
+  the reason exists, and the note is the override's only audit trail (the log
+  line quotes it). One line, at most 255 characters counted BOTH as code
+  points and as UTF-16 units (the service clips by the latter); the card
+  refuses instead of letting the route cut it.
+- **Permission (manager ruling):** no new gate — the route is jwtOrApiKey,
+  the card is any staff. Casey never proposes an override as a side effect of
+  another card: the A9 / A9.3 cards still refuse every override-shaped key by
+  name and now point at this kind.
+- **Refused by name:** any other field (a stage rides no override card); a
+  status outside na / done (the others are derived); a set that changes no
+  step's status — already done by its detector (named, with its detail), or
+  already that override with the same note (nothing to change); a clear with
+  no override (the route 404s; the panel shows no clear button). A set over an
+  override of the SAME status with a DIFFERENT note is a valid NOTE-ONLY card
+  (coordinator ruling, 2026-11-10 — the panel allows it): "status unchanged
+  (<status>); note replaced: "<old>" → "<new>"", the log line it writes, and
+  no gate / portal / danger change (`note_only` on the draft).
+- **Disclosed** — Casey never manufactures or conceals a blocker:
+  1. *What the system sees vs what the override declares*, per step: its
+     DERIVED status, its detector (registry label; a `manual` step "only an
+     override can mark"), the resolver's detail / progress / hint. For a set
+     over an existing override and for a clear, the derived status is the
+     REAL resolver re-run over a db wrapper that hides exactly this case's
+     override on this key from its one overrides read
+     (`caseOverrideHiddenDb`); the wrapper must see exactly one such read in
+     mysql2's shape, and the projected row must carry no override, or the
+     card is refused (fail closed).
+  2. *What it unblocks / re-blocks:* A9's gate re-run over the case's
+     pipeline with the step before and after (`caseOverrideGate`) — every
+     main-lane stage but the current one, plus an intake lead's retention
+     crossing: UNBLOCKS (danger line) the moves this step alone was
+     blocking, RE-BLOCKS on a clear, and "still blocked" with the other steps
+     named. The native Advance and the board's drag check no requirement, so
+     there it changes only what the Steps panel shows (said on the card).
+  3. *The client portal:* `buildNextSteps`'s own rule — client-visible steps
+     with a client label on the current main-lane and upcoming stages; N/A
+     and skipped hidden, done shown done — before → after; staff-only, no
+     client label and off-scope steps say the portal does not change.
+  4. *The case-log line* word for word, `set_by` = the signed-in user (an API
+     key would record 0), fire-and-forget.
+  5. *The override it replaces / drops:* status, note, author (users name),
+     when (firm time).
+  A REQUIRED step marked done / N/A that the system does not see done gets a
+  danger line, as does a clear that returns a REQUIRED step to open.
+- **The card (browser family `case_requirement_override`):** danger exactly
+  on those two cases (`caseOverrideDanger`). Freshness: `expected` = the
+  matched rows (stage id / key / number, status, derived status), the
+  override (status, note, set_by, at), the whole step list's signature
+  (key@stage:status:required:override), the resolved template, current stage
+  key, history length, and phase / type / subtype. The click re-reads GET
+  `…/pipeline/requirements`, GET `…/pipeline` and GET `/api/cases/:id` and
+  refuses on any difference before the claim. A step's DERIVED status under
+  an override is not re-readable from any route (the override masks it) —
+  the card says what it was at preparation.
+- **Outcomes:** the clear's "No override on requirement" 404 reads as
+  `Refused — nothing written` (someone cleared it first); other 4xx are the
+  shared refusal. Result checks read the route payloads (`override` echo on
+  a set — key, status, note, case; `cleared: true` on a clear). **Receipt:**
+  the STRING case_id (neither route returns a row id). **Sync:** the
+  override matcher in `public/js/yc-sync.js` (POST + DELETE, `yc_pipeline`)
+  already exists — open case pages reload their pipeline. Nothing added.
+- Tests: `tests/caseyRequirementOverride.test.js` (normalizer + the browser
+  functions lifted by name), gated
+  `tests/caseyRequirementOverride.mysql.test.js` (set / replace / clear on
+  the real routes; the projected "returns to" status = the real resolver
+  after the real DELETE; the log row; the precheck after hand edits; the
+  routes' own 400 / 404 beside the card's refusals and the clipped note),
+  `tests/assistantUi.test.js`, `tests/assistantPromptKinds.test.js`,
+  `tests/caseyActionPermissions.test.js` (78 kinds / 66 mounts).
 
 #### A10: Checklists and checklist items — create, item add and item update shipped 2026-11-01
 

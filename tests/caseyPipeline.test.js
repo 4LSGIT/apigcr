@@ -281,7 +281,7 @@ describe('THE RETENTION CROSSING — intake → the chapter pipeline\'s first st
       consult_booked: [(s) => req('questionnaire', s, 'skipped', { internal_label: 'Intake questionnaire submitted' })],
       contract_sent: [(s) => req('contract_signed', s, 'active', { internal_label: 'Retainer contract signed', owner: 'client' }), (s) => req('id_copy', s, 'done')],
     } });
-    await refuse(advance(), /^UNMET REQUIREMENTS: moving case 25-12345-abc from Contract sent \(contract_sent\) to Retained \(retained\) on Chapter 7 would pass over 1 required step that is not done: "Retainer contract signed" \(stage Contract sent, active, client\)\. Casey never moves a case past an unmet requirement and cannot override one/, { pipe });
+    await refuse(advance(), /^UNMET REQUIREMENTS: moving case 25-12345-abc from Contract sent \(contract_sent\) to Retained \(retained\) on Chapter 7 would pass over 1 required step that is not done: "Retainer contract signed" \(stage Contract sent, active, client\)\. Casey never moves a case past an unmet requirement on a pipeline card/, { pipe });
     // 'skipped' was passed over before this card: not this move's blocker.
     const ok = pipeOf({ at: 'contract_sent', reqs: { consult_booked: [(s) => req('questionnaire', s, 'skipped')] } });
     await expect(run(advance(), { pipe: ok })).resolves.toMatchObject({ crossing: true, expected: { requirements: ['questionnaire@11:skipped:1'] } });
@@ -296,7 +296,7 @@ describe('UNMET REQUIREMENTS — the normalizer is the gate the route does not h
       (s) => req('optional_call', s, 'active', { required: 0 }),
       (s) => req('id_copy', s, 'na'),
     ] } });
-    await refuse(advance(), /^UNMET REQUIREMENTS: moving case 25-12345-abc from Consult booked \(consult_booked\) to Consult done \(consult_done\) would pass over 2 required steps that are not done: "Intake questionnaire submitted" \(stage Consult booked, active, client\); "Six months of pay stubs" \(stage Consult booked, active, staff\)\. Casey never moves a case past an unmet requirement and cannot override one\. Complete them, or the user marks them done \/ N\/A on the case's Steps panel, then ask again$/, { pipe });
+    await refuse(advance(), /^UNMET REQUIREMENTS: moving case 25-12345-abc from Consult booked \(consult_booked\) to Consult done \(consult_done\) would pass over 2 required steps that are not done: "Intake questionnaire submitted" \(stage Consult booked, active, client\); "Six months of pay stubs" \(stage Consult booked, active, staff\)\. Casey never moves a case past an unmet requirement on a pipeline card\. Complete them, or mark them done \/ N\/A — the user on the case's Steps panel, or Casey through a reviewed override card \(case\.requirement\.override\.v1\) — then ask again$/, { pipe });
   });
 
   test('a skip ahead passes the upcoming steps of every stage in between; an off-ramp discloses everything numbered below it', async () => {
@@ -376,7 +376,7 @@ describe('OFF-RAMP = EXIT — a move onto an off-ramp passes over no requirement
   });
 
   test('a MAIN-lane move over the same open steps still REFUSES, with the unchanged message', async () => {
-    await refuse(move('contract_sent'), /^UNMET REQUIREMENTS: moving case 25-12345-abc from Consult booked \(consult_booked\) to Contract sent \(contract_sent\) would pass over 3 required steps that are not done: "Intake questionnaire submitted" \(stage Consult booked, active, client\); "Six months of pay stubs" \(stage Consult booked, active\); "Fee quoted" \(stage Consult done, upcoming, staff\)\. Casey never moves a case past an unmet requirement and cannot override one\. Complete them, or the user marks them done \/ N\/A on the case's Steps panel, then ask again$/, { pipe: openPipe() });
+    await refuse(move('contract_sent'), /^UNMET REQUIREMENTS: moving case 25-12345-abc from Consult booked \(consult_booked\) to Contract sent \(contract_sent\) would pass over 3 required steps that are not done: "Intake questionnaire submitted" \(stage Consult booked, active, client\); "Six months of pay stubs" \(stage Consult booked, active\); "Fee quoted" \(stage Consult done, upcoming, staff\)\. Casey never moves a case past an unmet requirement on a pipeline card\. Complete them, or mark them done \/ N\/A — the user on the case's Steps panel, or Casey through a reviewed override card \(case\.requirement\.override\.v1\) — then ask again$/, { pipe: openPipe() });
     await refuse(advance(), /^UNMET REQUIREMENTS: moving case 25-12345-abc from Consult booked \(consult_booked\) to Consult done \(consult_done\) would pass over 2 required steps that are not done: "Intake questionnaire submitted" \(stage Consult booked, active, client\); "Six months of pay stubs" \(stage Consult booked, active\)\. Casey never moves/, { pipe: openPipe() });
     // On the Chapter 7 pipeline too: Dismissed is an exit, Filed is not.
     const ch7 = pipeOf({ template: CH7, at: 'retained', reqs: { retained: [(s) => req('fee', s, 'active', { internal_label: 'Retainer fee paid' })] } });

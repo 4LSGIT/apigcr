@@ -78,6 +78,9 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'casePipelineLabel', 'casePipelineCaseLabel', 'casePipelineStageName', 'casePipelineText', 'casePipelineRequest',
   'casePipelinePassed', 'casePipelinePrecheck', 'casePipelineResult', 'casePipelineKnownOutcome',
   'caseTransferText', 'caseTransferRequest', 'caseTransferPrecheck', 'caseTransferResult', 'caseTransferKnownOutcome',
+  // A9.4: the requirement override family (tests/caseyRequirementOverride.test.js drives it function by function).
+  'caseOverrideLabel', 'caseOverrideWord', 'caseOverrideDanger', 'caseOverrideText', 'caseOverrideRequest', 'caseOverridePrecheck',
+  'caseOverrideResult', 'caseOverrideKnownOutcome',
   'checklistFoldTitle', 'checklistLabel', 'checklistParentLabel', 'checklistListLine', 'checklistText', 'checklistCreateBody',
   'checklistRequest', 'checkitemRequest', 'checklistCreatePrecheck', 'checklistListPrecheck', 'checklistPrecheck', 'checkitemPrecheck',
   'checklistResult', 'checkitemResult', 'checklistKnownOutcome', 'checklistOpenPersonal', 'checklistEntity', 'checklistOpen',
@@ -134,6 +137,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CASE_CONTACT_ACTION_KINDS'), constSrc(html, 'CASE_CONTACT_TYPES'),
     constSrc(html, 'CASE_PIPELINE_ACTION_KINDS'), constSrc(html, 'CASE_PIPELINE_STAGE_KEY'), constSrc(html, 'CASE_PIPELINE_OPEN'),
     constSrc(html, 'CASE_PIPELINE_TRANSFER_ACTION_KINDS'), constSrc(html, 'CASE_TRANSFER_TORN'),
+    constSrc(html, 'CASE_REQUIREMENT_OVERRIDE_ACTION_KINDS'), constSrc(html, 'CASE_OVERRIDE_KEY'),
     constSrc(html, 'CHECKLIST_ACTION_KINDS'), constSrc(html, 'CHECKITEM_ACTION_KINDS'), constSrc(html, 'CHECKLIST_LINK_TYPES'),
     constSrc(html, 'DOCUMENT_ACTION_KINDS'), constSrc(html, 'DOCLINK_ACTION_KINDS'), constSrc(html, 'DOCUMENT_FIELD_MAX'),
     constSrc(html, 'CASE_DOCKET_ACTION_KINDS'), constSrc(html, 'CASE_DOCKET_FIELDS'), constSrc(html, 'CASE_DOCKET_NAMES'),
@@ -3388,7 +3392,7 @@ describe('A9 case pipeline cards (case.pipeline.advance / move)', () => {
       [draft(), reads({ pipeOpts: { stages: STAGES.filter((s) => s.stage_key !== 'consult_done') } }), 'The destination stage Consult done (consult_done) changed or is no longer active'],
       [draft(), reads({ pipeOpts: { stages: STAGES.map((s) => (s.stage_key === 'consult_done' ? { ...s, stage_number: 5 } : s)) } }), 'The destination stage Consult done (consult_done) changed'],
       // An optional step made REQUIRED since the review is now a blocker — named, never summarized.
-      [draft(), reads({ pipeOpts: { reqs: unmet } }), 'UNMET REQUIREMENTS since this card was prepared — the move would now pass over: "Courtesy call" (stage Consult booked, active). Nothing was written. Casey cannot override a requirement.'],
+      [draft(), reads({ pipeOpts: { reqs: unmet } }), 'UNMET REQUIREMENTS since this card was prepared — the move would now pass over: "Courtesy call" (stage Consult booked, active). Nothing was written. A pipeline card cannot override a requirement — mark it done or N/A first (the Steps panel, or Casey\'s requirement override card), then ask again.'],
       // A step on the passed-over stages finished / added since the review: stale.
       [draft(), reads({ pipeOpts: { reqs: { ...REQS, consult_booked: [REQS.consult_booked[0], { ...REQS.consult_booked[1], status: 'done' }] } } }), 'The steps case 25-12345-abc would pass over changed since this card was prepared'],
       [movement(), reads({ pipeOpts: { reqs: { ...REQS, consult_done: [] } } }), 'The steps case 25-12345-abc would pass over changed'],
@@ -3444,7 +3448,7 @@ describe('A9 case pipeline cards (case.pipeline.advance / move)', () => {
         'The required steps case 25-12345-abc would leave open on the off-ramp changed since this card was prepared — now open: "Courtesy call" (stage Consult booked, active); "Fee quoted" (stage Consult done, upcoming). Nothing was written.'],
       // The destination moved to the main lane since: no longer an exit — the refusal by name.
       [exitCard(), reads({ pipeOpts: { reqs: OPEN, stages: STAGES.map((st) => (st.stage_key === 'dead_lead' ? { ...st, lane: 'main' } : st)) } }),
-        'UNMET REQUIREMENTS since this card was prepared — the move would now pass over: "Fee quoted" (stage Consult done, upcoming). Nothing was written. Casey cannot override a requirement.'],
+        'UNMET REQUIREMENTS since this card was prepared — the move would now pass over: "Fee quoted" (stage Consult done, upcoming). Nothing was written. A pipeline card cannot override a requirement — mark it done or N/A first (the Steps panel, or Casey\'s requirement override card), then ask again.'],
       // A card that does not itself say off-ramp is never treated as one.
       [exitCard({ to: { ...movement().action_draft.to, lane: 'main' } }), reads({ pipeOpts: { reqs: OPEN } }),
         'UNMET REQUIREMENTS since this card was prepared — the move would now pass over: "Fee quoted" (stage Consult done, upcoming).'],
@@ -3629,6 +3633,101 @@ describe('A9.3 case pipeline transfer card (case.pipeline.transfer.v1)', () => {
     const lock = draft();
     await runTransfer(lock, async () => { throw Object.assign(new Error('Pipeline advance already in progress for case 7KQ2M9XA — retry'), { status: 409, body: { status: 'error' } }); });
     expect([lock.action_draft.refusal_status, lock.action_draft.ambiguous_error]).toEqual(['Refused — nothing written', undefined]);
+  });
+});
+
+// A9.4: the requirement override family through the SHARED engine (its
+// builder, precheck, result check, outcome map and danger rule are pinned
+// function by function in tests/caseyRequirementOverride.test.js). Pinned
+// here: the family is wired — two kinds, a STRING receipt — the three
+// click-time reads run before the claim, the write is ONE POST (set) or ONE
+// DELETE (clear) to the Steps panel's own path, danger follows the server's
+// rows, and the clear route's "no override" 404 reads as a refusal.
+describe('A9.4 requirement override cards (case.requirement.override / .clear)', () => {
+  const CASE_ID = '7KQ2M9XA';
+  const REQ_ROW = (over = {}) => ({ requirement_key: 'fee', stage_id: 31, stage_key: 'retained', internal_label: 'Retainer fee paid', required: 1, status: 'active', override: null, ...over });
+  const draft = (over = {}) => ({ action_draft: {
+    draft_id: '6f6f6f6f-1b2c-4d3e-8f40-123456789abc', kind: 'case.requirement.override.v1', status: 'draft', received_at: Date.now(),
+    case: { case_id: CASE_ID, case_number: '25-12345-abc', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', clients: ['Dana Debtor'] },
+    pipeline: { template_id: 2, name: 'Chapter 7', role: 'case' },
+    requirement: { requirement_key: 'fee', internal_label: 'Retainer fee paid', required: 1 },
+    override_status: 'na', note: 'Paid in cash at the consult',
+    rows: [{ requirement_key: 'fee', stage_id: 31, stage_key: 'retained', stage_label: 'Retained', stage_number: 1, template_id: 2, template_name: 'Chapter 7', on_pipeline: true,
+      internal_label: 'Retainer fee paid', required: 1, owner: 'client', detector: 'manual', detector_label: 'Manual (override only)', status: 'active', derived_status: 'active', after_status: 'na' }],
+    sees: ['"Retainer fee paid" (stage Retained, required, client): the system sees active — a manual step'], existing: null,
+    gate: { unblocks: ['Filed (filed) — its next stage'], reblocks: [], still: [] }, log_line: 'Requirement fee: marked N/A (override) - Paid in cash at the consult',
+    effects: [], warnings: ['REQUIRED STEP MARKED N/A ON YOUR WORD: …'],
+    expected: { case_id: CASE_ID, pipeline_phase: 'case', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', template_id: 2, stage_key: 'retained', history_count: 1,
+      requirement_key: 'fee', rows: [{ stage_id: 31, stage_key: 'retained', stage_number: 1, on_pipeline: true, status: 'active', derived_status: 'active' }], override: null,
+      signature: ['fee@31:active:1:-'] },
+    evidence: [],
+    // Model-shaped junk that must never reach the request.
+    stage: 'filed', requirement_key: 'other',
+    ...over,
+  } });
+  const read = (p) => {
+    if (p === `/api/cases/${CASE_ID}/pipeline/requirements`) return { status: 'success', requirements: [REQ_ROW()] };
+    if (p === `/api/cases/${CASE_ID}/pipeline`) return { status: 'success', template: { id: 2 }, current: { stage_key: 'retained' }, history: [{}], stages: [{ stage_id: 31, stage_key: 'retained', stage_number: 1 }] };
+    if (p === `/api/cases/${CASE_ID}`) return { case: { case_id: CASE_ID, case_type: 'Bankruptcy', case_subtype: 'Chapter 7', pipeline_phase: 'case' } };
+    throw new Error(`unexpected read ${p}`);
+  };
+  function runOverride(message, write) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (p, body, method, headers) => {
+      if (method === 'GET') { gets.push(p); return read(p); }
+      writes.push({ path: p, body, method, headers }); return write();
+    });
+    const ledgerApi = jest.fn(async (p, body) => { ledger.push(p.endsWith('/claim') ? 'claim' : { receipt: body }); return p.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a94' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) } };
+    const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history: [], openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, openEntity, sandbox }));
+  }
+  const PATH = `/api/cases/${CASE_ID}/pipeline/requirements/fee/override`;
+
+  test('set: three reads, ONE POST of {status, note}, the STRING receipt, a danger-styled review', async () => {
+    const m = draft();
+    const ok = async () => ({ status: 'success', override: { case_id: CASE_ID, requirement_key: 'fee', status: 'na', note: 'Paid in cash at the consult' } });
+    const { writes, gets, ledger, P, openEntity, sandbox } = await runOverride(m, ok);
+    const fam = sandbox.actionFamily(m.action_draft);
+    expect([fam.id, [...fam.kinds], fam.idField, fam.appliedKey, !!fam.stringReceipt])
+      .toEqual(['case_requirement_override', ['case.requirement.override.v1', 'case.requirement.override.clear.v1'], 'case_id', 'result_override_case_id', true]);
+    expect(gets).toEqual([`/api/cases/${CASE_ID}/pipeline/requirements`, `/api/cases/${CASE_ID}/pipeline`, `/api/cases/${CASE_ID}`]);
+    expect(writes).toEqual([{ path: PATH, method: 'POST', headers: undefined, body: { status: 'na', note: 'Paid in cash at the consult' } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a94', result: { case_id: CASE_ID } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_override_case_id: CASE_ID });
+    expect(P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning', confirmButtonText: 'Mark step N/A' });
+    expect(openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345-abc');
+  });
+
+  test('clear: ONE DELETE with no body; not danger when the step returns to done; the "no override" 404 is a refusal, not ambiguous', async () => {
+    const clearDraft = () => draft({ kind: 'case.requirement.override.clear.v1', override_status: null, note: null,
+      rows: [{ ...draft().action_draft.rows[0], status: 'na', derived_status: 'done', after_status: 'done' }],
+      expected: { ...draft().action_draft.expected, rows: [{ stage_id: 31, stage_key: 'retained', stage_number: 1, on_pipeline: true, status: 'na', derived_status: 'done' }],
+        override: { status: 'na', note: 'old', set_by: 6, at: '2026-11-01T10:00:00.000Z' }, signature: ['fee@31:na:1:na'] } });
+    const naRow = REQ_ROW({ status: 'na', override: { status: 'na', note: 'old', set_by: 6, at: '2026-11-01T10:00:00.000Z' } });
+    const m = clearDraft();
+    const api = jest.fn(async (p, body, method) => {
+      if (method === 'GET') return p.endsWith('/requirements') ? { status: 'success', requirements: [naRow] } : read(p);
+      return { status: 'success', cleared: true, case_id: CASE_ID, requirement_key: 'fee' };
+    });
+    const ledgerApi = jest.fn(async (p) => (p.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-c' } : { outcome: 'applied' }));
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) } };
+    const sandbox = actionSandbox({ P, api, ledgerApi, history: [], openEntity: jest.fn(), saveAssistantMessage: jest.fn() });
+    await sandbox.executeActionDraft(m);
+    expect(api.mock.calls.filter((c) => c[2] !== 'GET')).toEqual([[PATH, null, 'DELETE']]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_override_case_id: CASE_ID });
+    expect(P.Swal.fire.mock.calls[0][0]).toMatchObject({ confirmButtonText: 'Clear step override' });
+    expect(P.Swal.fire.mock.calls[0][0].icon).not.toBe('warning');
+    const gone = clearDraft();
+    const api2 = jest.fn(async (p, body, method) => {
+      if (method === 'GET') return p.endsWith('/requirements') ? { status: 'success', requirements: [naRow] } : read(p);
+      throw Object.assign(new Error('No override on requirement "fee" for case 7KQ2M9XA'), { status: 404, body: { status: 'error' } });
+    });
+    const sb2 = actionSandbox({ P: { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) } }, api: api2, ledgerApi, history: [], openEntity: jest.fn(), saveAssistantMessage: jest.fn() });
+    await sb2.executeActionDraft(gone);
+    expect([gone.action_draft.status, gone.action_draft.refusal_status, gone.action_draft.ambiguous_error]).toEqual(['draft', 'Refused — nothing written', undefined]);
+    expect(gone.action_draft.refusal_error).toMatch(/someone cleared it first/);
   });
 });
 

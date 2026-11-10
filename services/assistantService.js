@@ -607,9 +607,9 @@ const CASE_CONTACT_CARD_NAMES = 12;
 //     destination still reading 'skipped' the same way
 //     (`expected.required_skipped`) — they stay skipped there.
 //     Optional ones are disclosed on the card. There
-//     is NO override pathway: a draft key naming an override refuses by name,
-//     and overrides stay the user's own act on the Steps panel (a later
-//     sub-slice with its own reason and permission contract).
+//     is NO override pathway on these cards: a draft key naming an override
+//     refuses by name and points at A9.4's own card
+//     (case.requirement.override.v1 — one step, its reason, its own review).
 //   * pipeline_phase is written by advanceStage from the entered stage's
 //     template role, never directly. A crossing (intake → case) is
 //     danger-styled; a case-phase case displaying the Intake pipeline (no
@@ -634,7 +634,8 @@ const CASE_PIPELINE_KEYS = {
   'case.pipeline.move.v1': new Set(['kind', 'case_id', 'stage', 'note', 'evidence']),
 };
 // A key that reads as a requirement override / bypass is refused BY NAME
-// before anything else: the cards have no override pathway at all.
+// before anything else: the pipeline cards have no override pathway (an
+// override is A9.4's own card, never a side effect of a move).
 const CASE_PIPELINE_OVERRIDE_KEY = /overrid|waive|bypass|skip|ignore|force|requirement|mark_?(?:done|na)|not_?applicable|unblock|exempt/i;
 // Keys that would choose another pipeline (POST /pipeline/move territory).
 const CASE_PIPELINE_CROSS_KEYS = new Set(['template_id', 'template', 'pipeline', 'pipeline_id', 'pipeline_template_id', 'case_type', 'case_subtype']);
@@ -668,6 +669,51 @@ const CASE_PIPELINE_NOTE_MAX = 255;
 // STRING case_id. Same switch as A9, casey_case_pipeline_enabled.
 const CASE_PIPELINE_TRANSFER_ACTION_KINDS = new Set(['case.pipeline.transfer.v1']);
 const CASE_PIPELINE_TRANSFER_KEYS = new Set(['kind', 'case_id', 'pipeline', 'stage', 'note', 'evidence']);
+// A9.4: requirement OVERRIDES — set or clear ONE per-case override on ONE
+// pipeline step, the case page Steps panel's own n/a / done / clear buttons
+// (public/case.html pwOverride / pwClearOverride): case.requirement.override.v1
+// {case_id, requirement (key or label), status 'na' | 'done', note} → POST
+// /api/cases/:id/pipeline/requirements/:key/override {status, note}, and
+// case.requirement.override.clear.v1 {case_id, requirement} → DELETE on the
+// same path (requirementService.setOverride / clearOverride; both write a
+// case-log row, fire-and-forget). The route is bare jwtOrApiKey (any staff),
+// so is the card (manager ruling — no new gate). The step is resolved through
+// requirementService.getCaseRequirements — the route's own FULL read, BOTH
+// applicable templates, so a retained case's intake-history steps (which the
+// panel also offers) resolve too — by key, else by label. One override binds
+// by KEY: every step of the case carrying the key is marked at once.
+// Refused by name: an unknown / ambiguous step, a status outside na / done, a
+// set that would not change any step's status (already done by its detector,
+// or already that override), a clear with no override (the route 404s; the
+// panel shows no clear button), and a note that is empty, more than one line or
+// over 255 characters (REQUIRED here, optional on the panel — manager ruling:
+// it is the override's only audit trail; the service clips silently, the card
+// refuses instead). Casey never proposes an override as a side effect of
+// another card: the pipeline cards keep refusing every override-shaped key and
+// point here. DISCLOSED (the "reason and permission contract" A9 deferred —
+// Casey never manufactures or conceals a blocker): what the system sees (the
+// step's DERIVED status, its detector, detail / progress / hint — for a set
+// over an existing override and for a clear, the resolver re-run with this
+// key's override hidden: the status the step returns to) beside what the
+// override declares; which of A9's gated moves it unblocks or re-blocks; the
+// client portal's Next steps card; the case-log line `_logOverride` writes and
+// that set_by records the signed-in user; the existing override it replaces or
+// drops. Danger (browser): a REQUIRED step marked done / N/A that the system
+// does not see done, or a clear that returns a REQUIRED step to open.
+// Freshness: the matched rows (status, override), the whole step list's
+// signature, the resolved template, position and history length, and the
+// case's phase / type / subtype ride `expected`; the click re-reads GET
+// …/pipeline/requirements, GET …/pipeline and GET /api/cases/:id and refuses
+// on any difference. Receipt: the STRING case_id (the routes return no row id).
+// Same switch as A9, casey_case_pipeline_enabled.
+const CASE_REQUIREMENT_OVERRIDE_ACTION_KINDS = new Set(['case.requirement.override.v1', 'case.requirement.override.clear.v1']);
+const CASE_REQUIREMENT_OVERRIDE_KEYS = {
+  'case.requirement.override.v1': new Set(['kind', 'case_id', 'requirement', 'status', 'note', 'evidence']),
+  'case.requirement.override.clear.v1': new Set(['kind', 'case_id', 'requirement', 'evidence']),
+};
+// case_requirement_overrides.note is varchar(255); setOverride clips by JS
+// string length (UTF-16 units), so the card refuses past 255 of EITHER count.
+const CASE_REQUIREMENT_NOTE_MAX = 255;
 // A10: checklists and checklist items — create ONE list or note
 // (checklist.create.v1 → POST /checklists {title, kind, body?, link_type, link,
 // items?}), add ONE item (checklist.item.add.v1 → POST /checklists/:id/items
@@ -4133,7 +4179,7 @@ async function casePipelineRead(db, caseId) {
     notes.push(`NO PIPELINE: no pipeline resolves for case ${number || id} (no active Intake pipeline exists), so it has no stages and no steps — there is nothing to advance or move it along.`);
   } else {
     notes.push(`The ${tpl.name} pipeline (${tpl.role}) as the case page's Pipeline widget and Steps panel read it: ${stageRows.length} stage${stageRows.length === 1 ? '' : 's'}, both lanes (main = the ordered path; offramp = an exit reachable from anywhere, never "next"), and ${reqRows.length} step${reqRows.length === 1 ? '' : 's'} with the resolver's status — done, na (marked N/A), skipped (passed over), active (the current stage's work), upcoming.`);
-    notes.push('A REQUIRED step that is active or upcoming blocks a move past its stage onto the main path or into the chapter pipeline (the pipeline cards refuse it; Casey cannot override one); a move onto an off-ramp is an exit and is not refused.');
+    notes.push('A REQUIRED step that is active or upcoming blocks a move past its stage onto the main path or into the chapter pipeline (the pipeline cards refuse it); marking a step done or N/A is its own card — case.requirement.override.v1, one step at a time, with the reason — and clearing an override is case.requirement.override.clear.v1. A move onto an off-ramp is an exit and is not refused.');
     if (tpl.role === 'case') notes.push('The Intake pipeline\'s steps of a retained case are history and are not listed.');
     if (!current) notes.push('NO STAGE YET: the case has no pipeline history — every stage is upcoming and nothing is active.');
     else if (!curStage) notes.push(`The case's latest stage, ${current.status_label || current.stage_key} (${current.stage_key}), is not a stage of the ${tpl.name} pipeline.`);
@@ -4182,7 +4228,7 @@ async function normalizeCasePipelineAction(db, value, evidence, { currentUserId 
   // NO override pathway: refused by name before anything is read.
   const overrideKeys = Object.keys(value).filter((k) => k !== 'kind' && CASE_PIPELINE_OVERRIDE_KEY.test(k));
   if (overrideKeys.length) {
-    throw casePipelineError(`REQUIREMENT OVERRIDE refused (${overrideKeys.join(', ')}): a pipeline card never marks a requirement done or N/A, never skips one and never moves a case past an unmet one — Casey has no override pathway. The user records an override on the case's Steps panel; then ask Casey again`);
+    throw casePipelineError(`REQUIREMENT OVERRIDE refused (${overrideKeys.join(', ')}): a pipeline card never marks a requirement done or N/A, never skips one and never moves a case past an unmet one — Casey has no override pathway on a pipeline card. Marking a step done or N/A is its OWN card: propose case.requirement.override.v1 {case_id, requirement, status, note} for that one step (or the user marks it on the case's Steps panel), then propose the move again — never both in one card`);
   }
   const crossKeys = Object.keys(value).filter((k) => CASE_PIPELINE_CROSS_KEYS.has(k));
   if (crossKeys.length) {
@@ -4306,7 +4352,7 @@ async function normalizeCasePipelineAction(db, value, evidence, { currentUserId 
   if (blockers.length && !exit) {
     throw casePipelineError(`UNMET REQUIREMENTS: moving case ${caseLabel} from ${fromText} to ${casePipelineStageText(dest)}${crossing ? ` on ${destTemplate.name}` : ''} would pass over ${blockers.length} required step${blockers.length > 1 ? 's' : ''} that ${blockers.length > 1 ? 'are' : 'is'} not done: ` +
       blockers.map(casePipelineStepText).join('; ') +
-      '. Casey never moves a case past an unmet requirement and cannot override one. Complete them, or the user marks them done / N/A on the case\'s Steps panel, then ask again');
+      '. Casey never moves a case past an unmet requirement on a pipeline card. Complete them, or mark them done / N/A — the user on the case\'s Steps panel, or Casey through a reviewed override card (case.requirement.override.v1) — then ask again');
   }
   // RECOVERY (off-ramp → a main-lane stage of the same template) discloses the
   // REQUIRED steps below the destination that read 'skipped' — the off-ramp
@@ -4484,7 +4530,7 @@ async function normalizeCasePipelineTransferAction(db, value, evidence, { curren
   }
   const overrideKeys = Object.keys(value).filter((k) => k !== 'kind' && CASE_PIPELINE_OVERRIDE_KEY.test(k));
   if (overrideKeys.length) {
-    throw casePipelineError(`REQUIREMENT OVERRIDE refused (${overrideKeys.join(', ')}): a pipeline card never marks a requirement done or N/A — Casey has no override pathway. The transfer card DISCLOSES the steps a move passes over; the user records an override on the case's Steps panel`);
+    throw casePipelineError(`REQUIREMENT OVERRIDE refused (${overrideKeys.join(', ')}): a pipeline card never marks a requirement done or N/A — Casey has no override pathway on a pipeline card. The transfer card DISCLOSES the steps a move passes over; marking a step of the case's pipeline done or N/A is its own card, case.requirement.override.v1 (or the user's Steps panel)`);
   }
   const unknown = Object.keys(value).filter((k) => !CASE_PIPELINE_TRANSFER_KEYS.has(k));
   if (unknown.length) {
@@ -4765,6 +4811,373 @@ async function normalizeCasePipelineTransferAction(db, value, evidence, { curren
       dest_stage_id: Number(destStage.id),
       dest_stages: activeStages.map(CASE_PIPELINE_TRANSFER_SIG.stage),
       templates: activeTemplates.map(CASE_PIPELINE_TRANSFER_SIG.template).sort(),
+    },
+    evidence: refs,
+  };
+}
+
+// ── A9.4: requirement overrides ────────────────────────────────────────────
+// The status a step returns to without this case's override on `key`: the
+// REAL resolver (requirementService.resolveRequirements) re-run over a db
+// wrapper that hides exactly that override row from its one overrides read —
+// every other input (templates, stages, the latest log row, the detector
+// batches) is the live read. Shape guard, fail closed: the wrapper must see
+// exactly one read of case_requirement_overrides, in mysql2's [rows, fields]
+// shape, or the card is refused (a resolver that changed how it reads
+// overrides would otherwise project the override itself as the "derived"
+// state). Real-engine twin: tests/caseyRequirementOverride.mysql.test.js
+// (the projection equals the real resolver after the real DELETE).
+function caseOverrideHiddenDb(db, caseId, key) {
+  let reads = 0; let shapeOk = true;
+  const wrapped = {
+    query: async (sql, params) => {
+      const res = await db.query(sql, params);
+      if (/\bFROM\s+case_requirement_overrides\b/i.test(String(sql))) {
+        reads += 1;
+        if (!Array.isArray(res) || !Array.isArray(res[0])) { shapeOk = false; return res; }
+        return [res[0].filter((o) => !(String(o.case_id) === caseId && String(o.requirement_key) === key)), ...res.slice(1)];
+      }
+      return res;
+    },
+  };
+  return { db: wrapped, ok: () => reads === 1 && shapeOk };
+}
+
+async function caseOverrideDerived(db, caseId, key, matched) {
+  const reqSvc = require('./requirementService');
+  const hidden = caseOverrideHiddenDb(db, caseId, key);
+  const byCase = await reqSvc.resolveRequirements(hidden.db, [caseId]);
+  const list = byCase && typeof byCase.get === 'function' ? byCase.get(caseId) || [] : [];
+  if (!hidden.ok()) return null;
+  const out = new Map();
+  for (const r of matched) {
+    const p = list.find((x) => x.requirement_key === key && Number(x.stage_id) === Number(r.stage_id));
+    if (!p || p.override) return null;
+    out.set(Number(r.stage_id), p);
+  }
+  return out;
+}
+
+const CASE_OVERRIDE_WORD = { na: 'N/A', done: 'done' };
+
+// What the system sees for one step, in words: its detector and the
+// resolver's own detail / progress / hint for that step.
+function caseOverrideSeesText(row) {
+  if (row.detector === 'manual') {
+    return `a manual step — no detector watches it, so only an override can mark it done or N/A${row.hint ? ` (it asks: ${row.hint})` : ''}`;
+  }
+  const facts = [row.detail, row.progress].filter((x) => x != null && String(x).trim() !== '').map((x) => String(x).slice(0, 200));
+  const found = row.derived_status === 'done';
+  return `its detector (${row.detector_label}) ${found ? 'finds it done' : 'does not find it done'}${facts.length ? `: ${facts.join('; ')}` : ''}${!found && row.hint ? ` (it asks: ${row.hint})` : ''}`;
+}
+
+function caseOverrideStepText(row) {
+  return `"${row.internal_label}" (stage ${row.stage_label}${row.on_pipeline ? '' : ` on ${row.template_name}`}, ${row.required ? 'required' : 'optional'}${row.owner ? `, ${row.owner}` : ''})`;
+}
+
+// A9's unmet-requirements gate, re-run over the case's pipeline with this
+// key's steps at `before` and at `after`: for each move A9's cards gate (every
+// main-lane stage of the resolved pipeline but the current one, and — an
+// intake lead — the retention crossing, which passes every intake step), the
+// REQUIRED steps active / upcoming below it. Returns the moves this key's steps
+// stop / start blocking, and whether other steps block them anyway.
+function caseOverrideGate(pipe, key, before, after) {
+  const stages = Array.isArray(pipe && pipe.stages) ? pipe.stages : [];
+  const curKey = pipe && pipe.current ? String(pipe.current.stage_key) : null;
+  const next = Array.isArray(pipe && pipe.upcoming) && pipe.upcoming[0] ? String(pipe.upcoming[0].stage_key) : null;
+  const rowsOf = (pred) => {
+    const out = [];
+    for (const s of stages) {
+      if (!pred(s)) continue;
+      for (const r of Array.isArray(s.requirements) ? s.requirements : []) {
+        out.push({ r, stage: s });
+      }
+    }
+    return out;
+  };
+  const blocking = (x, side) => {
+    if (!x.r.required) return false;
+    const st = x.r.requirement_key === key ? (side === 'after' ? after : before).get(Number(x.stage.stage_id)) : x.r.status;
+    return CASE_PIPELINE_OPEN.has(String(st));
+  };
+  const moves = [];
+  for (const d of stages) {
+    if (casePipelineOfframp(d) || String(d.stage_key) === curKey) continue;
+    moves.push({ text: `${casePipelineStageText(d)}${String(d.stage_key) === next ? ' — its next stage' : ''}`,
+      rows: rowsOf((s) => Number(s.stage_number) < Number(d.stage_number)) });
+  }
+  if (pipe && pipe.template && pipe.template.role === 'intake' && pipe.phase !== 'case') {
+    moves.push({ text: 'its chapter pipeline\'s first stage (retaining the lead — the crossing passes every intake step)', rows: rowsOf(() => true) });
+  }
+  const unblocks = []; const reblocks = []; const still = [];
+  for (const m of moves) {
+    const mine = (side) => m.rows.some((x) => x.r.requirement_key === key && blocking(x, side));
+    const others = m.rows.filter((x) => x.r.requirement_key !== key && blocking(x, 'before'))
+      .map((x) => `"${String(x.r.internal_label || x.r.requirement_key)}" (stage ${String(x.stage.internal_label || x.stage.stage_key)}, ${x.r.status})`);
+    const b = mine('before'); const a = mine('after');
+    if (b && !a) (others.length ? still : unblocks).push({ move: m.text, others });
+    else if (!b && a) (others.length ? still : reblocks).push({ move: m.text, others });
+  }
+  return { unblocks, reblocks, still };
+}
+
+async function normalizeCaseRequirementOverrideAction(db, value, evidence, { currentUserId = null } = {}) {
+  // The A9 switch: '0' and every pipeline kind — these too — do not exist.
+  if (require('../lib/firmConfig').cfg('casey_case_pipeline_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const kind = value.kind;
+  const clear = kind === 'case.requirement.override.clear.v1';
+  const allowed = CASE_REQUIREMENT_OVERRIDE_KEYS[kind];
+  const unknown = Object.keys(value).filter((k) => !allowed.has(k));
+  if (unknown.length) {
+    throw casePipelineError(`A requirement override ${clear ? 'clear ' : ''}carries unsupported fields: ${unknown.join(', ')} — it takes ${[...allowed].filter((k) => k !== 'kind').join(', ')} only: ONE step of ONE case, nothing else (a stage move, an advance or a transfer is its own card — one card, one override)`);
+  }
+  const caseId = String(value.case_id == null ? '' : value.case_id).trim();
+  if (!caseId || caseId.length > 20 || !/^[A-Za-z0-9_-]+$/.test(caseId)) throw casePipelineError('A requirement override needs the case\'s exact case_id');
+  const reqText = typeof value.requirement === 'string' ? value.requirement.trim() : '';
+  if (!reqText || reqText.length > 120) throw casePipelineError('A requirement override needs "requirement": the step\'s requirement_key or label, as a case.pipeline read lists it');
+  let status = null; let note = null;
+  if (!clear) {
+    status = typeof value.status === 'string' ? value.status.trim().toLowerCase() : '';
+    if (status !== 'na' && status !== 'done') {
+      throw casePipelineError(`An override's status is "na" (not applicable) or "done" — got ${JSON.stringify(value.status == null ? null : value.status)}. Every other status (active, upcoming, skipped) is derived by the system and cannot be set; to return a step to its derived status, propose case.requirement.override.clear.v1`);
+    }
+    if (typeof value.note !== 'string' || !value.note.trim()) {
+      throw casePipelineError('An override needs "note": the reason, in the user\'s words — it is the only record of why the step was marked (the case log quotes it). Ask the user why if they have not said');
+    }
+    note = value.note.trim();
+    if (/[\u0000-\u001f\u007f]/.test(note)) throw casePipelineError('The override note is one line of text, as the Steps panel\'s note field takes — no line breaks');
+    const points = [...note].length;
+    if (points > CASE_REQUIREMENT_NOTE_MAX || note.length > CASE_REQUIREMENT_NOTE_MAX) {
+      throw casePipelineError(`The override note is ${points} characters${note.length !== points ? ` (${note.length} UTF-16 units)` : ''} — the override keeps ${CASE_REQUIREMENT_NOTE_MAX} and the route would cut it short silently. Shorten it`);
+    }
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  const cited = refs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return row && String(row.case_id) === caseId;
+  });
+  if (!cited) throw casePipelineError(`The requirement override evidence does not identify case ${caseId} — cite a row carrying its exact case_id (read the case first)`);
+
+  const found = await require('./caseService').getCase(db, caseId, 'contacts');
+  if (!found || !found.case) throw casePipelineError(`Case ${caseId} no longer exists`);
+  const row = found.case;
+  const id = String(row.case_id);
+  const number = String(row.case_number_full || row.case_number || '').trim().slice(0, 40);
+  const caseLabel = number || id;
+  const reqSvc = require('./requirementService');
+  const admin = require('./pipelineAdminService');
+  const detectors = require('./requirementDetectors');
+  // The route's own read: BOTH applicable templates (the panel's Steps list
+  // plus its intake-history section).
+  const all = await reqSvc.getCaseRequirements(db, id);
+  if (!all.length) throw casePipelineError(`Case ${caseLabel} has no pipeline steps — there is nothing to mark ${clear ? 'or clear' : 'done or N/A'}`);
+  const live = () => all.slice(0, 40).map((r) => `"${String(r.internal_label || r.requirement_key)}" (${r.requirement_key}, ${r.status})`).join(', ') + (all.length > 40 ? `, and ${all.length - 40} more` : '');
+  const want = reqText.toLowerCase();
+  let key = (all.find((r) => String(r.requirement_key).toLowerCase() === want) || {}).requirement_key || null;
+  if (!key) {
+    const byLabel = all.filter((r) => String(r.internal_label || '').trim().toLowerCase() === want);
+    const keys = [...new Set(byLabel.map((r) => String(r.requirement_key)))];
+    if (keys.length > 1) {
+      throw casePipelineError(`"${reqText}" names ${keys.length} different steps of case ${caseLabel}: ${byLabel.map((r) => `"${r.internal_label}" (${r.requirement_key}, stage ${r.stage_key}, ${r.status})`).join(', ')} — name it by its requirement_key`);
+    }
+    if (!keys.length) throw casePipelineError(`"${reqText}" is not a step of case ${caseLabel}'s pipeline — its steps are: ${live()}. A case.pipeline read shows each step with its key and status`);
+    key = keys[0];
+  }
+  key = String(key);
+  const matched = all.filter((r) => String(r.requirement_key) === key);
+  const ov = matched[0].override || null;
+
+  const pipe = await require('./pipelineService').getPipeline(db, id, { requirements: true });
+  const tpl = pipe && pipe.template ? pipe.template : null;
+  const phase = String(row.pipeline_phase == null ? '' : row.pipeline_phase).trim().toLowerCase() === 'case' ? 'case' : 'intake';
+  const pipeStages = tpl && Array.isArray(pipe.stages) ? pipe.stages : [];
+  const onPipeline = new Set(pipeStages.map((s) => Number(s.stage_id)));
+
+  // Each step's stage and detector (the admin read behind the Config page).
+  const stageInfo = new Map();
+  for (const sid of [...new Set(matched.map((r) => Number(r.stage_id)))]) {
+    const listed = await admin.listRequirements(db, sid);
+    stageInfo.set(sid, listed);
+  }
+  const tplNames = new Map((await admin.listTemplates(db)).map((t) => [Number(t.id), String(t.name || `pipeline #${t.id}`)]));
+
+  // What the system sees without the override: the step's live status when
+  // there is none; the resolver re-run with it hidden when there is one.
+  let derived = null;
+  if (ov) {
+    derived = await caseOverrideDerived(db, id, key, matched);
+    if (!derived) throw casePipelineError(`Casey could not work out what "${matched[0].internal_label}" would read without its override (the resolver's override read was not the one it expects), so it cannot show what the ${clear ? 'clear' : 'override'} changes. Nothing was prepared; the user can change it on the case's Steps panel`);
+  }
+  const rows = matched.map((r) => {
+    const sid = Number(r.stage_id);
+    const listed = stageInfo.get(sid);
+    const def = (listed.requirements || []).find((x) => String(x.requirement_key) === key && !!Number(x.active)) || {};
+    const st = listed.stage || {};
+    const d = derived ? derived.get(sid) : r;
+    const det = String(def.detector || '');
+    const reg = det ? detectors.getDetector(det) : null;
+    const derivedStatus = String(d.status);
+    return {
+      requirement_key: key, stage_id: sid, stage_key: String(r.stage_key), stage_label: String(st.internal_label || r.stage_key),
+      stage_number: Number(st.stage_number), lane: casePipelineOfframp(st) ? 'offramp' : 'main',
+      template_id: Number(st.template_id), template_name: tplNames.get(Number(st.template_id)) || `pipeline #${st.template_id}`, on_pipeline: onPipeline.has(sid),
+      internal_label: String(r.internal_label || key), client_label: r.client_label == null ? null : String(r.client_label),
+      client_visible: r.client_visible ? 1 : 0, required: r.required ? 1 : 0, owner: String(r.owner || ''),
+      detector: det, detector_label: reg && reg.label ? String(reg.label) : det || 'unknown',
+      status: String(r.status), derived_status: derivedStatus,
+      after_status: clear ? derivedStatus : status,
+      detail: d.detail == null ? null : String(d.detail).slice(0, 300), progress: d.progress == null ? null : String(d.progress).slice(0, 120),
+      hint: r.hint == null ? null : String(r.hint).slice(0, 300),
+    };
+  });
+  const label = rows[0].internal_label;
+
+  // ── Refusals that need the read ─────────────────────────────────────────
+  if (clear && !ov) {
+    throw casePipelineError(`"${label}" on case ${caseLabel} has no override to clear — it reads ${rows.map((r) => r.status).join(' / ')} by the system's own reckoning (${caseOverrideSeesText(rows[0])}). The route answers 404 and the Steps panel shows no clear button. To mark it, propose case.requirement.override.v1`);
+  }
+  // A set over an override of the SAME status with a DIFFERENT note is a
+  // note-only change (the Steps panel allows it — coordinator ruling,
+  // 2026-11-10): the status does not move, so no gate / portal / danger line
+  // changes. The fully identical set (same status, same note) is refused.
+  let noteOnly = false;
+  if (!clear && rows.every((r) => r.status === status)) {
+    if (ov && ov.status === status) {
+      if (String(ov.note == null ? '' : ov.note) === note) {
+        throw casePipelineError(`"${label}" on case ${caseLabel} is already marked ${CASE_OVERRIDE_WORD[status]} by an override with this same note ("${note}") — there is nothing to change`);
+      }
+      noteOnly = true;
+    } else throw casePipelineError(`"${label}" on case ${caseLabel} is already done — ${caseOverrideSeesText(rows[0])} — so a "done" override changes nothing. Casey does not set it`);
+  }
+
+  // ── Who set the existing override ───────────────────────────────────────
+  let existing = null;
+  if (ov) {
+    const setBy = ov.set_by == null ? 0 : Number(ov.set_by);
+    let who = 'an API key or automation (set_by 0)';
+    if (setBy > 0) {
+      const [urows] = await db.query('SELECT user, user_name FROM users WHERE user = ? LIMIT 1', [setBy]);
+      const u = Array.isArray(urows) ? urows[0] : null;
+      who = u && u.user_name ? `${String(u.user_name).slice(0, 80)} (user #${setBy})` : `user #${setBy}`;
+    }
+    const at = ov.at instanceof Date ? ov.at : ov.at != null ? new Date(ov.at) : null;
+    const { DateTime } = require('luxon');
+    existing = {
+      status: String(ov.status), note: ov.note == null ? null : String(ov.note), set_by: setBy, set_by_text: who,
+      at: at && !Number.isNaN(at.getTime()) ? at.toISOString() : null,
+      at_text: at && !Number.isNaN(at.getTime()) ? `${DateTime.fromJSDate(at).setZone(FIRM_TZ).toFormat('yyyy-MM-dd HH:mm')} firm time` : 'an unknown time',
+    };
+  }
+
+  // ── What the system sees vs what the override declares ──────────────────
+  const warnings = []; const effects = []; const sees = [];
+  for (const r of rows) {
+    sees.push(clear
+      ? `${caseOverrideStepText(r)}: now ${CASE_OVERRIDE_WORD[r.status] || r.status} by the override; once cleared it reads ${r.derived_status} — ${caseOverrideSeesText(r)}.`
+      : `${caseOverrideStepText(r)}: the system sees ${r.derived_status}${r.status !== r.derived_status ? ` (it reads ${CASE_OVERRIDE_WORD[r.status] || r.status} now, by the override this replaces)` : ''} — ${caseOverrideSeesText(r)}; the override declares it ${CASE_OVERRIDE_WORD[status]}.`);
+  }
+  // A note-only set moves no status, so it manufactures nothing.
+  const manufactured = !clear ? rows.filter((r) => r.required && r.derived_status !== 'done' && r.status !== r.after_status) : [];
+  const reopened = clear ? rows.filter((r) => r.required && CASE_PIPELINE_OPEN.has(r.after_status)) : [];
+  if (manufactured.length) {
+    warnings.push(`REQUIRED STEP MARKED ${status === 'na' ? 'N/A' : 'DONE'} ON YOUR WORD: ${manufactured.map(caseOverrideStepText).join('; ')} — the system does not see it done (it reads ${manufactured.map((r) => r.derived_status).join(' / ')}); the override makes it read ${CASE_OVERRIDE_WORD[status]} with the note as the only reason on record.`);
+  }
+  if (reopened.length) {
+    warnings.push(`REQUIRED STEP REOPENED: ${reopened.map(caseOverrideStepText).join('; ')} reads ${reopened.map((r) => r.after_status).join(' / ')} again once the override is gone — the system does not see it done.`);
+  }
+  if (rows.length > 1) {
+    effects.push(`One key, ${rows.length} steps: "${key}" is carried by ${rows.map((r) => `stage ${r.stage_label} on ${r.template_name}`).join(' and ')} — an override binds by key, so ${clear ? 'clearing it changes' : 'it marks'} all of them at once.`);
+  }
+
+  // ── What it unblocks / re-blocks on A9's gated moves ────────────────────
+  const beforeMap = new Map(rows.map((r) => [r.stage_id, r.status]));
+  const afterMap = new Map(rows.map((r) => [r.stage_id, r.after_status]));
+  const mismatch = !!tpl && phase === 'case' && tpl.role === 'intake';
+  const gate = tpl && !mismatch ? caseOverrideGate({ ...pipe, phase }, key, beforeMap, afterMap) : { unblocks: [], reblocks: [], still: [] };
+  const verbNow = clear ? 'clearing it' : 'the override';
+  if (gate.unblocks.length) {
+    warnings.push(`UNBLOCKS: Casey's pipeline cards refuse a move past an open REQUIRED step; with "${label}" marked ${CASE_OVERRIDE_WORD[status]} they no longer refuse a move to ${gate.unblocks.map((g) => g.move).join('; ')}.`);
+  }
+  if (gate.reblocks.length) {
+    warnings.push(`RE-BLOCKS: once cleared, "${label}" blocks Casey's pipeline cards from moving the case to ${gate.reblocks.map((g) => g.move).join('; ')} until it is done or N/A again.`);
+  }
+  for (const g of gate.still) {
+    effects.push(`Still blocked either way: a move to ${g.move} — ${g.others.join('; ')} ${g.others.length > 1 ? 'block' : 'blocks'} it too.`);
+  }
+  if (!gate.unblocks.length && !gate.reblocks.length && !gate.still.length) {
+    effects.push(mismatch
+      ? `Pipeline moves: none change — Casey's pipeline cards refuse every move of this retained case on the Intake pipeline for another reason (its type / subtype matches no chapter pipeline).`
+      : `Pipeline moves: ${verbNow} ${clear ? 'blocks' : 'unblocks'} no move on Casey's pipeline cards (the step is ${rows.some((r) => r.required) ? '' : 'optional, '}${rows.every((r) => !r.on_pipeline) ? `on ${rows[0].template_name}, not the pipeline the case resolves to` : `${rows.map((r) => r.status).join(' / ')} now and ${rows.map((r) => r.after_status).join(' / ')} after, behind no gated move`}).`);
+  }
+  effects.push(`The case page's own Advance and the pipeline board's drag check no requirement at all, so there the ${clear ? 'clear' : 'override'} changes only what the Steps panel shows: "${label}" reads ${clear ? rows.map((r) => r.after_status).join(' / ') : CASE_OVERRIDE_WORD[status]}${clear ? '' : `${status === 'na' ? ' with an N/A chip' : ''} and the note under it`}.`);
+
+  // ── The client portal's Next steps card (portalCaseService.buildNextSteps):
+  // client-visible steps with a client label, on the current main-lane stage
+  // and the upcoming ones; skipped and N/A are hidden, done shows as done.
+  const cur = pipe && pipe.current ? pipeStages.find((s) => s.stage_key === pipe.current.stage_key) || null : null;
+  const portalStages = new Set();
+  if (cur && !casePipelineOfframp(cur)) portalStages.add(Number(cur.stage_id));
+  for (const s of Array.isArray(pipe && pipe.upcoming) ? pipe.upcoming : []) portalStages.add(Number(s.stage_id));
+  const portalState = (st) => (st === 'na' || st === 'skipped' ? 'hidden' : st === 'done' ? 'shown as done' : 'shown as still to do');
+  const portal = [];
+  for (const r of rows) {
+    if (!r.client_visible) { portal.push(`${caseOverrideStepText(r)} is staff-only — the client portal never shows it.`); continue; }
+    if (!r.client_label || !r.client_label.trim()) { portal.push(`${caseOverrideStepText(r)} is client-visible but has no client label, so the portal drops it either way.`); continue; }
+    if (!r.on_pipeline || !portalStages.has(r.stage_id)) {
+      portal.push(`${caseOverrideStepText(r)} is client-visible, but its stage is not the case's current or an upcoming main-lane stage, so the client's Next steps card does not list it either way.`);
+      continue;
+    }
+    const b = portalState(r.status); const a = portalState(r.after_status);
+    portal.push(b === a
+      ? `Client portal: "${r.client_label}" stays ${b} on the client's Next steps card.`
+      : `Client portal: "${r.client_label}" goes from ${b} to ${a} on the client's Next steps card${r.required ? ', and the count of steps remaining changes with it' : ''}.`);
+  }
+  for (const line of portal) effects.push(line);
+
+  // ── The case-log row and who it records ─────────────────────────────────
+  const logLine = clear ? `Requirement ${key}: override cleared` : `Requirement ${key}: marked ${status === 'na' ? 'N/A' : 'done'} (override) - ${note}`;
+  const you = currentUserId == null ? 'you' : `you (user #${Number(currentUserId)})`;
+  effects.push(`Case log: one "status" row on the case, by ${you}, reading "${logLine}". ${clear ? 'The override row is deleted.' : `The override row records set_by = ${you} (an API key would record 0).`} The log write is fire-and-forget: if it fails, the ${clear ? 'clear' : 'override'} still stands.`);
+  if (existing) {
+    const prior = `${CASE_OVERRIDE_WORD[existing.status] || existing.status}, set by ${existing.set_by_text} on ${existing.at_text}, ${existing.note ? `with the note "${existing.note}"` : 'with no note'}`;
+    effects.push(clear
+      ? `Drops the override: ${prior} — the note goes with it (the case-log row written when it was set stays).`
+      : noteOnly
+        ? `NOTE ONLY: status unchanged (${CASE_OVERRIDE_WORD[status]}); note replaced: ${existing.note == null ? '(none)' : `"${existing.note}"`} → "${note}". The override was ${prior}; only its note and set_by change (the case-log row written when it was set stays, and this one adds a new line).`
+        : `REPLACES the existing override: ${prior} — its status and note are overwritten (the case-log row written when it was set stays).`);
+  }
+  effects.push('Automation: neither route emits an event — no trigger rule runs.');
+  if (!clear) effects.push('The override binds to this case and this key: it survives a stage move and a move to another pipeline that carries the same key, until it is cleared.');
+
+  const clients = (Array.isArray(found.clients) ? found.clients : [])
+    .filter((c) => c && (c.relate_type === 'Primary' || c.relate_type === 'Secondary'))
+    .map((c) => String(c.contact_name || '').trim().slice(0, 200)).filter(Boolean).slice(0, 4);
+  const sig = (r) => `${String(r.requirement_key)}@${Number(r.stage_id)}:${String(r.status)}:${r.required ? 1 : 0}:${r.override ? String(r.override.status) : '-'}`;
+  return {
+    draft_id: crypto.randomUUID(), kind, status: 'draft',
+    case: { case_id: id, case_number: number, case_type: String(row.case_type || '').slice(0, 40), case_subtype: String(row.case_subtype || '').slice(0, 40), clients },
+    pipeline: tpl ? { template_id: Number(tpl.id), name: String(tpl.name), role: String(tpl.role) } : null,
+    requirement: { requirement_key: key, internal_label: label, required: rows.some((r) => r.required) ? 1 : 0 },
+    override_status: status, note, note_only: noteOnly,
+    rows, sees, existing,
+    gate: { unblocks: gate.unblocks.map((g) => g.move), reblocks: gate.reblocks.map((g) => g.move), still: gate.still.map((g) => ({ move: g.move, others: g.others })) },
+    log_line: logLine,
+    effects, warnings,
+    expected: {
+      case_id: id,
+      pipeline_phase: phase,
+      case_type: row.case_type == null ? '' : String(row.case_type),
+      case_subtype: row.case_subtype == null ? '' : String(row.case_subtype),
+      template_id: tpl ? Number(tpl.id) : null,
+      stage_key: pipe && pipe.current ? String(pipe.current.stage_key) : null,
+      history_count: Array.isArray(pipe && pipe.history) ? pipe.history.length : 0,
+      requirement_key: key,
+      rows: rows.map((r) => ({ stage_id: r.stage_id, stage_key: r.stage_key, stage_number: r.stage_number, on_pipeline: r.on_pipeline, status: r.status, derived_status: r.derived_status })),
+      override: existing ? { status: existing.status, note: existing.note, set_by: existing.set_by, at: existing.at } : null,
+      signature: all.map(sig).sort(),
     },
     evidence: refs,
   };
@@ -10810,6 +11223,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && CASE_CONTACT_ACTION_KINDS.has(value.kind)) return normalizeCaseContactAction(db, value, evidence);
   if (value && CASE_PIPELINE_ACTION_KINDS.has(value.kind)) return normalizeCasePipelineAction(db, value, evidence, { currentUserId });
   if (value && CASE_PIPELINE_TRANSFER_ACTION_KINDS.has(value.kind)) return normalizeCasePipelineTransferAction(db, value, evidence, { currentUserId });
+  if (value && CASE_REQUIREMENT_OVERRIDE_ACTION_KINDS.has(value.kind)) return normalizeCaseRequirementOverrideAction(db, value, evidence, { currentUserId });
   if (value && CHECKLIST_ACTION_KINDS.has(value.kind)) return normalizeChecklistAction(db, value, evidence, { currentUserId });
   if (value && DOCUMENT_ACTION_KINDS.has(value.kind)) return normalizeDocumentAction(db, value, evidence, { currentUserId });
   if (value && CASE_DOCKET_ACTION_KINDS.has(value.kind)) return normalizeCaseDocketAction(db, value, evidence, { currentUserId });
@@ -10985,6 +11399,13 @@ function taskDraftRequested(question, history = []) {
     /\b(?:move|put|mark|set|send|bump|push)\b[^.?!\n]{0,40}\b(?:to|as|on|into)\s+(?:the\s+)?(?:next stage|retained|dead lead|dismissed|filed|closed|discharged)\b/i.test(request) ||
     // A9.3: onto another pipeline by its usual name ("transfer it to Chapter 13").
     /\b(?:move|transfer|switch|put|send)\b[^.?!\n]{0,40}\b(?:to|onto|into|on)\s+(?:the\s+)?(?:chapter \d{1,2}|ch\.? ?\d{1,2}|intake|civil litigation)\b/i.test(request);
+  // A9.4: a pipeline step marked N/A or done, or its override cleared ("mark
+  // the retainer step N/A", "override the W-2 requirement as done", "clear the
+  // override on the questionnaire step"). A step / requirement / override noun
+  // with a mark-or-clear verb in a request message.
+  const requirementOverride = /\b(?:steps?|requirements?|overrides?)\b/i.test(text) &&
+    (/\b(?:mark|set|override|waive|record)\b[^.?!\n]{0,60}\b(?:n\/a|na|not applicable|done|complete|completed|satisfied)\b/i.test(request) ||
+      /\b(?:clear|remove|undo|reset|delete|drop)\b[^.?!\n]{0,40}\boverrides?\b/i.test(request));
   // A10: a checklist, a note-and-list card or one item. The noun names a
   // checklist (a bare "list" is too common — "list the cases"); "check off" /
   // "tick off" carry their own noun.
@@ -11022,7 +11443,7 @@ function taskDraftRequested(question, history = []) {
   const caseFields = /\b(?:(?:open|file|filing|close|closing|discharge|objection|preference|341|show[ -]?cause|due|confirmation|hearing)\s+dates?|dates? (?:filed|opened|closed|discharged)|judge|trustee|chapter|caption|our role|lead source|case source|source ref|primary reason|341 (?:link|status|docs|amend\w*|notes)|show[ -]?cause|objection|preference|180|matrix|schedules|filing fee|final installment|docs (?:due|missing)|garnish\w*|reaffirm\w*|redemption|(?:1st|2nd|first|second) course|pre-?petition|post-?petition|fee (?:application|order|amounts?|due)|funding app|plan (?:filed|cos)|dismissal notice|outcome|follow-?up email|7 ?steps|custom fields?|case fields?|cf_\w+)\b/i.test(text) &&
     /\b(?:case|file|matter|debtor|client)s?\b/i.test(text) &&
     /\b(?:draft|propose|prepare|set|change|update|edit|correct|fix|enter|record|put|fill|mark|check|uncheck|clear|empty|remove|blank|switch|assign)\b/i.test(request);
-  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || checklist || documentEdit || docketAdopt || caseFields || formWork || mailTriage || folderRelink || job || workflow || hook || sequence || send || ingestRule ||
+  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || requirementOverride || checklist || documentEdit || docketAdopt || caseFields || formWork || mailTriage || folderRelink || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 

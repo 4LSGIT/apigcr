@@ -1302,15 +1302,6 @@ COMMENTs.)
 
 ## From the Ask Casey arc — A9 pipeline transitions (2026-10-29) — deferred
 
-- **The requirement-override sub-slice.** Casey setting or clearing a per-case
-  requirement override (`POST / DELETE
-  /api/cases/:id/pipeline/requirements/:key/override`, status `na` | `done`,
-  note) needs its own reason and permission contract before it exists: today
-  the route is bare `jwtOrApiKey` (any staff, any API key), and an override is
-  exactly the act that turns a blocker into a non-blocker, so a card for it
-  must never ride along with a transition. A9's cards refuse every
-  override-shaped key by name; this sub-slice decides who may override what,
-  the required reason, and how the card discloses what the override unblocks.
 - **Native: the case page's Advance and the board's drag do not warn on unmet
   requirements.** Only Casey's cards refuse them; the native confirm says
   "Move this case to X?" with no mention of open required steps. A warning

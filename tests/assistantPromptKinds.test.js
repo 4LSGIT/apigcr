@@ -332,14 +332,17 @@ describe('A8 — every stage teaches case contact membership and its refusals', 
 });
 
 // A9: the 'case' prefix a third time (case.pipeline), so this block pins A9's
-// own bullet and that every stage teaches the refusals — above all that there
-// is NO override pathway and an unmet requirement is repeated, never
+// own bullet and that every stage teaches the refusals — above all that a
+// move card has NO override pathway (A9.4's own card is the override) and an
+// unmet requirement is repeated, never
 // summarized (a stage that does not know it proposes an override key the
 // server then refuses, every time).
 describe('A9 — every stage teaches the pipeline cards, the unmet-requirement refusal and the absent override', () => {
   test('the plan carries its own bullet and no longer lists stage as a field edit', () => {
     expect(planPrompt).toContain('Reviewed case pipeline actions are available');
-    expect(planPrompt).toContain('refuses — and the answer says why — any move that would pass over a REQUIRED step not done or N/A (Casey cannot\n  override a requirement');
+    // A9.4 (2026-11-10): the move cards still never override; the override is its own card.
+    expect(planPrompt).toContain('refuses — and the answer says why — any move that would pass over a REQUIRED step not done or N/A (a pipeline card\n  never overrides one: marking it done / N/A is the requirement override action below, its own card)');
+    expect(planPrompt).not.toContain('Casey cannot\n  override a requirement');
     expect(planPrompt).toContain('no other CONTACT field is editable by Casey');
     expect(planPrompt).toContain("a case's pipeline STAGE moves only through the pipeline actions below, never as a field edit");
     // Off-ramp = exit (Fred, 2026-11-01): the planner must not refuse "mark this lead dead" over open steps.
@@ -352,7 +355,8 @@ describe('A9 — every stage teaches the pipeline cards, the unmet-requirement r
     expect(answerPrompt).toContain('Case pipeline rules (A9');
     expect(answerPrompt).toContain('the server picks it; never name one');
     expect(answerPrompt).toContain('a move that would pass over a REQUIRED step\n    that is not done or N/A (the refusal lists every such step word for word — repeat them all, never summarize them\n    away)');
-    expect(answerPrompt).toContain('Casey has NO override pathway');
+    expect(answerPrompt).toContain('a pipeline card has NO override pathway — marking a step\n    done or N/A is its own card, case.requirement.override.v1');
+    expect(answerPrompt).not.toContain('Casey has NO override pathway');
     expect(answerPrompt).toContain('A move onto an OFF-RAMP stage (dead lead, no show, dismissed) is an exit, not a continuation: open required steps\n    do NOT refuse it — propose it');
     expect(answerPrompt).toContain('moving a case onto ANOTHER pipeline');
     expect(answerPrompt).toContain('A case\'s pipeline STAGE moves only through the pipeline kinds below.');
@@ -895,5 +899,50 @@ describe('A9.3 — every stage teaches the transfer card, which card to pick, an
     expect(repairPrompt).toContain('- case.pipeline.transfer.v1: kind,case_id,pipeline,stage?,note?,evidence — pipeline is the destination pipeline\'s id or\n  name');
     expect(repairPrompt).toContain('move onto a stage of ANOTHER pipeline is case.pipeline.transfer.v1, never this kind');
     expect(repairPrompt).not.toContain('case_type / case_subtype, custom');
+  });
+});
+
+// A9.4: the requirement override set / clear joins the case family (its plan
+// marker is the case notes bullet), so it carries its own pins. A stage that
+// does not know it refuses "mark the fee step N/A" (A9 taught "Casey has no
+// override pathway"), or folds an override into a move card (refused by name);
+// a stage that does not teach the REQUIRED note invents a reason.
+describe('A9.4 — every stage teaches the requirement override cards, the required reason, and one card per step', () => {
+  test('the plan carries its own bullet: a query plan with the case.pipeline read, never a side effect of a move', () => {
+    expect(planPrompt).toContain('Reviewed requirement override actions are available: mark ONE step of ONE case\'s pipeline N/A (not applicable) or\n  done, with the user\'s reason');
+    expect(planPrompt).toContain('a case.pipeline read of the case showing its\n  steps with their requirement_key, status and any override');
+    expect(planPrompt).toContain('One card marks one step: never inside a move card,\n  never as a side effect of another request');
+  });
+  test('the investigate stage names the proposal family and its evidence', () => {
+    expect(investigatePrompt).toContain('requirement\n  override proposals, which need a row carrying the exact case_id and the step\'s requirement_key');
+  });
+  test('the answer teaches both kinds, the required note, the refusals and the disclosures', () => {
+    expect(answerPrompt).toContain('{"kind":"case.requirement.override.v1","case_id":"7KQ2M9XA","requirement":"fee","status":"na","note":');
+    expect(answerPrompt).toContain('{"kind":"case.requirement.override.clear.v1","case_id":"7KQ2M9XA","requirement":"fee","evidence"');
+    expect(answerPrompt).toContain('Requirement override rules (A9.4');
+    expect(answerPrompt).toContain('"note" is REQUIRED on a set: the user\'s reason, in their words');
+    expect(answerPrompt).toContain('No reason given? Ask for one; never invent it.');
+    expect(answerPrompt).toContain('One card, one step: never fold an override into a move card');
+    expect(answerPrompt).toContain('a step already in that status (done by its detector, or the same override with the same reason — a NEW reason on the\n    same status is a valid card: it replaces the note, the status does not move); a\n    clear when the step has no override');
+    expect(planPrompt).toContain('(a new reason on the\n  same override status is allowed: it replaces the note)');
+    expect(answerPrompt).toContain('"cannot override one" in the refusal means\n    the move card cannot');
+    expect(answerPrompt).toContain('/requirement-override/');
+  });
+  test('the repair stage carries both shapes and the move shape points at the override card', () => {
+    expect(repairPrompt).toContain('- case.requirement.override.v1: kind,case_id,requirement,status,note,evidence');
+    expect(repairPrompt).toContain('note is the user\'s reason (REQUIRED, one line, up to 255 characters — never invented)');
+    expect(repairPrompt).toContain('- case.requirement.override.clear.v1: kind,case_id,requirement,evidence');
+    expect(repairPrompt).toContain('a move card never overrides\n  one (marking it is case.requirement.override.v1, its own card)');
+    expect(repairPrompt).not.toContain('is refused and cannot be overridden');
+  });
+  test('an override request forces the draft path; a question about a step does not', () => {
+    const svc = require(path.join(REPO, 'services', 'assistantService'));
+    for (const q of ['Mark the retainer fee step N/A on case 7KQ2M9XA — the client paid cash', 'Please override the W-2 requirement as done',
+      'Clear the override on the questionnaire step', 'Set the credit counseling step to done, the certificate came by mail']) {
+      expect({ q, forced: svc.taskDraftRequested(q) }).toEqual({ q, forced: true });
+    }
+    for (const q of ['What steps are left on the Smith case?', 'Is the retainer requirement done?', 'Why is the W-2 step marked N/A?']) {
+      expect({ q, forced: svc.taskDraftRequested(q) }).toEqual({ q, forced: false });
+    }
   });
 });

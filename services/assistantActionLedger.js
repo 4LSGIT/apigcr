@@ -36,6 +36,9 @@ const KINDS = new Map([
   // A9.3: the cross-pipeline transfer — the same case, the same STRING receipt
   // (the move route answers the advance's payload plus `moved`, no row id).
   ['case.pipeline.transfer.v1', 'case_id'],
+  // A9.4: a requirement override set / cleared on the case — the same STRING
+  // receipt (neither override route returns a row id of its own).
+  ...['override', 'override.clear'].map(k => [`case.requirement.${k}.v1`, 'case_id']),
   // A7c: the receipt is the case whose docket was adopted — the STRING case_id
   // path (the docket route returns the case; a case has no integer id).
   ['case.docket.adopt.v1', 'case_id'],
