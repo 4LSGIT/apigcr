@@ -811,6 +811,34 @@ describe('A13 — every stage teaches the mail cards, the mail reads and their r
   });
 });
 
+// A13b: the attachment filing card — the typed preview read must be taught to
+// the plan and investigate stages (a card without one is refused), and every
+// stage must teach the suggestion-only case, the confirm rule and the refusals.
+describe('A13b — every stage teaches the attachment filing card, the preview read and its refusals', () => {
+  test('the plan carries the read kind and the family bullet', () => {
+    expect(planPrompt).toContain('mail.attachments.preview ({"mail_message_id":N,"case_id":optional\n  "7KQ2M9XA"} — ONE email\'s attachments as Comms\' File attachments dialog previews them');
+    expect(planPrompt).toContain('A reviewed mail attachment filing action is available: file ONE email\'s attachments into ONE case\'s Dropbox\n  folder (mail.attachments.file');
+    expect(planPrompt).toContain('a case the preview suggests is only a suggestion');
+    expect(planPrompt).toContain('several emails\n  at once (one card per email');
+  });
+  test('the investigate stage names the read kind and the proposal family', () => {
+    expect(investigatePrompt).toContain('mail.attachments.preview\n  ({"mail_message_id","case_id"?}');
+    expect(investigatePrompt).toContain('and mail attachment filing proposals, which need\n  the email\'s row from a mail.search / mail.message read, a mail.attachments.preview read of that email');
+  });
+  test('the answer and repair stages teach the shape, the suggestion-only case, the confirm rule and every refusal', () => {
+    expect(answerPrompt).toContain('Mail attachment filing rules (A13b');
+    expect(answerPrompt).toContain('{"kind":"mail.attachments.file.v1","mail_message_id":88123,"case_id":"7KQ2M9XA","parts":["2","3"],"confirm":["3"]');
+    expect(answerPrompt).toContain('a case_candidate row or a name in the subject is\n    a suggestion only');
+    expect(answerPrompt).toContain('never add one on your own (the server refuses the card without it');
+    expect(answerPrompt).toContain('several emails at once (one card per email;');
+    expect(answerPrompt).toContain('an email on another case MOVES');
+    expect(answerPrompt).toContain('/direct-send/mail-attachment-filing/safe-code-job/');
+    expect(repairPrompt).toContain('mail.attachments.file.v1: kind,mail_message_id,case_id,parts,confirm?,move?,link?,folder?,notify?,evidence');
+    expect(repairPrompt).toContain('confirm lists exactly the picked parts whose needs_confirm is set');
+    expect(repairPrompt).toContain('ONE email, never message_ids / all; no batch key');
+  });
+});
+
 // A11.1: the case folder card — the typed candidates read must be taught to the
 // plan and investigate stages (a card without one is refused), and every stage
 // must teach the candidates-only rule, the refusals and the no-undo fact.

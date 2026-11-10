@@ -65,6 +65,10 @@ const KINDS = new Map([
   // bridged — reused or created — which it returns as log_id.
   ['mail.read.v1', 'mail_message_id'],
   ['mail.case_link.v1', 'log_id'],
+  // A13b: the receipt is the email whose attachments were filed (the file
+  // route answers its id; a file's document id is absent for one already
+  // filed, and the log_id only when linked).
+  ['mail.attachments.file.v1', 'mail_message_id'],
   ['job.code_safe.create.v1', 'job_id'],
   ['workflow.draft.v1', 'workflow_id'],
   ['workflow.step_insert.v1', 'workflow_id'],

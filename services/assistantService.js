@@ -933,6 +933,29 @@ const MAIL_LOG_MESSAGE_MAX = 10000;
 const MAIL_LOG_DATA_MAX_BYTES = 65535;
 const MAIL_ADDRESS_RE = /^[^\s@<>"(),;:[\]\\]+@[^\s@<>"(),;:[\]\\]+\.[^\s@<>"(),;:[\]\\]+$/;
 const MAIL_DOMAIN_RE = /^(?=.{1,128}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+// A13b: file ONE email's attachments to ONE case — mail.attachments.file.v1 →
+// POST /api/mail/messages/:id/attachments/file {case_id, parts, confirm?,
+// move, link, folder?, batch?}, the Comms "File attachments" dialog's own
+// route (services/emailAttachmentCommsService.fileOne; design
+// ref/EMAIL_ATTACHMENTS_DESIGN.md §9). Its evidence is the typed read
+// mail.attachments.preview — the dialog's preview for that ONE email, as the
+// asking user. One switch, casey_mail_attachments_enabled (on unless '0').
+const MAIL_ATTACHMENTS_ACTION_KINDS = new Set(['mail.attachments.file.v1']);
+const MAIL_ATTACHMENTS_KEYS = new Set(['kind', 'mail_message_id', 'case_id', 'parts', 'confirm', 'move', 'link', 'folder', 'notify', 'evidence']);
+// The route's own part-id shape and list cap (emailAttachmentCommsService PART_RE / partsOf).
+const MAIL_ATTACHMENT_PART_RE = /^\d{1,4}(?:\.\d{1,4}){0,15}$/;
+const MAIL_ATTACHMENT_PARTS_MAX = 100;
+// mail.attachments.preview: attachment rows per read.
+const MAIL_ATTACHMENT_ROWS_MAX = 60;
+// The preview's skip reasons and confirm reasons, in the Comms dialog's words
+// (public/comms.html FA_SKIP / FA_CONFIRM).
+const MAIL_ATTACHMENT_SKIP = {
+  inline_image: 'it is an image inside the email (a signature or logo), never filed',
+  too_large: 'it is too large to file from here (the user can upload it straight to the case folder from Comms — not recorded as filed)',
+  blocked: 'its type is on the firm\'s never-filed list (the email_attachments_blocked_ext setting)',
+  type_not_allowed: 'it has no file type YisraCase can name',
+};
+const MAIL_ATTACHMENT_CONFIRM = { type: 'not a usual document type', size: 'a large file' };
 // A11.1: claim ONE Dropbox folder for ONE case — case.folder.relink.v1 → POST
 // /api/documents/relink {case_id, folder_path}, the Documents relink panel's
 // own confirm (documentSyncService.applyRelink). The folder must be a path the
@@ -7087,8 +7110,36 @@ async function normalizeMailCaseLink(db, value, evidence, currentUserId) {
   const m = await mailLoad(db, currentUserId, id);
   const record = await documentLinkRecord(db, 'case', caseIdRaw);
   if (!record) throw mailError(`Case ${caseIdRaw} not found`);
+  const caseLabel = record.label;
+  const { msg, logId, logCard, identity, people, effects, warnings } = await mailLinkPrediction(db, id, record);
+  effects.push(`Comms tab: ${caseLabel}'s Comms tab lists this email from now on (its mail card shows to staff who can read ${m.mailbox_address || 'its mailbox'}); an open Comms tab or comms hub in this browser refreshes on its own.`);
+  effects.push('Client portal: not shown — the portal shows no log entries of any type (its field whitelist excludes log columns).');
+  effects.push('Trigger event: none — linking emits no event, runs no trigger rule or workflow, and sends nothing.');
+  effects.push('One message, one case: a link card never moves it to another case later or unlinks it (the Comms tab\'s case tag does that; filing its attachments to another case with Link on moves it, and that card says so).');
 
+  return {
+    draft_id: crypto.randomUUID(), kind: 'mail.case_link.v1', status: 'draft',
+    message: mailCardMessage(m),
+    case: { case_id: record.case_id, case_number: record.case_number, case_type: record.case_type, label: caseLabel },
+    log: logCard,
+    identity,
+    effects, warnings,
+    expected: { stamp_log_id: msg.log_id == null ? null : Number(msg.log_id), log_id: logId || null, contacts: mailContactsKey(people) },
+    evidence: refs,
+  };
+}
+
+// caseLink's outcome predicted READ-ONLY, with caseLink's own lookups in its
+// order (the message's stamp, a copy's stamp, priorLogId — else a created
+// entry) and its own refusals, plus the sender ↔ case-contact comparison.
+// Shared by the A13 link card and the A13b filing card's "link" (fileOne runs
+// the same caseLink). `filing`: the email linked to THIS case already is the
+// link's no-op (sameCase), and one linked to ANOTHER case is a danger warning
+// — fileOne's caseLink MOVES it (setLogAbout overwrites) — instead of the A13
+// card's refusals. The route's own refusals throw tagged `linkRefusal`.
+async function mailLinkPrediction(db, id, record, { filing = false } = {}) {
   const mailRead = mailReadSvc();
+  const refuseLink = (message) => { throw Object.assign(mailError(message), { linkRefusal: true }); };
   // caseLink's own row read (without FOR UPDATE — nothing is written here).
   const [[msg]] = await db.query(
     `SELECT id, mailbox_id, folder, uid, message_id, provider_id, from_addr, to_addrs, cc_addrs, subject, date,
@@ -7121,44 +7172,51 @@ async function normalizeMailCaseLink(db, value, evidence, currentUserId) {
   const direction = inferDirection(fromEmail, domains);
   const warnings = []; const effects = [];
   const caseLabel = record.label;
-  let logCard;
+  let logCard; let sameCase = false; let otherCase = null;
   if (logId) {
     const [[lr]] = await db.query(
       `SELECT log_id, log_type, log_date, log_about_type, log_about_id, log_link_type, log_link_id,
               CHAR_LENGTH(log_message) AS message_chars
          FROM log WHERE log_id = ? LIMIT 1`, [logId]);
     if (!lr) {
-      throw mailError(`The log entry this message points at no longer exists (log #${logId}${via === 'copy' ? ', through a copy of it in another mailbox' : ''}) — the route refuses the link (409). The message's log stamp needs a manual fix first`);
+      refuseLink(`The log entry this message points at no longer exists (log #${logId}${via === 'copy' ? ', through a copy of it in another mailbox' : ''}) — the route refuses the link (409). The message's log stamp needs a manual fix first`);
     }
     const aboutType = lr.log_about_type == null ? null : String(lr.log_about_type);
     const aboutId = lr.log_about_id == null ? null : String(lr.log_about_id);
     if (aboutType === 'case' && aboutId != null) {
       if (aboutId.toLowerCase() === record.case_id.toLowerCase()) {
-        throw mailError(`That changes nothing — message #${id} is already linked to ${caseLabel} (log entry #${logId})`);
+        if (!filing) throw mailError(`That changes nothing — message #${id} is already linked to ${caseLabel} (log entry #${logId})`);
+        sameCase = true;
+      } else {
+        const [[other]] = await db.query('SELECT case_id, case_number, case_number_full FROM cases WHERE case_id = ? LIMIT 1', [aboutId]);
+        const otherLabel = other ? `case ${String(other.case_number_full || other.case_number || other.case_id).trim()}` : `case ${aboutId}`;
+        if (!filing) throw mailError(`ALREADY LINKED to another case: message #${id} is linked to ${otherLabel} (log entry #${logId}). Moving a message between cases is not available to Casey — the user changes the case tag on the Comms tab`);
+        otherCase = { case_id: other ? String(other.case_id) : aboutId, label: otherLabel };
+        warnings.push(`MOVES THE EMAIL OFF ANOTHER CASE: message #${id} is linked to ${otherLabel} (log entry #${logId}). A log entry has ONE about-link, so linking sets it to ${caseLabel}: the email leaves ${otherLabel}'s Comms and Log tabs. Set link to false to file the attachments and leave the email where it is.`);
       }
-      const [[other]] = await db.query('SELECT case_id, case_number, case_number_full FROM cases WHERE case_id = ? LIMIT 1', [aboutId]);
-      const otherLabel = other ? `case ${String(other.case_number_full || other.case_number || other.case_id).trim()}` : `case ${aboutId}`;
-      throw mailError(`ALREADY LINKED to another case: message #${id} is linked to ${otherLabel} (log entry #${logId}). Moving a message between cases is not available to Casey — the user changes the case tag on the Comms tab`);
-    }
-    if (aboutType) {
+    } else if (aboutType) {
       warnings.push(`REPLACES ITS ABOUT-LINK: log entry #${logId} is currently attributed to ${aboutType} ${aboutId}. A log entry has ONE about-link, so linking sets it to ${caseLabel} instead and that attribution is gone.`);
     }
     const chars = Number(lr.message_chars) || 0;
-    effects.push(`Links the EXISTING log entry #${logId} (a "${String(lr.log_type || '')}" entry dated ${mailWhen(lr.log_date)}${via === 'copy' ? ', written for a copy of this email in another mailbox' : via === 'source' ? ', written by another mail source that logged this email' : ''}) to ${caseLabel}: its about-link is set to the case — no new log entry, and its stored text is unchanged.${via !== 'stamped' ? ' The message is stamped with that entry.' : ''}`);
-    effects.push(`Who reads it: the entry stores ${chars ? `${chars.toLocaleString('en-US')} characters of this email's text` : 'no message text'}; from now on it shows on ${caseLabel}'s Log tab, readable by every signed-in staff member who opens the case — the mailbox's own read grant does not apply there.`);
+    if (sameCase) {
+      effects.push(`Already linked: log entry #${logId} is already about ${caseLabel}, so the link changes nothing.`);
+    } else {
+      effects.push(`Links the EXISTING log entry #${logId} (a "${String(lr.log_type || '')}" entry dated ${mailWhen(lr.log_date)}${via === 'copy' ? ', written for a copy of this email in another mailbox' : via === 'source' ? ', written by another mail source that logged this email' : ''}) to ${caseLabel}: its about-link is set to the case — no new log entry, and its stored text is unchanged.${via !== 'stamped' ? ' The message is stamped with that entry.' : ''}`);
+      effects.push(`Who reads it: the entry stores ${chars ? `${chars.toLocaleString('en-US')} characters of this email's text` : 'no message text'}; from now on it shows on ${caseLabel}'s Log tab, readable by every signed-in staff member who opens the case — the mailbox's own read grant does not apply there.`);
+    }
     logCard = { mode: 'reuse', log_id: logId, via, type: String(lr.log_type || ''), date: documentIso(lr.log_date),
       about_before: aboutType ? `${aboutType} ${aboutId}` : null, message_chars: chars };
   } else {
     const [[mb]] = await db.query('SELECT id, ingest_folders, ingest_state FROM mailboxes WHERE id = ? LIMIT 1', [msg.mailbox_id]);
     if (mb && mailRead.emissionPending(mb, msg)) {
-      throw mailError('This message is still being processed by the mail sync — try again in a few minutes. (The route refuses the link until the sync has logged it; nothing is proposed.)');
+      refuseLink('This message is still being processed by the mail sync — try again in a few minutes. (The route refuses the link until the sync has logged it; nothing is proposed.)');
     }
     if (mb && !mailRead.folderEmits(mb, msg.folder) && Number(msg.fresh)) {
-      throw mailError(`This email arrived in the last few minutes and another mail sync may still log it — try again in about ${mailRead.STORE_ONLY_GRACE_MIN} minutes. (The route refuses the link until then; nothing is proposed.)`);
+      refuseLink(`This email arrived in the last few minutes and another mail sync may still log it — try again in about ${mailRead.STORE_ONLY_GRACE_MIN} minutes. (The route refuses the link until then; nothing is proposed.)`);
     }
     const { emitText } = require('./mailbox/mailboxIngestService'); // lazy (convention)
     const otherParty = direction === 'incoming' ? fromEmail : (toList[0] || '');
-    if (!otherParty) throw mailError('This message has no usable address to log it under — the route refuses it (422)');
+    if (!otherParty) refuseLink('This message has no usable address to log it under — the route refuses it (422)');
     const body = emitText(msg.body_text, msg.body_html);
     const full = String(body.text || '');
     const cap = mailRead.LOG_MESSAGE_SOFT_CAP;
@@ -7209,20 +7267,9 @@ async function normalizeMailCaseLink(db, value, evidence, currentUserId) {
       warnings.push(`THE ${who.toUpperCase()} IS NOT A CONTACT ON THIS CASE: ${unmatched.join(', ')} ${unmatched.length > 1 ? 'are not emails' : 'is not an email'} of anyone on ${caseLabel} (${people.slice(0, 6).map((p) => `${p.name}${p.relate_type ? `, ${p.relate_type}` : ''}`).join('; ')}${people.length > 6 ? ' …' : ''}). Check it is the right case before linking.`);
     }
   }
-  effects.push(`Comms tab: ${caseLabel}'s Comms tab lists this email from now on (its mail card shows to staff who can read ${m.mailbox_address || 'its mailbox'}); an open Comms tab or comms hub in this browser refreshes on its own.`);
-  effects.push('Client portal: not shown — the portal shows no log entries of any type (its field whitelist excludes log columns).');
-  effects.push('Trigger event: none — linking emits no event, runs no trigger rule or workflow, and sends nothing.');
-  effects.push('One message, one case: moving it to another case later, or unlinking it, is not available to Casey (the Comms tab\'s case tag does that).');
-
   return {
-    draft_id: crypto.randomUUID(), kind: 'mail.case_link.v1', status: 'draft',
-    message: mailCardMessage(m),
-    case: { case_id: record.case_id, case_number: record.case_number, case_type: record.case_type, label: caseLabel },
-    log: logCard,
+    msg, logId: logId || null, via, logCard, sameCase, otherCase, people, effects, warnings,
     identity: { direction: outgoing ? 'outgoing' : 'incoming', compared, matched, unmatched, people: people.length },
-    effects, warnings,
-    expected: { stamp_log_id: msg.log_id == null ? null : Number(msg.log_id), log_id: logId || null, contacts: mailContactsKey(people) },
-    evidence: refs,
   };
 }
 
@@ -7236,6 +7283,418 @@ async function normalizeMailAction(db, value, evidence, { currentUserId = null }
   }
   if (value.kind === 'mail.read.v1') return normalizeMailRead(db, value, evidence, Number(currentUserId));
   return normalizeMailCaseLink(db, value, evidence, Number(currentUserId));
+}
+
+// ── A13b: file one email's attachments to a case ──────────────────────────
+// The Comms "File attachments" dialog's own reads and write, for ONE email
+// (services/emailAttachmentCommsService.js): preview (POST
+// /api/mail/attachments/preview — the typed read mail.attachments.preview AND
+// the normalizer's own re-read, never the evidence's copy; as the asking user
+// through mailReadService.loadVisible, so an email the user cannot read is not
+// found), caseFolders (POST /api/mail/attachments/folders — whether a typed
+// folder exists) and the write, fileOne. The server enforces the never-file
+// list and the second confirmation (409 needs_confirmation); the card refuses
+// both first, by name, and never adds a confirmation itself. The case link
+// fileOne runs is caseLink: predicted with A13's mailLinkPrediction in filing
+// mode. Real-engine twin: tests/caseyMailAttachments.mysql.test.js.
+
+function mailAttachmentsSvc() { return require('./emailAttachmentCommsService'); } // lazy (convention)
+
+// A decoded-size estimate for people ("about 1.2 MB").
+function mailBytes(n) {
+  const b = Math.max(0, Number(n) || 0);
+  if (b < 1024) return `${b} bytes`;
+  if (b < 1024 * 1024) return `${Math.round(b / 1024)} KB`;
+  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Where an already-filed part is, in words (the preview's filed object).
+function mailAttachmentWhere(f) {
+  if (!f) return null;
+  if (f.status === 'filing') return 'being filed right now';
+  if (f.case_id) return `filed to case ${f.case_id}${f.placement === 'unsorted' ? ' (into the unsorted bin — that case had no working folder)' : ''}`;
+  return 'filed to the unsorted client-uploads folder';
+}
+
+// One attachment's verdict as the freshness fingerprint the browser rebuilds
+// from the same route's answer (public/assistant.html mailAttachmentVerdict).
+function mailAttachmentVerdict(p) {
+  const f = p.filed;
+  const d = p.duplicate;
+  return [String(p.part), p.kind || '', p.reason || '', p.confirm || '',
+    f ? `${f.status || ''}:${f.case_id || ''}:${f.placement || ''}` : '',
+    d ? `${Number(d.mail_message_id) || 0}:${d.in_selection ? 1 : 0}` : ''].join('|');
+}
+
+function mailAttachmentMoveKey(mv) {
+  return mv ? `${Number(mv.count) || 0}:${Number(mv.unsorted) || 0}:${[...(mv.case_ids || [])].map(String).sort().join(',')}` : null;
+}
+
+// The mail.attachments.preview read (A13b): the Comms dialog's preview for ONE
+// email, as the asking user — a head row (the message, the case asked for or
+// the ONE case the matcher places it in, the matcher's verdict, what is filed
+// elsewhere, the review-notice recipient, the confirm policy), one row per
+// attachment (class file / optional / skip, why skipped, the second
+// confirmation it needs, where it is filed, a duplicate, the dialog's default
+// tick) and the candidate cases (suggestions only).
+async function mailAttachmentsPreviewRead(db, userId, step) {
+  const id = Number(step.mail_message_id);
+  let out;
+  try {
+    out = await mailAttachmentsSvc().preview(db, userId, { message_ids: [id], ...(step.case_id ? { case_id: step.case_id } : {}) });
+  } catch (e) {
+    if (e && e.status === 404 && /^Case not found/i.test(String(e.message || ''))) {
+      return { rows: [{ row_type: 'not_found', asked_case_id: step.case_id, note: `No case has case_id ${step.case_id} — read the case first` }], truncated: false };
+    }
+    if (e && e.status === 404) {
+      return { rows: [{ row_type: 'not_found', mail_message_id: id,
+        note: 'No message you can read has that id — one in a mailbox you hold no read grant on answers exactly like one that does not exist' }], truncated: false };
+    }
+    throw e;
+  }
+  const m = (Array.isArray(out.messages) ? out.messages : [])[0];
+  if (!m) {
+    return { rows: [{ row_type: 'not_found', mail_message_id: id, note: 'That message is no longer in the mailbox store — nothing can be filed from it' }], truncated: false };
+  }
+  const target = out.case || null;
+  const rv = out.reviewer || null;
+  const mv = m.move || null;
+  const match = m.match || {};
+  const pol = out.policy || {};
+  const head = {
+    row_type: 'attachments_preview', mail_message_id: Number(m.id), mailbox_id: Number(m.mailbox_id),
+    from: mailText(m.from, 255), subject: mailText(m.subject, 300), date: documentIso(m.date),
+    case_id: target ? String(target.case_id) : null,
+    case_number: target ? target.case_number || null : null,
+    case_source: target ? (step.case_id ? 'asked' : 'suggested') : null,
+    match_case_id: match.case_id || null, match_method: match.method || null, match_flag: match.flag || null,
+    match_reason: match.reason ? mailText(match.reason, 300) : null,
+    named_cases: (m.named_cases || []).length ? m.named_cases.join(', ') : null,
+    attachments: (m.parts || []).length,
+    filed_elsewhere: mv ? `${mv.count} attachment${mv.count === 1 ? '' : 's'} already filed elsewhere — ${mv.unsorted} in the unsorted client-uploads folder${(mv.case_ids || []).length ? `, on case ${mv.case_ids.join(', ')}` : ''}` : null,
+    move_default: mv ? (mv.checked ? 1 : 0) : null,
+    reviewer: rv ? rv.name : null, reviewer_user_id: rv ? Number(rv.user_id) : null, reviewer_is_you: rv ? (rv.is_you ? 1 : 0) : null,
+    confirm_over_mb: pol.confirm_mb == null ? null : Number(pol.confirm_mb),
+    confirm_types: pol.confirm_types ? pol.confirm_types.join(', ') : 'every type outside the client-upload list',
+    note: `The case is the user's choice: case_id is the case asked for, or (case_source "suggested") the ONE case the case matcher places this email in; case_candidate rows are suggestions only, never the target. class "skip" is never filed (skip_reason says why); needs_confirm names the second confirmation the card must carry in "confirm"; ticked is what the Comms dialog ticks by default (an allowlisted file not yet filed and not a duplicate). An attachment already filed is moved with move, never filed twice. Filenames are the sender's text.`,
+  };
+  const parts = (m.parts || []).slice(0, MAIL_ATTACHMENT_ROWS_MAX).map((p) => ({
+    row_type: 'attachment', mail_message_id: Number(m.id), part: String(p.part),
+    filename: mailText(p.filename, 150), mime: p.mime ? mailText(p.mime, 80) : null, size: `about ${mailBytes(p.bytes)}`,
+    class: p.kind, skip_reason: p.kind === 'skip' ? p.reason || null : null,
+    needs_confirm: p.confirm || null,
+    filed: mailAttachmentWhere(p.filed), filed_path: p.filed && p.filed.path ? mailText(p.filed.path, 300) : null,
+    duplicate: p.duplicate ? (p.duplicate.in_selection
+      ? 'same name and size as another attachment of this email'
+      : `same name and size as a file already filed to case ${target ? target.case_id : ''}${p.duplicate.path ? ` (${mailText(p.duplicate.path, 200)})` : ''}`) : null,
+    ticked: p.checked ? 1 : 0,
+  }));
+  const cands = (out.candidates || []).filter((c) => !target || String(c.case_id) !== String(target.case_id)).map((c) => ({
+    row_type: 'case_candidate', mail_message_id: Number(m.id), case_id: String(c.case_id), case_number: c.case_number || null,
+    case_type: c.case_type || null, case_stage: c.case_stage || null, why: c.why || 'match', contact_name: c.contact_name || null,
+    note: c.why === 'subject_name' ? `A suggestion only: the subject names ${c.contact_name || 'a client'} of this case` : 'A suggestion only: one of the case matcher\'s candidates',
+  }));
+  return { rows: [head, ...parts, ...cands], truncated: (m.parts || []).length > MAIL_ATTACHMENT_ROWS_MAX };
+}
+
+// The card's preview row must come from a mail.attachments.preview read of
+// THIS message (its head or one of its attachment rows).
+function mailAttachmentsPreviewCited(refs, evidence, id) {
+  return refs.some((ref) => {
+    const q = (Array.isArray(evidence) ? evidence : []).find((x) => x && x.id === ref.query_id);
+    if (!q || q.kind !== 'mail.attachments.preview') return false;
+    const row = Array.isArray(q.rows) ? q.rows[ref.row_number - 1] : null;
+    return !!row && (row.row_type === 'attachments_preview' || row.row_type === 'attachment') && Number(row.mail_message_id) === id;
+  });
+}
+
+function mailAttachmentPartList(raw, label) {
+  if (!Array.isArray(raw)) throw mailError(`"${label}" must be a list of part ids as the mail.attachments.preview read names them (["2", "3"])`);
+  if (raw.length > MAIL_ATTACHMENT_PARTS_MAX) throw mailError(`"${label}": at most ${MAIL_ATTACHMENT_PARTS_MAX} parts`);
+  const out = [];
+  for (const p of raw) {
+    const s = typeof p === 'number' && Number.isSafeInteger(p) ? String(p) : (typeof p === 'string' ? p.trim() : '');
+    if (!MAIL_ATTACHMENT_PART_RE.test(s)) {
+      throw mailError(`"${label}": ${String(JSON.stringify(p)).slice(0, 30)} is not a part id — copy the "part" of an attachment row of the mail.attachments.preview read`);
+    }
+    if (!out.includes(s)) out.push(s);
+  }
+  return out;
+}
+
+const mailAttachmentFolderNorm = (s) => String(s).split('/').map((x) => x.trim().toLowerCase().replace(/\s+/g, ' ')).join('/');
+
+async function normalizeMailAttachmentsFile(db, value, evidence, currentUserId) {
+  // Refused by name before anything is read: bulk, another mail operation, anything else.
+  const extra = Object.keys(value).filter((k) => !MAIL_ATTACHMENTS_KEYS.has(k));
+  const bulk = extra.filter((k) => MAIL_BULK_KEY.test(k));
+  if (bulk.length) {
+    throw mailError(`BULK refused (${bulk.join(', ')}): a filing card files ONE email's attachments — one card per email. Filing several emails at once is Comms' Select mode (the user ticks the emails there and files them together)`);
+  }
+  const ops = extra.filter((k) => MAIL_OTHER_OP_KEY.test(k));
+  if (ops.length) {
+    throw mailError(`OTHER MAIL OPERATIONS refused (${ops.join(', ')}): this card files ONE email's attachments to ONE case (moving what was filed elsewhere, linking the email and the review notice ride on it). Drafting, sending, flagging, archiving, deleting and unlinking mail are not available on it`);
+  }
+  if (extra.length) {
+    throw mailError(`A filing card carries unsupported fields: ${extra.join(', ')} — it takes mail_message_id, case_id, parts, confirm, move, link, folder, notify and evidence only (the browser makes the notice batch itself)`);
+  }
+  const id = mailMessageId(value);
+  const caseIdRaw = typeof value.case_id === 'string' ? value.case_id.trim() : (typeof value.case_id === 'number' ? String(value.case_id) : '');
+  if (!/^[A-Za-z0-9_-]{1,20}$/.test(caseIdRaw)) throw mailError('A filing card needs the exact case_id of the case the files go to');
+  if (value.parts === undefined || value.parts === null) {
+    throw mailError('A filing card needs "parts": the part ids to file, from the mail.attachments.preview read ([] only to move what was filed elsewhere)');
+  }
+  const parts = mailAttachmentPartList(value.parts, 'parts');
+  const confirm = value.confirm === undefined || value.confirm === null ? [] : mailAttachmentPartList(value.confirm, 'confirm');
+  for (const k of ['move', 'link', 'notify']) {
+    if (value[k] !== undefined && value[k] !== null && typeof value[k] !== 'boolean') throw mailError(`"${k}" must be true or false`);
+  }
+  const F = require('./emailAttachmentFilingService'); // lazy (convention)
+  let folder = null;
+  if (value.folder !== undefined && value.folder !== null && value.folder !== '') {
+    if (typeof value.folder !== 'string') throw mailError('"folder" must be text: a folder inside the case folder, exactly as named');
+    // The route's own rule (fileOne → exactFolder), in its words: nothing is
+    // trimmed (the firm's folder names lead with spaces on purpose).
+    try { folder = F.exactFolder(value.folder); } catch (e) {
+      throw mailError(`FOLDER REFUSED — ${e && e.message}. "folder" is a folder inside the case's Dropbox folder, used exactly as written (leading spaces are real); leave it out for the default Client Uploads/Emailed YYMMDD`);
+    }
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!mailCited(refs, evidence, id)) {
+    throw mailError(`The evidence does not identify message #${id} — cite its row from a mail.search or mail.message read (read the mail first)`);
+  }
+  if (!mailAttachmentsPreviewCited(refs, evidence, id)) {
+    throw mailError(`The evidence carries no mail.attachments.preview read of message #${id} — read its attachments first ({"mail_message_id":${id},"case_id":"…"}) and cite a row of that read`);
+  }
+  if (!documentRowCited(refs, evidence, (row) => row.case_id != null && String(row.case_id) === caseIdRaw)) {
+    throw mailError(`The evidence does not identify case ${caseIdRaw} — cite a row carrying its exact case_id (a case read, or the mail.attachments.preview row naming it)`);
+  }
+
+  // The dialog's own preview, re-run for this email and case as the user.
+  const comms = mailAttachmentsSvc();
+  let pv;
+  try {
+    pv = await comms.preview(db, currentUserId, { message_ids: [id], case_id: caseIdRaw });
+  } catch (e) {
+    if (e && e.status === 404 && /^Case not found/i.test(String(e.message || ''))) throw mailError(`Case ${caseIdRaw} not found`);
+    if (e && e.status === 404) throw mailError(`Message #${id} is not a message you can read — it does not exist, or it is in a mailbox you hold no read grant on`);
+    if (e && e.status === 400) throw mailError(`The attachments preview refused it: ${e.message}`);
+    throw e;
+  }
+  const pm = (Array.isArray(pv.messages) ? pv.messages : [])[0];
+  if (!pm || !pv.case) throw mailError(`Message #${id} is no longer in the mailbox store — nothing can be filed from it`);
+  const target = pv.case;
+  const caseId = String(target.case_id);
+  const caseLabel = `case ${target.case_number || caseId}`;
+  const byPart = new Map((pm.parts || []).map((p) => [String(p.part), p]));
+  const named = (p) => `"${mailText(p.filename, 150)}" (part ${p.part})`;
+
+  // Every part: on this email, fileable by a person, not filed already.
+  const needs = [];
+  for (const part of parts) {
+    const p = byPart.get(part);
+    if (!p) {
+      const list = (pm.parts || []).slice(0, 12).map((x) => `${x.part} ${mailText(x.filename, 60)}`).join(', ');
+      throw mailError(`Part ${part} is not an attachment of message #${id}${list ? ` (its attachments: ${list})` : ' (it has no attachments)'} — copy the part id from the mail.attachments.preview read`);
+    }
+    if (p.kind === 'skip') {
+      throw mailError(`NEVER FILED — ${named(p)} cannot be filed: ${MAIL_ATTACHMENT_SKIP[p.reason] || 'the route refuses it'}. Leave it out of parts`);
+    }
+    if (p.filed) {
+      if (p.filed.status === 'filing') throw mailError(`${named(p)} is being filed right now (another run holds its claim) — leave it out, or ask again in a few minutes`);
+      if (p.filed.case_id === caseId) throw mailError(`That changes nothing for ${named(p)} — it is already filed to ${caseLabel}${p.filed.path ? ` (${p.filed.path})` : ''}. Leave it out of parts`);
+      throw mailError(`${named(p)} is already ${mailAttachmentWhere(p.filed)} — an attachment is never filed twice. Leave it out of parts; "move": true moves what this email has filed elsewhere into ${caseLabel}`);
+    }
+    if (p.confirm && !confirm.includes(part)) needs.push(p);
+  }
+  if (needs.length) {
+    throw mailError(`NEEDS A SECOND CONFIRMATION — ${needs.map((p) => `${named(p)}: ${MAIL_ATTACHMENT_CONFIRM[p.confirm] || p.confirm}`).join('; ')}. The firm's settings ask a person to confirm ${needs.length === 1 ? 'it' : 'them'} (the route answers 409 until "confirm" lists ${needs.length === 1 ? 'its part' : 'their parts'}); put ${needs.length === 1 ? 'it' : 'them'} in "confirm" only when the user asked for ${needs.length === 1 ? 'that file' : 'those files'} by name`);
+  }
+  for (const part of confirm) {
+    const p = byPart.get(part);
+    if (!parts.includes(part)) throw mailError(`"confirm" lists part ${part}, which is not in "parts" — confirm only the parts the card files`);
+    if (!p.confirm) throw mailError(`"confirm" lists ${named(p)}, which needs no second confirmation — leave it out of "confirm"`);
+  }
+
+  // Move: what this email already has filed elsewhere (Unsorted or another
+  // case). The dialog's default: out of Unsorted ticked, out of a case not.
+  const mv = pm.move || null;
+  if (value.move === true && !mv) throw mailError(`Nothing to move — no attachment of message #${id} is filed anywhere but ${caseLabel}. Leave "move" out`);
+  const move = typeof value.move === 'boolean' ? value.move : !!(mv && mv.checked);
+  const moving = move && !!mv;
+  if (!parts.length && !moving) {
+    throw mailError(`Nothing to file — "parts" is empty${mv ? ` and the move is off (what this email filed on another case moves only when the card says "move": true)` : ''}. Name the attachments to file`);
+  }
+
+  const [[cd]] = await db.query('SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId]);
+  const caseFolderLinked = !!(cd && cd.case_dropbox && String(cd.case_dropbox).trim());
+  const effects = []; const warnings = [];
+  const files = parts.map((part) => byPart.get(part));
+
+  // The case: the user's choice, never the matcher's; the matcher's verdict is said.
+  const match = pm.match || {};
+  const cand = (pv.candidates || []).find((c) => String(c.case_id) === caseId && c.why);
+  if (match.case_id && String(match.case_id) === caseId) {
+    effects.push(`Case: ${caseLabel} — also the case the case matcher places this email in (${match.method || 'matched'}).`);
+  } else if (match.case_id) {
+    warnings.push(`NOT THE MATCHED CASE: the case matcher places this email in case ${match.case_id}${match.reason ? ` (${mailText(match.reason, 200)})` : ''}, not ${caseLabel}. Check it is the right case.`);
+  } else if (cand && cand.why === 'subject_name') {
+    effects.push(`Case: ${caseLabel} — a SUGGESTION from a name in the subject (${cand.contact_name || 'a client'}); the matcher places this email in no case${match.flag ? ` (${match.flag})` : ''}. It is filed there only because this card names it.`);
+  } else {
+    effects.push(`Case: ${caseLabel} — the case matcher places this email in no case${match.flag ? ` (${match.flag})` : ''}; it is filed there because this card names it.`);
+  }
+
+  // The folder: the route's default, or a typed one used exactly.
+  const msgDate = pm.date ? new Date(pm.date) : null;
+  const folderPath = folder || F.renderFolder(F.DEFAULT_CASE_SUBFOLDER, { date: msgDate, sender: '' });
+  const folderCard = { path: folderPath, default: !folder, exists: null, note: null };
+  if (folder) {
+    const fl = await comms.caseFolders(db, currentUserId, { case_id: caseId });
+    if (fl.reason === 'no_case_folder') {
+      folderCard.note = 'the case has no Dropbox folder to look in';
+    } else if (fl.reason === 'unavailable') {
+      folderCard.note = 'Dropbox did not answer, so whether it exists is not known — a missing folder is created';
+    } else {
+      const list = Array.isArray(fl.folders) ? fl.folders : [];
+      const exact = list.includes(folder);
+      const caseBlind = !exact ? list.find((x) => x.toLowerCase() === folder.toLowerCase()) : null;
+      const near = !exact && !caseBlind ? list.find((x) => mailAttachmentFolderNorm(x) === mailAttachmentFolderNorm(folder)) : null;
+      if (exact) {
+        folderCard.exists = true; folderCard.note = 'it exists';
+      } else if (caseBlind) {
+        folderCard.exists = true; folderCard.note = `it exists as "${caseBlind}" — Dropbox ignores letter case, so the files land in that folder`;
+      } else if (!near && (fl.truncated || folder.split('/').length > 4)) {
+        folderCard.note = 'it is not in the case folder\'s listing, which covers 4 levels and may be cut short — it may exist; a missing folder is created';
+      } else {
+        folderCard.exists = false; folderCard.note = 'it does not exist yet — it is created';
+        warnings.push(`NEW FOLDER: "${folder}" is not one of the case folder's subfolders, so filing CREATES it.${near ? ` The case folder has "${near}" — the same name but for spaces or letter case; a near miss makes a second folder beside the real one.` : ' Check the name: the firm\'s folder names often start with spaces (" 012 - Supplemental Responses").'}`);
+      }
+    }
+  }
+  if (!caseFolderLinked) {
+    warnings.push(`NO CASE FOLDER: ${caseLabel} has no Dropbox folder linked, so the filing first CREATES one (and raises a staff task about it) — or, if that fails, files into the unsorted client-uploads bin, in a folder named for the case.`);
+  }
+  if (files.length) {
+    effects.push(`Files ${files.length} attachment${files.length === 1 ? '' : 's'} of message #${id} ("${mailText(pm.subject, 120)}" from ${mailText(pm.from, 120)}) to ${caseLabel}: ${files.map((p) => `${named(p)}, about ${mailBytes(p.bytes)}`).join('; ')}.`);
+  }
+  effects.push(`Where: the case's Dropbox folder → "${folderPath}"${folder ? ` — taken exactly as written; ${folderCard.note || 'whether it exists was not checked'}` : ' — the default (Client Uploads, a folder per day named for the email\'s date, firm time)'}. A file whose name is already taken there is saved beside it with a number added.`);
+  for (const p of files.filter((x) => x.kind === 'optional')) {
+    effects.push(`${named(p)} is not on the client-upload list — the Comms dialog leaves it unticked; it is filed because this card names it.`);
+  }
+  for (const p of files.filter((x) => x.confirm)) {
+    warnings.push(`${named(p)}: ${p.confirm === 'size' ? `a large file (about ${mailBytes(p.bytes)})` : 'not a usual document type'} — it needs a second confirmation, and this card carries it.`);
+  }
+  for (const p of files.filter((x) => x.duplicate)) {
+    warnings.push(`DUPLICATE: ${named(p)} has the same name and size as ${p.duplicate.in_selection ? 'another attachment of this email' : `a file already filed to ${caseLabel}${p.duplicate.path ? ` (${p.duplicate.path})` : ''}`} — filing it makes a second copy (the Comms dialog leaves it unticked).`);
+  }
+  const leftOut = (pm.parts || []).filter((p) => p.kind !== 'skip' && !p.filed && !parts.includes(String(p.part)));
+  if (leftOut.length) effects.push(`Left on the email (not on this card): ${leftOut.slice(0, 10).map(named).join(', ')}${leftOut.length > 10 ? ' …' : ''}.`);
+  const never = (pm.parts || []).filter((p) => p.kind === 'skip');
+  if (never.length) effects.push(`Never filed: ${never.slice(0, 10).map((p) => `${named(p)} — ${p.reason === 'inline_image' ? 'an image inside the email' : p.reason === 'too_large' ? 'too large' : p.reason === 'blocked' ? 'a blocked type' : 'no usable type'}`).join('; ')}.`);
+
+  let moveCard = null;
+  if (mv) {
+    const caseIds = (mv.case_ids || []).map(String);
+    let labels = caseIds.map((c) => `case ${c}`);
+    if (caseIds.length) {
+      const [rows] = await db.query('SELECT case_id, case_number, case_number_full FROM cases WHERE case_id IN (?)', [caseIds]);
+      const byId = new Map((Array.isArray(rows) ? rows : []).map((r) => [String(r.case_id), `case ${String(r.case_number_full || r.case_number || r.case_id).trim()}`]));
+      labels = caseIds.map((c) => byId.get(c) || `case ${c}`);
+    }
+    moveCard = { asked: typeof value.move === 'boolean' ? value.move : null, move, count: Number(mv.count) || 0, unsorted: Number(mv.unsorted) || 0, case_ids: caseIds, cases: labels };
+    const where = [mv.unsorted ? `${mv.unsorted} from the unsorted client-uploads folder` : null, caseIds.length ? `from ${labels.join(', ')}` : null].filter(Boolean).join(', ');
+    if (moving) {
+      effects.push(`Moves what this email already has filed elsewhere — ${mv.count} file${mv.count === 1 ? '' : 's'}, ${where} — into "${folderPath}" in ${caseLabel}'s folder: moved in Dropbox by their id (keeping their current names, following any rename), linked to ${caseLabel}, and their filing records rewritten to it. The email's filed files move together, never one by one.${typeof value.move === 'boolean' ? '' : ' (The Comms dialog ticks this move by default: everything is in Unsorted.)'}`);
+      if (caseIds.length) {
+        warnings.push(`MOVES FILES OUT OF ANOTHER CASE: ${labels.join(', ')} hold${caseIds.length === 1 ? 's' : ''} files this email filed there; they move into ${caseLabel}'s folder (the Comms dialog never ticks this — the card says it).`);
+      }
+    } else {
+      effects.push(`Not moved: this email's ${mv.count} file${mv.count === 1 ? '' : 's'} filed elsewhere (${where}) stay where they are${caseIds.length && typeof value.move !== 'boolean' ? ' — moving out of another case is offered, never assumed ("move": true)' : ''}.`);
+    }
+  }
+
+  effects.push(`Recorded: each file is registered in YisraCase's documents, linked to ${caseLabel} (its Documents tab refreshes) and recorded as filed by you; the email shows Filed in Comms. One record per attachment, so a retry files only what is missing — never a second copy. Documents are staff-only: the client portal lists none.`);
+
+  // The review notice (the dialog's Notify, on by default).
+  const rv = pv.reviewer || null;
+  const notifyAsked = value.notify !== false;
+  const sendNotice = notifyAsked && !!rv && !rv.is_you;
+  if (!notifyAsked) effects.push('Review notice: none — the card turns it off.');
+  else if (!rv) effects.push('Review notice: none — no reviewer is set (the email_attachments_reviewer setting, Config).');
+  else if (rv.is_you) effects.push(`Review notice: none — you are the reviewer (${rv.name}).`);
+  else effects.push(`Review notice: after filing, ${rv.name} (the reviewer) is emailed ONE notice — "Filed from Comms — …", from the automations mailbox — listing what landed, with a link to each file, to review, rename and check off.`);
+
+  // Link to the case (the dialog's Link, on by default): caseLink, predicted.
+  const link = value.link !== false;
+  let linkCard = null; let linkExpected = null;
+  if (link) {
+    const m = await mailLoad(db, currentUserId, id);
+    let pred;
+    try { pred = await mailLinkPrediction(db, id, { case_id: caseId, label: caseLabel }, { filing: true }); } catch (e) {
+      if (e && e.linkRefusal) {
+        throw mailError(`LINK REFUSED — ${e.message}. Set "link" to false to file the attachments without linking the email (the user links it from Comms later)`);
+      }
+      throw e;
+    }
+    effects.push(...pred.effects);
+    warnings.push(...pred.warnings);
+    if (!pred.sameCase) effects.push(`Comms tab: ${caseLabel}'s Comms tab lists this email from then on.`);
+    linkCard = { ...pred.logCard, same_case: pred.sameCase, other_case: pred.otherCase, identity: pred.identity };
+    const st = m.log_status || {};
+    linkExpected = {
+      stamp_log_id: pred.msg.log_id == null ? null : Number(pred.msg.log_id), log_id: pred.logId || null,
+      linked_case_id: st.state === 'case' && st.case && st.case.case_id != null ? String(st.case.case_id) : null,
+    };
+  } else {
+    effects.push('Not linked: the email is not put on the case\'s log (the card turns Link off).');
+  }
+
+  // Trigger rules on the document events the filing emits (each new file:
+  // document.created + document.linked; a moved one: document.updated +
+  // document.linked). The rows do not exist yet, so rules are listed, not run.
+  const triggers = require('./triggerService'); // lazy (convention)
+  const events = [...new Set([...(files.length ? ['document.created'] : []), ...(moving ? ['document.updated'] : []), 'document.linked'])];
+  const ruleLines = [];
+  for (const ev of events) {
+    for (const r of await triggers.listActiveRulesForEvent(db, ev)) ruleLines.push(`#${Number(r.id)} "${String(r.name || '').slice(0, 80)}" (${ev})`);
+  }
+  effects.push(ruleLines.length
+    ? `Trigger rules: each file emits ${events.join(' / ')}; these active rules listen and MAY run (their conditions are checked on the real file once it exists): ${ruleLines.slice(0, 8).join('; ')}${ruleLines.length > 8 ? ' …' : ''}.`
+    : `Trigger rules: each file emits ${events.join(' / ')}; no active rule listens for ${events.length === 1 ? 'it' : 'them'}.`);
+
+  return {
+    draft_id: crypto.randomUUID(), kind: 'mail.attachments.file.v1', status: 'draft',
+    message: { mail_message_id: Number(pm.id), mailbox_id: Number(pm.mailbox_id), from: mailText(pm.from, 255), subject: mailText(pm.subject, 300), date: documentIso(pm.date) },
+    case: { case_id: caseId, case_number: target.case_number || null, case_type: target.case_type || null, case_stage: target.case_stage || null, label: caseLabel, folder_linked: caseFolderLinked },
+    files: files.map((p) => ({ part: String(p.part), filename: mailText(p.filename, 150), mime: p.mime || null, bytes: Number(p.bytes) || 0,
+      optional: p.kind === 'optional', confirm: p.confirm || null, duplicate: !!p.duplicate })),
+    parts, confirm,
+    move: moveCard,
+    folder: folder, folder_card: folderCard,
+    link, link_card: linkCard,
+    notice: { requested: notifyAsked, send: sendNotice, reviewer: rv ? { user_id: Number(rv.user_id), name: String(rv.name || ''), is_you: !!rv.is_you } : null },
+    effects, warnings,
+    expected: {
+      message: { mailbox_id: Number(pm.mailbox_id), from: pm.from || null, subject: pm.subject || '' },
+      parts: parts.map((part) => mailAttachmentVerdict(byPart.get(part))),
+      move: mailAttachmentMoveKey(mv),
+      reviewer_id: rv ? Number(rv.user_id) : null,
+      case_folder: caseFolderLinked,
+      link: linkExpected,
+    },
+    evidence: refs,
+  };
+}
+
+async function normalizeMailAttachmentsAction(db, value, evidence, { currentUserId = null } = {}) {
+  // The per-family switch: '0' and the A13b kind does not exist.
+  if (require('../lib/firmConfig').cfg('casey_mail_attachments_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  if (!Number.isSafeInteger(Number(currentUserId)) || Number(currentUserId) < 0 || currentUserId === null) {
+    throw mailError('Filing email attachments needs a signed-in user — mail grants belong to a person');
+  }
+  return normalizeMailAttachmentsFile(db, value, evidence, Number(currentUserId));
 }
 
 // ── A11.1: claim a Dropbox folder for a case ─────────────────────────────
@@ -11229,6 +11688,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && CASE_DOCKET_ACTION_KINDS.has(value.kind)) return normalizeCaseDocketAction(db, value, evidence, { currentUserId });
   if (value && FORM_ACTION_KINDS.has(value.kind)) return normalizeFormAction(db, value, evidence, { currentUserId });
   if (value && MAIL_ACTION_KINDS.has(value.kind)) return normalizeMailAction(db, value, evidence, { currentUserId });
+  if (value && MAIL_ATTACHMENTS_ACTION_KINDS.has(value.kind)) return normalizeMailAttachmentsAction(db, value, evidence, { currentUserId });
   if (value && CASE_FOLDER_ACTION_KINDS.has(value.kind)) return normalizeCaseFolderAction(db, value, evidence, { currentUserId });
   if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Action kind is unavailable');
   if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
@@ -11433,6 +11893,11 @@ function taskDraftRequested(question, history = []) {
   const mailTriage = /\b(?:e-?mails?|mail|messages?|inbox)\b/i.test(text) &&
     (/\bmark\b[^.?!\n]{0,40}\b(?:as\s+)?(?:read|unread|seen|unseen)\b/i.test(request) ||
       /\b(?:link|attach|tag|associate|connect|file|put|add)\b[^.?!\n]{0,60}\b(?:to|under|on|with)\s+(?:the|this|that|his|her|their)?\s*(?:case|file|matter)\b/i.test(request));
+  // A13b: an email's attachments filed to a case ("file the attachments from
+  // Dana's email to her case", "save the PDFs she emailed into the Smith case's
+  // Dropbox"). An attachment noun with a file / save / move verb.
+  const mailAttachments = /\b(?:attachments?|attached (?:files?|documents?|pdfs?)|(?:files?|documents?|pdfs?|scans?) (?:she|he|they|the client|the debtor) (?:e-?mailed|sent))\b/i.test(text) &&
+    /\b(?:draft|propose|prepare|file|save|store|put|move|upload|add|copy|drop|attach)\b/i.test(request);
   // A11.1: a Dropbox folder claimed for a case ("link the Smith folder to her
   // case", "relink the case's Dropbox folder", "point the case at that folder").
   const folderRelink = /\b(?:dropbox|folders?)\b/i.test(text) &&
@@ -11443,7 +11908,7 @@ function taskDraftRequested(question, history = []) {
   const caseFields = /\b(?:(?:open|file|filing|close|closing|discharge|objection|preference|341|show[ -]?cause|due|confirmation|hearing)\s+dates?|dates? (?:filed|opened|closed|discharged)|judge|trustee|chapter|caption|our role|lead source|case source|source ref|primary reason|341 (?:link|status|docs|amend\w*|notes)|show[ -]?cause|objection|preference|180|matrix|schedules|filing fee|final installment|docs (?:due|missing)|garnish\w*|reaffirm\w*|redemption|(?:1st|2nd|first|second) course|pre-?petition|post-?petition|fee (?:application|order|amounts?|due)|funding app|plan (?:filed|cos)|dismissal notice|outcome|follow-?up email|7 ?steps|custom fields?|case fields?|cf_\w+)\b/i.test(text) &&
     /\b(?:case|file|matter|debtor|client)s?\b/i.test(text) &&
     /\b(?:draft|propose|prepare|set|change|update|edit|correct|fix|enter|record|put|fill|mark|check|uncheck|clear|empty|remove|blank|switch|assign)\b/i.test(request);
-  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || requirementOverride || checklist || documentEdit || docketAdopt || caseFields || formWork || mailTriage || folderRelink || job || workflow || hook || sequence || send || ingestRule ||
+  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || requirementOverride || checklist || documentEdit || docketAdopt || caseFields || formWork || mailTriage || mailAttachments || folderRelink || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 
@@ -11702,6 +12167,20 @@ function validateStep(query, index) {
     if (!Number.isSafeInteger(n) || n < 1) throw httpError(422, `Step ${id} needs a positive mail_message_id`);
     return { id, kind, purpose, mail_message_id: n };
   }
+  // A13b — ONE message's attachments as the Comms filing dialog previews
+  // them, for the asking user, optionally against one case.
+  if (kind === 'mail.attachments.preview') {
+    const raw = query.mail_message_id;
+    const n = typeof raw === 'number' ? raw : (typeof raw === 'string' && /^\d{1,19}$/.test(raw.trim()) ? Number(raw.trim()) : NaN);
+    if (!Number.isSafeInteger(n) || n < 1) throw httpError(422, `Step ${id} needs a positive mail_message_id`);
+    const out = { id, kind, purpose, mail_message_id: n };
+    if (query.case_id !== undefined && query.case_id !== null && query.case_id !== '') {
+      const caseId = typeof query.case_id === 'string' ? query.case_id.trim() : '';
+      if (!/^[A-Za-z0-9_-]{1,20}$/.test(caseId)) throw httpError(422, `Step ${id} mail.attachments.preview case_id must be the case's exact case_id`);
+      out.case_id = caseId;
+    }
+    return out;
+  }
   if (kind === 'weather.lookup') {
     const location = String(query.location || '').trim();
     if (location.length < 2 || location.length > 120) throw httpError(422, `Step ${id} needs a 2-120 character weather location`);
@@ -11885,6 +12364,7 @@ function stepFingerprint(step) {
   if (kind === 'form.template') return `${kind}:${String(step.form_key || '').toLowerCase()}:${String(step.search || '').trim().toLowerCase()}`;
   if (kind === 'mail.search') return `${kind}:${String(step.q || '').toLowerCase()}:${step.mailbox_id || ''}:${step.unread_only ? 1 : 0}:${step.from || ''}:${step.since || ''}:${step.folder || 'inbox'}:${Number(step.limit) || 10}`;
   if (kind === 'mail.message') return `${kind}:${Number(step.mail_message_id)}`;
+  if (kind === 'mail.attachments.preview') return `${kind}:${Number(step.mail_message_id)}:${String(step.case_id || '')}`;
   if (kind === 'document.relink.candidates') return `${kind}:${String(step.case_id || '')}`;
   if (kind === 'case.pipeline') return `${kind}:${String(step.case_id || '')}`;
   if (kind === 'esign.requests') return step.case_id != null ? `${kind}:case:${String(step.case_id)}` : `${kind}:contact:${Number(step.contact_id)}`;
@@ -12200,21 +12680,24 @@ async function executeReadStep(db, query, { auth, userId }) {
     rows = out.rows;
     rowCount = rows.length;
     truncated = out.truncated;
-  } else if (query.kind === 'mail.search' || query.kind === 'mail.message') {
-    // A13: as the asking user — the hub's own grant resolution. Audited like
-    // comms.search (message ids only, never text).
+  } else if (query.kind === 'mail.search' || query.kind === 'mail.message' || query.kind === 'mail.attachments.preview') {
+    // A13 / A13b: as the asking user — the hub's own grant resolution. Audited
+    // like comms.search (message ids only, never text).
     const uid = Number(userId);
     if (!Number.isSafeInteger(uid) || uid < 0 || userId == null) throw httpError(403, 'Mail reads need a signed-in user');
-    const out = query.kind === 'mail.search' ? await mailSearchRead(db, uid, query) : await mailMessageRead(db, uid, query.mail_message_id);
+    const preview = query.kind === 'mail.attachments.preview';
+    const out = query.kind === 'mail.search' ? await mailSearchRead(db, uid, query)
+      : preview ? await mailAttachmentsPreviewRead(db, uid, query) : await mailMessageRead(db, uid, query.mail_message_id);
     rows = out.rows;
     rowCount = rows.length;
     truncated = out.truncated;
+    const seen = rows.filter((r) => r.row_type === (preview ? 'attachments_preview' : 'message'));
     auditAdminAction(db, {
       tool: 'mail_read', userId: auth && auth.userId, username: auth && auth.username,
       route: '/api/assistant/execute', method: 'POST', status: 'success',
-      details: { action: query.kind === 'mail.search' ? 'assistant_search' : 'assistant_read',
-        results: rows.filter((r) => r.row_type === 'message').length,
-        message_ids: rows.filter((r) => r.row_type === 'message').map((r) => r.mail_message_id) },
+      details: { action: query.kind === 'mail.search' ? 'assistant_search' : preview ? 'assistant_attachments_preview' : 'assistant_read',
+        results: seen.length,
+        message_ids: seen.map((r) => r.mail_message_id) },
     }).catch((err) => console.error('[assistant] mail read audit failed:', err.message));
   } else if (query.kind === 'automation.preview_step') {
     // Dry run only, by construction; the same capability gate as test-step
@@ -12772,7 +13255,7 @@ module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
-  normalizeActionDraft, contactRelationsRead, formTemplateRead, mailSearchRead, mailMessageRead, relinkCandidatesRead, esignRequestsRead, casePipelineRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
+  normalizeActionDraft, contactRelationsRead, formTemplateRead, mailSearchRead, mailMessageRead, mailAttachmentsPreviewRead, relinkCandidatesRead, esignRequestsRead, casePipelineRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
   repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan, answerSystemAppend, answerMaxTokens,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,

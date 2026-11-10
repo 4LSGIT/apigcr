@@ -443,6 +443,9 @@ the registry under its own row or any stored copy of the same email (same
 RFC Message-ID, any mailbox — `mailReadService.attachFiled`), and the
 **Not filed** filter (`not_filed`) lists mail with files none of which is
 filed, by the same copy rule.
+Ask Casey files one email's attachments through the same route — plan doc
+`ref/ASK_CASEY_ACTIONS_PLAN.md` A13b (the `mail.attachments.file.v1` card, after
+its `mail.attachments.preview` read of this preview).
 
 Tests: `tests/emailAttachments.mysql.test.js` "Comms filing (S3)" (the
 preview's classes, policy and reviewer; the suggestion; filed / duplicates /

@@ -1325,6 +1325,8 @@ tests/caseyHookCreate.test.js
 tests/caseyIngestRule.mysql.test.js
 tests/caseyIngestRule.test.js
 tests/caseyJobCodeAction.test.js
+tests/caseyMailAttachments.mysql.test.js
+tests/caseyMailAttachments.test.js
 tests/caseyMailTriage.mysql.test.js
 tests/caseyMailTriage.panes.test.js
 tests/caseyMailTriage.test.js

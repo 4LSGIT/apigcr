@@ -3410,6 +3410,254 @@ function mailOpen(draft) {
   openEntity(e.kind, e.id, e.label);
 }
 
+// Email attachments filed to a case (A13b). ONE email's attachments into ONE
+// case's Dropbox folder through the Comms "File attachments" dialog's own
+// route: POST /api/mail/messages/:id/attachments/file {case_id, parts,
+// confirm, move, link, folder?, batch?}. The server proposed only parts its
+// mail.attachments.preview re-read shows as fileable (a never-filed type, an
+// attachment already filed, a confirmation the card does not carry — each
+// refused by name), resolved the move, the folder (the route's default or one
+// taken exactly), the case link (A13's caseLink prediction) and the review
+// notice, and baked each part's verdict, the move, the reviewer, the case's
+// folder link and the email's case link into `expected`. The click re-runs
+// that preview (POST /api/mail/attachments/preview), the case and — when it
+// links — the message, and refuses on ANY difference BEFORE the claim. No
+// Idempotency-Key: the filing registry makes every part idempotent (one row
+// per attachment), and the ledger's one claim per draft stands. With the
+// notice on, the batch id comes from the draft and the notice route is called
+// once the email's files landed (as the dialog does). The route is on the
+// yc-sync bus already (doclink:case:<id>; linked: mail:<id> +
+// comms:case:<id>). Receipt: the integer mail_message_id.
+const MAIL_ATTACHMENTS_ACTION_KINDS = new Set(['mail.attachments.file.v1']);
+
+function mailAttachmentsLabel() { return 'File email attachments'; }
+
+function mailAttachmentsCaseLabel(draft) {
+  const c = (draft && draft.case) || {};
+  return String(c.label || (c.case_id ? `case ${c.case_id}` : 'the case'));
+}
+
+function mailAttachmentBytes(n) {
+  const b = Math.max(0, Number(n) || 0);
+  if (b < 1024) return `${b} bytes`;
+  if (b < 1024 * 1024) return `${Math.round(b / 1024)} KB`;
+  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// The server's mailAttachmentVerdict, over the preview route's own answer.
+function mailAttachmentVerdict(p) {
+  const f = p.filed;
+  const d = p.duplicate;
+  return [String(p.part), p.kind || '', p.reason || '', p.confirm || '',
+    f ? `${f.status || ''}:${f.case_id || ''}:${f.placement || ''}` : '',
+    d ? `${Number(d.mail_message_id) || 0}:${d.in_selection ? 1 : 0}` : ''].join('|');
+}
+
+function mailAttachmentMoveKey(mv) {
+  return mv ? `${Number(mv.count) || 0}:${Number(mv.unsorted) || 0}:${[...(mv.case_ids || [])].map(String).sort().join(',')}` : null;
+}
+
+function mailAttachmentsText(draft) {
+  const m = draft.message || {};
+  const when = m.date ? `${String(m.date).slice(0, 16).replace('T', ' ')} UTC` : 'no date';
+  const c = draft.case || {};
+  const lines = ['Email attachments filing proposal — not applied', `Action: ${mailAttachmentsLabel(draft)}`,
+    `Email: #${m.mail_message_id} — from ${m.from || '(no sender)'}, "${m.subject || '(no subject)'}", ${when}`,
+    `Case: ${mailAttachmentsCaseLabel(draft)}${c.case_type ? ` (${c.case_type})` : ''}`];
+  for (const x of draft.files || []) {
+    lines.push(`File: "${x.filename}" (part ${x.part}, about ${mailAttachmentBytes(x.bytes)})${x.optional ? ' — not on the client-upload list' : ''}${x.confirm ? ` — needs a second confirmation (${x.confirm === 'size' ? 'large file' : 'unusual type'}), carried by this card` : ''}${x.duplicate ? ' — DUPLICATE of a file already filed' : ''}`);
+  }
+  const fc = draft.folder_card || {};
+  lines.push(`Folder: ${fc.path || '(the default)'}${fc.default ? ' (the default)' : ' (exactly as written)'}${fc.note ? ` — ${fc.note}` : ''}`);
+  if (draft.move) {
+    lines.push(draft.move.move
+      ? `Move: ${draft.move.count} file(s) this email filed elsewhere move into this case${(draft.move.cases || []).length ? ` — out of ${draft.move.cases.join(', ')}` : ''}`
+      : `Move: off — ${draft.move.count} file(s) this email filed elsewhere stay where they are`);
+  }
+  lines.push(`Link the email to the case: ${draft.link ? 'yes' : 'no'}`);
+  const n = draft.notice || {};
+  lines.push(`Review notice: ${n.send && n.reviewer ? `yes — emailed to ${n.reviewer.name}` : 'no'}`);
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  lines.push('Writes: the files into the case\'s Dropbox folder, their documents-registry rows and links, one filing record per attachment' +
+      `${draft.move && draft.move.move ? ', the moved files\' new place' : ''}${draft.link ? ', and the email\'s log entry on the case' : ''} — the email itself is untouched.`,
+    'Stale check: if an attachment is filed, becomes a duplicate or changes its never-file / confirm verdict, what this email filed elsewhere changes, the reviewer or the case\'s Dropbox link changes, or the email is linked since, nothing is filed.',
+    'Other open pages: the case\'s Documents tab (and, when linked, its Comms tab and an open comms hub) in this browser refreshes on its own.',
+    `Notification: ${n.send ? 'the review notice to the reviewer' : 'none'}; Casey sends nothing else.`);
+  return lines.join('\n');
+}
+
+// The notice batch: the route's BATCH_RE (8-30 of A-Z a-z 0-9 _ -), from the
+// draft id — one card, one batch.
+function mailAttachmentsBatch(draft) {
+  const b = `cy${String(draft && draft.draft_id || '').replace(/[^A-Za-z0-9]/g, '')}`.slice(0, 30);
+  if (!/^[A-Za-z0-9_-]{8,30}$/.test(b)) throw new Error('This card has no usable id for its review notice.');
+  return b;
+}
+
+function mailAttachmentsRequest(draft) {
+  const id = mailMessageIdOf(draft);
+  const caseId = typeof ((draft && draft.case) || {}).case_id === 'string' ? draft.case.case_id : '';
+  if (!/^[A-Za-z0-9_-]{1,20}$/.test(caseId)) throw new Error('This card has no usable case.');
+  const partRe = /^\d{1,4}(?:\.\d{1,4}){0,15}$/;
+  const parts = Array.isArray(draft.parts) ? draft.parts.map(String) : null;
+  const confirm = Array.isArray(draft.confirm) ? draft.confirm.map(String) : [];
+  if (!parts || parts.length > 100 || !parts.every((p) => partRe.test(p)) || !confirm.every((p) => parts.includes(p))) throw new Error('This card has no usable attachment list.');
+  const move = !!(draft.move && draft.move.move === true);
+  if (!parts.length && !move) throw new Error('This card files nothing.');
+  if (typeof draft.link !== 'boolean') throw new Error('This card has no case-link choice.');
+  const body = { case_id: caseId, parts, confirm, move, link: draft.link };
+  if (draft.folder != null && draft.folder !== '') {
+    if (typeof draft.folder !== 'string') throw new Error('This card has no usable folder.');
+    body.folder = draft.folder; // exact: the case folder's own names keep their leading spaces
+  }
+  if (draft.notice && draft.notice.send === true) body.batch = mailAttachmentsBatch(draft);
+  return { path: `/api/mail/messages/${id}/attachments/file`, method: 'POST', body };
+}
+
+async function mailAttachmentsPrecheck(draft) {
+  const req = mailAttachmentsRequest(draft); // a card that cannot be written is never read
+  const id = mailMessageIdOf(draft);
+  const caseId = req.body.case_id;
+  const x = draft.expected || {};
+  const label = mailAttachmentsCaseLabel(draft);
+  const gone = `Message #${id} is no longer one you can read (it was removed, or your access to its mailbox changed). Nothing was filed.`;
+  let got;
+  try { got = await api(`/api/cases/${encodeURIComponent(caseId)}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `${label} no longer exists. Nothing was filed.`; throw e; }
+  const row = got && got.case;
+  if (!row) throw new Error('the case could not be read');
+  const folderLinked = !!(row.case_dropbox && String(row.case_dropbox).trim());
+  if (folderLinked !== !!x.case_folder) {
+    return `${label}'s Dropbox folder link was ${folderLinked ? 'added' : 'removed'} since this card was prepared, so where the files land changed. Nothing was filed. Ask Casey to prepare it again.`;
+  }
+  let pv;
+  try { pv = await api('/api/mail/attachments/preview', { message_ids: [id], case_id: caseId }, 'POST'); }
+  catch (e) {
+    if (e && e.status === 404) return /case not found/i.test(String((e.body && e.body.message) || e.message || '')) ? `${label} no longer exists. Nothing was filed.` : gone;
+    throw e;
+  }
+  const m = pv && Array.isArray(pv.messages) ? pv.messages.find((y) => Number(y.id) === id) : null;
+  if (!m) return `Message #${id} is no longer in the mailbox store. Nothing was filed.`;
+  const em = x.message || {};
+  if (Number(m.mailbox_id) !== Number(em.mailbox_id) || (m.from || null) !== (em.from || null) || (m.subject || '') !== (em.subject || '')) {
+    return `Message #${id} is not the email this card was prepared for any more (its mailbox, sender or subject changed). Nothing was filed. Ask Casey to prepare it again.`;
+  }
+  const byPart = new Map((Array.isArray(m.parts) ? m.parts : []).map((p) => [String(p.part), p]));
+  const want = Array.isArray(x.parts) ? x.parts : [];
+  const now = req.body.parts.map((part) => (byPart.has(part) ? mailAttachmentVerdict(byPart.get(part)) : `${part}|gone`));
+  const i = now.findIndex((v, k) => v !== want[k]);
+  if (i >= 0 || now.length !== want.length) {
+    const p = byPart.get(req.body.parts[Math.max(i, 0)]);
+    return `${p ? `"${p.filename}"` : `Part ${req.body.parts[Math.max(i, 0)]}`} changed since this card was prepared (it was filed, became a duplicate, or the firm's never-file / confirm settings changed). Nothing was filed. Ask Casey to prepare it again.`;
+  }
+  if (mailAttachmentMoveKey(m.move) !== (x.move == null ? null : x.move)) {
+    return `What message #${id} has filed elsewhere changed since this card was prepared, so the move would not be the reviewed one. Nothing was filed. Ask Casey to prepare it again.`;
+  }
+  const rid = pv.reviewer ? Number(pv.reviewer.user_id) : null;
+  if (rid !== (x.reviewer_id == null ? null : Number(x.reviewer_id))) {
+    return 'The review-notice recipient (the email_attachments_reviewer setting) changed since this card was prepared. Nothing was filed. Ask Casey to prepare it again.';
+  }
+  if (draft.link === true) {
+    const xl = x.link || {};
+    const mm = await mailReadMessage(id);
+    if (!mm) return gone;
+    const st = mm.log_status || {};
+    const linkedCase = st.state === 'case' && st.case && st.case.case_id != null ? String(st.case.case_id) : null;
+    const num = (v) => (v == null ? null : Number(v));
+    if (linkedCase !== (xl.linked_case_id == null ? null : String(xl.linked_case_id)) || num(mm.log_id) !== num(xl.stamp_log_id) || num(st.log_id) !== num(xl.log_id)) {
+      return `Message #${id}'s case link or log entry changed since this card was prepared (someone linked it, or the mail sync logged it). Nothing was filed. Ask Casey to prepare it again.`;
+    }
+  }
+  return '';
+}
+
+// The file route, then — with the notice on and something landed — the
+// review notice for this card's batch (Comms' own order). The notice is
+// best-effort: the files are filed whatever it answers, so its failure rides
+// on the answer instead of failing the card.
+async function mailAttachmentsDispatch(request) {
+  const out = await api(request.path, request.body, request.method);
+  const batch = request.body.batch;
+  if (batch && out && out.status === 'success') {
+    const files = Array.isArray(out.files) ? out.files : [];
+    const landed = files.some((x) => x && (x.status === 'filed' || x.status === 'already_filed')) || !!(out.refiled && Number(out.refiled.moved) > 0);
+    if (landed) {
+      try { out.notice = await api('/api/mail/attachments/notice', { batch }, 'POST'); }
+      catch (e) { out.notice_error = (e && e.message) || 'the review notice could not be sent'; }
+    }
+  }
+  return out;
+}
+
+function mailAttachmentsResult(draft, result) {
+  const req = mailAttachmentsRequest(draft);
+  const id = mailMessageIdOf(draft);
+  if (!result || result.status !== 'success' || Number(result.id) !== id) throw new Error('The filing route did not confirm the email');
+  if (!result.case || String(result.case.case_id).toLowerCase() !== req.body.case_id.toLowerCase()) throw new Error('The filing route did not file to the reviewed case');
+  const files = Array.isArray(result.files) ? result.files : null;
+  if (!files) throw new Error('The filing route did not report the files');
+  const byPart = new Map(files.filter((x) => x && x.part != null).map((x) => [String(x.part), x]));
+  const missing = req.body.parts.filter((p) => !byPart.has(p));
+  if (missing.length) throw new Error(`The filing route did not report part ${missing.join(', ')}`);
+  if (req.body.move && !result.refiled) throw new Error('The filing route did not report the move');
+  if (req.body.link && result.linked !== true && !result.link_error) throw new Error('The filing route did not confirm the case link');
+  const picked = req.body.parts.map((p) => byPart.get(p));
+  const logId = Number(result.log_id);
+  draft.file_outcome = {
+    filed: picked.filter((x) => x.status === 'filed').length,
+    already: picked.filter((x) => x.status === 'already_filed').length,
+    failed: picked.filter((x) => x.status !== 'filed' && x.status !== 'already_filed').slice(0, 10)
+      .map((x) => ({ part: String(x.part), filename: String(x.filename || '').slice(0, 150), status: String(x.status || ''), error: x.error ? String(x.error).slice(0, 200) : null })),
+    moved: result.refiled ? Number(result.refiled.moved) || 0 : 0,
+    move_failed: result.refiled && Array.isArray(result.refiled.failed) ? result.refiled.failed.length : 0,
+    folder_path: typeof result.folder_path === 'string' ? result.folder_path.slice(0, 300) : null,
+    linked: result.linked === true, log_id: Number.isSafeInteger(logId) && logId > 0 ? logId : null,
+    link_error: result.link_error ? String(result.link_error).slice(0, 300) : null,
+    notice: result.notice ? { sent: result.notice.sent === true, reason: result.notice.reason ? String(result.notice.reason) : null } : null,
+    notice_error: result.notice_error ? String(result.notice_error).slice(0, 300) : null,
+  };
+  return { mail_message_id: id };
+}
+
+// The file route's 409 needs_confirmation is written before anything is
+// filed: the firm's confirm settings changed between the card and the click.
+// Its 400 / 404 / 422 are refusals by the shared 4xx rule (each is thrown
+// before the move or any filing); anything else stays ambiguous.
+function mailAttachmentsKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  if (e && e.status === 409 && e.body && Array.isArray(e.body.needs_confirmation) && e.body.needs_confirmation.length) {
+    const list = e.body.needs_confirmation;
+    const names = list.map((n) => `"${String(n.filename || `part ${n.part}`)}" (${n.why === 'size' ? 'a large file' : 'not a usual document type'})`).join(', ');
+    return { status: 'Refused — nothing written',
+      text: `Refused — nothing filed: the firm's confirm settings changed since this card was prepared, and ${names} now need${list.length === 1 ? 's' : ''} a second confirmation this card does not carry. Ask Casey to prepare it again.` };
+  }
+  return null;
+}
+
+function mailAttachmentsOutcomeText(draft) {
+  const o = draft.file_outcome || {};
+  const bits = [];
+  if (o.filed) bits.push(`${o.filed} file${o.filed === 1 ? '' : 's'} filed`);
+  if (o.already) bits.push(`${o.already} already there`);
+  if (o.moved) bits.push(`${o.moved} moved in`);
+  if (o.folder_path) bits.push(`folder ${o.folder_path}`);
+  const problems = [];
+  for (const x of o.failed || []) problems.push(`"${x.filename}" ${x.status === 'in_progress' ? 'is being filed by someone else right now' : `failed (${x.error || 'error'})`}`);
+  if (o.move_failed) problems.push(`${o.move_failed} file(s) could not be moved`);
+  if (o.link_error) problems.push(`the email was NOT linked to the case (${o.link_error}) — link it from Comms`);
+  if (o.notice_error) problems.push(`the review notice could not be sent (${o.notice_error})`);
+  const linked = o.linked ? ` The email is linked to the case${o.log_id ? ` (log entry #${o.log_id})` : ''}.` : '';
+  const notice = o.notice ? (o.notice.sent ? ' The reviewer was sent the review notice.' : (o.notice.reason === 'no_reviewer' ? ' No review notice: no reviewer is set.' : '')) : '';
+  return { summary: bits.join(', '), problems, tail: `${linked}${notice}` };
+}
+
+function mailAttachmentsAppliedMessage(draft, payload, replayed) {
+  if (replayed) return `${mailAttachmentsLabel(draft)} had already been applied to message #${payload.mail_message_id}; nothing was filed a second time.`;
+  const t = mailAttachmentsOutcomeText(draft);
+  return `${mailAttachmentsLabel(draft)} applied to ${mailAttachmentsCaseLabel(draft)}: ${t.summary || 'done'}.${t.tail}${t.problems.length ? ` NOT DONE: ${t.problems.join('; ')}. Retry from Comms → File attachments (what landed shows as Filed).` : ''}`;
+}
+
 // Case folder relink (A11.1). Claim ONE Dropbox folder for ONE case through
 // the Documents relink panel's own confirm: POST /api/documents/relink
 // {case_id, folder_path}. The server proposed only a folder the case's
@@ -5486,11 +5734,39 @@ const ACTION_FAMILIES = [
     failure: 'The email could not be linked.',
     appliedCopy: (draft) => ({
       status: `Applied — email linked (log entry #${draft.result_mail_link_log_id})`,
-      warning: `Message #${(draft.message || {}).mail_message_id} is now linked to ${mailCaseLabel(draft)} through log entry #${draft.result_mail_link_log_id}, using your signed-in account. It shows on the case's Comms and Log tabs; Casey cannot move or unlink it.`,
+      warning: `Message #${(draft.message || {}).mail_message_id} is now linked to ${mailCaseLabel(draft)} through log entry #${draft.result_mail_link_log_id}, using your signed-in account. It shows on the case's Comms and Log tabs; a link card cannot move or unlink it.`,
       button: `Open ${mailEntity(draft).label}`,
     }),
     reviewWarning: 'Review the email, the case, the log entry it reuses or creates (a created entry copies the email\'s text into the case\'s log) and whether the sender is a contact on the case. Canceling writes nothing.',
     open: mailOpen,
+  },
+  {
+    // A13b: the receipt is the integer mail_message_id whose attachments were filed.
+    id: 'mail_attachments', kinds: MAIL_ATTACHMENTS_ACTION_KINDS, title: 'Email attachments filing', noun: 'attachment filing', errorNoun: 'attachment filing',
+    label: mailAttachmentsLabel, text: mailAttachmentsText, request: mailAttachmentsRequest, result: mailAttachmentsResult,
+    dispatch: mailAttachmentsDispatch,
+    idField: 'mail_message_id', appliedKey: 'result_mail_attachments_id',
+    // A confirmed part, a duplicate, a move out of another case, a typed folder
+    // that does not exist, a link that moves the email off another case, no
+    // case folder, a sender who is not on the case, a case the matcher disagrees with.
+    danger: (draft) => (draft.warnings || []).length > 0,
+    precheck: mailAttachmentsPrecheck,
+    knownOutcome: mailAttachmentsKnownOutcome,
+    refusalText: (detail) => `Refused — nothing filed (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `message #${payload.mail_message_id}`,
+    appliedMessage: mailAttachmentsAppliedMessage,
+    entity: (draft) => ({ kind: 'case', id: String((draft.case || {}).case_id || ''), label: mailAttachmentsCaseLabel(draft).replace(/^case /, '') }),
+    failure: 'The attachments could not be filed.',
+    appliedCopy: (draft) => {
+      const t = mailAttachmentsOutcomeText(draft);
+      return {
+        status: `${t.problems.length ? 'Applied with problems' : 'Applied'} — attachments filed to ${mailAttachmentsCaseLabel(draft)}`,
+        warning: `${t.summary ? `${t.summary[0].toUpperCase()}${t.summary.slice(1)}, using your signed-in account.` : 'Filed using your signed-in account.'}${t.tail}${t.problems.length ? ` Not done: ${t.problems.join('; ')} — retry from Comms → File attachments.` : ''} A wrong filing is fixed by moving the files in Dropbox.`,
+        button: `Open ${mailAttachmentsCaseLabel(draft).replace(/^case /, '')}`,
+      };
+    },
+    reviewWarning: 'Review the email, the case, every file (any marked large, unusual or a duplicate above all), the folder, what moves, the case link and the review notice. The files land in Dropbox at once; a wrong filing is fixed by moving them there. Canceling files nothing.',
+    open: (draft) => openEntity('case', String((draft.case || {}).case_id || ''), mailAttachmentsCaseLabel(draft).replace(/^case /, '')),
   },
   {
     id: 'job', kinds: JOB_ACTION_KINDS, title: 'Safe code job', noun: 'scheduled job', errorNoun: 'job action',

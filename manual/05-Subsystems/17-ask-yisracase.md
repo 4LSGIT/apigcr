@@ -1033,13 +1033,72 @@ subject words, a day — and works only on a message that search found.
     when you ask (a separate card you confirm), never a "draft" that sends;
   - work on texts or calls: they have no read or case-link action;
   - move an email that is already on a case to another case, or unlink it —
-    change the case tag on the Comms tab;
+    change the case tag on the Comms tab (filing the email's attachments to
+    another case with Link on does move it — that card warns, below);
   - flag, archive or delete mail.
 - Casey refuses when you click if the email's read state, its log entry or the
   case's contacts changed since the card was prepared — ask again.
 
 The off switch for these cards is the `casey_mail_triage_enabled` setting (on
 unless set to 0).
+
+#### Filing an email's attachments to a case
+
+Casey can **file one email's attachments into a case's Dropbox folder** — the
+same thing Comms' **File to case…** dialog does, from any mailbox you can read,
+one email per card ("file the pay stubs Dana emailed this morning to her
+case"). Casey finds the email first, then reads its attachments the way the
+dialog previews them, and proposes a card you confirm.
+
+- **The case is yours to choose.** When Comms would suggest a case (the one
+  case the sender's email matches, or a client whose name is in the subject),
+  Casey says it is a suggestion; the card files only to the case you named or
+  agreed to. If the case matcher places the email in a different case, the
+  card warns you.
+- **Which files.** The card lists each attachment it files (name and size) and
+  the ones it leaves on the email. It never files a blocked type (programs,
+  scripts and the like — the firm's `email_attachments_blocked_ext` list), an
+  image inside the email (a signature or logo), a file too large to file from
+  here, or a file already filed — Casey says why. A file outside the usual
+  document types, or a large one, needs a **second confirmation** (the firm's
+  `email_attachments_confirm_ext` / `email_attachments_confirm_mb` settings):
+  Casey includes it only when you asked for that file, and the card marks it
+  as a warning. A **duplicate** (the same name and size as a file already in
+  the case) is filed only when you ask for it, and the card warns.
+- **Where it lands.** By default `Client Uploads/Emailed YYMMDD` in the case's
+  Dropbox folder, named for the email's date — the card shows the actual name.
+  You can name another folder inside the case folder; it is used **exactly as
+  written** (the firm's folder names often start with spaces), and the card
+  says whether it exists — a folder that does not exist yet is created, with a
+  warning (and the nearest real name, when yours differs only by spaces or
+  capitals). A case with no Dropbox folder linked gets one created first (with
+  a staff task), and the card warns.
+- **What docs@ already filed.** When the email's files were already filed to
+  the unsorted uploads folder, the card moves them into the case too (as the
+  dialog does). Files the email filed on **another case** move only when you
+  ask, with a warning naming that case.
+- **Link to the case** is on by default, as in the dialog: the email goes on
+  the case's log (the card says whether it reuses a log entry or creates one —
+  the email's text then becomes readable by anyone who reads the case), and
+  the sender is compared with the case's contacts. An email already linked to
+  **another** case is moved to this one — the card warns. When the link cannot
+  be made yet (an email that arrived minutes ago), Casey says so; ask it to
+  file without linking and link it from Comms later.
+- **The review notice** is on by default: after filing, the reviewer (the
+  `email_attachments_reviewer` setting) is emailed one notice listing what
+  landed — not when you are the reviewer, and not when none is set.
+- **After you apply,** the chat says what was filed, what was already there,
+  what moved, whether the email was linked and whether the notice went out. A
+  file that failed or a link that could not be made is said plainly ("Applied
+  with problems") — retry from Comms; what landed shows as Filed.
+- Casey files **one email per card**; to file several at once, use Comms'
+  Select mode. It refuses when you click if an attachment was filed meanwhile,
+  became a duplicate or changed its blocked / confirm verdict, if what the
+  email filed elsewhere, the reviewer, the case's Dropbox link or the email's
+  case link changed since the card was prepared — ask again.
+
+The off switch for this card is the `casey_mail_attachments_enabled` setting
+(on unless set to 0).
 
 ### Sending a text or email
 

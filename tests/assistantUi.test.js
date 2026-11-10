@@ -98,6 +98,10 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'formDraftPrecheck', 'formDraftResult', 'formLinkRequest', 'formLinkPrecheck', 'formLinkResult', 'formLinkKnownOutcome', 'formEntity', 'formOpen',
   'mailLabel', 'mailCaseLabel', 'mailMessageLine', 'mailText', 'mailMessageIdOf', 'mailReadRequest', 'mailReadMessage', 'mailReadPrecheck',
   'mailReadResult', 'mailLinkRequest', 'mailLinkPrecheck', 'mailLinkResult', 'mailLinkKnownOutcome', 'mailOpenInfo', 'mailEntity', 'mailOpen',
+  // A13b: the attachment filing family (tests/caseyMailAttachments.test.js drives it function by function).
+  'mailAttachmentsLabel', 'mailAttachmentsCaseLabel', 'mailAttachmentBytes', 'mailAttachmentVerdict', 'mailAttachmentMoveKey', 'mailAttachmentsText',
+  'mailAttachmentsBatch', 'mailAttachmentsRequest', 'mailAttachmentsPrecheck', 'mailAttachmentsDispatch', 'mailAttachmentsResult',
+  'mailAttachmentsKnownOutcome', 'mailAttachmentsOutcomeText', 'mailAttachmentsAppliedMessage',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
   'workflowDraftLabel', 'workflowSendLines', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
   'workflowStepActionLabel', 'workflowStepWorkflowLine', 'workflowStepInsertText', 'workflowStepEditValue',
@@ -146,7 +150,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CASE_FIELDS_DOCKET_SEARCH_MAX'),
     constSrc(html, 'CASE_FOLDER_ACTION_KINDS'), constSrc(html, 'CASE_FOLDER_PATH_MAX'), constSrc(html, 'CASE_FOLDER_CONTROL'),
     constSrc(html, 'FORM_DRAFT_ACTION_KINDS'), constSrc(html, 'FORM_LINK_ACTION_KINDS'), constSrc(html, 'FORM_DATA_MAX_BYTES'),
-    constSrc(html, 'MAIL_READ_ACTION_KINDS'), constSrc(html, 'MAIL_LINK_ACTION_KINDS'),
+    constSrc(html, 'MAIL_READ_ACTION_KINDS'), constSrc(html, 'MAIL_LINK_ACTION_KINDS'), constSrc(html, 'MAIL_ATTACHMENTS_ACTION_KINDS'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
     constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEQUENCE_ENROLL_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
@@ -5080,6 +5084,85 @@ describe('A13 mail cards (mail.read / mail.case_link)', () => {
   test('an email entity opens a where-to-find-it note, never a URL', () => {
     expect(html).toContain("else if (kind === 'mail') mailOpenInfo(label);");
     expect(html).toContain("mail: 'fa-envelope'");
+  });
+});
+
+// A13b: the attachment filing family through the ONE shared engine (its
+// functions are driven one by one in tests/caseyMailAttachments.test.js).
+describe('A13b attachment filing card (mail.attachments.file)', () => {
+  const CASE_ID = '7KQ2M9XA';
+  const JUNK = { ids: [1, 2], all: true, batch: 'model-chosen', rename: 'x.pdf' };
+  const parts = () => [{ part: '2', filename: 'stub.pdf', kind: 'file', reason: null, confirm: null, filed: null, duplicate: null }];
+  const fileMsg = (over = {}) => ({ action_draft: {
+    draft_id: 'bebebebe-1b2c-4d3e-8f40-123456789abc', kind: 'mail.attachments.file.v1', received_at: Date.now(), ...JUNK, status: 'draft',
+    message: { mail_message_id: 88123, mailbox_id: 3, from: 'Dana Debtor <dana@example.com>', subject: 'Pay stubs', date: '2026-10-30T15:04:00.000Z' },
+    case: { case_id: CASE_ID, case_number: '25-12345', case_type: 'Bankruptcy', label: 'case 25-12345', folder_linked: true },
+    files: [{ part: '2', filename: 'stub.pdf', bytes: 2960, optional: false, confirm: null, duplicate: false }],
+    parts: ['2'], confirm: [], move: null, folder: null, folder_card: { path: 'Client Uploads/Emailed 261030', default: true, exists: null, note: null },
+    link: false, link_card: null, notice: { requested: true, send: true, reviewer: { user_id: 5, name: 'Shana', is_you: false } },
+    effects: ['Files 1 attachment of message #88123'], warnings: [],
+    expected: { message: { mailbox_id: 3, from: 'Dana Debtor <dana@example.com>', subject: 'Pay stubs' }, parts: ['2|file||||'], move: null, reviewer_id: 5, case_folder: true, link: null },
+    evidence: [], ...over } });
+  function runFile(message, { write, confirm = true } = {}) {
+    const calls = []; const ledger = [];
+    const api = jest.fn(async (path, body, method) => {
+      calls.push([method, path]);
+      if (path === `/api/cases/${CASE_ID}`) return { case: { case_id: CASE_ID, case_dropbox: 'https://dbx/case' } };
+      if (path === '/api/mail/attachments/preview') return { status: 'success', messages: [{ id: 88123, mailbox_id: 3, from: 'Dana Debtor <dana@example.com>', subject: 'Pay stubs', parts: parts(), move: null }], reviewer: { user_id: 5, name: 'Shana', is_you: false } };
+      if (path === '/api/mail/attachments/notice') return { status: 'success', sent: true, notices: 1 };
+      return write(path, body, method);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a13b' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) } };
+    const history = []; const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ api, calls, ledger, P, history, openEntity, sandbox }));
+  }
+  const filed = async () => ({ status: 'success', id: 88123, case: { case_id: CASE_ID }, files: [{ part: '2', status: 'filed', filename: 'stub.pdf' }],
+    refiled: null, linked: false, log_id: null, link_error: null, folder_path: '/cases/x/Client Uploads/Emailed 261030' });
+
+  test('re-reads the case and the preview; ONE file POST of exactly the card (no junk); the notice for its batch; the integer receipt; opens the case', async () => {
+    const m = fileMsg();
+    const { api, calls, ledger, P, history, openEntity, sandbox } = await runFile(m, { write: filed });
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('mail_attachments');
+    expect(calls).toEqual([['GET', `/api/cases/${CASE_ID}`], ['POST', '/api/mail/attachments/preview'], ['POST', '/api/mail/messages/88123/attachments/file'], ['POST', '/api/mail/attachments/notice']]);
+    const fileCall = api.mock.calls.find((c) => c[0].endsWith('/attachments/file'));
+    expect(fileCall[1]).toEqual({ case_id: CASE_ID, parts: ['2'], confirm: [], move: false, link: false, batch: 'cybebebebe1b2c4d3e8f4012345678' });
+    expect(api.mock.calls.find((c) => c[0].endsWith('/notice'))[1]).toEqual({ batch: 'cybebebebe1b2c4d3e8f4012345678' });
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a13b', result: { mail_message_id: 88123 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_mail_attachments_id: 88123 });
+    expect(history[0].text).toBe('File email attachments applied to case 25-12345: 1 file filed, folder /cases/x/Client Uploads/Emailed 261030. The reviewer was sent the review notice.');
+    expect(history[0].entities).toEqual([{ kind: 'case', id: CASE_ID, label: '25-12345' }]);
+    expect(openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345');
+    expect(P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'question', confirmButtonText: 'File email attachments' });
+  });
+
+  test('a warning danger-styles the review; a 409 needs_confirmation is a refusal, a 500 stays ambiguous', async () => {
+    const m = fileMsg({ warnings: ['DUPLICATE: "stub.pdf" (part 2) …'] });
+    const r = await runFile(m, { write: async () => { throw Object.assign(new Error('needs'), { status: 409, body: { needs_confirmation: [{ part: '2', filename: 'stub.pdf', why: 'size' }] } }); } });
+    expect(r.P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning', focusCancel: true });
+    expect(m.action_draft.refusal_error).toMatch(/^Refused — nothing filed: the firm's confirm settings changed/);
+    expect(m.action_draft.ambiguous_error).toBeUndefined();
+    const m2 = fileMsg();
+    await runFile(m2, { write: async () => { throw Object.assign(new Error('Server error'), { status: 500 }); } });
+    expect(m2.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+  });
+
+  test('a reopened card restores from the ledger with the integer receipt; one family, one kind; no other attachment kind resolves', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    const m = fileMsg();
+    box.applyActionResults([m], [{ draft_id: m.action_draft.draft_id, kind: 'mail.attachments.file.v1', outcome: 'applied', result: { mail_message_id: 88123 } }]);
+    expect([m.action_draft.status, m.action_draft.result_mail_attachments_id]).toEqual(['applied', 88123]);
+    const host = dom.window.document.createElement('div');
+    box.hydrateActionDraft(box.actionFamily(m.action_draft), host, m, m.action_draft);
+    expect(host.querySelector('.action-draft-status').textContent).toBe('Applied — attachments filed to case 25-12345');
+    expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open 25-12345', 'Copy details']);
+    const f = box.actionFamily({ kind: 'mail.attachments.file.v1' });
+    expect([[...f.kinds], f.idField, f.appliedKey, !!f.stringReceipt]).toEqual([['mail.attachments.file.v1'], 'mail_message_id', 'result_mail_attachments_id', false]);
+    for (const kind of ['mail.attachments.bulk.v1', 'mail.attachments.file.v2', 'mail.attachments.delete.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    dom.window.close();
   });
 });
 

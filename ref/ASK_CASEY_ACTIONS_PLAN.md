@@ -12,7 +12,8 @@ other case field, 2026-11-09; the docket's replace / clear, A7e), A7c (case dock
 advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer) + A9.4 (requirement override set / clear), A10 (checklists and items), A11 (documents —
 update and link), A11.1 (a case's Dropbox folder — candidates-only relink),
 A12 (form drafts and submission links), A13 (mail triage —
-read state and case link; no drafts exist, no SMS triage), A14 (direct email /
+read state and case link; no drafts exist, no SMS triage), A13b (one email's
+attachments filed to a case, the Comms File attachments route), A14 (direct email /
 SMS send), A16 (reports), A17.0–A17.4, A17.6, A17.7 + A17.7b (workflows — explain,
 preview, draft, step, publish, start with an optional reviewed input), A18.2, A18.3, A18.4a/b/c/d (sequences — step,
 publish, enroll with an optional reviewed trigger_data, appointment- or e-sign-scoped), A19.0/A19.1 (inbound hooks), A20.0–A20.3 (email and phone
@@ -2095,8 +2096,117 @@ DELETE `/api/mail/messages/:id/read`) and `mail.case_link.v1` (POST
   `tests/assistantUi.test.js`, `tests/ycSync.test.js`.
 
 **Deferred** (`ref/plans.md`): bulk read, SMS / call triage (no route),
-drafts (none exist), moving a message to another case, unlinking, flags
-(flagged / answered), archive, reading an HTML-only body.
+drafts (none exist), moving a message to another case on a link card (the
+A13b filing card's Link does move one, disclosed as a danger line), unlinking,
+flags (flagged / answered), archive, reading an HTML-only body.
+
+#### A13b: File an email's attachments to a case — shipped 2026-11-10
+
+One kind, `mail.attachments.file.v1` {mail_message_id, case_id, parts, confirm?,
+move?, link?, folder?, notify?} → ONE `POST
+/api/mail/messages/:id/attachments/file`, the Comms "File attachments"
+dialog's own route (`emailAttachmentCommsService.fileOne`;
+`ref/EMAIL_ATTACHMENTS_DESIGN.md` §9). The route is the whole engine: move
+(when asked) → file the picks through the docs@ filing engine → link. Staff
+JWT only (`requireJwt` — an API key is 403); its authority is READ access on
+the email (`mailReadService.loadVisible` — a grant, SU, the attorney read
+bypass, an alias slice); an unreadable email is a 404, never an oracle.
+
+**The read.** `mail.attachments.preview` {mail_message_id, case_id?} →
+`emailAttachmentCommsService.preview` for that ONE message, on the app pool,
+as the asking user, audited like the other mail reads (`admin_audit_log` tool
+`mail_read`, action `assistant_attachments_preview`, message ids only). Rows:
+a head (`attachments_preview`: the message, the case asked for or the ONE case
+the matcher places it in — `case_source` asked / suggested — the matcher's
+verdict, the cases named in the subject, what the email has filed elsewhere and
+the dialog's default move tick, the review-notice recipient with `is_you`, the
+confirm policy), one `attachment` row per part (≤ 60: part id, file name, size
+estimate, class file / optional / skip with `skip_reason`, `needs_confirm`
+type / size, where it is filed, a duplicate, the dialog's default tick) and the
+`case_candidate` rows (suggestions only, `why` match / subject_name). An
+unreadable message, an unknown case (`asked_case_id` — never a citable
+`case_id`) and a pruned copy are `not_found` rows.
+
+**Evidence.** The message's row from a `mail.search` / `mail.message` read
+(A13's rule), a `mail.attachments.preview` row of THAT message (head or
+attachment row), and a row carrying the exact case_id (a case read, or the
+preview row naming it). The normalizer re-runs the preview itself for the one
+message and the card's case — it never trusts the evidence's copy.
+
+**Refused by name**, before anything is read: bulk (`message_ids`, `all`,
+`ids`, a list as `mail_message_id` — one card per email, A13's
+`MAIL_BULK_KEY`; Comms' Select mode files many), another mail operation, any
+other field (the notice `batch` is the browser's), a malformed part list or
+boolean, and a folder the route's own `exactFolder` refuses (its words: `.` /
+`..`, `\ : * ? " < > |`, control characters, a blank name, a name ending in a
+dot or space, > 6 levels, > 120 characters a name). After the preview: a part
+not on the email; a skip-class part (`NEVER FILED` — an image inside the
+email, too large, a blocked type, no usable type); a part already filed to
+this case (nothing to do), filed elsewhere (never twice — `move` carries it)
+or being filed; a part whose `needs_confirm` is set but is not in `confirm`
+(`NEEDS A SECOND CONFIRMATION`, naming each file and why — the route would
+409; Casey never adds a confirmation itself); a `confirm` entry for a part not
+on the card or needing none; `move: true` with nothing filed elsewhere; nothing
+to file; with Link on, the case-link route's own refusals (the sync still
+emitting, the store-only grace, no usable address, a dead stamped log entry —
+`LINK REFUSED`, offering `link: false`).
+
+**Disclosed.** The case — the matcher's own case, a subject-name suggestion,
+or none — and `NOT THE MATCHED CASE` (danger) when the matcher places the
+email in another case; each file (name, part, size); where it lands (the
+default `Client Uploads/Emailed YYMMDD` by its real name — the email's
+firm-local date, `renderFolder` — or a typed folder taken exactly, checked
+against `caseFolders`: exists, exists in another letter case, `NEW FOLDER`
+(danger, naming a near miss that differs only in spaces or case), or unknown
+when Dropbox did not answer / the listing is cut); `NO CASE FOLDER` (danger:
+the ladder auto-creates one with a task, or bins); an optional part (unticked
+in Comms); each confirmed part as a danger line ("… needs a second
+confirmation, and this card carries it"); a `DUPLICATE` (danger); the parts
+left on the email and those never filed; the move (default from the preview:
+out of Unsorted on, out of another case off — `MOVES FILES OUT OF ANOTHER
+CASE` danger when asked); the registry (one record per attachment, staff-only
+documents, filed by the user); the review notice (sent to the reviewer, none
+when the user is the reviewer, no reviewer set, or `notify: false`); the case
+link through A13's `mailLinkPrediction` in filing mode (create / reuse /
+"already linked" no-op, the identity check, and `MOVES THE EMAIL OFF ANOTHER
+CASE` danger — the route's `setLogAbout` overwrites, which the A13 card
+refuses); the trigger rules listening for `document.created` /
+`document.updated` / `document.linked` (listed, not run: the rows do not exist
+yet).
+
+**Browser** (family `mail_attachments`, danger = any warning). The request
+sends `move` and `link` as explicit booleans (the route reads an absent one as
+false), the folder exactly, and — only when the notice goes out — `batch` =
+`cy` + the draft id (≤ 30, the route's `BATCH_RE`). The precheck re-reads GET
+`/api/cases/:id` (the case's Dropbox link), POST
+`/api/mail/attachments/preview` (the message, each card part's verdict —
+class, reason, confirm, filed, duplicate — the move, the reviewer) and, when it
+links, GET `/api/mail/messages/:id` (stamp, resolved log entry, linked case),
+refusing on any difference before the claim. The dispatch files, then sends
+`POST /api/mail/attachments/notice {batch}` when something landed (Comms'
+order); a notice failure rides on the answer, never fails the card. The result
+requires every card part in `files[]`, the reviewed case, `refiled` when it
+moves and `linked` or a `link_error` when it links; a failed file and a
+`link_error` are "Applied with problems", never applied-clean. A 409
+`needs_confirmation` at the click is a refusal naming the files; 400 / 404 /
+422 refuse by the shared rule; a 5xx stays ambiguous. No Idempotency-Key: the
+filing registry makes every part idempotent, and the ledger's one claim per
+draft stands. Receipt: the integer `mail_message_id`. Sync: the route is on
+`public/js/yc-sync.js` already (`doclink:case:<id>`; linked: `mail:<id>` +
+`comms:case:<id>`) — nothing added.
+
+Off switch `casey_mail_attachments_enabled` (on unless '0', casey section,
+sort 67; the read stays). Tests: `tests/caseyMailAttachments.test.js` (the
+read, the normalizer and the browser, mocked services), gated
+`tests/caseyMailAttachments.mysql.test.js` (the real routes and services: the
+card's verdicts = the preview route's, the omitted confirmation refused by the
+card AND 409'd, a blocked part refused AND 422'd, the file landing with its
+registry rows, link log row, notice batch and document events, the precheck
+after a policy change, access, the Unsorted move, the predicted link refusal =
+the route's link_error, a leading-space folder, a duplicate),
+`tests/assistantUi.test.js`, `tests/caseyActionPermissions.test.js` (79 kinds
+/ 67 mounts; the API key 403 and the no-grant 404 on the file and preview
+routes), `tests/assistantPromptKinds.test.js`, `tests/automationRead.test.js`.
 
 #### A14: Outbound email and SMS — SHIPPED 2026-10-27 (direct send, ruling 15)
 

@@ -24,6 +24,26 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey's attachment filing card (A13b, 11-10):** kind
+  `mail.attachments.file.v1` {mail_message_id, case_id, parts, confirm?, move?,
+  link?, folder?, notify?} → ONE `POST /api/mail/messages/:id/attachments/file`
+  (Comms' File attachments route, `emailAttachmentCommsService.fileOne`; staff
+  JWT, read access on the email), after the typed read `mail.attachments.preview`
+  {mail_message_id, case_id?} (the dialog's preview for one email, as the user —
+  evidence must cite it, the mail row and the case row). Invariants:
+  `normalizeMailAttachmentsFile` re-runs the preview itself; it refuses by name
+  bulk, a skip-class part, a part already filed (move carries those), and a
+  `needs_confirm` part missing from `confirm` — it never adds a confirmation (the
+  route's 409 is the backstop); the case is never the preview's suggestion unless
+  named; a typed folder goes through the route's own `exactFolder` (leading
+  spaces kept). Link rides A13's `mailLinkPrediction` in filing mode: an email on
+  another case is a danger line (fileOne's caseLink MOVES it — the A13 card still
+  refuses that). The browser sends `move` / `link` as explicit booleans (absent =
+  false in the route), the notice batch (`cy` + draft id) only when the notice goes
+  out, then `POST /api/mail/attachments/notice` once something landed; a failed
+  file or `link_error` is "Applied with problems". Receipt `mail_message_id`; switch
+  `casey_mail_attachments_enabled`; tests `tests/caseyMailAttachments{,.mysql}.test.js`;
+  plan ASK_CASEY_ACTIONS_PLAN A13b.
 - **Casey's requirement override cards (A9.4, 11-10):** kinds
   `case.requirement.override.v1` {case_id, requirement (key or label), status
   'na' | 'done', note (REQUIRED, one line, ≤255 code points AND UTF-16 units —

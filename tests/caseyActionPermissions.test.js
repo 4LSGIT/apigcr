@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 78 shipped kinds:
+ * These tests ask that claim two questions for all 79 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 78 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 79 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -26,7 +26,7 @@
  *     builder never sends (code_mode pinned 'safe'), so for this kind's
  *     actual request the route is as capability-free as the rest — pinned by
  *     its own test below. The comms hub kinds are the other exception: the
- *     A14 sends and the A13 mail triage routes add requireJwt (a staff JWT
+ *     A14 sends and the A13 / A13b mail routes add requireJwt (a staff JWT
  *     only) and their authority is the caller's per-channel grant (send /
  *     mailbox read), resolved in the service — each pinned below. The
  *     schema has no firm_id/tenant_id column at all (0 occurrences in
@@ -168,6 +168,8 @@ const KINDS = [
   // card sends DELETE for "unread" on the same path — pinned below).
   { kind: 'mail.read.v1', method: 'POST', path: '/api/mail/messages/1/read' },
   { kind: 'mail.case_link.v1', method: 'POST', path: '/api/mail/messages/1/case-link' },
+  // A13b: the Comms File attachments dialog's own route (one email per request).
+  { kind: 'mail.attachments.file.v1', method: 'POST', path: '/api/mail/messages/1/attachments/file' },
   // A16: the Reports editor's own create route.
   { kind: 'report.draft.v1', method: 'POST', path: '/api/reports' },
   // A20.2 / A20.3: the ingest rule editor's own routes (email shown; the
@@ -263,19 +265,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 78 kinds (no database)
+// SECTION 1 — the route-level gate, for all 79 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 78 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 79 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 78 kinds cover 66 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(78);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(66);
+  test('the 79 kinds cover 67 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(79);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(67);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -283,7 +285,7 @@ describe('P2 — what the canonical write route gates on (all 78 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 78', async () => {
+  test('no token: every kind is 401 — authentication is required for all 79', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -589,6 +591,41 @@ describe('P2 — what the canonical write route gates on (all 78 shipped kinds)'
         expect({ roles: roles.join(',') || 'none', method, p, status: res.status, message: res.body.message })
           .toEqual({ roles: roles.join(',') || 'none', method, p, status: 404, message: 'Message not found' });
       }
+    }
+    expect(writes).toEqual([]);
+  });
+
+  // A13b: the attachment filing route — and the two reads the card and its
+  // click-time precheck use (the preview, the case folder listing) and the
+  // notice the browser sends after it — sit behind the same human-only guard:
+  // an x-api-key caller (no person) is 403 before the service is asked, and a
+  // roleless staff token with no read grant on the message's mailbox gets 404
+  // 'Message not found' (no existence oracle) — nothing is filed or claimed.
+  test('mail.attachments.file.v1: an API key is refused (403); no role gate; the mailbox read grant is the authority (404 without it)', async () => {
+    const src = read('routes/api.mail.js');
+    for (const mount of ["router.post('/api/mail/messages/:id/attachments/file', ...guard", "router.post('/api/mail/attachments/preview', ...guard",
+      "router.post('/api/mail/attachments/folders', ...guard", "router.post('/api/mail/attachments/notice', ...guard"]) expect(src).toContain(mount);
+    const oldKey = process.env.INTERNAL_API_KEY;
+    process.env.INTERNAL_API_KEY = 'yci_casey_p2_internal_test'; // secret-scan: allow
+    const writes = [];
+    const db = { query: async (sql) => { if (!/^\s*SELECT/i.test(sql) && !/INSERT INTO jwt_api_audit_log/.test(sql)) writes.push(sql); return [[], []]; } };
+    try {
+      const a = appWith(db);
+      for (const [p, body] of [['/api/mail/messages/1/attachments/file', { case_id: 'ABC', parts: ['2'], link: true }],
+        ['/api/mail/attachments/preview', { message_ids: [1], case_id: 'ABC' }], ['/api/mail/attachments/notice', { batch: 'abcdefgh12' }]]) {
+        const key = await call(a, { method: 'POST', path: p }, { 'x-api-key': process.env.INTERNAL_API_KEY }, body);
+        expect({ p, status: key.status, message: key.body.message }).toEqual({ p, status: 403, message: 'Mail routes require a signed-in user' });
+      }
+      for (const roles of [['staff'], [], ['attorney']]) {
+        for (const [p, body] of [['/api/mail/messages/1/attachments/file', { case_id: 'ABC', parts: ['2'], link: true }],
+          ['/api/mail/attachments/preview', { message_ids: [1], case_id: 'ABC' }]]) {
+          const res = await call(a, { method: 'POST', path: p }, bearer(token({ roles })), body);
+          expect({ roles: roles.join(',') || 'none', p, status: res.status, message: res.body.message })
+            .toEqual({ roles: roles.join(',') || 'none', p, status: 404, message: 'Message not found' });
+        }
+      }
+    } finally {
+      if (oldKey === undefined) delete process.env.INTERNAL_API_KEY; else process.env.INTERNAL_API_KEY = oldKey;
     }
     expect(writes).toEqual([]);
   });
