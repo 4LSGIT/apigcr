@@ -7,14 +7,14 @@
  * form cards take appointment records:
  *   form.draft.delete.v1 → DELETE /api/forms/draft?form_key&link_type&link_id (the draft banner's Discard)
  *   form.pdf.file.v1     → POST   /api/forms/submissions/:id/pdf/file {filename?} (the Form Inbox's File)
- * No submit kind: the form page's Submit is a seven-call browser chain and POST
- * /api/forms/submit alone patches nothing, starts nothing and leaves the draft
- * — a named deferral, refused by name on every form card.
+ * Submitting a stored draft is A12.3's own card (form.submit.v1 —
+ * tests/caseyFormSubmit.test.js); a submit-shaped key on these cards is
+ * refused by name, pointing at it.
  *
  * The contract pinned here:
  *   1. the casey_forms_enabled switch covers the new kinds; the by-name and
- *      unknown-key refusals (and the submit deferral sentence) run before
- *      anything is read;
+ *      unknown-key refusals (the other-operations sentence names every form
+ *      card, the submit card included) run before anything is read;
  *   2. the discard: the DRAFT row and its record cited; a submitted row, a row
  *      with no record and a gone record refused; every answer listed (template
  *      labels, off-form keys, no template, a non-object payload); NO UNDO
@@ -163,19 +163,19 @@ describe('the per-family switch and the by-name refusals', () => {
     await expect(run(pdf())).resolves.toMatchObject({ kind: 'form.pdf.file.v1', status: 'draft' });
   });
 
-  test('the route-owned columns, other operations (the submit deferral sentence) and unknown keys, before any read', async () => {
+  test('the route-owned columns, other operations (the sentence names the submit card) and unknown keys, before any read', async () => {
     await refuse(discard({ status: 'draft' }), /^RESERVED FIELDS refused \(status\): a discard card names the draft row by submission_id/);
     await refuse(pdf({ version: 3 }), /^RESERVED FIELDS refused \(version\): a PDF card names the submission by submission_id/);
     for (const card of [discard({ submit: true }), pdf({ submit_form: true }), pdf({ delete: true })]) {
-      await refuse(card, /^OTHER FORM OPERATIONS refused \(\w+\): each form card does ONE thing .* Submitting a form is not available to Casey: there is no atomic route — the form page's Submit is a seven-call browser chain \(validate, PATCH the record, POST the submission, DELETE the draft, start up to 3 workflows, write the log\), and POST \/api\/forms\/submit alone patches nothing, starts nothing and leaves the draft\./);
+      await refuse(card, /^OTHER FORM OPERATIONS refused \(\w+\): each form card does ONE thing .* file ONE submission's PDF \(form\.pdf\.file\.v1\) or submit ONE stored draft \(form\.submit\.v1\)\. Editing \/ publishing \/ restoring a template/);
     }
     await refuse(pdf({ again: true }), /^A form pdf card carries unsupported fields: again — it takes submission_id and an optional filename and evidence only$/);
     await refuse(discard({ form_key: '341_notes', link_type: 'case', link_id: CASE_ID }), /^A form discard card carries unsupported fields: form_key, link_type, link_id — it takes submission_id \(the DRAFT row\) and evidence only$/);
     expect([calls.sql, calls.getSubmission, calls.latest]).toEqual([[], [], []]);
   });
 
-  test('there is no submit kind', async () => {
-    await refuse({ kind: 'form.submit.v1', submission_id: 4530, evidence: [] }, /^Action kind is unavailable$/);
+  test('the submit kind exists now (A12.3): it reaches its own normalizer', async () => {
+    await refuse({ kind: 'form.submit.v1', submission_id: 4530, evidence: [{ query_id: 'q2', row_number: 1 }] }, /^The submit evidence does not identify draft #4530/);
   });
 });
 
@@ -383,8 +383,8 @@ describe('appointment records on the A12 cards', () => {
 });
 
 describe('the ledger and the request detector', () => {
-  test('both receipt the reviewed form_submissions row; still no submit kind', () => {
-    expect([ledger.KINDS.get('form.draft.delete.v1'), ledger.KINDS.get('form.pdf.file.v1'), ledger.KINDS.has('form.submit.v1')]).toEqual(['submission_id', 'submission_id', false]);
+  test('both receipt the reviewed form_submissions row', () => {
+    expect([ledger.KINDS.get('form.draft.delete.v1'), ledger.KINDS.get('form.pdf.file.v1')]).toEqual(['submission_id', 'submission_id']);
   });
   test.each([
     'discard the draft of the 341 notes form for the Smith case',

@@ -78,6 +78,9 @@ const KINDS = new Map([
   // registry hiccups, so it is reported on the card, never the receipt).
   ['form.draft.delete.v1', 'submission_id'],
   ['form.pdf.file.v1', 'submission_id'],
+  // A12.3: the submit receipts the NEW submitted row the route recorded (it
+  // answers submission.id) — the reviewed draft row is deleted by the submit.
+  ['form.submit.v1', 'submission_id'],
   // A13: a read card receipts the message whose read state it set (the route
   // answers {id, unread}); a case link receipts the log row the route
   // bridged — reused or created — which it returns as log_id.

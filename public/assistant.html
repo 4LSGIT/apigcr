@@ -3441,12 +3441,30 @@ function caseDocketKnownOutcome(e) {
 //     on the draft for the applied copy; its temporary download link is never
 //     kept. Not announced on yc-sync (no matcher; the route's answer is the
 //     verdict). Both always danger. Receipt: the reviewed submission_id.
-// Submitting a form has no card (no atomic route — the form page's Submit is
-// a seven-call browser chain).
+// A12.3 adds the form page's Submit for a STORED draft:
+//   * form_submit: form.submit.v1 → POST /api/forms/submissions/submit-draft
+//     {submission_id, expected_updated_at} — the page's whole Save chain run
+//     server-side (formSubmitService). The server refused everything the route
+//     would refuse (every failing answer named) and disclosed the columns the
+//     patch writes, the workflows, the trigger rules, the draft consumed and
+//     the log entry. The click re-reads the record, GET /api/forms/latest (the
+//     draft's id + updated_at + data hash, and the latest submission's id),
+//     GET /api/form-templates/render/:form_key (the published version and a
+//     hash of its definition) and, when the form writes a record, that record
+//     (a hash of its row) — refusing on ANY difference before the claim — and
+//     sends the draft's updated_at, so the route's own 409 is the last line.
+//     Every 4xx the route answers is written before its first write (the 409s
+//     included: the stale draft, link type, form version, docket and contact
+//     conflicts — the contact writer's run inside its rolled-back
+//     transaction), so refusal409. A 400 naming fields names them. A 500 stays
+//     ambiguous (after the record write it names the columns written). The
+//     route announces itself on yc-sync (form:<type>:<id> + the record's
+//     changes). Receipt: the NEW submission's id. Always danger.
 const FORM_DRAFT_ACTION_KINDS = new Set(['form.draft.v1']);
 const FORM_LINK_ACTION_KINDS = new Set(['form.submission.link.v1']);
 const FORM_DISCARD_ACTION_KINDS = new Set(['form.draft.delete.v1']);
 const FORM_PDF_ACTION_KINDS = new Set(['form.pdf.file.v1']);
+const FORM_SUBMIT_ACTION_KINDS = new Set(['form.submit.v1']);
 // The route's verdict: placement values, and how many of its warnings the applied copy keeps.
 const FORM_PDF_PLACEMENTS = ['case', 'unsorted'];
 const FORM_PDF_WARNINGS_KEPT = 6;
@@ -3486,6 +3504,7 @@ function formLabel(draft) {
   }
   if (draft && draft.kind === 'form.draft.delete.v1') return 'Discard form draft';
   if (draft && draft.kind === 'form.pdf.file.v1') return 'File form PDF to Dropbox';
+  if (draft && draft.kind === 'form.submit.v1') return 'Submit form';
   return 'Save form draft';
 }
 
@@ -3512,6 +3531,34 @@ function formText(draft) {
     lines.push('Writes: the one draft row is deleted — no submission, no record field and no other form is touched.',
       'Stale check: if anyone saves, restores, submits or discards this draft before you apply, nothing is deleted.',
       'Notification: Casey sends nothing; discarding runs no trigger rule.');
+    return lines.join('\n');
+  }
+  if (draft.kind === 'form.submit.v1') {
+    const f = draft.form || {}; const dr = draft.draft || {}; const sub = draft.submitted; const pt = draft.patch; const au = draft.automation || {};
+    lines.push('Form submit proposal — not applied', `Action: ${formLabel(draft)}`,
+      `Form: "${formTitle(draft)}" (${f.form_key}, a ${f.link_type} form, form version ${Number(f.schema_version) || 1}, ${f.data_mode === 'snapshot' ? 'snapshot' : 'live'} mode)`,
+      `Record: ${formRecordLabel(draft)}`,
+      `Draft: #${dr.submission_id}, saved by ${dr.saved_by || 'someone'} at ${when(dr.updated_at)} — submitted, then deleted`,
+      `Becomes: version ${Number(draft.version_after) || 0} of "${formTitle(draft)}" on that record`,
+      sub ? `Latest submission until now: version ${sub.version} (#${sub.submission_id}, ${when(sub.updated_at)})` : 'Latest submission: none — this is the first',
+      `Answers in it: ${Number(draft.answers_total) || 0} (${Number(draft.answers_filled) || 0} filled in)`);
+    for (const a of draft.answers || []) lines.push(`Answer: ${a.label} (${a.key}): ${a.value}${a.off_form ? ' — not on the current form' : ''}`);
+    for (const ch of draft.changes || []) lines.push(`Differs from the form as loaded: ${ch.label} (${ch.key}): ${ch.before} → ${ch.after}`);
+    if (pt) {
+      for (const c of pt.columns || []) {
+        lines.push(`Writes on ${pt.label}: ${c.column} ${c.before} → ${c.after}`);
+        for (const r of c.readers || []) lines.push(`Reads ${c.column}: ${r}`);
+      }
+    } else lines.push('Writes on the record: nothing');
+    for (const w of draft.workflows || []) lines.push(`Workflow: #${w.id} "${w.name || 'unknown'}" — ${w.will_start ? 'starts' : `WILL NOT START (${w.why})`}`);
+    if (!(draft.workflows || []).length) lines.push('Workflows: none');
+    for (const l of au.lines || []) lines.push(`Automation: ${l}`);
+    if (!(au.lines || []).length) lines.push(`Automation: no active rule on ${(au.events || []).join(' / ') || 'its events'} would act (${Number(au.rules_checked) || 0} checked)`);
+    (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+    (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+    lines.push(`Writes: ${pt ? `the record's columns above first, then ` : ''}ONE submitted row (the draft's answers as stored), the draft's deletion, the workflow starts and one log entry — the post-submit steps are reported, never undone.`,
+      'Stale check: if the draft, the form, its latest submission or the record changes before you apply, nothing is submitted; the route re-checks the draft itself.',
+      'Notification: Casey sends nothing itself; the workflows and trigger rules above may.');
     return lines.join('\n');
   }
   if (draft.kind === 'form.pdf.file.v1') {
@@ -3813,6 +3860,123 @@ function formPdfAppliedMessage(draft, payload, replayed) {
   const o = draft.pdf_outcome || {};
   const notes = (o.warnings || []).length ? ` Notes: ${o.warnings.join('; ')}.` : '';
   return `${formLabel(draft)} applied to submission #${payload.submission_id}: filed as "${o.file_name || draft.file_name}" at ${o.path || '(unknown path)'} (${o.placement === 'case' ? 'the case folder' : 'the unsorted form-submissions folder'})${o.document_id ? `, document #${o.document_id}` : ', not yet in the document registry (the sync picks it up)'}.${notes}`;
+}
+
+// The stored DRAFT row the submit names, with the updated_at the card read
+// (the route's expected_updated_at precondition).
+function formSubmitRequest(draft) {
+  const d = draft.draft || {};
+  const id = Number(d.submission_id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('This card has no usable draft id.');
+  const formKey = typeof d.form_key === 'string' ? d.form_key : '';
+  if (!/^[A-Za-z0-9_-]{1,50}$/.test(formKey)) throw new Error('This card has no usable form.');
+  const linkId = typeof d.link_id === 'string' ? d.link_id : '';
+  formRecordPath(d.link_type, linkId);
+  const x = draft.expected || {};
+  if (Number(x.draft_id) !== id || typeof x.updated_at !== 'string' || Number.isNaN(new Date(x.updated_at).getTime())) throw new Error('This card has no usable stale check.');
+  return { path: '/api/forms/submissions/submit-draft', method: 'POST', body: { submission_id: id, expected_updated_at: x.updated_at } };
+}
+
+async function formSubmitPrecheck(draft) {
+  formSubmitRequest(draft); // a card that cannot be written is never read
+  const d = draft.draft; const x = draft.expected || {};
+  const where = `"${formTitle(draft)}" for ${formRecordLabel(draft)}`;
+  try { await api(formRecordPath(d.link_type, d.link_id), null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `${formRecordLabel(draft)} no longer exists. Nothing was submitted.`; throw e; }
+  const got = await api(`/api/forms/latest?form_key=${encodeURIComponent(d.form_key)}&link_type=${encodeURIComponent(d.link_type)}&link_id=${encodeURIComponent(d.link_id)}`, null, 'GET');
+  if (!got || got.status !== 'success' || !('draft' in got) || !('submitted' in got)) throw new Error('the form could not be read');
+  const now = got.draft;
+  if (!now) return `The draft of ${where} is gone — submitted or discarded since this card was prepared. Nothing was submitted.`;
+  let stored = now.data;
+  if (typeof stored === 'string') { try { stored = JSON.parse(stored); } catch (_) { stored = null; } }
+  if (Number(now.id) !== Number(x.draft_id) || formIso(now.updated_at) !== formIso(x.updated_at) || await formDataHash(stored) !== x.data_hash) {
+    return `The draft of ${where} changed since this card was prepared (someone saved it${now.user_name ? ` — last by ${now.user_name}` : ''}). Nothing was submitted; the card would have submitted answers you have not reviewed. Ask Casey to prepare it again.`;
+  }
+  const subNow = got.submitted ? Number(got.submitted.id) : null;
+  if ((x.submitted_id == null ? null : Number(x.submitted_id)) !== subNow) {
+    return `${where} was submitted since this card was prepared${got.submitted ? ` (now version ${got.submitted.version})` : ''}. Nothing was submitted — the version it becomes, and what the form compares the answers with, changed. Ask Casey to prepare it again.`;
+  }
+  let tpl;
+  try { tpl = await api(`/api/form-templates/render/${encodeURIComponent(d.form_key)}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `"${formTitle(draft)}" is no longer published. Nothing was submitted.`; throw e; }
+  if (!tpl || tpl.status !== 'success' || !tpl.definition || typeof tpl.definition !== 'object') throw new Error('the form could not be read');
+  if (Number(tpl.schema_version) !== Number(x.schema_version) || await formDataHash(tpl.definition) !== x.definition_hash) {
+    return `"${formTitle(draft)}" was published again since this card was prepared — the checks on its answers and the record columns it writes may differ. Nothing was submitted. Ask Casey to prepare it again.`;
+  }
+  const r = x.record;
+  if (r) {
+    let rec;
+    try { rec = await api(formRecordPath(r.type, String(r.id)), null, 'GET'); }
+    catch (e) { if (e && e.status === 404) return `The ${r.type} this form writes to (${r.type} ${r.id}) no longer exists. Nothing was submitted.`; throw e; }
+    const row = rec && rec[r.type === 'case' ? 'case' : 'contact'];
+    if (!row || typeof row !== 'object') throw new Error('the record could not be read');
+    if (await formDataHash(row) !== r.hash) {
+      return `${(draft.patch && draft.patch.label) || `${r.type} ${r.id}`} changed since this card was prepared — the columns the submit writes, and what it compares the answers with, may differ. Nothing was submitted. Ask Casey to prepare it again.`;
+    }
+  }
+  return '';
+}
+
+function formSubmitResult(draft, result) {
+  formSubmitRequest(draft);
+  const d = draft.draft;
+  const sub = result && result.submission;
+  const id = Number(sub && sub.id);
+  if (!result || result.status !== 'success' || !Number.isSafeInteger(id) || id < 1) throw new Error('The forms route did not confirm the submission');
+  const same = (a, c) => String(a == null ? '' : a).toLowerCase() === String(c == null ? '' : c).toLowerCase();
+  if (!same(result.form_key, d.form_key) || result.link_type !== d.link_type || !same(result.link_id, d.link_id)) throw new Error('The forms route did not confirm the reviewed form and record');
+  if (!Array.isArray(result.patched) || !Array.isArray(result.workflows)) throw new Error('The forms route did not report what it wrote');
+  const reviewed = ((draft.patch || {}).columns || []).map((c) => c.column);
+  const patched = result.patched.slice(0, 60).map((c) => String(c).slice(0, 64));
+  const logId = Number(result.log_id);
+  const clip = (v) => (v == null || v === '' ? null : String(v).slice(0, 300));
+  draft.submit_outcome = {
+    submission_id: id, version: Number(sub.version) || null,
+    patched, unreviewed: patched.filter((c) => !reviewed.includes(c)),
+    draft_deleted: result.draft_deleted === true, draft_delete_error: clip(result.draft_delete_error),
+    workflows: result.workflows.slice(0, 5).map((w) => ({ id: Number(w && w.id) || null, started: !!(w && w.started === true),
+      execution_id: Number.isSafeInteger(Number(w && w.execution_id)) && Number(w.execution_id) > 0 ? Number(w.execution_id) : null, error: clip(w && w.error) })),
+    log_id: Number.isSafeInteger(logId) && logId > 0 ? logId : null, log_error: clip(result.log_error),
+  };
+  return { submission_id: id };
+}
+
+// The route's 400 that names the failing answers (body.fields), written before
+// any write. Every other 4xx is a refusal by the shared rule (refusal409: the
+// route's 409s are all written before its first write); a 500 stays ambiguous.
+function formSubmitKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  if (e && e.status === 400 && e.body && Array.isArray(e.body.fields) && e.body.fields.length) {
+    const named = e.body.fields.slice(0, 10).map((f) => `"${String((f && (f.label || f.key)) || 'an answer')}" (${String(f && f.key)}): ${String((f && f.message) || 'invalid')}`).join('; ');
+    return { status: 'Refused — nothing written', text: `Refused — nothing written: the route refused the draft's answers — ${named}. Fill ${e.body.fields.length > 1 ? 'them' : 'it'} in on the form (or ask Casey for a draft card), then ask again.` };
+  }
+  return null;
+}
+
+function formSubmitOutcomeText(draft) {
+  const o = draft.submit_outcome || {};
+  const wfName = (id) => {
+    const w = (draft.workflows || []).find((x) => Number(x.id) === Number(id));
+    return `workflow #${id}${w && w.name ? ` "${w.name}"` : ''}`;
+  };
+  const bits = [`recorded as version ${o.version || '?'} (submission #${o.submission_id})`];
+  if ((o.patched || []).length) bits.push(`wrote ${o.patched.join(', ')} on ${(draft.patch && draft.patch.label) || 'the record'}`);
+  const started = (o.workflows || []).filter((w) => w.started);
+  if (started.length) bits.push(`started ${started.map((w) => `${wfName(w.id)}${w.execution_id ? ` (run #${w.execution_id})` : ''}`).join(', ')}`);
+  if (o.draft_deleted) bits.push('deleted the draft');
+  if (o.log_id) bits.push(`wrote log entry #${o.log_id}`);
+  const problems = [];
+  if ((o.unreviewed || []).length) problems.push(`the route also wrote ${o.unreviewed.join(', ')}, which this card did not show — check the record`);
+  for (const w of (o.workflows || []).filter((x) => !x.started)) problems.push(`${wfName(w.id)} did NOT start (${w.error || 'no reason given'}) — start it from its workflow page if it is needed`);
+  if (o.draft_delete_error) problems.push(`the draft was NOT deleted (${o.draft_delete_error}) — discard it on the form`);
+  if (o.log_error) problems.push(`the log entry was NOT written (${o.log_error})`);
+  return { summary: bits.join(', '), problems };
+}
+
+function formSubmitAppliedMessage(draft, payload, replayed) {
+  if (replayed) return `${formLabel(draft)} had already been applied (submission #${payload.submission_id}); nothing was submitted a second time.`;
+  const t = formSubmitOutcomeText(draft);
+  return `${formLabel(draft)} applied — "${formTitle(draft)}" for ${formRecordLabel(draft)}: ${t.summary}.${t.problems.length ? ` NOT DONE: ${t.problems.join('; ')}.` : ''}`;
 }
 
 // Mail triage (A13). Mark ONE email read or unread for the signed-in user, or
@@ -6439,6 +6603,35 @@ const ACTION_FAMILIES = [
       button: `Open ${formEntity(draft).label}`,
     }),
     reviewWarning: 'Review the submission, the folder and file name, and the copies already on file — every filing makes another copy in Dropbox. Nothing is sent. Canceling files nothing.',
+    open: formOpen,
+  },
+  {
+    // A12.3: the receipt is the integer id of the NEW submitted row (the
+    // reviewed draft row is deleted by the submit).
+    id: 'form_submit', kinds: FORM_SUBMIT_ACTION_KINDS, title: 'Form submit', noun: 'form submit', errorNoun: 'form submit',
+    label: formLabel, text: formText, request: formSubmitRequest, result: formSubmitResult,
+    idField: 'submission_id', appliedKey: 'result_form_submit_id',
+    // Always: a submission cannot be un-submitted, and the record write comes first.
+    danger: () => true,
+    precheck: formSubmitPrecheck,
+    knownOutcome: formSubmitKnownOutcome,
+    // Audited (routes/api.forms.js → formSubmitService): every 409 the route
+    // answers is thrown before its first write.
+    refusal409: true,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `submission #${payload.submission_id}`,
+    appliedMessage: formSubmitAppliedMessage,
+    entity: (draft) => formEntity(draft),
+    failure: 'The form could not be submitted.',
+    appliedCopy: (draft) => {
+      const t = formSubmitOutcomeText(draft);
+      return {
+        status: `${t.problems.length ? 'Applied with problems' : 'Applied'} — "${formTitle(draft)}" submitted (submission #${draft.result_form_submit_id})`,
+        warning: `${t.summary[0].toUpperCase()}${t.summary.slice(1)}, using your signed-in account.${t.problems.length ? ` Not done: ${t.problems.join('; ')}.` : ''} No screen un-submits a submission.`,
+        button: `Open ${formEntity(draft).label}`,
+      };
+    },
+    reviewWarning: 'Review the form, the record, every answer, the record columns it writes before and after, the workflows it starts and the trigger rules that run. The record is written first and a submission cannot be un-submitted. Canceling submits nothing.',
     open: formOpen,
   },
   {

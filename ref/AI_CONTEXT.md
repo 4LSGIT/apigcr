@@ -40,6 +40,22 @@ body. Governing migrations in `ref/migrations/`.*
   and `/api/contacts/{linkId}` load/patch targets (else 422). yc-sync announces
   `form:<type>:<id>` plus the record's `changes`. Manual: 02-YisraForms Parts 8,
   11. Tests: `formsSubmitDraft.test.js`, gated `formsSubmitDraft.mysql.test.js`.
+- **Casey's form submit card (A12.3, 11-11):** kind `form.submit.v1`
+  {submission_id = the DRAFT row} → that route with `expected_updated_at` = the
+  draft's updated_at the card read (`normalizeFormSubmit`; flag
+  `casey_forms_enabled`). Invariants: the card discloses the patch with the
+  route's OWN `resolvePatchTarget` / `resolveBase` / `computeDiffAndPatch` /
+  `wfListOf` (exported from formSubmitService for it — never a second copy);
+  it names EVERY failing answer by looping `validateValues` with the failing
+  declaration relaxed in a deep clone (the route stops at the first); it
+  refuses by name the route's 404 / 409 / 422s and the docket guard. The click
+  re-reads the record, GET `/api/forms/latest` (draft id + updated_at + data
+  hash, the latest submission's id), GET `/api/form-templates/render/:form_key`
+  (schema_version + definition hash) and the patch record (a hash of its row).
+  Every 4xx the route answers precedes its first write (`refusal409`); a 500
+  stays ambiguous. Receipt: the NEW submission id; family `form_submit`. Tests:
+  `caseyFormSubmit.test.js`, gated `caseyFormSubmit.mysql.test.js`; plan:
+  ASK_CASEY_ACTIONS_PLAN A12.3.
 - **Casey's attachment filing card (A13b, 11-10):** kind
   `mail.attachments.file.v1` {mail_message_id, case_id, parts, confirm?, move?,
   link?, folder?, notify?} → ONE `POST /api/mail/messages/:id/attachments/file`
@@ -1195,10 +1211,8 @@ body. Governing migrations in `ref/migrations/`.*
   bin with `_identityPrefix`); the draft render refusal is a 500 with an exact
   message before any upload; the verdict's `temp_link` is never kept. Both A12
   kinds take `link_type` 'appt' (record re-read GET `/api/appts/:id`; identity
-  = the appointment's client); no live template links to one (2026-11-11). NO
-  submit kind: the form page's Submit is a seven-call browser chain and POST
-  `/api/forms/submit` alone patches nothing, starts nothing and leaves the
-  draft — refused by name on every form card. Receipts: the reviewed
+  = the appointment's client); no live template links to one (2026-11-11).
+  Submitting a stored draft is A12.3's card (above). Receipts: the reviewed
   `submission_id`; families `form_discard` / `form_pdf`. Tests:
   `tests/caseyFormDiscardPdf.test.js`, gated
   `tests/caseyFormDiscardPdf.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A12.2.

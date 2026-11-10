@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 86 shipped kinds:
+ * These tests ask that claim two questions for all 87 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 86 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 87 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -26,8 +26,8 @@
  *     builder never sends (code_mode pinned 'safe'), so for this kind's
  *     actual request the route is as capability-free as the rest — pinned by
  *     its own test below. The comms hub kinds are the other exception: the
- *     A14 sends and the A13 / A13b mail routes add requireJwt (a staff JWT
- *     only) and their authority is the caller's per-channel grant (send /
+ *     A14 sends, the A13 / A13b mail routes and the A12.3 form submit add
+ *     requireJwt (a staff JWT only) and their authority is the caller's per-channel grant (send /
  *     mailbox read), resolved in the service — each pinned below. The
  *     schema has no firm_id/tenant_id column at all (0 occurrences in
  *     ref/database.sql), so "cross-firm" has no expression here; the
@@ -160,6 +160,8 @@ const KINDS = [
   // A12.2: the draft banner's Discard and the Form Inbox's File button.
   { kind: 'form.draft.delete.v1', method: 'DELETE', path: '/api/forms/draft' },
   { kind: 'form.pdf.file.v1', method: 'POST', path: '/api/forms/submissions/1/pdf/file' },
+  // A12.3: the form page's Submit, run server-side for a stored draft (a staff JWT only).
+  { kind: 'form.submit.v1', method: 'POST', path: '/api/forms/submissions/submit-draft' },
   { kind: 'job.code_safe.create.v1', method: 'POST', path: '/scheduled-jobs' },
   { kind: 'workflow.draft.v1', method: 'POST', path: '/workflows/bulk' },
   { kind: 'workflow.step_insert.v1', method: 'POST', path: '/workflows/1/steps' },
@@ -275,19 +277,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 86 kinds (no database)
+// SECTION 1 — the route-level gate, for all 87 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 86 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 87 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 86 kinds cover 74 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(86);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(74);
+  test('the 87 kinds cover 75 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(87);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(75);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -295,7 +297,7 @@ describe('P2 — what the canonical write route gates on (all 86 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 86', async () => {
+  test('no token: every kind is 401 — authentication is required for all 87', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -475,6 +477,35 @@ describe('P2 — what the canonical write route gates on (all 86 shipped kinds)'
         .toEqual({ roles: roles.join(',') || 'none', draft: 500, link: [404, 'Submission 1 not found'],
           discard: [400, 'Missing required query params: form_key, link_type, link_id'], pdf: [404, 'Submission 1 not found'] });
     }
+  });
+
+  // A12.3: the submit-draft route adds requireJwt to the file's jwtOrApiKey (a
+  // submission is written as a person: submitted_by, the log entry, the
+  // record's case.updated actor) and NO role or capability: an x-api-key
+  // caller is 403 before the service is asked, and a roleless staff token
+  // reaches formSubmitService (the stub db holds no draft → 'Draft 1 not
+  // found', 404), never 401/403 — nothing is written either way.
+  test('A12.3 submit route: an API key is refused (403); no role gate; a roleless staff token reaches the service', async () => {
+    const src = read('routes/api.forms.js');
+    expect(src).toContain("router.post('/api/forms/submissions/submit-draft', jwtOrApiKey, requireJwt, async");
+    const oldKey = process.env.INTERNAL_API_KEY;
+    process.env.INTERNAL_API_KEY = 'yci_casey_p2_internal_test'; // secret-scan: allow
+    const writes = [];
+    const db = { query: async (sql) => { if (!/^\s*SELECT/i.test(sql) && !/INSERT INTO jwt_api_audit_log/.test(sql)) writes.push(sql); return [[], []]; } };
+    const k = KINDS.find((x) => x.kind === 'form.submit.v1');
+    try {
+      const a = appWith(db);
+      const key = await call(a, k, { 'x-api-key': process.env.INTERNAL_API_KEY }, { submission_id: 1 });
+      expect([key.status, key.body.message]).toEqual([403, 'Submitting a draft requires a signed-in user']);
+      for (const roles of [['staff'], [], ['attorney']]) {
+        const res = await call(a, k, bearer(token({ roles })), { submission_id: 1 });
+        expect({ roles: roles.join(',') || 'none', status: res.status, message: res.body.message })
+          .toEqual({ roles: roles.join(',') || 'none', status: 404, message: 'Draft 1 not found' });
+      }
+    } finally {
+      if (oldKey === undefined) delete process.env.INTERNAL_API_KEY; else process.env.INTERNAL_API_KEY = oldKey;
+    }
+    expect(writes).toEqual([]);
   });
 
   // A7c: the docket route is jwtOrApiKey only (api.cases.js is one of the

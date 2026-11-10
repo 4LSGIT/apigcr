@@ -941,16 +941,25 @@ const CASE_DOCKET_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 // Appointment-linked forms: the builder, the renderer (appt_id) and the Form
 // Inbox's adopt dialog accept link_type 'appt', so both A12 kinds and the
 // discard take it (no live template links to one today, verified 2026-11-11).
-// NOT built: submitting a form — no atomic route: the form page's Submit is a
-// seven-call browser chain (validate, PATCH the record, POST submit, DELETE
-// the draft, start up to 3 workflows, log), and POST /api/forms/submit alone
-// patches nothing, starts nothing and leaves the draft (ref/ASK_CASEY_ACTIONS_PLAN A12.2).
+// A12.3 adds the form page's Submit, for a STORED draft:
+//   * form.submit.v1 → POST /api/forms/submissions/submit-draft
+//     {submission_id, expected_updated_at} (services/formSubmitService.js — the
+//     page's whole Save chain run server-side: validate, PATCH the record's
+//     apiColumn diff, record the submission, delete the draft, start the
+//     onSubmit workflows, write the log). The normalizer refuses by name what
+//     the route would refuse, naming EVERY failing answer (the route stops at
+//     the first), and discloses the record columns the patch writes — with the
+//     route's own target, baseline and diff (formSubmitService's exports) —
+//     the workflows, the trigger rules on form.submitted and on the record's
+//     .updated event, the draft consumed and the log entry. Real-engine twin:
+//     tests/caseyFormSubmit.mysql.test.js.
 // One per-family switch, casey_forms_enabled (on unless '0').
-const FORM_ACTION_KINDS = new Set(['form.draft.v1', 'form.submission.link.v1', 'form.draft.delete.v1', 'form.pdf.file.v1']);
+const FORM_ACTION_KINDS = new Set(['form.draft.v1', 'form.submission.link.v1', 'form.draft.delete.v1', 'form.pdf.file.v1', 'form.submit.v1']);
 const FORM_DRAFT_KEYS = new Set(['kind', 'form_key', 'link_type', 'link_id', 'data', 'evidence']);
 const FORM_LINK_KEYS = new Set(['kind', 'submission_id', 'link_type', 'link_id', 'evidence']);
 const FORM_DISCARD_KEYS = new Set(['kind', 'submission_id', 'evidence']);
 const FORM_PDF_KEYS = new Set(['kind', 'submission_id', 'filename', 'evidence']);
+const FORM_SUBMIT_KEYS = new Set(['kind', 'submission_id', 'evidence']);
 // formPdfService's filename core: the form title fragment (MAX_NAME_FRAGMENT)
 // and an override's (MAX_NAME_FRAGMENT + 30), after its sanitizer.
 const FORM_PDF_NAME_FRAGMENT = 100;
@@ -7089,10 +7098,8 @@ const FORM_CARD_TAKES = {
   link: 'submission_id, link_type, link_id',
   discard: 'submission_id (the DRAFT row)',
   pdf: 'submission_id and an optional filename',
+  submit: 'submission_id (the DRAFT row)',
 };
-
-// The one sentence every form card refuses a submit with (A12.2's named deferral).
-const FORM_SUBMIT_DEFERRAL = 'Submitting a form is not available to Casey: there is no atomic route — the form page\'s Submit is a seven-call browser chain (validate, PATCH the record, POST the submission, DELETE the draft, start up to 3 workflows, write the log), and POST /api/forms/submit alone patches nothing, starts nothing and leaves the draft. The user submits it on the form';
 
 // Refused by name before anything is read: the route-owned columns, then any
 // other form operation, then anything else unknown.
@@ -7104,12 +7111,13 @@ function formRefuseKeys(extra, which) {
       link: 'a link card sends link_type and link_id — the route renumbers the version and stamps who linked it',
       discard: 'a discard card names the draft row by submission_id — the request is built from that stored row',
       pdf: 'a PDF card names the submission by submission_id — the route renders the stored row as it is',
+      submit: 'a submit card names the draft row by submission_id — the route records it under the published form version, numbers it and stamps you as the submitter',
     }[which];
     throw formError(`RESERVED FIELDS refused (${reserved.join(', ')}): ${why}`);
   }
   const ops = extra.filter((k) => FORM_OTHER_OP_KEY.test(k));
   if (ops.length) {
-    throw formError(`OTHER FORM OPERATIONS refused (${ops.join(', ')}): each form card does ONE thing — save ONE draft (form.draft.v1), link ONE submission (form.submission.link.v1), discard ONE draft (form.draft.delete.v1) or file ONE submission's PDF (form.pdf.file.v1). ${FORM_SUBMIT_DEFERRAL}. Editing / publishing / restoring a template, changing its visibility and unlinking a submission are not available to Casey either — the user does them in the form builder (no screen unlinks)`);
+    throw formError(`OTHER FORM OPERATIONS refused (${ops.join(', ')}): each form card does ONE thing — save ONE draft (form.draft.v1), link ONE submission (form.submission.link.v1), discard ONE draft (form.draft.delete.v1), file ONE submission's PDF (form.pdf.file.v1) or submit ONE stored draft (form.submit.v1). Editing / publishing / restoring a template, changing its visibility and unlinking a submission are not available to Casey — the user does them in the form builder (no screen unlinks)`);
   }
   if (extra.length) {
     throw formError(`A form ${which} card carries unsupported fields: ${extra.join(', ')} — it takes ${FORM_CARD_TAKES[which]} and evidence only`);
@@ -7717,6 +7725,335 @@ async function normalizeFormPdfFile(db, value, evidence) {
   };
 }
 
+// ── A12.3: form.submit.v1 (the form page's Submit, for a stored draft) ──
+
+// How a record column's stored value reads on the card (the value the GET
+// returns — JSON round-tripped, so a DATE reads as its ISO text).
+function formStoredShow(value) {
+  if (value === undefined || value === null) return '(blank)';
+  if (typeof value === 'string') return value === '' ? '(empty)' : `"${value.length > 200 ? `${value.slice(0, 200)}…` : value}"`;
+  const text = JSON.stringify(value);
+  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+}
+
+// Every failing answer, by the route's own validator (extFormService
+// .validateValues, which stops at the FIRST failure): run it, record the field
+// it names, relax that field's declaration to a bare text field in a deep clone
+// of the definition (values kept, so a requiredWhen elsewhere still reads them),
+// and run it again. A field that fails again once relaxed holds a value no field
+// accepts (an object, an over-long string) — its value is cleared in the clone.
+// A repeater failure is named by the repeater's key, as the route names it; an
+// unknown key is dropped from the clone. Nothing here re-implements a rule.
+function formSubmitFailures(def, data) {
+  const ext = require('./extFormService'); // lazy (convention)
+  const labels = ext.buildValueRegistry(def);
+  const work = JSON.parse(JSON.stringify(def));
+  const values = JSON.parse(JSON.stringify(data));
+  const reg = ext.buildValueRegistry(work); // its entries ARE the clone's declarations
+  const relaxed = new Set();
+  const failures = [];
+  const bound = Object.keys(reg.fields).length + Object.keys(reg.repeaters).length + Object.keys(values).length;
+  for (let i = 0; i <= 2 * bound + 2; i++) {
+    try { ext.validateValues(work, values); return failures; } catch (e) {
+      if (!e || e.status !== 400) throw e;
+      const message = String(e.message || 'invalid');
+      const m = /^values\.([A-Za-z0-9_]+)/.exec(message);
+      const key = m ? m[1] : null;
+      if (!key) { failures.push({ key: null, label: null, message }); return failures; }
+      if (!failures.some((f) => f.key === key)) {
+        const f = labels.fields[key];
+        failures.push({ key, label: f ? formLabel(f, key) : key, message });
+      }
+      if (relaxed.has(key) || (!reg.fields[key] && !reg.repeaters[key])) {
+        delete values[key];
+        continue;
+      }
+      relaxed.add(key);
+      const decls = reg.fields[key] ? [reg.fields[key]] : Object.values(reg.repeaters[key]);
+      for (const d of decls) {
+        for (const k of Object.keys(d)) if (k !== 'name') delete d[k];
+        d.type = 'text';
+      }
+    }
+  }
+  return failures;
+}
+
+// The record the onSubmit.patch writes, read through the service its GET calls
+// (caseService.getCase / contactService.getContact) — the raw row for the
+// dry-runs, the JSON round trip the browser receives for the stale check.
+async function formSubmitRecord(db, target) {
+  if (target.entity === 'case') {
+    const found = await require('./caseService').getCase(db, target.id, 'contacts');
+    return found && found.case ? { raw: found.case, json: JSON.parse(JSON.stringify(found.case)), found } : null;
+  }
+  const found = await require('./contactService').getContact(db, target.id);
+  return found && found.contact ? { raw: found.contact, json: JSON.parse(JSON.stringify(found.contact)), found } : null;
+}
+
+async function normalizeFormSubmit(db, value, evidence, currentUserId) {
+  formRefuseKeys(Object.keys(value).filter((k) => !FORM_SUBMIT_KEYS.has(k)), 'submit');
+  const subId = Number(value.submission_id);
+  if (!Number.isSafeInteger(subId) || subId < 1) {
+    throw formError('A form submit needs the DRAFT row\'s exact positive submission_id (form_submissions.id AS submission_id, status "draft")');
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!documentRowCited(refs, evidence, (row) => row.submission_id != null && Number(row.submission_id) === subId)) {
+    throw formError(`The submit evidence does not identify draft #${subId} — cite the form_submissions row carrying its exact submission_id (read it first: form_submissions.id AS submission_id)`);
+  }
+  // 1. The draft (the route's first read).
+  const row = await formSubmissionRow(db, subId, 'Draft');
+  if (row.status !== 'draft') {
+    throw formError(`#${subId} is already SUBMITTED (version ${Number(row.version) || 0}) — only a stored draft can be submitted (the route answers "Submission ${subId} is not a draft")`);
+  }
+  const linkType = String(row.link_type || '').toLowerCase();
+  if (!FORM_LINK_TYPES.includes(linkType)) {
+    throw formError(`Draft #${subId} belongs to ${linkType ? `a "${linkType.slice(0, 20)}"` : 'no record'} — no form page opens it, so there is no Submit to mirror`);
+  }
+  const linkId = String(row.link_id == null ? '' : row.link_id);
+  if (!formTargetCited(refs, evidence, linkType, linkId)) {
+    throw formError(`The submit evidence does not identify ${linkType} ${linkId} — cite a row carrying its exact ${formIdColumn(linkType)} (read the ${linkType === 'appt' ? 'appointment' : linkType} first)`);
+  }
+  const record = await formLinkRecord(db, linkType, linkId);
+  if (!record) throw formError(`${formRecordWord(linkType)} ${linkId} no longer exists — no form page opens this draft, so there is no Submit to mirror`);
+  const formSvc = require('./formService'); // lazy (convention)
+  const latest = await formSvc.getLatest(db, row.form_key, row.link_type, linkId);
+  const draftRow = latest && latest.draft ? latest.draft : null;
+  const subRow = latest && latest.submitted ? latest.submitted : null;
+  if (!draftRow || Number(draftRow.id) !== subId) throw formError(`Draft #${subId} is no longer the draft of this form and record — it was discarded, submitted or replaced`);
+
+  // 2. The published template — the route's refusals, by name.
+  const tpl = await formTemplateLoad(db, row.form_key);
+  if (!tpl || !tpl.published) {
+    throw formError(`No published template for form_key "${row.form_key}" — the route refuses the submit (404): ${tpl ? `"${tpl.title}" has never been published` : 'it has no template (one of the hand-built form pages, which submit only from their own page)'}`);
+  }
+  if (tpl.link_type !== String(row.link_type)) {
+    throw formError(`"${tpl.title}" is a ${tpl.link_type}-linked form — draft #${subId} is linked to a ${row.link_type || 'nothing'}; the route refuses the submit (409)`);
+  }
+  const draftVersion = Number(draftRow.schema_version);
+  if (draftVersion !== Number(tpl.schema_version)) {
+    throw formError(`OLD FORM VERSION refused: draft #${subId} was saved on version ${draftRow.schema_version} of "${tpl.title}"; the published form is version ${tpl.schema_version}. The route refuses it (409) rather than submit answers re-shaped onto fields nobody reviewed — the user opens the form, restores the draft and saves it again on the current version, then asks again`);
+  }
+  const def = tpl.definition;
+  const onSubmit = def.onSubmit && typeof def.onSubmit === 'object' && !Array.isArray(def.onSubmit) ? def.onSubmit : {};
+  const data = formParse(draftRow.data);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw formError(`Draft #${subId} does not hold a JSON object — the route refuses it (422). The user opens the form and discards or fixes the draft`);
+  }
+  const { fields, repeaters } = formFields(def);
+  const labelOf = (key) => (fields[key] ? formLabel(fields[key], key) : key);
+
+  // 3. Validation — EVERY failing answer, by the route's validator.
+  const failures = formSubmitFailures(def, data);
+  if (failures.length) {
+    const shown = failures.slice(0, FORM_CARD_LIST).map((f) => (f.key
+      ? `"${f.label}" (${f.key}): ${f.message.startsWith(`values.${f.key} `) ? f.message.slice(`values.${f.key} `.length) : f.message.replace(/^values\./, '')}`
+      : f.message));
+    throw formError(`ANSWERS REFUSED: the route validates the draft against the published "${tpl.title}" and would refuse it (400) — ${shown.join('; ')}${failures.length > FORM_CARD_LIST ? ` … +${failures.length - FORM_CARD_LIST} more` : ''}. Nothing is proposed — fill ${failures.length > 1 ? 'them' : 'it'} in first (a form.draft.v1 card can), then ask again`);
+  }
+
+  // 4. The patch the route will apply — formSubmitService's OWN target,
+  //    baseline and diff (exported for this card; never a second copy).
+  const fss = require('./formSubmitService'); // lazy (convention)
+  const ctx = { formKey: row.form_key, linkType: row.link_type, linkId };
+  const unsupported = (e) => formError(`${e.message} — the route refuses the submit (422) before anything is written. The user submits it on the form`);
+  let target = null;
+  try {
+    target = onSubmit.patch && typeof onSubmit.patch === 'object' && !Array.isArray(onSubmit.patch) ? fss.resolvePatchTarget(onSubmit.patch, ctx) : null;
+  } catch (e) { if (e && e.status === 422) throw unsupported(e); throw e; }
+  let base;
+  try { base = await fss.resolveBase(db, def, ctx); } catch (e) { if (e && e.status === 422) throw unsupported(e); throw e; }
+  const { diff, payload } = fss.computeDiffAndPatch(def, base, data);
+  const payloadCols = Object.keys(payload);
+  const patching = !!target && payloadCols.length > 0;
+
+  const warnings = []; const effects = [];
+  let patch = null; let targetRec = null; let automation = { lines: [], rules_checked: 0, quiet: 0 }; const events = [];
+  if (target) {
+    targetRec = await formSubmitRecord(db, target);
+    if (!targetRec) {
+      throw formError(`The ${target.entity} this form writes to (${target.entity} ${target.id}) no longer exists — the route ${patching ? 'refuses the submit (404) at the write' : 'could not read its baseline'}`);
+    }
+  }
+  const { buildEnvelope, buildChanges } = require('../lib/domainEvents');
+  if (patching) {
+    const raw = targetRec.raw;
+    const columns = payloadCols.map((col) => ({ column: col, before: formStoredShow(targetRec.json[col]), after: formStoredShow(payload[col]) }));
+    if (target.entity === 'case') {
+      const caseSvc = require('./caseService'); // lazy (convention)
+      const refusal = await caseSvc.docketWriteRefusal(db, target.id, payload);
+      if (refusal) throw formError(`DOCKET refused — ${String(refusal.message).replace(/[.\s]+$/, '')}. The route refuses the submit (${refusal.status}) before anything is written`);
+      for (const c of columns) {
+        c.readers = [...(CASE_FIELDS_SURFACES[c.column] || []), `Templates: {{cases.${c.column}}} in letters, forms, emails and texts resolves to the new value.`];
+        c.client_visible = c.readers.some((x) => /^CLIENT PORTAL/.test(x));
+      }
+      const nextFields = require('../lib/blankDateToNull').blankDatesToNull('cases', { ...payload });
+      const docketNext = {};
+      for (const f of CASE_DOCKET_FIELDS) if (Object.prototype.hasOwnProperty.call(nextFields, f)) docketNext[f] = nextFields[f];
+      if (Object.keys(docketNext).length) {
+        const docket = await caseFieldsDocketReview(db, raw, docketNext, targetRec.found);
+        warnings.push(...docket.warnings); effects.push(...docket.effects);
+      }
+      const visible = columns.filter((c) => c.client_visible).map((c) => c.column);
+      if (visible.length) warnings.push(`CLIENT-VISIBLE COLUMNS: the submit writes ${visible.join(', ')} on the case — the client portal shows ${visible.length > 1 ? 'them' : 'it'} (each column's readers are listed).`);
+      const relinks = [];
+      if (Object.prototype.hasOwnProperty.call(nextFields, 'case_judge') || Object.prototype.hasOwnProperty.call(nextFields, 'case_number_full')) relinks.push('the judge link (from the full case number\'s judge suffix, else the judge text)');
+      if (Object.prototype.hasOwnProperty.call(nextFields, 'case_trustee')) relinks.push('the trustee link (from the trustee text and the chapter)');
+      if (relinks.length) effects.push(`Re-resolved by the server: ${relinks.join(' and ')} — a failed match writes an empty link.`);
+      const envChanges = buildChanges(raw, nextFields, Object.keys(nextFields));
+      if (Object.keys(envChanges).length) {
+        const run = await casePipelineAutomation(db, buildEnvelope('case.updated', {
+          case_id: String(raw.case_id), ...(currentUserId != null ? { actor: { user_id: currentUserId } } : {}), source: 'manual',
+          data: { ...raw, ...nextFields }, changes: envChanges, extra: { updated_fields: Object.keys(nextFields) },
+        }), 'case.updated', 'this submit\'s case write');
+        automation = { lines: [...run.lines], rules_checked: run.rules_checked, quiet: run.quiet };
+        events.push('case.updated');
+      }
+    } else {
+      for (const c of columns) c.readers = [`Templates: {{contacts.${c.column}}} in letters, forms, emails and texts resolves to the new value.`];
+      const envChanges = buildChanges(raw, payload, payloadCols);
+      if (Object.keys(envChanges).length) {
+        const run = await casePipelineAutomation(db, buildEnvelope('contact.updated', {
+          contact_id: Number(raw.contact_id), actor: { user_id: currentUserId == null ? 0 : currentUserId },
+          data: { ...raw, ...payload }, changes: envChanges, extra: { updated_fields: payloadCols },
+        }), 'contact.updated', 'this submit\'s contact write');
+        automation = { lines: [...run.lines], rules_checked: run.rules_checked, quiet: run.quiet };
+        events.push('contact.updated');
+      }
+    }
+    const targetLabel = target.entity === 'case' && String(target.id).toLowerCase() === linkId.toLowerCase() && linkType === 'case' ? record.label
+      : target.entity === 'contact' && linkType === 'contact' && Number(target.id) === Number(linkId) ? record.label : `${target.entity} ${target.id}`;
+    patch = { type: target.entity, id: String(target.entity === 'case' ? targetRec.raw.case_id : targetRec.raw.contact_id), label: targetLabel, columns };
+    warnings.push(`RECORD WRITTEN FIRST: before the submission is recorded, the route writes ${columns.length} column${columns.length === 1 ? '' : 's'} on ${targetLabel} (${columns.map((c) => `${c.column} ${c.before} → ${c.after}`).join('; ')}) through the ${target.entity} page's own save. The write is not undone if a later step fails.`);
+  } else if (target) {
+    effects.push(`Record: the form writes to ${target.entity} ${target.id} when saved, but the draft's answers already match it — no column changes, so nothing is written there.`);
+  } else {
+    effects.push('Record: this form writes no record column when submitted (it has no onSubmit.patch) — only the submission is recorded.');
+  }
+
+  // The submitted row and form.submitted (formService.submitForm's envelope).
+  const [[maxRow]] = await db.query(
+    `SELECT COALESCE(MAX(version), 0) AS max_version
+       FROM form_submissions
+      WHERE form_key = ? AND link_type = ? AND link_id = ? AND status = 'submitted'`,
+    [row.form_key, row.link_type, linkId]);
+  const prior = Number(maxRow && maxRow.max_version) || 0;
+  const next = prior + 1;
+  const formRun = await casePipelineAutomation(db, buildEnvelope('form.submitted', {
+    contact_id: row.link_type === 'contact' ? (parseInt(linkId, 10) || null) : null,
+    case_id: row.link_type === 'case' ? linkId : null,
+    actor: { user_id: currentUserId == null ? 0 : currentUserId }, source: 'internal',
+    data: { submission_id: 0, form_key: row.form_key, link_type: row.link_type, link_id: linkId, version: next, schema_version: tpl.schema_version },
+    extra: { surface: 'internal' },
+  }), 'form.submitted', 'this submission');
+  automation.lines.push(...formRun.lines);
+  automation.rules_checked += formRun.rules_checked;
+  automation.quiet += formRun.quiet;
+  events.push('form.submitted');
+  if (automation.lines.some((l) => l.outcome === 'unknown')) warnings.push('AUTOMATION: at least one trigger rule could not be evaluated for this submit — read its line; it may run.');
+
+  // The onSubmit workflows (start_workflow's own refusals, read-only).
+  const wfList = fss.wfListOf(onSubmit);
+  const wfIds = wfList.map((w) => Number(w && w.id)).filter((n) => Number.isSafeInteger(n) && n > 0);
+  const wfRows = new Map();
+  if (wfIds.length) {
+    const [rows] = await db.query('SELECT id, name, description, active, current_version FROM workflows WHERE id IN (?)', [wfIds]);
+    for (const r of (Array.isArray(rows) ? rows : [])) wfRows.set(Number(r.id), r);
+  }
+  const workflows = wfList.map((w) => {
+    const id = Number(w && w.id);
+    const r = Number.isSafeInteger(id) && id > 0 ? wfRows.get(id) : null;
+    const why = !Number.isSafeInteger(id) || id < 1 ? `its id ${JSON.stringify(w && w.id)} is not a workflow id`
+      : !r ? `workflow #${id} does not exist`
+      : !Number(r.current_version) ? `workflow #${id} has never been published`
+      : !Number(r.active) ? `workflow #${id} is inactive` : null;
+    return {
+      id: Number.isSafeInteger(id) ? id : null, name: r ? String(r.name || '').slice(0, 100) : null,
+      description: r && r.description ? String(r.description).slice(0, 200) : null,
+      will_start: !why, ...(why ? { why } : {}),
+      init_keys: w && w.initData && typeof w.initData === 'object' && !Array.isArray(w.initData) ? Object.keys(w.initData).slice(0, 20) : [],
+    };
+  });
+  const makePdf = !!onSubmit.pdf;
+  if (workflows.length) {
+    effects.push(`Workflows: the submit then starts ${workflows.length === 1 ? 'one workflow' : `${workflows.length} workflows`}, each on its own — ${workflows.map((w) => `#${w.id} "${w.name || 'unknown'}"${w.description ? ` (${w.description})` : ''}${w.will_start ? '' : ' — WILL NOT START'}`).join('; ')}. Each starts with the draft's answers, its own initData${workflows.some((w) => w.init_keys.length) ? ` (${[...new Set(workflows.flatMap((w) => w.init_keys))].join(', ')})` : ''} and the form's system fields (form_key, form_title, link_type, link_id, the new submission_id, make_pdf = ${makePdf}, _values). A start that fails is reported on the result and undoes nothing — not the submission, not the record write, not the other workflows.${makePdf ? ' make_pdf is true: a PDF exists only if one of these workflows renders it — the submit itself makes none.' : ''}`);
+    const dead = workflows.filter((w) => !w.will_start);
+    if (dead.length) warnings.push(`WORKFLOW WILL NOT START: ${dead.map((w) => w.why).join('; ')} — the submit still goes through and reports ${dead.length > 1 ? 'them' : 'it'} as not started.`);
+  } else {
+    effects.push(`Workflows: none — this form starts no workflow when submitted${makePdf ? ' (its make_pdf flag rides on workflow starts, so no PDF is made)' : ''}.`);
+  }
+
+  // Disclosure.
+  const keys = Object.keys(data);
+  const answers = keys.slice(0, FORM_CARD_LIST).map((key) => ({
+    key, label: labelOf(key), value: formShow(data[key]),
+    ...(fields[key] || repeaters[key] ? {} : { off_form: true }),
+  }));
+  const filled = keys.filter((k) => !formEmpty(data[k])).length;
+  const diffKeys = Object.keys(diff);
+  const changes = diffKeys.slice(0, FORM_CARD_LIST).map((key) => ({ key, label: labelOf(key), before: formShow(diff[key][0]), after: formShow(diff[key][1]) }));
+  const saved = formSavedBy(draftRow, currentUserId);
+  const when = formWhen(draftRow.updated_at);
+  warnings.unshift(`NO UNDO: submitting records "${tpl.title}" as version ${next} on ${record.label} — no screen un-submits or deletes a submission.`);
+  const at = draftRow.updated_at instanceof Date ? draftRow.updated_at : new Date(draftRow.updated_at);
+  if (saved.by == null) {
+    warnings.push(`THE CLIENT'S DRAFT: the client saved it on the public form link at ${when} — you are submitting their answers as staff (you are recorded as the submitter).`);
+  } else if (!saved.mine && !Number.isNaN(at.getTime()) && Date.now() - at.getTime() < FORM_FOREIGN_DRAFT_MS) {
+    warnings.push(`RECENT DRAFT BY SOMEONE ELSE: ${saved.who} saved this draft at ${when} — within the last 24 hours, so they may still be working on it.`);
+  }
+  effects.unshift(
+    `Submits draft #${subId} of "${tpl.title}" for ${record.label}, saved by ${saved.who} at ${when} (form version ${tpl.schema_version}) — exactly the answers it holds, as stored, recorded under your account as version ${next} (${prior ? `the latest submission until now is version ${prior}` : 'the first submission of this form on this record'}).`,
+    def.dataMode === 'snapshot'
+      ? 'The form opens in SNAPSHOT mode: the newest submission is what it shows, so it shows these answers from now on.'
+      : 'The form opens in live mode: its fields read the record, so what it shows next is the record after this submit.',
+  );
+  effects.push(
+    `The draft is consumed: draft #${subId} is DELETED after the submission is recorded. A copy of this form already open anywhere keeps its draft banner, and its next autosave after any typing saves a NEW draft from that screen.`,
+    `Log: one "form" entry on ${record.label}, by you — action form_submit, version ${next}, and the ${diffKeys.length ? `${diffKeys.length} answer${diffKeys.length === 1 ? '' : 's'} that differ from the form as loaded (${diffKeys.slice(0, 12).map(labelOf).join(', ')}${diffKeys.length > 12 ? ' …' : ''})` : 'answers that differ from the form as loaded (none)'}.`,
+    `Trigger events: ${events.join(', then ')} — every active rule on ${events.length > 1 ? 'them' : 'it'} that would act is listed (form.submitted is checked against a stand-in submission id; the real one is minted when you apply).`,
+    'Other open pages: the route announces the submit on the sync bus, so an open copy of this form for this record refreshes its submission history, and an open page of the record repaints the columns written.',
+  );
+  if (linkType === 'case') {
+    const [reqs] = await db.query(
+      `SELECT internal_label FROM pipeline_stage_requirements
+        WHERE active = 1 AND detector = 'form'
+          AND LOWER(JSON_UNQUOTE(JSON_EXTRACT(detector_config, '$.form_key'))) = LOWER(?)`, [row.form_key]);
+    const reqLabels = [...new Set((Array.isArray(reqs) ? reqs : []).map((r) => String(r.internal_label || '').trim()).filter(Boolean))];
+    effects.push(reqLabels.length
+      ? `Pipeline steps: ${reqLabels.slice(0, 10).map((l) => `"${l}"`).join(', ')}${reqLabels.length > 10 ? ' …' : ''} look for a submitted "${row.form_key}" form on the case — on this case they read as done from now on.`
+      : `Pipeline steps: no active step looks for a submitted "${row.form_key}" form.`);
+  }
+  if (keys.length > answers.length) effects.push(`Answers: the first ${answers.length} of ${keys.length} are listed.`);
+  if (diffKeys.length > changes.length) effects.push(`Differences: the first ${changes.length} of ${diffKeys.length} are listed.`);
+
+  const card = {
+    draft_id: crypto.randomUUID(), kind: 'form.submit.v1', status: 'draft',
+    form: { form_key: tpl.form_key, title: tpl.title, link_type: tpl.link_type, visibility: tpl.visibility,
+      schema_version: tpl.schema_version, data_mode: def.dataMode === 'snapshot' ? 'snapshot' : 'live' },
+    record: { link_type: linkType, link_id: record.link_id, label: record.label },
+    draft: { submission_id: subId, form_key: String(row.form_key), link_type: String(row.link_type), link_id: linkId,
+      updated_at: documentIso(draftRow.updated_at), saved_by: saved.who, schema_version: draftVersion },
+    answers, answers_total: keys.length, answers_filled: filled,
+    changes, changes_total: diffKeys.length,
+    patch, workflows, make_pdf: makePdf, version_after: next,
+    submitted: subRow ? { submission_id: Number(subRow.id), version: Number(subRow.version) || 0, updated_at: documentIso(subRow.updated_at) } : null,
+    automation: { events, lines: automation.lines.map((l) => l.text), rules_checked: automation.rules_checked, quiet: automation.quiet },
+    effects, warnings,
+    expected: {
+      draft_id: subId, updated_at: documentIso(draftRow.updated_at), data_hash: formDataHash(data),
+      schema_version: tpl.schema_version, definition_hash: formDataHash(JSON.parse(JSON.stringify(def))),
+      submitted_id: subRow ? Number(subRow.id) : null,
+      record: targetRec ? { type: target.entity, id: patch ? patch.id : String(target.id), hash: formDataHash(targetRec.json) } : null,
+    },
+    evidence: refs,
+  };
+  const chars = JSON.stringify(card).length;
+  if (chars > FORM_CARD_MAX_CHARS) {
+    throw formError(`This submit card would be ${chars.toLocaleString('en-US')} characters — more than a chat can store with it (${FORM_CARD_MAX_CHARS.toLocaleString('en-US')}). Nothing is proposed — the user submits it on the form`);
+  }
+  return card;
+}
+
 async function normalizeFormAction(db, value, evidence, { currentUserId = null } = {}) {
   // The per-family switch: '0' and the A12 kinds do not exist.
   if (require('../lib/firmConfig').cfg('casey_forms_enabled') === '0') {
@@ -7725,6 +8062,7 @@ async function normalizeFormAction(db, value, evidence, { currentUserId = null }
   if (value.kind === 'form.draft.v1') return normalizeFormDraft(db, value, evidence, currentUserId);
   if (value.kind === 'form.draft.delete.v1') return normalizeFormDiscard(db, value, evidence, currentUserId);
   if (value.kind === 'form.pdf.file.v1') return normalizeFormPdfFile(db, value, evidence);
+  if (value.kind === 'form.submit.v1') return normalizeFormSubmit(db, value, evidence, currentUserId);
   return normalizeFormSubmissionLink(db, value, evidence);
 }
 
@@ -12802,9 +13140,10 @@ function taskDraftRequested(question, history = []) {
   // A12: a form draft / prefill, or a submission linked to a case or contact
   // ("prefill the 341 notes for the Smith case", "link that intake submission
   // to her case"); A12.2: a draft discarded, or a submission's PDF filed
-  // ("discard the draft of her intake", "file the PDF of submission 286").
+  // ("discard the draft of her intake", "file the PDF of submission 286");
+  // A12.3: a stored draft submitted ("submit the 341 notes draft").
   const formWork = /\b(?:forms?|questionnaires?|submissions?|dbkq|341 notes)\b/i.test(text) &&
-    /\b(?:draft|propose|prepare|prefill|pre-fill|fill(?: in| out)?|start|save|link|attach|adopt|assign|connect|associate|file\b[^.?!\n]{0,40}\b(?:to|under|on|with)|discard|delete|scrap|throw (?:out|away)|get rid of|(?:make|create|render|save|file|archive|put|store)\b[^.?!\n]{0,40}\bpdfs?)\b/i.test(request);
+    /\b(?:draft|propose|prepare|prefill|pre-fill|fill(?: in| out)?|start|save|submit|link|attach|adopt|assign|connect|associate|file\b[^.?!\n]{0,40}\b(?:to|under|on|with)|discard|delete|scrap|throw (?:out|away)|get rid of|(?:make|create|render|save|file|archive|put|store)\b[^.?!\n]{0,40}\bpdfs?)\b/i.test(request);
   // A13: a known email marked read / unread, or linked to a case ("mark the
   // trustee's email read", "link Dana's last email to her case").
   const mailTriage = /\b(?:e-?mails?|mail|messages?|inbox)\b/i.test(text) &&

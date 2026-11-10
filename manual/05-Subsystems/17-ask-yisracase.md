@@ -979,17 +979,19 @@ suggestions** for it, and works only on a folder that list shows.
 The off switch for these cards is the `casey_document_relink_enabled` setting
 (on unless set to 0).
 
-### Forms: drafts, discards, PDFs and submission links
+### Forms: drafts, submits, discards, PDFs and submission links
 
 Casey can **save one draft of a form** for a case, contact or appointment,
-**link one submitted form that arrived unlinked** (a public form sent without a
-case — it waits in the Form Inbox) to its case, contact or appointment,
-**discard one saved draft**, or **file one submitted form's PDF to Dropbox** —
-one per card, through the same routes the form's own autosave, the draft
-banner's **Discard**, and the Form Inbox's **Link** and **File** buttons use.
+**submit one saved draft**, **link one submitted form that arrived unlinked** (a
+public form sent without a case — it waits in the Form Inbox) to its case,
+contact or appointment, **discard one saved draft**, or **file one submitted
+form's PDF to Dropbox** — one per card, through the same routes the form's own
+autosave, its **Submit** (run on the server in one step), the draft banner's
+**Discard**, and the Form Inbox's **Link** and **File** buttons use.
 Ask in plain words ("prefill the 341 notes for the Smith case: trustee Jane
-Trustee, meeting on November 20", "link that intake submission from Dana to her
-case", "discard the draft of Dana's intake", "file the PDF of submission 4521").
+Trustee, meeting on November 20", "submit the draft of the 341 notes for the
+Smith case", "link that intake submission from Dana to her case", "discard the
+draft of Dana's intake", "file the PDF of submission 4521").
 Casey first reads the form itself — its fields, their types and their choices —
 and uses only those.
 
@@ -1020,6 +1022,26 @@ and uses only those.
   shows these answers from then on), the log entry the link writes, whether an
   intake form closes the case's intake reminders, and the pipeline steps that
   read as done because a submitted form now exists.
+- **A submit card** submits exactly the answers the saved draft holds — to
+  change one first, ask for a draft card and submit after it is applied. It
+  shows the form, the record, who saved the draft, every answer in it, and the
+  version the submission becomes. When the form saves answers back to the
+  record, it lists **each record field it changes, before and after** (only
+  the ones that differ), and warns when the client portal shows one of them or
+  when the field is a case number. It names every workflow the form starts
+  (warning when one is inactive or was never published — the submit still goes
+  through and reports it as not started), every trigger rule that would run,
+  the pipeline steps a submitted form satisfies, and the log entry. **A
+  submission cannot be un-submitted**, and the record fields are written
+  first. The draft is used up: it is deleted after the submission is recorded
+  (a copy of the form already open keeps its draft banner, and its next
+  autosave after any typing saves a new draft). If a required answer is
+  missing or an answer is not one the form accepts, Casey lists **every** such
+  answer and proposes nothing — fill them in first. A draft saved on an older
+  version of the form is refused too: open the form, restore the draft and
+  save it again on the current version. When it is applied, a workflow that
+  did not start, or a draft that could not be deleted, shows as "Applied with
+  problems".
 - **A discard card** names the form, the record, who saved the draft and
   when, and lists every answer in it. Discarding deletes the draft for good —
   no screen brings it back; the form's last submitted answers are untouched.
@@ -1038,22 +1060,20 @@ and uses only those.
   page (and the case's or contact's Documents tab) and the card lists any
   trigger rule that listens for new documents.
 - **What Casey will not do, and says so:**
-  - submit a form — the form's Submit does several things in the browser at
-    once (it saves fields back to the record, records the submission, deletes
-    the draft, starts the form's workflows and writes the log), and no single
-    action does all of that; open the form and submit it there (a draft card
-    can prepare the answers first);
   - edit, publish or restore a form, change who can see it, or unlink a
     submission — do those in the form builder (nothing unlinks);
   - draft a form that was never published, or use a field the form does not
     have, a value of the wrong kind or a choice that is not on its list;
   - link a draft, a submission that is already linked, or a form to the wrong
     kind of record (a case form to a contact);
-  - discard a submitted form, or file a PDF of a draft.
+  - discard a submitted form, file a PDF of a draft, or submit a form that is
+    already submitted.
 - **Freshness.** When you confirm, the card re-reads the record and the draft
   (or the submission). If anyone saved, restored or discarded the draft, or
   linked the submission, since the card was prepared, nothing is written,
-  deleted or filed; ask Casey to prepare it again.
+  deleted or filed; ask Casey to prepare it again. A submit card also refuses
+  when the form was published again, when someone submitted the form on that
+  record, or when the record it writes to changed.
 - **Other open pages.** A copy of the form open in the form page in this browser
   picks up the new draft by itself; if you were typing in it, it keeps your
   typing, shows the new draft's banner and stops autosaving until you Restore or

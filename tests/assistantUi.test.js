@@ -105,6 +105,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   // A12.2: the discard and PDF families (tests/caseyFormDiscardPdf.test.js drives them function by function).
   'formDiscardRequest', 'formDiscardPrecheck', 'formDiscardResult', 'formDiscardKnownOutcome', 'formPdfRequest', 'formPdfPrecheck',
   'formPdfResult', 'formPdfKnownOutcome', 'formPdfAppliedMessage',
+  // A12.3: the submit family (tests/caseyFormSubmit.test.js drives it function by function).
+  'formSubmitRequest', 'formSubmitPrecheck', 'formSubmitResult', 'formSubmitKnownOutcome', 'formSubmitOutcomeText', 'formSubmitAppliedMessage',
   'mailLabel', 'mailCaseLabel', 'mailMessageLine', 'mailText', 'mailMessageIdOf', 'mailReadRequest', 'mailReadMessage', 'mailReadPrecheck',
   'mailReadResult', 'mailLinkRequest', 'mailLinkPrecheck', 'mailLinkResult', 'mailLinkKnownOutcome', 'mailOpenInfo', 'mailEntity', 'mailOpen',
   // A13b: the attachment filing family (tests/caseyMailAttachments.test.js drives it function by function).
@@ -162,6 +164,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CASE_FOLDER_ACTION_KINDS'), constSrc(html, 'CASE_FOLDER_PATH_MAX'), constSrc(html, 'CASE_FOLDER_CONTROL'),
     constSrc(html, 'FORM_DRAFT_ACTION_KINDS'), constSrc(html, 'FORM_LINK_ACTION_KINDS'), constSrc(html, 'FORM_DATA_MAX_BYTES'),
     constSrc(html, 'FORM_DISCARD_ACTION_KINDS'), constSrc(html, 'FORM_PDF_ACTION_KINDS'), constSrc(html, 'FORM_PDF_PLACEMENTS'), constSrc(html, 'FORM_PDF_WARNINGS_KEPT'),
+    constSrc(html, 'FORM_SUBMIT_ACTION_KINDS'),
     constSrc(html, 'MAIL_READ_ACTION_KINDS'), constSrc(html, 'MAIL_LINK_ACTION_KINDS'), constSrc(html, 'MAIL_ATTACHMENTS_ACTION_KINDS'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
@@ -4887,11 +4890,13 @@ describe('A12 form cards (form.draft / form.submission.link)', () => {
     const fd = box.actionFamily({ kind: 'form.draft.v1' }); const fl = box.actionFamily({ kind: 'form.submission.link.v1' });
     expect([[...fd.kinds], fd.idField, fd.appliedKey, !!fd.stringReceipt]).toEqual([['form.draft.v1'], 'submission_id', 'result_form_draft_id', false]);
     expect([[...fl.kinds], fl.idField, fl.appliedKey, !!fl.stringReceipt]).toEqual([['form.submission.link.v1'], 'submission_id', 'result_form_link_id', false]);
-    // A12.2: the discard and the PDF filing are their own families (tests/caseyFormDiscardPdf.test.js); no submit kind (no atomic route).
+    // A12.2: the discard and the PDF filing are their own families (tests/caseyFormDiscardPdf.test.js); A12.3 the submit (tests/caseyFormSubmit.test.js).
     const fx = box.actionFamily({ kind: 'form.draft.delete.v1' }); const fp = box.actionFamily({ kind: 'form.pdf.file.v1' });
     expect([[...fx.kinds], fx.idField, fx.appliedKey, !!fx.stringReceipt]).toEqual([['form.draft.delete.v1'], 'submission_id', 'result_form_discard_id', false]);
     expect([[...fp.kinds], fp.idField, fp.appliedKey, !!fp.stringReceipt]).toEqual([['form.pdf.file.v1'], 'submission_id', 'result_form_pdf_id', false]);
-    for (const kind of ['form.submit.v1', 'form.template.publish.v1', 'form.submission.unlink.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    const fs3 = box.actionFamily({ kind: 'form.submit.v1' });
+    expect([[...fs3.kinds], fs3.idField, fs3.appliedKey, !!fs3.stringReceipt, fs3.refusal409]).toEqual([['form.submit.v1'], 'submission_id', 'result_form_submit_id', false, true]);
+    for (const kind of ['form.template.publish.v1', 'form.submission.unlink.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
   });
 });

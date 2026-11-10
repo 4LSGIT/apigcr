@@ -1328,6 +1328,8 @@ tests/caseyDocuments.mysql.test.js
 tests/caseyDocuments.test.js
 tests/caseyFormDiscardPdf.mysql.test.js
 tests/caseyFormDiscardPdf.test.js
+tests/caseyFormSubmit.mysql.test.js
+tests/caseyFormSubmit.test.js
 tests/caseyForms.mysql.test.js
 tests/caseyForms.test.js
 tests/caseyHookCreate.test.js

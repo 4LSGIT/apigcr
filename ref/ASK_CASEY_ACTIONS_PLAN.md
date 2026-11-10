@@ -11,8 +11,8 @@ update), A7 group A (case notes, case alerts, contact notes), A7 groups B/C (any
 other case field, 2026-11-09; the docket's replace / clear, A7e), A7c (case docket adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
 advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer) + A9.4 (requirement override set / clear), A10 + A10.2 (checklists and items; list rename / note edit, list and item delete), A11 + A11.2 (documents —
 update and link; share and unlink), A11.1 (a case's Dropbox folder — candidates-only relink),
-A12 + A12.2 (form drafts and submission links; draft discard and PDF filing; appointment
-records — no submit: no atomic route), A13 (mail triage —
+A12 + A12.2 + A12.3 (form drafts and submission links; draft discard and PDF filing; appointment
+records; submitting a stored draft), A13 (mail triage —
 read state and case link; no drafts exist, no SMS triage), A13b (one email's
 attachments filed to a case, the Comms File attachments route), A14 (direct email /
 SMS send), A16 (reports), A17.0–A17.4, A17.6, A17.7 + A17.7b (workflows — explain,
@@ -30,13 +30,13 @@ of its plan stands in those sections.
 
 ## Review briefing
 
-The shipped baseline is 86 proposal kinds (the action ledger's `KINDS`
+The shipped baseline is 87 proposal kinds (the action ledger's `KINDS`
 registry; `tests/caseyActionPermissions.test.js` pins the inventory against it)
-in 45 browser families: the record families — Tasks, Events, Appointments,
+in 46 browser families: the record families — Tasks, Events, Appointments,
 contact phone / email / address rows, contact relations and roles, case and
 contact notes and case alerts, case contacts, case pipeline moves, the case
 docket, the case's Dropbox folder, checklists and their items, documents and their links (edit, link, unlink, share), form drafts, submission links,
-draft discards and submission PDF filings, an email's read state and its case link — plus direct SMS /
+draft discards, submission PDF filings and draft submits, an email's read state and its case link — plus direct SMS /
 email sends, report drafts and the automation families (safe code jobs, workflow draft / step / publish / start,
 hooks, sequence step / publish / enroll, ingest rules). Every family
 uses the same boundary: one
@@ -1983,9 +1983,9 @@ than case / contact (no screen makes one; the Links dialog unlinks it).
 #### A12: Forms — draft and submission link shipped 2026-11-02
 
 Start with a form draft or prefill and save/link it to a resolved record.
-Draft discard and PDF filing are A12.2's kinds; submission has no kind (no
-atomic route, A12.2); template editing, publishing, visibility changes and
-version restore are form-builder operations with no card.
+Draft discard and PDF filing are A12.2's kinds, and submitting a stored draft
+is A12.3's; template editing, publishing, visibility changes and version
+restore are form-builder operations with no card.
 Render the template/version, destination, material answers, overwrite behavior,
 and whether the operation makes anything client-visible.
 
@@ -2130,18 +2130,13 @@ link_id}).
   `tests/ycSync.test.js`.
 
 **Deferred** (`ref/plans.md`), each with its reason; discard, PDF filing and
-appointment records shipped in A12.2:
-- **Submit** — no atomic route: the Submit button is a seven-call browser
-  chain (validate, PATCH the record, POST submit, DELETE draft, start up to 3
-  workflows, log), and POST /api/forms/submit alone patches nothing, starts
-  nothing and leaves the draft. A native atomic internal submit route is
-  Fred's call.
+appointment records shipped in A12.2, submit in A12.3:
 - **Template editing / publishing / visibility / version restore /
   deletion** — form-builder operations.
 - **Unlinking a submission** — no screen does it.
 - **The hand-built form pages on the bus** — they do not load yc-sync.
 
-#### A12.2: Forms — draft discard, PDF filing, appointment records shipped 2026-11-11 (no submit: no atomic route)
+#### A12.2: Forms — draft discard, PDF filing, appointment records shipped 2026-11-11
 
 Fred (2026-11-09): "Casey can do *at least* anything the user can do in the
 UI." This slice went through the form controls that work on ONE row. Two had no
@@ -2164,15 +2159,11 @@ dialog all accept them.
   7. it POSTs `/api/log`.
 
   `formService.submitForm` inserts the row and emits `form.submitted`. It
-  validates nothing, PATCHes nothing, starts nothing and leaves the draft. The
-  only server-side submit chain is the client's external route
-  (`api.ext.forms.js`: validateValues, submit, workflows), which Casey cannot
-  use. So there is **no submit kind**. The reason is named on every form card:
-  "no atomic route — the form page's Submit is a seven-call browser chain
-  (validate, PATCH the record, POST the submission, DELETE the draft, start up
-  to 3 workflows, write the log), and POST /api/forms/submit alone patches
-  nothing, starts nothing and leaves the draft." A native atomic internal
-  submit route is Fred's call (manager ruling, 2026-11-11).
+  validates nothing, PATCHes nothing, starts nothing and leaves the draft, so
+  this slice built no submit card on it. The atomic route is POST
+  `/api/forms/submissions/submit-draft` (`services/formSubmitService.js`,
+  Fred's go 2026-11-11), which runs the chain server-side for a stored draft;
+  its card is A12.3.
 - **Discard** → DELETE `/api/forms/draft?form_key&link_type&link_id`
   (`formService.deleteDraft`). It deletes the one draft row matched under
   general_ci and answers `{deleted}` (false when nothing matched). There is no
@@ -2203,8 +2194,9 @@ no new key:
 
 Both A12 kinds also take `link_type` "appt" (link_id = the exact appt_id).
 - **Refused by name**, on every form card, before anything is read: the
-  route-owned columns, any key shaped like another form operation (the submit
-  deferral sentence above), and any unknown key — `again` on a PDF card, and
+  route-owned columns, any key shaped like another form operation (the
+  sentence names each form card's one operation, the submit card included),
+  and any unknown key — `again` on a PDF card, and
   `form_key` / `link_type` / `link_id` / `data` on a discard card (the request
   is built from the stored row).
 - **Discard.** The evidence cites the draft row (`submission_id`) AND its
@@ -2285,8 +2277,6 @@ Both A12 kinds also take `link_type` "appt" (link_id = the exact appt_id).
   `tests/caseyActionPermissions.test.js`.
 
 **Deferred** (`ref/plans.md`):
-- **Submitting a form** — no atomic route (above). A native internal submit
-  route is Fred's call.
 - **Template editing / publishing / visibility / version restore /
   deletion** — form-builder operations, not row controls.
 - **Unlinking a submission** — no screen does it.
@@ -2294,6 +2284,117 @@ Both A12 kinds also take `link_type` "appt" (link_id = the exact appt_id).
 - **Native gaps:** the discard and the filing are silent on yc-sync; nothing
   records that a submission's PDF was filed (so a re-file is caught only by
   name).
+
+#### A12.3: Forms — submitting a stored draft shipped 2026-11-11
+
+Fred (2026-11-09): "Casey can do *at least* anything the user can do in the
+UI." The form page's **Submit** is the one form control A12.2 left without a
+card. POST `/api/forms/submissions/submit-draft` {submission_id,
+expected_updated_at?} (`services/formSubmitService.js`, staff JWT only) now
+runs the page's whole Save chain server-side for a STORED draft, in the page's
+order: validate, PATCH the record's apiColumn diff, record the submission,
+delete the draft, start each `onSubmit` workflow, write the `form_submit` log
+entry. Its header is the contract; this card is its reviewed front.
+
+**Shipped contract.** One kind behind A12's `casey_forms_enabled` (no new
+key): `form.submit.v1` {submission_id (the DRAFT row), evidence} → that route
+with `expected_updated_at` = the draft's updated_at the card read. Real-engine
+twin: `tests/caseyFormSubmit.mysql.test.js`.
+- **Refused by name**, before anything is read: the route-owned columns, any
+  other form operation, any unknown key — `data`, `form_key`, `link_type`,
+  `link_id` among them (the card submits the stored draft exactly as saved; a
+  changed answer is a `form.draft.v1` card first).
+- **Refused with the route's own reasons, before the click.** The evidence
+  cites the draft row AND its record. Refused: a gone row; a SUBMITTED row; a
+  row with no record or an unknown link type; a gone record; a row that is no
+  longer the draft of its form and record; no published template (404); another
+  link type (409); another `schema_version` (409, both versions named — the
+  user restores and re-saves the draft on the current version); a non-object
+  payload (422); a load / patch URL the route cannot stand in for (422 — the
+  route's own message, from `resolvePatchTarget` / `resolveBase`); a docket the
+  route's guard refuses (`caseService.docketWriteRefusal`, its message); a gone
+  patch record.
+- **Every failing answer.** `extFormService.validateValues` stops at the first
+  failure, and the route's 400 names that one. The card loops the real
+  validator: it records the field named, relaxes that declaration to a bare
+  text field in a DEEP CLONE of the definition (values kept, so another
+  field's `requiredWhen` still reads them), and runs it again; a field that
+  fails again once relaxed holds a value no field accepts (an object, an
+  over-long string), so its value is cleared in the clone; an unknown key is
+  dropped from the clone; a repeater failure is named by the repeater's key, as
+  the route names it. No rule is re-implemented. The refusal lists every label.
+- **The diff is the route's.** The card calls formSubmitService's own
+  `resolvePatchTarget`, `resolveBase`, `computeDiffAndPatch` and `wfListOf`
+  (exported for it — a second copy would drift). The twin pins that the
+  columns the card disclosed are exactly the columns the route patched.
+- **Disclosed** (always danger — NO UNDO: no screen un-submits a submission):
+  - the form, the record, who saved the draft and when, EVERY answer by
+    template label (40 listed, the count said), the version it becomes;
+  - the answers that differ from the form as loaded (the log entry's diff);
+  - RECORD WRITTEN FIRST: each column the patch writes, before → after (the
+    record's value as its GET returns it); for a case, A7's code-measured
+    readers (`CASE_FIELDS_SURFACES`) per column and a CLIENT-VISIBLE COLUMNS
+    warning for a portal-visible one, the docket review (A7e's
+    `caseFieldsDocketReview`) when a docket column is in the diff, and the
+    judge / trustee links the server re-resolves;
+  - every `onSubmit` workflow (name, description, its initData keys, the
+    system fields with `make_pdf`) — each start independent and reported,
+    never fatal; WORKFLOW WILL NOT START for one that does not exist, was never
+    published or is inactive (start_workflow's own refusals, read-only);
+  - the trigger rules, dry-run (preview lane, nothing dispatched): the
+    record's `case.updated` (source "manual") or `contact.updated` envelope
+    when the patch changes something, then `form.submitted` as `submitForm`
+    builds it (the next version; a stand-in submission id);
+  - the draft consumed (deleted after the submission is recorded; an open
+    copy keeps its banner, and its next autosave re-creates a draft); the log
+    entry (type form, action form_submit, the diff); the pipeline steps a
+    submitted form of this key satisfies (case forms); THE CLIENT'S DRAFT and
+    RECENT DRAFT BY SOMEONE ELSE as A12.2's discard says them.
+- **Freshness:** `expected` holds the draft's id + updated_at + the SHA-256 of
+  its canonical stored JSON, the published `schema_version` + a hash of the
+  definition, the latest submission's id (the version it becomes; a snapshot
+  form's baseline), and — when the form has an `onSubmit.patch` — the patch
+  record's type, id and a hash of its row as its GET returns it. The click
+  re-reads the link record, GET `/api/forms/latest`, GET
+  `/api/form-templates/render/:form_key` and the patch record (GET
+  `/api/cases/:id` / `/api/contacts/:id`), refuses on ANY difference before the
+  claim, and sends `expected_updated_at`, so the route's 409 is the last line.
+  The record hash is deliberately the whole row: any edit to the record
+  between card and click refuses (a changed loaded field can change the diff).
+- **Outcomes:** every 4xx the route answers is written before its first write
+  — the 409s included (the stale draft, link type and form version precede
+  everything; the docket refusal precedes `updateCase`; the contact writer's
+  conflicts are thrown inside its rolled-back transaction) — so the family is
+  `refusal409`. The 400 with `fields` is a refusal naming them. A 500 stays
+  ambiguous (after the record write it names the columns written). On
+  success the browser keeps `submission.id`, the version, `patched` (a column
+  the card did not show is a problem line), `draft_deleted`, `workflows[]`
+  (a `started:false` entry is a problem line naming the workflow) and
+  `log_id`: any problem reads "Applied with problems".
+- **Receipt:** the NEW submitted row's id (the ledger's rule — the route
+  returns it; the reviewed draft row is deleted by the submit). Family
+  `form_submit`.
+- **Sync:** the route already announces itself on yc-sync (`form:<type>:<id>`
+  plus the record's `changes`); this slice adds no matcher.
+- Tests: `tests/caseyFormSubmit.test.js` (mocked; browser lifted by name),
+  gated `tests/caseyFormSubmit.mysql.test.js` (the real route and
+  formSubmitService; workflow starts and domain events stubbed at the
+  boundary), `tests/caseyFormDiscardPdf.test.js`, `tests/assistantUi.test.js`,
+  `tests/assistantPromptKinds.test.js`, `tests/caseyActionPermissions.test.js`
+  (the route is staff-JWT only: an API key is 403).
+
+**Not built**, each with its reason:
+- **Submitting answers the draft does not hold** — the route submits the
+  stored draft; a change is a draft card first, then a submit card.
+- **Contact-writer refusals before the click** — `updateContact`'s blocked
+  columns and its other refusals live inside the writer, not in an exported
+  rule; the route answers them as a 400 before anything is written, and the
+  browser reads it as a refusal.
+- **A live scan of stored readers** (reports, form templates, pipeline steps
+  naming a patched column — A7's `caseFieldsReaders`): the card discloses A7's
+  code-measured surfaces only.
+- **Template editing / publishing / visibility / version restore /
+  deletion, unlinking a submission** — as A12.2.
 
 #### A13: Message triage — mail read state and case link shipped 2026-11-02 (no drafts: none exist)
 

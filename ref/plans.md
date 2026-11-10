@@ -1157,19 +1157,11 @@ COMMENTs.)
   - POST `/api/log` and PUT `/api/log/:id/about` announce nothing on the sync
     bus, so a Comms tab never hears a note or a case tag written elsewhere.
 
-## From the Ask Casey arc — A12 / A12.2 forms (2026-11-02, 2026-11-11) — deferred
+## From the Ask Casey arc — A12 / A12.2 / A12.3 forms (2026-11-02, 2026-11-11) — deferred
 
-Draft discard, PDF filing and appointment-linked forms shipped in A12.2
-(ASK_CASEY_ACTIONS_PLAN A12.2).
+Draft discard, PDF filing and appointment-linked forms shipped in A12.2, and
+submitting a stored draft in A12.3 (ASK_CASEY_ACTIONS_PLAN A12.2, A12.3).
 
-- **Submitting a form — the card (A12.3).** The native route exists: POST
-  `/api/forms/submissions/submit-draft` runs the page's whole Save chain for a
-  stored draft in one request (validation, the `onSubmit.patch` record write,
-  `form.submitted`, the draft delete, every `onSubmit.workflows` start, the log
-  entry — `services/formSubmitService.js`). The Casey card over it is still to
-  build: it must disclose the record columns the submit writes, every workflow
-  it starts, the trigger rules on `form.submitted`, and refuse on missing
-  required answers before the click (the route answers the first one as a 400).
 - **Template editing, publishing, visibility, version restore, deletion** —
   form-builder operations, not row controls.
 - **The hand-built form pages on the bus.** `casedetails.html`,

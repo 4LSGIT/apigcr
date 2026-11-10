@@ -598,8 +598,13 @@ async function submitDraft(db, body, { auth } = {}) {
 
 module.exports = {
   submitDraft,
-  // exported for tests:
-  pageValue,
+  // A12.3 — Ask Casey's form.submit.v1 card discloses the SAME diff, patch
+  // target and workflow list this route applies (computeDiffAndPatch,
+  // resolveBase, resolvePatchTarget, wfListOf) — never a second copy:
   computeDiffAndPatch,
   resolveBase,
+  resolvePatchTarget,
+  wfListOf,
+  // exported for tests:
+  pageValue,
 };

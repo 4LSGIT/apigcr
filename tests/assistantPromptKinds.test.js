@@ -603,16 +603,14 @@ describe('A12 — every stage teaches the form cards, the form.template read and
   });
 });
 
-// A12.2: the discard and PDF cards, appointment-linked forms, and the submit
-// deferral. Pins that every stage teaches both new kinds and what each cites,
-// that NO stage still says discarding or filing a PDF is unavailable, that the
-// submit deferral is taught with its reason, that appointments are form
-// records, and that no stage invents a submit kind or an "again" flag.
-describe('A12.2 — every stage teaches the discard and PDF cards and the submit deferral', () => {
+// A12.2: the discard and PDF cards and appointment-linked forms. Pins that
+// every stage teaches both kinds and what each cites, that NO stage still says
+// discarding or filing a PDF is unavailable, that appointments are form
+// records, and that no stage invents an "again" flag. (The submit deferral is
+// gone: A12.3's block below.)
+describe('A12.2 — every stage teaches the discard and PDF cards', () => {
   test('the plan extends the form bullet; the old "not available" list is gone', () => {
-    expect(planPrompt).toContain('discard ONE saved draft (form.draft.delete — the form\'s Discard), or file ONE submitted\n  form\'s PDF to Dropbox (form.pdf.file — the Form Inbox\'s File)');
-    expect(planPrompt).toContain('for a discard, that sql.read of the DRAFT row (status \'draft\') and a read of its record');
-    expect(planPrompt).toContain('Submitting a form is NOT available: there is no atomic route (the form\'s Submit is a seven-call browser\n  chain)');
+    expect(planPrompt).toContain('discard ONE saved draft (form.draft.delete — the form\'s Discard), file ONE submitted\n  form\'s PDF to Dropbox (form.pdf.file — the Form Inbox\'s File)');
     expect(planPrompt).not.toContain('submitting, PDFs, template editing');
     expect(planPrompt).not.toContain('deleting a draft and unlinking are not available');
   });
@@ -621,21 +619,47 @@ describe('A12.2 — every stage teaches the discard and PDF cards and the submit
     expect(investigatePrompt).toContain('(an unlinked submission\'s PDF needs only its row)');
     expect(investigatePrompt).toContain('a row carrying the record\'s exact case_id, contact_id or appt_id');
   });
-  test('the answer and repair stages teach both shapes, every-filing-is-a-copy, no-undo, and the submit deferral', () => {
+  test('the answer and repair stages teach both shapes, every-filing-is-a-copy and no-undo', () => {
     for (const kind of ['form.draft.delete.v1', 'form.pdf.file.v1']) {
       expect({ kind, answer: answerPrompt.includes(`{"kind":"${kind}"`), repair: repairPrompt.includes(`- ${kind}: kind,`) }).toEqual({ kind, answer: true, repair: true });
     }
     expect(answerPrompt).toContain('Form rules (A12 / A12.2');
     expect(answerPrompt).toContain('Every\n    answer in it is deleted and no screen restores it');
     expect(answerPrompt).toContain('EVERY filing makes another copy (the route never skips one)');
-    expect(answerPrompt).toContain('Submitting a form is NOT available to Casey: there\n    is no atomic route');
     expect(answerPrompt).toContain('an appointment (link_type "appt", link_id = the\n    exact appt_id)');
     expect(answerPrompt).not.toContain('Submitting a form, making or filing its PDF');
     expect(answerPrompt).not.toContain('deleting a draft and unlinking are not available');
     expect(repairPrompt).toContain('never form_key, link_type, link_id\n  or data (the server builds the request from the stored row)');
-    expect(repairPrompt).toContain('never "again", never a draft. There is NO submit kind');
+    expect(repairPrompt).toContain('never "again", never a draft\n');
     expect(repairPrompt).not.toContain('never an appointment');
-    for (const p of [answerPrompt, repairPrompt, planPrompt, investigatePrompt]) expect(p).not.toContain('form.submit.v1');
+  });
+});
+
+// A12.3: the submit card. Pins that every stage teaches form.submit and what it
+// cites, that NO stage still says submitting is unavailable or names the old
+// "no atomic route" reason, and that the card takes no answers of its own.
+describe('A12.3 — every stage teaches the submit card; the deferral is gone', () => {
+  test('the plan names the kind, what to read and what the server refuses', () => {
+    expect(planPrompt).toContain('or submit ONE stored draft (form.submit — the form\'s\n  Submit, run server-side in one request)');
+    expect(planPrompt).toContain('for a discard or a submit, that sql.read of the DRAFT row (status \'draft\') and a read of its record');
+    expect(planPrompt).toContain('a draft saved on an older form version, or a draft\n  whose answers the form refuses (the card names every failing answer)');
+  });
+  test('the investigate stage names what a submit cites', () => {
+    expect(investigatePrompt).toContain('and form submit proposals, which need the DRAFT\'s\n  row with form_submissions.id AS submission_id');
+  });
+  test('the answer and repair stages teach the shape, what it writes, and no undo', () => {
+    expect(answerPrompt).toContain('{"kind":"form.submit.v1","submission_id":4530,');
+    expect(answerPrompt).toContain('* form.submit.v1 submits ONE stored draft — the form\'s Submit button, run on the server in one request');
+    expect(answerPrompt).toContain('A submission cannot be un-submitted.');
+    expect(answerPrompt).toContain('for\n    a submit, the form, the record, the version it becomes, the record columns it writes (before and after)');
+    expect(repairPrompt).toContain('- form.submit.v1: kind,submission_id,evidence — the DRAFT row');
+    expect(repairPrompt).toContain('never data, answers, form_key,\n  link_type or link_id (it submits the stored draft exactly as saved)');
+    for (const p of [answerPrompt, repairPrompt, planPrompt, investigatePrompt]) {
+      expect(p).not.toContain('no atomic route');
+      expect(p).not.toContain('seven-call');
+      expect(p).not.toContain('Submitting a form is NOT available');
+      expect(p).not.toContain('NO submit kind');
+    }
   });
 });
 
