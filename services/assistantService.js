@@ -7115,7 +7115,7 @@ async function normalizeMailCaseLink(db, value, evidence, currentUserId) {
   effects.push(`Comms tab: ${caseLabel}'s Comms tab lists this email from now on (its mail card shows to staff who can read ${m.mailbox_address || 'its mailbox'}); an open Comms tab or comms hub in this browser refreshes on its own.`);
   effects.push('Client portal: not shown — the portal shows no log entries of any type (its field whitelist excludes log columns).');
   effects.push('Trigger event: none — linking emits no event, runs no trigger rule or workflow, and sends nothing.');
-  effects.push('One message, one case: a link card never moves it to another case later or unlinks it (the Comms tab\'s case tag does that; filing its attachments to another case with Link on moves it, and that card says so).');
+  effects.push('One message, one case: an email shows on one case at a time — linking one that is already on another case MOVES it (a danger line says so, as the Comms tab\'s case tag does silently); a link card never unlinks it (the case tag does that).');
 
   return {
     draft_id: crypto.randomUUID(), kind: 'mail.case_link.v1', status: 'draft',
@@ -7190,9 +7190,11 @@ async function mailLinkPrediction(db, id, record, { filing = false } = {}) {
       } else {
         const [[other]] = await db.query('SELECT case_id, case_number, case_number_full FROM cases WHERE case_id = ? LIMIT 1', [aboutId]);
         const otherLabel = other ? `case ${String(other.case_number_full || other.case_number || other.case_id).trim()}` : `case ${aboutId}`;
-        if (!filing) throw mailError(`ALREADY LINKED to another case: message #${id} is linked to ${otherLabel} (log entry #${logId}). Moving a message between cases is not available to Casey — the user changes the case tag on the Comms tab`);
+        // 2026-11-11 (Fred's standing rule — the Comms case tag moves an email
+        // silently): a link card moves it too, disclosed as a danger line; it
+        // used to refuse ("not available to Casey").
         otherCase = { case_id: other ? String(other.case_id) : aboutId, label: otherLabel };
-        warnings.push(`MOVES THE EMAIL OFF ANOTHER CASE: message #${id} is linked to ${otherLabel} (log entry #${logId}). A log entry has ONE about-link, so linking sets it to ${caseLabel}: the email leaves ${otherLabel}'s Comms and Log tabs. Set link to false to file the attachments and leave the email where it is.`);
+        warnings.push(`MOVES THE EMAIL OFF ANOTHER CASE: message #${id} is linked to ${otherLabel} (log entry #${logId}). A log entry has ONE about-link, so linking sets it to ${caseLabel}: the email leaves ${otherLabel}'s Comms and Log tabs.${filing ? ' Set link to false to file the attachments and leave the email where it is.' : ' If it belongs on both cases, leave it — an email shows on one case at a time (the Comms tab\'s case tag does the same move).'}`);
       }
     } else if (aboutType) {
       warnings.push(`REPLACES ITS ABOUT-LINK: log entry #${logId} is currently attributed to ${aboutType} ${aboutId}. A log entry has ONE about-link, so linking sets it to ${caseLabel} instead and that attribution is gone.`);

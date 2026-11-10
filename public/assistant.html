@@ -5734,7 +5734,7 @@ const ACTION_FAMILIES = [
     failure: 'The email could not be linked.',
     appliedCopy: (draft) => ({
       status: `Applied — email linked (log entry #${draft.result_mail_link_log_id})`,
-      warning: `Message #${(draft.message || {}).mail_message_id} is now linked to ${mailCaseLabel(draft)} through log entry #${draft.result_mail_link_log_id}, using your signed-in account. It shows on the case's Comms and Log tabs; a link card cannot move or unlink it.`,
+      warning: `Message #${(draft.message || {}).mail_message_id} is now linked to ${mailCaseLabel(draft)} through log entry #${draft.result_mail_link_log_id}, using your signed-in account. It shows on the case's Comms and Log tabs; a link card cannot unlink it (the Comms tab's case tag can), and linking it to another case later moves it, with a warning.`,
       button: `Open ${mailEntity(draft).label}`,
     }),
     reviewWarning: 'Review the email, the case, the log entry it reuses or creates (a created entry copies the email\'s text into the case\'s log) and whether the sender is a contact on the case. Canceling writes nothing.',

@@ -2096,9 +2096,11 @@ DELETE `/api/mail/messages/:id/read`) and `mail.case_link.v1` (POST
   `tests/assistantUi.test.js`, `tests/ycSync.test.js`.
 
 **Deferred** (`ref/plans.md`): bulk read, SMS / call triage (no route),
-drafts (none exist), moving a message to another case on a link card (the
-A13b filing card's Link does move one, disclosed as a danger line), unlinking,
-flags (flagged / answered), archive, reading an HTML-only body.
+drafts (none exist), unlinking, flags (flagged / answered), archive, reading
+an HTML-only body. Since 2026-11-11 a link to a message already on ANOTHER
+case is not refused: the card moves it, disclosed as a danger line (MOVES THE
+EMAIL OFF ANOTHER CASE) — Fred's standing rule, the Comms case tag makes the
+same move silently; the A13b filing card's Link behaves the same.
 
 #### A13b: File an email's attachments to a case — shipped 2026-11-10
 

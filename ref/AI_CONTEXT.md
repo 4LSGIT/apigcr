@@ -37,8 +37,8 @@ body. Governing migrations in `ref/migrations/`.*
   route's 409 is the backstop); the case is never the preview's suggestion unless
   named; a typed folder goes through the route's own `exactFolder` (leading
   spaces kept). Link rides A13's `mailLinkPrediction` in filing mode: an email on
-  another case is a danger line (fileOne's caseLink MOVES it — the A13 card still
-  refuses that). The browser sends `move` / `link` as explicit booleans (absent =
+  another case is a danger line (fileOne's caseLink MOVES it; since 11-11 the A13
+  link card discloses the same move instead of refusing). The browser sends `move` / `link` as explicit booleans (absent =
   false in the route), the notice batch (`cy` + draft id) only when the notice goes
   out, then `POST /api/mail/attachments/notice` once something landed; a failed
   file or `link_error` is "Applied with problems". Receipt `mail_message_id`; switch

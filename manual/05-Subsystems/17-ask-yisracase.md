@@ -1032,9 +1032,9 @@ subject words, a day — and works only on a message that search found.
   - draft an email: YisraCase has **no mail drafts** — Casey can send an email
     when you ask (a separate card you confirm), never a "draft" that sends;
   - work on texts or calls: they have no read or case-link action;
-  - move an email that is already on a case to another case, or unlink it —
-    change the case tag on the Comms tab (filing the email's attachments to
-    another case with Link on does move it — that card warns, below);
+  - unlink an email from a case — change the case tag on the Comms tab
+    (linking an email that is already on another case does move it, and the
+    card warns: an email shows on one case at a time);
   - flag, archive or delete mail.
 - Casey refuses when you click if the email's read state, its log entry or the
   case's contacts changed since the card was prepared — ask again.

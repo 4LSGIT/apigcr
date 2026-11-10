@@ -316,9 +316,10 @@ d('the Casey mail cards on real MySQL (A13)', () => {
     expect(row).toEqual({ log_type: 'email', log_link_type: 'email', log_link_id: 'dana@example.com', log_about_type: 'case', log_about_id: C1,
       log_by: 7, log_message: 'Here are my pay stubs.', log_direction: 'incoming' });
     expect((await q('SELECT log_id FROM mail_messages WHERE id = 501'))[0].log_id).toBe(res.body.log_id);
-    // THE ALREADY-LINKED BRANCH: this case is a no-op; another case is refused — and the route would relink.
+    // THE ALREADY-LINKED BRANCH: this case is a no-op; another case is a MOVE the card discloses (2026-11-11, was refused) — and the route relinks.
     await expect(norm(linkCard(501))).rejects.toThrow(`That changes nothing — message #501 is already linked to case 25-70001 (log entry #${res.body.log_id})`);
-    await expect(norm(linkCard(501, C2))).rejects.toThrow(`ALREADY LINKED to another case: message #501 is linked to case 25-70001 (log entry #${res.body.log_id})`);
+    const moveCard = await norm(linkCard(501, C2));
+    expect(moveCard.warnings).toContain(`MOVES THE EMAIL OFF ANOTHER CASE: message #501 is linked to case 25-70001 (log entry #${res.body.log_id}). A log entry has ONE about-link, so linking sets it to case 25-70002: the email leaves case 25-70001's Comms and Log tabs. If it belongs on both cases, leave it — an email shows on one case at a time (the Comms tab's case tag does the same move).`);
     expect(await browser.mailLinkPrecheck(card)).toBe('Message #501 is already linked to case 25-70001 — someone linked it since this card was prepared. Nothing was written.');
     const relink = await call(app, 'POST', '/api/mail/messages/501/case-link', { case_id: C2 });
     expect([relink.status, relink.body.log_created, relink.body.log_id]).toEqual([200, false, res.body.log_id]);

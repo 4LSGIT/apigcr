@@ -299,11 +299,13 @@ describe('mail.case_link.v1 — the log entry caseLink would use', () => {
     await refuse(linkCard(), 'The log entry this message points at no longer exists (log #5001) — the route refuses the link (409)', linkOpts({ row: ROW({ log_id: 5001 }), log: null }));
     await refuse(linkCard(), 'The log entry this message points at no longer exists (log #6001, through a copy of it in another mailbox)', linkOpts({ copyStamp: { log_id: 6001 }, log: null }));
   });
-  test('ALREADY LINKED: to this case is a no-op (case-blind); to another case is refused, naming it', async () => {
+  test('ALREADY LINKED: to this case is a no-op (case-blind); to another case is MOVED, disclosed as a danger line (2026-11-11, was refused)', async () => {
     const log = (aboutId) => ({ log_id: 5001, log_type: 'email', log_date: DATE, log_about_type: 'case', log_about_id: aboutId, message_chars: 1 });
     await refuse(linkCard(), 'That changes nothing — message #88123 is already linked to case 25-12345 (log entry #5001)', linkOpts({ row: ROW({ log_id: 5001 }), log: log(CASE_ID.toLowerCase()) }));
-    await refuse(linkCard(), 'ALREADY LINKED to another case: message #88123 is linked to case 24-99999 (log entry #5001). Moving a message between cases is not available to Casey',
-      linkOpts({ row: ROW({ log_id: 5001 }), log: log('OTHER123'), otherCase: { case_id: 'OTHER123', case_number: '24-99999', case_number_full: null } }));
+    const card = await run(linkCard(), linkOpts({ row: ROW({ log_id: 5001 }), log: log('OTHER123'), otherCase: { case_id: 'OTHER123', case_number: '24-99999', case_number_full: null } }));
+    expect(card.warnings).toContain('MOVES THE EMAIL OFF ANOTHER CASE: message #88123 is linked to case 24-99999 (log entry #5001). A log entry has ONE about-link, so linking sets it to case 25-12345: the email leaves case 24-99999\'s Comms and Log tabs. If it belongs on both cases, leave it — an email shows on one case at a time (the Comms tab\'s case tag does the same move).');
+    expect(card.warnings.join('\n')).not.toMatch(/Set link to false/);
+    expect(card.effects.join('\n')).toContain('linking one that is already on another case MOVES it');
   });
   test('an about-link to something else is REPLACED — a danger warning, not a refusal', async () => {
     const log = { log_id: 5001, log_type: 'email', log_date: DATE, log_about_type: 'contact', log_about_id: '1309', message_chars: 1 };
