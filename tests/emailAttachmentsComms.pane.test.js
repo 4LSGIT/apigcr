@@ -442,6 +442,31 @@ describe('the dialog', () => {
     expect(doc.querySelector('#fd-body .fd-named')).toBeNull();
   });
 
+  test('S3c: a case shows its subtype and client — the chips, the picker\'s suggestions, the case search', async () => {
+    const adv = { case_id: 'CMKA8RKX', case_number: '26-03006-jda', case_type: 'Bankruptcy', case_subtype: 'Adversary Proceeding', case_stage: 'Open', case_caption: 'Cohen v. Boren', primary_contact_name: 'Michele Boren', why: 'subject_name', contact_name: 'Michele Boren' };
+    const ch7 = { case_id: 'FW13PDQT', case_number: '25-32362-jda', case_type: 'Bankruptcy', case_subtype: 'Chapter 7', case_stage: 'Open', case_caption: null, primary_contact_name: 'Michele Boren', why: 'subject_name', contact_name: 'Michele Boren' };
+    const { window, doc } = await boot({
+      handler: standard({
+        'POST /api/mail/attachments/preview': (p) => (p.case_id ? PREVIEW({ case: adv, suggested: false, candidates: [adv, ch7] }) : PREVIEW({ case: null, suggested: false, candidates: [adv, ch7] })),
+        'GET /api/cases/search': () => ({ cases: [{ case_id: 'CMKA8RKX', case_number_full: '26-03006-jda', case_type: 'Bankruptcy', case_subtype: 'Adversary Proceeding', case_stage: 'Open', primary_contact_name: 'Michele Boren' }] }),
+      }),
+    });
+    await openThread(window, doc);
+    doc.querySelector('.atts .att-file').click();
+    await tick(window, 60);
+    expect([...doc.querySelectorAll('#fd-body .fd-case .cand')].map((b) => b.textContent)).toEqual(['26-03006-jda · Adversary Proceeding', '25-32362-jda · Chapter 7']);
+    doc.querySelector('#fd-body .fd-search').click();
+    expect([...doc.querySelectorAll('#case-sugg li .l2')].map((x) => x.textContent)).toEqual([
+      'Bankruptcy · Adversary Proceeding · Michele Boren is named in the subject', 'Bankruptcy · Chapter 7 · Michele Boren is named in the subject']);
+    const q = doc.getElementById('case-q');
+    q.value = 'bor'; q.dispatchEvent(new window.Event('input'));
+    await tick(window, 320);
+    expect(doc.querySelector('#case-results li .l2').textContent).toBe('CMKA8RKX · Bankruptcy · Adversary Proceeding · Open');
+    doc.querySelector('#case-sugg li').click();
+    await tick(window, 60);
+    expect(doc.querySelector('#fd-body .fd-case').textContent).toMatch(/To case.*26-03006-jda.*Adversary Proceeding.*Open/s);
+  });
+
   test('Escape closes it; the case picker opens over it and its pick comes back', async () => {
     const { window, doc, calls } = await boot({
       handler: standard({ 'GET /api/cases/search': () => ({ cases: [{ case_id: 'ZZZZ9999', case_number: '26-49999', case_type: 'BK' }] }) }),

@@ -408,6 +408,17 @@ Rulings (Fred, 2026-11-10):
   `\ : * ? " < > |`, control characters, a blank name, a name ending in a
   dot or a space, > 6 levels, > 120 characters a name). A move goes to the
   same folder.
+- **The default folder takes the case folder's own names** (S3c, Fred
+  2026-11-10: "don't hardcode that, it's firm specific"): the rendered
+  template is compared with the folders already in the case folder, level by
+  level (`emailAttachmentFilingService.alignCaseFolder`) — an exact name wins,
+  else one equal to it with the edges trimmed and letter case ignored; no
+  match at a level = that level and below as written (created). So a case
+  holding " Client Uploads" gets its files there, not in a second
+  "Client Uploads". It runs for docs@ (§4) and refile too, once per email and
+  only when a file is uploaded (one listing per level); a case with no folder
+  link or a Dropbox failure files as written. A person's exact folder is never
+  compared.
 - **Names in the subject** (S3b): an email the matcher places nowhere (no
   case, no candidates — an Adobe Sign notice "… between Stuart Sandweiss and
   michele boren is Signed and Filed!") offers the cases of clients (Primary /
@@ -421,7 +432,7 @@ Routes (`routes/api.mail.js`, staff JWT):
 
 | Route | Does |
 |---|---|
-| `POST /api/mail/attachments/preview` `{message_ids ≤50, case_id?}` | Read-only. Per email: every attachment as `file` (allowlist — ticked unless filed or a duplicate) / `optional` (any other type a person may file — unticked) / `skip` (`inline_image`, `too_large`, `blocked`, `type_not_allowed`), with `filed`, `duplicate`, `confirm` ('type' / 'size'), the matcher's verdict, and `move`. Target = `case_id`, else the ONE case every email with files matches (`suggested`). Also the candidates, the reviewer (`is_you`), the policy. `mailbox_id` is the box the reader sees it in (an alias's id for a slice reader — the part route's URL). |
+| `POST /api/mail/attachments/preview` `{message_ids ≤50, case_id?}` | Read-only. Per email: every attachment as `file` (allowlist — ticked unless filed or a duplicate) / `optional` (any other type a person may file — unticked) / `skip` (`inline_image`, `too_large`, `blocked`, `type_not_allowed`), with `filed`, `duplicate`, `confirm` ('type' / 'size'), the matcher's verdict, and `move`. Target = `case_id`, else the ONE case every email with files matches (`suggested`). Also the candidates, the reviewer (`is_you`), the policy. The target and every candidate are full case cards (S3c): number, type, **subtype** (one client's two Bankruptcy cases differ only there), stage, caption, Primary client. `mailbox_id` is the box the reader sees it in (an alias's id for a slice reader — the part route's URL). |
 | `POST /api/mail/attachments/folders` `{case_id}` | The case folder's subfolders for the folder choice: ONE recursive Dropbox listing of `cases.case_dropbox`, folders only, relative, exact names, ≤ 4 levels, ≤ 400. `reason`: `no_case_folder` / `unavailable` (Dropbox did not answer — type the folder). Any staff member (what `/api/dropbox/list` already gives). |
 | `POST /api/mail/messages/:id/attachments/file` `{case_id, parts, confirm?, move?, link?, batch?, folder?}` | ONE email: move (when asked) → file the picks (`fileMessageAttachments` target `case`, `filed_by` the person, reason "Filed to case X by <name> from Comms.") → link. One request per email: the dialog shows progress and a retry re-runs one email (the registry makes every part idempotent). 400 a part not on the email / nothing to do; 422 a part that cannot be filed (says why); 409 `needs_confirmation`. With `batch`, the result is queued under digest key `comms-<batch>` (`mail_attachment_notices`, §8's table). The answer carries `log_id` when linked; `public/js/yc-sync.js` announces `doclink:case:<id>` (a file landed or moved in) and, when linked, case-link's `mail:<id>` + `comms:case:<id>` — an open case's Documents and Comms tabs refresh. |
 | `POST /api/mail/attachments/notice` `{batch}` | Every email of the batch must be readable by the caller (checked before anything is claimed — a batch id is not a capability); claims the queued results and sends the reviewer ONE notice PER SENDER (§8's `digestOutput` — the renderer speaks for one sender), From `email_automations`, subject `Filed from Comms — …`, title "Filed by <name>". `{sent:false, reason}`: `you_are_the_reviewer` / `no_reviewer` (claimed all the same) / `nothing_to_report`. A dialog closed before this call leaves its rows unclaimed: no notice for that batch. |

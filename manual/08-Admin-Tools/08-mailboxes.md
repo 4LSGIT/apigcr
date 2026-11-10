@@ -426,7 +426,13 @@ Comms](#phone-lines--comms), below).
     folder**: the case folder's folders are listed — pick one, or type a new
     one (it is created). The name is used exactly as written — a space at the
     start of a folder name (how the firm sorts its folders) counts. A move
-    (below) goes to the same folder.
+    (below) goes to the same folder. The default uses the case's own folder
+    when it has one by that name with different spacing or capitals (a case
+    with " Client Uploads" gets its files there, not in a second folder) —
+    docs@ does the same.
+  - Every case shown — the suggestions, the case search, the chosen case —
+    gives its subtype (Chapter 7, Adversary Proceeding…), so one client's
+    cases are told apart.
   - **Each file has a tick box.** Documents (PDF, Word, Excel, pictures, text)
     start ticked. Other types — a zip, a forwarded email — start unticked:
     tick them if they belong. Never filed, whatever you tick: the firm's

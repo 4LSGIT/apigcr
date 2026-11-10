@@ -3168,7 +3168,9 @@ folder in the case folder, taken EXACTLY (leading spaces are the firm's sort
 order; `exactFolder` refuses what could leave it); `…/attachments/folders`
 lists the case folder's subfolders; an email the matcher places nowhere
 offers the cases of clients named (first + last) in its subject — never staff,
-never auto-picked. Filed state rides
+never auto-picked. S3c: a template folder (docs@ and Comms' default) is
+aligned with the case folder's existing names (`alignCaseFolder`: exact, else
+trimmed + case-blind; no firm names in code). Filed state rides
 every Comms attachment (`attachFiled` — own row, else any copy by RFC
 Message-ID); the `not_filed` list filter uses the same copy rule.
 

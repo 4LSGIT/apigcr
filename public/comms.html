@@ -2425,7 +2425,7 @@ async function searchCases() {
       tabindex: '0', onclick: () => pickCase(c), onkeydown: (e) => { if (e.key === 'Enter') pickCase(c); },
     },
       h('div', { className: 'l1' }, c.case_number_full || c.case_number || '(no case number)'),
-      h('div', { className: 'l2' }, [c.case_id, c.case_type, c.case_stage].filter(Boolean).join(' · ')),
+      h('div', { className: 'l2' }, [c.case_id, c.case_type, c.case_subtype, c.case_stage].filter(Boolean).join(' · ')),
       h('div', { className: 'l2' }, [c.caption_adds_info ? c.case_caption : '', c.primary_contact_name].filter(Boolean).join(' — ') || '(no primary contact)'),
     )) : [h('li', { className: 'empty' }, 'No matches')]));
   } catch (err) {
@@ -2599,7 +2599,11 @@ function faSetCase(c) {
 function faPickCase() {
   const fa = state.fa;
   if (!fa || fa.busy || fa.done) return;
-  const sugg = ((fa.data && fa.data.candidates) || []).map((c) => ({ ...c, who: c.case_type || '' }));
+  // l2 = type · subtype · who: one client's two cases differ only by subtype (Chapter 7 / Adversary Proceeding)
+  const sugg = ((fa.data && fa.data.candidates) || []).map((c) => ({
+    ...c,
+    who: [c.case_subtype, c.why === 'subject_name' && c.contact_name ? `${c.contact_name} is named in the subject` : (c.primary_contact_name || '')].filter(Boolean).join(' · '),
+  }));
   openCasePicker({ mode: 'file', sugg, suggLabel: 'Suggested from these emails' }, {
     title: 'File to which case?',
     hint: 'The files go into the case\'s Dropbox folder, under Client Uploads / Emailed (the date of each email).',
@@ -2616,16 +2620,17 @@ function faRender() {
   // built with h(), never .append(…, null): append writes a null child as the TEXT "null"
   kids.push(fa.case
     ? h('div', { className: 'fd-case' }, h('span', { className: 'yc-flabel' }, 'To case'),
-      h('span', { className: 'chip case', title: [fa.case.case_id, fa.case.case_type].filter(Boolean).join(' · ') }, icon('fa-briefcase'), faCaseLabel(fa.case)),
+      h('span', { className: 'chip case', title: [fa.case.case_id, fa.case.case_type, fa.case.case_subtype, fa.case.primary_contact_name].filter(Boolean).join(' · ') }, icon('fa-briefcase'), faCaseLabel(fa.case)),
+      fa.case.case_subtype ? h('span', { className: 'chip' }, fa.case.case_subtype) : null,
       fa.case.case_stage ? h('span', { className: 'chip' }, fa.case.case_stage) : null,
       d.suggested ? h('span', { className: 'muted' }, 'every email matches this case') : null,
       lock ? null : h('button', { className: 'linkish fd-change', type: 'button', onclick: faPickCase }, 'Change'))
     : h('div', { className: 'fd-case' }, h('span', { className: 'yc-flabel' }, 'Pick the case'),
       (d.candidates || []).map((c) => h('button', {
         className: 'chip case cand', type: 'button',
-        title: [c.why === 'subject_name' && c.contact_name ? `${c.contact_name} is named in the subject` : null, c.case_type, c.case_stage].filter(Boolean).join(' · '),
+        title: [c.why === 'subject_name' && c.contact_name ? `${c.contact_name} is named in the subject` : null, c.case_type, c.case_subtype, c.case_stage, c.primary_contact_name].filter(Boolean).join(' · '),
         onclick: () => faSetCase(c),
-      }, icon('fa-briefcase'), c.case_number || c.case_id)),
+      }, icon('fa-briefcase'), `${c.case_number || c.case_id}${c.case_subtype ? ` · ${c.case_subtype}` : ''}`)),
       h('button', { className: 'btn small fd-search', type: 'button', onclick: faPickCase }, icon('fa-magnifying-glass'), ' Search cases…')));
   // S3b: names in a subject the matcher could not place (an e-sign notice) — say whose cases those are
   const namedBy = [...new Set((d.candidates || []).filter((c) => c.why === 'subject_name' && c.contact_name).map((c) => c.contact_name))];

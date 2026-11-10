@@ -161,6 +161,48 @@ function exactFolder(raw) {
 }
 
 /**
+ * ALIGN A TEMPLATE FOLDER WITH THE CASE FOLDER'S OWN NAMES (S3c, Fred
+ * 2026-11-10: "don't hardcode that, it's firm specific"). A firm sorts its
+ * folders with leading spaces (" Client Uploads"), so the default template's
+ * "Client Uploads" made a SECOND folder beside the real one in cases that
+ * have it. Each segment of the rendered template is matched against the
+ * folders already there, level by level: an exact name wins, else one equal
+ * to it with the edges trimmed and letter case ignored (the first such, in
+ * Dropbox's order); a segment with no match — and everything under it — is
+ * kept as written (created). No firm's names are coded here.
+ * Best effort: a case with no folder link, or any Dropbox failure, leaves the
+ * folder as rendered (the placement ladder then does what it always did).
+ * Not for a person's exact pick (exactFolder): that one is already a name.
+ * @returns {Promise<string>}
+ */
+async function alignCaseFolder(db, caseId, rel) {
+  if (!caseId || !rel) return rel;
+  try {
+    const [[c]] = await db.query('SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId]);
+    const link = c && c.case_dropbox ? String(c.case_dropbox).trim() : '';
+    if (!link) return rel;
+    const dbx = require('./dropboxService');                 // lazy (convention)
+    const cred = await dbx._resolveCredential(db, {});
+    let parent = await dbx.resolveLocation(db, cred, { sharedLink: link, expectFolder: true });
+    const segs = rel.split('/');
+    const out = [];
+    for (let i = 0; i < segs.length; i++) {
+      const listing = await dbx.listFolder(db, { path: parent, credentialId: cred, maxEntries: 2000 });
+      const names = (listing.entries || []).filter(e => e && e['.tag'] === 'folder').map(e => String(e.name || ''));
+      const want = segs[i].trim().toLowerCase();
+      const hit = names.includes(segs[i]) ? segs[i] : names.find(n => n.trim().toLowerCase() === want);
+      if (!hit) return [...out, ...segs.slice(i)].join('/');
+      out.push(hit);
+      parent = dbx.joinPath(parent, hit);
+    }
+    return out.join('/');
+  } catch (err) {
+    console.warn(`${LOG_TAG} case ${caseId}: folder names not compared (${err && err.message}) — filing to "${rel}" as written`);
+    return rel;
+  }
+}
+
+/**
  * Fill a folder template. Tokens: {yymmdd} {yyyy-mm-dd} {sender}. A template
  * may hold '/' (nested folders); every segment is cleaned on its own and empty
  * ones dropped, so no value can climb out of the folder it was meant for.
@@ -393,7 +435,13 @@ async function fileMessageAttachments(db, o = {}) {
 
   const date = msg.date instanceof Date ? msg.date : (msg.date ? new Date(msg.date) : null);
   const senderLabel = (dest.contact && (dest.contact.lfm_name || dest.contact.name)) || fromEmail || 'unknown sender';
-  const caseFolder = exact || renderFolder(o.subfolder || DEFAULT_CASE_SUBFOLDER, { date, sender: senderLabel });
+  // The case-rung folder: a person's exact pick, else the template aligned with
+  // the case folder's own names — compared once, and only when a file is
+  // actually uploaded (a re-run that finds everything filed reads no folder).
+  const rendered = renderFolder(o.subfolder || DEFAULT_CASE_SUBFOLDER, { date, sender: senderLabel });
+  let caseFolderP = null;
+  const caseFolderFor = () => (caseFolderP = caseFolderP ||
+    (exact ? Promise.resolve(exact) : dest.caseId ? alignCaseFolder(db, dest.caseId, rendered) : Promise.resolve(rendered)));
   const binFolder = renderFolder(o.unsortedSubfolder || DEFAULT_UNSORTED_SUBFOLDER, { date, sender: senderLabel });
 
   // A person's pick (Comms): only the parts named — and for those, any type
@@ -446,7 +494,7 @@ async function fileMessageAttachments(db, o = {}) {
         linkId: dest.linkId,
         content: buffer,
         fileName: safeFileName(f.filename, f.ext),
-        subfolder: caseFolder,
+        subfolder: await caseFolderFor(),
         unsortedPathKey: uploadTarget().UNSORTED_PATH_KEY,
         unsortedDefault: uploadTarget().DEFAULT_UNSORTED_PATH,
         unsortedFilenamePrefix: '',
@@ -698,7 +746,7 @@ async function refileMessageAttachments(db, o = {}) {
   const prep = await placement().preparePlacement(db, {
     linkType: 'case',
     linkId: cs.case_id,
-    subfolder: exact || renderFolder(o.subfolder || DEFAULT_CASE_SUBFOLDER, { date, sender: '' }),
+    subfolder: exact || await alignCaseFolder(db, cs.case_id, renderFolder(o.subfolder || DEFAULT_CASE_SUBFOLDER, { date, sender: '' })),
     unsortedPathKey: uploadTarget().UNSORTED_PATH_KEY,
     unsortedDefault: uploadTarget().DEFAULT_UNSORTED_PATH,
     artifactLabel: ARTIFACT_LABEL,
@@ -773,6 +821,7 @@ module.exports = {
   SOURCE,
   TARGETS,
   exactFolder,
+  alignCaseFolder,
   FOLDER_MAX_DEPTH,
   // exported for tests
   renderFolder,

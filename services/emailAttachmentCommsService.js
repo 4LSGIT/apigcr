@@ -131,9 +131,18 @@ function boolOf(v, label) {
   return v;
 }
 
+// A case as the dialog shows it: number, type AND subtype (one client's two
+// Bankruptcy cases differ only there — Chapter 7 vs Adversary Proceeding),
+// stage, and who it is (the Primary client; the caption) — the case search's
+// own fields (caseService.searchCases).
+const CASE_CARD_SQL = `SELECT c.case_id, c.case_number, c.case_number_full, c.case_type, c.case_subtype, c.case_stage, c.case_caption,
+       (SELECT pc.contact_name FROM case_relate cr JOIN contacts pc ON pc.contact_id = cr.case_relate_client_id
+         WHERE cr.case_relate_case_id = c.case_id AND cr.case_relate_type = 'Primary'
+         ORDER BY cr.case_relate_client_id LIMIT 1) AS primary_contact_name
+  FROM cases c`;
+
 async function caseRow(db, caseId) {
-  const [[c]] = await db.query(
-    'SELECT case_id, case_number, case_number_full, case_type, case_stage FROM cases WHERE case_id = ? LIMIT 1', [caseId]);
+  const [[c]] = await db.query(`${CASE_CARD_SQL} WHERE c.case_id = ? LIMIT 1`, [caseId]);
   return c || null;
 }
 
@@ -142,7 +151,10 @@ function shapeCase(c) {
     case_id: c.case_id,
     case_number: c.case_number_full || c.case_number || null,
     case_type: c.case_type || null,
+    case_subtype: c.case_subtype || null,
     case_stage: c.case_stage || null,
+    case_caption: c.case_caption || null,
+    primary_contact_name: c.primary_contact_name || null,
   } : null;
 }
 
@@ -387,6 +399,16 @@ async function preview(db, userId, body) {
     for (const c of list) {
       if (candidates.size >= CANDIDATES_MAX) break;
       if (!candidates.has(c.case_id)) candidates.set(c.case_id, c);
+    }
+  }
+  // every candidate as a full case card (subtype, client, caption), one read
+  if (candidates.size) {
+    const [cards] = await db.query(`${CASE_CARD_SQL} WHERE c.case_id IN (?)`, [[...candidates.keys()]]);
+    for (const row of cards) {
+      const k = [...candidates.keys()].find(id => String(id).toLowerCase() === String(row.case_id).toLowerCase());
+      if (k == null) continue;
+      const cur = candidates.get(k);
+      candidates.set(k, { ...shapeCase(row), ...(cur.why ? { why: cur.why } : {}), ...(cur.contact_name ? { contact_name: cur.contact_name } : {}) });
     }
   }
 
