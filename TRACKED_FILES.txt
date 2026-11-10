@@ -1903,6 +1903,7 @@ tests/ssnModifiers.test.js
 tests/startupInit.maintenance.test.js
 tests/su.stepup.test.js
 tests/systemAlertStatusFn.test.js
+tests/taskCreate.badInput400.test.js
 tests/taskQueue.accel.test.js
 tests/taskService.status.test.js
 tests/taskService.test.js

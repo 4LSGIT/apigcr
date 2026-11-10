@@ -124,6 +124,11 @@ router.post('/api/tasks', jwtOrApiKey, async (req, res) => {
     res.json({ status: 'success', title: 'Task Created', message: 'Task successfully created', ...result, ...(replayed ? { replayed: true } : {}) });
   } catch (err) {
     if (sendIdempotencyError(res, err)) return;
+    // createTask's input refusals (over-long title/desc/source) carry status
+    // 400. A 500 here raises a route_500 alert for what is a caller mistake.
+    if (err && err.status === 400) {
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
     console.error('POST /api/tasks error:', err);
     res.status(500).json({ status: 'error', message: err.message });
   }

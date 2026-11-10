@@ -1183,13 +1183,18 @@ async function createTask(db, {
   session_key_id        = null,
   log_extra             = null
 }) {
-  if (!title) throw new Error('createTask requires title');
-  if (!to)    throw new Error('createTask requires to');
+  // These five are the CALLER's input, not a server fault: each carries
+  // status 400 so POST /api/tasks answers 400. Answered as a 500 they raised
+  // a route_500 alert (system_alerts 2201, 2026-11-10: a 1,010-char desc).
+  // Messages are unchanged — other callers match on them.
+  const badInput = (message) => Object.assign(new Error(message), { status: 400 });
+  if (!title) throw badInput('createTask requires title');
+  if (!to)    throw badInput('createTask requires to');
 
   // sql_mode is NOT strict → an overlong value truncates SILENTLY. Throw instead.
-  if (String(title).length  > 100)  throw new Error('createTask: title exceeds 100 chars');
-  if (String(desc).length   > 1000) throw new Error('createTask: desc exceeds 1000 chars');
-  if (source && String(source).length > 50) throw new Error('createTask: source exceeds 50 chars');
+  if (String(title).length  > 100)  throw badInput('createTask: title exceeds 100 chars');
+  if (String(desc).length   > 1000) throw badInput('createTask: desc exceeds 1000 chars');
+  if (source && String(source).length > 50) throw badInput('createTask: source exceeds 50 chars');
 
   // null/undefined `from` → self-assign to the recipient; a legitimate 0
   // (the automations user) is preserved, NOT coerced to `to`.
