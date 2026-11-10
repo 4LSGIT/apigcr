@@ -1378,14 +1378,6 @@ COMMENTs.)
   response carries `contact_a_id` / `contact_b_id`), a refetch marker for the
   role rows, readers in the two panes, and the ycSync tests — never a
   Casey-only emit (manager ruling 2026-10-28).
-- **The A6 remove sub-slice.** Relation DELETE, ending a relation (`active`
-  / `end_date` / `end_reason` with the type's `allowed_end_reasons` vocab),
-  role deactivation (PATCH `active=0`, the native "remove") and hard detach,
-  reactivation of either, a relation type change (vocab re-validation +
-  symmetric collision), and editing an ended relation. Each is refused by name
-  in the A6 normalizer today; a sub-slice needs its own card wording for the
-  downstream effect (a trustee leaving the roster, a judge suffix no longer
-  resolving) and click-time freshness.
 - **Symmetric reverse race.** `contactRelationService.createRelation` refuses
   the reverse of a SYMMETRIC type with an application-level SELECT, not a key,
   so two concurrent creates of (A,B,spouse) and (B,A,spouse) can both store.

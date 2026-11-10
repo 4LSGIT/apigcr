@@ -252,7 +252,11 @@ describe('A6 — every stage teaches contact relations and roles, and the contac
   test('the plan carries its own bullet and the A5 bullet no longer excludes relations/roles', () => {
     expect(planPrompt).toContain('Reviewed contact relation and role actions are available');
     expect(planPrompt).not.toContain('relations/roles, or scalar contact edits');
-    expect(planPrompt).toContain('Ending, removing, deactivating or reactivating a relationship');
+    // A6.2: the plan teaches the lifecycle and no longer refuses it.
+    expect(planPrompt).toContain('END an active\n  relationship, REACTIVATE an ended one, or DELETE one');
+    expect(planPrompt).toContain('DEACTIVATE an active role (the contact\n  form\'s "remove"), REACTIVATE an inactive one, or DELETE an inactive one');
+    expect(planPrompt).not.toContain('Ending, removing, deactivating or reactivating a relationship');
+    expect(planPrompt).not.toMatch(/changing a relationship's type[^.]*not available/);
   });
   test('the investigate stage names the read and the proposal family', () => {
     expect(investigatePrompt).toContain('contact relation / role proposals, which need a contact.relations read');
@@ -261,12 +265,20 @@ describe('A6 — every stage teaches contact relations and roles, and the contac
     expect(investigatePrompt).toContain('- Available kinds are sql.read, manual.search, comms.search, weather.lookup, contact.relations ({"contact_id"}');
     expect(planPrompt).toContain('Available kinds are sql.read, manual.search, comms.search, weather.lookup,\n  contact.relations ({"contact_id":N}');
   });
-  test('the answer and repair stages teach direction, the registry, and the deferred remove', () => {
+  test('the answer and repair stages teach direction, the registry, and the A6.2 lifecycle', () => {
     expect(answerPrompt).toContain('Contact relation and role rules (A6');
     expect(answerPrompt).toContain('for parent_child contact_a is the PARENT');
     expect(answerPrompt).toContain('type_code / role / status MUST be values from those registry rows');
-    expect(answerPrompt).toContain('Ending, deactivating, reactivating or deleting\n    a relation, changing its type');
-    expect(repairPrompt).toContain('changes allows ONLY status,start_date,notes');
+    // A6.2 (Fred, 2026-11-09): the old refusals are gone from every stage.
+    expect(answerPrompt).not.toContain('Ending, deactivating, reactivating or deleting');
+    expect(answerPrompt).not.toContain('reactivation is not available');
+    expect(answerPrompt).not.toContain('Deactivating/removing a role,');
+    expect(answerPrompt).toContain('allowed_statuses, allowed_end_reasons');
+    expect(answerPrompt).toContain('an end_reason from that type\'s\n    allowed_end_reasons');
+    expect(answerPrompt).toContain('remove DELETES an INACTIVE row only, with no undo');
+    expect(repairPrompt).not.toContain('changes allows ONLY status,start_date,notes');
+    expect(repairPrompt).toContain('changes allows status,start_date,notes,type_code, and\n  end_date,end_reason only on an ENDED relation');
+    expect(repairPrompt).toContain('remove (delete) an INACTIVE one only');
     expect(repairPrompt).toContain('attrs is the COMPLETE\n  replacement object');
   });
 });

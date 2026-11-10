@@ -24,6 +24,29 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey's relation / role lifecycle cards (A6.2, 11-10):** kinds
+  `contact.relation.end.v1` {relation_id, end_date? (today), end_reason?} /
+  `.reactivate.v1` / `.remove.v1` {relation_id} → PATCH / DELETE
+  `/api/contact-relations/:id` (body fixed by the kind: {active:0, end_date,
+  end_reason} / {active:1, end_date:null, end_reason:''}); `contact.role.
+  deactivate.v1` / `.reactivate.v1` / `.remove.v1` {contact_id, role_id} →
+  PATCH {active} / DELETE `/api/contacts/:id/roles/:rowId`. A6.1's
+  `contact.relation.update.v1` now also takes `type_code` and, on an ENDED
+  relation (active 0 or an end_date), `end_date` / `end_reason` — the tab's
+  Edit dialog. Normalizer-only invariants (the routes guard none): the merged
+  status / end reason must pass the type's vocab (the PATCH re-checks it on
+  every save and would 400); reactivate refuses a retired type / role code and
+  a second ACTIVE relation of the type between the pair; role remove refuses an
+  ACTIVE row (the Roles section offers Delete only on inactive rows; the route
+  would delete it). The judge / trustee link shift is MEASURED by running
+  lib/caseRoleResolver / lib/trusteeRoster over a db wrapper that rewrites the
+  one `cr.active = 1` in each contact_roles query (`roleProjectedDb`); a query
+  of another shape, or any failure, refuses the card — the resolvers swallow
+  errors. Stored links are never re-resolved by a role change, only on the
+  case's next judge / docket / trustee write. Same switch
+  `casey_contact_relations_enabled`; tests
+  `tests/caseyContactRelationsRemove{,.mysql}.test.js`; plan
+  ASK_CASEY_ACTIONS_PLAN A6.2.
 - **Casey's cross-pipeline transfer card (A9.3, 11-09):** kind
   `case.pipeline.transfer.v1` {case_id, pipeline (template id or name), stage?
   (key/label on the destination; unnamed = `pwMoveOpen`'s default), note?} →

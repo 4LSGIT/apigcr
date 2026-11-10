@@ -137,8 +137,9 @@ he rules):
 - Casey tasks land in the machine-Notices preset via `source:'Casey'`; the
   completion-notice default differs from the native form. Default: unchanged.
 - Opus remains the `better_quality` default model.
-- A6 remove variants: deferred (A6 shipped create/update 2026-10-28); ENDING a
-  relation counts as remove, not update (manager ruling 2026-10-28). See A6.
+- A6 lifecycle (end / reactivate / remove; role deactivate / reactivate /
+  remove): shipped as A6.2, 2026-11-10 — ENDING a relation is its own kind, not
+  an update (manager ruling 2026-10-28, kept). See A6.
 
 ## Governing principle: actions run through the user
 
@@ -599,7 +600,7 @@ PATCH recipients to all open contact readers, plus the existing donor marker
 for native forced phone/email transfers. No Casey-only emit exists. Applied
 results persist and open the parent contact.
 
-#### A6: Contact relations and roles — create and update shipped 2026-10-28
+#### A6: Contact relations and roles — create and update shipped 2026-10-28, lifecycle (A6.2) 2026-11-10
 
 Add relation and role create/update/remove separately from scalar contact
 editing. Resolve both ends and the role/type registry on the server, protect
@@ -619,8 +620,8 @@ the Relationships tab and the Roles section read.
 
 **Shipped contract (A6.1).** Four kinds: `contact.relation.create.v1`
 (POST `/api/contact-relations`), `contact.relation.update.v1` (PATCH
-`/api/contact-relations/:id` — status, start_date, notes of an ACTIVE
-relation), `contact.role.create.v1` (POST `/api/contacts/:id/roles`) and
+`/api/contact-relations/:id` — status, start_date, notes; A6.2 adds
+type_code and an ENDED relation's end_date / end_reason), `contact.role.create.v1` (POST `/api/contacts/:id/roles`) and
 `contact.role.update.v1` (PATCH `/api/contacts/:id/roles/:rowId` — the
 complete attrs object of an active row). The type / role code resolves in the
 registry and carries its spelling; an unknown or retired code refuses and
@@ -645,12 +646,69 @@ Off switch `casey_contact_relations_enabled` (on unless '0'). Tests:
 `tests/caseyContactRelations.test.js`, gated
 `tests/caseyContactRelations.mysql.test.js`.
 
-**Deferred (the remove sub-slice).** Relation removal (the hard DELETE),
-ENDING a relation (`active` / `end_date` / `end_reason` — it takes the
-relation out of active state and feeds downstream consumers, the same risk
-class as remove; manager ruling 2026-10-28), role removal and deactivation
-(PATCH `active=0`, the native "remove"), reactivation of either, a relation
-type change, and editing an ended relation. Each is refused by name today.
+**Shipped contract (A6.2, 2026-11-10 — Fred, 2026-11-09: "Casey can do at
+least anything the user can do in the UI").** Six lifecycle kinds, each on the
+route the native control uses: `contact.relation.end.v1` {relation_id,
+end_date? (today, firm-local), end_reason?} → PATCH {active:0, end_date,
+end_reason}; `contact.relation.reactivate.v1` {relation_id} → PATCH {active:1,
+end_date:null, end_reason:''}; `contact.relation.remove.v1` {relation_id} →
+DELETE `/api/contact-relations/:id` ({deleted_id}); `contact.role.deactivate.v1`
+/ `.reactivate.v1` {contact_id, role_id} → PATCH `/api/contacts/:id/roles/:rowId`
+{active:0|1} ({id}); `contact.role.remove.v1` → DELETE the same path
+({removed}). And `contact.relation.update.v1` widened to what the tab's Edit
+dialog allows: `type_code` (a live type; contact_a stays A; the dialog's rule —
+status and end_reason always sent with a type change — kept; the pair rule
+re-run on the new type) and, on an ENDED relation (active 0 or an end_date),
+`end_date` / `end_reason`. The body comes from the KIND in the browser
+(families `contact_relation_lifecycle`, `contact_role_lifecycle`), never from
+draft text. Refused by name (the routes guard none of it): an ended relation on
+an end card (ENDED = A6.1's reading: inactive or carrying an end date), an
+active one on a reactivate card, an inactive role on a deactivate card, an
+active one on a reactivate card, an ACTIVE role row on a remove card (the Roles
+section offers Delete only on inactive rows; the route would delete it — pinned
+on the twin), reactivating onto a retired type / retired or unknown role code
+(stricter than the route — never put a retired vocabulary back into use; an end,
+deactivate or remove of one is allowed), an end_reason outside the type's
+`allowed_end_reasons` (the contact.relations read now carries it), an end date
+in the future or before the start, a stored status / end reason the type no
+longer allows (the PATCH re-validates the MERGED values on every save and would
+400 — pinned), and a reactivation that would leave two ACTIVE relations of the
+type between the pair. No relation row is undeletable natively (no FK, trigger
+or reader blocks it). DISCLOSED: the Relationships tab of both contacts (the
+only code reader besides Casey's read; no template, report, event or portal page
+reads relations); the A7 stored-definitions scan for `contact_relations` /
+`contact_roles` (a hit is a STORED READERS warning); NO UNDO on every delete,
+naming END as the reversible alternative for an active relation; the role's code
+readers (trustee roster, judge resolution, role filter / pickers); and, for a
+judge or trustee, the link SHIFT — measured by running lib/caseRoleResolver and
+lib/trusteeRoster (the resolvers updateCase runs) once on the stored state and
+once on a projected one (`roleProjectedDb` rewrites the single `cr.active = 1`
+of each contact_roles query; a query of another shape or any failure refuses the
+card, since the resolvers swallow errors), over the cases they could touch
+(judge: docket suffix, judge text carrying the judge's last name, or a stored
+link; trustee: every case with a trustee; more than 20,000 refuses). The card
+names the cases whose link would change and counts the stored links to the
+contact; nothing re-resolves until each case's judge / docket / trustee is next
+written. Danger: every delete and every role deactivation; an end, a relation
+reactivation or a role reactivation when it carries a warning. `expected` is the
+row as stored (relations: updated_at, both ends, type, every value; roles:
+active, attrs, stored role code — the table has no updated_at); the click
+re-reads the native GETs and refuses on ANY difference before the claim (a
+reactivation also re-checks the pair). Outcomes: either route's 404 is "already
+removed" (`contactLifecycleKnownOutcome`); a role DELETE answering removed:0
+throws in the result reader. Idempotency: none — one claim per draft; a second
+card's delete is a 404, a second end / reactivate is refused by the re-read
+(residual: two cards clicked in the same instant both pass and both PATCH — the
+second end rewrites the end fields). No yc-sync matcher (native gap kept).
+Ledger rows, prompts (plan 27, answer 29, repair 17; the investigate stage had no
+refusal to drop), the request detector's lifecycle verbs, permissions matrix
+(76 kinds / 64 mounts). Same switch `casey_contact_relations_enabled`. Tests:
+`tests/caseyContactRelationsRemove.test.js`, gated
+`tests/caseyContactRelationsRemove.mysql.test.js`.
+
+**Deferred.** Changing either contact of a relation (the native PATCH forbids
+it; delete and re-add) and role-type / relation-type administration (YisraCase
+Config, firm.settings).
 
 #### A7: Scalar contact and case edits — group A shipped 2026-10-28, groups B/C 2026-11-09
 

@@ -66,6 +66,10 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'contactRelationLabel', 'contactRelationValue', 'contactRelationLines', 'contactRelationText', 'contactRoleAttrLines', 'contactRoleText',
   'contactRelationRequest', 'contactRoleRequest', 'contactRelationStableJson', 'contactRelationDay', 'contactRelationPrecheck',
   'contactRolePrecheck', 'contactRelationResult', 'contactRoleResult', 'contactRelationOpenTarget',
+  // A6.2: the lifecycle families (tests/caseyContactRelationsRemove.test.js drives them).
+  'contactLifecycleLabel', 'contactLifecycleTail', 'contactRelationLifecycleText', 'contactRoleLifecycleText',
+  'contactRelationLifecycleRequest', 'contactRoleLifecycleRequest', 'contactRelationLifecyclePrecheck', 'contactRoleLifecyclePrecheck',
+  'contactRelationLifecycleResult', 'contactRoleLifecycleResult', 'contactLifecycleKnownOutcome', 'contactLifecycleAppliedVerb',
   'recordTextSpec', 'recordTextLabel', 'recordTextCount', 'recordTextShow', 'recordTextDiff', 'recordTextBefore',
   'recordTextTargetLines', 'recordTextText', 'recordTextDanger', 'recordTextRequest', 'recordTextPrecheck',
   'caseTextResult', 'contactTextResult', 'recordTextOpenTarget',
@@ -124,6 +128,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'TASK_ACTION_KINDS'), constSrc(html, 'EVENT_ACTION_KINDS'),
     constSrc(html, 'APPT_ACTION_KINDS'), constSrc(html, 'CONTACT_SUBRECORD_ACTION_KINDS'),
     constSrc(html, 'CONTACT_RELATION_ACTION_KINDS'), constSrc(html, 'CONTACT_ROLE_ACTION_KINDS'),
+    constSrc(html, 'CONTACT_RELATION_LIFECYCLE_KINDS'), constSrc(html, 'CONTACT_ROLE_LIFECYCLE_KINDS'),
     constSrc(html, 'CASE_TEXT_ACTION_KINDS'), constSrc(html, 'CONTACT_TEXT_ACTION_KINDS'), constSrc(html, 'RECORD_TEXT_SPECS'),
     constSrc(html, 'RECORD_TEXT_CONTEXT'), constSrc(html, 'RECORD_TEXT_PART_MAX'), constSrc(html, 'RECORD_TEXT_WORD_MAX'),
     constSrc(html, 'CASE_CONTACT_ACTION_KINDS'), constSrc(html, 'CASE_CONTACT_TYPES'),
@@ -2193,11 +2198,18 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
       expect(host.querySelector('.action-draft-status').textContent).toBe(chip);
       expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open Dana Client', 'Copy details']);
     }
-    // Two families, distinct applied keys, the four A6 kinds and nothing else.
+    // Two A6.1 families, distinct applied keys, the four A6.1 kinds and nothing else.
     const rel = box.actionFamily({ kind: 'contact.relation.update.v1' }); const role = box.actionFamily({ kind: 'contact.role.update.v1' });
     expect([[...rel.kinds], [...role.kinds]]).toEqual([['contact.relation.create.v1', 'contact.relation.update.v1'], ['contact.role.create.v1', 'contact.role.update.v1']]);
     expect([rel.appliedKey, role.appliedKey, rel.idField, role.idField]).toEqual(['result_relation_id', 'result_role_id', 'relation_id', 'role_id']);
-    for (const kind of ['contact.relation.end.v1', 'contact.relation.delete.v1', 'contact.role.remove.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    // A6.2: the lifecycle kinds have their OWN two families (distinct applied
+    // keys); a model-invented spelling still has none.
+    const relLife = box.actionFamily({ kind: 'contact.relation.end.v1' }); const roleLife = box.actionFamily({ kind: 'contact.role.remove.v1' });
+    expect([relLife.id, [...relLife.kinds], roleLife.id, [...roleLife.kinds]]).toEqual([
+      'contact_relation_lifecycle', ['contact.relation.end.v1', 'contact.relation.reactivate.v1', 'contact.relation.remove.v1'],
+      'contact_role_lifecycle', ['contact.role.deactivate.v1', 'contact.role.reactivate.v1', 'contact.role.remove.v1']]);
+    expect([relLife.appliedKey, roleLife.appliedKey, relLife.idField, roleLife.idField]).toEqual(['result_relation_lifecycle_id', 'result_role_lifecycle_id', 'relation_id', 'role_id']);
+    for (const kind of ['contact.relation.delete.v1', 'contact.role.delete.v1', 'contact.relation.deactivate.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
   });
 

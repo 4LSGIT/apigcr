@@ -15,9 +15,11 @@
  *      code refuses and names the live ones); status from the type's vocab;
  *   3. direction and uniqueness: one relation per pair and type in EITHER
  *      direction — the reverse of a one-way type refuses with its own words,
- *      an inactive duplicate refuses (reactivation is deferred);
- *   4. the deferred remove: ending / deactivating keys, a type change, either
- *      contact id and role reactivation refuse BY NAME;
+ *      an inactive duplicate refuses (and names contact.relation.reactivate.v1);
+ *   4. the lifecycle keys on these kinds (active, an ACTIVE relation's end
+ *      fields, either contact id) refuse BY NAME and name the A6.2 kinds that
+ *      do it (tests/caseyContactRelationsRemove.test.js — which also pins the
+ *      A6.2 update widening: a type change, an ENDED relation's end fields);
  *   5. evidence: both contact ids for a relation create, the exact
  *      relation_id / role_id row for an update;
  *   6. role attrs through the route's own validator (number identity), the
@@ -67,7 +69,7 @@ function makeDb(over = {}) {
       const c = CONTACTS[params[0]];
       return [c && !(over.missing || []).includes(params[0]) ? [{ ...c }] : []];
     }
-    if (flat === 'SELECT type_code, forward_label, reverse_label, is_symmetric, allowed_statuses, active FROM contact_relation_types WHERE type_code = ? LIMIT 1') {
+    if (flat === 'SELECT type_code, forward_label, reverse_label, is_symmetric, allowed_statuses, allowed_end_reasons, active FROM contact_relation_types WHERE type_code = ? LIMIT 1') {
       // general_ci: the registry finds a differently-cased code.
       const t = Object.values(TYPES).find((x) => x.type_code.toLowerCase() === String(params[0]).toLowerCase());
       return [t ? [{ ...t }] : []];
@@ -160,7 +162,7 @@ describe('contact.relation.create.v1', () => {
   });
 
   test('ending a relation at create, unknown keys and a self-relation refuse by name', async () => {
-    await refuse(relCreate({ end_date: '2020-01-01' }), /created ACTIVE — it takes no end_date\. Ending a relation is not available to Casey/);
+    await refuse(relCreate({ end_date: '2020-01-01' }), /created ACTIVE — it takes no end_date\. Ending a relation is its own card: propose contact\.relation\.end\.v1/);
     await refuse(relCreate({ active: 0, end_reason: 'divorced' }), /it takes no active, end_reason/);
     await refuse(relCreate({ created_by: 6 }), /Relation create carries unsupported fields: created_by/);
     await refuse(relCreate({ contact_b_id: 77 }), /cannot be related to itself/);
@@ -201,7 +203,7 @@ describe('contact.relation.create.v1', () => {
     const sym = { relations: [{ id: 7, type_code: 'spouse', contact_a_id: 78, contact_b_id: 77, active: 1 }] };
     await refuse(relCreate({ type_code: 'spouse' }), /already have a spouse relation \(#7\)/, sym);
     const inactive = { relations: [{ id: 8, type_code: 'spouse', contact_a_id: 77, contact_b_id: 78, active: 0 }] };
-    await refuse(relCreate({ type_code: 'spouse' }), /It is INACTIVE; reactivating or editing an ended relation is not available to Casey/, inactive);
+    await refuse(relCreate({ type_code: 'spouse' }), /It is INACTIVE — to make it active again, propose contact\.relation\.reactivate\.v1 for relation #8\./, inactive);
     // Another type between the same pair is a different relation.
     await expect(normalizeActionDraft(makeDb(same), relCreate({ type_code: 'spouse' }), EVIDENCE)).resolves.toBeTruthy();
   });
@@ -221,25 +223,20 @@ describe('contact.relation.update.v1', () => {
     expect(out.changes).not.toHaveProperty('notes');
   });
 
-  test('ending, a type change, either contact and unknown fields refuse by name', async () => {
-    await refuse(relUpdate({ changes: { end_date: '2026-10-01', end_reason: 'divorced' } }), /cannot change end_date, end_reason — ending or deactivating a relation is not available to Casey/);
-    await refuse(relUpdate({ changes: { active: 0 } }), /cannot change active/);
-    await refuse(relUpdate({ changes: { type_code: 'domestic_partner' } }), /cannot change type_code — a type change is not available to Casey/);
+  test('the end fields of an ACTIVE relation, active itself, either contact and unknown fields refuse by name (A6.2: they name the kinds)', async () => {
+    await refuse(relUpdate({ changes: { end_date: '2026-10-01', end_reason: 'divorced' } }), /Relation 44 is ACTIVE — an update cannot set its end_date, end_reason; ending it is contact\.relation\.end\.v1/);
+    await refuse(relUpdate({ changes: { active: 0 } }), /cannot change active — ending a relation is contact\.relation\.end\.v1 and making an ended one active again is contact\.relation\.reactivate\.v1/);
     await refuse(relUpdate({ changes: { contact_b_id: 90 } }), /cannot change contact_b_id — either end of a relation is fixed/);
     await refuse(relUpdate({ changes: { created_by: 1 } }), /changes unsupported fields: created_by/);
     await refuse(relUpdate({ changes: {} }), /needs a changes object/);
     await refuse(relUpdate({ contact_id: 77 }), /Relation update carries unsupported fields: contact_id/);
   });
 
-  test('evidence must be the exact relation_id row; the relation must exist and be ACTIVE', async () => {
+  test('evidence must be the exact relation_id row; the relation must exist', async () => {
     await refuse(relUpdate({ evidence: [{ query_id: 'q1', row_number: 1 }] }), /does not identify relation 44 — cite a contact.relations row/);
     await refuse(relUpdate({ relation_id: 45, evidence: [{ query_id: 'q2', row_number: 1 }] }), /does not identify relation 45/);
     getRelation.mockResolvedValueOnce(null);
     await refuse(relUpdate(), /Relation 44 no longer exists/);
-    getRelation.mockResolvedValueOnce({ ...RELATION_44, active: 0 });
-    await refuse(relUpdate(), /Relation 44 is ended or inactive — editing or reactivating an ended relation is not available/);
-    getRelation.mockResolvedValueOnce({ ...RELATION_44, end_date: new Date('2026-01-01T00:00:00Z') });
-    await refuse(relUpdate(), /Relation 44 is ended or inactive/);
     await refuse(relUpdate(), /Contact 78 \(contact_b\) is unavailable/, { missing: [78] });
   });
 
@@ -280,7 +277,7 @@ describe('contact.role.create.v1', () => {
 
   test('a contact already holding the role — active or inactive — refuses, naming the row', async () => {
     await refuse(roleCreate(), /Dana Client already holds the trustee role \(role row #31\)\. Nothing is proposed/, { roles: [{ id: 31, contact_id: 77, role: 'trustee', active: 1 }] });
-    await refuse(roleCreate(), /Dana Client has an INACTIVE trustee role row \(#32\)\. Reactivating a role is not available to Casey/, { roles: [{ id: 32, contact_id: 77, role: 'trustee', active: 0 }] });
+    await refuse(roleCreate(), /Dana Client has an INACTIVE trustee role row \(#32\)\. Nothing is proposed — to make it active again, propose contact\.role\.reactivate\.v1 for role row #32/, { roles: [{ id: 32, contact_id: 77, role: 'trustee', active: 0 }] });
     await refuse(roleCreate({ evidence: [{ query_id: 'q1', row_number: 2 }] }), /Role create evidence does not identify contact 77/);
   });
 
@@ -305,7 +302,7 @@ describe('contact.role.update.v1', () => {
   });
 
   test('deactivate / reactivate, the role code and a missing attrs object refuse by name', async () => {
-    await refuse(roleUpdate({ active: 0 }), /cannot change active — deactivating \(removing\) or reactivating a role is not available/);
+    await refuse(roleUpdate({ active: 0 }), /cannot change active — deactivating \(removing\) a role is contact\.role\.deactivate\.v1 and reactivating one is contact\.role\.reactivate\.v1/);
     await refuse(roleUpdate({ role: 'judge' }), /cannot change the role code/);
     await refuse(roleUpdate({ attrs: undefined }), /needs the COMPLETE new attrs object/);
   });
@@ -316,7 +313,7 @@ describe('contact.role.update.v1', () => {
     getRoleRow.mockResolvedValueOnce({ ...ROLE_31, contact_id: 78 });
     await refuse(roleUpdate(), /Role row 31 is not on contact 77/);
     getRoleRow.mockResolvedValueOnce({ ...ROLE_31, active: 0 });
-    await refuse(roleUpdate(), /Role row 31 \(trustee\) is INACTIVE — reactivating a role is not available/);
+    await refuse(roleUpdate(), /Role row 31 \(trustee\) is INACTIVE — its attributes are edited once it is active again: propose contact\.role\.reactivate\.v1 first/);
   });
 
   test('no change is key-order-insensitive; invalid attrs refuse', async () => {
@@ -345,7 +342,7 @@ describe('A6.0 — the contact.relations read kind', () => {
         forward_label: 'Parent of', reverse_label: 'Child of', updated_at: new Date('2026-10-02T12:00:00Z') },
     ] });
     jest.spyOn(roleSvc, 'listContactRoles').mockResolvedValue({ roles: [{ id: 31, contact_id: 77, role: 'trustee', label: 'Trustee', attrs: { chapter: [7] }, active: 1 }] });
-    jest.spyOn(relSvc, 'listRelationTypes').mockResolvedValue({ types: [{ type_code: 'spouse', forward_label: 'Spouse of', reverse_label: 'Spouse of', is_symmetric: 1, allowed_statuses: ['separated'] }] });
+    jest.spyOn(relSvc, 'listRelationTypes').mockResolvedValue({ types: [{ type_code: 'spouse', forward_label: 'Spouse of', reverse_label: 'Spouse of', is_symmetric: 1, allowed_statuses: ['separated'], allowed_end_reasons: ['divorced', 'deceased'] }] });
     jest.spyOn(roleSvc, 'listRoleTypes').mockResolvedValue({ types: [{ role_code: 'trustee', label: 'Trustee', attrs_schema: TRUSTEE_SCHEMA }] });
     const out = await contactRelationsRead(makeDb(), 77);
     expect(out.truncated).toBe(false);
@@ -356,7 +353,8 @@ describe('A6.0 — the contact.relations read kind', () => {
     expect(out.rows[1]).toMatchObject({ relation_id: 45, contact_a_name: 'Acme Corp', contact_b_name: 'Dana Client', reads: 'Acme Corp: Parent of Dana Client',
       reads_reverse: 'Dana Client: Child of Acme Corp', active: 0, end_date: '2020-01-01', end_reason: 'deceased' });
     expect(out.rows[2]).toEqual({ row_type: 'role', contact_id: 77, role_id: 31, role: 'trustee', role_label: 'Trustee', attrs: '{"chapter":[7]}', active: 1 });
-    expect(out.rows[3]).toEqual({ row_type: 'relation_type', type_code: 'spouse', forward_label: 'Spouse of', reverse_label: 'Spouse of', is_symmetric: 1, allowed_statuses: 'separated' });
+    // A6.2: the end-reason vocabulary rides the registry row (an end card's end_reason comes from it).
+    expect(out.rows[3]).toEqual({ row_type: 'relation_type', type_code: 'spouse', forward_label: 'Spouse of', reverse_label: 'Spouse of', is_symmetric: 1, allowed_statuses: 'separated', allowed_end_reasons: 'divorced,deceased' });
     expect(out.rows[4]).toEqual({ row_type: 'role_type', role_code: 'trustee', role_label: 'Trustee', attrs_schema: JSON.stringify(TRUSTEE_SCHEMA) });
     expect(relSvc.listContactRelations).toHaveBeenCalledWith(expect.anything(), 77, { limit: 20 });
   });

@@ -13,9 +13,10 @@ const KINDS = new Map([
   ...['create', 'update', 'complete', 'cancel'].map(k => [`event.${k}.v1`, 'event_id']),
   ...['create', 'update', 'attended', 'no_show', 'cancel', 'reschedule', 'reschedule_later'].map(k => [`appt.${k}.v1`, 'appt_id']),
   ...['phone', 'email', 'address'].flatMap(f => ['create', 'update', 'end'].map(k => [`contact.${f}.${k}.v1`, 'contact_id'])),
-  // A6: the receipt is the relation / role row the route created or edited.
-  ...['create', 'update'].map(k => [`contact.relation.${k}.v1`, 'relation_id']),
-  ...['create', 'update'].map(k => [`contact.role.${k}.v1`, 'role_id']),
+  // A6: the receipt is the relation / role row the route created or edited —
+  // A6.2's lifecycle kinds included (a removed row's id names what was removed).
+  ...['create', 'update', 'end', 'reactivate', 'remove'].map(k => [`contact.relation.${k}.v1`, 'relation_id']),
+  ...['create', 'update', 'deactivate', 'reactivate', 'remove'].map(k => [`contact.role.${k}.v1`, 'role_id']),
   // A7 group A: the receipt is the record whose one text column was written.
   ['case.notes.update.v1', 'case_id'],
   ['case.alerts.update.v1', 'case_id'],

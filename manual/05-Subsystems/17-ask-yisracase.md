@@ -341,9 +341,11 @@ Casey can add ONE relationship between two contacts ("record Sam as Dana's
 son", "Acme is Dana's employer"), or give a contact ONE role ("make Jane Smith
 a chapter 13 trustee"), through the same routes as the contact page's
 **Relationships** tab and the contact form's **Roles** section. It can also
-edit an ACTIVE relationship's status, start date or notes, or replace an
-active role's details (for a trustee: chapters and 341 Zoom link; for a judge:
-the docket suffix).
+edit a relationship's status, start date, notes or type (and, once it has
+ended, its end date and end reason), or replace an active role's details (for
+a trustee: chapters and 341 Zoom link; for a judge: the docket suffix). And it
+can do what those pages' end, remove and reactivate controls do — see
+*Ending, reactivating and deleting* below.
 
 Casey first reads the contact's relationships and roles together with the
 firm's lists of relationship types and roles — it never invents a type: an
@@ -356,8 +358,10 @@ of Dana Client" — so the direction of a one-way type is never ambiguous.
 - **No duplicates.** Two contacts can have each type of relationship once. A
   pair that already has that type, in either direction and even if the
   existing one is inactive, is refused — including the reverse of a one-way
-  type (Dana cannot be both Sam's parent and Sam's child). A contact that
-  already holds a role, or holds an inactive row for it, is refused too.
+  type (Dana cannot be both Sam's parent and Sam's child); a type change onto
+  such a type is refused the same way. A contact that already holds a role, or
+  holds an inactive row for it, is refused too (reactivate the old row
+  instead).
 - **Role details are checked as the Roles section checks them**: a trustee
   needs at least one chapter, a judge needs the docket suffix. A role card
   says what reads the role: trustees appear on the trustee roster that case
@@ -366,16 +370,52 @@ of Dana Client" — so the direction of a one-way type is never ambiguous.
   already carries is flagged in warning style, because resolution for it then
   falls back to the judge's name. A role update replaces the whole set of
   details; anything the new set leaves out is listed as removed.
-- **Not available to Casey**: ending, removing, deactivating or reactivating a
-  relationship or role, changing a relationship's type or either contact, and
-  managing the lists of types and roles. Do these on the contact page.
+- **A type change** keeps the direction (the first contact stays first) and
+  shows how both records will read afterwards; a status or end reason the new
+  type does not allow must be changed in the same card.
+- **Not available to Casey**: changing either contact of a relationship, and
+  managing the lists of types and roles. Do these on the contact page or in
+  YisraCase Config.
 - **Freshness.** When you confirm, the card re-reads the contact's
   relationships or roles first. If the pair became related, the relationship
-  was edited or ended, or the role was added, edited or deactivated since the
-  card was prepared, nothing is written. If the route refuses (for example a
+  was edited, ended or reactivated, or the role was added, edited, deactivated
+  or reactivated since the card was prepared, nothing is written. If the route refuses (for example a
   duplicate added a moment earlier), the card says nothing was written.
 - Once applied, the card opens the contact. Other open pages show the change
   after a reload — exactly as for an edit made on the contact page itself.
+
+#### Ending, reactivating and deleting
+
+- **End a relationship** ("Dana and Sam divorced — end their spouse
+  relationship"): the relationship becomes inactive with an end date (today
+  unless you name one; never in the future or before its start date) and an
+  end reason from that type's list. It stays on the Relationships tab's
+  **All** view as history. An already-ended relationship is refused.
+- **Reactivate a relationship**: an ended one becomes active again and its end
+  date and end reason are cleared (the card shows the old values). Refused
+  when the type has been retired, or when the two contacts already have
+  another active relationship of that type.
+- **Delete a relationship**: the row is gone for good, with no undo — the card
+  says so in warning style and, for an active one, points out that ending it
+  keeps the history. Use it for a relationship added in error.
+- **Deactivate a role** (the Roles section's ×): the role is kept in history
+  and can be reactivated. **Reactivate a role** brings an inactive row back
+  with its old details (refused for a retired role; details that no longer
+  pass the role's rules are flagged). **Delete a role** works only on an
+  inactive row, exactly as the Roles section offers Delete only there.
+- **What else changes is spelled out.** A relationship is read only by the
+  two contacts' Relationships tabs — the card says so, and also scans saved
+  reports, form templates, portal cards, pipeline steps, workflow and sequence
+  steps and ingest actions for any that name the table. For a **judge** or
+  **trustee** role, the card counts the cases whose judge or trustee link
+  would resolve to a different contact once the role is deactivated or
+  reactivated — by running the same matching the case page runs — names them,
+  and counts the cases that link to this contact today. Nothing changes on
+  those cases until their judge, docket number or trustee is next saved; then
+  the link follows the new roster. Deactivating or deleting a role, and
+  deleting a relationship, are always warning-styled.
+- If the route answers that the row no longer exists (someone deleted it a
+  moment earlier), the card says nothing was written.
 
 The off switch for these cards is the `casey_contact_relations_enabled`
 setting (on unless set to 0).

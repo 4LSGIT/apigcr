@@ -888,11 +888,20 @@ function contactRelationText(draft) {
       `Already related: no — these two contacts have no ${rel.type_code} relation in either direction (re-checked when you apply).`);
   } else {
     const c = draft.current || {};
+    // A6.2: an ENDED relation's end fields, and a type change, ride the update too.
+    if (rel.ended) lines.push(`Current state: ended${c.end_date ? ` ${c.end_date}` : ''}${c.end_reason ? ` (${c.end_reason})` : ''} — ${Number(c.active) ? 'still marked active' : 'inactive'}`);
     lines.push(`Current status: ${c.status || 'None'}`, `Current start date: ${c.start_date || 'Not recorded'}`, `Current notes: ${c.notes || 'Empty'}`);
-    const names = { status: 'New status', start_date: 'New start date', notes: 'New complete notes' };
-    Object.entries(draft.changes || {}).forEach(([key, value]) => lines.push(`${names[key] || key}: ${value || 'Clear'}`));
-    lines.push('Stays: active — the type, both contacts and the end fields are unchanged.',
-      'Stale check: if the relation is edited, ended or removed before you apply, nothing is written.');
+    const t = draft.new_type;
+    if (t) {
+      const a = rel.contact_a || {}; const b = rel.contact_b || {};
+      lines.push(`New type: ${t.type_code} — ${t.is_symmetric ? 'two-way (reads the same from both sides)' : 'one-way (the two records read differently)'}`,
+        `On ${a.contact_name}'s record after: "${t.forward_label} ${b.contact_name}"`, `On ${b.contact_name}'s record after: "${t.reverse_label} ${a.contact_name}"`);
+    }
+    const names = { status: 'New status', start_date: 'New start date', notes: 'New complete notes', end_date: 'New end date', end_reason: 'New end reason' };
+    Object.entries(draft.changes || {}).filter(([key]) => key !== 'type_code').forEach(([key, value]) => lines.push(`${names[key] || key}: ${value || 'Clear'}`));
+    lines.push(rel.ended ? `Stays: ended — ${t ? 'both contacts are' : 'the type and both contacts are'} unchanged.`
+      : t ? 'Stays: active — both contacts and the end fields are unchanged.' : 'Stays: active — the type, both contacts and the end fields are unchanged.',
+    'Stale check: if the relation is edited, ended, reactivated or removed before you apply, nothing is written.');
   }
   lines.push('Other open pages: the Relationships tab shows the change after a reload (as it does for an edit made there).',
     'Notification: nothing is sent.');
@@ -940,9 +949,16 @@ function contactRelationRequest(draft) {
   const id = Number(rel.relation_id);
   if (!Number.isSafeInteger(id) || id < 1) throw new Error('This relationship update has no usable relation id.');
   const body = {};
-  ['status', 'start_date', 'notes'].forEach((key) => { if (Object.prototype.hasOwnProperty.call(draft.changes || {}, key)) body[key] = draft.changes[key]; });
+  // A6.2: a type change only with the card's reviewed new_type, the end fields
+  // only on a relation the card saw ENDED — anything else in changes is inert.
+  const keys = ['status', 'start_date', 'notes'];
+  if (draft.new_type && (draft.changes || {}).type_code === draft.new_type.type_code) keys.unshift('type_code');
+  if (rel.ended) keys.push('end_date', 'end_reason');
+  keys.forEach((key) => { if (Object.prototype.hasOwnProperty.call(draft.changes || {}, key)) body[key] = draft.changes[key]; });
   if (!Object.keys(body).length) throw new Error('This relationship update changes nothing.');
   if ('start_date' in body && !body.start_date) body.start_date = null;
+  if ('end_date' in body && !body.end_date) body.end_date = null;
+  if ('end_reason' in body && String(body.end_reason || '').length > 40) throw new Error('The end reason is longer than the 40 characters YisraCase stores. Ask Casey to prepare it again.');
   if ('notes' in body && String(body.notes || '').length > 500) throw new Error('The notes are longer than the 500 characters YisraCase stores. Ask Casey to prepare it again with shorter notes.');
   return { path: `/api/contact-relations/${id}`, method: 'PATCH', body };
 }
@@ -989,8 +1005,14 @@ async function contactRelationPrecheck(draft) {
   const id = Number(rel.relation_id);
   const row = rows.find((r) => Number(r.id) === id);
   if (!row) return `Relation #${id} no longer exists, or its type changed, since this card was prepared. Nothing was written.`;
-  if (!Number(row.active) || row.end_date) return `Relation #${id} was ended or deactivated since this card was prepared. Nothing was written.`;
+  const nowEnded = !Number(row.active) || !!row.end_date;
+  if (nowEnded && !rel.ended) return `Relation #${id} was ended or deactivated since this card was prepared. Nothing was written.`;
+  if (!nowEnded && rel.ended) return `Relation #${id} was reactivated since this card was prepared. Nothing was written.`;
   const c = draft.current || {};
+  if (rel.ended && (Number(row.active ? 1 : 0) !== Number(c.active ? 1 : 0) || contactRelationDay(row.end_date) !== (c.end_date || null)
+      || String(row.end_reason || '') !== String(c.end_reason || ''))) {
+    return `Relation #${id} was edited since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
   const stamp = (() => { const d = new Date(row.updated_at); return Number.isNaN(d.getTime()) ? null : d.toISOString(); })();
   if (stamp !== (draft.expected && draft.expected.updated_at) || String(row.status || '') !== String(c.status || '')
       || contactRelationDay(row.start_date) !== (c.start_date || null) || String(row.notes || '') !== String(c.notes || '')) {
@@ -1033,6 +1055,180 @@ function contactRoleResult(draft, result) {
 function contactRelationOpenTarget(draft) {
   const contact = draft.contact || (draft.relation && draft.relation.contact_a) || {};
   return { id: Number(contact.contact_id), label: String(contact.contact_name || 'Contact') };
+}
+
+// Contact relation and role LIFECYCLE (A6.2): END / REACTIVATE / DELETE one
+// relation and DEACTIVATE / REACTIVATE / DELETE one role row, through the
+// routes the Relationships tab's Edit dialog and Delete button and the Roles
+// section's ×, Reactivate and Delete use — PATCH / DELETE
+// /api/contact-relations/:id and PATCH / DELETE /api/contacts/:id/roles/:rowId.
+// The body comes from the KIND (active / end fields), never from the draft's
+// free text. No Idempotency-Key, as A6.1: one claim per draft; a second card's
+// delete answers 404 (a refusal) and a second end or reactivate is refused by
+// the click-time re-read (the state it was built on is gone). Neither route has
+// a yc-sync matcher (a native gap, ref/plans.md) — native behaviour kept.
+const CONTACT_RELATION_LIFECYCLE_KINDS = new Set(['contact.relation.end.v1', 'contact.relation.reactivate.v1', 'contact.relation.remove.v1']);
+const CONTACT_ROLE_LIFECYCLE_KINDS = new Set(['contact.role.deactivate.v1', 'contact.role.reactivate.v1', 'contact.role.remove.v1']);
+
+function contactLifecycleLabel(draft) {
+  return ({ 'contact.relation.end.v1': 'End relationship', 'contact.relation.reactivate.v1': 'Reactivate relationship',
+    'contact.relation.remove.v1': 'Delete relationship', 'contact.role.deactivate.v1': 'Deactivate contact role',
+    'contact.role.reactivate.v1': 'Reactivate contact role', 'contact.role.remove.v1': 'Delete contact role' })[draft && draft.kind] || 'Contact lifecycle action';
+}
+
+function contactLifecycleTail(draft, lines, noun, page) {
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  lines.push(`Stale check: if the ${noun} is edited, ended, reactivated or removed before you apply, nothing is written.`,
+    `Other open pages: ${page} shows the change after a reload (as it does for a change made there).`, 'Notification: nothing is sent.');
+  return lines.join('\n');
+}
+
+function contactRelationLifecycleText(draft) {
+  const rel = draft.relation || {}; const c = draft.current || {};
+  const lines = ['Relationship proposal — not applied', `Action: ${contactLifecycleLabel(draft)}`, `Relation: #${rel.relation_id}`, ...contactRelationLines(rel),
+    `Current state: ${Number(c.active) ? 'active' : 'inactive'}${c.end_date ? `, ended ${c.end_date}` : ''}${c.end_reason ? ` (${c.end_reason})` : ''}`,
+    `Current status: ${c.status || 'None'}`, `Current start date: ${c.start_date || 'Not recorded'}`, `Current notes: ${c.notes || 'Empty'}`];
+  if (draft.kind === 'contact.relation.end.v1') {
+    const ch = draft.changes || {};
+    lines.push('Becomes: inactive (ended)', `End date: ${ch.end_date}`, `End reason: ${ch.end_reason || 'None'}`,
+      'Stays: the type, both contacts, status, start date and notes.');
+  } else if (draft.kind === 'contact.relation.reactivate.v1') {
+    lines.push('Becomes: active, with no end date and no end reason', 'Stays: the type, both contacts, status, start date and notes.');
+  } else {
+    lines.push('Becomes: DELETED — the row is gone, with no undo.');
+  }
+  return contactLifecycleTail(draft, lines, 'relation', 'the Relationships tab');
+}
+
+function contactRoleLifecycleText(draft) {
+  const c = draft.contact || {}; const role = draft.role || {}; const cur = draft.current || {};
+  const lines = ['Contact role proposal — not applied', `Action: ${contactLifecycleLabel(draft)}`, `Contact: ${c.contact_name} (#${c.contact_id})`,
+    `Role: ${role.label} (${role.role_code})${role.type_retired ? ' — this role type is retired' : ''}`, `Role row: #${role.role_id}`,
+    `Current state: ${Number(cur.active) ? 'active' : 'inactive'}`, ...contactRoleAttrLines(role.fields, cur.attrs, 'Current ')];
+  lines.push(draft.kind === 'contact.role.deactivate.v1' ? 'Becomes: inactive — kept in history with its attributes, and can be reactivated'
+    : draft.kind === 'contact.role.reactivate.v1' ? 'Becomes: active, with the attributes above' : 'Becomes: DELETED — the row is gone, with no undo.');
+  return contactLifecycleTail(draft, lines, 'role row', 'the contact form');
+}
+
+function contactRelationLifecycleRequest(draft) {
+  const id = Number(draft.relation && draft.relation.relation_id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('This relationship action has no usable relation id.');
+  const path = `/api/contact-relations/${id}`;
+  if (draft.kind === 'contact.relation.remove.v1') return { path, method: 'DELETE', body: null };
+  if (draft.kind === 'contact.relation.reactivate.v1') return { path, method: 'PATCH', body: { active: 1, end_date: null, end_reason: '' } };
+  if (draft.kind !== 'contact.relation.end.v1') throw new Error('This relationship action has an unknown kind.');
+  const ch = draft.changes || {};
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(ch.end_date || ''))) throw new Error('This end has no usable end date.');
+  if (String(ch.end_reason || '').length > 40) throw new Error('The end reason is longer than the 40 characters YisraCase stores. Ask Casey to prepare it again.');
+  return { path, method: 'PATCH', body: { active: 0, end_date: String(ch.end_date), end_reason: String(ch.end_reason || '') } };
+}
+
+function contactRoleLifecycleRequest(draft) {
+  const cid = Number(draft.contact && draft.contact.contact_id);
+  const rid = Number(draft.role && draft.role.role_id);
+  if (!Number.isSafeInteger(cid) || cid < 1 || !Number.isSafeInteger(rid) || rid < 1) throw new Error('This role action has no usable contact or role row.');
+  const path = `/api/contacts/${cid}/roles/${rid}`;
+  if (draft.kind === 'contact.role.remove.v1') return { path, method: 'DELETE', body: null };
+  if (draft.kind === 'contact.role.deactivate.v1') return { path, method: 'PATCH', body: { active: 0 } };
+  if (draft.kind === 'contact.role.reactivate.v1') return { path, method: 'PATCH', body: { active: 1 } };
+  throw new Error('This role action has an unknown kind.');
+}
+
+// Click time: the relation as the card saw it, every reviewed value. The list
+// is read from contact A's side (contact B's when A is gone — a delete may
+// clear an orphan row).
+async function contactRelationLifecyclePrecheck(draft) {
+  const rel = draft.relation || {}; const exp = draft.expected || {};
+  const id = Number(rel.relation_id);
+  const read = async (cid) => api(`/api/contacts/${cid}/relations?type_code=${encodeURIComponent(exp.type_code || rel.type_code)}&limit=100`, null, 'GET');
+  let list;
+  try { list = await read(Number(exp.contact_a_id)); } catch (e) {
+    if (!(e && e.status === 404)) throw e;
+    try { list = await read(Number(exp.contact_b_id)); } catch (e2) {
+      if (e2 && e2.status === 404) return `Neither contact of relation #${id} exists any more, so it cannot be re-read. Nothing was written.`;
+      throw e2;
+    }
+  }
+  const rows = list && Array.isArray(list.relations) ? list.relations : null;
+  const total = Number(list && list.total);
+  if (!rows || !Number.isFinite(total) || total > rows.length) throw new Error('the contact\'s relationships could not be read in full');
+  const row = rows.find((r) => Number(r.id) === id);
+  if (!row) return `Relation #${id} no longer exists, or its type changed, since this card was prepared. Nothing was written.`;
+  const stamp = (() => { const d = new Date(row.updated_at); return Number.isNaN(d.getTime()) ? null : d.toISOString(); })();
+  if (stamp !== exp.updated_at || Number(row.active ? 1 : 0) !== Number(exp.active ? 1 : 0)
+      || Number(row.contact_a_id) !== Number(exp.contact_a_id) || Number(row.contact_b_id) !== Number(exp.contact_b_id)
+      || String(row.status || '') !== String(exp.status || '') || contactRelationDay(row.start_date) !== (exp.start_date || null)
+      || contactRelationDay(row.end_date) !== (exp.end_date || null) || String(row.end_reason || '') !== String(exp.end_reason || '')
+      || String(row.notes || '') !== String(exp.notes || '')) {
+    return `Relation #${id} was edited, ended or reactivated since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  if (draft.kind === 'contact.relation.reactivate.v1') {
+    const pair = [Number(exp.contact_a_id), Number(exp.contact_b_id)].sort().join(',');
+    const twin = rows.find((r) => Number(r.id) !== id && Number(r.active) && r.type_code === exp.type_code
+      && [Number(r.contact_a_id), Number(r.contact_b_id)].sort().join(',') === pair);
+    if (twin) return `The two contacts now have another ACTIVE ${exp.type_code} relation (#${Number(twin.id)}), so reactivating #${id} would record it twice. Nothing was written.`;
+  }
+  return '';
+}
+
+async function contactRoleLifecyclePrecheck(draft) {
+  const c = draft.contact || {}; const role = draft.role || {}; const exp = draft.expected || {};
+  let list;
+  try { list = await api(`/api/contacts/${Number(c.contact_id)}/roles`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `${c.contact_name} (contact #${Number(c.contact_id)}) no longer exists. Nothing was written.`; throw e; }
+  const rows = list && Array.isArray(list.roles) ? list.roles : null;
+  if (!rows) throw new Error('the contact\'s roles could not be read');
+  const id = Number(role.role_id);
+  const row = rows.find((r) => Number(r.id) === id);
+  if (!row) return `Role row #${id} is no longer on ${c.contact_name}. Nothing was written.`;
+  if (Number(row.active ? 1 : 0) !== Number(exp.active ? 1 : 0)) return `Role row #${id} was ${Number(row.active) ? 'reactivated' : 'deactivated'} since this card was prepared. Nothing was written.`;
+  if (String(row.role || '') !== String(exp.role || '')
+      || contactRelationStableJson(row.attrs == null ? null : row.attrs) !== contactRelationStableJson(exp.attrs === undefined ? null : exp.attrs)) {
+    return `Role row #${id} was edited since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+// What each route returns: the PATCH echoes the stored relation; the DELETE
+// {deleted_id}; the role PATCH {id}; the role DELETE {removed} (0 or 1).
+function contactRelationLifecycleResult(draft, result) {
+  const id = Number(draft.relation && draft.relation.relation_id);
+  if (draft.kind === 'contact.relation.remove.v1') {
+    if (Number(result && result.deleted_id) !== id) throw new Error('The relationship route did not confirm the delete');
+    return { relation_id: id };
+  }
+  const row = result && result.relation;
+  const want = draft.kind === 'contact.relation.end.v1' ? 0 : 1;
+  if (!row || Number(row.id) !== id || Number(row.active ? 1 : 0) !== want) throw new Error('The relationship route did not confirm the change');
+  return { relation_id: id };
+}
+
+function contactRoleLifecycleResult(draft, result) {
+  const id = Number(draft.role && draft.role.role_id);
+  if (draft.kind === 'contact.role.remove.v1') {
+    if (Number(result && result.removed) !== 1) throw new Error('The role route deleted no row — it was already gone');
+    return { role_id: id };
+  }
+  if (Number(result && result.id) !== id) throw new Error('The role route did not confirm the change');
+  return { role_id: id };
+}
+
+// A 404 from either route is a refusal written before any change: the row is
+// already gone (another card or the native page removed it).
+function contactLifecycleKnownOutcome(e) {
+  const body = e && e.body;
+  if (body && body.idempotency) return null;
+  const message = String((e && e.message) || (body && body.message) || '');
+  if (e && e.status === 404 && /^Relation \d+ not found$|Role row not found on this contact/.test(message)) {
+    return { status: 'Refused — nothing written', text: `Refused — nothing written: that row no longer exists (already removed — ${message}). Ask Casey to read the contact again.` };
+  }
+  return null;
+}
+
+function contactLifecycleAppliedVerb(draft) {
+  return ({ 'contact.relation.end.v1': 'ended', 'contact.relation.reactivate.v1': 'active again', 'contact.relation.remove.v1': 'deleted',
+    'contact.role.deactivate.v1': 'deactivated', 'contact.role.reactivate.v1': 'active again', 'contact.role.remove.v1': 'deleted' })[draft.kind] || 'changed';
 }
 
 // Case notes, case alerts and contact notes (A7 group A). Each card writes ONE
@@ -4734,6 +4930,48 @@ const ACTION_FAMILIES = [
       button: `Open ${contactRelationOpenTarget(draft).label}`,
     }),
     reviewWarning: 'Review the role and every attribute — rosters, pickers and case matching read it the moment it is saved. Nothing is sent. Canceling writes nothing.',
+    open: (draft) => { const t = contactRelationOpenTarget(draft); openEntity('contact', t.id, t.label); },
+  },
+  {
+    // A6.2: END / REACTIVATE / DELETE one relation. A delete has no undo; an
+    // end or reactivate is danger when the card carries a warning.
+    id: 'contact_relation_lifecycle', kinds: CONTACT_RELATION_LIFECYCLE_KINDS, title: 'Relationship', noun: 'relationship', errorNoun: 'relationship action',
+    label: contactLifecycleLabel, text: contactRelationLifecycleText, request: contactRelationLifecycleRequest, result: contactRelationLifecycleResult,
+    idField: 'relation_id', appliedKey: 'result_relation_lifecycle_id',
+    danger: (draft) => draft.kind === 'contact.relation.remove.v1' || (draft.warnings || []).length > 0,
+    precheck: contactRelationLifecyclePrecheck,
+    knownOutcome: contactLifecycleKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `relationship #${payload.relation_id}`,
+    entity: (draft) => { const t = contactRelationOpenTarget(draft); return { kind: 'contact', id: String(t.id), label: t.label }; },
+    failure: 'The relationship action could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — relationship #${draft.result_relation_lifecycle_id} ${contactLifecycleAppliedVerb(draft)}`,
+      warning: `Relationship #${draft.result_relation_lifecycle_id} was ${contactLifecycleAppliedVerb(draft) === 'active again' ? 'made active again' : contactLifecycleAppliedVerb(draft)} using your signed-in account. Every effect listed above applies from now.`,
+      button: `Open ${contactRelationOpenTarget(draft).label}`,
+    }),
+    reviewWarning: 'Review both contacts, the state the relation is in now and what it becomes — a delete cannot be undone; ending keeps it as history. Nothing is sent. Canceling writes nothing.',
+    open: (draft) => { const t = contactRelationOpenTarget(draft); openEntity('contact', t.id, t.label); },
+  },
+  {
+    // A6.2: DEACTIVATE / REACTIVATE / DELETE one role row. Deactivate and
+    // delete are always danger (rosters and case matching follow the row).
+    id: 'contact_role_lifecycle', kinds: CONTACT_ROLE_LIFECYCLE_KINDS, title: 'Contact role', noun: 'role row', errorNoun: 'role action',
+    label: contactLifecycleLabel, text: contactRoleLifecycleText, request: contactRoleLifecycleRequest, result: contactRoleLifecycleResult,
+    idField: 'role_id', appliedKey: 'result_role_lifecycle_id',
+    danger: (draft) => draft.kind !== 'contact.role.reactivate.v1' || (draft.warnings || []).length > 0,
+    precheck: contactRoleLifecyclePrecheck,
+    knownOutcome: contactLifecycleKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `role row #${payload.role_id}`,
+    entity: (draft) => { const t = contactRelationOpenTarget(draft); return { kind: 'contact', id: String(t.id), label: t.label }; },
+    failure: 'The role action could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — role row #${draft.result_role_lifecycle_id} ${contactLifecycleAppliedVerb(draft)}`,
+      warning: `Role row #${draft.result_role_lifecycle_id} was ${contactLifecycleAppliedVerb(draft) === 'active again' ? 'made active again' : contactLifecycleAppliedVerb(draft)} using your signed-in account. Every effect listed above applies from now.`,
+      button: `Open ${contactRelationOpenTarget(draft).label}`,
+    }),
+    reviewWarning: 'Review the role row and every effect — rosters, pickers and case judge / trustee matching follow an active row the moment it changes. A delete cannot be undone. Nothing is sent. Canceling writes nothing.',
     open: (draft) => { const t = contactRelationOpenTarget(draft); openEntity('contact', t.id, t.label); },
   },
   {
