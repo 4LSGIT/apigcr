@@ -1157,18 +1157,26 @@ COMMENTs.)
   - POST `/api/log` and PUT `/api/log/:id/about` announce nothing on the sync
     bus, so a Comms tab never hears a note or a case tag written elsewhere.
 
-## From the Ask Casey arc — A12 forms (2026-11-02) — deferred
+## From the Ask Casey arc — A12 / A12.2 forms (2026-11-02, 2026-11-11) — deferred
 
-- **Submitting a form** (POST `/api/forms/submit`): fires `form.submitted`,
-  can PATCH the record (`onSubmit.patch`) and start workflows from the BROWSER
-  (`onSubmit.workflows` — yc-forms' save(), not the route), so a Casey submit
-  needs its own card: the record columns it writes, every workflow it starts,
-  the trigger rules on `form.submitted`, and required answers as refusals.
-- **PDF render / filing** (`/api/forms/submissions/:id/pdf/file` — not
-  idempotent, a second call files a second copy).
-- **Template editing, publishing, visibility, version restore, deletion.**
-- **Deleting / discarding a draft** (DELETE `/api/forms/draft`).
-- **Appointment-linked forms** — no template links to an appointment today.
+Draft discard, PDF filing and appointment-linked forms shipped in A12.2
+(ASK_CASEY_ACTIONS_PLAN A12.2).
+
+- **Submitting a form — no atomic route.** The form page's Submit is a
+  seven-call browser chain in yc-forms' save(): validate, PATCH the record's
+  apiColumn fields (`onSubmit.patch`), POST `/api/forms/submit`, DELETE the
+  draft, start up to 3 `onSubmit.workflows` (with `make_pdf`), POST
+  `/api/log`. POST `/api/forms/submit` alone inserts the row and emits
+  `form.submitted` — it patches nothing, starts nothing and leaves the draft.
+  A Casey submit card needs a native atomic internal submit route first: one
+  server call that runs the template's validation (extFormService.validateValues
+  exists), the apiColumn PATCH, the submission, the draft delete, the workflow
+  starts and the log, mirroring the external route's server-side chain. Fred's
+  call (manager ruling, 2026-11-11). The card would then disclose the record
+  columns it writes, every workflow it starts, the trigger rules on
+  `form.submitted`, and refuse each failing required answer.
+- **Template editing, publishing, visibility, version restore, deletion** —
+  form-builder operations, not row controls.
 - **The hand-built form pages on the bus.** `casedetails.html`,
   `casedetails-bk.html`, `341notes.html`, `issn.html` and `contact-form.html`
   do not load yc-sync, so they miss `form:` markers (render.html does). Loading
@@ -1186,6 +1194,16 @@ COMMENTs.)
     it, and maps every failure to 500 (no 400 for a malformed `data`).
   - `linkSubmission`'s log entry says "linked … from the Form Inbox" whoever
     calls it.
+  - DELETE `/api/forms/draft` answers `{deleted}` with no record, so yc-sync
+    cannot announce a discard: an open copy keeps its banner and re-saves on
+    its next autosave. POST `…/pdf/file` is not announced either (no matcher;
+    the new document reaches a Documents tab on refresh).
+  - Nothing records that a submission's PDF was filed (no column on
+    `form_submissions`, no link from `documents`): a re-file is caught only by
+    the "(#id)" in the default file name, and not at all under a custom name.
+  - `formPdfService.renderSubmissionPdf` throws plain Errors for a draft and a
+    bad id, so POST `…/pdf/file` and GET `…/pdf` answer 500 where a 400 is
+    meant.
   - The D1 public draft GET returns whatever draft row exists for (form, case)
     — a staff draft included — to whoever holds the case link (the accepted
     D1 trade; worth a line in the form builder's server-drafts toggle).

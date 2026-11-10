@@ -979,14 +979,17 @@ suggestions** for it, and works only on a folder that list shows.
 The off switch for these cards is the `casey_document_relink_enabled` setting
 (on unless set to 0).
 
-### Forms: drafts and submission links
+### Forms: drafts, discards, PDFs and submission links
 
-Casey can **save one draft of a form** for a case or contact, or **link one
-submitted form that arrived unlinked** (a public form sent without a case — it
-waits in the Form Inbox) to its case or contact — one per card, through the
-same routes the form's own autosave and the Form Inbox's Link button use. Ask in
-plain words ("prefill the 341 notes for the Smith case: trustee Jane Trustee,
-meeting on November 20", "link that intake submission from Dana to her case").
+Casey can **save one draft of a form** for a case, contact or appointment,
+**link one submitted form that arrived unlinked** (a public form sent without a
+case — it waits in the Form Inbox) to its case, contact or appointment,
+**discard one saved draft**, or **file one submitted form's PDF to Dropbox** —
+one per card, through the same routes the form's own autosave, the draft
+banner's **Discard**, and the Form Inbox's **Link** and **File** buttons use.
+Ask in plain words ("prefill the 341 notes for the Smith case: trustee Jane
+Trustee, meeting on November 20", "link that intake submission from Dana to her
+case", "discard the draft of Dana's intake", "file the PDF of submission 4521").
 Casey first reads the form itself — its fields, their types and their choices —
 and uses only those.
 
@@ -1017,19 +1020,40 @@ and uses only those.
   shows these answers from then on), the log entry the link writes, whether an
   intake form closes the case's intake reminders, and the pipeline steps that
   read as done because a submitted form now exists.
+- **A discard card** names the form, the record, who saved the draft and
+  when, and lists every answer in it. Discarding deletes the draft for good —
+  no screen brings it back; the form's last submitted answers are untouched.
+  It warns when the client saved the draft on the public form link (their
+  saved progress is gone) or someone else saved it in the last 24 hours. A copy
+  of the form already open somewhere keeps showing its draft banner, and its
+  next autosave after any typing saves a new draft from that screen.
+- **A PDF card** names the folder and the file name: the case's Dropbox folder
+  (its Forms subfolder) for a case form; the unsorted form-submissions folder,
+  with the record's name in front, for a contact, appointment or unlinked
+  submission. It warns when a case has no Dropbox folder (filing creates one and
+  raises a task) and when a copy named with the submission's number — "(#4521)"
+  — is already on file: **every filing makes another copy** (the Form Inbox's
+  File button works the same way), and Casey cannot see a copy that was filed
+  under a name of your choosing. The new file is registered on the Documents
+  page (and the case's or contact's Documents tab) and the card lists any
+  trigger rule that listens for new documents.
 - **What Casey will not do, and says so:**
-  - submit a form, make or file its PDF, edit, publish or restore a form,
-    change who can see it, discard a draft, or unlink a submission — do those on
-    the form, in the Form Inbox or in the form builder;
+  - submit a form — the form's Submit does several things in the browser at
+    once (it saves fields back to the record, records the submission, deletes
+    the draft, starts the form's workflows and writes the log), and no single
+    action does all of that; open the form and submit it there (a draft card
+    can prepare the answers first);
+  - edit, publish or restore a form, change who can see it, or unlink a
+    submission — do those in the form builder (nothing unlinks);
   - draft a form that was never published, or use a field the form does not
     have, a value of the wrong kind or a choice that is not on its list;
   - link a draft, a submission that is already linked, or a form to the wrong
     kind of record (a case form to a contact);
-  - work on appointment-linked forms.
+  - discard a submitted form, or file a PDF of a draft.
 - **Freshness.** When you confirm, the card re-reads the record and the draft
   (or the submission). If anyone saved, restored or discarded the draft, or
-  linked the submission, since the card was prepared, nothing is written; ask
-  Casey to prepare it again.
+  linked the submission, since the card was prepared, nothing is written,
+  deleted or filed; ask Casey to prepare it again.
 - **Other open pages.** A copy of the form open in the form page in this browser
   picks up the new draft by itself; if you were typing in it, it keeps your
   typing, shows the new draft's banner and stops autosaving until you Restore or

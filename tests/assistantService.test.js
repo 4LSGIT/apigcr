@@ -604,10 +604,10 @@ describe('assistant knowledge and prompts', () => {
   });
 
   test('all assistant prompts are registered JSON prompts', () => {
-    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '32', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_investigate')).toMatchObject({ output_type: 'json', version: '13', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '34', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '22', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '33', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_investigate')).toMatchObject({ output_type: 'json', version: '14', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '35', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '23', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.roles[\s\S]*canonical role field/);

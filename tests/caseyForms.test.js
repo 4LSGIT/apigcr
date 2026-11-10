@@ -154,7 +154,7 @@ describe('refused by name before anything is read', () => {
     expect([calls.sql, calls.latest, calls.getSubmission]).toEqual([[], [], 0]);
   });
   test.each([['submit'], ['make_pdf'], ['publish'], ['delete_draft'], ['visibility'], ['restore_version'], ['unlink'], ['template_id']])('another form operation (%s)', async (k) => {
-    await refuse(draftCard({ [k]: true }), new RegExp(`^OTHER FORM OPERATIONS refused \\(${k}\\): Casey saves ONE draft or links ONE submission`));
+    await refuse(draftCard({ [k]: true }), new RegExp(`^OTHER FORM OPERATIONS refused \\(${k}\\): each form card does ONE thing — save ONE draft \\(form\\.draft\\.v1\\), link ONE submission`));
     expect(calls.sql).toEqual([]);
   });
   test('any other unknown key', async () => {
@@ -211,8 +211,9 @@ describe('the form.template read', () => {
 describe('the draft: target, evidence, template', () => {
   test('form_key, link type and data shapes', async () => {
     await refuse(draftCard({ form_key: '' }), 'A form draft needs the form\'s exact form_key');
-    await refuse(draftCard({ link_type: 'appt' }), /^APPOINTMENT-LINKED forms are not available to Casey/);
-    await refuse(draftCard({ link_type: 'bill' }), 'A form belongs to a case (link_type "case", link_id = the exact case_id) or a contact');
+    // A12.2: an appointment is a form record (tests/caseyFormDiscardPdf.test.js) — with a positive integer appt_id.
+    await refuse(draftCard({ link_type: 'appt', link_id: 'x' }), 'An appointment form needs link_id = the appointment\'s exact positive appt_id');
+    await refuse(draftCard({ link_type: 'bill' }), 'A form belongs to a case (link_type "case", link_id = the exact case_id), a contact');
     await refuse(draftCard({ link_id: 'bad id!' }), 'A case form needs link_id = the case\'s exact case_id');
     await refuse(draftCard({ data: [] }), 'A form draft needs "data": an object of field key → answer');
     await refuse(draftCard({ data: {} }), 'A form draft needs at least one answer in "data"');
@@ -382,7 +383,7 @@ describe('the disclosures', () => {
 describe('the submission link', () => {
   test('submission id, link type, evidence for both rows (a BIGINT string row accepted)', async () => {
     await refuse(linkCard({ submission_id: 'x' }), 'A submission link needs the submission\'s exact positive submission_id');
-    await refuse(linkCard({ link_type: 'appt' }), /^APPOINTMENT-LINKED forms are not available to Casey/);
+    await refuse(linkCard({ link_type: 'appt', link_id: 0 }), 'An appointment form needs link_id = the appointment\'s exact positive appt_id');
     await refuse(linkCard({ evidence: [{ query_id: 'q3', row_number: 2 }, { query_id: 'q2', row_number: 1 }] }), 'The link evidence does not identify submission #4521 — cite a form_submissions row carrying its exact submission_id');
     await refuse(linkCard({ evidence: [{ query_id: 'q3', row_number: 1 }] }), `The link evidence does not identify case ${CASE_ID}`);
     expect(calls.getSubmission).toBe(0);

@@ -1325,6 +1325,8 @@ tests/caseyDocumentShare.mysql.test.js
 tests/caseyDocumentShare.test.js
 tests/caseyDocuments.mysql.test.js
 tests/caseyDocuments.test.js
+tests/caseyFormDiscardPdf.mysql.test.js
+tests/caseyFormDiscardPdf.test.js
 tests/caseyForms.mysql.test.js
 tests/caseyForms.test.js
 tests/caseyHookCreate.test.js

@@ -580,8 +580,8 @@ describe('A12 — every stage teaches the form cards, the form.template read and
   test('the plan carries the read kind and its own bullet with the reads the cards cite', () => {
     expect(planPrompt).toContain('form.template ({"form_key":"341_notes","search":optional field search} — one form\n  template');
     expect(planPrompt).toContain('form_templates is NOT in the curated schema, so never sql.read it');
-    expect(planPrompt).toContain('Reviewed form actions are available: save ONE draft of a published form for a case or contact (form.draft — it\n  never submits)');
-    expect(planPrompt).toContain('a form.template read of the form (its field keys, types and\n  options — read it BEFORE drafting; never guess a key)');
+    expect(planPrompt).toContain('Reviewed form actions are available: save ONE draft of a published form for a case, contact or appointment\n  (form.draft — it never submits)');
+    expect(planPrompt).toContain('a form.template read of the form (its field keys, types and options — read it BEFORE drafting;\n  never guess a key)');
     expect(planPrompt).toContain('form_submissions.id AS submission_id, form_key, status, link_type, link_id, version, created_at,\n  data');
   });
   test('the investigate stage names the read kind and both proposal families', () => {
@@ -599,7 +599,43 @@ describe('A12 — every stage teaches the form cards, the form.template read and
     expect(answerPrompt).toContain('a public form with server drafts shows it on the client\'s link');
     expect(answerPrompt).toContain('ingest-rule/report-draft/case-docket/form/');
     expect(repairPrompt).toContain('form.draft.v1: kind,form_key,link_type,link_id,data,evidence — form_key and every key in data come from a\n  form.template read of a PUBLISHED form');
-    expect(repairPrompt).toContain('never a draft, never an already-linked submission, never an appointment');
+    expect(repairPrompt).toContain('also cited; never a draft, never an already-linked submission');
+  });
+});
+
+// A12.2: the discard and PDF cards, appointment-linked forms, and the submit
+// deferral. Pins that every stage teaches both new kinds and what each cites,
+// that NO stage still says discarding or filing a PDF is unavailable, that the
+// submit deferral is taught with its reason, that appointments are form
+// records, and that no stage invents a submit kind or an "again" flag.
+describe('A12.2 — every stage teaches the discard and PDF cards and the submit deferral', () => {
+  test('the plan extends the form bullet; the old "not available" list is gone', () => {
+    expect(planPrompt).toContain('discard ONE saved draft (form.draft.delete — the form\'s Discard), or file ONE submitted\n  form\'s PDF to Dropbox (form.pdf.file — the Form Inbox\'s File)');
+    expect(planPrompt).toContain('for a discard, that sql.read of the DRAFT row (status \'draft\') and a read of its record');
+    expect(planPrompt).toContain('Submitting a form is NOT available: there is no atomic route (the form\'s Submit is a seven-call browser\n  chain)');
+    expect(planPrompt).not.toContain('submitting, PDFs, template editing');
+    expect(planPrompt).not.toContain('deleting a draft and unlinking are not available');
+  });
+  test('the investigate stage names what a discard and a PDF cite, and the appointment id', () => {
+    expect(investigatePrompt).toContain('and form draft discard\n  and form PDF filing proposals, which need the draft\'s or the submission\'s row with form_submissions.id AS\n  submission_id');
+    expect(investigatePrompt).toContain('(an unlinked submission\'s PDF needs only its row)');
+    expect(investigatePrompt).toContain('a row carrying the record\'s exact case_id, contact_id or appt_id');
+  });
+  test('the answer and repair stages teach both shapes, every-filing-is-a-copy, no-undo, and the submit deferral', () => {
+    for (const kind of ['form.draft.delete.v1', 'form.pdf.file.v1']) {
+      expect({ kind, answer: answerPrompt.includes(`{"kind":"${kind}"`), repair: repairPrompt.includes(`- ${kind}: kind,`) }).toEqual({ kind, answer: true, repair: true });
+    }
+    expect(answerPrompt).toContain('Form rules (A12 / A12.2');
+    expect(answerPrompt).toContain('Every\n    answer in it is deleted and no screen restores it');
+    expect(answerPrompt).toContain('EVERY filing makes another copy (the route never skips one)');
+    expect(answerPrompt).toContain('Submitting a form is NOT available to Casey: there\n    is no atomic route');
+    expect(answerPrompt).toContain('an appointment (link_type "appt", link_id = the\n    exact appt_id)');
+    expect(answerPrompt).not.toContain('Submitting a form, making or filing its PDF');
+    expect(answerPrompt).not.toContain('deleting a draft and unlinking are not available');
+    expect(repairPrompt).toContain('never form_key, link_type, link_id\n  or data (the server builds the request from the stored row)');
+    expect(repairPrompt).toContain('never "again", never a draft. There is NO submit kind');
+    expect(repairPrompt).not.toContain('never an appointment');
+    for (const p of [answerPrompt, repairPrompt, planPrompt, investigatePrompt]) expect(p).not.toContain('form.submit.v1');
   });
 });
 

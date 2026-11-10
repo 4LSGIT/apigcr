@@ -1112,8 +1112,11 @@
          PATCH /api/forms/submissions/:id/link   { id, link_type, link_id,
                                                  version, … } — the TARGET
        Fails closed without a link (an unlinked '' row belongs to no record).
-       Not matched: POST /api/forms/submit, DELETE /api/forms/draft and the
-       PDF routes — no Casey card sends them (ref/plans.md). */
+       Not matched: POST /api/forms/submit (no Casey card sends it — no atomic
+       route), DELETE /api/forms/draft (A12.2's discard card sends it, but the
+       route's {deleted} answer names no record to announce from — a native gap)
+       and the PDF routes (A12.2's filing card sends POST …/pdf/file, a document
+       write announced by nothing today) (ref/plans.md). */
     [/^\/api\/forms\/draft$/,                         'form', formGetter, ['POST']],
     [/^\/api\/forms\/submissions\/(\d+)\/link$/, 'form', formGetter, ['PATCH']],
     /* Mail triage (A13) — the comms hub's ONE-message writes, which the Ask

@@ -3424,8 +3424,32 @@ function caseDocketKnownOutcome(e) {
 // (form:<link_type>:<link_id>), so an open copy of the form refetches.
 // Receipt: the integer submission_id for both (two families — their routes,
 // re-reads and outcomes differ).
+// A12.2 adds two families on the same row-level controls, and appointment
+// records (link_type 'appt', re-read through GET /api/appts/:id) for all four:
+//   * form_discard: form.draft.delete.v1 → DELETE /api/forms/draft?form_key&
+//     link_type&link_id (the draft banner's Discard), built from the stored
+//     DRAFT row the card names. The click re-reads GET /api/forms/latest and
+//     refuses unless the draft is still that row with the same updated_at and
+//     data hash. The route answers {deleted} only, so yc-sync cannot announce
+//     it (the card says an open copy keeps its banner). An answer of
+//     deleted:false is a refusal — nothing was there to delete.
+//   * form_pdf: form.pdf.file.v1 → POST /api/forms/submissions/:id/pdf/file
+//     {filename?} (the Form Inbox's File button) — NOT idempotent: a second
+//     filing is a second copy, which the card's ALREADY FILED warning names.
+//     The click re-reads GET /api/forms/submissions/:id (status, link,
+//     version). The verdict's path / file name / placement / document id stay
+//     on the draft for the applied copy; its temporary download link is never
+//     kept. Not announced on yc-sync (no matcher; the route's answer is the
+//     verdict). Both always danger. Receipt: the reviewed submission_id.
+// Submitting a form has no card (no atomic route — the form page's Submit is
+// a seven-call browser chain).
 const FORM_DRAFT_ACTION_KINDS = new Set(['form.draft.v1']);
 const FORM_LINK_ACTION_KINDS = new Set(['form.submission.link.v1']);
+const FORM_DISCARD_ACTION_KINDS = new Set(['form.draft.delete.v1']);
+const FORM_PDF_ACTION_KINDS = new Set(['form.pdf.file.v1']);
+// The route's verdict: placement values, and how many of its warnings the applied copy keeps.
+const FORM_PDF_PLACEMENTS = ['case', 'unsorted'];
+const FORM_PDF_WARNINGS_KEPT = 6;
 // form_submissions.data — the same 64 KB bound the server checked.
 const FORM_DATA_MAX_BYTES = 64 * 1024;
 
@@ -3452,23 +3476,60 @@ function formIso(value) {
 
 function formRecordLabel(draft) {
   const r = draft && draft.kind === 'form.submission.link.v1' ? draft.target : draft && draft.record;
-  return String((r && (r.label || r.link_id)) || 'the record');
+  return String((r && (r.label || r.link_id)) || (draft && draft.kind === 'form.pdf.file.v1' ? 'no record (unlinked)' : 'the record'));
 }
 
 function formLabel(draft) {
   if (draft && draft.kind === 'form.submission.link.v1') {
-    return (draft.link || {}).link_type === 'contact' ? 'Link form submission to contact' : 'Link form submission to case';
+    const t = (draft.link || {}).link_type;
+    return t === 'contact' ? 'Link form submission to contact' : t === 'appt' ? 'Link form submission to appointment' : 'Link form submission to case';
   }
+  if (draft && draft.kind === 'form.draft.delete.v1') return 'Discard form draft';
+  if (draft && draft.kind === 'form.pdf.file.v1') return 'File form PDF to Dropbox';
   return 'Save form draft';
 }
 
 function formTitle(draft) {
-  const f = draft && (draft.kind === 'form.submission.link.v1' ? draft.submission : draft.form) || {};
+  const f = draft && (draft.kind === 'form.submission.link.v1' || draft.kind === 'form.pdf.file.v1' ? draft.submission : draft.form) || {};
   return String(f.title || f.form_key || 'form');
 }
 
 function formText(draft) {
   const lines = [];
+  const when = (v) => (v ? `${String(v).slice(0, 16).replace('T', ' ')} UTC` : 'an unknown time');
+  if (draft.kind === 'form.draft.delete.v1') {
+    const f = draft.form || {}; const dr = draft.draft || {}; const sub = draft.submitted;
+    lines.push('Form draft discard proposal — not applied', `Action: ${formLabel(draft)}`,
+      `Form: "${formTitle(draft)}" (${f.form_key}${f.has_template ? `, a ${f.link_type} form` : ', no template'})`,
+      `Record: ${formRecordLabel(draft)}`,
+      `Draft: #${dr.submission_id}, saved by ${dr.saved_by || 'someone'} at ${when(dr.updated_at)} — deleted`,
+      `Answers in it: ${Number(draft.answers_total) || 0} (${Number(draft.answers_filled) || 0} filled in)`,
+      sub ? `Latest submission: version ${sub.version} (#${sub.submission_id}, ${when(sub.updated_at)}) — untouched` : 'Latest submission: none');
+    for (const a of draft.answers || []) lines.push(`Answer: ${a.label} (${a.key}): ${a.value}${a.off_form ? ' — not on the current form' : ''}`);
+    if (draft.raw != null) lines.push(`Stored: ${draft.raw}`);
+    (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+    (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+    lines.push('Writes: the one draft row is deleted — no submission, no record field and no other form is touched.',
+      'Stale check: if anyone saves, restores, submits or discards this draft before you apply, nothing is deleted.',
+      'Notification: Casey sends nothing; discarding runs no trigger rule.');
+    return lines.join('\n');
+  }
+  if (draft.kind === 'form.pdf.file.v1') {
+    const s = draft.submission || {}; const pl = draft.placement || {}; const c = draft.copies || {};
+    lines.push('Form PDF filing proposal — not applied', `Action: ${formLabel(draft)}`,
+      `Submission: #${s.submission_id} "${formTitle(draft)}" (${s.form_key}), version ${Number(s.version) || 0}, received ${when(s.created_at)} by ${s.saved_by || 'the public form'}`,
+      `Record: ${formRecordLabel(draft)}`,
+      `File name: ${draft.file_name}${draft.filename != null ? ' (your name)' : ' (the default)'}`,
+      `Folder: ${pl.folder || '(unknown)'}`,
+      `Copies already on file: ${Number(c.count) || 0}${(c.names || []).length ? ` (${c.names.join('; ')}${Number(c.count) > c.names.length ? ' …' : ''})` : ''}`);
+    (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+    (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+    lines.push('Writes: a NEW PDF file in Dropbox and its document row — every filing makes another copy; nothing on the submission changes.',
+      'Stale check: if the submission is linked, removed or changed before you apply, nothing is filed.',
+      'Other open pages: Documents tabs and the Documents page show the new file when refreshed.',
+      'Notification: Casey sends nothing.');
+    return lines.join('\n');
+  }
   if (draft.kind === 'form.submission.link.v1') {
     const s = draft.submission || {}; const t = draft.target || {};
     lines.push('Form submission link proposal — not applied', `Action: ${formLabel(draft)}`,
@@ -3511,6 +3572,7 @@ function formText(draft) {
 function formRecordPath(linkType, linkId) {
   if (linkType === 'case' && /^[A-Za-z0-9_-]{1,20}$/.test(linkId)) return `/api/cases/${encodeURIComponent(linkId)}`;
   if (linkType === 'contact' && /^[1-9]\d{0,19}$/.test(linkId)) return `/api/contacts/${encodeURIComponent(linkId)}`;
+  if (linkType === 'appt' && /^[1-9]\d{0,9}$/.test(linkId)) return `/api/appts/${encodeURIComponent(linkId)}`;
   throw new Error('This card has no usable record.');
 }
 
@@ -3623,6 +3685,11 @@ function formLinkKnownOutcome(e) {
 
 function formEntity(draft) {
   const r = (draft.kind === 'form.submission.link.v1' ? draft.target : draft.record) || {};
+  // An unlinked submission's PDF belongs to no record: it is found on the Documents page.
+  if (draft.kind === 'form.pdf.file.v1' && !draft.record) {
+    return { kind: 'document', id: String((draft.submission || {}).submission_id || ''), label: String((draft.pdf_outcome && draft.pdf_outcome.file_name) || draft.file_name || 'the form PDF') };
+  }
+  if (r.link_type === 'appt') return { kind: 'appointment', id: String(r.link_id || ''), label: formRecordLabel(draft) };
   const linkType = r.link_type === 'contact' ? 'contact' : 'case';
   return { kind: linkType, id: String(r.link_id || ''), label: formRecordLabel(draft).replace(/^case /, '').replace(/ \(contact #\d+\)$/, '') };
 }
@@ -3630,6 +3697,122 @@ function formEntity(draft) {
 function formOpen(draft) {
   const e = formEntity(draft);
   openEntity(e.kind, e.id, e.label);
+}
+
+// The stored DRAFT row the discard deletes (its own spelling of the key and
+// record — the DELETE matches them under general_ci).
+function formDiscardRequest(draft) {
+  const d = draft.draft || {};
+  const id = Number(d.submission_id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('This card has no usable draft id.');
+  const formKey = typeof d.form_key === 'string' ? d.form_key : '';
+  if (!/^[A-Za-z0-9_-]{1,50}$/.test(formKey)) throw new Error('This card has no usable form.');
+  const linkId = typeof d.link_id === 'string' ? d.link_id : '';
+  formRecordPath(d.link_type, linkId);
+  return { path: `/api/forms/draft?form_key=${encodeURIComponent(formKey)}&link_type=${encodeURIComponent(d.link_type)}&link_id=${encodeURIComponent(linkId)}`, method: 'DELETE', body: null };
+}
+
+async function formDiscardPrecheck(draft) {
+  formDiscardRequest(draft); // a card that cannot be written is never read
+  const d = draft.draft; const x = draft.expected || {};
+  const where = `"${formTitle(draft)}" for ${formRecordLabel(draft)}`;
+  try { await api(formRecordPath(d.link_type, d.link_id), null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `${formRecordLabel(draft)} no longer exists. Nothing was deleted.`; throw e; }
+  const got = await api(`/api/forms/latest?form_key=${encodeURIComponent(d.form_key)}&link_type=${encodeURIComponent(d.link_type)}&link_id=${encodeURIComponent(d.link_id)}`, null, 'GET');
+  if (!got || got.status !== 'success' || !('draft' in got)) throw new Error('the form could not be read');
+  const now = got.draft;
+  if (!now) return `The draft of ${where} is already gone — discarded or submitted since this card was prepared. Nothing was deleted.`;
+  let stored = now.data;
+  if (typeof stored === 'string') { try { stored = JSON.parse(stored); } catch (_) { stored = null; } }
+  if (Number(now.id) !== Number(x.draft_id) || Number(now.id) !== Number(d.submission_id) || formIso(now.updated_at) !== formIso(x.updated_at) || await formDataHash(stored) !== x.data_hash) {
+    return `The draft of ${where} changed since this card was prepared (someone saved it${now.user_name ? ` — last by ${now.user_name}` : ''}). Nothing was deleted; the card would have discarded answers you have not reviewed. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function formDiscardResult(draft, result) {
+  formDiscardRequest(draft);
+  // The route ran a DELETE that matched nothing: nothing was there to delete.
+  if (result && result.status === 'success' && result.deleted === false) throw Object.assign(new Error('nothing deleted'), { formDiscardNone: true });
+  if (!result || result.status !== 'success' || result.deleted !== true) throw new Error('The forms route did not confirm the discard');
+  return { submission_id: Number(draft.draft.submission_id) };
+}
+
+function formDiscardKnownOutcome(e) {
+  if (e && e.formDiscardNone === true) {
+    return { status: 'Refused — nothing deleted', text: 'Refused — nothing deleted: the draft was already gone when the discard reached the server (discarded or submitted a moment before). Ask Casey to read the form again.' };
+  }
+  return null;
+}
+
+function formPdfRequest(draft) {
+  const id = Number((draft.submission || {}).submission_id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('This card has no usable submission id.');
+  if (draft.filename != null && (typeof draft.filename !== 'string' || !draft.filename.trim())) throw new Error('This card has no usable file name.');
+  return { path: `/api/forms/submissions/${id}/pdf/file`, method: 'POST', body: draft.filename != null ? { filename: draft.filename } : null };
+}
+
+async function formPdfPrecheck(draft) {
+  formPdfRequest(draft); // a card that cannot be written is never read
+  const x = draft.expected || {};
+  const subId = Number(draft.submission.submission_id);
+  const r = draft.record;
+  if (r) {
+    try { await api(formRecordPath(r.link_type, r.link_id), null, 'GET'); }
+    catch (e) { if (e && e.status === 404) return `${formRecordLabel(draft)} no longer exists. Nothing was filed.`; throw e; }
+  }
+  let got;
+  try { got = await api(`/api/forms/submissions/${subId}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `Submission #${subId} no longer exists. Nothing was filed.`; throw e; }
+  const s = got && got.submission;
+  if (!s || Number(s.id) !== subId || !('link_type' in s) || !('version' in s)) throw new Error('the submission could not be read');
+  if (String(s.status) !== String(x.status) || String(s.link_type) !== String(x.link_type) || String(s.link_id == null ? '' : s.link_id) !== String(x.link_id) || Number(s.version) !== Number(x.version)) {
+    return `Submission #${subId} changed since this card was prepared (${String(s.link_type) !== String(x.link_type) ? 'it was linked — the PDF would land somewhere else' : 'its status or version'}). Nothing was filed. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function formPdfResult(draft, result) {
+  formPdfRequest(draft);
+  const subId = Number(draft.submission.submission_id);
+  if (!result || result.status !== 'success' || Number(result.submission_id) !== subId) throw new Error('The forms route did not confirm the submission');
+  if (typeof result.path !== 'string' || !result.path || typeof result.file_name !== 'string' || !result.file_name || !FORM_PDF_PLACEMENTS.includes(result.placement)) {
+    throw new Error('The forms route did not confirm where the PDF was filed');
+  }
+  const docId = Number(result.document_id);
+  // Kept for the applied copy; the verdict's temp_link is a download capability and is never kept.
+  draft.pdf_outcome = {
+    path: result.path.slice(0, 1000), file_name: result.file_name.slice(0, 300), placement: result.placement,
+    document_id: Number.isSafeInteger(docId) && docId > 0 ? docId : null,
+    warnings: Array.isArray(result.warnings) ? result.warnings.slice(0, FORM_PDF_WARNINGS_KEPT).map((w) => String(w).slice(0, 300)) : [],
+  };
+  return { submission_id: subId };
+}
+
+// The file route's answers written before any Dropbox work, worded for staff:
+// the 404s (the submission, its template, a published definition) and the
+// render refusals it throws as plain Errors (a draft, a bad id — a 500 with an
+// exact message, thrown before anything is rendered or uploaded). Anything
+// else — an upload failure (the ladder may already have created a case
+// folder), a 500 of another wording — stays ambiguous.
+function formPdfKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const refused = 'Refused — nothing filed';
+  const message = String((e && e.body && e.body.message) || (e && e.message) || '');
+  if (e && e.status === 404 && (/^Submission \d+ not found$/.test(message) || /^No template exists for form_key ".*"$/.test(message) || /^No published definition available for form_key ".*"$/.test(message))) {
+    return { status: refused, text: `Refused — nothing filed: ${message}. Ask Casey to read it again.` };
+  }
+  if (e && e.status === 500 && /^submission \d+ is a draft \u2014 only submitted forms can be rendered$/.test(message)) {
+    return { status: refused, text: `Refused — nothing filed: ${message}.` };
+  }
+  return null;
+}
+
+function formPdfAppliedMessage(draft, payload, replayed) {
+  if (replayed) return `${formLabel(draft)} had already been applied to submission #${payload.submission_id}; nothing was filed a second time.`;
+  const o = draft.pdf_outcome || {};
+  const notes = (o.warnings || []).length ? ` Notes: ${o.warnings.join('; ')}.` : '';
+  return `${formLabel(draft)} applied to submission #${payload.submission_id}: filed as "${o.file_name || draft.file_name}" at ${o.path || '(unknown path)'} (${o.placement === 'case' ? 'the case folder' : 'the unsorted form-submissions folder'})${o.document_id ? `, document #${o.document_id}` : ', not yet in the document registry (the sync picks it up)'}.${notes}`;
 }
 
 // Mail triage (A13). Mark ONE email read or unread for the signed-in user, or
@@ -6213,6 +6396,49 @@ const ACTION_FAMILIES = [
       button: `Open ${formEntity(draft).label}`,
     }),
     reviewWarning: 'Review the submission, its name / phone / email against the people on the record, the version it becomes and the log entry. Linking is one-way. Canceling writes nothing.',
+    open: formOpen,
+  },
+  {
+    // A12.2: the receipt is the integer submission_id of the DRAFT the DELETE removed.
+    id: 'form_discard', kinds: FORM_DISCARD_ACTION_KINDS, title: 'Form draft discard', noun: 'draft discard', errorNoun: 'draft discard',
+    label: formLabel, text: formText, request: formDiscardRequest, result: formDiscardResult,
+    idField: 'submission_id', appliedKey: 'result_form_discard_id',
+    // Always: the draft's answers are deleted and no screen restores them.
+    danger: () => true,
+    precheck: formDiscardPrecheck,
+    knownOutcome: formDiscardKnownOutcome,
+    refusalText: (detail) => `Refused — nothing deleted (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `draft #${payload.submission_id}`,
+    entity: (draft) => formEntity(draft),
+    failure: 'The form draft could not be discarded.',
+    appliedCopy: (draft) => ({
+      status: `Applied — draft #${draft.result_form_discard_id} discarded`,
+      warning: `The draft of "${formTitle(draft)}" for ${formRecordLabel(draft)} was deleted using your signed-in account; its answers are gone. A copy of the form already open elsewhere still shows its banner until it is reopened.`,
+      button: `Open ${formEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review the form, the record, who saved the draft and every answer in it — they are deleted the moment it is applied, and no screen restores a discarded draft. Canceling deletes nothing.',
+    open: formOpen,
+  },
+  {
+    // A12.2: the receipt is the integer submission_id whose PDF was filed.
+    id: 'form_pdf', kinds: FORM_PDF_ACTION_KINDS, title: 'Form PDF filing', noun: 'PDF filing', errorNoun: 'PDF filing',
+    label: formLabel, text: formText, request: formPdfRequest, result: formPdfResult,
+    idField: 'submission_id', appliedKey: 'result_form_pdf_id',
+    // Always: it writes a new file to Dropbox and every filing is another copy.
+    danger: () => true,
+    precheck: formPdfPrecheck,
+    knownOutcome: formPdfKnownOutcome,
+    refusalText: (detail) => `Refused — nothing filed (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `submission #${payload.submission_id}`,
+    appliedMessage: formPdfAppliedMessage,
+    entity: (draft) => formEntity(draft),
+    failure: 'The form PDF could not be filed.',
+    appliedCopy: (draft) => ({
+      status: `Applied — PDF of submission #${draft.result_form_pdf_id} filed`,
+      warning: `"${formTitle(draft)}" submission #${draft.result_form_pdf_id} was filed to Dropbox using your signed-in account${draft.pdf_outcome ? ` as "${draft.pdf_outcome.file_name}" (${draft.pdf_outcome.path})` : ''}. Applying another card files another copy.`,
+      button: `Open ${formEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review the submission, the folder and file name, and the copies already on file — every filing makes another copy in Dropbox. Nothing is sent. Canceling files nothing.',
     open: formOpen,
   },
   {

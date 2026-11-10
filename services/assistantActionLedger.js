@@ -72,6 +72,12 @@ const KINDS = new Map([
   // (it returns the row id) and the submission the PATCH linked.
   ['form.draft.v1', 'submission_id'],
   ['form.submission.link.v1', 'submission_id'],
+  // A12.2: both receipt the reviewed form_submissions row — the DRAFT the
+  // DELETE removed (the route answers only {deleted}) and the submission whose
+  // PDF was filed (the document row the route registers may be null when the
+  // registry hiccups, so it is reported on the card, never the receipt).
+  ['form.draft.delete.v1', 'submission_id'],
+  ['form.pdf.file.v1', 'submission_id'],
   // A13: a read card receipts the message whose read state it set (the route
   // answers {id, unread}); a case link receipts the log row the route
   // bridged — reused or created — which it returns as log_id.

@@ -1163,6 +1163,29 @@ body. Governing migrations in `ref/migrations/`.*
   unless '0'). Tests: `tests/caseyForms.test.js`, gated
   `tests/caseyForms.mysql.test.js`, `tests/formRender.sync.test.js`; plan:
   ASK_CASEY_ACTIONS_PLAN A12.
+- **Casey form discard / PDF filing / appointment records (A12.2, 11-11):**
+  same switch. `form.draft.delete.v1` {submission_id = the DRAFT row} → DELETE
+  `/api/forms/draft?form_key&link_type&link_id` (the draft banner's Discard),
+  built from the stored row; the route answers `{deleted}` only (false = a
+  refusal), so yc-sync cannot announce it — an open copy keeps its banner and
+  re-saves on its next autosave. `form.pdf.file.v1` {submission_id, filename?}
+  → POST `/api/forms/submissions/:id/pdf/file` (the Form Inbox's File): NOT
+  idempotent, and nothing records a filing, so the card counts active
+  `documents` named `LIKE '%(#<id>)%.pdf'` (the default core) as an ALREADY
+  FILED danger warning, never a refusal; it predicts formPdfService's file name
+  (firm-local date) and the placement ladder read-only (case folder from
+  `case_folder_cache.path_lower` — the cache never holds `path_display`; a case
+  with no folder gets one created; contact / appt / unlinked → the unsorted
+  bin with `_identityPrefix`); the draft render refusal is a 500 with an exact
+  message before any upload; the verdict's `temp_link` is never kept. Both A12
+  kinds take `link_type` 'appt' (record re-read GET `/api/appts/:id`; identity
+  = the appointment's client); no live template links to one (2026-11-11). NO
+  submit kind: the form page's Submit is a seven-call browser chain and POST
+  `/api/forms/submit` alone patches nothing, starts nothing and leaves the
+  draft — refused by name on every form card. Receipts: the reviewed
+  `submission_id`; families `form_discard` / `form_pdf`. Tests:
+  `tests/caseyFormDiscardPdf.test.js`, gated
+  `tests/caseyFormDiscardPdf.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A12.2.
 - **Casey mail triage (A13, 11-02):** kinds `mail.read.v1` → POST / DELETE
   `/api/mail/messages/:id/read` and `mail.case_link.v1` → POST
   `/api/mail/messages/:id/case-link` {case_id} (guard `jwtOrApiKey` +

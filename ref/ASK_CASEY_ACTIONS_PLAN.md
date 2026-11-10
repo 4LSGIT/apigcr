@@ -11,7 +11,8 @@ update), A7 group A (case notes, case alerts, contact notes), A7 groups B/C (any
 other case field, 2026-11-09; the docket's replace / clear, A7e), A7c (case docket adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
 advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer) + A9.4 (requirement override set / clear), A10 + A10.2 (checklists and items; list rename / note edit, list and item delete), A11 + A11.2 (documents —
 update and link; share and unlink), A11.1 (a case's Dropbox folder — candidates-only relink),
-A12 (form drafts and submission links), A13 (mail triage —
+A12 + A12.2 (form drafts and submission links; draft discard and PDF filing; appointment
+records — no submit: no atomic route), A13 (mail triage —
 read state and case link; no drafts exist, no SMS triage), A13b (one email's
 attachments filed to a case, the Comms File attachments route), A14 (direct email /
 SMS send), A16 (reports), A17.0–A17.4, A17.6, A17.7 + A17.7b (workflows — explain,
@@ -29,13 +30,13 @@ of its plan stands in those sections.
 
 ## Review briefing
 
-The shipped baseline is 84 proposal kinds (the action ledger's `KINDS`
+The shipped baseline is 86 proposal kinds (the action ledger's `KINDS`
 registry; `tests/caseyActionPermissions.test.js` pins the inventory against it)
-in 43 browser families: the record families — Tasks, Events, Appointments,
+in 45 browser families: the record families — Tasks, Events, Appointments,
 contact phone / email / address rows, contact relations and roles, case and
 contact notes and case alerts, case contacts, case pipeline moves, the case
-docket, the case's Dropbox folder, checklists and their items, documents and their links (edit, link, unlink, share), form drafts and
-submission links, an email's read state and its case link — plus direct SMS /
+docket, the case's Dropbox folder, checklists and their items, documents and their links (edit, link, unlink, share), form drafts, submission links,
+draft discards and submission PDF filings, an email's read state and its case link — plus direct SMS /
 email sends, report drafts and the automation families (safe code jobs, workflow draft / step / publish / start,
 hooks, sequence step / publish / enroll, ingest rules). Every family
 uses the same boundary: one
@@ -1982,8 +1983,9 @@ than case / contact (no screen makes one; the Links dialog unlinks it).
 #### A12: Forms — draft and submission link shipped 2026-11-02
 
 Start with a form draft or prefill and save/link it to a resolved record.
-Submission, PDF filing, template editing, publishing, visibility changes,
-version restore, and deletion are separate proposal kinds and later releases.
+Draft discard and PDF filing are A12.2's kinds; submission has no kind (no
+atomic route, A12.2); template editing, publishing, visibility changes and
+version restore are form-builder operations with no card.
 Render the template/version, destination, material answers, overwrite behavior,
 and whether the operation makes anything client-visible.
 
@@ -2027,8 +2029,10 @@ link_id}).
 - **Refused by name**, before anything is read: the route-owned columns
   `status`, `version`, `submitted_by`, `schema_version`; any key shaped like
   another form operation (submit, pdf / render / file, publish, delete /
-  discard, visibility, restore, unlink / relink, template); any other unknown
-  key; an appointment link (no template links to one).
+  discard, visibility, restore, unlink / relink, template — the discard and the
+  PDF are their own A12.2 cards); any other unknown key. An appointment record
+  is accepted since A12.2 (link_type "appt"): no live template links to one
+  today (verified 2026-11-11); the code accepts it throughout.
 - **Draft.** The evidence cites a row with the exact case_id / contact_id AND
   the investigation holds a `form.template` read of that form_key (the field
   keys come from it, never from memory). Refused: an unknown form_key; an
@@ -2125,9 +2129,171 @@ link_id}).
   `tests/formRender.sync.test.js`, `tests/assistantUi.test.js`,
   `tests/ycSync.test.js`.
 
-**Deferred** (`ref/plans.md`): submit, PDF render / filing, template editing /
-publishing / visibility / version restore / deletion, deleting a draft,
-appointment-linked forms, the hand-built form pages on the bus.
+**Deferred** (`ref/plans.md`), each with its reason; discard, PDF filing and
+appointment records shipped in A12.2:
+- **Submit** — no atomic route: the Submit button is a seven-call browser
+  chain (validate, PATCH the record, POST submit, DELETE draft, start up to 3
+  workflows, log), and POST /api/forms/submit alone patches nothing, starts
+  nothing and leaves the draft. A native atomic internal submit route is
+  Fred's call.
+- **Template editing / publishing / visibility / version restore /
+  deletion** — form-builder operations.
+- **Unlinking a submission** — no screen does it.
+- **The hand-built form pages on the bus** — they do not load yc-sync.
+
+#### A12.2: Forms — draft discard, PDF filing, appointment records shipped 2026-11-11 (no submit: no atomic route)
+
+Fred (2026-11-09): "Casey can do *at least* anything the user can do in the
+UI." This slice went through the form controls that work on ONE row. Two had no
+card yet: the draft banner's **Discard** (on every form page) and the Form
+Inbox's **File** button. Both now have cards. The A12 cards also take
+appointment records, because the builder, the renderer and the inbox's adopt
+dialog all accept them.
+
+**What the UI does, read from the pages.**
+- **Submit is not one route.** yc-forms' `save()` runs the whole Submit in the
+  browser:
+  1. it validates;
+  2. it stops with "No changes to save" when the form equals its baseline;
+  3. it PATCHes the record's apiColumn fields to `onSubmit.patch.url`;
+  4. it POSTs `/api/forms/submit`;
+  5. it DELETEs the draft (fire-and-forget);
+  6. it starts each `onSubmit.workflow(s)` entry (up to 3) through
+     `/workflows/:id/start` with `make_pdf`, fire-and-forget — a PDF exists
+     only if a workflow renders one;
+  7. it POSTs `/api/log`.
+
+  `formService.submitForm` inserts the row and emits `form.submitted`. It
+  validates nothing, PATCHes nothing, starts nothing and leaves the draft. The
+  only server-side submit chain is the client's external route
+  (`api.ext.forms.js`: validateValues, submit, workflows), which Casey cannot
+  use. So there is **no submit kind**. The reason is named on every form card:
+  "no atomic route — the form page's Submit is a seven-call browser chain
+  (validate, PATCH the record, POST the submission, DELETE the draft, start up
+  to 3 workflows, write the log), and POST /api/forms/submit alone patches
+  nothing, starts nothing and leaves the draft." A native atomic internal
+  submit route is Fred's call (manager ruling, 2026-11-11).
+- **Discard** → DELETE `/api/forms/draft?form_key&link_type&link_id`
+  (`formService.deleteDraft`). It deletes the one draft row matched under
+  general_ci and answers `{deleted}` (false when nothing matched). There is no
+  record in the answer, so yc-sync has nothing to announce — a native gap.
+  Submit also calls it (step 5).
+- **File** → POST `/api/forms/submissions/:id/pdf/file` {filename?}
+  (`formPdfService.fileSubmissionPdf` → `filePlacementService.placeAndRegister`).
+  It renders the submitted row; a draft is a plain Error, so the route answers
+  a 500 "submission N is a draft — only submitted forms can be rendered" before
+  any upload. The template-less 404s come from `getSubmissionForRender`. It
+  uploads with `mode:'add', autorename:true` and registers a `documents` row
+  (linked to the case or contact; appointment and unlinked submissions get no
+  link), which emits `document.created` / `document.linked`. It is NOT
+  idempotent by design: a second filing is a second copy. **Nothing records
+  that a submission was filed** — no column on the submission, no link from
+  the document. The inbox button refiles without any check.
+- **Appointment records.** `formTemplateService` LINK_TYPES (case / contact /
+  appt), the builder's link-type select, render.html's `appt_id`, customView's
+  `open_form` and the inbox's adopt dialog (an id input) all accept them. No
+  live template or submission links to one today (verified 2026-11-11: the
+  template link types are `case`; the submission link types are `case` and
+  `contact`). The code accepts them throughout.
+
+**Shipped contract.** Two kinds behind A12's `casey_forms_enabled`, which needs
+no new key:
+- `form.draft.delete.v1` {submission_id (the DRAFT row), evidence}
+- `form.pdf.file.v1` {submission_id, filename?, evidence}
+
+Both A12 kinds also take `link_type` "appt" (link_id = the exact appt_id).
+- **Refused by name**, on every form card, before anything is read: the
+  route-owned columns, any key shaped like another form operation (the submit
+  deferral sentence above), and any unknown key — `again` on a PDF card, and
+  `form_key` / `link_type` / `link_id` / `data` on a discard card (the request
+  is built from the stored row).
+- **Discard.** The evidence cites the draft row (`submission_id`) AND its
+  record's row (case_id / contact_id / appt_id). Refused: a gone row; a
+  SUBMITTED row (no screen deletes a submission); a row with no record or an
+  unknown link type; a gone record (no form page opens it); a row that is no
+  longer the draft of its form and record (`getLatest`). A form with no
+  template (the hand-built pages) is allowed: its answers are listed by key.
+  - **Disclosed:** the form and the record; who saved the draft and when;
+    EVERY answer it holds (the template's labels; keys not on the current form
+    marked; 40 listed, the count said); the latest submission untouched; no
+    event; no pipeline step.
+  - **Danger, always:** NO UNDO (the answers are gone for good). THE CLIENT'S
+    DRAFT when the client saved it on the public link (with server drafts, the
+    link has nothing left to offer them). RECENT DRAFT BY SOMEONE ELSE (< 24 h:
+    their open form's next autosave saves a new draft).
+  - **Open copies:** the route answers only `{deleted}`, so an open copy keeps
+    its banner, Restore there still fills from what it loaded, and its next
+    autosave after typing saves a NEW draft.
+- **PDF.** The evidence cites the submission AND, when it is linked and the
+  record exists, the record's row. Refused: a gone row; a draft; an unknown
+  link type; the render's own 404s (no template, no published definition),
+  read first through `getSubmissionForRender`.
+  - **The file name** is formPdfService's exactly: `{firm-local created
+    date} {title} (#id).pdf`, or the override sanitized to 130 characters.
+    `filename` is text of at most 200 characters, with no control characters.
+  - **The folder** follows the ladder, read-only:
+    - a case with `case_dropbox` → `case_folder_cache.path_lower` + `/Forms`
+      (the cache never holds `path_display`; the upload is built from the same
+      lowercased path);
+    - a case with none → CASE FOLDER CREATED (danger: the route creates and
+      links a folder and raises a task);
+    - a gone case → UNSORTED (danger: the bin's per-case subfolder plus a move
+      task);
+    - a contact, appointment or unlinked submission → the unsorted bin root
+      (`dropbox_unsorted_forms_path`, else the default), with
+      `formPdfService._identityPrefix`.
+  - **ALREADY FILED** (danger, never a refusal — the inbox button refiles
+    without a check; manager ruling, 2026-11-11): active `documents` named
+    `LIKE '%(#<id>)%.pdf'`, the default core the inbox route and the
+    workflow's `render_submission_pdf` both use. The warning names the first
+    copy and the count, and says Casey cannot see a copy filed under a custom
+    name. With none, an effect says the same. An override without "(#id)" is
+    disclosed as invisible to a later card.
+  - **Also disclosed:** the registration (linked to the case / contact, or
+    nothing); the trigger rules listening on the document events (listed, not
+    run — the row does not exist yet); the version-matched rendering (or that
+    the current form is used); that the ~4-hour download link is not kept.
+  - Always danger.
+- **Appointment records** (both A12 kinds and the discard). The record is read
+  as GET `/api/appts/:id` names it: `appointment #<id> (<type>, <firm-local
+  date> firm time, <client>[, <status>])`. A link's identity check is against
+  the appointment's client; there is no intake gate and no pipeline steps.
+- **Freshness:** `expected` holds the draft's id + updated_at + the SHA-256 of
+  its canonical stored JSON (discard), or the submission's status + link +
+  version (PDF). The click re-reads the record (GET `/api/cases/:id`,
+  `/api/contacts/:id` or `/api/appts/:id`), then GET `/api/forms/latest`
+  (discard) or GET `/api/forms/submissions/:id` (PDF), and refuses on any
+  difference before the claim. The copy count is NOT re-read: no route returns
+  it exactly (the documents search is full-text), and it only feeds a warning.
+- **Outcomes:**
+  - Discard: `{deleted:false}` is a refusal ("already gone").
+  - PDF: the 404s (submission, template, published definition) and the draft
+    500 (its exact message, thrown before the upload) are refusals.
+    Everything else stays ambiguous — an upload failure may already have
+    created a case folder.
+- **Receipt:** the reviewed `submission_id` for both. The applied PDF card
+  keeps the verdict's path, file name, placement, `document_id` and warnings,
+  never its `temp_link`. Families `form_discard` and `form_pdf`.
+- **Sync:** yc-sync announces POST `/api/forms/draft` and PATCH
+  `…/link` (A12). It announces neither of these routes, and this slice adds no
+  matcher: the DELETE's answer names no record, and the filing's documents
+  are refreshed by hand.
+- Tests: `tests/caseyFormDiscardPdf.test.js` (mocked; browser lifted by name),
+  gated `tests/caseyFormDiscardPdf.mysql.test.js` (real routes; Dropbox and
+  the PDF renderer stubbed at their boundaries), `tests/caseyForms.test.js`,
+  `tests/assistantUi.test.js`, `tests/assistantPromptKinds.test.js`,
+  `tests/caseyActionPermissions.test.js`.
+
+**Deferred** (`ref/plans.md`):
+- **Submitting a form** — no atomic route (above). A native internal submit
+  route is Fred's call.
+- **Template editing / publishing / visibility / version restore /
+  deletion** — form-builder operations, not row controls.
+- **Unlinking a submission** — no screen does it.
+- **The hand-built form pages on the bus.**
+- **Native gaps:** the discard and the filing are silent on yc-sync; nothing
+  records that a submission's PDF was filed (so a re-file is caught only by
+  name).
 
 #### A13: Message triage — mail read state and case link shipped 2026-11-02 (no drafts: none exist)
 

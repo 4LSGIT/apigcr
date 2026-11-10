@@ -923,15 +923,44 @@ const CASE_DOCKET_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 //     Form Inbox's own keys) with the people on the target.
 // A `form.template` typed read (app pool — form_templates is outside the
 // curated report schema) gives the model the field list before it drafts.
+// A12.2 adds, behind the same switch, the two other form controls a page
+// offers on ONE row, each through that page's own route:
+//   * form.draft.delete.v1 → DELETE /api/forms/draft?form_key&link_type&link_id
+//     (the draft banner's Discard, on every form page). The card names the
+//     DRAFT row by id; the request is built from that stored row, never from
+//     the model. The route answers {deleted} with no record, so yc-sync cannot
+//     announce it: an open copy keeps its banner and its next autosave
+//     re-creates the draft — the card says so.
+//   * form.pdf.file.v1 → POST /api/forms/submissions/:id/pdf/file {filename?}
+//     (the Form Inbox's File button). NOT idempotent by the route's design: a
+//     second filing is a second copy (Dropbox autorenames). Nothing records
+//     that a submission was filed, so the card counts active documents whose
+//     name carries "(#<id>)" — the default name core both the inbox and the
+//     workflow step use — and says so as a danger warning, never a refusal
+//     (the inbox button refiles without any check).
+// Appointment-linked forms: the builder, the renderer (appt_id) and the Form
+// Inbox's adopt dialog accept link_type 'appt', so both A12 kinds and the
+// discard take it (no live template links to one today, verified 2026-11-11).
+// NOT built: submitting a form — no atomic route: the form page's Submit is a
+// seven-call browser chain (validate, PATCH the record, POST submit, DELETE
+// the draft, start up to 3 workflows, log), and POST /api/forms/submit alone
+// patches nothing, starts nothing and leaves the draft (ref/ASK_CASEY_ACTIONS_PLAN A12.2).
 // One per-family switch, casey_forms_enabled (on unless '0').
-const FORM_ACTION_KINDS = new Set(['form.draft.v1', 'form.submission.link.v1']);
+const FORM_ACTION_KINDS = new Set(['form.draft.v1', 'form.submission.link.v1', 'form.draft.delete.v1', 'form.pdf.file.v1']);
 const FORM_DRAFT_KEYS = new Set(['kind', 'form_key', 'link_type', 'link_id', 'data', 'evidence']);
 const FORM_LINK_KEYS = new Set(['kind', 'submission_id', 'link_type', 'link_id', 'evidence']);
+const FORM_DISCARD_KEYS = new Set(['kind', 'submission_id', 'evidence']);
+const FORM_PDF_KEYS = new Set(['kind', 'submission_id', 'filename', 'evidence']);
+// formPdfService's filename core: the form title fragment (MAX_NAME_FRAGMENT)
+// and an override's (MAX_NAME_FRAGMENT + 30), after its sanitizer.
+const FORM_PDF_NAME_FRAGMENT = 100;
+// A filename override longer than this is not a name (the core keeps 130).
+const FORM_PDF_FILENAME_MAX = 200;
 // form_submissions columns the route owns: refused by name at the top level.
 const FORM_RESERVED_KEYS = ['status', 'version', 'submitted_by', 'schema_version'];
 // Keys that read as another, higher-impact form operation: refused by name.
 const FORM_OTHER_OP_KEY = /submit|publish|pdf|render|file_?to|delete|discard|visib|restore|unlink|relink|template/i;
-const FORM_LINK_TYPES = ['case', 'contact'];
+const FORM_LINK_TYPES = ['case', 'contact', 'appt'];
 // form_submissions.data — the same 64 KB storage bound the external routes enforce.
 const FORM_DATA_MAX_BYTES = 64 * 1024;
 // A draft someone ELSE saved this recently is a danger warning.
@@ -7054,31 +7083,43 @@ function formVisibility(tpl) {
   return { effect: 'Staff-only form (internal): no client page shows it.' };
 }
 
+// What each form card sends, for the refusals below.
+const FORM_CARD_TAKES = {
+  draft: 'form_key, link_type, link_id, data',
+  link: 'submission_id, link_type, link_id',
+  discard: 'submission_id (the DRAFT row)',
+  pdf: 'submission_id and an optional filename',
+};
+
+// The one sentence every form card refuses a submit with (A12.2's named deferral).
+const FORM_SUBMIT_DEFERRAL = 'Submitting a form is not available to Casey: there is no atomic route — the form page\'s Submit is a seven-call browser chain (validate, PATCH the record, POST the submission, DELETE the draft, start up to 3 workflows, write the log), and POST /api/forms/submit alone patches nothing, starts nothing and leaves the draft. The user submits it on the form';
+
 // Refused by name before anything is read: the route-owned columns, then any
 // other form operation, then anything else unknown.
 function formRefuseKeys(extra, which) {
   const reserved = extra.filter((k) => FORM_RESERVED_KEYS.includes(String(k).toLowerCase()));
   if (reserved.length) {
-    throw formError(`RESERVED FIELDS refused (${reserved.join(', ')}): ${which === 'draft'
-      ? 'a draft card sends form_key, link_type, link_id and data — the route sets the row\'s status, version and author itself, and the form version is the template\'s'
-      : 'a link card sends link_type and link_id — the route renumbers the version and stamps who linked it'}`);
+    const why = {
+      draft: 'a draft card sends form_key, link_type, link_id and data — the route sets the row\'s status, version and author itself, and the form version is the template\'s',
+      link: 'a link card sends link_type and link_id — the route renumbers the version and stamps who linked it',
+      discard: 'a discard card names the draft row by submission_id — the request is built from that stored row',
+      pdf: 'a PDF card names the submission by submission_id — the route renders the stored row as it is',
+    }[which];
+    throw formError(`RESERVED FIELDS refused (${reserved.join(', ')}): ${why}`);
   }
   const ops = extra.filter((k) => FORM_OTHER_OP_KEY.test(k));
   if (ops.length) {
-    throw formError(`OTHER FORM OPERATIONS refused (${ops.join(', ')}): Casey saves ONE draft or links ONE submission. Submitting a form, making or filing its PDF, editing / publishing / restoring a template, changing its visibility, deleting or discarding a draft and unlinking are not available to Casey — the user does them on the form, the Form Inbox or the form builder`);
+    throw formError(`OTHER FORM OPERATIONS refused (${ops.join(', ')}): each form card does ONE thing — save ONE draft (form.draft.v1), link ONE submission (form.submission.link.v1), discard ONE draft (form.draft.delete.v1) or file ONE submission's PDF (form.pdf.file.v1). ${FORM_SUBMIT_DEFERRAL}. Editing / publishing / restoring a template, changing its visibility and unlinking a submission are not available to Casey either — the user does them in the form builder (no screen unlinks)`);
   }
   if (extra.length) {
-    throw formError(`A form ${which} card carries unsupported fields: ${extra.join(', ')} — it takes ${which === 'draft' ? 'form_key, link_type, link_id, data' : 'submission_id, link_type, link_id'} and evidence only`);
+    throw formError(`A form ${which} card carries unsupported fields: ${extra.join(', ')} — it takes ${FORM_CARD_TAKES[which]} and evidence only`);
   }
 }
 
 function formLinkTarget(value) {
   const linkType = String(value.link_type == null ? '' : value.link_type).trim().toLowerCase();
-  if (linkType === 'appt' || linkType === 'appointment') {
-    throw formError('APPOINTMENT-LINKED forms are not available to Casey — no form template links to an appointment today (a later slice)');
-  }
   if (!FORM_LINK_TYPES.includes(linkType)) {
-    throw formError(`A form belongs to a case (link_type "case", link_id = the exact case_id) or a contact (link_type "contact", link_id = the exact contact_id) — got ${linkType ? `"${linkType.slice(0, 40)}"` : 'nothing'}`);
+    throw formError(`A form belongs to a case (link_type "case", link_id = the exact case_id), a contact (link_type "contact", link_id = the exact contact_id) or an appointment (link_type "appt", link_id = the exact appt_id) — got ${linkType ? `"${linkType.slice(0, 40)}"` : 'nothing'}`);
   }
   if (linkType === 'case') {
     const linkId = String(value.link_id == null ? '' : value.link_id).trim();
@@ -7086,14 +7127,47 @@ function formLinkTarget(value) {
     return { linkType, linkId };
   }
   const n = Number(value.link_id);
-  if (!Number.isSafeInteger(n) || n < 1) throw formError('A contact form needs link_id = the contact\'s exact positive contact_id');
+  if (!Number.isSafeInteger(n) || n < 1) {
+    throw formError(linkType === 'contact' ? 'A contact form needs link_id = the contact\'s exact positive contact_id' : 'An appointment form needs link_id = the appointment\'s exact positive appt_id');
+  }
   return { linkType, linkId: String(n) };
 }
 
+// The id column a record's evidence row carries.
+function formIdColumn(linkType) {
+  return linkType === 'case' ? 'case_id' : linkType === 'contact' ? 'contact_id' : 'appt_id';
+}
+
 function formTargetCited(refs, evidence, linkType, linkId) {
-  return linkType === 'case'
-    ? documentRowCited(refs, evidence, (row) => row.case_id != null && String(row.case_id) === linkId)
-    : documentRowCited(refs, evidence, (row) => Number(row.contact_id) === Number(linkId));
+  if (linkType === 'case') return documentRowCited(refs, evidence, (row) => row.case_id != null && String(row.case_id) === linkId);
+  const col = formIdColumn(linkType);
+  return documentRowCited(refs, evidence, (row) => row[col] != null && Number(row[col]) === Number(linkId));
+}
+
+// The record a form row belongs to — a case or contact (A11's record read), or
+// an appointment named the way GET /api/appts/:id reads it (type, firm-local
+// date, client). null = gone.
+async function formLinkRecord(db, linkType, linkId) {
+  if (linkType !== 'appt') return documentLinkRecord(db, linkType, linkId);
+  const [rows] = await db.query(
+    `SELECT a.appt_id, a.appt_type, DATE_FORMAT(a.appt_date, '%Y-%m-%d %H:%i') AS appt_date_local, a.appt_status,
+            a.appt_client_id, c.contact_name
+       FROM appts a LEFT JOIN contacts c ON c.contact_id = a.appt_client_id
+      WHERE a.appt_id = ? LIMIT 1`, [Number(linkId)]);
+  const r = Array.isArray(rows) ? rows[0] : null;
+  if (!r) return null;
+  const type = String(r.appt_type || '').trim().slice(0, 60) || 'appointment';
+  const client = String(r.contact_name || '').trim().slice(0, 120);
+  return {
+    link_type: 'appt', link_id: String(r.appt_id), appt_id: Number(r.appt_id), appt_type: type,
+    appt_date: r.appt_date_local ? String(r.appt_date_local) : null, appt_status: String(r.appt_status || ''),
+    client_id: r.appt_client_id == null ? null : Number(r.appt_client_id), client_name: client || null,
+    label: `appointment #${r.appt_id} (${type}, ${r.appt_date_local ? `${r.appt_date_local} firm time` : 'no date'}${client ? `, ${client}` : ', no client'}${r.appt_status && r.appt_status !== 'Scheduled' ? `, ${r.appt_status}` : ''})`,
+  };
+}
+
+function formRecordWord(linkType) {
+  return linkType === 'case' ? 'Case' : linkType === 'contact' ? 'Contact' : 'Appointment';
 }
 
 function formWhen(value) {
@@ -7112,7 +7186,7 @@ async function normalizeFormDraft(db, value, evidence, currentUserId) {
   if (!askedKeys.length) throw formError('A form draft needs at least one answer in "data"');
   const refs = taskDraftEvidence(value.evidence, evidence);
   if (!formTargetCited(refs, evidence, linkType, linkId)) {
-    throw formError(`The draft evidence does not identify ${linkType} ${linkId} — cite a row carrying its exact ${linkType === 'case' ? 'case_id' : 'contact_id'} (read the ${linkType} first)`);
+    throw formError(`The draft evidence does not identify ${linkType} ${linkId} — cite a row carrying its exact ${formIdColumn(linkType)} (read the ${linkType === 'appt' ? 'appointment' : linkType} first)`);
   }
   // The typed template read must be in this investigation: the field keys,
   // types and options come from it, never from memory.
@@ -7127,8 +7201,8 @@ async function normalizeFormDraft(db, value, evidence, currentUserId) {
   if (tpl.link_type !== linkType) {
     throw formError(`"${tpl.title}" is a ${tpl.link_type}-linked form — its draft belongs to a ${tpl.link_type}, not a ${linkType}`);
   }
-  const record = await documentLinkRecord(db, linkType, linkId);
-  if (!record) throw formError(`${linkType === 'case' ? 'Case' : 'Contact'} ${linkId} no longer exists`);
+  const record = await formLinkRecord(db, linkType, linkId);
+  if (!record) throw formError(`${formRecordWord(linkType)} ${linkId} no longer exists`);
   const def = tpl.definition;
   const { fields, repeaters } = formFields(def);
   const fieldKeys = Object.keys(fields); const repKeys = Object.keys(repeaters);
@@ -7208,7 +7282,7 @@ async function normalizeFormDraft(db, value, evidence, currentUserId) {
   } else {
     effects.push('No draft exists yet: this card creates the draft for this record.');
   }
-  effects.push('Where it shows: wherever this form opens for this record (its tab on the case page, or a custom view\'s form button), a banner says there is an unsaved draft, with Restore and Discard. Nothing on the form changes until someone clicks Restore; Discard deletes the draft, and saving the form deletes it too.');
+  effects.push(`Where it shows: wherever this form opens for this ${linkType === 'appt' ? 'appointment (a custom view\'s form button, or the form builder\'s Live tab)' : 'record (its tab on the case page, or a custom view\'s form button)'}, a banner says there is an unsaved draft, with Restore and Discard. Nothing on the form changes until someone clicks Restore; Discard deletes the draft, and saving the form deletes it too.`);
   if (vis.effect) effects.push(vis.effect);
   notes.forEach((n) => effects.push(`Stored form: ${n}`));
   if (requiredEmpty.length) {
@@ -7254,12 +7328,15 @@ function formPhone(text) {
   return d.length === 10 ? d : null;
 }
 
-async function formLinkPeople(db, linkType, linkId) {
+async function formLinkPeople(db, linkType, linkId, record = null) {
   let ids;
   if (linkType === 'case') {
     const [rows] = await db.query(
       'SELECT case_relate_client_id AS contact_id, case_relate_type AS relate_type FROM case_relate WHERE case_relate_case_id = ?', [linkId]);
     ids = Array.isArray(rows) ? rows : [];
+  } else if (linkType === 'appt') {
+    // The appointment's client — the person GET /api/appts/:id names.
+    ids = record && record.client_id ? [{ contact_id: record.client_id, relate_type: 'the appointment\'s client' }] : [];
   } else ids = [{ contact_id: Number(linkId), relate_type: null }];
   const cids = [...new Set(ids.map((r) => Number(r.contact_id)).filter((n) => Number.isSafeInteger(n) && n > 0))].slice(0, 60);
   if (!cids.length) return [];
@@ -7318,7 +7395,7 @@ async function normalizeFormSubmissionLink(db, value, evidence) {
     throw formError(`The link evidence does not identify submission #${subId} — cite a form_submissions row carrying its exact submission_id (read it first: form_submissions.id AS submission_id)`);
   }
   if (!formTargetCited(refs, evidence, linkType, linkId)) {
-    throw formError(`The link evidence does not identify ${linkType} ${linkId} — cite a row carrying its exact ${linkType === 'case' ? 'case_id' : 'contact_id'} (read the ${linkType} first)`);
+    throw formError(`The link evidence does not identify ${linkType} ${linkId} — cite a row carrying its exact ${formIdColumn(linkType)} (read the ${linkType === 'appt' ? 'appointment' : linkType} first)`);
   }
   const formSvc = require('./formService'); // lazy (convention)
   let sub;
@@ -7339,12 +7416,12 @@ async function normalizeFormSubmissionLink(db, value, evidence) {
   if (tpl.link_type !== linkType) {
     throw formError(`Form "${sub.form_key}" is a ${tpl.link_type}-linked form — it cannot be linked to a ${linkType}`);
   }
-  const record = await documentLinkRecord(db, linkType, linkId);
+  const record = await formLinkRecord(db, linkType, linkId);
   if (!record) throw formError(`${linkType} "${linkId}" not found`);
 
   const data = formParse(sub.data);
   const answers = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
-  const people = await formLinkPeople(db, linkType, record.link_id);
+  const people = await formLinkPeople(db, linkType, record.link_id, record);
   const identity = formIdentity(answers, people);
   const [[maxRow]] = await db.query(
     `SELECT COALESCE(MAX(version), 0) AS max_version
@@ -7359,9 +7436,9 @@ async function normalizeFormSubmissionLink(db, value, evidence) {
   if (!identity.length) {
     effects.push('Identity: the answers carry no name, phone or email (the Form Inbox\'s identifying answers), so nothing could be compared with the people on the record — check the answers yourself.');
   } else if (!people.length) {
-    warnings.push(`IDENTITY NOT CHECKED: ${record.label} has no contacts, so the submission's ${identity.map((x) => x.answer).join(' / ')} could not be compared with anyone. Check it is the right ${linkType}.`);
+    warnings.push(`IDENTITY NOT CHECKED: ${record.label} has no ${linkType === 'appt' ? 'client' : 'contacts'}, so the submission's ${identity.map((x) => x.answer).join(' / ')} could not be compared with anyone. Check it is the right ${linkType === 'appt' ? 'appointment' : linkType}.`);
   } else if (missed.length) {
-    warnings.push(`IDENTITY MISMATCH: the submission's ${missed.map((x) => `${x.answer} "${x.value}"`).join(', ')} match${missed.length > 1 ? '' : 'es'} no ${linkType === 'case' ? 'contact on this case' : 'phone, email or name of this contact'} (${people.slice(0, 6).map((p) => `${p.name}${p.relate_type ? `, ${p.relate_type}` : ''}`).join('; ')}${people.length > 6 ? ' …' : ''}). Check it is the right person before linking — the route never unlinks.`);
+    warnings.push(`IDENTITY MISMATCH: the submission's ${missed.map((x) => `${x.answer} "${x.value}"`).join(', ')} match${missed.length > 1 ? '' : 'es'} no ${linkType === 'case' ? 'contact on this case' : linkType === 'appt' ? 'phone, email or name of the appointment\'s client' : 'phone, email or name of this contact'} (${people.slice(0, 6).map((p) => `${p.name}${p.relate_type ? `, ${p.relate_type}` : ''}`).join('; ')}${people.length > 6 ? ' …' : ''}). Check it is the right person before linking — the route never unlinks.`);
   }
   effects.push(`Links submission #${subId} ("${tpl.title}", received ${formWhen(sub.created_at)}, unlinked) to ${record.label}: it becomes version ${next} of this form there — the NEWEST submission (${prior ? `the latest until now is version ${prior}` : 'the first submission of this form on this record'}; it carried version ${Number(sub.version) || 0} in the unlinked series).`);
   const def = tpl.definition || {};
@@ -7404,12 +7481,250 @@ async function normalizeFormSubmissionLink(db, value, evidence) {
   };
 }
 
+// ── A12.2: form.draft.delete.v1 (the draft banner's Discard) ──
+
+// Who saved a form row, as a card names it.
+function formSavedBy(row, currentUserId) {
+  const by = row.submitted_by == null ? null : Number(row.submitted_by);
+  const mine = by != null && currentUserId != null && by === Number(currentUserId);
+  const who = by == null ? 'the client, on the public form link (no staff account)'
+    : mine ? 'you' : `${String(row.user_name || '').trim().slice(0, 80) || 'a user'} (user #${by})`;
+  return { by, mine, who };
+}
+
+// The submission row a discard or a PDF card names (GET /api/forms/submissions/:id).
+async function formSubmissionRow(db, subId, what) {
+  const formSvc = require('./formService'); // lazy (convention)
+  try { return await formSvc.getSubmission(db, subId); } catch (e) {
+    if (e && e.status === 404) throw formError(`${what} #${subId} no longer exists`);
+    throw e;
+  }
+}
+
+async function normalizeFormDiscard(db, value, evidence, currentUserId) {
+  formRefuseKeys(Object.keys(value).filter((k) => !FORM_DISCARD_KEYS.has(k)), 'discard');
+  const subId = Number(value.submission_id);
+  if (!Number.isSafeInteger(subId) || subId < 1) {
+    throw formError('A draft discard needs the DRAFT row\'s exact positive submission_id (form_submissions.id AS submission_id, status "draft")');
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!documentRowCited(refs, evidence, (row) => row.submission_id != null && Number(row.submission_id) === subId)) {
+    throw formError(`The discard evidence does not identify draft #${subId} — cite the form_submissions row carrying its exact submission_id (read it first: form_submissions.id AS submission_id)`);
+  }
+  const row = await formSubmissionRow(db, subId, 'Draft');
+  if (row.status !== 'draft') {
+    throw formError(`#${subId} is a SUBMITTED form (version ${Number(row.version) || 0}), not a draft — no screen deletes a submission; Casey discards drafts only`);
+  }
+  const linkType = String(row.link_type || '').toLowerCase();
+  if (!FORM_LINK_TYPES.includes(linkType)) {
+    throw formError(`Draft #${subId} belongs to ${linkType ? `a "${linkType.slice(0, 20)}"` : 'no record'} — no form page opens it, so there is no Discard to mirror`);
+  }
+  const linkId = String(row.link_id == null ? '' : row.link_id);
+  if (!formTargetCited(refs, evidence, linkType, linkId)) {
+    throw formError(`The discard evidence does not identify ${linkType} ${linkId} — cite a row carrying its exact ${formIdColumn(linkType)} (read the ${linkType === 'appt' ? 'appointment' : linkType} first)`);
+  }
+  const record = await formLinkRecord(db, linkType, linkId);
+  if (!record) throw formError(`${formRecordWord(linkType)} ${linkId} no longer exists — no form page opens this draft, so there is no Discard to mirror`);
+  // The read the click re-runs (GET /api/forms/latest): the ONE draft of this
+  // form and record, and its latest submission.
+  const formSvc = require('./formService'); // lazy (convention)
+  const latest = await formSvc.getLatest(db, row.form_key, row.link_type, linkId);
+  const draftRow = latest && latest.draft ? latest.draft : null;
+  const subRow = latest && latest.submitted ? latest.submitted : null;
+  if (!draftRow || Number(draftRow.id) !== subId) throw formError(`Draft #${subId} is no longer the draft of this form and record — it was discarded or replaced`);
+  const tpl = await formTemplateLoad(db, row.form_key);
+  const title = tpl ? tpl.title : String(row.form_key);
+  const reg = tpl && tpl.published ? formFields(tpl.definition) : { fields: {}, repeaters: {} };
+  const stored = formParse(draftRow.data);
+  const isObj = stored && typeof stored === 'object' && !Array.isArray(stored);
+  const keys = isObj ? Object.keys(stored) : [];
+  const answers = keys.slice(0, FORM_CARD_LIST).map((key) => ({
+    key, label: reg.fields[key] ? formLabel(reg.fields[key], key) : key, value: formShow(stored[key]),
+    ...(reg.fields[key] || reg.repeaters[key] || !tpl || !tpl.published ? {} : { off_form: true }),
+  }));
+  const filled = keys.filter((k) => !formEmpty(stored[k])).length;
+  const saved = formSavedBy(draftRow, currentUserId);
+  const when = formWhen(draftRow.updated_at);
+
+  const warnings = [`NO UNDO: draft #${subId} is DELETED — ${isObj ? `its ${keys.length} saved answer${keys.length === 1 ? '' : 's'} (${filled} filled in)` : 'everything it holds'} ${keys.length === 1 ? 'is' : 'are'} gone for good; no screen restores a discarded draft.`];
+  const at = draftRow.updated_at instanceof Date ? draftRow.updated_at : new Date(draftRow.updated_at);
+  if (saved.by == null) {
+    warnings.push(`THE CLIENT'S DRAFT: the client saved it on the public form link at ${when}. ${tpl && tpl.visibility === 'public' && tpl.definition && tpl.definition.external && tpl.definition.external.serverDrafts === true
+      ? 'The public link offers them this draft to resume; after the discard it has nothing to offer, and whatever they typed is gone.'
+      : 'Whatever they typed is gone.'}`);
+  } else if (!saved.mine && !Number.isNaN(at.getTime()) && Date.now() - at.getTime() < FORM_FOREIGN_DRAFT_MS) {
+    warnings.push(`RECENT DRAFT BY SOMEONE ELSE: ${saved.who} saved this draft at ${when} — within the last 24 hours, so they may still be working on it. If their form is still open, its next autosave saves a NEW draft from their screen.`);
+  }
+  const effects = [
+    `Deletes draft #${subId} of "${title}" for ${record.label}, saved by ${saved.who} at ${when} (form version ${Number(draftRow.schema_version) || 1}).`,
+    subRow
+      ? `The latest SUBMITTED answers (version ${Number(subRow.version) || 0}, submission #${subRow.id}, ${formWhen(subRow.updated_at)}) are untouched — the form shows them when it opens.`
+      : 'No submission of this form exists on this record: the form opens from the record\'s own data (or blank) once the draft is gone.',
+    'Other open pages: nothing announces the discard — the route answers only {deleted}, with no record for the sync bus to name. A copy of this form already open anywhere keeps showing its draft banner (Restore there still fills the form from the copy it loaded), and its next autosave after any typing saves a NEW draft from that screen.',
+    'Trigger event: none — discarding a draft emits no event, and a draft satisfies no pipeline step.',
+  ];
+  if (!tpl) effects.push(`Form: "${row.form_key}" has no template (one of the hand-built form pages) — the answers are listed by their keys.`);
+  if (isObj && keys.length > answers.length) effects.push(`Answers: the first ${answers.length} of ${keys.length} are listed.`);
+  if (!isObj) effects.push('Answers: the draft holds data that is not a JSON object — it is shown as stored.');
+
+  return {
+    draft_id: crypto.randomUUID(), kind: 'form.draft.delete.v1', status: 'draft',
+    form: { form_key: String(row.form_key), title, link_type: tpl ? tpl.link_type : linkType, visibility: tpl ? tpl.visibility : null, has_template: !!tpl },
+    record: { link_type: linkType, link_id: record.link_id, label: record.label },
+    draft: { submission_id: subId, form_key: String(row.form_key), link_type: String(row.link_type), link_id: linkId,
+      updated_at: documentIso(draftRow.updated_at), saved_by: saved.who, schema_version: Number(draftRow.schema_version) || 1 },
+    answers, answers_total: keys.length, answers_filled: filled, ...(isObj ? {} : { raw: formShow(stored) }),
+    submitted: subRow ? { submission_id: Number(subRow.id), version: Number(subRow.version) || 0, updated_at: documentIso(subRow.updated_at) } : null,
+    effects, warnings,
+    expected: { draft_id: subId, updated_at: documentIso(draftRow.updated_at), data_hash: formDataHash(stored) },
+    evidence: refs,
+  };
+}
+
+// ── A12.2: form.pdf.file.v1 (the Form Inbox's File button) ──
+
+// formPdfService.renderSubmissionPdf's file name: the override's sanitized core,
+// else "{firm-local date} {title} (#id)", plus ".pdf".
+function formPdfFileName(sub, title, override) {
+  const { sanitizeNameFragment } = require('./formPdfService'); // lazy (convention)
+  const { DateTime } = require('luxon');
+  if (override != null) return `${sanitizeNameFragment(String(override).replace(/\.pdf$/i, ''), FORM_PDF_NAME_FRAGMENT + 30)}.pdf`;
+  const at = sub.created_at instanceof Date ? sub.created_at : new Date(sub.created_at);
+  let dt = DateTime.fromJSDate(at, { zone: 'utc' }).setZone(FIRM_TZ);
+  if (!dt.isValid) dt = DateTime.now().setZone(FIRM_TZ);
+  return `${dt.toFormat('yyyy-MM-dd')} ${sanitizeNameFragment(title || sub.form_key, FORM_PDF_NAME_FRAGMENT)} (#${sub.id}).pdf`;
+}
+
+// Where filePlacementService.placeAndRegister would put it — its ladder,
+// read-only: the case folder (rung 1), a case with no folder (rung 2 creates
+// one), a case row gone (rung 3, the bin's per-case subfolder), anything else
+// the bin's root with an identity prefix.
+async function formPdfPlacement(db, sub, fileName) {
+  const pdf = require('./formPdfService'); // lazy (convention)
+  const { getSetting } = require('./settingsService');
+  const bin = async () => {
+    let raw = null;
+    try { raw = await getSetting(db, pdf.UNSORTED_PATH_KEY); } catch (_) { raw = null; }
+    const clean = raw == null ? '' : String(raw).replace(/[\r\n]+$/, '');
+    return clean || pdf.DEFAULT_UNSORTED_PATH;
+  };
+  if (sub.link_type === 'case') {
+    const [rows] = await db.query('SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [String(sub.link_id)]);
+    const c = Array.isArray(rows) ? rows[0] : null;
+    if (c && String(c.case_dropbox || '').trim() !== '') {
+      // path_lower, never path_display (documentIngestService's header: the
+      // cache never holds path_display) — and the upload destination is built
+      // from the same lowercased path (dropboxService.resolveLocation).
+      const [cache] = await db.query('SELECT path_lower FROM case_folder_cache WHERE case_id = ? AND resolve_error IS NULL LIMIT 1', [String(sub.link_id)]);
+      const p = Array.isArray(cache) && cache[0] && cache[0].path_lower ? String(cache[0].path_lower) : null;
+      return { rung: 'case', folder: p ? `${p}/${pdf.SUBFOLDER}` : `the case's linked Dropbox folder, subfolder ${pdf.SUBFOLDER}`, file_name: fileName };
+    }
+    if (c) return { rung: 'case_create', folder: `a NEW Dropbox folder for the case, subfolder ${pdf.SUBFOLDER}`, file_name: fileName };
+    return { rung: 'unsorted_case', folder: `${await bin()}/<case ${sub.link_id} subfolder>`, file_name: fileName };
+  }
+  return { rung: 'unsorted', folder: await bin(), file_name: `${await pdf._identityPrefix(db, sub)}${fileName}` };
+}
+
+async function normalizeFormPdfFile(db, value, evidence) {
+  formRefuseKeys(Object.keys(value).filter((k) => !FORM_PDF_KEYS.has(k)), 'pdf');
+  const subId = Number(value.submission_id);
+  if (!Number.isSafeInteger(subId) || subId < 1) throw formError('A PDF filing needs the submission\'s exact positive submission_id (form_submissions.id AS submission_id)');
+  let override = null;
+  if (value.filename !== undefined && value.filename !== null) {
+    if (typeof value.filename !== 'string') throw formError('"filename" is the PDF\'s new name, as text');
+    const f = value.filename.trim();
+    if (!f) throw formError('"filename", when given, is the PDF\'s new name — leave it out for the default "<date> <form title> (#id).pdf"');
+    if (CASE_DOCKET_CONTROL.test(f)) throw formError('"filename" cannot hold a line break or a control character');
+    if (Array.from(f).length > FORM_PDF_FILENAME_MAX) throw formError(`"filename" is over ${FORM_PDF_FILENAME_MAX} characters`);
+    override = f;
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!documentRowCited(refs, evidence, (row) => row.submission_id != null && Number(row.submission_id) === subId)) {
+    throw formError(`The PDF evidence does not identify submission #${subId} — cite a form_submissions row carrying its exact submission_id (read it first: form_submissions.id AS submission_id)`);
+  }
+  const sub = await formSubmissionRow(db, subId, 'Submission');
+  if (sub.status !== 'submitted') {
+    throw formError(`A DRAFT has no PDF: #${subId} is a draft — the route renders submitted forms only ("only submitted forms can be rendered")`);
+  }
+  const linkType = String(sub.link_type || '').toLowerCase();
+  let record = null;
+  if (linkType) {
+    if (!FORM_LINK_TYPES.includes(linkType)) throw formError(`Submission #${subId} is linked to a "${linkType.slice(0, 20)}" — Casey reads case, contact and appointment forms only`);
+    record = await formLinkRecord(db, linkType, String(sub.link_id));
+    if (record && !formTargetCited(refs, evidence, linkType, String(sub.link_id))) {
+      throw formError(`The PDF evidence does not identify ${linkType} ${sub.link_id} — cite a row carrying its exact ${formIdColumn(linkType)} too (the record it files under)`);
+    }
+  }
+  const formSvc = require('./formService'); // lazy (convention)
+  let bundle;
+  try { bundle = await formSvc.getSubmissionForRender(db, subId); } catch (e) {
+    if (e && e.status) throw formError(`The route cannot render submission #${subId}: ${e.message}`);
+    throw e;
+  }
+  const title = String(bundle.title || sub.form_key).slice(0, 150);
+  const fileName = formPdfFileName(sub, title, override);
+  const place = await formPdfPlacement(db, sub, fileName);
+
+  // Nothing records that a submission was filed: the copies already on file
+  // are the active documents whose name carries "(#<id>)" — the default core.
+  const like = `%(#${subId})%.pdf`;
+  const [[cnt]] = await db.query("SELECT COUNT(*) AS n FROM documents WHERE status = 'active' AND name LIKE ?", [like]);
+  const [named] = await db.query("SELECT id, name FROM documents WHERE status = 'active' AND name LIKE ? ORDER BY id LIMIT 3", [like]);
+  const copies = { count: Number(cnt && cnt.n) || 0, names: (Array.isArray(named) ? named : []).map((r) => String(r.name).slice(0, 200)) };
+
+  const warnings = []; const effects = [];
+  if (copies.count) {
+    warnings.push(`ALREADY FILED: a copy named "${copies.names[0]}" already sits in Documents (${copies.count} active document${copies.count === 1 ? '' : 's'} named with "(#${subId})"); filing again makes a SECOND copy (the route autorenames) — Casey cannot see a copy filed under a custom name.`);
+  } else {
+    effects.push(`Copies on file: no active document is named with "(#${subId})" (the default name). A copy filed under a custom name, or one the document registry has not picked up, is invisible to this check — filing again would make a second copy.`);
+  }
+  const where = record ? record.label : linkType ? `${linkType} ${sub.link_id} (no longer exists)` : 'no record (unlinked)';
+  if (place.rung === 'case') {
+    effects.push(`Lands in: ${place.folder} — as "${place.file_name}" (Dropbox adds " (1)" if that name is taken). If Dropbox cannot open the case's folder link, it goes to the unsorted form-submissions bin instead and a task asks staff to move it.`);
+  } else if (place.rung === 'case_create') {
+    warnings.push(`CASE FOLDER CREATED: ${record.label} has no Dropbox folder linked, so filing CREATES one, links it to the case and raises a task about it — before the PDF lands in its ${require('./formPdfService').SUBFOLDER} subfolder as "${place.file_name}". If the case already has a folder nobody linked, the two must be merged by hand.`);
+  } else if (place.rung === 'unsorted_case') {
+    warnings.push(`UNSORTED: case ${sub.link_id} no longer exists, so the PDF goes to the unsorted form-submissions bin (${place.folder}) as "${place.file_name}", and a task asks staff to move it.`);
+  } else {
+    effects.push(`Lands in: the unsorted form-submissions bin (${place.folder}) as "${place.file_name}" — ${linkType === 'appt' ? 'an appointment form has no case folder' : linkType === 'contact' ? 'a contact form has no case folder' : 'an unlinked submission has no case folder'}; no task is raised (the Form Inbox lists these).`);
+  }
+  if (override != null) effects.push(`Name: your filename replaces the default "<date> ${title} (#${subId})"${place.file_name.includes(`(#${subId})`) ? '' : ` — this copy's name carries no "(#${subId})", so a later card cannot see it`}.`);
+  effects.push(linkType === 'case' || linkType === 'contact'
+    ? `Registered: a document row for the new file, linked to ${where} — it joins that ${linkType}'s Documents tab (and, under "Include related", the related ${linkType === 'case' ? 'contacts\'' : 'cases\''}).`
+    : `Registered: a document row for the new file, linked to nothing — it shows only on the Documents page${linkType === 'appt' ? ' (no document links to an appointment)' : ''}.`);
+  effects.push(`What it shows: "${title}" as the submitter saw it — the form version the submission was made under${bundle.schema_matched === false ? '; that version is gone, so the CURRENT form is used and answers to removed fields are not printed' : ''}; hidden fields are left out.`);
+  const triggers = require('./triggerService'); // lazy (convention)
+  const events = ['document.created', ...(linkType === 'case' || linkType === 'contact' ? ['document.linked'] : [])];
+  const ruleLines = [];
+  for (const ev of events) {
+    for (const r of await triggers.listActiveRulesForEvent(db, ev)) ruleLines.push(`#${Number(r.id)} "${String(r.name || '').slice(0, 80)}" (${ev})`);
+  }
+  effects.push(ruleLines.length
+    ? `Trigger rules: the new document emits ${events.join(' / ')}; these active rules listen and MAY run (their conditions are checked on the real file once it exists): ${ruleLines.slice(0, 8).join('; ')}${ruleLines.length > 8 ? ' …' : ''}.`
+    : `Trigger rules: the new document emits ${events.join(' / ')}; no active rule listens for ${events.length === 1 ? 'it' : 'them'}.`);
+  effects.push('Untouched: the submission and its answers. Casey sends nothing; the route\'s ~4-hour download link is not kept or shown — open the file from Documents or Dropbox.');
+
+  return {
+    draft_id: crypto.randomUUID(), kind: 'form.pdf.file.v1', status: 'draft',
+    submission: { submission_id: subId, form_key: String(sub.form_key), title, created_at: documentIso(sub.created_at), version: Number(sub.version) || 0,
+      link_type: String(sub.link_type || ''), link_id: String(sub.link_id == null ? '' : sub.link_id),
+      saved_by: sub.submitted_by == null ? 'the public form (no staff account)' : String(sub.user_name || `user #${sub.submitted_by}`) },
+    record: record ? { link_type: record.link_type, link_id: record.link_id, label: record.label } : null,
+    filename: override, file_name: place.file_name, placement: { rung: place.rung, folder: place.folder },
+    copies, effects, warnings,
+    expected: { status: String(sub.status), link_type: String(sub.link_type || ''), link_id: String(sub.link_id == null ? '' : sub.link_id), version: Number(sub.version) || 0 },
+    evidence: refs,
+  };
+}
+
 async function normalizeFormAction(db, value, evidence, { currentUserId = null } = {}) {
   // The per-family switch: '0' and the A12 kinds do not exist.
   if (require('../lib/firmConfig').cfg('casey_forms_enabled') === '0') {
     throw httpError(422, 'Action kind is unavailable');
   }
   if (value.kind === 'form.draft.v1') return normalizeFormDraft(db, value, evidence, currentUserId);
+  if (value.kind === 'form.draft.delete.v1') return normalizeFormDiscard(db, value, evidence, currentUserId);
+  if (value.kind === 'form.pdf.file.v1') return normalizeFormPdfFile(db, value, evidence);
   return normalizeFormSubmissionLink(db, value, evidence);
 }
 
@@ -12486,9 +12801,10 @@ function taskDraftRequested(question, history = []) {
     /\b(?:draft|propose|prepare|add|put|set|record|enter|fill|adopt|attach|save|store|give|assign|update|link|change|replace|correct|fix|edit|clear|remove|erase|blank|swap)\b/i.test(request);
   // A12: a form draft / prefill, or a submission linked to a case or contact
   // ("prefill the 341 notes for the Smith case", "link that intake submission
-  // to her case").
+  // to her case"); A12.2: a draft discarded, or a submission's PDF filed
+  // ("discard the draft of her intake", "file the PDF of submission 286").
   const formWork = /\b(?:forms?|questionnaires?|submissions?|dbkq|341 notes)\b/i.test(text) &&
-    /\b(?:draft|propose|prepare|prefill|pre-fill|fill(?: in| out)?|start|save|link|attach|adopt|assign|connect|associate|file\b[^.?!\n]{0,40}\b(?:to|under|on|with))\b/i.test(request);
+    /\b(?:draft|propose|prepare|prefill|pre-fill|fill(?: in| out)?|start|save|link|attach|adopt|assign|connect|associate|file\b[^.?!\n]{0,40}\b(?:to|under|on|with)|discard|delete|scrap|throw (?:out|away)|get rid of|(?:make|create|render|save|file|archive|put|store)\b[^.?!\n]{0,40}\bpdfs?)\b/i.test(request);
   // A13: a known email marked read / unread, or linked to a case ("mark the
   // trustee's email read", "link Dana's last email to her case").
   const mailTriage = /\b(?:e-?mails?|mail|messages?|inbox)\b/i.test(text) &&
