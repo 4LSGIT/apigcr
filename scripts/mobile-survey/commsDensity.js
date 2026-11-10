@@ -9,8 +9,13 @@
 //
 //   viewport     first list row top   opened email body (iframe) top
 //   1440×900     ≤ 239 (no regression)   ≤ 450      (baseline 2026-10-12: 793)
-//   1280×800     ≤ 239                   ≤ 420      (baseline: 750)
+//   1280×800     ≤ 239                   ≤ 450      (baseline: 750)
 //   390×844      ≤ 200 (filters closed)  ≤ 520      (baselines: 312 / 788)
+//
+// The 1280 body target is 1440's (Fred, 2026-11-10; it was 420): the fixture
+// email carries two attachments, one of them Filed, plus File to case…
+// (email attachments S3), and at 1280 that strip wraps to a second row (447).
+// An email with two long file names wraps there anyway.
 //
 // SELECT ROW gate (email attachments, 2026-11-10): the list's Select button
 // sits in the top bar beside Filters, visible, inside the right edge and on
@@ -48,7 +53,7 @@ const OUT = arg('out', path.join(os.tmpdir(), 'yc-comms-density'));
 
 const TARGETS = [
   { w: 1440, h: 900, rowTop: 239, bodyTop: 450 },
-  { w: 1280, h: 800, rowTop: 239, bodyTop: 420 },
+  { w: 1280, h: 800, rowTop: 239, bodyTop: 450 },
   { w: 390, h: 844, rowTop: 200, bodyTop: 520 },
 ];
 
