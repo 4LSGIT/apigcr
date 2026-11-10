@@ -62,6 +62,12 @@ const KINDS = new Map([
   // row, ids included — the one matching the reviewed target is the receipt).
   ['document.update.v1', 'document_id'],
   ['document.link.v1', 'document_link_id'],
+  // A11.2: the share receipts the reviewed DOCUMENT (the route answers only
+  // the link, which is never a receipt — a public link is a capability); the
+  // unlink receipts the reviewed link row (the DELETE echoes no id — a removed
+  // row's id names what was removed).
+  ['document.share.v1', 'document_id'],
+  ['document.unlink.v1', 'document_link_id'],
   // A12: both receipt the form_submissions row — the draft the POST upserted
   // (it returns the row id) and the submission the PATCH linked.
   ['form.draft.v1', 'submission_id'],

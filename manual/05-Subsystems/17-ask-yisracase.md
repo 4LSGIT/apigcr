@@ -847,15 +847,18 @@ that list", "check off the credit report", "rename that list to Pre-filing
 The off switch for these cards is the `casey_checklists_enabled` setting (on
 unless set to 0).
 
-### Documents: title, type, tags and links
+### Documents: title, type, tags, links and public links
 
 Casey can read the Documents registry (every file the Dropbox sync has seen,
 and which case or contact each is linked to), and it can **change one
-document's title, type or tags** or **link one document to one case or
-contact** — one change per card, through the same routes the Documents page's
-Edit and Links buttons use. Ask in plain words ("retitle the petition PDF on
-the Smith case to Chapter 7 petition (filed)", "tag it court, filed", "link
-this paystub to Dana's contact").
+document's title, type or tags**, **link one document to one case or
+contact**, **unlink one document from one case or contact**, or **share one
+document** (its public link) — one change per card, through the same routes
+the Documents page's Edit, Links and Copy public link buttons use. Ask in
+plain words ("retitle the petition PDF on the Smith case to Chapter 7
+petition (filed)", "tag it court, filed", "link this paystub to Dana's
+contact", "unlink that scan from the Smith case", "get me a public link to the
+signed retainer").
 
 - **An edit card** shows the document (file name, path, size, source), each
   field before and after, and every case or contact it is linked to — the
@@ -870,29 +873,50 @@ this paystub to Dana's contact").
   each case that contact is on (a contact link), badged "via" the record. A
   document's first case link also takes it off the Documents page's "no case"
   list. A link you make is kept even if the file is later moved in Dropbox.
+- **An unlink card** shows the link that goes (and whether a person or the
+  Dropbox sync made it), the links left, and **exactly which Documents tabs the
+  document leaves** — that record's, and under Include related the tabs it
+  showed on through that record — and which it still shows on through its other
+  links. Unlinking its last link is allowed; the card warns that the document
+  is then linked to nothing (it goes back on the "Unlinked" list when no case
+  link is left). If the file still sits in that case's Dropbox folder, the card
+  warns that **the sync puts the case link back** (on a later sweep, and
+  whenever the file changes) — to keep it off the case, move the file out of the
+  folder in Dropbox. The file itself is never touched. There is no undo button:
+  link it again if you change your mind.
+- **A share card** gets the document's **permanent public link** from Dropbox —
+  the Copy public link button on the Documents page. It says plainly what that
+  is: **anyone who has the link can open and download the file, with no login,
+  and it does not expire**; it can only be turned off in Dropbox itself. If the
+  document already has a link, nothing new is made. Casey never sees the link:
+  after you confirm, the card shows it (in this window only — it is not saved in
+  the chat) with a **Copy public link** button. Later, copy it from the
+  Documents page. Casey does not send it to anyone.
 - **Automation.** Editing a document can start rules on "document updated";
   linking one, rules on "document linked". The card checks every active rule
   and lists each that would run, and any whose test could not run — that one
-  **may** run.
+  **may** run. Sharing and unlinking start no rules.
 - **Staff only.** The client portal does not list registered documents.
 - **What Casey will not do, and says so:**
-  - delete, restore or mark a document missing;
-  - rename or move the file, or touch its public link — Dropbox owns the file;
+  - delete, restore or mark a document missing — no screen does that either;
+    the Dropbox sync sets it;
+  - rename or move the file — Dropbox owns the file;
   - use the relation word **path** — that is the Dropbox sync's own mark;
-  - link a document that is deleted or missing, link it to anything but a
-    case or a contact, or add a link that already exists;
+  - link or share a document that is deleted or missing, link or unlink it to
+    anything but a case or a contact, or add a link that already exists;
   - work on a document already linked to more than 20 records (it warns from
     5);
   - save a value longer than the field holds, or an edit that changes nothing;
-  - unlink, upload, generate or share documents, or register a new file — do
-    those on the Documents page.
+  - upload or generate documents, or register a new file — do those on the
+    Documents page.
 - **Freshness.** When you confirm, the card re-reads the document (and, for a
   link, the record). If the document was edited, renamed by the sync, deleted,
-  or gained or lost a link since the card was prepared, nothing is written; ask
-  Casey to prepare it again.
+  shared, or gained or lost a link since the card was prepared, nothing is
+  written; ask Casey to prepare it again.
 - Once applied, the card opens the case or contact (an edit to a document with
-  no links points you to More → Documents). Open Documents pages and tabs
-  showing the document refresh on their own.
+  no links points you to More → Documents; a share card's button copies the
+  link). Open Documents pages and tabs showing the document refresh on their
+  own.
 
 The off switch for these cards is the `casey_documents_enabled` setting (on
 unless set to 0).

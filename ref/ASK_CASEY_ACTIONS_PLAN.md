@@ -9,8 +9,8 @@ reschedule-later; one phone/email/address subrecord create, narrow update or
 history-preserving end. Since then: A6 (contact relations and roles — create and
 update), A7 group A (case notes, case alerts, contact notes), A7 groups B/C (any
 other case field, 2026-11-09; the docket's replace / clear, A7e), A7c (case docket adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
-advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer) + A9.4 (requirement override set / clear), A10 + A10.2 (checklists and items; list rename / note edit, list and item delete), A11 (documents —
-update and link), A11.1 (a case's Dropbox folder — candidates-only relink),
+advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer) + A9.4 (requirement override set / clear), A10 + A10.2 (checklists and items; list rename / note edit, list and item delete), A11 + A11.2 (documents —
+update and link; share and unlink), A11.1 (a case's Dropbox folder — candidates-only relink),
 A12 (form drafts and submission links), A13 (mail triage —
 read state and case link; no drafts exist, no SMS triage), A13b (one email's
 attachments filed to a case, the Comms File attachments route), A14 (direct email /
@@ -29,12 +29,12 @@ of its plan stands in those sections.
 
 ## Review briefing
 
-The shipped baseline is 68 proposal kinds (the action ledger's `KINDS`
+The shipped baseline is 84 proposal kinds (the action ledger's `KINDS`
 registry; `tests/caseyActionPermissions.test.js` pins the inventory against it)
-in 32 browser families: the record families — Tasks, Events, Appointments,
+in 43 browser families: the record families — Tasks, Events, Appointments,
 contact phone / email / address rows, contact relations and roles, case and
 contact notes and case alerts, case contacts, case pipeline moves, the case
-docket, the case's Dropbox folder, checklists and their items, documents and their links, form drafts and
+docket, the case's Dropbox folder, checklists and their items, documents and their links (edit, link, unlink, share), form drafts and
 submission links, an email's read state and its case link — plus direct SMS /
 email sends, report drafts and the automation families (safe code jobs, workflow draft / step / publish / start,
 hooks, sequence step / publish / enroll, ingest rules). Every family
@@ -1625,11 +1625,11 @@ offers it and no route does it atomically; upsert-many and template expansion.
 
 Editing a registered document's staff metadata and linking a document to a
 case or contact come first. Upload bytes, signed upload URLs and provider
-credentials never become model output. Registering by external id,
-generation, sharing, relinking, external-store sync, unlinking, status
-changes (delete / restore), replacement and deletion are each separate
-higher-impact sub-slices with exact destination, filename/template,
-overwrite, link, recipient and external-provider effects shown in review.
+credentials never become model output. Sharing and unlinking are A11.2, the
+case folder relink A11.1; registering by external id, generation,
+external-store sync, replacement and deletion stay separate sub-slices with
+exact destination, filename/template, overwrite, link, recipient and
+external-provider effects shown in review, and no screen changes a status.
 
 **What the routes guard.** Little. `PATCH /api/documents/:id` and `POST
 /api/documents/:id/links` (`routes/api.documents.js` → `documentService`) sit
@@ -1667,8 +1667,9 @@ relation?}).
   plain word (≤ 32), disclosed as an existing word (with its count) or a NEW
   one; never required.
 - **Refused by name**, before anything is read: `status` (delete / restore /
-  missing — a separate, higher-impact sub-slice) and the provider-owned
-  `name`, `path`, `external_id`, `shared_link`; relation **"path"** — the
+  missing — no screen offers it; the Dropbox sync owns it) and the
+  provider-owned `name`, `path`, `external_id`, `shared_link` (written only by
+  the share route — A11.2's card); relation **"path"** — the
   Dropbox sync's own mark: its reconciler retracts only path links without a
   creator, but its attribution sweep skips any document holding a case link
   with that relation, so a person's "path" link would silently stop the sync
@@ -1733,9 +1734,9 @@ relation?}).
   `tests/assistantUi.test.js`, `tests/ycSync.test.js`,
   `tests/reportSchemaDenylist.test.js`.
 
-**Deferred** (`ref/plans.md`): register by external id, generate, share,
-sync roots, unlink, status changes, replacement, deletion, `shared_link`. The
-relink confirm shipped as A11.1 (below).
+**Deferred** (`ref/plans.md`): share and unlink shipped as A11.2, the relink
+confirm as A11.1 (both below); what remains is A11.2's Deferred list, each with
+its reason.
 
 #### A11.1: Case folder relink — shipped 2026-11-03
 
@@ -1856,8 +1857,127 @@ evidence} → that route.
   `tests/ycSync.test.js`.
 
 **Deferred** (`ref/plans.md`): free-typed folder paths; relink dismiss /
-undo-dismiss through Casey; unlink; an undo verb for a claim (pending Fred);
-bulk anything — NEVER.
+undo-dismiss through Casey; unlinking on the folder card (one document's link
+is A11.2's unlink card); an undo verb for a claim (pending Fred); bulk
+anything — NEVER.
+
+#### A11.2: Documents — share and unlink shipped 2026-11-11
+
+Origin: Fred's standing rule (2026-11-09) — "Casey can do *at least* anything
+the user can do in the UI." The Documents page (`public/documents.html`)
+offers three per-document controls A11 refused by name: the row's **Copy
+public link** button (`onCopyLink` → POST `/api/documents/:id/share`, on every
+row, whatever its status — no flag, tag or status marks a document
+unshareable), the Links dialog's **Unlink** button (`onLinks` → DELETE
+`/api/documents/:id/links {link_type, link_id}`, on EVERY link — the last one
+included, any document status, with no confirm), and nothing else. Its edit
+dialog sends `{title, doc_type, tags}` only: **no screen changes a document's
+status**, so no status kind is built (Deferred, below).
+
+**What the routes guard.** Both bare `jwtOrApiKey`. The share route
+(`loadOr404` → `sources.get(row.source).ensureSharedLink` →
+`documentService.setSharedLink`) is the only site that mints a document's
+permanent link: `dropboxService.getOrCreateSharedLink` lists the file's direct
+links (`sharing/list_shared_links`, `direct_only`) and returns the first —
+whatever settings it was made with, possibly outside YisraCase — else creates
+one with `requested_visibility: 'public'` and no expiry; the route stores the
+answer (clamped to varchar(512)) and returns `{status, shared_link}`. It never
+looks at the document's status, and it ALWAYS asks Dropbox, even when a link
+is stored (the page never calls it then — its button copies the stored link
+and never asks Dropbox again). Nothing in YisraCase revokes a link; Dropbox's
+own sharing settings do, and a revoked link stays stored (dead) until a later
+share replaces it. No event (`setSharedLink` emits nothing). A Dropbox error
+maps through `mapErrorStatus`: its 409 from either sharing call passes through
+as 409 — nothing was created. The unlink route deletes
+`WHERE document_id AND link_type AND link_id` (general_ci — case-folded) and
+answers `{status, removed:true, link_type, link_id}` echoing the request, or
+404 "Link not found"; no event (`document.unlinked` is unregistered). Pinned
+on a real engine (`tests/caseyDocumentShare.mysql.test.js`, Dropbox stubbed at
+`getOrCreateSharedLink`).
+
+**Shipped contract.** Two kinds behind A11's switch
+`casey_documents_enabled`: `document.share.v1` {document_id, evidence} and
+`document.unlink.v1` {document_id, link_type, link_id, evidence}.
+- **Refused by name before anything is read** (A11's rule, both kinds):
+  `status`, `shared_link`, `name`, `path`, `external_id`; any other key.
+- **Share.** Evidence: a row carrying the exact `document_id`. A deleted /
+  missing / gone document refuses (Dropbox has no file to share — the route
+  would ask anyway and fail with its 409). The server reads only WHETHER a link
+  is stored (`(shared_link IS NOT NULL AND shared_link <> '')`), never the link
+  — the column stays on `DENIED_COLUMNS`. Card, always danger: PUBLIC LINK
+  (permanent, anyone holding it opens and downloads the file, no login, no
+  expiry, nothing records who opens it); NEW LINK when none is stored (Dropbox's
+  existing link for the file, with its own settings, else a new public one);
+  ALREADY SHARED otherwise (nothing new, unless Dropbox lost the link — then a
+  new one replaces it); PENDING DELETE; revoking only in Dropbox; the link is
+  shown only after the click; Casey sends it nowhere; no trigger event; the
+  document, its title / type and every record it is linked to.
+- **Unlink.** `link_type` "case" (exact case_id) or "contact" (exact
+  contact_id) — another type refuses (the Links dialog unlinks it). Evidence:
+  the document row AND the record's row (its case_id / contact_id) or the
+  `document_links` row (link_type + link_id). Refused: a gone document; a link
+  the document does not have (folded as the DELETE compares — the route's
+  404); a document linked to more than 20 records (A11's review cap). A
+  deleted or missing document is DISCLOSED, not refused — the dialog offers
+  it. The request carries the link row's own stored spelling. Card, always
+  danger: the link (record, relation, made by a person or by the Dropbox
+  sync), the links before and after; where it stops showing —
+  `resolveRelatedTargets` of the removed link minus everything the remaining
+  links still reach (the "Include related" predicate, one hop): the record's
+  own tab (left, or still shown through another link), each related tab it
+  leaves (badged "via" today), each it keeps; LINKED TO NOTHING (danger) for
+  the last link; the triage effect (no case link left → back on the "Unlinked"
+  list); **COMES BACK** (danger) when the link is a case link of an active
+  document whose file sits in that case's folder — `documentSyncService
+  ._matchCase` over the `case_folder_cache` rows of the path's ancestors: the
+  sync re-adds a case "path" link whenever the file changes in Dropbox
+  (`documents.link`, firing `document.linked`) and, when no case path link is
+  left, on a later sweep lap (`attributeUnlinked`, silent) — with the sync
+  switched off said so; the lasting fix is moving the file; the file, the
+  title / type / tags and the other links untouched; no undo (a re-link is a
+  new row; Casey never writes "path"); no trigger event.
+- **Freshness.** `expected` = status, link presence, name / title / doc_type
+  and the whole link set (share) or status and the whole link set (unlink);
+  the click re-reads GET `/api/documents/:id` and refuses on ANY difference
+  before the claim (shared since, link removed, retitled, renamed by the sync,
+  a link added or removed, the reviewed link row gone, status changed).
+- **Idempotency:** none added — one claim per draft. A second share is
+  Dropbox's get-or-create (the same link back, stored unchanged); a second
+  unlink is the route's 404, read as a refusal.
+- **Outcomes.** Share: 404 "Document not found" and Dropbox's 409 from
+  `sharing/list_shared_links` / `create_shared_link_with_settings` are
+  refusals (nothing was made or stored); the answer must carry an `https://`
+  link of at most 512 characters, else ambiguous (a link may exist at Dropbox).
+  Unlink: 404 "Link not found" is a refusal; the answer must echo
+  `removed:true` with the reviewed link_type / link_id.
+- **The link, in the browser only.** The share answer's link is kept on the
+  draft as a NON-enumerable property: shown on the applied card with a "Copy
+  public link" button (the Documents page's own clipboard call and its
+  copy-by-hand fallback), never serialized into the chat, the action ledger or
+  the model's history. The applied copy says whether Dropbox returned the
+  stored link or a new one. A card reopened from history (or replayed from
+  the ledger) points at the Documents page's button instead. No auto-copy
+  after the click (the card shows it).
+- **Receipts:** the reviewed integer `document_id` (share — the route answers
+  only the link, never a receipt) and the reviewed `document_link_id` (unlink
+  — the DELETE echoes no id). Browser families `docshare` and `docunlink`.
+- **Sync:** nothing added. Both routes already have matchers —
+  `POST /api/documents/:id/share` announces `document:<id>` with the stored
+  `shared_link` value; `DELETE /api/documents/:id/links` announces
+  `doclink:<link_type>:<link_id>` (refetch) from the echo.
+- Tests: `tests/caseyDocumentShare.test.js` (mocked; browser lifted by name),
+  gated `tests/caseyDocumentShare.mysql.test.js` (the real routes; the real
+  sweep re-adding the unlinked case link), `tests/assistantUi.test.js`,
+  `tests/assistantPromptKinds.test.js`, `tests/caseyActionPermissions.test.js`.
+
+**Deferred** (`ref/plans.md`): a status change (delete / restore / missing) —
+no screen offers one: the edit dialog saves title / type / tags, and the
+Dropbox sync owns the status; register by external id, generate, upload,
+replacement and deletion — none is a control on an existing document's row
+(upload and generate are the page's own flows with a destination, a filename
+and an overwrite to review); sync roots and relink dismiss — the sync panel's
+engine configuration and queue, not per-document actions; a link type other
+than case / contact (no screen makes one; the Links dialog unlinks it).
 
 #### A12: Forms — draft and submission link shipped 2026-11-02
 

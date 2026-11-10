@@ -1095,8 +1095,8 @@ COMMENTs.)
 - **Dismiss / undo-dismiss through Casey** (POST `/api/documents/relink/dismiss`
   {case_id | case_ids, undo?}) — a note on the queue that changes no link; a
   card would be cheap, but the queue is the panel's working surface.
-- **Unlink** — see A11's unlink bullet; a re-link detaches only the sync's own
-  links outside the new folder.
+- **Unlinking on the folder card** — a re-link detaches only the sync's own
+  links outside the new folder; one document's link is A11.2's unlink card.
 - **An undo verb for a claim** — deferred (Fred delegated, manager ruled 2026-11-03). The audit log entry
   (`log_extra.relink`) keeps the old path and the old link; an undo would
   re-point the case at the old link and re-attach the old folder's files —
@@ -1239,7 +1239,9 @@ COMMENTs.)
     in SQL (general_ci): a value differing from the case's own stored number
     only in capitalisation is refused as a "replacement".
 
-## From the Ask Casey arc — A11 documents (2026-11-02) — deferred
+## From the Ask Casey arc — A11 / A11.2 documents (2026-11-02, 2026-11-11) — deferred
+
+Share and unlink shipped as A11.2 (ASK_CASEY_ACTIONS_PLAN).
 
 - **Register by external id** (POST `/api/documents/register` {external_id}).
   The model has no way to learn a Dropbox id it has not read, and every synced
@@ -1247,17 +1249,23 @@ COMMENTs.)
 - **Generate** (POST `/api/documents/generate` — a contract template filed
   into a case's Dropbox folder) — writes a file: destination, filename,
   template and overwrite all need review.
-- **Share** (POST `/api/documents/:id/share` mints a PERMANENT public
-  Dropbox link) — a capability anyone holding the URL can use; `shared_link`
-  stays denied to sql.read and off every card until a share contract exists.
 - **Sync roots** (POST / PATCH `/api/documents/sync-roots`) — engine
   configuration with fan-out over thousands of rows. (The relink confirm
   shipped as A11.1 — its own deferred list is above.)
-- **Unlink** (DELETE `/api/documents/:id/links`) — no event exists for it
-  (`document.unlinked` is unregistered), and a removed link silently drops the
-  document from that record's tab and its related tabs; its own sub-slice.
 - **Status changes, replacement and deletion** (PATCH {status} — delete /
-  restore / missing) — `status` is refused by name today.
+  restore / missing) — no screen offers them: the Documents page's edit dialog
+  sends title / type / tags only, and the Dropbox sync owns the status (a file
+  deleted in Dropbox becomes deleted after the grace window, active again if it
+  reappears). `status` stays refused by name; a card would be the first writer
+  of a value only the sync sets today.
+- **Unlinking a link type other than case / contact** — no screen makes one
+  (the route accepts any type from an API caller); the Links dialog unlinks it.
+- **Native gaps found while tracing A11.2 (not Casey's):** the share route
+  never looks at the document's status (a deleted document reaches Dropbox and
+  fails there); once a link is stored, the Documents page's Copy public link
+  button copies it without asking Dropbox again, so a link revoked in Dropbox
+  stays stored and copied (dead) until a share card replaces it; no screen
+  revokes a link.
 - **Native gaps found while tracing (not Casey's):** the link route links a
   deleted or missing document; it accepts relation `path` from any caller —
   and the attribution sweep (`documentSyncService.attributeUnlinked`, the

@@ -1321,6 +1321,8 @@ tests/caseyContactRelationsRemove.mysql.test.js
 tests/caseyContactRelationsRemove.test.js
 tests/caseyDocket.mysql.test.js
 tests/caseyDocket.test.js
+tests/caseyDocumentShare.mysql.test.js
+tests/caseyDocumentShare.test.js
 tests/caseyDocuments.mysql.test.js
 tests/caseyDocuments.test.js
 tests/caseyForms.mysql.test.js

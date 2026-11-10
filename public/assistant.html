@@ -3029,6 +3029,230 @@ function documentOpen(draft) {
   openEntity(e.kind, e.id, e.label);
 }
 
+// Documents A11.2 — share and unlink: the Documents page's two other
+// per-document controls, through its own routes.
+//   * document.share.v1 → POST /api/documents/:id/share (the row's "Copy public
+//     link" button): get-or-create Dropbox's PERMANENT public link and store it
+//     on the row. The server read only WHETHER a link is stored; the link itself
+//     is shown only here, after the click, from the route's answer — kept on the
+//     draft as a non-enumerable property, so it is never saved into the chat,
+//     the ledger or the model's history. Reopened later, the card points at the
+//     Documents page's Copy public link button instead.
+//   * document.unlink.v1 → DELETE /api/documents/:id/links {link_type, link_id}
+//     (the Links dialog's Unlink button) — the body is the link row exactly as
+//     stored. The server named where the document stops showing, what is left,
+//     the triage effect and a COMES BACK danger when the Dropbox sync re-adds
+//     the case link.
+// Both always danger. `expected` = status, link presence, name / title / type
+// and the link set (share) or status and the link set (unlink); the click
+// re-reads GET /api/documents/:id and refuses on any difference BEFORE the
+// claim. No Idempotency-Key: one claim per draft (a second share is Dropbox's
+// get-or-create; a second unlink is the route's 404, read as a refusal). Both
+// routes are on the yc-sync bus (document:<id> with shared_link;
+// doclink:<type>:<id>). Receipts: the reviewed document_id (share — the route
+// answers only the link) and the reviewed document_link_id (unlink — the route
+// echoes no id).
+const DOCSHARE_ACTION_KINDS = new Set(['document.share.v1']);
+const DOCUNLINK_ACTION_KINDS = new Set(['document.unlink.v1']);
+// documents.shared_link is varchar(512).
+const DOCSHARE_LINK_MAX = 512;
+
+function docshareLabel() { return 'Share document (public link)'; }
+
+function docunlinkLabel(draft) {
+  return ((draft && draft.link) || {}).link_type === 'contact' ? 'Unlink document from contact' : 'Unlink document from case';
+}
+
+function documentHeadLines(d) {
+  return [`Document: #${d.document_id} "${d.name}" (${d.ext ? String(d.ext).toUpperCase() : 'no extension'}, ${documentSize(d.size)}, ${d.source || 'unknown source'}${d.server_modified ? `, modified ${String(d.server_modified).slice(0, 10)}` : ''})`,
+    `Path: ${d.path || '(unknown)'}`];
+}
+
+function documentLinksLine(rows, total) {
+  const named = (rows || []).map((l) => `${l.label}${l.relation ? ` (${l.relation})` : ''}`);
+  const more = Number(total || 0) - named.length;
+  return `${named.join('; ') || 'none'}${more > 0 ? ` (+${more} more)` : ''}`;
+}
+
+function docshareText(draft) {
+  const d = draft.document || {};
+  const lines = ['Document share proposal — not applied', `Action: ${docshareLabel()}`, ...documentHeadLines(d),
+    `Title: ${documentShown(d.title)}${d.doc_type ? `; type "${d.doc_type}"` : ''}`,
+    `Linked to (${Number(draft.links_total) || 0}): ${documentLinksLine(draft.links, draft.links_total)}`,
+    `Public link now: ${draft.shared ? 'one is stored (the Documents page marks it "public")' : 'none stored'}`];
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  lines.push('Writes: at Dropbox, a public link to the file (unless one exists); in YisraCase, that link stored on this document — the file, its title, type, tags and links are untouched.',
+    'Stale check: if the document is edited, deleted, shared or gains or loses a link before you apply, nothing is sent.',
+    'Notification: Casey sends nothing and no trigger rule runs.');
+  return lines.join('\n');
+}
+
+function docunlinkText(draft) {
+  const d = draft.document || {};
+  const lines = ['Document unlink proposal — not applied', `Action: ${docunlinkLabel(draft)}`, ...documentHeadLines(d),
+    `Current title: ${documentShown(d.title)}`, `Unlink from: ${draft.link_note || (draft.target || {}).label}`,
+    `Links now (${Number(draft.links_total) || 0}): ${documentLinksLine(draft.links_before, draft.links_total)}`,
+    `Links after: ${Number(draft.links_after) || 0}`];
+  (draft.visibility || []).forEach((v) => lines.push(`Where: ${v}`));
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  lines.push('Writes: one link row deleted (this document → that record) — the document, its file and its other links are untouched.',
+    'Stale check: if the document gains or loses a link, or changes status, before you apply, nothing is written.',
+    'Notification: Casey sends nothing and no trigger rule runs.');
+  return lines.join('\n');
+}
+
+function docshareRequest(draft) {
+  return { path: `/api/documents/${documentId(draft)}/share`, method: 'POST', body: null };
+}
+
+// The link row exactly as stored: the route deletes by (document, type, id).
+function docunlinkBody(draft) {
+  const l = draft.link || {};
+  if (l.link_type !== 'case' && l.link_type !== 'contact') throw new Error('This card has no usable record.');
+  const linkId = typeof l.link_id === 'string' ? l.link_id : '';
+  if (!(l.link_type === 'case' ? /^[A-Za-z0-9_-]{1,20}$/ : /^[1-9]\d{0,19}$/).test(linkId)) throw new Error('This card has no usable record id.');
+  const rowId = Number(l.document_link_id);
+  if (!Number.isSafeInteger(rowId) || rowId < 1) throw new Error('This card has no usable link id.');
+  return { link_type: l.link_type, link_id: linkId };
+}
+
+function docunlinkRequest(draft) {
+  return { path: `/api/documents/${documentId(draft)}/links`, method: 'DELETE', body: docunlinkBody(draft) };
+}
+
+async function docsharePrecheck(draft) {
+  documentId(draft); // a card that cannot be written is never read
+  const x = draft.expected || {};
+  const r = await documentRead(draft);
+  if (r.gone) return r.gone.replace('Nothing was written.', 'Nothing was shared.');
+  const s = (v) => (v == null ? null : String(v));
+  if (s(r.doc.status) !== 'active' || s(r.doc.status) !== s(x.status)) {
+    return `The document "${documentName(draft)}" is ${r.doc.status || 'no longer active'} now. Nothing was shared.`;
+  }
+  if (!!r.doc.shared_link !== (x.shared === true)) {
+    return x.shared
+      ? `The stored public link of "${documentName(draft)}" was removed since this card was prepared. Nothing was shared. Ask Casey to prepare it again.`
+      : `The document "${documentName(draft)}" was shared since this card was prepared — a public link is stored now. Nothing was shared. Ask Casey to prepare it again.`;
+  }
+  if (s(r.doc.name) !== s(x.name) || s(r.doc.title) !== s(x.title) || s(r.doc.doc_type) !== s(x.doc_type)) {
+    return `The document "${documentName(draft)}" changed since this card was prepared (its file name, title or type). Nothing was shared. Ask Casey to prepare it again.`;
+  }
+  if (JSON.stringify(documentLinkSignature(r.links)) !== JSON.stringify((x.links || []).slice().sort())) {
+    return `The links of "${documentName(draft)}" changed since this card was prepared (one was added or removed). Nothing was shared. Ask Casey to prepare it again.`;
+  }
+  // In memory only: the applied copy says whether Dropbox handed back the
+  // stored link or a new one.
+  Object.defineProperty(draft, '__docsharePrior', { value: r.doc.shared_link ? String(r.doc.shared_link) : '', configurable: true });
+  return '';
+}
+
+async function docunlinkPrecheck(draft) {
+  const body = docunlinkBody(draft); // a card that cannot be written is never read
+  const x = draft.expected || {};
+  const r = await documentRead(draft);
+  if (r.gone) return r.gone;
+  if (String(r.doc.status) !== String(x.status)) {
+    return `The document "${documentName(draft)}" is ${r.doc.status || 'changed'} now (it was ${x.status} when this card was prepared). Nothing was written. Ask Casey to prepare it again.`;
+  }
+  const l = draft.link || {};
+  if (!r.links.some((row) => Number(row.id) === Number(l.document_link_id) && String(row.link_type) === body.link_type && String(row.link_id) === body.link_id)) {
+    return `The document "${documentName(draft)}" is no longer linked to ${(draft.target || {}).label || 'that record'} — someone unlinked it since this card was prepared. Nothing was written.`;
+  }
+  if (JSON.stringify(documentLinkSignature(r.links)) !== JSON.stringify((x.links || []).slice().sort())) {
+    return `The links of "${documentName(draft)}" changed since this card was prepared (one was added or removed). Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function docshareResult(draft, result) {
+  const id = documentId(draft);
+  const link = result && result.shared_link;
+  if (typeof link !== 'string' || !/^https:\/\/\S+$/.test(link) || Array.from(link).length > DOCSHARE_LINK_MAX) {
+    throw new Error('The documents route did not return a public link');
+  }
+  // Never serialized: not into the chat, the ledger or the model's history.
+  Object.defineProperty(draft, '__docshareLink', { value: link, configurable: true });
+  return { document_id: id };
+}
+
+function docunlinkResult(draft, result) {
+  const body = docunlinkBody(draft);
+  if (!result || result.removed !== true || String(result.link_type) !== body.link_type || String(result.link_id) !== body.link_id) {
+    throw new Error('The documents route did not confirm the unlink');
+  }
+  return { document_link_id: Number(draft.link.document_link_id) };
+}
+
+// The route's answers written before anything was made: the document is gone
+// (404, before Dropbox is asked), or Dropbox refused to list / create the link
+// (a 409 from the sharing calls — no link exists from it, nothing stored).
+function docshareKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const message = String((e && e.message) || (e && e.body && e.body.message) || '');
+  if (e && e.status === 404 && /Document not found/.test(message)) {
+    return { status: 'Refused — nothing shared', text: 'Refused — nothing shared: that document no longer exists in the registry. Ask Casey to read it again.' };
+  }
+  if (e && e.status === 409 && /^dropbox: POST \/2\/sharing\/(?:list_shared_links|create_shared_link_with_settings) → 409:/.test(message)) {
+    return { status: 'Refused — nothing shared', text: `Refused — nothing shared: Dropbox refused to share the file (${message.slice(0, 200)}), so no link was made and nothing was stored. If the file was moved or deleted in Dropbox, ask Casey to read the document again once the sync has caught up.` };
+  }
+  return null;
+}
+
+// The route's 404 "Link not found" is written before any row: the link was gone.
+function docunlinkKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const message = String((e && e.message) || (e && e.body && e.body.message) || '');
+  if (e && e.status === 404 && /Link not found/.test(message)) {
+    return { status: 'Refused — nothing written', text: 'Refused — nothing written: that link was already gone when this was applied (someone unlinked it first), so nothing was removed. Ask Casey to read the document again.' };
+  }
+  return null;
+}
+
+function docshareAppliedWarning(draft) {
+  const link = draft.__docshareLink;
+  if (!link) {
+    return `"${documentName(draft)}" was shared using your signed-in account. The link is not kept in the chat — find the document under More → Documents and use its Copy public link button.`;
+  }
+  const prior = draft.__docsharePrior;
+  const same = prior ? (prior === link
+    ? ' This is the link that was already stored — nothing new was made.'
+    : ' Dropbox returned a NEW link: the one stored before no longer worked, and this one replaces it.') : '';
+  return `"${documentName(draft)}" now has a permanent public link — anyone who holds it can open the file: ${link}${same} It is shown here in this browser only; the Documents page's Copy public link button copies it any time.`;
+}
+
+async function docshareCopy(draft) {
+  const link = draft.__docshareLink;
+  if (!link) {
+    try { P.Swal?.fire({ icon: 'info', title: 'Public link', text: 'The link is not kept in the chat. Find the document under More → Documents and use its Copy public link button.', heightAuto: false }); }
+    catch (_) { /* outside the shell the applied line already says where it is */ }
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(link);
+    P.Swal?.fire({ icon: 'success', title: 'Link copied', timer: 1400, showConfirmButton: false, heightAuto: false });
+  } catch (_) {
+    // The Clipboard API is blocked in some iframe / permission contexts — the
+    // Documents page's own fallback: show it to copy by hand.
+    try { P.Swal?.fire({ icon: 'info', title: 'Copy manually', input: 'textarea', inputValue: link, inputAttributes: { readonly: 'readonly' }, heightAuto: false }); }
+    catch (__) { /* the link is on the card */ }
+  }
+}
+
+function docunlinkEntity(draft) {
+  const t = draft.target || {};
+  if (t.missing) return { kind: 'document', id: String((draft.document || {}).document_id || ''), label: documentName(draft) };
+  if (t.link_type === 'case') return { kind: 'case', id: String(t.case_id || t.link_id), label: String(t.case_number || t.case_id || t.link_id) };
+  return { kind: 'contact', id: String(t.contact_id || t.link_id), label: String(t.contact_name || t.link_id) };
+}
+
+function docunlinkOpen(draft) {
+  const e = docunlinkEntity(draft);
+  if (e.kind === 'document') { documentOpenInfo(e.label); return; }
+  openEntity(e.kind, e.id, e.label);
+}
+
 // Case docket adopt (A7c). Fill ONE case's BLANK case number and/or full case
 // number with the number exactly as the user gave it, through the court-review
 // adopt flow's own route: PATCH /api/cases/:id/docket {case_number?,
@@ -5862,6 +6086,50 @@ const ACTION_FAMILIES = [
     }),
     reviewWarning: 'Review the document, the record it joins, where it will show and every trigger rule it runs — they start the moment it is saved. Nothing is sent by Casey itself. Canceling writes nothing.',
     open: documentOpen,
+  },
+  {
+    // A11.2: the share receipts the reviewed document_id (the route answers only the link).
+    id: 'docshare', kinds: DOCSHARE_ACTION_KINDS, title: 'Document share', noun: 'document', errorNoun: 'document share',
+    label: docshareLabel, text: docshareText, request: docshareRequest, result: docshareResult,
+    idField: 'document_id', appliedKey: 'result_docshare_document_id',
+    // Always: it mints a permanent public link anyone holding it can use.
+    danger: () => true,
+    precheck: docsharePrecheck,
+    knownOutcome: docshareKnownOutcome,
+    refusalText: (detail) => `Refused — nothing shared (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `document #${payload.document_id}`,
+    entity: (draft) => ({ kind: 'document', id: String((draft.document || {}).document_id || ''), label: documentName(draft) }),
+    failure: 'The document could not be shared.',
+    appliedCopy: (draft) => ({
+      status: `Applied — document #${draft.result_docshare_document_id} shared`,
+      warning: docshareAppliedWarning(draft),
+      button: draft.__docshareLink ? 'Copy public link' : 'Where is the link?',
+    }),
+    reviewWarning: 'Review the document and what a public link is — anyone who holds it can open the file, with no login, until it is deleted in Dropbox. Casey sends it nowhere. Canceling makes nothing.',
+    // The card shows the link; its button copies it.
+    afterApply: () => {},
+    open: docshareCopy,
+  },
+  {
+    // A11.2: the unlink receipts the reviewed document_link_id (the route echoes no id).
+    id: 'docunlink', kinds: DOCUNLINK_ACTION_KINDS, title: 'Document unlink', noun: 'document link', errorNoun: 'document unlink',
+    label: docunlinkLabel, text: docunlinkText, request: docunlinkRequest, result: docunlinkResult,
+    idField: 'document_link_id', appliedKey: 'result_docunlink_id',
+    // Always: the document leaves that record's Documents tabs, and there is no undo.
+    danger: () => true,
+    precheck: docunlinkPrecheck,
+    knownOutcome: docunlinkKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `document link #${payload.document_link_id}`,
+    entity: (draft) => docunlinkEntity(draft),
+    failure: 'The document unlink could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — link #${draft.result_docunlink_id} removed`,
+      warning: `"${documentName(draft)}" was unlinked from ${(draft.target || {}).label} using your signed-in account; every effect listed above applies from now.${(draft.warnings || []).some((w) => /^COMES BACK:/.test(w)) ? ' The Dropbox sync may re-add the link (see the warning above).' : ''}`,
+      button: `Open ${docunlinkEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review the document, the link that goes, what is left and every Documents tab it leaves — it leaves them the moment it is applied, and there is no undo button. Nothing is sent. Canceling writes nothing.',
+    open: docunlinkOpen,
   },
   {
     // A7c: the receipt is the STRING case_id — the docket route returns the case.

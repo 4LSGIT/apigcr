@@ -431,7 +431,7 @@ describe('A11 — every stage teaches the document cards, their evidence alias a
   test('the plan carries its own bullet with the reads the cards cite', () => {
     expect(planPrompt).toContain('Reviewed document actions are available: change ONE registered document\'s staff title, type or tags, or link ONE\n  document to ONE case or contact');
     expect(planPrompt).toContain('documents.id AS document_id');
-    expect(planPrompt).toContain('The server refuses a status change (delete / restore), the file name or path, a public link, the\n  "path" relation');
+    expect(planPrompt).toContain('The server refuses a status change (delete / restore — no screen offers one),\n  the file name or path, writing the stored link directly, the "path" relation');
   });
   test('the investigate stage names the proposal family and its alias', () => {
     expect(investigatePrompt).toContain('and document proposals, which need the\n  document\'s row with documents.id AS document_id');
@@ -440,13 +440,44 @@ describe('A11 — every stage teaches the document cards, their evidence alias a
   test('the answer and repair stages teach the shapes, the refusals and where a link shows', () => {
     expect(answerPrompt).toContain('Document rules (A11');
     expect(answerPrompt).toContain('cite a row carrying the document_id AND a row carrying\n    that case_id / contact_id');
-    expect(answerPrompt).toContain('"status" (deleting, restoring or marking a\n    document missing)');
+    expect(answerPrompt).toContain('"status" (deleting, restoring or marking a\n    document missing');
     expect(answerPrompt).toContain('relation "path" (the Dropbox sync\'s own mark)');
-    expect(answerPrompt).toContain('a link that\n    already exists');
+    expect(answerPrompt).toContain('a link that already exists');
     expect(answerPrompt).toContain('under "Include related" each contact\n    on that case / each case of that contact');
     expect(answerPrompt).toContain('case-pipeline/checklist/document/direct-send');
     expect(repairPrompt).toContain('Never status, name, path, external_id or shared_link (each is refused by name)');
     expect(repairPrompt).toContain('evidence carries the document_id AND the case_id /\n  contact_id; relation is one short plain word or omitted, never "path"');
+  });
+});
+
+// A11.2: the document family's share and unlink. Pins that every stage
+// teaches both kinds and the evidence each cites, that NO stage still says
+// sharing or unlinking is unavailable (the A11 sentence that would make a
+// stage refuse), that the link is never readable or written on a card, and
+// that no stage invents a status kind (no screen changes a status).
+describe('A11.2 — every stage teaches the share and unlink cards, and no stage still refuses them', () => {
+  test('the plan extends the document bullet; the old "not available" sentence is gone', () => {
+    expect(planPrompt).toContain('share ONE document (its permanent public Dropbox link — the Documents page\'s Copy\n  public link), or unlink ONE document from ONE case or contact');
+    expect(planPrompt).toContain('for a link or an unlink, also a read returning the case\'s\n  exact case_id or the contact\'s exact contact_id');
+    expect(planPrompt).toContain('The link itself is never readable');
+    expect(planPrompt).not.toContain('unlinking, generating, sharing and uploading');
+  });
+  test('the investigate stage names what a share and an unlink cite', () => {
+    expect(investigatePrompt).toContain('(a share needs only the document\n  row; an unlink the document row and the case_id / contact_id or its document_links row)');
+  });
+  test('the answer and repair stages teach the shapes, what a link is, COMES BACK, and drop the old refusal', () => {
+    for (const kind of ['document.share.v1', 'document.unlink.v1']) {
+      expect({ kind, answer: answerPrompt.includes(`{"kind":"${kind}"`), repair: repairPrompt.includes(`- ${kind}: kind,`) }).toEqual({ kind, answer: true, repair: true });
+    }
+    expect(answerPrompt).toContain('Document rules (A11 / A11.2');
+    expect(answerPrompt).toContain('anyone who holds it can open and download the file, with no login,\n    and it does not expire; it is revoked only in Dropbox. You never see the link and never write one on the card');
+    expect(answerPrompt).toContain('the sync re-adds a case link — the card says so');
+    expect(answerPrompt).toContain('a share or an unlink runs none');
+    expect(answerPrompt).not.toContain('Unlinking, generating, sharing,');
+    expect(answerPrompt).not.toContain('a public\n    link is never shown');
+    expect(repairPrompt).toContain('never put a link, a URL or shared_link on the card');
+    expect(repairPrompt).toContain('of a link the document HAS');
+    for (const p of [answerPrompt, repairPrompt, planPrompt, investigatePrompt]) expect(p).not.toContain('document.status.v1');
   });
 });
 

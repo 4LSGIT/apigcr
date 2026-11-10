@@ -91,6 +91,9 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'documentId', 'documentUpdateBody', 'documentUpdateRequest', 'documentLinkRequest', 'documentLinkSignature', 'documentRead',
   'documentUpdatePrecheck', 'documentLinkPrecheck', 'documentUpdateResult', 'documentLinkResult', 'documentKnownOutcome',
   'documentOpenInfo', 'documentEntity', 'documentOpen',
+  'docshareLabel', 'docunlinkLabel', 'documentHeadLines', 'documentLinksLine', 'docshareText', 'docunlinkText', 'docshareRequest',
+  'docunlinkBody', 'docunlinkRequest', 'docsharePrecheck', 'docunlinkPrecheck', 'docshareResult', 'docunlinkResult',
+  'docshareKnownOutcome', 'docunlinkKnownOutcome', 'docshareAppliedWarning', 'docshareCopy', 'docunlinkEntity', 'docunlinkOpen',
   'caseDocketLabel', 'caseDocketCaseLabel', 'caseDocketAfterLabel', 'caseDocketShown', 'caseDocketText', 'caseDocketBody', 'caseDocketRequest',
   'caseDocketPrecheck', 'caseDocketResult', 'caseDocketKnownOutcome',
   'caseFieldsLabel', 'caseFieldsCaseLabel', 'caseFieldsCanon', 'caseFieldsText', 'caseFieldsDanger', 'caseFieldsBody', 'caseFieldsRequest',
@@ -148,6 +151,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CHECKLIST_ACTION_KINDS'), constSrc(html, 'CHECKITEM_ACTION_KINDS'), constSrc(html, 'CHECKLIST_LINK_TYPES'),
     constSrc(html, 'CHECKLIST_EDIT_ACTION_KINDS'), constSrc(html, 'CHECKLIST_DELETE_ACTION_KINDS'), constSrc(html, 'CHECKITEM_DELETE_ACTION_KINDS'),
     constSrc(html, 'DOCUMENT_ACTION_KINDS'), constSrc(html, 'DOCLINK_ACTION_KINDS'), constSrc(html, 'DOCUMENT_FIELD_MAX'),
+    constSrc(html, 'DOCSHARE_ACTION_KINDS'), constSrc(html, 'DOCUNLINK_ACTION_KINDS'), constSrc(html, 'DOCSHARE_LINK_MAX'),
     constSrc(html, 'CASE_DOCKET_ACTION_KINDS'), constSrc(html, 'CASE_DOCKET_FIELDS'), constSrc(html, 'CASE_DOCKET_NAMES'),
     constSrc(html, 'CASE_DOCKET_MAX'), constSrc(html, 'CASE_DOCKET_CONTROL'),
     constSrc(html, 'CASE_FIELDS_ACTION_KINDS'), constSrc(html, 'CASE_FIELDS_MAX'), constSrc(html, 'CASE_FIELDS_REFUSED_NAMES'), constSrc(html, 'CASE_FIELDS_COLUMN'),
@@ -4191,7 +4195,12 @@ describe('A11 document cards (document.update / document.link)', () => {
     const links = box.actionFamily({ kind: 'document.link.v1' });
     expect([[...docs.kinds], docs.idField, docs.appliedKey, !!docs.stringReceipt]).toEqual([['document.update.v1'], 'document_id', 'result_document_id', false]);
     expect([[...links.kinds], links.idField, links.appliedKey, !!links.stringReceipt]).toEqual([['document.link.v1'], 'document_link_id', 'result_document_link_id', false]);
-    for (const kind of ['document.unlink.v1', 'document.delete.v1', 'document.share.v1', 'document.register.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    // A11.2: share and unlink are their own families (tests/caseyDocumentShare.test.js); no status kind.
+    const shares = box.actionFamily({ kind: 'document.share.v1' });
+    const unlinks = box.actionFamily({ kind: 'document.unlink.v1' });
+    expect([[...shares.kinds], shares.idField, shares.appliedKey, !!shares.stringReceipt]).toEqual([['document.share.v1'], 'document_id', 'result_docshare_document_id', false]);
+    expect([[...unlinks.kinds], unlinks.idField, unlinks.appliedKey, !!unlinks.stringReceipt]).toEqual([['document.unlink.v1'], 'document_link_id', 'result_docunlink_id', false]);
+    for (const kind of ['document.status.v1', 'document.delete.v1', 'document.register.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
   });
 });

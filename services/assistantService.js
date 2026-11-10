@@ -826,10 +826,33 @@ const CHECKLIST_CARD_ITEMS = 30;
 // Receipts: the integer document_id (update — the PATCH returns the row) and
 // document_link_id (link — the POST returns every link row). One per-family
 // switch, casey_documents_enabled (on unless '0').
-const DOCUMENT_ACTION_KINDS = new Set(['document.update.v1', 'document.link.v1']);
+// A11.2 adds the Documents page's two other per-document controls, same switch:
+//   * document.share.v1 → POST /api/documents/:id/share (the row's "Copy
+//     public link" button — the ONLY site that mints a document's PERMANENT
+//     public Dropbox link; get-or-create at Dropbox, cached on the row). The
+//     server never reads the link itself (only whether one is stored); the
+//     card says what a link is, that it is revoked only in Dropbox, and that
+//     Dropbox's answer is shown only after the click. A deleted or missing
+//     document refuses (Dropbox has no file to share). No event.
+//   * document.unlink.v1 → DELETE /api/documents/:id/links {link_type,
+//     link_id} (the Links dialog's Unlink button — offered on EVERY link, the
+//     last one included, any status). The card names the link that goes,
+//     what is left, the Documents tabs it leaves (resolveRelatedTargets over
+//     the removed link minus the remaining ones), the triage effect, and a
+//     COMES BACK danger when the Dropbox sync would re-add a case link (the
+//     file still sits in that case's folder — documentSyncService._matchCase
+//     over case_folder_cache). No event (document.unlinked is unregistered).
+// NOT built: a status change (no screen sends one — the edit dialog saves
+// title / doc_type / tags only), register, generate, sync roots, relink
+// dismiss, replacement, deletion, upload (ref/ASK_CASEY_ACTIONS_PLAN A11.2).
+// Receipts: the reviewed document_id (share — the route answers only the
+// link) and the reviewed document_link_id (unlink — the route echoes none).
+const DOCUMENT_ACTION_KINDS = new Set(['document.update.v1', 'document.link.v1', 'document.share.v1', 'document.unlink.v1']);
 const DOCUMENT_KEYS = {
   'document.update.v1': new Set(['kind', 'document_id', 'title', 'doc_type', 'tags', 'evidence']),
   'document.link.v1': new Set(['kind', 'document_id', 'link_type', 'link_id', 'relation', 'evidence']),
+  'document.share.v1': new Set(['kind', 'document_id', 'evidence']),
+  'document.unlink.v1': new Set(['kind', 'document_id', 'link_type', 'link_id', 'evidence']),
 };
 // Refused by name wherever they appear on a document card.
 const DOCUMENT_SYSTEM_KEYS = ['status', 'shared_link', 'name', 'path', 'external_id'];
@@ -6005,8 +6028,8 @@ function documentSystemKeys(value, kind) {
   const hit = DOCUMENT_SYSTEM_KEYS.filter((k) => value && Object.prototype.hasOwnProperty.call(value, k));
   if (!hit.length) return;
   const why = [];
-  if (hit.includes('status')) why.push('STATUS refused: deleting, restoring or marking a document missing is not available to Casey (a separate, higher-impact action) — the user does it on the Documents page');
-  if (hit.includes('shared_link')) why.push('SHARED LINK refused: a public link is a capability — Casey never creates, shows or writes one');
+  if (hit.includes('status')) why.push('STATUS refused: deleting, restoring or marking a document missing is not available to Casey — and no screen does it either: the Documents page\'s edit dialog saves only the title, type and tags, and the Dropbox sync sets the status (a file deleted in Dropbox becomes deleted after a short grace, and active again if it reappears)');
+  if (hit.includes('shared_link')) why.push('SHARED LINK refused: the stored link is never written directly — Dropbox makes a public link, through a document.share.v1 card (the Documents page\'s Copy public link button)');
   const provider = hit.filter((k) => k === 'name' || k === 'path' || k === 'external_id');
   if (provider.length) why.push(`${provider.map((k) => k.toUpperCase()).join(' / ')} refused: a document's file name, path and Dropbox id belong to Dropbox (the sync writes them) — Casey edits only the staff title, type and tags; the file itself is renamed or moved in Dropbox`);
   throw documentError(`${why.join('; ')} (${kind})`);
@@ -6097,7 +6120,7 @@ async function documentTarget(db, documentId, verb) {
   if (!state) throw documentError(`Document #${documentId} no longer exists`);
   const { document } = state;
   if (document.status !== 'active') {
-    throw documentError(`Document #${documentId} ("${document.title || document.name}") is ${document.status || 'not active'} — Casey ${verb}s active documents only. Restoring a document is a separate action the user takes on the Documents page`);
+    throw documentError(`Document #${documentId} ("${document.title || document.name}") is ${document.status || 'not active'} — Casey ${verb}s active documents only (the Dropbox sync marks a document deleted when its file is deleted in Dropbox, and active again if it reappears; no screen restores one)`);
   }
   return state;
 }
@@ -6333,6 +6356,192 @@ async function normalizeDocumentLink(db, value, evidence, currentUserId) {
   };
 }
 
+// ── A11.2: document share / unlink ────────────────────────────────────────
+// Whether a public link is stored — a yes / no, never the link itself (the
+// column is a capability: DENIED to sql.read and absent from every card).
+async function documentShared(db, documentId) {
+  const [rows] = await db.query(
+    "SELECT (shared_link IS NOT NULL AND shared_link <> '') AS shared FROM documents WHERE id = ? LIMIT 1", [documentId]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  return !!(row && Number(row.shared));
+}
+
+async function normalizeDocumentShare(db, value, evidence) {
+  const documentId = documentIdFrom(value.document_id);
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!documentRowCited(refs, evidence, (row) => Number(row.document_id) === documentId)) {
+    throw documentError(`The share evidence does not identify document #${documentId} — cite a row carrying its exact document_id (read it first: documents.id AS document_id)`);
+  }
+  // A deleted or missing document has no file at Dropbox to share; the route
+  // would ask Dropbox anyway and fail there (or, for a pending delete, may).
+  const state = await documentTarget(db, documentId, 'share');
+  const { document, links, linksCard } = state;
+  const shared = await documentShared(db, documentId);
+  const warnings = ['PUBLIC LINK: applying asks Dropbox for a PERMANENT link to this file. Anyone who holds the link can open and download the file — no login, it does not expire, and YisraCase records nothing about who opens it.'];
+  if (!shared) {
+    warnings.push('NEW LINK: no public link is stored for this document yet. Dropbox hands back the link it already has for the file if one was made outside YisraCase (with whatever settings it was made with); otherwise it creates a NEW PUBLIC link.');
+  }
+  // Only the pending delete: the many-links warning is about where an edit shows.
+  warnings.push(...documentWarnings(document, []));
+  const effects = [];
+  if (shared) {
+    effects.push('Already shared: a public link is already stored for this document (the Documents page marks it "public"). Applying makes nothing new — Dropbox hands back the link it already has — unless that link was deleted in Dropbox since, in which case Dropbox creates a NEW public link and it replaces the stored one.');
+  }
+  effects.push(
+    'Revoking: only in Dropbox (the file\'s sharing settings) — YisraCase has no control for it. A revoked link stays stored on the document, and the Documents page\'s Copy public link button keeps copying it (that button never asks Dropbox again once a link is stored) until a share card replaces it.',
+    'Shown after you apply: this card never shows or guesses the link. Dropbox\'s answer is shown on this card, in this browser only (it is not saved in the chat and never sent to Casey), with a button to copy it; the Documents page\'s Copy public link button copies it any time.',
+    'Stored: the link is saved on the document; Casey\'s reads never return it.',
+    'Sends nothing: Casey does not send the link anywhere — it reaches a client only when you send it.',
+    'No trigger event: sharing emits none — no rule runs.',
+    'Other open pages: the Documents page and Documents tabs showing it mark it "public" on their own.');
+  return {
+    draft_id: crypto.randomUUID(), kind: 'document.share.v1', status: 'draft',
+    document, shared,
+    links: linksCard, links_total: links.length,
+    effects, warnings,
+    expected: { status: document.status, shared, name: document.name, title: document.title, doc_type: document.doc_type, links: documentLinkSignature(links) },
+    evidence: refs,
+  };
+}
+
+// The case a file's path files it under, the way the Dropbox sync decides it:
+// documentSyncService._matchCase (innermost cached case folder) over the
+// case_folder_cache rows for the path's own ancestors. null = no case folder.
+async function documentFolderCase(db, pathLower) {
+  const p = String(pathLower || '');
+  const ancestors = [];
+  for (let i = p.lastIndexOf('/'); i > 0; i = p.lastIndexOf('/', i - 1)) ancestors.push(p.slice(0, i));
+  if (!ancestors.length) return null;
+  const [rows] = await db.query('SELECT case_id, path_lower FROM case_folder_cache WHERE path_lower IN (?)', [ancestors]);
+  const byPath = new Map();
+  for (const r of (Array.isArray(rows) ? rows : [])) if (r.path_lower) byPath.set(String(r.path_lower), { case_id: r.case_id, path_lower: r.path_lower });
+  return caseFolderSync()._matchCase(byPath, p);
+}
+
+async function normalizeDocumentUnlink(db, value, evidence) {
+  const documentId = documentIdFrom(value.document_id);
+  const { resolveRelatedTargets, RELATION_PATH } = require('./documentService');
+  const linkType = String(value.link_type == null ? '' : value.link_type).trim().toLowerCase();
+  if (!DOCUMENT_LINK_TYPES.includes(linkType)) {
+    throw documentError(`Unlinking a document from ${linkType ? `"${linkType.slice(0, 40)}"` : 'nothing'} is not available — Casey unlinks a document from a case (link_type "case", link_id = the exact case_id) or a contact (link_type "contact", link_id = the exact contact_id); the Documents page's Links dialog unlinks any other link`);
+  }
+  let linkId;
+  if (linkType === 'case') {
+    linkId = String(value.link_id == null ? '' : value.link_id).trim();
+    if (!/^[A-Za-z0-9_-]{1,20}$/.test(linkId)) throw documentError('A case unlink needs link_id = the case\'s exact case_id');
+  } else {
+    const n = Number(value.link_id);
+    if (!Number.isSafeInteger(n) || n < 1) throw documentError('A contact unlink needs link_id = the contact\'s exact positive contact_id');
+    linkId = String(n);
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!documentRowCited(refs, evidence, (row) => Number(row.document_id) === documentId)) {
+    throw documentError(`The unlink evidence does not identify document #${documentId} — cite a row carrying its exact document_id (read it first: documents.id AS document_id)`);
+  }
+  // The record: a row carrying its exact id, or the link row itself
+  // (document_links.link_type + link_id).
+  const linkRow = (row) => row.link_type != null && String(row.link_type).toLowerCase() === linkType && row.link_id != null && String(row.link_id) === linkId;
+  const targetCited = linkType === 'case'
+    ? documentRowCited(refs, evidence, (row) => (row.case_id != null && String(row.case_id) === linkId) || linkRow(row))
+    : documentRowCited(refs, evidence, (row) => Number(row.contact_id) === Number(linkId) || linkRow(row));
+  if (!targetCited) {
+    throw documentError(`The unlink evidence does not identify ${linkType} ${linkId} — cite a row carrying its exact ${linkType === 'case' ? 'case_id' : 'contact_id'}, or the document_links row (link_type, link_id)`);
+  }
+  // The Documents page offers Unlink on every link of every document, deleted
+  // ones included — so a non-active document is disclosed, not refused.
+  const state = await documentState(db, documentId);
+  if (!state) throw documentError(`Document #${documentId} no longer exists`);
+  const { document, links, linksCard } = state;
+  const docName = document.title || document.name;
+  // The DELETE matches link_type / link_id under general_ci — folded here too.
+  const gone = links.find((l) => l.link_type.toLowerCase() === linkType && documentFoldId(l.link_id) === documentFoldId(linkId));
+  if (!gone) {
+    throw documentError(`Document #${documentId} ("${docName}") is not linked to ${linkType} ${linkId} — there is nothing to unlink (the route would answer "Link not found")`);
+  }
+  if (links.length > DOCUMENT_LINKS_MAX) {
+    throw documentError(`Document #${documentId} is linked to ${links.length} records — more than one card can review (${DOCUMENT_LINKS_MAX}). The user unlinks it on the Documents page`);
+  }
+  const record = await documentLinkRecord(db, linkType, gone.link_id);
+  const target = record || { link_type: linkType, link_id: gone.link_id, label: `${linkType} ${gone.link_id} (not found)`, missing: true };
+  const remaining = links.filter((l) => l !== gone);
+  const madeBySync = String(gone.relation || '').toLowerCase() === RELATION_PATH && gone.created_by == null;
+  const linkNote = `${target.label}${gone.relation ? ` — relation "${gone.relation}"` : ' — no relation word'}${madeBySync
+    ? ', made by the Dropbox sync (the file sat in that case\'s folder), not by a person'
+    : gone.created_by != null ? `, made by user #${gone.created_by}` : ', made by no signed-in user'}${record ? '' : ' — that record no longer exists'}`;
+
+  // Where it stops showing: the removed link's related set (the predicate the
+  // Documents tabs' "Include related" view reads) minus what the remaining
+  // links still reach.
+  const keyOf = (t) => { const ty = String(t.link_type).toLowerCase(); return `${ty}\u0000${ty === 'case' ? documentFoldId(t.link_id) : String(t.link_id).trim()}`; };
+  const lost = await resolveRelatedTargets(db, linkType, gone.link_id);
+  const keep = new Set();
+  for (const l of remaining) {
+    const r = await resolveRelatedTargets(db, l.link_type, l.link_id);
+    r.targets.forEach((t) => keep.add(keyOf(t)));
+  }
+  const hops = lost.targets.slice(1);
+  const hopsLost = hops.filter((t) => !keep.has(keyOf(t)));
+  const hopsKept = hops.filter((t) => keep.has(keyOf(t)));
+  const hopLabel = await documentTargetLabels(db, [...hopsLost.slice(0, DOCUMENT_CARD_LINKS), ...hopsKept.slice(0, DOCUMENT_CARD_LINKS)]);
+  const named = (list) => {
+    const shown = list.slice(0, DOCUMENT_CARD_LINKS).map((t) => `${hopLabel(t)}${t.relate_type ? ` (${t.relate_type} on the case)` : ''}`);
+    return `${shown.join('; ')}${list.length > shown.length ? ` (+${list.length - shown.length} more)` : ''}`;
+  };
+  const visibility = [keep.has(keyOf(lost.targets[0]))
+    ? `${target.label}'s Documents tab — no longer listed there directly, but still shown under "Include related" (on by default) through another of the document's links.`
+    : `${target.label}'s Documents tab — it leaves it (listed there directly today).`];
+  if (hopsLost.length) {
+    visibility.push(`Under "Include related" (on by default) it also leaves the Documents tab of ${linkType === 'case' ? 'each contact on this case' : 'each case this contact is on'} — ${named(hopsLost)}${lost.truncated ? ' (and more — the related set is capped)' : ''} — where it shows badged "via ${target.label}" today.`);
+  } else if (!hops.length) {
+    visibility.push(`Under "Include related": ${linkType === 'case' ? 'this case has no contacts' : 'this contact is on no case'}, so no other Documents tab loses it.`);
+  }
+  if (hopsKept.length) visibility.push(`Still shown, through another of its links, on the Documents tab of: ${named(hopsKept)}.`);
+  visibility.push(remaining.length
+    ? 'Stays on: the Documents tab of each record it is still linked to (listed), and the Documents page.'
+    : 'Stays on: the Documents page only (More → Documents).');
+
+  const warnings = [];
+  if (!remaining.length) {
+    warnings.push('LINKED TO NOTHING: this is the document\'s only link — afterwards it belongs to no case or contact and shows only on the Documents page.');
+  }
+  // The Dropbox sync re-adds a case link while the file sits in that case's
+  // folder: the incremental path on any change to the file (documents.link,
+  // which fires document.linked), and the background sweep when the document
+  // holds no case "path" link at all (bulkLink, silent).
+  if (linkType === 'case' && document.status === 'active') {
+    const [pathRows] = await db.query('SELECT path_lower FROM documents WHERE id = ? LIMIT 1', [documentId]);
+    const pathLower = Array.isArray(pathRows) && pathRows[0] && pathRows[0].path_lower ? String(pathRows[0].path_lower) : '';
+    const hit = pathLower ? await documentFolderCase(db, pathLower) : null;
+    if (hit && documentFoldId(hit.case_id) === documentFoldId(gone.link_id)) {
+      const sweep = !remaining.some((l) => l.link_type.toLowerCase() === 'case' && String(l.relation || '').toLowerCase() === RELATION_PATH);
+      const on = await caseFolderSync().isSyncEnabled(db);
+      warnings.push(`COMES BACK: the file still sits in ${target.label}'s Dropbox folder, so the Dropbox sync re-adds this case link${sweep ? ' on a later pass of its background sweep (silently) and' : ''} whenever the file changes in Dropbox (that re-add runs "document linked" rules)${on ? '' : ' — the sync is switched off right now, so nothing re-adds it until it is switched back on'}. To keep the document off this case, move the file out of the case's folder in Dropbox.`);
+    }
+  }
+  const effects = [];
+  if (document.status !== 'active') {
+    effects.push(`Status: the document is ${document.status || 'not active'} — the Documents lists already hide it by default; the unlink still deletes the link row.`);
+  }
+  if (linkType === 'case' && !remaining.some((l) => l.link_type.toLowerCase() === 'case')) {
+    effects.push('Triage: it has no other case link, so it goes back on the Documents page\'s "Unlinked" list (documents with no case).');
+  }
+  effects.push(
+    'Untouched: the file in Dropbox, the document\'s title, type and tags, and its other links — only this one link row is deleted.',
+    `No undo: linking it again makes a NEW link${gone.relation ? ` (the relation word "${gone.relation}" and the link's date are not kept${madeBySync ? '; Casey never writes "path" — only the sync does' : ''})` : ' (the link\'s date is not kept)'}.`,
+    'No trigger event: unlinking emits none (there is no "document unlinked" event) — no rule runs, and nothing a rule did when it was linked is undone.',
+    'Other open pages: that record\'s Documents tab refreshes on its own.');
+  return {
+    draft_id: crypto.randomUUID(), kind: 'document.unlink.v1', status: 'draft',
+    document, target,
+    link: { document_link_id: gone.document_link_id, link_type: gone.link_type, link_id: gone.link_id, relation: gone.relation, made_by_sync: madeBySync },
+    link_note: linkNote,
+    links_before: linksCard, links_total: links.length, links_after: remaining.length,
+    visibility, effects, warnings,
+    expected: { status: document.status, links: documentLinkSignature(links) },
+    evidence: refs,
+  };
+}
+
 async function normalizeDocumentAction(db, value, evidence, { currentUserId = null } = {}) {
   // The per-family switch: '0' and the A11 kinds do not exist.
   if (require('../lib/firmConfig').cfg('casey_documents_enabled') === '0') {
@@ -6347,6 +6556,8 @@ async function normalizeDocumentAction(db, value, evidence, { currentUserId = nu
     throw documentError(`A ${kind} card carries unsupported fields: ${unknown.join(', ')} — it takes ${[...allowed].filter((k) => k !== 'kind').join(', ')} only`);
   }
   if (kind === 'document.update.v1') return normalizeDocumentUpdate(db, value, evidence, currentUserId);
+  if (kind === 'document.share.v1') return normalizeDocumentShare(db, value, evidence);
+  if (kind === 'document.unlink.v1') return normalizeDocumentUnlink(db, value, evidence);
   return normalizeDocumentLink(db, value, evidence, currentUserId);
 }
 
@@ -12263,9 +12474,10 @@ function taskDraftRequested(question, history = []) {
     /\b(?:check|tick|cross)\s+(?:it\s+|that\s+|them\s+|this\s+)?off\b/i.test(request);
   // A11: a document's title / type / tags, or a link to a case or contact.
   // The noun is a document (a bare "file" is too often the case file); the
-  // verb an edit or link in a request message.
+  // verb an edit or link in a request message. A11.2: a share (a public /
+  // shareable link) or an unlink from a case or contact.
   const documentEdit = /\b(?:documents?|pdfs?|scans?|scanned)\b/i.test(text) &&
-    /\b(?:draft|propose|prepare|retitle|re-?title|rename|title|tag|re-?tag|untag|classify|categori[sz]e|label|link|attach|associate|connect|file\b[^.?!\n]{0,40}\b(?:to|under|on|with)|set (?:the|its) (?:title|type|tags?)|change (?:the|its) (?:title|type|tags?))\b/i.test(request);
+    /\b(?:draft|propose|prepare|retitle|re-?title|rename|title|tag|re-?tag|untag|classify|categori[sz]e|label|link|attach|associate|connect|file\b[^.?!\n]{0,40}\b(?:to|under|on|with)|set (?:the|its) (?:title|type|tags?)|change (?:the|its) (?:title|type|tags?)|share|(?:public|shared|shareable|sharing) link|un-?link|detach|disconnect|(?:remove|take)\b[^.?!\n]{0,60}\b(?:from|off))\b/i.test(request);
   // A7c: a docket / case number being added to a case ("add the case number
   // 25-12345 to the Smith case", "put the docket on it"); A7e: replaced or
   // cleared on the case fields card ("change the case number to …", "clear the

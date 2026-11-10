@@ -1040,6 +1040,30 @@ body. Governing migrations in `ref/migrations/`.*
   matchers, nothing added. Off switch `casey_documents_enabled` (on unless
   '0'). Tests: `tests/caseyDocuments.test.js`, gated
   `tests/caseyDocuments.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A11.
+- **Casey document share / unlink (A11.2, 11-11):** same switch, two kinds on
+  the Documents page's own controls — `document.share.v1` (POST
+  `/api/documents/:id/share`, Copy public link: Dropbox get-or-create of the
+  file's PERMANENT link — an existing direct link with its own settings, else a
+  new public one, no expiry — stored on `documents.shared_link`; the route
+  always asks Dropbox and ignores status) and `document.unlink.v1` (DELETE
+  `/api/documents/:id/links {link_type, link_id}`, the Links dialog's Unlink —
+  any link, the last one, any status). NO status kind: no screen sends one.
+  Invariants: the server reads only WHETHER a link is stored, never the link
+  (still on `DENIED_COLUMNS`); the browser keeps the route's link as a
+  NON-enumerable draft property — shown with a copy button, never in the chat,
+  the ledger or the model's history. Share refuses a non-active document;
+  unlink discloses it. Unlink names the tabs it leaves
+  (`resolveRelatedTargets` of the removed link minus what the remaining links
+  reach), LINKED TO NOTHING, the triage effect, and COMES BACK when the sync
+  re-adds a case link (`documentSyncService._matchCase` over
+  `case_folder_cache` for the file's ancestors — the incremental path on any
+  change, `attributeUnlinked` when no case path link is left). Neither emits
+  an event. Freshness: GET `/api/documents/:id` (status, link presence, name /
+  title / type, links). Outcomes: share 404 + Dropbox's sharing 409 and unlink
+  404 "Link not found" are refusals. Receipts: the reviewed `document_id` /
+  `document_link_id`; families `docshare` / `docunlink`. Sync: existing
+  matchers. Tests: `tests/caseyDocumentShare.test.js`, gated
+  `tests/caseyDocumentShare.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A11.2.
 - **Casey docket adopt (A7c, 11-02):** kind `case.docket.adopt.v1` → PATCH
   `/api/cases/:id/docket` {case_number?, case_number_full?} (the court-review
   adopt writer, bare `jwtOrApiKey`; never the cases PATCH). Fills a BLANK

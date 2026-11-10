@@ -133,7 +133,7 @@ describe('STATUS and the provider-owned columns — refused by name before anyth
   test.each([
     ['status on an update', () => update({ status: 'deleted' }), /^STATUS refused: deleting, restoring or marking a document missing is not available to Casey .* \(document\.update\.v1\)$/],
     ['status on a link', () => link({ status: 'active' }), /^STATUS refused: .*\(document\.link\.v1\)$/],
-    ['shared_link', () => update({ shared_link: 'https://x' }), /^SHARED LINK refused: a public link is a capability — Casey never creates, shows or writes one \(document\.update\.v1\)$/],
+    ['shared_link', () => update({ shared_link: 'https://x' }), /^SHARED LINK refused: the stored link is never written directly — Dropbox makes a public link, through a document\.share\.v1 card \(the Documents page's Copy public link button\) \(document\.update\.v1\)$/],
     ['name', () => update({ name: 'New.pdf' }), /^NAME refused: a document's file name, path and Dropbox id belong to Dropbox/],
     ['path and external_id together', () => update({ path: '/y', external_id: 'id:z' }), /^PATH \/ EXTERNAL_ID refused: /],
   ])('%s', async (_n, make, re) => {
