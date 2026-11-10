@@ -557,6 +557,11 @@ function landingAllowed(req) {
   if (p === '/theme.css')              return isRead;
   if (p === '/css/yc-forms.css')       return isRead;
   if (p === '/js/yc-forms.js')         return isRead;
+  // render.html's vendored Bootstrap CSS + SweetAlert2 (2026-11-10, moved off
+  // cdn.jsdelivr.net). Exact paths, not a /vendor/ prefix: a version bump is
+  // a new filename and must be allowed here on purpose.
+  if (p === '/css/vendor/bootstrap-5.3.3.min.css')            return isRead;
+  if (p === '/js/vendor/sweetalert2-11.26.25.all.min.js')     return isRead;
   if (p === '/favicon.ico')            return isRead;
   return false;
 }

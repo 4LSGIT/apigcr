@@ -320,6 +320,7 @@ public/communicate.html
 public/connections.html
 public/contact.html
 public/courtpreview.html
+public/css/vendor/bootstrap-5.3.3.min.css
 public/css/yc-forms.css
 public/ctaManager.html
 public/customView.html
@@ -382,6 +383,7 @@ public/js/optoutAck.js
 public/js/phoneSendable.js
 public/js/reportCharts.js
 public/js/vendor/purify-3.4.16.min.js
+public/js/vendor/sweetalert2-11.26.25.all.min.js
 public/js/versionGuard.js
 public/js/videoInsert.js
 public/js/yc-custom-fields.js

@@ -70,6 +70,7 @@ const LANDING_HTML = [
 const LANDING_CSS = [
   'public/theme.css',
   'public/css/yc-forms.css',
+  'public/css/vendor/bootstrap-5.3.3.min.css',   // render.html, vendored 2026-11-10
 ];
 
 // Subresource paths assembled at runtime, which the static scan cannot see.
@@ -190,5 +191,23 @@ describe('every subresource on the landing host is allowlisted', () => {
     const html = fs.readFileSync(path.join(REPO, 'public/forms/render.html'), 'utf8');
     expect(subresourcePaths(html)).toContain('/theme.css');
     expect(allowed('/theme.css')).toBe(true);
+  });
+
+  // render.html takes client intake, so it loads no third-party code or CSS
+  // (2026-11-10: Bootstrap + SweetAlert2 vendored off cdn.jsdelivr.net, where
+  // the script tag was an unpinned `sweetalert2@11`). A CDN tag added back
+  // here is invisible to the scan above, which drops external URLs.
+  test('LOCK: render.html loads no external <link>/<script> subresource', () => {
+    const html = fs.readFileSync(path.join(REPO, 'public/forms/render.html'), 'utf8');
+    const external = [];
+    for (const tag of html.match(/<(?:link|script)\b[^>]*>/gi) || []) {
+      const m = /\b(?:src|href)\s*=\s*["']([^"']+)/i.exec(tag);
+      if (m && /^(?:https?:)?\/\//i.test(m[1])) external.push(m[1]);
+    }
+    expect(external).toEqual([]);
+    expect(subresourcePaths(html)).toEqual(expect.arrayContaining([
+      '/css/vendor/bootstrap-5.3.3.min.css',
+      '/js/vendor/sweetalert2-11.26.25.all.min.js',
+    ]));
   });
 });
