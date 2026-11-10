@@ -313,7 +313,7 @@ Comms](#phone-lines--comms), below).
   Sent label, or a polled Sent folder; **All folders** is everything; a
   message a mailbox sent shows who it went to, "To: …"),
   **Any** / **On a case** / **Not on a case** (one at a time),
-  **Unread**, **Client mail**, **Has files**. On a phone the filters sit
+  **Unread**, **Client mail**, **Has files**, **Not filed**. On a phone the filters sit
   behind a **Filters** button (it shows how many are on); search and the
   menus stay put.
 - **On a wide screen** your saved views and the mailboxes sit in a column
@@ -336,9 +336,12 @@ Comms](#phone-lines--comms), below).
     mailboxes. An attorney or trustee on a case is not a client of it.
   - **Has files** keeps mail with a real attachment — what the paperclip
     counts; a signature logo drawn inside the message is not a file.
-  - **Not on a case** is mail not yet on any case's log. **Client mail** +
-    **Has files** + **Not on a case**, saved as a view, is a "documents
-    clients sent that nobody has filed yet" queue.
+  - **Not filed** keeps mail with a real attachment none of which has been
+    filed yet — not by docs@ and not with **File attachments** (below), from
+    this copy of the email or any other copy in another box. **Client mail** +
+    **Not filed**, saved as a view, is the "documents clients sent that nobody
+    has filed yet" queue.
+  - **Not on a case** is mail not yet on any case's log.
 - **Read / unread is yours alone.** An unread message stands out in the
   list: a blue dot, bold sender, subject and date, on a white row (the lighter
   row in the dark theme); read ones are plain, on the page's grey. Opening a
@@ -390,13 +393,66 @@ Comms](#phone-lines--comms), below).
   (**New tab** there opens a PDF full size; some phones cannot show a PDF
   inside a page, so use New tab or Download); clicking any other file's name
   downloads it. On every chip
-  the arrow downloads, and the folder button **saves it to a case**: pick the
-  case — the email's own case and the cases of the clients in the
-  conversation are offered first, or search — and it goes into that case's
-  Dropbox folder and onto its Documents tab, exactly like an upload from the
-  case. Every file comes from the mail server when you click it (see
-  Attachments above). Only an image drawn inside the message itself (a
-  signature logo) is not listed — it appears when you click **Show**.
+  the arrow downloads, and the folder button **files it to a case** — **File
+  attachments** (below) with just that file ticked; the viewer's **Save to
+  case** does the same. A file already filed carries a green **Filed** tag
+  (hover it: which case, and where in Dropbox). Every file comes from the
+  mail server when you click it (see Attachments above). Only an image drawn
+  inside the message itself (a signature logo) is not listed — it appears
+  when you click **Show**.
+- **File attachments** puts an email's files into a case's Dropbox folder the
+  way docs@ does — `Client Uploads/Emailed YYMMDD` (the email's date), each
+  file registered on the case's Documents tab and recorded as filed, so it is
+  never filed twice. It works in **every mailbox you can read**: anyone who
+  can read the email can file its files. Open it from **File to case…** under
+  a message's attachments, from a file's folder button, from **File the
+  attachments of its N emails…** at the top of a conversation, or for many
+  emails at once from the list: **Select** (above the list) — a click then
+  ticks an email instead of opening it; **All shown** ticks the whole list,
+  **Same sender** ticks every shown email from the ticked emails' senders
+  (a client who sent ten separate emails: tick one, Same sender, File
+  attachments); at most 50 at a time; **Done** leaves Select.
+  - **The case** is suggested when every email belongs to the same one (the
+    docs@ rules: the case the email names, else the sender's open case). Else
+    pick one of the suggested cases or **Search cases…**; **Change** picks
+    another. When an email's own case is a different one, the email says so
+    — check before you file. An email from a stranger — an Adobe Sign notice,
+    say — offers the cases of the clients whose first and last name are in
+    its subject ("Suggested because the subject names Michele Boren"); it
+    never picks one for you, and never offers the firm's own people.
+  - **Folder** — **Client Uploads / Emailed** (the email's date) is the
+    default, right for what a client sends. For anything else (a signed
+    agreement, discovery, a court paper) pick **Another folder in the case
+    folder**: the case folder's folders are listed — pick one, or type a new
+    one (it is created). The name is used exactly as written — a space at the
+    start of a folder name (how the firm sorts its folders) counts. A move
+    (below) goes to the same folder.
+  - **Each file has a tick box.** Documents (PDF, Word, Excel, pictures, text)
+    start ticked. Other types — a zip, a forwarded email — start unticked:
+    tick them if they belong. Never filed, whatever you tick: the firm's
+    blocked types (programs, scripts, installers — Config), signature images
+    drawn in the email, and files over about 40 MB (for those, **Upload … to
+    the case's folder directly** still copies the file into the case folder,
+    but it is not recorded as filed). A file the case already has — same name,
+    same size, filed before or earlier in your selection — starts unticked and
+    says **Already in this case**. A file already filed says where.
+  - **Move** — an email docs@ filed to **Unsorted** (no case could be chosen)
+    offers to move those files into the case you picked, ticked; one filed to
+    a *different* case is offered too, unticked.
+  - **Link each email to the case** (on by default) puts each email on the
+    case's log, like **Link to case**.
+  - **Send <name> the review notice** (on by default): the reviewer set in
+    Config (**Emailed documents review**) gets one email listing what was
+    filed, by whom, with links — one email per sender. When you are the
+    reviewer, none is sent.
+  - Some files ask for a **second confirmation** before they are filed —
+    types off the usual document list, and large files (over 15 MB unless
+    Config says otherwise). File shows them and asks **Yes, file them**.
+  - Filing goes one email at a time, each with its own result line ("Filed 2
+    files · linked to the case"); one email failing stops nothing else. The
+    summary says what landed; to retry a failed email, open File attachments
+    again — what landed already shows as filed. Closing the window refreshes
+    the list and the conversation.
 - **Task** (in the ⋯ menu, and its own button on a wide screen) turns the
   email into a task: the title and description start from the email, the
   task is yours unless you assign it, due today (**+1 business day** moves

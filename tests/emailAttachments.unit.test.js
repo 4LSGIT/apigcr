@@ -148,9 +148,10 @@ describe('fileableParts', () => {
     ]);
     expect(r.skipped).toEqual([
       { part: '3', filename: 'logo.png', reason: 'inline_image' },
-      { part: '5', filename: 'invoice.pdf.exe', reason: 'type_not_allowed' },
+      { part: '5', filename: 'invoice.pdf.exe', reason: 'type_not_allowed', blocked: true },   // a program: never, by anyone
       { part: '6', filename: 'huge.pdf', reason: 'too_large' },
-      { part: '7', filename: 'Fwd.eml', reason: 'type_not_allowed' },
+      // not on the client-upload list, but a PERSON may file it from Comms (S3)
+      { part: '7', filename: 'Fwd.eml', reason: 'type_not_allowed', optional: true, ext: 'eml', est_bytes: 6660 },
     ]);
   });
 
@@ -285,4 +286,24 @@ describe('notice', () => {
     expect(n.html).toContain('?files=cCF8ZT7VE');
     expect(n.text).toContain('possible case: PVXC1RMM — Bankruptcy · Filed');
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('exactFolder — a folder a person picked inside the case folder (S3b)', () => {
+  const { exactFolder } = require('../services/emailAttachmentFilingService');
+  test('kept EXACTLY: leading spaces (the firm\'s sort order), inner spaces; doubled / edge slashes dropped', () => {
+    expect(exactFolder(' 012 - Supplemental Responses')).toBe(' 012 - Supplemental Responses');
+    expect(exactFolder('/  Client Uploads//Emailed 261110/')).toBe('  Client Uploads/Emailed 261110');
+    expect(exactFolder('a/b/c/d/e/f')).toBe('a/b/c/d/e/f');
+  });
+  test.each([
+    ['..', /"\." and "\.\."/], ['a/../b', /"\." and "\.\."/], [' . ', /"\." and "\.\."/], ['a\\b', /cannot hold/], ['a:b', /cannot hold/],
+    ['a*', /cannot hold/], ['ok\u0007', /cannot hold/], ['a.', /end in a dot or a space/], ['a ', /end in a dot or a space/],
+    ['   ', /blank/], ['x/  /y', /blank/], ['', /empty/], ['///', /empty/], ['a/b/c/d/e/f/g', /at most 6 levels/], ['x'.repeat(121), /longer than 120/],
+    ['y'.repeat(401), /too long/],
+  ])('%j is refused (BAD_FOLDER)', (raw, re) => {
+    expect(() => exactFolder(raw)).toThrow(re);
+    try { exactFolder(raw); } catch (e) { expect(e.code).toBe('BAD_FOLDER'); }
+  });
+  test('not text → refused', () => { expect(() => exactFolder(7)).toThrow(/folder must be text/); });
 });

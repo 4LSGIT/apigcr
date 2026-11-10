@@ -129,6 +129,38 @@ function cleanSegment(s, max = 100) {
 }
 
 /**
+ * A folder a PERSON picked inside the case folder (Comms, design §9) — taken
+ * EXACTLY: the firm's folder names carry leading spaces on purpose (they set
+ * the sort order: " 012 - Supplemental Responses", " Client Uploads"), so
+ * nothing is trimmed or collapsed the way renderFolder cleans a template —
+ * a cleaned name would create a second folder beside the real one. Instead
+ * anything that could leave the case folder or that Dropbox / Windows sync
+ * mangles is REFUSED: '.' / '..', backslash, : * ? " < > |, control
+ * characters, a blank segment, a segment ending in a dot or a space, more
+ * than FOLDER_MAX_DEPTH segments or FOLDER_SEG_MAX characters in one. Empty
+ * segments from doubled / leading / trailing slashes are dropped.
+ * @returns {string} 'A/ B/C' — THROWS codedError BAD_FOLDER
+ */
+const FOLDER_MAX_DEPTH = 6;
+const FOLDER_SEG_MAX = 120;
+function exactFolder(raw) {
+  if (typeof raw !== 'string') throw codedError('BAD_FOLDER', 'folder must be text');
+  if (raw.length > 400) throw codedError('BAD_FOLDER', 'folder is too long');
+  const segs = raw.split('/').filter(seg => seg !== '');
+  if (!segs.length) throw codedError('BAD_FOLDER', 'folder is empty');
+  if (segs.length > FOLDER_MAX_DEPTH) throw codedError('BAD_FOLDER', `folder: at most ${FOLDER_MAX_DEPTH} levels`);
+  for (const seg of segs) {
+    const t = seg.trim();
+    if (!t) throw codedError('BAD_FOLDER', 'folder: a folder name cannot be blank');
+    if (t === '.' || t === '..') throw codedError('BAD_FOLDER', 'folder: "." and ".." are not folder names');
+    if (/[\\:*?"<>|\u0000-\u001f\u007f]/.test(seg)) throw codedError('BAD_FOLDER', 'folder: a name cannot hold \\ : * ? " < > | or control characters');
+    if (/[. ]$/.test(seg)) throw codedError('BAD_FOLDER', 'folder: a name cannot end in a dot or a space');
+    if (seg.length > FOLDER_SEG_MAX) throw codedError('BAD_FOLDER', `folder: a name is longer than ${FOLDER_SEG_MAX} characters`);
+  }
+  return segs.join('/');
+}
+
+/**
  * Fill a folder template. Tokens: {yymmdd} {yyyy-mm-dd} {sender}. A template
  * may hold '/' (nested folders); every segment is cleaned on its own and empty
  * ones dropped, so no value can climb out of the folder it was meant for.
@@ -255,7 +287,7 @@ async function _contactRow(db, contactId) {
  * Where this message's files go.
  * @returns {Promise<{match, linkType, linkId, caseId, contact}>}
  */
-async function _destination(db, { target, caseId, contactId, msg, fromEmail, text }) {
+async function _destination(db, { target, caseId, contactId, msg, fromEmail, text, reason }) {
   // The matcher always runs: its contact names the unsorted folder, and its
   // candidates go in the notice, whatever the caller decided.
   const match = await caseMatch.matchCase(db, { fromEmail, subject: msg.subject, text });
@@ -264,7 +296,7 @@ async function _destination(db, { target, caseId, contactId, msg, fromEmail, tex
     const cs = await _caseRow(db, caseId);
     if (!cs) throw codedError('CASE_NOT_FOUND', `case ${caseId} not found`);
     return {
-      match: { ...match, case_id: cs.case_id, method: 'explicit', flag: null, reason: `Filed to case ${cs.case_id} as the automation directed.` },
+      match: { ...match, case_id: cs.case_id, method: 'explicit', flag: null, reason: reason || `Filed to case ${cs.case_id} as the automation directed.` },
       linkType: 'case', linkId: cs.case_id, caseId: cs.case_id, contact: match.contact,
     };
   }
@@ -272,7 +304,7 @@ async function _destination(db, { target, caseId, contactId, msg, fromEmail, tex
     const ct = await _contactRow(db, contactId);
     if (!ct) throw codedError('CONTACT_NOT_FOUND', `contact ${contactId} not found`);
     return {
-      match: { ...match, case_id: null, method: 'explicit', flag: null, reason: `Filed for ${ct.name || `contact ${ct.contact_id}`} as the automation directed.` },
+      match: { ...match, case_id: null, method: 'explicit', flag: null, reason: reason || `Filed for ${ct.name || `contact ${ct.contact_id}`} as the automation directed.` },
       linkType: 'contact', linkId: ct.contact_id, caseId: null, contact: ct,
     };
   }
@@ -315,11 +347,22 @@ async function _fetchWithRetry(db, msg, part, maxBytes) {
  * @param {string} [o.caseId]               target 'case'
  * @param {number} [o.contactId]            target 'contact'
  * @param {string} [o.subfolder]            case-rung folder template
+ * @param {string} [o.folder]               case-rung folder taken EXACTLY (a person's
+ *                                          pick — exactFolder; wins over subfolder)
  * @param {string} [o.unsortedSubfolder]    bin folder template
  * @param {number} [o.filedBy]              acting user; null = automation
  * @param {number} [o.maxBytes]
  * @param {string} [o.noticeSubjectPrefix]
  * @param {string} [o.noticeTitle]
+ * @param {string} [o.digestKey]            queue the notice for email_attachments_digest (§8)
+ * @param {string[]} [o.parts]              ONLY these parts (a person's pick, Comms — §9);
+ *                                          the message's other fileable parts are skipped
+ *                                          as 'not_selected'. Omitted = every fileable part.
+ *                                          A picked part may be any type but a
+ *                                          blocked one (mailAttachmentService
+ *                                          .blockedExtensions — the setting)
+ * @param {string} [o.reason]               the match reason an explicit target reports
+ *                                          (default: "as the automation directed")
  * @returns {Promise<object>} the result (see the internal function's __meta)
  */
 async function fileMessageAttachments(db, o = {}) {
@@ -330,6 +373,7 @@ async function fileMessageAttachments(db, o = {}) {
   const maxBytes = Number(o.maxBytes) > 0 ? Number(o.maxBytes) : attachments.DEFAULT_MAX_BYTES;
   const filedBy = o.filedBy == null || o.filedBy === '' ? null : Number(o.filedBy);
   const digestKey = o.digestKey == null || o.digestKey === '' ? null : String(o.digestKey);
+  const exact = o.folder == null || o.folder === '' ? null : exactFolder(o.folder);
 
   const msg = await attachments.resolveMessage(db, o.ref);
   if (!msg) {
@@ -341,6 +385,7 @@ async function fileMessageAttachments(db, o = {}) {
   const text = require('./mailbox/mailboxIngestService').emitText(msg.body_text, msg.body_html).text;   // lazy (convention)
   const dest = await _destination(db, {
     target, caseId: o.caseId, contactId: o.contactId, msg, fromEmail, text,
+    reason: o.reason ? String(o.reason) : null,
   });
   // BURST DIGEST (design §8): in the sender's burst from now — before the
   // files, so a burst still being filed holds its notice back.
@@ -348,10 +393,27 @@ async function fileMessageAttachments(db, o = {}) {
 
   const date = msg.date instanceof Date ? msg.date : (msg.date ? new Date(msg.date) : null);
   const senderLabel = (dest.contact && (dest.contact.lfm_name || dest.contact.name)) || fromEmail || 'unknown sender';
-  const caseFolder = renderFolder(o.subfolder || DEFAULT_CASE_SUBFOLDER, { date, sender: senderLabel });
+  const caseFolder = exact || renderFolder(o.subfolder || DEFAULT_CASE_SUBFOLDER, { date, sender: senderLabel });
   const binFolder = renderFolder(o.unsortedSubfolder || DEFAULT_UNSORTED_SUBFOLDER, { date, sender: senderLabel });
 
-  const { files: fileable, skipped } = attachments.fileableParts(msg, { maxBytes });
+  // A person's pick (Comms): only the parts named — and for those, any type
+  // but a program or script. Automation passes no parts and files every part
+  // the client-upload allowlist takes, exactly as before.
+  const picked = Array.isArray(o.parts) ? new Set(o.parts.map(String)) : null;
+  const scan = attachments.fileableParts(msg, {
+    maxBytes, staffPick: !!picked, blocked: picked ? await attachments.blockedExtensions(db) : undefined,
+  });
+  const fileable = [];
+  const skipped = [];
+  for (const sk of scan.skipped) {
+    // optional (+ its ext / est_bytes) and blocked are preview-only (Comms)
+    const { optional, ext, est_bytes, blocked, ...rest } = sk;
+    skipped.push(rest);
+  }
+  for (const f of scan.files) {
+    if (!picked || picked.has(f.part)) fileable.push(f);
+    else skipped.push({ part: f.part, filename: f.filename, reason: 'not_selected' });
+  }
   const files = [];
   const warnings = [];
   const placements = new Set();
@@ -609,12 +671,14 @@ async function _stampDropboxIds(db, mailMessageId) {
  * @param {number} o.mailMessageId
  * @param {string} o.caseId
  * @param {string} [o.subfolder]    case-rung template (default as filing)
+ * @param {string} [o.folder]       case-rung folder taken EXACTLY (exactFolder; wins)
  * @param {number} [o.filedBy]
  * @returns {Promise<{case_id, placement, folder_path, folder_link, moved, already_there, failed, warnings}>}
  */
 async function refileMessageAttachments(db, o = {}) {
   const mid = Number(o.mailMessageId);
   if (!Number.isInteger(mid) || mid <= 0) throw codedError('BAD_REF', 'mail_message_id must be a positive integer');
+  const exact = o.folder == null || o.folder === '' ? null : exactFolder(o.folder);
   const cs = await _caseRow(db, o.caseId);
   if (!cs) throw codedError('CASE_NOT_FOUND', `case ${o.caseId} not found`);
   const filedBy = o.filedBy == null || o.filedBy === '' ? null : Number(o.filedBy);
@@ -634,7 +698,7 @@ async function refileMessageAttachments(db, o = {}) {
   const prep = await placement().preparePlacement(db, {
     linkType: 'case',
     linkId: cs.case_id,
-    subfolder: renderFolder(o.subfolder || DEFAULT_CASE_SUBFOLDER, { date, sender: '' }),
+    subfolder: exact || renderFolder(o.subfolder || DEFAULT_CASE_SUBFOLDER, { date, sender: '' }),
     unsortedPathKey: uploadTarget().UNSORTED_PATH_KEY,
     unsortedDefault: uploadTarget().DEFAULT_UNSORTED_PATH,
     artifactLabel: ARTIFACT_LABEL,
@@ -708,6 +772,8 @@ module.exports = {
   STALE_CLAIM_MIN,
   SOURCE,
   TARGETS,
+  exactFolder,
+  FOLDER_MAX_DEPTH,
   // exported for tests
   renderFolder,
   safeFileName,

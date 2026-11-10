@@ -1138,6 +1138,15 @@
        own rows; no Casey card sends it), the views, image senders, send. */
     [/^\/api\/mail\/messages\/(\d+)\/read$/,      'mail', mailReadGetter, ['POST', 'DELETE']],
     [/^\/api\/mail\/messages\/(\d+)\/case-link$/, 'mail', mailCaseLinkGetter, ['POST']],
+    /* File attachments (email attachments S3) — ONE email's attachments filed
+       to a case from Comms (POST /api/mail/messages/:id/attachments/file):
+       a file that landed (or was moved in) changed the case's DOCUMENT SET
+       (`doclink:case:<id>`, the address its Documents tab refetches on — as
+       upload-commit); with Link on, the email went on the case's log, which
+       is case-link's announcement exactly (`mail:<id>` {log_id, case_id} +
+       `comms:case:<id>`). Fails closed: an answer for another message, no
+       case, nothing landed and nothing linked. */
+    [/^\/api\/mail\/messages\/(\d+)\/attachments\/file$/, 'mail', mailFileGetter, ['POST']],
   ];
 
   /**
@@ -1151,6 +1160,31 @@
     if (!r || typeof r !== 'object' || !id) return null;
     if (typeof r.unread !== 'boolean' || String(r.id) !== String(id)) return null;
     return [{ addr: 'mail:' + id, fields: { unread: r.unread } }];
+  }
+
+  /**
+   * File attachments (email attachments S3): the case's document set when a
+   * file landed or moved in; the message and the case's comms when linked.
+   *
+   * @param   {object} r   `{status, id, case:{case_id}, files:[{status}], refiled:{moved}|null, linked, log_id}`
+   * @param   {string} id  the URL capture
+   * @returns {Array|null}
+   */
+  function mailFileGetter(r, id) {
+    if (!r || typeof r !== 'object' || !id || String(r.id) !== String(id)) return null;
+    var c = r['case'];
+    var caseId = c && c.case_id;
+    if (caseId == null || caseId === '') return null;
+    var out = [];
+    var files = Array.isArray(r.files) ? r.files : [];
+    var landed = files.some(function (f) { return f && f.status === 'filed'; }) ||
+      !!(r.refiled && Number(r.refiled.moved) > 0);
+    if (landed) out.push({ addr: 'doclink:case:' + caseId, fields: { yc_refetch: 1 } });
+    if (r.linked === true && r.log_id != null) {
+      out.push({ addr: 'mail:' + id, fields: { log_id: r.log_id, case_id: caseId } });
+      out.push({ addr: 'comms:case:' + caseId, fields: { yc_refetch: 1 } });
+    }
+    return out.length ? out : null;
   }
 
   /**

@@ -18,11 +18,26 @@
  *   mysql -uroot yc_eatt_test < ref/database.sql
  *   mysql -uroot yc_eatt_test < ref/migrations/2026-11-06_mail_attachment_filings.sql
  *   mysql -uroot yc_eatt_test < ref/migrations/2026-11-09_mail_attachment_notices.sql
+ *   mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -uroot mysql   # once per server: S3's
+ *     "link to case" writes a log row, and log_date is CONVERT_TZ(…, 'EST5EDT') (NOT NULL)
  *   YC_TEST_MYSQL_URL=mysql://user:pw@127.0.0.1:3307/yc_eatt_test \
  *     npx jest tests/emailAttachments.mysql.test.js
  * Run 2026-11-06: MySQL 8.0.46, production sql_mode, session time zone UTC.
  * The burst digest (S2d, design §8) runs here too: its clock is ingested_at
  * against UTC_TIMESTAMP(), so the tests age rows in SQL — no fake timers.
+ * So does Comms filing (S3, design §9): real users + channel_grants rows (the
+ * access rule is mailReadService.loadVisible's), the firm's settings through
+ * the settingsService mock, the review notice through a stubbed sendEmail.
+ * S3 mutation-checked (2026-11-10, 30 mutations, all killed): the default
+ * tick ignoring duplicates; the move tick off another case; the confirm 409;
+ * the firm's blocked list ignored; loadVisible dropped (fileOne, preview,
+ * the notice's pre-claim check); the reviewer-is-filer and inactive-reviewer
+ * checks; one notice for every sender; the case-blind duplicate key; the
+ * in-selection duplicate; link / move never run; filed_by lost; the one-case
+ * suggestion; the alias mailbox id; isFirmSender off / domain blind; the
+ * NOT FILED copy branch and the FILES half; attachFiled's copy lookup, its
+ * extension-added name match, its own-row-first order; the engine's part
+ * pick; staffPick; the size confirm; the blocked setting unread.
  */
 
 'use strict';
@@ -49,7 +64,7 @@ const mockJoinPath = (base, ...segments) => {
   }
   return out;
 };
-const mockDbx = { files: new Map(), uploads: [], moves: [], seq: 0, links: { 'https://dbx/case-PVXC1RMM': '/cases/bentley' } };
+const mockDbx = { files: new Map(), uploads: [], moves: [], seq: 0, links: { 'https://dbx/case-PVXC1RMM': '/cases/bentley' }, listing: null };
 const mockMetaOf = (f) => ({ '.tag': 'file', id: f.id, name: f.path.split('/').pop(), path_display: f.path, path_lower: f.path.toLowerCase(), size: f.size });
 jest.mock('../services/dropboxService', () => ({
   _resolveCredential: jest.fn(async () => 8),
@@ -84,11 +99,19 @@ jest.mock('../services/dropboxService', () => ({
     return { metadata: mockMetaOf(f) };
   }),
   joinPath: (...a) => mockJoinPath(...a),
+  // S3b's folder choice: one recursive listing (mockDbx.listing = {entries, truncated} or an Error)
+  listFolder: jest.fn(async (db, { path, recursive }) => {
+    if (mockDbx.listing instanceof Error) throw mockDbx.listing;
+    mockDbx.listed = { path, recursive };
+    return mockDbx.listing || { entries: [], count: 0, truncated: false };
+  }),
 }));
 jest.mock('../services/settingsService', () => ({ getSetting: jest.fn(async () => null), getSettings: jest.fn(async () => ({})) }));
 jest.mock('../services/caseService', () => ({ ensureCaseDropboxFolder: jest.fn(async () => { throw new Error('no auto-create in this test'); }) }));
 jest.mock('../services/taskService', () => ({ createTask: jest.fn(async () => ({ task_id: 1 })) }));
 jest.mock('../services/esignAlertService', () => ({ resolveAlertAssignee: jest.fn(async () => 22) }));
+// S3's review notice goes out through emailService (the real module otherwise).
+jest.mock('../services/emailService', () => ({ ...jest.requireActual('../services/emailService'), sendEmail: jest.fn(async () => ({ ok: true })) }));
 jest.mock('../services/mailbox/imapTransport', () => ({
   ...jest.requireActual('../services/mailbox/imapTransport'),
   fetchPart: jest.fn(),
@@ -187,7 +210,7 @@ maybe('email attachments S1/S2 on real MySQL', () => {
              VALUES (2, 'stuart@4lsg.com', '4lsg.com', 'imap.test', 'u', 'gmail-firm', 'provider', ?),
                     (3, 'it@mdbl.test', 'mdbl.test', 'imap.test', 'u', NULL, NULL, ?)`,
     [JSON.stringify({ [ALL]: { uidvalidity: 7, last_uid: 999 } }), JSON.stringify({ INBOX: { uidvalidity: 3, last_uid: 999 } })]);
-    mockDbx.files.clear(); mockDbx.uploads.length = 0; mockDbx.moves.length = 0; mockDbx.seq = 0;
+    mockDbx.files.clear(); mockDbx.uploads.length = 0; mockDbx.moves.length = 0; mockDbx.seq = 0; mockDbx.listing = null; mockDbx.listed = null;
     global.__REG = [];
     transport.fetchPart.mockReset();
     serveParts();
@@ -800,6 +823,436 @@ maybe('email attachments S1/S2 on real MySQL', () => {
       const w = await fns.email_attachments_digest({ mail_message_id: String(mid), digest_key: KEY, quiet: '1m', cap: '10m', output_var: 'digest' }, pool);
       expect(w.output.action).toBe('send');                         // 61 s ≥ a 1-minute quiet
       expect(w.set_vars.digest).toBe(w.output);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe('Comms filing (S3, design §9)', () => {
+    const comms = require('../services/emailAttachmentCommsService');
+    const settings = require('../services/settingsService');
+    const emailSvc = require('../services/emailService');
+    const reads = require('../services/mailbox/mailReadService');
+    const SS = 1, SB = 5, FRED = 6, RG = 22;
+    let SET;
+    const MB = 1024 * 1024;
+    const file = (part, filename, mime, size, extra = {}) => ({ part: String(part), filename, mime, size, ...extra });
+    const regRows = (mid) => q('SELECT part, status, link_type, link_id, placement, filed_by FROM mail_attachment_filings WHERE mail_message_id = ? ORDER BY part', [mid]);
+
+    beforeEach(async () => {
+      await q('DELETE FROM channel_grants');
+      await q('DELETE FROM users');
+      await q(`INSERT INTO users (username, user_name, user_fname, user_lname, user_initials, user_auth, user, email, ringcentral, roles) VALUES
+        ('ss', 'Stuart', 'Stuart', 'S', 'SS', 'authorized', ?, 'ss@4lsg.com', 0, 'su'),
+        ('sb', 'Shana', 'Shana', 'B', 'SB', 'authorized', ?, 'sb@4lsg.com', 0, 'staff'),
+        ('fred', 'Fred', 'Fred', 'F', 'FF', 'authorized', ?, 'fred@4lsg.com', 0, 'staff,it'),
+        ('rg', 'Rena', 'Rena', 'Grunberger', 'RG', 'authorized', ?, 'rg@4lsg.com', 0, 'staff')`, [SS, SB, FRED, RG]);
+      // SB and Fred READ stuart@ (mailbox 2); nobody but SU reads mailbox 3; RG reads nothing.
+      await q(`INSERT INTO channel_grants (user, channel_type, channel_id, can_read, can_send, can_manage, granted_by) VALUES
+        (?, 'mailbox', 2, 1, 0, 0, 1), (?, 'mailbox', 2, 1, 0, 0, 1)`, [SB, FRED]);
+      SET = { email_attachments_reviewer: String(SB) };
+      settings.getSettings.mockImplementation(async (db, keys) => Object.fromEntries(keys.map(k => [k, SET[k] ?? null])));
+      emailSvc.sendEmail.mockClear();
+    });
+    afterEach(() => settings.getSettings.mockImplementation(async () => ({})));
+
+    test('preview classifies every attachment: file / optional / skip, with the confirm reason; the policy and reviewer ride along', async () => {
+      await kase('PVXC1RMM', 'Open', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' });
+      const mid = await message({
+        from: 'Michele Boren <michele@x.com>', subject: 'my docs', html: '<p>hi</p><img src="cid:logo1">',
+        attachments: [
+          file(2, 'paystub.pdf', 'application/pdf', 4000),
+          file(3, 'scans.zip', 'application/zip', 9000),
+          file(4, 'invoice.pdf.exe', 'application/octet-stream', 500),
+          file(5, 'logo.png', 'image/png', 900, { cid: 'logo1' }),
+          file(6, 'bank.pdf', 'application/pdf', 25 * MB),        // decoded ≈ 18.5 MB > the 15 MB default
+          file(7, 'video.pdf', 'application/pdf', 60 * MB),       // decoded ≈ 44 MB > the 40 MB cap
+          file(8, 'Fwd', 'message/rfc822', 3000),                 // no extension: named by its type (.eml)
+          file(9, 'noext', 'application/octet-stream', 100),      // no usable type at all
+        ],
+      });
+      const r = await comms.preview(pool, FRED, { message_ids: [mid], case_id: 'PVXC1RMM' });
+      expect(r.case).toEqual({ case_id: 'PVXC1RMM', case_number: '26-PVXC1', case_type: 'Bankruptcy', case_stage: 'Open' });
+      expect(r.suggested).toBe(false);
+      expect(r.reviewer).toEqual({ user_id: SB, name: 'Shana', is_you: false });
+      expect(r.policy).toEqual({ confirm_mb: 15, confirm_types: null });
+      expect(r.max_messages).toBe(50);
+      const [m] = r.messages;
+      expect(m).toMatchObject({ id: mid, mailbox_id: 2, from: 'Michele Boren <michele@x.com>', subject: 'my docs', move: null });
+      expect(m.parts.map(p => [p.part, p.filename, p.kind, p.reason, p.confirm, p.checked])).toEqual([
+        ['2', 'paystub.pdf', 'file', null, null, true],
+        ['3', 'scans.zip', 'optional', null, 'type', false],
+        ['4', 'invoice.pdf.exe', 'skip', 'blocked', null, false],
+        ['5', 'logo.png', 'skip', 'inline_image', null, false],
+        ['6', 'bank.pdf', 'file', null, 'size', true],
+        ['7', 'video.pdf', 'skip', 'too_large', null, false],
+        ['8', 'Fwd.eml', 'optional', null, 'type', false],
+        ['9', 'noext', 'skip', 'type_not_allowed', null, false],
+      ]);
+      expect(m.parts[0].bytes).toBe(Math.round(4000 * att.DECODED_RATIO));
+
+      // the firm's lists: zip blocked, eml fine without asking, confirm over 20 MB
+      SET.email_attachments_blocked_ext = 'zip, exe';
+      SET.email_attachments_confirm_ext = 'docx';
+      SET.email_attachments_confirm_mb = '20';
+      const r2 = await comms.preview(pool, FRED, { message_ids: [mid], case_id: 'PVXC1RMM' });
+      expect(r2.policy).toEqual({ confirm_mb: 20, confirm_types: ['docx'] });
+      expect(r2.messages[0].parts.map(p => [p.part, p.kind, p.reason, p.confirm])).toEqual([
+        ['2', 'file', null, null], ['3', 'skip', 'blocked', null], ['4', 'skip', 'blocked', null], ['5', 'skip', 'inline_image', null],
+        ['6', 'file', null, null], ['7', 'skip', 'too_large', null], ['8', 'optional', null, null], ['9', 'skip', 'type_not_allowed', null],
+      ]);
+      // the reviewer previewing sees it is herself
+      expect((await comms.preview(pool, SB, { message_ids: [mid] })).reviewer.is_you).toBe(true);
+    });
+
+    test('preview: the matcher suggests the one case every email matches; a mixed selection suggests none', async () => {
+      const c = await contact('Michele', 'Boren', 'michele@x.com');
+      await kase('PVXC1RMM', 'Open', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' }); await relate('PVXC1RMM', c);
+      const a = await message({ from: 'michele@x.com', date: '2026-11-05 21:00:00', attachments: [pdf(2)] });
+      const b = await message({ from: 'Michele <michele@x.com>', date: '2026-11-05 20:00:00', attachments: [pdf(2, 'w2.pdf')] });
+      const noFiles = await message({ from: 'michele@x.com', date: '2026-11-05 22:00:00', attachments: [] });
+      const r = await comms.preview(pool, FRED, { message_ids: [a, b, noFiles] });
+      expect(r).toMatchObject({ case: { case_id: 'PVXC1RMM' }, suggested: true });
+      expect(r.messages.map(m => m.id)).toEqual([b, a, noFiles]);   // oldest first
+      expect(r.messages[0].match).toMatchObject({ case_id: 'PVXC1RMM', method: 'sender_open_case', flag: null });
+      expect(r.candidates.map(x => x.case_id)).toEqual(['PVXC1RMM']);
+      const stranger = await message({ from: 'mom@y.com', attachments: [pdf(2)] });
+      const mixed = await comms.preview(pool, FRED, { message_ids: [a, stranger] });
+      expect(mixed).toMatchObject({ case: null, suggested: false });
+      expect(mixed.candidates.map(x => x.case_id)).toEqual(['PVXC1RMM']);
+      // two clients, two cases: no one case to suggest; both offered
+      const k = await contact('Kiara', 'Bentley', 'kiara@x.com');
+      await kase('CF8ZT7VE', 'Filed', 'case'); await relate('CF8ZT7VE', k);
+      const fromKiara = await message({ from: 'kiara@x.com', attachments: [pdf(2)] });
+      const two = await comms.preview(pool, FRED, { message_ids: [a, fromKiara] });
+      expect(two).toMatchObject({ case: null, suggested: false });
+      expect(two.candidates.map(x => x.case_id).sort()).toEqual(['CF8ZT7VE', 'PVXC1RMM']);
+      // a firm sender never matches a client case (the matcher fix): no suggestion
+      const staff = await message({ from: 'Rena <rena@4lsg.com>', attachments: [pdf(2)] });
+      await relate('PVXC1RMM', await contact('Rena', 'G', 'rena@4lsg.com'));
+      const own = await comms.preview(pool, FRED, { message_ids: [staff] });
+      expect(own).toMatchObject({ case: null, suggested: false });
+      expect(own.messages[0].match).toMatchObject({ case_id: null, flag: 'firm_sender' });
+    });
+
+    test('preview: filed parts, duplicates already in the case or earlier in the selection, and parts to move (Unsorted ticked, another case not)', async () => {
+      await kase('PVXC1RMM', 'Open', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' });
+      await kase('CF8ZT7VE', 'Filed', 'case');
+      // filed to the target case before
+      const first = await message({ from: 'michele@x.com', date: '2026-11-01 20:00:00', attachments: [pdf(2, 'Paystub.pdf', 4000)] });
+      await filing.fileMessageAttachments(pool, { ref: { mail_message_id: first }, target: 'case', caseId: 'PVXC1RMM' });
+      // filed to Unsorted (a stranger, no case)
+      const binned = await message({ from: 'mom@y.com', date: '2026-11-02 20:00:00', attachments: [pdf(2, 'tax.pdf')] });
+      await filing.fileMessageAttachments(pool, { ref: { mail_message_id: binned } });
+      // filed to ANOTHER case
+      const other = await message({ from: 'mom@y.com', subject: 'case CF8ZT7VE', date: '2026-11-03 20:00:00', attachments: [pdf(2, 'deed.pdf')] });
+      await q("UPDATE cases SET case_dropbox = 'https://dbx/case-PVXC1RMM' WHERE case_id = 'CF8ZT7VE'");
+      await filing.fileMessageAttachments(pool, { ref: { mail_message_id: other } });
+      // the same paystub again (case-blind name, same encoded size) + one sent twice in this selection
+      const again = await message({ from: 'michele@x.com', date: '2026-11-04 20:00:00', attachments: [pdf(2, 'paystub.PDF', 4000), pdf(3, 'w2.pdf', 5000)] });
+      const twice = await message({ from: 'michele@x.com', date: '2026-11-05 20:00:00', attachments: [pdf(2, 'W2.pdf', 5000), pdf(3, 'w2.pdf', 5001)] });
+
+      const r = await comms.preview(pool, FRED, { message_ids: [twice, again, other, binned, first], case_id: 'PVXC1RMM' });
+      const by = Object.fromEntries(r.messages.map(m => [m.id, m]));
+      expect(by[first].parts[0]).toMatchObject({ filed: { status: 'filed', placement: 'case', case_id: 'PVXC1RMM' }, duplicate: null, checked: false });
+      expect(by[first].move).toBeNull();                                         // already in the target
+      expect(by[binned].parts[0]).toMatchObject({ filed: { status: 'filed', placement: 'unsorted', case_id: null }, checked: false });
+      expect(by[binned].move).toEqual({ count: 1, unsorted: 1, case_ids: [], checked: true });
+      expect(by[other].parts[0].filed).toMatchObject({ placement: 'case', case_id: 'CF8ZT7VE' });
+      expect(by[other].move).toEqual({ count: 1, unsorted: 0, case_ids: ['CF8ZT7VE'], checked: false });
+      expect(by[again].parts[0]).toMatchObject({ filed: null, duplicate: { mail_message_id: first, in_selection: false }, checked: false });
+      expect(by[again].parts[0].duplicate.path).toMatch(/\/cases\/bentley\/Client Uploads\/Emailed \d{6}\/Paystub\.pdf$/);
+      expect(by[again].parts[1]).toMatchObject({ duplicate: null, checked: true });
+      expect(by[twice].parts[0]).toMatchObject({ duplicate: { mail_message_id: again, in_selection: true }, checked: false });
+      expect(by[twice].parts[1]).toMatchObject({ duplicate: null, checked: true });   // a different size is a different file
+      // no target → nothing is a duplicate and nothing is offered a move tick
+      const loose = await comms.preview(pool, FRED, { message_ids: [binned, again] });
+      expect(loose.case).toBeNull();
+      expect(loose.messages.find(m => m.id === again).parts[0].duplicate).toBeNull();
+      expect(loose.messages.find(m => m.id === binned).move).toMatchObject({ count: 1, checked: false });
+    });
+
+    test('fileOne files exactly the picked parts to the case; a confirm-type pick needs confirming (409), a blocked or bad pick is refused', async () => {
+      await kase('PVXC1RMM', 'Open', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' });
+      const mid = await message({
+        from: 'Michele Boren <michele@x.com>', subject: 'docs', date: '2026-11-06 03:30:00', html: '<img src="cid:logo1">',
+        attachments: [pdf(2, 'paystub.pdf'), file(3, 'scans.zip', 'application/zip', 9000), file(4, 'run.exe', 'application/octet-stream', 50),
+          file(5, 'logo.png', 'image/png', 900, { cid: 'logo1' }), pdf(6, 'leave-me.pdf')],
+      });
+      const go = (body, who = FRED) => comms.fileOne(pool, who, mid, { case_id: 'PVXC1RMM', ...body });
+      await expect(go({ parts: ['2', '3'] })).rejects.toMatchObject({
+        status: 409, needs_confirmation: [{ part: '3', filename: 'scans.zip', why: 'type' }] });
+      await expect(go({ parts: ['4'] })).rejects.toMatchObject({ status: 422, message: "run.exe cannot be filed: its type is on the firm's never-filed list." });
+      await expect(go({ parts: ['5'] })).rejects.toMatchObject({ status: 422, message: 'logo.png cannot be filed: it is an inline signature image.' });
+      await expect(go({ parts: ['9'] })).rejects.toMatchObject({ status: 400, message: 'part 9 is not an attachment of this email' });
+      await expect(go({ parts: [] })).rejects.toMatchObject({ status: 400, message: /^Nothing to file/ });
+      await expect(go({ parts: ['2'], case_id: 'NOPE1234' })).rejects.toMatchObject({ status: 404, message: 'Case not found' });
+      await expect(go({ parts: ['2'], extra: 1 })).rejects.toMatchObject({ status: 400, message: 'unknown field "extra"' });
+      await expect(go({ parts: ['2'], move: 'yes' })).rejects.toMatchObject({ status: 400 });
+      await expect(go({ parts: ['2'], batch: 'short' })).rejects.toMatchObject({ status: 400 });
+      expect(mockDbx.uploads).toHaveLength(0);                                      // every refusal is before any filing
+
+      const r = await go({ parts: ['2', '3'], confirm: ['3'] });
+      expect(r).toMatchObject({ id: mid, case: { case_id: 'PVXC1RMM' }, refiled: null, linked: false, link_error: null });
+      expect(r.files.map(f => [f.part, f.status, f.filename])).toEqual([['2', 'filed', 'paystub.pdf'], ['3', 'filed', 'scans.zip']]);
+      // the parts nobody picked are not "skipped" to the person; the ones that could never be filed say why
+      expect(r.skipped).toEqual([
+        { part: '4', filename: 'run.exe', reason: 'type_not_allowed' },
+        { part: '5', filename: 'logo.png', reason: 'inline_image' },
+      ]);
+      expect(mockDbx.uploads.map(u => u.path)).toEqual([
+        '/cases/bentley/Client Uploads/Emailed 261105/paystub.pdf',
+        '/cases/bentley/Client Uploads/Emailed 261105/scans.zip',
+      ]);
+      expect(r.folder_path).toBe('/cases/bentley/Client Uploads/Emailed 261105');
+      expect(await regRows(mid)).toEqual([
+        expect.objectContaining({ part: '2', status: 'filed', link_type: 'case', link_id: 'PVXC1RMM', placement: 'case', filed_by: FRED }),
+        expect.objectContaining({ part: '3', status: 'filed', link_type: 'case', link_id: 'PVXC1RMM', placement: 'case', filed_by: FRED }),
+      ]);
+      // again, plus the forgotten one: the filed ones come back already_filed, nothing is uploaded twice
+      const r2 = await go({ parts: ['2', '6'] });
+      expect(r2.files.map(f => [f.part, f.status])).toEqual([['2', 'already_filed'], ['6', 'filed']]);
+      expect(mockDbx.uploads).toHaveLength(3);
+      expect(await q('SELECT COUNT(*) AS n FROM mail_attachment_notices')).toEqual([{ n: 0 }]);   // no batch → nothing queued
+
+      // a size-confirm pick: over the firm's threshold
+      SET.email_attachments_confirm_mb = '0.001';
+      const big = await message({ from: 'michele@x.com', attachments: [pdf(2, 'big.pdf', 5000)] });
+      await expect(comms.fileOne(pool, FRED, big, { case_id: 'PVXC1RMM', parts: ['2'] })).rejects.toMatchObject({
+        status: 409, needs_confirmation: [{ part: '2', filename: 'big.pdf', why: 'size' }] });
+      SET.email_attachments_confirm_mb = '0';                                       // 0 = never ask
+      expect((await comms.fileOne(pool, FRED, big, { case_id: 'PVXC1RMM', parts: ['2'] })).files[0].status).toBe('filed');
+      // the firm's own never-file list is the one enforced (zip on it; exe off it is then a confirm-type pick)
+      SET.email_attachments_blocked_ext = 'zip';
+      const z = await message({ from: 'michele@x.com', attachments: [file(2, 'more.zip', 'application/zip', 900), file(3, 'tool.exe', 'application/octet-stream', 900)] });
+      await expect(comms.fileOne(pool, FRED, z, { case_id: 'PVXC1RMM', parts: ['2'], confirm: ['2'] })).rejects.toMatchObject({ status: 422, message: /never-filed list/ });
+      expect((await comms.fileOne(pool, FRED, z, { case_id: 'PVXC1RMM', parts: ['3'], confirm: ['3'] })).files[0]).toMatchObject({ status: 'filed', filename: 'tool.exe' });
+    });
+
+    test('fileOne with move: what docs@ put in Unsorted moves to the case (the whole email), then the picks file beside it', async () => {
+      await kase('PVXC1RMM', 'Open', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' });
+      const mid = await message({ from: 'mom@y.com', attachments: [pdf(2, 'tax.pdf'), file(3, 'pics.zip', 'application/zip', 900)] });
+      await filing.fileMessageAttachments(pool, { ref: { mail_message_id: mid } });      // docs@: no case → Unsorted
+      expect((await regRows(mid)).map(x => x.placement)).toEqual(['unsorted']);
+      const moveOnly = await comms.fileOne(pool, FRED, mid, { case_id: 'PVXC1RMM', parts: [], move: true });
+      expect(moveOnly.refiled).toMatchObject({ moved: 1, already_there: 0, failed: [] });
+      expect(moveOnly.files.map(f => [f.part, f.status])).toEqual([['2', 'already_filed']]);
+      expect(mockDbx.moves.map(m => m.to)).toEqual(['/cases/bentley/Client Uploads/Emailed 261105/tax.pdf']);
+      expect(await regRows(mid)).toEqual([expect.objectContaining({ part: '2', link_type: 'case', link_id: 'PVXC1RMM', placement: 'case', filed_by: FRED })]);
+      // nothing left elsewhere: move alone is now "nothing to file"
+      await expect(comms.fileOne(pool, FRED, mid, { case_id: 'PVXC1RMM', parts: [], move: true })).rejects.toMatchObject({ status: 400 });
+      // the zip the robot skipped, picked by a person
+      const r = await comms.fileOne(pool, FRED, mid, { case_id: 'PVXC1RMM', parts: ['3'], confirm: ['3'] });
+      expect(r.files.map(f => [f.part, f.status])).toEqual([['3', 'filed']]);
+      expect(r.refiled).toBeNull();
+    });
+
+    test('access: anyone who can READ the email files it; no read access = 404 and nothing happens; SU reads every box', async () => {
+      await kase('PVXC1RMM', 'Open', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' });
+      const mine = await message({ from: 'michele@x.com', attachments: [pdf(2)] });
+      const box3 = await message({ from: 'michele@x.com', mailboxId: 3, attachments: [pdf(2)] });
+      for (const call of [
+        () => comms.preview(pool, RG, { message_ids: [mine] }),
+        () => comms.fileOne(pool, RG, mine, { case_id: 'PVXC1RMM', parts: ['2'] }),
+        () => comms.preview(pool, SB, { message_ids: [mine, box3] }),
+        () => comms.fileOne(pool, SB, box3, { case_id: 'PVXC1RMM', parts: ['2'] }),
+        () => comms.preview(pool, FRED, { message_ids: [999999] }),
+      ]) await expect(call()).rejects.toMatchObject({ status: 404, message: 'Message not found' });
+      expect(mockDbx.uploads).toHaveLength(0);
+      expect((await comms.fileOne(pool, SB, mine, { case_id: 'PVXC1RMM', parts: ['2'] })).files[0].status).toBe('filed');
+      expect((await comms.fileOne(pool, SS, box3, { case_id: 'PVXC1RMM', parts: ['2'] })).files[0].status).toBe('filed');
+      // an ALIAS slice reader (rena@ inside stuart@): her slice's mail, under the alias's id (the part route's URL)
+      await q(`INSERT INTO mailboxes (id, address, domain, imap_host, imap_user, alias_of) VALUES (5, 'rena@4lsg.com', '4lsg.com', 'imap.test', 'u', 2)`);
+      await q("INSERT INTO channel_grants (user, channel_type, channel_id, can_read, can_send, can_manage, granted_by) VALUES (?, 'mailbox', 5, 1, 0, 0, 1)", [RG]);
+      const toRena = await message({ from: 'michele@x.com', attachments: [pdf(2, 'r.pdf')] });
+      await q("UPDATE mail_messages SET to_addrs = 'Rena <rena@4lsg.com>' WHERE id = ?", [toRena]);
+      const pv = await comms.preview(pool, RG, { message_ids: [toRena] });
+      expect(pv.messages[0]).toMatchObject({ id: toRena, mailbox_id: 5 });
+      expect((await comms.preview(pool, FRED, { message_ids: [toRena] })).messages[0].mailbox_id).toBe(2);
+      expect((await comms.fileOne(pool, RG, toRena, { case_id: 'PVXC1RMM', parts: ['2'] })).files[0].status).toBe('filed');
+      await expect(comms.preview(pool, RG, { message_ids: [mine] })).rejects.toMatchObject({ status: 404 });   // not in her slice
+      // the input guards
+      await expect(comms.preview(pool, FRED, { message_ids: [] })).rejects.toMatchObject({ status: 400 });
+      await expect(comms.preview(pool, FRED, { message_ids: Array.from({ length: 51 }, (_, i) => i + 1) })).rejects.toMatchObject({ status: 400, message: 'at most 50 emails at a time' });
+      await expect(comms.preview(pool, FRED, { message_ids: [mine], case_id: 'NOPE1234' })).rejects.toMatchObject({ status: 404, message: 'Case not found' });
+    });
+
+    test('fileOne with link: the email is linked to the case (its log row); a link that cannot happen yet is reported, the files still file', async () => {
+      await kase('PVXC1RMM', 'Open', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' });
+      const fresh = await message({ from: 'michele@x.com', subject: 'just now', text: 'here you go', attachments: [pdf(2)] });
+      const r1 = await comms.fileOne(pool, FRED, fresh, { case_id: 'PVXC1RMM', parts: ['2'], link: true });
+      expect(r1.files[0].status).toBe('filed');
+      expect(r1).toMatchObject({ linked: false, link_error: expect.stringMatching(/arrived in the last few minutes/) });
+      const old = await message({ from: 'michele@x.com', subject: 'last week', text: 'here you go', attachments: [pdf(2)] });
+      await q('UPDATE mail_messages SET ingested_at = UTC_TIMESTAMP() - INTERVAL 1 DAY WHERE id = ?', [old]);
+      const r2 = await comms.fileOne(pool, FRED, old, { case_id: 'PVXC1RMM', parts: ['2'], link: true });
+      expect(r2).toMatchObject({ linked: true, link_error: null });
+      const [m] = await q('SELECT log_id FROM mail_messages WHERE id = ?', [old]);
+      expect(m.log_id).not.toBeNull();
+      expect(r2.log_id).toBe(Number(m.log_id));                                    // public/js/yc-sync.js announces it
+      expect(r1.log_id).toBeNull();
+      const [lg] = await q('SELECT log_type, log_link_type, log_link_id, log_by FROM log WHERE log_id = ?', [m.log_id]);
+      expect(lg).toMatchObject({ log_type: 'email', log_by: FRED });
+      const [about] = await q('SELECT * FROM log WHERE log_id = ?', [m.log_id]);
+      expect(JSON.stringify(about)).toContain('PVXC1RMM');
+    });
+
+    test('the review notice: one per batch per sender, to the reviewer — not when the reviewer filed them, not without a reviewer', async () => {
+      const c = await contact('Michele', 'Boren', 'michele@x.com');
+      await kase('PVXC1RMM', 'Open', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' }); await relate('PVXC1RMM', c);
+      const BATCH = 'batchAAAA1111';
+      const a = await message({ from: 'Michele Boren <michele@x.com>', subject: 'stubs', attachments: [pdf(2, 'stub.pdf')] });
+      const b = await message({ from: 'Michele Boren <michele@x.com>', subject: 'w2', attachments: [pdf(2, 'w2.pdf')] });
+      const d = await message({ from: 'Her Mom <mom@y.com>', subject: 'for michele', attachments: [pdf(2, 'deed.pdf')] });
+      for (const id of [a, b, d]) await comms.fileOne(pool, FRED, id, { case_id: 'PVXC1RMM', parts: ['2'], batch: BATCH });
+      const queued = await q('SELECT digest_key, mail_message_id, sender, notified_at FROM mail_attachment_notices ORDER BY mail_message_id');
+      expect(queued.map(x => [x.digest_key, x.mail_message_id, x.sender, x.notified_at])).toEqual([
+        [`comms-${BATCH}`, a, 'michele@x.com', null], [`comms-${BATCH}`, b, 'michele@x.com', null], [`comms-${BATCH}`, d, 'mom@y.com', null]]);
+      // someone who cannot read them cannot claim them
+      await expect(comms.sendNotice(pool, RG, { batch: BATCH })).rejects.toMatchObject({ status: 404 });
+      expect((await q('SELECT COUNT(*) AS n FROM mail_attachment_notices WHERE notified_at IS NULL'))[0].n).toBe(3);
+
+      const s = await comms.sendNotice(pool, FRED, { batch: BATCH });
+      expect(s).toEqual({ sent: true, to: { user_id: SB, name: 'Shana' }, count: 3, notices: 2 });
+      expect(emailSvc.sendEmail).toHaveBeenCalledTimes(2);
+      const [[, m1], [, m2]] = emailSvc.sendEmail.mock.calls;
+      expect(m1).toMatchObject({ from: 'automations@4lsg.com', to: 'sb@4lsg.com',
+        subject: 'Filed from Comms — Michele Boren (2 files from 2 emails) — filed to case PVXC1RMM' });
+      expect(m1.html).toContain('Filed by Fred');
+      expect(m1.html).toContain('>stub.pdf</a>');
+      expect(m1.html).toContain('>w2.pdf</a>');
+      expect(m1.html).not.toContain('deed.pdf');
+      expect(m2.subject).toMatch(/^Filed from Comms — Her Mom \(1 file\) — filed to case PVXC1RMM$/);
+      expect(m2.html).toContain('Filed to case PVXC1RMM by Fred from Comms.');
+      const claimed = await q('SELECT mail_message_id, digest_of, notified_at IS NOT NULL AS done FROM mail_attachment_notices ORDER BY mail_message_id');
+      expect(claimed.map(x => [x.mail_message_id, x.digest_of, x.done])).toEqual([[a, a, 1], [b, a, 1], [d, d, 1]]);
+      expect(await comms.sendNotice(pool, FRED, { batch: BATCH })).toEqual({ sent: false, reason: 'nothing_to_report' });
+      expect(emailSvc.sendEmail).toHaveBeenCalledTimes(2);
+
+      // the reviewer filing herself: claimed, not sent
+      const e = await message({ from: 'michele@x.com', attachments: [pdf(2, 'more.pdf')] });
+      await comms.fileOne(pool, SB, e, { case_id: 'PVXC1RMM', parts: ['2'], batch: 'batchBBBB2222' });
+      expect(await comms.sendNotice(pool, SB, { batch: 'batchBBBB2222' })).toEqual({ sent: false, reason: 'you_are_the_reviewer', count: 1 });
+      // no reviewer set (or one who cannot sign in): claimed, not sent
+      const f = await message({ from: 'michele@x.com', attachments: [pdf(2, 'last.pdf')] });
+      await comms.fileOne(pool, FRED, f, { case_id: 'PVXC1RMM', parts: ['2'], batch: 'batchCCCC3333' });
+      await q("UPDATE users SET user_auth = 'disabled' WHERE user = ?", [SB]);
+      expect(await comms.sendNotice(pool, FRED, { batch: 'batchCCCC3333' })).toEqual({ sent: false, reason: 'no_reviewer', count: 1 });
+      SET.email_attachments_reviewer = '';
+      expect(await comms.resolveReviewer(pool)).toBeNull();
+      expect(emailSvc.sendEmail).toHaveBeenCalledTimes(2);
+      await expect(comms.sendNotice(pool, FRED, { batch: 'bad batch!' })).rejects.toMatchObject({ status: 400 });
+    });
+
+    test('S3b folder: a folder inside the case folder taken EXACTLY (leading spaces kept), nested; a move lands there too; what could leave the case folder is refused', async () => {
+      await kase('PVXC1RMM', 'Open', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' });
+      const a = await message({ from: 'adobesign@adobesign.com', subject: 'signed', date: '2026-11-10 03:12:00', attachments: [pdf(2, 'Responses.pdf')] });
+      const r = await comms.fileOne(pool, FRED, a, { case_id: 'PVXC1RMM', parts: ['2'], folder: ' 012 - Supplemental Responses' });
+      expect(r.files[0]).toMatchObject({ status: 'filed', path: '/cases/bentley/ 012 - Supplemental Responses/Responses.pdf' });
+      expect(r.folder_path).toBe('/cases/bentley/ 012 - Supplemental Responses');
+      const b = await message({ from: 'adobesign@adobesign.com', attachments: [pdf(2, 'Sworn.pdf')] });
+      const r2 = await comms.fileOne(pool, FRED, b, { case_id: 'PVXC1RMM', parts: ['2'], folder: '/Signed Documents//2026/' });
+      expect(r2.files[0].path).toBe('/cases/bentley/Signed Documents/2026/Sworn.pdf');
+      // docs@ put this one in Unsorted: moved into the chosen folder, with the new pick beside it
+      const c = await message({ from: 'mom@y.com', attachments: [pdf(2, 'tax.pdf'), pdf(3, 'deed.pdf')] });
+      await filing.fileMessageAttachments(pool, { ref: { mail_message_id: c }, parts: ['2'] });
+      const r3 = await comms.fileOne(pool, FRED, c, { case_id: 'PVXC1RMM', parts: ['3'], move: true, folder: ' Client Docs' });
+      expect(mockDbx.moves.map(m => m.to)).toEqual(['/cases/bentley/ Client Docs/tax.pdf']);
+      expect(r3.files.find(f => f.part === '3').path).toBe('/cases/bentley/ Client Docs/deed.pdf');
+      for (const bad of ['../x', 'a/../b', 'a\\b', '  /x', 'a:b', 'a.', 'a ', 'a/b/c/d/e/f/g', 'x'.repeat(121)]) {
+        await expect(comms.fileOne(pool, FRED, a, { case_id: 'PVXC1RMM', parts: ['2'], folder: bad })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/^folder/) });
+      }
+      await expect(comms.fileOne(pool, FRED, a, { case_id: 'PVXC1RMM', parts: ['2'], folder: 7 })).rejects.toMatchObject({ status: 400 });
+      expect(mockDbx.uploads).toHaveLength(4);                                      // the 3 picks + docs@'s tax.pdf: no refusal uploaded anything
+      // no folder = the default, as before
+      const d = await message({ from: 'mom@y.com', date: '2026-11-06 03:30:00', attachments: [pdf(2, 'z.pdf')] });
+      expect((await comms.fileOne(pool, FRED, d, { case_id: 'PVXC1RMM', parts: ['2'], folder: '' })).files[0].path).toBe('/cases/bentley/Client Uploads/Emailed 261105/z.pdf');
+    });
+
+    test('S3b folders: the case folder\'s subfolders from one recursive listing — folders only, relative, exact names, ≤ 4 levels; no folder / Dropbox down said', async () => {
+      await kase('PVXC1RMM', 'Open', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' });
+      const F = (p) => ({ '.tag': 'folder', path_display: p, path_lower: p.toLowerCase() });
+      mockDbx.listing = { truncated: false, entries: [
+        F('/cases/bentley/ 012 - Supplemental Responses'), F('/cases/bentley/Client Uploads'), F('/cases/bentley/Client Uploads/Emailed 261108'),
+        { '.tag': 'file', path_display: '/cases/bentley/a.pdf', path_lower: '/cases/bentley/a.pdf' },
+        F('/cases/bentley/a/b/c/d'), F('/cases/bentley/a/b/c/d/e'), F('/elsewhere/x'), F('/cases/bentley'), F('/cases/bentley-sibling/x'),
+      ] };
+      const r = await comms.caseFolders(pool, RG, { case_id: 'PVXC1RMM' });
+      expect(mockDbx.listed).toEqual({ path: '/cases/bentley', recursive: true });
+      expect(r).toEqual({ case_id: 'PVXC1RMM', truncated: false, reason: null,
+        folders: [' 012 - Supplemental Responses', 'a/b/c/d', 'Client Uploads', 'Client Uploads/Emailed 261108'] });
+      mockDbx.listing = new Error('too_many_requests');
+      expect(await comms.caseFolders(pool, RG, { case_id: 'PVXC1RMM' })).toMatchObject({ folders: [], reason: 'unavailable', error: 'too_many_requests' });
+      await kase('CF8ZT7VE', 'Filed', 'case');
+      expect(await comms.caseFolders(pool, RG, { case_id: 'CF8ZT7VE' })).toEqual({ case_id: 'CF8ZT7VE', folders: [], truncated: false, reason: 'no_case_folder' });
+      await expect(comms.caseFolders(pool, RG, { case_id: 'NOPE1234' })).rejects.toMatchObject({ status: 404 });
+      await expect(comms.caseFolders(pool, RG, {})).rejects.toMatchObject({ status: 400 });
+    });
+
+    test('S3b names: an email placed nowhere offers the cases of clients named (first AND last) in its subject — never the firm\'s people, never the target', async () => {
+      const mb = await contact('Michele', 'Boren', 'michelemaria057@msn.com');
+      await kase('CMKA8RKX', 'Open', 'case'); await relate('CMKA8RKX', mb);
+      await kase('FW13PDQT', 'Concluded', 'case'); await relate('FW13PDQT', mb, 'Secondary');
+      await kase('ZZZZ0001', 'Open', 'case'); await relate('ZZZZ0001', mb, 'Other');            // not a client relation
+      const ss = await contact('Stuart', 'Sandweiss', 'stuart@4lsg.com');                       // a firm address
+      await kase('SSSS0001', 'Open', 'case'); await relate('SSSS0001', ss);
+      const rr = await contact('Rena', 'Grunberger', 'rena@gmail.test');                       // named like a staff user
+      await kase('RRRR0001', 'Open', 'case'); await relate('RRRR0001', rr);
+      const only = await contact('Boren', 'Michele', null);                                    // the names swapped: still both words
+      await kase('OOOO0001', 'Open', 'case'); await relate('OOOO0001', only);
+      const adobe = await message({ from: 'Adobe Sign <adobesign@adobesign.com>',
+        subject: 'Boren - Supplemental Responses to Interrogatories - FINAL between Stuart Sandweiss and michele boren is Signed and Filed! (cc Rena Grunberger)', attachments: [pdf(2)] });
+      const r = await comms.preview(pool, FRED, { message_ids: [adobe] });
+      expect(r).toMatchObject({ case: null, suggested: false });
+      expect(r.candidates.map(c => [c.case_id, c.why, c.contact_name])).toEqual([
+        ['CMKA8RKX', 'subject_name', 'Michele Boren'], ['OOOO0001', 'subject_name', 'Boren Michele'], ['FW13PDQT', 'subject_name', 'Michele Boren'],
+      ]);
+      expect(r.messages[0].named_cases).toEqual(['CMKA8RKX', 'OOOO0001', 'FW13PDQT']);
+      expect(r.messages[0].parts[0].checked).toBe(true);                             // files tick as ever; the case is still the person's pick
+      // one name only, or the words apart from a name: nothing
+      expect(await comms.subjectNameCases(pool, 'Signed doc received (Adobe Sign): Boren - Sworn Statement')).toEqual([]);
+      expect(await comms.subjectNameCases(pool, 'Michelle Borenstein')).toEqual([]);
+      // the matcher placed it (her own address): no name scan, the matcher's case
+      const own = await message({ from: 'michelemaria057@msn.com', subject: 'michele boren - the docs you asked for', attachments: [pdf(2)] });
+      const r2 = await comms.preview(pool, FRED, { message_ids: [own] });
+      expect(r2.messages[0].named_cases).toEqual([]);
+      expect(r2.candidates.every(c => c.why !== 'subject_name')).toBe(true);
+    });
+
+    test('Comms reads: the "Not filed" filter, and each attachment\'s filed state (its own row, or a copy\'s)', async () => {
+      await kase('PVXC1RMM', 'Open', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' });
+      const fwd = file(4, 'Fwd', 'message/rfc822', 3000);                        // filed as "Fwd.eml"
+      const filed = await message({ from: 'michele@x.com', rfc: 'same@x', attachments: [pdf(2, 'a.pdf'), pdf(3, 'b.pdf'), fwd] });
+      const copy = await message({ from: 'michele@x.com', rfc: 'same@x', mailboxId: 3, attachments: [pdf(2, 'a.pdf'), pdf(3, 'b.pdf'), fwd] });
+      const waiting = await message({ from: 'michele@x.com', attachments: [pdf(2, 'c.pdf')] });
+      const logoOnly = await message({ from: 'michele@x.com', html: '<img src="cid:l">', attachments: [file(2, 'l.png', 'image/png', 900, { cid: 'l' })] });
+      const plain = await message({ from: 'michele@x.com', attachments: [] });
+      const notFiled = async () => (await reads.listMessages(pool, SS, { all_folders: '1', not_filed: '1' })).messages.map(m => m.id);
+      const before = await notFiled();                                              // the pair (listed once), and c.pdf's email
+      expect(before).toHaveLength(2);
+      expect(before).toContain(waiting);
+      expect([filed, copy]).toContain(before.find(id => id !== waiting));
+      const all = (await reads.listMessages(pool, SS, { all_folders: '1' })).messages.map(m => m.id);
+      expect(all).toEqual(expect.arrayContaining([waiting, logoOnly, plain]));     // a logo or no file at all is never "not filed"
+      await comms.fileOne(pool, SS, copy, { case_id: 'PVXC1RMM', parts: ['2', '4'], confirm: ['4'] });   // the COPY was filed (docs@ files the copy it is handed)
+      expect(await notFiled()).toEqual([waiting]);                                  // one part filed, from either copy = done
+
+      const t = await reads.getMessage(pool, FRED, filed);
+      const atts = t.messages[0].attachments;
+      expect(atts.find(x => x.part === '2').filed).toMatchObject({ status: 'filed', placement: 'case', link_type: 'case', link_id: 'PVXC1RMM' });
+      expect(atts.find(x => x.part === '2').filed.path).toBe('/cases/bentley/Client Uploads/Emailed 261105/a.pdf');
+      expect(atts.find(x => x.part === '3').filed).toBeFalsy();
+      expect(atts.find(x => x.part === '4').filed).toMatchObject({ link_id: 'PVXC1RMM', path: '/cases/bentley/Client Uploads/Emailed 261105/Fwd.eml' });
+      // the copy's own card (SU reads mailbox 3): its own rows
+      const own = (await reads.getMessage(pool, SS, copy)).messages[0].attachments;
+      expect(own.map(x => !!x.filed)).toEqual([true, false, true]);
+      // a DIFFERENT email that happens to carry a part 2 shows nothing
+      const other = (await reads.getMessage(pool, FRED, waiting)).messages[0].attachments;
+      expect(other[0].filed).toBeFalsy();
+      // both copies filed, to different cases: each card shows ITS OWN row first
+      await kase('CF8ZT7VE', 'Filed', 'case', { dropbox: 'https://dbx/case-PVXC1RMM' });
+      await comms.fileOne(pool, FRED, filed, { case_id: 'CF8ZT7VE', parts: ['2'] });
+      expect((await reads.getMessage(pool, FRED, filed)).messages[0].attachments[0].filed.link_id).toBe('CF8ZT7VE');
+      expect((await reads.getMessage(pool, SS, copy)).messages[0].attachments[0].filed.link_id).toBe('PVXC1RMM');
     });
   });
 });

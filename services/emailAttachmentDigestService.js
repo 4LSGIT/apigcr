@@ -316,6 +316,7 @@ module.exports = {
   record,
   check,
   refileDigest,
+  burstRows,
   senderKey,
   QUIET_DEFAULT_MS,
   CAP_DEFAULT_MS,

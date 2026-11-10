@@ -42,6 +42,7 @@ const SKIP_REASON = Object.freeze({
   inline_image: 'inline image (signature / logo)',
   type_not_allowed: 'file type not filed',
   too_large: 'too large to file',
+  not_selected: 'left out by the person who filed these',
 });
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"'[\]]/g, (c) => (

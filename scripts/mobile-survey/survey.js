@@ -875,6 +875,13 @@ async function walk(page, W, record) {
     const PANE_DIALOGS = [
       ['comms-compose', 'openCompose()'],
       ['comms-reply-all', 'openMessage(state.messages[0]).then(() => openReply(state.thread.messages.find((m) => m.id === 301), true))'],
+      // Email attachments S3: File attachments (fixtures/api/mail/attachments/preview.json — every tag, a long
+      // unbroken file name, a move row, a long reviewer name) opened from an email whose card shows a Filed chip
+      // (…/threads/t1%40example-firm.test.json part 3 — that card alone is comms-thread-files), and the
+      // list's select mode with every row ticked.
+      ['comms-thread-files', "openMessage(state.messages[0]).then(() => { const a = document.querySelector('.mcard.anchor .atts'); if (a) a.scrollIntoView(); })"],
+      ['comms-file-attachments', 'openMessage(state.messages[0]).then(() => openFileDialog([301, 300]))'],
+      ['comms-select', 'setSelectMode(true); for (const m of state.messages) state.sel.add(m.id); renderList()'],
     ];
     for (const [key, js] of PANE_DIALOGS) {
       await page.evaluate(() => openMainTab('tabComms')); await sleep(1500);
@@ -882,7 +889,7 @@ async function walk(page, W, record) {
       if (!fr) { await record(`dialog:${key}`, await measure(page, null), await shot('dialog_' + key)); continue; }
       await fr.evaluate((js) => { try { return (0, eval)(js); } catch (e) { console.error(e); } }, js); await sleep(1500);
       await record(`dialog:${key}`, await measure(page, fr), await shot('dialog_' + key));
-      await fr.evaluate(() => { if (state.composer) closeComposer(state.composer, { keepDraft: false }); closeThread(); });
+      await fr.evaluate(() => { if (state.composer) closeComposer(state.composer, { keepDraft: false }); if (state.fa) closeFileDialog(); if (state.sel) setSelectMode(false); closeThread(); });
     }
 
     // The Code dialog (public/js/ycCodeBox.js), opened through the launcher's

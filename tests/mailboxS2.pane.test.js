@@ -464,15 +464,22 @@ describe('comms hub pane', () => {
     expect(doc.getElementById('viewer-backdrop').classList.contains('open')).toBe(false);
   });
 
-  test('save to case: suggestions (the linked case, then the conversation\'s client cases) → part blob → upload-link → Dropbox → upload-commit', async () => {
+  // Since email attachments S3 the Save button opens File attachments (tests/emailAttachmentsComms.pane.test.js);
+  // the browser's direct upload stays for a file too large for the server — the dialog's "Upload … directly".
+  test('save to case, too large for the server: part blob → upload-link → Dropbox → upload-commit, from the File dialog', async () => {
     const thread = withAtts([{ part: '2', filename: 'Untitled.pdf', size: 5, mime: 'application/pdf', cid: 'f_1', inline: false }],
       { case: { case_id: 'CaseA1', case_number: '26-11111' } });
     const xhrs = [];
     const { window, doc, calls } = await boot({
       handler: standard({
         'GET /api/mail/threads/root%40x.test': () => fresh(thread),
-        'GET /api/mail/messages/11/related': () => ({ contacts: [{ contact_id: 500, name: 'Doe, Jane', kind: 'person', emails: ['jane@client.test'], role: 'from', cases: [
-          { case_id: 'CaseA1', case_number: '26-11111', case_stage: 'Filed' }, { case_id: 'CaseB2', case_number: '26-22222', case_type: 'BK', case_stage: 'Open' }] }] }),
+        'POST /api/mail/attachments/preview': () => ({
+          case: { case_id: 'CaseB2', case_number: '26-22222', case_type: 'BK', case_stage: 'Open' }, suggested: true, candidates: [],
+          messages: [{ id: 11, mailbox_id: 1, from: 'Jane Doe <jane@client.test>', subject: 'Plan objection', date: '2026-10-08T14:00:00.000Z',
+            match: { case_id: 'CaseB2' }, move: null,
+            parts: [{ part: '2', filename: 'Untitled.pdf', mime: 'application/pdf', bytes: 60e6, kind: 'skip', reason: 'too_large', confirm: null, filed: null, duplicate: null, checked: false }] }],
+          reviewer: null, policy: { confirm_mb: 15, confirm_types: null }, max_messages: 50,
+        }),
         'GET /api/mailboxes/1/messages/11/parts/2': () => new window.Blob(['%PDF-1.7'], { type: 'application/pdf' }),
         'POST /api/documents/upload-link': () => ({ link: 'https://content.dropboxapi.com/apitul/1/abc', path: '/Cases/B2/Untitled.pdf', ticket: 'tkt', placement: 'case' }),
         'POST /api/documents/upload-commit': () => ({ document: { id: 9 }, link_type: 'case', link_id: 'CaseB2' }),
@@ -487,19 +494,19 @@ describe('comms hub pane', () => {
     doc.querySelector('#msg-list .msg').click();
     await tick(window, 80);
     doc.querySelector('.att .att-save').click();
-    expect(doc.getElementById('case-title').textContent).toBe('Save “Untitled.pdf” to a case');
-    const sugg = [...doc.querySelectorAll('#case-sugg li')];
-    expect(sugg.map((li) => li.querySelector('.l1').textContent)).toEqual(['26-11111', '26-22222Open']);
-    expect(doc.getElementById('case-sugg-wrap').hidden).toBe(false);
-    sugg[1].click();
     await tick(window, 80);
-    expect(doc.getElementById('case-backdrop').classList.contains('open')).toBe(false);
+    expect(doc.getElementById('fd-backdrop').classList.contains('open')).toBe(true);
+    expect(calls.find((c) => c.url === '/api/mail/attachments/preview').payload).toEqual({ message_ids: [11] });
+    const direct = [...doc.querySelectorAll('#fd-body .fd-note .linkish')].find((b) => /directly/.test(b.textContent));
+    expect(direct.textContent).toBe('Upload Untitled.pdf to the case\'s folder directly');
+    direct.click();
+    await tick(window, 80);
     expect(calls.find((c) => c.url === '/api/documents/upload-link').payload).toEqual({ case_id: 'CaseB2', filename: 'Untitled.pdf' });
     expect(xhrs.map((x) => [x.method, x.url, x.headers['Content-Type'], x.body && x.body.size])).toEqual([['POST', 'https://content.dropboxapi.com/apitul/1/abc', 'application/octet-stream', 8]]);
     expect(calls.find((c) => c.url === '/api/documents/upload-commit').payload).toEqual({ ticket: 'tkt', external_id: 'id:dbx123' });
     expect(doc.getElementById('toast').textContent).toBe('Saved Untitled.pdf to 26-22222');
-    // and nothing was case-LINKED by a save
-    expect(calls.some((c) => /case-link/.test(c.url))).toBe(false);
+    // and nothing was case-LINKED or filed by a direct upload
+    expect(calls.some((c) => /case-link|attachments\/file/.test(c.url))).toBe(false);
   });
 
   test('images: "Always show from <sender>" trusts for this reader and re-renders; Stop hides them again', async () => {
@@ -930,7 +937,7 @@ describe('comms hub pane', () => {
       }),
     });
     const first = calls.find((c) => c.url === '/api/mail/messages');
-    expect(first.payload).toEqual({ mailbox_ids: '1', unread_only: 1, q: 'plan', client_only: 0, has_files: 0, has_case: 0, no_case: 0, all_folders: 0, from_domain: '' });
+    expect(first.payload).toEqual({ mailbox_ids: '1', unread_only: 1, q: 'plan', client_only: 0, has_files: 0, not_filed: 0, has_case: 0, no_case: 0, all_folders: 0, from_domain: '' });
     expect(on(doc, 'f-unread')).toBe(true);
     expect(doc.getElementById('mb-label').textContent).toBe('Billing — billing@firm.test (2)');
     doc.getElementById('f-case-on').click(); // D.5: the three-way case switch

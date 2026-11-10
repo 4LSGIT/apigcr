@@ -75,6 +75,35 @@ function allowedExtensions() {
   return require('../portalDocsService').ALLOWED_EXTENSIONS;   // lazy (convention)
 }
 
+/**
+ * A PERSON filing from Comms (email attachments S3, Fred 2026-11-10) may
+ * file ANY type except the BLOCKED ones — the app setting
+ * `email_attachments_blocked_ext` (comma-separated extensions; blank = this
+ * built-in list of programs, scripts, installers, disk images and shortcuts).
+ * Why a default at all: case folders sync through Dropbox onto every staff
+ * computer, so a file filed there sits one double-click from running on all
+ * of them, and no client sends a real document in these formats. Automation
+ * (docs@) still files only the client-upload allowlist whatever the setting
+ * says: anyone can email docs@, and an archive is how a stranger slips past a
+ * type check. Through fileableParts' `staffPick` + `blocked`, which
+ * emailAttachmentFilingService passes only for parts a person picked.
+ */
+const DEFAULT_BLOCKED_EXTENSIONS = Object.freeze(new Set([
+  'exe', 'com', 'bat', 'cmd', 'msi', 'msp', 'mst', 'scr', 'pif', 'cpl', 'dll', 'sys', 'drv', 'ocx',
+  'vbs', 'vbe', 'js', 'jse', 'mjs', 'cjs', 'wsf', 'wsh', 'wsc', 'ws', 'ps1', 'psm1', 'psd1', 'hta',
+  'sh', 'bash', 'zsh', 'csh', 'ksh', 'command', 'tool', 'py', 'pyw', 'pl', 'rb', 'php',
+  'app', 'pkg', 'mpkg', 'dmg', 'iso', 'img', 'vhd', 'vhdx', 'deb', 'rpm', 'apk', 'ipa', 'jar', 'jnlp',
+  'reg', 'lnk', 'url', 'website', 'msc', 'gadget', 'scpt', 'workflow', 'xll', 'appref-ms', 'application',
+  'chm', 'inf', 'ins', 'isp', 'job', 'run', 'bin', 'elf',
+]));
+/** MIME types that give a nameless part an extension a person may file. */
+const STAFF_EXT_BY_MIME = Object.freeze({
+  'application/zip': 'zip',
+  'application/x-zip-compressed': 'zip',
+  'message/rfc822': 'eml',
+  'application/vnd.ms-outlook': 'msg',
+});
+
 /** Extension to give a part that arrived without one, by MIME type. */
 const EXT_BY_MIME = Object.freeze({
   'application/pdf': 'pdf',
@@ -205,12 +234,21 @@ function extOf(name) {
  *   type_not_allowed  extension (or MIME type) not on the allowlist —
  *                     attached emails, calendar invites, archives, .exe …
  *   too_large         estimated decoded size over maxBytes
+ * A part skipped only for its type that a PERSON could still file (any type
+ * not blocked, within maxBytes) carries `optional: true` — Comms offers it
+ * unticked.
  *
  * @param {object} row   resolveMessage() row (attachments parsed, body_html)
+ * @param {object} [o]
+ * @param {number} [o.maxBytes]
+ * @param {boolean} [o.staffPick]  a person's pick: every type not blocked
+ *                   passes the type check
+ * @param {Set<string>} [o.blocked]  the blocked extensions (blockedExtensions(db));
+ *                   default DEFAULT_BLOCKED_EXTENSIONS
  * @returns {{files: Array<{part, filename, mime, ext, est_bytes, inline}>,
- *            skipped: Array<{part, filename, reason}>}}
+ *            skipped: Array<{part, filename, reason, optional?, blocked?}>}}
  */
-function fileableParts(row, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
+function fileableParts(row, { maxBytes = DEFAULT_MAX_BYTES, staffPick = false, blocked = DEFAULT_BLOCKED_EXTENSIONS } = {}) {
   const parts = (Array.isArray(row && row.attachments) ? row.attachments : [])
     .filter(p => p && p.part != null && PART_ID_RE.test(String(p.part)));
   const marked = reads().markInline(parts, row && row.body_html);
@@ -223,17 +261,91 @@ function fileableParts(row, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
     const est = Math.round((Number(p.size) || 0) * DECODED_RATIO);
     let filename = String(p.filename || '').trim();
     let ext = extOf(filename);
-    if (!ext && EXT_BY_MIME[mime]) {
-      ext = EXT_BY_MIME[mime];
+    const byMime = EXT_BY_MIME[mime] || STAFF_EXT_BY_MIME[mime];
+    if (!ext && byMime) {
+      ext = byMime;
       filename = `${filename || `attachment-${part}`}.${ext}`;
     }
     const shown = filename || `attachment-${part}`;
     if (p.inline && est < INLINE_LOGO_MAX_BYTES) { skipped.push({ part, filename: shown, reason: 'inline_image' }); continue; }
-    if (!ext || !allowed.has(ext)) { skipped.push({ part, filename: shown, reason: 'type_not_allowed' }); continue; }
+    const isBlocked = !!ext && (blocked instanceof Set ? blocked : DEFAULT_BLOCKED_EXTENSIONS).has(ext);
+    const personMay = !!ext && !isBlocked;
+    if (!ext || !(allowed.has(ext) || (staffPick && personMay))) {
+      skipped.push({ part, filename: shown, reason: 'type_not_allowed',
+        ...(personMay && est <= maxBytes ? { optional: true, ext, est_bytes: est } : {}),
+        ...(isBlocked ? { blocked: true } : {}) });
+      continue;
+    }
     if (est > maxBytes) { skipped.push({ part, filename: shown, reason: 'too_large' }); continue; }
     files.push({ part, filename, mime, ext, est_bytes: est, inline: !!p.inline });
   }
   return { files, skipped };
+}
+
+/** "exe, .JS ,bat" → Set {exe, js, bat}; tokens that are not plain extensions are dropped. */
+function parseExtensionList(raw) {
+  return new Set(String(raw == null ? '' : raw).split(/[\s,;]+/)
+    .map(t => t.trim().toLowerCase().replace(/^\.+/, ''))
+    .filter(t => /^[a-z0-9][a-z0-9_-]{0,15}$/.test(t)));
+}
+
+/**
+ * The blocked extensions a person may never file (header): the
+ * `email_attachments_blocked_ext` setting, or — unset, blank, or nothing
+ * usable in it — DEFAULT_BLOCKED_EXTENSIONS. Blank can never unblock
+ * everything by accident; a firm that wants a type filed removes just it.
+ */
+async function blockedExtensions(db) {
+  let raw = null;
+  try {
+    const { getSettings } = require('../settingsService');   // lazy (convention)
+    raw = (await getSettings(db, [BLOCKED_SETTING]))[BLOCKED_SETTING];
+  } catch (err) {
+    console.warn(`[mailAttachment] ${BLOCKED_SETTING} unreadable, using the built-in list:`, err && err.message);
+  }
+  const set = parseExtensionList(raw);
+  return set.size ? set : DEFAULT_BLOCKED_EXTENSIONS;
+}
+const BLOCKED_SETTING = 'email_attachments_blocked_ext';
+const CONFIRM_EXT_SETTING = 'email_attachments_confirm_ext';
+const CONFIRM_MB_SETTING = 'email_attachments_confirm_mb';
+const DEFAULT_CONFIRM_MB = 15;
+
+/**
+ * What a PERSON filing from Comms may file, and what needs a second
+ * confirmation (Fred, 2026-11-10) — the three firm settings, read together:
+ *   blocked       never filed (blockedExtensions above)
+ *   confirmExt    Set of types that need confirming; null = blank setting =
+ *                 every type outside the client-upload allowlist
+ *   confirmBytes  decoded-size estimate over which a file needs confirming;
+ *                 0 = never (setting 0); blank = DEFAULT_CONFIRM_MB
+ */
+async function staffFilingPolicy(db) {
+  const blocked = await blockedExtensions(db);
+  let vals = {};
+  try {
+    const { getSettings } = require('../settingsService');   // lazy (convention)
+    vals = await getSettings(db, [CONFIRM_EXT_SETTING, CONFIRM_MB_SETTING]);
+  } catch (err) {
+    console.warn('[mailAttachment] confirm settings unreadable, using defaults:', err && err.message);
+  }
+  const ext = parseExtensionList(vals[CONFIRM_EXT_SETTING]);
+  const mbRaw = String(vals[CONFIRM_MB_SETTING] == null ? '' : vals[CONFIRM_MB_SETTING]).trim();
+  const mb = mbRaw === '' || !Number.isFinite(Number(mbRaw)) || Number(mbRaw) < 0 ? DEFAULT_CONFIRM_MB : Number(mbRaw);
+  return { blocked, confirmExt: ext.size ? ext : null, confirmBytes: Math.round(mb * 1024 * 1024) };
+}
+
+/**
+ * Why a part a person picked needs a second confirmation — 'type', 'size', or
+ * null. `f` = a fileableParts file {ext, est_bytes} (or a skipped optional
+ * part with the same fields).
+ */
+function confirmReason(f, policy) {
+  const ext = String(f && f.ext ? f.ext : '').toLowerCase();
+  const typeNeeds = policy.confirmExt ? policy.confirmExt.has(ext) : !allowedExtensions().has(ext);
+  if (typeNeeds) return 'type';
+  if (policy.confirmBytes > 0 && Number(f && f.est_bytes) > policy.confirmBytes) return 'size';
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -302,6 +414,16 @@ module.exports = {
   DEFAULT_MAX_BYTES,
   INLINE_LOGO_MAX_BYTES,
   EXT_BY_MIME,
+  DEFAULT_BLOCKED_EXTENSIONS,
+  BLOCKED_SETTING,
+  CONFIRM_EXT_SETTING,
+  CONFIRM_MB_SETTING,
+  DEFAULT_CONFIRM_MB,
+  blockedExtensions,
+  staffFilingPolicy,
+  confirmReason,
+  parseExtensionList,
+  DECODED_RATIO,
   // exported for tests
   _extOf: extOf,
 };

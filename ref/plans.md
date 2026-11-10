@@ -596,9 +596,9 @@ showed and the slice left alone:
   emitted (the error execution row is the only trace). Re-key windows only,
   rare. Fix: in backfill, also re-emit a present row with `log_id` NULL whose
   date is past `backfill_emit_after` (the new pass's crash-window rule).
-- **docs@ attachments → Dropbox** — IN PROGRESS as its own arc:
-  `ref/EMAIL_ATTACHMENTS_DESIGN.md` (S1 plumbing built 2026-11-06; S2 = the
-  docs@ workflow, S3 = Comms UI). Its deferred items live in that doc §8.
+- **docs@ attachments → Dropbox** — its own arc: `ref/EMAIL_ATTACHMENTS_DESIGN.md`
+  (S1 plumbing, S2/S2b–d the docs@ workflow, S3 File attachments from Comms —
+  all built by 2026-11-10). Its deferred items live in that doc §10.
 - **hookService stores a 512 KB SLICE of JSON TEXT in a JSON column.**
   `hook_executions.raw_input` and `hooks.captured_sample` are `json`; the
   oversized-payload path (`rawInputStr.slice(0, 512 * 1024)`, both the

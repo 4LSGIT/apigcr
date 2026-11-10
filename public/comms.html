@@ -306,6 +306,9 @@
   .att > .btn + .btn { border-left: 1px solid var(--border); }
   .att .att-name { min-width: 0; }
   .att .nm { overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+  /* Email attachments S3: "Filed" on a filed attachment (where, in its title) */
+  .att .att-filed { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; font-size: 10.5px; font-weight: 600; color: var(--ok-on-soft); background: var(--ok-soft); border-left: 1px solid var(--border); white-space: nowrap; }
+  .atts .att-file { font-size: 11px; }
 
   /* ── Related: the client's file, straight from the mail ── */
   .related { display: flex; flex-wrap: wrap; gap: 3px 6px; align-items: center; padding: 4px 10px; border-bottom: 1px solid var(--border); font-size: 11px; min-width: 0; }
@@ -336,6 +339,56 @@
   /* The frame's sandbox/srcdoc are set by mailRender.js; only its box is styled here. */
   .mail-frame { display: block; width: 100%; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
   .mail-frame.tall { height: 85vh !important; }
+
+  /* ── File attachments to a case (email attachments S3) ───────────
+     The dialog lists every chosen email's attachments with a checkbox each;
+     the select mode puts a checkbox on every list row and a bar over the
+     list. Names and subjects are TEXT; long ones wrap (overflow-wrap). */
+  .modal.fd { max-width: 640px; }
+  .fd-case { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; min-width: 0; }
+  .fd-case .yc-flabel { margin: 0; }
+  .fd-case .chip.case { cursor: default; max-width: 100%; }
+  .fd-case .chip.cand { cursor: pointer; }
+  .fd-folder { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin-bottom: 10px; min-width: 0; }
+  .fd-folder .yc-flabel { margin: 0; flex: 0 0 100%; }
+  .fd-folder .check { white-space: normal; }
+  .modal .fd-folder input[type="text"] { flex: 1 1 100%; }
+  .fd-folder .yc-hint { flex: 0 0 100%; }
+  .fd-named { margin: -4px 0 8px; }
+  .fd-list { max-height: 52vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; min-width: 0; }
+  .fd-msg { padding: 8px 10px; border-bottom: 1px solid var(--border); min-width: 0; }
+  .fd-msg:last-child { border-bottom: 0; }
+  .fd-mhead { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+  .fd-from { font-weight: 700; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .fd-date { flex: 0 0 auto; font-size: 11px; color: var(--text-muted); }
+  .fd-subj { font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; margin-bottom: 4px; }
+  .fd-part { display: flex; flex-wrap: wrap; gap: 3px 8px; align-items: center; padding: 3px 0; font-size: 12.5px; cursor: pointer; min-width: 0; }
+  .fd-part.off { cursor: default; color: var(--text-muted); }
+  .fd-part input { flex: 0 0 auto; margin: 0; }
+  .fd-name { min-width: 0; overflow-wrap: anywhere; }
+  .fd-size { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+  .fd-tag { font-size: 10.5px; font-weight: 600; padding: 0 6px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); overflow-wrap: anywhere; }
+  .fd-tag.warn { background: var(--warn-soft); color: var(--warn-on-soft); border-color: var(--warn); }
+  .fd-tag.ok { background: var(--ok-soft); color: var(--ok-on-soft); border-color: var(--ok); }
+  .fd-move { font-style: italic; }
+  .fd-note { font-size: 11.5px; color: var(--text-muted); padding: 2px 0; overflow-wrap: anywhere; }
+  .fd-note.warn { color: var(--warn-on-soft); }
+  .fd-res { font-size: 12px; margin-top: 4px; padding: 3px 6px; border-radius: 4px; overflow-wrap: anywhere; background: var(--surface-2); }
+  .fd-res.ok { background: var(--ok-soft); color: var(--ok-on-soft); }
+  .fd-res.warn { background: var(--warn-soft); color: var(--warn-on-soft); }
+  .fd-res.err { background: var(--danger-soft); color: var(--danger-on-soft); }
+  .fd-opts { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+  .fd-opts .check { white-space: normal; align-items: flex-start; }
+  .fd-confirm, .fd-summary { margin-top: 10px; padding: 8px 10px; border-radius: 4px; font-size: 12.5px; overflow-wrap: anywhere; }
+  .fd-confirm { background: var(--warn-soft); border: 1px solid var(--warn); color: var(--warn-on-soft); }
+  .fd-summary { background: var(--surface-2); border: 1px solid var(--border); }
+  #sel-btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-on-soft); font-weight: 700; }
+  .sel-bar { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 6px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--border); background: var(--accent-soft); color: var(--accent-on-soft); font-size: 12px; }
+  .sel-bar[hidden] { display: none; }
+  .sel-bar .sel-n { font-weight: 700; margin-right: auto; }
+  .msg .selbox { position: absolute; left: 4px; top: 9px; margin: 0; }
+  .list-col.selecting .msg.unread::before { display: none; }
+  .msg.picked { background: var(--accent-soft); }
 
   /* ── Modal ─────────────────────────────────────────────────── */
   .modal-backdrop {
@@ -671,8 +724,16 @@
         <button class="fchip" type="button" id="f-unread" aria-pressed="false">Unread</button>
         <button class="fchip" type="button" id="f-client" aria-pressed="false" title="Mail to or from a client — someone Primary or Secondary on a case: the sender, or one of the first five recipients. The firm's own addresses never count."><i class="fa-solid fa-user" aria-hidden="true"></i> Client mail</button>
         <button class="fchip" type="button" id="f-files" aria-pressed="false" title="Has attachments (images drawn inside the message do not count)"><i class="fa-solid fa-paperclip" aria-hidden="true"></i> Has files</button>
+        <button class="fchip" type="button" id="f-notfiled" aria-pressed="false" title="Has attachments and none of them filed yet — not by docs@ and not with File attachments"><i class="fa-solid fa-folder-open" aria-hidden="true"></i> Not filed</button>
       </div>
-      <div class="status-line"><span id="status"></span><span id="sync-line" style="display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center;min-width:0"></span><button class="btn small" type="button" id="readall-btn" hidden>Mark all read</button></div>
+      <div class="status-line"><button class="btn small" type="button" id="sel-btn" aria-pressed="false" title="Tick emails to file their attachments to a case together">Select</button><span id="status"></span><span id="sync-line" style="display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center;min-width:0"></span><button class="btn small" type="button" id="readall-btn" hidden>Mark all read</button></div>
+      <div class="sel-bar" id="sel-bar" role="toolbar" aria-label="Selected emails" hidden>
+        <span class="sel-n" id="sel-n">0 selected</span>
+        <button class="btn small" type="button" id="sel-all" title="Tick every email in the list as it is shown">All shown</button>
+        <button class="btn small" type="button" id="sel-sender" title="Also tick every shown email from the same sender as the ticked ones">Same sender</button>
+        <button class="btn small primary" type="button" id="sel-file" disabled><i class="fa-solid fa-folder-plus" aria-hidden="true"></i> File attachments…</button>
+        <button class="btn small" type="button" id="sel-done">Done</button>
+      </div>
       <div id="list-error"></div>
       <ul class="msg-list" id="msg-list" aria-live="polite"></ul>
     </section>
@@ -782,6 +843,19 @@
     <span class="yc-hint">A view only narrows what you can already read — it never grants access to a mailbox.</span>
     <div id="vw-list" style="margin-top:14px"></div>
     <div class="modal-actions"><button class="btn" type="button" id="views-close">Close</button></div>
+  </div>
+</div>
+
+<!-- ── File attachments to a case (email attachments S3) — the body is built by the script; the case picker opens over it ── -->
+<div class="modal-backdrop" id="fd-backdrop">
+  <div class="modal fd" role="dialog" aria-modal="true" aria-labelledby="fd-title">
+    <h3 id="fd-title">File attachments to a case</h3>
+    <div class="modal-err" id="fd-msg" role="alert"></div>
+    <div id="fd-body"></div>
+    <div class="modal-actions">
+      <button class="btn" type="button" id="fd-cancel">Cancel</button>
+      <button class="btn primary" type="button" id="fd-go" disabled>File</button>
+    </div>
   </div>
 </div>
 
@@ -985,6 +1059,8 @@ const state = {
   nextCursor: null,
   loading: false,
   seq: 0,               // list request guard
+  sel: null,            // email attachments S3: Set of ticked row ids while the list is in select mode (null = off)
+  fa: null,             // email attachments S3: the open File attachments dialog's state
   selectedId: null,
   thread: null,         // { key, subject, messages, anchorId, truncated, newIds: Set — unread as it opened }
   threadSeq: 0,
@@ -1401,6 +1477,7 @@ function applyView(v) {
   setPressed('f-unread', !!f.unread_only);
   setPressed('f-client', !!f.client_only);
   setPressed('f-files', !!f.has_files);
+  setPressed('f-notfiled', !!f.not_filed);
   setCaseSeg(f.has_case ? 'on' : (f.no_case ? 'off' : 'any'));
   setScope(f.sent_only ? 'sent' : (f.all_folders ? 'all' : 'inbox'));
   renderViewSelect();
@@ -1416,6 +1493,7 @@ function currentFilters() {
   if (pressed('f-unread')) f.unread_only = true;
   if (pressed('f-client')) f.client_only = true;
   if (pressed('f-files')) f.has_files = true;
+  if (pressed('f-notfiled')) f.not_filed = true;
   if (pressed('f-case-on')) f.has_case = true;
   else if (pressed('f-case-off')) f.no_case = true;
   if (pressed('f-folders')) f.all_folders = true;
@@ -1426,7 +1504,7 @@ function currentFilters() {
 /** "Filters (n)" (D.5, ≤768px): n = what narrows beyond the scope segment. */
 function renderFbarBtn() {
   const f = currentFilters();
-  const n = ['unread_only', 'client_only', 'has_files', 'has_case', 'no_case'].filter((k) => f[k]).length;
+  const n = ['unread_only', 'client_only', 'has_files', 'not_filed', 'has_case', 'no_case'].filter((k) => f[k]).length;
   E('fbar-n').textContent = n ? `Filters (${n})` : 'Filters';
 }
 
@@ -1447,6 +1525,7 @@ function listParams(cursor) {
   p.unread_only = f.unread_only ? 1 : 0;
   p.client_only = f.client_only ? 1 : 0;
   p.has_files = f.has_files ? 1 : 0;
+  p.not_filed = f.not_filed ? 1 : 0;
   p.has_case = f.has_case ? 1 : 0;
   p.no_case = f.no_case ? 1 : 0;
   p.all_folders = f.all_folders ? 1 : 0;
@@ -1484,6 +1563,8 @@ async function loadList({ append = false, silent = false } = {}) {
       state.messages = state.messages.concat(fresh);
     } else {
       state.messages = rows;
+      // select mode: a fresh list keeps only the ticks on emails it still shows
+      if (state.sel) { const shown = new Set(rows.map((r) => r.id)); for (const id of [...state.sel]) if (!shown.has(id)) state.sel.delete(id); }
     }
     state.nextCursor = (data && data.next_cursor) || null;
     renderList();
@@ -1520,12 +1601,18 @@ function msgRow(m) {
   if (m.case) chips.append(caseChip(m.case));
   else if (m.log_status && m.log_status.state === 'logged') chips.append(h('span', { className: 'chip', title: 'On the firm log' }, icon('fa-box-archive'), 'Logged'));
   if (m.attachment_count) chips.append(h('span', { className: 'chip', title: `${m.attachment_count} attachment(s)` }, icon('fa-paperclip'), String(m.attachment_count)));
+  // Select mode (email attachments S3): a click ticks the row instead of opening it.
+  const picking = !!state.sel;
+  const ticked = picking && state.sel.has(m.id);
+  const act = () => (picking ? toggleSel(m.id) : openMessage(m));
   const li = h('li', {
-    className: 'msg' + (m.unread ? ' unread' : '') + (state.selectedId === m.id ? ' selected' : '') + (multiBox() ? ' boxed' : ''),
-    dataset: { id: String(m.id) }, tabindex: '0', role: 'button',
-    onclick: () => openMessage(m),
-    onkeydown: (e) => { if (e.key === 'Enter') openMessage(m); },
+    className: 'msg' + (m.unread ? ' unread' : '') + (state.selectedId === m.id && !picking ? ' selected' : '') + (multiBox() ? ' boxed' : '') + (ticked ? ' picked' : ''),
+    dataset: { id: String(m.id) }, tabindex: '0', role: picking ? 'checkbox' : 'button',
+    'aria-checked': picking ? (ticked ? 'true' : 'false') : null,
+    onclick: act,
+    onkeydown: (e) => { if (e.key === 'Enter' || (picking && e.key === ' ')) { e.preventDefault(); act(); } },
   },
+    picking ? h('input', { type: 'checkbox', className: 'selbox', tabindex: '-1', 'aria-hidden': 'true', checked: ticked ? true : null }) : null,
     h('span', { className: 'sr-only sr-state' }, m.unread ? 'Unread. ' : ''),
     h('div', { className: 'r1' }, h('span', { className: 'from', title: rowWho(m).title }, rowWho(m).text), h('span', { className: 'date' }, listDate(m.date))),
     h('div', { className: 'r2' }, h('span', { className: 'subject' }, m.subject || '(no subject)')),
@@ -1536,6 +1623,7 @@ function msgRow(m) {
 }
 
 function renderList() {
+  renderSelBar();
   const list = E('msg-list');
   const unread = state.messages.filter((m) => m.unread).length;
   E('status').textContent = state.messages.length
@@ -1868,8 +1956,12 @@ function viewerNewTab() {
   window.open(v.url, '_blank', 'noopener');
 }
 
-// ── Save an attachment to a case's Dropbox folder ───────────
+// ── Upload an attachment straight to a case's Dropbox folder ─
 /*
+ * Since email attachments S3 an attachment's Save button opens File
+ * attachments (the docs@ engine — recorded, duplicate-checked). This direct
+ * path stays for the one file that engine cannot carry: one too large for the
+ * server (the dialog's "Upload … directly" link). It is NOT recorded as filed.
  * The documents upload flow, unchanged (public/documents.html): /upload-link
  * picks the case's folder (or the shared no-folder ladder) and mints a Dropbox
  * temporary upload link; the browser POSTs the bytes straight to Dropbox
@@ -1916,9 +2008,12 @@ function renderThread() {
   const body = E('thread-body');
   const nodes = [];
   if (t.messages.length > 1 || t.truncated) {
+    const withFiles = t.messages.filter((x) => attachedFiles(x).length).map((x) => x.id);
     nodes.push(h('div', { className: 'thread-note' },
       `${t.messages.length} message${t.messages.length === 1 ? '' : 's'} in this conversation` +
-      (t.truncated ? ' (showing the latest 100)' : '')));
+      (t.truncated ? ' (showing the latest 100)' : ''),
+      withFiles.length > 1 ? [' · ', h('button', { className: 'linkish thread-file', type: 'button', onclick: () => openFileDialog(withFiles) },
+        `File the attachments of its ${withFiles.length} emails…`)] : null));
   }
   const last = t.messages[t.messages.length - 1];
   for (const m of t.messages) {
@@ -2156,8 +2251,11 @@ function fillCard(card, m) {
         // S2P (D.4): no separate View button — the NAME opens the viewer for a
         // viewable file (its title says so); the chips stay one row wide.
         h('button', { className: 'btn small att-dl', type: 'button', title: `Download ${nm}`, 'aria-label': `Download ${nm}`, onclick: (e) => downloadPart(m, a, e.currentTarget) }, icon('fa-download')),
-        h('button', { className: 'btn small att-save', type: 'button', title: `Save ${nm} to a case's Dropbox folder`, 'aria-label': `Save ${nm} to a case`, onclick: () => openSavePicker(m, a) }, icon('fa-folder-plus')));
-    })));
+        // S3: Save to case = File attachments with just this file ticked (the docs@ engine: Client Uploads/Emailed YYMMDD, the registry, the duplicate check)
+        h('button', { className: 'btn small att-save', type: 'button', title: `File ${nm} to a case`, 'aria-label': `File ${nm} to a case`, onclick: () => openFileDialog([m.id], { onlyPart: { id: m.id, part: String(a.part) } }) }, icon('fa-folder-plus')),
+        a.filed ? h('span', { className: 'att-filed', title: filedTitle(a.filed) }, icon('fa-check'), 'Filed') : null);
+    }),
+    h('button', { className: 'btn small att-file', type: 'button', title: 'File this email\'s attachments to a case', onclick: () => openFileDialog([m.id]) }, icon('fa-folder-plus'), ' File to case…')));
   }
   kids.push(h('div', { className: 'mbody' }, built.frame));
   slot.replaceChildren(...kids);
@@ -2256,7 +2354,7 @@ function openCase(c) {
 // ── Link to case ────────────────────────────────────────────
 let caseTimer = null;
 let caseSeq = 0;
-/** ONE case picker for both jobs: link the email, or save an attachment. */
+/** ONE case picker for every job: link the email, the composer's Case field, File attachments' case. */
 function openCasePicker(picker, { title, hint }) {
   state.picker = picker;
   state.linking = picker.mode === 'link' ? picker.m : null;
@@ -2271,10 +2369,11 @@ function openCasePicker(picker, { title, hint }) {
   // picked recipients' cases (the Case field's chips), and says so.
   const newMsg = picker.mode === 'compose' && !!picker.composer && picker.composer.kind === 'new';
   const seen = new Set();
-  const sugg = newMsg
-    ? (picker.composer.caseSugg || []).filter((x) => x && x.case_id && !seen.has(x.case_id) && seen.add(x.case_id))
-    : caseSuggestions(picker.m);
-  E('case-sugg-label').textContent = newMsg ? 'From your recipients' : 'From this conversation';
+  const sugg = picker.sugg ? picker.sugg
+    : newMsg
+      ? (picker.composer.caseSugg || []).filter((x) => x && x.case_id && !seen.has(x.case_id) && seen.add(x.case_id))
+      : caseSuggestions(picker.m);
+  E('case-sugg-label').textContent = picker.suggLabel || (newMsg ? 'From your recipients' : 'From this conversation');
   E('case-sugg-wrap').hidden = !sugg.length;
   E('case-sugg').replaceChildren(...sugg.map((c) => h('li', {
     className: 'sugg', tabindex: '0', onclick: () => pickCase(c), onkeydown: (e) => { if (e.key === 'Enter') pickCase(c); },
@@ -2293,17 +2392,10 @@ function openCaseLink(m) {
       : 'This email is not on the log yet — linking adds it to the log of the case you pick.',
   });
 }
-function openSavePicker(m, a) {
-  closeViewer();
-  openCasePicker({ mode: 'save', m, a }, {
-    title: `Save “${a.filename || `attachment ${a.part}`}” to a case`,
-    hint: 'It goes into the case\'s Dropbox folder (the unsorted uploads folder if the case has none yet) and shows on its Documents tab.',
-  });
-}
 function pickCase(c) {
   const p = state.picker;
   if (!p) return;
-  if (p.mode === 'save') { closeCaseLink(); saveToCase(p.m, p.a, c); return; }
+  if (p.mode === 'file') { closeCaseLink(); faSetCase(c); return; } // email attachments S3
   if (p.mode === 'compose') { // S2P §G: the composer's Case field
     const cmp = p.composer;
     closeCaseLink();
@@ -2364,6 +2456,460 @@ async function linkCase(c) {
     const box = E('case-msg');
     box.textContent = err.message || 'Linking failed';
     box.classList.add('show');
+  }
+}
+
+// ── File attachments to a case (email attachments S3) ───────
+/*
+ * The docs@ filing engine, from any mailbox the reader can read (Fred,
+ * 2026-11-10; ref/EMAIL_ATTACHMENTS_DESIGN.md §9; manual Comms chapter).
+ *   POST /api/mail/attachments/preview — every attachment of the chosen
+ *     emails, classified (file / optional / skip), with where it is already
+ *     filed, duplicates of what the case has, what needs a second
+ *     confirmation, the matcher's suggested case, and the review notice's
+ *     recipient;
+ *   POST /api/mail/messages/:id/attachments/file — ONE email at a time, so
+ *     the dialog shows progress and a failure stops nothing else (the
+ *     registry makes every part idempotent: opening the dialog again shows
+ *     what landed as filed);
+ *   POST /api/mail/attachments/notice — the reviewer's notice for the run
+ *     (one per sender), when the reviewer is someone else and the box is
+ *     ticked.
+ * The server enforces the never-file list and the confirm rules (409
+ * needs_confirmation); the confirm step here is the same rule, asked first.
+ */
+const FA_SKIP = {
+  inline_image: 'Signature image inside the email — not filed',
+  too_large: 'Too large to file from here',
+  blocked: 'Never filed — the firm blocks this file type',
+  type_not_allowed: 'Not filed — it has no usable file type',
+};
+const FA_CONFIRM = { type: 'not a usual document type', size: 'a large file' };
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+/** "Filed to case 26-123 — /path" for an attachment's Filed chip. */
+function filedTitle(f) {
+  const where = f.placement === 'unsorted' || f.link_type !== 'case' ? 'the unsorted uploads folder' : `case ${f.link_id}`;
+  return `${f.status === 'filing' ? 'Being filed' : 'Filed'} to ${where}${f.path ? ` — ${f.path}` : ''}`;
+}
+
+// ── the list's select mode ──
+function setSelectMode(on) {
+  state.sel = on ? new Set() : null;
+  E('sel-btn').setAttribute('aria-pressed', on ? 'true' : 'false');
+  document.querySelector('.list-col').classList.toggle('selecting', !!on);
+  renderList();
+}
+function toggleSel(id) {
+  if (!state.sel) return;
+  if (state.sel.has(id)) state.sel.delete(id); else state.sel.add(id);
+  renderList();
+}
+/** Tick every shown email from the senders of the ticked ones. */
+function selectSameSender() {
+  if (!state.sel || !state.sel.size) { toast('Tick an email first — then this ticks the rest from its sender'); return; }
+  const senders = new Set(state.messages.filter((m) => state.sel.has(m.id)).map((m) => bareAddress(m.from_addr)).filter(Boolean));
+  for (const m of state.messages) if (senders.has(bareAddress(m.from_addr))) state.sel.add(m.id);
+  renderList();
+}
+function renderSelBar() {
+  const on = !!state.sel;
+  E('sel-bar').hidden = !on;
+  if (!on) return;
+  const n = state.sel.size;
+  const max = (state.fa && state.fa.data && state.fa.data.max_messages) || 50;
+  E('sel-n').textContent = n > max ? `${n} selected — at most ${max} at a time` : `${n} selected`;
+  E('sel-file').disabled = !n || n > max;
+}
+
+// ── the dialog ──
+function faBatchId() {
+  const abc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const rnd = new Uint32Array(20);
+  try { crypto.getRandomValues(rnd); } catch (_) { for (let i = 0; i < rnd.length; i++) rnd[i] = Math.floor(Math.random() * 4294967296); }
+  return Array.from(rnd, (n) => abc[n % abc.length]).join('');
+}
+const faPickable = (p) => p.kind !== 'skip' && !p.filed;
+function faError(msg) { const b = E('fd-msg'); b.textContent = msg || ''; b.classList.toggle('show', !!msg); }
+const faCaseLabel = (c) => (c ? (c.case_number || c.case_id) : '');
+/** A case id as its number, when the preview named it. */
+function faNum(id) {
+  const fa = state.fa;
+  const c = fa && fa.data && (fa.data.candidates || []).find((x) => x.case_id === id);
+  return (c && c.case_number) || id;
+}
+
+/** Open the dialog for these emails; onlyPart = {id, part}: start with just that file ticked (an attachment's Save button). */
+function openFileDialog(ids, { onlyPart = null } = {}) {
+  const list = [...new Set((ids || []).map(Number))].filter((n) => Number.isInteger(n) && n > 0);
+  if (!list.length) return;
+  closeViewer();
+  state.fa = {
+    ids: list, onlyPart, case: null, data: null, picks: new Map(), moves: new Map(), link: true, notify: true,
+    confirming: false, busy: false, done: false, results: new Map(), filedAny: false, summary: null, seq: 0,
+    folderMode: 'default', folder: '', folders: null, lastFolder: null,   // S3b: where in the case folder
+  };
+  faError('');
+  E('fd-title').textContent = list.length === 1 ? 'File attachments to a case' : `File attachments from ${list.length} emails`;
+  E('fd-backdrop').classList.add('open');
+  faPreview(null);
+}
+
+async function faPreview(caseId) {
+  const fa = state.fa;
+  if (!fa) return;
+  const seq = ++fa.seq;
+  fa.confirming = false;
+  faError('');
+  E('fd-body').replaceChildren(h('div', { className: 'empty' }, 'Reading the attachments…'));
+  faButtons();
+  try {
+    const data = await api('/api/mail/attachments/preview', 'POST', caseId ? { message_ids: fa.ids, case_id: caseId } : { message_ids: fa.ids });
+    if (state.fa !== fa || seq !== fa.seq) return;
+    const before = fa.case ? fa.case.case_id : null;
+    fa.data = data;
+    fa.case = data.case || null;
+    if (!fa.case || fa.case.case_id !== before) { fa.folderMode = 'default'; fa.folder = ''; fa.folders = null; }
+    fa.picks = new Map();
+    fa.moves = new Map();
+    for (const m of data.messages || []) {
+      const ticked = new Set();
+      for (const p of m.parts || []) {
+        const want = fa.onlyPart ? (fa.onlyPart.id === m.id && fa.onlyPart.part === p.part && faPickable(p)) : p.checked;
+        if (want) ticked.add(p.part);
+      }
+      fa.picks.set(m.id, ticked);
+      fa.moves.set(m.id, !fa.onlyPart && !!(m.move && m.move.checked));
+    }
+    faRender();
+  } catch (err) {
+    if (state.fa !== fa || seq !== fa.seq) return;
+    E('fd-body').replaceChildren();
+    faError(err.message || 'Could not read the attachments');
+    faButtons();
+  }
+}
+
+/** A case from the picker or a suggestion: read everything again against it (duplicates, moves). */
+function faSetCase(c) {
+  const fa = state.fa;
+  if (!fa || fa.busy || fa.done || !c || !c.case_id) return;
+  faPreview(c.case_id);
+}
+function faPickCase() {
+  const fa = state.fa;
+  if (!fa || fa.busy || fa.done) return;
+  const sugg = ((fa.data && fa.data.candidates) || []).map((c) => ({ ...c, who: c.case_type || '' }));
+  openCasePicker({ mode: 'file', sugg, suggLabel: 'Suggested from these emails' }, {
+    title: 'File to which case?',
+    hint: 'The files go into the case\'s Dropbox folder, under Client Uploads / Emailed (the date of each email).',
+  });
+}
+
+function faRender() {
+  const fa = state.fa;
+  if (!fa || !fa.data) return;
+  const d = fa.data;
+  const lock = fa.busy || fa.done;
+  const kids = [];
+
+  // built with h(), never .append(…, null): append writes a null child as the TEXT "null"
+  kids.push(fa.case
+    ? h('div', { className: 'fd-case' }, h('span', { className: 'yc-flabel' }, 'To case'),
+      h('span', { className: 'chip case', title: [fa.case.case_id, fa.case.case_type].filter(Boolean).join(' · ') }, icon('fa-briefcase'), faCaseLabel(fa.case)),
+      fa.case.case_stage ? h('span', { className: 'chip' }, fa.case.case_stage) : null,
+      d.suggested ? h('span', { className: 'muted' }, 'every email matches this case') : null,
+      lock ? null : h('button', { className: 'linkish fd-change', type: 'button', onclick: faPickCase }, 'Change'))
+    : h('div', { className: 'fd-case' }, h('span', { className: 'yc-flabel' }, 'Pick the case'),
+      (d.candidates || []).map((c) => h('button', {
+        className: 'chip case cand', type: 'button',
+        title: [c.why === 'subject_name' && c.contact_name ? `${c.contact_name} is named in the subject` : null, c.case_type, c.case_stage].filter(Boolean).join(' · '),
+        onclick: () => faSetCase(c),
+      }, icon('fa-briefcase'), c.case_number || c.case_id)),
+      h('button', { className: 'btn small fd-search', type: 'button', onclick: faPickCase }, icon('fa-magnifying-glass'), ' Search cases…')));
+  // S3b: names in a subject the matcher could not place (an e-sign notice) — say whose cases those are
+  const namedBy = [...new Set((d.candidates || []).filter((c) => c.why === 'subject_name' && c.contact_name).map((c) => c.contact_name))];
+  if (!fa.case && namedBy.length) kids.push(h('div', { className: 'fd-note fd-named' }, `Suggested because the subject names ${namedBy.join(', ')} — check before you pick.`));
+  if (fa.case) kids.push(faFolderRow(lock));
+
+  const list = h('div', { className: 'fd-list' });
+  for (const m of d.messages || []) list.append(faMessage(m, lock));
+  kids.push(list);
+
+  const opts = h('div', { className: 'fd-opts' });
+  const link = h('input', { type: 'checkbox', id: 'fd-link', checked: fa.link ? true : null, disabled: lock ? true : null });
+  link.addEventListener('change', () => { fa.link = link.checked; });
+  opts.append(h('label', { className: 'check' }, link, ' Link each email to the case (it goes on the case\'s log)'));
+  const rv = d.reviewer;
+  if (rv && !rv.is_you) {
+    const nt = h('input', { type: 'checkbox', id: 'fd-notify', checked: fa.notify ? true : null, disabled: lock ? true : null });
+    nt.addEventListener('change', () => { fa.notify = nt.checked; });
+    opts.append(h('label', { className: 'check' }, nt, ` Send ${rv.name} the review notice (one email listing what was filed)`));
+  } else if (rv && rv.is_you) {
+    opts.append(h('span', { className: 'yc-hint' }, 'You review emailed documents, so no review notice is sent.'));
+  }
+  kids.push(opts);
+
+  if (fa.confirming) {
+    const need = faNeedsConfirm();
+    kids.push(h('div', { className: 'fd-confirm', role: 'alert' },
+      h('strong', {}, `Please confirm ${need.length === 1 ? 'this file' : 'these files'}: `),
+      need.map((x) => `${x.filename} (${FA_CONFIRM[x.confirm] || 'needs a look'})`).join(', '),
+      '. File anyway?'));
+  }
+  if (fa.summary) kids.push(h('div', { className: 'fd-summary', role: 'status' }, fa.summary));
+  E('fd-body').replaceChildren(...kids);
+  faButtons();
+}
+
+/** S3b — where in the case folder: Client Uploads / Emailed YYMMDD, or another folder (picked from the case folder, or typed). */
+function faFolderRow(lock) {
+  const fa = state.fa;
+  const def = h('input', { type: 'radio', name: 'fd-folder', value: 'default', checked: fa.folderMode !== 'other' ? true : null, disabled: lock ? true : null });
+  const oth = h('input', { type: 'radio', name: 'fd-folder', value: 'other', checked: fa.folderMode === 'other' ? true : null, disabled: lock ? true : null });
+  def.addEventListener('change', () => { fa.folderMode = 'default'; faRender(); });
+  oth.addEventListener('change', () => { fa.folderMode = 'other'; faRender(); faLoadFolders(); const i = E('fd-folder-path'); if (i) i.focus(); });
+  const row = h('div', { className: 'fd-folder' }, h('span', { className: 'yc-flabel' }, 'Folder'),
+    h('label', { className: 'check' }, def, ' Client Uploads / Emailed (each email\'s date)'),
+    h('label', { className: 'check' }, oth, ' Another folder in the case folder'));
+  if (fa.folderMode === 'other') {
+    const inp = h('input', {
+      type: 'text', id: 'fd-folder-path', list: 'fd-folder-list', value: fa.folder, maxlength: '400', autocomplete: 'off',
+      placeholder: 'Pick a folder, or type a new one', 'aria-label': 'Folder inside the case folder', disabled: lock ? true : null,
+    });
+    inp.addEventListener('input', () => { fa.folder = inp.value; faButtons(); });
+    row.append(inp, h('datalist', { id: 'fd-folder-list' }), h('span', { className: 'yc-hint', id: 'fd-folder-note' }));
+    setTimeout(faPaintFolders, 0);
+  }
+  return row;
+}
+/** The case folder's subfolders, read once per case (POST /api/mail/attachments/folders). */
+async function faLoadFolders() {
+  const fa = state.fa;
+  if (!fa || !fa.case) return;
+  const cid = fa.case.case_id;
+  if (fa.folders && fa.folders.case_id === cid) return;
+  fa.folders = { case_id: cid, state: 'loading', list: [], truncated: false };
+  faPaintFolders();
+  let next;
+  try {
+    const r = await api('/api/mail/attachments/folders', 'POST', { case_id: cid });
+    next = { case_id: cid, state: (r && r.reason) || 'ok', list: Array.isArray(r && r.folders) ? r.folders : [], truncated: !!(r && r.truncated) };
+  } catch (_) {
+    next = { case_id: cid, state: 'unavailable', list: [], truncated: false };
+  }
+  if (state.fa !== fa || !fa.folders || fa.folders.case_id !== cid) return;
+  fa.folders = next;
+  faPaintFolders();
+}
+function faPaintFolders() {
+  const fa = state.fa;
+  const dl = E('fd-folder-list');
+  const note = E('fd-folder-note');
+  if (!fa || !dl || !note) return;
+  const f = fa.folders || { state: 'loading', list: [] };
+  dl.replaceChildren(...f.list.map((x) => h('option', { value: x })));
+  note.textContent = f.state === 'loading' ? 'Reading the case folder…'
+    : f.state === 'no_case_folder' ? 'The case has no Dropbox folder yet — type a folder name.'
+      : f.state === 'unavailable' ? 'Dropbox did not answer — type the folder exactly as it is named.'
+        : f.list.length ? `${plural(f.list.length, 'folder')} in the case folder${f.truncated ? ' (the first ones)' : ''} — pick one, or type a new one (it is created). Spaces at the start of a name count.`
+          : 'No folders in the case folder yet — type one (it is created).';
+}
+
+function faMessage(m, lock) {
+  const fa = state.fa;
+  const picks = fa.picks.get(m.id) || new Set();
+  const res = fa.results.get(m.id);
+  const wrap = h('div', { className: 'fd-msg', dataset: { id: String(m.id) } },
+    h('div', { className: 'fd-mhead' },
+      h('span', { className: 'fd-from', title: m.from || '' }, personName(m.from)),
+      h('span', { className: 'fd-date' }, listDate(m.date))),
+    h('div', { className: 'fd-subj' }, m.subject || '(no subject)'));
+  // the matcher picked ANOTHER case for this email: say so (never a block — a person decides)
+  if (fa.case && m.match && m.match.case_id && m.match.case_id !== fa.case.case_id) {
+    wrap.append(h('div', { className: 'fd-note warn' }, icon('fa-triangle-exclamation'),
+      ` The sender's case looks like ${faNum(m.match.case_id)} — check this is the right case.`));
+  }
+  const parts = m.parts || [];
+  if (!parts.length) wrap.append(h('div', { className: 'fd-note' }, 'No attachments.'));
+  for (const p of parts) {
+    const can = faPickable(p) && !lock;
+    const cb = h('input', { type: 'checkbox', checked: picks.has(p.part) ? true : null, disabled: can ? null : true });
+    cb.addEventListener('change', () => {
+      if (cb.checked) picks.add(p.part); else picks.delete(p.part);
+      if (fa.confirming) { fa.confirming = false; faRender(); } else faButtons();
+    });
+    const tags = [];
+    if (p.filed) {
+      tags.push(h('span', { className: 'fd-tag ok', title: filedTitle(p.filed) },
+        p.filed.placement === 'unsorted' || !p.filed.case_id ? 'Filed to Unsorted'
+          : (fa.case && p.filed.case_id === fa.case.case_id ? 'Filed to this case' : `Filed to case ${faNum(p.filed.case_id)}`)));
+    } else if (p.kind === 'skip') {
+      tags.push(h('span', { className: 'fd-tag' }, FA_SKIP[p.reason] || 'Not filed'));
+    } else {
+      if (p.duplicate) {
+        tags.push(h('span', { className: 'fd-tag warn', title: p.duplicate.path || '' }, p.duplicate.in_selection
+          ? 'The same file as an earlier email here'
+          : `Already in this case${p.duplicate.filed_at ? ` (filed ${listDate(p.duplicate.filed_at)})` : ''}`));
+      }
+      if (p.kind === 'optional') tags.push(h('span', { className: 'fd-tag' }, 'Not a usual document type'));
+      if (p.confirm) tags.push(h('span', { className: 'fd-tag' }, 'Asks to confirm'));
+    }
+    wrap.append(h('label', { className: 'fd-part' + (can ? '' : ' off'), dataset: { part: p.part } }, cb,
+      h('span', { className: 'fd-name', title: p.mime || '' }, p.filename),
+      p.bytes ? h('span', { className: 'fd-size' }, bytes(p.bytes)) : null,
+      ...tags));
+    // too big for the server to carry: the browser's direct upload still can
+    if (p.kind === 'skip' && p.reason === 'too_large' && fa.case && !lock) {
+      wrap.append(h('div', { className: 'fd-note' }, h('button', {
+        className: 'linkish', type: 'button',
+        onclick: () => saveToCase({ id: m.id, mailbox_id: m.mailbox_id }, { part: p.part, filename: p.filename }, fa.case),
+      }, `Upload ${p.filename} to the case's folder directly`), ' (it is not recorded as filed)'));
+    }
+  }
+  if (m.move) {
+    const where = [m.move.unsorted ? 'Unsorted' : null, ...(m.move.case_ids || []).map((id) => `case ${faNum(id)}`)].filter(Boolean).join(', ');
+    const mv = h('input', { type: 'checkbox', checked: fa.moves.get(m.id) ? true : null, disabled: lock || !fa.case ? true : null });
+    mv.addEventListener('change', () => { fa.moves.set(m.id, mv.checked); faButtons(); });
+    wrap.append(h('label', { className: 'fd-part fd-move' + (lock || !fa.case ? ' off' : '') }, mv,
+      h('span', { className: 'fd-name' }, `Move the ${plural(m.move.count, 'file')} already filed to ${where || 'another place'} into this case`)));
+  }
+  if (res) wrap.append(h('div', { className: `fd-res ${res.tone}`, role: res.tone === 'err' ? 'alert' : null }, res.text));
+  return wrap;
+}
+
+/** The ticked parts that need the second confirmation. */
+function faNeedsConfirm() {
+  const fa = state.fa;
+  const out = [];
+  for (const m of (fa && fa.data && fa.data.messages) || []) {
+    const picks = fa.picks.get(m.id) || new Set();
+    for (const p of m.parts || []) if (picks.has(p.part) && faPickable(p) && p.confirm) out.push(p);
+  }
+  return out;
+}
+/** What File will do: files ticked, files moved. */
+function faCount() {
+  const fa = state.fa;
+  let files = 0;
+  let moved = 0;
+  for (const m of (fa && fa.data && fa.data.messages) || []) {
+    const picks = fa.picks.get(m.id) || new Set();
+    files += (m.parts || []).filter((p) => picks.has(p.part) && faPickable(p)).length;
+    if (m.move && fa.moves.get(m.id)) moved += m.move.count;
+  }
+  return { files, moved };
+}
+function faButtons() {
+  const fa = state.fa;
+  const go = E('fd-go');
+  const cancel = E('fd-cancel');
+  if (!fa) return;
+  cancel.textContent = fa.done ? 'Close' : 'Cancel';
+  cancel.disabled = !!fa.busy;
+  go.hidden = !!fa.done;
+  if (fa.done) return;
+  const n = faCount();
+  go.disabled = !!fa.busy || !fa.data || !fa.case || !(n.files + n.moved) || (fa.folderMode === 'other' && !fa.folder.trim());
+  go.textContent = fa.busy ? 'Filing…'
+    : fa.confirming ? 'Yes, file them'
+      : !fa.data ? 'File'
+        : !fa.case ? 'Pick a case first'
+          : !(n.files + n.moved) ? 'Nothing ticked'
+            : fa.folderMode === 'other' && !fa.folder.trim() ? 'Pick a folder'
+            : n.files && n.moved ? `File ${plural(n.files, 'file')}, move ${n.moved}`
+            : n.moved ? `Move ${plural(n.moved, 'file')}` : `File ${plural(n.files, 'file')}`;
+}
+
+async function faGo() {
+  const fa = state.fa;
+  if (!fa || fa.busy || fa.done || !fa.case || !fa.data) return;
+  if (faNeedsConfirm().length && !fa.confirming) { fa.confirming = true; faRender(); return; }
+  fa.confirming = false;
+  fa.busy = true;
+  faError('');
+  const rv = fa.data.reviewer;
+  const batch = rv && !rv.is_you && fa.notify ? faBatchId() : null;
+  const jobs = (fa.data.messages || []).map((m) => {
+    const picks = fa.picks.get(m.id) || new Set();
+    const parts = (m.parts || []).filter((p) => picks.has(p.part) && faPickable(p));
+    return { m, parts: parts.map((p) => p.part), confirm: parts.filter((p) => p.confirm).map((p) => p.part), move: !!(m.move && fa.moves.get(m.id)) };
+  }).filter((j) => j.parts.length || j.move);
+  for (const j of jobs) fa.results.set(j.m.id, { tone: 'busy', text: 'Waiting…' });
+  faRender();
+  let filedN = 0;
+  let movedN = 0;
+  let okN = 0;
+  let badN = 0;
+  for (const j of jobs) {
+    fa.results.set(j.m.id, { tone: 'busy', text: 'Filing…' });
+    faRender();
+    const body = { case_id: fa.case.case_id, parts: j.parts, confirm: j.confirm, move: j.move, link: fa.link };
+    if (batch) body.batch = batch;
+    if (fa.folderMode === 'other') body.folder = fa.folder;   // exact: the case folder's own names keep their leading spaces
+    try {
+      const out = await api(`/api/mail/messages/${j.m.id}/attachments/file`, 'POST', body);
+      const files = Array.isArray(out && out.files) ? out.files : [];
+      const filed = files.filter((f) => f.status === 'filed').length;
+      const already = files.filter((f) => f.status === 'already_filed').length;
+      const failed = files.filter((f) => f.status === 'failed' || f.status === 'in_progress');
+      const moved = out && out.refiled ? Number(out.refiled.moved) || 0 : 0;
+      const moveFailed = out && out.refiled && Array.isArray(out.refiled.failed) ? out.refiled.failed.length : 0;
+      filedN += filed;
+      movedN += moved;
+      const bits = [];
+      if (filed) bits.push(`Filed ${plural(filed, 'file')}`);
+      if (moved) bits.push(`moved ${moved}`);
+      if (already && !moved && !filed) bits.push(`${plural(already, 'file')} already there`);
+      if (out && out.linked) bits.push('linked to the case');
+      if (failed.length) bits.push(`${failed.length} failed: ${failed.map((f) => `${f.filename} (${f.status === 'in_progress' ? 'someone else is filing it right now' : (f.error || 'error')})`).join('; ')}`);
+      if (moveFailed) bits.push(`${moveFailed} could not be moved`);
+      if (out && out.link_error) bits.push(`not linked: ${out.link_error}`);
+      const bad = failed.length || moveFailed || (out && out.link_error);
+      fa.results.set(j.m.id, { tone: bad ? 'warn' : 'ok', text: bits.join(' · ') || 'Done' });
+      if (filed || moved || already) fa.filedAny = true;
+      if (out && out.folder_path && (filed || moved)) fa.lastFolder = out.folder_path;
+      okN++;
+    } catch (err) {
+      badN++;
+      fa.results.set(j.m.id, { tone: 'err', text: err.message || 'Filing failed' });
+    }
+    faRender();
+  }
+  let notice = '';
+  if (batch && fa.filedAny) {
+    try {
+      const n = await api('/api/mail/attachments/notice', 'POST', { batch });
+      if (n && n.sent) notice = ` ${rv.name} was sent the review notice.`;
+      else if (n && n.reason === 'no_reviewer') notice = ' No review notice: no reviewer is set in Config.';
+    } catch (err) {
+      notice = ` The review notice could not be sent: ${err.message}`;
+    }
+  }
+  fa.busy = false;
+  fa.done = true;
+  const what = [filedN ? `Filed ${plural(filedN, 'file')}` : null, movedN ? `moved ${plural(movedN, 'file')}` : null].filter(Boolean).join(' and ');
+  fa.summary = `${what || 'Nothing new filed'} — case ${faCaseLabel(fa.case)}, ${okN} of ${plural(jobs.length, 'email')} done.` +
+    (badN ? ` ${plural(badN, 'email')} failed: open File attachments again to retry (what landed shows as filed).` : '') + notice +
+    (fa.lastFolder ? ` Folder: ${fa.lastFolder}` : '');
+  faRender();
+}
+
+function closeFileDialog() {
+  const fa = state.fa;
+  if (fa && fa.busy) return; // never mid-run: each email's request is already on its way
+  E('fd-backdrop').classList.remove('open');
+  E('fd-body').replaceChildren();
+  faError('');
+  state.fa = null;
+  if (!fa || !fa.filedAny) return;
+  // What changed shows: the open conversation's Filed chips and log line, the list (Not filed, case chips).
+  if (state.sel) setSelectMode(false);
+  loadList({ silent: true });
+  const t = state.thread;
+  if (t && t.messages.some((x) => fa.ids.includes(x.id) || (x.copies || []).some((c) => fa.ids.includes(c.id)))) {
+    const anchor = state.messages.find((r) => r.id === t.anchorId) || { id: t.anchorId, thread_key: t.key, subject: t.subject };
+    openMessage(anchor);
   }
 }
 
@@ -2514,6 +3060,7 @@ function viewSummary(v) {
   if (f.unread_only) bits.push('unread');
   if (f.client_only) bits.push('client mail');
   if (f.has_files) bits.push('with files');
+  if (f.not_filed) bits.push('files not filed');
   if (f.has_case) bits.push('on a case');
   if (f.no_case) bits.push('not on a case');
   if (f.all_folders) bits.push('all folders');
@@ -3201,7 +3748,7 @@ async function init() {
   let qTimer = null;
   const debounced = () => { clearTimeout(qTimer); qTimer = setTimeout(() => { renderFbarBtn(); loadList(); }, 350); };
   E('f-q').addEventListener('input', debounced);
-  for (const id of ['f-unread', 'f-client', 'f-files']) E(id).addEventListener('click', () => { setPressed(id, !pressed(id)); renderFbarBtn(); loadList(); });
+  for (const id of ['f-unread', 'f-client', 'f-files', 'f-notfiled']) E(id).addEventListener('click', () => { setPressed(id, !pressed(id)); renderFbarBtn(); loadList(); });
   // The case filter is a three-way switch (D.5): Any / On a case / Not on a case
   E('f-case-any').addEventListener('click', () => { if (caseSegNow() !== 'any') { setCaseSeg('any'); renderFbarBtn(); loadList(); } });
   E('f-case-on').addEventListener('click', () => { if (caseSegNow() !== 'on') { setCaseSeg('on'); renderFbarBtn(); loadList(); } });
@@ -3259,9 +3806,18 @@ async function init() {
   E('viewer-close').addEventListener('click', closeViewer);
   E('viewer-tab').addEventListener('click', viewerNewTab);
   E('viewer-dl').addEventListener('click', () => { const v = state.viewer; if (v) downloadPart(v.m, v.a); });
-  E('viewer-save').addEventListener('click', () => { const v = state.viewer; if (v) openSavePicker(v.m, v.a); });
+  E('viewer-save').addEventListener('click', () => { const v = state.viewer; if (v) openFileDialog([v.m.id], { onlyPart: { id: v.m.id, part: String(v.a.part) } }); });
   E('viewer-backdrop').addEventListener('click', (e) => { if (e.target === E('viewer-backdrop')) closeViewer(); });
   E('case-backdrop').addEventListener('click', (e) => { if (e.target === E('case-backdrop')) closeCaseLink(); });
+  // File attachments (email attachments S3): the dialog and the list's select mode
+  E('fd-cancel').addEventListener('click', closeFileDialog);
+  E('fd-go').addEventListener('click', faGo);
+  E('fd-backdrop').addEventListener('click', (e) => { if (e.target === E('fd-backdrop')) closeFileDialog(); });
+  E('sel-btn').addEventListener('click', () => setSelectMode(!state.sel));
+  E('sel-done').addEventListener('click', () => setSelectMode(false));
+  E('sel-all').addEventListener('click', () => { for (const m of state.messages) state.sel && state.sel.add(m.id); renderList(); });
+  E('sel-sender').addEventListener('click', selectSameSender);
+  E('sel-file').addEventListener('click', () => { if (state.sel && state.sel.size) openFileDialog([...state.sel]); });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (openMenu) closeMenu(); // the ⋯ menu first (D.1: keyboard-operable)
@@ -3273,6 +3829,7 @@ async function init() {
     else if (E('task-backdrop').classList.contains('open')) closeTaskModal();
     else if (E('viewer-backdrop').classList.contains('open')) closeViewer();
     else if (E('case-backdrop').classList.contains('open')) closeCaseLink();
+    else if (E('fd-backdrop').classList.contains('open')) closeFileDialog();
     else if (E('views-backdrop').classList.contains('open')) closeViews();
     else if (E('compose-backdrop').classList.contains('open') && state.composer) closeComposer(state.composer, { keepDraft: true });
     else if (!E('mb-panel').hidden) toggleBoxPanel(false);
@@ -3340,7 +3897,7 @@ window.ycBecameVisible = () => {
   if (E('case-backdrop').classList.contains('open') || E('views-backdrop').classList.contains('open') || E('viewer-backdrop').classList.contains('open')
       || E('compose-backdrop').classList.contains('open') || E('ph-new-backdrop').classList.contains('open') || E('task-backdrop').classList.contains('open')
       || E('ca-act-backdrop').classList.contains('open') || E('ca-view-backdrop').classList.contains('open') || E('ca-tx-backdrop').classList.contains('open')
-      || E('ca-rs-backdrop').classList.contains('open')) return;
+      || E('ca-rs-backdrop').classList.contains('open') || E('fd-backdrop').classList.contains('open')) return;
   if (phoneShown()) { phoneRefresh(); return; }
   loadSummary().catch(() => {});
   loadList({ silent: true });

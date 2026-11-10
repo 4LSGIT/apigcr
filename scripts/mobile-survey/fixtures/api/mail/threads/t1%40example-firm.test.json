@@ -84,7 +84,8 @@
      "size": 40211,
      "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
      "cid": null,
-     "inline": false
+     "inline": false,
+     "filed": { "status": "filed", "placement": "case", "link_type": "case", "link_id": "TESTCASE1", "path": "/Law Office/Cases/A very long client folder name for overflow checks/Client Uploads/Emailed 261008/Exhibit A.docx", "filed_at": "2026-10-08T15:00:00.000Z" }
     },
     {
      "part": "4",

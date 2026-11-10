@@ -176,8 +176,12 @@ tasks, documents, a one-field registry
 values — `cta/10/executions` for browsing a detail by hand), two mailboxes
 (`mailboxes` — one with an overlong address and display name), and the comms
 hub (`mail/mailboxes`, `mail/messages`, `mail/views`, plus one conversation at
-`mail/threads/t1%40example-firm.test` — the list's first row — for browsing a
-thread by hand; the survey itself opens the list only), the comms Phone tab
+`mail/threads/t1%40example-firm.test` — the list's first row, one attachment
+filed (its card, scrolled to the attachments, is `dialog:comms-thread-files`)
+— and `mail/attachments/preview` behind the File attachments dialog,
+surveyed as `dialog:comms-file-attachments` with the list's select mode as
+`dialog:comms-select`; the composers are `dialog:comms-compose` /
+`dialog:comms-reply-all`), the comms Phone tab
 (`phone-lines/readable`, `phone-lines/1/conversations`, `phone-lines/1/calls`,
 one conversation at `phone-lines/1/conversations/5555550199` — overlong names,
 an unbroken URL, a short code — and one with a number no contact holds at

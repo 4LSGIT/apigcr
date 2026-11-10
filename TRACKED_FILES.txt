@@ -954,6 +954,7 @@ scripts/mobile-survey/fixtures/api/cta/2/executions.json
 scripts/mobile-survey/fixtures/api/documents.json
 scripts/mobile-survey/fixtures/api/entitlements.json
 scripts/mobile-survey/fixtures/api/field-defs.json
+scripts/mobile-survey/fixtures/api/mail/attachments/preview.json
 scripts/mobile-survey/fixtures/api/mail/first-seen.json
 scripts/mobile-survey/fixtures/api/mail/identities.json
 scripts/mobile-survey/fixtures/api/mail/mailboxes.json
@@ -1103,6 +1104,7 @@ services/documentSourceService.js
 services/documentSyncService.js
 services/dropboxService.js
 services/dropboxServiceLegacy.js
+services/emailAttachmentCommsService.js
 services/emailAttachmentDigestService.js
 services/emailAttachmentFilingService.js
 services/emailAttachmentNotice.js
@@ -1474,6 +1476,8 @@ tests/dropboxService.retry.test.js
 tests/emailAttachments.mysql.test.js
 tests/emailAttachments.unit.test.js
 tests/emailAttachments.workflow.test.js
+tests/emailAttachmentsComms.pane.test.js
+tests/emailAttachmentsComms.routes.test.js
 tests/emailAttachmentsDigest.unit.test.js
 tests/emailDesignRules.test.js
 tests/emailDesignRules.timing.test.js

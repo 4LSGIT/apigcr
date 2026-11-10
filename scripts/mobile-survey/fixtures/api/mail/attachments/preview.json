@@ -1,0 +1,38 @@
+{
+ "status": "success",
+ "case": { "case_id": "TESTCASE1", "case_number": "26-99999-xyz-with-a-long-docket-suffix", "case_type": "Bankruptcy", "case_stage": "Open" },
+ "suggested": false,
+ "candidates": [
+  { "case_id": "TESTCASE1", "case_number": "26-99999-xyz-with-a-long-docket-suffix", "case_type": "Bankruptcy", "case_stage": "Open" },
+  { "case_id": "TESTCASE2", "case_number": "26-88888", "case_type": "Bankruptcy", "case_stage": "Filed" }
+ ],
+ "messages": [
+  {
+   "id": 301, "mailbox_id": 2,
+   "from": "\"Counsel, Opposing Q.\" <a-really-long-sender-address-for-overflow-checks@opposing-counsel-law-group.test>",
+   "subject": "Re: Re: Fwd: Motion to extend the deadline for filing objections to the amended plan — please confirm by Friday",
+   "date": "2026-10-08T14:32:00.000Z",
+   "match": { "case_id": "TESTCASE2", "method": "sender_open_case", "flag": null, "reason": null },
+   "move": { "count": 2, "unsorted": 1, "case_ids": ["TESTCASE2"], "checked": false },
+   "parts": [
+    { "part": "2", "filename": "Proposed Order Extending Deadline (redline v3 — final final).pdf", "mime": "application/pdf", "bytes": 135717, "kind": "file", "reason": null, "confirm": null, "filed": null, "duplicate": { "mail_message_id": 290, "filed_at": "2026-10-01T15:00:00.000Z", "path": "/Law Office/Cases/A very long client folder name/Client Uploads/Emailed 261001/Proposed Order.pdf", "in_selection": false }, "checked": false },
+    { "part": "3", "filename": "Exhibit A.docx", "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "bytes": 29756, "kind": "file", "reason": null, "confirm": null, "filed": { "status": "filed", "placement": "unsorted", "case_id": null, "link_type": null, "path": "/Law Office/Cases/Unsorted Client Uploads/Exhibit A.docx", "filed_at": "2026-10-08T15:00:00.000Z" }, "duplicate": null, "checked": false },
+    { "part": "5", "filename": "AllTheBankStatementsForTwentyTwentyFiveInOneUnbrokenFileName_final_v2.zip", "mime": "application/zip", "bytes": 18874368, "kind": "optional", "reason": null, "confirm": "type", "filed": null, "duplicate": null, "checked": false },
+    { "part": "6", "filename": "setup.exe", "mime": "application/octet-stream", "bytes": 120000, "kind": "skip", "reason": "blocked", "confirm": null, "filed": null, "duplicate": null, "checked": false },
+    { "part": "7", "filename": "deposition-video.pdf", "mime": "application/pdf", "bytes": 47185920, "kind": "skip", "reason": "too_large", "confirm": null, "filed": null, "duplicate": null, "checked": false }
+   ]
+  },
+  {
+   "id": 300, "mailbox_id": 1,
+   "from": "Jane Doe <jane@client.test>",
+   "subject": "w2",
+   "date": "2026-10-07T14:32:00.000Z",
+   "match": { "case_id": "TESTCASE1", "method": "sender_open_case", "flag": null, "reason": null },
+   "move": null,
+   "parts": []
+  }
+ ],
+ "reviewer": { "user_id": 5, "name": "Shoshana Bennett-Longname", "is_you": false },
+ "policy": { "confirm_mb": 15, "confirm_types": null },
+ "max_messages": 50
+}

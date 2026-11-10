@@ -2854,6 +2854,64 @@ describe('_sniff — mail matchers (A13)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// _sniff — File attachments (email attachments S3)
+//
+// POST /api/mail/messages/:id/attachments/file — one email's attachments filed
+// to a case from Comms (the answer's shape is emailAttachmentCommsService
+// .fileOne's, proven on MySQL in tests/emailAttachments.mysql.test.js). A file
+// that landed, or a move, changed the case's DOCUMENT SET; Link on is
+// case-link's own announcement.
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — File attachments (email attachments S3)', () => {
+  function spy(w) {
+    const seen = [];
+    ['mail:*', 'comms:*', 'doclink:*', 'case:*', 'contact:*'].forEach((a) => w.YC.on(a, '*', (f, m) => seen.push({ addr: m.addr, fields: f })));
+    return seen;
+  }
+  const URL = '/api/mail/messages/88123/attachments/file';
+  const ANSWER = (over = {}) => ({ status: 'success', id: 88123, case: { case_id: 'AAAA', case_number: '26-1' }, files: [{ part: '2', status: 'filed' }], skipped: [], refiled: null, linked: true, log_id: 5001, link_error: null, ...over });
+
+  test('filed + linked: the case\'s document set, the message, the case\'s comms', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', URL, ANSWER());
+    expect(seen).toEqual([
+      { addr: 'doclink:case:AAAA', fields: { yc_refetch: 1 } },
+      { addr: 'mail:88123', fields: { log_id: 5001, case_id: 'AAAA' } },
+      { addr: 'comms:case:AAAA', fields: { yc_refetch: 1 } },
+    ]);
+  });
+
+  test('only what changed: a move alone is the document set; already-filed files linked is only the link; neither is silence', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', URL, ANSWER({ files: [{ part: '2', status: 'already_filed' }], refiled: { moved: 1 }, linked: false, log_id: null }));
+    w.YC._sniff('POST', URL, ANSWER({ files: [{ part: '2', status: 'already_filed' }] }));
+    w.YC._sniff('POST', URL, ANSWER({ files: [{ part: '2', status: 'failed' }], linked: false, log_id: null, link_error: 'arrived in the last few minutes' }));
+    expect(seen).toEqual([
+      { addr: 'doclink:case:AAAA', fields: { yc_refetch: 1 } },
+      { addr: 'mail:88123', fields: { log_id: 5001, case_id: 'AAAA' } },
+      { addr: 'comms:case:AAAA', fields: { yc_refetch: 1 } },
+    ]);
+  });
+
+  test('FAILS CLOSED: an error body, another message\'s answer, no case, linked without a log id; GET and other verbs are silent', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', URL, { status: 'error', message: 'This file needs a second confirmation: scans.zip', needs_confirmation: [] });
+    w.YC._sniff('POST', URL, ANSWER({ id: 99 }));
+    w.YC._sniff('POST', URL, ANSWER({ case: null }));
+    w.YC._sniff('POST', URL, ANSWER({ files: [], log_id: null }));
+    w.YC._sniff('GET', URL, ANSWER());
+    w.YC._sniff('PUT', URL, ANSWER());
+    w.YC._sniff('POST', '/api/mail/attachments/preview', ANSWER());
+    w.YC._sniff('POST', '/api/mail/attachments/notice', ANSWER());
+    expect(seen).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
 // _sniff — guided re-link (A11.1)
 //
 // POST /api/documents/relink answers {status, result: applyRelink's return}

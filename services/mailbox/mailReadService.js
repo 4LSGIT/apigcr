@@ -20,6 +20,8 @@
  *   listViews / createView / updateView / deleteView   inbox_views, caller-owned
  *   viewCounts(db, userId)                   unread per saved view (Inbox, the view's filters)
  *   caseLink(db, userId, id, body)           attach the message's log row to a case
+ *   loadVisible(db, userId, id)              the message's access check (ACCESS) — shared with
+ *                                            emailAttachmentCommsService (Comms filing)
  *
  * Spec: ref/MAILBOX_SYSTEM_DESIGN.md §4.3 (read state), §4.4 (hub), D6, OQ1
  * (answered: group by the stored thread_key). HTTP layer: routes/api.mail.js.
@@ -176,6 +178,7 @@ const FILTER_KEYS = Object.freeze({
   no_case: 'bool',
   client_only: 'bool',
   has_files: 'bool',
+  not_filed: 'bool',           // email attachments S3: has files, none filed yet (FILED below)
   all_folders: 'bool',
   sent_only: 'bool',           // S3: the Sent scope (SENT SCOPE above)
   from_domain: 'domain',
@@ -983,6 +986,18 @@ const FILES_WHERE = `0 < (SELECT COUNT(*) FROM JSON_TABLE(m.attachments, '$[*]' 
            OR LOCATE(CONCAT('cid:', REPLACE(REGEXP_REPLACE(a.cid, '^<|>$', ''), '@', '%40')), COALESCE(m.body_html, '')) > 0)))`;
 
 /*
+ * NOT FILED (not_filed — email attachments S3, ref/EMAIL_ATTACHMENTS_DESIGN.md
+ * §9): a message with files (FILES_WHERE) none of whose parts is in
+ * mail_attachment_filings as filed — under this row's id or a COPY's (the same
+ * RFC Message-ID stored in another mailbox or folder: docs@ files the copy it
+ * was handed). "Nothing filed from it yet", not "every file filed": an email
+ * whose person left the logo out is done.
+ */
+const NOT_FILED_WHERE = `NOT EXISTS (SELECT 1 FROM mail_attachment_filings fl
+     WHERE fl.status = 'filed' AND (fl.mail_message_id = m.id OR (m.message_id IS NOT NULL AND fl.mail_message_id IN
+       (SELECT cp.id FROM mail_messages cp WHERE cp.message_id = m.message_id))))`;
+
+/*
  * SENT SCOPE (header). The Gmail \Sent system label (SENT_LABEL, bound as a
  * parameter) or a Sent folder name on the last path segment. REGEXP on the
  * general_ci folder column is case-blind (ICU). tests/mailboxS3.mysql.test.js
@@ -1173,6 +1188,7 @@ function scopeWhere(filters, cursor, entry = null) {
   if (filters.no_case) where.push('c.case_id IS NULL');
   if (filters.client_only) { where.push(CLIENT_WHERE); params.push([...CLIENT_RELATIONS], firmAddressPattern()); }
   if (filters.has_files) where.push(FILES_WHERE);
+  if (filters.not_filed) where.push(`${FILES_WHERE} AND ${NOT_FILED_WHERE}`);
   if (filters.from_domain) {
     // from_addr is the display form: "Name <a@b>" or bare "a@b".
     const e = escapeLike(filters.from_domain);
@@ -1439,6 +1455,66 @@ function collapse(list) {
 }
 
 /**
+ * FILED (email attachments S3): each attachment of each (collapsed) message
+ * gets `filed` — {status 'filed'|'filing', placement, link_type, link_id,
+ * path, filed_at} — from mail_attachment_filings under the message's own id
+ * first, else under ANY stored copy of the same email (same RFC Message-ID,
+ * any mailbox or folder — the NOT FILED filter's rule; same part, same file
+ * name), so the card says "Filed → case X" whichever copy docs@ or a person
+ * filed, including a copy in a mailbox this reader cannot open (it says only
+ * where an attachment of an email they CAN read went). Best effort: a failure
+ * here leaves the chips off, never the thread.
+ */
+async function attachFiled(db, messages) {
+  const ids = [...new Set(messages.flatMap(m => [m, ...(m.copies || [])].map(c => Number(c.id))))].filter(Number.isInteger);
+  if (!ids.length) return messages;
+  let rows;
+  let rfcOf;
+  try {
+    const [own] = await db.query('SELECT id, message_id FROM mail_messages WHERE id IN (?)', [ids]);
+    rfcOf = new Map(own.map(r => [Number(r.id), r.message_id || null]));
+    const rfcs = [...new Set(own.map(r => r.message_id).filter(Boolean))];
+    [rows] = await db.query(
+      `SELECT f.mail_message_id, mm.message_id AS rfc, f.part, f.status, f.filename, f.link_type, f.link_id,
+              f.placement, f.dropbox_path, f.filed_at
+         FROM mail_attachment_filings f
+         LEFT JOIN mail_messages mm ON mm.id = f.mail_message_id
+        WHERE f.status IN ('filed', 'filing')
+          AND (f.mail_message_id IN (?)${rfcs.length ? ' OR f.mail_message_id IN (SELECT cp.id FROM mail_messages cp WHERE cp.message_id IN (?))' : ''})`,
+      rfcs.length ? [ids, rfcs] : [ids]
+    );
+  } catch (err) {
+    console.warn('[mail] filed status unavailable:', err && err.code ? err.code : '', err && err.message);
+    return messages;
+  }
+  if (!Array.isArray(rows) || !rows.length) return messages;
+  for (const m of messages) {
+    const own = new Set([m, ...(m.copies || [])].map(c => Number(c.id)));
+    const rfc = rfcOf.get(Number(m.id)) || [...own].map(id => rfcOf.get(id)).find(Boolean) || null;
+    for (const a of m.attachments || []) {
+      const samePart = (x) => String(x.part) === String(a.part);
+      // the registry keeps the name the filing used: the mail's, plus an
+      // extension when the mail gave none (fileableParts: "Fwd" → "Fwd.eml")
+      const af = String(a.filename || '').toLowerCase();
+      const sameName = (x) => { const xf = String(x.filename || '').toLowerCase(); return !af || xf === af || xf.startsWith(`${af}.`); };
+      const r = rows.find(x => Number(x.mail_message_id) === Number(m.id) && samePart(x)) ||
+        rows.find(x => own.has(Number(x.mail_message_id)) && samePart(x) && sameName(x)) ||
+        (rfc ? rows.find(x => x.rfc === rfc && samePart(x) && sameName(x)) : undefined);
+      if (!r) continue;
+      a.filed = {
+        status: r.status,
+        placement: r.placement || null,
+        link_type: r.link_type || null,
+        link_id: r.link_id == null ? null : String(r.link_id),
+        path: r.dropbox_path || null,
+        filed_at: toDate(r.filed_at),
+      };
+    }
+  }
+  return messages;
+}
+
+/**
  * One thread by its stored thread_key, merged across every readable mailbox.
  * Over THREAD_MAX stored rows (copies count), the NEWEST window is returned —
  * the message the reader just clicked is almost always the latest one, and an
@@ -1473,7 +1549,7 @@ async function getThread(db, userId, threadKey) {
     return m;
   });
   attachSentBy(list, sendMap); // before collapse, so any copy's match survives the merge
-  const messages = await markTrust(db, userId, collapse(list));
+  const messages = await markTrust(db, userId, await attachFiled(db, collapse(list)));
   return {
     thread_key: key,
     subject: (messages.find(m => m.subject) || {}).subject || null,
@@ -1520,7 +1596,7 @@ async function getMessage(db, userId, messageId) {
     thread_key: m.thread_key,
     subject: m.subject,
     truncated: false,
-    messages: await markTrust(db, userId, [{ ...m, copies: [{ id: m.id, mailbox_id: m.mailbox_id, mailbox_address: m.mailbox_address, folder: m.folder, place: m.place, unread: m.unread }] }]),
+    messages: await markTrust(db, userId, await attachFiled(db, [{ ...m, copies: [{ id: m.id, mailbox_id: m.mailbox_id, mailbox_address: m.mailbox_address, folder: m.folder, place: m.place, unread: m.unread }] }])),
   };
 }
 
@@ -2192,6 +2268,7 @@ module.exports = {
   updateView,
   deleteView,
   caseLink,
+  loadVisible,
   related,
   firstSeen,
   listImageSenders,
@@ -2219,6 +2296,8 @@ module.exports = {
   parseCursor,
   cursorOf,
   FILTER_KEYS,
+  NOT_FILED_WHERE,
+  attachFiled,
   SENT_WHERE,
   ALIAS_WHERE,
   ALIAS_SENT_WHERE,

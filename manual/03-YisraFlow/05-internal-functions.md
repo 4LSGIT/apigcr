@@ -1922,7 +1922,9 @@ rule: `{{mailbox.message_row_id}}`), or `mailbox_id` + `folder` + `uid`, or
   it agrees with the sender; otherwise the sender's one open case (Open,
   Pending or Filed; with several, the one retained case). A named case that
   is none of a known client's cases while they have open ones is a
-  **conflict** — no case is chosen. Read-only; output `case_id` (null = undecided),
+  **conflict** — no case is chosen. A sender on a firm address (the firm's
+  email domains, or a YisraCase mailbox) is nobody's client: only a case the
+  email names matches (flag `firm_sender` otherwise). Read-only; output `case_id` (null = undecided),
   `method`, `flag`, `reason`, `contact`, `candidates`. Denied to CTA links.
 - **`email_attachments_file`** (workflow only) — files the attachments to
   Dropbox, **once each**: a re-run files only what is missing. With a case:
@@ -1931,7 +1933,10 @@ rule: `{{mailbox.message_row_id}}`), or `mailbox_id` + `folder` + `uid`, or
   `Emailed YYMMDD - <sender>`, registered to the sender's contact when there
   is one. Every file is registered in Documents. Skipped and listed:
   signature-size inline images, file types the client-upload page refuses,
-  files over 40 MB. Output: `placement`, `case_id`, `match`, `folder_path`,
+  files over 40 MB. (Comms' **File attachments** uses the same filing with a
+  person's picks — any type but the firm's never-filed list; [Mailboxes →
+  Reading mail](../08-Admin-Tools/08-mailboxes.md#reading-mail--comms).)
+  Output: `placement`, `case_id`, `match`, `folder_path`,
   `folder_link`, `files` (each filed file with a `link` that opens it in
   Dropbox), `skipped`, `counts`, `docs_checklist` (the case's Docs Needed
   list — a link to the case's Checklists tab and its open items; null when the

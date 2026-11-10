@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-05T03:06:58.463Z_  
-_844 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 321, PUT: 40, _ALL: 3_
+_Generated 2026-11-10T03:53:36.569Z_  
+_848 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 325, PUT: 40, _ALL: 3_
 
 ## Global middleware chain
 
@@ -460,6 +460,9 @@ _844 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 321, PUT: 40, _ALL:
 | POST | `/api/m/:token/cancel` | — | — |
 | POST | `/api/m/:token/reschedule` | — | — |
 | GET | `/api/m/:token/slots` | — | — |
+| POST | `/api/mail/attachments/folders` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/mail/attachments/notice` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/mail/attachments/preview` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/mail/first-seen` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/mail/identities` | `jwtOrApiKey`, `requireJwt` | `getMailIdentities` |
 | GET | `/api/mail/image-senders` | `jwtOrApiKey`, `requireJwt` | — |
@@ -468,6 +471,7 @@ _844 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 321, PUT: 40, _ALL:
 | GET | `/api/mail/mailboxes` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/mail/messages` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/mail/messages/:id` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/mail/messages/:id/attachments/file` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/mail/messages/:id/case-link` | `jwtOrApiKey`, `requireJwt` | — |
 | DELETE | `/api/mail/messages/:id/read` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/mail/messages/:id/read` | `jwtOrApiKey`, `requireJwt` | — |
@@ -1124,4 +1128,4 @@ _844 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 321, PUT: 40, _ALL:
 
 ---
 
-_844 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 321, PUT: 40, _ALL: 3_
+_848 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 325, PUT: 40, _ALL: 3_

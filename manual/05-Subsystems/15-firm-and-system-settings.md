@@ -42,9 +42,9 @@ first.
 |---|---|
 | **Firm identity** | Name, logo, phone, website, office email, mailing address, signing attorney — on generated documents and client-facing pages |
 | **Senders** | The automations address, the default sender, the firm's email domains, the default and staff text lines |
-| **Notifications & routing** | Where IT and system alerts go, the catch-all inbox, and who gets office alerts, billing tasks, appointment follow-ups and the events digest; the payment-failure drip cooldown |
+| **Notifications & routing** | Where IT and system alerts go, the catch-all inbox, and who gets office alerts, billing tasks, appointment follow-ups, the events digest and the review notice for documents filed from Comms (*Emailed documents review*); the payment-failure drip cooldown |
 | **Client self-service & booking** | What a client may do from their manage link (cancel, reschedule, rebook), the cutoff and horizon, the texts sent, and the Shabbos booking window |
-| **Dropbox filing** | The case folder templates and the "unsorted" folders for uploads, forms, generated and signed documents |
+| **Dropbox filing** | The case folder templates and the "unsorted" folders for uploads, forms, generated and signed documents; what Comms' File attachments may file (below) |
 | **E-Sign** | Test mode, the default reminder sequence, and the credit balance and its low-credit alert |
 | **Marketing email & consent** | Who gets consent follow-up tasks (unsubscribe-page notes, clients who opted out of texts, possible text opt-outs), the marketing footer's advertisement label and debt-relief-agency statement, the marketing reply-to address, and the campaign cap and paced rate — see [Email unsubscribe](../06-Client-Facing/07-email-unsubscribe.md) and [Text opt-outs](../01-YisraCase-overview/17-text-opt-outs.md) |
 | **Automation variables** | Settings the firm made for its own workflows (below) |
@@ -60,6 +60,17 @@ marketing send), *Operational campaign recipient cap* and *Paced send rate*
 ([Campaign Manager](../01-YisraCase-overview/11-campaign-manager.md)). The
 marketing footer also reads the firm's name, mailing address, phone and
 signing attorney from **Firm identity**.
+
+**Email attachments** (Dropbox filing) — what a person may file with Comms'
+**File attachments** ([Mailboxes → Reading mail](../08-Admin-Tools/08-mailboxes.md#reading-mail--comms)):
+*Email attachments: never filed* — file types (extensions, like `exe, bat`)
+no one can file; blank means the built-in list of programs, scripts,
+installers, disk images and shortcuts, never "nothing". *Email attachments:
+confirm these types* — types that need a second confirmation; blank means
+every type that is not a usual document (PDF, Word, Excel, pictures, text).
+*Email attachments: confirm over (MB)* — files larger than this need a second
+confirmation; blank = 15, 0 = never. The server enforces all three, not just
+the window.
 
 **Spaces are kept exactly.** Dropbox folder names carry leading spaces on
 purpose (they set the sort order), so nothing here trims what you type.

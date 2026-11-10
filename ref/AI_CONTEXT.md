@@ -3133,6 +3133,24 @@ sender (one FOR UPDATE read, `digest_of` = the claimer) and sends ONE notice
 and at most ONE pick-the-case, whose answer refiles the burst's unsorted
 emails (`email_attachments_refile` `digest_key` + `digest_of`). A burst of
 one = the single-email notice unchanged.
+**Comms filing (S3, §9 there):** any mailbox — whoever can READ an email
+(`mailReadService.loadVisible`) may file its attachments from Comms
+(`services/emailAttachmentCommsService.js`; `POST /api/mail/attachments/
+preview`, `…/messages/:id/attachments/file` one email per request,
+`…/attachments/notice`). A person may file any type but the never-file list
+(`email_attachments_blocked_ext`; blank = the built-in programs/scripts list,
+never "nothing"); `email_attachments_confirm_ext` / `_confirm_mb` need a
+second confirmation, enforced server-side (409 `needs_confirmation`). The
+review notice (one per sender in the batch, digest key `comms-<batch>`) goes
+to `email_attachments_reviewer` unless that is the filer. A firm-address
+sender is nobody's client in the matcher (`firm_sender`). S3b: `folder` = any
+folder in the case folder, taken EXACTLY (leading spaces are the firm's sort
+order; `exactFolder` refuses what could leave it); `…/attachments/folders`
+lists the case folder's subfolders; an email the matcher places nowhere
+offers the cases of clients named (first + last) in its subject — never staff,
+never auto-picked. Filed state rides
+every Comms attachment (`attachFiled` — own row, else any copy by RFC
+Message-ID); the `not_filed` list filter uses the same copy rule.
 
 ### Direction & firm-to-firm
 `from.email` domain ∈ `EMAIL_DOMAINS` → `outgoing`, else `incoming`.

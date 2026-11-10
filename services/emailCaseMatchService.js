@@ -35,6 +35,17 @@
  *                                other cases are candidates) or
  *                                'unknown_sender'
  *
+ * ── A FIRM SENDER IS NOBODY'S CLIENT (2026-11-10) ───────────────────────────
+ * When the From is a FIRM address — on a firm domain (emailIngestService
+ * firmDomains(): the email_domains setting, subdomains too — the rule the
+ * Comms client filter uses) or a YisraCase mailbox's own address — S is
+ * EMPTY and contact is null: staff forwarding a client's documents is not the
+ * client sending them. Live 2026-11-10: Stuart's own contact is Primary on his
+ * personal cases (one Pending), so his forward to docs@ with no id in the
+ * subject would have filed a client's documents into HIS case. A firm sender
+ * still matches by a case id or number in the email (E); otherwise
+ * flag 'firm_sender'.
+ *
  * ── CASE IDS — ANY VINTAGE (Fred, 2026-11-08) ───────────────────────────────
  * lib/caseId mints 8 uppercase Crockford Base32 characters; the ~1,060 legacy
  * ids are 8 base64url characters, mixed case (13 of them happen to be all
@@ -67,7 +78,8 @@
  *                'case_id_in_body' | 'case_number_in_body' |
  *                'sender_open_case' | 'sender_retained_case' | null
  *   flag         null | 'conflict' | 'multiple_case_ids' |
- *                'multiple_open_cases' | 'no_open_case' | 'unknown_sender'
+ *                'multiple_open_cases' | 'no_open_case' | 'unknown_sender' |
+ *                'firm_sender'
  *   reason       one plain sentence for the staff notice
  *   contact      {contact_id, name, lfm_name} | null — the sender
  *   candidates   [{case_id, case_number, case_type, case_stage, case_status,
@@ -292,6 +304,23 @@ async function senderContact(db, email) {
   return r ? { contact_id: Number(r.contact_id), name: r.contact_name || null, lfm_name: r.contact_lfm_name || null } : null;
 }
 
+/**
+ * Is this a firm address — a firm domain (or a subdomain of one) or a
+ * YisraCase mailbox's own address? (Header: A FIRM SENDER IS NOBODY'S CLIENT.)
+ */
+async function isFirmSender(db, email) {
+  const addr = String(email == null ? '' : email).trim().toLowerCase();
+  if (!EMAIL_RE.test(addr)) return false;
+  const domain = addr.slice(addr.lastIndexOf('@') + 1);
+  const firm = require('./emailIngestService').firmDomains();   // lazy (convention)
+  for (const d of firm) {
+    const fd = String(d).toLowerCase();
+    if (domain === fd || domain.endsWith(`.${fd}`)) return true;
+  }
+  const [rows] = await db.query('SELECT 1 FROM mailboxes WHERE address = ? LIMIT 1', [addr]);
+  return rows.length > 0;
+}
+
 /** Every case the contact is a CLIENT on (Primary / Secondary), any stage. */
 async function _clientCases(db, contactId) {
   const [rows] = await db.query(
@@ -339,7 +368,8 @@ async function matchCase(db, { fromEmail, subject, text } = {}) {
   const where = inSubject.length ? 'subject' : 'body';
   const typedMethod = typedNamed.length ? `case_${typedNamed[0].via === 'id' ? 'id' : 'number'}_in_${where}` : null;
 
-  const contact = await senderContact(db, fromEmail);
+  const firmSender = await isFirmSender(db, fromEmail);
+  const contact = firmSender ? null : await senderContact(db, fromEmail);
   const all = contact ? await _clientCases(db, contact.contact_id) : [];
   const open = all.filter(r => OPEN_STAGES.includes(r.case_stage));
 
@@ -402,12 +432,16 @@ async function matchCase(db, { fromEmail, subject, text } = {}) {
         : `The sender (${contact.name || 'a known contact'}) is not a client on any case.`,
       all.map(r => _cand(r, 'sender')));
   }
+  if (firmSender) {
+    return miss('firm_sender', 'It was sent from a firm address, not by a client, and the email names no case.', []);
+  }
   return miss('unknown_sender', 'The sender is not a contact in YisraCase, and the email names no case.', []);
 }
 
 module.exports = {
   matchCase,
   senderContact,
+  isFirmSender,
   extractCaseIds,
   extractCaseNumbers,
   ownText,

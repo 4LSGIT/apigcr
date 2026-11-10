@@ -4,8 +4,9 @@ Status: S1 (plumbing) landed 2026-11-06 (cdf2050). S2 (the docs@ workflow)
 landed 2026-11-06 (367d8b3); shadow live since 2026-11-06 (workflow 55, rule
 24 action 28); cut over to SB 2026-11-08. S2b (2026-11-08): case numbers and
 legacy ids name the case. S2c (2026-11-09): per-file links, the Docs Needed
-list. S2d (2026-11-09): one notice per burst (§8). S3 (Comms UI) not started.
-Rulings: Fred, 2026-11-06, 2026-11-08 and 2026-11-09 (§1).
+list. S2d (2026-11-09): one notice per burst (§8). S3 (2026-11-10): File
+attachments from Comms, any mailbox (§9).
+Rulings: Fred, 2026-11-06, 2026-11-08, 2026-11-09 and 2026-11-10 (§1, §9).
 Living design doc — edit claims in place when a slice changes them.
 
 ## 1. Goal and rulings
@@ -56,12 +57,16 @@ mailAttachmentService.js` is the server-side path to them:
   `{mailbox_id, folder, uid}`; `{source, message_id}` (the ingest dedupe
   identity, resolved through each mailbox's emission config — provider id or
   RFC Message-ID).
-- `fileableParts(row)` — kept: extension on the client-upload allowlist
-  (`portalDocsService.ALLOWED_EXTENSIONS`; no extension → from the MIME type);
-  skipped with a reason: cid-referenced inline images under 20 KB (signature
-  logos — NOT every inline image: Apple Mail sends photographed documents as
-  inline images, `mail_messages` 3206), refused types (`.eml`, `.ics`, `.zip`,
-  `.exe`, …), estimated over 40 MB.
+- `fileableParts(row, {staffPick, blocked})` — kept: extension on the
+  client-upload allowlist (`portalDocsService.ALLOWED_EXTENSIONS`; no
+  extension → from the MIME type; a person's pick also names `.zip` / `.eml` /
+  `.msg` by type); skipped with a reason: cid-referenced inline images under
+  20 KB (signature logos — NOT every inline image: Apple Mail sends
+  photographed documents as inline images, `mail_messages` 3206), types off
+  the allowlist (`.eml`, `.ics`, `.zip`, `.exe`, …), estimated over 40 MB. A
+  skipped type a PERSON may still file carries `optional` (+ `ext`,
+  `est_bytes`); one on the never-file list carries `blocked`. With
+  `staffPick` (Comms, §9) any type but the blocked ones is kept.
 - `fetchPartBuffer(db, row, part)` — `imapTransport.fetchPart`'s identity
   guard (UIDVALIDITY + Message-ID), buffered with a hard byte cap. Coded
   errors: `BAD_REF`, `MAILBOX_GONE`, `RESYNC_PENDING`, `PART_GONE`,
@@ -89,7 +94,13 @@ the Comms `related()` rule).
 | \|E\| = 1, otherwise | none, `conflict` |
 | no id, \|S\| = 1 | S |
 | no id, \|S\| > 1 | the one retained case, else none, `multiple_open_cases` |
-| no id, S empty | none, `no_open_case` (known contact) / `unknown_sender` |
+| no id, S empty | none, `no_open_case` (known contact) / `unknown_sender` / `firm_sender` |
+
+A sender on a firm address — a firm domain (`email_domains`, subdomains too)
+or a YisraCase mailbox's own address — is nobody's client: S is empty and
+contact is null, so only a case the email names matches (`firm_sender`
+otherwise). Staff forwarding a client's documents is not the client sending
+them; Stuart's own contact is Primary on his personal cases (2026-11-10).
 
 Case ids: "case <id>" (any letter case; also `case:`, `case #`, `case id`,
 `case no.`) in subject or body; a bare token of uppercase letters and digits in
@@ -142,6 +153,11 @@ A 'filing' claim older than 15 min is re-claimed; a fresh one is reported
 `in_progress`. A re-run files only what is missing. Dropbox ids are stamped
 from `documents.external_id` after the batch (the refile handle). No FK to
 `mail_messages`: the record outlives a purged or pruned mail copy.
+
+`parts` (Comms, §9): only these part ids are filed, a person's pick (any
+type but the blocked ones); the rest are reported `not_selected` ("left out
+by the person who filed these"). `reason` replaces the notice's default
+"why it went there" line.
 
 Failure posture: throws only when there is nothing to report on (`BAD_REF`,
 `MESSAGE_NOT_STORED`, `CASE_NOT_FOUND`, `CONTACT_NOT_FOUND`, `BAD_TARGET`).
@@ -347,10 +363,102 @@ real routers on a local MySQL holding live workflow 55: GO, re-run = nothing
 to do, NO-GO without the table, stop-before-publish → re-run publishes,
 stop-mid-draft → re-run refuses until the draft is discarded.
 
-## 9. Deferred / follow-ups
+## 9. S3 — File attachments from Comms (`emailAttachmentCommsService`)
 
-- **S3, Comms UI**: an attachment chip shows "Filed → case X" from
-  `mail_attachment_filings`; a "File all to case" action for unsorted mail.
+Why (live, 2026-11-10): over 60 days about 69 client emails with files went
+to staff inboxes and only 37 to docs@. Processing every inbound email is
+wrong (most mail in a staff box is not a client's documents); forwarding them
+one by one to docs@ is slow. So Comms files them: from ANY mailbox, a person
+picks the emails, the case and the files, and the docs@ engine (§4) does the
+filing — same folders, names, registry and duplicate guard.
+
+Rulings (Fred, 2026-11-10):
+- **Any mailbox**; **anyone who can READ the email** may file its
+  attachments (`mailReadService.loadVisible` — grant, SU, the attorney read
+  bypass, an alias slice). An unreadable email is a 404 (no oracle).
+- **A person may file any type** except the never-file list —
+  `email_attachments_blocked_ext` (a list of extensions; blank or nothing
+  usable in it = programs, scripts, installers, disk images, shortcuts —
+  `mailAttachmentService.DEFAULT_BLOCKED_EXTENSIONS`; blank never unblocks
+  everything).
+- **A second confirmation** for a type on `email_attachments_confirm_ext`
+  (blank = every type off the client-upload allowlist) or a file over
+  `email_attachments_confirm_mb` (blank = 15, 0 = never) — enforced by the
+  SERVER (409 `needs_confirmation` until the part is in `confirm`), not only
+  the dialog.
+- **Link the email to the case** — on by default (the "Link to case"
+  action, `mailReadService.caseLink`).
+- **The review notice** goes to `email_attachments_reviewer` (a user; SB) —
+  not when the reviewer is the one filing, nor when no reviewer is set.
+- **Duplicates**: a file with the same name (letter case aside) and the same
+  ENCODED size as one already filed to the target case, or earlier in the
+  same selection, starts unticked and says so.
+- **Move what docs@ put in Unsorted**: an email's parts filed elsewhere can be
+  moved into the chosen case (`refileMessageAttachments` — the whole email's
+  filed parts together). Out of Unsorted it starts ticked; out of ANOTHER
+  case it is offered, never ticked.
+- **Any folder in the case folder** (S3b): default `Client Uploads/Emailed
+  YYMMDD`; or one of the case folder's subfolders, or a typed one (created
+  if missing) — for what the client did not send (a signed agreement,
+  discovery, a court paper). Taken EXACTLY (`emailAttachmentFilingService.
+  exactFolder`): the firm's folder names carry leading spaces on purpose
+  (" 012 - Supplemental Responses"), so nothing is trimmed — a cleaned name
+  would create a second folder beside the real one; what could leave the
+  case folder or that Windows sync mangles is refused instead (`.` / `..`,
+  `\ : * ? " < > |`, control characters, a blank name, a name ending in a
+  dot or a space, > 6 levels, > 120 characters a name). A move goes to the
+  same folder.
+- **Names in the subject** (S3b): an email the matcher places nowhere (no
+  case, no candidates — an Adobe Sign notice "… between Stuart Sandweiss and
+  michele boren is Signed and Filed!") offers the cases of clients (Primary /
+  Secondary) whose first AND last name are both words of the subject —
+  suggestions only, never the target. Never the firm's own people: a contact
+  named exactly like a staff user, or holding a firm-address email
+  (`isFirmSender`), is left out (the attorney is named in every e-sign
+  subject).
+
+Routes (`routes/api.mail.js`, staff JWT):
+
+| Route | Does |
+|---|---|
+| `POST /api/mail/attachments/preview` `{message_ids ≤50, case_id?}` | Read-only. Per email: every attachment as `file` (allowlist — ticked unless filed or a duplicate) / `optional` (any other type a person may file — unticked) / `skip` (`inline_image`, `too_large`, `blocked`, `type_not_allowed`), with `filed`, `duplicate`, `confirm` ('type' / 'size'), the matcher's verdict, and `move`. Target = `case_id`, else the ONE case every email with files matches (`suggested`). Also the candidates, the reviewer (`is_you`), the policy. `mailbox_id` is the box the reader sees it in (an alias's id for a slice reader — the part route's URL). |
+| `POST /api/mail/attachments/folders` `{case_id}` | The case folder's subfolders for the folder choice: ONE recursive Dropbox listing of `cases.case_dropbox`, folders only, relative, exact names, ≤ 4 levels, ≤ 400. `reason`: `no_case_folder` / `unavailable` (Dropbox did not answer — type the folder). Any staff member (what `/api/dropbox/list` already gives). |
+| `POST /api/mail/messages/:id/attachments/file` `{case_id, parts, confirm?, move?, link?, batch?, folder?}` | ONE email: move (when asked) → file the picks (`fileMessageAttachments` target `case`, `filed_by` the person, reason "Filed to case X by <name> from Comms.") → link. One request per email: the dialog shows progress and a retry re-runs one email (the registry makes every part idempotent). 400 a part not on the email / nothing to do; 422 a part that cannot be filed (says why); 409 `needs_confirmation`. With `batch`, the result is queued under digest key `comms-<batch>` (`mail_attachment_notices`, §8's table). The answer carries `log_id` when linked; `public/js/yc-sync.js` announces `doclink:case:<id>` (a file landed or moved in) and, when linked, case-link's `mail:<id>` + `comms:case:<id>` — an open case's Documents and Comms tabs refresh. |
+| `POST /api/mail/attachments/notice` `{batch}` | Every email of the batch must be readable by the caller (checked before anything is claimed — a batch id is not a capability); claims the queued results and sends the reviewer ONE notice PER SENDER (§8's `digestOutput` — the renderer speaks for one sender), From `email_automations`, subject `Filed from Comms — …`, title "Filed by <name>". `{sent:false, reason}`: `you_are_the_reviewer` / `no_reviewer` (claimed all the same) / `nothing_to_report`. A dialog closed before this call leaves its rows unclaimed: no notice for that batch. |
+
+Comms (`public/comms.html`): a **File to case…** button under every email's
+attachments, an attachment's **Save** button (= the dialog with only that
+file ticked; the viewer's Save to case too), a link on a conversation with
+several emails with files, and the list's **Select** mode (a click ticks;
+All shown; Same sender; ≤ 50 at a time). The dialog: the case (suggested,
+a candidate — "Suggested because the subject names …" for a name-based one —
+or the case picker over it), the folder (default, or another: the case
+folder's subfolders read once, or typed), per email its attachments with a
+checkbox each and their tags, the move row, Link and Notify, the confirm step,
+per-email results and a summary; closing it re-reads the list and the open
+conversation. A file too large for the server (> 40 MB estimated) can still
+be uploaded straight to the case folder by the browser (the documents upload
+flow) — not recorded as filed. Every attachment shows **Filed** once it is in
+the registry under its own row or any stored copy of the same email (same
+RFC Message-ID, any mailbox — `mailReadService.attachFiled`), and the
+**Not filed** filter (`not_filed`) lists mail with files none of which is
+filed, by the same copy rule.
+
+Tests: `tests/emailAttachments.mysql.test.js` "Comms filing (S3)" (the
+preview's classes, policy and reviewer; the suggestion; filed / duplicates /
+moves; fileOne's picks, confirm, blocked, refusals; move; access incl. an
+alias slice; link; the batch notice per sender; Not filed + Filed on real
+MySQL); `tests/emailAttachmentsComms.routes.test.js` (guard, 409 passthrough);
+`tests/emailAttachmentsComms.pane.test.js` (the dialog, the select mode, the
+card); the mobile survey's `dialog:comms-thread-files`,
+`dialog:comms-file-attachments`, `dialog:comms-select`. S3b: the mysql
+"S3b folder / folders / names" tests, `exactFolder` in
+`tests/emailAttachments.unit.test.js`, the pane's folder and names tests.
+
+## 10. Deferred / follow-ups
+
 - Refile leaves the emptied unsorted day folder behind.
 - A burst's notice names a sender's emails only; mail from the same client's
   second address is its own burst.
+- Comms: a batch whose dialog was closed mid-run sends no notice (its queued
+  rows stay unclaimed under `comms-<batch>`); nothing prunes those rows.

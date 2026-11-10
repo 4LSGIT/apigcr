@@ -27,6 +27,23 @@
  *   POST   /api/mail/messages/:id/case-link   {case_id} — about-link the message's log row
  *                                             to a case; a store-only message gets its
  *                                             log row created first
+ *   Email attachments S3 — file attachments to a case from Comms
+ *   (services/emailAttachmentCommsService.js; ref/EMAIL_ATTACHMENTS_DESIGN.md §9):
+ *   POST   /api/mail/attachments/preview      {message_ids:[…≤50], case_id?} → each email's
+ *                                             attachments classified (file / optional / skip),
+ *                                             filed status, duplicates, confirm flags, the
+ *                                             suggested case, the review-notice recipient
+ *   POST   /api/mail/attachments/folders      {case_id} → the case folder's subfolders (the
+ *                                             dialog's folder choice; one Dropbox listing)
+ *   POST   /api/mail/messages/:id/attachments/file
+ *                                             {case_id, parts:[…], confirm?:[…], move?, link?,
+ *                                             batch?, folder?} → files ONE email's picked parts (409
+ *                                             {needs_confirmation} when a picked part needs the
+ *                                             second confirmation and is not in confirm)
+ *   POST   /api/mail/attachments/notice       {batch} → the review notice for the batch's
+ *                                             emails (one per sender) to the
+ *                                             email_attachments_reviewer user
+ *            Anyone who can READ the email may file it (Fred, 2026-11-10).
  *   GET    /api/mail/messages/:id/related     contacts behind the conversation's outside
  *                                             addresses + their client cases (open the file),
  *                                             + the outside addresses no contact holds
@@ -85,6 +102,7 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const { auditAdminAction, verifyElevationToken, stepupEnabled } = require('../lib/auth.superuser');
 const { makeLimiter } = require('../lib/rateLimiter');
 const svc = require('../services/mailbox/mailReadService');
+const filingComms = require('../services/emailAttachmentCommsService');
 const send = require('../services/mailbox/mailboxSendService');
 const optout = require('../services/optoutService');
 const mbx = require('../services/mailboxService');
@@ -210,6 +228,41 @@ router.post('/api/mail/messages/:id/case-link', ...guard, async (req, res) => {
     const out = await svc.caseLink(req.db, req.auth.userId, req.params.id, req.body);
     res.json({ status: 'success', ...out });
   } catch (err) { sendError(res, 'POST /api/mail/messages/:id/case-link', err); }
+});
+
+// ─── Email attachments S3: file attachments to a case ───
+router.post('/api/mail/attachments/preview', ...guard, async (req, res) => {
+  try {
+    const out = await filingComms.preview(req.db, req.auth.userId, req.body);
+    res.json({ status: 'success', ...out });
+  } catch (err) { sendError(res, 'POST /api/mail/attachments/preview', err); }
+});
+
+router.post('/api/mail/attachments/folders', ...guard, async (req, res) => {
+  try {
+    const out = await filingComms.caseFolders(req.db, req.auth.userId, req.body);
+    res.json({ status: 'success', ...out });
+  } catch (err) { sendError(res, 'POST /api/mail/attachments/folders', err); }
+});
+
+router.post('/api/mail/messages/:id/attachments/file', ...guard, async (req, res) => {
+  try {
+    const out = await filingComms.fileOne(req.db, req.auth.userId, req.params.id, req.body);
+    res.json({ status: 'success', ...out });
+  } catch (err) {
+    // The second confirmation: the parts it is for travel with the refusal.
+    if (err && err.status === 409 && Array.isArray(err.needs_confirmation)) {
+      return res.status(409).json({ status: 'error', message: err.message, needs_confirmation: err.needs_confirmation });
+    }
+    sendError(res, 'POST /api/mail/messages/:id/attachments/file', err);
+  }
+});
+
+router.post('/api/mail/attachments/notice', ...guard, async (req, res) => {
+  try {
+    const out = await filingComms.sendNotice(req.db, req.auth.userId, req.body);
+    res.json({ status: 'success', ...out });
+  } catch (err) { sendError(res, 'POST /api/mail/attachments/notice', err); }
 });
 
 // ─── GET /api/mail/messages/:id/related ───
