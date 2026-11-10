@@ -773,11 +773,14 @@ unless set to 0).
 ### Checklists and notes
 
 Casey can make **one checklist or note** on a case, on a contact, or as your
-own personal list, **add one item** to an existing checklist, or **rename,
-check off or reopen one item** — one change per card, through the same routes
+own personal list, **add one item** to an existing checklist, **rename, check
+off or reopen one item**, **rename one list or note**, **mark one note done or
+not done**, **replace one note's text**, **delete one list or note** (with its
+items) or **delete one item** — one change per card, through the same routes
 the Notes & Lists tab uses. Ask in plain words ("make a pre-filing checklist
 on the Smith case with credit report and tax transcripts", "add 2024 W-2 to
-that list", "check off the credit report").
+that list", "check off the credit report", "rename that list to Pre-filing
+2026", "delete the old intake list").
 
 - **A new list** shows the record it goes on, its title, whether it is a
   checklist or a note, and its starting items (up to 25 — each starts
@@ -787,33 +790,59 @@ that list", "check off the credit report").
   the items already on the list, and the list's status afterwards: checking
   off its last open item completes the list; adding an item to a completed
   list, or reopening one of its items, makes it incomplete again.
+- **A list or note change** shows each field before and after: the title, the
+  note's done / not done, or the note's text (the new text replaces the old
+  text whole). A checklist's done state follows its items, so only a note's
+  can be set.
+- **A delete** always shows in warning style and says it **cannot be undone**:
+  a list card shows how many items go with it (done and open) and names them;
+  a note card shows the length of its text; an item card shows the item and
+  offers checking it off instead. It also says when the list is the case's
+  Docs Needed list, a system (tagged) list, a contact's list (it disappears
+  from every case board that contact is on), or — for a superuser — another
+  person's personal list (only its owner or a superuser can delete one).
+- **Pipeline steps.** A case's tagged checklist can satisfy a pipeline step
+  (for example "Documents received"). When a delete would change a step — the
+  list disappears, or deleting its last open item completes it — the card
+  names the step and its status before and after, in warning style.
 - **Automation.** Checking off an item can start trigger rules (an item
-  completed; a list completed). The card dry-runs both against every active
+  completed; a list completed); so can deleting a list's last open item (a
+  list completed). The card dry-runs both against every active
   rule and lists each rule that would run, and any whose test could not run —
   that one **may** run. Making a list or adding an item starts no rule.
 - **Visible to the client.** An item on a case's **Docs Needed** list is shown
   to the client — in the client portal and on the case's public documents
   link, which lists every unchecked item by name. The card says so in warning
-  style whenever it adds, renames, checks off or reopens such an item.
+  style whenever it adds, renames, checks off, reopens or deletes such an
+  item, deletes that list, or renames a list whose title alone makes it the
+  documents list.
 - **What Casey will not do, and says so:**
-  - make a case list titled **Docs Needed** — that title alone makes it the
-    client's documents list, which only the documents automation creates (add
-    items to the existing one instead);
-  - set a list's **tag** or put items in a particular **order**;
+  - make or rename a case list to **Docs Needed** — that title alone makes it
+    the client's documents list, which only the documents automation creates
+    (add items to the existing one instead);
+  - set a list's **tag**, change a list between checklist and note, or move it
+    to another record;
+  - put items in a particular **order** — the Notes & Lists tab cannot reorder
+    items either;
   - make a list for **another person**, or on a bill, appointment, task or
-    event, or change another person's personal list;
-  - add items to a **note**, or give a checklist a body;
-  - add an item whose name is already on the list (in any capitalisation);
-  - delete or reorder lists or items, rename a list, or edit a note's text —
-    do those on the Notes & Lists tab.
+    event, or change another person's personal list (a superuser may delete
+    one, with a warning);
+  - add items to a **note**, give a checklist a body, or set a checklist's
+    done state;
+  - add an item whose name is already on the list (in any capitalisation), or
+    make a change that changes nothing;
+  - a title longer than the list can hold.
 - **Freshness.** When you confirm, the card re-reads the record's lists (a new
-  list) or the list and every item on it (an item card). If anything changed
-  since the card was prepared, nothing is written; ask Casey to prepare it
-  again.
+  list) or the list, its text and every item on it (every other card). If
+  anything changed since the card was prepared, nothing is written; ask Casey
+  to prepare it again.
 - Once applied, the card opens the case or contact (a personal list points
-  you to More → Notes & Lists). An open Notes & Lists tab for that record
-  refreshes on its own — unless you are typing in it; then it refreshes when
-  you click away.
+  you to More → Notes & Lists). After a new list, an added item or an item
+  change, an open Notes & Lists tab for that record refreshes on its own —
+  unless you are typing in it; then it refreshes when you click away. After a
+  list or note change or a delete it does **not** (the tab's own edits of
+  these do not announce themselves either): another open Notes & Lists tab
+  shows the old list until you reopen it.
 
 The off switch for these cards is the `casey_checklists_enabled` setting (on
 unless set to 0).

@@ -1271,25 +1271,25 @@ COMMENTs.)
 
 - **Lists for another user.** The native route lets anyone make a personal
   list FOR a colleague and add to it (delegation is its point); Casey makes
-  and changes only the asker's own. A card for someone else's list needs a
-  ruling on who may assign to whom and whether the owner is told.
+  and changes only the asker's own (A10.2's one exception: a superuser's
+  delete, mirroring the route's detach gate). A card for someone else's list
+  needs a ruling on who may assign to whom and whether the owner is told.
 - **Lists on bills, appointments, tasks and events (and unlinked lists).**
   Refused by name on create and on item cards; a card would have to name and
   freshness-check those records. The board covers them natively.
-- **Reorder** (PATCH `/checkitems/:id` {position}) — a reorder moves many
-  rows' positions; `position` is refused by name today.
-- **Delete a list or an item** (DELETE `/checklists/:id` cascades its items;
-  DELETE `/checkitems/:id` can complete a list and emit `checklist.completed`)
-  — destructive, its own contract.
+- **Reorder** — no surface offers it (checklistView.html has no item reorder)
+  and no route does it atomically: the only lever is one `position` per PATCH
+  `/checkitems/:id`, so a card would be N non-atomic writes that can leave a
+  half-applied order. Needs a reorder UI and an atomic route first; `position`
+  is refused by name today.
 - **Upsert-many and template expansion** (POST `/checklists/upsert-items`:
   find-or-create the case's docs list, drop items matching the first 22
   characters, insert fresh; emits `checklist.items_upserted`, which trigger
   rule 14 listens to) — a fan-out onto the client-facing docs list.
-- **Rename a list, edit a note's body, set a note's done state** (PATCH
-  `/checklists/:id`).
-- **Sync gaps left on the native side.** Only the three routes Casey uses are
-  on the bus (`checklist:<link_type>:<link>`). PATCH / DELETE
-  `/checklists/:id`, DELETE `/checkitems/:id` and POST
+- **Sync gaps left on the native side.** Only A10's three routes (create, item
+  add, item update) are on the bus (`checklist:<link_type>:<link>`). PATCH / DELETE
+  `/checklists/:id`, DELETE `/checkitems/:id` (all three also Casey's since
+  A10.2, which kept the native behaviour) and POST
   `/checklists/upsert-items` still announce nothing, so another open board
   stays stale until its tab is re-entered; the global board (More → Notes &
   Lists, `checklistsView.html`) does not subscribe to `checklist:*` at all.

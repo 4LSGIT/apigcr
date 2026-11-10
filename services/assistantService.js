@@ -750,11 +750,39 @@ const CASE_REQUIREMENT_NOTE_MAX = 255;
 // checklist_id (create / item add — both routes return the whole list) or
 // checkitem_id (update — the route returns the item row). One per-family
 // switch, casey_checklists_enabled (on unless '0').
-const CHECKLIST_ACTION_KINDS = new Set(['checklist.create.v1', 'checklist.item.add.v1', 'checklist.item.update.v1']);
+// A10.2 (same switch) adds what the Notes & Lists page itself offers on an
+// existing list: rename a list, set a note's done state, edit a note's text
+// (checklist.update.v1 → PATCH /checklists/:id {title?, status?, body?} — the
+// page's editTitle / toggleNoteDone / saveBody), delete a list or note with
+// its items (checklist.delete.v1 → DELETE /checklists/:id — deleteList) and
+// delete ONE item (checklist.item.delete.v1 → DELETE /checkitems/:id —
+// deleteItem). The page has no item reorder and the routes no atomic reorder,
+// so there is no reorder kind. Tag (SU-only), list_kind (immutable) and a move
+// to another record are refused by name; the title width is the column's
+// (information_schema), the note text lib/noteLimits'; a delete discloses its
+// cascade, counts and NO UNDO; the delete and the item delete project the
+// requirementDetectors `checklist` detector over the post-state (the real
+// resolver over a db wrapper) and name every pipeline step whose status moves.
+// Another user's personal list is refused, except that a SUPERUSER may delete
+// one (the route's mayDetachPersonal). None of the three routes is on the sync
+// bus — native behaviour kept, no matcher added.
+const CHECKLIST_ACTION_KINDS = new Set(['checklist.create.v1', 'checklist.item.add.v1', 'checklist.item.update.v1',
+  'checklist.update.v1', 'checklist.delete.v1', 'checklist.item.delete.v1']);
 const CHECKLIST_KEYS = {
   'checklist.create.v1': new Set(['kind', 'title', 'list_kind', 'body', 'link_type', 'link', 'items', 'evidence']),
   'checklist.item.add.v1': new Set(['kind', 'checklist_id', 'name', 'evidence']),
   'checklist.item.update.v1': new Set(['kind', 'checkitem_id', 'name', 'status', 'evidence']),
+  'checklist.update.v1': new Set(['kind', 'checklist_id', 'title', 'status', 'body', 'evidence']),
+  'checklist.delete.v1': new Set(['kind', 'checklist_id', 'evidence']),
+  'checklist.item.delete.v1': new Set(['kind', 'checkitem_id', 'evidence']),
+};
+// A10.2: fields an update card refuses BY NAME (before the generic unknown-field
+// refusal) — each is something the page does not offer on an existing list.
+const CHECKLIST_UPDATE_NAMED = {
+  list_kind: 'KIND refused: a list\'s kind never changes — a note stays a note and a checklist stays a checklist (the route refuses it: converting would strand a note\'s text or a list\'s items). Delete it and make a new one instead',
+  link: 'MOVE refused: the Notes & Lists page never moves a list to another record, and neither does Casey — make a new list on the other record instead',
+  link_type: 'MOVE refused: the Notes & Lists page never moves a list to another record, and neither does Casey — make a new list on the other record instead',
+  items: 'ITEMS refused: a list update changes the list itself (its title, a note\'s done state, a note\'s text) — items are added, changed and deleted by item cards',
 };
 // Refused by name wherever they appear (the draft, or an initial item).
 const CHECKLIST_SYSTEM_KEYS = ['tag', 'position'];
@@ -5577,6 +5605,357 @@ async function normalizeChecklistItemUpdate(db, value, evidence, currentUserId) 
   };
 }
 
+// ── A10.2: list rename / note status / note text, list delete, item delete ──
+// The routes again guard little (routes/api.checklists.js): PATCH
+// /checklists/:id takes any title (varchar width clipped silently under the
+// relaxed sql_mode) and refuses a body / status on a checklist and a change of
+// kind; DELETE /checklists/:id cascades the items (checkitems_ibfk_1 ON DELETE
+// CASCADE) and is gated only by mayDetachPersonal (another user's personal
+// list: its owner, a superuser or an api_key); DELETE /checkitems/:id
+// recomputes the derived list status and emits checklist.completed after the
+// response when the list turns complete. Real-engine twin:
+// tests/caseyChecklistEdit.mysql.test.js.
+
+// The two columns an update card checks, as the live schema has them: the
+// title's width (characters) and the status ENUM's members.
+async function checklistColumns(db) {
+  const [rows] = await db.query(
+    `SELECT COLUMN_NAME AS name, CHARACTER_MAXIMUM_LENGTH AS width, COLUMN_TYPE AS column_type
+       FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'checklists' AND COLUMN_NAME IN ('title', 'status')`);
+  const byName = new Map((Array.isArray(rows) ? rows : []).map((r) => [String(r.name).toLowerCase(), r]));
+  const title = byName.get('title'); const status = byName.get('status');
+  const width = title && title.width != null ? Number(title.width) : NaN;
+  if (!Number.isSafeInteger(width) || width < 1 || !status) throw checklistError('The checklists columns could not be read — nothing is proposed');
+  return { titleWidth: width, statuses: caseFieldsMembers(status.column_type) };
+}
+
+// The stored text of one list — checklistState's read carries no body.
+async function checklistBody(db, checklistId) {
+  const [rows] = await db.query('SELECT body FROM checklists WHERE id = ? LIMIT 1', [checklistId]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  return row && row.body != null ? String(row.body) : null;
+}
+
+// The list an A10.2 card acts on. The A10 rules hold (a case, a contact or
+// the asking user's own personal list), except `suDeletes`: the route lets a
+// superuser delete another user's personal list (mayDetachPersonal), so the
+// delete card does too, read from the users row (rowIsSuperuser — the route
+// reads the JWT's roles claim; a role change between is the route's 403).
+async function checklistEditTarget(db, checklistId, currentUserId, verb, { suDeletes = false, itemCap = false } = {}) {
+  const state = await checklistState(db, checklistId);
+  if (!state) throw checklistError(`Checklist #${checklistId} no longer exists`);
+  const { list } = state;
+  if (!CHECKLIST_LINK_TYPES.includes(list.link_type)) {
+    throw checklistError(`"${list.title}" (#${list.checklist_id}) hangs off ${checklistLinkName(list.link_type)} — Casey works on lists of a case, a contact or your own personal list only; the user changes this one on the Notes & Lists page`);
+  }
+  let owner = null;
+  if (list.link_type === 'user' && String(list.link) !== String(currentUserId)) {
+    const [ownerRows] = await db.query('SELECT user, user_name FROM users WHERE user = ? LIMIT 1', [Number(list.link)]);
+    const ownerRow = Array.isArray(ownerRows) ? ownerRows[0] : null;
+    const ownerName = ownerRow && String(ownerRow.user_name || '').trim() ? `${String(ownerRow.user_name).trim().slice(0, 60)} (user #${list.link})` : `user #${list.link}`;
+    let su = false;
+    if (suDeletes) {
+      const [meRows] = await db.query('SELECT user_auth, roles FROM users WHERE user = ? LIMIT 1', [Number(currentUserId)]);
+      su = require('../lib/auth.superuser').rowIsSuperuser(Array.isArray(meRows) ? meRows[0] : null);
+    }
+    if (!su) {
+      throw checklistError(`"${list.title}" (#${list.checklist_id}) is another user's personal list — it belongs to ${ownerName}. ${suDeletes
+        ? 'Only its owner or a superuser may delete it (the route refuses everyone else); the owner deletes it on the Notes & Lists page'
+        : 'Casey works on your own personal lists only; the owner or you change it on the Notes & Lists page'}`);
+    }
+    owner = { user_id: Number(list.link), label: ownerName };
+  }
+  if (itemCap && state.items.length > CHECKLIST_ITEMS_MAX) {
+    throw checklistError(`"${list.title}" has ${state.items.length} items — more than one card can review (${CHECKLIST_ITEMS_MAX}). The user changes it on the Notes & Lists tab`);
+  }
+  const parent = await checklistParent(db, list.link_type, list.link, currentUserId);
+  if (!parent) throw checklistError(`The ${list.link_type} "${list.title}" hangs off (${list.link}) no longer exists`);
+  if (owner) Object.assign(parent, { user_id: owner.user_id, link: String(owner.user_id), label: `${owner.label}'s personal list` });
+  const body = await checklistBody(db, list.checklist_id);
+  return { ...state, list: { ...list, body }, parent, owner, verb };
+}
+
+// What the click compares whole against GET /checklists/:id.
+function checklistEditExpected(list, items) {
+  return { title: list.title, kind: list.kind, link_type: list.link_type, link: list.link, tag: list.tag, status: list.status,
+    body: list.body == null ? null : list.body, items: checklistItemSignature(items) };
+}
+
+// The requirementDetectors `checklist` detector re-run over the post-state:
+// the REAL resolver (requirementService.resolveRequirements) over a db wrapper
+// that rewrites exactly this list in the detector's two reads — its checklists
+// read (the row dropped, or its stored status replaced) and its checkitems
+// count (the row dropped, or its total / done replaced; a list left with no
+// items has no count row, as GROUP BY gives none). Every other read is live.
+// Shape guard, fail closed: at most one read of each table, mysql2's
+// [rows, fields] shape, and the same number of list reads with and without
+// the projection — otherwise the card is refused.
+function checklistProjectedDb(db, listId, project) {
+  let listReads = 0; let itemReads = 0; let shapeOk = true;
+  const wrapped = {
+    query: async (sql, params) => {
+      const res = await db.query(sql, params);
+      const text = String(sql);
+      const isList = /\bFROM\s+checklists\b/i.test(text);
+      const isItems = !isList && /\bFROM\s+checkitems\b/i.test(text);
+      if (!isList && !isItems) return res;
+      if (isList) listReads += 1; else itemReads += 1;
+      if (!Array.isArray(res) || !Array.isArray(res[0])) { shapeOk = false; return res; }
+      if (!project) return res;
+      let rows;
+      if (isList) {
+        rows = project.drop ? res[0].filter((r) => Number(r.id) !== listId)
+          : res[0].map((r) => (Number(r.id) === listId ? { ...r, status: project.status } : r));
+      } else {
+        rows = res[0].filter((r) => Number(r.checklist_id) !== listId);
+        const asked = Array.isArray(params) && Array.isArray(params[0]) && params[0].map(Number).includes(listId);
+        if (!project.drop && asked && project.items && project.items.total > 0) {
+          rows.push({ checklist_id: listId, total: project.items.total, done: project.items.done });
+        }
+      }
+      return [rows, ...res.slice(1)];
+    },
+  };
+  return { db: wrapped, reads: () => ({ listReads, itemReads, shapeOk }) };
+}
+
+// Which pipeline steps of the list's case change status with this change.
+// A contact or personal list feeds no step (the detector reads link_type
+// 'case' only), and neither does a note (kind 'checklist' only) — the
+// projection shows the latter on its own.
+async function checklistPipelineShift(db, list, parent, project) {
+  if (list.link_type !== 'case') {
+    return { changed: [], text: `Pipeline: no step reads this list — a pipeline step's checklist detector reads only a CASE's tagged checklists (this one is ${list.link_type === 'contact' ? 'a contact\'s' : 'a personal list'}).` };
+  }
+  const caseId = String(parent.case_id);
+  const reqSvc = require('./requirementService');
+  const before = checklistProjectedDb(db, list.checklist_id, null);
+  const after = checklistProjectedDb(db, list.checklist_id, project);
+  const b = await reqSvc.resolveRequirements(before.db, [caseId]);
+  const a = await reqSvc.resolveRequirements(after.db, [caseId]);
+  const rb = before.reads(); const ra = after.reads();
+  if (!rb.shapeOk || !ra.shapeOk || rb.listReads > 1 || ra.listReads !== rb.listReads || rb.itemReads > 1 || ra.itemReads > 1) {
+    throw checklistError(`The pipeline steps of ${parent.label} could not be projected for this change (the requirement resolver read the checklists in an unexpected way) — nothing is proposed`);
+  }
+  if (rb.listReads === 0) {
+    return { changed: [], text: `Pipeline: no step of ${parent.label} reads a checklist — no checklist requirement is on its pipeline, so no step changes.` };
+  }
+  const rowsOf = (m) => (m && typeof m.get === 'function' ? m.get(caseId) || [] : []);
+  const key = (r) => `${r.requirement_key}\u0000${Number(r.stage_id)}`;
+  const was = new Map(rowsOf(b).map((r) => [key(r), r]));
+  const changed = [];
+  for (const r of rowsOf(a)) {
+    const old = was.get(key(r));
+    if (!old || old.status === r.status) continue;
+    changed.push({ requirement_key: r.requirement_key, stage_key: r.stage_key, internal_label: r.internal_label, required: r.required ? 1 : 0,
+      from: old.status, to: r.status, progress_from: old.progress || null, progress_to: r.progress || null });
+  }
+  if (!changed.length) {
+    return { changed, text: `Pipeline: every step of ${parent.label} keeps its status — its checklist steps were re-resolved over this change.` };
+  }
+  const lines = changed.map((c) => `"${String(c.internal_label || c.requirement_key).slice(0, 120)}" (stage ${c.stage_key}, ${c.required ? 'required' : 'optional'}) goes ${c.from} → ${c.to}${c.progress_to ? ` (${c.progress_to})` : c.progress_from ? ` (was ${c.progress_from}; no list left to count)` : ''}`);
+  return { changed, text: `PIPELINE: on ${parent.label}, ${lines.join('; ')} — the step's checklist detector reads this list${changed.length > 1 ? 's' : ''} by tag; the Steps panel, the board and Casey's pipeline cards follow it at once.` };
+}
+
+const CHECKLIST_NO_BUS = (route) => `Other open pages: ${route} is not on the sync bus — another open Notes & Lists board keeps showing the old list until it reloads (re-entering its tab reloads it).`;
+
+async function normalizeChecklistUpdate(db, value, evidence, currentUserId) {
+  const checklistId = Number(value.checklist_id);
+  if (!Number.isSafeInteger(checklistId) || checklistId < 1) throw checklistError('A list update needs the list\'s exact positive checklist_id');
+  const hasTitle = value.title !== undefined && value.title !== null;
+  const hasStatus = value.status !== undefined && value.status !== null;
+  const hasBody = value.body !== undefined && value.body !== null;
+  if (!hasTitle && !hasStatus && !hasBody) {
+    throw checklistError('A list update needs "title" (the new title), "status" (a note\'s "complete" or "incomplete") or "body" (a note\'s new text) — at least one');
+  }
+  let title = null;
+  if (hasTitle) {
+    if (typeof value.title !== 'string') throw checklistError('The list title must be text');
+    title = value.title.trim();
+    if (!title) throw checklistError('The list title is empty — the Notes & Lists page never saves an empty title');
+    if (CASE_FIELDS_CONTROL.test(title)) throw checklistError('The list title is one line of text — no line breaks or control characters');
+  }
+  if (hasStatus && value.status !== 'complete' && value.status !== 'incomplete') {
+    throw checklistError(`status must be "complete" or "incomplete" (got "${String(value.status).slice(0, 40)}") — the done / not done of a note, as its checkbox sets it`);
+  }
+  let body = null;
+  if (hasBody) {
+    if (typeof value.body !== 'string') throw checklistError('The note text must be text');
+    if (CASE_FIELDS_TEXT_CONTROL.test(value.body)) throw checklistError('The note text carries a control character — only text, tabs and line breaks are kept');
+    const tooLong = require('../lib/noteLimits').checkNoteLengths({ body: value.body });
+    if (tooLong) throw checklistError(`The note ${tooLong}`);
+    body = value.body;
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!checklistRowCited(refs, evidence, (row) => Number(row.checklist_id) === checklistId)) {
+    throw checklistError(`The list evidence does not identify checklist #${checklistId} — cite a row carrying its exact checklist_id (read the list first: checklists.id AS checklist_id)`);
+  }
+  const cols = await checklistColumns(db);
+  if (hasTitle && [...title].length > cols.titleWidth) {
+    throw checklistError(`The list title is ${[...title].length} characters — the column keeps ${cols.titleWidth} and the route would cut it short silently`);
+  }
+  if (hasStatus && !cols.statuses.includes(value.status)) throw checklistError(`status "${value.status}" is not one the list column holds (${cols.statuses.join(', ')})`);
+  const target = await checklistEditTarget(db, checklistId, currentUserId, 'change');
+  const { list, items, parent } = target;
+  const isNote = list.kind === 'note';
+  // The route's own kind rules, judged on the stored kind.
+  if (hasBody && !isNote) throw checklistError(`"${list.title}" (#${list.checklist_id}) is a checklist — a checklist holds items, not text; only a note has a body (the route refuses it)`);
+  if (hasStatus && !isNote) {
+    throw checklistError(`"${list.title}" (#${list.checklist_id}) is a checklist — its status is derived from its items and cannot be set (the route refuses it). Complete or reopen its items instead (checklist.item.update.v1)`);
+  }
+  const changes = {}; const before = {};
+  if (hasTitle && title !== list.title) { changes.title = title; before.title = list.title; }
+  if (hasStatus && value.status !== list.status) { changes.status = value.status; before.status = list.status; }
+  // NULL and '' both show as an empty note on the page — not a change.
+  if (hasBody && body !== (list.body == null ? '' : list.body)) { changes.body = body; before.body = list.body; }
+  if (!Object.keys(changes).length) {
+    throw checklistError(`"${list.title}" already has ${[hasTitle && 'that title', hasStatus && `status ${list.status || 'unset'}`, hasBody && 'that text'].filter(Boolean).join(' and ')} — that changes nothing`);
+  }
+  const warnings = []; const effects = [];
+  if ('title' in changes) {
+    const docsAfter = list.link_type === 'case' && (list.tag === 'docs_needed' || checklistFoldTitle(title) === CHECKLIST_DOCS_TITLE);
+    if (!list.docs_list && docsAfter) {
+      throw checklistError(`DOCS LIST refused: on a case, a ${list.kind} titled "${title}" becomes the case's client-facing docs list (the client portal and the case's public documents link read any case list titled "Docs Needed"). That list is made by the documents automation, never by Casey — choose another title`);
+    }
+    if (list.docs_list && !docsAfter) {
+      warnings.push(`${CHECKLIST_DOCS_WARNING(parent)} It is the docs list ONLY by its title (it has no docs_needed tag): renamed "${title}", it stops being one — the client portal and the public documents link stop showing its items, with no error.`);
+    } else if (list.docs_list) {
+      effects.push(`Docs list: still ${parent.label}'s docs list (by its ${list.tag === 'docs_needed' ? 'docs_needed tag' : 'title'}) — the client portal and public documents link keep showing its items.`);
+    }
+    const [rows] = await db.query('SELECT id, title, kind FROM checklists WHERE link_type = ? AND link = ? ORDER BY created_date ASC, id ASC', [list.link_type, list.link]);
+    const same = (Array.isArray(rows) ? rows : []).filter((r) => Number(r.id) !== list.checklist_id && checklistFoldTitle(r.title) === checklistFoldTitle(title));
+    if (same.length) {
+      warnings.push(`DUPLICATE TITLE: ${parent.label} already has ${same.length === 1 ? 'a' : same.length} ${same.length === 1 ? String(same[0].kind || 'checklist') : 'lists'} titled "${String(same[0].title)}" (#${same.map((r) => Number(r.id)).join(', #')}). Duplicates are allowed; both would show under the same title.`);
+    }
+  }
+  effects.push(`Writes: this ${isNote ? 'note' : 'list'}'s ${Object.keys(changes).map((k) => ({ title: 'title', status: 'done state', body: 'text' })[k]).join(', ')} — nothing else (no item, no tag, no record).`);
+  if ('body' in changes) effects.push('Text: the new text REPLACES the stored text whole — exactly what is shown below is saved.');
+  effects.push('Trigger event: none — this route emits no event (a note\'s done state deliberately emits none), so no trigger rule runs.');
+  effects.push('Pipeline: no step changes — a step\'s checklist detector reads only a case\'s tagged CHECKLISTS and their derived status, never a note, a title or a note\'s text.');
+  effects.push(CHECKLIST_NO_BUS('PATCH /checklists/:id'));
+  return {
+    draft_id: crypto.randomUUID(), kind: 'checklist.update.v1', status: 'draft',
+    list, parent, changes, before, items_total: items.length,
+    effects, warnings,
+    expected: checklistEditExpected(list, items),
+    evidence: refs,
+  };
+}
+
+async function normalizeChecklistDelete(db, value, evidence, currentUserId) {
+  const checklistId = Number(value.checklist_id);
+  if (!Number.isSafeInteger(checklistId) || checklistId < 1) throw checklistError('A list delete needs the list\'s exact positive checklist_id');
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!checklistRowCited(refs, evidence, (row) => Number(row.checklist_id) === checklistId)) {
+    throw checklistError(`The list evidence does not identify checklist #${checklistId} — cite a row carrying its exact checklist_id (read the list first: checklists.id AS checklist_id)`);
+  }
+  const target = await checklistEditTarget(db, checklistId, currentUserId, 'delete', { suDeletes: true });
+  const { list, items, parent } = target;
+  const isNote = list.kind === 'note';
+  const done = items.filter((i) => i.status === 'complete').length;
+  const counts = { total: items.length, done, open: items.length - done };
+  const warnings = []; const effects = [];
+  const bodyLen = list.body == null ? 0 : list.body.length;
+  warnings.push(isNote
+    ? `NO UNDO: the note "${list.title}" (#${list.checklist_id}) is DELETED${bodyLen ? ` with its text (${bodyLen} characters)` : ''} — it is gone for good; the Notes & Lists page has no restore.`
+    : `NO UNDO: the list "${list.title}" (#${list.checklist_id}) is DELETED with ${counts.total ? `its ${counts.total} item${counts.total === 1 ? '' : 's'} (${counts.done} done, ${counts.open} open)` : 'no items'} — the list and every item are gone for good; the Notes & Lists page has no restore.`);
+  if (list.docs_list) {
+    warnings.push(`${CHECKLIST_DOCS_WARNING(parent)} Deleted, it disappears from the client portal and the public documents link until a new docs list is made.`);
+  } else if (list.tag) {
+    warnings.push(`SYSTEM ${isNote ? 'NOTE' : 'LIST'}: tagged "${list.tag}" — automation finds this ${isNote ? 'note' : 'list'} by that tag, and finds nothing once it is deleted.`);
+  }
+  if (target.owner) {
+    warnings.push(`ANOTHER USER'S LIST: this is ${target.owner.label}'s personal list — you may delete it only as a superuser (the route lets an owner or a superuser detach one), and the owner is not told.`);
+  }
+  if (list.link_type === 'contact') {
+    const [caseRows] = await db.query('SELECT COUNT(DISTINCT case_relate_case_id) AS n FROM case_relate WHERE case_relate_client_id = ?', [Number(list.link)]);
+    const n = Number((Array.isArray(caseRows) && caseRows[0] && caseRows[0].n) || 0);
+    warnings.push(`CONTACT'S ${isNote ? 'NOTE' : 'LIST'}: it belongs to ${parent.label} — deleting it removes it from their Notes & Lists tab${n ? ` and from their group on the board of every case they are on (${n} case${n === 1 ? '' : 's'})` : ''}.`);
+  }
+  const shift = await checklistPipelineShift(db, list, parent, { drop: true });
+  (shift.changed.length ? warnings : effects).push(shift.text);
+  effects.push(`Writes: one DELETE — the ${isNote ? 'note' : `list and its ${counts.total} item row${counts.total === 1 ? '' : 's'} (the items go with it by the database's cascade)`}; nothing else.`);
+  effects.push('Trigger event: none — deleting a list emits no event, so no trigger rule runs.');
+  effects.push(CHECKLIST_NO_BUS('DELETE /checklists/:id'));
+  return {
+    draft_id: crypto.randomUUID(), kind: 'checklist.delete.v1', status: 'draft',
+    list, parent, counts, items_before: checklistItemsCard(items), items_total: items.length,
+    pipeline: shift.changed,
+    effects, warnings,
+    expected: checklistEditExpected(list, items),
+    evidence: refs,
+  };
+}
+
+async function normalizeChecklistItemDelete(db, value, evidence, currentUserId) {
+  const itemId = Number(value.checkitem_id);
+  if (!Number.isSafeInteger(itemId) || itemId < 1) throw checklistError('An item delete needs the item\'s exact positive checkitem_id');
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!checklistRowCited(refs, evidence, (row) => Number(row.checkitem_id) === itemId)) {
+    throw checklistError(`The item evidence does not identify item #${itemId} — cite a row carrying its exact checkitem_id (read the items first: checkitems.id AS checkitem_id)`);
+  }
+  const [parentRows] = await db.query('SELECT checklist_id FROM checkitems WHERE id = ? LIMIT 1', [itemId]);
+  const parentRow = Array.isArray(parentRows) ? parentRows[0] : null;
+  if (!parentRow) throw checklistError(`Checklist item #${itemId} no longer exists`);
+  const target = await checklistEditTarget(db, Number(parentRow.checklist_id), currentUserId, 'delete', { itemCap: true });
+  const { list, items, parent } = target;
+  const item = items.find((i) => i.checkitem_id === itemId);
+  if (!item) throw checklistError(`Checklist item #${itemId} moved while Casey read it`);
+  const after = items.filter((i) => i.checkitem_id !== itemId);
+  const statusAfter = checklistDerivedStatus(after);
+  const transitions = checklistTransition(list.status, statusAfter);
+  const storedAfter = transitions ? statusAfter : list.status;
+  const listCompleted = transitions && statusAfter === 'complete';
+  const warnings = []; const effects = [];
+  warnings.push(`NO UNDO: the item "${item.name}" (#${itemId}, ${item.status || 'no status'}) is DELETED from "${list.title}" — it is gone for good; the Notes & Lists page has no restore. To keep it as done instead, check it off (checklist.item.update.v1).`);
+  if (list.docs_list) {
+    warnings.push(`${CHECKLIST_DOCS_WARNING(parent)} Deleting "${item.name}" ${item.status === 'complete' ? 'removes it from what the client sees as received' : 'removes it from what the client is asked for — the portal and the public documents link stop listing it'}.`);
+  }
+  if (transitions) {
+    (statusAfter === 'complete' ? effects : warnings).push(statusAfter === 'complete'
+      ? `List status: "${list.title}" becomes COMPLETE — "${item.name}" is its last open item (the route recomputes the status after the delete).`
+      : `REOPENS THE LIST: "${list.title}" is complete; "${item.name}" is its only item, and a checklist left with no items is never complete (no event fires for that).`);
+  } else {
+    effects.push(`List status: stays ${list.status || 'unset'} (the route recomputes it after the delete).`);
+  }
+  const shift = await checklistPipelineShift(db, list, parent, {
+    status: storedAfter, items: { total: after.length, done: after.filter((i) => i.status === 'complete').length },
+  });
+  (shift.changed.length ? warnings : effects).push(shift.text);
+  const events = []; const lines = []; let rulesChecked = 0; let quiet = 0;
+  if (listCompleted) {
+    events.push('checklist.completed');
+    const { buildEnvelope } = require('../lib/domainEvents');
+    const actor = { user_id: Number.isSafeInteger(Number(currentUserId)) && Number(currentUserId) > 0 ? Number(currentUserId) : 0 };
+    const out = await casePipelineAutomation(db, buildEnvelope('checklist.completed', {
+      contact_id: list.link_type === 'contact' ? (parseInt(list.link, 10) || null) : null,
+      case_id: list.link_type === 'case' ? String(list.link) : null,
+      actor,
+      data: { checklist_id: list.checklist_id, title: list.title, tag: list.tag, link_type: list.link_type },
+    }), 'checklist.completed', 'this list');
+    lines.push(...out.lines); rulesChecked += out.rules_checked; quiet += out.quiet;
+  }
+  if (lines.some((l) => l.outcome === 'unknown')) warnings.push('AUTOMATION: at least one trigger rule could not be evaluated for this change — read its line; it may run.');
+  effects.push(events.length
+    ? 'Trigger event: checklist.completed fires after the delete — every active rule on it is listed below.'
+    : 'Trigger event: none — deleting an item emits checklist.completed only when it completes the list, and this one does not.');
+  effects.push(`Writes: one DELETE of this item; the route then recomputes "${list.title}"'s derived status — nothing else.`);
+  effects.push(CHECKLIST_NO_BUS('DELETE /checkitems/:id'));
+  return {
+    draft_id: crypto.randomUUID(), kind: 'checklist.item.delete.v1', status: 'draft',
+    list, parent,
+    item: { checkitem_id: itemId, checklist_id: list.checklist_id, name: item.name, status: item.status },
+    items_before: checklistItemsCard(items), items_total: items.length,
+    list_status: { from: list.status, to: storedAfter },
+    pipeline: shift.changed,
+    automation: { events, lines: lines.map((l) => l.text), rules_checked: rulesChecked, quiet },
+    effects, warnings,
+    expected: checklistEditExpected(list, items),
+    evidence: refs,
+  };
+}
+
 async function normalizeChecklistAction(db, value, evidence, { currentUserId = null } = {}) {
   // The per-family switch: '0' and the A10 kinds do not exist.
   if (require('../lib/firmConfig').cfg('casey_checklists_enabled') === '0') {
@@ -5585,6 +5964,10 @@ async function normalizeChecklistAction(db, value, evidence, { currentUserId = n
   const kind = value.kind;
   // System fields first, by name, before anything is read.
   checklistSystemKeys(value, kind);
+  if (kind === 'checklist.update.v1') {
+    const named = Object.keys(CHECKLIST_UPDATE_NAMED).filter((k) => Object.prototype.hasOwnProperty.call(value, k));
+    if (named.length) throw checklistError(`${named.map((k) => CHECKLIST_UPDATE_NAMED[k]).filter((t, i, a) => a.indexOf(t) === i).join('; ')} (${kind})`);
+  }
   const allowed = CHECKLIST_KEYS[kind];
   const unknown = Object.keys(value).filter((k) => !allowed.has(k));
   if (unknown.length) {
@@ -5592,6 +5975,9 @@ async function normalizeChecklistAction(db, value, evidence, { currentUserId = n
   }
   if (kind === 'checklist.create.v1') return normalizeChecklistCreate(db, value, evidence, currentUserId);
   if (kind === 'checklist.item.add.v1') return normalizeChecklistItemAdd(db, value, evidence, currentUserId);
+  if (kind === 'checklist.update.v1') return normalizeChecklistUpdate(db, value, evidence, currentUserId);
+  if (kind === 'checklist.delete.v1') return normalizeChecklistDelete(db, value, evidence, currentUserId);
+  if (kind === 'checklist.item.delete.v1') return normalizeChecklistItemDelete(db, value, evidence, currentUserId);
   return normalizeChecklistItemUpdate(db, value, evidence, currentUserId);
 }
 
@@ -11868,11 +12254,12 @@ function taskDraftRequested(question, history = []) {
   const requirementOverride = /\b(?:steps?|requirements?|overrides?)\b/i.test(text) &&
     (/\b(?:mark|set|override|waive|record)\b[^.?!\n]{0,60}\b(?:n\/a|na|not applicable|done|complete|completed|satisfied)\b/i.test(request) ||
       /\b(?:clear|remove|undo|reset|delete|drop)\b[^.?!\n]{0,40}\boverrides?\b/i.test(request));
-  // A10: a checklist, a note-and-list card or one item. The noun names a
+  // A10 / A10.2: a checklist, a note-and-list card or one item — made, added
+  // to, renamed, edited, checked off or deleted. The noun names a
   // checklist (a bare "list" is too common — "list the cases"); "check off" /
   // "tick off" carry their own noun.
   const checklist = (/\b(?:check ?lists?|(?:list|checklist) items?|docs needed|personal list|to-?do list|notes? (?:and|&) lists?)\b/i.test(text) &&
-      /\b(?:draft|propose|prepare|create|make|start|add|put|append|check|tick|mark|complete|finish|uncheck|untick|reopen|rename|update|change)\b/i.test(request)) ||
+      /\b(?:draft|propose|prepare|create|make|start|add|put|append|check|tick|mark|complete|finish|uncheck|untick|reopen|rename|retitle|update|change|edit|delete|remove|erase|drop)\b/i.test(request)) ||
     /\b(?:check|tick|cross)\s+(?:it\s+|that\s+|them\s+|this\s+)?off\b/i.test(request);
   // A11: a document's title / type / tags, or a link to a case or contact.
   // The noun is a document (a bare "file" is too often the case file); the

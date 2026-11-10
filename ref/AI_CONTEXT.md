@@ -985,6 +985,29 @@ body. Governing migrations in `ref/migrations/`.*
   '0'). Tests: `tests/caseyChecklists.test.js`, gated
   `tests/caseyChecklists.mysql.test.js`, `tests/checklistView.sync.test.js`;
   plan: ASK_CASEY_ACTIONS_PLAN A10.
+- **Casey list edits and deletes (A10.2, 11-11):** same switch, three kinds on
+  the Notes & Lists page's own routes — `checklist.update.v1` (PATCH
+  `/checklists/:id` {title?, status?, body?}; status / body on a NOTE only, the
+  route's rule), `checklist.delete.v1` (DELETE `/checklists/:id`, items by the FK
+  cascade) and `checklist.item.delete.v1` (DELETE `/checkitems/:id`, which
+  recomputes the derived status and may emit `checklist.completed`). NO reorder
+  kind: the page has none and no route reorders atomically. Refused by name:
+  `tag`, `position`, `list_kind`, `link` / `link_type`, `items` (update). The
+  title width is read from information_schema (characters); a rename into
+  "Docs Needed" on a case is refused, out of a title-only docs list warned.
+  Another user's personal list is refused — except a delete by a SUPERUSER
+  (users.roles via `rowIsSuperuser`, mirroring `mayDetachPersonal`), warned.
+  Deletes always carry NO UNDO + counts. Invariant: a delete / item delete
+  re-runs the REAL `requirementService.resolveRequirements` over
+  `checklistProjectedDb` (this list dropped, or its status + item counts
+  replaced, in the `checklist` detector's two reads; shape-guarded, fail
+  closed) and names each pipeline step whose status moves (danger). The
+  click re-reads GET `/checklists/:id` incl. the note TEXT. Receipts:
+  `checklist_id` (update, delete) / `checkitem_id` (item delete) — the
+  DELETEs echo no id, so the receipt is the reviewed row. SYNC: none of the
+  three routes is on yc-sync (native gap, kept — `ref/plans.md`). Tests:
+  `tests/caseyChecklistEdit.test.js`, gated
+  `tests/caseyChecklistEdit.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A10.
 - **Casey document cards (A11, 11-02):** kinds `document.update.v1` (PATCH
   `/api/documents/:id` {title?, doc_type?, tags?}) and `document.link.v1` (POST
   `/api/documents/:id/links` {link_type, link_id, relation?}) — the Documents

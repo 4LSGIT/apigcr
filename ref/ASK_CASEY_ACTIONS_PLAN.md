@@ -9,7 +9,7 @@ reschedule-later; one phone/email/address subrecord create, narrow update or
 history-preserving end. Since then: A6 (contact relations and roles — create and
 update), A7 group A (case notes, case alerts, contact notes), A7 groups B/C (any
 other case field, 2026-11-09; the docket's replace / clear, A7e), A7c (case docket adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
-advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer) + A9.4 (requirement override set / clear), A10 (checklists and items), A11 (documents —
+advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer) + A9.4 (requirement override set / clear), A10 + A10.2 (checklists and items; list rename / note edit, list and item delete), A11 (documents —
 update and link), A11.1 (a case's Dropbox folder — candidates-only relink),
 A12 (form drafts and submission links), A13 (mail triage —
 read state and case link; no drafts exist, no SMS triage), A13b (one email's
@@ -1442,13 +1442,15 @@ DELETE. `normalizeCaseRequirementOverrideAction`:
   `tests/assistantUi.test.js`, `tests/assistantPromptKinds.test.js`,
   `tests/caseyActionPermissions.test.js` (78 kinds / 66 mounts).
 
-#### A10: Checklists and checklist items — create, item add and item update shipped 2026-11-01
+#### A10: Checklists and checklist items — create, item add and item update shipped 2026-11-01, edits and deletes (A10.2) 2026-11-11
 
 Creating a checklist or note, adding one item, and updating / completing one
-item. Template expansion, upsert-many, reorder, and deletion remain separate
-because they can create or affect many records. The parent record is resolved
-server-side, the card shows the item counts, and the writes are on the sync
-bus.
+item; A10.2 adds the page's own edits of an existing list (rename, a note's
+done state and text) and its deletes (a list, an item). Template expansion and
+upsert-many stay separate because they create or affect many records; reorder
+does not exist on the page or as an atomic route. The parent record is resolved
+server-side, the card shows the item counts, and A10's three writes are on the
+sync bus (A10.2's three are not — the native gap, kept).
 
 **What the routes guard.** Little. The Notes & Lists routes
 (`routes/api.checklists.js`, mounted at the ROOT — `/checklists`,
@@ -1539,10 +1541,85 @@ items?}), `checklist.item.add.v1` (POST `/checklists/:id/items` {name}) and
   `tests/assistantUi.test.js`, `tests/ycSync.test.js`,
   `tests/checklistView.sync.test.js`.
 
-**Deferred** (`ref/plans.md`): lists for another user; lists on bills,
-appointments, tasks and events; reorder; list and item delete; upsert-many and
-template expansion; a note body edit and a list rename / status edit (PATCH
-`/checklists/:id`, also unmatched on the bus).
+**Shipped contract (A10.2, 2026-11-11 — Fred, 2026-11-09: "Casey can do at
+least anything the user can do in the UI").** Three more kinds behind the same
+switch, each the route the Notes & Lists page (`public/checklistView.html`, also
+the case and contact pages' Notes & Lists tabs, which iframe it) uses:
+`checklist.update.v1` {checklist_id, title?, status?, body?} → PATCH
+`/checklists/:id` (the page's editTitle / toggleNoteDone / saveBody),
+`checklist.delete.v1` {checklist_id} → DELETE `/checklists/:id` (deleteList) and
+`checklist.item.delete.v1` {checkitem_id} → DELETE `/checkitems/:id`
+(deleteItem). There is no reorder kind: the page has no item reorder (no drag
+handler, no position write) and the routes no atomic reorder — only one
+`position` per PATCH `/checkitems/:id`, which no surface sends (manager ruling,
+2026-11-11).
+- **Refused by name**, before anything is read: `tag` (system field, SU-only)
+  and `position` anywhere; on an update `list_kind` (a list's kind never changes
+  — the route 400s it), `link` / `link_type` (the page never moves a list) and
+  `items` (item cards' job); any other unknown field.
+- **Update.** At least one field. The title is trimmed, one line, non-empty,
+  and at most the column's width in CHARACTERS, read from
+  `information_schema.COLUMNS` (the route clips silently — pinned). `status`
+  is "complete" / "incomplete" and in the column's ENUM, and `body` is the
+  WHOLE new text (tabs and newlines kept, other control characters refused,
+  `lib/noteLimits`); both on a NOTE only — the route's own rule, judged on the
+  stored kind. A field equal to the stored value is dropped, and a card left
+  with nothing is refused (NULL and '' are one empty note). A rename INTO "Docs
+  Needed" on a case is refused (DOCS LIST, as create); a rename OUT of a
+  title-only docs list is a CLIENT-VISIBLE warning (the portal and the public
+  documents link stop showing it); a duplicate title on the record is warned.
+  No event, no pipeline step reads a title, a note or its text — said.
+- **Delete.** NO UNDO always, with the cascade (the items go by
+  `checkitems_ibfk_1` ON DELETE CASCADE): the counts (done / open) and the first
+  30 items, or a note's text length. Disclosed: the docs list (CLIENT-VISIBLE —
+  gone from the portal and the public documents link), a tagged list (SYSTEM
+  LIST — automation finds nothing by that tag), a contact's list (gone from
+  their tab and their group on every case board they are on, counted from
+  case_relate). Another user's personal list is refused naming its owner,
+  unless the asking user is a SUPERUSER (`rowIsSuperuser` on the users row —
+  the route's `mayDetachPersonal` reads the JWT's roles; a change between is
+  the route's 403): then it is a card with an ANOTHER USER'S LIST warning. No
+  event.
+- **Item delete.** NO UNDO (offering check-off instead); the derived list
+  status after (`lib/checklistStatus.js`, the route recomputes): the last open
+  item completes the list and `checklist.completed` is dry-run against the
+  active rules (preview lane, as A10's update); the only item of a complete
+  list REOPENS it (an empty checklist is never complete; no event); a docs-list
+  item is CLIENT-VISIBLE (open: no longer asked for; done: no longer shown as
+  received).
+- **The pipeline projection** (delete, item delete): the requirementDetectors
+  `checklist` detector reads a case's tagged CHECKLISTS' stored status and item
+  counts, so a delete can move a step. The card re-runs the REAL resolver
+  (`requirementService.resolveRequirements`) over `checklistProjectedDb`, which
+  rewrites exactly this list in the detector's two reads — dropped, or its
+  status and counts replaced — and names every step whose status moves
+  (`PIPELINE:` danger, `pipeline` on the draft); a case with no checklist step,
+  a contact or personal list, and an unchanged step each say so. Shape guard,
+  fail closed: at most one read of each table, mysql2's shape, the same list
+  reads with and without the projection.
+- **Freshness / outcomes.** `expected` = the list's title, kind, record, tag,
+  status, TEXT and every item's id:status:name; the click re-reads GET
+  `/checklists/:id` and refuses on any difference (an item already gone reads
+  "someone already deleted it"). 404 "Checklist not found" / "Item not found"
+  and the detach 403 are refusals (`knownOutcome`). Receipts: the integer
+  checklist_id (update — the PATCH returns the list — and delete) or
+  checkitem_id (item delete); both DELETEs answer `{status, message}` with no
+  id, so the receipt is the reviewed row. Browser families `checklist_update`
+  (danger with a warning), `checklist_delete` and `checkitem_delete` (always
+  danger).
+- **Sync — a native gap, kept.** PATCH and DELETE `/checklists/:id` and
+  DELETE `/checkitems/:id` have no yc-sync matcher; the page writes them without
+  announcing. The cards keep native behaviour and add none: another open board
+  stays stale until it reloads (each card says so). `ref/plans.md` carries it.
+- Tests: `tests/caseyChecklistEdit.test.js` (mocked; the real resolver over a
+  fake db; browser lifted by name), gated `tests/caseyChecklistEdit.mysql.test.js`
+  (the real routes; the projection equals the real resolver after the real
+  write), `tests/assistantUi.test.js`, `tests/assistantPromptKinds.test.js`,
+  `tests/caseyActionPermissions.test.js`.
+
+**Deferred** (`ref/plans.md`): lists for another user (except a superuser's
+delete); lists on bills, appointments, tasks and events; reorder — no surface
+offers it and no route does it atomically; upsert-many and template expansion.
 
 #### A11: Documents — update and link shipped 2026-11-02
 

@@ -2596,6 +2596,192 @@ function checklistOpen(draft) {
   openEntity(e.kind, e.id, e.label);
 }
 
+// Checklist edits and deletes (A10.2) — what the Notes & Lists page itself
+// offers on an existing list: rename a list, set a note's done state or edit a
+// note's text (PATCH /checklists/:id {title?, status?, body?}), delete a list
+// or note with its items (DELETE /checklists/:id) and delete ONE item (DELETE
+// /checkitems/:id). There is no reorder (the page has none). The server
+// refused tag / list_kind / a move by name, an over-width title, an
+// over-limit note, a body or status on a checklist, another user's personal
+// list (except a superuser's delete), a "Docs Needed" rename and a no-op; it
+// disclosed the cascade, the counts, NO UNDO, the docs list, the pipeline
+// steps the requirement detector moves and (item delete) the
+// checklist.completed rules; and it baked the list (title, kind, record, tag,
+// status, text) and every item into `expected`. The click re-reads GET
+// /checklists/:id and refuses on ANY difference BEFORE the claim. None of the
+// three routes is on the yc-sync bus — another open board stays stale until it
+// reloads (the card says so); no matcher is added here. Receipts: the integer
+// checklist_id (update, delete) or checkitem_id (item delete); both DELETEs
+// answer {status, message} with no id, so the receipt is the reviewed row.
+const CHECKLIST_EDIT_ACTION_KINDS = new Set(['checklist.update.v1']);
+const CHECKLIST_DELETE_ACTION_KINDS = new Set(['checklist.delete.v1']);
+const CHECKITEM_DELETE_ACTION_KINDS = new Set(['checklist.item.delete.v1']);
+
+function checklistEditLabel(draft) {
+  const kind = draft && draft.kind;
+  const note = ((draft && draft.list) || {}).kind === 'note';
+  if (kind === 'checklist.delete.v1') return note ? 'Delete note' : 'Delete list';
+  if (kind === 'checklist.item.delete.v1') return 'Delete checklist item';
+  if (kind === 'checklist.update.v1') {
+    const keys = Object.keys(draft.changes || {});
+    if (keys.length === 1 && keys[0] === 'title') return note ? 'Rename note' : 'Rename list';
+    if (keys.length === 1 && keys[0] === 'status') return draft.changes.status === 'complete' ? 'Mark note done' : 'Mark note not done';
+    if (keys.length === 1 && keys[0] === 'body') return 'Edit note text';
+    return note ? 'Update note' : 'Update list';
+  }
+  return 'Checklist action';
+}
+
+function checklistEditShowText(text) {
+  if (text == null || text === '') return 'empty';
+  const t = String(text);
+  return `${t.length} characters — "${t.length > 300 ? `${t.slice(0, 300)}…` : t}"`;
+}
+
+function checklistEditText(draft) {
+  const l = draft.list || {}; const isNote = l.kind === 'note';
+  const lines = [`${draft.kind === 'checklist.item.delete.v1' ? 'Checklist item' : isNote ? 'Note' : 'Checklist'} proposal — not applied`, `Action: ${checklistEditLabel(draft)}`,
+    `${isNote ? 'Note' : 'List'}: ${checklistListLine(draft)}`];
+  if (draft.kind === 'checklist.update.v1') {
+    const c = draft.changes || {}; const b = draft.before || {};
+    if ('title' in c) lines.push(`Title: "${b.title}" → "${c.title}"`);
+    if ('status' in c) lines.push(`Done: ${b.status === 'complete' ? 'done' : b.status ? 'not done' : 'unset'} → ${c.status === 'complete' ? 'done' : 'not done'}`);
+    if ('body' in c) lines.push(`Text before: ${checklistEditShowText(b.body)}`, `Text after: ${checklistEditShowText(c.body)}`);
+  } else if (draft.kind === 'checklist.delete.v1') {
+    const n = draft.counts || {};
+    if (isNote) lines.push(`Text: ${checklistEditShowText(l.body)}`);
+    else {
+      const shown = (draft.items_before || []).map((i) => `"${i.name}" (${i.status || 'no status'})`);
+      const more = Number(draft.items_total || 0) - shown.length;
+      lines.push(`Items deleted with it: ${Number(n.total) || 0} (${Number(n.done) || 0} done, ${Number(n.open) || 0} open)${shown.length ? ` — ${shown.join('; ')}${more > 0 ? ` (+${more} more)` : ''}` : ''}`);
+    }
+  } else {
+    const it = draft.item || {}; const st = draft.list_status || {};
+    lines.push(`Item deleted: #${it.checkitem_id} "${it.name}" (${it.status || 'no status'})`,
+      `Items now: ${Number(draft.items_total) || 0} → ${Math.max(0, (Number(draft.items_total) || 0) - 1)}`,
+      `List status: ${st.from || 'unset'}${st.to !== st.from ? ` → ${st.to}` : ' (unchanged)'}`);
+  }
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  if (draft.kind === 'checklist.item.delete.v1') {
+    const a = draft.automation || {}; const acting = a.lines || [];
+    if ((a.events || []).length) {
+      lines.push(acting.length
+        ? `Automation: ${Number(a.rules_checked) || 0} active trigger rule(s) on ${a.events.join(' / ')} checked; ${acting.length} would act:`
+        : `Automation: no active trigger rule acts on ${a.events.join(' / ')} (${Number(a.rules_checked) || 0} checked).`);
+      acting.forEach((x) => lines.push(`Automation: ${x}`));
+      if (acting.length) lines.push('Automation: what those actions cause in turn is not followed here.');
+    }
+  }
+  lines.push(`Stale check: if the ${isNote ? 'note' : 'list'}${isNote ? '' : ' or any item on it'} changes before you apply, nothing is written.`,
+    `Notification: Casey sends nothing itself${draft.kind === 'checklist.item.delete.v1' && ((draft.automation || {}).events || []).length ? '; the trigger rules above are the only follow-on effects' : ''}.`);
+  return lines.join('\n');
+}
+
+function checklistEditListId(draft) {
+  const id = Number((draft.list || {}).checklist_id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('This card has no usable list id.');
+  return id;
+}
+
+function checklistUpdateRequest(draft) {
+  const id = checklistEditListId(draft);
+  const c = draft.changes || {}; const body = {};
+  const extra = Object.keys(c).filter((k) => !['title', 'status', 'body'].includes(k));
+  if (extra.length) throw new Error('This card carries a field a list update never writes.');
+  if ('title' in c) {
+    if (typeof c.title !== 'string' || !c.title.trim() || c.title !== c.title.trim() || Array.from(c.title).length > 255) throw new Error('This card has no usable title.');
+    body.title = c.title;
+  }
+  if ('status' in c) {
+    if (c.status !== 'complete' && c.status !== 'incomplete') throw new Error('This card has no usable note status.');
+    if ((draft.list || {}).kind !== 'note') throw new Error('Only a note\'s done state can be set.');
+    body.status = c.status;
+  }
+  if ('body' in c) {
+    if (typeof c.body !== 'string' || c.body.length > 10000) throw new Error('This card\'s note text is unusable.');
+    if ((draft.list || {}).kind !== 'note') throw new Error('Only a note has text.');
+    body.body = c.body;
+  }
+  if (!Object.keys(body).length) throw new Error('This card changes nothing.');
+  return { path: `/checklists/${id}`, method: 'PATCH', body };
+}
+
+function checklistDeleteRequest(draft) {
+  return { path: `/checklists/${checklistEditListId(draft)}`, method: 'DELETE', body: null };
+}
+
+function checkitemDeleteRequest(draft) {
+  const id = Number((draft.item || {}).checkitem_id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('This card has no usable item id.');
+  if (Number((draft.item || {}).checklist_id) !== checklistEditListId(draft)) throw new Error('This card\'s item and list do not match.');
+  return { path: `/checkitems/${id}`, method: 'DELETE', body: null };
+}
+
+// The list and every item on it, re-read and compared whole — the text too.
+async function checklistEditPrecheck(draft) {
+  const request = draft.kind === 'checklist.update.v1' ? checklistUpdateRequest(draft)
+    : draft.kind === 'checklist.delete.v1' ? checklistDeleteRequest(draft) : checkitemDeleteRequest(draft);
+  void request; // a card that cannot be written is never read
+  const l = draft.list || {}; const x = draft.expected || {};
+  const id = checklistEditListId(draft);
+  let got;
+  try { got = await api(`/checklists/${id}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `The ${l.kind === 'note' ? 'note' : 'list'} "${l.title}" no longer exists${draft.kind === 'checklist.delete.v1' ? ' — someone already deleted it' : ''}. Nothing was written.`; throw e; }
+  if (!got || Number(got.id) !== id || !Array.isArray(got.items)) throw new Error('the list could not be read');
+  const s = (v) => (v == null ? null : String(v));
+  if (s(got.title) !== s(x.title) || s(got.kind) !== s(x.kind) || s(got.link_type) !== s(x.link_type)
+    || s(got.link) !== s(x.link) || s(got.tag) !== s(x.tag) || s(got.status) !== s(x.status)) {
+    return `The ${l.kind === 'note' ? 'note' : 'list'} "${l.title}" changed since this card was prepared (its title, kind, record, tag or status). Nothing was written. Ask Casey to prepare it again.`;
+  }
+  if (s(got.body) !== s(x.body)) {
+    return `The text of the note "${l.title}" changed since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  if (draft.kind === 'checklist.item.delete.v1' && !got.items.some((i) => Number(i.id) === Number((draft.item || {}).checkitem_id))) {
+    return `That item is no longer on "${l.title}" — someone already deleted it. Nothing was written.`;
+  }
+  const sig = got.items.map((i) => `${Number(i.id)}:${i.status == null ? '' : i.status}:${i.name == null ? '' : i.name}`).sort();
+  if (JSON.stringify(sig) !== JSON.stringify((x.items || []).slice().sort())) {
+    return `The items on "${l.title}" changed since this card was prepared (one was added, removed, renamed, checked or reopened). Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+// PATCH /checklists/:id answers the whole list: the reviewed list, every
+// changed field exactly as sent.
+function checklistUpdateResult(draft, result) {
+  const id = Number(result && result.id);
+  if (!Number.isSafeInteger(id) || id !== checklistEditListId(draft)) throw new Error('The checklist route did not answer for the reviewed list');
+  const c = draft.changes || {};
+  for (const k of ['title', 'status', 'body']) {
+    if (k in c && String(result[k] == null ? '' : result[k]) !== String(c[k])) throw new Error(`The checklist route did not save the ${k === 'body' ? 'text' : k}`);
+  }
+  return { checklist_id: id };
+}
+
+// Both DELETEs answer {status:'success', message} and no id: the receipt is
+// the reviewed row (a removed row's id names what was removed).
+function checklistDeleteResult(draft, result) {
+  if (!result || result.status !== 'success') throw new Error('The checklist route did not confirm the delete');
+  return { checklist_id: checklistEditListId(draft) };
+}
+
+function checkitemDeleteResult(draft, result) {
+  if (!result || result.status !== 'success') throw new Error('The checklist route did not confirm the delete');
+  return { checkitem_id: Number(draft.item.checkitem_id) };
+}
+
+// The routes' answers before any write: gone (404, the A10 wording) and the
+// personal-list detach gate (403 — the owner or a superuser only).
+function checklistEditKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const message = String((e && e.message) || (e && e.body && e.body.message) || '');
+  if (e && e.status === 403 && /belongs to another user/.test(message)) {
+    return { status: 'Refused — nothing written', text: 'Refused — nothing written: that personal list belongs to another user, and only its owner or a superuser may delete it. Ask its owner.' };
+  }
+  return checklistKnownOutcome(e);
+}
+
 // Documents (A11). Change ONE registered document's staff title / type / tags,
 // or link ONE document to ONE case or contact, through the Documents page's
 // own routes: PATCH /api/documents/:id {title?, doc_type?, tags?} and POST
@@ -5570,6 +5756,69 @@ const ACTION_FAMILIES = [
       button: `Open ${checklistEntity(draft).label}`,
     }),
     reviewWarning: 'Review the list, the item before and after, the list status after and every trigger rule it runs — they start the moment it is saved. Nothing is sent by Casey itself. Canceling writes nothing.',
+    open: checklistOpen,
+  },
+  {
+    // A10.2: the list update receipts the integer checklist_id (the PATCH returns the list).
+    id: 'checklist_update', kinds: CHECKLIST_EDIT_ACTION_KINDS, title: 'Checklist', noun: 'checklist', errorNoun: 'list change',
+    label: checklistEditLabel, text: checklistEditText, request: checklistUpdateRequest, result: checklistUpdateResult,
+    idField: 'checklist_id', appliedKey: 'result_checklist_update_id',
+    // A docs list it stops being, a duplicate title.
+    danger: (draft) => (draft.warnings || []).length > 0,
+    precheck: checklistEditPrecheck,
+    knownOutcome: checklistEditKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `checklist #${payload.checklist_id}`,
+    entity: (draft) => checklistEntity(draft),
+    failure: 'The list change could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — ${(draft.list || {}).kind === 'note' ? 'note' : 'list'} #${draft.result_checklist_update_id} saved`,
+      warning: `"${(draft.changes || {}).title || (draft.list || {}).title}" on ${checklistParentLabel(draft)} was saved using your signed-in account. Another open Notes & Lists board shows the old value until it reloads.`,
+      button: `Open ${checklistEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review the list, each field before and after and every warning — a new note text replaces the old one whole. Nothing is sent. Canceling writes nothing.',
+    open: checklistOpen,
+  },
+  {
+    // A10.2: the delete echoes no id; the receipt is the reviewed checklist_id.
+    id: 'checklist_delete', kinds: CHECKLIST_DELETE_ACTION_KINDS, title: 'Delete checklist', noun: 'checklist', errorNoun: 'list delete',
+    label: checklistEditLabel, text: checklistEditText, request: checklistDeleteRequest, result: checklistDeleteResult,
+    idField: 'checklist_id', appliedKey: 'result_checklist_delete_id',
+    // Always: a delete cannot be undone.
+    danger: () => true,
+    precheck: checklistEditPrecheck,
+    knownOutcome: checklistEditKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `checklist #${payload.checklist_id}`,
+    entity: (draft) => checklistEntity(draft),
+    failure: 'The list delete could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — ${(draft.list || {}).kind === 'note' ? 'note' : 'list'} #${draft.result_checklist_delete_id} deleted`,
+      warning: `"${(draft.list || {}).title}" was deleted from ${checklistParentLabel(draft)}${(draft.list || {}).kind === 'note' ? '' : ` with its ${Number((draft.counts || {}).total) || 0} item(s)`} using your signed-in account. It cannot be restored. Every effect listed above applies from now.`,
+      button: `Open ${checklistEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review the list, the items deleted with it and every warning — a delete cannot be undone, and a pipeline step it moves follows at once. Nothing is sent. Canceling writes nothing.',
+    open: checklistOpen,
+  },
+  {
+    // A10.2: the item delete echoes no id; the receipt is the reviewed checkitem_id.
+    id: 'checkitem_delete', kinds: CHECKITEM_DELETE_ACTION_KINDS, title: 'Delete checklist item', noun: 'checklist item', errorNoun: 'item delete',
+    label: checklistEditLabel, text: checklistEditText, request: checkitemDeleteRequest, result: checkitemDeleteResult,
+    idField: 'checkitem_id', appliedKey: 'result_checkitem_delete_id',
+    // Always: a delete cannot be undone.
+    danger: () => true,
+    precheck: checklistEditPrecheck,
+    knownOutcome: checklistEditKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `checklist item #${payload.checkitem_id}`,
+    entity: (draft) => checklistEntity(draft),
+    failure: 'The item delete could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — item #${draft.result_checkitem_delete_id} deleted`,
+      warning: `"${(draft.item || {}).name}" was deleted from "${(draft.list || {}).title}" using your signed-in account. It cannot be restored.${((draft.automation || {}).events || []).length ? ' The trigger rules listed above run from this change.' : ''}`,
+      button: `Open ${checklistEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review the item, the list status after, every pipeline step and trigger rule it moves — a delete cannot be undone. Nothing is sent by Casey itself. Canceling writes nothing.',
     open: checklistOpen,
   },
   {

@@ -395,6 +395,33 @@ describe('A10 — every stage teaches the checklist cards, their evidence aliase
   });
 });
 
+// A10.2: the checklist family's edits of an existing list. Pins that every
+// stage teaches the three kinds, the evidence each cites, that there is NO
+// reorder (the page has none — a stage that does not know it invents one), the
+// by-name refusals, and that a delete is said to be permanent.
+describe('A10.2 — every stage teaches the list update / delete / item delete cards, and that there is no reorder', () => {
+  test('the plan extends the checklist bullet with the reads the cards cite and the missing reorder', () => {
+    expect(planPrompt).toContain('The same family renames ONE list or note, sets ONE note\'s done state or replaces its text, deletes ONE list or note\n  with its items, or deletes ONE item');
+    expect(planPrompt).toContain('There is no reorder action (the page has none).');
+  });
+  test('the investigate stage names the aliases for the new cards', () => {
+    expect(investigatePrompt).toContain('checkitems.id AS checkitem_id for an item change or an item delete');
+    expect(investigatePrompt).toContain('checklists.id AS checklist_id for a rename, a note edit or a list delete');
+  });
+  test('the answer and repair stages teach the shapes, the refusals, no reorder and NO UNDO', () => {
+    for (const kind of ['checklist.update.v1', 'checklist.delete.v1', 'checklist.item.delete.v1']) {
+      expect({ kind, answer: answerPrompt.includes(`{"kind":"${kind}"`), repair: repairPrompt.includes(`- ${kind}: kind,`) }).toEqual({ kind, answer: true, repair: true });
+    }
+    expect(answerPrompt).toContain('There is NO reorder card — the page cannot reorder\n    items either; say so.');
+    expect(answerPrompt).toContain('"list_kind" (a list\'s kind\n    never changes), "link" / "link_type" (a list is never moved to another record)');
+    expect(answerPrompt).toContain('except that a superuser may delete one (the route allows it; the card warns)');
+    expect(answerPrompt).toContain('that a delete has NO UNDO');
+    expect(repairPrompt).toContain('never tag, list_kind, link, link_type or items');
+    expect(repairPrompt).not.toContain('checklist.items.reorder');
+    expect(answerPrompt).not.toContain('checklist.items.reorder');
+  });
+});
+
 // A11: a new family prefix (document). Pins that every stage teaches the
 // refusals a stage that does not know them proposes anyway — a status change
 // (delete / restore), the file's name / path / public link, the sync's "path"

@@ -51,6 +51,12 @@ const KINDS = new Map([
   ['checklist.create.v1', 'checklist_id'],
   ['checklist.item.add.v1', 'checklist_id'],
   ['checklist.item.update.v1', 'checkitem_id'],
+  // A10.2: the list update receipts the LIST (the PATCH returns it); the two
+  // deletes echo no id ({status, message}), so the receipt is the reviewed
+  // row — a removed list's / item's id names what was removed.
+  ['checklist.update.v1', 'checklist_id'],
+  ['checklist.delete.v1', 'checklist_id'],
+  ['checklist.item.delete.v1', 'checkitem_id'],
   // A11: the update receipts the DOCUMENT (the PATCH returns the row); the
   // link receipts the new document_links row (the POST returns every link
   // row, ids included — the one matching the reviewed target is the receipt).

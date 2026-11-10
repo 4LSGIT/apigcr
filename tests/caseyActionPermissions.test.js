@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 79 shipped kinds:
+ * These tests ask that claim two questions for all 82 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 79 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 82 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -144,6 +144,10 @@ const KINDS = [
   { kind: 'checklist.create.v1', method: 'POST', path: '/checklists' },
   { kind: 'checklist.item.add.v1', method: 'POST', path: '/checklists/1/items' },
   { kind: 'checklist.item.update.v1', method: 'PATCH', path: '/checkitems/1' },
+  // A10.2: the same router — a list's own PATCH, the list DELETE and the item DELETE.
+  { kind: 'checklist.update.v1', method: 'PATCH', path: '/checklists/1' },
+  { kind: 'checklist.delete.v1', method: 'DELETE', path: '/checklists/1' },
+  { kind: 'checklist.item.delete.v1', method: 'DELETE', path: '/checkitems/1' },
   // A11: the Documents page's own registry routes (routes/api.documents.js).
   { kind: 'document.update.v1', method: 'PATCH', path: '/api/documents/1' },
   { kind: 'document.link.v1', method: 'POST', path: '/api/documents/1/links' },
@@ -265,19 +269,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 79 kinds (no database)
+// SECTION 1 — the route-level gate, for all 82 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 79 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 82 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 79 kinds cover 67 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(79);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(67);
+  test('the 82 kinds cover 70 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(82);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(70);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -285,7 +289,7 @@ describe('P2 — what the canonical write route gates on (all 79 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 79', async () => {
+  test('no token: every kind is 401 — authentication is required for all 82', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -397,19 +401,24 @@ describe('P2 — what the canonical write route gates on (all 79 shipped kinds)'
     }
   });
 
-  // A10: the checklist routes are jwtOrApiKey only. Their two isSuperuser
-  // reads are mayWriteTag (a tag on a list or item — refused by name before a
-  // card exists, never in a card's body) and mayDetachPersonal (DELETE, or a
-  // PATCH re-homing a list — no card sends either). A roleless staff token
-  // reaches all three handlers: past the gate, the stub db's empty rows read
-  // as 'not found' (404) or a created row (201), never 401/403.
+  // A10 / A10.2: the checklist routes are jwtOrApiKey only. Their two
+  // isSuperuser reads are mayWriteTag (a tag on a list or item — refused by
+  // name before a card exists, never in a card's body) and mayDetachPersonal
+  // (DELETE /checklists/:id, or a PATCH re-homing a list). The A10.2 delete
+  // card sends that DELETE: its normalizer refuses another user's personal
+  // list unless the asking user is a superuser (users.roles), so the route's
+  // detach gate is the backstop, never the only check; no card re-homes a
+  // list (link / link_type refused by name). A roleless staff token reaches
+  // all six handlers: past the gate, the stub db's empty rows read as 'not
+  // found' (404) or a created row (201), never 401/403.
   test('A10 route file: no capability gate; isSuperuser only behind the tag and detach checks', async () => {
     const src = read('routes/api.checklists.js');
     expect(/requireAuth/.test(src)).toBe(false);
     expect(/\bcan\(\s*req\.auth/.test(src)).toBe(false);
     expect([...src.matchAll(/isSuperuser\(auth\)/g)].length).toBe(2);
     expect(src).toContain("return auth?.type === 'api_key' || isSuperuser(auth);");
-    for (const mount of ["router.post('/checklists', jwtOrApiKey", "router.post('/checklists/:id/items', jwtOrApiKey", "router.patch('/checkitems/:id', jwtOrApiKey"]) {
+    for (const mount of ["router.post('/checklists', jwtOrApiKey", "router.post('/checklists/:id/items', jwtOrApiKey", "router.patch('/checkitems/:id', jwtOrApiKey",
+      "router.patch('/checklists/:id', jwtOrApiKey", "router.delete('/checklists/:id', jwtOrApiKey", "router.delete('/checkitems/:id', jwtOrApiKey"]) {
       expect(src).toContain(mount);
     }
     const a = app();
