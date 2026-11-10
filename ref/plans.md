@@ -2261,29 +2261,6 @@ Active surfaces with known next steps.
   that cites the file. Review: `local/to review/TEST_SUITE_INDEPENDENT_REVIEW_2026-10-18.md`
   (gitignored).
 
-- **Branch protection on main (remote-land-suite phase 2; Fred approved in
-  principle 2026-10-27). Everything but the click shipped 2026-11-10; Fred
-  turns it on.** Require status check `test`, "do not allow bypassing" —
-  every session pushes as the admin account 4LSGIT, so without no-bypass the
-  rule binds nobody. The soak was clean: every red run since 2026-10-28 was a
-  deterministic code failure caught by the gate (none a flake), zero red runs
-  from 2026-10-30 on. Shipped, all in gitignored `local/` and all tested on a
-  stub `gh` with real output shapes plus a fake GitHub that refuses main
-  without a check (44 assertions, 10/10 mutations killed): (1) `local/go.sh`
-  behind Fred's `git go` alias — commit, push `land/fred-<sha>`, wait for the
-  green run, push main (the untested alias survives as `git go-untested`);
-  (2) `local/break-glass.sh` — `status` / `lift` / `restore` / `dry-run`: while
-  the rule is on, an Actions outage blocks EVERY deploy (a `land.sh
-  --local-suite` green is invisible to GitHub, its push refused with GH006),
-  so `lift` saves the live rule and deletes it, `restore` PUTs the canonical
-  body and reads it back; `dry-run` ran the whole cycle on a throwaway branch
-  against the real API on 2026-11-10; (3) land.sh refuses `--no-jest` and
-  `--local-suite` up front while the rule is on, and a GH006 refusal at the
-  push is a NO-GO naming the break-glass. Remaining: Fred runs
-  `bash /Users/FRED/apigcr/local/break-glass.sh restore` (the click), then
-  the Deploy section of CLAUDE.md says "enforced", not "planned". Flaky
-  suites cost a rerun under the rule, not a blocked deploy.
-
 - **Twin red on main (found by the YisraMail P1 worker, 2026-10-29; MySQL
   8.0.46, each twin on its own fresh DB; identical on `f838db7` and the slice).**
   `keyTasks.mysql` 2/15 fail: the PRE-D3 tests expect no `task_session_key_id`, but the tables
