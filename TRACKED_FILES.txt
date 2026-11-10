@@ -1782,6 +1782,7 @@ tests/manualReadmeCoverage.test.js
 tests/manualSearch.test.js
 tests/manualsRoute.test.js
 tests/mascotSkins.test.js
+tests/mobileSurveyRetry.test.js
 tests/moduleLoad.smoke.test.js
 tests/multipartBody.test.js
 tests/mySettings.test.js

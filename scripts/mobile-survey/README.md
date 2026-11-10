@@ -66,6 +66,11 @@ desktop breakpoint, also run `--widths 800,1000,1200`.
 | `--out` | `$TMPDIR/yc-mobile-survey` | screenshots + `report.json` |
 | `--fail-on-errors` | off | page errors also fail the run |
 
+A width whose walk dies on puppeteer's "Attempted to use detached Frame" (a
+pane iframe reloaded under the walk's handle — the harness, not the page) is
+walked once more from a fresh page, its partial rows discarded; the log says
+`RETRY`. A second death, or any other error, ends the run with exit 2.
+
 Chrome comes from `PUPPETEER_EXECUTABLE_PATH`, else the standard macOS and
 Linux install paths (`puppeteer-core` is already a dependency; nothing is
 downloaded). A full run at three widths is ~250 surfaces and takes a few

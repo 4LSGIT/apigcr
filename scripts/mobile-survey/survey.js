@@ -915,6 +915,19 @@ async function walk(page, W, record) {
   }
 }
 
+// A pane iframe that reloads while the walk holds its Frame handle makes the
+// next evaluate throw puppeteer's "Attempted to use detached Frame" — seen
+// twice in two days on one width each (after the firm layout editor; after the
+// client Documents pane), never reproducible on a lone re-run. It is the
+// harness losing its handle, not the page overflowing, so a width that dies
+// that way is walked ONCE more from a fresh page (its partial rows and counts
+// discarded); a second death, or any other error, still ends the run with
+// exit 2 as before. (2026-11-11)
+function isDetachedFrameError(err) {
+  return /Attempted to use detached Frame/i.test(String((err && err.message) || err || ''));
+}
+const WIDTH_ATTEMPTS = 2;
+
 // ── main ────────────────────────────────────────────────────────────────────
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
@@ -924,8 +937,10 @@ async function walk(page, W, record) {
   let overflowCount = 0, errorCount = 0;
 
   try {
-    for (const W of WIDTHS) {
+    for (const W of WIDTHS) for (let attempt = 1; attempt <= WIDTH_ATTEMPTS; attempt++) {
+      const mark = { rows: report.length, overflowCount, errorCount };
       const page = await browser.newPage();
+      try {
       await page.setViewport({ width: W, height: 812, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
       await page.evaluateOnNewDocument((jwt) => { try { localStorage.setItem('jwt', jwt); } catch (_) { } }, fakeJwt());
       let errors = [];
@@ -956,6 +971,13 @@ async function walk(page, W, record) {
         console.log(`${W}  ${tag}  ${key}${bad.length ? '\n          ' + bad.join('\n          ') : ''}${errs.length ? '\n          ! ' + errs.join('\n          ! ') : ''}`);
       });
       await page.close();
+      break;
+      } catch (err) {
+        try { await page.close(); } catch (_) { /* already gone */ }
+        if (!isDetachedFrameError(err) || attempt >= WIDTH_ATTEMPTS) throw err;
+        report.length = mark.rows; overflowCount = mark.overflowCount; errorCount = mark.errorCount;
+        console.log(`${W}  RETRY     detached frame mid-walk (${String(err.message || err).slice(0, 80)}) — walking this width once more from a fresh page`);
+      }
     }
   } finally {
     await browser.close();
