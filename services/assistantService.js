@@ -988,6 +988,55 @@ const FORM_CARD_MAX_CHARS = 60000;
 // The masks yc-forms strips on collect() (_stripMaskByType), so a draft stores
 // what a person's own save would.
 const FORM_MASK_DIGITS = new Set(['phone', 'ssn', 'zip', 'ein']);
+// A12.4: the form builder's FIRM-WIDE template operations, each through the
+// builder's own route (routes/api.formTemplates.js → formTemplateService):
+//   * form.template.publish.v1 {template_id}             → POST /api/form-templates/:id/publish
+//   * form.template.visibility.v1 {template_id, visibility} → POST /api/form-templates/:id/visibility
+//   * form.template.restore.v1 {template_id, version_id} → POST /api/form-templates/:id/versions/:versionId/restore
+//   * form.template.delete.v1 {template_id}              → DELETE /api/form-templates/:id
+// The card cites the template's row from a form.template.state read (and the
+// version's row for a restore); the normalizer mirrors every refusal the
+// service makes — publishTemplate's validateDefinition (400), setVisibility's
+// value check (400) and form_dev gate on an off-internal flip (403, the
+// ASKING user's roles read from users — the route reads them from the JWT),
+// restoreVersion's version-of-this-template 404 and its form_dev gate on a
+// version whose code / hooks / css differ from the draft (403),
+// deleteTemplate's published / has-submissions refusals (400) — plus three
+// no-ops no route refuses (a publish of a draft identical to the published
+// definition, a visibility already set, a restore of a version the draft
+// already equals). The publish diff is computed here: formTemplateService has
+// no diff of its own (fieldSignature decides only the version bump, and the
+// builder's confirm shows only that prediction); the field walk is
+// extFormService.buildValueRegistry (formFields), the bump is the service's
+// own fieldSignature, the executing-key scan its scanExternalRefusals, the
+// code gate its authoredKeyChanges, the workflow list formSubmitService's
+// wfListOf — never a second copy. Editing a definition (PUT) and creating a
+// template (POST) have no card: a definition is a large JSON the builder edits
+// visually, and a card cannot review it line by line. Real-engine twin:
+// tests/caseyFormTemplates.mysql.test.js. Its own switch,
+// casey_form_templates_enabled (on unless '0') — firm-wide template
+// operations, not record edits.
+const FORM_TEMPLATE_ACTION_KINDS = new Set(['form.template.publish.v1', 'form.template.visibility.v1', 'form.template.restore.v1', 'form.template.delete.v1']);
+const FORM_TEMPLATE_KEYS = Object.freeze({
+  'form.template.publish.v1': new Set(['kind', 'template_id', 'evidence']),
+  'form.template.visibility.v1': new Set(['kind', 'template_id', 'visibility', 'evidence']),
+  'form.template.restore.v1': new Set(['kind', 'template_id', 'version_id', 'evidence']),
+  'form.template.delete.v1': new Set(['kind', 'template_id', 'evidence']),
+});
+const FORM_TEMPLATE_TAKES = Object.freeze({
+  'form.template.publish.v1': 'template_id',
+  'form.template.visibility.v1': 'template_id and visibility ("internal", "portal" or "public")',
+  'form.template.restore.v1': 'template_id and version_id',
+  'form.template.delete.v1': 'template_id',
+});
+// formTemplateService VISIBILITIES — the route's own set (its 400 names them).
+const FORM_TEMPLATE_VISIBILITIES = ['internal', 'portal', 'public'];
+// Keys that read as editing the definition itself: refused by name, with the reason.
+const FORM_TEMPLATE_EDIT_KEY = /definition|draft|title|form_key|link_type|field|section|code|css|hooks|schema/i;
+// The form.template.state read: version rows listed (newest first).
+const FORM_TEMPLATE_VERSIONS_LISTED = 20;
+// Records named per list on a card (stale drafts, readers).
+const FORM_TEMPLATE_NAMED = 10;
 // A13: mail triage — mark ONE known message read or unread for the signed-in
 // user (mail.read.v1 → POST / DELETE /api/mail/messages/:id/read) or link ONE
 // message to ONE case (mail.case_link.v1 → POST
@@ -6930,7 +6979,7 @@ async function formTemplateRead(db, formKey, search = '') {
     schema_version: tpl.schema_version, published: tpl.published ? 1 : 0, published_at: tpl.published_at,
   };
   if (!tpl.published) {
-    head.note = 'UNPUBLISHED — it has no published definition, so it has no field list and Casey cannot draft it (publishing is a form-builder operation)';
+    head.note = 'UNPUBLISHED — it has no published definition, so it has no field list and Casey cannot draft it (publishing it is a form.template.publish.v1 card, from a form.template.state read)';
     return { rows: [head], truncated: false };
   }
   const def = tpl.definition;
@@ -7119,7 +7168,7 @@ function formRefuseKeys(extra, which) {
   }
   const ops = extra.filter((k) => FORM_OTHER_OP_KEY.test(k));
   if (ops.length) {
-    throw formError(`OTHER FORM OPERATIONS refused (${ops.join(', ')}): each form card does ONE thing — save ONE draft (form.draft.v1), link ONE submission (form.submission.link.v1), discard ONE draft (form.draft.delete.v1), file ONE submission's PDF (form.pdf.file.v1) or submit ONE stored draft (form.submit.v1). Editing / publishing / restoring a template, changing its visibility and unlinking a submission are not available to Casey — the user does them in the form builder (no screen unlinks)`);
+    throw formError(`OTHER FORM OPERATIONS refused (${ops.join(', ')}): each form card does ONE thing — save ONE draft (form.draft.v1), link ONE submission (form.submission.link.v1), discard ONE draft (form.draft.delete.v1), file ONE submission's PDF (form.pdf.file.v1) or submit ONE stored draft (form.submit.v1). Publishing a template, changing its visibility, restoring a version into its draft and deleting a never-published template are the template cards (form.template.publish.v1 / form.template.visibility.v1 / form.template.restore.v1 / form.template.delete.v1, from a form.template.state read); editing a template's definition and unlinking a submission are not available to Casey — the user edits a template in the form builder (no screen unlinks)`);
   }
   if (extra.length) {
     throw formError(`A form ${which} card carries unsupported fields: ${extra.join(', ')} — it takes ${FORM_CARD_TAKES[which]} and evidence only`);
@@ -7206,7 +7255,7 @@ async function normalizeFormDraft(db, value, evidence, currentUserId) {
   const tpl = await formTemplateLoad(db, formKey);
   if (!tpl) throw formError(`No form template has form_key "${formKey}" — Casey drafts only a form that has a template`);
   if (!tpl.published) {
-    throw formError(`UNPUBLISHED FORM refused: "${tpl.title}" (${tpl.form_key}) has never been published, so it has no field list a draft could be checked against — publishing it is a form-builder operation`);
+    throw formError(`UNPUBLISHED FORM refused: "${tpl.title}" (${tpl.form_key}) has never been published, so it has no field list a draft could be checked against — publish it first (a form.template.publish.v1 card, from a form.template.state read)`);
   }
   if (tpl.link_type !== linkType) {
     throw formError(`"${tpl.title}" is a ${tpl.link_type}-linked form — its draft belongs to a ${tpl.link_type}, not a ${linkType}`);
@@ -8068,6 +8117,564 @@ async function normalizeFormAction(db, value, evidence, { currentUserId = null }
   if (value.kind === 'form.pdf.file.v1') return normalizeFormPdfFile(db, value, evidence);
   if (value.kind === 'form.submit.v1') return normalizeFormSubmit(db, value, evidence, currentUserId);
   return normalizeFormSubmissionLink(db, value, evidence);
+}
+
+// ── A12.4: form templates — publish, visibility, version restore, delete ──
+// The form builder's own controls (public/formBuilder.html publishFlow,
+// visFlow, restoreVersionFlow, deleteTemplateRow), each through its own route.
+
+function formTemplateSvc() { return require('./formTemplateService'); } // lazy (convention)
+
+// A template row from the read (or the route) as a card names it.
+function formTemplateName(tpl) {
+  return `"${String(tpl.title || tpl.form_key).slice(0, 150)}" (${tpl.form_key}, template #${Number(tpl.id)})`;
+}
+
+function formTemplatePublished(tpl) { return tpl.definition != null; }
+
+// Every answer field of a definition, flattened — the registry the external
+// draft and submit routes check keys against (formFields → extFormService
+// buildValueRegistry); a repeater's row fields are "<repeater>.<field>".
+// Display-only items carry no answer and are not in it.
+function formTemplateFlat(def) {
+  const out = new Map();
+  if (!def || typeof def !== 'object' || Array.isArray(def)) return out;
+  let reg;
+  try { reg = formFields(def); } catch (_) { return out; }
+  for (const [k, f] of Object.entries(reg.fields)) out.set(k, { key: k, f: f || {}, repeater: null });
+  for (const [rep, rf] of Object.entries(reg.repeaters)) {
+    out.set(rep, { key: rep, f: { type: 'repeater', label: rep }, repeater: null, isRepeater: true });
+    for (const [k, f] of Object.entries(rf)) out.set(`${rep}.${k}`, { key: `${rep}.${k}`, f: f || {}, repeater: rep });
+  }
+  return out;
+}
+
+function formTemplateApiColumn(f) {
+  const v = f && f.apiColumn;
+  if (v == null || v === '') return 'nothing';
+  return typeof v === 'string' ? v : JSON.stringify(v).slice(0, 120);
+}
+
+function formTemplateFieldLine(x) {
+  const f = x.f || {};
+  const bits = [String(f.type || 'text')];
+  if (f.required === true) bits.push('required');
+  if (f.apiColumn != null && f.apiColumn !== '') bits.push(`saves to ${formTemplateApiColumn(f)}`);
+  return { key: x.key, label: formLabel(f, x.key.split('.').pop()), detail: bits.join(', '), ...(x.repeater ? { repeater: x.repeater } : {}) };
+}
+
+// The answer-field difference between two definitions (before → after): added,
+// removed (a rename reads as one of each — fieldSignature counts it the same
+// way), and per field the type, label, required-ness, required-when
+// condition, the record column it saves to and its options.
+function formTemplateFieldDiff(before, after) {
+  const a = formTemplateFlat(before); const b = formTemplateFlat(after);
+  const added = []; const removed = []; const changed = [];
+  for (const [k, x] of b) if (!a.has(k)) added.push(formTemplateFieldLine(x));
+  for (const [k, x] of a) if (!b.has(k)) removed.push(formTemplateFieldLine(x));
+  for (const [k, y] of b) {
+    const x = a.get(k);
+    if (!x || x.isRepeater || y.isRepeater) continue;
+    const f0 = x.f; const f1 = y.f; const what = [];
+    if (String(f0.type || 'text') !== String(f1.type || 'text')) what.push(`type ${f0.type || 'text'} → ${f1.type || 'text'}`);
+    const l0 = formLabel(f0, k.split('.').pop()); const l1 = formLabel(f1, k.split('.').pop());
+    if (l0 !== l1) what.push(`label "${l0}" → "${l1}"`);
+    if ((f0.required === true) !== (f1.required === true)) what.push(f1.required === true ? 'now REQUIRED' : 'no longer required');
+    if (formCanonical(f0.requiredWhen == null ? null : f0.requiredWhen) !== formCanonical(f1.requiredWhen == null ? null : f1.requiredWhen)) what.push('its required-when condition changes');
+    if (formCanonical(f0.apiColumn == null ? null : f0.apiColumn) !== formCanonical(f1.apiColumn == null ? null : f1.apiColumn)) what.push(`record column ${formTemplateApiColumn(f0)} → ${formTemplateApiColumn(f1)}`);
+    if (formCanonical(formOptionValues(f0)) !== formCanonical(formOptionValues(f1))) what.push(`options ${JSON.stringify(formOptionValues(f0)).slice(0, 120)} → ${JSON.stringify(formOptionValues(f1)).slice(0, 120)}`);
+    if (what.length) changed.push({ key: k, label: l1, what: what.join('; '), ...(y.repeater ? { repeater: y.repeater } : {}) });
+  }
+  return { added, removed, changed };
+}
+
+const FORM_TEMPLATE_CONTAINERS = ['sections', 'tabs', 'stickyTop', 'stickyBottom'];
+
+// The whole difference a card shows: the answer fields, whether the layout
+// (sections / rows / display-only items) differs too, every other top-level
+// key that differs, and the onSubmit workflow lists (formSubmitService's
+// wfListOf — the list the submit route starts).
+function formTemplateDefDiff(before, after) {
+  const b = before && typeof before === 'object' && !Array.isArray(before) ? before : {};
+  const a = after && typeof after === 'object' && !Array.isArray(after) ? after : {};
+  const { wfListOf } = require('./formSubmitService'); // lazy (convention)
+  const pick = (d) => { const o = {}; for (const k of FORM_TEMPLATE_CONTAINERS) if (d[k] !== undefined) o[k] = d[k]; return o; };
+  const fields = formTemplateFieldDiff(before, after);
+  const other = [...new Set([...Object.keys(b), ...Object.keys(a)])]
+    .filter((k) => !FORM_TEMPLATE_CONTAINERS.includes(k))
+    .filter((k) => formCanonical(b[k] === undefined ? null : b[k]) !== formCanonical(a[k] === undefined ? null : a[k]))
+    .sort();
+  const wf = (d) => wfListOf(d.onSubmit && typeof d.onSubmit === 'object' ? d.onSubmit : {})
+    .map((w) => Number(w && w.id)).filter((n) => Number.isSafeInteger(n) && n > 0);
+  return {
+    ...fields,
+    layout_changed: formCanonical(pick(b)) !== formCanonical(pick(a)),
+    other_keys: other,
+    workflows_before: wf(b), workflows_after: wf(a),
+  };
+}
+
+function formTemplateDiffCount(diff) {
+  return diff.added.length + diff.removed.length + diff.changed.length;
+}
+
+// The diff as card lines (capped; the count said).
+function formTemplateDiffLines(diff, verb) {
+  const lines = [];
+  const cap = (list, word, fmt) => {
+    for (const x of list.slice(0, FORM_CARD_LIST)) lines.push(fmt(x));
+    if (list.length > FORM_CARD_LIST) lines.push(`… and ${list.length - FORM_CARD_LIST} more ${word}`);
+  };
+  cap(diff.added, 'added fields', (x) => `ADDED: ${x.label} (${x.key}) — ${x.detail}`);
+  cap(diff.removed, 'removed fields', (x) => `REMOVED: ${x.label} (${x.key}) — ${x.detail}`);
+  cap(diff.changed, 'changed fields', (x) => `CHANGED: ${x.label} (${x.key}) — ${x.what}`);
+  if (diff.layout_changed && !formTemplateDiffCount(diff)) lines.push(`Layout only: the sections, rows or display-only items ${verb} (wording, order, headings) — no answer field changes.`);
+  else if (diff.layout_changed) lines.push(`The sections, rows or display-only items ${verb} too (wording, order, headings).`);
+  if (diff.other_keys.length) lines.push(`Other settings that change: ${diff.other_keys.join(', ')}.`);
+  return lines;
+}
+
+async function formTemplateWorkflowNames(db, ids) {
+  const want = [...new Set(ids)];
+  const out = new Map();
+  if (!want.length) return out;
+  const [rows] = await db.query('SELECT id, name, active, current_version FROM workflows WHERE id IN (?)', [want]);
+  for (const r of (Array.isArray(rows) ? rows : [])) out.set(Number(r.id), r);
+  return out;
+}
+
+function formTemplateWorkflowLine(id, row) {
+  if (!row) return `workflow #${id} — DOES NOT EXIST (its start fails on every submit)`;
+  const name = `workflow #${id} "${String(row.name || '').slice(0, 80)}"`;
+  if (!row.active) return `${name} — INACTIVE (its start fails on every submit)`;
+  if (!Number(row.current_version)) return `${name} — NEVER PUBLISHED (its start fails on every submit)`;
+  return name;
+}
+
+// The ASKING user's form-developer standing, by the predicate the routes use
+// (lib/auth.formDev.js isFormDev — SU, or the it / form_dev role), over the
+// roles on the users row. The route reads the roles the JWT carries (minted at
+// sign-in), so a grant or a revoke since the user signed in is seen here first;
+// the route's 403 stays the last word.
+async function formTemplateFormDev(db, currentUserId) {
+  const uid = Number(currentUserId);
+  if (!Number.isSafeInteger(uid) || uid < 0) return false;
+  const [rows] = await db.query('SELECT user_auth, roles FROM users WHERE user = ? LIMIT 1', [uid]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row || !String(row.user_auth || '').startsWith('authorized')) return false;
+  const { isFormDev } = require('../lib/auth.formDev'); // lazy (convention)
+  return isFormDev({ type: 'jwt', roles: String(row.roles || '').split(',').map((r) => r.trim()).filter(Boolean) });
+}
+
+// A cited row of a form.template.state read (the template's own read — a
+// sql.read cannot reach form_templates, which is outside the curated schema).
+function formTemplateCited(refs, evidence, test) {
+  return refs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    if (!query || query.kind !== 'form.template.state') return false;
+    const row = Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return !!row && test(row);
+  });
+}
+
+// What the click re-reads (GET /api/form-templates/:id and …/versions) and
+// refuses on any difference before the claim.
+function formTemplateExpected(tpl, versions) {
+  const hash = (v) => formDataHash(JSON.parse(JSON.stringify(v)));
+  return {
+    template_id: Number(tpl.id), updated_at: documentIso(tpl.updated_at), schema_version: Number(tpl.schema_version) || 1,
+    visibility: String(tpl.visibility || 'internal'), published_at: documentIso(tpl.published_at),
+    definition_hash: tpl.definition == null ? null : hash(tpl.definition),
+    draft_hash: hash(tpl.draft_definition == null ? null : tpl.draft_definition),
+    version_ids: versions.map((v) => Number(v.id)),
+  };
+}
+
+function formTemplateHead(tpl) {
+  return {
+    template_id: Number(tpl.id), form_key: String(tpl.form_key), title: String(tpl.title || tpl.form_key).slice(0, 150),
+    link_type: String(tpl.link_type || ''), visibility: String(tpl.visibility || 'internal'),
+    schema_version: Number(tpl.schema_version) || 1, published: formTemplatePublished(tpl) ? 1 : 0,
+    published_at: documentIso(tpl.published_at), updated_at: documentIso(tpl.updated_at),
+  };
+}
+
+// The submissions and drafts that carry this form_key (counts; drafts by version).
+async function formTemplateUsage(db, formKey) {
+  const [rows] = await db.query(
+    `SELECT status, schema_version, COUNT(*) AS n FROM form_submissions WHERE form_key = ? GROUP BY status, schema_version`, [formKey]);
+  const out = { submitted: 0, drafts: 0, drafts_by_version: {} };
+  for (const r of (Array.isArray(rows) ? rows : [])) {
+    const n = Number(r.n) || 0;
+    if (r.status === 'submitted') out.submitted += n;
+    else { out.drafts += n; out.drafts_by_version[Number(r.schema_version) || 1] = (out.drafts_by_version[Number(r.schema_version) || 1] || 0) + n; }
+  }
+  return out;
+}
+
+// The form.template.state read (A12.4): with no form_key, every template (the
+// builder's opener list — listTemplates); with one, that template's row (the
+// builder's GET /api/form-templates/:id), whether its draft differs from what
+// is published and how, its publish history (listVersions), its submissions
+// and drafts, and the stored definitions naming its form_key (A7's
+// caseFieldsReaders scan). Never the raw definitions.
+async function formTemplateStateRead(db, formKey) {
+  const fts = formTemplateSvc();
+  if (!formKey) {
+    const list = await fts.listTemplates(db);
+    const rows = list.slice(0, MAX_ROWS).map((t) => ({
+      row_type: 'template', template_id: Number(t.id), form_key: String(t.form_key), title: String(t.title || t.form_key).slice(0, 150),
+      link_type: String(t.link_type || ''), visibility: String(t.visibility || 'internal'), schema_version: Number(t.schema_version) || 1,
+      published: t.published_at ? 1 : 0, published_at: documentIso(t.published_at), updated_at: documentIso(t.updated_at),
+    }));
+    return { rows, truncated: list.length > MAX_ROWS };
+  }
+  const [found] = await db.query('SELECT id FROM form_templates WHERE form_key = ? LIMIT 1', [formKey]);
+  const hit = Array.isArray(found) ? found[0] : null;
+  if (!hit) {
+    return { rows: [{ row_type: 'not_found', form_key: formKey, note: `No form template has form_key "${formKey}" — read form.template.state with no form_key to list every template` }], truncated: false };
+  }
+  const tpl = await fts.getTemplate(db, Number(hit.id));
+  const versions = await fts.listVersions(db, Number(tpl.id));
+  const published = formTemplatePublished(tpl);
+  const head = { row_type: 'template', ...formTemplateHead(tpl) };
+  if (!published) {
+    head.draft_state = 'never published';
+    head.publishes_as = Number(tpl.schema_version) || 1;
+  } else if (formCanonical(tpl.draft_definition) === formCanonical(tpl.definition)) {
+    head.draft_state = 'same as published';
+  } else {
+    const diff = formTemplateDefDiff(tpl.definition, tpl.draft_definition);
+    const bumped = fts.fieldSignature(tpl.draft_definition) !== fts.fieldSignature(tpl.definition);
+    head.draft_state = 'differs from published';
+    head.publishes_as = bumped ? (Number(tpl.schema_version) || 1) + 1 : Number(tpl.schema_version) || 1;
+    head.fields_added = diff.added.length; head.fields_removed = diff.removed.length; head.fields_changed = diff.changed.length;
+    head.layout_changed = diff.layout_changed ? 1 : 0;
+    if (diff.other_keys.length) head.settings_changed = diff.other_keys.join(', ');
+  }
+  head.version_count = versions.length;
+  const usage = await formTemplateUsage(db, tpl.form_key);
+  const readers = (await caseFieldsReaders(db, [String(tpl.form_key)])).get(String(tpl.form_key))
+    .filter((r) => !r.startsWith(`Form template #${Number(tpl.id)} `));
+  const rows = [head];
+  const newest = versions[0] ? Number(versions[0].id) : null;
+  for (const v of versions.slice(0, FORM_TEMPLATE_VERSIONS_LISTED)) {
+    rows.push({
+      row_type: 'version', template_id: Number(tpl.id), version_id: Number(v.id), schema_version: Number(v.schema_version) || 1,
+      published_at: documentIso(v.published_at), published_by: v.user_name ? String(v.user_name) : (v.published_by != null ? `user #${v.published_by}` : null),
+      schema_changed: v.schema_changed ? 1 : 0, newest: Number(v.id) === newest ? 1 : 0,
+    });
+  }
+  if (versions.length > FORM_TEMPLATE_VERSIONS_LISTED) head.note = `only the newest ${FORM_TEMPLATE_VERSIONS_LISTED} of ${versions.length} versions are listed`;
+  rows.push({
+    row_type: 'usage', template_id: Number(tpl.id), form_key: String(tpl.form_key),
+    submitted: usage.submitted, drafts: usage.drafts,
+    drafts_by_version: Object.keys(usage.drafts_by_version).length ? JSON.stringify(usage.drafts_by_version) : '',
+    named_by: readers.length ? readers.slice(0, FORM_TEMPLATE_NAMED).join('; ') + (readers.length > FORM_TEMPLATE_NAMED ? ' …' : '') : '',
+    named_by_count: readers.length,
+  });
+  return { rows, truncated: versions.length > FORM_TEMPLATE_VERSIONS_LISTED };
+}
+
+// Refused by name before anything is read, then the template the card names:
+// its cited row, the route's own read (getTemplate — 404 → gone).
+async function formTemplateTarget(db, value, evidence, what) {
+  const keys = FORM_TEMPLATE_KEYS[value.kind];
+  const extra = Object.keys(value).filter((k) => !keys.has(k));
+  if (extra.length) {
+    const edits = extra.filter((k) => FORM_TEMPLATE_EDIT_KEY.test(k));
+    if (edits.length) {
+      throw formError(`TEMPLATE EDITING refused (${edits.join(', ')}): Casey publishes, changes the visibility of, restores a version of or deletes a template — it never edits a definition, title or form_key, and never creates a template. A definition is a large JSON the form builder edits visually, and a card cannot review it line by line: the user edits it in the form builder`);
+    }
+    throw formError(`A form template ${what} card carries unsupported fields: ${extra.join(', ')} — it takes ${FORM_TEMPLATE_TAKES[value.kind]} and evidence only (each template card does ONE thing: publish the draft — form.template.publish.v1, change the visibility — form.template.visibility.v1, restore a version into the draft — form.template.restore.v1, or delete a never-published template — form.template.delete.v1)`);
+  }
+  const id = Number(value.template_id);
+  if (!Number.isSafeInteger(id) || id < 1) throw formError(`A form template ${what} needs the template's exact positive template_id (from a form.template.state read)`);
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!formTemplateCited(refs, evidence, (row) => row.row_type === 'template' && Number(row.template_id) === id)) {
+    throw formError(`The ${what} evidence does not identify form template #${id} — cite its template row from a form.template.state read (form_templates is outside the curated schema; a sql.read cannot read it)`);
+  }
+  const fts = formTemplateSvc();
+  let tpl;
+  try { tpl = await fts.getTemplate(db, id); } catch (e) {
+    if (e && e.status === 404) throw formError(`Form template #${id} no longer exists`);
+    throw e;
+  }
+  return { id, refs, tpl, fts };
+}
+
+function formTemplateSized(card, what) {
+  const chars = JSON.stringify(card).length;
+  if (chars > FORM_CARD_MAX_CHARS) {
+    throw formError(`This ${what} card would be ${chars.toLocaleString('en-US')} characters — more than a chat can store with it (${FORM_CARD_MAX_CHARS.toLocaleString('en-US')}). Nothing is proposed — the user does it in the form builder`);
+  }
+  return card;
+}
+
+// What a client-facing visibility means today, read off the serving code:
+// only `public` is served outside the app (extFormService.getServableTemplate's
+// default scope); the link is /f/<form_key>?case_id=…, and the case id in it is
+// the only credential.
+function formTemplateExposure(tpl, def) {
+  const badLink = def && def.external && def.external.badLink === 'degrade' ? 'degrade' : 'reject';
+  const link = `/f/${tpl.form_key}?case_id=<the case's id>`;
+  return {
+    link, badLink,
+    who: badLink === 'degrade'
+      ? `anyone holding the bare link /f/${tpl.form_key} opens it WITHOUT a login and submits it unlinked (badLink "degrade"); a link carrying a case id (${link}) opens it for that case`
+      : `anyone holding a link that carries a real case id (${link}) opens it WITHOUT a login — the case id is the only credential (badLink "reject": a link without one shows the Unauthorized Link page)`,
+  };
+}
+
+async function normalizeFormTemplatePublish(db, value, evidence) {
+  const { id, refs, tpl, fts } = await formTemplateTarget(db, value, evidence, 'publish');
+  const draft = tpl.draft_definition; const def = tpl.definition;
+  const name = formTemplateName(tpl);
+  try { fts.validateDefinition(draft); } catch (e) {
+    if (e && e.status === 400) throw formError(`DRAFT INVALID refused: the route validates the draft before it publishes and would refuse it (400) — ${e.message}. The user fixes the draft in the form builder`);
+    throw e;
+  }
+  const first = def == null;
+  if (!first && formCanonical(draft) === formCanonical(def)) {
+    throw formError(`NOTHING TO PUBLISH: the draft of ${name} is identical to its published version ${Number(tpl.schema_version) || 1} — publishing would only stamp another version row; nothing changes for anyone who opens the form`);
+  }
+  const vNow = Number(tpl.schema_version) || 1;
+  const bumped = !first && fts.fieldSignature(draft) !== fts.fieldSignature(def);
+  const next = bumped ? vNow + 1 : vNow;
+  const diff = formTemplateDefDiff(first ? null : def, draft);
+  const versions = await fts.listVersions(db, id);
+  const usage = await formTemplateUsage(db, tpl.form_key);
+  const vis = String(tpl.visibility || 'internal');
+
+  // Drafts saved on the version this publish retires: the submit route (and the
+  // Ask Casey submit card) refuses a draft whose schema_version is not the
+  // published one (409) until it is re-saved; the form page shows a version warning.
+  let stale = { count: 0, records: [] };
+  if (bumped) {
+    const [rows] = await db.query(
+      `SELECT id, link_type, link_id, updated_at FROM form_submissions
+        WHERE form_key = ? AND status = 'draft' AND schema_version = ? ORDER BY updated_at DESC, id DESC`, [tpl.form_key, vNow]);
+    const list = Array.isArray(rows) ? rows : [];
+    const records = [];
+    for (const r of list.slice(0, FORM_TEMPLATE_NAMED)) {
+      const lt = String(r.link_type || '').toLowerCase();
+      const rec = FORM_LINK_TYPES.includes(lt) ? await formLinkRecord(db, lt, String(r.link_id)) : null;
+      records.push({ submission_id: Number(r.id), record: rec ? rec.label : `${lt || 'no record'} ${r.link_id || ''}`.trim(), updated_at: documentIso(r.updated_at) });
+    }
+    stale = { count: list.length, records };
+  }
+
+  const wfIds = [...new Set([...diff.workflows_before, ...diff.workflows_after])];
+  const wfRows = await formTemplateWorkflowNames(db, wfIds);
+  const workflows = diff.workflows_after.map((wid) => ({ id: wid, line: formTemplateWorkflowLine(wid, wfRows.get(wid)) }));
+
+  const warnings = []; const effects = [];
+  if (stale.count) {
+    warnings.push(`OPEN DRAFTS LEFT ON THE OLD VERSION: ${stale.count} saved draft${stale.count === 1 ? '' : 's'} of this form ${stale.count === 1 ? 'was' : 'were'} saved on version ${vNow}; once version ${next} is published, submitting ${stale.count === 1 ? 'it' : 'them'} is refused (409 — the submit route and the Casey submit card) until ${stale.count === 1 ? 'it is' : 'they are'} restored and re-saved on the form, and the form page shows a version warning: ${stale.records.map((r) => `draft #${r.submission_id} for ${r.record}`).join('; ')}${stale.count > stale.records.length ? ' …' : ''}.`);
+  }
+  if (diff.removed.length && !first) {
+    warnings.push(`FIELDS REMOVED: ${diff.removed.slice(0, 12).map((x) => `${x.label} (${x.key})`).join(', ')}${diff.removed.length > 12 ? ' …' : ''} — the published form stops asking ${diff.removed.length === 1 ? 'it' : 'them'}; answers already stored in submissions and drafts keep ${diff.removed.length === 1 ? 'it' : 'them'}.`);
+  }
+  if (vis === 'public') {
+    const exp = formTemplateExposure(tpl, draft);
+    warnings.push(`PUBLIC FORM: ${name} is public, so the new version goes live on its public link the moment it publishes — ${exp.who}.`);
+    const executing = fts.scanExternalRefusals(draft);
+    if (executing.length) {
+      warnings.push(`RUNS IN CLIENTS' BROWSERS: the draft carries ${executing.join(', ')} — on the public form these run in every visitor's browser. No third-party scripts, fonts, pixels or tracker iframes: any external resource discloses that the visitor is consulting a bankruptcy firm.`);
+    }
+  } else if (vis === 'portal') {
+    effects.push(`Visibility "portal": no route serves portal forms today (the external routes serve public templates only), so no client sees the new version${fts.scanExternalRefusals(draft).length ? ` — the draft carries ${fts.scanExternalRefusals(draft).join(', ')}, which would run in clients' browsers once portal forms are served` : ''}.`);
+  } else {
+    effects.push('Visibility "internal": staff only — no client page serves this form.');
+  }
+  const authored = fts.authoredKeyChanges(draft, first ? null : def);
+  if (authored.length) {
+    warnings.push(`CODE CHANGES: publishing changes the form's ${authored.join(', ')} — the form page runs its code, loads its hooks and applies its CSS in every staff browser that opens it${vis === 'public' ? ', and on the public link in every visitor\'s browser' : ''}.`);
+  }
+  if (formCanonical(diff.workflows_before) !== formCanonical(diff.workflows_after) && !first) {
+    warnings.push(`ON-SUBMIT WORKFLOWS CHANGE: every submit starts ${diff.workflows_after.length ? workflows.map((w) => w.line).join(', ') : 'no workflow'} (now: ${diff.workflows_before.length ? diff.workflows_before.map((wid) => formTemplateWorkflowLine(wid, wfRows.get(wid))).join(', ') : 'none'}).`);
+  }
+  effects.push(first
+    ? `Publishes ${name} for the first time, as version ${next}: from now on the form opens (its record tab, a custom view's form button, the builder's Live tab) and Casey can draft it.`
+    : bumped
+      ? `Publishes the draft of ${name} as version ${next} (the answer fields changed, so the version bumps from ${vNow}).`
+      : `Publishes the draft of ${name} as version ${vNow} again (no answer field changed, so the version does not bump — the History tab labels it "no schema change").`);
+  effects.push('Every form page that opens this form from now on renders the new version; a copy already open keeps the old one until it is reopened. Submissions already made are untouched.');
+  effects.push(`Usage: ${usage.submitted} submitted form${usage.submitted === 1 ? '' : 's'} and ${usage.drafts} saved draft${usage.drafts === 1 ? '' : 's'} of this form exist.`);
+  if (diff.workflows_after.length && (first || formCanonical(diff.workflows_before) === formCanonical(diff.workflows_after))) {
+    effects.push(`On submit (unchanged by this publish${first ? ' — first version' : ''}): starts ${workflows.map((w) => w.line).join(', ')}.`);
+  } else if (!diff.workflows_after.length && (first || !diff.workflows_before.length)) {
+    effects.push('On submit: no workflow starts.');
+  }
+  effects.push(`History: version row #${versions.length + 1} of this template is appended (the builder's History tab lists it); the draft is left as it is.`);
+  effects.push('No undo: no route unpublishes. Going back means restoring an older version into the draft (a restore card) and publishing it — a new version.');
+  effects.push('Other open pages: nothing on the sync bus hears a template write — a form builder already open on this template shows the old published version until it is reopened.');
+  effects.push('Recorded: the route writes an audit row (admin_audit_log, form_templates, "published"). No trigger event fires.');
+
+  return formTemplateSized({
+    draft_id: crypto.randomUUID(), kind: 'form.template.publish.v1', status: 'draft',
+    template: formTemplateHead(tpl),
+    publish: { first_publish: first, bumped, schema_version_after: next },
+    diff: { added: diff.added.slice(0, FORM_CARD_LIST), removed: diff.removed.slice(0, FORM_CARD_LIST), changed: diff.changed.slice(0, FORM_CARD_LIST),
+      added_total: diff.added.length, removed_total: diff.removed.length, changed_total: diff.changed.length,
+      layout_changed: diff.layout_changed, other_keys: diff.other_keys, lines: first ? [] : formTemplateDiffLines(diff, 'change') },
+    fields_total: first ? diff.added.length : null,
+    stale_drafts: stale, workflows, usage,
+    effects, warnings,
+    expected: formTemplateExpected(tpl, versions),
+    evidence: refs,
+  }, 'publish');
+}
+
+async function normalizeFormTemplateVisibility(db, value, evidence, currentUserId) {
+  const { id, refs, tpl, fts } = await formTemplateTarget(db, value, evidence, 'visibility');
+  const to = String(value.visibility == null ? '' : value.visibility).trim();
+  if (!FORM_TEMPLATE_VISIBILITIES.includes(to)) throw formError(`"visibility" must be one of internal, portal, public (the route refuses anything else, 400) — got ${to ? `"${to.slice(0, 40)}"` : 'nothing'}`);
+  const from = String(tpl.visibility || 'internal');
+  const name = formTemplateName(tpl);
+  if (to === from) throw formError(`NOTHING TO CHANGE: ${name} is already "${from}"`);
+  if (to !== 'internal' && !await formTemplateFormDev(db, currentUserId)) {
+    throw formError(`FORM DEVELOPER REQUIRED: setting visibility "${to}" (exposing this form externally) requires form-developer authorization — the form_dev role, or IT / superuser — and your account holds none of them, so the route would refuse it (403). Ask IT to grant it, or to make the flip. Flipping back to "internal" never requires it`);
+  }
+  const versions = await fts.listVersions(db, id);
+  const def = tpl.definition;
+  const warnings = []; const effects = [];
+  if (to === 'public') {
+    const exp = formTemplateExposure(tpl, def);
+    if (def == null) {
+      warnings.push(`EXPOSED ON PUBLISH: ${name} has never been published, so its public link serves nothing yet — but the moment it is published, ${exp.who}.`);
+    } else {
+      warnings.push(`EXPOSED PUBLICLY: the external form routes serve the PUBLISHED version ${Number(tpl.schema_version) || 1} of ${name} at once — ${exp.who}. Every later publish goes live on that link the moment it publishes.`);
+      const executing = fts.scanExternalRefusals(def);
+      if (executing.length) {
+        warnings.push(`RUNS IN CLIENTS' BROWSERS: the published version carries ${executing.join(', ')} — these run in every visitor's browser on the public form. No third-party scripts, fonts, pixels or tracker iframes: any external resource discloses that the visitor is consulting a bankruptcy firm.`);
+      }
+      if (def.external && def.external.serverDrafts === true && tpl.link_type === 'case') {
+        warnings.push('SERVER DRAFTS: the form keeps drafts on the server for its public link — whoever opens a case\'s link is offered that case\'s stored draft to resume (a staff draft included), every answer in it shown to them.');
+      }
+    }
+    effects.push('Nothing in the definition changes and nothing is published — visibility is its own setting (the external routes read it on every request).');
+  } else if (to === 'portal') {
+    warnings.push(`OFF INTERNAL: "portal" exposes ${name} to logged-in portal clients once a portal page serves forms — none does today (the external routes serve public templates only, extFormService getServableTemplate), so no client reaches it yet${from === 'public' ? '; and its public link STOPS working at once (the generic Unauthorized Link page) — a client part-way through it can no longer save or submit there' : ''}.`);
+  } else {
+    if (from === 'public') {
+      warnings.push(`TAKEN DOWN: the public link /f/${tpl.form_key} stops serving ${name} at once — anyone opening it gets the generic Unauthorized Link page, and a client part-way through the form can no longer save a draft or submit (their next request is refused; answers kept in their own browser stay there). Links already sent stop working until it is public again.`);
+    } else {
+      effects.push('Back to staff only: no route served "portal" forms, so no client loses access.');
+    }
+  }
+  effects.push(`${from} → ${to}. ${to === 'internal' ? 'Flipping back to internal needs no form-developer role.' : 'Off-internal flips need the form_dev role (or IT / superuser) — you hold it.'}`);
+  effects.push('Other open pages: nothing on the sync bus hears a template write — a form builder already open on this template shows the old visibility until it is reopened.');
+  effects.push('Recorded: the route writes an audit row (admin_audit_log, form_templates, "visibility_changed"). No trigger event fires.');
+  return formTemplateSized({
+    draft_id: crypto.randomUUID(), kind: 'form.template.visibility.v1', status: 'draft',
+    template: formTemplateHead(tpl), visibility: { from, to },
+    link: to === 'public' ? formTemplateExposure(tpl, def).link : null,
+    effects, warnings,
+    expected: formTemplateExpected(tpl, versions),
+    evidence: refs,
+  }, 'visibility');
+}
+
+async function normalizeFormTemplateRestore(db, value, evidence, currentUserId) {
+  const { id, refs, tpl, fts } = await formTemplateTarget(db, value, evidence, 'restore');
+  const vid = Number(value.version_id);
+  if (!Number.isSafeInteger(vid) || vid < 1) throw formError('A version restore needs the version\'s exact positive version_id (a version row of the form.template.state read)');
+  if (!formTemplateCited(refs, evidence, (row) => row.row_type === 'version' && Number(row.version_id) === vid && Number(row.template_id) === id)) {
+    throw formError(`The restore evidence does not identify version #${vid} of template #${id} — cite its version row from a form.template.state read of this template`);
+  }
+  let ver;
+  try { ver = await fts.getVersion(db, id, vid); } catch (e) {
+    if (e && e.status === 404) throw formError(`Version #${vid} is not a version of form template #${id} (or no longer exists) — the route refuses it (404)`);
+    throw e;
+  }
+  const name = formTemplateName(tpl);
+  const vDef = ver.definition; const draft = tpl.draft_definition; const def = tpl.definition;
+  if (formCanonical(vDef) === formCanonical(draft)) {
+    throw formError(`NOTHING TO RESTORE: the draft of ${name} already equals version ${Number(ver.schema_version) || 1} (version #${vid})`);
+  }
+  const authored = fts.authoredKeyChanges(vDef, draft);
+  if (authored.length && !await formTemplateFormDev(db, currentUserId)) {
+    throw formError(`FORM DEVELOPER REQUIRED: version #${vid} has a different ${authored.join(', ')} than the current draft, so restoring it changes the form's authored code — that requires form-developer authorization (the form_dev role, or IT / superuser), and your account holds none of them; the route would refuse it (403). Ask IT, or a form developer, to restore it`);
+  }
+  const versions = await fts.listVersions(db, id);
+  const diff = formTemplateDefDiff(draft, vDef);
+  const unpublished = def == null || formCanonical(draft) !== formCanonical(def);
+  const isPublished = def != null && formCanonical(vDef) === formCanonical(def);
+  const by = ver.user_name ? String(ver.user_name).slice(0, 80) : ver.published_by != null ? `user #${ver.published_by}` : 'an unknown user';
+  const warnings = []; const effects = [];
+  const n = formTemplateDiffCount(diff);
+  if (unpublished) {
+    warnings.push(`DRAFT REPLACED: the current draft of ${name} holds edits that were never published${def == null ? ' (the template has never been published)' : ''} — the restore replaces it whole and those edits are LOST (no route keeps an unpublished draft): ${n} answer field${n === 1 ? '' : 's'} differ${n === 1 ? 's' : ''}${diff.layout_changed ? ', plus layout' : ''}${diff.other_keys.length ? `, plus ${diff.other_keys.join(', ')}` : ''}.`);
+  } else {
+    effects.push(`The current draft equals the published version ${Number(tpl.schema_version) || 1}, which stays in the history — the restore replaces it (${n} answer field${n === 1 ? '' : 's'} differ${n === 1 ? 's' : ''}).`);
+  }
+  if (authored.length) warnings.push(`CODE CHANGES: the restored draft has a different ${authored.join(', ')} — once published, the form page runs it in every staff browser that opens the form.`);
+  effects.push(`Restores version ${Number(ver.schema_version) || 1} (version #${vid}, published ${formWhen(ver.published_at)} by ${by})${isPublished ? ' — the version currently published' : ''} into the DRAFT of ${name}.`);
+  effects.push('Publishes nothing: the published form, its version and its visibility are untouched; nobody filling the form sees a change until a publish card (or the builder\'s Publish) publishes the restored draft.');
+  if (def != null) {
+    const bump = fts.fieldSignature(vDef) !== fts.fieldSignature(def);
+    effects.push(`If it is published later, it ${isPublished ? 'changes nothing (it is the published version)' : bump ? `publishes as version ${(Number(tpl.schema_version) || 1) + 1} (its answer fields differ from the published version)` : `publishes as version ${Number(tpl.schema_version) || 1} again (same answer fields)`}.`);
+  }
+  effects.push('Other open pages: nothing on the sync bus hears a template write — a form builder already open on this template still holds the OLD draft, and its next Save writes that old draft back over the restored one. Reopen it first.');
+  effects.push('No audit row and no trigger event: the route records neither for a restore.');
+  return formTemplateSized({
+    draft_id: crypto.randomUUID(), kind: 'form.template.restore.v1', status: 'draft',
+    template: formTemplateHead(tpl),
+    version: { version_id: vid, schema_version: Number(ver.schema_version) || 1, published_at: documentIso(ver.published_at), published_by: by, is_published: isPublished },
+    diff: { added: diff.added.slice(0, FORM_CARD_LIST), removed: diff.removed.slice(0, FORM_CARD_LIST), changed: diff.changed.slice(0, FORM_CARD_LIST),
+      added_total: diff.added.length, removed_total: diff.removed.length, changed_total: diff.changed.length,
+      layout_changed: diff.layout_changed, other_keys: diff.other_keys, lines: formTemplateDiffLines(diff, 'differ') },
+    draft_unpublished: unpublished,
+    effects, warnings,
+    expected: formTemplateExpected(tpl, versions),
+    evidence: refs,
+  }, 'restore');
+}
+
+async function normalizeFormTemplateDelete(db, value, evidence) {
+  const { id, refs, tpl, fts } = await formTemplateTarget(db, value, evidence, 'delete');
+  const name = formTemplateName(tpl);
+  if (tpl.definition != null || tpl.published_at != null) {
+    throw formError(`PUBLISHED TEMPLATE refused: ${name} has been published — the route deletes only a template that was NEVER published ("cannot delete a template that has been published", 400), and the form builder offers Delete only then`);
+  }
+  const usage = await formTemplateUsage(db, tpl.form_key);
+  if (usage.submitted + usage.drafts > 0) {
+    throw formError(`SUBMISSIONS EXIST refused: ${usage.submitted} submitted form${usage.submitted === 1 ? '' : 's'} and ${usage.drafts} saved draft${usage.drafts === 1 ? '' : 's'} carry form_key "${tpl.form_key}" — the route refuses the delete ("cannot delete: submissions exist for "${tpl.form_key}"", 400)`);
+  }
+  const versions = await fts.listVersions(db, id);
+  const readers = (await caseFieldsReaders(db, [String(tpl.form_key)])).get(String(tpl.form_key))
+    .filter((r) => !r.startsWith(`Form template #${id} `));
+  const warnings = [`NO UNDO: ${name} is DELETED — its draft definition is gone for good (it was never published, so no version keeps it); no screen restores a deleted template.`];
+  const effects = [];
+  if (readers.length) {
+    warnings.push(`STORED READERS: ${readers.slice(0, FORM_TEMPLATE_NAMED).join(', ')}${readers.length > FORM_TEMPLATE_NAMED ? ' …' : ''} name "${tpl.form_key}" — after the delete ${readers.length === 1 ? 'it names' : 'they name'} a form that does not exist. Check before applying.`);
+  } else {
+    effects.push(`Stored definitions: no report, other form template, portal card, pipeline step, workflow / sequence step or ingest action names "${tpl.form_key}" (scanned now).`);
+  }
+  effects.push(`Deletes form template #${id} "${String(tpl.title || tpl.form_key).slice(0, 150)}" (${tpl.form_key}, a ${tpl.link_type} form, never published, visibility ${tpl.visibility || 'internal'}) and its ${versions.length} version row${versions.length === 1 ? '' : 's'} (a never-published template has none; the route clears them anyway).`);
+  effects.push(`Usage: no submission or draft carries form_key "${tpl.form_key}" (the route refuses otherwise); the key is free for a new template afterwards.`);
+  effects.push(`The form builder asks the same thing: "Delete never-published template "${tpl.form_key}" — ${String(tpl.title || '').slice(0, 150)}? This cannot be undone."`);
+  effects.push('Other open pages: nothing on the sync bus hears a template write — a form builder already open on this template keeps showing it; its next Save fails (the template is gone).');
+  effects.push('No audit row and no trigger event: the route records neither for a delete.');
+  return formTemplateSized({
+    draft_id: crypto.randomUUID(), kind: 'form.template.delete.v1', status: 'draft',
+    template: formTemplateHead(tpl), versions: versions.length, readers: readers.slice(0, FORM_TEMPLATE_NAMED), readers_total: readers.length,
+    effects, warnings,
+    expected: formTemplateExpected(tpl, versions),
+    evidence: refs,
+  }, 'delete');
+}
+
+async function normalizeFormTemplateAction(db, value, evidence, { currentUserId = null } = {}) {
+  // The per-family switch: '0' and the A12.4 kinds do not exist.
+  if (require('../lib/firmConfig').cfg('casey_form_templates_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  if (value.kind === 'form.template.publish.v1') return normalizeFormTemplatePublish(db, value, evidence);
+  if (value.kind === 'form.template.visibility.v1') return normalizeFormTemplateVisibility(db, value, evidence, currentUserId);
+  if (value.kind === 'form.template.restore.v1') return normalizeFormTemplateRestore(db, value, evidence, currentUserId);
+  return normalizeFormTemplateDelete(db, value, evidence);
 }
 
 // ── A13: mail triage ──────────────────────────────────────────────────────
@@ -12943,6 +13550,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && DOCUMENT_ACTION_KINDS.has(value.kind)) return normalizeDocumentAction(db, value, evidence, { currentUserId });
   if (value && CASE_DOCKET_ACTION_KINDS.has(value.kind)) return normalizeCaseDocketAction(db, value, evidence, { currentUserId });
   if (value && FORM_ACTION_KINDS.has(value.kind)) return normalizeFormAction(db, value, evidence, { currentUserId });
+  if (value && FORM_TEMPLATE_ACTION_KINDS.has(value.kind)) return normalizeFormTemplateAction(db, value, evidence, { currentUserId });
   if (value && MAIL_ACTION_KINDS.has(value.kind)) return normalizeMailAction(db, value, evidence, { currentUserId });
   if (value && MAIL_ATTACHMENTS_ACTION_KINDS.has(value.kind)) return normalizeMailAttachmentsAction(db, value, evidence, { currentUserId });
   if (value && CASE_FOLDER_ACTION_KINDS.has(value.kind)) return normalizeCaseFolderAction(db, value, evidence, { currentUserId });
@@ -13148,6 +13756,11 @@ function taskDraftRequested(question, history = []) {
   // A12.3: a stored draft submitted ("submit the 341 notes draft").
   const formWork = /\b(?:forms?|questionnaires?|submissions?|dbkq|341 notes)\b/i.test(text) &&
     /\b(?:draft|propose|prepare|prefill|pre-fill|fill(?: in| out)?|start|save|submit|link|attach|adopt|assign|connect|associate|file\b[^.?!\n]{0,40}\b(?:to|under|on|with)|discard|delete|scrap|throw (?:out|away)|get rid of|(?:make|create|render|save|file|archive|put|store)\b[^.?!\n]{0,40}\bpdfs?)\b/i.test(request);
+  // A12.4: a form template published, exposed / taken down, rolled back to a
+  // version or deleted ("publish the intake form", "make the questionnaire
+  // public", "restore version 3 of the 341 notes", "delete that template").
+  const formTemplate = /\b(?:form templates?|templates?|forms?|questionnaires?|dbkq|341 notes)\b/i.test(text) &&
+    /\b(?:publish|re-?publish|go live|make (?:it |the form )?live|visibility|expose|(?:make|set|switch|flip|turn)\b[^.?!\n]{0,40}\b(?:public|internal|portal|private|staff[ -]only)|take\b[^.?!\n]{0,40}\b(?:down|offline)|restore|roll ?back|revert|delete|remove)\b/i.test(request);
   // A13: a known email marked read / unread, or linked to a case ("mark the
   // trustee's email read", "link Dana's last email to her case").
   const mailTriage = /\b(?:e-?mails?|mail|messages?|inbox)\b/i.test(text) &&
@@ -13168,7 +13781,7 @@ function taskDraftRequested(question, history = []) {
   const caseFields = /\b(?:(?:open|file|filing|close|closing|discharge|objection|preference|341|show[ -]?cause|due|confirmation|hearing)\s+dates?|dates? (?:filed|opened|closed|discharged)|judge|trustee|chapter|caption|our role|lead source|case source|source ref|primary reason|341 (?:link|status|docs|amend\w*|notes)|show[ -]?cause|objection|preference|180|matrix|schedules|filing fee|final installment|docs (?:due|missing)|garnish\w*|reaffirm\w*|redemption|(?:1st|2nd|first|second) course|pre-?petition|post-?petition|fee (?:application|order|amounts?|due)|funding app|plan (?:filed|cos)|dismissal notice|outcome|follow-?up email|7 ?steps|custom fields?|case fields?|cf_\w+)\b/i.test(text) &&
     /\b(?:case|file|matter|debtor|client)s?\b/i.test(text) &&
     /\b(?:draft|propose|prepare|set|change|update|edit|correct|fix|enter|record|put|fill|mark|check|uncheck|clear|empty|remove|blank|switch|assign)\b/i.test(request);
-  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || requirementOverride || checklist || documentEdit || docketAdopt || caseFields || formWork || mailTriage || mailAttachments || folderRelink || job || workflow || hook || sequence || send || ingestRule ||
+  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || requirementOverride || checklist || documentEdit || docketAdopt || caseFields || formWork || formTemplate || mailTriage || mailAttachments || folderRelink || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 
@@ -13349,6 +13962,20 @@ function validateStep(query, index) {
       const search = String(query.search).trim();
       if (search.length > FORM_TEMPLATE_SEARCH_MAX) throw httpError(422, `Step ${id} form.template search is over ${FORM_TEMPLATE_SEARCH_MAX} characters`);
       out.search = search;
+    }
+    return out;
+  }
+  // A12.4 — the form builder's view of the templates (typed, key-keyed:
+  // form_templates is outside the curated schema): no form_key lists every
+  // template; a form_key returns that template's row, its draft against what
+  // is published, its versions, its submissions and drafts and the stored
+  // definitions naming it — what a template card cites.
+  if (kind === 'form.template.state') {
+    const out = { id, kind, purpose };
+    if (query.form_key !== undefined && query.form_key !== null && String(query.form_key).trim() !== '') {
+      const formKey = String(query.form_key).trim();
+      if (formKey.length > 50 || !/^[A-Za-z0-9_-]+$/.test(formKey)) throw httpError(422, `Step ${id} form_key must be letters, digits, - or _, up to 50`);
+      out.form_key = formKey;
     }
     return out;
   }
@@ -13622,6 +14249,7 @@ function stepFingerprint(step) {
   if (kind === 'weather.lookup') return `${kind}:${String(step.location || '').trim().toLowerCase()}`;
   if (kind === 'contact.relations') return `${kind}:${Number(step.contact_id)}`;
   if (kind === 'form.template') return `${kind}:${String(step.form_key || '').toLowerCase()}:${String(step.search || '').trim().toLowerCase()}`;
+  if (kind === 'form.template.state') return `${kind}:${String(step.form_key || '').toLowerCase()}`;
   if (kind === 'mail.search') return `${kind}:${String(step.q || '').toLowerCase()}:${step.mailbox_id || ''}:${step.unread_only ? 1 : 0}:${step.from || ''}:${step.since || ''}:${step.folder || 'inbox'}:${Number(step.limit) || 10}`;
   if (kind === 'mail.message') return `${kind}:${Number(step.mail_message_id)}`;
   if (kind === 'mail.attachments.preview') return `${kind}:${Number(step.mail_message_id)}:${String(step.case_id || '')}`;
@@ -13916,6 +14544,12 @@ async function executeReadStep(db, query, { auth, userId }) {
     truncated = out.truncated;
   } else if (query.kind === 'form.template') {
     const out = await formTemplateRead(db, query.form_key, query.search || '');
+    rows = out.rows;
+    rowCount = rows.length;
+    truncated = out.truncated;
+  } else if (query.kind === 'form.template.state') {
+    // A12.4: on the app pool (form_templates is outside the report manifest).
+    const out = await formTemplateStateRead(db, query.form_key || '');
     rows = out.rows;
     rowCount = rows.length;
     truncated = out.truncated;
@@ -14515,7 +15149,7 @@ module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
-  normalizeActionDraft, contactRelationsRead, formTemplateRead, mailSearchRead, mailMessageRead, mailAttachmentsPreviewRead, relinkCandidatesRead, esignRequestsRead, casePipelineRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
+  normalizeActionDraft, contactRelationsRead, formTemplateRead, formTemplateStateRead, mailSearchRead, mailMessageRead, mailAttachmentsPreviewRead, relinkCandidatesRead, esignRequestsRead, casePipelineRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
   repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan, answerSystemAppend, answerMaxTokens,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,

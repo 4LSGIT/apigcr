@@ -107,6 +107,9 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'formPdfResult', 'formPdfKnownOutcome', 'formPdfAppliedMessage',
   // A12.3: the submit family (tests/caseyFormSubmit.test.js drives it function by function).
   'formSubmitRequest', 'formSubmitPrecheck', 'formSubmitResult', 'formSubmitKnownOutcome', 'formSubmitOutcomeText', 'formSubmitAppliedMessage',
+  // A12.4: the form template family (tests/caseyFormTemplates.test.js drives it function by function).
+  'formTemplateLabel', 'formTemplateName', 'formTemplateText', 'formTemplateRequest', 'formTemplatePrecheck', 'formTemplateResult',
+  'formTemplateKnownOutcome', 'formTemplateAppliedMessage', 'formTemplateOpenInfo', 'formTemplateEntity', 'formTemplateOpen',
   'mailLabel', 'mailCaseLabel', 'mailMessageLine', 'mailText', 'mailMessageIdOf', 'mailReadRequest', 'mailReadMessage', 'mailReadPrecheck',
   'mailReadResult', 'mailLinkRequest', 'mailLinkPrecheck', 'mailLinkResult', 'mailLinkKnownOutcome', 'mailOpenInfo', 'mailEntity', 'mailOpen',
   // A13b: the attachment filing family (tests/caseyMailAttachments.test.js drives it function by function).
@@ -164,7 +167,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CASE_FOLDER_ACTION_KINDS'), constSrc(html, 'CASE_FOLDER_PATH_MAX'), constSrc(html, 'CASE_FOLDER_CONTROL'),
     constSrc(html, 'FORM_DRAFT_ACTION_KINDS'), constSrc(html, 'FORM_LINK_ACTION_KINDS'), constSrc(html, 'FORM_DATA_MAX_BYTES'),
     constSrc(html, 'FORM_DISCARD_ACTION_KINDS'), constSrc(html, 'FORM_PDF_ACTION_KINDS'), constSrc(html, 'FORM_PDF_PLACEMENTS'), constSrc(html, 'FORM_PDF_WARNINGS_KEPT'),
-    constSrc(html, 'FORM_SUBMIT_ACTION_KINDS'),
+    constSrc(html, 'FORM_SUBMIT_ACTION_KINDS'), constSrc(html, 'FORM_TEMPLATE_ACTION_KINDS'), constSrc(html, 'FORM_TEMPLATE_VISIBILITIES'),
     constSrc(html, 'MAIL_READ_ACTION_KINDS'), constSrc(html, 'MAIL_LINK_ACTION_KINDS'), constSrc(html, 'MAIL_ATTACHMENTS_ACTION_KINDS'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
@@ -4896,7 +4899,10 @@ describe('A12 form cards (form.draft / form.submission.link)', () => {
     expect([[...fp.kinds], fp.idField, fp.appliedKey, !!fp.stringReceipt]).toEqual([['form.pdf.file.v1'], 'submission_id', 'result_form_pdf_id', false]);
     const fs3 = box.actionFamily({ kind: 'form.submit.v1' });
     expect([[...fs3.kinds], fs3.idField, fs3.appliedKey, !!fs3.stringReceipt, fs3.refusal409]).toEqual([['form.submit.v1'], 'submission_id', 'result_form_submit_id', false, true]);
-    for (const kind of ['form.template.publish.v1', 'form.submission.unlink.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    // A12.4: the four template cards are ONE family (tests/caseyFormTemplates.test.js); still no unlink kind.
+    const ft = box.actionFamily({ kind: 'form.template.publish.v1' });
+    expect([[...ft.kinds], ft.idField, ft.appliedKey, !!ft.stringReceipt, !!ft.refusal409]).toEqual([['form.template.publish.v1', 'form.template.visibility.v1', 'form.template.restore.v1', 'form.template.delete.v1'], 'template_id', 'result_form_template_id', false, false]);
+    for (const kind of ['form.template.update.v1', 'form.template.create.v1', 'form.submission.unlink.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
   });
 });

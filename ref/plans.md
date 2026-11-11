@@ -1157,13 +1157,20 @@ COMMENTs.)
   - POST `/api/log` and PUT `/api/log/:id/about` announce nothing on the sync
     bus, so a Comms tab never hears a note or a case tag written elsewhere.
 
-## From the Ask Casey arc — A12 / A12.2 / A12.3 forms (2026-11-02, 2026-11-11) — deferred
+## From the Ask Casey arc — A12 / A12.2 / A12.3 / A12.4 forms (2026-11-02, 2026-11-11) — deferred
 
-Draft discard, PDF filing and appointment-linked forms shipped in A12.2, and
-submitting a stored draft in A12.3 (ASK_CASEY_ACTIONS_PLAN A12.2, A12.3).
+Draft discard, PDF filing and appointment-linked forms shipped in A12.2,
+submitting a stored draft in A12.3, and a template's publish, visibility,
+version restore and delete in A12.4 (ASK_CASEY_ACTIONS_PLAN A12.2–A12.4).
 
-- **Template editing, publishing, visibility, version restore, deletion** —
-  form-builder operations, not row controls.
+- **Template editing and creation** — PUT / POST `/api/form-templates`: a
+  definition is a large JSON the form builder edits visually, and a card
+  cannot review it line by line.
+- **A publish precondition** — `POST /api/form-templates/:id/publish` takes no
+  expected-draft token (the workflow publish route's P11 `expected_base`), so
+  a draft saved between the A12.4 card's click-time re-read and the POST
+  publishes unreviewed. The builder has the same gap between its confirm and
+  its POST.
 - **The hand-built form pages on the bus.** `casedetails.html`,
   `casedetails-bk.html`, `341notes.html`, `issn.html` and `contact-form.html`
   do not load yc-sync, so they miss `form:` markers (render.html does). Loading

@@ -1061,8 +1061,10 @@ and uses only those.
   page (and the case's or contact's Documents tab) and the card lists any
   trigger rule that listens for new documents.
 - **What Casey will not do, and says so:**
-  - edit, publish or restore a form, change who can see it, or unlink a
-    submission — do those in the form builder (nothing unlinks);
+  - edit a form's fields or settings, create a form, or unlink a
+    submission — edit and create forms in the form builder (nothing unlinks);
+    publishing, visibility, restoring a version and deleting a never-published
+    form are the template cards below;
   - draft a form that was never published, or use a field the form does not
     have, a value of the wrong kind or a choice that is not on its list;
   - link a draft, a submission that is already linked, or a form to the wrong
@@ -1083,6 +1085,59 @@ and uses only those.
 
 The off switch for these cards is the `casey_forms_enabled` setting (on unless
 set to 0).
+
+#### Form templates: publish, visibility, restore, delete
+
+Casey can do to **one form template** what the form builder does — one per
+card, through the builder's own actions: **publish** its draft, change **who
+can see it** (internal, portal or public), **restore** one of its published
+versions into the draft, or **delete** a form that was never published. Ask in
+plain words ("publish the case sheet form", "make the intake form public",
+"restore version 2 of the 341 notes", "delete the test form I made"). Casey
+first reads the form's builder view — whether its draft differs from what is
+published, its versions, and what still uses it. These change the form for
+**everyone** who opens it, so they have their own off switch.
+
+- **A publish card** lists every answer field the draft adds, removes or
+  changes (its label, whether it is required, its choices, the record field it
+  saves to), whether the layout or other settings change too, and the version
+  it publishes as — the version only goes up when the answer fields change. It
+  warns about **saved drafts left on the old version** (by record: they cannot
+  be submitted until someone restores and re-saves them on the form), fields
+  removed, a change to the workflows a submit starts, a change to the form's
+  code, and — for a public form — that the new version **goes live on its link
+  at once**. Nothing unpublishes: going back means restoring an older version
+  and publishing again. Casey will not publish a draft the builder would
+  refuse, or a draft identical to what is already published.
+- **A visibility card** says what changes for clients. **Public** serves the
+  published form on its link, `/f/<form key>?case_id=…`, with no login — the
+  case id in the link is the only key (a form set to accept any link opens
+  even without one, and submits unlinked); every later publish goes live there
+  at once. **Portal** is served by no page yet. **Internal** takes a public
+  form down at once — its link stops working, and a client part-way through it
+  can no longer save or submit. Exposing a form (anything but internal) needs
+  the **form developer role** (or IT / superuser), exactly as in the builder;
+  without it Casey says so and proposes nothing. Taking a form back to internal
+  needs no role.
+- **A restore card** names the version (when, and by whom, it was published)
+  and copies it into the **draft** — nothing is published until a publish card
+  (or the builder's Publish). It warns when the draft holds edits that were
+  never published: they are **lost**, and the card counts the fields that
+  differ. Restoring a version whose code differs needs the form developer role.
+  A form builder already open on that form still holds the old draft, and its
+  next Save would write it back — reopen it first.
+- **A delete card** deletes a form that was never published and has no
+  submissions or drafts (otherwise Casey refuses, as the builder does). **No
+  undo.** It names any report, workflow step, pipeline step or other definition
+  that still mentions the form's key.
+- **Freshness.** When you confirm, the card re-reads the form and its version
+  list; if anyone saved, published, restored, changed the visibility of or
+  deleted it since the card was prepared, nothing is written.
+- **Other open pages.** An open form builder does not refresh by itself —
+  reopen it.
+
+The off switch for these cards is the `casey_form_templates_enabled` setting
+(on unless set to 0).
 
 ### Email: read state and case links
 
@@ -1465,6 +1520,9 @@ those tables are outside the report schema, so it is the only way Casey sees
 them), the typed `form.template` read (one form's title, who can see it,
 whether it is published, and its published fields with their types and
 choices — the form-template tables are outside the report schema too), the
+typed `form.template.state` read (the form builder's view of the templates:
+every form, or one form's draft against what is published, its versions and
+what still uses it — what a template card cites), the
 typed mail reads — `mail.search` (the Comms hub's own email list for the
 signed-in user's readable mailboxes, never message text) and `mail.message`
 (one message's headers and the start of its plain text, read as the sender's

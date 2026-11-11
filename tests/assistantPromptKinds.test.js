@@ -663,6 +663,42 @@ describe('A12.3 — every stage teaches the submit card; the deferral is gone', 
   });
 });
 
+// A12.4: the form builder's template operations. Every stage teaches the
+// four kinds and the form.template.state read they cite; NO stage still says
+// publishing / visibility / restore are form-builder-only (a stage still
+// saying so refuses the new kinds — the job lesson); editing and creating a
+// template stay named deferrals with their reason; no stage invents an
+// update / create kind.
+describe('A12.4 — every stage teaches the template cards and the form.template.state read', () => {
+  test('the plan carries its own bullet, the read and what the server refuses; the old exclusion is gone', () => {
+    expect(planPrompt).toContain('- Reviewed form template actions are available — the form builder\'s own controls, ONE template per card');
+    expect(planPrompt).toContain('form.template.state ({"form_key":optional — omit it to list every template}');
+    expect(planPrompt).toContain('a form.template.state read of the template by its form_key (no form_key lists\n  every template');
+    expect(planPrompt).toContain('exposing a form (any visibility but internal) or restoring a version whose code differs from the draft for a user\n  without the form_dev role');
+    expect(planPrompt).toContain('Editing a\n  template\'s definition, title or form_key and creating a template are not available (the builder edits a\n  definition visually; a card cannot review it line by line)');
+  });
+  test('the investigate stage names the read and what a template proposal cites', () => {
+    expect(investigatePrompt).toContain('form.template.state ({"form_key"?} — the form builder\'s view of the templates');
+    expect(investigatePrompt).toContain('and form template proposals (publish,\n  visibility, version restore, delete), which need a form.template.state read of the template');
+  });
+  test('the answer and repair stages teach all four shapes, the form_dev gate, and the editing deferral with its reason', () => {
+    for (const kind of ['form.template.publish.v1', 'form.template.visibility.v1', 'form.template.restore.v1', 'form.template.delete.v1']) {
+      expect({ kind, answer: answerPrompt.includes(`{"kind":"${kind}"`), repair: repairPrompt.includes(`- ${kind}: kind,template_id,`) }).toEqual({ kind, answer: true, repair: true });
+    }
+    expect(answerPrompt).toContain('Form template rules (A12.4');
+    expect(answerPrompt).toContain('Anything but "internal" needs the form_dev role (or IT /\n    superuser).');
+    expect(answerPrompt).toContain('the builder edits a definition visually, and a card cannot review it line by line; the user does it there.');
+    expect(repairPrompt).toContain('- form.template.restore.v1: kind,template_id,version_id,evidence — the template\'s row AND the version\'s row');
+    expect(repairPrompt).toContain('No template card takes a definition, title,\n  form_key or fields: editing and creating templates are not available');
+    for (const p of [answerPrompt, repairPrompt, planPrompt, investigatePrompt]) {
+      expect(p).not.toContain('Template editing / publishing / visibility');
+      expect(p).not.toContain('Editing / publishing /\n    restoring a template');
+      expect(p).not.toContain('form.template.update');
+      expect(p).not.toContain('form.template.create');
+    }
+  });
+});
+
 describe('a job request forces the draft-required path like the other families', () => {
   const svc = require(path.join(REPO, 'services', 'assistantService'));
 

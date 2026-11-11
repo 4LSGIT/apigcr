@@ -3981,6 +3981,208 @@ function formSubmitAppliedMessage(draft, payload, replayed) {
   return `${formLabel(draft)} applied — "${formTitle(draft)}" for ${formRecordLabel(draft)}: ${t.summary}.${t.problems.length ? ` NOT DONE: ${t.problems.join('; ')}.` : ''}`;
 }
 
+// Form templates (A12.4). The form builder's own template controls, ONE
+// template per card, through its own routes (routes/api.formTemplates.js):
+//   * form.template.publish.v1    → POST   /api/form-templates/:id/publish
+//   * form.template.visibility.v1 → POST   /api/form-templates/:id/visibility {visibility}
+//   * form.template.restore.v1    → POST   /api/form-templates/:id/versions/:versionId/restore
+//   * form.template.delete.v1     → DELETE /api/form-templates/:id
+// The server cited the template's row (and the version's) from a
+// form.template.state read, refused what the service refuses (the draft's
+// validation, the form_dev gate on an off-internal flip and on a restore that
+// changes code / hooks / css, a version of another template, a published or
+// used template's delete) and the three no-ops, and baked the template's
+// updated_at, schema_version, visibility, published_at, the hashes of its
+// published and draft definitions and its version ids into `expected`. The
+// click re-reads GET /api/form-templates/:id and GET …/versions and refuses
+// on ANY difference BEFORE the claim (the routes take no precondition of
+// their own, so this re-read is the only one). Every 4xx those routes answer
+// is thrown before their first write (audited: the 404s, the 400s of
+// validateDefinition / the visibility value / the delete refusals, the
+// form_dev 403s) and none answers a 409, so no refusal409. A 5xx stays
+// ambiguous (a publish's version row is inserted after its UPDATE). Nothing on
+// yc-sync announces a template route (no matcher; an open form builder does
+// not listen) — the cards say so. One family, `form_template`; the receipt is
+// the reviewed template_id for all four.
+const FORM_TEMPLATE_ACTION_KINDS = new Set(['form.template.publish.v1', 'form.template.visibility.v1', 'form.template.restore.v1', 'form.template.delete.v1']);
+const FORM_TEMPLATE_VISIBILITIES = ['internal', 'portal', 'public'];
+
+function formTemplateLabel(draft) {
+  if (draft && draft.kind === 'form.template.visibility.v1') {
+    const to = (draft.visibility || {}).to;
+    return to === 'internal' ? 'Make form template internal' : to === 'public' ? 'Make form template public' : 'Make form template portal';
+  }
+  if (draft && draft.kind === 'form.template.restore.v1') return 'Restore form version into draft';
+  if (draft && draft.kind === 'form.template.delete.v1') return 'Delete form template';
+  return 'Publish form template';
+}
+
+function formTemplateName(draft) {
+  const t = (draft && draft.template) || {};
+  return `"${String(t.title || t.form_key || 'form')}" (${t.form_key || '?'})`;
+}
+
+function formTemplateText(draft) {
+  const t = draft.template || {};
+  const lines = [];
+  const when = (v) => (v ? `${String(v).slice(0, 16).replace('T', ' ')} UTC` : 'never');
+  const head = `Template: ${formTemplateName(draft)}, template #${t.template_id}, a ${t.link_type || '?'} form, visibility ${t.visibility || 'internal'}, ${t.published ? `published version ${t.schema_version} (${when(t.published_at)})` : 'never published'}`;
+  if (draft.kind === 'form.template.publish.v1') {
+    const p = draft.publish || {}; const d = draft.diff || {}; const s = draft.stale_drafts || {};
+    lines.push('Form template publish proposal — not applied', `Action: ${formTemplateLabel(draft)}`, head,
+      `Publishes as: version ${p.schema_version_after}${p.first_publish ? ' (first publish)' : p.bumped ? ' (the answer fields changed — the version bumps)' : ' (no answer field changed — same version)'}`);
+    if (p.first_publish) lines.push(`Answer fields: ${Number(draft.fields_total) || 0}`);
+    for (const l of d.lines || []) lines.push(`Change: ${l}`);
+    lines.push(`Saved drafts left on the old version: ${Number(s.count) || 0}`);
+    for (const r of s.records || []) lines.push(`Old-version draft: #${r.submission_id} for ${r.record}`);
+    for (const w of draft.workflows || []) lines.push(`On submit: ${w.line}`);
+  } else if (draft.kind === 'form.template.visibility.v1') {
+    const v = draft.visibility || {};
+    lines.push('Form template visibility proposal — not applied', `Action: ${formTemplateLabel(draft)}`, head, `Visibility: ${v.from} → ${v.to}`);
+    if (draft.link) lines.push(`Public link: ${draft.link}`);
+  } else if (draft.kind === 'form.template.restore.v1') {
+    const v = draft.version || {}; const d = draft.diff || {};
+    lines.push('Form version restore proposal — not applied', `Action: ${formTemplateLabel(draft)}`, head,
+      `Version: ${v.schema_version} (version #${v.version_id}), published ${when(v.published_at)} by ${v.published_by || 'an unknown user'}${v.is_published ? ' — the version currently published' : ''}`,
+      `Current draft: ${draft.draft_unpublished ? 'holds UNPUBLISHED edits — replaced and lost' : 'equals the published version — replaced'}`);
+    for (const l of d.lines || []) lines.push(`Draft → version: ${l}`);
+  } else {
+    lines.push('Form template delete proposal — not applied', `Action: ${formTemplateLabel(draft)}`, head,
+      `Version rows: ${Number(draft.versions) || 0}`, `Stored definitions naming it: ${Number(draft.readers_total) || 0}`);
+  }
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  lines.push(draft.kind === 'form.template.publish.v1'
+    ? 'Writes: the template\'s published definition, version and publish time, plus one version row — the draft and every submission are untouched.'
+    : draft.kind === 'form.template.visibility.v1'
+      ? 'Writes: the template\'s visibility only — its definitions, versions and submissions are untouched; nothing is published.'
+      : draft.kind === 'form.template.restore.v1'
+        ? 'Writes: the template\'s DRAFT definition only — nothing is published; the published form, its versions and every submission are untouched.'
+        : 'Writes: deletes the template row and its version rows — there is no undo.',
+  'Stale check: if anyone saves, publishes, restores, re-exposes or deletes this template before you apply, nothing is written.',
+  'Notification: Casey sends nothing; no trigger rule runs.');
+  return lines.join('\n');
+}
+
+function formTemplateRequest(draft) {
+  const t = draft.template || {};
+  const id = Number(t.template_id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('This card has no usable template id.');
+  const x = draft.expected || {};
+  if (Number(x.template_id) !== id) throw new Error('This card has no usable stale check.');
+  const base = `/api/form-templates/${id}`;
+  if (draft.kind === 'form.template.publish.v1') {
+    const next = Number((draft.publish || {}).schema_version_after);
+    if (!Number.isSafeInteger(next) || next < 1) throw new Error('This card has no usable version.');
+    return { path: `${base}/publish`, method: 'POST', body: null };
+  }
+  if (draft.kind === 'form.template.visibility.v1') {
+    const to = (draft.visibility || {}).to;
+    if (!FORM_TEMPLATE_VISIBILITIES.includes(to)) throw new Error('This card has no usable visibility.');
+    return { path: `${base}/visibility`, method: 'POST', body: { visibility: to } };
+  }
+  if (draft.kind === 'form.template.restore.v1') {
+    const vid = Number((draft.version || {}).version_id);
+    if (!Number.isSafeInteger(vid) || vid < 1 || !(x.version_ids || []).map(Number).includes(vid)) throw new Error('This card has no usable version.');
+    return { path: `${base}/versions/${vid}/restore`, method: 'POST', body: null };
+  }
+  if (draft.kind === 'form.template.delete.v1') return { path: base, method: 'DELETE', body: null };
+  throw new Error('This card has no usable template operation.');
+}
+
+async function formTemplatePrecheck(draft) {
+  const req = formTemplateRequest(draft); // a card that cannot be written is never read
+  const x = draft.expected || {};
+  const id = Number(draft.template.template_id);
+  const name = formTemplateName(draft);
+  let got;
+  try { got = await api(`/api/form-templates/${id}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `${name} no longer exists — someone deleted it since this card was prepared. Nothing was written.`; throw e; }
+  const t = got && got.template;
+  if (!t || Number(t.id) !== id || !('draft_definition' in t) || !('definition' in t)) throw new Error('the template could not be read');
+  const defHash = t.definition == null ? null : await formDataHash(t.definition);
+  if (formIso(t.updated_at) !== formIso(x.updated_at) || Number(t.schema_version) !== Number(x.schema_version)
+      || String(t.visibility || 'internal') !== String(x.visibility) || formIso(t.published_at) !== formIso(x.published_at)
+      || defHash !== (x.definition_hash == null ? null : x.definition_hash) || await formDataHash(t.draft_definition) !== x.draft_hash) {
+    return `${name} changed since this card was prepared (its draft, published version or visibility). Nothing was written. Ask Casey to read it again.`;
+  }
+  const vers = await api(`/api/form-templates/${id}/versions`, null, 'GET');
+  if (!vers || !Array.isArray(vers.versions)) throw new Error('the template\'s versions could not be read');
+  const ids = vers.versions.map((v) => Number(v && v.id));
+  const want = (x.version_ids || []).map(Number);
+  if (ids.length !== want.length || ids.some((v, i) => v !== want[i])) {
+    return `${name} was published again since this card was prepared (its version list changed). Nothing was written. Ask Casey to read it again.`;
+  }
+  if (req.method === 'POST' && /\/restore$/.test(req.path) && !ids.includes(Number(draft.version.version_id))) {
+    return `Version #${draft.version.version_id} is no longer a version of ${name}. Nothing was written.`;
+  }
+  return '';
+}
+
+function formTemplateResult(draft, result) {
+  formTemplateRequest(draft);
+  const id = Number(draft.template.template_id);
+  if (!result || result.status !== 'success') throw new Error('The form templates route did not confirm the change');
+  if (draft.kind === 'form.template.publish.v1') {
+    const p = draft.publish || {};
+    if (Number(result.schema_version) !== Number(p.schema_version_after) || result.bumped !== !!p.bumped) {
+      throw new Error(`The publish route answered version ${result.schema_version}${result.bumped ? ' (bumped)' : ''}, not the reviewed version ${p.schema_version_after} — open the form builder's History tab`);
+    }
+    draft.template_outcome = { schema_version: Number(result.schema_version), bumped: !!result.bumped,
+      external_executes: Array.isArray(result.external_executes) ? result.external_executes.slice(0, 10).map((k) => String(k).slice(0, 80)) : [] };
+  } else if (draft.kind === 'form.template.visibility.v1') {
+    if (result.visibility !== draft.visibility.to) throw new Error('The visibility route did not confirm the reviewed visibility');
+  } else if (draft.kind === 'form.template.restore.v1') {
+    const r = result.restored || {};
+    if (Number(r.version_id) !== Number(draft.version.version_id) || !result.template || Number(result.template.id) !== id) throw new Error('The restore route did not confirm the reviewed version');
+  } else if (result.deleted !== true) {
+    throw new Error('The form templates route did not confirm the delete');
+  }
+  return { template_id: id };
+}
+
+// The routes' refusals worded for staff: the form_dev gate (403 — an
+// off-internal flip, or a restore that changes code / hooks / css) and the
+// 404s (the template, or a version of another template). Both are thrown
+// before any write; every other 4xx is a refusal by the shared rule.
+function formTemplateKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const message = String((e && e.body && e.body.message) || (e && e.message) || '');
+  if (e && e.status === 403 && /requires form-developer authorization/.test(message)) {
+    return { status: 'Refused — nothing written', text: `Refused — nothing written: ${message} (The route reads the roles your sign-in carries: a role granted since you signed in counts after you sign in again.)` };
+  }
+  if (e && e.status === 404 && (/^Template \d+ not found$/.test(message) || /^Version \d+ not found for template \d+$/.test(message))) {
+    return { status: 'Refused — nothing written', text: `Refused — nothing written: ${message} — it no longer exists. Ask Casey to read it again.` };
+  }
+  return null;
+}
+
+function formTemplateAppliedMessage(draft, payload, replayed) {
+  const name = formTemplateName(draft);
+  if (replayed) return `${formTemplateLabel(draft)} had already been applied to template #${payload.template_id}; nothing was written a second time.`;
+  if (draft.kind === 'form.template.publish.v1') {
+    const o = draft.template_outcome || {};
+    return `${name} published as version ${o.schema_version || (draft.publish || {}).schema_version_after}${o.bumped ? ' (the version bumped)' : ''}.${(o.external_executes || []).length ? ` It is externally visible and carries ${o.external_executes.join(', ')} — these run in clients' browsers.` : ''}`;
+  }
+  if (draft.kind === 'form.template.visibility.v1') return `${name} is now ${draft.visibility.to}.`;
+  if (draft.kind === 'form.template.restore.v1') return `Version ${draft.version.schema_version} of ${name} was restored into its draft — nothing is published until the draft is.`;
+  return `${name} was deleted.`;
+}
+
+function formTemplateOpenInfo(label) {
+  try { P.Swal?.fire({ icon: 'info', title: label || 'Form template', text: 'Find it under More → Form Builder (search its form key).', heightAuto: false }); }
+  catch (_) { /* outside the shell the chat line already names the template */ }
+}
+
+function formTemplateEntity(draft) {
+  const t = draft.template || {};
+  return { kind: 'form_template', id: String(t.template_id || ''), label: formTemplateName(draft) };
+}
+
+function formTemplateOpen(draft) {
+  formTemplateOpenInfo(formTemplateName(draft));
+}
+
 // Mail triage (A13). Mark ONE email read or unread for the signed-in user, or
 // link ONE email to ONE case, through the comms hub's own routes: POST /
 // DELETE /api/mail/messages/:id/read and POST /api/mail/messages/:id/case-link
@@ -6637,6 +6839,34 @@ const ACTION_FAMILIES = [
     open: formOpen,
   },
   {
+    // A12.4: one family for the four template cards; the receipt is the
+    // reviewed template_id (a deleted template's is the id it had).
+    id: 'form_template', kinds: FORM_TEMPLATE_ACTION_KINDS, title: 'Form template', noun: 'form template', errorNoun: 'form template change',
+    label: formTemplateLabel, text: formTemplateText, request: formTemplateRequest, result: formTemplateResult,
+    idField: 'template_id', appliedKey: 'result_form_template_id',
+    // Always for a delete (no undo) and an off-internal flip (exposure);
+    // otherwise whenever the card warns (stale drafts, a public form, code,
+    // fields removed, workflows changed, unpublished draft edits lost, a
+    // public form taken down).
+    danger: (draft) => draft.kind === 'form.template.delete.v1'
+      || (draft.kind === 'form.template.visibility.v1' && (draft.visibility || {}).to !== 'internal')
+      || (draft.warnings || []).length > 0,
+    precheck: formTemplatePrecheck,
+    knownOutcome: formTemplateKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `template #${payload.template_id}`,
+    appliedMessage: formTemplateAppliedMessage,
+    entity: (draft) => formTemplateEntity(draft),
+    failure: 'The form template could not be changed.',
+    appliedCopy: (draft) => ({
+      status: `Applied — ${formTemplateLabel(draft).toLowerCase()} (template #${draft.result_form_template_id})`,
+      warning: `${formTemplateAppliedMessage(draft, { template_id: draft.result_form_template_id }, false)} Done using your signed-in account. A form builder already open on this template does not refresh — reopen it.`,
+      button: 'Where to find it',
+    }),
+    reviewWarning: 'Review the template, what changes for everyone who opens the form, the drafts and links it affects and the version it touches. These are firm-wide changes. Canceling writes nothing.',
+    open: formTemplateOpen,
+  },
+  {
     // A13: the receipt is the integer mail_message_id whose read state was set.
     id: 'mail_read', kinds: MAIL_READ_ACTION_KINDS, title: 'Email read state', noun: 'read state', errorNoun: 'read-state change',
     label: mailLabel, text: mailText, request: mailReadRequest, result: mailReadResult,
@@ -7403,6 +7633,7 @@ function openEntity(kind, id, label) {
     else if (kind === 'checklist') checklistOpenPersonal(label);
     else if (kind === 'document') documentOpenInfo(label);
     else if (kind === 'mail') mailOpenInfo(label);
+    else if (kind === 'form_template') formTemplateOpenInfo(label);
   } catch (_) { /* The links are useful only inside the YisraCase shell. */ }
 }
 

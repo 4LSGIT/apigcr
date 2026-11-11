@@ -167,7 +167,7 @@ describe('the per-family switch and the by-name refusals', () => {
     await refuse(discard({ status: 'draft' }), /^RESERVED FIELDS refused \(status\): a discard card names the draft row by submission_id/);
     await refuse(pdf({ version: 3 }), /^RESERVED FIELDS refused \(version\): a PDF card names the submission by submission_id/);
     for (const card of [discard({ submit: true }), pdf({ submit_form: true }), pdf({ delete: true })]) {
-      await refuse(card, /^OTHER FORM OPERATIONS refused \(\w+\): each form card does ONE thing .* file ONE submission's PDF \(form\.pdf\.file\.v1\) or submit ONE stored draft \(form\.submit\.v1\)\. Editing \/ publishing \/ restoring a template/);
+      await refuse(card, /^OTHER FORM OPERATIONS refused \(\w+\): each form card does ONE thing .* file ONE submission's PDF \(form\.pdf\.file\.v1\) or submit ONE stored draft \(form\.submit\.v1\)\. Publishing a template, changing its visibility, restoring a version into its draft and deleting a never-published template are the template cards \(form\.template\.publish\.v1/);
     }
     await refuse(pdf({ again: true }), /^A form pdf card carries unsupported fields: again — it takes submission_id and an optional filename and evidence only$/);
     await refuse(discard({ form_key: '341_notes', link_type: 'case', link_id: CASE_ID }), /^A form discard card carries unsupported fields: form_key, link_type, link_id — it takes submission_id \(the DRAFT row\) and evidence only$/);

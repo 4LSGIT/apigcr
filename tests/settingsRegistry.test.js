@@ -54,6 +54,7 @@ describe('classification snapshot', () => {
     "casey_document_relink_enabled": "system system casey ui bool",
     "casey_documents_enabled": "system system casey ui bool",
     "casey_forms_enabled": "system system casey ui bool",
+    "casey_form_templates_enabled": "system system casey ui bool",
     "casey_mail_triage_enabled": "system system casey ui bool",
     "casey_mail_attachments_enabled": "system system casey ui bool",
     "casey_hook_authoring_enabled": "system system casey ui bool",

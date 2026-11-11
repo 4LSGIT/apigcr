@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 87 shipped kinds:
+ * These tests ask that claim two questions for all 91 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 87 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 91 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -28,7 +28,12 @@
  *     its own test below. The comms hub kinds are the other exception: the
  *     A14 sends, the A13 / A13b mail routes and the A12.3 form submit add
  *     requireJwt (a staff JWT only) and their authority is the caller's per-channel grant (send /
- *     mailbox read), resolved in the service — each pinned below. The
+ *     mailbox read), resolved in the service — each pinned below. The A12.4
+ *     form template routes are the third: jwtOrApiKey only, but the service
+ *     applies lib/auth.formDev's predicate (SU, roles it / form_dev, or an
+ *     API key) to an off-internal visibility flip and to a restore whose
+ *     version changes code / hooks / css — a roleless staff token is 403
+ *     there and only there (pinned below). The
  *     schema has no firm_id/tenant_id column at all (0 occurrences in
  *     ref/database.sql), so "cross-firm" has no expression here; the
  *     row-scope negatives are foreign-PARENT negatives instead (a subrecord
@@ -162,6 +167,12 @@ const KINDS = [
   { kind: 'form.pdf.file.v1', method: 'POST', path: '/api/forms/submissions/1/pdf/file' },
   // A12.3: the form page's Submit, run server-side for a stored draft (a staff JWT only).
   { kind: 'form.submit.v1', method: 'POST', path: '/api/forms/submissions/submit-draft' },
+  // A12.4: the form builder's Publish, visibility select, History Restore and
+  // opener-list Delete (routes/api.formTemplates.js).
+  { kind: 'form.template.publish.v1', method: 'POST', path: '/api/form-templates/1/publish' },
+  { kind: 'form.template.visibility.v1', method: 'POST', path: '/api/form-templates/1/visibility' },
+  { kind: 'form.template.restore.v1', method: 'POST', path: '/api/form-templates/1/versions/1/restore' },
+  { kind: 'form.template.delete.v1', method: 'DELETE', path: '/api/form-templates/1' },
   { kind: 'job.code_safe.create.v1', method: 'POST', path: '/scheduled-jobs' },
   { kind: 'workflow.draft.v1', method: 'POST', path: '/workflows/bulk' },
   { kind: 'workflow.step_insert.v1', method: 'POST', path: '/workflows/1/steps' },
@@ -226,7 +237,10 @@ const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/api.contactRelation
   // A11: the document registry routes — jwtOrApiKey only (pinned below).
   'routes/api.documents.js',
   // A12: the form routes — jwtOrApiKey only (pinned below).
-  'routes/api.forms.js'];
+  'routes/api.forms.js',
+  // A12.4: the form template routes — jwtOrApiKey, plus the service's
+  // form_dev predicate on an off-internal flip and a code-changing restore.
+  'routes/api.formTemplates.js'];
 
 // ── Shared HTTP harness: the real routers behind the real jwtOrApiKey ──────
 // Both sections drive the SAME routers. Section 1 hands them a stub req.db
@@ -277,19 +291,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 87 kinds (no database)
+// SECTION 1 — the route-level gate, for all 91 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 87 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 91 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 87 kinds cover 75 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(87);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(75);
+  test('the 91 kinds cover 79 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(91);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(79);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -297,7 +311,7 @@ describe('P2 — what the canonical write route gates on (all 87 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 87', async () => {
+  test('no token: every kind is 401 — authentication is required for all 91', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -506,6 +520,64 @@ describe('P2 — what the canonical write route gates on (all 87 shipped kinds)'
       if (oldKey === undefined) delete process.env.INTERNAL_API_KEY; else process.env.INTERNAL_API_KEY = oldKey;
     }
     expect(writes).toEqual([]);
+  });
+
+  // A12.4: the form template routes are jwtOrApiKey only at the route; the
+  // routes pass { formDev: isFormDev(req.auth) } into formTemplateService,
+  // which refuses (403, code form_dev_required) an off-internal visibility
+  // flip and a restore whose version changes code / hooks / css for anyone
+  // else — and nothing else. A stub db holding one never-published template
+  // (draft carrying code 'a') and one version (code 'b'): a roleless staff
+  // token publishes and deletes (the handlers run), flips to internal, and is
+  // 403 on "public" and on the code-changing restore; form_dev, it, su and an
+  // API key pass both. Every 403 precedes the write (no UPDATE recorded).
+  test('A12.4 template routes: jwtOrApiKey; the form_dev predicate gates ONLY an off-internal flip and a code-changing restore', async () => {
+    const src = read('routes/api.formTemplates.js');
+    expect(/requireAuth|isSuperuser|\bcan\(\s*req\.auth/.test(src)).toBe(false);
+    for (const mount of ["router.post('/api/form-templates/:id/publish', jwtOrApiKey,", "router.post('/api/form-templates/:id/visibility', jwtOrApiKey,",
+      "router.post('/api/form-templates/:id/versions/:versionId/restore', jwtOrApiKey,", "router.delete('/api/form-templates/:id', jwtOrApiKey,"]) {
+      expect(src).toContain(mount);
+    }
+    expect(src).toContain('const authzOf = (req) => ({ formDev: isFormDev(req.auth) });');
+    const oldKey = process.env.INTERNAL_API_KEY;
+    process.env.INTERNAL_API_KEY = 'yci_casey_p2_internal_test'; // secret-scan: allow
+    const DRAFT = { code: 'a', sections: [{ title: 'S', rows: [{ fields: [{ name: 'x', type: 'text', label: 'X' }] }] }] };
+    let writes = [];
+    const db = { query: async (sql) => {
+      if (/FROM form_templates WHERE id = \? LIMIT 1/.test(sql) && /draft_definition/.test(sql)) {
+        return [[{ id: 1, form_key: 'k', title: 'K', link_type: 'case', schema_version: 1, visibility: 'internal', definition: null, draft_definition: DRAFT, published_at: null }], []];
+      }
+      if (/FROM form_template_versions\s+WHERE id = \? AND template_id = \?/.test(sql)) return [[{ id: 1, schema_version: 1, definition: { ...DRAFT, code: 'b' } }], []];
+      if (/COUNT\(\*\) AS c FROM form_submissions/.test(sql)) return [[{ c: 0 }], []];
+      if (/^\s*(UPDATE|DELETE|INSERT INTO form_template_versions)/i.test(sql)) { writes.push(sql.replace(/\s+/g, ' ').trim().slice(0, 44)); return [{ affectedRows: 1 }, []]; }
+      return [[], []];
+    } };
+    const k = (kind) => KINDS.find((x) => x.kind === kind);
+    try {
+      const a = appWith(db);
+      for (const roles of [['staff'], [], ['attorney']]) {
+        writes = [];
+        const pub = await call(a, k('form.template.publish.v1'), bearer(token({ roles })));
+        const del = await call(a, k('form.template.delete.v1'), bearer(token({ roles })));
+        const toInternal = await call(a, k('form.template.visibility.v1'), bearer(token({ roles })), { visibility: 'internal' });
+        const expose = await call(a, k('form.template.visibility.v1'), bearer(token({ roles })), { visibility: 'public' });
+        const restore = await call(a, k('form.template.restore.v1'), bearer(token({ roles })));
+        expect({ roles: roles.join(',') || 'none', pub: pub.status, del: del.status, toInternal: toInternal.status,
+          expose: [expose.status, /^setting visibility "public" \(exposing this form externally\) requires form-developer authorization/.test(expose.body.message)],
+          restore: [restore.status, /^restoring a version that changes code requires form-developer authorization/.test(restore.body.message)] })
+          .toEqual({ roles: roles.join(',') || 'none', pub: 200, del: 200, toInternal: 200, expose: [403, true], restore: [403, true] });
+        // publish (UPDATE + version INSERT), delete (two DELETEs), the internal flip (UPDATE) — and nothing for either 403.
+        expect(writes).toEqual(['UPDATE form_templates SET definition = draft', 'INSERT INTO form_template_versions (template',
+          'DELETE FROM form_template_versions WHERE tem', 'DELETE FROM form_templates WHERE id = ?', 'UPDATE form_templates SET visibility = ?, up']);
+      }
+      for (const auth of [bearer(token({ roles: ['form_dev'] })), bearer(token({ roles: ['it'] })), bearer(token({ roles: ['su'] })), { 'x-api-key': process.env.INTERNAL_API_KEY }]) {
+        const expose = await call(a, k('form.template.visibility.v1'), auth, { visibility: 'public' });
+        const restore = await call(a, k('form.template.restore.v1'), auth);
+        expect([expose.status, expose.body.visibility, restore.status, restore.body.restored && restore.body.restored.version_id]).toEqual([200, 'public', 200, 1]);
+      }
+    } finally {
+      if (oldKey === undefined) delete process.env.INTERNAL_API_KEY; else process.env.INTERNAL_API_KEY = oldKey;
+    }
   });
 
   // A7c: the docket route is jwtOrApiKey only (api.cases.js is one of the

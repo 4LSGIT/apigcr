@@ -12,7 +12,8 @@ other case field, 2026-11-09; the docket's replace / clear, A7e), A7c (case dock
 advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer) + A9.4 (requirement override set / clear), A10 + A10.2 (checklists and items; list rename / note edit, list and item delete), A11 + A11.2 (documents —
 update and link; share and unlink), A11.1 (a case's Dropbox folder — candidates-only relink),
 A12 + A12.2 + A12.3 (form drafts and submission links; draft discard and PDF filing; appointment
-records; submitting a stored draft), A13 (mail triage —
+records; submitting a stored draft), A12.4 (form templates — publish, visibility, version restore,
+delete), A13 (mail triage —
 read state and case link; no drafts exist, no SMS triage), A13b (one email's
 attachments filed to a case, the Comms File attachments route), A14 (direct email /
 SMS send), A16 (reports), A17.0–A17.4, A17.6, A17.7 + A17.7b (workflows — explain,
@@ -30,13 +31,14 @@ of its plan stands in those sections.
 
 ## Review briefing
 
-The shipped baseline is 87 proposal kinds (the action ledger's `KINDS`
+The shipped baseline is 91 proposal kinds (the action ledger's `KINDS`
 registry; `tests/caseyActionPermissions.test.js` pins the inventory against it)
-in 46 browser families: the record families — Tasks, Events, Appointments,
+in 47 browser families: the record families — Tasks, Events, Appointments,
 contact phone / email / address rows, contact relations and roles, case and
 contact notes and case alerts, case contacts, case pipeline moves, the case
 docket, the case's Dropbox folder, checklists and their items, documents and their links (edit, link, unlink, share), form drafts, submission links,
-draft discards, submission PDF filings and draft submits, an email's read state and its case link — plus direct SMS /
+draft discards, submission PDF filings and draft submits, an email's read state and its case link — plus form
+template publish / visibility / restore / delete, direct SMS /
 email sends, report drafts and the automation families (safe code jobs, workflow draft / step / publish / start,
 hooks, sequence step / publish / enroll, ingest rules). Every family
 uses the same boundary: one
@@ -1987,9 +1989,11 @@ than case / contact (no screen makes one; the Links dialog unlinks it).
 #### A12: Forms — draft and submission link shipped 2026-11-02
 
 Start with a form draft or prefill and save/link it to a resolved record.
-Draft discard and PDF filing are A12.2's kinds, and submitting a stored draft
-is A12.3's; template editing, publishing, visibility changes and version
-restore are form-builder operations with no card.
+Draft discard and PDF filing are A12.2's kinds, submitting a stored draft is
+A12.3's, and a template's publish, visibility change, version restore and
+delete are A12.4's. Editing a template's definition and creating a template
+have no card: a definition is a large JSON the form builder edits visually,
+and a card cannot review it line by line.
 Render the template/version, destination, material answers, overwrite behavior,
 and whether the operation makes anything client-visible.
 
@@ -2135,8 +2139,9 @@ link_id}).
 
 **Deferred** (`ref/plans.md`), each with its reason; discard, PDF filing and
 appointment records shipped in A12.2, submit in A12.3:
-- **Template editing / publishing / visibility / version restore /
-  deletion** — form-builder operations.
+- **Template editing and creation** — a definition is a large JSON the
+  form builder edits visually; a card cannot review it line by line
+  (publish, visibility, restore and delete shipped in A12.4).
 - **Unlinking a submission** — no screen does it.
 - **The hand-built form pages on the bus** — they do not load yc-sync.
 
@@ -2282,8 +2287,8 @@ Both A12 kinds also take `link_type` "appt" (link_id = the exact appt_id).
   `tests/caseyActionPermissions.test.js`.
 
 **Deferred** (`ref/plans.md`):
-- **Template editing / publishing / visibility / version restore /
-  deletion** — form-builder operations, not row controls.
+- **Template editing and creation** — as A12; the builder's publish,
+  visibility, restore and delete are A12.4's cards.
 - **Unlinking a submission** — no screen does it.
 - **The hand-built form pages on the bus.**
 - **Native gaps:** the filing is silent on yc-sync; nothing
@@ -2398,8 +2403,154 @@ twin: `tests/caseyFormSubmit.mysql.test.js`.
 - **A live scan of stored readers** (reports, form templates, pipeline steps
   naming a patched column — A7's `caseFieldsReaders`): the card discloses A7's
   code-measured surfaces only.
-- **Template editing / publishing / visibility / version restore /
-  deletion, unlinking a submission** — as A12.2.
+- **Template editing and creation, unlinking a submission** — as A12.2.
+
+#### A12.4: Forms — template publish, visibility, version restore, delete shipped 2026-11-11
+
+Fred (2026-11-09): "Casey can do *at least* anything the user can do in the
+UI." The form builder (`public/formBuilder.html`) lets a user publish a
+template's draft (`publishFlow`), change its visibility (`visFlow`), restore a
+published version into the draft (the History tab's `restoreVersionFlow`) and
+delete a never-published template (the opener list's `deleteTemplateRow`).
+Each is now a reviewed card through the builder's own route
+(`routes/api.formTemplates.js` → `services/formTemplateService.js`).
+
+**What the routes do, read from the service.**
+- **Publish** (POST `/api/form-templates/:id/publish`, any staff JWT or API
+  key): `validateDefinition` on the stored draft (400), then copies the draft
+  over the published definition, bumps `schema_version` only when
+  `fieldSignature` (the sorted name + type of every answer field) changed, and
+  appends a `form_template_versions` row. It refuses nothing else — a draft
+  identical to what is published still publishes (a duplicate version row).
+  The answer is `{schema_version, bumped}` (+ `external_executes` for a
+  non-internal template whose draft carries code / css / hooks / embeds). An
+  audit row, no domain event.
+- **Visibility** (POST `…/:id/visibility {visibility}`): `internal` /
+  `portal` / `public` (anything else 400); a flip off `internal` is
+  form_dev-gated (`lib/auth.formDev.js` — SU, roles `it` / `form_dev`, or an
+  API key; 403); back to internal is open to all. An audit row. What it
+  exposes, read from the serving code: only `public` is served outside the
+  app (`extFormService.getServableTemplate`'s default scope); the link is
+  `/f/<form_key>?case_id=…` and the case id is the only credential (badLink
+  `reject`, the default, refuses a link without one; `degrade` serves the bare
+  link anonymously). No page serves `portal` forms today.
+- **Restore** (POST `…/:id/versions/:versionId/restore`): 404 for a version
+  of another template; form_dev-gated (403) when the version's top-level
+  code / hooks / css differ from the current draft (`authoredKeyChanges`);
+  copies the version's definition into the DRAFT column-to-column. Publishes
+  nothing; no audit row.
+- **Delete** (DELETE `…/:id`): only a template never published (`definition`
+  AND `published_at` NULL — 400) with no `form_submissions` row of its key,
+  drafts included (400). Deletes the template and its (always empty) version
+  rows. No audit row. The builder offers Delete only while `published_at` is
+  NULL.
+- No route takes a precondition, and none is on yc-sync (no matcher; an open
+  form builder does not listen — the cards say so).
+
+**Read enablement.** `form.template.state` {form_key?} — a typed read on the
+app pool (form_templates is outside the curated report manifest, A11): with
+no form_key, every template (`listTemplates` — the builder's opener list:
+template_id, form_key, title, link type, visibility, version, published);
+with one, that template's row (`getTemplate`) — whether the draft is the same
+as published, differs (how many answer fields are added / removed / changed,
+whether the layout and other settings differ, the version it would publish
+as) or was never published — its version rows (`listVersions`, newest 20:
+version_id, version, published when and by whom, schema_changed) and a usage
+row (submissions, drafts by version, and the stored definitions naming its
+form_key — A7's `caseFieldsReaders` scan, the template itself left out). The
+raw definitions never leave the server. Every card cites a row of this read
+(a sql.read look-alike row is refused).
+
+**Shipped contract.** Four kinds behind their OWN switch,
+`casey_form_templates_enabled` (on unless '0', casey section, sort 68) —
+firm-wide template operations, not record edits (ruling 4's per-family off
+switch): `form.template.publish.v1` {template_id}, `form.template.visibility.v1`
+{template_id, visibility}, `form.template.restore.v1` {template_id,
+version_id}, `form.template.delete.v1` {template_id}, each with evidence.
+- **Refused by name**, before anything is read: a key shaped like editing the
+  definition (definition / draft / title / form_key / fields / code …) — with
+  the reason; any other unknown key, naming the four cards.
+- **Refused with the route's own reasons, before the click.** A gone template
+  (404). Publish: the draft's `validateDefinition` message (400). Visibility:
+  a value outside the three (400); a flip off internal when the ASKING user's
+  roles (`users.roles`, through the same `isFormDev` predicate) hold no
+  form_dev — the route reads the roles the JWT carries, so a grant since
+  sign-in reaches the card first and the route's 403 stays the last word.
+  Restore: a version of another template (404); a version whose code / hooks /
+  css differ, without form_dev (403). Delete: a published template (either
+  column), and one with any submission or draft of its key.
+- **Refused as no-ops the routes do not refuse:** a publish of a draft
+  identical to the published definition (key order ignored), a visibility
+  already set, a restore of a version the draft already equals.
+- **The diff is computed here** — formTemplateService has no diff of its own
+  (fieldSignature decides only the bump; the builder's confirm shows only that
+  prediction). It reuses the service's and the platform's helpers, never a
+  second copy: the field walk is `extFormService.buildValueRegistry`, the bump
+  is `fieldSignature`, the executing keys `scanExternalRefusals`, the code
+  gate `authoredKeyChanges`, the workflow list `formSubmitService.wfListOf`.
+  Per answer field (a repeater and each of its row fields are separate keys):
+  added, removed (a rename reads as one of each, as `fieldSignature` counts
+  it), and per field the type, label, required-ness, required-when, the record
+  column it saves to and its options; whether the sections / rows /
+  display-only items differ; every other top-level key that differs.
+- **Disclosed:**
+  - publish — the diff, the version it publishes as (bump or not; the first
+    publish keeps the row's version), every saved draft left on the retired
+    version (count + records; the submit route and the A12.3 card refuse them
+    409 until re-saved), FIELDS REMOVED, ON-SUBMIT WORKFLOWS CHANGE (each
+    workflow named, or that its start will fail — missing, inactive, never
+    published), a public form going live on its link at once and the
+    executing keys it carries, CODE CHANGES (code / hooks / css run in every
+    staff browser), usage, the version row appended, no undo (going back is a
+    restore card plus a publish — a new version), the audit row;
+  - visibility — from → to; public: who reaches it without a login and by
+    which link (reject vs degrade), never-published (EXPOSED ON PUBLISH), the
+    executing keys, server drafts (a case's stored draft offered on its link);
+    portal: served by nothing today (a public link stops working); internal
+    from public: TAKEN DOWN (the link stops at once, a client mid-form can no
+    longer save or submit);
+  - restore — the version (when, by whom, whether it is the published one),
+    DRAFT REPLACED when the draft holds unpublished edits (the fields that
+    differ counted; no route keeps them), CODE CHANGES, publishes nothing, what
+    a later publish would do, and that an open builder's next Save writes the
+    old draft back;
+  - delete — NO UNDO, STORED READERS (definitions naming the form_key), the
+    builder's own confirm text.
+  - Danger: always for delete and for any flip off internal; otherwise
+    whenever the card warns.
+- **Freshness:** `expected` holds the template's updated_at, schema_version,
+  visibility, published_at, the SHA-256 of its published and draft
+  definitions (canonical, key-sorted) and its version ids. The click re-reads
+  GET `/api/form-templates/:id` and GET `…/versions` and refuses on ANY
+  difference before the claim (the routes take no precondition, so this is
+  the only check; a write between the re-read and the POST is not caught).
+- **Outcomes:** every 4xx these routes answer is thrown before their first
+  write (audited: the 404s, the 400s, the form_dev 403s) and none answers a
+  409, so no `refusal409`; the 403 and the 404s are worded by `knownOutcome`.
+  A 5xx stays ambiguous (a publish's version row is inserted after its
+  UPDATE). The result checks read each route's answer: publish's
+  `schema_version` / `bumped` equal the card's (else ambiguous), visibility's
+  value, restore's `restored.version_id` and template id, delete's
+  `deleted:true`.
+- **Receipt:** the reviewed `template_id` for all four (a deleted template's
+  is the id it had). One browser family, `form_template`.
+- **Sync:** none of the four routes is announced on yc-sync (no matcher;
+  nothing listens for a template); this slice adds none.
+- Tests: `tests/caseyFormTemplates.test.js` (mocked; browser lifted by name),
+  gated `tests/caseyFormTemplates.mysql.test.js` (the real routes and
+  formTemplateService; the submit-draft 409 on a draft left on the old
+  version is the real route), `tests/caseyActionPermissions.test.js` (91
+  kinds / 79 mounts; the form_dev predicate gates only the off-internal flip
+  and the code-changing restore), `tests/assistantPromptKinds.test.js`,
+  `tests/assistantUi.test.js`, `tests/automationRead.test.js`.
+
+**Not built**, each with its reason:
+- **Editing a definition (PUT) and creating a template (POST)** — a
+  definition is a large JSON the builder edits visually; a card cannot review
+  it line by line.
+- **A publish precondition on the route** — `publishTemplate` takes no
+  expected-draft token (A17.6's P11 equivalent); the click's re-read is the
+  only freshness check.
 
 #### A13: Message triage — mail read state and case link shipped 2026-11-02 (no drafts: none exist)
 

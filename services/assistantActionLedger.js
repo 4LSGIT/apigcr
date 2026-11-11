@@ -81,6 +81,14 @@ const KINDS = new Map([
   // A12.3: the submit receipts the NEW submitted row the route recorded (it
   // answers submission.id) — the reviewed draft row is deleted by the submit.
   ['form.submit.v1', 'submission_id'],
+  // A12.4: the four template cards receipt the reviewed TEMPLATE (publish
+  // answers {schema_version, bumped}, visibility {visibility}, restore the
+  // row and {version_id}, delete {deleted} — the template id is the one id
+  // all four share; a deleted template's receipt is the id it had).
+  ['form.template.publish.v1', 'template_id'],
+  ['form.template.visibility.v1', 'template_id'],
+  ['form.template.restore.v1', 'template_id'],
+  ['form.template.delete.v1', 'template_id'],
   // A13: a read card receipts the message whose read state it set (the route
   // answers {id, unread}); a case link receipts the log row the route
   // bridged — reused or created — which it returns as log_id.

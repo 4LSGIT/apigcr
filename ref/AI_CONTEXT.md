@@ -76,6 +76,30 @@ body. Governing migrations in `ref/migrations/`.*
   stays ambiguous. Receipt: the NEW submission id; family `form_submit`. Tests:
   `caseyFormSubmit.test.js`, gated `caseyFormSubmit.mysql.test.js`; plan:
   ASK_CASEY_ACTIONS_PLAN A12.3.
+- **Casey's form template cards (A12.4, 11-11):** kinds
+  `form.template.publish.v1` {template_id} → POST
+  `/api/form-templates/:id/publish`, `form.template.visibility.v1` {template_id,
+  visibility} → POST `…/:id/visibility`, `form.template.restore.v1`
+  {template_id, version_id} → POST `…/:id/versions/:versionId/restore`,
+  `form.template.delete.v1` {template_id} → DELETE `…/:id` — the form
+  builder's own controls; own flag `casey_form_templates_enabled` (firm-wide
+  operations). Every card cites a row of the typed `form.template.state` read
+  (no form_key: `listTemplates`; a form_key: the row, the draft vs published
+  diff, `listVersions`, usage + `caseFieldsReaders`). Invariants: the
+  normalizer mirrors the service's refusals (validateDefinition 400; the
+  form_dev gate on an off-internal flip and on a restore whose code / hooks /
+  css differ — read from `users.roles` through `isFormDev`, while the route
+  reads the JWT's roles; version-of-another-template 404; published / used
+  template delete 400) plus three no-ops the routes allow; the publish diff is
+  computed in assistantService because formTemplateService has none, from
+  `buildValueRegistry` / `fieldSignature` / `scanExternalRefusals` /
+  `authoredKeyChanges` / `wfListOf` (no copy). The routes take no
+  precondition: the click re-reads GET `/:id` + `/:id/versions` (updated_at,
+  schema_version, visibility, published_at, definition + draft hashes, version
+  ids). No 4xx follows a write and none is a 409 (no `refusal409`). Receipt:
+  `template_id`; family `form_template`. Editing (PUT) and creating (POST)
+  have no card. Tests: `caseyFormTemplates.test.js`, gated
+  `caseyFormTemplates.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A12.4.
 - **Casey's attachment filing card (A13b, 11-10):** kind
   `mail.attachments.file.v1` {mail_message_id, case_id, parts, confirm?, move?,
   link?, folder?, notify?} → ONE `POST /api/mail/messages/:id/attachments/file`

@@ -161,7 +161,7 @@ describe('the switch and the by-name refusals', () => {
 
   test('the route-owned columns, another operation and unknown keys, before any read; the sentence names the submit card', async () => {
     await refuse(submit({ status: 'submitted' }), /^RESERVED FIELDS refused \(status\): a submit card names the draft row by submission_id/);
-    await refuse(submit({ publish: true }), /^OTHER FORM OPERATIONS refused \(publish\): each form card does ONE thing — .* or submit ONE stored draft \(form\.submit\.v1\)\. Editing \/ publishing/);
+    await refuse(submit({ publish: true }), /^OTHER FORM OPERATIONS refused \(publish\): each form card does ONE thing — .* or submit ONE stored draft \(form\.submit\.v1\)\. Publishing a template, changing its visibility, restoring a version into its draft and deleting a never-published template are the template cards/);
     await refuse(submit({ data: { trustee: 'X' } }), /^A form submit card carries unsupported fields: data — it takes submission_id \(the DRAFT row\) and evidence only$/);
     await refuse(submit({ form_key: 'case_sheet' }), /carries unsupported fields: form_key/);
     expect([calls.sql, calls.getSubmission, calls.latest]).toEqual([[], [], []]);
