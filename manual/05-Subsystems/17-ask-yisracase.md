@@ -1033,8 +1033,9 @@ and uses only those.
   the pipeline steps a submitted form satisfies, and the log entry. **A
   submission cannot be un-submitted**, and the record fields are written
   first. The draft is used up: it is deleted after the submission is recorded
-  (a copy of the form already open keeps its draft banner, and its next
-  autosave after any typing saves a new draft). If a required answer is
+  (a copy of the form already open in this browser drops its draft banner; one
+  with unsaved typing keeps that typing, and its next autosave saves a new
+  draft). If a required answer is
   missing or an answer is not one the form accepts, Casey lists **every** such
   answer and proposes nothing — fill them in first. A draft saved on an older
   version of the form is refused too: open the form, restore the draft and
@@ -1047,9 +1048,8 @@ and uses only those.
   It warns when the client saved the draft on the public form link (their
   saved progress is gone) or someone else saved it in the last 24 hours. A copy
   of the form already open in this browser drops its draft banner on its own
-  (one of the older hand-built form pages does not, until it reloads); a copy
-  with unsaved typing keeps it, and its next autosave saves a new draft from
-  that screen.
+  (template forms and the hand-built pages alike); a copy with unsaved typing
+  keeps that typing, and its next autosave saves a new draft from that screen.
 - **A PDF card** names the folder and the file name: the case's Dropbox folder
   (its Forms subfolder) for a case form; the unsorted form-submissions folder,
   with the record's name in front, for a contact, appointment or unlinked

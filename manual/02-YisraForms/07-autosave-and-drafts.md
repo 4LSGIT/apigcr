@@ -46,8 +46,10 @@ If the draft's `schema_version` differs from the form's current `schemaVersion`,
 
 A draft saved for the same record in another frame of the same browser — an
 Ask Casey draft card, or the same form open in another tab — is announced on the
-sync bus (`form:<link_type>:<link_id>`). A form page that loads the bus (the
-form renderer, `forms/render.html`) re-reads the latest draft and submission:
+sync bus (`form:<link_type>:<link_id>`). Every form page in use loads the
+bus — the form renderer (`forms/render.html`) and the hand-built pages
+(`casedetails`, `casedetails-bk`, `issn`, `contact-form`) — and re-reads the
+latest draft and submission:
 
 - **No unsaved typing:** the form refreshes and shows the draft banner.
 - **Unsaved typing:** the form is never repopulated. It shows the newer draft's
@@ -56,8 +58,8 @@ form renderer, `forms/render.html`) re-reads the latest draft and submission:
   erase the newer draft. Restore, Discard or a save ends the hold.
 
 The form's own autosave echo is ignored, and the refresh waits while the page
-is hidden or a field has the caret. A copy open in another browser, or one of
-the older hand-built form pages, does not hear it and sees the draft on reload.
+is hidden or a field has the caret. A copy open in another browser does not
+hear it and sees the draft on reload.
 
 A draft **discarded** elsewhere (the banner's Discard, an Ask Casey discard
 card, or a submit's draft cleanup) is announced the same way when a draft was

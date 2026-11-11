@@ -24,6 +24,22 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Hand-built form pages on the sync bus (11-11):** `forms/casedetails-bk.html`,
+  `casedetails.html`, `issn.html` and `contact-form.html` load
+  `<script src="/js/yc-sync.js">` before yc-forms.js, so init step 13d
+  (`_setupSync`) subscribes each to `form:<link_type>:<link_id>` on the
+  IFRAME's own bus — a second yc-sync instance, receive-only (the sniff runs
+  only in the shell's apiSend; the form's draft writes go out through
+  `window.parent.apiSend`, are sniffed there and come back over the shared
+  `yc-sync` BroadcastChannel, fenced by `_lastDraftWrite`). contact-form.html's
+  own `save()` mirrors stock step 4b (DELETE the superseded draft, null
+  `_draftData`, clear `_draftConflict`, hide the banner); its Roles reader stays
+  on `P.YC`. A clean form's bus refresh re-runs onLoad from the cached row:
+  custom fields refetch nothing (defs cached) and repaint only when clean and
+  unfocused; contact-form re-reads its phone/email lists for the consent
+  badges, as on every refresh.
+  `341notes.html` is unused and not on the bus (`ref/plans.md`). Test:
+  `tests/formsPages.sync.test.js` (flat and nested-iframe boots).
 - **Sync bus: relations, roles, checklist edits, draft discard (11-11):**
   `public/js/yc-sync.js` matches POST / PATCH / DELETE `/api/contact-relations`
   → `relations:contact:<a>` AND `<b>` (markers; the DELETE route reads the row
@@ -36,8 +52,8 @@ body. Governing migrations in `ref/migrations/`.*
   route echoes its query). Readers: contact.html's Relationships tab (only
   while showing; off screen parked for `ycRefreshIfStale`; echo stamp at the
   start of `loadContactRelations`); contact-form.html's Roles section,
-  subscribed through the HOST's bus (`P.YC`) — loading yc-sync.js there would
-  switch on YCForm's `form:` listener for contact_info — parked while hidden
+  subscribed through the HOST's bus (`P.YC`; the page's own yc-sync.js serves
+  YCForm's `form:` listener) — parked while hidden
   or while a card is typed in / a "+ Role" card is open (`roleApi` stamps every
   write); YCForm stamps `_lastDraftWrite` on its draft DELETE too. Not on the
   bus: POST `/checklists/upsert-items`; checklistsView.html's Browse view
@@ -1236,7 +1252,8 @@ body. Governing migrations in `ref/migrations/`.*
   `form:<link_type>:<link_id>` (the draft POST echoes form_key / link_type /
   link_id additively); `YCForm._setupSync` refetches, never repopulates a
   dirty form and holds its autosave while a newer draft waits; render.html
-  loads yc-sync in internal mode only. Off switch `casey_forms_enabled` (on
+  loads yc-sync in internal mode only, the hand-built pages by a static tag.
+  Off switch `casey_forms_enabled` (on
   unless '0'). Tests: `tests/caseyForms.test.js`, gated
   `tests/caseyForms.mysql.test.js`, `tests/formRender.sync.test.js`; plan:
   ASK_CASEY_ACTIONS_PLAN A12.
@@ -1246,8 +1263,8 @@ body. Governing migrations in `ref/migrations/`.*
   built from the stored row; the route answers `{deleted}` (false = a
   refusal) plus its query's `form_key` / `link_type` / `link_id`, and yc-sync
   announces `form:<link_type>:<link_id>` only when a row was deleted — an
-  open render.html copy drops its banner; a hand-built form page does not
-  listen. `form.pdf.file.v1` {submission_id, filename?}
+  open copy of the form (render.html or a hand-built page) drops its banner.
+  `form.pdf.file.v1` {submission_id, filename?}
   → POST `/api/forms/submissions/:id/pdf/file` (the Form Inbox's File): NOT
   idempotent, and nothing records a filing, so the card counts active
   `documents` named `LIKE '%(#<id>)%.pdf'` (the default core) as an ALREADY

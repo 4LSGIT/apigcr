@@ -1171,11 +1171,10 @@ version restore and delete in A12.4 (ASK_CASEY_ACTIONS_PLAN A12.2–A12.4).
   a draft saved between the A12.4 card's click-time re-read and the POST
   publishes unreviewed. The builder has the same gap between its confirm and
   its POST.
-- **The hand-built form pages on the bus.** `casedetails.html`,
-  `casedetails-bk.html`, `341notes.html`, `issn.html` and `contact-form.html`
-  do not load yc-sync, so they miss `form:` markers (render.html does). Loading
-  it is one script tag each, but contact-form.html mirrors save() by hand and
-  would need `_draftConflict` cleared on its own save.
+- **`public/forms/341notes.html` is unused** — nothing loads it (case.html's
+  341 tab is `/forms/render.html?form_key=341_notes`; `tests/fixtures/slice26/`
+  reproduces its onLoad), and it is the one hand-built form page not on the
+  sync bus. Retiring it is a separate decision.
 - **The record's Forms tab and the Form Inbox on the bus.**
   `forms/submissionsWidget.html` and `formInbox.html` load yc-sync but do not
   subscribe, so a link made elsewhere shows only on refresh.

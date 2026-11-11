@@ -1619,6 +1619,7 @@ tests/formrender.extappearance.test.js
 tests/formrender.extcode.test.js
 tests/formrender.x2external.test.js
 tests/formrender.x4view.test.js
+tests/formsPages.sync.test.js
 tests/formsSubmitDraft.mysql.test.js
 tests/formsSubmitDraft.test.js
 tests/formsubmissions.x4.test.js

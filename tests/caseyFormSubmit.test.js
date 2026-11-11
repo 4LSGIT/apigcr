@@ -287,7 +287,7 @@ describe('the card', () => {
     const fsub = calls.evaluated.find((e) => e[1] === 'form.submitted')[2];
     expect([fsub.case_id, fsub.data.version, fsub.data.form_key, fsub.data.schema_version]).toEqual([CASE_ID, 4, 'case_sheet', 4]);
     expect(c.version_after).toBe(4);
-    expect(c.effects).toContain('The draft is consumed: draft #4530 is DELETED after the submission is recorded. A copy of this form already open anywhere keeps its draft banner, and its next autosave after any typing saves a NEW draft from that screen.');
+    expect(c.effects).toContain('The draft is consumed: draft #4530 is DELETED after the submission is recorded. A copy of this form already open in this browser re-reads it and drops its draft banner; one with unsaved typing is not repopulated, keeps that typing, and its next autosave saves a NEW draft from that screen.');
     expect(c.effects.find((e) => e.startsWith('Log:'))).toBe('Log: one "form" entry on case 25-12345, by you — action form_submit, version 4, and the 5 answers that differ from the form as loaded (Trustee, Chapter, Debts, Notes, creditors).');
     expect(c.effects).toContain('Pipeline steps: "Case sheet in" look for a submitted "case_sheet" form on the case — on this case they read as done from now on.');
     expect(c.answers.map((a) => a.label)).toEqual(['Trustee', 'Chapter', 'Debts', 'Notes', 'creditors']);

@@ -740,6 +740,10 @@
   <div id="rolesList"></div>
 </div>
 
+<!-- A12: the sync bus in THIS window, so YCForm.init (step 13d, _setupSync)
+     subscribes this form to form:<link_type>:<link_id> — a draft saved,
+     discarded, adopted or submitted for this record in another frame. -->
+<script src="/js/yc-sync.js"></script>
 <script src="/js/yc-forms.js"></script>
 <script src="/js/yc-custom-fields.js"></script>
 <script>
@@ -1387,6 +1391,19 @@
           schema_version: this.config.schemaVersion,
           data:           this.collect(),
         });
+
+        // 5b. Clean up the now-superseded draft row (non-blocking) and drop
+        //     any draft held over the sync bus — yc-forms.js save() step 4b,
+        //     mirrored. A save supersedes the draft; without these lines a
+        //     draft heard from another frame (_draftConflict) kept this
+        //     form's autosave held after the save, and its banner up.
+        this._api(
+          `/api/forms/draft?form_key=${encodeURIComponent(this.config.formKey)}&link_type=${encodeURIComponent(this.config.linkType)}&link_id=${encodeURIComponent(this.config.linkId)}`,
+          'DELETE'
+        ).catch(err => console.warn('[YCForm] Draft cleanup failed (non-blocking):', err));
+        this._draftData = null;
+        this._draftConflict = false;   // A12: a save supersedes any pending draft
+        if (this._draftBannerEl) this._draftBannerEl.style.display = 'none';
 
         // 6. Workflow trigger (fire-and-forget) — not configured here, but
         //    kept for parity if future config adds it.
@@ -2764,11 +2781,12 @@
     // leave this section showing the old roles until the page reloaded.
     //
     // SUBSCRIBED THROUGH THE HOST'S BUS (P.YC — contact.html loads
-    // yc-sync.js), not a <script> of our own: loading yc-sync.js HERE would
-    // also switch on YCForm's own form:<type>:<id> listener for contact_info
-    // (yc-forms.js _setupSync runs whenever window.YC exists), a change to the
-    // contact form's behaviour this reader has no business making. Unsubscribed
-    // on pagehide so a reloaded frame leaves no handler in the host.
+    // yc-sync.js). This page loads yc-sync.js too, deliberately, for YCForm's
+    // own form:<type>:<id> listener on contact_info (yc-forms.js _setupSync
+    // subscribes on THIS window's bus); this reader stays on the host's.
+    // Either bus hears every frame's writes (one BroadcastChannel name), so
+    // the choice changes nothing it receives. Unsubscribed on pagehide so a
+    // reloaded frame leaves no handler in the host.
     //
     // FENCES, in order:
     //   · its own echo — roleApi() / loadRoles() stamped rolesLastLocal

@@ -931,8 +931,8 @@ const CASE_DOCKET_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 //     DRAFT row by id; the request is built from that stored row, never from
 //     the model. The route echoes the record beside {deleted}, so yc-sync
 //     announces `form:<link_type>:<link_id>` when a row was deleted: an open
-//     copy on a page that listens (the form renderer) drops its banner, while
-//     a hand-built form page does not listen — the card says which.
+//     copy of the form — the renderer or a hand-built page alike — re-reads
+//     and drops its banner.
 //   * form.pdf.file.v1 → POST /api/forms/submissions/:id/pdf/file {filename?}
 //     (the Form Inbox's File button). NOT idempotent by the route's design: a
 //     second filing is a second copy (Dropbox autorenames). Nothing records
@@ -7621,7 +7621,7 @@ async function normalizeFormDiscard(db, value, evidence, currentUserId) {
       : 'No submission of this form exists on this record: the form opens from the record\'s own data (or blank) once the draft is gone.',
     tpl
       ? 'Other open pages: the discard is announced on the sync bus — a copy of this form already open for this record re-reads it and drops its draft banner; one with unsaved typing keeps that typing, and its next autosave saves a NEW draft from that screen.'
-      : 'Other open pages: the discard is announced on the sync bus, but this hand-built form page does not listen — a copy already open anywhere keeps showing its draft banner (Restore there still fills the form from the copy it loaded) until it reloads, and its next autosave after any typing saves a NEW draft from that screen.',
+      : 'Other open pages: the discard is announced on the sync bus, and this hand-built form page listens like a template form — a copy already open for this record in this browser re-reads it and drops its draft banner; one with unsaved typing is not repopulated, keeps that typing, and its next autosave saves a NEW draft from that screen.',
     'Trigger event: none — discarding a draft emits no event, and a draft satisfies no pipeline step.',
   ];
   if (!tpl) effects.push(`Form: "${row.form_key}" has no template (one of the hand-built form pages) — the answers are listed by their keys.`);
@@ -8061,7 +8061,7 @@ async function normalizeFormSubmit(db, value, evidence, currentUserId) {
       : 'The form opens in live mode: its fields read the record, so what it shows next is the record after this submit.',
   );
   effects.push(
-    `The draft is consumed: draft #${subId} is DELETED after the submission is recorded. A copy of this form already open anywhere keeps its draft banner, and its next autosave after any typing saves a NEW draft from that screen.`,
+    `The draft is consumed: draft #${subId} is DELETED after the submission is recorded. A copy of this form already open in this browser re-reads it and drops its draft banner; one with unsaved typing is not repopulated, keeps that typing, and its next autosave saves a NEW draft from that screen.`,
     `Log: one "form" entry on ${record.label}, by you — action form_submit, version ${next}, and the ${diffKeys.length ? `${diffKeys.length} answer${diffKeys.length === 1 ? '' : 's'} that differ from the form as loaded (${diffKeys.slice(0, 12).map(labelOf).join(', ')}${diffKeys.length > 12 ? ' …' : ''})` : 'answers that differ from the form as loaded (none)'}.`,
     `Trigger events: ${events.join(', then ')} — every active rule on ${events.length > 1 ? 'them' : 'it'} that would act is listed (form.submitted is checked against a stand-in submission id; the real one is minted when you apply).`,
     'Other open pages: the route announces the submit on the sync bus, so an open copy of this form for this record refreshes its submission history, and an open page of the record repaints the columns written.',

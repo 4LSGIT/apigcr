@@ -2130,8 +2130,9 @@ link_id}).
   the newer draft's banner and HOLDS its autosave (which would replace the
   newer draft whole) until Restore / Discard or a save. Fenced on its own
   autosave echo (`_api` stamps draft POSTs, 1.5 s), parked while hidden, mid-save
-  or typed in. The older hand-built form pages (casedetails, casedetails-bk,
-  341notes, issn, contact-form) do not load yc-sync — the card says so.
+  or typed in. The hand-built form pages (casedetails, casedetails-bk, issn,
+  contact-form) load yc-sync by a static tag and listen the same way;
+  341notes.html is unused (nothing loads it).
 - Off switch `casey_forms_enabled` (on unless '0', casey section, sort 64).
   Tests: `tests/caseyForms.test.js`, gated `tests/caseyForms.mysql.test.js`,
   `tests/formRender.sync.test.js`, `tests/assistantUi.test.js`,
@@ -2143,7 +2144,6 @@ appointment records shipped in A12.2, submit in A12.3:
   form builder edits visually; a card cannot review it line by line
   (publish, visibility, restore and delete shipped in A12.4).
 - **Unlinking a submission** — no screen does it.
-- **The hand-built form pages on the bus** — they do not load yc-sync.
 
 #### A12.2: Forms — draft discard, PDF filing, appointment records shipped 2026-11-11
 
@@ -2223,9 +2223,9 @@ Both A12 kinds also take `link_type` "appt" (link_id = the exact appt_id).
     DRAFT when the client saved it on the public link (with server drafts, the
     link has nothing left to offer them). RECENT DRAFT BY SOMEONE ELSE (< 24 h:
     their open form's next autosave saves a new draft).
-  - **Open copies:** the route answers only `{deleted}`, so an open copy keeps
-    its banner, Restore there still fills from what it loaded, and its next
-    autosave after typing saves a NEW draft.
+  - **Open copies:** yc-sync announces the discard (the route echoes its
+    query), so an open copy of the form drops its banner; unsaved typing there
+    is kept, and its next autosave saves a NEW draft.
 - **PDF.** The evidence cites the submission AND, when it is linked and the
   record exists, the record's row. Refused: a gone row; a draft; an unknown
   link type; the render's own 404s (no template, no published definition),
@@ -2277,8 +2277,8 @@ Both A12 kinds also take `link_type` "appt" (link_id = the exact appt_id).
   keeps the verdict's path, file name, placement, `document_id` and warnings,
   never its `temp_link`. Families `form_discard` and `form_pdf`.
 - **Sync:** yc-sync announces the discard (DELETE `/api/forms/draft`, only
-  when a row was deleted — an open render.html copy drops its banner; a
-  hand-built form page does not listen, and the card says which). The filing
+  when a row was deleted — an open copy of the form drops its banner,
+  render.html and the hand-built pages alike). The filing
   is not announced: its documents are refreshed by hand.
 - Tests: `tests/caseyFormDiscardPdf.test.js` (mocked; browser lifted by name),
   gated `tests/caseyFormDiscardPdf.mysql.test.js` (real routes; Dropbox and
@@ -2290,7 +2290,6 @@ Both A12 kinds also take `link_type` "appt" (link_id = the exact appt_id).
 - **Template editing and creation** — as A12; the builder's publish,
   visibility, restore and delete are A12.4's cards.
 - **Unlinking a submission** — no screen does it.
-- **The hand-built form pages on the bus.**
 - **Native gaps:** the filing is silent on yc-sync; nothing
   records that a submission's PDF was filed (so a re-file is caught only by
   name).
@@ -2356,7 +2355,8 @@ twin: `tests/caseyFormSubmit.mysql.test.js`.
     when the patch changes something, then `form.submitted` as `submitForm`
     builds it (the next version; a stand-in submission id);
   - the draft consumed (deleted after the submission is recorded; an open
-    copy keeps its banner, and its next autosave re-creates a draft); the log
+    copy in this browser re-reads and drops its banner, and one with unsaved
+    typing re-creates a draft on its next autosave); the log
     entry (type form, action form_submit, the diff); the pipeline steps a
     submitted form of this key satisfies (case forms); THE CLIENT'S DRAFT and
     RECENT DRAFT BY SOMEONE ELSE as A12.2's discard says them.
