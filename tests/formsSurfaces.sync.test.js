@@ -23,8 +23,9 @@
 // promise on close, as SweetAlert2 does. Every wait is bounded.
 //
 // Per page: a matching message → exactly one re-read; a draft SAVE (origin
-// auto:POST /api/forms/draft) → none, a draft DELETE → one (a stock submit's
-// only announcement); a burst coalesces; a load in flight is not doubled;
+// auto:POST /api/forms/draft) → none, a draft DELETE → one; a stock submit
+// (POST /api/forms/submit, announced since 2026-11-11) → one, and one with
+// its draft cleanup behind it (the burst coalesces); a burst coalesces; a load in flight is not doubled;
 // parked while a dialog is open / the page is hidden, flushed on close /
 // visibilitychange; an off-screen frame is NOT parked; the page's own writes:
 // the inbox's link PATCH echo is fenced, POST …/pdf/file announces nothing;
@@ -189,6 +190,9 @@ const draftSave = (w, linkType, linkId) => sniffFrom(w, 'POST', '/api/forms/draf
 const draftDelete = (w, linkType, linkId) => sniffFrom(w, 'DELETE',
   `/api/forms/draft?form_key=intake&link_type=${linkType}&link_id=${linkId}`,
   { status: 'success', deleted: true, form_key: 'intake', link_type: linkType, link_id: linkId });
+/** A stock submit (YCForm save() step 4) — its route answer with the additive record echo. */
+const stockSubmit = (w, linkType, linkId) => sniffFrom(w, 'POST', '/api/forms/submit',
+  { status: 'success', id: 78, version: 3, updated_at: new Date().toISOString(), form_key: 'intake', link_type: linkType, link_id: linkId });
 const submitDraft = (w, linkType, linkId) => sniffFrom(w, 'POST', '/api/forms/submissions/submit-draft',
   { status: 'success', id: 77, version: 2, link_type: linkType, link_id: linkId });
 
@@ -246,6 +250,20 @@ describe('submissionsWidget.html (the record\'s Forms tab) — on the sync bus',
     await sleep(COALESCE);
     expect(reads(b.calls)).toBe(2);
     submitDraft(b.other, 'case', CASE_ID);
+    await sleep(COALESCE);
+    expect(reads(b.calls)).toBe(3);
+  });
+
+  test('a stock SUBMIT (POST /api/forms/submit, no draft behind it) re-reads once; with its draft cleanup behind it, still once', async () => {
+    const b = await boot();
+    stockSubmit(b.other, 'case', 'OTHER9');                      // another record's submit
+    await sleep(COALESCE);
+    expect(reads(b.calls)).toBe(1);
+    stockSubmit(b.other, 'case', CASE_ID);
+    await sleep(COALESCE);
+    expect(b.fw.YC._log.some((m) => m.origin === 'auto:POST /api/forms/submit' && m.addr === `form:case:${CASE_ID}`)).toBe(true);
+    expect(reads(b.calls)).toBe(2);
+    stockSubmit(b.other, 'case', CASE_ID); draftDelete(b.other, 'case', CASE_ID);
     await sleep(COALESCE);
     expect(reads(b.calls)).toBe(3);
   });
@@ -351,6 +369,17 @@ describe('formInbox.html (the Form Inbox) — on the sync bus', () => {
     expect(b.fw.YC._log.some((m) => /POST \/api\/forms\/draft$/.test(m.origin))).toBe(true);   // it DID arrive
     expect(reads(b.calls)).toBe(2);
     draftDelete(b.other, 'case', 'AAAA0001');
+    await sleep(COALESCE);
+    expect(reads(b.calls)).toBe(3);
+  });
+
+  test('a stock SUBMIT for any record (POST /api/forms/submit, no draft behind it) re-reads once; with its draft cleanup, still once', async () => {
+    const b = await boot();
+    stockSubmit(b.other, 'contact', '5');
+    await sleep(COALESCE);
+    expect(b.fw.YC._log.some((m) => m.origin === 'auto:POST /api/forms/submit' && m.addr === 'form:contact:5')).toBe(true);
+    expect(reads(b.calls)).toBe(2);
+    stockSubmit(b.other, 'case', 'AAAA0001'); draftDelete(b.other, 'case', 'AAAA0001');
     await sleep(COALESCE);
     expect(reads(b.calls)).toBe(3);
   });

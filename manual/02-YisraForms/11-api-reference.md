@@ -80,10 +80,15 @@ all of them for a stored draft in one request, use
 
 **Response:**
 ```json
-{ "status": "success", "id": 44, "version": 4, "updated_at": "2026-04-07T16:05:00.000Z" }
+{ "status": "success", "id": 44, "version": 4, "updated_at": "2026-04-07T16:05:00.000Z",
+  "form_key": "contact_info", "link_type": "contact", "link_id": "1001" }
 ```
 
 `version` auto-increments per form+entity (1, 2, 3...). Drafts are always version 0.
+`form_key` / `link_type` / `link_id` echo the request, as on `/draft`, so the
+sync bus can announce `form:<link_type>:<link_id>` — the record's Forms tab, the
+Form Inbox and an open copy of the form re-read, even when no draft existed for
+the cleanup DELETE to announce.
 
 **Console test:**
 ```js
@@ -103,10 +108,13 @@ Delete a draft — the user clicked "Discard", or a save just recorded the submi
 
 **Response:**
 ```json
-{ "status": "success", "deleted": true }
+{ "status": "success", "deleted": true,
+  "form_key": "contact_info", "link_type": "contact", "link_id": "1001" }
 ```
 
-Returns `"deleted": false` if no draft existed.
+Returns `"deleted": false` if no draft existed. `form_key` / `link_type` /
+`link_id` echo the query; the sync bus announces `form:<link_type>:<link_id>`
+only when `deleted` is `true`.
 
 **Console test:**
 ```js

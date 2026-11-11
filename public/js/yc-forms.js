@@ -76,7 +76,7 @@ class YCForm {
     this._draftConflict = false;   // A12: a newer draft arrived over the bus while
                                    // this form held unsaved typing — autosave holds
                                    // until the banner's Restore / Discard (or a save).
-    this._lastDraftWrite = 0;      // A12: when this frame last POSTed / DELETEd a draft (echo fence).
+    this._lastDraftWrite = 0;      // A12: when this frame last wrote a draft or a submission (echo fence).
     this._userEditSeq = 0;         // Bumped on every TRUSTED user input/change.
                                    // Lets refresh()/save() tell "onLoad wrote this
                                    // field" from "the user typed into it while we
@@ -1312,9 +1312,9 @@ if (this.config.endpoints.load && !this.config.external) {
   // SYNC BUS (A12) — another frame saved a draft of, or adopted a submission
   // onto, THIS record's forms
   //
-  // public/js/yc-sync.js announces POST and DELETE /api/forms/draft, PATCH
-  // /api/forms/submissions/:id/link and POST /api/forms/submissions/submit-draft
-  // as `form:<link_type>:<link_id>` — above all
+  // public/js/yc-sync.js announces POST and DELETE /api/forms/draft, POST
+  // /api/forms/submit, PATCH /api/forms/submissions/:id/link and POST
+  // /api/forms/submissions/submit-draft as `form:<link_type>:<link_id>` — above all
   // an Ask Casey card applied from the assistant pane, which an open form used
   // to stay blind to until it was reloaded. Active only when the host page
   // loads yc-sync.js (window.YC), in internal mode, with a record.
@@ -1324,8 +1324,9 @@ if (this.config.endpoints.load && !this.config.external) {
   // prevents, not one it makes.
   //
   // FENCES, in order:
-  //   · its own echo — this frame POSTed or DELETEd a draft within
-  //     SYNC_ECHO_MS (_api stamps it), so the message is its own write;
+  //   · its own echo — this frame POSTed or DELETEd a draft, or POSTed a
+  //     submission, within SYNC_ECHO_MS (_api stamps it), so the message is
+  //     its own write;
   //   · the browser tab hidden, mid-save, or the caret in a field of the form:
   //     PARKED in _syncStale and re-run when the page becomes visible
   //     (visibilitychange) or the focus leaves the field (focusout).
@@ -2545,8 +2546,16 @@ if (this.config.endpoints.load && !this.config.external) {
       // form must not take its own autosave for someone else's draft. The
       // DELETE too (yc-sync matchers slice): the banner's Discard and the
       // post-submit cleanup are announced as well, and this frame already
-      // shows their outcome.
-      if ((method === 'POST' || method === 'DELETE') && String(url).split('?')[0] === '/api/forms/draft') {
+      // shows their outcome. And the submission POST (save() step 4 — and
+      // contact-form's custom save, which calls this same _api): it is
+      // announced too, and save() has already re-baselined the form and set
+      // "Saved just now"; unfenced, the echo re-reads and refresh() re-runs
+      // populate() + onLoad and _showLastSaved() overwrites that status. The
+      // cleanup DELETE's start stamp happens to land first today; this one
+      // does not depend on it.
+      const ownPath = String(url).split('?')[0];
+      if (((method === 'POST' || method === 'DELETE') && ownPath === '/api/forms/draft') ||
+          (method === 'POST' && ownPath === '/api/forms/submit')) {
         this._lastDraftWrite = Date.now();
         const p = window.parent.apiSend(url, method, body);
         Promise.resolve(p).then(() => { this._lastDraftWrite = Date.now(); }, () => { this._lastDraftWrite = Date.now(); });
@@ -2562,8 +2571,8 @@ if (this.config.endpoints.load && !this.config.external) {
 // GLOBAL EXPORT
 // ═══════════════════════════════════════════════════════════════════════════
 
-// A12: how long after this frame's own draft POST / DELETE settles a bus message for
-// the same record is taken as its echo (checklistView's CL_ECHO_MS).
+// A12: how long after this frame's own draft POST / DELETE or submission POST settles
+// a bus message for the same record is taken as its echo (checklistView's CL_ECHO_MS).
 YCForm.SYNC_ECHO_MS = 1500;
 
 window.YCForm = YCForm;

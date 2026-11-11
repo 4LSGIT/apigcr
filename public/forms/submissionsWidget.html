@@ -275,14 +275,16 @@
   /* ── Sync bus (2026-11-11) ──────────────────────────────────────────────
      This record's form rows are announced as `form:<link_type>:<link_id>`
      (public/js/yc-sync.js FORMS matchers): an adopt from the Form Inbox, a
-     submit-draft (an Ask Casey card), a stock submit's draft cleanup. Each
+     submit-draft (an Ask Casey card), a stock submit (POST /api/forms/submit)
+     and its draft cleanup. Each
      is a bare {yc_refetch:1}; the answer is load(), a re-read from the top.
      The address is compared lowercase, the way YCForm._setupSync does.
      Skipped: a draft SAVE (origin `auto:POST /api/forms/draft` — it touches
      only the draft row, and this list shows submitted rows only). The skip
      reads the message's origin trace and fails open: any other origin
-     re-reads. The draft DELETE is NOT skipped — it is the only announcement
-     a stock submit makes (POST /api/forms/submit has no matcher).
+     re-reads. The draft DELETE is NOT skipped: a stock submit announces its
+     POST /api/forms/submit and then the DELETE; the two coalesce into one
+     re-read when they land within BUS_MS, and cost two GETs at worst.
      FENCES:
        · no echo to fence: this page's one write, POST …/pdf/file, has no
          matcher and changes nothing the list shows;

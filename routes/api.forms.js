@@ -111,7 +111,12 @@ router.post('/api/forms/submit', jwtOrApiKey, async (req, res) => {
       req.db, form_key, link_type, link_id,
       schema_version || 1, data, req.auth.userId
     );
-    res.json({ status: 'success', ...result });
+    // The record the submission belongs to rides the answer (additive — the
+    // service's { id, version, updated_at } is unchanged), as on the draft
+    // routes: yc-sync announces `form:<link_type>:<link_id>` from it, so the
+    // record's Forms tab, the Form Inbox and an open copy of the form see a
+    // submission that had no draft row for its cleanup DELETE to announce.
+    res.json({ status: 'success', ...result, form_key, link_type, link_id });
   } catch (err) {
     console.error('[api.forms] submitForm error:', err);
     res.status(500).json({ status: 'error', message: err.message });

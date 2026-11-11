@@ -856,13 +856,15 @@
      The inbox lists submissions for EVERY record, so every `form:*` marker
      is its business (public/js/yc-sync.js FORMS matchers): a link moves a row
      from Needs linking to Linked, a submit-draft (an Ask Casey card) or a
-     stock submit's draft cleanup adds one to Linked / All. Each message is a
+     stock submit (POST /api/forms/submit, then its draft cleanup) adds one
+     to Linked / All. Each message is a
      bare {yc_refetch:1}; the answer is load(), a re-read from the top.
      Skipped: a draft SAVE (origin `auto:POST /api/forms/draft` — an autosave
      touches only the draft row, and nothing here lists drafts). The skip
      reads the message's origin trace and fails open: any other origin
-     re-reads. The draft DELETE is NOT skipped — it is the only announcement
-     a stock submit makes (POST /api/forms/submit has no matcher).
+     re-reads. The draft DELETE is NOT skipped: a stock submit announces its
+     POST /api/forms/submit and then the DELETE; the two coalesce into one
+     re-read when they land within BUS_MS, and cost two GETs at worst.
      FENCES, in order:
        · its own link — linkApi() stamps busLastLocal at the PATCH and when
          it settles; a message within BUS_ECHO_MS is that echo (the page

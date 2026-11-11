@@ -1182,13 +1182,6 @@ version restore and delete in A12.4 (ASK_CASEY_ACTIONS_PLAN A12.2–A12.4).
     calls it.
   - POST `…/pdf/file` is not announced on the sync bus (no matcher; the new
     document reaches a Documents tab on refresh).
-  - POST `/api/forms/submit` has no yc-sync matcher (its answer is `{id,
-    version, updated_at}`, no link), so a stock submit is announced only by
-    its draft cleanup's DELETE (`deleted:true`). A submit with no draft row —
-    sent before the first autosave, or a template with `autosave:false` —
-    reaches no open Forms tab, Form Inbox or copy of the form until reload.
-    A matcher needs the route to echo `link_type` / `link_id`, as the draft
-    routes do.
   - Nothing records that a submission's PDF was filed (no column on
     `form_submissions`, no link from `documents`): a re-file is caught only by
     the "(#id)" in the default file name, and not at all under a custom name.

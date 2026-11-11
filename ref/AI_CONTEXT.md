@@ -24,6 +24,21 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **The stock form submit on the sync bus (11-11):** POST `/api/forms/submit`
+  answers its `{id, version, updated_at}` PLUS an additive `{form_key,
+  link_type, link_id}` echo of the request (as the draft routes do), and
+  `public/js/yc-sync.js` announces it as `form:<link_type>:<link_id>`
+  (`formGetter`, a marker; fails closed on an unlinked `''` row). A form
+  submitted before it ever saved a draft (its cleanup DELETE deletes no row and
+  stays silent) now reaches the record's Forms tab, the Form Inbox and an open
+  copy of the form. A submit with a draft behind it announces twice (submit,
+  then the DELETE); the list readers coalesce, and the submitting YCForm fences
+  both — `_api` stamps `_lastDraftWrite` at the submission POST too (contact-form's
+  custom save calls the same `_api`), not leaning on the cleanup DELETE's stamp,
+  which happens to land first. External submits (`/api/ext/forms/…`) are not
+  announced: the external page loads no bus. Tests: `tests/ycSync.test.js`,
+  `tests/formsubmissions.x4.test.js`, `tests/formsPages.sync.test.js`,
+  `tests/formsSurfaces.sync.test.js`.
 - **No off-screen park for form readers (11-11):** `YCForm._syncShown()` and
   contact-form.html's `rolesShowing()` no longer park a bus message when the
   frame is off screen (`frameElement.getClientRects()` empty); their `resize`
@@ -43,9 +58,9 @@ body. Governing migrations in `ref/migrations/`.*
   `formInbox.html` acts on every record. Both answer with `load()`. A draft
   SAVE (origin `auto:POST /api/forms/draft` — the message's only draft
   discriminator, read from the origin trace, failing open) is skipped; a draft
-  DELETE is not — it is a stock submit's only announcement (POST
-  `/api/forms/submit` has no matcher, so a submit with no draft row announces
-  nothing). Fences: the inbox's link PATCH echo (`linkApi`, stamped at the
+  DELETE is not (a stock submit announces POST `/api/forms/submit`, then the
+  DELETE; the burst window folds the pair into one re-read when they land
+  within it). Fences: the inbox's link PATCH echo (`linkApi`, stamped at the
   PATCH and when it settles, 1.5 s); a 250 ms burst window; a load in flight is
   not doubled; parked under an open view / adopt dialog (`busHoldWhile`), a
   focused inbox filter select, or a hidden page. Not parked off-screen: no

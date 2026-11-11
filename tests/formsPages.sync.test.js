@@ -44,6 +44,14 @@
 // stale until the user typed into it. Off screen and dirty: still never
 // repopulated — the banner and the held autosave come regardless.
 //
+// SUBMIT (NESTED; POST /api/forms/submit announced since 2026-11-11, from the
+// route's additive { form_key, link_type, link_id } echo): another frame's
+// submit with no draft cleanup behind it → one GET /api/forms/latest, the
+// new submission's "Last saved by" status, no banner. The page's OWN save:
+// the submit's echo arrives and is fenced (no re-read, nothing parked,
+// "Saved just now" stays) — and the submission POST stamps the fence by
+// itself, without the cleanup DELETE whose stamp happens to land first.
+//
 //   npx jest tests/formsPages.sync.test.js
 'use strict';
 
@@ -124,7 +132,7 @@ function prepareWindow(win) {
 }
 
 /** The API, answered as the routes do — including the { form_key, link_type,
- *  link_id } echo the draft routes carry for the yc-sync matcher — then the
+ *  link_id } echo the draft and submit routes carry for the yc-sync matchers — then the
  *  sniff, a macrotask later, in `sniffWin`'s realm (the shell's / the host's). */
 function makeApi(cfg, state, calls, sniffWin) {
   return async (url, method, body) => {
@@ -134,7 +142,7 @@ function makeApi(cfg, state, calls, sniffWin) {
     if (url.startsWith('/api/forms/latest')) data = state.latest;
     else if (url === '/api/forms/draft' && method === 'POST') data = { status: 'success', id: 88, updated_at: new Date().toISOString(), ...echo };
     else if (url.startsWith('/api/forms/draft?') && method === 'DELETE') data = { status: 'success', deleted: true, ...echo };
-    else if (url === '/api/forms/submit') data = { status: 'success', id: 7, version: 2, updated_at: new Date().toISOString() };
+    else if (url === '/api/forms/submit') data = { status: 'success', id: 7, version: 2, updated_at: new Date().toISOString(), ...echo };
     else if (url === '/api/field-defs') data = { status: 'success', defs: [] };
     else if (url.startsWith(`/api/cases/${CASE_ID}?include=clients`)) data = { case: caseRow(), clients: [] };
     else if (url === '/api/contacts/5' && method === 'GET') data = { status: 'success', contact: contactRow() };
@@ -233,6 +241,13 @@ const addrOf = (cfg) => `form:${cfg.linkType}:${cfg.linkId}`;
 const announce = (busWin, cfg, linkType = cfg.linkType, linkId = cfg.linkId) => busWin.YC._sniff('POST', '/api/forms/draft',
   { status: 'success', id: 99, updated_at: new Date().toISOString(), form_key: cfg.formKey, link_type: linkType, link_id: linkId });
 const banner = (w) => w.document.getElementById('draftBanner').style.display;
+const status = (w) => w.document.getElementById('saveStatus').textContent;
+/** A submission for `cfg`'s record from another frame, through the real
+ *  matcher, with the submit route's answer (its additive record echo). */
+const announceSubmit = (busWin, cfg) => busWin.YC._sniff('POST', '/api/forms/submit',
+  { status: 'success', id: 12, version: 3, updated_at: new Date().toISOString(), form_key: cfg.formKey, link_type: cfg.linkType, link_id: cfg.linkId });
+const elsewhereSubmission = (cfg) => ({ id: 12, version: 3, schema_version: 1, data: { [cfg.field]: 'Submitted elsewhere' },
+  updated_at: new Date().toISOString(), submitted_by: 1, user_name: 'Stuart' });
 function type(w, name, value) {
   const el = w.document.querySelector(`[name="${name}"]`);
   el.value = value;
@@ -355,6 +370,57 @@ describe.each(PAGES)('$file — NESTED in a host frame (production topology)', (
     expect(latestReads(calls)).toBe(before + 1);
     expect(banner(fw)).toBe('flex');
     expect(fw.ycForm._syncStale).toBe(false);                     // nothing left parked
+  });
+
+  // Native slice (2026-11-11): POST /api/forms/submit is announced. A form
+  // submitted in another frame before it ever saved a draft used to announce
+  // nothing (its cleanup DELETE deleted no row), so an open copy kept the
+  // old submission until reload.
+  test('another frame\'s SUBMIT (no draft cleanup behind it): the open copy re-reads latest and shows the submission', async () => {
+    const { host, fw, calls, state } = await bootNested(cfg);
+    const before = latestReads(calls);
+    state.latest = { submitted: elsewhereSubmission(cfg), draft: null };
+    announceSubmit(host, cfg);
+    await sleep(60);
+    expect(lastLogged(fw)).toBe(addrOf(cfg));
+    expect(latestReads(calls)).toBe(before + 1);
+    expect(fw.ycForm._submittedData && fw.ycForm._submittedData.version).toBe(3);
+    expect(status(fw)).toMatch(/^Last saved by Stuart at /);
+    expect(banner(fw)).toBe('none');
+  });
+
+  test('ITS OWN save: the submit POST\'s echo arrives and is fenced — no re-read, "Saved just now" stays', async () => {
+    const { host, fw, calls, state } = await bootNested(cfg);
+    const before = latestReads(calls);
+    // What a re-read would return: the submission just saved. Unfenced, the
+    // echo re-reads it and _showLastSaved() overwrites "Saved just now" with
+    // "Last saved by Fred at …" (measured with both stamps removed).
+    state.latest = { submitted: { id: 7, version: 2, schema_version: 1, data: { [cfg.field]: 'Saved here' },
+      updated_at: new Date().toISOString(), submitted_by: 6, user_name: 'Fred' }, draft: null };
+    type(fw, cfg.field, 'Saved here');
+    if (fw.document.activeElement && fw.document.activeElement.blur) fw.document.activeElement.blur();
+    const hostLog = host.YC._log.length;
+    await fw.ycForm.save();
+    expect(calls.filter((c) => c.method === 'POST' && c.url === '/api/forms/submit').length).toBe(1);
+    await sleep(80);
+    const heard = fw.YC._log.slice(-2).map((m) => m.origin);
+    expect(host.YC._log.slice(hostLog).map((m) => m.origin)).toEqual(heard);   // what the host sniffed, the form heard
+    expect(heard[0]).toBe('auto:POST /api/forms/submit');         // the submit's echo DID arrive
+    expect(latestReads(calls)).toBe(before);                      // …and was not re-read
+    expect(fw.ycForm._syncStale).toBe(false);                     // …nor parked for later
+    expect(status(fw)).toBe('Saved just now');
+    expect(fw.ycForm.isDirty()).toBe(false);
+  });
+
+  test('the submission POST stamps the echo fence by itself (no draft DELETE behind it)', async () => {
+    const { fw, calls } = await bootNested(cfg);
+    const before = latestReads(calls);
+    await fw.ycForm._api('/api/forms/submit', 'POST', {
+      form_key: cfg.formKey, link_type: cfg.linkType, link_id: cfg.linkId, schema_version: 1, data: {} });
+    await sleep(60);
+    expect(calls.filter((c) => c.method === 'DELETE').length).toBe(0);
+    expect(lastLogged(fw)).toBe(addrOf(cfg));                     // the echo arrived
+    expect([latestReads(calls), fw.ycForm._syncStale]).toEqual([before, false]);
   });
 
   test('OFF SCREEN with unsaved typing: still never repopulated; the banner shows and autosave HOLDS', async () => {

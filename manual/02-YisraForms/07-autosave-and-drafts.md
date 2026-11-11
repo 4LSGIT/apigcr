@@ -67,6 +67,11 @@ actually deleted: an open copy re-reads and its stale draft banner comes down.
 A copy with unsaved typing keeps that typing, and its next autosave saves a new
 draft. The form's own Discard is not re-read.
 
+A form **submitted** elsewhere is announced too, whether or not it ever saved a
+draft: an open copy re-reads, repopulates when it holds no unsaved typing, and
+its status line shows the new "Last saved by". The form's own Save is not
+re-read.
+
 ---
 
 ## What Happens on Submit

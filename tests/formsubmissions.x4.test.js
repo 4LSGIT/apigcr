@@ -361,4 +361,33 @@ describe('X4 — routes (live router)', () => {
     expect([resp.status, await resp.json()]).toEqual([200,
       { status: 'success', deleted: false, form_key: '341_notes', link_type: 'appt', link_id: '812' }]);
   });
+
+  // Native slice (2026-11-11): the submit echoes the record beside the
+  // service's { id, version, updated_at } (additive), so the bus can announce
+  // form:<link_type>:<link_id> for a submission that had no draft row.
+  test('POST /api/forms/submit answers { id, version, updated_at } plus form_key / link_type / link_id', async () => {
+    const at = '2026-11-11T15:00:00.000Z';
+    dbHolder.db = stubDb([
+      [{ max_version: 2 }],                // next version in the series
+      { insertId: 501 },                   // INSERT form_submissions
+      [{ updated_at: at }],                // updated_at read-back
+      { insertId: 1 },                     // domainEvents.emit's domain_event_queue INSERT (fire-and-forget)
+    ]);
+    let resp = await fetch(base + '/api/forms/submit', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ form_key: 'case_details', link_type: 'case', link_id: 'hjSFMabb', schema_version: 1, data: { a: 1 } }),
+    });
+    expect([resp.status, await resp.json()]).toEqual([200,
+      { status: 'success', id: 501, version: 3, updated_at: at, form_key: 'case_details', link_type: 'case', link_id: 'hjSFMabb' }]);
+    expect(dbHolder.db.calls[1].params.slice(0, 4)).toEqual(['case_details', 'case', 'hjSFMabb', 3]);
+
+    // A missing field is still the untouched 400, with no echo.
+    dbHolder.db = stubDb([]);
+    resp = await fetch(base + '/api/forms/submit', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ form_key: 'case_details', link_type: 'case', data: {} }),
+    });
+    expect([resp.status, await resp.json()]).toEqual([400,
+      { status: 'error', message: 'Missing required fields: form_key, link_type, link_id, data' }]);
+  });
 });

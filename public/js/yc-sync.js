@@ -79,8 +79,9 @@
  *   'doclink:case:AAAAAAAA'   ← Documents S3: the SET of documents on a target
  *   'checklist:case:AAAAAAAA' ← A10: the SET of notes & lists on a record
  *                               (the doclink split again — see its matchers)
- *   'form:case:AAAAAAAA'      ← A12: a record's form rows (drafts and
- *                               adopted submissions) — a refetch marker
+ *   'form:case:AAAAAAAA'      ← A12: a record's form rows (drafts,
+ *                               submissions, adopted submissions) — a
+ *                               refetch marker
  *   'relations:contact:1001'  ← a contact's relation set (both ends of a
  *                               contact_relations row) — a refetch marker
  *   'roles:contact:1001'      ← a contact's role rows — a refetch marker
@@ -1137,8 +1138,8 @@
     [/^\/checkitems\/(\d+)$/,        'checklist', checklistGetter(true),  ['PATCH', 'DELETE']],
     [/^\/checklists\/(\d+)$/,        'checklist', checklistGetter(false), ['PATCH', 'DELETE']],
 
-    /* FORMS (A12). A saved draft and a submission adopted onto a record
-       announce the RECORD whose form rows changed, as
+    /* FORMS (A12). A saved draft, a submission, and a submission adopted
+       onto a record announce the RECORD whose form rows changed, as
        `form:<link_type>:<link_id>` — a marker (`yc_refetch`): a draft is a
        whole payload, never a `{column: value}` diff, and the reader re-reads
        GET /api/forms/latest for its own form anyway. Not `case:<id>`: the
@@ -1147,12 +1148,32 @@
        (public/js/yc-forms.js _setupSync) in every form host that loads this
        file, plus two list readers: forms/submissionsWidget.html (a record's
        Forms tab, its own record) and formInbox.html (every record), both of
-       which skip a draft save (neither lists drafts).
+       which skip a draft save (neither lists drafts). The external form
+       page (render.html in external mode, POST /api/ext/forms/…) loads no
+       bus, so an external submit is announced by nothing.
          POST  /api/forms/draft                  { id, updated_at } + the
                                                  additive { form_key,
                                                  link_type, link_id } echo the
                                                  route carries for this (the
                                                  service row has no link)
+         POST  /api/forms/submit                 { id, version, updated_at }
+                                                 + the same additive echo —
+                                                 a stock save's submission
+                                                 (YCForm save() step 4,
+                                                 contact-form's custom save).
+                                                 A new row, no diff: a
+                                                 marker. Without it a form
+                                                 submitted before it ever
+                                                 saved a draft announced
+                                                 nothing (its cleanup DELETE
+                                                 deleted no row, below).
+                                                 A stock save therefore
+                                                 announces twice when a
+                                                 draft existed (this, then
+                                                 the DELETE); the list
+                                                 readers coalesce, YCForm
+                                                 fences its own echo of
+                                                 both (_api stamps them)
          PATCH /api/forms/submissions/:id/link   { id, link_type, link_id,
                                                  version, … } — the TARGET
          POST  /api/forms/submissions/submit-draft  { link_type, link_id, … }
@@ -1178,10 +1199,10 @@
                                                  on the POST's path — the verb
                                                  miss continues the scan.
        Fails closed without a link (an unlinked '' row belongs to no record).
-       Not matched: POST /api/forms/submit (no Casey card sends it — no atomic
-       route) and the PDF routes (A12.2's filing card sends POST …/pdf/file, a
-       document write announced by nothing today) (ref/plans.md). */
+       Not matched: the PDF routes (A12.2's filing card sends POST …/pdf/file,
+       a document write announced by nothing today) (ref/plans.md). */
     [/^\/api\/forms\/draft$/,                         'form', formGetter, ['POST']],
+    [/^\/api\/forms\/submit$/,                        'form', formGetter, ['POST']],
     [/^\/api\/forms\/draft$/,                         'form', formDiscardGetter, ['DELETE']],
     [/^\/api\/forms\/submissions\/(\d+)\/link$/, 'form', formGetter, ['PATCH']],
     [/^\/api\/forms\/submissions\/submit-draft$/,   'form', submitDraftGetter, ['POST']],
@@ -1313,7 +1334,8 @@
    * Form writes — announce the RECORD whose form rows changed (A12).
    *
    * Array return (getter contract v2): the address is the record, which the
-   * draft URL never names; both routes answer `link_type` / `link_id`.
+   * draft / submit URL never names; every route it serves answers
+   * `link_type` / `link_id`.
    *
    * @param   {object} r  the parsed response body
    * @returns {Array|null}

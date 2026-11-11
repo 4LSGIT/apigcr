@@ -2761,11 +2761,11 @@ describe('_sniff — checklist matchers (A10)', () => {
 // ─────────────────────────────────────────────────────────────
 // _sniff — forms (A12)
 //
-// A saved draft and an adopted submission announce the RECORD whose form rows
-// changed, `form:<link_type>:<link_id>`, with a refetch marker (a draft is a
-// whole payload, never a column diff). The draft route's service row has no
-// link, so the route echoes form_key / link_type / link_id additively; the
-// link route answers the TARGET.
+// A saved draft, a submission and an adopted submission announce the RECORD
+// whose form rows changed, `form:<link_type>:<link_id>`, with a refetch marker
+// (a draft is a whole payload, never a column diff). The draft and submit
+// routes' service rows have no link, so those routes echo form_key /
+// link_type / link_id additively; the link route answers the TARGET.
 // ─────────────────────────────────────────────────────────────
 
 describe('_sniff — form matchers (A12)', () => {
@@ -2822,12 +2822,32 @@ describe('_sniff — form matchers (A12)', () => {
     expect(seen.map((x) => x.addr)).toEqual(['form:case:AAAA']);
   });
 
-  test('only the matched writes: GET, submit, a DELETE without deleted:true, the PDF routes and other verbs are silent', () => {
+  // Native slice (2026-11-11): the stock submit announces the record too, so
+  // a form submitted before it ever saved a draft (its cleanup DELETE deletes
+  // no row and stays silent) is no longer invisible to the record's readers.
+  test('the submit POST announces the record with a marker (its real answer, the additive echo); fails closed without a link', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    const echo = { form_key: 'case_details', link_type: 'case', link_id: 'AAAA' };
+    w.YC._sniff('POST', '/api/forms/submit', { status: 'success', id: 41, version: 3, updated_at: '2026-11-11T10:00:00.000Z', ...echo });
+    // The pre-slice answer (no echo), an unlinked echo, an error body: silent.
+    w.YC._sniff('POST', '/api/forms/submit', { status: 'success', id: 41, version: 3, updated_at: '2026-11-11T10:00:00.000Z' });
+    w.YC._sniff('POST', '/api/forms/submit', { status: 'success', id: 42, version: 1, form_key: 'k', link_type: '', link_id: '' });
+    w.YC._sniff('POST', '/api/forms/submit', { status: 'success', id: 42, version: 1, form_key: 'k', link_type: 'contact', link_id: null });
+    w.YC._sniff('POST', '/api/forms/submit', { status: 'error', message: 'Missing required fields: form_key, link_type, link_id, data' });
+    // POST only: no other verb exists on the route.
+    w.YC._sniff('PUT',  '/api/forms/submit', { status: 'success', id: 43, ...echo });
+    w.YC._sniff('PATCH', '/api/forms/submit', { status: 'success', id: 43, ...echo });
+    expect(seen).toEqual([
+      { addr: 'form:case:AAAA', fields: { yc_refetch: 1 }, origin: 'auto:POST /api/forms/submit' },
+    ]);
+  });
+
+  test('only the matched writes: GET, a DELETE without deleted:true, the PDF routes and other verbs are silent', () => {
     const w = mkWindow();
     const seen = spy(w);
     const row = { status: 'success', id: 1, form_key: 'k', link_type: 'case', link_id: 'AAAA' };
     w.YC._sniff('GET',    '/api/forms/latest?form_key=k&link_type=case&link_id=AAAA', row);
-    w.YC._sniff('POST',   '/api/forms/submit', row);
     w.YC._sniff('DELETE', '/api/forms/draft?form_key=k&link_type=case&link_id=AAAA', row);
     w.YC._sniff('PUT',    '/api/forms/draft', row);
     w.YC._sniff('POST',   '/api/forms/submissions/1/link', row);
