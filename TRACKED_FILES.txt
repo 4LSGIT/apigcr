@@ -345,7 +345,6 @@ public/feedback.html
 public/formBuilder.html
 public/formBuilderSimple.html
 public/formInbox.html
-public/forms/341notes.html
 public/forms/casedetails-bk.html
 public/forms/casedetails.html
 public/forms/contact-form.html
@@ -1622,6 +1621,7 @@ tests/formrender.x4view.test.js
 tests/formsPages.sync.test.js
 tests/formsSubmitDraft.mysql.test.js
 tests/formsSubmitDraft.test.js
+tests/formsSurfaces.sync.test.js
 tests/formsubmissions.x4.test.js
 tests/formtemplates.d4schema.test.js
 tests/formtemplates.formdev.test.js

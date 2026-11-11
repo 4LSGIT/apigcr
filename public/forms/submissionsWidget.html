@@ -105,14 +105,14 @@
   }
 
   function viewSubmission(id) {
-    Swal.fire({
+    busHoldWhile(Swal.fire({
       html: '<iframe class="sw-view-frame" title="Submission" ' +
             'src="/forms/render.html?view_submission=' + encodeURIComponent(id) + '"></iframe>',
       width: '880px',
       showConfirmButton: false,
       showCloseButton: true,
       customClass: { htmlContainer: 'sw-dlg-html' },
-    });
+    }));
   }
 
   // ── PDF (X5.1) — the Form Inbox pair, on the case/contact page. Bytes ride
@@ -171,6 +171,8 @@
     var list = E('swList');
     if (!linkId) { list.textContent = 'Missing link_id.'; return; }
     list.textContent = 'Loading\u2026';
+    busStale = false;      // a read from the top answers every message before it
+    busLoading = true;
     try {
       var tplRes = await api('/api/form-templates', 'GET');
       TPL = {};
@@ -264,7 +266,66 @@
       e.className = 'sw-error';
       e.textContent = 'Could not load submissions: ' + (err && err.message || err);
       list.appendChild(e);
+    } finally {
+      busLoading = false;
+      if (busStale) busReload();   // a message arrived mid-load: one more read
     }
+  }
+
+  /* ── Sync bus (2026-11-11) ──────────────────────────────────────────────
+     This record's form rows are announced as `form:<link_type>:<link_id>`
+     (public/js/yc-sync.js FORMS matchers): an adopt from the Form Inbox, a
+     submit-draft (an Ask Casey card), a stock submit's draft cleanup. Each
+     is a bare {yc_refetch:1}; the answer is load(), a re-read from the top.
+     The address is compared lowercase, the way YCForm._setupSync does.
+     Skipped: a draft SAVE (origin `auto:POST /api/forms/draft` — it touches
+     only the draft row, and this list shows submitted rows only). The skip
+     reads the message's origin trace and fails open: any other origin
+     re-reads. The draft DELETE is NOT skipped — it is the only announcement
+     a stock submit makes (POST /api/forms/submit has no matcher).
+     FENCES:
+       · no echo to fence: this page's one write, POST …/pdf/file, has no
+         matcher and changes nothing the list shows;
+       · a burst coalesces over BUS_MS; a load in flight is not doubled, and
+         a message during it re-reads once more after it (load()'s finally);
+       · PARKED while a submission's view dialog is open (busHoldWhile —
+         flushed when it closes; the rebuild would not reach the dialog, but
+         the list stays still under the reader), or while the page is hidden
+         (flushed on visibilitychange).
+     An off-screen tab is NOT parked: nothing tells this iframe that
+     case.html's Forms tab came back on screen (no resize, no ping), so a
+     parked reload would stay stale, and an unseen re-read destroys nothing.
+     §3.6: the handler only reads (load() is two GETs and a repaint); it
+     never writes and never emits. */
+  var BUS_MS = 250;
+  var DRAFT_SAVE = /^auto:POST \/api\/forms\/draft(?:[?#]|$)/;
+  var busStale = false, busTimer = null, busLoading = false, busHold = 0;
+
+  function busHoldWhile(p) {
+    busHold++;
+    return Promise.resolve(p).finally(function () {
+      busHold--;
+      setTimeout(busReload, 0);
+    });
+  }
+
+  function busReload() {
+    if (!busStale || busLoading || busHold > 0 || document.visibilityState === 'hidden') return;
+    load();
+  }
+
+  function busSubscribe() {
+    var YC = window.YC;
+    if (!YC || typeof YC.on !== 'function' || !linkId) return;
+    var addr = ('form:' + linkType + ':' + linkId).toLowerCase();
+    YC.on('form:*', '*', function (_fields, msg) {
+      if (!msg || String(msg.addr || '').toLowerCase() !== addr) return;
+      if (DRAFT_SAVE.test(String(msg.origin || ''))) return;          // a draft save
+      busStale = true;
+      clearTimeout(busTimer);
+      busTimer = setTimeout(busReload, BUS_MS);
+    });
+    document.addEventListener('visibilitychange', function () { setTimeout(busReload, 0); });
   }
 
   E('swRefresh').addEventListener('click', load);
@@ -272,7 +333,7 @@
   (function boot() {
     var tries = 0;
     (function wait() {
-      if (shellApi()) return load();
+      if (shellApi()) { busSubscribe(); return load(); }
       if (++tries > 100) { E('swList').textContent = 'Open this page inside YisraCase.'; return; }
       setTimeout(wait, 100);
     })();

@@ -2132,7 +2132,7 @@ link_id}).
   autosave echo (`_api` stamps draft POSTs, 1.5 s), parked while hidden, mid-save
   or typed in. The hand-built form pages (casedetails, casedetails-bk, issn,
   contact-form) load yc-sync by a static tag and listen the same way;
-  341notes.html is unused (nothing loads it).
+  341notes.html is retired (2026-11-11).
 - Off switch `casey_forms_enabled` (on unless '0', casey section, sort 64).
   Tests: `tests/caseyForms.test.js`, gated `tests/caseyForms.mysql.test.js`,
   `tests/formRender.sync.test.js`, `tests/assistantUi.test.js`,

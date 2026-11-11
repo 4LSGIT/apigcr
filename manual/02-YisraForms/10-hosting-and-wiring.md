@@ -11,7 +11,7 @@ Forms call `window.parent.apiSend()` for all API requests. This works through a 
 ```
 index.html          ← apiSend() defined here
   └─ case.html     ← window.apiSend = P.apiSend   (relay)
-       └─ forms/341notes.html   ← calls P.apiSend()
+       └─ forms/issn.html       ← calls P.apiSend()
 ```
 
 **Rule: any page that hosts a form iframe must relay apiSend.**
@@ -76,8 +76,8 @@ The parent sets the iframe `src` with the entity ID as a query parameter:
 // Contact form:
 E("tabInfoIframe").src = `forms/contact-form.html?contact_id=${clientID}`;
 
-// 341 notes:
-E("341iframe").src = `forms/341notes.html?case_id=${caseId}`;
+// 341 notes (a template form — one renderer, the form_key names it):
+E("341").src = `/forms/render.html?form_key=341_notes&case_id=${caseId}`;
 ```
 
 The form fetches its own data — no URL query strings with field values needed.
@@ -167,7 +167,7 @@ The same form can be hosted in different pages:
 | Form | Host page | URL param |
 |------|-----------|-----------|
 | `forms/contact-form.html` | `contact.html` | `?contact_id=${clientID}` |
-| `forms/341notes.html` | `case.html` | `?case_id=${caseId}` |
+| `forms/render.html` (the 341 notes template) | `case.html` | `?form_key=341_notes&case_id=${caseId}` |
 | `forms/casedetails.html` | `case.html` | `?case_id=${caseId}` |
 | `forms/issn.html` | `case.html` | `?case_id=${caseId}` |
 

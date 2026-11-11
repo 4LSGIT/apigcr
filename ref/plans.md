@@ -1171,13 +1171,6 @@ version restore and delete in A12.4 (ASK_CASEY_ACTIONS_PLAN A12.2–A12.4).
   a draft saved between the A12.4 card's click-time re-read and the POST
   publishes unreviewed. The builder has the same gap between its confirm and
   its POST.
-- **`public/forms/341notes.html` is unused** — nothing loads it (case.html's
-  341 tab is `/forms/render.html?form_key=341_notes`; `tests/fixtures/slice26/`
-  reproduces its onLoad), and it is the one hand-built form page not on the
-  sync bus. Retiring it is a separate decision.
-- **The record's Forms tab and the Form Inbox on the bus.**
-  `forms/submissionsWidget.html` and `formInbox.html` load yc-sync but do not
-  subscribe, so a link made elsewhere shows only on refresh.
 - **Native gaps found while tracing (not Casey's):**
   - Drafts have no concurrency check: two people (two browsers — the bus is
     per browser) with the same form open replace each other's draft on every
@@ -1189,6 +1182,22 @@ version restore and delete in A12.4 (ASK_CASEY_ACTIONS_PLAN A12.2–A12.4).
     calls it.
   - POST `…/pdf/file` is not announced on the sync bus (no matcher; the new
     document reaches a Documents tab on refresh).
+  - POST `/api/forms/submit` has no yc-sync matcher (its answer is `{id,
+    version, updated_at}`, no link), so a stock submit is announced only by
+    its draft cleanup's DELETE (`deleted:true`). A submit with no draft row —
+    sent before the first autosave, or a template with `autosave:false` —
+    reaches no open Forms tab, Form Inbox or copy of the form until reload.
+    A matcher needs the route to echo `link_type` / `link_id`, as the draft
+    routes do.
+  - An off-screen form frame parked by `YCForm._setupSync` (and
+    contact-form.html's Roles reader) waits for a `resize` that does not come:
+    Chromium fires none inside an iframe whose host flips `display` once it
+    has laid out (measured 2026-11-11, headless shell: a frame hidden and
+    re-shown got 0 resize events; only a frame that LOADED hidden got one on
+    first show — index.html's pingBecameVisible comment says the same). The
+    refetch then waits for visibilitychange or a focusout in that frame.
+    case.html's inner tabs ping nothing. `submissionsWidget.html` and
+    `formInbox.html` do not park off-screen for this reason.
   - Nothing records that a submission's PDF was filed (no column on
     `form_submissions`, no link from `documents`): a re-file is caught only by
     the "(#id)" in the default file name, and not at all under a custom name.

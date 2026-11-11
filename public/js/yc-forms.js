@@ -1536,7 +1536,7 @@ if (this.config.endpoints.load && !this.config.external) {
    *   - Tags fields hide their input in readonly → special-cased to copy
    *     the pill texts.
    *
-   * Forms that never enter .yc-readonly (casedetails, issn, 341notes,
+   * Forms that never enter .yc-readonly (casedetails, issn,
    * external fill-in forms) are unaffected — the handler returns
    * immediately.
    *

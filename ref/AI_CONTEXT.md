@@ -24,6 +24,20 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **The Forms tab and the Form Inbox on the sync bus (11-11):**
+  `forms/submissionsWidget.html` (case.html's Forms tab) subscribes to
+  `form:*` and acts on its own record's address (lowercase compare);
+  `formInbox.html` acts on every record. Both answer with `load()`. A draft
+  SAVE (origin `auto:POST /api/forms/draft` — the message's only draft
+  discriminator, read from the origin trace, failing open) is skipped; a draft
+  DELETE is not — it is a stock submit's only announcement (POST
+  `/api/forms/submit` has no matcher, so a submit with no draft row announces
+  nothing). Fences: the inbox's link PATCH echo (`linkApi`, stamped at the
+  PATCH and when it settles, 1.5 s); a 250 ms burst window; a load in flight is
+  not doubled; parked under an open view / adopt dialog (`busHoldWhile`), a
+  focused inbox filter select, or a hidden page. Not parked off-screen: no
+  event reaches an iframe whose host flips `display`, so a parked reload would
+  stay stale. Test: `tests/formsSurfaces.sync.test.js`.
 - **Hand-built form pages on the sync bus (11-11):** `forms/casedetails-bk.html`,
   `casedetails.html`, `issn.html` and `contact-form.html` load
   `<script src="/js/yc-sync.js">` before yc-forms.js, so init step 13d
@@ -38,8 +52,9 @@ body. Governing migrations in `ref/migrations/`.*
   custom fields refetch nothing (defs cached) and repaint only when clean and
   unfocused; contact-form re-reads its phone/email lists for the consent
   badges, as on every refresh.
-  `341notes.html` is unused and not on the bus (`ref/plans.md`). Test:
-  `tests/formsPages.sync.test.js` (flat and nested-iframe boots).
+  `341notes.html` is retired (11-11; the 341 tab is render.html
+  `form_key=341_notes`). Test: `tests/formsPages.sync.test.js` (flat and
+  nested-iframe boots).
 - **Sync bus: relations, roles, checklist edits, draft discard (11-11):**
   `public/js/yc-sync.js` matches POST / PATCH / DELETE `/api/contact-relations`
   → `relations:contact:<a>` AND `<b>` (markers; the DELETE route reads the row

@@ -1,8 +1,8 @@
 /**
  * /forms/hooks/notes_341.js — hook for the `341_notes` template.
  *
- * Reproduces the parts of public/forms/341notes.html's onLoad that the template
- * schema cannot express:
+ * Reproduces the parts of public/forms/341notes.html's onLoad (the page was
+ * retired 2026-11-11) that the template schema cannot express:
  *
  *   1. Debtor / co-debtor first-middle-last from _loadResult.clients
  *      (resolver prefill cannot traverse cases → case_relate → contacts).

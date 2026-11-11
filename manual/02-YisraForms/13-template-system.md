@@ -2,7 +2,7 @@
 
 Parts 1–12 describe hand-built forms: a standalone HTML file per form with a `YCForm` config block. The template system sits **on top of** that runtime — a form is a JSON `definition` stored in the database, and one generic renderer (`public/forms/render.html`) turns it into a working `YCForm` at load time. No per-form code, no deploy to change a form.
 
-The five hand-built forms (`contact-form`, `issn`, `341notes`, `casedetails`, `casedetails-bk`) are untouched and keep working exactly as documented in the earlier parts. The template system is for **new** forms.
+The four hand-built forms (`contact-form`, `issn`, `casedetails`, `casedetails-bk`) keep working exactly as documented in the earlier parts, and hear the sync bus like a template form ([Part 7](07-autosave-and-drafts.md)). The 341 notes form was ported to the `341_notes` template and its hand-built page retired. The template system is for **new** forms.
 
 **Governing contract:** `ref/FORM_TEMPLATE_SCHEMA_V1.md` — the authoritative spec for the definition JSON, validation rules, and publish semantics. This chapter is the working-knowledge version.
 

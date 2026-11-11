@@ -418,6 +418,8 @@
     var list = E('fxList');
     list.textContent = 'Loading…';
     var scope = E('fxScope').value;
+    busStale = false;      // a read from the top answers every message before it
+    busLoading = true;
     try {
       var tplRes = await api('/api/form-templates', 'GET');
       TPL = {};
@@ -474,19 +476,22 @@
       e.className = 'fx-error';
       e.textContent = 'Could not load the inbox: ' + (err && err.message || err);
       list.appendChild(e);
+    } finally {
+      busLoading = false;
+      if (busStale) busReload();   // a message arrived mid-load: one more read
     }
   }
 
   // ── Read-only rendered view (render.html view mode — one renderer) ──
   function viewSubmission(id) {
-    Swal.fire({
+    busHoldWhile(Swal.fire({
       html: '<iframe class="fx-view-frame" title="Submission" ' +
             'src="/forms/render.html?view_submission=' + encodeURIComponent(id) + '"></iframe>',
       width: '880px',
       showConfirmButton: false,
       showCloseButton: true,
       customClass: { htmlContainer: 'fx-dlg-html' },
-    });
+    }));
   }
 
   // ── PDF (X5.1) ─────────────────────────────────────────────────────────────
@@ -618,7 +623,7 @@
         '<option value="appt">Appointment</option>' +
       '</select>';
 
-    var result = await Swal.fire({
+    var result = await busHoldWhile(Swal.fire({
       title: 'Link submission #' + sub.id,
       html:
         '<div class="fx-dlg-header">' +
@@ -808,7 +813,7 @@
           return false;
         }
         try {
-          var out = await api('/api/forms/submissions/' + sub.id + '/link', 'PATCH',
+          var out = await linkApi(sub.id,
             { link_type: selected.link_type, link_id: selected.link_id });
           return out;
         } catch (err) {
@@ -819,7 +824,7 @@
       },
 
       willClose: function () { if (picker && picker.destroy) picker.destroy(); },
-    });
+    }));
 
     if (!result.isConfirmed || !result.value) return;
     var out = result.value;
@@ -834,7 +839,7 @@
   // Shared PATCH for the create-chain (errors toast — no dialog to keep open).
   async function patchLink(sub, linkType, linkId) {
     try {
-      var out = await api('/api/forms/submissions/' + sub.id + '/link', 'PATCH',
+      var out = await linkApi(sub.id,
         { link_type: linkType, link_id: linkId });
       Toast.fire({
         icon: 'success',
@@ -847,6 +852,84 @@
     }
   }
 
+  /* ── Sync bus (2026-11-11) ──────────────────────────────────────────────
+     The inbox lists submissions for EVERY record, so every `form:*` marker
+     is its business (public/js/yc-sync.js FORMS matchers): a link moves a row
+     from Needs linking to Linked, a submit-draft (an Ask Casey card) or a
+     stock submit's draft cleanup adds one to Linked / All. Each message is a
+     bare {yc_refetch:1}; the answer is load(), a re-read from the top.
+     Skipped: a draft SAVE (origin `auto:POST /api/forms/draft` — an autosave
+     touches only the draft row, and nothing here lists drafts). The skip
+     reads the message's origin trace and fails open: any other origin
+     re-reads. The draft DELETE is NOT skipped — it is the only announcement
+     a stock submit makes (POST /api/forms/submit has no matcher).
+     FENCES, in order:
+       · its own link — linkApi() stamps busLastLocal at the PATCH and when
+         it settles; a message within BUS_ECHO_MS is that echo (the page
+         re-reads after its own link anyway). POST …/pdf/file has no matcher,
+         so there is no echo of it to fence;
+       · a burst coalesces over BUS_MS; a load in flight is not doubled, and
+         a message during it re-reads once more after it (load()'s finally);
+       · PARKED while the user holds state: the adopt dialog or the view
+         dialog is open (busHoldWhile — flushed when the dialog resolves), a
+         filter select has the focus (flushed on focusout), or the page is
+         hidden (flushed on visibilitychange).
+     An off-screen panel is NOT parked: nothing tells an iframe its panel
+     came back (index.html pingBecameVisible's own comment; the panel stage's
+     drill-in pings nothing), so a parked reload there would stay stale, and
+     an unseen re-read destroys nothing.
+     §3.6: the handler only reads (load() is GETs and a repaint); it never
+     writes and never emits. */
+  var BUS_MS = 250;
+  var BUS_ECHO_MS = 1500;
+  var DRAFT_SAVE = /^auto:POST \/api\/forms\/draft(?:[?#]|$)/;
+  var busStale = false, busTimer = null, busLoading = false, busHold = 0, busLastLocal = 0;
+
+  function linkApi(subId, body) {
+    busLastLocal = Date.now();
+    var p = api('/api/forms/submissions/' + subId + '/link', 'PATCH', body);
+    var stamp = function () { busLastLocal = Date.now(); };
+    p.then(stamp, stamp);
+    return p;
+  }
+
+  // Hold the bus while a dialog is open; flush a tick after it resolves, so
+  // the dialog's own follow-up load() (after a link) runs first and answers it.
+  function busHoldWhile(p) {
+    busHold++;
+    return Promise.resolve(p).finally(function () {
+      busHold--;
+      setTimeout(busReload, 0);
+    });
+  }
+
+  function busBusy() {
+    if (busLoading || busHold > 0) return true;
+    if (document.visibilityState === 'hidden') return true;
+    var a = document.activeElement;
+    return !!(a && a.tagName === 'SELECT' && a.classList.contains('fx-filter'));
+  }
+
+  function busReload() {
+    if (!busStale || busBusy()) return;
+    load();
+  }
+
+  function busSubscribe() {
+    var YC = window.YC;
+    if (!YC || typeof YC.on !== 'function') return;
+    YC.on('form:*', '*', function (_fields, msg) {
+      if (msg && DRAFT_SAVE.test(String(msg.origin || ''))) return;   // a draft save
+      if (Date.now() - busLastLocal < BUS_ECHO_MS) return;             // our own link, echoed
+      busStale = true;
+      clearTimeout(busTimer);
+      busTimer = setTimeout(busReload, BUS_MS);
+    });
+    var later = function () { setTimeout(busReload, 0); };
+    document.addEventListener('visibilitychange', later);
+    document.addEventListener('focusout', later);
+  }
+
   // ── Wiring ──
   E('fxRefresh').addEventListener('click', load);
   E('fxScope').addEventListener('change', load);   // scope is a SERVER filter
@@ -856,7 +939,7 @@
   (function boot() {
     var tries = 0;
     (function wait() {
-      if (shellApi()) return load();
+      if (shellApi()) { busSubscribe(); return load(); }
       if (++tries > 100) {
         E('fxList').textContent = 'Open this page inside YisraCase.';
         return;

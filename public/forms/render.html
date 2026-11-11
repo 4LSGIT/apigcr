@@ -97,8 +97,8 @@
  *   - Checkgroup allowOther (§4.3): the data-yc-other checkbox +
  *     data-yc-other-text input + .yc-other-text wrapper markup that
  *     _getCheckgroup/_setCheckgroup expect, plus the user-click toggle the
- *     runtime does NOT provide (hand-built forms wire it themselves — see
- *     341notes setupOtherToggle).
+ *     runtime does NOT provide (hand-built forms wire it themselves — the
+ *     retired 341notes.html's setupOtherToggle was the model).
  *   - Resolver prefill (§5): one batched POST /resolve in the generated
  *     onLoad; refs auto-built from linkType; ||| separator; prefillMode
  *     ifEmpty (default) / always. Runs before init step 13c so prefilled
@@ -309,8 +309,8 @@
   // repeater field types today, so degrade rather than break.
   var REPEATER_TYPES = { text: 1, number: 1, date: 1, select: 1, checkbox: 1 };
 
-  // Mirror of the resolver-prefill separator in contract §5 and the 341notes
-  // pattern. NOTE (accepted risk, per contract): a resolved VALUE containing
+  // Mirror of the resolver-prefill separator in contract §5 and the retired
+  // 341notes.html's pattern. NOTE (accepted risk, per contract): a resolved VALUE containing
   // "|||" would break part alignment — the count guard below aborts the whole
   // prefill write in that case instead of writing misaligned values.
   var PREFILL_SEP = '|||';
@@ -701,7 +701,7 @@
         });
         if (f.allowOther) {
           // Exactly the markup _getCheckgroup/_setCheckgroup expect (mirrors
-          // 341notes): data-yc-other checkbox, then a .yc-other-text wrapper
+          // the retired 341notes.html): data-yc-other checkbox, then a .yc-other-text wrapper
           // (initially hidden) containing the data-yc-other-text input.
           // _setCheckgroup manages the wrapper's visibility on populate; the
           // USER-click toggle is wired in renderBody (the runtime doesn't do
@@ -1312,8 +1312,8 @@
 
     // Wire the user-click "Other" toggle on every allowOther checkgroup. The
     // runtime only manages .yc-other-text visibility on populate
-    // (_setCheckgroup); the click behavior is form-page responsibility (see
-    // 341notes setupOtherToggle — mirrored here).
+    // (_setCheckgroup); the click behavior is form-page responsibility (the
+    // retired 341notes.html's setupOtherToggle — mirrored here).
     form.querySelectorAll('.yc-check-grid').forEach(function (grid) {
       var otherCb  = grid.querySelector('input[data-yc-other]');
       var otherDiv = grid.querySelector('.yc-other-text');
