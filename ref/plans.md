@@ -1189,15 +1189,6 @@ version restore and delete in A12.4 (ASK_CASEY_ACTIONS_PLAN A12.2–A12.4).
     reaches no open Forms tab, Form Inbox or copy of the form until reload.
     A matcher needs the route to echo `link_type` / `link_id`, as the draft
     routes do.
-  - An off-screen form frame parked by `YCForm._setupSync` (and
-    contact-form.html's Roles reader) waits for a `resize` that does not come:
-    Chromium fires none inside an iframe whose host flips `display` once it
-    has laid out (measured 2026-11-11, headless shell: a frame hidden and
-    re-shown got 0 resize events; only a frame that LOADED hidden got one on
-    first show — index.html's pingBecameVisible comment says the same). The
-    refetch then waits for visibilitychange or a focusout in that frame.
-    case.html's inner tabs ping nothing. `submissionsWidget.html` and
-    `formInbox.html` do not park off-screen for this reason.
   - Nothing records that a submission's PDF was filed (no column on
     `form_submissions`, no link from `documents`): a re-file is caught only by
     the "(#id)" in the default file name, and not at all under a custom name.

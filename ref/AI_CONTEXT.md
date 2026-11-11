@@ -24,6 +24,19 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **No off-screen park for form readers (11-11):** `YCForm._syncShown()` and
+  contact-form.html's `rolesShowing()` no longer park a bus message when the
+  frame is off screen (`frameElement.getClientRects()` empty); their `resize`
+  wakes are gone. Chromium fires no `resize` in an already-laid-out iframe
+  whose host flips `display`, and nothing pings nested form frames
+  (`pingBecameVisible` reaches only the shell's direct frames; case.html's /
+  contact.html's inner tabs ping nothing), so a parked message stayed stale
+  until the user typed into the stale form. Still parked: a hidden browser tab
+  (visibilitychange flushes), mid-save / the caret in a field (focusout), and
+  for Roles a busy card or the section not yet painted by its boot
+  `loadRoles()` (which now flushes when it paints). The dirty fences are
+  unchanged: an off-screen dirty form is never repopulated. Tests:
+  `tests/formsPages.sync.test.js`, `tests/contactFormRoles.sync.test.js`.
 - **The Forms tab and the Form Inbox on the sync bus (11-11):**
   `forms/submissionsWidget.html` (case.html's Forms tab) subscribes to
   `form:*` and acts on its own record's address (lowercase compare);

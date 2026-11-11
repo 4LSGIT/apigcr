@@ -2552,6 +2552,7 @@
       }
       document.getElementById('rolesSection').style.display = '';
       reportHeight();
+      rolesBusReload();   // a message parked while the section was unpainted (Roles reader)
     }
 
     /** One schema field → HTML. THE renderer — ~30 lines over the five-type
@@ -2791,21 +2792,27 @@
     // FENCES, in order:
     //   · its own echo — roleApi() / loadRoles() stamped rolesLastLocal
     //     within ROLES_ECHO_MS;
-    //   · not showing (the section, this frame, or the browser tab), or busy
-    //     (an unsaved "+ Role" card, a card typed in and not saved, the caret
-    //     in a role field — loadRoles() rebuilds every card and would eat the
-    //     typing): PARKED in rolesBusStale and re-run when the frame is shown
-    //     again (resize), the page becomes visible, the focus leaves a field,
-    //     or a save / cancel clears the busy state.
+    //   · not showing (the section not painted yet, or the browser tab
+    //     hidden), or busy (an unsaved "+ Role" card, a card typed in and not
+    //     saved, the caret in a role field — loadRoles() rebuilds every card
+    //     and would eat the typing): PARKED in rolesBusStale and re-run when
+    //     loadRoles() paints the section, the page becomes visible, the focus
+    //     leaves a field, or a save / cancel clears the busy state. The
+    //     section is display:none only until the boot loadRoles() paints it
+    //     (nothing else hides it), so a message during a slow boot load waits
+    //     for that paint instead of racing a second load against it.
+    //   NOT parked: this frame merely off screen (contact.html's inner tab not
+    //   Info). Chromium fires no resize inside an already-laid-out iframe
+    //   whose host flips display, and contact.html's tabs ping nothing, so a
+    //   parked message stayed stale until the user was already working in the
+    //   section. An unseen re-read destroys nothing the busy fence protects.
     // §3.6: loadRoles() is two GETs and a repaint — never a write.
     const ROLES_ECHO_MS = 1500;
 
     function rolesShowing() {
       const sec = document.getElementById('rolesSection');
       if (!sec || sec.style.display === 'none') return false;
-      if (document.visibilityState === 'hidden') return false;
-      try { const f = window.frameElement; return !f || f.getClientRects().length > 0; }
-      catch (_) { return true; }
+      return document.visibilityState !== 'hidden';
     }
 
     function rolesBusy() {
@@ -2841,7 +2848,6 @@
       const later = () => setTimeout(rolesBusReload, 0);
       document.addEventListener('visibilitychange', later);
       document.addEventListener('focusout', later);
-      window.addEventListener('resize', later);
     })();
 
 

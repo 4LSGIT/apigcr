@@ -1326,10 +1326,18 @@ if (this.config.endpoints.load && !this.config.external) {
   // FENCES, in order:
   //   · its own echo — this frame POSTed or DELETEd a draft within
   //     SYNC_ECHO_MS (_api stamps it), so the message is its own write;
-  //   · hidden (its tab, or the browser tab), mid-save, or the caret in a field
-  //     of the form: PARKED in _syncStale and re-run when the page becomes
-  //     visible, the frame is shown again (a resize), or the focus leaves the
-  //     field.
+  //   · the browser tab hidden, mid-save, or the caret in a field of the form:
+  //     PARKED in _syncStale and re-run when the page becomes visible
+  //     (visibilitychange) or the focus leaves the field (focusout).
+  //   NOT parked: a frame merely off screen (its host's inner tab not the
+  //   showing one). Chromium fires no resize inside an already-laid-out iframe
+  //   whose host flips display, and nothing else tells a nested form frame it
+  //   is shown again (index.html pingBecameVisible reaches only the frames
+  //   directly in the div it shows; case.html's / contact.html's inner tabs
+  //   ping nothing), so a parked message stayed stale until the user was
+  //   already typing in the stale form. An unseen re-read destroys nothing:
+  //   only a clean form is repopulated (refresh()'s dirty check), and a dirty
+  //   one gets the banner and the held autosave whether it is seen or not.
   // Then: refetch GET /api/forms/latest; a clean form repopulates through
   // refresh() (whose data source raises the draft banner); a form with unsaved
   // typing is never repopulated — it shows the newer draft's banner and holds
@@ -1354,13 +1362,11 @@ if (this.config.endpoints.load && !this.config.external) {
     const later = () => setTimeout(() => this._syncPoll(), 0);
     document.addEventListener('visibilitychange', later);
     document.addEventListener('focusout', later);
-    window.addEventListener('resize', later);
   }
 
+  // Only the browser tab hiding parks — never the frame's own size (FENCES above).
   _syncShown() {
-    if (document.visibilityState === 'hidden') return false;
-    try { const f = window.frameElement; return !f || f.getClientRects().length > 0; }
-    catch (_) { return true; }
+    return document.visibilityState !== 'hidden';
   }
 
   _syncBusy() {

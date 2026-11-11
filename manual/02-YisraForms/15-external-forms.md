@@ -366,9 +366,15 @@ a linked submission — so the strategy-session SMS reminders stop. The adopt
 itself is recorded as a `form` log entry on the target, and the submission
 row keeps `linked_by` / `linked_at` forever.
 
-Adoption is one-way. Linked submissions never reappear in the Inbox; each
-case's **Form Submissions** tab lists everything linked to it (adopted rows
-carry an `adopted` badge).
+Adoption is one-way: a linked submission cannot be unlinked or moved, and it
+leaves the default **Needs linking** scope for good (the **Linked** and **All
+submissions** scopes still list it). Each case's **Form Submissions** tab lists
+everything linked to it (adopted rows carry an `adopted` badge).
+
+The Inbox and a case's **Form Submissions** tab refresh themselves when a
+submission is linked or submitted elsewhere (another tab, another user, Ask
+Casey); the one exception is a form submitted before it ever saved a draft,
+which shows on the next reload.
 
 ---
 

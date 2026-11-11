@@ -1145,7 +1145,9 @@
        form rows are not the case row, and that would cost every open case
        file a full refetch on every autosave. The reader is YCForm itself
        (public/js/yc-forms.js _setupSync) in every form host that loads this
-       file.
+       file, plus two list readers: forms/submissionsWidget.html (a record's
+       Forms tab, its own record) and formInbox.html (every record), both of
+       which skip a draft save (neither lists drafts).
          POST  /api/forms/draft                  { id, updated_at } + the
                                                  additive { form_key,
                                                  link_type, link_id } echo the

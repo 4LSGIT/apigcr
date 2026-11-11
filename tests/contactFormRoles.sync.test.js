@@ -15,8 +15,13 @@
 //   · EATING TYPING — a re-read rebuilds every card; a card typed in and not
 //     saved, an unsaved "+ Role" card or the caret in a role field must park
 //     the message until that is done;
-//   · OFF SCREEN — the section, the frame or the browser tab not showing parks
-//     it too, and it runs once when shown again;
+//   · OFF SCREEN — the browser tab hidden parks it, and it runs once when
+//     visible; the section not yet painted by the boot load parks it, and the
+//     boot load's paint runs it; the FRAME merely off screen (contact.html's
+//     inner tab not Info: frameElement.getClientRects() empty) does NOT park
+//     it — Chromium fires no resize inside an already-laid-out iframe whose
+//     host flips display and contact.html's tabs ping nothing, so a parked
+//     message stayed stale until the user worked in the section;
 //   · §3.6 — the re-read is GETs only; nothing is announced.
 //
 //   npx jest tests/contactFormRoles.sync.test.js
@@ -56,11 +61,16 @@ const JUDGE = { role_code: 'judge', label: 'Judge', active: 1, sort_order: 0,
   attrs_schema: [{ key: 'judge_3', type: 'text', label: 'Docket suffix', required: true }] };
 const CLERK = { role_code: 'clerk', label: 'Clerk', active: 1, sort_order: 1, attrs_schema: null };
 
-async function boot() {
+/** `firstRolesDelay` holds the BOOT roles GET open that long (a slow first
+ *  load, the section still display:none); `waitRendered:false` returns as soon
+ *  as the page exists. */
+async function boot({ firstRolesDelay = 0, waitRendered = true } = {}) {
   const calls = [];
   let w;
+  let rolesGets = 0;
   const apiSend = async (url, method, body) => {
     calls.push({ url, method });
+    if (url === '/api/contacts/5/roles' && method === 'GET' && rolesGets++ === 0 && firstRolesDelay) await sleep(firstRolesDelay);
     let data = { status: 'success' };
     if (method === 'GET' && url === '/api/contacts/5') data = { status: 'success', contact: contactRow() };
     else if (url === '/api/contacts/5/phones') data = { status: 'success', phones: [] };
@@ -97,6 +107,7 @@ async function boot() {
   });
   DOMS.push(dom);
   w = dom.window;
+  if (!waitRendered) return { w, calls };
   for (let i = 0; i < 300 && !(w.document.querySelector('[data-role-card="9"]')); i++) await sleep(10);
   if (!w.document.querySelector('[data-role-card="9"]')) throw new Error('contact-form: the Roles section never rendered');
   await sleep(1600);                         // past the boot load's echo stamp
@@ -106,6 +117,13 @@ async function boot() {
 const roleGets = (calls) => calls.filter((c) => c.url === '/api/contacts/5/roles' && c.method === 'GET').length;
 function setHidden(w, hidden) {
   Object.defineProperty(w.document, 'visibilityState', { configurable: true, get: () => (hidden ? 'hidden' : 'visible') });
+}
+/** This frame display:none in its host (contact.html on another inner tab):
+ *  getClientRects() empty, which is what Chromium answers for it. */
+function setOffScreen(w) {
+  const frame = { getClientRects: () => [] };
+  Object.defineProperty(w, 'frameElement', { configurable: true, get: () => frame });
+  return frame;
 }
 
 describe('contact-form.html — Roles reader (roles:contact:<id>)', () => {
@@ -202,15 +220,43 @@ describe('contact-form.html — Roles reader (roles:contact:<id>)', () => {
     expect(roleGets(calls)).toBe(2);
   });
 
-  test('NOT SHOWING: the section hidden parks it; shown again (a resize), it runs', async () => {
-    const { w, calls } = await boot();
+  test('NOT PAINTED: a message during a slow boot load parks; the boot load\'s paint runs it once', async () => {
+    const { w, calls } = await boot({ firstRolesDelay: 2300, waitRendered: false });
+    for (let i = 0; i < 300 && !roleGets(calls); i++) await sleep(10);
+    expect(roleGets(calls)).toBe(1);                               // the boot GET, held open
+    await sleep(1600);                                             // past the boot load's echo stamp
     const sec = w.document.getElementById('rolesSection');
-    sec.style.display = 'none';
+    expect(sec.style.display).toBe('none');                        // not painted yet
+    w.YC.emit(ADDR, { yc_refetch: 1 }, 'test');
+    await sleep(30);
+    expect(roleGets(calls)).toBe(1);                               // parked: no second load racing the first
+    for (let i = 0; i < 300 && !w.document.querySelector('[data-role-card="9"]'); i++) await sleep(10);
+    await sleep(30);
+    expect(sec.style.display).toBe('');
+    expect(roleGets(calls)).toBe(2);                               // the paint flushed it
+    await sleep(30);
+    expect(roleGets(calls)).toBe(2);                               // exactly once
+  }, 10000);
+
+  test('OFF SCREEN FRAME (contact.html on another tab): answered at once — no resize ever comes', async () => {
+    const { w, calls } = await boot();
+    const frame = setOffScreen(w);
+    expect(w.frameElement).toBe(frame);                            // the stub is what the page would read
+    expect(w.frameElement.getClientRects().length).toBe(0);
+    w.YC.emit(ADDR, { yc_refetch: 1 }, 'test');
+    await sleep(30);
+    expect(roleGets(calls)).toBe(2);
+  });
+
+  test('OFF SCREEN FRAME and busy: the caret in a role field still parks it; leaving the field runs it', async () => {
+    const { w, calls } = await boot();
+    setOffScreen(w);
+    const input = w.document.querySelector('[data-role-card="9"] [data-rkey="judge_3"]');
+    input.focus();
     w.YC.emit(ADDR, { yc_refetch: 1 }, 'test');
     await sleep(30);
     expect(roleGets(calls)).toBe(1);
-    sec.style.display = '';
-    w.dispatchEvent(new w.Event('resize'));
+    input.blur();                                                 // fires focusout
     await sleep(30);
     expect(roleGets(calls)).toBe(2);
   });

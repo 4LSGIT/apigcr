@@ -37,6 +37,13 @@
 // and runs it once when visible. contact-form's own save() clears the hold:
 // it DELETEs the superseded draft, hides the banner, clears _draftConflict.
 //
+// OFF SCREEN (NESTED, the frame's getClientRects() empty — what a display:none
+// iframe answers): the message is answered AT ONCE. It used to park until a
+// `resize` that Chromium never fires in an already-laid-out iframe whose host
+// flips display, and nothing else wakes a nested form frame, so the form sat
+// stale until the user typed into it. Off screen and dirty: still never
+// repopulated — the banner and the held autosave come regardless.
+//
 //   npx jest tests/formsPages.sync.test.js
 'use strict';
 
@@ -209,13 +216,13 @@ async function bootNested(cfg, { latest } = {}) {
   DOMS.push(dom);
   hostWin = dom.window;
   const iframe = hostWin.document.getElementById('f');
-  iframe.getClientRects = () => [{ width: 800, height: 600 }];   // jsdom lays out nothing: "shown"
+  iframe.getClientRects = () => [{ width: 800, height: 600 }];   // jsdom lays out nothing: "shown" (the OFF SCREEN tests flip it)
   let fw = null;
   for (let i = 0; i < 300 && !(fw && fw.ycForm); i++) { fw = iframe.contentWindow; await sleep(10); }
   if (!fw || !fw.ycForm) throw new Error(`${cfg.file}: the iframe never booted a form`);
   await ready(fw, `${cfg.file} (nested)`);
   fw.ycForm.config.autosaveMs = 60000;
-  return { host: hostWin, fw, calls, fetched, state, hostSubs };
+  return { host: hostWin, iframe, fw, calls, fetched, state, hostSubs };
 }
 
 const latestReads = (calls) => calls.filter((c) => c.method === 'GET' && c.url.startsWith('/api/forms/latest')).length;
@@ -334,6 +341,35 @@ describe.each(PAGES)('$file — NESTED in a host frame (production topology)', (
     await sleep(40);
     expect([lastLogged(host), lastLogged(fw)]).toEqual([addrOf(cfg), addrOf(cfg)]);
     expect(latestReads(calls)).toBe(before + 1);
+  });
+
+  test('OFF SCREEN (its host tab not showing): the message is answered at once, with no resize', async () => {
+    const { host, iframe, fw, calls, state } = await bootNested(cfg);
+    iframe.getClientRects = () => [];                             // display:none, as Chromium answers it
+    expect(fw.frameElement).toBe(iframe);                         // the stub is what the form would read
+    expect(fw.frameElement.getClientRects().length).toBe(0);
+    const before = latestReads(calls);
+    state.latest = { submitted: null, draft: caseyDraft(cfg) };
+    announce(host, cfg);
+    await sleep(60);
+    expect(latestReads(calls)).toBe(before + 1);
+    expect(banner(fw)).toBe('flex');
+    expect(fw.ycForm._syncStale).toBe(false);                     // nothing left parked
+  });
+
+  test('OFF SCREEN with unsaved typing: still never repopulated; the banner shows and autosave HOLDS', async () => {
+    const { host, iframe, fw, calls, state } = await bootNested(cfg);
+    iframe.getClientRects = () => [];
+    const el = type(fw, cfg.field, 'Half typed');
+    if (fw.document.activeElement && fw.document.activeElement.blur) fw.document.activeElement.blur();
+    state.latest = { submitted: null, draft: caseyDraft(cfg) };
+    announce(host, cfg);
+    await sleep(60);
+    expect(el.value).toBe('Half typed');
+    expect([banner(fw), fw.ycForm._draftConflict]).toEqual(['flex', true]);
+    const posts = draftPosts(calls);
+    await fw.ycForm.autosaveTick();
+    expect(draftPosts(calls)).toBe(posts);
   });
 });
 
