@@ -338,9 +338,12 @@ describe('the disclosures', () => {
   const recent = new Date(Date.now() - 2 * 3600 * 1000);
   test('someone else\'s draft in the last 24 hours is a danger warning; mine, or an older one, is not', async () => {
     const other = await run(draftCard(), { draft: { id: 55, data: { mode: 'Zoom' }, updated_at: recent, submitted_by: 2, user_name: 'Stuart', schema_version: 4 } });
-    expect(other.warnings[0]).toMatch(/^RECENT DRAFT BY SOMEONE ELSE: Stuart \(user #2\) saved this draft at .* within the last 24 hours/);
+    const at = recent.toISOString().slice(0, 16).replace('T', ' ');
+    // A staff form's autosave carries the draft POST's precondition: refused, and the card's draft shows in its banner.
+    expect(other.warnings[0]).toBe(`RECENT DRAFT BY SOMEONE ELSE: Stuart (user #2) saved this draft at ${at} UTC — within the last 24 hours, so they may still be working on it. Every answer they saved is carried forward unchanged. If they still have the form open, their next autosave is refused instead of replacing this card's answers: their form shows this card's draft in a banner, where Restore loads it and Discard deletes it.`);
     const client = await run(draftCard(), { draft: { id: 55, data: { mode: 'Zoom' }, updated_at: recent, submitted_by: null, user_name: null, schema_version: 4 } });
-    expect(client.warnings[0]).toMatch(/^RECENT DRAFT BY SOMEONE ELSE: the client, on the public form link \(no staff account\) saved this draft/);
+    // The public form's draft save has no stale check: its next autosave still replaces the draft whole.
+    expect(client.warnings[0]).toBe(`RECENT DRAFT BY SOMEONE ELSE: the client, on the public form link (no staff account) saved this draft at ${at} UTC — within the last 24 hours, so they may still be working on it. Every answer they saved is carried forward unchanged. If they still have the public form open, its next autosave replaces the whole draft, this card's answers included (the public form's draft save has no stale check).`);
     const mine = await run(draftCard(), { draft: { id: 55, data: { mode: 'Zoom' }, updated_at: recent, submitted_by: 6, user_name: 'Fred', schema_version: 4 } });
     expect(mine.warnings.some((w) => /RECENT DRAFT/.test(w))).toBe(false);
     expect(mine.existing.saved_by).toBe('you');

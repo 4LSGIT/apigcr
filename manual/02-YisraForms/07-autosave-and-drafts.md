@@ -22,6 +22,14 @@ When `autosave: true` is set, the form automatically saves a draft to the databa
 
 One draft per form+entity, enforced by the `draft_key` database constraint. The draft is upserted — overwritten on each autosave. Draft `version` is always 0.
 
+Each autosave names the draft row the form last saw — the one it loaded, its
+own last save, or the one it restored (`expected_draft_id` +
+`expected_updated_at`; both `null` when it holds none). The server writes only
+when the draft is still that row, to the millisecond, or is gone (then a new
+draft is saved). Any other draft is **never replaced**: the save is refused
+(see Two browsers below). An external form's server draft names no row — the
+client's autosave replaces it whole.
+
 ---
 
 ## Draft Recovery
@@ -54,12 +62,22 @@ latest draft and submission:
 - **No unsaved typing:** the form refreshes and shows the draft banner.
 - **Unsaved typing:** the form is never repopulated. It shows the newer draft's
   banner and **stops autosaving** ("Draft not saved — a newer draft is
-  waiting") — every autosave replaces the whole draft, so the next one would
-  erase the newer draft. Restore, Discard or a save ends the hold.
+  waiting") — the next autosave would replace the newer draft whole. Restore,
+  Discard or a save ends the hold.
 
 The form's own autosave echo is ignored, and the refresh waits while the page
-is hidden or a field has the caret. A copy open in another browser does not
-hear it and sees the draft on reload.
+is hidden or a field has the caret.
+
+### Two browsers
+
+The sync bus does not cross browsers (one per browser), so a copy of the form
+open in another browser — a colleague's machine — hears nothing. Its next
+autosave names the draft row it last saw, which is no longer the draft, and the
+server refuses it. The form then shows the newer draft's banner, keeps the
+typing on screen, and **stops autosaving** with "Draft not saved — *name* saved
+a newer draft at *time*: Restore or Discard it first". Restore loads the newer
+draft (and autosave resumes on top of it); Discard deletes it (and the next
+autosave saves the typing as a new draft). Nothing retries on its own.
 
 A draft **discarded** elsewhere (the banner's Discard, an Ask Casey discard
 card, or a submit's draft cleanup) is announced the same way when a draft was

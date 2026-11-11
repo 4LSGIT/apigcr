@@ -4,7 +4,8 @@
  * routes/api.forms.js — REST routes for the YisraCase Forms System
  *
  * GET    /api/forms/latest   — latest submitted + draft for a form+entity
- * POST   /api/forms/draft    — upsert autosave draft
+ * POST   /api/forms/draft    — upsert autosave draft (optional precondition:
+ *                               expected_draft_id + expected_updated_at → 409)
  * POST   /api/forms/submit   — record explicit submission
  * DELETE /api/forms/draft     — discard draft
  * GET    /api/forms/history   — submission history
@@ -27,7 +28,8 @@
  * All routes require JWT or API key auth (submit-draft: a JWT). The
  * Slice-4/X4 submissions routes map service `.status` errors to 400/404/409
  * (the api.formTemplates pattern);
- * the older handlers keep their original 500-everything mapping untouched.
+ * the older handlers keep their original 500-everything mapping (the draft
+ * POST adds its precondition's 400 / 409).
  */
 
 const express = require('express');
@@ -75,10 +77,20 @@ router.post('/api/forms/draft', jwtOrApiKey, async (req, res) => {
     });
   }
 
+  // Optional precondition (formService.draftExpectation): expected_draft_id +
+  // expected_updated_at, both set (the row this caller holds) or both null (it
+  // holds none). Neither key → the draft is replaced whole, as before.
+  let expected;
+  try {
+    expected = formService.draftExpectation(req.body);
+  } catch (err) {
+    return res.status(400).json({ status: 'error', message: err.message });
+  }
+
   try {
     const result = await formService.upsertDraft(
       req.db, form_key, link_type, link_id,
-      schema_version || 1, data, req.auth.userId
+      schema_version || 1, data, req.auth.userId, { expected }
     );
     // A12: the record the draft belongs to rides the answer (additive — the
     // service's { id, updated_at } is unchanged) so public/js/yc-sync.js can
@@ -86,6 +98,12 @@ router.post('/api/forms/draft', jwtOrApiKey, async (req, res) => {
     // matcher reads what the server wrote; an open copy of the form refetches.
     res.json({ status: 'success', ...result, form_key, link_type, link_id });
   } catch (err) {
+    // The precondition failed: nothing was written. `draft` is the row there
+    // now (GET /api/forms/latest's draft shape) or null when there is none.
+    // No record echo, so yc-sync announces nothing (apiSend throws first anyway).
+    if (err.status === 409) {
+      return res.status(409).json({ status: 'conflict', message: err.message, draft: err.draft || null });
+    }
     console.error('[api.forms] upsertDraft error:', err);
     res.status(500).json({ status: 'error', message: err.message });
   }

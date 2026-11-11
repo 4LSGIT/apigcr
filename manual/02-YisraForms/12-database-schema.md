@@ -52,7 +52,7 @@ CREATE TABLE form_submissions (
 | `linked_by` | int / null | X4: who adopted an unlinked submission from the Form Inbox. NULL when the row was linked at submit time (or never) |
 | `linked_at` | datetime / null | X4: when the adopt happened |
 | `created_at` | datetime | Row creation time |
-| `updated_at` | datetime | Auto-updated on every change |
+| `updated_at` | datetime(3) | Auto-updated on every change, to the millisecond (the draft POST's precondition compares it — Part 11) |
 | `draft_key` | varchar(100) | Generated column for draft uniqueness |
 
 ---
@@ -69,7 +69,9 @@ The `UNIQUE` index means:
 - Only **one draft** per form+entity (database rejects a second)
 - **Unlimited submitted rows** (MySQL allows multiple NULLs in unique indexes)
 
-Autosave uses `INSERT ... ON DUPLICATE KEY UPDATE` — no SELECT needed, no race conditions.
+A save without a precondition uses `INSERT ... ON DUPLICATE KEY UPDATE` — no SELECT needed, no
+race conditions. The form page's autosave sends one (Part 11, POST `/api/forms/draft`): a conditional
+`UPDATE` of the row it saw, then a plain `INSERT` this index refuses when another draft exists.
 
 ---
 

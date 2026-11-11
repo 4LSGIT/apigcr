@@ -3420,7 +3420,9 @@ function caseDocketKnownOutcome(e) {
 // the existing draft's id + updated_at + data hash (draft) or the
 // submission's status + link + version (link) into `expected`. The click
 // re-reads GET /api/forms/latest or GET /api/forms/submissions/:id (plus the
-// record) and refuses on ANY difference BEFORE the claim. No Idempotency-Key:
+// record) and refuses on ANY difference BEFORE the claim; the draft POST also
+// carries expected_draft_id + expected_updated_at (null + null: no draft), so
+// the route's own 409 is the last line (formDraftKnownOutcome). No Idempotency-Key:
 // one claim per draft; a second draft card re-reads the changed draft, and a
 // second link card is the route's own 409. Both writes are on the yc-sync bus
 // (form:<link_type>:<link_id>), so an open copy of the form refetches.
@@ -3640,7 +3642,31 @@ function formDraftRequest(draft) {
   for (const ch of draft.changes || []) {
     if (!Object.prototype.hasOwnProperty.call(data, ch.key)) throw new Error('This card\'s answers do not carry the reviewed change.');
   }
-  return { path: '/api/forms/draft', method: 'POST', body: { form_key: formKey, link_type: r.link_type, link_id: linkId, schema_version: version, data } };
+  // The route's precondition: the draft row the card reviewed (its expected
+  // id + updated_at), or none — the route answers 409 when that changed.
+  const x = draft.expected || {};
+  const expId = x.draft_id == null ? null : Number(x.draft_id);
+  const expAt = x.updated_at == null ? null : String(x.updated_at);
+  if ((expId === null) !== (expAt === null) || (expId !== null && (!Number.isSafeInteger(expId) || expId < 1 || Number.isNaN(Date.parse(expAt))))) {
+    throw new Error('This card has no usable stale check.');
+  }
+  return { path: '/api/forms/draft', method: 'POST', body: { form_key: formKey, link_type: r.link_type, link_id: linkId, schema_version: version, data,
+    expected_draft_id: expId, expected_updated_at: expAt } };
+}
+
+// The route's precondition refusal (409 {status:'conflict', draft}), written
+// before any write: a draft row the card did not review (moved, or a new one)
+// is there after the card's click-time re-read. A reviewed row that is gone
+// is no 409 (the route saves a new draft, replacing nothing unseen). Any
+// other 409 stays ambiguous (no refusal409).
+function formDraftKnownOutcome(e) {
+  if (!e || e.status !== 409 || !e.body || e.body.idempotency || e.body.status !== 'conflict') return null;
+  const d = e.body.draft;
+  if (d && typeof d === 'object') {
+    const when = formIso(d.updated_at);
+    return { status: 'Refused — nothing written', text: `Refused — nothing written: a newer draft (#${Number(d.id) || '?'}) was saved by ${String(d.user_name || '').trim() || 'someone'} at ${when ? `${when.slice(0, 16).replace('T', ' ')} UTC` : 'an unknown time'}, after this card's last check. Ask Casey to prepare it again.` };
+  }
+  return { status: 'Refused — nothing written', text: 'Refused — nothing written: the draft changed after this card\'s last check. Ask Casey to prepare it again.' };
 }
 
 async function formDraftPrecheck(draft) {
@@ -6733,6 +6759,7 @@ const ACTION_FAMILIES = [
     // A recent draft by someone else, fields a restore blanks, or a client who sees it.
     danger: (draft) => (draft.warnings || []).length > 0,
     precheck: formDraftPrecheck,
+    knownOutcome: formDraftKnownOutcome,
     refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
     resultText: (payload) => `draft #${payload.submission_id}`,
     entity: (draft) => formEntity(draft),

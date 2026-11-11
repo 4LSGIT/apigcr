@@ -16,9 +16,10 @@
  *      No per-draft read rule: the draft routes have none (any signed-in staff
  *      member reads and writes any draft). `expected_updated_at`, when given,
  *      must equal the row's updated_at (409 otherwise) — the freshness a
- *      reviewed card carries (A12 reads updated_at from GET /api/forms/latest).
- *      updated_at is DATETIME (whole seconds): two saves inside one second are
- *      indistinguishable to it.
+ *      reviewed card carries (A12 reads updated_at from GET /api/forms/latest),
+ *      compared by epoch ms. updated_at is DATETIME(3) and the draft writes
+ *      stamp NOW(3) (since 2026-11-11), so two saves inside one second are told
+ *      apart; only two in the same millisecond would not be.
  *   2. The PUBLISHED template (formTemplateService.getPublishedByKey — the read
  *      render.html boots from). None → 404; another link type than the draft's
  *      → 409; a draft saved under another schema_version → 409 naming both. The

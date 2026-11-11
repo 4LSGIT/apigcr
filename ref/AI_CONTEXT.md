@@ -24,6 +24,32 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **The draft POST's precondition (11-11):** POST `/api/forms/draft` takes an
+  optional `expected_draft_id` + `expected_updated_at` (both set: the row the
+  caller saw; both null: none held; anything else → 400). With it the route
+  never replaces a draft row the caller has not seen: the row must still be
+  that id with that updated_at to the MILLISECOND, or be gone (a new draft is
+  saved); otherwise 409 `{status:'conflict', message, draft}` (the row now
+  there, `/latest`'s draft shape), nothing written, nothing announced. Atomic
+  by construction (`formService.upsertDraft`: conditional UPDATE, then an
+  INSERT `idx_draft_unique` refuses) — never a SELECT-then-write. Needs
+  `form_submissions.updated_at` DATETIME(3) (`scripts/formDraftUpdatedAtMs.js`,
+  `ref/migrations/2026-11-11_form_submissions_updated_at_ms.sql`) and the
+  draft writes' NOW(3): at whole seconds two saves in one second tied and the
+  stale one passed. No precondition → the old wholesale replace (the external
+  draft route sends none; a client's autosave still replaces a staff draft —
+  plans.md). YCForm holds `_draftSeen` ({id, updated_at}: from GET latest at
+  init, each POST's answer, `syncLatest`, Restore; null after any draft
+  DELETE through `_api`) and sends it from `autosaveTick`; a 409 with a draft
+  raises the same banner + `_draftConflict` hold the bus raises (status "Draft
+  not saved — X saved a newer draft at T: Restore or Discard it first"), never
+  retried. This is what reaches a copy open in another BROWSER, which the bus
+  cannot. The A12 draft card sends its `expected` pair;
+  `formDraftKnownOutcome` reads the 409 as a refusal; its RECENT DRAFT warning
+  says a staff copy is refused (the public form's still replaces). Tests:
+  `tests/formsDraftPrecondition.mysql.test.js` (real engine, the migration,
+  the race, the same-second case), `tests/formsDraftPrecondition.test.js`,
+  `tests/caseyForms*.test.js`, `tests/assistantUi.test.js`.
 - **The stock form submit on the sync bus (11-11):** POST `/api/forms/submit`
   answers its `{id, version, updated_at}` PLUS an additive `{form_key,
   link_type, link_id}` echo of the request (as the draft routes do), and
@@ -1273,7 +1299,9 @@ body. Governing migrations in `ref/migrations/`.*
   {link_type, link_id} (bare `jwtOrApiKey`). The draft route is `ON DUPLICATE
   KEY UPDATE data = VALUES(data)` on `draft_key` (one draft per form + record,
   general_ci): it REPLACES the whole payload, validates nothing, stamps the
-  body's schema_version (1 when omitted). The normalizer checks every answer
+  body's schema_version (1 when omitted) — unless the body carries the
+  `expected_draft_id` + `expected_updated_at` precondition (§0, 11-11), which
+  the card sends. The normalizer checks every answer
   against the PUBLISHED definition (`extFormService.buildValueRegistry`),
   stores it the way yc-forms `collect()` would, and carries every existing
   draft answer it does not set forward verbatim; the body's schema_version is

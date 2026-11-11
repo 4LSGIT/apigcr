@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-09T01:40:31.608Z
+-- Generated: 2026-11-11T20:08:53.542Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:000fb19271b51bb9da03136d45b49ecc
+-- Fingerprint: sha256:c37b3d17a70665584b904847583ca6d6
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2282,7 +2282,7 @@ CREATE TABLE `form_submissions` (
   `linked_by` int unsigned DEFAULT NULL,
   `linked_at` datetime DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'DATETIME(3) since 2026-11-11: POST /api/forms/draft expected_updated_at compares it to the millisecond (at whole seconds two saves in one second were indistinguishable)',
   `draft_key` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci GENERATED ALWAYS AS ((case when (`status` = _utf8mb4'draft') then concat(`form_key`,_utf8mb4':',`link_type`,_utf8mb4':',`link_id`) else NULL end)) STORED
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 

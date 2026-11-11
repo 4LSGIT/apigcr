@@ -667,6 +667,7 @@ ref/migrations/2026-11-06_docs_intake_shadow.console.js
 ref/migrations/2026-11-06_mail_attachment_filings.sql
 ref/migrations/2026-11-09_docs_intake_digest.console.js
 ref/migrations/2026-11-09_mail_attachment_notices.sql
+ref/migrations/2026-11-11_form_submissions_updated_at_ms.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -903,6 +904,7 @@ scripts/encrypt-smtp-passwords.js
 scripts/ensure-sql-proxy.js
 scripts/esign_e2e_check.js
 scripts/esign_zoho_smoke.js
+scripts/formDraftUpdatedAtMs.js
 scripts/genTypeKeyBackfill.js
 scripts/gen_signatures.js
 scripts/hookAsyncReceiverS0.js
@@ -1618,6 +1620,8 @@ tests/formrender.extappearance.test.js
 tests/formrender.extcode.test.js
 tests/formrender.x2external.test.js
 tests/formrender.x4view.test.js
+tests/formsDraftPrecondition.mysql.test.js
+tests/formsDraftPrecondition.test.js
 tests/formsPages.sync.test.js
 tests/formsSubmitDraft.mysql.test.js
 tests/formsSubmitDraft.test.js

@@ -29,15 +29,7 @@ const domainEvents = require('../lib/domainEvents'); // Trigger T4
  */
 async function getLatest(db, formKey, linkType, linkId) {
   // Draft — at most one row due to draft_key unique constraint
-  const [[draft]] = await db.query(
-    `SELECT fs.id, fs.schema_version, fs.data, fs.updated_at, fs.submitted_by,
-            u.user_name AS user_name
-     FROM form_submissions fs
-     LEFT JOIN users u ON u.user = fs.submitted_by
-     WHERE fs.form_key = ? AND fs.link_type = ? AND fs.link_id = ? AND fs.status = 'draft'
-     LIMIT 1`,
-    [formKey, linkType, linkId]
-  );
+  const draft = await currentDraft(db, formKey, linkType, linkId);
 
   // Latest submitted — most recent by version (or updated_at as tiebreaker)
   const [[submitted]] = await db.query(
@@ -63,8 +55,87 @@ async function getLatest(db, formKey, linkType, linkId) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * The draft row of a form + entity, as GET /api/forms/latest returns it (and
+ * the draft POST's 409 does): { id, schema_version, data, updated_at,
+ * submitted_by, user_name } or null.
+ */
+async function currentDraft(db, formKey, linkType, linkId) {
+  const [[draft]] = await db.query(
+    `SELECT fs.id, fs.schema_version, fs.data, fs.updated_at, fs.submitted_by,
+            u.user_name AS user_name
+     FROM form_submissions fs
+     LEFT JOIN users u ON u.user = fs.submitted_by
+     WHERE fs.form_key = ? AND fs.link_type = ? AND fs.link_id = ? AND fs.status = 'draft'
+     LIMIT 1`,
+    [formKey, linkType, linkId]
+  );
+  return draft || null;
+}
+
+/**
+ * The draft POST's optional precondition, read from its body
+ * (POST /api/forms/draft { expected_draft_id, expected_updated_at }).
+ *
+ *   - neither key → undefined: no precondition, the draft is replaced whole
+ *     (API-key callers, the external route, any caller that sends neither);
+ *   - both null → { draftId: null, updatedAt: null }: "I hold no draft" — the
+ *     write is refused when a draft row exists;
+ *   - both set → { draftId, updatedAt: Date }: the draft row must still be
+ *     that id with that updated_at, to the millisecond (updated_at is
+ *     DATETIME(3) since 2026-11-11 — at whole seconds two saves inside one
+ *     second were indistinguishable), or be gone (then a new draft is
+ *     inserted — nothing unseen is replaced).
+ * Anything else — one key without the other, a non-integer id, a timestamp
+ * that does not parse — is a 400.
+ */
+function draftExpectation(body) {
+  const b = body && typeof body === 'object' ? body : {};
+  const hasId = Object.prototype.hasOwnProperty.call(b, 'expected_draft_id');
+  const hasAt = Object.prototype.hasOwnProperty.call(b, 'expected_updated_at');
+  if (!hasId && !hasAt) return undefined;
+  const id = b.expected_draft_id;
+  const at = b.expected_updated_at;
+  if (!hasId || !hasAt || (id === null) !== (at === null)) {
+    throw httpError(400, 'expected_draft_id and expected_updated_at go together: both null (no draft held) or both set');
+  }
+  if (id === null) return { draftId: null, updatedAt: null };
+  const draftId = Number(id);
+  if (!Number.isSafeInteger(draftId) || draftId <= 0 || (typeof id !== 'number' && !/^[1-9]\d*$/.test(String(id)))) {
+    throw httpError(400, 'expected_draft_id must be a positive integer');
+  }
+  const ms = (typeof at === 'string' && at.trim()) || typeof at === 'number' ? new Date(at).getTime() : NaN;
+  if (Number.isNaN(ms)) throw httpError(400, 'expected_updated_at is not a date');
+  return { draftId, updatedAt: new Date(ms) };
+}
+
+/** The draft POST's 409: nothing was written; `draft` is the row now there (or null). */
+function draftConflict(message, draft) {
+  const err = httpError(409, message);
+  err.draft = draft || null;
+  return err;
+}
+
+/**
  * Insert or update the single draft row for a form + entity.
- * Uses INSERT ... ON DUPLICATE KEY UPDATE on the draft_key unique index.
+ *
+ * With no `opts.expected` (the external route, API-key callers, any caller
+ * that sends no precondition): INSERT ... ON DUPLICATE KEY UPDATE on the
+ * draft_key unique index (idx_draft_unique) — the draft is replaced whole.
+ *
+ * With `opts.expected` (draftExpectation) the rule is: never replace a draft
+ * row the caller has not seen. The check IS the write, so two saves racing on
+ * the same expected value cannot both pass —
+ *   - { draftId, updatedAt }: UPDATE ... WHERE id = ? AND this form + record
+ *     + status 'draft' AND updated_at = ?. InnoDB re-reads the row under its
+ *     lock, so of two racing UPDATEs the second sees the first's updated_at
+ *     and matches nothing. affectedRows counts MATCHED rows (mysql2's
+ *     default FOUND_ROWS), so 0 means the row moved, was replaced by a new
+ *     row, or is gone (discarded / submitted) — then the INSERT below;
+ *   - { draftId: null }, or the expected row gone: a plain INSERT.
+ *     idx_draft_unique refuses it when a draft row exists (ER_DUP_ENTRY) →
+ *     409 with that row. No row at all → a new draft: nothing unseen is
+ *     replaced (the page's "your next autosave saves a new draft").
+ * Every write stamps updated_at = NOW(3).
  *
  * @param {object} db
  * @param {string} formKey
@@ -73,10 +144,48 @@ async function getLatest(db, formKey, linkType, linkId) {
  * @param {number} schemaVersion
  * @param {object} data          - full form payload (will be stored as JSON)
  * @param {number|null} userId   - req.auth.userId
- * @returns {{ id: number, updated_at: string }}
+ * @param {object} [opts]        - { expected } from draftExpectation
+ * @returns {{ id: number, updated_at: Date }}
+ * @throws a 409 (err.draft = the current row or null) when the precondition fails
  */
-async function upsertDraft(db, formKey, linkType, linkId, schemaVersion, data, userId) {
+async function upsertDraft(db, formKey, linkType, linkId, schemaVersion, data, userId, opts = {}) {
   const dataJson = typeof data === 'string' ? data : JSON.stringify(data);
+  const expected = opts && opts.expected;
+
+  if (expected) {
+    if (expected.draftId != null) {
+      const [upd] = await db.query(
+        `UPDATE form_submissions
+            SET data = ?, schema_version = ?, submitted_by = ?, updated_at = NOW(3)
+          WHERE id = ? AND form_key = ? AND link_type = ? AND link_id = ? AND status = 'draft'
+            AND updated_at = ?`,
+        [dataJson, schemaVersion, userId, expected.draftId, formKey, linkType, linkId, expected.updatedAt]
+      );
+      if (upd.affectedRows === 1) {
+        const [[row]] = await db.query(`SELECT updated_at FROM form_submissions WHERE id = ?`, [expected.draftId]);
+        return { id: expected.draftId, updated_at: row.updated_at };
+      }
+    }
+    let ins;
+    try {
+      [ins] = await db.query(
+        `INSERT INTO form_submissions
+           (form_key, link_type, link_id, status, version, schema_version, data, submitted_by, updated_at)
+         VALUES (?, ?, ?, 'draft', 0, ?, ?, ?, NOW(3))`,
+        [formKey, linkType, linkId, schemaVersion, dataJson, userId]
+      );
+    } catch (err) {
+      if (err && err.code === 'ER_DUP_ENTRY') {
+        throw draftConflict(expected.draftId != null
+          ? 'The draft was saved again since it was read — nothing was written'
+          : 'A draft of this form already exists for this record — nothing was written',
+        await currentDraft(db, formKey, linkType, linkId));
+      }
+      throw err;
+    }
+    const [[row]] = await db.query(`SELECT updated_at FROM form_submissions WHERE id = ?`, [ins.insertId]);
+    return { id: ins.insertId, updated_at: row.updated_at };
+  }
 
   const [result] = await db.query(
     `INSERT INTO form_submissions
@@ -86,7 +195,7 @@ async function upsertDraft(db, formKey, linkType, linkId, schemaVersion, data, u
        data = VALUES(data),
        schema_version = VALUES(schema_version),
        submitted_by = VALUES(submitted_by),
-       updated_at = NOW()`,
+       updated_at = NOW(3)`,
     [formKey, linkType, linkId, schemaVersion, dataJson, userId]
   );
 
@@ -601,6 +710,7 @@ async function getSubmissionForRender(db, id) {
 module.exports = {
   getLatest,
   upsertDraft,
+  draftExpectation,
   submitForm,
   deleteDraft,
   getHistory,

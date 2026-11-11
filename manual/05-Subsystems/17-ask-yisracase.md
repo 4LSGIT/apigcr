@@ -1002,8 +1002,10 @@ and uses only those.
   who saved the existing draft last and when, and how many of its answers are
   **carried forward unchanged** — saving a draft replaces it whole, so Casey
   sends every answer already in it again. It warns when someone else saved the
-  draft in the last 24 hours (they may still be working on it, and a copy open
-  in another browser would replace the draft on its next autosave), and when
+  draft in the last 24 hours (they may still be working on it: a copy they have
+  open is refused on its next autosave and shows this card's draft in a banner,
+  where Restore loads it and Discard deletes it — but the client's public form
+  still replaces the draft whole on its next autosave), and when
   the draft does not hold every field: **Restore fills the form from the draft,
   so each field it lacks shows blank** — check the restored form before saving
   it. Required answers left empty are listed (the form asks for them when it is
@@ -1080,8 +1082,10 @@ and uses only those.
 - **Other open pages.** A copy of the form open in the form page in this browser
   picks up the new draft by itself; if you were typing in it, it keeps your
   typing, shows the new draft's banner and stops autosaving until you Restore or
-  Discard. The older built-in form pages (Case Details, ISSN, the contact form)
-  and copies open in another browser show it when reopened.
+  Discard. The built-in form pages (Case Details, ISSN, the contact form) listen
+  the same way. A copy open in another browser does not hear it: its next
+  autosave is refused, and it then shows the new draft's banner and stops
+  autosaving until Restore or Discard.
 
 The off switch for these cards is the `casey_forms_enabled` setting (on unless
 set to 0).

@@ -43,6 +43,12 @@
  *   - The browser's prechecks pass on a fresh card (the SHA-256 of the
  *     canonical stored draft, the ISO updated_at round trip) and refuse after
  *     a change; the answer checks accept the real answers.
+ *   - The draft request carries the card's expected draft id + updated_at
+ *     (null + null for no draft), the route accepts it, and the same request
+ *     past a change is the route's 409, which formDraftKnownOutcome reads as a
+ *     refusal (form_submissions.updated_at migrated to DATETIME(3) in the
+ *     before-hook by scripts/formDraftUpdatedAtMs.js — a no-op once
+ *     ref/database.sql carries it).
  */
 'use strict';
 
@@ -120,8 +126,8 @@ function browserChecks(api) {
   const max = /const FORM_DATA_MAX_BYTES = [^;]+;/.exec(html);
   if (!max) throw new Error('FORM_DATA_MAX_BYTES not found');
   const names = ['formCanonical', 'formDataHash', 'formIso', 'formRecordLabel', 'formTitle', 'formRecordPath', 'formDraftRequest', 'formDraftPrecheck',
-    'formDraftResult', 'formLinkRequest', 'formLinkPrecheck', 'formLinkResult'];
-  const src = `${max[0]}\n${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { formDraftRequest, formDraftPrecheck, formDraftResult, formLinkRequest, formLinkPrecheck, formLinkResult };`;
+    'formDraftResult', 'formDraftKnownOutcome', 'formLinkRequest', 'formLinkPrecheck', 'formLinkResult'];
+  const src = `${max[0]}\n${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { formDraftRequest, formDraftPrecheck, formDraftResult, formDraftKnownOutcome, formLinkRequest, formLinkPrecheck, formLinkResult };`;
   return new Function('api', src)(api); // eslint-disable-line no-new-func
 }
 
@@ -194,6 +200,9 @@ d('the Casey form cards on real MySQL (A12)', () => {
       for (const sql of creates) await conn.query(sql);
       for (const sql of alters) await conn.query(sql);
       await conn.query('SET FOREIGN_KEY_CHECKS = 1');
+      // form_submissions.updated_at → DATETIME(3), the draft POST precondition's
+      // resolution (a no-op once ref/database.sql carries it).
+      await require('../scripts/formDraftUpdatedAtMs').run(conn, { apply: true, log: () => {} });
     } finally { conn.release(); }
     app = express();
     app.use(express.json());
@@ -266,19 +275,33 @@ d('the Casey form cards on real MySQL (A12)', () => {
     expect([c.carried, c.existing.saved_by, c.warnings[0].slice(0, 46)]).toEqual([{ count: 2, off_form: 1 }, 'Stuart (user #2)', 'RECENT DRAFT BY SOMEONE ELSE: Stuart (user #2)']);
     expect(await browser.formDraftPrecheck(c)).toBe('');
     const req = browser.formDraftRequest(c);
-    expect(req).toEqual({ path: '/api/forms/draft', method: 'POST', body: { form_key: '341_notes', link_type: 'case', link_id: C1, schema_version: 3, data: c.data } });
+    expect(req).toEqual({ path: '/api/forms/draft', method: 'POST', body: { form_key: '341_notes', link_type: 'case', link_id: C1, schema_version: 3, data: c.data,
+      expected_draft_id: c.expected.draft_id, expected_updated_at: c.expected.updated_at } });
     const res = await call(app, req.method, req.path, req.body);
+    expect(res.status).toBe(200);
     expect(browser.formDraftResult(c, res.body)).toEqual({ submission_id: c.expected.draft_id });
     const [row] = await draftOf('341_notes', 'case', C1);
     expect([row.data, row.schema_version, row.submitted_by]).toEqual([c.data, 3, 6]);
     // The stored draft changed (its data and its updated_at): the same card now refuses.
     expect(await browser.formDraftPrecheck(c)).toMatch(/^The draft of "341 Notes" for case 25-70001 changed since this card was prepared \(someone saved it — last by Fred\)/);
+    // The route itself is the last line: the same request again (past the re-read) is a 409 naming the row now
+    // there, which the card reads as a refusal; nothing is written.
+    const replay = await call(app, req.method, req.path, req.body);
+    expect(replay.status).toBe(409);
+    expect([replay.body.status, replay.body.draft.id, replay.body.draft.user_name, replay.body.draft.updated_at]).toEqual(['conflict', c.expected.draft_id, 'Fred', res.body.updated_at]);
+    expect(browser.formDraftKnownOutcome({ status: 409, body: replay.body })).toEqual({ status: 'Refused — nothing written',
+      text: `Refused — nothing written: a newer draft (#${c.expected.draft_id}) was saved by Fred at ${res.body.updated_at.slice(0, 16).replace('T', ' ')} UTC, after this card's last check. Ask Casey to prepare it again.` });
+    expect((await draftOf('341_notes', 'case', C1))[0].data).toEqual(c.data);
     // A card prepared with NO draft refuses once a draft appears; one prepared over a draft refuses once it is discarded.
     const fresh = await normalizeActionDraft(pool, { kind: 'form.draft.v1', form_key: '341_notes', link_type: 'case', link_id: C2,
       data: { trustee_name: 'X' }, evidence: [{ query_id: 'q2', row_number: 1 }] }, [ev[0], { id: 'q2', rows: [{ case_id: C2 }] }], { currentUserId: 6 });
     expect([fresh.expected, await browser.formDraftPrecheck(fresh)]).toEqual([{ draft_id: null, updated_at: null, data_hash: null }, '']);
     await call(app, 'POST', '/api/forms/draft', { form_key: '341_notes', link_type: 'case', link_id: C2, data: { attended: false } });
     expect(await browser.formDraftPrecheck(fresh)).toMatch(/^Someone saved a draft of "341 Notes" for case 25-70002 since this card was prepared/);
+    const freshReq = browser.formDraftRequest(fresh);
+    expect([freshReq.body.expected_draft_id, freshReq.body.expected_updated_at]).toEqual([null, null]);
+    const dup = await call(app, freshReq.method, freshReq.path, freshReq.body);
+    expect([dup.status, dup.body.message, dup.body.draft.data]).toEqual([409, 'A draft of this form already exists for this record — nothing was written', { attended: false }]);
     await call(app, 'DELETE', `/api/forms/draft?form_key=341_notes&link_type=case&link_id=${C1}`);
     expect(await browser.formDraftPrecheck(c)).toMatch(/^The draft of "341 Notes" for case 25-70001 was discarded or submitted since this card was prepared/);
   });

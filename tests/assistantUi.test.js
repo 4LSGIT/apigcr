@@ -101,7 +101,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'caseFolderLabel', 'caseFolderCaseLabel', 'caseFolderText', 'caseFolderRequest', 'caseFolderPrecheck', 'caseFolderResult',
   'caseFolderKnownOutcome', 'caseFolderAppliedMessage',
   'formCanonical', 'formDataHash', 'formIso', 'formRecordLabel', 'formLabel', 'formTitle', 'formText', 'formRecordPath', 'formDraftRequest',
-  'formDraftPrecheck', 'formDraftResult', 'formLinkRequest', 'formLinkPrecheck', 'formLinkResult', 'formLinkKnownOutcome', 'formEntity', 'formOpen',
+  'formDraftPrecheck', 'formDraftResult', 'formDraftKnownOutcome', 'formLinkRequest', 'formLinkPrecheck', 'formLinkResult', 'formLinkKnownOutcome', 'formEntity', 'formOpen',
   // A12.2: the discard and PDF families (tests/caseyFormDiscardPdf.test.js drives them function by function).
   'formDiscardRequest', 'formDiscardPrecheck', 'formDiscardResult', 'formDiscardKnownOutcome', 'formPdfRequest', 'formPdfPrecheck',
   'formPdfResult', 'formPdfKnownOutcome', 'formPdfAppliedMessage',
@@ -4700,7 +4700,7 @@ describe('A12 form cards (form.draft / form.submission.link)', () => {
     expect(sandbox.actionFamily(m.action_draft).id).toBe('form_draft');
     expect(gets).toEqual([`/api/cases/${CASE_ID}`, LATEST]);
     expect(writes).toEqual([{ path: '/api/forms/draft', method: 'POST', headers: undefined,
-      body: { form_key: '341_notes', link_type: 'case', link_id: CASE_ID, schema_version: 4, data: DATA } }]);
+      body: { form_key: '341_notes', link_type: 'case', link_id: CASE_ID, schema_version: 4, data: DATA, expected_draft_id: 55, expected_updated_at: AT } }]);
     expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a12', result: { submission_id: 55 } } }]);
     expect(m.action_draft).toMatchObject({ status: 'applied', result_form_draft_id: 55 });
     expect(history[0].text).toBe('Save form draft applied to draft #55.');
@@ -4721,6 +4721,7 @@ describe('A12 form cards (form.draft / form.submission.link)', () => {
       changes: [{ key: 'trustee_name', label: 'Trustee', type: 'text', before: null, after: '"Jane Trustee"', unchanged: false }] });
     const rf = await runForm(fresh, { write: saved, read: reads({ latest: { status: 'success', submitted: null, draft: null } }) });
     expect(rf.writes.length).toBe(1);
+    expect([rf.writes[0].body.expected_draft_id, rf.writes[0].body.expected_updated_at]).toEqual([null, null]);
     expect(rf.P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning', focusCancel: true });
     expect(rf.P.Swal.fire.mock.calls[0][0].text).toContain('Existing draft: none — this card creates it');
     expect(rf.P.Swal.fire.mock.calls[0][0].text).toContain('Answer: Trustee (trustee_name): (not in the draft) → "Jane Trustee"');
@@ -4738,6 +4739,10 @@ describe('A12 form cards (form.draft / form.submission.link)', () => {
       [draftMsg({ data: ['x'] }), 'has no answers'],
       [draftMsg({ data: { outcome: 'Continued' } }), 'do not carry the reviewed change'],
       [draftMsg({ data: big, changes: [] }), 'over the form store\'s 64 KB limit'],
+      [draftMsg({ expected: { draft_id: 55, updated_at: null, data_hash: 'x' } }), 'no usable stale check'],
+      [draftMsg({ expected: { draft_id: null, updated_at: AT, data_hash: null } }), 'no usable stale check'],
+      [draftMsg({ expected: { draft_id: 0, updated_at: AT, data_hash: 'x' } }), 'no usable stale check'],
+      [draftMsg({ expected: { draft_id: 55, updated_at: 'not a date', data_hash: 'x' } }), 'no usable stale check'],
     ]) {
       const x = await runForm(message, { write: saved });
       expect({ why, gets: x.gets, ledger: x.ledger, writes: x.writes }).toEqual({ why, gets: [], ledger: [], writes: [] });
@@ -4788,6 +4793,29 @@ describe('A12 form cards (form.draft / form.submission.link)', () => {
     const noId = draftMsg();
     await runForm(noId, { write: async (p, body) => ({ ...(await saved(p, body)), id: 0 }) });
     expect(noId.action_draft.ambiguous_error).toMatch(/did not confirm the draft/);
+  });
+
+  test('draft: the route\'s precondition 409 (a newer draft, past the click-time re-read) is a refusal naming who and when; any other 409 stays ambiguous', async () => {
+    const conflict = (draft) => async () => { throw Object.assign(new Error('The draft was saved again since it was read — nothing was written'),
+      { status: 409, body: { status: 'conflict', message: 'The draft was saved again since it was read — nothing was written', draft } }); };
+    const newer = draftMsg();
+    await runForm(newer, { write: conflict({ id: 55, schema_version: 4, data: {}, updated_at: '2026-11-01T10:07:31.123Z', submitted_by: 2, user_name: 'Stuart' }) });
+    expect([newer.action_draft.refusal_error, newer.action_draft.refusal_status, newer.action_draft.ambiguous_error, newer.action_draft.status]).toEqual([
+      'Refused — nothing written: a newer draft (#55) was saved by Stuart at 2026-11-01 10:07 UTC, after this card\'s last check. Ask Casey to prepare it again.',
+      'Refused — nothing written', undefined, 'draft']);
+    const client = draftMsg();
+    await runForm(client, { write: conflict({ id: 56, schema_version: 4, data: {}, updated_at: '2026-11-01T10:07:31.123Z', submitted_by: null, user_name: null }) });
+    expect(client.action_draft.refusal_error).toBe('Refused — nothing written: a newer draft (#56) was saved by someone at 2026-11-01 10:07 UTC, after this card\'s last check. Ask Casey to prepare it again.');
+    const gone = draftMsg();
+    await runForm(gone, { write: conflict(null) });
+    expect(gone.action_draft.refusal_error).toBe('Refused — nothing written: the draft changed after this card\'s last check. Ask Casey to prepare it again.');
+    // A 409 without the precondition's shape (or an idempotency 409) is not read as a refusal.
+    const odd = draftMsg();
+    await runForm(odd, { write: async () => { throw Object.assign(new Error('Conflict'), { status: 409, body: { status: 'error', message: 'Conflict' } }); } });
+    expect([odd.action_draft.refusal_error, odd.action_draft.ambiguous_error]).toEqual([undefined, expect.stringMatching(/may already have been applied/)]);
+    const idem = draftMsg();
+    await runForm(idem, { write: async () => { throw Object.assign(new Error('x'), { status: 409, body: { status: 'conflict', draft: null, idempotency: { outcome: 'unknown' } } }); } });
+    expect(idem.action_draft.refusal_error).toBe(undefined);
   });
 
   const linkMsg = (over = {}) => ({ action_draft: {

@@ -2004,7 +2004,15 @@ UPDATE data = VALUES(data)` on the generated `draft_key` (one draft per
 form_key + link_type + link_id, compared under general_ci), so a second save
 keeps the row and REPLACES the whole payload — any answer it does not carry is
 gone — and stamps the body's `schema_version` (1 when the body omits it). It
-validates nothing against the template and emits no event. PATCH
+validates nothing against the template and emits no event. With the optional
+precondition `expected_draft_id` + `expected_updated_at` (the row the caller
+saw, or both null for none) it replaces only that row — compared to the
+millisecond, `updated_at` being DATETIME(3) since 2026-11-11 — or saves a new
+draft when no row exists; any other draft row is a 409 `{status:'conflict',
+message, draft}` (the row now there) with nothing written. The check is the
+write (a conditional UPDATE, then an INSERT `idx_draft_unique` refuses), so of
+two racing saves exactly one lands. The form page's autosave and this card
+send it; the external draft route does not. PATCH
 `/api/forms/submissions/:id/link` → `formService.linkSubmission` answers 400 for
 a draft, 409 for an already-linked row (its own read, and its conditional
 UPDATE losing a race) and for another link type than the template's (a
@@ -2031,7 +2039,8 @@ row only. 49 field rows per read; `search` narrows by key or label. The
 `sql.read` reads drafts and submissions.
 
 **Shipped contract.** Two kinds behind one switch: `form.draft.v1` (POST
-`/api/forms/draft` {form_key, link_type, link_id, schema_version, data}) and
+`/api/forms/draft` {form_key, link_type, link_id, schema_version, data,
+expected_draft_id, expected_updated_at}) and
 `form.submission.link.v1` (PATCH `/api/forms/submissions/:id/link` {link_type,
 link_id}).
 - **Refused by name**, before anything is read: the route-owned columns
@@ -2067,7 +2076,11 @@ link_id}).
   the route would store 1).
 - **Disclosed:** each answer before → after (an answer already equal is shown
   unchanged); who last saved the draft and when — someone else (the client
-  included) within 24 hours is a danger warning; **RESTORE BLANKS** — the form's
+  included) within 24 hours is a danger warning (RECENT DRAFT BY SOMEONE ELSE):
+  a staff form they still have open is refused on its next autosave and shows
+  this card's draft in a banner, where Restore loads it and Discard deletes it;
+  the client's public form has no stale check, so its next autosave replaces
+  the whole draft, this card's answers included; **RESTORE BLANKS** — the form's
   Restore populates every field from the draft, so each field the draft does
   not hold shows blank, and a save after it saves the blanks (and writes the
   record when the form patches it) — a danger warning naming them; the latest
@@ -2104,15 +2117,23 @@ link_id}).
   the record (GET `/api/cases/:id` / `/api/contacts/:id`) and GET
   `/api/forms/latest` or GET `/api/forms/submissions/:id`, and refuses on any
   difference before the claim — a draft saved, restored or discarded since, a
-  draft that appeared over a "no draft" card, a submission linked since.
+  draft that appeared over a "no draft" card, a submission linked since. The
+  draft POST then carries `expected.draft_id` / `expected.updated_at` as the
+  route's precondition (null + null for a "no draft" card), so a save landing
+  between the re-read and the POST is the route's 409 — the last line, as in
+  A12.3.
 - **Idempotency:** none added. One claim per draft; a second draft card re-reads
   the changed draft and refuses; a second link card is refused by its re-read or
   the route's 409.
 - **Outcomes:** the link route's 409s ("already linked", "was linked by
   someone else", the template's link type) and 404s (submission, target) are
-  before-write refusals (`knownOutcome`); a 400 is a refusal; anything else —
-  every draft-route 500, an answer that does not echo the reviewed form and
-  record or the submission — stays ambiguous.
+  before-write refusals (`knownOutcome`); the draft route's precondition 409
+  (`{status:'conflict', draft}`) is a refusal naming the newer draft's number,
+  who saved it and when (`formDraftKnownOutcome`: "Refused — nothing written: a
+  newer draft (#N) was saved by X at T, after this card's last check. Ask Casey
+  to prepare it again."); a 400 is a refusal; anything else — every draft-route
+  500, any other 409, an answer that does not echo the reviewed form and record
+  or the submission — stays ambiguous.
 - **Receipt:** the integer `submission_id` for both — the draft row the POST
   upserted (it returns the row id) and the submission the PATCH linked. Two
   browser families (`form_draft`, `form_link`): their routes, re-reads and

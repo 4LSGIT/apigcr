@@ -7320,7 +7320,11 @@ async function normalizeFormDraft(db, value, evidence, currentUserId) {
     existing = { draft_id: Number(draftRow.id), updated_at: documentIso(draftRow.updated_at), saved_by: who,
       schema_version: Number(draftRow.schema_version) || 1 };
     if (!mine && !Number.isNaN(at.getTime()) && Date.now() - at.getTime() < FORM_FOREIGN_DRAFT_MS) {
-      warnings.push(`RECENT DRAFT BY SOMEONE ELSE: ${who} saved this draft at ${formWhen(draftRow.updated_at)} — within the last 24 hours, so they may still be working on it. Every answer they saved is carried forward unchanged, but if they still have the form open in another browser, their next autosave replaces the whole draft, this card's answers included.`);
+      // A staff form's autosave carries the draft POST's precondition (a 409
+      // when the row moved); the public form's draft save carries none.
+      warnings.push(`RECENT DRAFT BY SOMEONE ELSE: ${who} saved this draft at ${formWhen(draftRow.updated_at)} — within the last 24 hours, so they may still be working on it. Every answer they saved is carried forward unchanged. ${by == null
+        ? 'If they still have the public form open, its next autosave replaces the whole draft, this card\'s answers included (the public form\'s draft save has no stale check).'
+        : 'If they still have the form open, their next autosave is refused instead of replacing this card\'s answers: their form shows this card\'s draft in a banner, where Restore loads it and Discard deletes it.'}`);
     }
   }
   if (absent.length) {

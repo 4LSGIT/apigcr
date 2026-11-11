@@ -43,26 +43,53 @@ await apiSend("/api/forms/latest?form_key=contact_info&link_type=contact&link_id
 Upsert a draft. Called by autosave.
 
 **Body:** `form_key`, `link_type`, `link_id`, `data` (required). `schema_version` (optional, default 1).
+Optional precondition, the two keys together: `expected_draft_id` + `expected_updated_at` — the
+draft row the caller last saw (its `id` and `updated_at` from `/latest` or the last save's answer),
+or both `null` for "I hold no draft". One without the other, an id that is not a positive integer,
+or a timestamp that does not parse is a 400 (`{ "status": "error", "message": … }`).
 
 **Response:**
 ```json
-{ "status": "success", "id": 43, "updated_at": "2026-04-07T16:02:15.000Z",
+{ "status": "success", "id": 43, "updated_at": "2026-04-07T16:02:15.123Z",
   "form_key": "contact_info", "link_type": "contact", "link_id": "1001" }
 ```
 
 `form_key` / `link_type` / `link_id` echo the request so the sync bus can
 announce `form:<link_type>:<link_id>` (an open copy of the form refetches —
-see [Autosave & Drafts](07-autosave-and-drafts.md)).
+see [Autosave & Drafts](07-autosave-and-drafts.md)). `updated_at` carries milliseconds
+(`form_submissions.updated_at` is `DATETIME(3)`).
 
-Uses `INSERT ... ON DUPLICATE KEY UPDATE` on the `draft_key` unique index — no race conditions. The
-whole `data` payload is REPLACED on every save (answers a save does not carry are gone), and
-`schema_version` is overwritten too (1 when omitted).
+Without the precondition: `INSERT ... ON DUPLICATE KEY UPDATE` on the `draft_key` unique index —
+no race conditions, last write wins. The whole `data` payload is REPLACED on every save (answers a
+save does not carry are gone), and `schema_version` is overwritten too (1 when omitted).
+
+With it, the server never replaces a draft the caller has not seen. The draft row must still be
+that `id` with that `updated_at` (compared to the millisecond) — or be gone, in which case a new
+draft is saved; `null` + `null` saves only when no draft exists. The check is the write itself (a
+conditional `UPDATE`, then an `INSERT` the unique index refuses), so of two saves racing on the
+same expected row exactly one lands. Otherwise **409**, nothing written, and `draft` is the row
+there now — `/latest`'s draft shape (`null` only if it vanished again before the re-read):
+```json
+{ "status": "conflict", "message": "The draft was saved again since it was read — nothing was written",
+  "draft": { "id": 43, "schema_version": 1, "data": { "fname": "Frederick" },
+             "updated_at": "2026-04-07T16:05:40.517Z", "submitted_by": 1, "user_name": "Stuart" } }
+```
+With `null` + `null` the message is "A draft of this form already exists for this record — nothing
+was written". The form page always sends the precondition (Part 7, Two browsers); so does an Ask
+Casey draft card (the draft it reviewed). The external draft route (`/api/ext/forms/:form_key/draft`)
+sends none. A 409 is not announced on the sync bus.
 
 **Console test:**
 ```js
 await apiSend("/api/forms/draft", "POST", {
   form_key: "contact_info", link_type: "contact", link_id: "1001",
   schema_version: 1, data: { fname: "Fred" }
+});
+// With the precondition (a 409 if someone saved since):
+const { draft } = await apiSend("/api/forms/latest?form_key=contact_info&link_type=contact&link_id=1001", "GET");
+await apiSend("/api/forms/draft", "POST", {
+  form_key: "contact_info", link_type: "contact", link_id: "1001", schema_version: 1, data: { fname: "Fred" },
+  expected_draft_id: draft ? draft.id : null, expected_updated_at: draft ? draft.updated_at : null
 });
 ```
 
@@ -347,7 +374,7 @@ await apiSend("/api/forms/submissions/submit-draft", "POST",
 const formService = require('../services/formService');
 
 formService.getLatest(db, formKey, linkType, linkId)
-formService.upsertDraft(db, formKey, linkType, linkId, schemaVersion, data, userId)
+formService.upsertDraft(db, formKey, linkType, linkId, schemaVersion, data, userId, { expected })  // expected: draftExpectation(body); 409 err.draft
 formService.submitForm(db, formKey, linkType, linkId, schemaVersion, data, userId)
 formService.deleteDraft(db, formKey, linkType, linkId)
 formService.getHistory(db, formKey, linkType, linkId, limit)

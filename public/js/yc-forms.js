@@ -77,6 +77,8 @@ class YCForm {
                                    // this form held unsaved typing — autosave holds
                                    // until the banner's Restore / Discard (or a save).
     this._lastDraftWrite = 0;      // A12: when this frame last wrote a draft or a submission (echo fence).
+    this._draftSeen = null;        // { id, updated_at } of the draft row this form's autosave may
+                                   // replace — sent as the draft POST's precondition (null: none held).
     this._userEditSeq = 0;         // Bumped on every TRUSTED user input/change.
                                    // Lets refresh()/save() tell "onLoad wrote this
                                    // field" from "the user typed into it while we
@@ -233,6 +235,7 @@ if (this.config.endpoints.load && !this.config.external) {
       }
       this._submittedData = latest.submitted;
       this._draftData = latest.draft;
+      if (!this.config.external) this._draftSeen = YCForm._draftRef(latest.draft);
 
       // 9. Decide what data to populate
       const dataSource = this._resolveDataSource();
@@ -389,6 +392,7 @@ if (this.config.endpoints.load && !this.config.external) {
         // step 13b) — restored values may show/hide sections.
         this._evaluateConditionals();
         this._draftConflict = false;   // A12: the newer draft is the form's now
+        if (!this.config.external) this._draftSeen = YCForm._draftRef(draft);   // its row is the one autosave replaces
         this._draftBannerEl.style.display = 'none';
       };
     }
@@ -1279,32 +1283,64 @@ if (this.config.endpoints.load && !this.config.external) {
       return;
     }
 
-    // A12: a newer draft (someone else's, or an Ask Casey card) arrived over
-    // the sync bus while this form held unsaved typing. The route replaces a
-    // draft WHOLE, so saving now would silently erase it: hold until the
+    // A12: a newer draft (someone else's, or an Ask Casey card) is waiting —
+    // heard over the sync bus while this form held unsaved typing, or answered
+    // by the route's 409 below. Saving would replace it whole: hold until the
     // banner's Restore or Discard decides.
     if (this._draftConflict) {
       this._showStatus('Draft not saved — a newer draft is waiting: Restore or Discard it first');
       return;
     }
 
+    // The precondition: the draft row this form last saw (_draftSeen), or
+    // null when it holds none. The route refuses the save (409) when the row
+    // moved since — another browser's autosave, an Ask Casey card — which the
+    // sync bus cannot announce across browsers.
+    const seen = this._draftSeen;
     try {
       this._showStatus('Saving draft...', true);
 
-      await this._api('/api/forms/draft', 'POST', {
-        form_key:       this.config.formKey,
-        link_type:      this.config.linkType,
-        link_id:        this.config.linkId,
-        schema_version: this.config.schemaVersion,
-        data:           this.collect(),
+      const res = await this._api('/api/forms/draft', 'POST', {
+        form_key:            this.config.formKey,
+        link_type:           this.config.linkType,
+        link_id:             this.config.linkId,
+        schema_version:      this.config.schemaVersion,
+        data:                this.collect(),
+        expected_draft_id:   seen ? seen.id : null,
+        expected_updated_at: seen ? seen.updated_at : null,
       });
 
+      this._draftSeen = YCForm._draftRef(res);
       this._lastAutosaveJson = currentJson;
       this._showStatus('Draft saved just now');
     } catch (err) {
+      if (err && err.status === 409 && err.body && err.body.status === 'conflict') {
+        // Refused, nothing written — never retried. A newer draft: the same
+        // banner and hold the bus raises. None (the row that refused it was
+        // gone again by the re-read): nothing to protect, so the next change
+        // saves. (A draft discarded or submitted elsewhere is no 409: the
+        // route saves a new one — it replaces nothing this form has not seen.)
+        const d = err.body.draft || null;
+        this._draftData = d;
+        if (d) {
+          this._draftConflict = true;
+          this._showDraftBanner(d, this._submittedData);
+          this._showStatus(`Draft not saved — ${d.user_name || 'someone'} saved a newer draft at ${new Date(d.updated_at).toLocaleString()}: Restore or Discard it first`);
+        } else {
+          this._draftSeen = null;
+          if (this._draftBannerEl) this._draftBannerEl.style.display = 'none';
+          this._showStatus('Draft not saved — the draft changed elsewhere; your next change saves it');
+        }
+        return;
+      }
       console.warn('[YCForm] Autosave failed:', err);
       this._showStatus('Draft save failed');
     }
+  }
+
+  /** { id, updated_at } of a draft row (GET latest's draft, a draft POST's answer, a 409's draft), or null. */
+  static _draftRef(row) {
+    return row && row.id != null && row.updated_at != null ? { id: row.id, updated_at: row.updated_at } : null;
   }
 
 
@@ -1342,8 +1378,10 @@ if (this.config.endpoints.load && !this.config.external) {
   // Then: refetch GET /api/forms/latest; a clean form repopulates through
   // refresh() (whose data source raises the draft banner); a form with unsaved
   // typing is never repopulated — it shows the newer draft's banner and holds
-  // its autosave (_draftConflict), because the route replaces a draft whole
-  // and the next autosave would erase the newer one.
+  // its autosave (_draftConflict): the next autosave would replace the newer
+  // draft whole (its precondition is the row syncLatest just read). Across
+  // browsers, where no bus reaches, the draft POST's own 409 raises the same
+  // banner and hold (autosaveTick).
   // ═══════════════════════════════════════════════════════════════════════════
 
   _setupSync() {
@@ -1399,6 +1437,7 @@ if (this.config.endpoints.load && !this.config.external) {
     );
     this._submittedData = (latest && latest.submitted) || null;
     this._draftData = (latest && latest.draft) || null;
+    this._draftSeen = YCForm._draftRef(this._draftData);   // the row there now (none: null)
     const outcome = await this.refresh();   // repopulates ONLY a clean form; never saves
     const d = this._draftData;
     const s = this._submittedData;
@@ -2558,7 +2597,11 @@ if (this.config.endpoints.load && !this.config.external) {
           (method === 'POST' && ownPath === '/api/forms/submit')) {
         this._lastDraftWrite = Date.now();
         const p = window.parent.apiSend(url, method, body);
-        Promise.resolve(p).then(() => { this._lastDraftWrite = Date.now(); }, () => { this._lastDraftWrite = Date.now(); });
+        // A draft DELETE that succeeded (the banner's Discard, save()'s cleanup,
+        // contact-form's mirrored cleanup) leaves no row: the next autosave
+        // expects none. Registered before the caller's await, so it runs first.
+        const gone = method === 'DELETE' && ownPath === '/api/forms/draft';
+        Promise.resolve(p).then(() => { this._lastDraftWrite = Date.now(); if (gone) this._draftSeen = null; }, () => { this._lastDraftWrite = Date.now(); });
         return p;
       }
       return window.parent.apiSend(url, method, body);
