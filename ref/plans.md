@@ -1301,13 +1301,12 @@ Share and unlink shipped as A11.2 (ASK_CASEY_ACTIONS_PLAN).
   makes is on the bus (`checklist:<link_type>:<link>`) except POST
   `/checklists/upsert-items`, which announces nothing (its callers are
   server-side; an open docs board stays stale until its tab is re-entered).
-  The global board's **Browse** view (More → Notes & Lists,
-  `checklistsView.html`'s own `browseRow` renderer) has no bus listener at
-  all: a list created, edited or deleted anywhere shows there only on reload.
-  Its Mine and Unlinked views iframe `checklistView.html` and inherit that
-  page's `checklist:*` subscriber. A native gap (filed by the yc-sync matchers
-  slice, 2026-11-11): subscribe Browse to `checklist:*` with checklistView's
-  fences.
+  The global board's Mine and Unlinked views iframe `checklistView.html` and
+  inherit that page's `checklist:*` subscriber; its **Browse** view
+  (`checklistsView.html`'s own `browseRow` renderer) subscribes to
+  `checklist:*` itself since 2026-11-11 (first page re-read; an open row's
+  editor iframe and a hidden page park the refresh and flush on Back /
+  visibilitychange).
 - **The docs predicate's title fallback.** `portalDocsService.listDocs`,
   `_caseItemMap` and the public docs GET still match `title = 'Docs Needed'`
   (a transition fallback for untagged rows) and, unlike upsert-items, do not

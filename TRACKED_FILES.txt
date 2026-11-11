@@ -1375,6 +1375,7 @@ tests/cfCourtBackfill.test.js
 tests/checklistView.autoGrow.test.js
 tests/checklistView.sync.test.js
 tests/checklists.s1notes.test.js
+tests/checklistsViewBrowse.sync.test.js
 tests/clioTool.test.js
 tests/clioTool2.test.js
 tests/codeBodyParity.test.js

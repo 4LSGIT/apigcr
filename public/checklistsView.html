@@ -294,7 +294,7 @@ function render() {
     const back = document.createElement('button');
     back.className = 'cx-back';
     back.innerHTML = '<i class="fa-solid fa-arrow-left"></i> Back to all notes &amp; lists';
-    back.onclick = () => { openId = null; render(); };
+    back.onclick = () => { openId = null; render(); cxBusReload(); };
     body.appendChild(back);
     body.appendChild(frameTo('checklistView.html?id=' + encodeURIComponent(openId)));
     return;
@@ -458,6 +458,39 @@ function start() {
 
 // Re-entry hook, matching checklistView.html's reloadChecklists.
 window.reloadChecklists = () => { offset = 0; openId = null; rows = []; start(); };
+
+/* ── Sync bus (2026-11-11) ─────────────────────────────────────────
+   Mine and Unlinked inherit checklistView.html's `checklist:*` subscriber by
+   iframing it; Browse renders here and used to hear nothing — a list created,
+   edited or deleted anywhere showed only on reload. Browse now subscribes to
+   every `checklist:*` marker (it shows ALL lists, so every address is its
+   business) and re-reads its first page from the top. Fences, in the sibling
+   page's spirit: nothing happens unless Browse is the showing scope; an OPEN
+   row is an editor iframe (checklistView.html?id=) that a re-render would
+   destroy mid-edit, so a message then only marks the view stale and the Back
+   button flushes it; a hidden page parks the same way and flushes on
+   visibilitychange; a burst coalesces over CX_BUS_MS; a load in flight is not
+   doubled. Browse makes no writes of its own, so there is no echo to fence —
+   its open editor's writes are the sibling page's, with their own stamp, and
+   hearing them here is the point (the row list updates when you go Back).
+   Paging is reset to the first page (the sibling reloads whole too). */
+const CX_BUS_MS = 250;
+let cxBusStale = false, cxBusTimer = null, cxLoading = false;
+function cxBusReload() {
+  if (!cxBusStale || scope !== 'browse' || openId != null || document.hidden || cxLoading) return;
+  cxBusStale = false;
+  offset = 0;
+  cxLoading = true;
+  Promise.resolve(loadBrowse(false)).finally(() => { cxLoading = false; if (cxBusStale) cxBusReload(); });
+}
+if (window.YC) {
+  YC.on('checklist:*', '*', () => {
+    cxBusStale = true;
+    clearTimeout(cxBusTimer);
+    cxBusTimer = setTimeout(cxBusReload, CX_BUS_MS);
+  });
+  document.addEventListener('visibilitychange', cxBusReload);
+}
 
 // ── Boot ──────────────────────────────────────────────────────────
 (function waitForShell() {
