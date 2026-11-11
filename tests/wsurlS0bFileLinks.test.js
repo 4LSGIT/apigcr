@@ -140,6 +140,32 @@ describe('wsurl S0b — index.html (calxAnchor)', () => {
     });
 });
 
+describe('calxAnchor — case-anchored appt shows its contact too', () => {
+  const SHELL = read('public/index.html');
+  const src = fnSrc(SHELL, 'calxEsc') + '\n' + fnSrc(SHELL, 'calxAnchor');
+
+  test('contact link then case link', () => {
+    const w = shellDoc(src);
+    w.document.body.innerHTML = w.calxAnchor({
+      link_type: 'case', case_id: 'ABCD2345',
+      display: { case_label: '26-12345', contact_name: 'Pat One' },
+      attendees: [{ party: 'user', id: 6 }, { party: 'contact', id: 1405 }],
+    });
+    const links = w.document.querySelectorAll('a');
+    expect(links).toHaveLength(2);
+    links.forEach((a) => click(w, a));
+    expect(w.__calls).toEqual([['Pat One', 'client', '1405'], ['26-12345', 'case', 'ABCD2345']]);
+  });
+
+  test('no contact attendee: case link only (events unchanged)', () => {
+    const w = shellDoc(src);
+    w.document.body.innerHTML = w.calxAnchor({
+      link_type: 'case', case_id: 'ABCD2345', display: { case_label: '26-12345', contact_name: null },
+    });
+    expect(w.document.querySelectorAll('a')).toHaveLength(1);
+  });
+});
+
 /** case.html / contact.html log cell, through the page's REAL tabLogGet. */
 async function bootLog(page) {
   const SRC = read(page);

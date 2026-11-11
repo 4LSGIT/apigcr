@@ -5270,12 +5270,19 @@
         return row.link_id == null ? calxEsc(name)
           : fileLinkHtml(name, 'client', row.link_id, String(name));
       }
+      // An appt anchored to a case still has its client: the read layer sends
+      // display.contact_name and the client as the {party:'contact'} attendee.
+      // Show both (contact · case), as the Appts tab's two columns did.
+      const ct = (row.attendees || []).find(a => a && a.party === 'contact');
+      const who = (d.contact_name && ct && ct.id != null)
+        ? fileLinkHtml(d.contact_name, 'client', ct.id, String(d.contact_name)) + ' · '
+        : '';
       if (row.case_id) {
         const label = d.case_label || row.docket || row.case_id;
-        return fileLinkHtml(label, 'case', row.case_id, String(label));
+        return who + fileLinkHtml(label, 'case', row.case_id, String(label));
       }
       if (row.docket) {
-        return calxEsc(row.docket)
+        return who + calxEsc(row.docket)
           + ' <span class="calx-key">(no case matches this docket yet)</span>';
       }
       return '<span class="calx-key">—</span>';
