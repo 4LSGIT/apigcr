@@ -405,9 +405,9 @@ describe('Calendar list footer: Print and Export', () => {
     expect(w.__files).toHaveLength(1);
     expect(w.__files[0].filename).toMatch(/^yisracase-calendar-\d{4}-\d{2}-\d{2}\.csv$/);
     const lines = w.__files[0].content.replace(/^﻿/, '').split('\r\n');
-    expect(lines[0]).toBe('Starts,Ends,All Day,Kind,Title,Type Key,Source,Source ID,Attached To,Case ID,With,State,Resolution');
-    expect(lines[1]).toBe(`2026-10-15 09:30:00,2026-10-15 10:00:00,,hearing,${NEUTRAL},confirmation_hearing,event,9,26-12345,ABCD2345,Everyone,live,`);
-    expect(lines[2]).toBe('2026-10-16 00:00:00,,Yes,meeting,341 Meeting,,appt,5,Pat One,,Fred Ross,resolved,attended');
+    expect(lines[0]).toBe('Starts,Ends,All Day,Kind,Title,Type Key,Source,Source ID,Attached To,Contact,Case ID,With,State,Resolution');
+    expect(lines[1]).toBe(`2026-10-15 09:30:00,2026-10-15 10:00:00,,hearing,${NEUTRAL},confirmation_hearing,event,9,26-12345,,ABCD2345,Everyone,live,`);
+    expect(lines[2]).toBe('2026-10-16 00:00:00,,Yes,meeting,341 Meeting,,appt,5,Pat One,Pat One,,Fred Ross,resolved,attended');
     expect(lines).toHaveLength(3);
   });
 

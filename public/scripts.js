@@ -1715,6 +1715,9 @@ const CALENDAR_CSV_COLUMNS = [
       return r.link_type === 'contact' ? (d.contact_name || `Contact #${r.link_id}`)
         : (d.case_label || r.docket || r.case_id || '');
     } },
+  // The client, whatever the row is anchored to — an appt attached to a case
+  // still has one (the read layer's display.contact_name). Blank for events.
+  { key: 'contact',   label: 'Contact', get: (r) => (r.display && r.display.contact_name) || '' },
   { key: 'case_id',   label: 'Case ID' },
   { key: 'with',      label: 'With', get: (r) => {
       const a = (r.attendees || [])[0];

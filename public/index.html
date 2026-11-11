@@ -5298,9 +5298,11 @@
     const CALX_SORT_KEYS = {
       kind: (r) => String(r.kind_key || ''),
       title: (r) => String(r.title || ''),
+      // Sorts by what the cell shows FIRST: the client when the row has one
+      // (calxAnchor renders "contact · case"), else the case / docket.
       attached: (r) => {
         const d = r.display || {};
-        return String(r.link_type === 'contact' ? (d.contact_name || '') : (d.case_label || r.docket || r.case_id || ''));
+        return String(d.contact_name || (r.link_type === 'contact' ? '' : (d.case_label || r.docket || r.case_id || '')));
       },
       with: (r) => {
         const a = (r.attendees || [])[0];
