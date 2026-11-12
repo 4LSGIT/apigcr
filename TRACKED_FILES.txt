@@ -1545,6 +1545,7 @@ tests/esignWebhook.test.js
 tests/eventDedup.phaseB.test.js
 tests/eventRegistryCoverage.test.js
 tests/eventService.typeKey.test.js
+tests/eventTypeOptions.test.js
 tests/eventservice.linkfilter.test.js
 tests/eventservice.remindertitle.test.js
 tests/executionVersionStamp.test.js
@@ -1571,7 +1572,6 @@ tests/fixtures/comms_s2_audio/vbr_xing.mp3.head
 tests/fixtures/comms_s2_audio/vm.wav.head
 tests/fixtures/contactColumns.s1.json
 tests/fixtures/emailDesign/newsletter.html
-tests/fixtures/eventColumns.s3b.json
 tests/fixtures/ingestNativeGolden.json
 tests/fixtures/ingestRuleTestRoutes.golden.json
 tests/fixtures/intake_cards_definition.json

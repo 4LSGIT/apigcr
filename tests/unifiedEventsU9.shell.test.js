@@ -93,13 +93,11 @@ describe('Calendar tab wiring (U9)', () => {
     expect(HTML).toMatch(/openMainTab\('tabCalendar'\)/);
   });
 
-  test('it sits BETWEEN Appointments and Events in the sidebar', () => {
-    // Position is the slice's own statement about what the tab is: a third
-    // list beside the two it unifies, for one release, so the new answer can
-    // be checked against the old two.
+  test('it sits right after Appointments in the sidebar (the Events tab it sat before is retired)', () => {
     const at = (t) => HTML.indexOf(`data-tab="${t}"`);
+    expect(at('tabAppts')).toBeGreaterThan(-1);
     expect(at('tabAppts')).toBeLessThan(at('tabCalendar'));
-    expect(at('tabCalendar')).toBeLessThan(at('tabEvents'));
+    expect(at('tabEvents')).toBe(-1);
   });
 
   test('its icon is distinct from both neighbours', () => {
@@ -113,14 +111,16 @@ describe('Calendar tab wiring (U9)', () => {
     expect(cal).not.toBe(icon('tabEvents'));
   });
 
-  test('THE OLD TABS ARE UNTOUCHED — U9 adds a third list, it does not retire two', () => {
-    // Explicitly out of scope for this slice (U9b owns the retirement). If a
-    // later edit deletes one of these, this test is where that decision has to
-    // be made on purpose rather than as a side effect.
+  test('U9b-P4 (Fred, 2026-11-12): the Events tab is retired, the Appointments tab STAYS', () => {
+    // The decision made on purpose: staff still use Appointments (audit log,
+    // 10-13..11-10), only IT used Events. If a later edit deletes Appointments,
+    // this test is where that decision has to be made again.
     expect(HTML).toMatch(/<div id="tabAppts" class="tab-main">/);
-    expect(HTML).toMatch(/<div id="tabEvents" class="tab-main">/);
     expect(HTML).toMatch(/function openApptsTab\(\)/);
-    expect(HTML).toMatch(/function openEventsTab\(\)/);
+    expect(HTML).not.toMatch(/<div id="tabEvents"/);
+    expect(HTML).not.toMatch(/function openEventsTab\(\)|function tabEventsGet\(|EVENTS_COLUMNS/);
+    // An old ?open=tabEvents link lands on the Calendar tab.
+    expect(fnSrc(HTML, 'wsOpenTarget')).toContain('({ tabEvents: "tabCalendar" })[head0]');
   });
 });
 
@@ -438,10 +438,10 @@ describe('U9b-P2 — F5 restore goes through each tab\'s opener', () => {
 
   test('each list tab restores through its opener; anything else is a bare openMainTab', () => {
     const { f, calls } = load();
-    for (const t of ['tabCases', 'tabContacts', 'tabAppts', 'tabCalendar', 'tabEvents', 'tabLogs',
+    for (const t of ['tabCases', 'tabContacts', 'tabAppts', 'tabCalendar', 'tabLogs',
                      'tabHome', 'tabTasks', 'file-div3']) f(t);
     expect(calls).toEqual(['openCasesTab', 'openContactsTab', 'openApptsTab', 'openCalendarTab',
-      'openEventsTab', 'openLogsTab', 'openMainTab:tabHome', 'openMainTab:tabTasks', 'openMainTab:file-div3']);
+      'openLogsTab', 'openMainTab:tabHome', 'openMainTab:tabTasks', 'openMainTab:file-div3']);
   });
 
   test('exactly one opener call per boot: the boot site defers to restore when ?files= is present', () => {

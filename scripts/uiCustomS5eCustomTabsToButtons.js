@@ -197,6 +197,8 @@ const HISTORIC_CUSTOM = Object.freeze({
   onclick: "openMainTab('tabCustom')", tab: 'tabCustom',
   domIds: { sidebar: 'sbCustom', home: 'tabCustomButton' },
 });
+// The Events tab's launcher item as featureRegistry.js had it until U9b-P4.
+const HISTORIC_EVENTS = Object.freeze({ label: 'Events', icon: 'flag', onclick: 'openEventsTab()', tab: 'tabEvents' });
 function restoreCustomTab(w) {
   const home = w.DEFAULT_LAYOUTS.home, side = w.DEFAULT_LAYOUTS.sidebar;
   const cal = home.map((e, i) => (e && e.item === 'calendar' ? i : -1)).filter((i) => i >= 0);
@@ -243,6 +245,11 @@ function loadCore() {
     const { HISTORIC: C3 } = require('./launcherC3MoreAdminPages');
     for (const [id, it] of Object.entries(C3.items)) ctx.window.FEATURE_REGISTRY[id] = J(it);
     ctx.window.DEFAULT_LAYOUTS = J(C3.layouts);
+  }
+  // U9b-P4 (2026-11-12) retired the Events tab and its `events` item; this
+  // world predates that too, and the frozen C3 layouts still place it.
+  if (!Object.prototype.hasOwnProperty.call(ctx.window.FEATURE_REGISTRY, 'events')) {
+    ctx.window.FEATURE_REGISTRY.events = J(HISTORIC_EVENTS);
   }
   const historic = !Object.prototype.hasOwnProperty.call(ctx.window.FEATURE_REGISTRY, 'custom');
   if (historic) restoreCustomTab(ctx.window);

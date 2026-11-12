@@ -24,6 +24,25 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **U9b-P4 + the Calendar column picker (11-12):** the shell's Events tab is
+  RETIRED (markup, EVENTS_COLUMNS, tabEventsGet, its bus reader, the `events`
+  launcher item, LIST_CSV.events / EVENT_CSV_COLUMNS); `?open=tabEvents`
+  aliases to `tabCalendar` in wsOpenTarget; saved layouts naming `events`
+  drop it at render. The Appointments tab STAYS (staff use it; audit log
+  10-13..11-10). `fe-event_types` is a `retired` registry key (never served,
+  never edited); `getEventTypeOptions()` reads the calendar-type registry via
+  `loadEventTypeOptions()` (one GET `/api/calendar-types?kind=hearing,
+  deadline,conference,other&active=1` per page, built-in list on failure) and
+  `newEventDialog` awaits it. The Calendar list has a column picker
+  (CALX_COLUMNS, `yc.calendar.cols_off|cols_on|cols_order.<uid>`; defaults =
+  the original seven; off by default: Date, Time, Contact — every client from
+  `display.contacts` — Case, Status) and an export choice (All columns /
+  As shown on screen). `/api/calendar-range` `include_labels` adds
+  `display.contacts: [{id, name, role}]` (row's own contact first, then the
+  anchored case's Primary + Secondary debtors) in the same contacts query
+  (UNION ALL; the budget stays one query). A saved copy of the old Events
+  tab may live as a Tool (it calls only `/api/events` + `/api/calendar-types`).
+
 - **The draft POST's precondition (11-11):** POST `/api/forms/draft` takes an
   optional `expected_draft_id` + `expected_updated_at` (both set: the row the
   caller saw; both null: none held; anything else → 400). With it the route
@@ -4090,9 +4109,9 @@ Tests: `settingsRegistry`, `settingsInventory`, `settingsAutomationGuard`,
 `appSettingsRegistry`, `appSettingsGate`, `settingsArcMigrate`,
 `vocabWriteGates`, `configShellAccess`, `configReadOnly`, `mySettings`,
 `contactRolesConfig`, `settingsToolHomes`, `ycSettingRows`, `firmTab`,
-`configSystemTab`, `configListsTab`. Lists draws `fe-event_types` with a
-dedicated editor (duplicates refused, a removal asks); System draws runtime
-state as text, never controls.
+`configSystemTab`, `configListsTab`. Lists draws `fe-lead_sources` only
+(`fe-event_types` and its dedicated editor retired in U9b-P4, 11-12); System
+draws runtime state as text, never controls.
 
 ## 33. ASK CASEY / YISRAI — READ-ONLY INVESTIGATION AND REVIEWED ACTIONS
 

@@ -127,7 +127,7 @@ describe('classification snapshot', () => {
     "esign_webhook_token": "secret console console ui string",
     "event_digest_recipients": "firm firm routing ui user_csv",
     "fe-case_types": "vocab config types ui json",
-    "fe-event_types": "vocab config lists ui json_array",
+    "fe-event_types": "retired console console ui json_array",
     "fe-firm_logo_url": "firm firm identity ui url",
     "fe-firm_phone": "firm firm identity ui phone",
     "fe-firm_site_url": "firm firm identity ui url",
@@ -290,7 +290,7 @@ describe('alsoWrite — a per-key write grant (settings-access 2026-10-28)', () 
     const granted = Object.keys(reg.SETTINGS).filter((k) => reg.SETTINGS[k].alsoWrite !== undefined);
     expect(granted.map((k) => [k, reg.SETTINGS[k].alsoWrite])).toEqual([['fe-lead_sources', 'firm.lists']]);
     expect(reg.writeCapsOf(reg.get('fe-lead_sources'))).toEqual(['firm.settings', 'firm.lists']);   // additive
-    expect(reg.writeCapsOf(reg.get('fe-event_types'))).toEqual(['firm.settings']);
+    expect(reg.writeCapsOf(reg.get('fe-case_types'))).toEqual(['firm.settings']);
     expect(reg.writeCapsOf(reg.get('quo_api_key'))).toEqual([]);
   });
 

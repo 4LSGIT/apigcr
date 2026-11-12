@@ -4261,7 +4261,6 @@
          not-yet-defined function declaration is simply false. */
       if (typeof refreshStaleContactsTab === 'function') refreshStaleContactsTab();
       if (typeof refreshStaleApptsTab    === 'function') refreshStaleApptsTab();
-      if (typeof refreshStaleEventsTab   === 'function') refreshStaleEventsTab();
     });
   </script>
 
@@ -4849,83 +4848,6 @@
     </div>
   </div>
 
-  <div id="tabEvents" class="tab-main">
-    <h1><i class="fa-solid fa-flag"></i> Events <i class="fa-solid fa-flag"></i></h1>
-    <div class="yc-filters">
-      <span class="yc-f-row"><button id="tabEventsNew" onclick="newEventDialog({ linkPick: true, onSaved: () => tabEventsGet(0) })"><i class="fa-solid fa-flag"></i> New Event</button></span>
-      <label class="yc-f yc-f-q"><span class="yc-f-l">Search</span>
-      <input id="tabEventsQ" style="width: auto" placeholder="Search titles…"
-             onkeydown="if(event.key==='Enter'){event.preventDefault();tabEventsGet(0);}" /></label>
-      <div class="yc-f-panel">
-      <label class="yc-f"><span class="yc-f-l">Type</span>
-      <select id="tabEventsType" class="eventtypelist" style="width: auto">
-        <option value="">All types</option>
-      </select></label>
-      <label class="yc-f"><span class="yc-f-l">Status</span>
-      <select id="tabEventsStatus" style="width: auto">
-        <option selected>Scheduled</option>
-        <option>Completed</option>
-        <option>Canceled</option>
-        <!-- U6c. A superseded predecessor. Listed so it can be FOUND — the
-             default Scheduled view hides it, which is the whole point of the
-             status existing. Mirrors the appts tab, which has offered
-             Rescheduled since long before this arc. -->
-        <option>Rescheduled</option>
-        <option value="all">All</option>
-      </select></label>
-      <!-- Link state. An event is ALLOWED to be attached to nothing — the
-           columns are nullable and the write path returns cleanly for it, so a
-           firm-wide event (office closed, a CLE seminar) is a legitimate
-           unlinked row. This finds them; it also finds the ones where somebody
-           meant to attach a case and didn't. It composes with every other
-           filter here, which is the point of putting it here rather than on a
-           list of its own. -->
-      <label class="yc-f yc-f-check">
-        <input type="checkbox" id="tabEventsUnlinked" onchange="tabEventsGet(0)" />
-        <span class="yc-f-l">Unlinked only</span>
-      </label>
-      <span class="yc-f yc-f-wide"><span class="yc-f-l">Time</span>
-      <select id="tabEventsTime" style="width: auto" onchange="tabEventsTimeChange(this.value)">
-        <option>All</option>
-        <option>Before</option>
-        <option>On</option>
-        <option>After</option>
-        <option>Between</option>
-      </select>
-      <input id="tabEventsDate1" type="date" style="width: auto; display: none" />
-      <label id="tabEventsDateLabel"></label>
-      <input id="tabEventsDate2" type="date" style="width: auto; display: none" /></span>
-      <!-- The Columns picker lives in the table FOOTER since R1 (the shared
-           ycColsDialog modal, opened from renderFooter's Columns button). -->
-      <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
-      <select id="tabEventsSort" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
-        <option value="upcoming">Upcoming first</option>
-        <option value="date">Date</option>
-        <option value="type">Type</option>
-        <option value="title">Title</option>
-        <option value="status">Status</option>
-      </select>
-      <select id="tabEventsSort2" style="width: auto" data-type="sortDi" onchange="sortSelect(this)">
-        <option value="ASC">Ascending</option>
-        <option value="DESC">Descending</option>
-      </select></span>
-      </div>
-      <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
-      <button id="tabEventsButton" class="yc-f-go" onclick="tabEventsGet(0)" data-type="goButton">Search</button>
-    </div>
-    <!-- Headers are generated from EVENTS_COLUMNS (the tab's column model,
-         in the script block below) by ycColsHeadRender — same cells, same
-         sort() onclicks, same data-sort-upcoming Date header as the static
-         row this replaces (S3b). -->
-    <table id="eventsTable" class="logTable">
-      <tr></tr>
-    </table>
-    <div id="eventsTableFoot"></div>
-    <div id="tabEventsLoad" style="display: none">
-      <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
-    </div>
-  </div>
-
   <!-- ══════════════════════════════════════════════════════════════════════
        CALENDAR — the unified list (Unified Events U9)
        ══════════════════════════════════════════════════════════════════════ -->
@@ -4995,12 +4917,11 @@
        the shell's `.tab-main > iframe { display: block }`). */
     #tabCalendar:not(.calx-grid) > #calxGridFrame { display: none; }
 
-    /* Mid widths (769–1299px), for the Events tab's table as well as this
-       one. Between the phone layout and a full desktop window the sidebar
-       leaves these two list tables less room than their columns need — the
-       Calendar list has ~800px of min-content against a 580–780px tab at
-       800–1000px windows, and Events overflowed at 800 with no rows at all —
-       so they pushed the whole shell sideways, header and filter bar too.
+    /* Mid widths (769–1299px). Between the phone layout and a full desktop
+       window the sidebar leaves the Calendar list less room than its columns
+       need — ~800px of min-content against a 580–780px tab at 800–1000px
+       windows — so it pushed the whole shell sideways, header and filter bar
+       too.
        Here they take the phone block's idiom (`.tab-main > table.logTable`
        in the shell's ≤768px rules): the <table> is its own scroll box and the
        parser-made <tbody> re-forms the table inside it at full width. Where
@@ -5008,13 +4929,11 @@
        Grid mode's `#tabCalendar.calx-grid > #calxTable` hide (2,1,0) still
        wins. */
     @media (min-width: 769px) and (max-width: 1299px) {
-      #tabEvents > #eventsTable,
       #tabCalendar > #calxTable { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
       /* 1px short of the box: with collapsed borders the outer half of the
          last column's border lies outside the table, so at 100% a table
          that FITS still scrolled its box by 1px — a scrollbar under it on
          any OS that shows classic scrollbars. */
-      #tabEvents > #eventsTable > tbody,
       #tabCalendar > #calxTable > tbody { display: table; width: calc(100% - 1px); }
     }
   </style>
@@ -5495,12 +5414,16 @@
     const CALX_COLUMNS = [
       { key: 'when', label: 'When ⇅', sort: 'when', default_on: true, cls: 'calx-when',
         th_extra: ' data-sort-upcoming="upcoming" title="Upcoming first → oldest first → newest first"',
+        csv: (r) => String(r.starts_at || ''),
         render: (r) => calxWhen(r) },
       { key: 'date', label: 'Date', sort: 'when', default_on: false,
+        csv: (r) => String(r.starts_at || '').slice(0, 10),
         render: (r) => { const p = calxWhenParts(r); return p ? p.day : '<span class="calx-allday">—</span>'; } },
       { key: 'time', label: 'Time', default_on: false,
+        csv: (r) => (r.all_day ? '' : String(r.starts_at || '').slice(11, 16)),
         render: (r) => { const p = calxWhenParts(r); return p && p.time ? p.time : '<span class="calx-allday">all day</span>'; } },
       { key: 'kind', label: 'Kind', sort: 'kind', default_on: true, cls: 'calx-kind',
+        csv: (r) => String(r.kind_key || ''),
         render: (r) => {
           const kind = String(r.kind_key || 'other');
           const icon = CALX_KIND_ICON[kind] || CALX_KIND_ICON.other;
@@ -5518,12 +5441,15 @@
       { key: 'contact', label: 'Contact', sort: 'contact', default_on: false,
         render: (r) => calxContacts(r) },
       { key: 'case', label: 'Case', sort: 'case', default_on: false,
+        csv: (r) => CALX_SORT_KEYS.case(r),
         render: (r) => calxCase(r) },
       { key: 'with', label: 'With', sort: 'with', default_on: true,
         render: (r) => calxWithName(r) },
       { key: 'state', label: 'State', sort: 'state', default_on: true,
+        csv: (r) => String(r.resolution ? (CALX_RESOLUTION_LABEL[r.resolution] || r.resolution) : (r.state || '')),
         render: (r) => calxBadge(r) },
       { key: 'status', label: 'Status', sort: 'status', default_on: false,
+        csv: (r) => calxStatusText(r),
         render: (r) => calxEsc(calxStatusText(r)) },
       { key: 'actions', label: 'Actions', default_on: true, cls: 'calx-acts', csv: false,
         render: (r) => calxActions(r) },
@@ -5583,6 +5509,36 @@
     function calxColsApply() {
       calxColsVis = calxColsVisible();
       calxColsRender();
+    }
+
+    /* Export the rows listed — the Cases / Appts choice (exportListCsv's
+       "All columns" vs "As shown on screen", ycViewCsvColumns), as a small
+       dialog because this list is already in memory (no range to pick).
+       All columns = CALENDAR_CSV_COLUMNS, the fixed full set; As shown = the
+       on-screen columns in screen order, each through its model `csv`
+       producer or its CALENDAR_CSV_COLUMNS twin (Actions excluded). */
+    async function calxExport() {
+      const view = ycViewCsvColumns(calxColsVis, CALENDAR_CSV_COLUMNS);
+      const res = await Swal.fire({
+        customClass: { popup: 'yc-popup' },
+        title: 'Export to CSV',
+        html: '<div style="text-align:left;font-size:0.95em">'
+          + '<p style="margin:0 0 0.8em">' + calxRows.length + ' row' + (calxRows.length === 1 ? '' : 's') + ' listed.</p>'
+          + '<label style="display:flex;align-items:center;gap:0.5em;margin-bottom:0.4em">'
+          + '<input type="radio" name="calx_exp_cols" value="all" checked><span>All columns (' + CALENDAR_CSV_COLUMNS.length + ')</span></label>'
+          + '<label style="display:flex;align-items:center;gap:0.5em">'
+          + '<input type="radio" name="calx_exp_cols" value="view"><span>As shown on screen (' + view.length + ')</span></label>'
+          + '</div>',
+        showCancelButton: true,
+        confirmButtonText: 'Export',
+        focusConfirm: false,
+        preConfirm: () => {
+          const el = document.querySelector('input[name="calx_exp_cols"]:checked');
+          return el ? el.value : 'all';
+        },
+      });
+      if (!res || !res.isConfirmed) return;
+      exportRowsCsv(res.value === 'view' ? view : CALENDAR_CSV_COLUMNS, calxRows, 'yisracase-calendar');
     }
 
     function calxColsDialog() {
@@ -5675,8 +5631,7 @@
           // List view only: the grid hides #calxFoot. Export writes the rows
           // listed — a capped list exports the capped rows, as the note says.
           foot.querySelector('[data-calx-foot="print"]').onclick = () => window.print();
-          foot.querySelector('[data-calx-foot="export"]').onclick = () =>
-            exportRowsCsv(CALENDAR_CSV_COLUMNS, calxRows, 'yisracase-calendar');
+          foot.querySelector('[data-calx-foot="export"]').onclick = () => calxExport();
           foot.querySelector('[data-calx-foot="columns"]').onclick = () => calxColsDialog();
         } else {
           // Empty window: the picker must still be reachable.
@@ -5929,89 +5884,10 @@
           return buttons.join(" ");
         } },
     ];
-    const EVENTS_COLUMNS = [
-      { key: 'event_id', label: 'ID', default_on: true,
-        render: (ev) => `<a href="#" onclick="showEvent(${ev.event_id});return false">${ev.event_id}</a>` },
-      { key: 'event_type', label: 'Type', sort: 'type', default_on: true,
-        render: (ev) => escHtml(ev.event_type == null ? "" : String(ev.event_type)) },
-      { key: 'event_title', label: 'Title', sort: 'title', default_on: true,
-        render: (ev) => escHtml(ev.event_title == null ? "" : String(ev.event_title)) },
-      { key: 'event_date', label: 'Date ⇅', sort: 'date', default_on: true,
-        th_extra: ' data-sort-upcoming="upcoming" title="Upcoming first → oldest first → newest first"',
-        render: (ev) => escHtml(ev.event_date ? String(ev.event_date).slice(0, 10) : "") },
-      { key: 'event_time', label: 'Time', default_on: true,
-        render: (ev) => {
-          const allDay = ev.event_all_day == 1 || ev.event_all_day === true;
-          return escHtml(allDay ? "All day" : (ev.event_time ? String(ev.event_time).slice(0, 5) : ""));
-        } },
-      { key: 'event_with', label: 'Blocks', default_on: true,
-        // events.event_with: whose booking availability this timed event
-        // carves. NULL = everyone (firm-wide); an id = that provider only.
-        // All-day events never block → blank.
-        render: (ev) => {
-          const allDay = ev.event_all_day == 1 || ev.event_all_day === true;
-          if (allDay) return "";
-          if (ev.event_with == null) return "Everyone";
-          if (Number(ev.event_with) === 0) return "Nobody";
-          const wu = (window.firmData?.users || [])
-            .find(u => Number(u.user) === Number(ev.event_with));
-          return escHtml(wu ? wu.user_name : `#${ev.event_with}`);
-        } },
-      { key: 'event_status', label: 'Status', sort: 'status', default_on: true,
-        render: (ev) => escHtml(ev.event_status == null ? "" : String(ev.event_status)) },
-      { key: 'linked', label: 'Linked', default_on: true,
-        // csv: the cell's own text, link markup dropped — no single CSV twin
-        // holds the noun + label the screen shows (S3c).
-        csv: (ev) => {
-          if (ev.event_link_type === 'case_number' && ev.event_link_id != null) {
-            return `Case #: ${String(ev.link_label || ev.event_link_id)}`;
-          }
-          if (ev.link_label && ev.event_link_id != null) {
-            return `${ev.event_link_type === 'case' ? 'Case' : 'Contact'}: ${String(ev.link_label)}`;
-          }
-          return '';
-        },
-        // addFile link (matches the rest of the page). case_number rows:
-        // docket verbatim; clickable only when the docket currently resolves
-        // to a case (resolved_case_id from the API's query-side resolution).
-        render: (ev) => {
-          const esc = (s) => escHtml(s == null ? "" : String(s));
-          if (ev.event_link_type === "case_number" && ev.event_link_id != null) {
-            const docket = String(ev.link_label || ev.event_link_id);
-            if (ev.resolved_case_id) {
-              return `Case #: ${fileLinkHtml(docket, 'case', ev.resolved_case_id, docket)}`;
-            }
-            return `Case #: ${esc(docket)}`;
-          }
-          if (ev.link_label && ev.event_link_id != null) {
-            const ft = ev.event_link_type === "case" ? "case" : "contact";
-            const noun = ev.event_link_type === "case" ? "Case" : "Contact";
-            return `${noun}: ${fileLinkHtml(ev.link_label, ft, ev.event_link_id, String(ev.link_label))}`;
-          }
-          return "";
-        } },
-      { key: 'event_location', label: 'Location', default_on: true,
-        render: (ev) => escHtml(ev.event_location == null ? "" : String(ev.event_location)) },
-      { key: 'action', label: 'Action', default_on: true,
-        csv: false,   // buttons, not data — excluded from export-view (S3c)
-        // Inline onclicks (escAttrJSON-quoted), no listeners: each write goes
-        // through the shell's apiSend and the tab's own `event:*` subscriber
-        // refetches — a callback would be a second fetch of the same page.
-        render: (ev) => {
-          const buttons = [];
-          buttons.push(`<button onclick='newEventDialog({ event: ${escAttrJSON(ev)} })'><i class="fa-solid fa-pen"></i> Edit</button>`);
-          if (ev.event_status === "Scheduled") {
-            buttons.push(`<button onclick="eventComplete(${ev.event_id})"><i class="fa-solid fa-check"></i> Complete</button>`);
-            buttons.push(`<button onclick="eventCancel(${ev.event_id})"><i class="fa-solid fa-ban"></i> Cancel</button>`);
-          }
-          return buttons.join(" ");
-        } },
-    ];
     // Headers from the models, HERE, right after the declarations — both
     // tables sit above this block, and nothing runs between that could fail
     // and leave a tab headerless. Once, at parse time, never on fetch.
     ycColsHeadRender(E('apptsTable'), APPTS_COLUMNS);
-    ycColsHeadRender(E('eventsTable'), EVENTS_COLUMNS);
 
     /* ── Column pickers (S3b) ────────────────────────────────────────────
        The Contacts/Cases pickers' structural twins (S2's block above
@@ -6109,74 +5985,6 @@
       apptsColsApply();
     }
 
-    let eventsColsVis = EVENTS_COLUMNS;
-
-    function eventsColsKey() { return `cols_off.${(user && user.user) || 0}`; }
-    // The R1 extension: the user's DISPLAY order (see the Cases block).
-    function eventsColsOrderKey() { return `cols_order.${(user && user.user) || 0}`; }
-
-    function eventsColsVisible() {
-      const ordered = ycColsOrder(EVENTS_COLUMNS, getTabPref('events', eventsColsOrderKey(), ''));
-      const off = getTabPref('events', eventsColsKey(), '').split(',');
-      const vis = ordered.filter((c) => !off.includes(c.key));
-      return vis.length ? vis : ordered.filter((c) => c.default_on);
-    }
-
-    /* The `events` global is "" (not null) after an empty page — both are
-       falsy, so the guard below and the `if (events)` in eventsColsRender
-       treat them alike. */
-    function eventsRenderRows() {
-      const table = E('eventsTable');
-      for (let i = table.rows.length - 1; i > 0; i--) table.deleteRow(i);
-      (events || []).forEach((ev) => {
-        table.insertRow().innerHTML = ycColsRowHtml(eventsColsVis, ev);
-      });
-    }
-
-    function eventsColsRender() {
-      const table = E('eventsTable');
-      ycColsHeadRender(table, eventsColsVis);
-      sortMarksSync(E('tabEvents'), table);
-      eventsRenderRows();   // unconditional: the screen is render(vis, cache), whatever the cache
-    }
-
-    function eventsColsApply() {          // storage → the on-screen set
-      eventsColsVis = eventsColsVisible();
-      eventsColsRender();
-    }
-
-    /* The Columns modal (R1) and its save — the Appts block's twin. */
-    function eventsColsDialog() {
-      ycColsDialog({
-        title: 'Events columns',
-        cols: ycColsOrder(EVENTS_COLUMNS, getTabPref('events', eventsColsOrderKey(), '')),
-        defaultKeys: EVENTS_COLUMNS.map((c) => c.key),
-        visibleKeys: eventsColsVis.map((c) => c.key),
-        onSave: eventsColsSave,
-      });
-    }
-
-    function eventsColsSave({ orderedKeys, checkedKeys }) {
-      const byKey = new Map(EVENTS_COLUMNS.map((c) => [c.key, c]));
-      const vis = orderedKeys.filter((k) => checkedKeys.includes(k))
-        .map((k) => byKey.get(k)).filter(Boolean);
-      eventsColsVis = vis.length ? vis : EVENTS_COLUMNS.filter((c) => c.default_on);
-      setTabPref('events', eventsColsOrderKey(), orderedKeys.join(','));
-      setTabPref('events', eventsColsKey(),
-        EVENTS_COLUMNS.filter((c) => !checkedKeys.includes(c.key)).map((c) => c.key).join(','));
-      eventsColsRender();
-    }
-
-    function eventsColsInit() {
-      if (!eventsColsInit.wired) {
-        eventsColsInit.wired = true;
-        window.addEventListener('storage', (e) => {
-          if (e.key === `yc.events.${eventsColsKey()}`
-            || e.key === `yc.events.${eventsColsOrderKey()}`) eventsColsApply();
-        });
-      }
-      eventsColsApply();
-    }
 
     /* ── RETIRED (Slice 3): the appt-updated / event-updated postMessage system.
        Two `message` listeners lived here. Each walked THIS document's iframes
@@ -6191,188 +5999,10 @@
        calendar.html now subscribe directly instead of being walked. That
        reaches any frame at any depth AND every other browser tab, and it also
        covers the writers that never posted at all (apptform2's linkCase /
-       createCase). The Appts and Events tabs below are readers like any
-       other — see each tab's liveness block. */
+       createCase). The Appts tab below is a reader like any other — see its
+       liveness block. (The Events tab was retired in U9b-P4, 2026-11-12;
+       the Calendar tab lists events.) */
 
-    function tabEventsTimeChange(time) {
-      if (time == "All") {
-        E("tabEventsDate1").style.display = "none";
-        E("tabEventsDateLabel").innerHTML = "";
-        E("tabEventsDate2").style.display = "none";
-      } else if (time != "Between") {
-        E("tabEventsDate1").style.display = "inline-block";
-        E("tabEventsDateLabel").innerHTML = "";
-        E("tabEventsDate2").style.display = "none";
-      } else {
-        E("tabEventsDate1").style.display = "inline-block";
-        E("tabEventsDateLabel").innerHTML = "and ";
-        E("tabEventsDate2").style.display = "inline-block";
-      }
-    }
-
-    /**
-     * @param {number}  offset
-     * @param {boolean} silent  TRUE for a BUS-TRIGGERED background refetch.
-     *   Same two suppressions, for the same two reasons, as tabCasesGet /
-     *   tabContactsGet:
-     *     · "No events found." — a filtered page legitimately emptying is the
-     *       filter working, not an error. Cancel the last Scheduled event
-     *       while filtered to Scheduled and the row correctly vanishes.
-     *     · the catch-block toast — a background fetch that fails must not
-     *       red-toast a user who did nothing. console.warn instead.
-     *   Every pre-existing caller passes nothing and keeps today's behaviour.
-     *   NOTE the `events = ""` reset in the empty branch is NOT suppressed: it
-     *   is what makes openEventsTab()'s first-open check fire again, and a
-     *   background refetch that empties the list has genuinely emptied it.
-     */
-    async function tabEventsGet(offset, silent = false) {
-      offsets.events = offset;
-      // Own page size, same shape as tabCasesGet (store key 'events').
-      const limit = YcPager.getLimit('events', 100);
-      E("tabEventsButton").disabled = true;
-      E("tabEventsLoad").style.display = "block";
-
-      const typeVal = E("tabEventsType").value.trim();
-      const status = E("tabEventsStatus").value;
-      const time = E("tabEventsTime").value;
-      const date1 = E("tabEventsDate1").value;
-      const date2 = E("tabEventsDate2").value;
-      const q = E("tabEventsQ").value.trim();
-      // listEvents: sort = 'upcoming' | 'asc' | 'desc'; sort_by a column
-      // (date is its default, so it is never sent).
-      const sortBy = E("tabEventsSort").value;
-      const sort = sortBy === "upcoming" ? "upcoming"
-        : E("tabEventsSort2").value === "DESC" ? "desc" : "asc";
-
-      const params = { limit, offset, status, sort };
-      if (sortBy !== "upcoming" && sortBy !== "date") params.sort_by = sortBy;
-      if (typeVal) params.type = typeVal;
-      if (q) params.q = q;
-      // 'none' is listEvents' read-only pseudo-filter for "attached to
-      // nothing". Omitted entirely when unchecked — sending link_type='' would
-      // read as a real link_type and match nothing.
-      if (E("tabEventsUnlinked").checked) params.link_type = "none";
-
-      if (time === "Before") { params.to = date1; }
-      if (time === "After") { params.from = date1; }
-      if (time === "On") { params.from = date1; params.to = date1; }
-      if (time === "Between") { params.from = date1; params.to = date2; }
-
-      const table = E("eventsTable");
-      const foot = E("eventsTableFoot");
-      foot.innerHTML = "";
-      const rows = table.getElementsByTagName("tr");
-      for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
-
-      // Footer — the shared pager (js/ycPager.js), page size remembered
-      // under this tab's own key instead of moving the shared global.
-      // Rendered on EVERY outcome since R1 (the Cases block says why: the
-      // Columns button lives here now).
-      const footRender = (total, shown) => YcPager.renderFooter(foot, {
-        total, limit, offset, shown,
-        onPage: (p) => tabEventsGet(p * limit),
-        persistKey: 'events',
-        onLimit: () => tabEventsGet(0),
-        onColumns: eventsColsDialog,
-        onPrint: true,
-        onExport: () => exportListCsv('events', () => csvFilterOf(params), { viewColumns: () => eventsColsVis }),
-      });
-
-      try {
-        const data = await apiSend("/api/events", "GET", params);
-        const total = data.total || 0;
-
-        if (total > 0 && data.data && data.data.length) {
-          events = data.data;
-          eventsRenderRows();
-          footRender(total, events.length);
-        } else {
-          events = "";
-          // Render the empty cache: rows a picker change painted while this
-          // fetch was in flight must not survive an empty result (review S3b).
-          eventsRenderRows();
-          footRender(total, 0);
-          if (!silent) Toast.fire({ icon: "info", title: "No events found." });
-        }
-      } catch (err) {
-        // The rows were already cleared above; null the cache too and
-        // re-render, so a picker change can't redraw the stale page and rows
-        // a picker change painted mid-flight don't outlive the failure.
-        events = null;
-        eventsRenderRows();
-        footRender(0, 0);
-        if (silent) console.warn("[events] background refetch failed:", err);
-        else Toast.fire({ icon: "error", title: "Error loading events", text: err.message });
-      }
-
-      E("tabEventsLoad").style.display = "none";
-      E("tabEventsButton").disabled = false;
-    }
-
-    /* ── Events-tab liveness (sync bus) ─────────────────────────────────────
-       Structural twin of the Cases and Contacts blocks: same first-open-only
-       history, same stale flag, same debounce, same never-cell-patch rule
-       (membership, ordering and page boundaries are all server-computed, so an
-       event that no longer matches the active status/date filter has to vanish
-       and only the server knows that).
-
-       The wildcard is the point. `event:*` fires for a save from eventform, an
-       edit or status action from this tab, a note edit in a checklistView card
-       two frames down, a court-pipeline write from another browser tab — the
-       tab does not care which, because it refetches regardless of the fields.
-
-       NO ECHO FENCE HERE, unlike the Appts twin below. Nothing left in this
-       tab refetches itself after a write: eventsChanged() is gone, and so is
-       showEvent()'s didClose refetch. The single bus refetch IS the refresh.
-       If a local refetch-after-write is ever reintroduced here, copy the
-       appts fence with it — otherwise every such write costs two fetches. */
-    let eventsStale = false;
-    let eventsDeb = null;
-
-    /** Is the Events tab the one actually on screen right now? */
-    function eventsTabVisible() {
-      return currentMainTabId() === 'tabEvents' && !document.hidden;
-    }
-
-    YC.on('event:*', '*', () => {
-      if (!eventsTabVisible()) { eventsStale = true; return; }
-      // Debounced: one write can land as several messages (a checklistView note
-      // save emits the sniff's marker AND its own value emit), and a burst
-      // across frames should still cost one refetch.
-      clearTimeout(eventsDeb);
-      eventsDeb = setTimeout(() => tabEventsGet(offsets.events || 0, true), 250);
-    });
-
-    /** Sole opener for the Events tab — sidebar item AND home button. */
-    function openEventsTab() {
-      if (!events) tabEventsGet(0);                    // first open: unchanged
-      else if (eventsStale) { eventsStale = false; tabEventsGet(offsets.events || 0, true); }
-      openMainTab('tabEvents');
-    }
-
-    /* Called by the visibilitychange handler in the Cases block, which owns the
-       single listener for all four main lists. A FUNCTION DECLARATION on
-       purpose — see refreshStaleContactsTab's comment for why the guarded
-       `typeof` up there needs one. */
-    function refreshStaleEventsTab() {
-      if (!eventsStale) return;
-      if (currentMainTabId() !== 'tabEvents') return;
-      eventsStale = false;
-      tabEventsGet(offsets.events || 0, true);
-    }
-
-    // Small HTML-escape helpers local to the shell for the events table.
-    function escHtml(s) {
-      return String(s == null ? "" : s)
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-    // JSON for an inline single-quoted onclick attribute: escape &, <, and the
-    // single quotes that would close the attribute. (newEventDialog reads the
-    // row object back via JSON.parse.)
-    function escAttrJSON(obj) {
-      return JSON.stringify(obj)
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/'/g, "&#39;");
-    }
 
     /**
      * Open one appointment in a modal.
@@ -9165,23 +8795,6 @@ async function initAuth() {
         });
       });
 
-      // Populate event-type selects (filter bar) from the same single source
-      // as the create/edit dialog (getEventTypeOptions in scripts.js). Static
-      // options in the markup (e.g. "All types") are preserved; the current
-      // value is restored so a re-populate never clobbers a user's choice.
-      document.querySelectorAll('select.eventtypelist').forEach(sel => {
-        const prev = sel.value;
-        // Drop any previously-appended dynamic options (keep static markup).
-        sel.querySelectorAll('option[data-dyn="1"]').forEach(o => o.remove());
-        (typeof getEventTypeOptions === 'function' ? getEventTypeOptions() : []).forEach(t => {
-          const opt = document.createElement('option');
-          opt.value = t;
-          opt.textContent = t;
-          opt.setAttribute('data-dyn', '1');
-          sel.appendChild(opt);
-        });
-        if (prev) sel.value = prev;
-      });
 
       // Build the Cases-tab type tree from fe-case_types — same single
       // source as NewCaseForm and case's overview selects (getCaseTypeMap
@@ -9194,7 +8807,6 @@ async function initAuth() {
       contactsColsInit();
       casesColsInit();
       apptsColsInit();
-      eventsColsInit();
       calxColsInit();
       casesCfInit();      // async: appends flagged cf columns, then re-inits Cases
       contactsCfInit();   // async: same, for the Contacts tab (C2)
@@ -9896,7 +9508,10 @@ async function initAuth() {
     function wsOpenTarget(open) {
       const raw = String(open || "");
       const cut = raw.indexOf("~");
-      const head = cut < 0 ? raw : raw.slice(0, cut);
+      // A retired main tab opens its successor, so old links and bookmarks
+      // keep working: the Events tab → the Calendar tab (U9b-P4).
+      const head0 = cut < 0 ? raw : raw.slice(0, cut);
+      const head = ({ tabEvents: "tabCalendar" })[head0] || head0;
       const m = /^file:(\d+)$/.exec(head);
       if (m) return { file: Number(m[1]) };
       const rest = cut < 0 || !window.ycSubTab ? "" : ycSubTab.normalize(raw.slice(cut + 1));
@@ -10044,7 +9659,7 @@ async function initAuth() {
       } else {
         const names = {
           tabHome: 'Home', tabCases: 'Cases', tabContacts: 'Contacts', tabAppts: 'Appointments',
-          tabCalendar: 'Calendar', tabEvents: 'Events', tabTasks: 'Tasks', tabComms: 'Comms',
+          tabCalendar: 'Calendar', tabTasks: 'Tasks', tabComms: 'Comms',
           tabLogs: 'Log', tabBills: 'Bills', tabPipeline: 'Pipeline Board', tabMore: 'More Features',
           tabSettings: 'Settings', tabAdmin: 'Admin', tabAll: 'All features',
         };
@@ -10214,7 +9829,6 @@ async function initAuth() {
         tabContacts: openContactsTab,
         tabAppts:    openApptsTab,
         tabCalendar: openCalendarTab,
-        tabEvents:   openEventsTab,
         tabLogs:     openLogsTab,
       }[tabId];
       if (opener) opener();

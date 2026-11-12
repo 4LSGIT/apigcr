@@ -1,22 +1,21 @@
 /**
  * tests/listColumns.s3b.test.js
  *
- * The Appts and Events tabs' column models + pickers (custom_table_view
- * S3b), the Contacts/Cases gates replayed over APPTS_COLUMNS and
- * EVENTS_COLUMNS — plus what is new here:
- *   · th_extra — the Date headers keep data-sort-upcoming + title, byte-
- *     identical to the static rows S3b removed;
- *   · NO ever-sorted latch: these tabs default to the upcoming sort, whose
- *     mark is the Date label's own "⇅", so apptsColsRender/eventsColsRender
- *     run sortMarksSync unconditionally — pinned by asserting the header is
+ * The Appts tab's column model + picker (custom_table_view S3b), the
+ * Contacts/Cases gates replayed over APPTS_COLUMNS — plus what is new here:
+ *   · th_extra — the Date header keeps data-sort-upcoming + title, byte-
+ *     identical to the static row S3b removed;
+ *   · NO ever-sorted latch: the tab defaults to the upcoming sort, whose
+ *     mark is the Date label's own "⇅", so apptsColsRender runs
+ *     sortMarksSync unconditionally — pinned by asserting the header is
  *     byte-identical to the old static row AFTER init ran the first sync;
  *   · the Appts action buttons: rendered by the model's Update column but
  *     BOUND in apptsRenderRows after the innerHTML write — the picker
- *     re-render path must rebind them (clicks keep reaching apptUpdate);
- *   · the `events` global is "" (not null) after an empty page.
+ *     re-render path must rebind them (clicks keep reaching apptUpdate).
+ * The Events half went with the Events tab (U9b-P4, 2026-11-12).
  *
- * Fixtures were frozen from the OLD positional templates before any S3b
- * edit (tests/fixtures/{apptColumns,eventColumns}.s3b.json).
+ * Fixtures were frozen from the OLD positional template before any S3b
+ * edit (tests/fixtures/apptColumns.s3b.json).
  *
  *   npx jest tests/listColumns.s3b.test.js
  */
@@ -32,7 +31,6 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const SCRIPTS = read('public/scripts.js');
 const INDEX = read('public/index.html');
 const APPT_FROZEN = JSON.parse(read('tests/fixtures/apptColumns.s3b.json'));
-const EVENT_FROZEN = JSON.parse(read('tests/fixtures/eventColumns.s3b.json'));
 
 function fnSrc(src, name) {
   const m = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(src);
@@ -101,43 +99,9 @@ const TABS = {
     fns: ['apptsColsKey', 'apptsColsOrderKey', 'apptsColsVisible', 'apptsRenderRows', 'apptsColsRender',
       'apptsColsApply', 'apptsColsDialog', 'apptsColsSave', 'apptsColsInit', 'tabApptsGet'],
   },
-  events: {
-    constName: 'EVENTS_COLUMNS', fnPrefix: 'events', tabId: 'tabEvents', tableId: 'eventsTable',
-    storageNs: 'events',
-    sortSelId: 'tabEventsSort', sortSel2Id: 'tabEventsSort2', rowsGlobal: 'events',
-    fetchFn: 'tabEventsGet', frozen: EVENT_FROZEN, cellCount: 10,
-    oldHeader: [
-      '<th>ID</th>',
-      `<th onclick="sort(this, 'type')">Type</th>`,
-      `<th onclick="sort(this, 'title')">Title</th>`,
-      DATE_TH('date'), '<th>Time</th>', '<th>Blocks</th>',
-      `<th onclick="sort(this, 'status')">Status</th>`,
-      '<th>Linked</th>', '<th>Location</th>', '<th>Action</th>',
-    ],
-    labels: ['ID', 'Type', 'Title', 'Date ⇅', 'Time', 'Blocks', 'Status', 'Linked', 'Location', 'Action'],
-    keys: ['event_id', 'event_type', 'event_title', 'event_date', 'event_time', 'event_with',
-      'event_status', 'linked', 'event_location', 'action'],
-    hideKey: 'event_with', hideIdx: 5, sortCol: { value: 'title', label: 'Title', key: 'event_title', idx: 2 },
-    dom: `
-      <input id="tabEventsButton"><div id="tabEventsLoad"></div>
-      <select id="tabEventsType"><option value="" selected>All</option></select>
-      <select id="tabEventsStatus"><option selected>Scheduled</option></select>
-      <input id="tabEventsTime" value="All"><input id="tabEventsDate1"><input id="tabEventsDate2">
-      <input id="tabEventsQ"><input type="checkbox" id="tabEventsUnlinked">
-      <select id="tabEventsSort" data-type="sortBy">
-        <option value="upcoming" selected>Upcoming first</option><option value="title">Title</option>
-      </select>
-      <select id="tabEventsSort2" data-type="sortDi"><option value="ASC" selected>A</option><option value="DESC">D</option></select>`,
-    prelude: `var offsets = {}, events = null;
-      window.firmData = { users: [{ user: 6, user_name: 'Fred' }, { user: 1, user_name: 'Stuart' }] };`,
-    apiBody: `({ total: window.__rows.length, data: JSON.parse(JSON.stringify(window.__rows)) })`,
-    fns: ['escHtml', 'escAttrJSON', 'eventsColsKey', 'eventsColsOrderKey', 'eventsColsVisible', 'eventsRenderRows',
-      'eventsColsRender', 'eventsColsApply', 'eventsColsDialog', 'eventsColsSave', 'eventsColsInit', 'tabEventsGet'],
-  },
 };
-// escHtml/escAttrJSON live in index.html and the appts picker never needs
-// them — but the shared block does, so the appts page lifts them too.
-TABS.appts.fns = ['escHtml', ...TABS.appts.fns];
+// The Events tab (and its EVENTS_COLUMNS twin) was retired in U9b-P4
+// (2026-11-12); the Calendar tab's picker is pinned in calendarColumns.test.js.
 
 function page(cfg, { userId = 6, storedOff, storageThrows = false } = {}) {
   const jsd = new JSDOM(`<!DOCTYPE html><body><div id="${cfg.tabId}" class="tab-main">
@@ -448,26 +412,13 @@ describe('appts action buttons — bound on every render path', () => {
   });
 });
 
-describe('events empty page keeps the "" global shape', () => {
-  test('an empty page renders nothing and a picker change stays empty', async () => {
-    const cfg = TABS.events;
-    const w = page(cfg);
-    w.__rows = [];
-    await w.__go(0);                                        // total 0 → events = ""
-    expect(w.eval('events')).toBe('');
-    setBox(w, cfg, 'event_with', false);
-    expect(cells(w, cfg)).toEqual([]);                      // "" is falsy: no render, no throw
-    expectAligned(w, cfg);
-  });
-});
-
-// Evaluate the WHOLE shared appts/events <script> block, as shipped, against
+// Evaluate the WHOLE appts <script> block, as shipped, against
 // the real table markup — the real gate for the two top-level build calls.
 function evalBlock(ycStub) {
   const declAt = INDEX.indexOf('const APPTS_COLUMNS');
   const blockStart = INDEX.lastIndexOf('<script>', declAt) + '<script>'.length;
   const block = INDEX.slice(blockStart, INDEX.indexOf('</script>', declAt));
-  const markup = ['apptsTable', 'eventsTable'].map((id) => {
+  const markup = ['apptsTable'].map((id) => {
     const at = INDEX.indexOf(`<table id="${id}"`);
     return INDEX.slice(at, INDEX.indexOf('</table>', at) + '</table>'.length);
   }).join('\n');
@@ -475,8 +426,6 @@ function evalBlock(ycStub) {
     <div id="tabAppts" class="tab-main">${markup}
       <select id="tabApptsSort" data-type="sortBy"><option value="upcoming" selected>U</option></select>
       <select id="tabApptsSort2" data-type="sortDi"><option value="ASC" selected>A</option></select>
-      <select id="tabEventsSort" data-type="sortBy"><option value="upcoming" selected>U</option></select>
-      <select id="tabEventsSort2" data-type="sortDi"><option value="ASC" selected>A</option></select>
     </div></body>`, { url: 'https://app.4lsg.com/', runScripts: 'dangerously' });
   const w = jsd.window;
   Object.defineProperty(w.HTMLElement.prototype, 'innerText', {
@@ -488,7 +437,7 @@ function evalBlock(ycStub) {
       window.Swal = { mixin: () => ({ fire: () => Promise.resolve({}) }), fire: () => Promise.resolve({}) };
       window.YC = { on: ${ycStub} };    // the block registers sync-bus handlers
       ${SCRIPTS}
-      var user = { user: 6 }, offsets = {}, appts = null, events = null;
+      var user = { user: 6 }, offsets = {}, appts = null;
       var YcPager = { getLimit: (k, d) => d, renderFooter() {} };
       var exportListCsv = () => {}, csvFilterOf = (p) => p;
       var Toast = { fire() {} };
@@ -508,19 +457,16 @@ describe('the shipped block', () => {
     const { ths, threw } = evalBlock('() => {}');
     expect(threw).toBeNull();
     expect(ths('apptsTable')).toEqual(TABS.appts.oldHeader);
-    expect(ths('eventsTable')).toEqual(TABS.events.oldHeader);
   });
 
   test('a sync-bus registration failure cannot leave either tab headerless', () => {
     const { ths, threw } = evalBlock("() => { throw new Error('sync regression'); }");
     expect(threw).not.toBeNull();
     expect(ths('apptsTable')).toEqual(TABS.appts.oldHeader);
-    expect(ths('eventsTable')).toEqual(TABS.events.oldHeader);
   });
 
   test.each([
     ['appts', 'apptsTable', 'appt_type', 5],
-    ['events', 'eventsTable', 'event_with', 5],
   ])("another window's save re-applies: %s (the shipped storage listener)", (name, tableId, hideKey, hideIdx) => {
     const cfg = TABS[name];
     const { w, threw } = evalBlock('() => {}');
@@ -541,7 +487,6 @@ describe('the shipped block', () => {
 describe('the pickers left the filter bars (R1)', () => {
   test.each([
     ['appts', 'tabAppts', 'tabApptsColsMenu', 'apptsTable'],
-    ['events', 'tabEvents', 'tabEventsColsMenu', 'eventsTable'],
   ])('%s: no Columns dropdown in the bar; the counter still counts a real filter', (name, tabId, menuId, tableId) => {
     const tabAt = INDEX.indexOf(`<div id="${tabId}"`);
     const bar = INDEX.slice(INDEX.indexOf('<div class="yc-filters">', tabAt),
@@ -559,8 +504,8 @@ describe('the pickers left the filter bars (R1)', () => {
       window.__active = (sel) => ycFiltersActive(document.querySelector(sel));
     `);
     expect(w.__active('.yc-filters')).toBe(0);
-    const date1 = w.document.querySelector(`#${tabId === 'tabAppts' ? 'tabApptsDate1' : 'tabEventsDate1'}`);
-    w.document.querySelector(`#${tabId === 'tabAppts' ? 'tabApptsTime' : 'tabEventsTime'}`).value = 'After';
+    const date1 = w.document.querySelector('#tabApptsDate1');
+    w.document.querySelector('#tabApptsTime').value = 'After';
     date1.value = '2026-11-01';
     expect(w.__active('.yc-filters')).toBeGreaterThan(0);   // a real filter still does
   });

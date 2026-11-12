@@ -62,20 +62,6 @@
     .ls-sec-body { padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
     .ls-sec-body > .yc-hint { margin: 0; }
 
-    /* The event-types editor (fe-event_types), drawn inside its settings row. */
-    .ls-et { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-    .ls-et > .yc-hint { margin: 0; }
-    .ls-et .ls-et-warn { color: var(--warn); }
-    .ls-et-list { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-    .ls-et-item { display: flex; align-items: flex-start; gap: 4px; min-width: 0; }
-    .ls-et-in { flex: 1 1 auto; min-width: 0; }
-    .ls-et-item .btn { flex: 0 0 auto; }
-    .ls-et-ws { font-size: var(--fs-xs); color: var(--warn); margin-top: 2px; overflow-wrap: anywhere; }
-    .ls-et-ws[hidden] { display: none; }
-    .ls-et-none { font-size: 12px; color: var(--text-muted); }
-    .ls-et-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-    .ls-et-msg { font-size: 12px; color: var(--danger); flex: 1 1 10em; min-width: 0; overflow-wrap: anywhere; }
-
     .empty-state {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       padding: 40px 10px; color: var(--text-muted); gap: 10px; text-align: center;
@@ -123,7 +109,8 @@
 // LISTS SUB-PAGE (Config shell → Lists) — settings arc, 2026-10
 //
 // A VOCABULARY tab: the app_settings keys of the config home's 'lists'
-// section (lib/settingsRegistry.js) — fe-lead_sources and fe-event_types.
+// section (lib/settingsRegistry.js) — fe-lead_sources (fe-event_types was
+// retired in U9b-P4; Calendar Types is the event vocabulary).
 // ONE GET /api/app-settings?home=config per load; the rows are drawn by
 // /js/ycSettingRows.js and each changed key saves on its own (PUT
 // /api/app-settings/:key, verbatim) with History + restore per row. The
@@ -133,16 +120,6 @@
 //
 //   · fe-lead_sources: the module's json_array list (add / remove / reorder).
 //     Suggestions only — the case's Lead Source field accepts free text.
-//   · fe-event_types: a DEDICATED editor (eventTypesEditor, passed through
-//     the rows' `editors`; the registry names no editor for the key, so this
-//     page assigns 'eventTypes' to that one row) — settings.html's Event
-//     Types editor ported: add / rename / reorder / remove, a remove asks
-//     first, empty or duplicate names (trimmed, any case) block the save
-//     before any PUT, and the page Save asks before saving a stored name that
-//     is gone (renamed, or removed without that question): existing events
-//     keep their old value. Calendar Types is the event form's real
-//     vocabulary; this list is the new-event dialog's and the Events filter's,
-//     and the event form's fallback.
 //
 // After a save batch or a restore that wrote an fe-* key, ycSettingRows runs
 // the shell's window.top.loadFirmData() once (the shell's own surfaces —
@@ -245,159 +222,9 @@ function banner(msg) {
 }
 const firmUsers = () => (P.firmData && Array.isArray(P.firmData.users) ? P.firmData.users : []);
 
-// ═══════════════════════════════════════════════════════════════
-// EVENT TYPES (fe-event_types: ["Name", …]) — settings.html's editor, ported
-// ═══════════════════════════════════════════════════════════════
-const ET_KEY = 'fe-event_types';
-const ET = { current: null };    // the live editor: the page's Save asks it about gone names
-
-/** The stored value → its names, or null for a shape this editor cannot
- *  read (the row then falls back to the type's own control). Blank → []. */
-function etParse(raw) {
-  const s = raw == null ? '' : String(raw);
-  if (s.trim() === '') return [];
-  let a;
-  try { a = JSON.parse(s); } catch (_) { return null; }
-  if (!Array.isArray(a) || a.some((x) => typeof x !== 'string' || /[\r\n]/.test(x))) return null;
-  return a;
-}
-const etNorm = (s) => String(s).trim().toLowerCase();
-
-function eventTypesEditor(row, ctx) {
-  const stored = row.value == null ? '' : String(row.value);
-  const orig = etParse(stored);
-  if (!orig) { ET.current = null; return null; }
-  const list = orig.slice();
-  const removed = new Set();     // stored names (trimmed) removed through the confirmed ✕
-  const box = document.createElement('div');
-  box.className = 'ls-et';
-  box.innerHTML = `<span class="yc-hint ls-et-warn">Renaming or removing an event type does <b>not</b> change existing
-      events — they keep their old value.</span>
-    <span class="yc-hint">The event form's real vocabulary is <b>Calendar Types</b> (its own tab here). This list is
-      what the new-event dialog and the Events filter offer, and what the event form falls back to when Calendar Types
-      cannot be read.</span>
-    <div class="ls-et-list"></div>
-    <div class="ls-et-foot"><button type="button" class="btn btn-outline btn-sm cc-w" data-et-add><i class="fa-solid fa-plus"></i> Add event type</button>
-      <span class="ls-et-msg" role="status"></span></div>`;
-  const listEl = box.querySelector('.ls-et-list');
-  const addBtn = box.querySelector('[data-et-add]');
-  const msg = box.querySelector('.ls-et-msg');
-
-  const same = () => list.length === orig.length && list.every((v, i) => v === orig[i]);
-  /** The first name listed twice (trimmed, any case), or null. */
-  function twice() {
-    const seen = new Set();
-    for (const v of list) {
-      const k = etNorm(v);
-      if (!k) continue;
-      if (seen.has(k)) return v.trim();
-      seen.add(k);
-    }
-    return null;
-  }
-  function problem() {
-    if (list.some((v) => v.trim() === '')) return 'Event type names cannot be empty — fill it in or remove it.';
-    const d = twice();
-    return d ? `“${d}” is listed twice — event type names must be unique.` : null;
-  }
-  function paintMsg() { const d = twice(); msg.textContent = d ? `“${d}” is listed twice.` : ''; }
-  function paintWs(badge, v) {
-    const h = window.ycSettingRows ? window.ycSettingRows.wsHint(v) : '';
-    badge.textContent = h;
-    badge.hidden = !h;
-  }
-
-  function render(focusAt) {
-    listEl.textContent = '';
-    addBtn.id = list.length ? '' : ctx.id;       // the row's label points at the first control
-    if (!addBtn.id) addBtn.removeAttribute('id');
-    if (!list.length) {
-      listEl.appendChild(Object.assign(document.createElement('div'), { className: 'ls-et-none', textContent: 'No event types — the app\'s built-in list applies.' }));
-    }
-    list.forEach((v, i) => {
-      const r = document.createElement('div');
-      r.className = 'ls-et-item';
-      r.innerHTML = `<div class="ls-et-in"><input type="text" data-et="${i}" placeholder="Event type name" spellcheck="false" autocomplete="off">
-          <div class="ls-et-ws"></div></div>
-        <button type="button" class="btn btn-outline btn-sm cc-w" data-et-up="${i}" title="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
-        <button type="button" class="btn btn-outline btn-sm cc-w" data-et-down="${i}" title="Move down" ${i === list.length - 1 ? 'disabled' : ''}>↓</button>
-        <button type="button" class="btn btn-outline btn-sm cc-w" data-et-del="${i}" title="Remove">✕</button>`;
-      const inp = r.querySelector('input');
-      inp.value = v;                                   // verbatim, never markup
-      inp.setAttribute('aria-label', `Event type ${i + 1}`);
-      if (i === 0) inp.id = ctx.id;
-      r.querySelector('[data-et-up]').setAttribute('aria-label', `Move event type ${i + 1} up`);
-      r.querySelector('[data-et-down]').setAttribute('aria-label', `Move event type ${i + 1} down`);
-      r.querySelector('[data-et-del]').setAttribute('aria-label', `Remove event type ${i + 1}`);
-      paintWs(r.querySelector('.ls-et-ws'), v);
-      listEl.appendChild(r);
-    });
-    if (focusAt != null) {
-      const f = listEl.querySelector(`[data-et="${focusAt}"]`);
-      if (f) f.focus();
-    }
-  }
-
-  listEl.addEventListener('input', (ev) => {
-    const t = ev.target, i = t.getAttribute('data-et');
-    if (i == null) return;
-    list[Number(i)] = t.value;                         // verbatim — no trim
-    paintWs(t.parentNode.querySelector('.ls-et-ws'), t.value);
-    paintMsg();
-    ctx.changed();
-  });
-  box.addEventListener('click', async (ev) => {
-    const b = ev.target.closest('button');
-    if (!b || b.disabled || !box.contains(b)) return;
-    const d = b.dataset;
-    let focus = null;
-    if (d.etAdd !== undefined) {
-      list.push('');
-      focus = list.length - 1;
-    } else if (d.etUp !== undefined || d.etDown !== undefined) {
-      const i = Number(d.etUp !== undefined ? d.etUp : d.etDown);
-      const j = d.etUp !== undefined ? i - 1 : i + 1;
-      if (j < 0 || j >= list.length) return;
-      [list[i], list[j]] = [list[j], list[i]];
-      focus = j;
-    } else if (d.etDel !== undefined) {
-      const i = Number(d.etDel), v = list[i];
-      if (v == null) return;
-      // A remove asks first (a blank entry has nothing to lose).
-      if (v.trim() !== '' && !(await ask('Remove this event type?',
-        `“${v.trim()}” is no longer offered in the new-event dialog or the Events filter once you save. `
-        + 'Existing events of this type keep it.', 'Remove'))) return;
-      if (list[i] !== v) return;                       // the list moved while the question was open
-      list.splice(i, 1);
-      if (orig.some((o) => o.trim() === v.trim())) removed.add(v.trim());
-    } else return;
-    render(focus);
-    paintMsg();
-    ctx.changed();
-  });
-  render(null);
-
-  const ed = {
-    el: box,
-    focusId: ctx.id,
-    /** Untouched → the stored string byte for byte; else the list as JSON. */
-    get() {
-      if (same()) return stored;
-      return list.length === 0 && stored.trim() === '' ? stored : JSON.stringify(list);
-    },
-    problem,
-    /** Stored names no longer listed and not removed through the ✕ question
-     *  (so: renamed, or edited away) — the page's Save asks about them. */
-    gone() {
-      const now = new Set(list.map((v) => v.trim()));
-      return [...new Set(orig.map((v) => v.trim()))].filter((n) => n && !now.has(n) && !removed.has(n));
-    },
-  };
-  ET.current = ed;
-  return ed;
-}
-
-const EDITORS = { eventTypes: eventTypesEditor };
+// No dedicated editors since U9b-P4 (2026-11-12): fe-event_types, the one
+// row that had one, is retired (the calendar-type registry replaced it).
+const EDITORS = {};
 
 // ═══════════════════════════════════════════════════════════════
 // PAGE — one GET per load, the rows, the shell protocol
@@ -430,7 +257,6 @@ const Page = {
     this.rows = [];
     ccApplyEditable();
     this.view = null;
-    ET.current = null;
     E('ls-rows').innerHTML = '<div class="empty-state"><i class="fa-solid fa-triangle-exclamation"></i><div></div></div>';
     E('ls-rows').querySelector('.empty-state > div').textContent = msg;
     banner(msg);
@@ -439,17 +265,11 @@ const Page = {
   },
 
   /** The served rows as this page draws them: editable per rowEditable (the
-   *  handshake AND can_edit, or an also_write row's can_edit alone);
-   *  fe-event_types through its dedicated editor. */
+   *  handshake AND can_edit, or an also_write row's can_edit alone). */
   rowsFor() {
-    return this.rows.map((r) => ({
-      ...r,
-      can_edit: rowEditable(r),
-      editor: r.key === ET_KEY ? (r.editor || 'eventTypes') : r.editor,
-    }));
+    return this.rows.map((r) => ({ ...r, can_edit: rowEditable(r) }));
   },
   render() {
-    ET.current = null;
     const host = E('ls-rows');
     const rows = this.rowsFor();
     if (!this.view) {
@@ -475,16 +295,6 @@ const Page = {
 
   async save() {
     if (!pageCanEdit() || !this.view || this.saving || !this.view.isDirty()) return;
-    // settings.html's question: a stored event type that is gone — renamed,
-    // or edited away — leaves existing events on the old value. (A ✕ remove
-    // asked already; a list the editor refuses is refused below, no PUT.)
-    const et = ET.current;
-    if (et && this.view.dirtyKeys().includes(ET_KEY) && !et.problem()) {
-      const gone = et.gone();
-      if (gone.length && !(await ask('Save the event types?',
-        `${gone.length === 1 ? 'This event type is' : 'These event types are'} renamed or removed: ${gone.join(', ')}. `
-        + 'Existing events keep their old value. Save anyway?', 'Save'))) return;
-    }
     this.saving = true;
     this.syncTopbar();
     banner(null);
@@ -535,7 +345,7 @@ window.addEventListener('beforeunload', (e) => {
 });
 
 // Test / debug handle.
-window.ListsPage = { Page, api, ET, ET_KEY, etParse, eventTypesEditor, SESSION_MSG, CC_RO_MSG, canEdit: () => ccCanEdit, pageCanEdit };
+window.ListsPage = { Page, api, SESSION_MSG, CC_RO_MSG, canEdit: () => ccCanEdit, pageCanEdit };
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {

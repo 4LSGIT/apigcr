@@ -85,32 +85,57 @@ function applyFeSetting(key, value) {
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Event types — single source of truth.
+   Event types — the labels the new-event dialog offers.
 
-   getEventTypeOptions() is the ONE place the create/edit dialog and the
-   shell's Events-tab filter both read from, so they can never drift apart.
+   Source: the item-type registry (GET /api/calendar-types →
+   calendar_item_types), the same rows eventform's picker reads (U2): active
+   hearing / deadline / conference / other types, grouped in that kind order,
+   labels only — the dialog sends event_type = the label and the server
+   resolves it to its type_key. loadEventTypeOptions() fetches ONCE per page
+   (newEventDialog awaits it); getEventTypeOptions() is the sync read: the
+   loaded labels, or the built-in default below when the registry has not
+   loaded or is unreachable, so a picker never renders empty.
 
-   Source: firmData.settings.event_types (shipped down by /api/firm-data from
-   the app_settings row 'fe-event_types'). Tolerates either a JSON array
-   (preferred) or a CSV string. Empty/missing → the built-in default below, so
-   the UI always has a list even before the setting is configured.
+   The app_settings list 'fe-event_types' is RETIRED (U9b-P4, 2026-11-12):
+   its two readers — the Events tab filter and this dialog — are gone / on the
+   registry, and the Config → Lists editor went with them.
    ────────────────────────────────────────────────────────────────────────── */
 const EVENT_TYPE_OPTIONS_DEFAULT = [
   'Confirmation Hearing', 'Docs Deadline', 'Deadline',
   'Court Date', 'Hearing', 'Internal',
 ];
+const EVENT_TYPE_KINDS = ['hearing', 'deadline', 'conference', 'other'];
+let eventTypeOptionsCache = null;      // registry labels once loaded
+let eventTypeOptionsLoading = null;    // the in-flight load, shared
 function getEventTypeOptions() {
-  const firm = (typeof window !== 'undefined' && window.firmData)
-    ? window.firmData
-    : ((typeof P !== 'undefined' && P && P.firmData) || {});
-  const raw = firm && firm.settings && firm.settings.event_types;
-  let list = [];
-  if (Array.isArray(raw)) {
-    list = raw.map(s => String(s).trim()).filter(Boolean);
-  } else if (typeof raw === 'string') {
-    list = raw.split(',').map(s => s.trim()).filter(Boolean);
-  }
-  return list.length ? list : EVENT_TYPE_OPTIONS_DEFAULT.slice();
+  return eventTypeOptionsCache ? eventTypeOptionsCache.slice() : EVENT_TYPE_OPTIONS_DEFAULT.slice();
+}
+function loadEventTypeOptions() {
+  if (eventTypeOptionsCache) return Promise.resolve(eventTypeOptionsCache.slice());
+  if (eventTypeOptionsLoading) return eventTypeOptionsLoading;
+  const send = (typeof P !== 'undefined' && P && typeof P.apiSend === 'function') ? P.apiSend
+    : (typeof window !== 'undefined' && typeof window.apiSend === 'function' ? window.apiSend : null);
+  if (!send) return Promise.resolve(getEventTypeOptions());
+  eventTypeOptionsLoading = Promise.resolve()
+    .then(() => send('/api/calendar-types?kind=' + EVENT_TYPE_KINDS.join(',') + '&active=1', 'GET'))
+    .then((res) => {
+      const rows = res && Array.isArray(res.data) ? res.data : [];
+      const labels = [];
+      for (const k of EVENT_TYPE_KINDS) {
+        for (const r of rows) {
+          const label = String((r && r.label) || '').trim();
+          if (String(r && r.kind) === k && label && !labels.includes(label)) labels.push(label);
+        }
+      }
+      if (labels.length) eventTypeOptionsCache = labels;
+      return getEventTypeOptions();
+    })
+    .catch((err) => {
+      console.warn('[event types] /api/calendar-types failed — using the built-in list:', err && err.message);
+      return getEventTypeOptions();
+    })
+    .finally(() => { eventTypeOptionsLoading = null; });
+  return eventTypeOptionsLoading;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -118,9 +143,8 @@ function getEventTypeOptions() {
 
    cases.case_type is a CATEGORY ("Bankruptcy", "Appeal", …) and
    cases.case_subtype the refinement ("Chapter 7", …). The valid combinations
-   live in the app_settings row 'fe-case_types' and ship down exactly like
-   'fe-event_types': /api/firm-data JSON-parses every fe-* row into
-   firmData.settings, so the map is at firmData.settings.case_types — a plain
+   live in the app_settings row 'fe-case_types' and ship down like every
+   fe-* row: /api/firm-data JSON-parses each into firmData.settings, so the map is at firmData.settings.case_types — a plain
    object of type → array-of-subtypes. Missing/malformed → the default below.
 
    Values stay OPAQUE free text: nothing here validates shape, and stored
@@ -167,9 +191,8 @@ function fmtCaseType(c) {
   return s ? `${t}: ${s}` : t;
 }
 
-/* Populate a case-type FILTER <select> from the map. Mirrors the shells'
-   eventtypelist populate: static options in the markup (e.g. value="%" All)
-   are preserved, dynamic options are tagged data-dyn and replaced on
+/* Populate a case-type FILTER <select> from the map. Static options in the
+   markup (e.g. value="%" All) are preserved, dynamic options are tagged data-dyn and replaced on
    re-populate, and the current value is restored so a re-populate never
    clobbers a user's choice.
 
@@ -1660,27 +1683,6 @@ const APPT_CSV_COLUMNS = [
   { key: 'appt_note',      label: 'Note' },
 ];
 
-const eventAllDay = (r) => r.event_all_day == 1 || r.event_all_day === true;
-const EVENT_CSV_COLUMNS = [
-  { key: 'event_id',         label: 'Event ID' },
-  { key: 'event_type',       label: 'Type' },
-  { key: 'event_title',      label: 'Title' },
-  { key: 'event_date',       label: 'Date', get: (r) => csvDate(r.event_date) },
-  { key: 'event_time',       label: 'Time', get: (r) => eventAllDay(r) ? 'All day'
-      : (r.event_time ? String(r.event_time).slice(0, 5) : '') },
-  { key: 'event_length',     label: 'Length (min)' },
-  // The tab's Blocks cell: NULL = everyone, 0 = nobody; all-day never blocks.
-  { key: 'event_with',       label: 'Blocks', get: (r) => eventAllDay(r) ? ''
-      : r.event_with == null ? 'Everyone'
-      : Number(r.event_with) === 0 ? 'Nobody' : csvUserName(r.event_with) },
-  { key: 'event_status',     label: 'Status' },
-  { key: 'event_resolution', label: 'Resolution' },
-  { key: 'event_link_type',  label: 'Linked Type' },
-  { key: 'link_label',       label: 'Linked To' },
-  { key: 'event_location',   label: 'Location' },
-  { key: 'event_note',       label: 'Note' },
-];
-
 // taskService.shapeRow's shape, not the table's column names.
 const TASK_CSV_COLUMNS = [
   { key: 'id',      label: 'Task ID' },
@@ -1715,9 +1717,13 @@ const CALENDAR_CSV_COLUMNS = [
       return r.link_type === 'contact' ? (d.contact_name || `Contact #${r.link_id}`)
         : (d.case_label || r.docket || r.case_id || '');
     } },
-  // The client, whatever the row is anchored to — an appt attached to a case
-  // still has one (the read layer's display.contact_name). Blank for events.
-  { key: 'contact',   label: 'Contact', get: (r) => (r.display && r.display.contact_name) || '' },
+  // Every client (display.contacts: own contact, then the case's debtors —
+  // a joint case lists both), '; '-joined; older payloads: contact_name.
+  { key: 'contact',   label: 'Contact', get: (r) => {
+      const d = r.display || {};
+      if (Array.isArray(d.contacts) && d.contacts.length) return d.contacts.map((c) => c.name || '').filter(Boolean).join('; ');
+      return d.contact_name || '';
+    } },
   { key: 'case_id',   label: 'Case ID' },
   { key: 'with',      label: 'With', get: (r) => {
       const a = (r.attendees || [])[0];
@@ -1736,7 +1742,6 @@ const LIST_CSV = {
   cases:    { endpoint: '/api/cases',    rows: 'cases',    total: 'total',   columns: CASE_CSV_COLUMNS,    prefix: 'yisracase-cases' },
   contacts: { endpoint: '/api/contacts', rows: 'contacts', total: 'total',   columns: CONTACT_CSV_COLUMNS, prefix: 'yisracase-contacts' },
   appts:    { endpoint: '/api/appts',    rows: 'appts',    total: 'counter', columns: APPT_CSV_COLUMNS,    prefix: 'yisracase-appts' },
-  events:   { endpoint: '/api/events',   rows: 'data',     total: 'total',   columns: EVENT_CSV_COLUMNS,   prefix: 'yisracase-events' },
   tasks:    { endpoint: '/api/tasks',    rows: 'data',     total: 'total',   columns: TASK_CSV_COLUMNS,    prefix: 'yisracase-tasks' },
 };
 
@@ -3699,7 +3704,9 @@ function newApptDialog(opts = {}) {
    All-day events never block availability — the field hides with the time
    row and is sent null, like event_length.
    ────────────────────────────────────────────────────────────────────────── */
-function newEventDialog(opts = {}) {
+async function newEventDialog(opts = {}) {
+  // The Type select's labels come from the registry (loaded once per page).
+  await loadEventTypeOptions();
   const isEdit = !!(opts.event && opts.event.event_id);
   const ev     = opts.event || {};
 
@@ -3750,7 +3757,7 @@ function newEventDialog(opts = {}) {
     }
   }
 
-  // ── Type select (single source — see getEventTypeOptions) ────────────────
+  // ── Type select (the registry's labels — see loadEventTypeOptions) ───────
   const TYPE_OPTIONS = getEventTypeOptions();
   const existingType = isEdit ? (ev.event_type || '') : '';
   const typeIsOther  = !!existingType && !TYPE_OPTIONS.includes(existingType);

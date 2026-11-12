@@ -112,10 +112,10 @@ describe('resolveLayout (pure)', () => {
 
   test('a placed list IS the order; base items neither placed nor removed slot in after their nearest preceding base item', () => {
     const user = { placed: { home: [{ item: 'comms' }, { item: 'cases' }, { break: true }, { item: 'moreAutomations' }] }, removed: { home: ['tasks'] } };
-    // base home: cases contacts appts | bills pipeline events | tasks newClient log | calendar comms
+    // base home: cases contacts appts | bills pipeline | tasks newClient log | calendar comms (events: retired U9b-P4)
     // (More Features left the base with launcher-nits C4: it is the firm's page, placed by the firm)
     expect(shape(R('home', { user }))).toEqual([
-      'comms', 'cases', 'contacts', 'appts', 'bills', 'pipeline', 'events', 'newClient', 'log', 'calendar',
+      'comms', 'cases', 'contacts', 'appts', 'bills', 'pipeline', 'newClient', 'log', 'calendar',
       '|', 'moreAutomations']);
     const out = R('home', { user });
     expect(out.filter((e) => e.origin === 'user').map((e) => e.id || '|')).toEqual(['comms', 'cases', '|', 'moreAutomations']);

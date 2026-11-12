@@ -17,9 +17,6 @@
  * every answer but true, onAccess both ways, no write control drawn, the
  * api() gate refusing every non-GET, THE SWEEP: every rendered control
  * driven → no write reaches apiSend; the same drive editable does write);
- * the event-types editor (settings.html's, ported: add, rename — the Save
- * asks —, reorder, remove — asks first —, duplicates / empty names refused
- * before any PUT, the warning and the Calendar Types note, verbatim values);
  * the lead-source list (suggestions-only note); loadFirmData once after an
  * fe-* save; the 403 session message; the dirty guards.
  *
@@ -93,8 +90,6 @@ function harness(w, extra) {
     L: w.ListsPage,
     row: (k) => $(`.ycsr-row[data-key="${k}"]`),
     status: (k) => $(`.ycsr-row[data-key="${k}"] .ycsr-status`).textContent,
-    et: () => $$('.ycsr-row[data-key="fe-event_types"] [data-et]'),
-    etVals: () => $$('.ycsr-row[data-key="fe-event_types"] [data-et]').map((i) => i.value),
     ls: () => $$('.ycsr-row[data-key="fe-lead_sources"] [data-ycsr-entry]'),
     setVal: (el, v) => { el.value = v; fire(el, el.tagName === 'SELECT' ? 'change' : 'input'); },
     /** window.confirm answers `yes` and records the question. */
@@ -115,8 +110,11 @@ describe('the page: one GET, the lists section only', () => {
     expect(t.gets()).toEqual(['/api/app-settings?home=config']);
     const listKeys = Object.keys(reg.SETTINGS).filter((k) => reg.SETTINGS[k].home === 'config' && reg.SETTINGS[k].section === 'lists')
       .sort((a, b) => reg.SETTINGS[a].sort - reg.SETTINGS[b].sort);
-    expect(listKeys).toEqual(['fe-lead_sources', 'fe-event_types']);
+    expect(listKeys).toEqual(['fe-lead_sources']);
     expect(t.$$('.ycsr-row').map((r) => r.dataset.key)).toEqual(listKeys);
+    // fe-event_types is RETIRED (U9b-P4): a stored row is never served, never drawn.
+    expect(t.fake.served().map((r) => r.key)).not.toContain('fe-event_types');
+    expect(t.row('fe-event_types')).toBeNull();
     expect(t.fake.served().map((r) => r.key)).toContain('fe-case_types');           // it was there to draw, and was not
     expect([t.row('fe-case_types'), t.$('#ls-rows').textContent.includes('Chapter 7')]).toEqual([null, false]);
     expect(t.$('#ls-pointer').textContent.replace(/\s+/g, ' ')).toBe('Case types are not edited here: they are in the Types & Subtypes tab, which checks usage and repoints pipeline templates.');
@@ -144,19 +142,18 @@ describe('the read-only handshake (settings arc §3b)', () => {
   const readOnly = (t) => {
     expect(t.$('body').classList.contains('cc-ro')).toBe(true);
     expect(t.controls().map((c) => c.outerHTML)).toEqual([]);                      // nothing that writes is drawn
-    expect(t.$$('.ycsr-row .ycsr-ro').map((e) => e.textContent)).toEqual([LS, ET]);  // the values as text
-    expect(t.$$('.ycsr-posture').map((e) => e.textContent)).toEqual(Array(2).fill('Read-only — you can see it here but not change it.'));
+    expect(t.$$('.ycsr-row .ycsr-ro').map((e) => e.textContent)).toEqual([LS]);      // the value as text
+    expect(t.$$('.ycsr-posture').map((e) => e.textContent)).toEqual(Array(1).fill('Read-only — you can see it here but not change it.'));
     expect(t.$('#ls-status').textContent).toBe('Read-only');
     expect(t.topbar().save).toBe(false);
   };
   const editable = (t) => {
     expect(t.$('body').classList.contains('cc-ro')).toBe(false);
-    expect(t.etVals()).toEqual(['Confirmation Hearing', 'Docs Deadline', 'Hearing']);
     expect(t.ls().map((i) => i.value)).toEqual(['Google', 'Referral']);
-    expect(t.$$('[data-ycsr="history"]')).toHaveLength(2);
+    expect(t.$$('[data-ycsr="history"]')).toHaveLength(1);
     expect(t.controls().filter((c) => c.disabled && !/^[↑↓]$/.test(c.textContent))).toEqual([]);
-    expect(t.$$('.cc-w').length).toBeGreaterThan(0);
-    expect(t.$$('.cc-w').filter((el) => t.w.getComputedStyle(el).display === 'none')).toEqual([]);
+    // (.cc-w write controls lived only in the retired event-types editor;
+    // the lead-source list's controls are the rows module's own.)
   };
 
   test('read-only at init for every answer but true (false / null / undefined / "true" / 1) — no onAccess needed', async () => {
@@ -167,10 +164,9 @@ describe('the read-only handshake (settings arc §3b)', () => {
     }
   });
 
-  test('editable at init when P.configCanEdit === true: the lead-source list and the event-types editor, History on both', async () => {
+  test('editable at init when P.configCanEdit === true: the lead-source list, with History', async () => {
     const t = await boot({ canEdit: true });
     editable(t);
-    expect(t.row('fe-event_types').querySelector('.ls-et')).not.toBeNull();
   });
 
   test('onAccess re-applies it both ways (true → editable; then false / missing / "true" / {} → read-only)', async () => {
@@ -192,13 +188,13 @@ describe('the read-only handshake (settings arc §3b)', () => {
   test('the server says can_edit false (no firm.settings) while the answer is true: still no control', async () => {
     const t = await boot({ canEdit: true, caps: { firm: false, system: false } });
     expect(t.controls()).toEqual([]);
-    expect(t.$$('.ycsr-ro').map((e) => e.textContent)).toEqual([LS, ET]);
+    expect(t.$$('.ycsr-ro').map((e) => e.textContent)).toEqual([LS]);
   });
 
   test('api() refuses every non-GET while read-only (and only then) — nothing reaches apiSend', async () => {
     const t = await boot({ canEdit: false });
     await expect(t.L.api('/api/app-settings/fe-lead_sources', 'PUT', { value: '[]' })).rejects.toThrow(RO_MSG);
-    await expect(t.L.api('/api/app-settings/fe-event_types/restore', 'POST', { version_id: 1 })).rejects.toThrow(RO_MSG);
+    await expect(t.L.api('/api/app-settings/fe-lead_sources/restore', 'POST', { version_id: 1 })).rejects.toThrow(RO_MSG);
     await expect(t.L.api('/api/app-settings?home=config')).resolves.toMatchObject({ status: 'success' });
     expect(t.writes()).toEqual([]);
     t.w.onAccess({ canEdit: true });
@@ -242,7 +238,7 @@ describe('the read-only handshake (settings arc §3b)', () => {
 
   test('THE SWEEP after a flip: an editable session with unsaved edits, then told read-only — its edits are gone with its controls, nothing writes', async () => {
     const t = await boot({ canEdit: true });
-    const stale = t.et()[0];
+    const stale = t.ls()[1];
     t.setVal(stale, 'Edited');
     t.setVal(t.ls()[0], 'Edited too');
     expect(t.L.Page.dirty()).toBe(true);
@@ -258,151 +254,15 @@ describe('the read-only handshake (settings arc §3b)', () => {
   test('THE SWEEP, editable: the same drive reaches the writes (so the read-only sweep exercises them)', async () => {
     const t = await boot({ canEdit: true });
     const n = await sweep(t);
-    expect(n).toBeGreaterThan(4);
+    expect(n).toBeGreaterThan(1);
     const got = new Set(t.writes().map(([k]) => k));
-    expect([...got].sort()).toEqual(['PUT /api/app-settings/fe-event_types', 'PUT /api/app-settings/fe-lead_sources']);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────
-describe('the event-types editor (settings.html\'s, ported)', () => {
-  const etRow = (t) => t.row('fe-event_types');
-  const btn = (t, attr, i) => etRow(t).querySelector(`[${attr}="${i}"]`);
-
-  test('drawn from the stored list verbatim, with the warning and the Calendar Types note; untouched is clean and hands back the stored string byte for byte', async () => {
-    const t = await boot();
-    const hints = [...etRow(t).querySelectorAll('.ls-et > .yc-hint')].map((h) => h.textContent.replace(/\s+/g, ' '));
-    expect(hints).toEqual([
-      'Renaming or removing an event type does not change existing events — they keep their old value.',
-      'The event form\'s real vocabulary is Calendar Types (its own tab here). This list is what the new-event dialog and the Events filter offer, and what the event form falls back to when Calendar Types cannot be read.',
-    ]);
-    expect(etRow(t).querySelector('.ls-et-warn')).toBe(etRow(t).querySelector('.ls-et > .yc-hint'));
-    expect(t.etVals()).toEqual(['Confirmation Hearing', 'Docs Deadline', 'Hearing']);
-    expect(etRow(t).querySelector('label.yc-flabel').htmlFor).toBe(t.et()[0].id);
-    expect([t.L.Page.view.value('fe-event_types'), t.L.Page.view.isDirty()]).toEqual([ET, false]);
-    // an edit and its revert: clean again
-    t.setVal(t.et()[1], 'Docs');
-    expect(t.L.Page.dirty()).toBe(true);
-    t.setVal(t.et()[1], 'Docs Deadline');
-    expect([t.L.Page.dirty(), t.L.Page.view.value('fe-event_types')]).toEqual([false, ET]);
-  });
-
-  test('add: a new entry, focused; typed verbatim (spaces kept, the badge says so); saved as a JSON list; no question (nothing gone); loadFirmData once', async () => {
-    const t = await boot();
-    t.answer(true);
-    t.click(etRow(t).querySelector('[data-et-add]'));
-    await flush();
-    expect(t.w.document.activeElement).toBe(t.et()[3]);
-    t.setVal(t.et()[3], 'Mediation ');
-    expect(etRow(t).querySelectorAll('.ls-et-ws')[3].textContent).toBe('⚠ 1 trailing space — preserved on save');
-    expect([t.$('#ls-status').textContent, t.topbar().save]).toEqual(['Unsaved changes', true]);
-    await t.save();
-    const want = JSON.stringify(['Confirmation Hearing', 'Docs Deadline', 'Hearing', 'Mediation ']);
-    expect(t.writes()).toEqual([['PUT /api/app-settings/fe-event_types', want]]);
-    expect([t.asked, t.firmLoads(), t.fake.value('fe-event_types'), t.status('fe-event_types')]).toEqual([[], 1, want, 'Saved']);
-    expect([t.L.Page.dirty(), t.topbar().save, t.etVals()]).toEqual([false, false, ['Confirmation Hearing', 'Docs Deadline', 'Hearing', 'Mediation ']]);
-  });
-
-  test('reorder: ↑ / ↓ move an entry (the ends disabled); the order is what saves', async () => {
-    const t = await boot();
-    expect([btn(t, 'data-et-up', 0).disabled, btn(t, 'data-et-down', 2).disabled]).toEqual([true, true]);
-    t.click(btn(t, 'data-et-down', 0));
-    await flush();
-    t.click(btn(t, 'data-et-up', 2));
-    await flush();
-    expect(t.etVals()).toEqual(['Docs Deadline', 'Hearing', 'Confirmation Hearing']);
-    await t.save();
-    expect(t.writes()).toEqual([['PUT /api/app-settings/fe-event_types', '["Docs Deadline","Hearing","Confirmation Hearing"]']]);
-    expect(t.asked).toEqual([]);
-  });
-
-  test('rename: the page Save asks first, naming what is gone — No: nothing saved, the edit kept; Yes: saved', async () => {
-    const t = await boot();
-    t.setVal(t.et()[2], 'Hearing (court)');
-    t.answer(false);
-    await t.save();
-    expect(t.asked).toEqual(['Save the event types?\n\nThis event type is renamed or removed: Hearing. Existing events keep their old value. Save anyway?']);
-    expect([t.writes(), t.L.Page.dirty(), t.et()[2].value]).toEqual([[], true, 'Hearing (court)']);
-    t.answer(true);
-    await t.save();
-    expect(t.writes()).toEqual([['PUT /api/app-settings/fe-event_types', '["Confirmation Hearing","Docs Deadline","Hearing (court)"]']]);
-    expect(t.asked).toHaveLength(2);
-    // a spacing-only change is not a rename (the consumers trim)
-    t.setVal(t.et()[0], ' Confirmation Hearing');
-    await t.save();
-    expect([t.asked.length, t.writes().length]).toEqual([2, 2]);
-  });
-
-  test('remove: asks first — No keeps it (clean); Yes removes it (dirty) and the Save asks nothing more; a blank entry goes without a question', async () => {
-    const t = await boot();
-    t.answer(false);
-    t.click(btn(t, 'data-et-del', 1));
-    await flush();
-    expect(t.asked).toEqual(['Remove this event type?\n\n“Docs Deadline” is no longer offered in the new-event dialog or the Events filter once you save. Existing events of this type keep it.']);
-    expect([t.etVals(), t.L.Page.dirty()]).toEqual([['Confirmation Hearing', 'Docs Deadline', 'Hearing'], false]);
-    t.answer(true);
-    t.click(btn(t, 'data-et-del', 1));
-    await flush();
-    expect([t.etVals(), t.L.Page.dirty(), t.asked.length]).toEqual([['Confirmation Hearing', 'Hearing'], true, 2]);
-    t.click(etRow(t).querySelector('[data-et-add]'));
-    await flush();
-    t.click(btn(t, 'data-et-del', 2));                       // the new blank entry
-    await flush();
-    expect([t.etVals(), t.asked.length]).toEqual([['Confirmation Hearing', 'Hearing'], 2]);
-    await t.save();
-    expect(t.asked).toHaveLength(2);                         // removed through the question: not asked again
-    expect(t.writes()).toEqual([['PUT /api/app-settings/fe-event_types', '["Confirmation Hearing","Hearing"]']]);
-    // emptied: an empty list, saved as one
-    t.click(btn(t, 'data-et-del', 0)); await flush();
-    t.click(btn(t, 'data-et-del', 0)); await flush();
-    expect(etRow(t).querySelector('.ls-et-none').textContent).toBe('No event types — the app\'s built-in list applies.');
-    await t.save();
-    expect(t.writes()[1]).toEqual(['PUT /api/app-settings/fe-event_types', '[]']);
-  });
-
-  test('duplicates (trimmed, any case) and empty names are refused before any PUT: the reason in the editor and on the row; the banner says so', async () => {
-    const t = await boot();
-    t.answer(true);
-    t.setVal(t.et()[0], ' docs deadline ');
-    expect(etRow(t).querySelector('.ls-et-msg').textContent).toBe('“Docs Deadline” is listed twice.');
-    await t.save();
-    expect([t.writes(), t.asked]).toEqual([[], []]);          // refused before the rename question too
-    expect(t.status('fe-event_types')).toBe('“Docs Deadline” is listed twice — event type names must be unique.');
-    expect(t.banner()).toBe('Lists: a list was not saved — the reason is on it.');
-    t.setVal(t.et()[0], 'Confirmation Hearing');
-    expect(etRow(t).querySelector('.ls-et-msg').textContent).toBe('');
-    t.click(etRow(t).querySelector('[data-et-add]'));
-    await flush();
-    t.setVal(t.et()[3], '   ');
-    await t.save();
-    expect(t.writes()).toEqual([]);
-    expect(t.status('fe-event_types')).toBe('Event type names cannot be empty — fill it in or remove it.');
-    t.setVal(t.et()[3], 'Mediation');
-    await t.save();
-    expect([t.writes().length, t.banner(), t.L.Page.dirty()]).toEqual([1, null, false]);
-  });
-
-  test('a stored value the editor cannot read: the row falls back to the type\'s own control (a textarea, verbatim); blank stored: an empty editor', async () => {
-    const t = await boot({ values: { ...VALUES, 'fe-event_types': ' {"Hearing": 1} ' } });
-    const ta = t.row('fe-event_types').querySelector('textarea');
-    expect([ta && ta.value, t.row('fe-event_types').querySelector('.ls-et'), t.L.ET.current]).toEqual([' {"Hearing": 1} ', null, null]);
-    expect(t.L.etParse('["a", 1]')).toBeNull();
-    expect(t.L.etParse('["a\\nb"]')).toBeNull();
-    const t2 = await boot({ values: { 'fe-lead_sources': LS } });                    // no fe-event_types row yet
-    expect([t2.et().length, t2.row('fe-event_types').querySelector('.ls-et-none').textContent, t2.L.Page.dirty()])
-      .toEqual([0, 'No event types — the app\'s built-in list applies.', false]);
-    expect(t2.row('fe-event_types').querySelector('label.yc-flabel').htmlFor).toBe(t2.row('fe-event_types').querySelector('[data-et-add]').id);
-    t2.click(t2.row('fe-event_types').querySelector('[data-et-add]'));
-    await flush();
-    t2.setVal(t2.et()[0], 'Hearing');
-    await t2.save();
-    expect(t2.writes()).toEqual([['PUT /api/app-settings/fe-event_types', '["Hearing"]']]);
+    expect([...got].sort()).toEqual(['PUT /api/app-settings/fe-lead_sources']);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
 describe('lead sources, firmData, refusals, guards', () => {
-  test('lead sources: the rows module\'s list (add / remove / reorder) — saved as a JSON list; with event types in the same Save: two PUTs, loadFirmData ONCE', async () => {
+  test('lead sources: the rows module\'s list (add / remove / reorder) — saved as a JSON list; loadFirmData once per Save', async () => {
     const t = await boot();
     expect(t.ls().map((i) => i.value)).toEqual(['Google', 'Referral']);
     t.click(t.row('fe-lead_sources').querySelector('[data-ycsr-li="add"]'));
@@ -413,13 +273,9 @@ describe('lead sources, firmData, refusals, guards', () => {
     expect(t.firmLoads()).toBe(1);
     t.click(t.row('fe-lead_sources').querySelector('[data-ycsr-li="del"][data-i="0"]'));
     await flush();
-    t.setVal(t.et()[0], 'Confirmation hearing');             // a case change is a rename: the Save asks
-    t.answer(true);
     await t.save();
-    expect(t.writes().slice(1)).toEqual([
-      ['PUT /api/app-settings/fe-lead_sources', '["Referral","Billboard"]'],
-      ['PUT /api/app-settings/fe-event_types', '["Confirmation hearing","Docs Deadline","Hearing"]']]);
-    expect([t.firmLoads(), t.asked.length]).toEqual([2, 1]);
+    expect(t.writes().slice(1)).toEqual([['PUT /api/app-settings/fe-lead_sources', '["Referral","Billboard"]']]);
+    expect([t.firmLoads(), t.asked.length]).toEqual([2, 0]);
   });
 
   test('a 403 on save (the permission gone since load): the server\'s sentence on the row, the session message on the banner, the edit kept', async () => {
@@ -444,21 +300,21 @@ describe('lead sources, firmData, refusals, guards', () => {
 
   test('the dirty guards: Refresh asks first (No keeps the edit, Yes re-reads clean); a tab return never reloads over an edit; an unload is held', async () => {
     const t = await boot();
-    t.setVal(t.et()[0], 'Changed');
+    t.setVal(t.ls()[0], 'Changed');
     t.answer(false);
     await t.w.onRefresh();
     await flush();
-    expect([t.asked, t.gets().length, t.et()[0].value]).toEqual([['Discard unsaved list changes?'], 1, 'Changed']);
+    expect([t.asked, t.gets().length, t.ls()[0].value]).toEqual([['Discard unsaved list changes?'], 1, 'Changed']);
     t.w.onShow();
     await flush();
-    expect([t.gets().length, t.et()[0].value]).toEqual([1, 'Changed']);
+    expect([t.gets().length, t.ls()[0].value]).toEqual([1, 'Changed']);
     const ev = new t.w.Event('beforeunload', { cancelable: true });
     t.w.dispatchEvent(ev);
     expect(ev.defaultPrevented).toBe(true);
     t.answer(true);
     await t.w.onRefresh();
     await flush();
-    expect([t.gets().length, t.et()[0].value, t.L.Page.dirty()]).toEqual([2, 'Confirmation Hearing', false]);
+    expect([t.gets().length, t.ls()[0].value, t.L.Page.dirty()]).toEqual([2, 'Google', false]);
     const ev2 = new t.w.Event('beforeunload', { cancelable: true });
     t.w.dispatchEvent(ev2);
     expect(ev2.defaultPrevented).toBe(false);
@@ -501,7 +357,7 @@ describe('under the real Config shell', () => {
     const t = await shell();
     expect([t.$('body').classList.contains('cc-ro'), t.controls().length, t.shown()]).toEqual([true, 0, ['refresh']]);
     await t.release({ can_edit_firm: true });
-    expect([t.$('body').classList.contains('cc-ro'), t.etVals().length, t.shown(), t.roBanner()]).toEqual([false, 3, ['refresh'], null]);
+    expect([t.$('body').classList.contains('cc-ro'), t.ls().length, t.shown(), t.roBanner()]).toEqual([false, 2, ['refresh'], null]);
     t.setVal(t.ls()[0], 'Search');
     expect(t.shown()).toEqual(['save', 'refresh']);
     t.mid.onTopbarSave();
@@ -510,13 +366,11 @@ describe('under the real Config shell', () => {
     expect([t.firmLoads(), t.shown()]).toEqual([1, ['refresh']]);
   });
 
-  test('a staff member (firm.lists, no firm.settings): Lead sources editable, Event types read-only; Save on THIS tab only, saving only Lead sources', async () => {
+  test('a staff member (firm.lists, no firm.settings): Lead sources editable; Save on THIS tab only, saving only Lead sources', async () => {
     const t = await shell({ firm: false, system: false, lists: true });
     await t.release({ can_edit_firm: false });
-    expect([t.$('body').classList.contains('cc-ro'), t.ls().length > 0, t.et().length, t.roBanner(), t.shown()])
-      .toEqual([false, true, 0, null, ['refresh']]);
-    expect(t.row('fe-event_types').querySelector('.ycsr-ro').textContent).toBe(ET);              // the value as text
-    expect(t.row('fe-event_types').querySelectorAll('input, select, textarea, button').length).toBe(0);
+    expect([t.$('body').classList.contains('cc-ro'), t.ls().length > 0, t.roBanner(), t.shown()])
+      .toEqual([false, true, null, ['refresh']]);
     expect(t.$('#ls-status').textContent).toBe('All changes saved');
     expect([t.mid.isReadOnlyTab('lists'), t.mid.isReadOnlyTab('types')]).toEqual([false, true]);   // the other tabs stay read-only
     t.setVal(t.ls()[0], 'Search');

@@ -123,7 +123,7 @@ function expectClean(w) {
 }
 
 const PAGER = `var YcPager = { getLimit: (k, d) => d, renderFooter() {} };
-  var casesColsDialog = () => {}, apptsColsDialog = () => {}, eventsColsDialog = () => {};`;
+  var casesColsDialog = () => {}, apptsColsDialog = () => {};`;
 // (contactsColsDialog is stubbed beside the contacts cf vars below; the
 // other three Gets reference theirs through footRender's onColumns — R1.)
 
@@ -202,28 +202,6 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
     const cells = cellText(dataRow(w, 'calxTable'));
     expect(cells.slice(1, 6)).toEqual([V, `${V} ${V}`, V, V, V]);
     expect(w.document.getElementById('calxFoot').textContent).toContain(`capped at ${V} —`);
-  });
-
-  test('tabEventsGet', async () => {
-    const w = page({
-      tabEventsButton: 'input', tabEventsLoad: 'div', tabEventsType: 'input', tabEventsStatus: 'input',
-      tabEventsTime: 'input', tabEventsDate1: 'input', tabEventsDate2: 'input', tabEventsQ: 'input',
-      tabEventsSort: 'input', tabEventsSort2: 'input=ASC', tabEventsUnlinked: 'check', eventsTable: 'table', eventsTableFoot: 'div',
-    }, `${PAGER} var offsets = {}, events;
-        ${constSrc(INDEX, 'EVENTS_COLUMNS')}
-        var eventsColsVis = EVENTS_COLUMNS;   // the picker's on-screen set (S3b)
-        ${fnSrc(INDEX, 'escHtml')} ${fnSrc(INDEX, 'escAttrJSON')}
-        ${fnSrc(INDEX, 'eventsRenderRows')} ${fnSrc(INDEX, 'tabEventsGet')}`,
-    async () => ({ total: 1, data: [{
-      event_id: 9, event_type: V, event_title: V, event_date: V, event_time: V, event_all_day: 0,
-      event_with: 6, event_status: V, event_link_type: 'contact', event_link_id: 1405,
-      link_label: V, event_location: V,
-    }] }));
-    w.firmData = { users: [{ user: 6, user_name: V }] };
-    await w.tabEventsGet(0);
-    expectClean(w);
-    expect(cellText(dataRow(w, 'eventsTable')).slice(0, 9)).toEqual(
-      ['9', V, V, V.slice(0, 10).trim(), V.slice(0, 5).trim(), V, V, `Contact: ${V}`, V]);
   });
 
   test('tabApptsGet: cells, and the action buttons get the raw values', async () => {

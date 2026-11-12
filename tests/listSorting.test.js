@@ -271,7 +271,7 @@ describe('the tabs send what the routes read', () => {
     const html = Object.entries(fields).map(([id, v]) => (v === 'table' ? `<table id="${id}"><tr><th>h</th></tr></table>`
       : v === 'div' ? `<div id="${id}"></div>` : v === 'check' ? `<input type="checkbox" id="${id}">` : input(id, v))).join('');
     const w = page(html, `var casesColsDialog = () => {}, contactsColsDialog = () => {},
-        apptsColsDialog = () => {}, eventsColsDialog = () => {};   // footRender's onColumns (R1)
+        apptsColsDialog = () => {};   // footRender's onColumns (R1)
       ${prelude} ${extra.map((f) => fnSrc(INDEX, f)).join('\n')} ${fnSrc(INDEX, fn)}`,
       async () => ({ total: 0, counter: 0, data: [], appts: [], contacts: [] }));
     await w[fn](0);
@@ -298,31 +298,16 @@ describe('the tabs send what the routes read', () => {
 
   const APPTS = { tabApptsButton: '', tabApptsLoad: 'div', tabApptsType: '__all__', tabApptsStatus: 'All', tabApptsTime: 'All',
     tabApptsDate1: '', tabApptsDate2: '', tabApptsWith: '', apptsTable: 'table', apptsTableFoot: 'div' };
-  // S3b: both tabs render through their column models.
+  // S3b: the tab renders through its column model.
   const APPTS_PRE = `var offsets = {}, appts, apptsLastLoad = 0; function tabApptsTypesLoad() {}
     ${constSrc(INDEX, 'APPTS_COLUMNS')}
     var apptsColsVis = APPTS_COLUMNS;
     ${fnSrc(INDEX, 'apptsRenderRows')}`;
-  const EVENTS_PRE = `var offsets = {}, events;
-    ${constSrc(INDEX, 'EVENTS_COLUMNS')}
-    var eventsColsVis = EVENTS_COLUMNS;
-    ${fnSrc(INDEX, 'eventsRenderRows')}`;
   test('appts: upcoming sends no direction; a column sends both', async () => {
     expect(await run('tabApptsGet', APPTS_PRE, { ...APPTS, tabApptsSort: 'upcoming', tabApptsSort2: 'DESC' }, ['apptsStatusValues']))
       .toEqual({ limit: 100, offset: 0, sort_by: 'upcoming' });
     expect(await run('tabApptsGet', APPTS_PRE, { ...APPTS, tabApptsSort: 'with', tabApptsSort2: 'DESC' }, ['apptsStatusValues']))
       .toEqual({ limit: 100, offset: 0, sort_by: 'with', sort_dir: 'DESC' });
-  });
-
-  const EVENTS = { tabEventsButton: '', tabEventsLoad: 'div', tabEventsType: '', tabEventsStatus: 'Scheduled', tabEventsTime: 'All',
-    tabEventsDate1: '', tabEventsDate2: '', tabEventsQ: '', tabEventsUnlinked: 'check', eventsTable: 'table', eventsTableFoot: 'div' };
-  const EV = (by, dir) => run('tabEventsGet', EVENTS_PRE, { ...EVENTS, tabEventsSort: by, tabEventsSort2: dir },
-    ['escHtml', 'escAttrJSON']);
-  test('events: upcoming, date both ways, a column', async () => {
-    expect(await EV('upcoming', 'DESC')).toEqual({ limit: 100, offset: 0, status: 'Scheduled', sort: 'upcoming' });
-    expect(await EV('date', 'DESC')).toEqual({ limit: 100, offset: 0, status: 'Scheduled', sort: 'desc' });
-    expect(await EV('date', 'ASC')).toEqual({ limit: 100, offset: 0, status: 'Scheduled', sort: 'asc' });
-    expect(await EV('title', 'DESC')).toEqual({ limit: 100, offset: 0, status: 'Scheduled', sort: 'desc', sort_by: 'title' });
   });
 
   test('the Cases Stage filter offers exactly the case_stage enum, in its order', () => {
@@ -340,12 +325,12 @@ describe('the tabs send what the routes read', () => {
 
   test('every sortable header is wired to a value its Order By select offers', () => {
     for (const [selId, thead] of [['tabContactsSort', 'contactsTable'], ['tabApptsSort', 'apptsTable'],
-      ['tabEventsSort', 'eventsTable'], ['calxSortBy', 'calxTable'], ['tabCasesOrder', 'casesTable']]) {
+      ['calxSortBy', 'calxTable'], ['tabCasesOrder', 'casesTable']]) {
       const sel = INDEX.slice(INDEX.indexOf(`<select id="${selId}"`), INDEX.indexOf('</select>', INDEX.indexOf(`<select id="${selId}"`)));
       const values = [...sel.matchAll(/value="([^"]+)"/g)].map((m) => m[1]);
       let keys; let ups = [];
       const MODEL = { contactsTable: 'CONTACT_COLUMNS', casesTable: 'CASES_COLUMNS',
-        apptsTable: 'APPTS_COLUMNS', eventsTable: 'EVENTS_COLUMNS' };
+        apptsTable: 'APPTS_COLUMNS', calxTable: 'CALX_COLUMNS' };
       if (MODEL[thead]) {
         // S1/S3a/S3b: these headers are generated from the column model, so
         // the static-markup scan below would come back empty. Read the

@@ -445,7 +445,7 @@ describe('4. the two-level resolver: shipped → firm → user', () => {
   test('without a firm document the S4a contract holds (base → user); an empty firm document changes nothing', () => {
     const user = { placed: { home: [{ item: 'comms' }, { item: 'cases' }, { break: true }, { item: 'moreAutomations' }] }, removed: { home: ['tasks'] } };
     const a = shape_(R('home', { user })), b = shape_(R('home', { user, firm: {} })), c = shape_(R('home', { user, firm: null }));
-    expect(a).toEqual(['comms', 'cases', 'contacts', 'appts', 'bills', 'pipeline', 'events', 'newClient', 'log', 'calendar', '|', 'moreAutomations']);   // More's Home tile is the firm's (firm:more) since C4
+    expect(a).toEqual(['comms', 'cases', 'contacts', 'appts', 'bills', 'pipeline', 'newClient', 'log', 'calendar', '|', 'moreAutomations']);   // More's Home tile is the firm's (firm:more) since C4
     expect(b).toEqual(a);
     expect(c).toEqual(a);
     for (const e of R('home', { user, firm: {} })) expect(Object.keys(e).sort()).toEqual(e.kind === 'item' ? ['id', 'kind', 'origin'] : ['kind', 'origin']);
@@ -466,7 +466,7 @@ describe('4. the two-level resolver: shipped → firm → user', () => {
 
   test('ruling 4: a firm Home change only ADDS for a user who already arranged Home; a fresh user gets the firm\'s order', () => {
     // a FULL firm list, as the firm editor writes one (a partial list pulls base items next to their neighbours, S4a JC3)
-    const FIRM_HOME = ['tasks', 'cases', 'moreAutomations', '|', 'contacts', 'appts', 'bills', '|', 'pipeline', 'events', 'newClient', '|', 'calendar', 'firm:more', 'comms', 'firm:payroll'];
+    const FIRM_HOME = ['tasks', 'cases', 'moreAutomations', '|', 'contacts', 'appts', 'bills', '|', 'pipeline', 'newClient', '|', 'calendar', 'firm:more', 'comms', 'firm:payroll'];
     const firm = { placed: { home: FIRM_HOME.map((x) => (x === '|' ? { break: true } : { item: x })) }, removed: { home: ['log'] } };
     // no user layout: the firm's Home exactly
     const fresh = shape_(R('home', { firm }));

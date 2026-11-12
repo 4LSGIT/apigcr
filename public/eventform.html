@@ -14,10 +14,9 @@
   <!-- Diagnostics ring buffer, loaded BEFORE scripts.js so it also catches
        errors thrown by scripts.js itself (case.html idiom). -->
   <script src="/js/diag.js"></script>
-  <!-- scripts.js gives this page getEventTypeOptions() (the ONE source the
-       shell's Events filter and newEventDialog read; since U2 this page's
-       Type picker reads the item-type registry first and falls back to it —
-       see efLoadTypes), Toast, E(), and the
+  <!-- scripts.js gives this page getEventTypeOptions() (the built-in type
+       list this page's Type picker falls back to when the item-type registry
+       is unreachable — see efLoadTypes), Toast, E(), and the
        shared eventComplete/eventCancel row helpers. It declares top-level
        `const E/V/S/D/U/X/P` — NOTHING below may redeclare those, which is why
        every identifier in this file is ef-prefixed. It also needs Swal loaded
@@ -317,9 +316,10 @@ let efBusy  = false;
    would have had.
 
    FALLBACK. If the fetch fails or returns nothing, efTypes stays null and the
-   picker renders exactly what it rendered before U2 — getEventTypeOptions()
-   from the fe-event_types setting, value = label — so the form never goes
-   blank. The server resolves the label to a key either way.
+   picker renders getEventTypeOptions() (scripts.js — the built-in list; the
+   fe-event_types setting it once read was retired in U9b-P4), value = label,
+   so the form never goes blank. The server resolves the label to a key
+   either way.
 
    "Other…" stays. It sends event_type = the custom text and NO type_key: the
    registry has no 'other' row, so the server applies the one rule every
@@ -336,10 +336,10 @@ async function efLoadTypes() {
     const res  = await efApi('/api/calendar-types?kind=' + EF_PICKER_KINDS.join(',') + '&active=1', 'GET');
     const rows = res && Array.isArray(res.data) ? res.data : [];
     efTypes = rows.length ? rows : null;
-    if (!efTypes) console.warn('[eventform] /api/calendar-types returned no rows — using the fe-event_types fallback');
+    if (!efTypes) console.warn('[eventform] /api/calendar-types returned no rows — using the built-in fallback list');
   } catch (err) {
     efTypes = null;
-    console.warn('[eventform] /api/calendar-types failed — using the fe-event_types fallback:', err && err.message);
+    console.warn('[eventform] /api/calendar-types failed — using the built-in fallback list:', err && err.message);
   }
 }
 
@@ -734,7 +734,7 @@ function efRenderForm() {
 
   const s = efRowState(ev);
 
-  // Type select — the registry picker (U2), or the pre-U2 rendering from
+  // Type select — the registry picker (U2), or the built-in list from
   // getEventTypeOptions() when the registry is unavailable. See the
   // efTypes block above for the contract.
   const sel = E('efTypeSelect');

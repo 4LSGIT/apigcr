@@ -148,16 +148,6 @@ const LISTS = {
       appt_client_id: 1405, appt_type: '341 Meeting', appt_note: HOSTILE, status: 'Scheduled' },
     want: { 'Note': NEUTRAL, 'Appt ID': '5', 'Status': 'Scheduled' },
   },
-  events: {
-    endpoint: '/api/events', rowsKey: 'data', totalKey: 'total', prefix: 'yisracase-events',
-    header: ['Event ID', 'Type', 'Title', 'Date', 'Time', 'Length (min)', 'Blocks', 'Status',
-      'Resolution', 'Linked Type', 'Linked To', 'Location', 'Note'],
-    row: { event_id: 9, event_title: HOSTILE, event_date: '2026-10-15T00:00:00.000Z',
-      event_time: '09:30:00', event_all_day: 0, event_with: 6, event_link_type: 'contact',
-      link_label: 'Pat One' },
-    want: { 'Title': NEUTRAL, 'Date': '2026-10-15', 'Time': '09:30', 'Blocks': 'Fred Ross',
-      'Linked To': 'Pat One' },
-  },
   tasks: {
     endpoint: '/api/tasks', rowsKey: 'data', totalKey: 'total', prefix: 'yisracase-tasks',
     header: ['Task ID', 'Status', 'Title', 'Description', 'Due', 'Start', 'Assigned To',
@@ -259,17 +249,6 @@ describe('exportListCsv: probe → fetch → one neutralised file, per list', ()
     await expect(w.exportListCsv('pipeline', () => ({}))).rejects.toThrow(/unknown list "pipeline"/);
   });
 
-  test('event Time and Blocks follow the tab: all day, firm-wide, nobody', () => {
-    const w = page(() => ({}));
-    const cols = w.__lex('EVENT_CSV_COLUMNS');
-    const csv = (r) => parse({ content: w.buildCsv(cols, [r]) })[1];
-    const col = (n) => cols.findIndex((c) => c.label === n);
-    expect(csv({ event_all_day: 1, event_with: 6 })[col('Time')]).toBe('All day');
-    expect(csv({ event_all_day: 1, event_with: 6 })[col('Blocks')]).toBe('');
-    expect(csv({ event_all_day: 0, event_with: null })[col('Blocks')]).toBe('Everyone');
-    expect(csv({ event_all_day: 0, event_with: 0 })[col('Blocks')]).toBe('Nobody');
-    expect(csv({ event_all_day: 0, event_with: 9 })[col('Blocks')]).toBe('#9');
-  });
 });
 
 describe('csvFilterOf: a fetch\'s params as an export filter', () => {
@@ -313,17 +292,6 @@ const TABS = {
       tabContactsRole: 'div', tabContactsBirthdays: 'input=next7', contactsTable: 'table', contactsTableFoot: 'div' },
     filters: { q: 'pat', sort_by: 'contact_lname', sort_dir: 'ASC', birthdays: 'next7' },
     list: { total: 1, contacts: [{ contact_id: 1, cases: [] }] },
-  },
-  events: {
-    fn: 'tabEventsGet', kind: 'events', prelude: 'var offsets = {}, events; var eventsColsDialog = () => {};',
-    consts: ['EVENTS_COLUMNS'],                  // S3b: rows render via the model
-    post: 'var eventsColsVis = EVENTS_COLUMNS;',
-    extra: ['escHtml', 'escAttrJSON', 'eventsRenderRows'],
-    dom: { tabEventsButton: 'input', tabEventsLoad: 'div', tabEventsType: 'input', tabEventsStatus: 'input=Scheduled',
-      tabEventsTime: 'input=After', tabEventsDate1: 'input=2026-10-01', tabEventsDate2: 'input', tabEventsQ: 'input',
-      tabEventsSort: 'input=upcoming', tabEventsSort2: 'input=ASC', tabEventsUnlinked: 'check', eventsTable: 'table', eventsTableFoot: 'div' },
-    filters: { status: 'Scheduled', sort: 'upcoming', from: '2026-10-01' },
-    list: { total: 1, data: [{ event_id: 9, event_all_day: 1 }] },
   },
   appts: {
     fn: 'tabApptsGet', kind: 'appts', prelude: 'var offsets = {}, appts, apptsLastLoad = 0; function tabApptsTypesLoad() {} var apptsColsDialog = () => {};',
@@ -373,12 +341,12 @@ describe('Calendar list footer: Print and Export', () => {
     calxState: 'input=all', calxSuperseded: 'check', calxWith: 'select=', calxTable: 'table',
     calxFoot: 'div', calxKinds: 'div', calxSortBy: 'input=when', calxSortDir: 'input=ASC',
   };
-  const CAL_CODE = `var calxSeq = 0, calxRows = null;
+  const CAL_CODE = `var calxSeq = 0, calxRows = null, user = { user: 6 };
     ${['CALX_MONTHS', 'CALX_DAYS', 'CALX_KIND_ICON', 'CALX_RESOLUTION_LABEL', 'CALX_APPT_STATUS', 'CALX_SORT_KEYS', 'CALX_COLUMNS']
       .map((c) => constSrc(INDEX, c)).join('\n')}
         var calxColsVis = CALX_COLUMNS.filter((c) => c.default_on);
     ${['calxEsc', 'calxISO', 'calxSortRows', 'calxWhen', 'calxBadge', 'calxAnchor', 'calxWithName', 'calxApptStatus',
-      'calxActions', 'calxAct', 'calxSelectedKinds', 'calxFilterSentence', 'calxWhenParts', 'calxContactList', 'calxContacts', 'calxCase', 'calxStatusText', 'calxRenderRows', 'calxGet']
+      'calxActions', 'calxAct', 'calxSelectedKinds', 'calxFilterSentence', 'calxWhenParts', 'calxContactList', 'calxContacts', 'calxCase', 'calxStatusText', 'calxRenderRows', 'calxGet', 'calxExport', 'calxColsKey', 'calxColsOnKey', 'calxColsOrderKey', 'calxColsRender', 'calxColsSave']
       .map((f) => fnSrc(INDEX, f)).join('\n')}`;
   const ITEMS = [
     { source: 'event', source_id: 9, kind_key: 'hearing', title: HOSTILE, type_key: 'confirmation_hearing',
@@ -403,6 +371,7 @@ describe('Calendar list footer: Print and Export', () => {
     const btn = w.document.querySelector('#calxFoot [data-calx-foot="export"]');
     expect(btn).not.toBeNull();
     btn.click();
+    await new Promise((r) => setTimeout(r, 0));   // the column-choice dialog resolves first
     expect(w.__files).toHaveLength(1);
     expect(w.__files[0].filename).toMatch(/^yisracase-calendar-\d{4}-\d{2}-\d{2}\.csv$/);
     const lines = w.__files[0].content.replace(/^﻿/, '').split('\r\n');
@@ -419,6 +388,7 @@ describe('Calendar list footer: Print and Export', () => {
     const kinds = [...w.document.querySelectorAll('#calxTable tr')].slice(1).map((tr) => tr.cells[1].textContent.trim());
     expect(kinds).toEqual(['meeting', 'hearing']);
     w.document.querySelector('#calxFoot [data-calx-foot="export"]').click();
+    await new Promise((r) => setTimeout(r, 0));   // the column-choice dialog resolves first
     const lines = w.__files[0].content.replace(/^\ufeff/, '').split('\r\n');
     expect(lines.slice(1).map((l) => l.split(',')[3])).toEqual(['meeting', 'hearing']);
   });
@@ -428,6 +398,7 @@ describe('Calendar list footer: Print and Export', () => {
     const foot = w.document.getElementById('calxFoot');
     expect(foot.textContent).toContain('capped at 2 —');
     foot.querySelector('[data-calx-foot="export"]').click();
+    await new Promise((r) => setTimeout(r, 0));   // the column-choice dialog resolves first
     expect(w.__files[0].content.split('\r\n')).toHaveLength(3);
   });
 
@@ -437,6 +408,30 @@ describe('Calendar list footer: Print and Export', () => {
     w.print = () => { printed++; };
     w.document.querySelector('#calxFoot [data-calx-foot="print"]').click();
     expect(printed).toBe(1);
+  });
+
+  test('Export offers the Cases choice: "As shown on screen" writes the visible columns in screen order', async () => {
+    const w = await calPage();
+    // The dialog's answer: the view radio.
+    w.__swalValue = 'view';
+    w.eval(`calxColsSave({
+      orderedKeys: ['date', 'time', 'contact', 'case', 'status', 'when', 'kind', 'title', 'attached', 'with', 'state', 'actions'],
+      checkedKeys: ['date', 'time', 'contact', 'case', 'status', 'actions'],
+    })`);
+    w.document.querySelector('#calxFoot [data-calx-foot="export"]').click();
+    await new Promise((r) => setTimeout(r, 0));
+    const lines = w.__files[0].content.replace(/^\uFEFF/, '').split('\r\n');
+    expect(lines[0]).toBe('Date,Time,Contact,Case,Status');          // Actions never exported
+    expect(lines[1]).toBe('2026-10-15,09:30,,26-12345,Scheduled');
+    expect(lines[2]).toBe('2026-10-16,,Pat One,,Attended');
+  });
+
+  test('Export cancelled writes nothing', async () => {
+    const w = await calPage();
+    w.Swal.fire = () => Promise.resolve({ isConfirmed: false });
+    w.document.querySelector('#calxFoot [data-calx-foot="export"]').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(w.__files).toHaveLength(0);
   });
 
   test('an empty list renders no Print / Export — only Columns, so the picker stays reachable', async () => {
@@ -546,18 +541,6 @@ describe('export view — "As shown on screen" (S3c)', () => {
       hide: 'time',
       list: (rows) => ({ counter: rows.length, appts: rows }),
     },
-    events: {
-      constName: 'EVENTS_COLUMNS', vis: 'eventsColsVis',
-      row: { event_id: 71, event_type: 'Hearing', event_title: 'Confirmation',
-        event_date: '2026-11-20T00:00:00.000Z', event_all_day: 0, event_time: '09:30:00',
-        event_with: null, event_status: 'Scheduled', event_link_type: 'case_number',
-        event_link_id: 55, link_label: '26-99999', resolved_case_id: 505, event_location: 'Courtroom 1' },
-      header: ['ID', 'Type', 'Title', 'Date', 'Time', 'Blocks', 'Status', 'Linked', 'Location'],
-      want: { 'Linked': 'Case #: 26-99999', 'Date': '2026-11-20', 'Time': '09:30', 'Blocks': 'Everyone' },
-      absent: 'Action',
-      hide: 'event_location',
-      list: (rows) => ({ total: rows.length, data: rows }),
-    },
   };
 
   const viewPage = (t, rows) => page(
@@ -659,13 +642,13 @@ describe('export view — "As shown on screen" (S3c)', () => {
     host2.remove();
   });
 
-  test('the four shipped footers pass their live visible set as viewColumns', () => {
+  test('the three shipped footers pass their live visible set as viewColumns', () => {
     // The callsites are inside tabXGet success branches; pin them as source
     // statements + the option name, then prove the adapter they feed works
     // on each tab's real model (the tests above run the full path). Cases
     // goes through casesViewColumns — the Caption-mode-aware set.
     for (const [tab, vis] of [['cases', 'casesViewColumns'], ['contacts', '\\(\\) => contactsColsVis'],
-      ['events', '\\(\\) => eventsColsVis'], ['appts', '\\(\\) => apptsColsVis']]) {
+      ['appts', '\\(\\) => apptsColsVis']]) {
       const call = new RegExp(`exportListCsv\\('${tab}', \\(\\) => csvFilterOf\\(params\\), \\{ viewColumns: ${vis} \\}\\)`);
       expect(INDEX).toMatch(call);
     }

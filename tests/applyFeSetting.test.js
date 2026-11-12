@@ -282,10 +282,12 @@ describe('applyFeSetting — downstream readers pick it up with no refetch', () 
     expect(w.getCaseTypeMap()).toEqual({ Litigation: ['Contract'] });
   });
 
-  test('getEventTypeOptions() reflects a bus-applied fe-event_types', () => {
+  test('getEventTypeOptions() no longer reads fe-event_types (retired U9b-P4): the registry or the built-in list', () => {
     const w = mkWindow({ settings: {} });
+    const before = w.getEventTypeOptions();
     w.applyFeSetting('fe-event_types', '["Only This"]');
-    expect(w.getEventTypeOptions()).toEqual(['Only This']);
+    expect(w.getEventTypeOptions()).toEqual(before);
+    expect(before).toContain('Confirmation Hearing');   // the built-in list (nothing loaded)
   });
 
   test('a malformed fe-case_types degrades to the built-in default, not a crash', () => {

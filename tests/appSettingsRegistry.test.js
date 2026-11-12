@@ -350,9 +350,11 @@ describe('GET /api/app-settings — per caller', () => {
       admin.cta_default_timeout_once.can_edit, admin.cloud_tasks_enabled]).toEqual([true, true, true, false, undefined]);
     // firm.lists (staff role): Lead sources only — not its neighbour on the Lists tab
     const staff = byKey(await call(world({ rows: ROWS() }), 'GET', '/api/app-settings', { headers: STAFF }));
-    expect([staff['fe-lead_sources'].can_edit, staff['fe-event_types'].can_edit, staff['fe-case_types'].can_edit,
-      staff.firm_name.can_edit]).toEqual([true, false, false, false]);
-    expect([staff['fe-lead_sources'].also_write, staff['fe-event_types'].also_write]).toEqual(['firm.lists', null]);
+    expect([staff['fe-lead_sources'].can_edit, staff['fe-case_types'].can_edit,
+      staff.firm_name.can_edit]).toEqual([true, false, false]);
+    expect([staff['fe-lead_sources'].also_write, staff['fe-case_types'].also_write]).toEqual(['firm.lists', null]);
+    // fe-event_types is RETIRED (U9b-P4): never served, to anyone.
+    expect(staff['fe-event_types']).toBeUndefined();
     const itRows = byKey(await call(world({ rows: ROWS() }), 'GET', '/api/app-settings', { headers: IT }));
     expect(itRows['fe-lead_sources'].also_write).toBe(null);
     const noRoles = byKey(await call(world({ rows: ROWS() }), 'GET', '/api/app-settings', { headers: tok([], 7, 'noroles') }));
@@ -411,7 +413,8 @@ describe('GET /api/app-settings — per caller', () => {
     expect(r.app_url).toMatchObject({ edit: 'console', can_edit: false, value: 'https://app.example.com', category: 'Platform' });
     expect(r.clio_login_code).toMatchObject({ kind: 'state', edit: 'console', can_edit: false, category: 'Runtime state (read-only)' });
     // ADMIN writes Lead sources through firm.settings → also_write null (its tab's handshake governs)
-    expect([r['fe-lead_sources'].also_write, r['fe-event_types'].also_write]).toEqual([null, null]);
+    expect([r['fe-lead_sources'].also_write, r['fe-case_types'].also_write]).toEqual([null, null]);
+    expect(r['fe-event_types']).toBeUndefined();   // retired (U9b-P4): never served
   });
 
   test('unregistered rows: editable + non-secret only, as Firm → Automation variables with their DB metadata', async () => {
@@ -524,7 +527,7 @@ describe('PUT — registered keys', () => {
   test.each([
     ['firm_name', STAFF, 'Changing Firm name needs the firm.settings permission'],
     ['portal_live', STAFF, 'Changing Portal live needs the firm.settings permission'],
-    ['fe-event_types', STAFF, 'Changing Event types (legacy list) needs the firm.settings permission'],
+    ['fe-case_types', STAFF, 'Changing Case types needs the firm.settings permission'],
     ['fe-lead_sources', tok([], 7, 'noroles'), 'Changing Lead sources needs the firm.settings permission'],
     ['cloud_tasks_enabled', ADMIN, 'Changing Cloud Tasks accelerator needs the system.settings permission'],
     ['cta_default_timeout_once', ADMIN, 'Changing Default expiry (single-use) needs the system.settings permission'],

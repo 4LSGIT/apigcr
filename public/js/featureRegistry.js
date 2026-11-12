@@ -122,17 +122,12 @@ window.FEATURE_REGISTRY = {
     onclick: 'openApptsTab()', tab: 'tabAppts',
   },
   // Unified Events U9. ONE list over both tables — the appointment and the
-  // hearing and the deadline, in one window, in one vocabulary. It sits
-  // between the two lists it unifies rather than replacing them: this release
-  // ships all three side by side so the new one can be checked against the
-  // old two. Retiring them is U9b.
+  // hearing and the deadline, in one window, in one vocabulary. The old Events
+  // tab was retired in U9b-P4 (2026-11-12): saved layouts naming `events`
+  // drop it at render (soft refs). Appointments stays — staff use it.
   calendar: {
     label: 'Calendar', icon: 'calendar-week',
     onclick: 'openCalendarTab()', tab: 'tabCalendar',
-  },
-  events: {
-    label: 'Events', icon: 'flag',
-    onclick: 'openEventsTab()', tab: 'tabEvents',
   },
   // The badge is the current user's overdue + due-today count —
   // tasksBadgeRefresh() in index.html.
@@ -432,7 +427,7 @@ window.DEFAULT_LAYOUTS = {
   home: [
     { item: 'cases' }, { item: 'contacts' }, { item: 'appts' },
     { break: true },
-    { item: 'bills' }, { item: 'pipeline' }, { item: 'events' },
+    { item: 'bills' }, { item: 'pipeline' },
     { break: true },
     { item: 'tasks' }, { item: 'newClient' }, { item: 'log' },
     { break: true },
@@ -447,7 +442,7 @@ window.DEFAULT_LAYOUTS = {
   sidebar: [
     { label: 'Records' },
     { item: 'cases' }, { item: 'contacts' }, { item: 'appts' },
-    { item: 'calendar' }, { item: 'events' }, { item: 'tasks' },
+    { item: 'calendar' }, { item: 'tasks' },
     { item: 'comms' }, { item: 'log' }, { item: 'bills' },
     { label: 'Actions' },
     { item: 'pipeline' }, { item: 'newClient' },

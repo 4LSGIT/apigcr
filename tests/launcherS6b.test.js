@@ -169,7 +169,7 @@ describe('2. the default layout is unchanged (the S1 expanded page)', () => {
     const kids = [...doc.querySelector('#tabHome > .home-grid').children];
     const want = LAY.home.map((e) => (e.break ? '|' : REG[e.item].surfaceLabels && REG[e.item].surfaceLabels.home ? REG[e.item].surfaceLabels.home : REG[e.item].label));
     expect(kids.map((k) => (k.classList.contains('home-break') ? '|' : k.textContent.trim()))).toEqual(want);
-    expect(want).toEqual(['Cases', 'Contacts', 'Appointments', '|', 'Billing', 'Pipeline Board', 'Events', '|',
+    expect(want).toEqual(['Cases', 'Contacts', 'Appointments', '|', 'Billing', 'Pipeline Board', '|',
       'Tasks', 'New Client', 'Log', '|', 'Calendar', 'Comms']);   // Calendar in the custom tab's old slot (S5e); More Features: the firm's page (C4)
     expect(kids.every((k) => k.className === 'home-btn' || k.className === 'home-break')).toBe(true);
     const tpl = doc.createElement('template');

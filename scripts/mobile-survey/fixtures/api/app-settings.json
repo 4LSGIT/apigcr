@@ -1176,27 +1176,6 @@
       "category": "Lists"
     },
     {
-      "key": "fe-event_types",
-      "value": "[\"Confirmation Hearing\",\"Docs Deadline\",\"Deadline\",\"Court Date\",\"Hearing\",\"Internal\"]",
-      "updated_at": "{{TODAY}}T08:00:00.000Z",
-      "exists": true,
-      "registered": true,
-      "kind": "vocab",
-      "home": "config",
-      "section": "lists",
-      "type": "json_array",
-      "options": null,
-      "label": "Event types (legacy list)",
-      "description": "The new-event dialog and the Events tab filter read this list; the event form falls back to it when the calendar-type registry is unreachable. Renaming or removing a type does not change existing events.",
-      "sort_order": 20,
-      "edit": "ui",
-      "editor": "eventTypes",
-      "env": null,
-      "required": false,
-      "can_edit": true,
-      "category": "Lists"
-    },
-    {
       "key": "fe-case_types",
       "value": "{\"Bankruptcy\":[\"Chapter 7\",\"Chapter 13\"],\"Other\":[]}",
       "updated_at": "{{TODAY}}T08:00:00.000Z",

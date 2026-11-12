@@ -214,10 +214,10 @@ describe('settings.html after CFG-1 (and the settings arc)', () => {
     expect(html).not.toMatch(/fe-case_types/);
   });
 
-  test('the legacy Event Types list left with the rest; the registry homes it in Config → Lists', () => {
+  test('the legacy Event Types list left with the rest; retired in U9b-P4 (the calendar-type registry replaced it)', () => {
     expect(html).not.toMatch(/id="eventTypesSection"/);
     expect(html).not.toMatch(/function etInit/);
-    expect(require('../lib/settingsRegistry').SETTINGS['fe-event_types']).toMatchObject({ home: 'config', section: 'lists' });
+    expect(require('../lib/settingsRegistry').SETTINGS['fe-event_types']).toMatchObject({ kind: 'retired', home: 'console', section: 'console' });
   });
 });
 

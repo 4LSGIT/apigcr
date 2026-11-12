@@ -37,7 +37,7 @@ The type list is configurable and currently includes values like:
 - Hearing
 - Internal
 
-Choosing **Other** lets you type a one-off type. The blessed list lives in a settings row (`fe-event_types`, a JSON array in app settings) — an administrator edits it in **YisraCase Config → Lists** (*Event types (legacy list)*) and the dropdown updates everywhere with no deployment. (The event form itself offers the calendar-type registry's types; this list is its fallback, and the new-event dialog and the Events tab filter read it.)
+Choosing **Other** lets you type a one-off type. The list comes from the calendar-type registry (**YisraCase Config → Calendar Types**): the event form and the new-event dialog both offer its active hearing, deadline, conference and other types, so a type added there shows up everywhere with no deployment. The list above is the built-in fallback used only when the registry can't be reached. (The old `fe-event_types` settings list was retired in November 2026.)
 
 ---
 
@@ -142,7 +142,7 @@ Recipients come from the `event_digest_recipients` setting (a list of staff user
 
 ## Where Events Appear
 
-- **The Events tab** in the main interface — all events, filterable by type, status, date range, and text search. It lists **upcoming first** (today, then the future soonest first, then the past newest first); **Order By** or the Type, Title, Date and Status headers sort otherwise, and the Date header steps through upcoming → oldest first → newest first. New events created here can be linked to a case, a contact, or left unlinked. **Columns** at the bottom of the table opens a dialog that picks which columns the table shows and in what order (the Edit/Complete/Cancel buttons are the Action column and can be hidden too; at least one column always stays; drag or the ↑/↓ buttons reorder, **Reset order** restores the default) — saved in your browser per user, each device keeping its own view. Printing prints the table as shown; **Export** in the footer asks for **All columns** (the full export set, including length, resolution and note) or **As shown on screen** (your visible columns in on-screen order, action buttons never included; the file name carries `-view`).
+- **The Calendar tab** in the main interface — every event and appointment in a date window, filterable by kind, state and person, with its own column picker and export (see *Calendar tab*). New events created there can be linked to a case, a contact, or left unlinked. (The separate Events tab was retired in November 2026; an old link to it opens the Calendar tab.)
 - **A case's Events tab** — every event linked to that case. New events created here are locked to the case.
 - **A contact's Events tab** — every event linked to that contact, locked the same way.
 

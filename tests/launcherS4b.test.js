@@ -166,15 +166,15 @@ describe('the editor core (pure, real resolver, real validator)', () => {
 
   test('an edited surface is written as its FULL visible list (+ the hide in removed); the other surface is not written', () => {
     const s = sess(null);
-    expect(s.hide('sidebar', idx(s, 'sidebar', 'events'))).toBe(true);
+    expect(s.hide('sidebar', idx(s, 'sidebar', 'calendar'))).toBe(true);
     const doc = J(s.doc());
     expect(doc.placed.sidebar).toEqual(entries(s, 'sidebar'));
     expect(doc.placed.sidebar.find((e) => e.label === 'Records')).toBeTruthy();   // the base labels come along
-    expect(doc.removed).toEqual({ sidebar: ['events'] });
+    expect(doc.removed).toEqual({ sidebar: ['calendar'] });
     expect(doc.placed.home).toBeUndefined();
     expect(valid(doc).same).toBe(true);
     expect(R('sidebar', doc).map(key)).toEqual(viewKeys(s, 'sidebar'));
-    expect(R('sidebar', doc).map(key)).not.toContain('events');
+    expect(R('sidebar', doc).map(key)).not.toContain('calendar');
     expect(R('home', doc).map(key)).toEqual(R('home', {}).map(key));             // Home: still the default
   });
 
@@ -543,9 +543,9 @@ describe('the panel (for real, jsdom)', () => {
     t.act('home', 'Appointments', 'up').click();
     expect(t.d.activeElement).toBe(t.act('home', 'Appointments', 'up'));
     t.act('home', 'Appointments', 'down').click();
-    t.act('sidebar', 'Events', 'hide').click();                                // hide a sidebar item
-    expect(t.rowNames('sidebar')).not.toContain('Events');
-    expect([...t.sec('sidebar').querySelectorAll('.yle-hidden-row .yle-name')].map((n) => n.textContent)).toEqual(['Events']);
+    t.act('sidebar', 'Calendar', 'hide').click();                                // hide a sidebar item
+    expect(t.rowNames('sidebar')).not.toContain('Calendar');
+    expect([...t.sec('sidebar').querySelectorAll('.yle-hidden-row .yle-name')].map((n) => n.textContent)).toEqual(['Calendar']);
     t.sec('home').querySelector('[data-act="pick"]').click();                  // pin a More panel to Home
     const q = t.sec('home').querySelector('.yle-pick-q');
     q.value = 'documents';
@@ -568,14 +568,14 @@ describe('the panel (for real, jsdom)', () => {
     const put = t.server.puts[0];
     expect([put.url, put.method, put.body.scope, put.body.config_key]).toEqual(['/api/ui-config', 'PUT', 'user', 'layout']);
     expect(valid(put.body.config).same).toBe(true);
-    expect(put.body.config.removed).toEqual({ sidebar: ['events'] });
+    expect(put.body.config.removed).toEqual({ sidebar: ['calendar'] });
     expect(t.panel().hidden).toBe(true);                                        // closed
     // firmData holds the STORED document, and the launcher was re-run with it
     expect(t.w.firmData.ui.user.layout).toEqual(J(t.server.stored));
     expect(t.w.firmData.ui.firm).toEqual(J(UI(null).firm));
     expect(t.seen('home').slice(0, 2)).toEqual(['contacts', 'cases']);
     expect(t.seen('home').slice(-2)).toEqual(['+moreDocuments', '|']);
-    expect(t.seen('sidebar')).not.toContain('events');
+    expect(t.seen('sidebar')).not.toContain('calendar');
     expect(t.seen('sidebar').pop()).toBe('#QA Label');
     expect(t.w.__noReload).toBe(marker);
 
@@ -592,9 +592,9 @@ describe('the panel (for real, jsdom)', () => {
     expect(doc2.placed.home).toBeUndefined();
     expect(doc2.removed.home).toBeUndefined();
     expect(doc2.placed.sidebar).toEqual(put.body.config.placed.sidebar);
-    expect(doc2.removed.sidebar).toEqual(['events']);
+    expect(doc2.removed.sidebar).toEqual(['calendar']);
     expect(t.seen('home').slice(0, 3)).toEqual(['cases', 'contacts', 'appts']);
-    expect(t.seen('sidebar')).not.toContain('events');
+    expect(t.seen('sidebar')).not.toContain('calendar');
     expect(t.seen('sidebar').pop()).toBe('#QA Label');
     expect(t.errors).toEqual([]);
   });
@@ -762,12 +762,12 @@ describe('fix round: the editor reads the current layers; the palette stands dow
     expect(VE.canonical(t.w.firmData.ui.user.layout)).toBe(VE.canonical(HOME_ELSEWHERE));
     expect(t.seen('home').slice(0, 2)).toEqual(['comms', 'cases']);                    // the launcher was re-run with it
     expect(t.rowNames('home').slice(0, 3)).toEqual(['Comms', 'Matters <b>', 'Contacts']);   // contacts slots in after its base neighbour
-    t.act('sidebar', 'Events', 'hide').click();                                         // edit the OTHER surface only
+    t.act('sidebar', 'Calendar', 'hide').click();                                         // edit the OTHER surface only
     t.panel().querySelector('.yle-save').click();
     await t.flush();
     const doc = t.server.puts[0].body.config;
     expect(doc.placed.home).toEqual(HOME_ELSEWHERE.placed.home);                        // kept, not wiped
-    expect(doc.removed).toEqual({ home: ['log'], sidebar: ['events'] });
+    expect(doc.removed).toEqual({ home: ['log'], sidebar: ['calendar'] });
     expect(t.seen('home').slice(0, 2)).toEqual(['comms', 'cases']);
   });
 
@@ -779,7 +779,7 @@ describe('fix round: the editor reads the current layers; the palette stands dow
     const bills = t.rowOf('home', 'Billing');
     expect(bills.querySelector('[data-act="hide"]').disabled).toBe(true);              // the firm's lock is known now
     expect(t.rowNames('home')).toContain('Matters <b>');                               // and its rename
-    t.act('sidebar', 'Events', 'hide').click();
+    t.act('sidebar', 'Calendar', 'hide').click();
     t.panel().querySelector('.yle-save').click();
     await t.flush();
     expect(t.server.puts[0].body.config.placed.home).toEqual(HOME_ELSEWHERE.placed.home);
@@ -842,7 +842,7 @@ describe('fix round: the editor reads the current layers; the palette stands dow
     await t.flush();
     expect(t.server.puts).toHaveLength(1);
     const before = t.rowNames('sidebar');
-    t.act('sidebar', 'Events', 'hide').click();                                         // ignored
+    t.act('sidebar', 'Calendar', 'hide').click();                                         // ignored
     t.act('home', 'Contacts', 'down').click();                                          // ignored
     t.panel().querySelector('.yle-cancel').click();                                     // ignored
     t.d.dispatchEvent(new t.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));   // ignored too
@@ -856,7 +856,7 @@ describe('fix round: the editor reads the current layers; the palette stands dow
     await t.flush();
     expect(t.w.ycLayoutEditor.isOpen()).toBe(false);
     expect(t.server.puts[0].body.config.removed.sidebar).toEqual(STORED.removed.sidebar);
-    expect(t.seen('sidebar')).toContain('events');
+    expect(t.seen('sidebar')).toContain('calendar');
     expect(t.server.puts).toHaveLength(1);
     // the next open takes edits again
     await t.open();

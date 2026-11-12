@@ -68,7 +68,7 @@ const MAX_CONTINUED_EVIDENCE_CHARS = 360000;
 const MAX_SUGGESTIONS = 3;
 const MAX_WORKSPACE_FILES = 20;
 const WORKSPACE_TABS = new Set([
-  'tabHome', 'tabCases', 'tabContacts', 'tabAppts', 'tabCalendar', 'tabEvents',
+  'tabHome', 'tabCases', 'tabContacts', 'tabAppts', 'tabCalendar',
   'tabTasks', 'tabComms', 'tabLogs', 'tabBills', 'tabPipeline', 'tabMore',
   'tabSettings', 'tabAdmin', 'tabAll',
   'tabPanel',   // the panel tab (launcher-nits C1): a panel no page shows, ?open=tabPanel~<id>

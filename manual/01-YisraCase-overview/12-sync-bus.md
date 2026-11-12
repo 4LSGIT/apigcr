@@ -62,7 +62,7 @@ Matched endpoints (read `MATCHERS` in yc-sync.js for the always-current list —
 
 | Surface | Subscribes | Does |
 |---|---|---|
-| Shell Cases/Contacts/Appts/Events tabs | `<type>:*` | debounced silent refetch of the current page when visible; stale-flag + refetch on tab re-entry / window return |
+| Shell Cases/Contacts/Appts tabs | `<type>:*` | debounced silent refetch of the current page when visible; stale-flag + refetch on tab re-entry / window return |
 | Shell | `setting:*` | writes `firmData.settings` in place (`applyFeSetting`) |
 | case.html | `case:<own>`, `setting:fe-*`, `appt:*`, `event:*` | merge into `entityData` → fenced paints (Overview inputs, notes, header, caption, alerts) → pipeline refetch on `pipeline_phase` → serialized form push; `yc_refetch` → queued full refetch |
 | contact.html | `contact:<own>`, `appt:*`, `event:*`, `relations:contact:<own>` | same shape, no pipeline; a relations marker re-reads the Relationships tab — only while that tab shows (entry reloads it anyway), parked while off screen, skipped within 1.5s of its own load |
