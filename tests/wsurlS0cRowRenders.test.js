@@ -184,10 +184,11 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
       calxState: 'input=all', calxSuperseded: 'check', calxWith: 'select=', calxTable: 'table',
       calxFoot: 'div', calxKinds: 'div', calxSortBy: 'input=upcoming', calxSortDir: 'input=ASC',
     }, `var calxSeq = 0, calxRows = null;
-        ${['CALX_MONTHS', 'CALX_DAYS', 'CALX_KIND_ICON', 'CALX_RESOLUTION_LABEL', 'CALX_APPT_STATUS', 'CALX_SORT_KEYS']
+        ${['CALX_MONTHS', 'CALX_DAYS', 'CALX_KIND_ICON', 'CALX_RESOLUTION_LABEL', 'CALX_APPT_STATUS', 'CALX_SORT_KEYS', 'CALX_COLUMNS']
           .map((c) => constSrc(INDEX, c)).join('\n')}
+        var calxColsVis = CALX_COLUMNS.filter((c) => c.default_on);
         ${['calxEsc', 'calxISO', 'calxSortRows', 'calxWhen', 'calxBadge', 'calxAnchor', 'calxWithName', 'calxApptStatus',
-          'calxActions', 'calxAct', 'calxSelectedKinds', 'calxFilterSentence', 'calxGet']
+          'calxActions', 'calxAct', 'calxSelectedKinds', 'calxFilterSentence', 'calxWhenParts', 'calxContactList', 'calxContacts', 'calxCase', 'calxStatusText', 'calxRenderRows', 'calxGet']
           .map((f) => fnSrc(INDEX, f)).join('\n')}`,
     async () => ({ has_more: true, limit: V, items: [{
       source: 'event', source_id: 9, kind_key: V, title: V, type_key: V,

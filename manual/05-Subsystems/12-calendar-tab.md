@@ -49,20 +49,23 @@ input.
 Filters refetch automatically (debounced). The footer names the active filters,
 so an empty list always says *why* it is empty.
 
-The footer also carries **Print** and **Export** (List view only). Export
-downloads the rows listed as a CSV — when the list is capped, the capped
-rows, so narrow the window first if you need the rest.
+The footer also carries **Print**, **Export** and **Columns** (List view
+only; an empty list shows Columns alone). Export downloads the rows listed as
+a CSV — when the list is capped, the capped rows, so narrow the window first
+if you need the rest. The CSV always carries the full column set (including a
+**Contact** column), whatever the screen shows.
 
 ## The list
 
-**Upcoming first** by default: today and later in start-time order, then the past newest first. **All-day rows come first within their day.** **Order By** (List view) — or a click on a column header — sorts by When, Kind, What, Attached to, With or State instead; the When header steps through upcoming → oldest first → newest first. The sort runs over the rows listed.
+**Upcoming first** by default: today and later in start-time order, then the past newest first. **All-day rows come first within their day.** **Order By** (List view) — or a click on a column header — sorts by When, Kind, What, Attached to, Contact, Case, With, State or Status instead; the When header steps through upcoming → oldest first → newest first. The sort runs over the rows listed.
 
 - **What** — the item's label, with its `type_key` muted beside it. A row with
   no registry type reads *unmapped* rather than showing a blank; mint it in
   *YisraCase Config → Calendar Types*.
 - **Attached to** — the case, contact or docket, as a link where there is
-  something to open. A docket with no matching case yet is plain text and says
-  so: it resolves by itself the moment that case is created.
+  something to open. An appointment attached to a case shows its client
+  first: *client · case*. A docket with no matching case yet is plain text and
+  says so: it resolves by itself the moment that case is created.
 - **State** — `live` plain, resolved green, cancelled grey, **missed red**,
   superseded struck through. Resolved and cancelled rows show *how* they ended
   (met / moot / held / cancelled), which is the distinction `event_status`
@@ -72,6 +75,25 @@ rows, so narrow the window first if you need the rest.
 
 Clicking a row opens that row's own form — the appointment dialog or the event
 dialog, the same two the old tabs use.
+
+### Columns
+
+**Columns** (footer) picks, hides and reorders the list's columns, saved per
+user in this browser (`yc.calendar.cols_off` / `cols_on` / `cols_order` .<user
+id>), like the Cases and Appointments pickers. The default set is the seven
+above, so nothing changes until someone opens it. Off by default:
+
+- **Date** and **Time** — When, split in two (Time reads *all day* where there
+  is none).
+- **Contact** — every client of the row: the appointment's client or the
+  contact it is attached to first, then the Primary and Secondary debtors of
+  the case it belongs to. A joint case lists both; hover a name for its role.
+  A hearing attached to a case shows that case's debtors.
+- **Case** — the case on its own, or the docket as text when no case matches.
+- **Status** — the Appointments tab's words: Scheduled, Attended, No Show,
+  Canceled, Rescheduled (events: Scheduled, the outcome, Canceled).
+
+*Attached to* stays available as the combined contact · case column.
 
 ## Quick actions
 

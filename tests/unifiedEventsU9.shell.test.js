@@ -352,12 +352,16 @@ describe('U9b-P2 — Calendar list quick actions', () => {
   test('the cell is wired: header, row cell, click routed before the row opener', () => {
     const ths = [...DOC.querySelectorAll('#calxTable th')].map((t) => t.textContent.trim());
     expect(ths[ths.length - 1]).toBe('Actions');
-    const get = fnSrc(CALX, 'calxGet');
-    // the empty state spans every column
-    expect(get).toContain(`colspan="${ths.length}"`);
-    expect(get).toContain(`'<td class="calx-acts">' + calxActions(r) + '</td>'`);
+    // Column picker: rows render from the model (CALX_COLUMNS) through the
+    // on-screen set, in calxRenderRows — the fetch and the picker share it.
+    const rows = fnSrc(CALX, 'calxRenderRows');
+    expect(fnSrc(CALX, 'calxGet')).toContain('calxRenderRows();');
+    // the empty state spans every ON-SCREEN column
+    expect(rows).toContain(`colspan="' + calxColsVis.length + '"`);
+    expect(rows).toContain('ycColsRowHtml(calxColsVis, r)');
+    expect(CALX).toMatch(/key: 'actions', label: 'Actions', default_on: true, cls: 'calx-acts', csv: false,\s+render: \(r\) => calxActions\(r\)/);
     // an action click must not ALSO open the row's form
-    const onclick = get.slice(get.indexOf('row.onclick'));
+    const onclick = rows.slice(rows.indexOf('row.onclick'));
     const act = onclick.indexOf('calxAct(r, act.dataset.calxAct); return;');
     expect(act).toBeGreaterThan(-1);
     expect(act).toBeLessThan(onclick.indexOf('showAppt(r.source_id)'));

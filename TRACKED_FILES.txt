@@ -1260,6 +1260,7 @@ tests/auditShape.test.js
 tests/autoGrow.test.js
 tests/automationRead.test.js
 tests/automationReadIngest.mysql.test.js
+tests/calendarColumns.test.js
 tests/calendarEvents.appt.test.js
 tests/calendarEvents.event.test.js
 tests/calendarEvents.registry.test.js

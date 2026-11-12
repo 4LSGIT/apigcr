@@ -19,7 +19,7 @@
  *                       for. It is a checkbox beside the state select in the
  *                       UI, not a value inside it, and the API says the same.
  *   include_attendees   1/true — attendees[] + client_expected (§3.6)
- *   include_labels      1/true — display{case_label, contact_name}
+ *   include_labels      1/true — display{case_label, contact_name, contacts[]}
  *   limit               default 500, hard cap 1000
  *   offset              default 0
  *

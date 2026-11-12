@@ -4949,10 +4949,10 @@
       background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600;
     }
     #tabCalendar .calx-presets button { font-size: 0.78rem; padding: 3px 9px; }
-    #tabCalendar .calx-when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    #tabCalendar td.calx-when { white-space: nowrap; font-variant-numeric: tabular-nums; }
     #tabCalendar .calx-allday { color: var(--text-muted); font-style: italic; }
     #tabCalendar .calx-key { color: var(--text-muted); font-size: 0.78rem; }
-    #tabCalendar .calx-kind { color: var(--text-2); white-space: nowrap; }
+    #tabCalendar td.calx-kind { color: var(--text-2); white-space: nowrap; }
     #tabCalendar .calx-badge { font-weight: 600; white-space: nowrap; }
     #tabCalendar .calx-b-resolved { color: var(--ok); }
     #tabCalendar .calx-b-missed { color: var(--danger); }
@@ -5068,8 +5068,11 @@
         <option value="kind">Kind</option>
         <option value="title">What</option>
         <option value="attached">Attached to</option>
+        <option value="contact">Contact</option>
+        <option value="case">Case</option>
         <option value="with">With</option>
         <option value="state">State</option>
+        <option value="status">Status</option>
       </select>
       <select id="calxSortDir" style="width: auto" data-type="sortDi" onchange="sortSelect(this)">
         <option value="ASC">Ascending</option>
@@ -5230,16 +5233,23 @@
        is never handed to new Date() and can never be read as UTC. The Date
        built here is used only to name the weekday. */
     function calxWhen(row) {
+      const p = calxWhenParts(row);
+      if (!p) return '<span class="calx-allday">—</span>';
+      return p.day + ' ' + (p.time || '<span class="calx-allday">all day</span>');
+    }
+    /* The two halves calxWhen joins — the Date and Time picker columns
+       render them apart. time is null for an all-day / timeless row. */
+    function calxWhenParts(row) {
       const s = String(row.starts_at || '');
       const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/);
-      if (!m) return '<span class="calx-allday">—</span>';
+      if (!m) return null;
       const d = new Date(+m[1], +m[2] - 1, +m[3]);
       const day = CALX_DAYS[d.getDay()] + ' ' + CALX_MONTHS[+m[2] - 1] + ' ' + (+m[3]);
-      if (row.all_day || !m[4]) return day + ' <span class="calx-allday">all day</span>';
+      if (row.all_day || !m[4]) return { day, time: null };
       let h = +m[4];
       const ampm = h >= 12 ? 'pm' : 'am';
       h = h % 12 || 12;
-      return day + ' ' + h + ':' + m[5] + ' ' + ampm;
+      return { day, time: h + ':' + m[5] + ' ' + ampm };
     }
 
     /* The state/resolution badge. `live` is deliberately plain text with no
@@ -5288,6 +5298,52 @@
       return '<span class="calx-key">—</span>';
     }
 
+    /* The Contact column: every client of the row — display.contacts (the
+       row's own contact first, then the anchored case's Primary + Secondary
+       debtors; the read layer de-duplicates). A joint case lists both. Older
+       payloads without contacts[] fall back to the single contact_name. */
+    function calxContactList(row) {
+      const d = row.display || {};
+      if (Array.isArray(d.contacts) && d.contacts.length) return d.contacts;
+      if (d.contact_name) {
+        const ct = (row.attendees || []).find(a => a && a.party === 'contact');
+        const id = String(row.link_type) === 'contact' ? row.link_id : (ct ? ct.id : null);
+        return [{ id, name: d.contact_name, role: null }];
+      }
+      return [];
+    }
+    function calxContacts(row) {
+      const list = calxContactList(row);
+      if (!list.length) return '<span class="calx-key">—</span>';
+      return list.map((c) => {
+        const name = c.name || ('Contact #' + c.id);
+        return c.id == null ? calxEsc(name)
+          : fileLinkHtml(name, 'client', c.id, String(name), c.role || null);
+      }).join(', ');
+    }
+    /* The Case column: the case link, a docket with no case as plain text. */
+    function calxCase(row) {
+      const d = row.display || {};
+      if (row.case_id) {
+        const label = d.case_label || row.docket || row.case_id;
+        return fileLinkHtml(label, 'case', row.case_id, String(label));
+      }
+      if (row.docket) return calxEsc(row.docket);
+      return '<span class="calx-key">—</span>';
+    }
+    /* The Status column, in the Appts tab's vocabulary for appts (Scheduled /
+       Attended / No Show / Canceled / Rescheduled) and the matching words for
+       events — the State column keeps the unified-events vocabulary. */
+    function calxStatusText(row) {
+      const st = String(row.state || 'live');
+      if (st === 'superseded') return 'Rescheduled';
+      if (st === 'cancelled') return 'Canceled';
+      if (st === 'live') return 'Scheduled';
+      if (row.source === 'appt') return calxApptStatus(row) || '';
+      const res = row.resolution ? (CALX_RESOLUTION_LABEL[row.resolution] || row.resolution) : st;
+      return String(res).charAt(0).toUpperCase() + String(res).slice(1);
+    }
+
     /* ORDER — sorted HERE, over the rows the read layer returned: one
        92-day window holds ~100 live rows against a 500 cap, and when it is
        capped the footer already says the list is partial. The read layer's
@@ -5313,6 +5369,12 @@
         return u ? String(u.user_name) : '#' + a.id;
       },
       state: (r) => String(r.resolution || r.state || ''),
+      contact: (r) => calxContactList(r).map(c => c.name || '').join(', '),
+      case: (r) => {
+        const d = r.display || {};
+        return String(r.case_id ? (d.case_label || r.docket || r.case_id) : (r.docket || ''));
+      },
+      status: (r) => calxStatusText(r),
     };
     function calxSortRows(rows, by, dir) {
       if (by === 'upcoming') {
@@ -5418,6 +5480,147 @@
       return bits.join(', ');
     }
 
+    /* ── The column model + picker (Calendar list) ───────────────────────
+       The Appts/Cases twin (custom_table_view S1/S4/R1; the contract is in
+       scripts.js above ycColsHeadRender). DEFAULT columns = the tab's
+       original seven, byte-for-byte the old positional template, so nobody's
+       screen changes until they open Columns. Off by default (cols_on half):
+       Date and Time apart, Contact (EVERY client of the row — a joint case
+       lists both; display.contacts from the read layer), Case, and Status in
+       the Appts tab's vocabulary. Attached to (contact · case in one cell)
+       stays as the combined option. Sorting is client-side (calxSortRows):
+       each `sort` key here is a CALX_SORT_KEYS / calxSortRows key and an
+       option of #calxSortBy. Storage: yc.calendar.cols_off / cols_on /
+       cols_order .<uid>. */
+    const CALX_COLUMNS = [
+      { key: 'when', label: 'When ⇅', sort: 'when', default_on: true, cls: 'calx-when',
+        th_extra: ' data-sort-upcoming="upcoming" title="Upcoming first → oldest first → newest first"',
+        render: (r) => calxWhen(r) },
+      { key: 'date', label: 'Date', sort: 'when', default_on: false,
+        render: (r) => { const p = calxWhenParts(r); return p ? p.day : '<span class="calx-allday">—</span>'; } },
+      { key: 'time', label: 'Time', default_on: false,
+        render: (r) => { const p = calxWhenParts(r); return p && p.time ? p.time : '<span class="calx-allday">all day</span>'; } },
+      { key: 'kind', label: 'Kind', sort: 'kind', default_on: true, cls: 'calx-kind',
+        render: (r) => {
+          const kind = String(r.kind_key || 'other');
+          const icon = CALX_KIND_ICON[kind] || CALX_KIND_ICON.other;
+          return '<i class="fa-solid ' + icon + '"></i> ' + calxEsc(kind);
+        } },
+      { key: 'title', label: 'What', sort: 'title', default_on: true,
+        // `title` is the read layer's human label — the authored event_title
+        // on events, appt_type on appts — and type_key rides muted beside it
+        // so an unmapped row is visible as an unmapped row.
+        render: (r) => calxEsc(r.title || '(untitled)')
+          + (r.type_key ? ' <span class="calx-key">' + calxEsc(r.type_key) + '</span>'
+                        : ' <span class="calx-key" title="no registry type — mint one in YisraCase Config → Calendar Types">unmapped</span>') },
+      { key: 'attached', label: 'Attached to', sort: 'attached', default_on: true,
+        render: (r) => calxAnchor(r) },
+      { key: 'contact', label: 'Contact', sort: 'contact', default_on: false,
+        render: (r) => calxContacts(r) },
+      { key: 'case', label: 'Case', sort: 'case', default_on: false,
+        render: (r) => calxCase(r) },
+      { key: 'with', label: 'With', sort: 'with', default_on: true,
+        render: (r) => calxWithName(r) },
+      { key: 'state', label: 'State', sort: 'state', default_on: true,
+        render: (r) => calxBadge(r) },
+      { key: 'status', label: 'Status', sort: 'status', default_on: false,
+        render: (r) => calxEsc(calxStatusText(r)) },
+      { key: 'actions', label: 'Actions', default_on: true, cls: 'calx-acts', csv: false,
+        render: (r) => calxActions(r) },
+    ];
+    let calxColsVis = CALX_COLUMNS.filter((c) => c.default_on);
+
+    function calxColsKey() { return `cols_off.${(user && user.user) || 0}`; }
+    function calxColsOnKey() { return `cols_on.${(user && user.user) || 0}`; }
+    function calxColsOrderKey() { return `cols_order.${(user && user.user) || 0}`; }
+
+    function calxColsVisible() {
+      const ordered = ycColsOrder(CALX_COLUMNS, getTabPref('calendar', calxColsOrderKey(), ''));
+      const off = getTabPref('calendar', calxColsKey(), '').split(',');
+      const on = getTabPref('calendar', calxColsOnKey(), '').split(',');
+      const vis = ordered.filter((c) => (c.default_on ? !off.includes(c.key) : on.includes(c.key)));
+      return vis.length ? vis : ordered.filter((c) => c.default_on);
+    }
+
+    /* Data rows from the cached calxRows through the ON-SCREEN set — shared
+       by the fetch and the picker (which must not refetch). Row click opens
+       the row's OWN form through the shell's existing openers (showAppt /
+       showEvent — one way to open each in the whole application); an anchor
+       click navigates; a quick-action click runs its action (QUICK ACTIONS). */
+    function calxRenderRows() {
+      const table = E('calxTable');
+      for (let i = table.rows.length - 1; i > 0; i--) table.deleteRow(i);
+      if (calxRows === null) return;
+      if (!calxRows.length) {
+        const row = table.insertRow();
+        row.style.cursor = 'default';
+        row.innerHTML = '<td colspan="' + calxColsVis.length + '" style="color:var(--text-muted)">Nothing on the calendar for '
+          + calxEsc(calxFilterSentence()) + '.</td>';
+        return;
+      }
+      calxRows.forEach((r) => {
+        const row = table.insertRow();
+        row.innerHTML = ycColsRowHtml(calxColsVis, r);
+        row.onclick = (ev) => {
+          if (ev.target.closest('a')) return;
+          const act = ev.target.closest('button[data-calx-act]');
+          if (act) { calxAct(r, act.dataset.calxAct); return; }
+          if (r.source === 'appt') showAppt(r.source_id);
+          else showEvent(r.source_id);
+        };
+      });
+    }
+
+    function calxColsRender() {
+      const table = E('calxTable');
+      ycColsHeadRender(table, calxColsVis);
+      // Defaults to the upcoming sort, whose mark IS the When label's "⇅",
+      // so an unconditional sync repaints the parse-time header (no latch).
+      sortMarksSync(E('tabCalendar'), table);
+      calxRenderRows();
+    }
+
+    function calxColsApply() {
+      calxColsVis = calxColsVisible();
+      calxColsRender();
+    }
+
+    function calxColsDialog() {
+      ycColsDialog({
+        title: 'Calendar columns',
+        cols: ycColsOrder(CALX_COLUMNS, getTabPref('calendar', calxColsOrderKey(), '')),
+        defaultKeys: CALX_COLUMNS.map((c) => c.key),
+        visibleKeys: calxColsVis.map((c) => c.key),
+        onSave: calxColsSave,
+      });
+    }
+
+    /* The screen follows the DIALOG's answer, never a storage read-back. */
+    function calxColsSave({ orderedKeys, checkedKeys }) {
+      const byKey = new Map(CALX_COLUMNS.map((c) => [c.key, c]));
+      const vis = orderedKeys.filter((k) => checkedKeys.includes(k))
+        .map((k) => byKey.get(k)).filter(Boolean);
+      calxColsVis = vis.length ? vis : CALX_COLUMNS.filter((c) => c.default_on);
+      setTabPref('calendar', calxColsOrderKey(), orderedKeys.join(','));
+      setTabPref('calendar', calxColsKey(),
+        CALX_COLUMNS.filter((c) => c.default_on && !checkedKeys.includes(c.key)).map((c) => c.key).join(','));
+      setTabPref('calendar', calxColsOnKey(),
+        CALX_COLUMNS.filter((c) => !c.default_on && checkedKeys.includes(c.key)).map((c) => c.key).join(','));
+      calxColsRender();
+    }
+
+    function calxColsInit() {
+      if (!calxColsInit.wired) {
+        calxColsInit.wired = true;
+        window.addEventListener('storage', (e) => {
+          if (e.key === `yc.calendar.${calxColsKey()}`
+            || e.key === `yc.calendar.${calxColsOnKey()}`
+            || e.key === `yc.calendar.${calxColsOrderKey()}`) calxColsApply();
+        });
+      }
+      calxColsApply();
+    }
+
     /**
      * @param {boolean} silent  TRUE for a BUS-TRIGGERED background refetch.
      *   Suppresses the error toast for the same reason every other list does:
@@ -5458,45 +5661,8 @@
         // it now — and owns the spinner and the button, so leave those too.
         if (seq !== calxSeq) return;
         calxRows = calxSortRows(data.items || [], E('calxSortBy').value, E('calxSortDir').value);
-        if (!calxRows.length) {
-          const row = table.insertRow();
-          row.style.cursor = 'default';
-          row.innerHTML = '<td colspan="7" style="color:var(--text-muted)">Nothing on the calendar for '
-            + calxEsc(calxFilterSentence()) + '.</td>';
-        } else {
-          calxRows.forEach((r) => {
-            const row = table.insertRow();
-            const kind = String(r.kind_key || 'other');
-            const icon = CALX_KIND_ICON[kind] || CALX_KIND_ICON.other;
-            // The label. `title` is the read layer's human label — the
-            // authored event_title on events, appt_type on appts — and
-            // type_key rides muted beside it so an unmapped row is visible as
-            // an unmapped row rather than just as a string.
-            const label = calxEsc(r.title || '(untitled)')
-              + (r.type_key ? ' <span class="calx-key">' + calxEsc(r.type_key) + '</span>'
-                            : ' <span class="calx-key" title="no registry type — mint one in YisraCase Config → Calendar Types">unmapped</span>');
-            row.innerHTML =
-              '<td class="calx-when">' + calxWhen(r) + '</td>' +
-              '<td class="calx-kind"><i class="fa-solid ' + icon + '"></i> ' + calxEsc(kind) + '</td>' +
-              '<td>' + label + '</td>' +
-              '<td>' + calxAnchor(r) + '</td>' +
-              '<td>' + calxWithName(r) + '</td>' +
-              '<td>' + calxBadge(r) + '</td>' +
-              '<td class="calx-acts">' + calxActions(r) + '</td>';
-            // Row click opens the row's OWN form, through the shell's existing
-            // openers — the same two Swals the Appts and Events tabs use, so
-            // there is one way to open an appointment and one way to open an
-            // event in this whole application. An anchor click is excluded so
-            // the case/contact links still navigate; a quick-action click runs
-            // its action instead (see QUICK ACTIONS).
-            row.onclick = (ev) => {
-              if (ev.target.closest('a')) return;
-              const act = ev.target.closest('button[data-calx-act]');
-              if (act) { calxAct(r, act.dataset.calxAct); return; }
-              if (r.source === 'appt') showAppt(r.source_id);
-              else showEvent(r.source_id);
-            };
-          });
+        calxRenderRows();
+        if (calxRows.length) {
           foot.innerHTML = calxRows.length + ' item' + (calxRows.length === 1 ? '' : 's') + ' · '
             + calxEsc(calxFilterSentence())
             + (data.has_more
@@ -5504,12 +5670,18 @@
                 + ' — narrow the window or the filters to see the rest</b>'
               : '')
             + ' <span class="calx-foot-acts"><button type="button" data-calx-foot="print">Print</button>'
-            + ' <button type="button" data-calx-foot="export">Export</button></span>';
+            + ' <button type="button" data-calx-foot="export">Export</button>'
+            + ' <button type="button" data-calx-foot="columns">Columns</button></span>';
           // List view only: the grid hides #calxFoot. Export writes the rows
           // listed — a capped list exports the capped rows, as the note says.
           foot.querySelector('[data-calx-foot="print"]').onclick = () => window.print();
           foot.querySelector('[data-calx-foot="export"]').onclick = () =>
             exportRowsCsv(CALENDAR_CSV_COLUMNS, calxRows, 'yisracase-calendar');
+          foot.querySelector('[data-calx-foot="columns"]').onclick = () => calxColsDialog();
+        } else {
+          // Empty window: the picker must still be reachable.
+          foot.innerHTML = '<span class="calx-foot-acts"><button type="button" data-calx-foot="columns">Columns</button></span>';
+          foot.querySelector('[data-calx-foot="columns"]').onclick = () => calxColsDialog();
         }
       } catch (err) {
         if (seq !== calxSeq) return;
@@ -9023,6 +9195,7 @@ async function initAuth() {
       casesColsInit();
       apptsColsInit();
       eventsColsInit();
+      calxColsInit();
       casesCfInit();      // async: appends flagged cf columns, then re-inits Cases
       contactsCfInit();   // async: same, for the Contacts tab (C2)
     }

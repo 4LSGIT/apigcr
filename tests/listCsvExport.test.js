@@ -374,10 +374,11 @@ describe('Calendar list footer: Print and Export', () => {
     calxFoot: 'div', calxKinds: 'div', calxSortBy: 'input=when', calxSortDir: 'input=ASC',
   };
   const CAL_CODE = `var calxSeq = 0, calxRows = null;
-    ${['CALX_MONTHS', 'CALX_DAYS', 'CALX_KIND_ICON', 'CALX_RESOLUTION_LABEL', 'CALX_APPT_STATUS', 'CALX_SORT_KEYS']
+    ${['CALX_MONTHS', 'CALX_DAYS', 'CALX_KIND_ICON', 'CALX_RESOLUTION_LABEL', 'CALX_APPT_STATUS', 'CALX_SORT_KEYS', 'CALX_COLUMNS']
       .map((c) => constSrc(INDEX, c)).join('\n')}
+        var calxColsVis = CALX_COLUMNS.filter((c) => c.default_on);
     ${['calxEsc', 'calxISO', 'calxSortRows', 'calxWhen', 'calxBadge', 'calxAnchor', 'calxWithName', 'calxApptStatus',
-      'calxActions', 'calxAct', 'calxSelectedKinds', 'calxFilterSentence', 'calxGet']
+      'calxActions', 'calxAct', 'calxSelectedKinds', 'calxFilterSentence', 'calxWhenParts', 'calxContactList', 'calxContacts', 'calxCase', 'calxStatusText', 'calxRenderRows', 'calxGet']
       .map((f) => fnSrc(INDEX, f)).join('\n')}`;
   const ITEMS = [
     { source: 'event', source_id: 9, kind_key: 'hearing', title: HOSTILE, type_key: 'confirmation_hearing',
@@ -438,10 +439,11 @@ describe('Calendar list footer: Print and Export', () => {
     expect(printed).toBe(1);
   });
 
-  test('an empty list renders no footer buttons', async () => {
+  test('an empty list renders no Print / Export — only Columns, so the picker stays reachable', async () => {
     const w = page(() => ({ items: [] }), CAL_CODE, CAL_DOM);
     await w.calxGet();
-    expect(w.document.querySelector('#calxFoot button')).toBeNull();
+    const btns = [...w.document.querySelectorAll('#calxFoot button')].map((b) => b.dataset.calxFoot);
+    expect(btns).toEqual(['columns']);
   });
 });
 

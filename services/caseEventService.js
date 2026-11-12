@@ -1039,7 +1039,8 @@ async function listForCase(db, caseId, opts = {}) {
 //   3. cases    — ONCE, only when the page actually contains docket-anchored
 //                 or (under includeLabels) case-anchored rows
 //   4. contacts — ONCE, only under includeLabels and only when the page
-//                 contains contact-anchored rows
+//                 contains contact-anchored rows, appt clients or anchored
+//                 cases (one UNION ALL: direct contacts + case debtors)
 //   5. registry — ONCE, only under includeAttendees (cached 60s)
 //
 // None of 3–5 scales with the number of rows: each is a single IN-list keyed
@@ -1174,7 +1175,10 @@ const RANGE_APPT_STATE_SQL = Object.freeze({
  *        implies it.
  * @param {boolean} [opts.includeAttendees=false]  §3.6, as listForCase
  * @param {boolean} [opts.includeLabels=false] add `display: {case_label,
- *        contact_name}` — display-only, additive, never a key to bind
+ *        contact_name, contacts: [{id, name, role}]}` — display-only,
+ *        additive, never a key to bind. `contacts` = the row's own contact
+ *        (contact anchor / appt client) first, then the anchored case's
+ *        Primary + Secondary debtors, de-duplicated.
  * @param {number} [opts.limit=500]   capped at 1000
  * @param {number} [opts.offset=0]
  * @returns {Promise<{items: object[], has_more: boolean}>}
@@ -1414,15 +1418,63 @@ async function listRange(db, opts = {}) {
   }
 
   // ── QUERY 4 — contacts (labels only) ──────────────────────────────────────
+  //
+  // ONE round trip, two halves (UNION ALL), so the budget stays one query:
+  //   · the contacts the rows name directly (contact anchors, appt clients) —
+  //     `case_id` NULL;
+  //   · the DEBTORS of every case this page is anchored to (case_relate
+  //     Primary then Secondary — 'Other' / 'Bystander' are not parties) —
+  //     `case_id` set. These feed display.contacts, the Calendar tab's
+  //     Contact column: a joint case has two clients, and a hearing anchored
+  //     to the case still belongs to them.
+  // Keyed by the DISTINCT anchors, so it does not scale with rows.
   const contactName = new Map();
-  if (includeLabels && contactIds.size) {
-    const ids = [...contactIds];
-    const [ctRows] = await db.query(
-      `SELECT contact_id, contact_name FROM contacts WHERE contact_id IN (${ids.map(() => '?').join(',')})`,
-      ids
-    );
-    for (const c of ctRows || []) contactName.set(Number(c.contact_id), _s(c.contact_name));
+  const caseContacts = new Map();   // lowercased case_id → [{id, name, role}]
+  const anchorCaseIds = includeLabels
+    ? [...new Set([...caseById.values()].map((a) => a.case_id))] : [];
+  if (includeLabels && (contactIds.size || anchorCaseIds.length)) {
+    const halves = [];
+    const params = [];
+    if (contactIds.size) {
+      const ids = [...contactIds];
+      halves.push(`SELECT NULL AS case_id, contact_id, contact_name, NULL AS role, 0 AS ord
+                     FROM contacts WHERE contact_id IN (${ids.map(() => '?').join(',')})`);
+      params.push(...ids);
+    }
+    if (anchorCaseIds.length) {
+      halves.push(`SELECT cr.case_relate_case_id AS case_id, c.contact_id, c.contact_name,
+                          cr.case_relate_type AS role,
+                          (CASE cr.case_relate_type WHEN 'Primary' THEN 1 ELSE 2 END) * 1000000000 + cr.case_relate_id AS ord
+                     FROM case_relate cr
+                     JOIN contacts c ON c.contact_id = cr.case_relate_client_id
+                    WHERE cr.case_relate_case_id IN (${anchorCaseIds.map(() => '?').join(',')})
+                      AND cr.case_relate_type IN ('Primary','Secondary')`);
+      params.push(...anchorCaseIds);
+    }
+    const [ctRows] = await db.query(`${halves.join(' UNION ALL ')} ORDER BY ord`, params);
+    for (const c of ctRows || []) {
+      if (c.case_id == null) { contactName.set(Number(c.contact_id), _s(c.contact_name)); continue; }
+      const k = _key(String(c.case_id));
+      if (!caseContacts.has(k)) caseContacts.set(k, []);
+      const list = caseContacts.get(k);
+      if (!list.some((x) => x.id === Number(c.contact_id))) {
+        list.push({ id: Number(c.contact_id), name: _s(c.contact_name), role: _s(c.role) });
+      }
+    }
   }
+  /** display.contacts for a row: its own contact first (if any), then the
+   *  anchored case's debtors, de-duplicated by id. Always an array. */
+  const contactsFor = (ownId, caseId) => {
+    const out = [];
+    const fromCase = caseId ? (caseContacts.get(_key(String(caseId))) || []) : [];
+    if (ownId != null) {
+      const id = Number(ownId);
+      const onCase = fromCase.find((x) => x.id === id);
+      out.push({ id, name: contactName.get(id) || (onCase && onCase.name) || null, role: onCase ? onCase.role : null });
+    }
+    for (const x of fromCase) if (!out.some((o) => o.id === x.id)) out.push({ ...x });
+    return out;
+  };
 
   // ── QUERY 5 — the registry, for client_expected ───────────────────────────
   let registry = null;
@@ -1457,6 +1509,7 @@ async function listRange(db, opts = {}) {
         case_label:   anchor ? anchor.label : null,
         contact_name: lt === 'contact' && r.event_link_id != null
           ? (contactName.get(Number(r.event_link_id)) || null) : null,
+        contacts: contactsFor(lt === 'contact' ? r.event_link_id : null, anchor ? anchor.case_id : null),
       };
     }
     items.push(row);
@@ -1480,6 +1533,7 @@ async function listRange(db, opts = {}) {
       row.display = {
         case_label:   anchor ? anchor.label : null,
         contact_name: r.appt_client_id != null ? (contactName.get(Number(r.appt_client_id)) || null) : null,
+        contacts: contactsFor(r.appt_client_id, anchor ? anchor.case_id : null),
       };
     }
     items.push(row);

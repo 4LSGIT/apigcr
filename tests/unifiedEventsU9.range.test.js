@@ -400,19 +400,49 @@ describe('listRange — anchors and labels', () => {
     expect(db.calls).toHaveLength(2);
   });
 
-  test('includeLabels adds display{} and costs ONE cases + ONE contacts query', async () => {
+  test('includeLabels adds display{} (incl. contacts[]) and costs ONE cases + ONE contacts query', async () => {
     const db = stubDb(range(
       [ev({ event_id: 1, event_link_type: 'contact', event_link_id: '1042' })],
       [ap()],
       [CASE_A],
-      [{ contact_id: 1042, contact_name: 'Denise A Herig' }]
+      // ONE query, two halves: the direct contact (case_id NULL) and the
+      // anchored case's debtors (Primary then Secondary, as ORDER BY ord).
+      [{ case_id: null, contact_id: 1042, contact_name: 'Denise A Herig', role: null },
+       { case_id: 'TYL6KJN8', contact_id: 1042, contact_name: 'Denise A Herig', role: 'Primary' },
+       { case_id: 'TYL6KJN8', contact_id: 1043, contact_name: 'Mark Herig', role: 'Secondary' }]
     ));
     const { items } = await svc.listRange(db, { ...WINDOW, includeLabels: true });
     expect(db.calls).toHaveLength(4);
+    expect(db.calls[3].sql).toMatch(/UNION ALL/);
+    expect(db.calls[3].sql).toMatch(/case_relate_type IN \('Primary','Secondary'\)/);
+    expect(db.calls[3].params).toEqual([1042, 'TYL6KJN8']);
     const evRow = items.find(r => r.source === 'event');
     const apRow = items.find(r => r.source === 'appt');
-    expect(evRow.display).toEqual({ case_label: null, contact_name: 'Denise A Herig' });
-    expect(apRow.display).toEqual({ case_label: '26-46639-mar', contact_name: 'Denise A Herig' });
+    expect(evRow.display).toEqual({
+      case_label: null, contact_name: 'Denise A Herig',
+      contacts: [{ id: 1042, name: 'Denise A Herig', role: null }],
+    });
+    // The client first (role from the case), then the joint debtor.
+    expect(apRow.display).toEqual({
+      case_label: '26-46639-mar', contact_name: 'Denise A Herig',
+      contacts: [{ id: 1042, name: 'Denise A Herig', role: 'Primary' },
+                 { id: 1043, name: 'Mark Herig', role: 'Secondary' }],
+    });
+  });
+
+  test('a case-anchored hearing lists the case debtors; an appt client NOT on the case still leads', async () => {
+    const db = stubDb(range(
+      [ev()],
+      [ap({ appt_client_id: 77 })],
+      [CASE_A],
+      [{ case_id: null, contact_id: 77, contact_name: 'Third Party', role: null },
+       { case_id: 'TYL6KJN8', contact_id: 1042, contact_name: 'Denise A Herig', role: 'Primary' }]
+    ));
+    const { items } = await svc.listRange(db, { ...WINDOW, includeLabels: true });
+    expect(items.find(r => r.source === 'event').display.contacts)
+      .toEqual([{ id: 1042, name: 'Denise A Herig', role: 'Primary' }]);
+    expect(items.find(r => r.source === 'appt').display.contacts)
+      .toEqual([{ id: 77, name: 'Third Party', role: null }, { id: 1042, name: 'Denise A Herig', role: 'Primary' }]);
   });
 
   test('display is ABSENT without includeLabels — the frozen shape gains no default keys', async () => {
@@ -428,14 +458,14 @@ describe('listRange — anchors and labels', () => {
     for (let i = 0; i < 60; i++) {
       many.push(ev({ event_id: 300 + i, event_link_type: 'case_number', event_link_id: '26-46639' }));
     }
-    // Three queries each: events, appts, cases. NO contacts query — nothing on
-    // this page is contact-anchored, and a lookup with an empty IN-list is a
-    // round trip that can only return nothing.
-    const big = stubDb(range(many, [], [CASE_A]));
+    // Four queries each: events, appts, cases, contacts (the anchored case's
+    // debtors). The contacts IN-list is keyed by DISTINCT cases, like the
+    // cases one is by distinct dockets.
+    const big = stubDb(range(many, [], [CASE_A], []));
     await svc.listRange(big, { ...WINDOW, includeLabels: true });
 
     const small = stubDb(range(
-      [ev({ event_link_type: 'case_number', event_link_id: '26-46639' })], [], [CASE_A]
+      [ev({ event_link_type: 'case_number', event_link_id: '26-46639' })], [], [CASE_A], []
     ));
     await svc.listRange(small, { ...WINDOW, includeLabels: true });
 
@@ -443,6 +473,7 @@ describe('listRange — anchors and labels', () => {
     // …and the IN-list is keyed by DISTINCT dockets, so 60 rows on one docket
     // bind one docket, not sixty.
     expect(big.calls[2].params).toEqual(['26-46639', '26-46639']);
+    expect(big.calls[3].params).toEqual(['TYL6KJN8']);
   });
 
   test('every source names its anchor — the events mapper gains link_type here', async () => {
