@@ -1,0 +1,117 @@
+{
+ "checklists": [
+  {
+   "id": 700,
+   "title": "Documents still needed before the 341 meeting",
+   "kind": "checklist",
+   "body": null,
+   "status": "incomplete",
+   "created_date": "2026-09-28T10:00:00Z",
+   "updated_date": "2026-09-29T15:30:00Z",
+   "created_by": 1,
+   "link": "TESTCASE1",
+   "link_type": "case",
+   "tag": "docs_needed",
+   "items_total": 4,
+   "items_done": 1,
+   "items": [
+    {
+     "id": 7001,
+     "checklist_id": 700,
+     "name": "Last six months of bank statements for every account, including the closed credit union account",
+     "status": "complete",
+     "position": 1,
+     "tag": null,
+     "created_date": "2026-09-28T10:00:00Z",
+     "updated_date": "2026-09-29T15:30:00Z"
+    },
+    {
+     "id": 7002,
+     "checklist_id": 700,
+     "name": "2024 and 2025 tax returns",
+     "status": "incomplete",
+     "position": 2,
+     "tag": null,
+     "created_date": "2026-09-28T10:00:00Z",
+     "updated_date": "2026-09-28T10:00:00Z"
+    },
+    {
+     "id": 7003,
+     "checklist_id": 700,
+     "name": "Pay stubs (60 days)",
+     "status": "incomplete",
+     "position": 3,
+     "tag": null,
+     "created_date": "2026-09-28T10:00:00Z",
+     "updated_date": "2026-09-28T10:00:00Z"
+    },
+    {
+     "id": 7004,
+     "checklist_id": 700,
+     "name": "Vehicle titles and the current payoff letter",
+     "status": "incomplete",
+     "position": 4,
+     "tag": null,
+     "created_date": "2026-09-28T10:00:00Z",
+     "updated_date": "2026-09-28T10:00:00Z"
+    }
+   ]
+  },
+  {
+   "id": 701,
+   "title": "Call notes \u2014 trustee's office",
+   "kind": "note",
+   "body": "Spoke with the paralegal 2026-09-29. The trustee wants the amended Schedule C before the continued meeting; they will not accept a faxed copy, upload through the portal only. Client prefers morning calls.",
+   "status": "incomplete",
+   "created_date": "2026-09-29T09:10:00Z",
+   "updated_date": "2026-09-29T09:10:00Z",
+   "created_by": 2,
+   "link": "TESTCASE1",
+   "link_type": "case",
+   "tag": null,
+   "items_total": 0,
+   "items_done": 0,
+   "items": []
+  },
+  {
+   "id": 702,
+   "title": "My Monday list",
+   "kind": "checklist",
+   "body": null,
+   "status": "complete",
+   "created_date": "2026-09-22T08:00:00Z",
+   "updated_date": "2026-09-22T17:45:00Z",
+   "created_by": 1,
+   "link": "1",
+   "link_type": "user",
+   "tag": null,
+   "items_total": 2,
+   "items_done": 2,
+   "items": [
+    {
+     "id": 7020,
+     "checklist_id": 702,
+     "name": "File the proof of claim",
+     "status": "complete",
+     "position": 1,
+     "tag": null,
+     "created_date": "2026-09-22T08:00:00Z",
+     "updated_date": "2026-09-22T12:00:00Z"
+    },
+    {
+     "id": 7021,
+     "checklist_id": 702,
+     "name": "Return the referral call",
+     "status": "complete",
+     "position": 2,
+     "tag": null,
+     "created_date": "2026-09-22T08:00:00Z",
+     "updated_date": "2026-09-22T17:45:00Z"
+    }
+   ]
+  }
+ ],
+ "total": 3,
+ "limit": 100,
+ "offset": 0
+}

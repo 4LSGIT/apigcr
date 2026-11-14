@@ -52,11 +52,15 @@
       display: flex; align-items: center; gap: 10px;
       padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px;
       margin-bottom: 7px; cursor: pointer; background: var(--surface);
+      /* The scope label and progress chip never shrink; at 320 they squeezed
+         the title to one word per line and still ran past the edge (first
+         surveyed 2026-11-14). Let the meta wrap under the title instead. */
+      flex-wrap: wrap;
     }
     .cx-row:hover { background: var(--hover); border-color: var(--border-strong); }
-    .cx-row-title { font-size: 14px; font-weight: 600; color: var(--text); }
+    .cx-row-title { font-size: 14px; font-weight: 600; color: var(--text); flex: 1 1 140px; min-width: 0; }
     .cx-row-scope {
-      font-size: 12px; color: var(--text-muted); white-space: nowrap;
+      font-size: 12px; color: var(--text-muted); white-space: nowrap; max-width: 100%;
     }
     .cx-row-scope a { color: var(--accent-2); text-decoration: none; }
     .cx-row-scope a:hover { text-decoration: underline; }

@@ -932,6 +932,7 @@ scripts/mobile-survey/fixtures/api/cases.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1/communications.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1/pipeline.json
+scripts/mobile-survey/fixtures/api/checklists.json
 scripts/mobile-survey/fixtures/api/comms-archive/admin.json
 scripts/mobile-survey/fixtures/api/comms-archive/health.json
 scripts/mobile-survey/fixtures/api/comms-archive/media/7001/transcript.json

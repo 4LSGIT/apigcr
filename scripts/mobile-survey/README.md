@@ -135,6 +135,7 @@ repo root does — the `text/html; charset=UTF-8` header matters, because
 
 - `POST /login`: a fake unsigned token.
 - `GET /api/firm-data`: `fixtures/firm-data.json`.
+- `/checklists[/…]` and `/checkitems[/…]` (the Notes & Lists ROOT routes, no `/api`): `fixtures/api/checklists.json` is the board — three cards: a case checklist with a long item, a note, a complete personal list. Before 2026-11-14 the mock answered them as static 404s and the board (`checklistsDiv`) was never surveyed past its error banner.
 - any `/api/<path>` or `/admin/<path>`: `fixtures/api/<path>.json` if it
   exists (exact path, no prefix fallback), else an empty-success envelope
   that covers the list shapes the panes read (`data`, `rows`, `entries`,

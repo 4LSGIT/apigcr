@@ -62,11 +62,18 @@
        900px breakpoint does NOT fire on either surface today — it activates
        only if a surface is ever widened. That is intended: do not try to
        detect the parent's width. */
-    .ck-stack { display: grid; gap: 8px; }
+    /* minmax(0, 1fr), not the implicit auto track: a grid track's floor is its
+       content's min-content width, and a note's textarea is ~280px wide on
+       its own (the browser's 20 columns), so inside a 210px frame — the
+       appointment dialog's nested lists at 320 — every card in the stack grew
+       to 285px and overflowed (first surveyed 2026-11-14, once the mock
+       served /checklists). */
+    .ck-stack { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); }
+    .ck-card { min-width: 0; }
     @media (min-width: 900px) {
       /* align-items:start so a two-line note does not stretch to the height of
          the 30-item list beside it. */
-      .ck-stack { grid-template-columns: 1fr 1fr; align-items: start; }
+      .ck-stack { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
     }
 
     /* ── One card ── */
@@ -391,6 +398,11 @@
     }
     .ck-add input {
       flex: 1;
+      /* A flex child's default min-width is its intrinsic size (~200px for an
+         input), so this row could never shrink below ~285px and overflowed
+         the appointment dialog's nested frame at 320 / 375 (first surveyed
+         2026-11-14, once the mock served /checklists). */
+      min-width: 0;
       font-size: 14px;
       padding: 6px 8px;
       border: 1px solid var(--border-strong);

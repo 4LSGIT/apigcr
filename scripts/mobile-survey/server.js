@@ -14,6 +14,14 @@
 //                                    (exact path only — /api/cases/X/pipeline
 //                                    does NOT fall back to /api/cases/X),
 //                                    otherwise an empty-success envelope.
+//   ANY /checklists[/…], /checkitems[/…]
+//                                 -> the same, for the Notes & Lists routes,
+//                                    which are ROOT routes (routes/api.checklists.js
+//                                    mounts without /api): fixtures/api/checklists.json
+//                                    is the board (`checklistsDiv`, checklistView.html).
+//                                    Until 2026-11-14 the mock served them as static
+//                                    404s, so the board rendered only its error banner
+//                                    at every width and its layout was never surveyed.
 //   PUT /api/ui-config            -> echoes the body's document back as saved
 //   POST /api/ui-config/versions/:id/restore
 //                                 -> fixtures/api/ui-config/versions/<id>.json's
@@ -82,7 +90,7 @@ let PERSONA = 'su';
 
 function fixtureFor(urlPath) {
   // '/api/cases/TESTCASE1' -> fixtures/api/cases/TESTCASE1.json
-  const rel = urlPath.replace(/^\/(api|admin)\//, '');
+  const rel = urlPath.replace(/^\/(api|admin)\//, '').replace(/^\//, '');   // root routes (/checklists) map like /api ones
   if (!rel || rel.includes('..')) return null;
   const twin = PERSONA !== 'su' && path.join(FIXTURES, 'api', `${rel}.${PERSONA}.json`);
   const file = twin && fs.existsSync(twin) ? twin : path.join(FIXTURES, 'api', rel + '.json');
@@ -192,7 +200,7 @@ function createApp({ log = null } = {}) {
     res.json({ status: 'success', setting: { key: req.params[0], value: v.old_value ?? '', updated_at: new Date().toISOString() } });
   });
 
-  app.all(/^\/(api|admin)\//, (req, res) => {
+  app.all(/^\/(api\/|admin\/|checklists(\/|$)|checkitems(\/|$))/, (req, res) => {
     const body = req.path === '/api/firm-data'
       ? readJson(path.join(FIXTURES, 'firm-data.json'))
       : (fixtureFor(req.path) || EMPTY);
