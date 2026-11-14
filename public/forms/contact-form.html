@@ -1488,6 +1488,10 @@
       } finally {
         this._saving = false;
         this._showLoading(false);
+        // Ported from the stock save() (2026-11-14): a sync-bus message that
+        // arrived mid-save was parked on _saving; run the park out now (every
+        // early return above lands here too).
+        this._syncResume();
       }
     };
 

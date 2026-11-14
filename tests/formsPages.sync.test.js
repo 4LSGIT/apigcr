@@ -37,6 +37,14 @@
 // and runs it once when visible. contact-form's own save() clears the hold:
 // it DELETEs the superseded draft, hides the banner, clears _draftConflict.
 //
+// MID-RUN (the re-poll fix, 2026-11-14): a message arriving while the form's
+// own re-read (GET /api/forms/latest) or its save() is in flight is parked
+// (_syncBusy) and, before the fix, nothing woke it — visibilitychange and
+// focusout fire only on the user's next act — so the form sat stale with no
+// banner. _syncResume runs the park out when the re-read / save ends: the
+// stub holds the in-flight request (state.hold) and the park is answered by a
+// SECOND re-read once it is released.
+//
 // OFF SCREEN (NESTED, the frame's getClientRects() empty — what a display:none
 // iframe answers): the message is answered AT ONCE. It used to park until a
 // `resize` that Chromium never fires in an already-laid-out iframe whose host
@@ -69,6 +77,12 @@ const SERVED = {
 };
 const YCSYNC = SERVED['/js/yc-sync.js'].toString('utf8');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Bounded wait for a condition (never an unbounded poll): true as soon as it holds, false after `ms`. */
+async function until(fn, ms = 1500) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (fn()) return true; await sleep(10); }
+  return fn();
+}
 
 const DOMS = [];
 const TEARDOWNS = [];
@@ -138,6 +152,7 @@ function makeApi(cfg, state, calls, sniffWin) {
   return async (url, method, body) => {
     calls.push({ url, method, body });
     const echo = { form_key: cfg.formKey, link_type: cfg.linkType, link_id: cfg.linkId };
+    const hold = state.hold && method === state.hold.method && url.startsWith(state.hold.prefix) ? state.hold : null;
     let data = { status: 'success' };
     if (url.startsWith('/api/forms/latest')) data = state.latest;
     else if (url === '/api/forms/draft' && method === 'POST') data = { status: 'success', id: 88, updated_at: new Date().toISOString(), ...echo };
@@ -150,6 +165,7 @@ function makeApi(cfg, state, calls, sniffWin) {
     else if (url === '/api/contacts/5/emails') data = { status: 'success', emails: [] };
     else if (url === '/api/contact-role-types') data = { status: 'success', types: [] };
     else if (url === '/api/contacts/5/roles' && method === 'GET') data = { status: 'success', roles: [] };
+    if (hold) { state.hold = null; await hold.promise; }   // the answer was computed at call time; only its delivery waits
     setTimeout(() => { try { sniffWin().YC._sniff(method, url, data); } catch (_) { /* noop */ } }, 0);
     return data;
   };
@@ -318,6 +334,26 @@ describe.each(PAGES)('$file — on the sync bus', (cfg) => {
     expect(draftPosts(calls)).toBe(posts);
   });
 
+  test('MID-RE-READ: a message arriving while GET latest is in flight is answered by a second re-read, not dropped', async () => {
+    const { w, shell, calls, state } = await boot(cfg);
+    const before = latestReads(calls);
+    let release; state.hold = { method: 'GET', prefix: '/api/forms/latest', promise: new Promise((r) => { release = r; }) };
+    announce(shell, cfg);                       // re-read #1 starts and is held (its answer: no draft)
+    await sleep(40);
+    expect(latestReads(calls)).toBe(before + 1);
+    expect(w.ycForm._syncing).toBe(true);
+    state.latest = { submitted: null, draft: caseyDraft(cfg) };
+    announce(shell, cfg);                       // arrives mid-run: parked (busy), re-read #1 still the only one
+    await sleep(40);
+    expect([latestReads(calls), w.ycForm._syncStale]).toEqual([before + 1, true]);
+    release();
+    expect(await until(() => latestReads(calls) === before + 2)).toBe(true);   // the park ran as soon as #1 ended
+    expect(await until(() => !w.ycForm._syncing && banner(w) === 'flex')).toBe(true);
+    expect(w.ycForm._syncStale).toBe(false);
+    await sleep(60);
+    expect(latestReads(calls)).toBe(before + 2);   // spent — no third read
+  });
+
   test('PARKED: a hidden page holds the refetch, and runs it once when visible', async () => {
     const { w, shell, calls } = await boot(cfg);
     let vis = 'hidden';
@@ -458,6 +494,27 @@ describe('contact-form.html — its own save() clears a draft held over the bus'
     type(w, cfg.field, 'After save');
     await w.ycForm.autosaveTick();
     expect(draftPosts(calls)).toBe(posts + 1);
+  });
+
+  test('MID-SAVE: a message arriving while save() is in flight is answered by a re-read once the save ends', async () => {
+    const cfg = CONTACT_FORM;
+    const { w, shell, calls, state } = await boot(cfg);
+    type(w, cfg.field, 'Typed then saved');
+    if (w.document.activeElement && w.document.activeElement.blur) w.document.activeElement.blur();
+    const before = latestReads(calls);
+    let release; state.hold = { method: 'PATCH', prefix: '/api/contacts/5', promise: new Promise((r) => { release = r; }) };
+    const saving = w.ycForm.save();
+    await sleep(40);
+    expect(w.ycForm._saving).toBe(true);
+    state.latest = { submitted: null, draft: caseyDraft(cfg) };
+    announce(shell, cfg);                       // another frame's draft, mid-save: parked
+    await sleep(40);
+    expect([latestReads(calls), w.ycForm._syncStale]).toEqual([before, true]);
+    release();
+    await saving;
+    expect(await until(() => latestReads(calls) === before + 1)).toBe(true);   // the park ran when the save ended
+    expect(await until(() => !w.ycForm._syncing && banner(w) === 'flex')).toBe(true);   // the saved form is clean: the newer draft shows
+    expect(w.ycForm._syncStale).toBe(false);
   });
 
   test('the Roles reader stays on the HOST\'s bus (P.YC); the form listens on the page\'s own', async () => {

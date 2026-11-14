@@ -1166,6 +1166,7 @@ if (this.config.endpoints.load && !this.config.external) {
     } finally {
       this._saving = false;
       this._showLoading(false);
+      this._syncResume();
     }
   }
 
@@ -1363,9 +1364,13 @@ if (this.config.endpoints.load && !this.config.external) {
   //   · its own echo — this frame POSTed or DELETEd a draft, or POSTed a
   //     submission, within SYNC_ECHO_MS (_api stamps it), so the message is
   //     its own write;
-  //   · the browser tab hidden, mid-save, or the caret in a field of the form:
-  //     PARKED in _syncStale and re-run when the page becomes visible
-  //     (visibilitychange) or the focus leaves the field (focusout).
+  //   · the browser tab hidden, mid-save, mid-re-read, or the caret in a field
+  //     of the form: PARKED in _syncStale and re-run when the page becomes
+  //     visible (visibilitychange), the focus leaves the field (focusout), or
+  //     the save / re-read that was running ends (_syncResume — nothing else
+  //     wakes a park set while _saving or _syncing was true; before it, a
+  //     message arriving mid-save or mid-re-read stayed parked until the
+  //     user's next act, so the form sat stale with no banner).
   //   NOT parked: a frame merely off screen (its host's inner tab not the
   //   showing one). Chromium fires no resize inside an already-laid-out iframe
   //   whose host flips display, and nothing else tells a nested form frame it
@@ -1422,7 +1427,14 @@ if (this.config.endpoints.load && !this.config.external) {
     this._syncing = true;
     try { await this.syncLatest(); }
     catch (err) { console.warn('[YCForm] sync refetch failed:', err); }
-    finally { this._syncing = false; }
+    finally { this._syncing = false; this._syncResume(); }
+  }
+
+  // Run out a park set while a save or a re-read was running (FENCES above):
+  // the busy flag is clear by the next macrotask, and a park the caret still
+  // holds returns early here and waits for focusout as before.
+  _syncResume() {
+    if (this._syncStale) setTimeout(() => this._syncPoll(), 0);
   }
 
   /**

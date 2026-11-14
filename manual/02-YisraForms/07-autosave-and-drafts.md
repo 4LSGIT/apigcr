@@ -66,7 +66,8 @@ latest draft and submission:
   Discard or a save ends the hold.
 
 The form's own autosave echo is ignored, and the refresh waits while the page
-is hidden or a field has the caret.
+is hidden, a field has the caret, or the form is mid-save or mid-refresh (it
+runs as soon as the save or refresh ends).
 
 ### Two browsers
 

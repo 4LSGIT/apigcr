@@ -43,6 +43,17 @@ body. Governing migrations in `ref/migrations/`.*
   (UNION ALL; the budget stays one query). A saved copy of the old Events
   tab may live as a Tool (it calls only `/api/events` + `/api/calendar-types`).
 
+- **YCForm re-poll after a mid-run bus message (11-14):** a `form:` message
+  arriving while the form's own re-read (`_syncing`) or its save (`_saving`)
+  was in flight was parked by `_syncBusy()` and nothing woke it (visibility-
+  change / focusout fire only on the user's next act), so the form sat stale
+  with no banner. `YCForm._syncResume()` runs the park out on the next
+  macrotask from `_syncPoll`'s finally and from save()'s — the stock one in
+  yc-forms.js AND contact-form.html's override (it replaces `save` whole; a
+  change to the stock save is re-ported there). A park the caret still holds
+  waits for focusout as before. `tests/formsPages.sync.test.js` MID-RE-READ /
+  MID-SAVE (the stub holds the in-flight request).
+
 - **The draft POST's precondition (11-11):** POST `/api/forms/draft` takes an
   optional `expected_draft_id` + `expected_updated_at` (both set: the row the
   caller saw; both null: none held; anything else → 400). With it the route
