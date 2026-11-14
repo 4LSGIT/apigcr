@@ -109,6 +109,29 @@ function draftExpectation(body) {
 }
 
 /** The draft POST's 409: nothing was written; `draft` is the row now there (or null). */
+/**
+ * The EXTERNAL draft POST's optional precondition, read from its body
+ * (POST /api/ext/forms/:form_key/draft { expected_updated_at }). That surface
+ * withholds row ids, so the draft is named by its record (form_key + the
+ * case) and its updated_at alone:
+ *   - key absent → undefined: no precondition, the draft is replaced whole
+ *     (a client page older than this precondition);
+ *   - null → { draftId: null, updatedAt: null }: "I hold no draft" — refused
+ *     when a draft row exists;
+ *   - a timestamp → { draftId: null, updatedAt: Date }: the record's draft row
+ *     must still carry that updated_at, to the millisecond, or be gone.
+ * Anything else is a 400 (the route maps it).
+ */
+function extDraftExpectation(body) {
+  const b = body && typeof body === 'object' ? body : {};
+  if (!Object.prototype.hasOwnProperty.call(b, 'expected_updated_at')) return undefined;
+  const at = b.expected_updated_at;
+  if (at === null) return { draftId: null, updatedAt: null };
+  const ms = (typeof at === 'string' && at.trim()) || typeof at === 'number' ? new Date(at).getTime() : NaN;
+  if (Number.isNaN(ms)) throw httpError(400, 'expected_updated_at is not a date');
+  return { draftId: null, updatedAt: new Date(ms) };
+}
+
 function draftConflict(message, draft) {
   const err = httpError(409, message);
   err.draft = draft || null;
@@ -122,16 +145,19 @@ function draftConflict(message, draft) {
  * that sends no precondition): INSERT ... ON DUPLICATE KEY UPDATE on the
  * draft_key unique index (idx_draft_unique) — the draft is replaced whole.
  *
- * With `opts.expected` (draftExpectation) the rule is: never replace a draft
- * row the caller has not seen. The check IS the write, so two saves racing on
- * the same expected value cannot both pass —
+ * With `opts.expected` (draftExpectation, or extDraftExpectation for the
+ * external route) the rule is: never replace a draft row the caller has not
+ * seen. The check IS the write, so two saves racing on the same expected
+ * value cannot both pass —
  *   - { draftId, updatedAt }: UPDATE ... WHERE id = ? AND this form + record
  *     + status 'draft' AND updated_at = ?. InnoDB re-reads the row under its
  *     lock, so of two racing UPDATEs the second sees the first's updated_at
  *     and matches nothing. affectedRows counts MATCHED rows (mysql2's
  *     default FOUND_ROWS), so 0 means the row moved, was replaced by a new
  *     row, or is gone (discarded / submitted) — then the INSERT below;
- *   - { draftId: null }, or the expected row gone: a plain INSERT.
+ *   - { draftId: null, updatedAt }: the external shape (no ids on that
+ *     surface) — the same UPDATE keyed on the record instead of the id;
+ *   - { draftId: null, updatedAt: null }, or the expected row gone: a plain INSERT.
  *     idx_draft_unique refuses it when a draft row exists (ER_DUP_ENTRY) →
  *     409 with that row. No row at all → a new draft: nothing unseen is
  *     replaced (the page's "your next autosave saves a new draft").
@@ -165,6 +191,24 @@ async function upsertDraft(db, formKey, linkType, linkId, schemaVersion, data, u
         const [[row]] = await db.query(`SELECT updated_at FROM form_submissions WHERE id = ?`, [expected.draftId]);
         return { id: expected.draftId, updated_at: row.updated_at };
       }
+    } else if (expected.updatedAt != null) {
+      // The record's one draft row (idx_draft_unique), named by its stamp alone.
+      const [upd] = await db.query(
+        `UPDATE form_submissions
+            SET data = ?, schema_version = ?, submitted_by = ?, updated_at = NOW(3)
+          WHERE form_key = ? AND link_type = ? AND link_id = ? AND status = 'draft'
+            AND updated_at = ?`,
+        [dataJson, schemaVersion, userId, formKey, linkType, linkId, expected.updatedAt]
+      );
+      if (upd.affectedRows === 1) {
+        const [[row]] = await db.query(
+          `SELECT id, updated_at FROM form_submissions
+            WHERE form_key = ? AND link_type = ? AND link_id = ? AND status = 'draft'
+            LIMIT 1`,
+          [formKey, linkType, linkId]
+        );
+        return { id: row.id, updated_at: row.updated_at };
+      }
     }
     let ins;
     try {
@@ -176,7 +220,7 @@ async function upsertDraft(db, formKey, linkType, linkId, schemaVersion, data, u
       );
     } catch (err) {
       if (err && err.code === 'ER_DUP_ENTRY') {
-        throw draftConflict(expected.draftId != null
+        throw draftConflict(expected.draftId != null || expected.updatedAt != null
           ? 'The draft was saved again since it was read — nothing was written'
           : 'A draft of this form already exists for this record — nothing was written',
         await currentDraft(db, formKey, linkType, linkId));
@@ -711,6 +755,7 @@ module.exports = {
   getLatest,
   upsertDraft,
   draftExpectation,
+  extDraftExpectation,
   submitForm,
   deleteDraft,
   getHistory,

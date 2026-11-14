@@ -12,7 +12,10 @@
  *      Server re-validates values, resolves linkage from the credential,
  *      records the submission, dispatches onSubmit.workflow SERVER-SIDE from
  *      the published definition. §5.3.
- * POST   /api/ext/forms/:form_key/draft            — body { case_id, values }.
+ * POST   /api/ext/forms/:form_key/draft            — body { case_id, values,
+ *      expected_updated_at? } (the precondition: the draft's stamp the page
+ *      last saw, null for none; absent → replaced whole; a miss is 409
+ *      { status:'conflict', updated_at } — the row's stamp now, no id).
  * DELETE /api/ext/forms/:form_key/draft?case_id=   — D1 server-side drafts,
  *      opt-in per template (external.serverDrafts) and LINKED-ONLY. See the
  *      block comment above those handlers for the trust-model note.
@@ -475,17 +478,31 @@ router.post('/api/ext/forms/:form_key/draft', async (req, res) => {
     if (!tpl) return res.status(404).json(notFoundBody);
     const def = tpl.definition;
 
-    // Body: { case_id, values } and NOTHING else — the §2 inversion rule, the
-    // same rejection submit applies. Checked AFTER the serverDrafts gate on
-    // purpose: a 400 here would otherwise confirm that a public form exists
-    // under this key even when it never opted into drafts, and no-oracle
-    // parity is cheaper to keep than to argue about.
+    // Body: { case_id, values, expected_updated_at? } and NOTHING else — the
+    // §2 inversion rule, the same rejection submit applies. Checked AFTER the
+    // serverDrafts gate on purpose: a 400 here would otherwise confirm that a
+    // public form exists under this key even when it never opted into drafts,
+    // and no-oracle parity is cheaper to keep than to argue about.
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
       ? req.body : {};
     for (const k of Object.keys(body)) {
-      if (k !== 'case_id' && k !== 'values') {
+      if (k !== 'case_id' && k !== 'values' && k !== 'expected_updated_at') {
         return res.status(400).json({ status: 'error', message: `unexpected body key "${k}"` });
       }
+    }
+
+    // The precondition (formService.extDraftExpectation): the draft stamp this
+    // page last saw — the GET's `draft.updated_at`, its own last save's answer
+    // — or null when it holds none. Absent: replaced whole, as before (a page
+    // loaded before this shipped). Since 2026-11-14 the client's autosave can
+    // no longer replace a draft the firm (or the client on another device)
+    // saved since it loaded; see the 409 below.
+    let expected;
+    try {
+      expected = formService.extDraftExpectation(body);
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ status: 'error', message: err.message });
+      throw err;
     }
 
     // Linkage: the credential IS the draft identity. Invalid or absent
@@ -512,12 +529,25 @@ router.post('/api/ext/forms/:form_key/draft', async (req, res) => {
     if (perCaseDraftLimited(caseId)) return tooMany(res);
 
     // submitted_by NULL = external, the same convention submit writes.
-    const out = await formService.upsertDraft(
-      req.db, tpl.form_key, 'case', caseId, tpl.schema_version, body.values, null
-    );
+    let out;
+    try {
+      out = await formService.upsertDraft(
+        req.db, tpl.form_key, 'case', caseId, tpl.schema_version, body.values, null, { expected }
+      );
+    } catch (err) {
+      // The precondition failed: nothing was written. The row's stamp now (or
+      // null when it vanished again) and nothing more — no id, no author: the
+      // same projection getServerDraft keeps. The page shows "updated since
+      // you opened it" and holds its autosave; its reload re-reads the draft.
+      if (err.status === 409) {
+        return res.status(409).json({ status: 'conflict', updated_at: err.draft ? err.draft.updated_at : null });
+      }
+      throw err;
+    }
 
     // updated_at and nothing more — the client needs it to compare against a
-    // local draft. Row ids stay off this surface (the submit-body precedent).
+    // local draft and as its next precondition. Row ids stay off this surface
+    // (the submit-body precedent).
     return res.json({ status: 'success', updated_at: out.updated_at });
   } catch (err) {
     console.error('[api.ext.forms] draft save error:', err);

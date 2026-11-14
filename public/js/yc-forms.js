@@ -77,6 +77,11 @@ class YCForm {
                                    // this form held unsaved typing — autosave holds
                                    // until the banner's Restore / Discard (or a save).
     this._lastDraftWrite = 0;      // A12: when this frame last wrote a draft or a submission (echo fence).
+    this._extDraftSeen = null;     // External (D1) server drafts: the server draft's updated_at this page last
+                                   // saw (the GET's draft, its own last save's answer); null = it holds none.
+                                   // Sent as expected_updated_at; the route refuses (409) a save over a draft
+                                   // saved since — by the firm, or by the client on another device.
+    this._extDraftConflict = false; // ...and that 409 arrived: autosave holds until a reload (or a discard).
     this._draftSeen = null;        // { id, updated_at } of the draft row this form's autosave may
                                    // replace — sent as the draft POST's precondition (null: none held).
     this._userEditSeq = 0;         // Bumped on every TRUSTED user input/change.
@@ -236,6 +241,12 @@ if (this.config.endpoints.load && !this.config.external) {
       this._submittedData = latest.submitted;
       this._draftData = latest.draft;
       if (!this.config.external) this._draftSeen = YCForm._draftRef(latest.draft);
+      else if (this.config.serverDrafts) {
+        // The SERVER row's stamp (not the picked candidate's: a newer device-local
+        // copy may have won the pick, but the precondition names the server row).
+        const sd = this.config.externalDraft;
+        this._extDraftSeen = sd && sd.updated_at != null ? sd.updated_at : null;
+      }
 
       // 9. Decide what data to populate
       const dataSource = this._resolveDataSource();
@@ -411,6 +422,8 @@ if (this.config.endpoints.load && !this.config.external) {
                 `${this.config.draftUrl}?case_id=${encodeURIComponent(this.config.linkId)}`,
                 'DELETE'
               );
+              this._extDraftSeen = null;           // no row: the next autosave expects none
+              this._extDraftConflict = false;      // the newer draft is gone with it
             } catch (err) {
               console.warn('[YCForm] Server draft discard failed:', err);
             }
@@ -1243,11 +1256,22 @@ if (this.config.endpoints.load && !this.config.external) {
     // opted-out forms take the untouched local path below.
     if (this.config.external) {
       if (this.config.serverDrafts && this.config.linkId) {
+        // The route refused an earlier save (409): the server draft was saved
+        // since this page loaded — by our office (a staff form, an Ask Casey
+        // card) or on another device. Hold: saving would replace it whole, and
+        // a device-local copy would out-rank it on the next load (pick-newer).
+        // The typing stays on screen; a reload shows the newer draft.
+        if (this._extDraftConflict) {
+          this._showStatus(YCForm.EXT_DRAFT_CONFLICT_STATUS);
+          return;
+        }
         try {
-          await this._api(this.config.draftUrl, 'POST', {
+          const res = await this._api(this.config.draftUrl, 'POST', {
             case_id: this.config.linkId,
             values:  this.collect(),
+            expected_updated_at: this._extDraftSeen,   // the precondition (null: holds none)
           });
+          if (res && res.updated_at != null) this._extDraftSeen = res.updated_at;
           // Server is now the source of truth. Drop the local copy so a stale
           // device-local draft can never out-rank it on a later boot — the
           // pick-newer rule would otherwise resurrect older answers whenever
@@ -1257,6 +1281,13 @@ if (this.config.endpoints.load && !this.config.external) {
           this._showStatus('Draft saved just now');
           return;
         } catch (err) {
+          if (err && err.status === 409 && err.body && err.body.status === 'conflict') {
+            // Refused, nothing written, never retried — and NOT the device-local
+            // fallback below (that copy would hide the newer server draft).
+            this._extDraftConflict = true;
+            this._showStatus(YCForm.EXT_DRAFT_CONFLICT_STATUS);
+            return;
+          }
           // A draft save is a convenience, never a failure mode. Fall through
           // to the device-local write and say so honestly in the status.
           console.warn('[YCForm] Server draft save failed — falling back to this device:', err);
@@ -2587,7 +2618,10 @@ if (this.config.endpoints.load && !this.config.external) {
       const resp = await fetch(this.config.baseUrl + url, opts);
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}));
-        throw new Error(errData.message || `HTTP ${resp.status}`);
+        const err = new Error(errData.message || `HTTP ${resp.status}`);
+        err.status = resp.status;   // the draft POST's 409 is read by autosaveTick
+        err.body = errData;
+        throw err;
       }
       return resp.json();
     } else {
@@ -2629,5 +2663,8 @@ if (this.config.endpoints.load && !this.config.external) {
 // A12: how long after this frame's own draft POST / DELETE or submission POST settles
 // a bus message for the same record is taken as its echo (checklistView's CL_ECHO_MS).
 YCForm.SYNC_ECHO_MS = 1500;
+// The external (D1) draft POST's 409 — the status line the public form shows and keeps showing
+// while it holds (Fred's wording, 2026-11-14). The typing stays on screen; a reload re-reads the draft.
+YCForm.EXT_DRAFT_CONFLICT_STATUS = 'Draft not saved \u2014 this form was updated since you opened it (by our office, or on another device). Reload to see the latest version.';
 
 window.YCForm = YCForm;

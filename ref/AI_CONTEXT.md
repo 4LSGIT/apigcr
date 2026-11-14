@@ -43,6 +43,24 @@ body. Governing migrations in `ref/migrations/`.*
   (UNION ALL; the budget stays one query). A saved copy of the old Events
   tab may live as a Tool (it calls only `/api/events` + `/api/calendar-types`).
 
+- **The public form's draft precondition (11-14):** POST
+  `/api/ext/forms/:form_key/draft` takes `expected_updated_at` — the server
+  draft's stamp the page last saw (the D1 GET's `draft.updated_at`, then each
+  save's answer), `null` when it loaded with none; absent → replaced whole
+  (a page loaded before this). `formService.extDraftExpectation` →
+  `{ draftId: null, updatedAt }` and `upsertDraft`'s record-keyed conditional
+  UPDATE (the row named by form + case + the stamp; no ids cross that
+  surface), else the plain INSERT idx_draft_unique refuses → 409
+  `{ status:'conflict', updated_at }` (the stamp now or null — no id, no
+  author). yc-forms.js external autosave: `_extDraftSeen` / `_extDraftConflict`
+  — on 409 the status says the form was updated since it was opened (by the
+  office or another device) and asks for a reload; the typing stays, NOTHING
+  is written to the device (a local copy would out-rank the newer server draft
+  under pick-newer), autosave holds until a reload or a discard. The external
+  `_api` now throws with `err.status` / `err.body`. Twins:
+  `formsDraftPrecondition.mysql` (service, concurrency ×5), stub route +
+  jsdom in `extforms.d1drafts`.
+
 - **YCForm re-poll after a mid-run bus message (11-14):** a `form:` message
   arriving while the form's own re-read (`_syncing`) or its save (`_saving`)
   was in flight was parked by `_syncBusy()` and nothing woke it (visibility-
@@ -53,6 +71,7 @@ body. Governing migrations in `ref/migrations/`.*
   change to the stock save is re-ported there). A park the caret still holds
   waits for focusout as before. `tests/formsPages.sync.test.js` MID-RE-READ /
   MID-SAVE (the stub holds the in-flight request).
+
 
 - **The draft POST's precondition (11-11):** POST `/api/forms/draft` takes an
   optional `expected_draft_id` + `expected_updated_at` (both set: the row the

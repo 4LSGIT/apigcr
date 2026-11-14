@@ -27,8 +27,14 @@ own last save, or the one it restored (`expected_draft_id` +
 `expected_updated_at`; both `null` when it holds none). The server writes only
 when the draft is still that row, to the millisecond, or is gone (then a new
 draft is saved). Any other draft is **never replaced**: the save is refused
-(see Two browsers below). An external form's server draft names no row — the
-client's autosave replaces it whole.
+(see Two browsers below). An external form's server draft names no row (that
+surface carries no ids): the public page sends the server draft's stamp alone
+(`expected_updated_at`, `null` when it loaded with none) and the same rule
+holds. A client whose save is refused sees "Draft not saved — this form was
+updated since you opened it (by our office, or on another device). Reload to
+see the latest version."; the typing stays on screen, nothing is saved on the
+device either (a device copy would hide the newer draft on the next load), and
+autosave stays held until the page is reloaded or the draft discarded.
 
 ---
 

@@ -164,6 +164,12 @@ Body: `{ case_id?, values }` (+ portal JWT header in portal mode).
    > guessability — accepted, same trust model as Jotform SCL bearer links.
    > Contract details live in the route/service doc blocks
    > (`routes/api.ext.forms.js`, `services/extFormService.js`).
+   > Since 2026-11-14 the draft POST takes `expected_updated_at` (the server
+   > draft's stamp the page last saw, `null` for none; absent → replaced
+   > whole): a 409 `{status:'conflict', updated_at}` — the stamp now, no id,
+   > no author — when the row moved, so a client's autosave no longer
+   > replaces a draft the firm (or another device) saved since the page
+   > loaded. The page holds its autosave and asks for a reload.
 
 ### 5.4 Abuse controls (both routes)
 - `lib/rateLimiter` with `getClientIp` (the proven post-hardening pattern):

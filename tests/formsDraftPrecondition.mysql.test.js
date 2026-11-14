@@ -35,6 +35,12 @@
  *   - Bad preconditions → 400, nothing written.
  *   - The Date-vs-string compare: mysql2 hands back a Date carrying the
  *     milliseconds; the JSON string the client holds matches it.
+ *   - The EXTERNAL shape (2026-11-14; formService.extDraftExpectation →
+ *     { draftId: null, updatedAt }): the record's one draft row named by its
+ *     stamp alone (no ids on that surface) — equal lands, stale → 409 with the
+ *     row, null with a row → 409, the row gone → a new draft, two concurrent
+ *     saves on one stamp → exactly one lands; at the service, the shape the
+ *     route hands it (tests/extforms.d1drafts.test.js has the route).
  */
 'use strict';
 
@@ -143,6 +149,13 @@ d('POST /api/forms/draft precondition on real MySQL', () => {
       for (const sql of creates) await conn.query(sql);
       for (const sql of alters) await conn.query(sql);
       await conn.query('SET FOREIGN_KEY_CHECKS = 1');
+      // ref/database.sql has carried the MIGRATED column since 2924a65 landed
+      // (the dump regenerates at every land), so the twin puts the column back
+      // in the pre-state first — the migration's pre → migrated path is what
+      // the first test exercises. (Red on main from that land until 2026-11-14.)
+      if (migration.classify(await migration.columnState(conn)) === 'done') {
+        await conn.query(`ALTER TABLE form_submissions MODIFY updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`);
+      }
       // The migration, through the script's own run() on one connection.
       migrationResults.preCol = await migration.columnState(conn);
       migrationResults.check = await migration.run(conn, { apply: false, log: (l) => migrationLogs.check.push(l) });
@@ -332,6 +345,63 @@ d('POST /api/forms/draft precondition on real MySQL', () => {
     expect(Math.floor(Date.parse(b.body.updated_at) / 1000)).toBe(Math.floor(Date.parse(a.body.updated_at) / 1000));
     expect(stale.status).toBe(409);
     expect(asObj((await draftRows())[0].data)).toEqual({ v: 'b' });
+  });
+
+  // ── The external shape: the draft named by its stamp alone (no id) ────────
+  const EXT = { form_key: 'ext_pre', link_type: 'case', link_id: 'abc12345' };
+  const extSave = (data, updatedAt) => formService.upsertDraft(pool, EXT.form_key, EXT.link_type, EXT.link_id, 3, data, null,
+    { expected: formService.extDraftExpectation({ expected_updated_at: updatedAt }) });
+  const extRows = () => q(`SELECT * FROM form_submissions WHERE form_key = 'ext_pre' AND status = 'draft' ORDER BY id`);
+
+  test('external shape: null inserts, the stamp (as the ISO string the client holds) lands and moves it, a stale stamp → 409 with the row, null with a row → 409; nothing written on a miss', async () => {
+    const a = await extSave({ reason: 'first' }, null);
+    expect(a.id).toBeGreaterThan(0);
+    const aIso = a.updated_at.toISOString();           // what the route answers and the page sends back
+    await nextMs();
+    const b = await extSave({ reason: 'second' }, aIso);
+    expect([b.id, b.updated_at.getTime() > a.updated_at.getTime()]).toEqual([a.id, true]);
+    let rows = await extRows();
+    expect([rows.length, asObj(rows[0].data)]).toEqual([1, { reason: 'second' }]);
+    const before = rows;
+    await expect(extSave({ reason: 'stale' }, aIso)).rejects.toMatchObject({
+      status: 409, message: 'The draft was saved again since it was read — nothing was written',
+      draft: { id: a.id, data: { reason: 'second' }, updated_at: b.updated_at, submitted_by: null, user_name: null } });
+    await expect(extSave({ reason: 'blind' }, null)).rejects.toMatchObject({
+      status: 409, message: 'A draft of this form already exists for this record — nothing was written', draft: { id: a.id } });
+    expect(await extRows()).toEqual(before);
+    // The Date the expectation carries and the string the client holds name the same millisecond.
+    expect(formService.extDraftExpectation({ expected_updated_at: b.updated_at.toISOString() }).updatedAt.getTime()).toBe(b.updated_at.getTime());
+  });
+
+  test('external shape: the row gone (discarded) → a NEW draft on the old stamp; a staff draft saved since → 409 (the firm\'s draft is never replaced)', async () => {
+    const a = await extSave({ reason: 'phone' }, null);
+    const aIso = a.updated_at.toISOString();
+    expect(await formService.deleteDraft(pool, EXT.form_key, EXT.link_type, EXT.link_id)).toBeTruthy();
+    const fresh = await extSave({ reason: 'laptop' }, aIso);
+    expect(fresh.id).not.toBe(a.id);
+    // The office saves over it (the staff route's own precondition, as a staff user).
+    await nextMs();
+    const staff = await formService.upsertDraft(pool, EXT.form_key, EXT.link_type, EXT.link_id, 3, { reason: 'office' }, 6,
+      { expected: { draftId: fresh.id, updatedAt: fresh.updated_at } });
+    expect(staff.updated_at.getTime()).toBeGreaterThan(fresh.updated_at.getTime());
+    await expect(extSave({ reason: 'client again' }, fresh.updated_at.toISOString())).rejects.toMatchObject({ status: 409, draft: { id: fresh.id, data: { reason: 'office' }, user_name: 'Fred' } });
+    const rows = await extRows();
+    expect([rows.length, asObj(rows[0].data), rows[0].submitted_by]).toEqual([1, { reason: 'office' }, 6]);
+  });
+
+  test('external shape, atomic: two concurrent saves on the same stamp → exactly one lands, one 409 (×5)', async () => {
+    for (let round = 0; round < 5; round++) {
+      await q(`DELETE FROM form_submissions WHERE form_key = 'ext_pre'`);
+      const base = await extSave({ who: 'base' }, null);
+      const iso = base.updated_at.toISOString();
+      await nextMs();   // the DATETIME(3) residual: a save in the base's own millisecond leaves the stamp unchanged
+      const pair = await Promise.allSettled([extSave({ who: 'x' }, iso), extSave({ who: 'y' }, iso)]);
+      expect(pair.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+      expect(pair.find((r) => r.status === 'rejected').reason.status).toBe(409);
+      const rows = await extRows();
+      expect(rows.length).toBe(1);
+      expect(['x', 'y']).toContain(asObj(rows[0].data).who);
+    }
   });
 
   test('a precondition the server cannot read → 400, nothing written', async () => {

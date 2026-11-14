@@ -101,8 +101,8 @@ function memDb(fixture) {
       if (q.includes('JOIN case_relate'))    return [fixture.primary ? [fixture.primary] : []];
       if (q.includes('MAX(version)'))        return [[{ max_version: 0 }]];
 
-      // upsertDraft
-      if (q.startsWith('INSERT INTO form_submissions') && q.includes("'draft'")) {
+      // upsertDraft — replace-whole (no precondition): INSERT ... ON DUPLICATE KEY UPDATE
+      if (q.startsWith('INSERT INTO form_submissions') && q.includes("'draft'") && q.includes('ON DUPLICATE KEY')) {
         const [formKey, linkType, linkId, schemaVersion, dataJson] = p;
         const k = `${formKey}|${linkType}|${linkId}`;
         const existing = drafts.get(k);
@@ -112,6 +112,30 @@ function memDb(fixture) {
         };
         drafts.set(k, row);
         return [{ insertId: existing ? 0 : row.id }];
+      }
+      // upsertDraft — the precondition's plain INSERT: idx_draft_unique refuses a second draft row
+      if (q.startsWith('INSERT INTO form_submissions') && q.includes("'draft'")) {
+        const [formKey, linkType, linkId, schemaVersion, dataJson] = p;
+        const k = `${formKey}|${linkType}|${linkId}`;
+        if (drafts.has(k)) { const e = new Error("Duplicate entry for key 'idx_draft_unique'"); e.code = 'ER_DUP_ENTRY'; throw e; }
+        const row = { id: (fixture._nextId = (fixture._nextId || 500) + 1), data: dataJson, schema_version: schemaVersion, updated_at: tick() };
+        drafts.set(k, row);
+        return [{ insertId: row.id }];
+      }
+      // upsertDraft — the record-keyed conditional UPDATE (the external precondition)
+      if (q.startsWith('UPDATE form_submissions SET data = ?') && q.includes('AND updated_at = ?')) {
+        const [dataJson, schemaVersion, , formKey, linkType, linkId, expectedAt] = p;
+        const row = drafts.get(`${formKey}|${linkType}|${linkId}`);
+        const at = expectedAt instanceof Date ? expectedAt.toISOString() : String(expectedAt);
+        if (!row || row.updated_at !== at) return [{ affectedRows: 0 }];
+        Object.assign(row, { data: dataJson, schema_version: schemaVersion, updated_at: tick() });
+        return [{ affectedRows: 1 }];
+      }
+      // currentDraft — the 409's re-read of the row there now
+      if (q.startsWith('SELECT fs.id, fs.schema_version, fs.data, fs.updated_at')) {
+        const [formKey, linkType, linkId] = p;
+        const row = drafts.get(`${formKey}|${linkType}|${linkId}`);
+        return [row ? [{ id: row.id, schema_version: row.schema_version, data: row.data, updated_at: row.updated_at, submitted_by: null, user_name: null }] : []];
       }
       // submitForm
       if (q.startsWith('INSERT INTO form_submissions') && q.includes("'submitted'")) {
@@ -554,6 +578,49 @@ describe('routes/api.ext.forms.js — draft routes (live router)', () => {
 
   // ── limits ────────────────────────────────────────────────────────────────
 
+  // ── The precondition (2026-11-14): expected_updated_at ────────────────────
+
+  test('expected_updated_at: null with no row inserts; equal lands and moves the stamp; stale → 409 { status, updated_at } and nothing written', async () => {
+    let r = await POST('/api/ext/forms/dbkq_test/draft', { case_id: 'abc12345', values: { reason: 'first' }, expected_updated_at: null });
+    expect(r.status).toBe(200);
+    const first = (await r.json()).updated_at;
+    expect(typeof first).toBe('string');
+
+    r = await POST('/api/ext/forms/dbkq_test/draft', { case_id: 'abc12345', values: { reason: 'second' }, expected_updated_at: first });
+    expect(r.status).toBe(200);
+    const second = (await r.json()).updated_at;
+    expect(Date.parse(second)).toBeGreaterThan(Date.parse(first));
+    expect(JSON.parse(drafts.get(draftKey).data).reason).toBe('second');
+
+    // Stale: the stamp another device / the firm already moved past.
+    r = await POST('/api/ext/forms/dbkq_test/draft', { case_id: 'abc12345', values: { reason: 'stale' }, expected_updated_at: first });
+    expect(r.status).toBe(409);
+    const body = await r.json();
+    expect(body).toEqual({ status: 'conflict', updated_at: second });   // the stamp now — no id, no author
+    expect(JSON.parse(drafts.get(draftKey).data).reason).toBe('second');
+
+    // "I hold none" while a row exists → the same 409.
+    r = await POST('/api/ext/forms/dbkq_test/draft', { case_id: 'abc12345', values: { reason: 'blind' }, expected_updated_at: null });
+    expect(r.status).toBe(409);
+    expect((await r.json()).updated_at).toBe(second);
+    expect(JSON.parse(drafts.get(draftKey).data).reason).toBe('second');
+  });
+
+  test('no expected_updated_at → replaced whole, as before (a page loaded before the precondition shipped)', async () => {
+    let r = await POST('/api/ext/forms/dbkq_test/draft', { case_id: 'abc12345', values: { reason: 'a' }, expected_updated_at: null });
+    expect(r.status).toBe(200);
+    r = await POST('/api/ext/forms/dbkq_test/draft', { case_id: 'abc12345', values: { reason: 'b' } });
+    expect(r.status).toBe(200);
+    expect(JSON.parse(drafts.get(draftKey).data).reason).toBe('b');
+  });
+
+  test('a malformed expected_updated_at is a 400 naming it; nothing stored', async () => {
+    const r = await POST('/api/ext/forms/dbkq_test/draft', { case_id: 'abc12345', values: { reason: 'x' }, expected_updated_at: 'yesterday-ish' });
+    expect(r.status).toBe(400);
+    expect((await r.json()).message).toContain('expected_updated_at');
+    expect(drafts.size).toBe(0);
+  });
+
   test('the draft per-IP budget is the autosave-sized one, not the submit budget', async () => {
     // Submit allows 10 per 15 min per IP. An autosave heartbeat needs more:
     // 11 draft saves from ONE pinned IP must all succeed.
@@ -678,8 +745,13 @@ function makePage(opts = {}) {
     fetches.push({ url: u, method, body });
     if (u.indexOf('/draft') !== -1) {
       if (opts.draftFails) return { ok: false, status: 500, json: async () => ({ message: 'boom' }) };
+      if (opts.draftConflict && method === 'POST') {
+        return { ok: false, status: 409, json: async () => ({ status: 'conflict', updated_at: '2026-09-04T12:30:00.000Z' }) };
+      }
+      // Each save answers a later stamp — the page's next precondition.
+      opts._saves = (opts._saves || 0) + 1;
       return { ok: true, status: 200,
-               json: async () => ({ status: 'success', updated_at: '2026-09-04T12:00:00.000Z' }) };
+               json: async () => ({ status: 'success', updated_at: `2026-09-04T12:0${opts._saves}:00.000Z` }) };
     }
     if (u.endsWith('/submit')) {
       return { ok: true, status: 200, json: async () => ({ status: 'success' }) };
@@ -743,7 +815,8 @@ describe('external server drafts — client (jsdom)', () => {
 
     const post = page.fetches.find((f) => f.method === 'POST' && f.url.indexOf('/draft') !== -1);
     expect(post.url).toBe('/api/ext/forms/dbkq_test/draft');
-    expect(Object.keys(post.body).sort()).toEqual(['case_id', 'values']);
+    expect(Object.keys(post.body).sort()).toEqual(['case_id', 'expected_updated_at', 'values']);
+    expect(post.body.expected_updated_at).toBeNull();   // a fresh form holds no server draft
     expect(post.body.case_id).toBe('abc12345');
     expect(post.body.values.reason).toBe('typing away');
     // server is the source of truth — no stale local copy left to out-rank it
@@ -859,6 +932,41 @@ describe('external server drafts — client (jsdom)', () => {
     expect(del.url).toBe('/api/ext/forms/dbkq_test/draft?case_id=abc12345');
     expect(w.localStorage.getItem(LOCAL_KEY)).toBeNull();
     expect(w.document.getElementById('draftBanner').style.display).toBe('none');
+  });
+
+  test('the precondition follows the server stamp: the GET\'s draft first, then each save\'s answer', async () => {
+    const page = makePage({
+      getBody: { status: 'success', title: 'Q', link_type: 'case', schema_version: 3,
+                 definition: EXT_DEF, load: LOAD, linked: true,
+                 draft: { data: { reason: 'from the office' }, updated_at: '2026-09-04T11:00:00.000Z', schema_version: 3 } },
+    });
+    const w = await ready(page);
+    type(w, 'reason', 'first edit');
+    await sleep(150);
+    type(w, 'reason', 'second edit');
+    await sleep(150);
+    const posts = page.fetches.filter((f) => f.method === 'POST' && f.url.indexOf('/draft') !== -1);
+    expect(posts.length).toBe(2);
+    expect(posts[0].body.expected_updated_at).toBe('2026-09-04T11:00:00.000Z');   // the server row the GET carried
+    expect(posts[1].body.expected_updated_at).toBe('2026-09-04T12:01:00.000Z');   // the first save's answer
+  });
+
+  test('a 409 holds the autosave: the status says the form was updated elsewhere, the typing stays, NOTHING is written locally, no retry', async () => {
+    const page = makePage({ draftConflict: true });
+    const w = await ready(page);
+    type(w, 'reason', 'my answer');
+    await sleep(150);
+    const posts = () => page.fetches.filter((f) => f.method === 'POST' && f.url.indexOf('/draft') !== -1).length;
+    expect(posts()).toBe(1);
+    expect(w.document.getElementById('saveStatus').textContent)
+      .toBe('Draft not saved \u2014 this form was updated since you opened it (by our office, or on another device). Reload to see the latest version.');
+    expect(w.document.querySelector('[name="reason"]').value).toBe('my answer');   // the typing stays on screen
+    expect(w.localStorage.getItem(LOCAL_KEY)).toBeNull();                          // no device copy to out-rank the newer server draft
+    type(w, 'reason', 'my answer, more');
+    await sleep(150);
+    expect(posts()).toBe(1);                                                        // held: no second POST
+    expect(w.localStorage.getItem(LOCAL_KEY)).toBeNull();
+    expect(w.document.getElementById('saveStatus').textContent).toContain('Reload to see the latest version');
   });
 
   test('AC5 client half: no `draft` key in the payload → the draft route is never touched, localStorage unchanged', async () => {

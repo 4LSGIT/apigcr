@@ -77,7 +77,10 @@ there now — `/latest`'s draft shape (`null` only if it vanished again before t
 With `null` + `null` the message is "A draft of this form already exists for this record — nothing
 was written". The form page always sends the precondition (Part 7, Two browsers); so does an Ask
 Casey draft card (the draft it reviewed). The external draft route (`/api/ext/forms/:form_key/draft`)
-sends none. A 409 is not announced on the sync bus.
+takes its own shape — `expected_updated_at` alone (the server draft's stamp, `null` for none; no ids
+on that surface), optional for a page loaded before it shipped — and answers a miss with **409**
+`{ "status": "conflict", "updated_at": <the row's stamp now, or null> }` and nothing more. A 409 is
+not announced on the sync bus.
 
 **Console test:**
 ```js

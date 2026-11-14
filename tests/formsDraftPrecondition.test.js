@@ -24,8 +24,10 @@
 //     draft (the route replaces nothing unseen); a 409 whose row is already
 //     gone again (draft null): no hold, the next change sends null and lands;
 //   · save()'s cleanup DELETE leaves the form holding no draft;
-//   · external serverDrafts autosave sends NO precondition (its route is
-//     unchanged).
+//   · external serverDrafts autosave sends ITS route's precondition — the
+//     server draft's stamp alone (expected_updated_at; no row id on that
+//     surface), even after a Restore of the server draft; never the staff
+//     pair (tests/extforms.d1drafts.test.js has the rest of that path).
 //
 //   npx jest tests/formsDraftPrecondition.test.js
 
@@ -301,7 +303,7 @@ describe('the route refuses (409): another browser saved since', () => {
 });
 
 describe('external serverDrafts', () => {
-  test('its autosave sends NO precondition (the external route is unchanged), even after a Restore of a server draft', async () => {
+  test('its autosave sends the server stamp as expected_updated_at (never the staff pair), even after a Restore of a server draft', async () => {
     const fetches = [];
     const EXT_DEF = { toggle: false, autosave: true, autosaveMs: 60000, external: { badLink: 'degrade', serverDrafts: true },
       sections: [{ title: 'S', rows: [{ fields: [{ name: 'reason', type: 'text' }] }] }] };
@@ -331,6 +333,7 @@ describe('external serverDrafts', () => {
     await w.ycForm.autosaveTick();
     const post = fetches.find((f) => f.method === 'POST' && f.url.indexOf('/draft') !== -1);
     expect(post.url).toBe('/api/ext/forms/ext_pre/draft');
-    expect(Object.keys(post.body).sort()).toEqual(['case_id', 'values']);
+    expect(Object.keys(post.body).sort()).toEqual(['case_id', 'expected_updated_at', 'values']);
+    expect(post.body.expected_updated_at).toBe('2026-11-11T11:00:00.000Z');   // the server row the GET carried, not the restored copy's
   });
 });

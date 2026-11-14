@@ -1172,9 +1172,6 @@ version restore and delete in A12.4 (ASK_CASEY_ACTIONS_PLAN A12.2–A12.4).
   publishes unreviewed. The builder has the same gap between its confirm and
   its POST.
 - **Native gaps found while tracing (not Casey's):**
-  - The public form's draft save (POST `/api/ext/forms/:form_key/draft`) takes
-    no precondition, unlike POST `/api/forms/draft`: a client's autosave still
-    replaces a staff (or Ask Casey) draft for the case whole.
   - POST `/api/forms/draft` defaults `schema_version` to 1 when the body omits
     it, and maps every failure but its precondition's 400 / 409 to 500 (no 400
     for a malformed `data`).
