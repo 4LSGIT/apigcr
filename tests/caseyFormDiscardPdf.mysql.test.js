@@ -292,7 +292,8 @@ d('the Casey form discard and PDF cards on real MySQL (A12.2)', () => {
       evidence: [{ query_id: 'q1', row_number: 1 }, { query_id: 'q2', row_number: 1 }] }, ev, { currentUserId: 6 })));
     expect(c.record).toEqual({ link_type: 'appt', link_id: '8812', label: 'appointment #8812 (Consultation, 2026-11-20 14:30 firm time, Dana Q. Debtor)' });
     expect(await browser.formDiscardPrecheck(c)).toBe('');
-    // MySQL's updated_at has one-second resolution: wait it out so the re-save is visible in it, as a real later save is.
+    // updated_at is DATETIME(3) since the 2026-11-11 migration (scripts/formDraftUpdatedAtMs.js); the wait only keeps the
+    // re-save unmistakably later than the card's read, as a real later save is.
     await new Promise((r) => setTimeout(r, 1100));
     await call(app, 'POST', '/api/forms/draft', { form_key: 'appt_prep', link_type: 'appt', link_id: '8812', schema_version: 1, data: { trustee_name: 'Jane', attended: true } });
     expect(await browser.formDiscardPrecheck(c)).toMatch(/^The draft of "Appointment prep" for appointment #8812 .* changed since this card was prepared \(someone saved it — last by Fred\)\. Nothing was deleted/);

@@ -3434,9 +3434,11 @@ function caseDocketKnownOutcome(e) {
 //     link_type&link_id (the draft banner's Discard), built from the stored
 //     DRAFT row the card names. The click re-reads GET /api/forms/latest and
 //     refuses unless the draft is still that row with the same updated_at and
-//     data hash. The route answers {deleted} only, so yc-sync cannot announce
-//     it (the card says an open copy keeps its banner). An answer of
-//     deleted:false is a refusal — nothing was there to delete.
+//     data hash. The route echoes its query's form_key / link_type / link_id
+//     (a2a281c) and yc-sync announces form:<link_type>:<link_id> when deleted
+//     is true, so an open copy in the same browser drops its banner on its own
+//     (formDiscardGetter); one in another browser keeps it until reopened. An
+//     answer of deleted:false is a refusal — nothing was there to delete.
 //   * form_pdf: form.pdf.file.v1 → POST /api/forms/submissions/:id/pdf/file
 //     {filename?} (the Form Inbox's File button) — NOT idempotent: a second
 //     filing is a second copy, which the card's ALREADY FILED warning names.
@@ -6808,7 +6810,7 @@ const ACTION_FAMILIES = [
     failure: 'The form draft could not be discarded.',
     appliedCopy: (draft) => ({
       status: `Applied — draft #${draft.result_form_discard_id} discarded`,
-      warning: `The draft of "${formTitle(draft)}" for ${formRecordLabel(draft)} was deleted using your signed-in account; its answers are gone. A copy of the form already open elsewhere still shows its banner until it is reopened.`,
+      warning: `The draft of "${formTitle(draft)}" for ${formRecordLabel(draft)} was deleted using your signed-in account; its answers are gone. A copy of the form open in this browser drops its banner on its own; one open in another browser shows it until it is reopened.`,
       button: `Open ${formEntity(draft).label}`,
     }),
     reviewWarning: 'Review the form, the record, who saved the draft and every answer in it — they are deleted the moment it is applied, and no screen restores a discarded draft. Canceling deletes nothing.',

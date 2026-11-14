@@ -1158,8 +1158,8 @@ async function visFlow(sel) {
     const ok = await ycConfirm(
       `Expose "${FKEY}" externally as ${to.toUpperCase()}?\n\n` +
       (to === 'public'
-        ? 'The external form routes will serve the PUBLISHED definition to anyone holding a link (and to portal clients).'
-        : 'The external form routes will serve the PUBLISHED definition to logged-in portal clients only.') +
+        ? 'The external form routes will serve the PUBLISHED definition to anyone holding a link.'
+        : 'Portal visibility is reserved: no route serves portal forms yet, so nobody reaches this template until a portal page serves forms (and its public link, if any, stops working).') +
       (executing.length
         ? `\n\nThis template carries ${executing.join(', ')} — it will RUN IN CLIENTS' BROWSERS.`
         : '') +

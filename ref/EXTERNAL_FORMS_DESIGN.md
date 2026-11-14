@@ -67,24 +67,30 @@ ALTER TABLE form_templates
   column exists, an external route serves nothing.
 - Policy lives in the COLUMN, not the definition JSON (definition is content).
 - Flipping visibility off `internal` is an explicit act in the builder (separate
-  from publish), and the server REFUSES the flip while the published definition
-  carries any refused key (§4). Refuse, never strip. Flipping back to internal is
-  always allowed.
+  from publish), form_dev-gated (`lib/auth.formDev.js`; `formTemplateService.
+  setVisibility`), and the builder's expose-confirm carries the no-third-party-
+  resources warning and names any executing keys the published definition
+  carries. The old content refusal on the flip is retired (§4). Flipping back to
+  internal is always allowed.
+- `portal` is served by nothing today: `extFormService.getServableTemplate`
+  defaults its scope to `['public']` and no caller widens it (the portal-mode
+  slice has not shipped), so a `portal` template reaches no client.
 - Publish and visibility are independent: external routes serve the PUBLISHED
   definition only, and only when visibility permits.
 
-## 4. The refusal invariant (inherited, non-negotiable)
+## 4. The refusal invariant — RETIRED 2026-08-16
 
-External render AND submit REFUSE templates whose published definition carries:
-`code`, `css`, `hooks`, or any `type:"embed"` field. Checked at the route on every
-request (cheap key-scan of the published definition), not only at flip time —
-belt and suspenders, because publish can change the definition after the flip.
-Refusal response is a generic 404-equivalent (no oracle about why).
-
-Relaxing any of these for external surfaces requires the on-demand security
-review chartered in program state — possibly never. Internal behavior is
-unaffected.
-
+External render and submit SERVE templates whose published definition carries
+`code`, `css`, `hooks` or `type:"embed"` fields; nothing on the serving path
+scans for them (`extFormService.getServableTemplate`). The decision record is
+`ref/EXTERNAL_CODE_CSS_DECISION.md`: gate authorship, warn at exposure, ban
+nothing content-wise. The controls are the form_dev AUTHORING gate on
+introducing / changing / removing top-level `code` / `hooks` / `css` and on the
+off-internal visibility flip (`formTemplateService`), the exposure warnings in
+the builder (expose-confirm, standing badge, publish's `external_executes`
+notice — all fed by `scanExternalRefusals`, kept under its historical name as
+an ADVISORY scanner), and `external.appearance` for safe styling values.
+Internal behavior is unaffected.
 ## 5. Routes
 
 ### 5.1 Link shape
@@ -107,8 +113,10 @@ Returns everything the renderer needs in one payload:
 
 Server steps, in order:
 1. Template lookup by form_key: must exist, be published, and have
-   visibility='public' (or 'portal'+valid portal JWT). Else generic 404.
-2. Refusal scan (§4). Else generic 404.
+   visibility='public' (the portal scope is not yet passed by any caller — §3).
+   Else generic 404.
+2. (The §4 refusal scan ran here until the 2026-08-16 reversal; nothing scans
+   now.)
 3. Resolve case_id if present: case exists → Primary contact →
    **hard projection of exactly contact_name, contact_phone, contact_email** —
    never `contacts.*` (contact_ssn is NOT NULL on that table; any wider read is a
@@ -124,7 +132,7 @@ Server steps, in order:
 ### 5.3 POST /api/ext/forms/:form_key/submit
 Body: `{ case_id?, values }` (+ portal JWT header in portal mode).
 
-1. Same template/visibility/refusal checks as GET.
+1. Same template/visibility checks as GET.
 2. Server-side re-validation of `values` against the PUBLISHED definition:
    required fields, basic type checks, option-membership for selects. Client
    validation exists but counts for nothing externally.
@@ -163,7 +171,7 @@ Body: `{ case_id?, values }` (+ portal JWT header in portal mode).
   to stop link-holder spam.
 - JSON body size cap on submit (e.g. 64KB — the intake form is 7 questions).
 - Uniform generic 404 for every refusal branch (missing template, wrong
-  visibility, refused keys, reject-mode bad link): no enumeration oracle
+  visibility, reject-mode bad link): no enumeration oracle
   distinguishing "no such form" from "form exists but not for you".
 
 ## 6. badLink modes

@@ -34,7 +34,9 @@ Matched endpoints (read `MATCHERS` in yc-sync.js for the always-current list —
 |---|---|---|
 | `/api/cases/:id` | PATCH | real values from `data.changes` |
 | `/api/contacts/:id` | PATCH | values from `data.changes` **+ `yc_refetch` to each transfer donor** |
-| `/api/cases/:id/docket` · `/pipeline/advance` | PATCH · POST | values from top-level `changes` |
+| `/api/cases/:id/docket` · `/pipeline/advance` · `/pipeline/move` | PATCH · POST · POST | values from top-level `changes` (a move whose stage is unchanged but whose membership was fixed up still carries the membership fields) |
+| `/api/cases/:id/pipeline/requirements/:key/override` | POST, DELETE | `yc_pipeline` marker to `case:<id>` — the derived Steps state changed with no `cases` column diff; unconditional for both verbs |
+| `/api/contacts` | POST | `yc_refetch` to `contact:<contact_id>` from the top-level `contact_id`; silent without one |
 | `/api/cases/:id/contacts[/:contactId]` | POST/PATCH/DELETE | `yc_refetch` (relate changes have no column diff) |
 | `/api/cases/:id/merge` | POST | `yc_refetch` to the **survivor only**; dry-run silent |
 | `/api/contacts/:id/booking-link` | POST | `{contact_token}` real value |

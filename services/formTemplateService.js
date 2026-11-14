@@ -1070,9 +1070,10 @@ function scanExternalRefusals(def) {
 // case_details / 341_notes) stay open to all staff because the builder
 // round-trips the existing code byte-identically.
 //
-// This gate does NOT relax the external refusal invariant (§4): even
-// form_dev-authored code/css/hooks are refused on external surfaces —
-// authorship trust and surface policy are independent controls.
+// This gate is independent of surface policy: since the 2026-08-16 reversal
+// code/css/hooks SERVE externally (the §4 refusal is retired; the builder's
+// expose-confirm warns instead) — authorship trust and surface policy are
+// independent controls.
 
 const AUTHORED_KEYS = ['code', 'hooks', 'css'];
 
