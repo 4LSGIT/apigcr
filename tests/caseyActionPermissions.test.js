@@ -60,7 +60,13 @@
  * constraints), so its predicates cannot drift from the live schema. It
  * recreates them in beforeAll, so run it --runInBand and never concurrently
  * with tests/assistantNormalizer.mysql.test.js against the same database —
- * that suite owns users / contacts / contact_phones too.
+ * that suite owns users / contacts / contact_phones too (it drops them
+ * children-first, so it runs AFTER this one on one DB since 2026-11-14; this
+ * one leaves its tables behind, FK included). The server needs the named
+ * time zones loaded (`mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql mysql`):
+ * the real contacts / tasks triggers CONVERT_TZ to America/Detroit, and
+ * without them log_date is NULL and three tests fail. Cloud SQL has them; a
+ * stock MySQL 8 does not.
  * Expected console noise: the post-commit fire-and-forget side effects
  * (domain events, alerting, sequences, GCal) log failures for tables this
  * harness deliberately does not create. That they are survivable is the

@@ -51,9 +51,14 @@ d('Ask Casey normalizer SQL on real MySQL', () => {
     if (!/_test$/.test(dbName)) throw new Error(`refusing to run against "${dbName}"`);
     pool = mysql.createPool({ uri: URL_, connectionLimit: 2, timezone: 'Z' });
     pool.on('connection', (conn) => conn.query(`SET SESSION sql_mode = '${PROD_SQL_MODE}'`));
-    await q('DROP TABLE IF EXISTS users');
-    await q('DROP TABLE IF EXISTS contacts');
+    // Children first: tests/caseyActionPermissions.test.js builds these three
+    // from ref/database.sql, whose contact_phones carries the real FK onto
+    // contacts (fk_contact_phones_contact) — dropping contacts first fails
+    // "Cannot drop table 'contacts' referenced by a foreign key constraint" when
+    // this suite runs after it on one _test DB (filed 2026-11-01, fixed 11-14).
     await q('DROP TABLE IF EXISTS contact_phones');
+    await q('DROP TABLE IF EXISTS contacts');
+    await q('DROP TABLE IF EXISTS users');
     await q(`CREATE TABLE users (
       user int NOT NULL PRIMARY KEY, user_name varchar(100) DEFAULT NULL,
       user_auth varchar(20) NOT NULL, user_type tinyint NOT NULL DEFAULT 1, does_appts tinyint NOT NULL DEFAULT 0
