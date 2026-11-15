@@ -668,6 +668,7 @@ ref/migrations/2026-11-06_mail_attachment_filings.sql
 ref/migrations/2026-11-09_docs_intake_digest.console.js
 ref/migrations/2026-11-09_mail_attachment_notices.sql
 ref/migrations/2026-11-11_form_submissions_updated_at_ms.sql
+ref/migrations/2026-11-15_comm_unsub_tokens_campaign_id_comment.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -868,6 +869,7 @@ scripts/cfCourtBackfill.js
 scripts/checkThemePresets.js
 scripts/cleanup_court_event_dupes_2026_07.js
 scripts/clioBackfill.js
+scripts/commUnsubTokensCampaignIdComment.js
 scripts/commsArchive/eval/review-tool.html
 scripts/commsArchive/s0_harness/README.md
 scripts/commsArchive/s0_harness/bin/timeout.c
@@ -1388,6 +1390,7 @@ tests/codeBodySites.guest.test.js
 tests/codeBox.mysql.test.js
 tests/codeBox.test.js
 tests/codeChildResultOrder.test.js
+tests/commUnsubTokensCampaignIdComment.test.js
 tests/commsAdminTools.pane.test.js
 tests/commsArchive.lockNames.mysql.test.js
 tests/commsArchive.registry.mysql.test.js

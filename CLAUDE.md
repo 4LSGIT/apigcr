@@ -226,6 +226,12 @@ Gates beyond Commands & gates below, every model:
   whole `ref/database.sql` (`logCommDate.mysql`) breaks after a twin that
   drops and rebuilds its own tables (`log`, `events`, …), and passes alone
   (A7c, 2026-11-02). Give each family its own `*_test` DB.
+  A twin whose tables carry the real `contacts` / `tasks` triggers also needs
+  the server's NAMED time zones loaded (`mysql_tzinfo_to_sql /usr/share/zoneinfo
+  | mysql mysql`): the triggers `CONVERT_TZ` to America/Detroit, which is NULL
+  without them, so `log_date` is NULL and the twin fails on "Column 'log_date'
+  cannot be null" (`intakeNameReview.mysql` 5/5, 2026-10-30). Cloud SQL has
+  them; a stock MySQL 8 does not.
 - A module-scope check that reads ANOTHER module's export at load
   (settingsRegistry's `assertAlsoWrite` reads `firmConfig.REGISTRY`) throws in
   every test that `jest.mock`s that module with a partial factory — red CI on a

@@ -5,9 +5,9 @@
  * routes/api.assets.js
  *
  * Owns the asset-store HTTP surface: uploads (multipart streaming OR base64),
- * listing, edit, and soft-delete — plus TEMP back-compat shims that preserve the
- * legacy /api/upload and /api/image-library contracts until the comms callers
- * migrate to assetpicker.js (Slice 5).
+ * listing, edit, and soft-delete. (The legacy /api/upload and /api/image-library
+ * shims this file once carried are gone — the comms callers use assetpicker.js;
+ * manual 11-campaign-manager, Images.)
  *
  * All routes are under jwtOrApiKey; req.auth.userId identifies the uploader and
  * req.db is the mysql2 pool. This file performs NO direct GCS or raw-SQL work:
@@ -19,12 +19,6 @@
  *   GET    /api/assets            — list (q, collection, mime, sort, limit, offset, include_deleted)
  *   PATCH  /api/assets/:id        — edit title/tags/collection
  *   DELETE /api/assets/:id        — soft-delete (GCS object intentionally retained)
- *
- *   TEMP back-compat (remove after Slice 5):
- *   POST   /api/upload            — legacy upload contract (collection -> 'comms-images')
- *   GET    /api/image-library     — legacy comms picker list
- *   POST   /api/image-library     — legacy manual URL add
- *   DELETE /api/image-library/:id — legacy remove (now soft-delete)
  *
  * Upload size policy:
  *   maxBytes default 25 MB, hard ceiling 500 MB. busboy's fileSize limit is set to
@@ -156,7 +150,7 @@ function dispatchUpload(req, res, policy, cfg) {
 // ── Multipart streaming path (busboy → storageService.putStream) ──
 //
 // Two-phase finalize: registration needs the text fields (collection/title/tags
-// and, for the /api/upload shim, addToLibrary), which may arrive as multipart
+// and addToLibrary), which may arrive as multipart
 // parts AFTER the file part. So we wait for BOTH the GCS upload to finish AND
 // busboy to fully parse ('close') before merging fields and registering. This
 // removes any dependence on multipart part ordering. Single-respond guard mirrors

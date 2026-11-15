@@ -503,14 +503,12 @@ if (typeof window !== 'undefined') (function () {
       // A solid fill, so --danger-fill, not --danger. SweetAlert2's white
       // label measures 6.93 on it.
       //
-      // Correct here, but only actually painted in LIGHT on the two consumers
-      // that also load style.css. SweetAlert2 11.26 applies confirmButtonColor
-      // as an inline CUSTOM PROPERTY and declares the background in its own
-      // sheet at .swal2-styled.swal2-confirm (0,2,0) — which style.css's
-      // `html[data-theme="dark"] button:not(...)` rule (0,6,2) outranks, so in
-      // dark every SweetAlert action button on a style.css page is repainted
-      // to --surface/--text. Pre-existing, repo-wide, and not this module's to
-      // fix; reported with slice 10.
+      // SweetAlert2 11.26 applies confirmButtonColor as an inline CUSTOM
+      // PROPERTY and paints the background from its own sheet at (0,0,2), so
+      // any page rule that reaches a button outranks it. style.css's dark-mode
+      // `html[data-theme="dark"] button:not(...)` rule excludes .swal2-styled
+      // for exactly that reason (its comment block, slice 9c), so this fill
+      // paints in both themes on the consumers that load style.css too.
       confirmButtonColor: 'var(--danger-fill)',
       showLoaderOnConfirm: true,
       allowOutsideClick: function () { return !_swal().isLoading(); },
