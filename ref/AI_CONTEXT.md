@@ -38,6 +38,34 @@ body. Governing migrations in `ref/migrations/`.*
   writers). Casey's ingest cards drop `requires_capability`: a code card is
   flagged by `draft.code` (its card line + danger styling) and applies for
   any staff user. Prompts: assistant_answer 39, assistant_plan 36.
+- **Casey query_db and webhook steps (A17.4a/b, 11-15):** the workflow kinds
+  (`workflow.draft.v1`, `.step_insert.v1`, `.step_edit.v1`; flag
+  `casey_workflow_authoring_enabled`) author both. `query_db` is NOT on
+  `CASEY_AUTHORABLE_FUNCTIONS`; it is in `CASEY_STRUCTURED_FUNCTIONS` (class
+  `read`; `caseyIngestActionClass` never reads it), and
+  `normalizeAuthoredStep` (async since this slice — it takes `db` and
+  `{userText, siblings}`) routes it to `normalizeQueryDbParams`: tables, ops
+  and join types from `lib/internal_functions/db.js` `__QUERY_DB_RULES` (the
+  runtime's own sets, frozen), every column `ref.column` checked against
+  `information_schema.COLUMNS` (aliased keys — MySQL 8 returns I_S names
+  upper-case), blocked columns refused in every position (plus the
+  `ASSISTANT_DENIED` token names; SSN / DOB allowed), defaults written,
+  output a fixed point; no `*`, no html_rows / `base_url`. Webhook steps
+  (class `external-call`): literal https URL, never templated, evidenced by
+  the user's own words (current message + last four user turns, whole-token
+  match — `draftUserText`) or, without a query string, a host a step of the
+  SAME workflow or a credential's `allowed_urls` holds; auth only via a
+  credential LABEL the user names (or this workflow's existing host pair),
+  never a new host with a credential, `checkUrlScope` at proposal time;
+  `credential_id` / `headers` refused; explicit method; timeout default
+  15 000. An edit's `changes.webhook` merges over the stored call (a step with
+  stored headers is refused; an unchanged URL needs no evidence). Cards: the
+  query in words + READS ONLY; the full URL, credential label, body + A17.2
+  dry run, timeout, LEAVES THE FIRM, the retry fact. Tests:
+  `tests/caseyWorkflowQueryWebhook.test.js`, the e2e block of
+  `tests/caseyWorkflowStep.test.js`, gated
+  `tests/caseyQueryDbColumns.mysql.test.js`; plan:
+  ref/ASK_CASEY_ACTIONS_PLAN.md A17.4a / A17.4b.
 - **U9b-P4 + the Calendar column picker (11-12):** the shell's Events tab is
   RETIRED (markup, EVENTS_COLUMNS, tabEventsGet, its bus reader, the `events`
   launcher item, LIST_CSV.events / EVENT_CSV_COLUMNS); `?open=tabEvents`
@@ -435,7 +463,7 @@ body. Governing migrations in `ref/migrations/`.*
   literal destination classified firm/outside on the card, an opted-out
   NUMBER refused (an email opt-out is marketing-only — D18 — and never
   refuses a forward); NOT workflow-draft authorable), `send_email`/`send_sms`
-  from a quoted literal firm sender, no `http` actions (A17.4b unbuilt; existing ones may be renamed /
+  from a quoted literal firm sender, no `http` actions (A17.4b's contract serves workflow webhook steps, not yet ingest actions; existing ones may be renamed /
   toggled / moved / removed, never re-pointed). Code-mode bodies are
   authorable and apply for any staff user (the route's ingest code gate
   refuses only an API key without automations.manage).

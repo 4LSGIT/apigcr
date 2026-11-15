@@ -1572,9 +1572,29 @@ no email/SMS; see the workflows chapter's `custom_code` section). It may
 instead be one `workflow.draft.v1` proposal: a complete but NEVER-PUBLISHED
 workflow (version 0 — nothing can start it until a human publishes it in the
 editor), with steps limited to the authoring allowlist (control flow, record
-lookups, task/event/log creation, and text/email sends) plus safe-mode code;
-webhooks, MMS and e-signature sends, and database writes are not authorable
-and Casey says which steps to add by hand. A text or email step shows its
+lookups, task/event/log creation, and text/email sends) plus safe-mode code,
+`query_db` reads and webhook calls (below); MMS and e-signature sends and
+database writes are not authorable and Casey says which steps to add by hand.
+A `query_db` step is built from a table, its columns and filters — Casey never
+writes a SQL string; the server checks every column against the live table
+(and refuses the blocked ones anywhere in the query — passwords, the
+custom-field bag, and reset / portal / link tokens). The card lists the table, the columns, each filter in
+plain words, the row limit (100 unless Casey sets another, at most 1000) and
+that the step only reads. Casey does not author the HTML-table output format.
+A webhook step calls an address outside the firm when the workflow runs. Its
+URL is used exactly as you typed it in the conversation — or, without a query
+string, on a host this workflow (or one of the firm's stored credentials)
+already calls; Casey never invents one and never builds a URL from a
+placeholder, and a URL carrying a token in its query string is yours to paste.
+Authentication comes only from a credential you name by its label (or the one
+this workflow already uses with that host); Casey writes no headers and never
+uses a credential with a host it has not been used with. The card shows the
+full URL, the method, the credential's label (never its secret), the body as
+stored and as a dry run with no run-time values, the timeout (15 seconds
+unless set), that the call leaves the firm, and the retry warning: with
+retries set, any failure — a timeout included — is retried, so an endpoint
+that is not safe to call twice can be. A webhook step that carries
+hand-written headers is changed only in the workflow editor. A text or email step shows its
 sender and says who it messages once a human publishes the workflow; the card
 is styled as a warning. The sender is one of the firm's own lines or mailboxes,
 or a firm sender setting that an earlier step of the workflow reads (for
@@ -1582,8 +1602,9 @@ example `{{settings.email_automations}}` after a step that reads the firm
 settings — Casey can add that settings step itself; it never reads a secret
 setting);
 Casey never adds email attachments. The same applies when Casey inserts or
-edits a step in an existing workflow, and the publish card names every send
-step and its recipient.
+edits a step in an existing workflow (a `query_db` step's whole query, or a
+webhook step's URL, method, credential, body, timeout or stored variables), and
+the publish card names every send step and its recipient.
 It may instead be one `workflow.start.v1` proposal: starting ONE run of an
 active workflow's published version now — with no input, or with the input
 you give it. Input values must be for names the workflow's published steps

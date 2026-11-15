@@ -2,7 +2,7 @@
 
 The destination is `ref/CASEY_VISION.md`; this document is the mechanics.
 
-Status (2026-11-09): A0/A0.1, A1, A2, A3, A4, A4.1 and A5 shipped 2026-10-20 —
+Status (2026-11-15): A0/A0.1, A1, A2, A3, A4, A4.1 and A5 shipped 2026-10-20 —
 the Task lifecycle; reviewed Event create/update/complete/cancel; Appointment
 create, narrow update, attended, no-show, cancel, reschedule-now and
 reschedule-later; one phone/email/address subrecord create, narrow update or
@@ -16,8 +16,8 @@ records; submitting a stored draft), A12.4 (form templates — publish, visibili
 delete), A13 (mail triage —
 read state and case link; no drafts exist, no SMS triage), A13b (one email's
 attachments filed to a case, the Comms File attachments route), A14 (direct email /
-SMS send), A16 (reports), A17.0–A17.4, A17.6, A17.7 + A17.7b (workflows — explain,
-preview, draft, step, publish, start with an optional reviewed input), A18.2, A18.3, A18.4a/b/c/d (sequences — step,
+SMS send), A16 (reports), A17.0–A17.4, A17.4a/b, A17.6, A17.7 + A17.7b (workflows — explain,
+preview, draft, step — query_db and webhook steps included — publish, start with an optional reviewed input), A18.2, A18.3, A18.4a/b/c/d (sequences — step,
 publish, enroll with an optional reviewed trigger_data, appointment- or e-sign-scoped), A19.0/A19.1 (inbound hooks), A20.0–A20.3 (email and phone
 ingest rules), R1 (read-loop continuation) and P13. A15 (e-signature) is not
 built. Each slice's section below carries its shipped contract. No general
@@ -3395,8 +3395,8 @@ steps from `lib/caseyAutomationAllowlist.js` (27 functions with side-effect
 classes since ruling 15 added `send_sms` / `send_email` (`external-send`) and
 `get_setting` / `get_settings` (`read`), snapshot-pinned;
 expansion is a deliberate review) plus safe-mode
-code steps; webhooks (A17.4b) and query_db (A17.4a) refused by name with
-add-by-hand guidance; `POST /workflows/bulk` wired into requestIdempotency;
+code steps, plus query_db (A17.4a) and webhook (A17.4b) steps under their own
+contracts below; `POST /workflows/bulk` wired into requestIdempotency;
 per-family flag `casey_workflow_authoring_enabled`; name collision checked at
 proposal time (names are not DB-unique — click-time safety is the idempotent
 draft_id + the 15-minute card TTL, a narrowing of this spec's click-time
@@ -3439,8 +3439,9 @@ precondition 409 renders as a refusal ("the workflow changed, nothing was
 written"), the one audited exception to the 409-stays-ambiguous rule.
 `BRANCH_TARGET_PARAMS` and the terminal sentinels moved to
 `lib/versionDiff.js` (the normalizer needed them; a service must not import a
-router). A17.4a (query_db), A17.4b (webhook) and A17.4c (standard-code
-scaffold) below remain unbuilt. Original spec:
+router). A17.4a (query_db) and A17.4b (webhook) shipped 2026-11-15 under the
+same two kinds (below); A17.4c (standard-code scaffold) remains unbuilt.
+Original spec:
 
 Higher impact than A17.3 because the workflow may be published and running.
 Separate kinds for insert and narrow edit:
@@ -3467,8 +3468,49 @@ and is refused. That is weaker than an idempotency key only in the unknown-
 outcome case, so the slice still sends one and reuses P4's three-outcome
 vocabulary.
 
-**A17.4a: `query_db` steps.** Fred, 2026-10-22: promoted from a deferred
-option to a planned slice.
+**A17.4a: `query_db` steps. SHIPPED 2026-11-15** (Fred: "do that") — in
+`workflow.draft.v1`, `workflow.step_insert.v1` and `workflow.step_edit.v1`,
+behind the existing `casey_workflow_authoring_enabled` flag (no new flag).
+`query_db` stays OFF the generic allowlist: it sits in its own map,
+`CASEY_STRUCTURED_FUNCTIONS` (`lib/caseyAutomationAllowlist.js`, class
+`read`, snapshot-pinned), which `caseyIngestActionClass` does not read — no
+ingest action or hook target gains it. The contract as built
+(`services/assistantService.js` `normalizeQueryDbParams` /
+`checkQueryDbColumns` / `queryDbReview`):
+
+- The model never supplies a query string. The normalizer BUILDS the params:
+  `from` and every join table from the function's own allowlist (exported
+  read-only as `lib/internal_functions/db.js` `__QUERY_DB_RULES` — the sets the
+  runtime uses, not a copy); every column as `table.column` or
+  `alias.column` (never `*`, never bare, never a ref outside the from table
+  and the joins); each join connecting its table to the from table or an
+  earlier join, under an alias that is not a table name; where ops and join
+  types from the function's closed sets; `IS NULL` / `IS NOT NULL` take no
+  value, `IN` / `NOT IN` a literal list of 1-50 text/number values (a
+  placeholder list is refused — it cannot be checked); other ops one
+  text/number value (≤ 500 chars, `{{placeholders}}` allowed, `|modifiers`
+  refused); limit 1-1000, default 100 WRITTEN into the params; format raw /
+  first / count. html_rows, `base_url` and `html_columns` are refused (a link
+  Casey would compose). Every default is written explicitly, and normalizing
+  the output again is a fixed point — the stored params are what was reviewed.
+- Every referenced column is checked against the LIVE columns of its table
+  (one `information_schema.COLUMNS` read scoped to `DATABASE()`); a refusal
+  lists the table's readable columns so the repair stage can fix the name.
+  Blocked columns (`users.password` / `password_hash`, `cases.custom`,
+  `contacts.custom`) are refused in EVERY position — select, where, order,
+  join — where the runtime only strips them from the output. Casey's own
+  floor on top: the chat-denied token / credential names (`ASSISTANT_DENIED`
+  — `reset_token`, `contact_token`, `appt_manage_token`, …) are refused too;
+  `contact_ssn` / `contact_dob` are not (the 2026-09-24 ruling makes SSN an
+  ordinary column to automation), and the card lists every column read.
+- The step config takes only `function_name`, `params`, `set_vars`,
+  `next_step`. An edit replaces a query_db step's params WHOLE with a built
+  structure; its other stored keys stay as stored.
+- The card shows the table, the joins, the columns, each predicate in plain
+  language, the combine mode, the order, the limit and what is returned, what
+  each variable stores, and "READS ONLY".
+
+Original spec:
 
 `query_db`'s "SQL" is a JSON structure (`from`, `select`, `where`, `join`)
 over a 19-table allowlist with blocked columns, not raw SQL, and the function
@@ -3482,7 +3524,51 @@ Casey's normalizer therefore builds the structure field by field — table from
 the allowlist, columns checked against the table, operators from a closed set
 — or P11 adds the element schema. The model never supplies a query string.
 
-**A17.4b: `webhook` steps.** Fred, 2026-10-22: "it's very standard, and should
+**A17.4b: `webhook` steps. SHIPPED 2026-11-15** (Fred: "do that") — in the
+same three kinds, same flag. The contract as built
+(`services/assistantService.js` `normalizeWebhookConfig` /
+`resolveWebhookStep`, side-effect class `external-call`):
+
+- The URL is a literal `https` URL — never templated anywhere in it, no
+  userinfo, no fragment, ≤ 2000 chars. Its evidence is either the user's OWN
+  words (the current message and the last four user turns — never an
+  assistant turn, never an evidence row, which carries third-party content),
+  matched as a whole token so a truncation of a typed URL does not count; or,
+  only for a URL with NO query string, a host that an existing webhook step of
+  the SAME workflow already calls (insert / edit) or that a stored
+  credential's `allowed_urls` names (a pattern whose host holds no wildcard).
+  A new draft has no "same workflow". An edit that leaves the stored URL as
+  stored needs no new evidence (Casey is not composing it).
+- Auth only through `credential` — a credential LABEL (the read surface never
+  shows an id), resolved to `credential_id` server-side. The label must be
+  named by the user (whole word, case-insensitive, not inside a URL), or be
+  the exact (host, credential) pair a step of this workflow already uses. A
+  credential is never paired with a host it has not been used with: its
+  `allowed_urls` must cover the URL (or it is `internal`, app host only), or
+  that same-workflow pair must exist; and `checkUrlScope` must pass (the run
+  would refuse it otherwise). `credential_id` and `headers` are refused by
+  name — Casey writes no header value at all.
+- `method` is explicit from GET/POST/PUT/PATCH/DELETE (the engine's legacy
+  default is GET); no body on GET/DELETE; body ≤ 10 000 chars of JSON;
+  `timeout_ms` 1000-120000, defaulting to 15 000 (written, and the card says
+  it was Casey's default); `set_vars` maps ≤ 20 variable names to scalars.
+- Edit: a webhook step's call is edited through `changes.webhook` — the fields
+  to change merged over the stored call, then held to the whole insert
+  contract; `credential: null` clears auth; `next_step` stays as stored. A
+  stored step carrying `headers` or any other hand-set key is refused (never
+  carried through a card); a label / note edit needs no call review.
+- The card shows the full URL, where the URL came from, the method, the
+  credential LABEL (never a value), the body as stored and through A17.2's dry
+  run (`stepPreviewService.buildStepPreview`, no run-time values, with the
+  placeholders that fill at run time listed), the timeout, LEAVES THE FIRM,
+  and the retry fact: with `max_retries` > 0 the engine retries on ANY failure
+  whatever the strategy — a timeout included — so a non-idempotent endpoint can
+  be hit N+1 times. The card family's danger styling covers it.
+- The full URL rides the card (the edit's PATCH replaces the whole config, so
+  it must) — the one place a stored webhook URL leaves the redacted read
+  surface, shown to the staff user who asked, never to the model.
+
+Original spec — Fred, 2026-10-22: "it's very standard, and should
 be allowed." Correct, and the earlier blanket exclusion was wrong. Measured:
 
 - `validateWebhookConfig` makes the webhook step the **best-validated** step
@@ -4718,8 +4804,9 @@ card is atomic and carries one precondition. Per-family flag
   quoted string, a dot path reads the message. **`http` actions are deferred** —
   the vision says yes; the risk is that an ingest http action ships every
   matching client message to a URL, and A17.4b's literal-URL /
-  named-credential contract is not built anywhere yet; the mitigation is to
-  build that contract once (A17.4b) and reuse it here. Existing http actions
+  named-credential contract is built for workflow webhook steps
+  (`resolveWebhookStep`, 2026-11-15) but not wired to ingest http actions;
+  the mitigation is to reuse that contract here. Existing http actions
   may be renamed, toggled, moved or removed — never re-pointed (Casey cannot
   see their URL).
 - **Forwards** (Fred's yes, 2026-10-27, ruling 15's logic): `forward_as_email`

@@ -149,6 +149,43 @@ describe('ruling 15 — no stage still teaches the send exclusion', () => {
   });
 });
 
+// A17.4a/b (2026-11-15): query_db and webhook steps became authorable in the
+// workflow kinds. Every stage refused them BY NAME before; a stage still
+// saying so refuses the new capability (the job lesson, the A7d sweep). The
+// STANDARD-code exclusion (A17.4c, unbuilt) must survive in the stages that
+// teach the step kinds.
+describe('A17.4a/b — every stage teaches query_db and webhook steps, none still refuses them', () => {
+  const stages = { answer: answerPrompt, plan: planPrompt, repair: repairPrompt, investigate: investigatePrompt };
+  const OLD_REFUSALS = ['webhooks, query_db', 'webhook steps, query_db', 'no webhook steps', 'no query_db',
+    'webhook or standard-code steps', 'webhooks, query_db, DB writes, chaining NOT authorable'];
+
+  test('the refused-by-name wording is gone from every stage', () => {
+    for (const [stage, src] of Object.entries(stages)) {
+      for (const phrase of OLD_REFUSALS) {
+        expect({ stage, phrase, present: src.includes(phrase) }).toEqual({ stage, phrase, present: false });
+      }
+    }
+  });
+
+  test('each stage teaches the new rules in its own register', () => {
+    expect(answerPrompt).toContain('query_db steps (class read — A17.4a)');
+    expect(answerPrompt).toContain('Webhook steps (class external-call — A17.4b)');
+    expect(answerPrompt).toContain('never a credential_id, never headers or any');
+    expect(planPrompt).toContain('query_db read steps are authorable');
+    expect(planPrompt).toContain('webhook steps to a LITERAL https URL the user typed');
+    expect(repairPrompt).toContain('or a query_db step {type:"internal_function"');
+    expect(repairPrompt).toContain('or a webhook step {type:"webhook"');
+    expect(investigatePrompt).toContain('a query_db step needs');
+    expect(investigatePrompt).toContain("a webhook step's\n  URL and credential come only from the user's own words");
+  });
+
+  test('the standard-code exclusion (A17.4c) still stands where the step kinds are taught', () => {
+    expect(answerPrompt).toContain('never standard-code steps');
+    expect(planPrompt).toContain('or standard-code\n  steps');
+    expect(repairPrompt).toContain('or\n  standard-code steps');
+  });
+});
+
 // A18.3: the sequence-step bullet used to say "publishing a sequence ... not
 // available"; a stage still saying so refuses the new kind (the job lesson).
 describe('A18.3 — every stage teaches sequence publish, none still excludes it', () => {

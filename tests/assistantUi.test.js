@@ -117,7 +117,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'mailAttachmentsBatch', 'mailAttachmentsRequest', 'mailAttachmentsPrecheck', 'mailAttachmentsDispatch', 'mailAttachmentsResult',
   'mailAttachmentsKnownOutcome', 'mailAttachmentsOutcomeText', 'mailAttachmentsAppliedMessage',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
-  'workflowDraftLabel', 'workflowSendLines', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
+  'workflowDraftLabel', 'workflowSendLines', 'workflowQueryLines', 'workflowWebhookLines', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
   'workflowStepActionLabel', 'workflowStepWorkflowLine', 'workflowStepInsertText', 'workflowStepEditValue',
   'workflowStepEditText', 'workflowStepActionText', 'workflowStepActionRequest', 'workflowStepActionResult',
   'workflowPublishLabel', 'workflowPublishChangeLine', 'workflowPublishText', 'workflowPublishRequest', 'workflowPublishResult',

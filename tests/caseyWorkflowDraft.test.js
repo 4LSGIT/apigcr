@@ -5,8 +5,10 @@
  * A17.3 — Casey drafts a complete, NEVER-PUBLISHED workflow. The pieces
  * pinned here:
  *   1. the normalizer: the authoring allowlist is the law (a function off it
- *      is refused BY NAME), code steps are forced safe, webhooks and bad
- *      policies are refused, the name-collision read runs at proposal time;
+ *      is refused BY NAME), code steps are forced safe, bad policies are
+ *      refused, the name-collision read runs at proposal time (query_db and
+ *      webhook steps — A17.4a/b — are pinned in
+ *      tests/caseyWorkflowQueryWebhook.test.js);
  *   2. the allowlist snapshot: adding a function is a deliberate review, the
  *      CTA-denylist pattern;
  *   3. POST /workflows/bulk honours an Idempotency-Key, because the card's
@@ -59,7 +61,9 @@ describe('the workflow-draft normalizer', () => {
   });
 
   test('a function off the allowlist is refused BY NAME; send_mms and writes are off it', async () => {
-    for (const fn of ['send_mms', 'update_db', 'start_workflow', 'enroll_sequence', 'create_cta', 'query_db', 'set_setting']) {
+    // query_db is off this list too, but authorable through its own
+    // structural normalizer (A17.4a) — tests/caseyWorkflowQueryWebhook.test.js.
+    for (const fn of ['send_mms', 'update_db', 'start_workflow', 'enroll_sequence', 'create_cta', 'set_setting']) {
       expect(CASEY_AUTHORABLE_FUNCTIONS.has(fn)).toBe(false);
       await expect(normalizeActionDraft(dbNoCollision, draft({
         steps: [{ type: 'internal_function', config: { function_name: fn, params: {} } }],
@@ -67,13 +71,13 @@ describe('the workflow-draft normalizer', () => {
     }
   });
 
-  test('standard code, webhook steps, bad policies and ladder blowouts are refused', async () => {
+  test('standard code, unknown step types, bad policies and ladder blowouts are refused', async () => {
     await expect(normalizeActionDraft(dbNoCollision, draft({
       steps: [{ type: 'custom_code', config: { code: '1;', code_mode: 'standard' } }],
     }), [])).rejects.toThrow(/only safe-mode code/);
     await expect(normalizeActionDraft(dbNoCollision, draft({
-      steps: [{ type: 'webhook', config: { url: 'https://x.example.com' } }],
-    }), [])).rejects.toThrow(/does not author webhook steps yet/);
+      steps: [{ type: 'http', config: { url: 'https://x.example.com' } }],
+    }), [])).rejects.toThrow(/has an unsupported type/);
     await expect(normalizeActionDraft(dbNoCollision, draft({
       steps: [{ type: 'internal_function', config: { function_name: 'noop', params: {} },
         error_policy: { strategy: 'explode' } }],
@@ -136,6 +140,17 @@ describe('the allowlist snapshot — adding a function is a deliberate review', 
       create_event: 'internal-record', create_log: 'internal-record',
       send_sms: 'external-send', send_email: 'external-send',
     });
+  });
+
+  // A17.4a: query_db is authorable ONLY through its structural normalizer —
+  // a separate map, never the generic list, never an ingest action.
+  test('the structural-normalizer functions, exactly as reviewed — and never on the generic list', () => {
+    const { CASEY_STRUCTURED_FUNCTIONS, caseyIngestActionClass } = require(path.join(__dirname, '..', 'lib', 'caseyAutomationAllowlist'));
+    expect(Object.fromEntries(CASEY_STRUCTURED_FUNCTIONS)).toEqual({ query_db: 'read' });
+    for (const name of CASEY_STRUCTURED_FUNCTIONS.keys()) {
+      expect({ name, onGenericList: CASEY_AUTHORABLE_FUNCTIONS.has(name), ingest: caseyIngestActionClass(name) })
+        .toEqual({ name, onGenericList: false, ingest: null });
+    }
   });
 
   // A20.2 follow-up (Fred, 2026-10-27): the forwards are authorable as INGEST

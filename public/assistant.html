@@ -4840,16 +4840,71 @@ function workflowSendLines(send, indent) {
   return lines;
 }
 
+// A17.4a: a query_db step's review — the normalizer's queryDbReview, never
+// model text: the table, the columns, each predicate in plain language, the
+// limit, and that the step only reads.
+function workflowQueryLines(q, indent) {
+  if (!q) return [];
+  const lines = [`${indent}READS ONLY: this step reads firm records and writes nothing.`, `${indent}Table: ${q.table}`];
+  for (const join of q.joins || []) lines.push(`${indent}Joined: ${join}`);
+  lines.push(`${indent}Columns: ${(q.columns || []).join(', ')}`);
+  const preds = q.predicates || [];
+  if (!preds.length) {
+    lines.push(`${indent}Rows: every row (no filter)`);
+  } else {
+    lines.push(`${indent}Rows where ${preds.length === 1 ? 'this holds' : q.combine === 'any' ? 'ANY of these hold' : 'ALL of these hold'}:`);
+    for (const pred of preds) lines.push(`${indent}  - ${pred}`);
+  }
+  if ((q.order || []).length) lines.push(`${indent}Order: ${q.order.join(', ')}`);
+  lines.push(`${indent}Limit: ${q.limit} rows; returns ${q.returns}`);
+  for (const store of q.stores || []) lines.push(`${indent}Stores: ${store}`);
+  return lines;
+}
+
+// A17.4b: a webhook step's review — the normalizer's annotation, never model
+// text. The credential appears by LABEL only; its secret is added when the
+// step runs and never reaches the card.
+function workflowWebhookLines(w, indent) {
+  if (!w) return [];
+  const show = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
+  const retries = Number(w.max_retries) > 0 ? Number(w.max_retries) : 0;
+  const lines = [
+    `${indent}LEAVES THE FIRM: when the workflow runs (after a human publishes it), this step sends an HTTP request to an outside address.`,
+    `${indent}URL: ${w.url}`,
+    `${indent}URL source: ${w.url_source}`,
+    `${indent}Method: ${w.method}`,
+    `${indent}Credential: ${w.credential ? `"${w.credential}" (its secret is added when the step runs and is never shown)` : 'none — the request carries no auth'}`,
+    `${indent}Timeout: ${w.timeout_ms} ms${w.timeout_defaulted ? ' (Casey\'s 15-second default; the cap is 120 seconds)' : ''}`,
+  ];
+  if (w.body != null) {
+    lines.push(`${indent}Body as stored: ${show(w.body)}`);
+    lines.push(`${indent}Body in a dry run with no run-time values: ${show(w.dry_run_body)}`);
+  } else {
+    lines.push(`${indent}Body: none`);
+  }
+  if ((w.filled_at_run_time || []).length) lines.push(`${indent}Filled when the step runs: ${w.filled_at_run_time.join(', ')}`);
+  if (w.set_vars) lines.push(`${indent}Stores from the response: ${show(w.set_vars)}`);
+  lines.push(retries
+    ? `${indent}RETRIES: up to ${retries} more attempt${retries === 1 ? '' : 's'} on ANY failure, whatever the error strategy — a timeout included, even when the endpoint already acted — so a non-idempotent endpoint can be hit ${retries + 1} times.`
+    : `${indent}Retries: none set — but a timed-out request may still have reached the endpoint, and every run that reaches this step calls it again.`);
+  return lines;
+}
+
 function workflowDraftStepLine(step, index) {
-  const head = `${index + 1}. [${step.type === 'custom_code' ? 'safe code' : step.config.function_name}]` +
+  const name = step.type === 'custom_code' ? 'safe code' : step.type === 'webhook' ? 'webhook' : step.config.function_name;
+  const head = `${index + 1}. [${name}]` +
     `${step.label ? ` ${step.label}` : ''}${step.side_effect && step.side_effect !== 'none' ? ` (${step.side_effect})` : ''}`;
   const body = step.type === 'custom_code'
     ? `code: ${String(step.config.code || '')}`
-    : `params: ${JSON.stringify(step.config.params || {})}` +
-      (step.config.set_vars ? ` set_vars: ${JSON.stringify(step.config.set_vars)}` : '') +
-      (step.config.next_step !== undefined ? ` next_step: ${JSON.stringify(step.config.next_step)}` : '');
+    : step.type === 'webhook'
+      ? `call: ${step.config.method} ${step.config.url}` +
+        (step.config.next_step !== undefined ? ` next_step: ${JSON.stringify(step.config.next_step)}` : '')
+      : `params: ${JSON.stringify(step.config.params || {})}` +
+        (step.config.set_vars ? ` set_vars: ${JSON.stringify(step.config.set_vars)}` : '') +
+        (step.config.next_step !== undefined ? ` next_step: ${JSON.stringify(step.config.next_step)}` : '');
   const policy = step.error_policy ? ` [on error: ${step.error_policy.strategy}${step.error_policy.max_retries ? `, ${step.error_policy.max_retries} retries` : ''}]` : '';
-  return [`${head}${policy}\n   ${body}`, ...workflowSendLines(step, '   ')].join('\n');
+  return [`${head}${policy}\n   ${body}`, ...workflowSendLines(step, '   '),
+    ...workflowQueryLines(step.query, '   '), ...workflowWebhookLines(step.webhook, '   ')].join('\n');
 }
 
 function workflowDraftText(draft) {
@@ -4916,13 +4971,15 @@ function workflowStepEditValue(value) {
 function workflowStepEditText(draft) {
   const t = draft.target || {};
   const lines = ['Workflow step edit proposal — not applied', workflowStepWorkflowLine(draft),
-    `Step ${draft.step_number}: [${t.type === 'custom_code' ? 'safe code' : t.function_name}]${t.label ? ` ${t.label}` : ''}`];
-  for (const field of ['label', 'note', 'params', 'code', 'input']) {
+    `Step ${draft.step_number}: [${t.type === 'custom_code' ? 'safe code' : t.type === 'webhook' ? 'webhook' : t.function_name}]${t.label ? ` ${t.label}` : ''}`];
+  for (const field of ['label', 'note', 'params', 'code', 'input', 'webhook']) {
     if (!(field in (draft.changes || {}))) continue;
     lines.push(`${field} — before: ${workflowStepEditValue(draft.before && draft.before[field])}`);
     lines.push(`${field} — after: ${workflowStepEditValue(draft.changes[field])}`);
   }
   lines.push(...workflowSendLines(draft.send, ''));
+  lines.push(...workflowQueryLines(draft.query, ''));
+  lines.push(...workflowWebhookLines(draft.webhook, ''));
   lines.push('Branch targets, the step\'s type and function, and its error policy are unchanged by construction.');
   lines.push('This edits the workflow\'s DRAFT only. Nothing changes in what runs until a human reviews and publishes the draft in the workflow editor.');
   lines.push('If anyone changes this workflow before you apply, the server refuses the write and Casey must re-read it.');
@@ -6985,11 +7042,11 @@ const ACTION_FAMILIES = [
     id: 'workflow', kinds: WORKFLOW_ACTION_KINDS, title: 'Workflow draft', noun: 'workflow draft', errorNoun: 'workflow draft',
     label: workflowDraftLabel, text: workflowDraftText, request: workflowDraftRequest, result: workflowDraftResult,
     idField: 'workflow_id', appliedKey: 'result_workflow_id',
-    danger: (draft) => (draft.steps || []).some((step) => step.side_effect === 'external-send'),
+    danger: (draft) => (draft.steps || []).some((step) => step.side_effect === 'external-send' || step.side_effect === 'external-call'),
     resultText: (payload) => `draft workflow #${payload.workflow_id}`,
     entity: (draft, payload) => ({ kind: 'workflow', id: String(payload.workflow_id), label: `${draft.name} #${payload.workflow_id} (unpublished)` }),
     failure: 'The workflow draft could not be created.',
-    reviewWarning: 'This creates an UNPUBLISHED workflow — version 0, which nothing can start. Review every step anyway: a human will later publish exactly what is written here, and once published an SMS or email step messages its recipient every time the workflow runs — review the recipient, sender and wording as if it were going out. Canceling writes nothing.',
+    reviewWarning: 'This creates an UNPUBLISHED workflow — version 0, which nothing can start. Review every step anyway: a human will later publish exactly what is written here, and once published an SMS or email step messages its recipient and a webhook step calls its outside URL every time the workflow runs — review the recipient, sender, URL and wording as if it were going out. Canceling writes nothing.',
     open: (draft) => openAutomationRecord('automations.workflow', draft.result_workflow_id,
       `Draft workflow #${draft.result_workflow_id}`,
       'Find it under More → Automations → Workflows. It stays unpublished until you publish it there.'),
@@ -6998,11 +7055,12 @@ const ACTION_FAMILIES = [
     id: 'workflow_step', kinds: WORKFLOW_STEP_ACTION_KINDS, title: 'Workflow step', noun: 'workflow step', errorNoun: 'workflow step action',
     label: workflowStepActionLabel, text: workflowStepActionText, request: workflowStepActionRequest,
     result: workflowStepActionResult, idField: 'workflow_id', appliedKey: 'result_step_workflow_id',
-    danger: (draft) => !!((draft.step && draft.step.side_effect === 'external-send') || (draft.send && draft.send.side_effect === 'external-send')),
+    danger: (draft) => !!((draft.step && (draft.step.side_effect === 'external-send' || draft.step.side_effect === 'external-call'))
+      || (draft.send && draft.send.side_effect === 'external-send') || draft.webhook),
     resultText: (payload) => `workflow #${payload.workflow_id}${payload.step_number ? ` step ${payload.step_number}` : ''} (draft)`,
     entity: (draft, payload) => ({ kind: 'workflow', id: String(payload.workflow_id), label: `${draft.workflow.name} #${payload.workflow_id} (draft edited)` }),
     failure: 'The workflow step action could not be applied.',
-    reviewWarning: 'This edits the workflow\'s DRAFT only — nothing runs until a human publishes it in the editor. Review every value anyway: a later publish ships exactly what is written here, and an SMS or email step then messages its recipient every time the workflow runs. If the workflow changed since this card was prepared, the server refuses the write. Canceling writes nothing.',
+    reviewWarning: 'This edits the workflow\'s DRAFT only — nothing runs until a human publishes it in the editor. Review every value anyway: a later publish ships exactly what is written here, and an SMS or email step then messages its recipient, and a webhook step calls its outside URL, every time the workflow runs. If the workflow changed since this card was prepared, the server refuses the write. Canceling writes nothing.',
     open: (draft) => openAutomationRecord('automations.workflow', draft.result_step_workflow_id,
       `Workflow #${draft.result_step_workflow_id}`,
       'Find it under More → Automations → Workflows. The change sits in its draft until you publish there.'),

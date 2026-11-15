@@ -138,8 +138,11 @@ const JOB_CODE_MAX_INPUT_JSON_CHARS = 10000;
 // current_version 0 with the steps as draft v1, and every dispatch site
 // refuses v0, so nothing can run it until a human publishes. Steps come only
 // from the authoring allowlist (lib/caseyAutomationAllowlist.js) plus
-// safe-mode code; webhook steps are A17.4b's narrower contract, query_db is
-// A17.4a — both refused here by name.
+// safe-mode code, plus (A17.4a/b, 2026-11-15) query_db steps built field by
+// field against the function's own rule sets and the live columns, and
+// webhook steps under the destination-and-credential contract (a literal URL
+// the user typed or whose host an existing step / credential already holds;
+// auth only through a credential the user names; no header values).
 // A17.4 adds the first writes against an EXISTING workflow: insert one step
 // into its draft, or narrowly edit one draft step (label, note, the param
 // values of an allowlisted function, or a safe-mode code body). Higher impact
@@ -148,7 +151,9 @@ const JOB_CODE_MAX_INPUT_JSON_CHARS = 10000;
 // target-step fingerprint) into the card, and the canonical route refuses the
 // write with a 409 when the base no longer holds (the wf27 scar as a route
 // property). Never editable through these kinds: type, function_name, any
-// branch target, error_policy, webhook steps, standard-mode code.
+// branch target, error_policy, standard-mode code. A query_db step's params
+// and a webhook step's call (A17.4a/b) are editable under the same rules
+// their insert obeys.
 // A17.6 adds publish: the reviewed card IS the impact preview (classification,
 // per-step diff, validation warnings, in-flight/stranded runs, what can start
 // it, its external effects, and the plain fact that no rollback route exists).
@@ -216,7 +221,7 @@ const WORKFLOW_DRAFT_MAX_STEPS = 20;
 const WORKFLOW_DRAFT_MAX_JSON = 60000;
 const WORKFLOW_STEP_INSERT_KEYS = new Set(['kind', 'workflow_id', 'step_number', 'step', 'evidence']);
 const WORKFLOW_STEP_EDIT_KEYS = new Set(['kind', 'workflow_id', 'step_number', 'changes', 'evidence']);
-const WORKFLOW_STEP_EDIT_CHANGE_KEYS = new Set(['label', 'note', 'params', 'code', 'input']);
+const WORKFLOW_STEP_EDIT_CHANGE_KEYS = new Set(['label', 'note', 'params', 'code', 'input', 'webhook']);
 const WORKFLOW_PUBLISH_KEYS = new Set(['kind', 'workflow_id', 'evidence']);
 const WORKFLOW_START_KEYS = new Set(['kind', 'workflow_id', 'init_data', 'contact_id', 'evidence']);
 // A17.7b: a start's reviewed input. Scalar values only; a string is capped so
@@ -9938,14 +9943,524 @@ function normalizeJobCodeAction(db, value, evidence) {
   };
 }
 
+// ── A17.4a: query_db steps ─────────────────────────────────────────────────
+// query_db's "SQL" is a JSON structure whose select / where / join contents
+// __meta does not describe (array params carry no element schema), so the
+// generic params validator would pass anything shaped like an array. Casey's
+// normalizer therefore BUILDS the structure field by field: the from / join
+// tables from the function's own allowlist (lib/internal_functions/db.js
+// __QUERY_DB_RULES), every column as ref.column against the live columns of
+// its table (information_schema, minus the blocked columns — refused in every
+// position, not only stripped from the output as the runtime does), operators
+// and join types from the function's closed sets, the limit bounded. A shape
+// the normalizer cannot fully check is refused, never passed through: no
+// "*", no html_rows (its base_url is a link Casey would compose), no
+// placeholder IN list. The model never supplies a query string.
+const QUERY_DB_PARAM_KEYS = new Set(['select', 'from', 'join', 'where', 'where_mode', 'order_by', 'limit', 'format', 'output_var', 'count_var']);
+const QUERY_DB_STEP_CONFIG_KEYS = new Set(['function_name', 'params', 'set_vars', 'next_step']);
+const QUERY_DB_FORMATS = new Set(['raw', 'count', 'first']);
+const QUERY_DB_COLUMN_RE = /^([A-Za-z_][A-Za-z0-9_]{0,63})\.([A-Za-z_][A-Za-z0-9_]{0,63})$/;
+const QUERY_DB_ALIAS_RE = /^[a-z][a-z0-9_]{0,29}$/;
+const QUERY_DB_MAX = { select: 40, joins: 4, where: 20, order: 5, inValues: 50, valueChars: 500 };
+const WORKFLOW_VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+// ASSISTANT_DENIED names a query_db step MAY read (see normalizeQueryDbParams).
+const QUERY_DB_CASEY_ALLOWED_DENIED = new Set(['contact_ssn', 'contact_dob']);
+const QUERY_DB_OP_WORDS = {
+  '=': 'equals', '!=': 'does not equal', '<>': 'does not equal', '>': 'is greater than', '<': 'is less than',
+  '>=': 'is at least', '<=': 'is at most', LIKE: 'matches the pattern', 'NOT LIKE': 'does not match the pattern',
+  IN: 'is one of', 'NOT IN': 'is none of', 'IS NULL': 'is empty (NULL)', 'IS NOT NULL': 'is not empty (NOT NULL)',
+};
+
+function queryDbScalar(v) {
+  return (typeof v === 'string' && v.length <= QUERY_DB_MAX.valueChars) || (typeof v === 'number' && Number.isFinite(v));
+}
+
+function queryDbVarName(value, field, at) {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !WORKFLOW_VAR_NAME_RE.test(value) || value === 'this' || value === 'env') {
+    throw httpError(422, `${at}: query_db ${field} must be a plain variable name (letters, digits, underscore; not "this" or "env")`);
+  }
+  return value;
+}
+
+// The structural half (no DB). Returns { params, used } — params is what the
+// step stores (every default written explicitly, so the card shows exactly
+// what runs), used lists every column reference for the live-column check.
+// Re-normalizing its own output yields the same params (idempotent).
+function normalizeQueryDbParams(raw, at) {
+  const rules = require('../lib/internal_functions').__QUERY_DB_RULES;
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) throw httpError(422, `${at}: query_db params must be a JSON object`);
+  if (raw.base_url !== undefined || raw.html_columns !== undefined || raw.format === 'html_rows') {
+    throw httpError(422, `${at}: Casey does not author query_db html_rows output (base_url / html_columns) — use format raw, first or count, or tell the user to add the HTML table by hand`);
+  }
+  const unknown = Object.keys(raw).filter((k) => !QUERY_DB_PARAM_KEYS.has(k));
+  if (unknown.length) throw httpError(422, `${at}: query_db carries unsupported params: ${unknown.join(', ')} — remove them`);
+  if (typeof raw.from !== 'string' || !rules.tables.has(raw.from)) {
+    throw httpError(422, `${at}: query_db "from" must be one of the function's tables: ${[...rules.tables].join(', ')}`);
+  }
+  const from = raw.from;
+  const refs = new Map([[from, from]]);
+  const used = [];
+  const column = (value, role) => {
+    if (value === '*') throw httpError(422, `${at}: query_db ${role} "*" — name each column as table.column so the card shows what is read`);
+    const m = typeof value === 'string' ? QUERY_DB_COLUMN_RE.exec(value) : null;
+    if (!m) throw httpError(422, `${at}: query_db ${role} ${JSON.stringify(value)} must be table.column (or alias.column)`);
+    if (!refs.has(m[1])) {
+      throw httpError(422, `${at}: query_db ${role} "${value}" names "${m[1]}", which is neither the from table nor a join's table or alias (${[...refs.keys()].join(', ')})`);
+    }
+    const table = refs.get(m[1]);
+    if ((rules.blockedColumns[table] || []).includes(m[2])) {
+      throw httpError(422, `${at}: query_db ${role} "${value}" — ${table}.${m[2]} is a blocked column; query_db never reads it`);
+    }
+    // Casey's own floor on top of the runtime's: the chat-denied token and
+    // credential names (users.reset_token, contacts.contact_token, …) are
+    // never authored into a read either — the runtime blocks only passwords
+    // and the custom bag. SSN / DOB are NOT refused here: since the
+    // 2026-09-24 ruling contact_ssn is an ordinary column to automation, and
+    // the card lists every column read.
+    if (ASSISTANT_DENIED.includes(m[2].toLowerCase()) && !QUERY_DB_CASEY_ALLOWED_DENIED.has(m[2].toLowerCase())) {
+      throw httpError(422, `${at}: query_db ${role} "${value}" — ${m[2]} is a token or credential column; Casey never authors a read of it`);
+    }
+    used.push({ ref: m[1], table, column: m[2], role });
+    return value;
+  };
+
+  const join = [];
+  if (raw.join !== undefined) {
+    if (!Array.isArray(raw.join) || raw.join.length > QUERY_DB_MAX.joins) throw httpError(422, `${at}: query_db join must be a list of at most ${QUERY_DB_MAX.joins} joins`);
+    raw.join.forEach((j, i) => {
+      const n = i + 1;
+      if (!j || typeof j !== 'object' || Array.isArray(j) || !onlyKeys(j, new Set(['type', 'table', 'alias', 'on']))) {
+        throw httpError(422, `${at}: query_db join ${n} must be {type, table, alias?, on:{left, right}}`);
+      }
+      const type = String(j.type == null ? 'left' : j.type).trim().toLowerCase().replace(/\s+/g, ' ');
+      if (!rules.joinTypes.has(type)) throw httpError(422, `${at}: query_db join ${n} type must be one of ${[...rules.joinTypes].join(', ')}`);
+      if (typeof j.table !== 'string' || !rules.tables.has(j.table)) {
+        throw httpError(422, `${at}: query_db join ${n} table must be one of the function's tables: ${[...rules.tables].join(', ')}`);
+      }
+      let ref = j.table;
+      if (j.alias !== undefined && j.alias !== null && j.alias !== '') {
+        if (typeof j.alias !== 'string' || !QUERY_DB_ALIAS_RE.test(j.alias) || rules.tables.has(j.alias)) {
+          throw httpError(422, `${at}: query_db join ${n} alias must be 1-30 lowercase letters, digits or underscores, start with a letter, and not be a table name`);
+        }
+        ref = j.alias;
+      }
+      if (refs.has(ref)) throw httpError(422, `${at}: query_db join ${n}: "${ref}" is already in the query — join a table twice only under distinct aliases`);
+      const earlier = new Set(refs.keys());
+      refs.set(ref, j.table);
+      const on = j.on;
+      if (!on || typeof on !== 'object' || Array.isArray(on) || !onlyKeys(on, new Set(['left', 'right']))) {
+        throw httpError(422, `${at}: query_db join ${n} needs on: {left, right}`);
+      }
+      const left = column(on.left, `join ${n} on.left`);
+      const right = column(on.right, `join ${n} on.right`);
+      const l = left.split('.')[0];
+      const r = right.split('.')[0];
+      if (!((l === ref && earlier.has(r)) || (r === ref && earlier.has(l)))) {
+        throw httpError(422, `${at}: query_db join ${n} must connect ${ref} to the from table or an earlier join (one side ${ref}.column, the other an earlier table's column)`);
+      }
+      join.push({ type, table: j.table, ...(ref !== j.table ? { alias: ref } : {}), on: { left, right } });
+    });
+  }
+
+  if (!Array.isArray(raw.select) || !raw.select.length || raw.select.length > QUERY_DB_MAX.select) {
+    throw httpError(422, `${at}: query_db select must list 1-${QUERY_DB_MAX.select} columns as table.column`);
+  }
+  const select = raw.select.map((c, i) => column(c, `select ${i + 1}`));
+
+  const where = [];
+  if (raw.where !== undefined) {
+    if (!Array.isArray(raw.where) || raw.where.length > QUERY_DB_MAX.where) throw httpError(422, `${at}: query_db where must be a list of at most ${QUERY_DB_MAX.where} clauses`);
+    raw.where.forEach((c, i) => {
+      const n = i + 1;
+      if (!c || typeof c !== 'object' || Array.isArray(c) || !onlyKeys(c, new Set(['column', 'op', 'value']))) {
+        throw httpError(422, `${at}: query_db where ${n} must be {column, op, value?}`);
+      }
+      const col = column(c.column, `where ${n} column`);
+      const op = typeof c.op === 'string' ? c.op.trim().toUpperCase().replace(/\s+/g, ' ') : '';
+      if (!rules.whereOps.has(op)) throw httpError(422, `${at}: query_db where ${n} op must be one of ${[...rules.whereOps].join(', ')}`);
+      const clause = { column: col, op };
+      if (op === 'IS NULL' || op === 'IS NOT NULL') {
+        if (c.value !== undefined && c.value !== null) throw httpError(422, `${at}: query_db where ${n} (${op}) takes no value`);
+      } else if (op === 'IN' || op === 'NOT IN') {
+        if (!Array.isArray(c.value) || !c.value.length || c.value.length > QUERY_DB_MAX.inValues || !c.value.every(queryDbScalar)) {
+          throw httpError(422, `${at}: query_db where ${n} (${op}) needs a literal list of 1-${QUERY_DB_MAX.inValues} text or number values (each at most ${QUERY_DB_MAX.valueChars} characters)`);
+        }
+        clause.value = c.value.slice();
+      } else {
+        if (!queryDbScalar(c.value)) {
+          throw httpError(422, `${at}: query_db where ${n} (${op}) needs one text or number value of at most ${QUERY_DB_MAX.valueChars} characters — test for empty with IS NULL / IS NOT NULL`);
+        }
+        clause.value = c.value;
+      }
+      where.push(clause);
+    });
+  }
+  let whereMode;
+  if (raw.where_mode !== undefined && raw.where_mode !== 'and' && raw.where_mode !== 'or') {
+    throw httpError(422, `${at}: query_db where_mode must be "and" or "or"`);
+  }
+  if (where.length) whereMode = raw.where_mode || 'and';
+
+  const orderBy = [];
+  if (raw.order_by !== undefined) {
+    if (!Array.isArray(raw.order_by) || raw.order_by.length > QUERY_DB_MAX.order) throw httpError(422, `${at}: query_db order_by must be a list of at most ${QUERY_DB_MAX.order} entries`);
+    raw.order_by.forEach((o, i) => {
+      const n = i + 1;
+      if (!o || typeof o !== 'object' || Array.isArray(o) || !onlyKeys(o, new Set(['column', 'dir']))) {
+        throw httpError(422, `${at}: query_db order_by ${n} must be {column, dir?}`);
+      }
+      const dir = String(o.dir == null ? 'asc' : o.dir).trim().toLowerCase();
+      if (!rules.orderDirs.has(dir)) throw httpError(422, `${at}: query_db order_by ${n} dir must be asc or desc`);
+      orderBy.push({ column: column(o.column, `order_by ${n} column`), dir });
+    });
+  }
+
+  const limit = raw.limit === undefined ? rules.defaultLimit : raw.limit;
+  if (!Number.isInteger(limit) || limit < 1 || limit > rules.maxLimit) {
+    throw httpError(422, `${at}: query_db limit must be a whole number 1-${rules.maxLimit}`);
+  }
+  const format = raw.format === undefined ? 'raw' : raw.format;
+  if (!QUERY_DB_FORMATS.has(format)) throw httpError(422, `${at}: query_db format must be raw, first or count`);
+  const outputVar = queryDbVarName(raw.output_var, 'output_var', at);
+  const countVar = queryDbVarName(raw.count_var, 'count_var', at);
+
+  const params = {
+    select, from,
+    ...(join.length ? { join } : {}),
+    ...(where.length ? { where, where_mode: whereMode } : {}),
+    ...(orderBy.length ? { order_by: orderBy } : {}),
+    limit, format,
+    ...(outputVar ? { output_var: outputVar } : {}),
+    ...(countVar ? { count_var: countVar } : {}),
+  };
+  const mods = require('../lib/workflow_engine').findModifierPlaceholders(params);
+  if (mods.length) throw httpError(422, `${at}: workflow placeholders take no |modifiers (${[...new Set(mods)].slice(0, 5).join(', ')}) — they resolve to empty`);
+  const vErr = require('../lib/internal_functions').__validateFunctionParams('query_db', params);
+  if (vErr) throw httpError(422, `${at}: ${vErr.error}`);
+  return { params, used };
+}
+
+// The live-column half: every referenced column must exist on its table,
+// spelled as the table spells it. One information_schema read (columns only —
+// names, never data). A refusal lists the table's readable columns so the
+// repair stage can fix the name.
+async function checkQueryDbColumns(db, normalized, at) {
+  const rules = require('../lib/internal_functions').__QUERY_DB_RULES;
+  const tables = [...new Set([normalized.params.from, ...(normalized.params.join || []).map((j) => j.table)])];
+  const [rows] = await db.query(
+    `SELECT TABLE_NAME AS table_name, COLUMN_NAME AS column_name
+       FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (?)
+      ORDER BY TABLE_NAME, ORDINAL_POSITION`, [tables]);
+  const byTable = new Map();
+  for (const r of rows || []) {
+    if (!byTable.has(r.table_name)) byTable.set(r.table_name, []);
+    byTable.get(r.table_name).push(r.column_name);
+  }
+  for (const t of tables) {
+    if (!byTable.has(t)) throw httpError(422, `${at}: query_db table ${t} has no columns in this database`);
+  }
+  for (const u of normalized.used) {
+    const cols = byTable.get(u.table);
+    if (!cols.includes(u.column)) {
+      const blocked = rules.blockedColumns[u.table] || [];
+      const readable = cols.filter((c) => !blocked.includes(c));
+      throw httpError(422, `${at}: query_db ${u.role} "${u.ref}.${u.column}" — ${u.table} has no column "${u.column}". Its columns: ${readable.slice(0, 80).join(', ')}${readable.length > 80 ? ', …' : ''}`);
+    }
+  }
+}
+
+// What the card shows for a query_db step: the table, the columns, each
+// predicate in plain language, the limit, and that the step only reads.
+function queryDbReview(params) {
+  const shown = (v) => (typeof v === 'string' && v.includes('{{') ? `${v} (filled when the step runs)` : JSON.stringify(v));
+  const where = params.where || [];
+  const returns = { raw: 'every matching row (up to the limit)', first: 'the first matching row only', count: 'the number of matching rows' }[params.format];
+  return {
+    reads_only: true,
+    table: params.from,
+    joins: (params.join || []).map((j) => `${j.type.toUpperCase()} JOIN ${j.table}${j.alias ? ` AS ${j.alias}` : ''} ON ${j.on.left} = ${j.on.right}`),
+    columns: params.select.slice(),
+    predicates: where.map((c) => `${c.column} ${QUERY_DB_OP_WORDS[c.op]}${c.value === undefined ? ''
+      : ` ${Array.isArray(c.value) ? `[${c.value.map(shown).join(', ')}]` : shown(c.value)}`}`),
+    combine: where.length > 1 ? (params.where_mode === 'or' ? 'any' : 'all') : null,
+    order: (params.order_by || []).map((o) => `${o.column} ${o.dir === 'desc' ? 'descending' : 'ascending'}`),
+    limit: params.limit,
+    returns,
+    stores: [
+      ...(params.output_var ? [`{{${params.output_var}}} ← ${returns}`] : []),
+      ...(params.count_var ? [`{{${params.count_var}}} ← the row count`] : []),
+    ],
+  };
+}
+
+async function normalizeQueryDbStepConfig(db, config, at) {
+  const extra = Object.keys(config).filter((k) => !QUERY_DB_STEP_CONFIG_KEYS.has(k));
+  if (extra.length) throw httpError(422, `${at}: a query_db step's config carries unsupported fields: ${extra.join(', ')} — remove them`);
+  if (config.set_vars !== undefined && (config.set_vars === null || typeof config.set_vars !== 'object' || Array.isArray(config.set_vars))) {
+    throw httpError(422, `${at}: set_vars must be a JSON object`);
+  }
+  const normalized = normalizeQueryDbParams(config.params, at);
+  await checkQueryDbColumns(db, normalized, at);
+  return { config: { ...config, params: normalized.params }, review: queryDbReview(normalized.params) };
+}
+
+// ── A17.4b: webhook steps ──────────────────────────────────────────────────
+// The webhook step is the best-validated step type (routes/workflows.js
+// validateWebhookConfig; lib/webhookExecutor through the async
+// buildHeadersForCredential), so the narrow part is the destination and the
+// credential, not the type:
+//   - the URL is a literal https URL, never templated (an unresolved workflow
+//     placeholder blanks silently, so {{base}}/hook could call /hook), never
+//     carrying userinfo or a fragment; it is either in the user's own message
+//     verbatim, or — with no query string, because a query-string token is
+//     the user's to type, never Casey's to compose — on a host an existing
+//     webhook step of the SAME workflow already calls, or a host a stored
+//     credential's allowed URLs name;
+//   - auth comes only from a credential the user NAMES by its label (or the
+//     exact (host, credential) pair a step of this workflow already uses);
+//     Casey writes no header values at all, and never pairs a credential with
+//     a host it has not been used with (its allowed URLs cover the URL, an
+//     internal credential's app host, or that same-workflow pair);
+//   - the method is explicit from the closed set (the engine's legacy default
+//     is GET, so an omitted method would surprise); timeout_ms defaults to
+//     15 s, well below the 120 s cap;
+//   - the card shows the full URL, the method, the credential LABEL, the body
+//     as stored and through A17.2's dry run, the timeout, and the retry fact.
+const WEBHOOK_STEP_KEYS = new Set(['url', 'method', 'credential', 'body', 'timeout_ms', 'set_vars']);
+const WEBHOOK_STORED_KEYS = new Set(['url', 'method', 'credential_id', 'body', 'timeout_ms', 'set_vars', 'next_step']);
+const WEBHOOK_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+const WEBHOOK_DEFAULT_TIMEOUT_MS = 15000;
+const WEBHOOK_MAX_TIMEOUT_MS = 120000;
+const WEBHOOK_MAX_URL_CHARS = 2000;
+const WEBHOOK_MAX_BODY_JSON = 10000;
+const WEBHOOK_MAX_SET_VARS = 20;
+
+function webhookHostOf(url) {
+  if (typeof url !== 'string' || /\{\{|\}\}/.test(url)) return null;
+  try { return new URL(url).host.toLowerCase() || null; } catch (_) { return null; }
+}
+
+// The URL appears in the user's text as a WHOLE token: what follows it is the
+// end, whitespace, a closing quote / bracket, or sentence punctuation that is
+// itself followed by the end or whitespace — so a model that truncates a typed
+// URL (dropping its query token or a path segment) is not "typed".
+function webhookUrlTypedByUser(text, url) {
+  for (let i = text.indexOf(url); i !== -1; i = text.indexOf(url, i + 1)) {
+    const rest = text.slice(i + url.length);
+    if (!rest || /^[\s)\]>"'<,;!]/.test(rest) || /^[.?:](?:\s|$)/.test(rest)) return true;
+  }
+  return false;
+}
+
+// A credential label the user named: case-insensitive, not inside a longer
+// word ("API" is not named by "rapid"), and not inside a URL the user typed
+// (the host "api.example.com" does not name a credential called "API").
+function webhookLabelNamedByUser(text, label) {
+  const esc = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^A-Za-z0-9])${esc}($|[^A-Za-z0-9])`, 'i').test(text.replace(/\bhttps?:\/\/\S+/gi, ' '));
+}
+
+function webhookAllowedUrls(cred) {
+  let list = cred.allowed_urls;
+  if (typeof list === 'string') { try { list = JSON.parse(list); } catch (_) { list = null; } }
+  return Array.isArray(list) ? list.filter((p) => typeof p === 'string' && p.trim()) : [];
+}
+
+// The structural half (no DB). `config` is Casey's shape: credential is a
+// LABEL (the read surface never shows a credential id), credential_id and
+// headers are refused by name. Returns { config, credential, timeoutDefaulted }
+// where config lacks credential_id until the DB half resolves the label.
+function normalizeWebhookConfig(config, at) {
+  if (config.headers !== undefined) {
+    throw httpError(422, `${at}: Casey writes no webhook headers — auth comes only from a credential the user names; tell the user to add any other header by hand`);
+  }
+  if (config.credential_id !== undefined) {
+    throw httpError(422, `${at}: name the webhook credential by its label in "credential" (the label the user gave, or the one an existing step of this workflow shows) — never a credential_id`);
+  }
+  const unknown = Object.keys(config).filter((k) => !WEBHOOK_STEP_KEYS.has(k));
+  if (unknown.length) throw httpError(422, `${at}: a webhook step's config carries unsupported fields: ${unknown.join(', ')} — remove them`);
+  const url = typeof config.url === 'string' ? config.url.trim() : '';
+  if (!url) throw httpError(422, `${at}: a webhook step needs a url`);
+  if (/\{\{|\}\}/.test(url)) {
+    throw httpError(422, `${at}: a webhook URL is never templated — an unresolved placeholder blanks silently, so the real destination could not be reviewed; use the literal URL`);
+  }
+  if (url.length > WEBHOOK_MAX_URL_CHARS || /\s/.test(url)) throw httpError(422, `${at}: the webhook URL must be one literal URL of at most ${WEBHOOK_MAX_URL_CHARS} characters`);
+  let parsed;
+  try { parsed = new URL(url); } catch (_) { throw httpError(422, `${at}: the webhook URL is not a valid URL`); }
+  if (parsed.protocol !== 'https:') throw httpError(422, `${at}: a webhook URL Casey writes must be https`);
+  if (parsed.username || parsed.password) throw httpError(422, `${at}: a webhook URL never carries a username or password — auth comes from a credential the user names`);
+  if (parsed.hash) throw httpError(422, `${at}: a webhook URL carries no #fragment`);
+  const method = typeof config.method === 'string' ? config.method.trim().toUpperCase() : '';
+  if (!WEBHOOK_METHODS.has(method)) {
+    throw httpError(422, `${at}: a webhook step needs an explicit method: ${[...WEBHOOK_METHODS].join(', ')} (the engine's default would be GET)`);
+  }
+  let credential = null;
+  if (config.credential !== undefined && config.credential !== null && config.credential !== '') {
+    if (typeof config.credential !== 'string' || !config.credential.trim() || config.credential.length > 255) {
+      throw httpError(422, `${at}: the webhook credential must be a credential's label`);
+    }
+    credential = config.credential.trim();
+  }
+  const out = { url, method };
+  if (config.body !== undefined && config.body !== null) {
+    if (method === 'GET' || method === 'DELETE') throw httpError(422, `${at}: a ${method} webhook sends no body — drop the body or use POST / PUT / PATCH`);
+    let json;
+    try { json = JSON.stringify(config.body); } catch (_) { json = undefined; }
+    if (json === undefined) throw httpError(422, `${at}: the webhook body is not serializable`);
+    if (json.length > WEBHOOK_MAX_BODY_JSON) throw httpError(422, `${at}: the webhook body exceeds ${WEBHOOK_MAX_BODY_JSON} characters of JSON`);
+    out.body = JSON.parse(json);
+  }
+  let timeoutDefaulted = false;
+  if (config.timeout_ms === undefined || config.timeout_ms === null) {
+    out.timeout_ms = WEBHOOK_DEFAULT_TIMEOUT_MS;
+    timeoutDefaulted = true;
+  } else {
+    if (!Number.isInteger(config.timeout_ms) || config.timeout_ms < 1000 || config.timeout_ms > WEBHOOK_MAX_TIMEOUT_MS) {
+      throw httpError(422, `${at}: webhook timeout_ms must be a whole number 1000-${WEBHOOK_MAX_TIMEOUT_MS}`);
+    }
+    out.timeout_ms = config.timeout_ms;
+  }
+  if (config.set_vars !== undefined) {
+    const sv = config.set_vars;
+    if (sv === null || typeof sv !== 'object' || Array.isArray(sv)) throw httpError(422, `${at}: set_vars must be a JSON object`);
+    const keys = Object.keys(sv);
+    if (keys.length > WEBHOOK_MAX_SET_VARS || keys.some((k) => !WORKFLOW_VAR_NAME_RE.test(k) || k === 'this' || k === 'env')
+        || Object.values(sv).some((v) => !((typeof v === 'string' && v.length <= 500) || (typeof v === 'number' && Number.isFinite(v)) || typeof v === 'boolean' || v === null))) {
+      throw httpError(422, `${at}: set_vars maps at most ${WEBHOOK_MAX_SET_VARS} plain variable names to text (e.g. "{{this.id}}"), number, true/false or null`);
+    }
+    out.set_vars = { ...sv };
+  }
+  const mods = require('../lib/workflow_engine').findModifierPlaceholders(out);
+  if (mods.length) throw httpError(422, `${at}: workflow placeholders take no |modifiers (${[...new Set(mods)].slice(0, 5).join(', ')}) — they resolve to empty`);
+  return { config: out, credential, timeoutDefaulted };
+}
+
+// The DB half: the destination's evidence, the credential's label → id, the
+// pairing rule, and the card annotation. ctx: { userText — the user's own
+// messages in this conversation; siblings — the target workflow's existing
+// steps as { step_number, type, config } ([] for a new draft) }. Edit only:
+// keepCredentialId is the stored credential kept unchanged, storedUrl the
+// step's own stored URL — an edit that leaves it as stored needs no evidence
+// for it (the user put it there; Casey is not composing it).
+async function resolveWebhookStep(db, normalized, ctx, at, { keepCredentialId = null, storedUrl = null } = {}) {
+  const userText = String(ctx.userText || '');
+  const siblings = Array.isArray(ctx.siblings) ? ctx.siblings : [];
+  const { config } = normalized;
+  const url = config.url;
+  const host = new URL(url).host.toLowerCase();
+  const [credRows] = await db.query('SELECT id, name, type, allowed_urls FROM credentials ORDER BY id');
+  const creds = (credRows || []).map((c) => ({ ...c, id: Number(c.id), name: String(c.name) }));
+
+  const siblingHost = siblings.find((s) => s.type === 'webhook' && webhookHostOf(s.config && s.config.url) === host);
+  // A credential's allowed-URL pattern names a host only when the host part
+  // holds no wildcard ("https://api.example.com/*" does; "https://*.x.com/*"
+  // does not); a wildcard in the path is replaced only to parse it.
+  const credentialHost = creds.find((c) => webhookAllowedUrls(c).some((p) =>
+    !/^[^:]+:\/\/[^/]*\*/.test(p) && webhookHostOf(p.replace(/\*/g, 'x')) === host)) || null;
+  const typed = webhookUrlTypedByUser(userText, url);
+  let urlSource;
+  if (storedUrl != null && url === storedUrl) {
+    urlSource = 'unchanged — as stored on this step';
+  } else if (typed) {
+    urlSource = 'typed by the user in this conversation';
+  } else {
+    if (new URL(url).search) {
+      throw httpError(422, `${at}: a webhook URL with a query string is the user's to type — ask the user to paste the full URL; Casey never composes one`);
+    }
+    if (siblingHost) urlSource = `same host as step ${siblingHost.step_number} of this workflow`;
+    else if (credentialHost) urlSource = `host named by the allowed URLs of credential "${credentialHost.name}"`;
+    else {
+      throw httpError(422, `${at}: the webhook URL must appear verbatim in the user's own message, or share its host with an existing webhook step of this workflow or a stored credential — ${host} does neither. Ask the user for the exact URL`);
+    }
+  }
+
+  let cred = null;
+  if (normalized.credential) {
+    const label = normalized.credential.toLowerCase();
+    const matches = creds.filter((c) => c.name.toLowerCase() === label);
+    if (!matches.length) {
+      throw httpError(422, `${at}: no credential is labelled "${normalized.credential}" — the user picks one by its exact label: ${creds.map((c) => c.name).slice(0, 30).join(', ') || '(none stored)'}`);
+    }
+    if (matches.length > 1) throw httpError(422, `${at}: more than one credential is labelled "${normalized.credential}" — tell the user to pick it in the workflow editor`);
+    cred = matches[0];
+  } else if (keepCredentialId != null) {
+    cred = creds.find((c) => c.id === Number(keepCredentialId)) || null;
+    if (!cred) throw httpError(422, `${at}: the step's stored credential #${keepCredentialId} no longer exists — tell the user to fix the step in the workflow editor`);
+  }
+  if (cred) {
+    const samePair = siblings.some((s) => s.type === 'webhook' && s.config && Number(s.config.credential_id) === cred.id
+      && webhookHostOf(s.config.url) === host);
+    const named = webhookLabelNamedByUser(userText, cred.name);
+    if (!named && !samePair) {
+      throw httpError(422, `${at}: credential "${cred.name}" was not named by the user — Casey uses a credential only when the user names it, or when this workflow already calls ${host} with it`);
+    }
+    const scope = require('../lib/credentialInjection').checkUrlScope(cred, url);
+    if (!scope.ok) throw httpError(422, `${at}: credential "${cred.name}" would refuse this URL when the step runs (${scope.reason})`);
+    const covered = webhookAllowedUrls(cred).length > 0 || cred.type === 'internal';
+    if (!covered && !samePair) {
+      throw httpError(422, `${at}: credential "${cred.name}" has no allowed URLs and no step of this workflow uses it with ${host} — Casey never pairs a credential with a new host; tell the user to add the step by hand (or set the credential's allowed URLs)`);
+    }
+  }
+
+  const stored = {
+    url, method: config.method,
+    ...(cred ? { credential_id: cred.id } : {}),
+    ...(config.body !== undefined ? { body: config.body } : {}),
+    timeout_ms: config.timeout_ms,
+    ...(config.set_vars !== undefined ? { set_vars: config.set_vars } : {}),
+  };
+  // A17.2's dry run, exactly as the preview kind runs it: placeholders
+  // resolved with no run-time variables (so each blanks), and listed.
+  const { preview } = require('./stepPreviewService').buildStepPreview({ step: { type: 'webhook' }, config: stored });
+  const annotation = {
+    url, method: config.method,
+    credential: cred ? cred.name : null,
+    timeout_ms: config.timeout_ms,
+    timeout_defaulted: normalized.timeoutDefaulted,
+    body: config.body === undefined ? null : config.body,
+    dry_run_body: config.body === undefined ? null : preview.resolved_config.body,
+    filled_at_run_time: preview.unresolved_placeholders,
+    set_vars: config.set_vars === undefined ? null : config.set_vars,
+    url_source: urlSource,
+  };
+  return { config: stored, annotation };
+}
+
+// Casey's view of a STORED webhook step (the edit card's "before", and the
+// merge base an edit applies its changes to). Refuses a step carrying keys
+// Casey does not author — literal headers above all — rather than carry them
+// through a card.
+function webhookStoredView(cfg, creds, stepNumber) {
+  const extra = Object.keys(cfg).filter((k) => !WEBHOOK_STORED_KEYS.has(k));
+  if (extra.length) {
+    throw httpError(422, `Step ${stepNumber} carries ${extra.join(', ')} — Casey does not edit a webhook step with literal headers or other hand-set keys; tell the user to change it in the workflow editor`);
+  }
+  const cred = cfg.credential_id == null ? null : creds.find((c) => Number(c.id) === Number(cfg.credential_id));
+  return {
+    url: cfg.url == null ? null : String(cfg.url),
+    method: cfg.method ? String(cfg.method).toUpperCase() : 'GET (engine default — not set)',
+    credential: cfg.credential_id == null ? null : (cred ? String(cred.name) : `credential #${cfg.credential_id} (missing)`),
+    body: cfg.body === undefined ? null : cfg.body,
+    timeout_ms: cfg.timeout_ms == null ? '30000 (engine default — not set)' : cfg.timeout_ms,
+    set_vars: cfg.set_vars === undefined ? null : cfg.set_vars,
+  };
+}
+
 // One authored step, normalized exactly as workflow.draft.v1 always has —
 // shared verbatim by the A17.3 draft (every step) and the A17.4 insert (its
 // one step). `at` is the error-message subject ("Workflow draft step 3",
 // "Inserted step"). Returns { type, config, side_effect, error_policy?,
-// label?, note? }; the side_effect annotation is for the card and is stripped
-// by the browser's request builder.
-function normalizeAuthoredStep(step, at) {
-  const { CASEY_AUTHORABLE_FUNCTIONS } = require('../lib/caseyAutomationAllowlist');
+// label?, note?, query?, webhook? }; side_effect and the query / webhook
+// review annotations are for the card and are stripped by the browser's
+// request builder (it sends type, config, label, note, error_policy only).
+// Async since A17.4a/b: a query_db step's columns are checked against the
+// live tables and a webhook step's destination and credential against the
+// conversation and the stored rows. ctx: { userText, siblings } (see
+// resolveWebhookStep).
+async function normalizeAuthoredStep(db, step, at, ctx = {}) {
+  const { CASEY_AUTHORABLE_FUNCTIONS, CASEY_STRUCTURED_FUNCTIONS } = require('../lib/caseyAutomationAllowlist');
   if (!step || typeof step !== 'object') throw httpError(422, `${at} is malformed`);
   // step_number is accepted and IGNORED: array order / the proposal's own
   // position field is authoritative, and P12's evidence rows show
@@ -9965,7 +10480,10 @@ function normalizeAuthoredStep(step, at) {
     throw httpError(422, `${at} config must not contain a "type" key`);
   }
   let out;
-  if (step.type === 'internal_function') {
+  if (step.type === 'internal_function' && CASEY_STRUCTURED_FUNCTIONS.has(config.function_name)) {
+    const q = await normalizeQueryDbStepConfig(db, config, at);
+    out = { type: 'internal_function', config: q.config, side_effect: CASEY_STRUCTURED_FUNCTIONS.get(config.function_name), query: q.review };
+  } else if (step.type === 'internal_function') {
     const fn = config.function_name;
     const sideEffect = CASEY_AUTHORABLE_FUNCTIONS.get(fn);
     if (!sideEffect) {
@@ -9988,7 +10506,8 @@ function normalizeAuthoredStep(step, at) {
     }
     out = { type: 'custom_code', config: { ...config, code_mode: 'safe' }, side_effect: 'safe-code' };
   } else if (step.type === 'webhook') {
-    throw httpError(422, `${at}: Casey does not author webhook steps yet — tell the user to add it by hand after the draft is created`);
+    const w = await resolveWebhookStep(db, normalizeWebhookConfig(config, at), ctx, at);
+    out = { type: 'webhook', config: w.config, side_effect: 'external-call', webhook: w.annotation };
   } else {
     throw httpError(422, `${at} has an unsupported type`);
   }
@@ -10008,12 +10527,15 @@ function normalizeAuthoredStep(step, at) {
     }
     out.error_policy = p;
   }
+  // The engine retries on ANY failure whenever max_retries > 0, whatever the
+  // strategy is named — the card says how many times the endpoint can be hit.
+  if (out.webhook) out.webhook.max_retries = out.error_policy && out.error_policy.max_retries ? out.error_policy.max_retries : 0;
   if (label) out.label = label;
   if (note) out.note = note;
   return out;
 }
 
-async function normalizeWorkflowDraftAction(db, value, evidence) {
+async function normalizeWorkflowDraftAction(db, value, evidence, { userText = '' } = {}) {
   if (require('../lib/firmConfig').cfg('casey_workflow_authoring_enabled') === '0') {
     throw httpError(422, 'Action kind is unavailable');
   }
@@ -10031,7 +10553,12 @@ async function normalizeWorkflowDraftAction(db, value, evidence) {
   if (!Array.isArray(value.steps) || !value.steps.length || value.steps.length > WORKFLOW_DRAFT_MAX_STEPS) {
     throw httpError(422, `Workflow draft needs 1-${WORKFLOW_DRAFT_MAX_STEPS} steps`);
   }
-  const steps = value.steps.map((step, index) => normalizeAuthoredStep(step, `Workflow draft step ${index + 1}`));
+  // A new workflow has no existing steps, so a webhook destination's evidence
+  // is the user's own message or a stored credential's host.
+  const steps = [];
+  for (let i = 0; i < value.steps.length; i++) {
+    steps.push(await normalizeAuthoredStep(db, value.steps[i], `Workflow draft step ${i + 1}`, { userText, siblings: [] }));
+  }
   for (let i = 0; i < steps.length; i++) {
     const prior = steps.slice(0, i).map((s, j) => ({ step_number: j + 1, type: s.type, config: s.config }));
     await annotateWorkflowSendStep(db, steps[i], prior, `Workflow draft step ${i + 1}`);
@@ -10067,7 +10594,7 @@ function evidenceSupportsAutomation(evidenceRefs, evidence, workflowId) {
 // route re-checks it inside the write transaction and refuses with a 409
 // when the base moved (P11). The 15-minute card TTL bounds the window; the
 // precondition closes it.
-async function normalizeWorkflowStepAction(db, value, evidence) {
+async function normalizeWorkflowStepAction(db, value, evidence, { userText = '' } = {}) {
   if (require('../lib/firmConfig').cfg('casey_workflow_authoring_enabled') === '0') {
     throw httpError(422, 'Action kind is unavailable');
   }
@@ -10096,6 +10623,9 @@ async function normalizeWorkflowStepAction(db, value, evidence) {
        FROM workflow_steps WHERE workflow_id = ? AND version = ? ORDER BY step_number`,
     [workflowId, readVersion]);
   const { stepFingerprint, parseMaybeJson, canonical, extractBranchTargets, BRANCH_TARGET_PARAMS } = require('../lib/versionDiff');
+  // The workflow's existing steps, parsed — a webhook destination's or a
+  // credential pairing's evidence (A17.4b) is a step of THIS workflow.
+  const siblings = steps.map((s) => ({ step_number: Number(s.step_number), type: s.type, config: parseMaybeJson(s.config) || {} }));
   const workflow = {
     workflow_id: workflowId,
     name: String(wf.name || `Workflow ${workflowId}`).slice(0, 200),
@@ -10115,7 +10645,7 @@ async function normalizeWorkflowStepAction(db, value, evidence) {
       }
       if (position === steps.length + 1) position = null; // appending by position IS an append
     }
-    const step = normalizeAuthoredStep(value.step, 'Inserted step');
+    const step = await normalizeAuthoredStep(db, value.step, 'Inserted step', { userText, siblings });
     const before = position != null ? position - 1 : steps.length;
     await annotateWorkflowSendStep(db, step, steps.slice(0, before).map((s) => ({
       step_number: s.step_number, type: s.type, config: parseMaybeJson(s.config) || {} })), 'Inserted step');
@@ -10145,13 +10675,33 @@ async function normalizeWorkflowStepAction(db, value, evidence) {
     throw httpError(422, 'Workflow step edit needs at least one change');
   }
   if (!onlyKeys(changes, WORKFLOW_STEP_EDIT_CHANGE_KEYS)) {
-    throw httpError(422, 'Workflow step edit contains unsupported change fields — only label, note, params, code, and input are editable');
+    throw httpError(422, 'Workflow step edit contains unsupported change fields — only label, note, params, code, input, and webhook are editable');
   }
-  const { CASEY_AUTHORABLE_FUNCTIONS } = require('../lib/caseyAutomationAllowlist');
+  const { CASEY_AUTHORABLE_FUNCTIONS, CASEY_STRUCTURED_FUNCTIONS } = require('../lib/caseyAutomationAllowlist');
   const out = { changes: {}, before: {} };
   let newConfig = null;
   let send = null;
-  if (target.type === 'internal_function') {
+  let query = null;
+  let webhook = null;
+  if ('webhook' in changes && target.type !== 'webhook') {
+    throw httpError(422, `Step ${stepNumber} is not a webhook step — "webhook" changes apply only to a webhook step`);
+  }
+  if (target.type === 'internal_function' && CASEY_STRUCTURED_FUNCTIONS.has(targetCfg.function_name)) {
+    // A17.4a: a query_db step's params are replaced WHOLE by a structure the
+    // normalizer builds and checks, exactly as an insert's are; the stored
+    // config's other keys (set_vars, next_step) stay as stored.
+    if ('code' in changes || 'input' in changes) {
+      throw httpError(422, `Step ${stepNumber} is not a code step — its behaviour is edited through params`);
+    }
+    if ('params' in changes) {
+      const normalized = normalizeQueryDbParams(changes.params, 'Workflow step edit');
+      await checkQueryDbColumns(db, normalized, 'Workflow step edit');
+      out.changes.params = normalized.params;
+      out.before.params = targetCfg.params == null ? null : targetCfg.params;
+      newConfig = { ...targetCfg, params: normalized.params };
+      query = queryDbReview(normalized.params);
+    }
+  } else if (target.type === 'internal_function') {
     const fn = targetCfg.function_name;
     if (!CASEY_AUTHORABLE_FUNCTIONS.get(fn)) {
       throw httpError(422, `Step ${stepNumber} runs "${fn}", which is outside Casey's authoring allowlist — tell the user to edit it by hand in the workflow editor`);
@@ -10213,6 +10763,46 @@ async function normalizeWorkflowStepAction(db, value, evidence) {
     }
     if (newConfig) newConfig.code_mode = 'safe';
     if (!('code' in changes) && !('input' in changes)) newConfig = null;
+  } else if (target.type === 'webhook') {
+    // A17.4b: the call is edited through `webhook` — a partial change merged
+    // over the stored call, then held to the insert's whole contract (literal
+    // URL with evidence unless left as stored, a credential the user names
+    // or this step's own pair, no header values). A step carrying literal
+    // headers or other hand-set keys is refused, never carried through a card.
+    if ('params' in changes || 'code' in changes || 'input' in changes) {
+      throw httpError(422, `Step ${stepNumber} is a webhook step — its call is edited through "webhook" (url, method, credential, body, timeout_ms, set_vars)`);
+    }
+    if ('webhook' in changes) {
+      const w = changes.webhook;
+      if (w == null || typeof w !== 'object' || Array.isArray(w) || !Object.keys(w).length) {
+        throw httpError(422, 'Workflow step edit webhook must be an object of the call fields to change');
+      }
+      const [credRows] = await db.query('SELECT id, name, type, allowed_urls FROM credentials ORDER BY id');
+      const before = webhookStoredView(targetCfg, credRows || [], stepNumber);
+      const merged = {
+        url: targetCfg.url,
+        method: targetCfg.method || 'GET',
+        ...(targetCfg.body !== undefined ? { body: targetCfg.body } : {}),
+        ...(targetCfg.timeout_ms != null ? { timeout_ms: targetCfg.timeout_ms } : {}),
+        ...(targetCfg.set_vars !== undefined ? { set_vars: targetCfg.set_vars } : {}),
+        ...w,
+      };
+      // credential: absent → the stored one stays; null / '' → no auth; a
+      // label → that credential, under the pairing rule.
+      const keepCredentialId = !('credential' in w) && targetCfg.credential_id != null ? targetCfg.credential_id : null;
+      const normalized = normalizeWebhookConfig(merged, 'Workflow step edit');
+      const resolved = await resolveWebhookStep(db, normalized, { userText, siblings }, 'Workflow step edit',
+        { keepCredentialId, storedUrl: typeof targetCfg.url === 'string' ? targetCfg.url : null });
+      newConfig = { ...resolved.config, ...(targetCfg.next_step !== undefined ? { next_step: targetCfg.next_step } : {}) };
+      webhook = resolved.annotation;
+      const storedPolicy = parseMaybeJson(target.error_policy);
+      webhook.max_retries = storedPolicy && Number(storedPolicy.max_retries) > 0 ? Number(storedPolicy.max_retries) : 0;
+      out.changes.webhook = {
+        url: webhook.url, method: webhook.method, credential: webhook.credential, body: webhook.body,
+        timeout_ms: webhook.timeout_ms, set_vars: webhook.set_vars,
+      };
+      out.before.webhook = before;
+    }
   } else {
     throw httpError(422, `Step ${stepNumber} is a ${target.type} step — Casey does not edit those; tell the user to change it in the workflow editor`);
   }
@@ -10237,6 +10827,8 @@ async function normalizeWorkflowStepAction(db, value, evidence) {
     changes: out.changes, before: out.before,
     ...(newConfig ? { new_config: newConfig } : {}),
     ...(send ? { send } : {}),
+    ...(query ? { query } : {}),
+    ...(webhook ? { webhook } : {}),
     expected_base: expectedBase,
   };
 }
@@ -13520,7 +14112,16 @@ async function normalizeIngestRuleAction(db, value, evidence) {
   };
 }
 
-async function normalizeActionDraft(db, value, evidence, { currentUserId = null, question = '' } = {}) {
+// The user's OWN words in this conversation: the current message plus the
+// last four user turns (the window taskDraftRequested reads). A17.4b's
+// literal-URL and named-credential evidence is read from here — never from
+// evidence rows, which carry third-party content (emails, transcripts).
+function draftUserText(question, history) {
+  const prior = cleanHistory(history).filter((m) => m.role === 'user').slice(-4).map((m) => m.text);
+  return [...prior, String(question || '')].join('\n');
+}
+
+async function normalizeActionDraft(db, value, evidence, { currentUserId = null, question = '', history = [] } = {}) {
   if (value == null) return null;
   if (value && INGEST_RULE_ACTION_KINDS.has(value.kind)) return normalizeIngestRuleAction(db, value, evidence);
   if (value && REPORT_ACTION_KINDS.has(value.kind)) return normalizeReportDraftAction(db, value, evidence, { currentUserId, question });
@@ -13532,10 +14133,10 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
     return normalizeSequenceStepInsertAction(db, value, evidence);
   }
   if (value && WORKFLOW_ACTION_KINDS.has(value.kind)) {
-    if (value.kind === 'workflow.draft.v1') return normalizeWorkflowDraftAction(db, value, evidence);
+    if (value.kind === 'workflow.draft.v1') return normalizeWorkflowDraftAction(db, value, evidence, { userText: draftUserText(question, history) });
     if (value.kind === 'workflow.publish.v1') return normalizeWorkflowPublishAction(db, value, evidence);
     if (value.kind === 'workflow.start.v1') return normalizeWorkflowStartAction(db, value, evidence);
-    return normalizeWorkflowStepAction(db, value, evidence);
+    return normalizeWorkflowStepAction(db, value, evidence, { userText: draftUserText(question, history) });
   }
   if (value && JOB_ACTION_KINDS.has(value.kind)) return normalizeJobCodeAction(db, value, evidence);
   if (value && EVENT_ACTION_KINDS.has(value.kind)) return normalizeEventAction(db, value, evidence);
@@ -13626,7 +14227,7 @@ async function repairActionDraft(db, approved, evidence, rejectedValue, rejectio
   });
   if (!ai.ok) return null;
   try {
-    const draft = await normalizeActionDraft(db, ai.json && ai.json.action_draft, evidence, { currentUserId: userId, question: approved.question });
+    const draft = await normalizeActionDraft(db, ai.json && ai.json.action_draft, evidence, { currentUserId: userId, question: approved.question, history: approved.history });
     return draft || null;
   } catch (err) {
     console.error(`[assistant] repaired action draft rejected again: ${err && err.message}`);
@@ -15093,7 +15694,7 @@ async function answerStage(db, s, { stream } = {}) {
   if (draftRequested) {
     let rejection = null;
     try {
-      actionDraft = await normalizeActionDraft(db, body.action_draft, evidence, { currentUserId: userId, question: approved.question });
+      actionDraft = await normalizeActionDraft(db, body.action_draft, evidence, { currentUserId: userId, question: approved.question, history: approved.history });
       if (!actionDraft) rejection = httpError(422, 'The action_draft field was absent');
     } catch (err) {
       rejection = err;

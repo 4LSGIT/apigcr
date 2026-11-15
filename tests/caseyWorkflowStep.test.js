@@ -15,7 +15,9 @@
  *   3. edit is NARROW: label, note, params of an allowlisted function, or a
  *      safe-mode code body. Never type/function_name, never a branch target
  *      (then/else/next-step values compare canonically, branches[].then
- *      included), never error_policy, never webhook or STANDARD-code steps;
+ *      included), never error_policy, never STANDARD-code steps (query_db
+ *      params and webhook calls — A17.4a/b — are pinned in
+ *      tests/caseyWorkflowQueryWebhook.test.js);
  *   4. insert steps obey the same allowlist as workflow.draft.v1 (shared
  *      normalizeAuthoredStep);
  *   5. P13: tabMore~moreAutomations~workflows~N in the canonical URL becomes
@@ -182,7 +184,7 @@ describe('workflow.step_edit.v1', () => {
     expect(out.before.code).toBe('input.a + input.b;');
   });
 
-  test('ineligible targets are refused by name: off-allowlist functions, standard code, webhooks', async () => {
+  test('ineligible targets are refused by name: off-allowlist functions, standard code; a webhook step edits only through "webhook"', async () => {
     await expect(normalizeActionDraft(stepDb(), editDraft({ step_number: 4, changes: { label: 'x' } }), EVIDENCE))
       .rejects.toThrow(/"send_mms", which is outside Casey's authoring allowlist/);
 
@@ -205,8 +207,12 @@ describe('workflow.step_edit.v1', () => {
       if (/FROM workflow_steps/.test(sql)) return [whRows];
       throw new Error(`db touched: ${sql}`);
     });
-    await expect(normalizeActionDraft(webhookDb, editDraft({ step_number: 4, changes: { label: 'x' } }), EVIDENCE))
-      .rejects.toThrow(/webhook step — Casey does not edit those/);
+    // A17.4b: a webhook step is editable — a label change needs no call
+    // review; params are the wrong channel for its call.
+    const relabel = await normalizeActionDraft(webhookDb, editDraft({ step_number: 4, changes: { label: 'x' } }), EVIDENCE);
+    expect(relabel.new_config).toBeUndefined();
+    await expect(normalizeActionDraft(webhookDb, editDraft({ step_number: 4, changes: { params: {} } }), EVIDENCE))
+      .rejects.toThrow(/webhook step — its call is edited through "webhook"/);
   });
 
   test('shape refusals: cross-type changes, empty changes, unknown change keys, bad step_number', async () => {
@@ -217,7 +223,7 @@ describe('workflow.step_edit.v1', () => {
     await expect(normalizeActionDraft(stepDb(), editDraft({ changes: {} }), EVIDENCE))
       .rejects.toThrow(/at least one change/);
     await expect(normalizeActionDraft(stepDb(), editDraft({ changes: { function_name: 'noop' } }), EVIDENCE))
-      .rejects.toThrow(/only label, note, params, code, and input are editable/);
+      .rejects.toThrow(/only label, note, params, code, input, and webhook are editable/);
     await expect(normalizeActionDraft(stepDb(), editDraft({ step_number: 9 }), EVIDENCE))
       .rejects.toThrow(/the draft has 4 steps/);
   });
@@ -340,6 +346,8 @@ describe('end to end: card request shapes are the route\'s shapes', () => {
         return [rows().map((r) => ({ id: 900 + r.step_number, step_number: r.step_number, type: r.type, config: r.config }))];
       }
       if (/UPDATE workflow_steps|INSERT INTO workflow_steps|DELETE FROM workflow_steps/.test(sql)) return [{ affectedRows: 1 }];
+      // validateWebhookConfig's credential FK check (A17.4b cards).
+      if (/SELECT id FROM credentials WHERE id = \?/.test(sql)) return [params[0] === 3 ? [{ id: 3 }] : []];
       throw new Error(`route db unscripted: ${sql}`);
     };
     return { query: script, withTransaction: async (fn) => fn({ query: script }) };
@@ -395,6 +403,59 @@ describe('end to end: card request shapes are the route\'s shapes', () => {
     } finally {
       STEP_ROWS[1].config = JSON.stringify({ function_name: 'evaluate_condition',
         params: { variable: '{{this.found}}', operator: '==', value: 'true', then: 3 } });
+    }
+  });
+
+  // A17.4a/b: the new step types' cards, through the same real router. The
+  // normalizer's pool adds what those normalizers read (live columns,
+  // credentials); the route's pool answers its own credential FK check.
+  function a174Db() {
+    const base = stepDb();
+    const inner = base.query;
+    base.query = jest.fn(async (sql, params) => {
+      if (/FROM information_schema\.COLUMNS/.test(sql)) {
+        const cols = { cases: ['case_id', 'case_number', 'case_status'] };
+        return [params[0].flatMap((t) => (cols[t] || []).map((c) => ({ table_name: t, column_name: c })))];
+      }
+      if (/SELECT id, name, type, allowed_urls FROM credentials/.test(sql)) {
+        return [[{ id: 3, name: 'Zap Key', type: 'bearer', allowed_urls: '["https://hooks.zapier.com/*"]' }]];
+      }
+      return inner(sql, params);
+    });
+    return base;
+  }
+  const ZAP = 'https://hooks.zapier.com/hooks/catch/1/abc';
+
+  test('A17.4a/b: query_db and webhook insert cards apply through the real route', async () => {
+    const q = await normalizeActionDraft(a174Db(), insertDraft({ step: { type: 'internal_function', label: 'Read case',
+      config: { function_name: 'query_db', params: { select: ['cases.case_number'], from: 'cases',
+        where: [{ column: 'cases.case_id', op: '=', value: '{{case_id}}' }], format: 'first', output_var: 'caseRow' } } } }), EVIDENCE);
+    const r1 = await sendToRoute(buildRequest(q));
+    expect({ status: r1.status, stepNumber: r1.body.stepNumber }).toEqual({ status: 201, stepNumber: 5 });
+
+    const w = await normalizeActionDraft(a174Db(), insertDraft({ step: { type: 'webhook', label: 'Tell Zapier',
+      config: { url: ZAP, method: 'POST', credential: 'Zap Key', body: { case: '{{caseRow.case_number}}' } } } }), EVIDENCE,
+    { question: `post the case number to ${ZAP} using the Zap Key credential` });
+    const request = buildRequest(w);
+    expect(request.body.config).toEqual({ url: ZAP, method: 'POST', credential_id: 3, body: { case: '{{caseRow.case_number}}' }, timeout_ms: 15000 });
+    const r2 = await sendToRoute(request);
+    expect({ status: r2.status, stepNumber: r2.body.stepNumber }).toEqual({ status: 201, stepNumber: 5 });
+  });
+
+  test('A17.4b: a webhook edit card applies through the real route (PATCH, whole config)', async () => {
+    const saved = STEP_ROWS[3];
+    STEP_ROWS[3] = { step_number: 4, type: 'webhook', label: 'Tell Zapier', note: null,
+      config: JSON.stringify({ url: ZAP, method: 'POST', credential_id: 3, body: { a: 1 }, timeout_ms: 20000 }), error_policy: null };
+    try {
+      const out = await normalizeActionDraft(a174Db(), editDraft({ step_number: 4, changes: { webhook: { body: { a: 2 } } } }), EVIDENCE,
+        { question: 'change the zapier body to a=2' });
+      const request = buildRequest(out);
+      expect(request).toMatchObject({ method: 'PATCH', path: '/workflows/27/steps/4' });
+      expect(request.body.config).toEqual({ url: ZAP, method: 'POST', credential_id: 3, body: { a: 2 }, timeout_ms: 20000 });
+      const ok = await sendToRoute(request);
+      expect(ok.status).toBe(200);
+    } finally {
+      STEP_ROWS[3] = saved;
     }
   });
 

@@ -1011,9 +1011,12 @@ COMMENTs.)
   `regex:` descriptors all compile under `l`; hook / trigger / suppression
   patterns not yet measured. Until then Casey writes no new pattern
   (preserve-only).
-- **Casey ingest `http` actions** (A20.2). They wait for A17.4b's literal-URL
-  / named-credential contract (build it once, use it for webhook steps and
-  ingest http actions). (Forwards shipped as ingest actions 2026-10-27, Fred's
+- **Casey ingest `http` actions** (A20.2). A17.4b's literal-URL /
+  named-credential contract is built for workflow webhook steps (2026-11-15,
+  `services/assistantService.js` `normalizeWebhookConfig` /
+  `resolveWebhookStep`); wiring it to ingest http actions is what remains (an
+  ingest action has no "same workflow", so its evidence is the user's words or
+  a credential's host). (Forwards shipped as ingest actions 2026-10-27, Fred's
   yes; `court_extract` stays off the allowlist.)
 - **Forwards in Casey WORKFLOW drafts** (A20.2 follow-up). `forward_as_email` /
   `forward_as_sms` are ingest-action authorable only. To make them
@@ -1054,6 +1057,28 @@ COMMENTs.)
 - **Native x-api-key starts send no `Idempotency-Key`** (the editor's Run
   button does since 2026-11-09): a retried API start still creates two runs
   unless the caller sends one (scope `workflows.start`).
+
+## From the Ask Casey arc — A17.4a/b query_db and webhook steps (2026-11-15) — deferred
+
+- **query_db html_rows output is not Casey-authorable** (`format: 'html_rows'`,
+  `base_url`, `html_columns` refused by name): its link base is a URL Casey
+  would compose. A reviewed shape — `html_columns` checked like select columns,
+  `base_url` held to the app's own origin — is a later revision.
+- **The native editor still saves any query_db structure.** Casey's
+  normalizer builds and checks `select` / `where` / `join` field by field, but
+  `__meta` still declares them as untyped arrays, so a human-saved step is
+  validated only when it runs (a misspelled column fails the run). The P11
+  alternative the plan named — an element schema in `__meta` — would close the
+  human path too.
+- **A credential pair from ANOTHER workflow is not evidence.** Casey reuses a
+  (host, credential) pair only when a step of the same workflow already holds
+  it, or the credential's `allowed_urls` cover the URL. A permissive credential
+  (`allowed_urls` empty) used by another workflow on that host still needs the
+  human editor. Widening the evidence to every stored step is a deliberate
+  review.
+- **Sequence webhook steps** stay human-only (A18.2's sequence allowlist is
+  sms / email / task); the A17.4b contract could serve them once a sequence
+  step has a "same template" evidence read.
 
 ## From the Ask Casey arc — A18.4b sequence enroll (2026-10-28) — deferred
 

@@ -1354,6 +1354,7 @@ tests/caseyPipelineRead.mysql.test.js
 tests/caseyPipelineRead.test.js
 tests/caseyPipelineTransfer.mysql.test.js
 tests/caseyPipelineTransfer.test.js
+tests/caseyQueryDbColumns.mysql.test.js
 tests/caseyRecordText.test.js
 tests/caseyRelink.mysql.test.js
 tests/caseyRelink.test.js
@@ -1374,6 +1375,7 @@ tests/caseySequenceStep.mysql.test.js
 tests/caseySequenceStep.test.js
 tests/caseyWorkflowDraft.test.js
 tests/caseyWorkflowPublish.test.js
+tests/caseyWorkflowQueryWebhook.test.js
 tests/caseyWorkflowSend.mysql.test.js
 tests/caseyWorkflowStart.mysql.test.js
 tests/caseyWorkflowStart.test.js
