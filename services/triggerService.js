@@ -654,10 +654,9 @@ const ACTION_TYPES = new Set(['workflow', 'sequence', 'internal_function', 'http
 // It used to run here under node:vm, which is not a boundary — `input` was a
 // host object, so the constructor walk-back reached `process`. The guest has
 // no process, require, fetch, timers or network, and a runaway body is
-// interrupted (or its child killed) instead of parking the event loop. The
-// authoring gate stays as it was (lib/triggerCodeGate.js: every route that
-// accepts a code body needs automations.manage) — relaxing it is Fred's call
-// after a soak (ref/plans.md).
+// interrupted (or its child killed) instead of parking the event loop. That
+// boundary is why authoring is open to any staff JWT (lib/triggerCodeGate.js:
+// only an API key carrying a code body needs automations.manage).
 //
 // 2026-08-29: raised 200 -> 15000 and made it env-overridable, matching
 // job_executor's CUSTOM_CODE_TIMEOUT_MS idiom.

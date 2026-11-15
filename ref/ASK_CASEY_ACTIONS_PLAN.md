@@ -4485,8 +4485,8 @@ sequences. Measured, they cannot:
 - `match_config` and `transform_config` structure, code syntax, and whether a
   target workflow or template exists or is published are **not** validated.
 - `code` mode runs in the QuickJS guest in the sandbox child (`lib/guestCode.js`)
-  with a 15 s limit; saving or test-drafting it needs `automations.manage`
-  (`lib/triggerCodeGate.js`).
+  with a 15 s limit; any staff JWT may save or test-draft it, an API key
+  needs `automations.manage` (`lib/triggerCodeGate.js`).
 - There is no concurrency check at all: `getRule` runs outside the transaction
   with no row lock.
 - Replay re-dispatches for real with no idempotency, and the stale sweep
@@ -4643,8 +4643,9 @@ missing contact id, a hook's state, an internal function's resolved params,
 an `http` host — never its URL). Deliberate narrowings: the kind previews a
 STORED rule only — it refuses every native body field, because a `code` body
 then ran in this process via `new Function` and a model-supplied one would
-have been model-composed code executing in-process (the native routes accept
-that only from holders of `automations.manage` — `lib/ingestCodeGate.js`).
+have been model-composed code executing in-process (the native routes then
+accepted that only from holders of `automations.manage` — `lib/ingestCodeGate.js`,
+open to any staff JWT since the 2026-11-15 ruling).
 Since 2026-10-26 code bodies run in the QuickJS guest (`lib/guestCode.js`);
 the narrowing stands until Fred rules otherwise (`ref/plans.md`); and it prepares an email
 envelope the way `evaluateRules` does (`body` = text || html), which the
@@ -4762,12 +4763,12 @@ card is atomic and carries one precondition. Per-family flag
   boundary that made safe-mode workflow code Casey-authorable (ruling 13);
   the remaining risk is a wrong body acting on live mail once the rule is
   active. Mitigations: the card shows the whole body, a create is inactive
-  (preview it with A20.1 first), and the request goes through the canonical
-  ingest code gate, which Fred keeps — so the user's own capability decides:
-  only an `automations.manage` holder can apply it, a plain staff user's card
-  is refused 403 by the route with nothing written, and the card says so up
-  front. **Confirmed by Fred, 2026-10-27.** Relaxing the gate stays Fred's
-  call after the soak.
+  (preview it with A20.1 first), the card is danger-styled and says the body
+  runs in the sandbox engine, and the request goes through the canonical
+  ingest code gate, which takes a code body from any staff JWT (Fred's
+  2026-11-15 ruling; only an API key without `automations.manage` is
+  refused) — so any staff user applies the card. **Code-mode authoring
+  confirmed by Fred, 2026-10-27.**
 - **Read surface:** `automation.definition` on an ingest rule adds
   `definition_updated_at` to the rule row and the latest five change-log
   rows as `change` rows (kind, actor, firm-local time, a field-level
@@ -4936,7 +4937,8 @@ silently. What the inventory established, for all 26 shipped kinds:
   (Later families add exceptions: `hook.create.v1` needs `automations.manage`,
   A14's two send kinds reach the comms hub routes, which check the
   caller's per-channel `can_send` grant and make an SU step up, and an A20
-  ingest-rule card that carries a code body meets the ingest code gate.)
+  ingest-rule card that carries a code body meets the ingest code gate, which
+  every staff JWT passes.)
 - **There is no firm/tenant axis.** The schema has no `firm_id` or `tenant_id`,
   so "cross-firm" has no expression here; the row constraints that exist are
   the normalizer's (evidence must name the exact id, the parent must match, the

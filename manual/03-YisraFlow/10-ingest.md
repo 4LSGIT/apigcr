@@ -193,14 +193,14 @@ sandbox frees up within 10 s — rare, logged, and raised as a system alert.
 Live mail runs ahead of hooks and of the test endpoints, which can never take
 its reserved share.
 
-**Code mode needs `automations.manage` (admin / IT).** A `code` match,
-transform or suppression is author-supplied JavaScript, so saving one — or
-testing a code body with either endpoint above —
-is refused (403, "requires the automations.manage capability") for anyone
-without that capability. Conditions, mapper and passthrough editing and
-testing stay open to all staff. Because the editor saves the whole rule, a
-staff user also can't save other edits (name, active, position) to a rule or
-suppression that is in code mode; ask an administrator.
+**Code mode is open to all staff.** A `code` match, transform or
+suppression is author-supplied JavaScript, but it runs only in the isolated
+engine above, so any staff user may save one or test a code body with either
+endpoint above — the same rule as a workflow's safe code step. Only an API
+key is checked: a key that writes or tests a code body needs the
+`automations.manage` capability in its scopes (403, "… from an API key
+require the automations.manage capability" otherwise). Hooks are different:
+managing hooks still needs `automations.manage`.
 
 ### Management API
 
@@ -225,8 +225,8 @@ Identical surface on both pipelines — substitute `email-ingest` or
 | `/api/{…}-ingest/rules/test-transform` | POST | Dry-run transform |
 
 All management routes are `jwtOrApiKey` and audited; the receiver is not.
-Writes and tests that carry `code` mode additionally need `automations.manage`
-(above).
+Writes and tests that carry `code` mode from an API key additionally need
+`automations.manage` (above).
 
 ### Change history and the stale-edit check
 

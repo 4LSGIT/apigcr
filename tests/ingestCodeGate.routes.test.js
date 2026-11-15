@@ -2,20 +2,22 @@
 /**
  * tests/ingestCodeGate.routes.test.js
  *
- * Email + phone ingest CODE bodies are gated on automations.manage
- * (lib/ingestCodeGate.js).
+ * Email + phone ingest CODE bodies (lib/ingestCodeGate.js): open to ANY
+ * staff JWT, roleless included; an API key carrying one still needs
+ * automations.manage (a NULL-scopes key holds it, a scoped key only when its
+ * scopes name it).
  *
  * WHY THIS SUITE EXISTS: ingest rule match/transform code and suppression
  * code ran IN THIS PROCESS via `new Function('input', code)`, where `process`
- * — and process.env, with the DB credentials and JWT_SECRET — was reachable.
- * Every ingest management route was plain jwtOrApiKey, so any staff JWT could
- * save a code rule or POST a code body to test-transform and read back
- * `process.env` in the response. Since 2026-10-26 the bodies run in the
- * QuickJS guest engine in the sandbox child (lib/guestCode.js) and find no
- * `process` (the admin cases assert it), but the gate stays exactly as it
- * was — relaxing it is Fred's call after a soak. A gate on one writer is a
- * gate on none (scheduledJobs.codeGate.test.js), so every code-accepting
- * route is here, both channels.
+ * — and process.env, with the DB credentials and JWT_SECRET — was reachable,
+ * and the gate kept every code body behind automations.manage. Since
+ * 2026-10-26 the bodies run in the QuickJS guest engine in the sandbox child
+ * (lib/guestCode.js) and find no `process` (the staff cases assert it), which
+ * is why a staff JWT now passes (Fred's ruling, ref/plans.md). Detection
+ * still fails closed for the caller it still refuses — a route-scoped API
+ * key — and a gate on one writer is a gate on none
+ * (scheduledJobs.codeGate.test.js), so every code-accepting route is here,
+ * both channels.
  *
  * HARNESS: the REAL routers and services on an ephemeral socket. Only
  * jwtOrApiKey is mocked (to set req.auth). req.db is a scripted stub that
@@ -38,10 +40,14 @@ const http = require('http');
 const express = require('express');
 
 const STAFF = { type: 'jwt', userId: 2, username: 'staff', roles: ['staff'] };
+const ROLELESS = { type: 'jwt', userId: 3, username: 'legacy', roles: [] };
 const ADMIN = { type: 'jwt', userId: 1, username: 'admin', roles: ['admin', 'staff', 'attorney'] };
 const IT    = { type: 'jwt', userId: 6, username: 'it', roles: ['it'] };
 const LEGACY_KEY = { type: 'api_key', scopes: null };
-const ROUTE_KEY  = { type: 'api_key', scopes: ['route:/mailbox-ingest'] };
+const CAP_KEY    = { type: 'api_key', scopes: ['route:/api/email-ingest', 'route:/api/phone-ingest', 'automations.manage'] };
+// The caller the gate still refuses: a key that reaches these routes but
+// lacks the capability.
+const ROUTE_KEY  = { type: 'api_key', scopes: ['route:/api/email-ingest', 'route:/api/phone-ingest'] };
 
 const HIT = '__ingestCodeGateHit';
 const BUMP = `globalThis.${HIT} = (globalThis.${HIT} || 0) + 1;`;
@@ -179,35 +185,36 @@ afterAll(() => jest.restoreAllMocks());
 beforeEach(() => { delete globalThis[HIT]; guestRuns = 0; });
 afterEach(() => { expect(globalThis[HIT]).toBeUndefined(); });   // never the host's global
 
-describe.each(['email', 'phone'])('%s ingest — code bodies need automations.manage', (ch) => {
+describe.each(['email', 'phone'])('%s ingest — code bodies: any staff JWT; an API key needs automations.manage', (ch) => {
   const base = `/api/${ch}-ingest`;
   const execId = CH[ch].execId;
 
   describe('POST rules/test-transform', () => {
     const codeBody = { transform_mode: 'code', transform_config: TRANSFORM_CODE, input: { subject: 'S' } };
 
-    test('staff + code body: 403 and the body never runs', async () => {
-      mockAuth = STAFF;
+    test('a route-scoped key + code body: 403 and the body never runs', async () => {
+      mockAuth = ROUTE_KEY;
       const r = await send(ch, 'POST', `${base}/rules/test-transform`, codeBody);
       expectRefused(r);
       expect(hits()).toBe(0);
     });
 
-    test('admin + code body: runs (the body executed once)', async () => {
-      mockAuth = ADMIN;
+    test('staff + code body: runs (the body executed once)', async () => {
+      mockAuth = STAFF;
       const r = await send(ch, 'POST', `${base}/rules/test-transform`, codeBody);
       expect(r.status).toBe(200);
       expect(r.body.transform).toEqual({ ok: true, output: { leaked: 'undefined' } });   // no process in the guest
       expect(hits()).toBe(1);
     });
 
-    test('it role and a NULL-scopes machine key hold it; a route-scoped key does not', async () => {
-      for (const [auth, status] of [[IT, 200], [LEGACY_KEY, 200], [ROUTE_KEY, 403]]) {
+    test('every staff JWT passes (roleless, admin, it); a key passes with NULL scopes or automations.manage; a route-scoped key does not', async () => {
+      const cases = [[ROLELESS, 200], [ADMIN, 200], [IT, 200], [LEGACY_KEY, 200], [CAP_KEY, 200], [ROUTE_KEY, 403]];
+      for (const [auth, status] of cases) {
         mockAuth = auth;
         const r = await send(ch, 'POST', `${base}/rules/test-transform`, codeBody);
         expect([auth, r.status]).toEqual([auth, status]);
       }
-      expect(hits()).toBe(2);
+      expect(hits()).toBe(5);
     });
 
     test('staff + mapper / passthrough: not gated', async () => {
@@ -220,11 +227,11 @@ describe.each(['email', 'phone'])('%s ingest — code bodies need automations.ma
       expect(p.status).toBe(200);
     });
 
-    test('fails closed: an absent or unknown mode is gated for staff (admin: a 400, or a failed-transform result)', async () => {
+    test('fails closed: an absent or unknown mode is gated for a route-scoped key (staff: a 400, or a failed-transform result)', async () => {
       for (const body of [{ input: {} }, { transform_mode: 'Code', transform_config: TRANSFORM_CODE, input: {} }, { transform_mode: 'xslt', input: {} }]) {
-        mockAuth = STAFF;
+        mockAuth = ROUTE_KEY;
         expectRefused(await send(ch, 'POST', `${base}/rules/test-transform`, body));
-        mockAuth = ADMIN;
+        mockAuth = STAFF;
         const r = await send(ch, 'POST', `${base}/rules/test-transform`, body);
         // absent mode is a request error; an unknown mode is a RESULT
         // (transform.ok false, "unknown transform_mode") — the golden's shape.
@@ -238,12 +245,22 @@ describe.each(['email', 'phone'])('%s ingest — code bodies need automations.ma
   describe('POST rules/test-match', () => {
     const codeBody = { match_mode: 'code', match_config: MATCH_CODE, exec_id: execId, include_misses: true };
 
-    test('staff + code body: 403 and the body never runs', async () => {
-      mockAuth = STAFF;
+    test('a route-scoped key + code body: 403 and the body never runs', async () => {
+      mockAuth = ROUTE_KEY;
       const r = await send(ch, 'POST', `${base}/rules/test-match`, codeBody);
       expectRefused(r);
       expect(r.db.seen).toEqual([]); // not even the corpus fetch
       expect(hits()).toBe(0);
+    });
+
+    test('staff (roleless too) + code body: runs against the corpus', async () => {
+      for (const [auth, n] of [[STAFF, 1], [ROLELESS, 2]]) {
+        mockAuth = auth;
+        const r = await send(ch, 'POST', `${base}/rules/test-match`, codeBody);
+        expect(r.status).toBe(200);
+        expect(r.body.matched_count).toBe(1);
+        expect(hits()).toBe(n);
+      }
     });
 
     test('admin + code body: runs against the corpus', async () => {
@@ -261,11 +278,11 @@ describe.each(['email', 'phone'])('%s ingest — code bodies need automations.ma
       expect(r.body.success).toBe(true);
     });
 
-    test('fails closed: an absent or unknown mode is gated for staff (and a 400 for admin)', async () => {
+    test('fails closed: an absent or unknown mode is gated for a route-scoped key (and a 400 for staff)', async () => {
       for (const body of [{}, { match_mode: 'CODE', match_config: MATCH_CODE }, { match_mode: 'regex', match_config: {} }]) {
-        mockAuth = STAFF;
+        mockAuth = ROUTE_KEY;
         expectRefused(await send(ch, 'POST', `${base}/rules/test-match`, body));
-        mockAuth = ADMIN;
+        mockAuth = STAFF;
         expect((await send(ch, 'POST', `${base}/rules/test-match`, body)).status).toBe(400);
       }
       expect(hits()).toBe(0);
@@ -273,19 +290,22 @@ describe.each(['email', 'phone'])('%s ingest — code bodies need automations.ma
   });
 
   describe('POST rules (create)', () => {
-    test('staff + code match or code transform: 403, nothing written', async () => {
-      mockAuth = STAFF;
+    test('a route-scoped key + code match or code transform: 403, nothing written', async () => {
+      mockAuth = ROUTE_KEY;
       expectRefused(await send(ch, 'POST', `${base}/rules`, { name: 'x', match_mode: 'code', match_config: MATCH_CODE }));
       expectRefused(await send(ch, 'POST', `${base}/rules`,
         { name: 'x', match_mode: 'conditions', match_config: COND, transform_mode: 'code', transform_config: TRANSFORM_CODE }));
     });
 
-    test('admin + code: created', async () => {
-      mockAuth = ADMIN;
-      const r = await send(ch, 'POST', `${base}/rules`,
-        { name: 'x', match_mode: 'conditions', match_config: COND, transform_mode: 'code', transform_config: TRANSFORM_CODE });
-      expect(r.status).toBe(201);
-      expect(r.db.writes().filter((w) => /^\s*INSERT INTO \w+_ingest_rules/.test(w.sql))).toHaveLength(1);
+    test('staff (roleless too) + code match or code transform: created', async () => {
+      for (const auth of [STAFF, ROLELESS]) {
+        mockAuth = auth;
+        const r = await send(ch, 'POST', `${base}/rules`,
+          { name: 'x', match_mode: 'conditions', match_config: COND, transform_mode: 'code', transform_config: TRANSFORM_CODE });
+        expect(r.status).toBe(201);
+        expect(r.db.writes().filter((w) => /^\s*INSERT INTO \w+_ingest_rules/.test(w.sql))).toHaveLength(1);
+        expect((await send(ch, 'POST', `${base}/rules`, { name: 'x', match_mode: 'code', match_config: MATCH_CODE })).status).toBe(201);
+      }
     });
 
     test('staff + conditions/mapper: created', async () => {
@@ -298,7 +318,7 @@ describe.each(['email', 'phone'])('%s ingest — code bodies need automations.ma
     });
 
     test('fails closed: a code-shaped config under a non-code mode is gated', async () => {
-      mockAuth = STAFF;
+      mockAuth = ROUTE_KEY;
       expectRefused(await send(ch, 'POST', `${base}/rules`,
         { name: 'x', match_mode: 'conditions', match_config: { ...COND, code: 'return true;' } }));
       expectRefused(await send(ch, 'POST', `${base}/rules`,
@@ -306,25 +326,25 @@ describe.each(['email', 'phone'])('%s ingest — code bodies need automations.ma
       expectRefused(await send(ch, 'POST', `${base}/rules`, { name: 'x', match_mode: 'Code', match_config: MATCH_CODE }));
     });
 
-    test('fails closed: an unknown mode is gated even with a config that is not code-shaped (admin: the validator 400s it)', async () => {
+    test('fails closed: an unknown mode is gated even with a config that is not code-shaped (staff: the validator 400s it)', async () => {
       const bodies = [
         { name: 'x', match_mode: 'regex', match_config: COND },
         { name: 'x', match_mode: 'conditions', match_config: COND, transform_mode: 'xslt', transform_config: MAPPER },
       ];
       for (const body of bodies) {
-        mockAuth = STAFF;
+        mockAuth = ROUTE_KEY;
         expectRefused(await send(ch, 'POST', `${base}/rules`, body));
-        mockAuth = ADMIN;
+        mockAuth = STAFF;
         expect((await send(ch, 'POST', `${base}/rules`, body)).status).toBe(400);
       }
-      mockAuth = STAFF;
+      mockAuth = ROUTE_KEY;
       expectRefused(await send(ch, 'POST', `${base}/suppressions`, { name: 's', match_mode: 'Code', match_config: COND }));
     });
   });
 
   describe('PUT rules/:id (update)', () => {
-    test('staff switching a rule to code, or editing code: 403, nothing written', async () => {
-      mockAuth = STAFF;
+    test('a route-scoped key switching a rule to code, or editing code: 403, nothing written', async () => {
+      mockAuth = ROUTE_KEY;
       expectRefused(await send(ch, 'PUT', `${base}/rules/2`, { transform_mode: 'code', transform_config: TRANSFORM_CODE }));
       expectRefused(await send(ch, 'PUT', `${base}/rules/2`, { match_mode: 'code', match_config: MATCH_CODE }));
       // config-only edit of a rule whose STORED transform is code
@@ -332,22 +352,25 @@ describe.each(['email', 'phone'])('%s ingest — code bodies need automations.ma
     });
 
     test('fails closed on the STORED mode: a config-only edit of a code rule is gated even when the config is not code-shaped', async () => {
-      mockAuth = STAFF;
+      mockAuth = ROUTE_KEY;
       expectRefused(await send(ch, 'PUT', `${base}/rules/1`, { transform_config: MAPPER }));
-      mockAuth = ADMIN; // the validator's answer, once past the gate
+      mockAuth = STAFF; // the validator's answer, once past the gate
       expect((await send(ch, 'PUT', `${base}/rules/1`, { transform_config: MAPPER })).status).toBe(400);
     });
 
-    test('staff config-only edit with a code-shaped config on a mapper rule: 403 (the mode-flip race)', async () => {
-      mockAuth = STAFF;
+    test('a route-scoped key\'s config-only edit with a code-shaped config on a mapper rule: 403 (the mode-flip race)', async () => {
+      mockAuth = ROUTE_KEY;
       expectRefused(await send(ch, 'PUT', `${base}/rules/2`, { transform_config: { code: 'return {};' } }));
     });
 
-    test('admin editing code: updated', async () => {
-      mockAuth = ADMIN;
+    test('staff switching a rule to code, or editing code: updated', async () => {
+      mockAuth = STAFF;
       const r = await send(ch, 'PUT', `${base}/rules/1`, { transform_config: TRANSFORM_CODE });
       expect(r.status).toBe(200);
       expect(r.db.writes().filter((w) => /^\s*UPDATE \w+_ingest_rules/.test(w.sql))).toHaveLength(1);
+      expect((await send(ch, 'PUT', `${base}/rules/2`, { transform_mode: 'code', transform_config: TRANSFORM_CODE })).status).toBe(200);
+      expect((await send(ch, 'PUT', `${base}/rules/2`, { match_mode: 'code', match_config: MATCH_CODE })).status).toBe(200);
+      expect(hits()).toBe(0); // saving runs nothing
     });
 
     test('staff edit that leaves the code side untouched: allowed (name / active on a code rule)', async () => {
@@ -357,14 +380,17 @@ describe.each(['email', 'phone'])('%s ingest — code bodies need automations.ma
       expect(r.db.writes()).toHaveLength(1);
     });
 
-    test('staff re-sending the WHOLE code rule (what the native editor does): refused — documented interaction', async () => {
-      mockAuth = STAFF;
+    test('re-sending the WHOLE code rule (what the native editor does): staff saves it; a route-scoped key is refused', async () => {
       const rule = storedRule(1, ch);
-      expectRefused(await send(ch, 'PUT', `${base}/rules/1`, {
+      const whole = {
         name: 'renamed', description: null, active: 1, position: 0,
         match_mode: rule.match_mode, match_config: rule.match_config,
         transform_mode: rule.transform_mode, transform_config: rule.transform_config,
-      }));
+      };
+      mockAuth = STAFF;
+      expect((await send(ch, 'PUT', `${base}/rules/1`, whole)).status).toBe(200);
+      mockAuth = ROUTE_KEY;
+      expectRefused(await send(ch, 'PUT', `${base}/rules/1`, whole));
     });
 
     test('staff editing a non-code rule\'s conditions/mapper: allowed', async () => {
@@ -382,13 +408,15 @@ describe.each(['email', 'phone'])('%s ingest — code bodies need automations.ma
   });
 
   describe('suppressions', () => {
-    test('staff create in code mode: 403, nothing written; admin: created', async () => {
-      mockAuth = STAFF;
+    test('create in code mode: a route-scoped key 403, nothing written; staff (roleless too): created', async () => {
+      mockAuth = ROUTE_KEY;
       expectRefused(await send(ch, 'POST', `${base}/suppressions`, { name: 's', match_mode: 'code', match_config: MATCH_CODE }));
-      mockAuth = ADMIN;
-      const r = await send(ch, 'POST', `${base}/suppressions`, { name: 's', match_mode: 'code', match_config: MATCH_CODE });
-      expect(r.status).toBe(201);
-      expect(r.db.writes()).toHaveLength(1);
+      for (const auth of [STAFF, ROLELESS]) {
+        mockAuth = auth;
+        const r = await send(ch, 'POST', `${base}/suppressions`, { name: 's', match_mode: 'code', match_config: MATCH_CODE });
+        expect(r.status).toBe(201);
+        expect(r.db.writes()).toHaveLength(1);
+      }
     });
 
     test('staff create in conditions mode: created', async () => {
@@ -397,8 +425,8 @@ describe.each(['email', 'phone'])('%s ingest — code bodies need automations.ma
       expect(r.status).toBe(201);
     });
 
-    test('staff update: switching to code, or a config-only edit of a code suppression → 403', async () => {
-      mockAuth = STAFF;
+    test('a route-scoped key\'s update: switching to code, or a config-only edit of a code suppression → 403', async () => {
+      mockAuth = ROUTE_KEY;
       expectRefused(await send(ch, 'PUT', `${base}/suppressions/2`, { match_mode: 'code', match_config: MATCH_CODE }));
       expectRefused(await send(ch, 'PUT', `${base}/suppressions/1`, { match_config: MATCH_CODE }));
       expectRefused(await send(ch, 'PUT', `${base}/suppressions/2`, { match_config: 'return true' })); // code-shaped
@@ -406,16 +434,16 @@ describe.each(['email', 'phone'])('%s ingest — code bodies need automations.ma
     });
 
     test('fails closed on the STORED mode: a config-only edit of a code suppression is gated even when the config is not code-shaped', async () => {
-      mockAuth = STAFF;
+      mockAuth = ROUTE_KEY;
       expectRefused(await send(ch, 'PUT', `${base}/suppressions/1`, { match_config: COND }));
-      mockAuth = ADMIN;
+      mockAuth = STAFF;
       expect((await send(ch, 'PUT', `${base}/suppressions/1`, { match_config: COND })).status).toBe(400);
     });
 
-    test('admin update of code: updated; staff name-only edit of a code suppression: allowed', async () => {
-      mockAuth = ADMIN;
-      expect((await send(ch, 'PUT', `${base}/suppressions/1`, { match_config: MATCH_CODE })).status).toBe(200);
+    test('staff update of code (or switching to code): updated; staff name-only edit of a code suppression: allowed', async () => {
       mockAuth = STAFF;
+      expect((await send(ch, 'PUT', `${base}/suppressions/1`, { match_config: MATCH_CODE })).status).toBe(200);
+      expect((await send(ch, 'PUT', `${base}/suppressions/2`, { match_mode: 'code', match_config: MATCH_CODE })).status).toBe(200);
       const r = await send(ch, 'PUT', `${base}/suppressions/1`, { name: 'renamed' });
       expect(r.status).toBe(200);
       expect(r.db.writes()).toHaveLength(1);

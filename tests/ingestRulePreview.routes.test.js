@@ -22,10 +22,10 @@
 
 process.env.EMAIL_DOMAINS = '4lsg.com';
 
-// The caller holds automations.manage: the golden's code-mode cases record the
-// endpoints' behaviour, and since the ingest code gate (lib/ingestCodeGate.js)
-// a staff-only caller is refused before that behaviour is reached — the
-// refusal is pinned by tests/ingestCodeGate.routes.test.js, not here.
+// The caller is a staff JWT, so the golden's code-mode cases pass the ingest
+// code gate (lib/ingestCodeGate.js — any staff JWT; only an API key without
+// automations.manage is refused) and record the endpoints' behaviour; the
+// gate itself is pinned by tests/ingestCodeGate.routes.test.js, not here.
 jest.mock('../lib/auth.jwtOrApiKey', () => (req, _res, next) => {
   req.auth = { type: 'jwt', userId: 1, username: 'golden', roles: ['admin', 'staff'] };
   next();

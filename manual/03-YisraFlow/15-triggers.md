@@ -261,7 +261,7 @@ The page's report waits for the event to be queued, so the event isn't lost when
 
 Code mode runs in an isolated JavaScript engine (QuickJS) in a separate, throwaway process — not inside the server. The code is a function body: `input` is the event envelope, `return` gives the result (a match is true when the result is truthy; a transform must return an object). There is no `process`, `require`, `fetch`, timers, network or database, and **no `Intl`**: `toLocaleString` and friends ignore `timeZone` without any error, so compute firm-local (Detroit) times from the UTC value yourself. `console.log` / `console.warn` go to the server log. A body gets 15 s of wall time (`TRIGGER_CODE_TIMEOUT_MS`) and 64 MB; past either it fails — a match counts as non-match, a transform fails and the rule's actions don't fire. It fails the same way, with a "code sandbox busy" reason, if no sandbox frees up within 10 s because the server is saturated with other code — rare, logged and raised as a system alert; live events have a reserved share that hooks and editor tests cannot take. The editor's test-draft and the dry run use the same engine as live events, in their own (smaller) share.
 
-**Code mode needs `automations.manage` (admin / IT).** A `code` match or transform is author-supplied JavaScript, so saving a rule with one — or testing a code body in the editor's draft test (`test-draft`) — is refused (403, "requires the automations.manage capability") for anyone without that capability. Conditions, mapper and passthrough editing and testing stay open to all staff, and so do the dry run and Run live, which only run saved rules. Because the editor saves the whole rule, a staff user also can't save other edits (name, active, actions) to a rule that is in code mode; ask an administrator.
+**Code mode is open to all staff.** A `code` match or transform is author-supplied JavaScript, but it runs only in the isolated engine above, so any staff user may save a rule with one or test a code body in the editor's draft test (`test-draft`) — the same rule as a workflow's safe code step. Only an API key is checked: a key that writes or tests a code body needs the `automations.manage` capability in its scopes (403, "… from an API key require the automations.manage capability" otherwise). The dry run and Run live only run saved rules and take no code body.
 
 ### Transform modes
 
@@ -473,12 +473,12 @@ Before U5 this matched `data.appt_type in [Initial Strategy Session, Strategy Se
 | `GET /api/triggers/rules` | jwt/api_key | List rules (`?event_type`), actions nested |
 | `GET /api/triggers/rules/:id` | jwt/api_key | One rule |
 | `GET /api/triggers/rules/:id/history` | jwt/api_key | Recent runs of this rule (`?limit`, default 20, max 100) |
-| `POST /api/triggers/rules` | jwt/api_key (+ `automations.manage` for a code side) | Create (optional `actions` array) |
-| `PUT /api/triggers/rules/:id` | jwt/api_key (+ `automations.manage` when it touches a code side) | Partial update; `actions` if present REPLACES the set |
+| `POST /api/triggers/rules` | jwt/api_key (an api_key + `automations.manage` for a code side) | Create (optional `actions` array) |
+| `PUT /api/triggers/rules/:id` | jwt/api_key (an api_key + `automations.manage` when it touches a code side) | Partial update; `actions` if present REPLACES the set |
 | `DELETE /api/triggers/rules/:id` | jwt/api_key | Delete rule + actions (history survives) |
 | `GET /api/triggers/executions` | jwt/api_key | Log (`?event_type&status&case_id&contact_id&limit&before_id`) |
 | `GET /api/triggers/executions/:id` | jwt/api_key | Full row — envelope + outcomes |
 | `GET /api/triggers/samples/:event_type` | jwt/api_key | Recent envelopes for the field-discovery panel |
 | `POST /api/triggers/test` | jwt/api_key | Dry run vs saved rules — nothing dispatches |
-| `POST /api/triggers/test-draft` | jwt/api_key (+ `automations.manage` unless both modes are non-code) | Evaluate an UNSAVED config vs one envelope — nothing dispatches |
+| `POST /api/triggers/test-draft` | jwt/api_key (an api_key + `automations.manage` unless both modes are non-code) | Evaluate an UNSAVED config vs one envelope — nothing dispatches |
 | `POST /api/triggers/replay` | jwt/api_key | **LIVE** re-processing of a recorded envelope (`execution_id` only) |

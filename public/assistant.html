@@ -5765,6 +5765,10 @@ function ingestRuleActionLine(action, i) {
   return `Action ${i + 1}: [${action.action_type}]${action.name ? ` "${action.name}"` : ''} ${action.summary}`;
 }
 
+function ingestRuleCarriesCode(draft) {
+  return !!(draft.code && (draft.code.match || draft.code.transform));
+}
+
 function ingestRuleText(draft) {
   const stale = 'Stale check: if anyone changes this rule before you apply, the server refuses the write and Casey must re-read it.';
   const lines = [];
@@ -5811,8 +5815,8 @@ function ingestRuleText(draft) {
     for (const note of draft.notes || []) lines.push(`Note: ${note}`);
     lines.push(`Undo: ${draft.revert_text}`, stale);
   }
-  if (draft.requires_capability) {
-    lines.push(`Code: this card carries a code body — only a user holding ${draft.requires_capability} can apply it; for anyone else the server refuses it and nothing is written. Read the code line by line.`);
+  if (ingestRuleCarriesCode(draft)) {
+    lines.push('Code: this card carries a code body. It runs in the isolated sandbox engine (no network, no database, no access to the server) whenever the rule runs. Read the code line by line.');
   }
   if (draft.kind === 'ingest_rule.create.v1') for (const note of draft.notes || []) lines.push(`Note: ${note}`);
   return lines.join('\n');
@@ -7122,7 +7126,7 @@ const ACTION_FAMILIES = [
     idField: 'ingest_rule_id', appliedKey: 'result_ingest_rule_id',
     // Danger: anything that changes what runs on live traffic (an ACTIVE
     // rule's edit, any activation / deactivation), a code body, or a send.
-    danger: (draft) => draft.kind === 'ingest_rule.set_active.v1' || !!draft.live || !!draft.requires_capability
+    danger: (draft) => draft.kind === 'ingest_rule.set_active.v1' || !!draft.live || ingestRuleCarriesCode(draft)
       || draft.side_effect === 'external-send'
       || (draft.actions || []).concat(draft.action ? [draft.action] : []).some((a) => a && a.side_effect === 'external-send'),
     resultText: (payload) => `ingest rule #${payload.ingest_rule_id}`,

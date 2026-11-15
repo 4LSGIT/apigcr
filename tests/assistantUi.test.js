@@ -129,7 +129,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'sequenceEnrollResult', 'sequenceEnrollFirstText', 'sequenceEnrollKnownOutcome',
   'sequenceEnrollReadText', 'sequenceEnrollTriggerLines', 'sequenceEnrollTriggerBody', 'sequenceEnrollApptScope',
   'ingestRulePath', 'ingestRuleId', 'ingestRuleLabel', 'ingestRuleValue', 'ingestRuleHead', 'ingestRuleSideText', 'ingestRuleActionLine',
-  'ingestRuleText', 'ingestRuleRequest', 'ingestRuleDispatch', 'ingestRuleResult', 'ingestRulePrecheck', 'openIngestRuleRecord',
+  'ingestRuleCarriesCode', 'ingestRuleText', 'ingestRuleRequest', 'ingestRuleDispatch', 'ingestRuleResult', 'ingestRulePrecheck', 'openIngestRuleRecord',
   'openAutomationRecord',
   'sendIsSms', 'sendActionLabel', 'sendRecipientLine', 'sendOptoutText', 'sendFactLines', 'sendDraftText', 'sendDraftFields', 'sendConfirmText', 'sendActionRequest',
   'sendPrecheck', 'sendActionDispatch', 'sendActionResult', 'sendResultText', 'openSendRecord',
@@ -2307,13 +2307,26 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     const createP = { Swal, apiSend: jest.fn(async (path, method, body, headers) => { created.push({ path, method, body, headers }); return { status: 'success', rule: { id: 77 } }; }) };
     const m4 = { action_draft: { draft_id: '6d2e3f4a-5b6c-4d7e-8f90-123456789abc', kind: 'ingest_rule.create.v1', status: 'draft', received_at: Date.now(),
       channel: 'phone', rule: { name: 'Clio code', position: 0, match_mode: 'conditions', match_config: { operator: 'and', conditions: [{ path: 'message', op: 'contains', value: 'code' }] },
-        transform_mode: 'passthrough', transform_config: null }, actions: [], order: 'position 0', code: { match: false, transform: false }, requires_capability: null, notes: [] } };
+        transform_mode: 'passthrough', transform_config: null }, actions: [], order: 'position 0', code: { match: false, transform: false }, notes: [] } };
     await actionSandbox({ P: createP, ledgerApi: ledgerApi2, saveAssistantMessage: jest.fn() }).executeActionDraft(m4);
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({ path: '/api/phone-ingest/rules', method: 'POST', headers: { 'Idempotency-Key': m4.action_draft.draft_id },
       body: { name: 'Clio code', active: 0, actions: [] } });
     expect(m4.action_draft.status).toBe('applied');
     expect(m4.action_draft.result_ingest_rule_id).toBe(77);
+  });
+
+  test('an ingest rule card carrying a code body is danger-styled (draft.code, not a capability claim)', () => {
+    const { actionFamily } = actionSandbox({});
+    const draft = (code) => ({ draft_id: '7e3f4a5b-6c7d-4e8f-9a01-23456789abcd', kind: 'ingest_rule.create.v1', status: 'draft', channel: 'email',
+      rule: { name: 'r', position: 0, match_mode: 'conditions', match_config: {}, transform_mode: 'passthrough', transform_config: null },
+      actions: [], order: 'position 0', code, notes: [] });
+    const family = actionFamily(draft({ match: false, transform: false }));
+    expect(family.id).toBe('ingest_rule');
+    const flags = [{ match: false, transform: false }, { match: true, transform: false }, { match: false, transform: true }];
+    expect(flags.map((c) => family.danger(draft(c)))).toEqual([false, true, true]);
+    // a stored pre-relaxation card's capability field no longer decides anything
+    expect(family.danger({ ...draft({ match: false, transform: false }), requires_capability: 'automations.manage' })).toBe(false);
   });
 
   test('the retry-receipt button is sized like the other card buttons', () => {

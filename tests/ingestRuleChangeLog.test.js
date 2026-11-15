@@ -13,7 +13,8 @@
  *   2. The routes, on a scripted stub db that RECORDS every statement: a
  *      malformed expected_base is a 400 with nothing written on every writer;
  *      a stale one is the structured 409 with nothing but the row lock issued;
- *      the code gate still answers before either (403); and a call without
+ *      the code gate still answers before either (403, for an API key without
+ *      automations.manage — staff JWTs pass it); and a call without
  *      expected_base issues no precondition at all.
  *   3. Append-only: no source file UPDATEs or DELETEs a change table.
  */
@@ -31,6 +32,9 @@ const changeLog = require('../services/ingestRuleChangeLog');
 const H = require('./helpers/ingestNativeSequence');
 
 const STAFF = { type: 'jwt', userId: 2, username: 'staff', roles: ['staff'] };
+// The one caller the ingest code gate still refuses: an API key whose scopes
+// lack automations.manage (lib/ingestCodeGate.js).
+const ROUTE_KEY = { type: 'api_key', key_label: 'route-bot', scopes: ['route:/api/email-ingest', 'route:/api/phone-ingest'] };
 const TS = new Date('2026-10-27T14:05:00.123Z');
 
 // ═════════════════════════════════════════════════════════════
@@ -247,7 +251,7 @@ describe.each(['email', 'phone'])('%s routes', (ch) => {
   });
 
   test('the code gate answers before the shape check and the precondition', async () => {
-    mockAuth = STAFF;
+    mockAuth = ROUTE_KEY;
     for (const eb of [{ definition_updated_at: 'junk' }, { definition_updated_at: '2020-01-01T00:00:00Z' }]) {
       const r = await call(ch, 'PUT', `${base}/rules/5`, { match_mode: 'code', match_config: { code: 'return true;' }, expected_base: eb });
       expect(r.status).toBe(403);

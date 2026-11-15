@@ -2,20 +2,20 @@
 /**
  * tests/triggerCodeGate.routes.test.js
  *
- * Trigger rule CODE bodies are gated on automations.manage
- * (lib/triggerCodeGate.js).
+ * Trigger rule CODE bodies (lib/triggerCodeGate.js): open to ANY staff JWT,
+ * roleless included; an API key carrying one still needs automations.manage
+ * (a NULL-scopes key holds it, a scoped key only when its scopes name it).
  *
  * WHY THIS SUITE EXISTS: a trigger rule's code match / code transform ran IN
  * THIS PROCESS under node:vm, and vm is not a boundary — `input` was a host
  * object, so the constructor walk-back reached the real `process` and
- * process.env (DB credentials, JWT_SECRET, CREDENTIALS_ENCRYPTION_KEY). Every
- * trigger route was plain jwtOrApiKey, so any staff JWT could POST a code
- * transform to /api/triggers/test-draft and read process.env back in the
- * response, or save one that runs on every domain event. Since 2026-10-26 the
- * body runs in the QuickJS guest engine in the sandbox child
- * (lib/guestCode.js) and the admin cases below run that same walk-back and
- * find NO process — but the gate stays exactly as it was (relaxing it is
- * Fred's call after a soak). A gate on one writer is a gate on none
+ * process.env (DB credentials, JWT_SECRET, CREDENTIALS_ENCRYPTION_KEY), and
+ * the gate kept every code body behind automations.manage. Since 2026-10-26
+ * the body runs in the QuickJS guest engine in the sandbox child
+ * (lib/guestCode.js): the staff cases below run that same walk-back and find
+ * NO process, which is why a staff JWT now passes (Fred's ruling, ref/plans.md).
+ * Detection still fails closed for the caller it still refuses — a route-
+ * scoped API key — and a gate on one writer is a gate on none
  * (scheduledJobs.codeGate.test.js), so every code-accepting route is here.
  *
  * HARNESS (mirrors tests/ingestCodeGate.routes.test.js): the REAL router and
@@ -54,10 +54,14 @@ const http = require('http');
 const express = require('express');
 
 const STAFF = { type: 'jwt', userId: 2, username: 'staff', roles: ['staff'] };
+const ROLELESS = { type: 'jwt', userId: 3, username: 'legacy', roles: [] };
 const ADMIN = { type: 'jwt', userId: 1, username: 'admin', roles: ['admin', 'staff', 'attorney'] };
 const IT    = { type: 'jwt', userId: 6, username: 'it', roles: ['it'] };
 const LEGACY_KEY = { type: 'api_key', scopes: null };
-const ROUTE_KEY  = { type: 'api_key', scopes: ['route:/mailbox-ingest'] };
+const CAP_KEY    = { type: 'api_key', scopes: ['route:/api/triggers', 'automations.manage'] };
+// The caller the gate still refuses: a key that reaches these routes but
+// lacks the capability.
+const ROUTE_KEY  = { type: 'api_key', scopes: ['route:/api/triggers'] };
 
 const HIT = '__triggerCodeGateHit';
 // The walk-back the gate was built for: under node:vm it reached the HOST
@@ -177,8 +181,8 @@ describe('POST /api/triggers/test-draft', () => {
     transform_mode: 'code', transform_config: TRANSFORM_CODE };
   const codeMatch = { envelope: ENVELOPE, match_mode: 'code', match_config: MATCH_CODE, transform_mode: 'passthrough' };
 
-  test('staff + code transform or code match: 403 and the body never runs, nothing read', async () => {
-    mockAuth = STAFF;
+  test('a route-scoped key without automations.manage + code transform or code match: 403 and the body never runs, nothing read', async () => {
+    mockAuth = ROUTE_KEY;
     for (const body of [codeTransform, codeMatch, { ...codeTransform, envelope: undefined, execution_id: 55 }]) {
       const r = await send('POST', '/api/triggers/test-draft', body);
       expectRefused(r);
@@ -187,8 +191,8 @@ describe('POST /api/triggers/test-draft', () => {
     expect(hits()).toBe(0);
   });
 
-  test('admin + code transform: runs — and the walk-back finds no host process (the hole is closed)', async () => {
-    mockAuth = ADMIN;
+  test('staff + code transform: runs — and the walk-back finds no host process (why staff may author it)', async () => {
+    mockAuth = STAFF;
     const r = await send('POST', '/api/triggers/test-draft', codeTransform);
     expect(r.status).toBe(200);
     expect(r.body.result).toEqual({ matched: true, transform_ok: true, transformed: { leaked: 'undefined' } });
@@ -198,13 +202,14 @@ describe('POST /api/triggers/test-draft', () => {
     expect(hits()).toBe(2);
   });
 
-  test('it role and a NULL-scopes machine key hold it; a route-scoped key does not', async () => {
-    for (const [auth, status] of [[IT, 200], [LEGACY_KEY, 200], [ROUTE_KEY, 403]]) {
+  test('every staff JWT passes (roleless, admin, it); a key passes with NULL scopes or automations.manage; a route-scoped key does not', async () => {
+    const cases = [[ROLELESS, 200], [ADMIN, 200], [IT, 200], [LEGACY_KEY, 200], [CAP_KEY, 200], [ROUTE_KEY, 403]];
+    for (const [auth, status] of cases) {
       mockAuth = auth;
       const r = await send('POST', '/api/triggers/test-draft', codeTransform);
       expect([auth, r.status]).toEqual([auth, status]);
     }
-    expect(hits()).toBe(2);
+    expect(hits()).toBe(5);
   });
 
   test('staff + conditions / mapper / passthrough: not gated', async () => {
@@ -219,7 +224,7 @@ describe('POST /api/triggers/test-draft', () => {
     expect(p.body.result.matched).toBe(true);
   });
 
-  test('fails closed: an absent, falsy, case-variant, array or unknown mode on EITHER side is gated for staff', async () => {
+  test('fails closed: an absent, falsy, case-variant, array or unknown mode on EITHER side is gated for a route-scoped key', async () => {
     const bodies = [
       { envelope: ENVELOPE },                                                                   // both absent
       { envelope: ENVELOPE, match_mode: 'conditions', match_config: COND },                    // transform absent
@@ -231,9 +236,9 @@ describe('POST /api/triggers/test-draft', () => {
       { envelope: ENVELOPE, match_mode: 'regex', match_config: {}, transform_mode: 'xslt' },
     ];
     for (const body of bodies) {
-      mockAuth = STAFF;
+      mockAuth = ROUTE_KEY;
       expectRefused(await send('POST', '/api/triggers/test-draft', body));
-      mockAuth = ADMIN; // past the gate: a result, never a code run
+      mockAuth = STAFF; // past the gate: a result, never a code run
       expect((await send('POST', '/api/triggers/test-draft', body)).status).toBe(200);
     }
     expect(hits()).toBe(0);
@@ -243,20 +248,25 @@ describe('POST /api/triggers/test-draft', () => {
 describe('POST /api/triggers/rules (create)', () => {
   const base = { event_type: 'case.stage_advanced', name: 'x', actions: ACTIONS };
 
-  test('staff + code match or code transform: 403, nothing written', async () => {
-    mockAuth = STAFF;
+  test('a route-scoped key + code match or code transform: 403, nothing written', async () => {
+    mockAuth = ROUTE_KEY;
     expectRefused(await send('POST', '/api/triggers/rules', { ...base, match_mode: 'code', match_config: MATCH_CODE }));
     expectRefused(await send('POST', '/api/triggers/rules',
       { ...base, match_mode: 'conditions', match_config: COND, transform_mode: 'code', transform_config: TRANSFORM_CODE }));
   });
 
-  test('admin + code: created', async () => {
-    mockAuth = ADMIN;
-    const r = await send('POST', '/api/triggers/rules',
-      { ...base, match_mode: 'conditions', match_config: COND, transform_mode: 'code', transform_config: TRANSFORM_CODE });
-    expect(r.status).toBe(200);
-    expect(r.body.status).toBe('success');
-    expect(r.db.writes().filter((w) => /^\s*INSERT INTO trigger_rules\b/.test(w.sql))).toHaveLength(1);
+  test('staff (roleless too) + code match or code transform: created', async () => {
+    for (const auth of [STAFF, ROLELESS]) {
+      mockAuth = auth;
+      const r = await send('POST', '/api/triggers/rules',
+        { ...base, match_mode: 'conditions', match_config: COND, transform_mode: 'code', transform_config: TRANSFORM_CODE });
+      expect(r.status).toBe(200);
+      expect(r.body.status).toBe('success');
+      expect(r.db.writes().filter((w) => /^\s*INSERT INTO trigger_rules\b/.test(w.sql))).toHaveLength(1);
+      const m = await send('POST', '/api/triggers/rules', { ...base, match_mode: 'code', match_config: MATCH_CODE });
+      expect(m.status).toBe(200);
+    }
+    expect(hits()).toBe(0); // saving runs nothing
   });
 
   test('staff + conditions/mapper: created; absent transform_mode = passthrough, not code', async () => {
@@ -271,7 +281,7 @@ describe('POST /api/triggers/rules (create)', () => {
   });
 
   test('fails closed: a code-shaped config under a non-code mode is gated', async () => {
-    mockAuth = STAFF;
+    mockAuth = ROUTE_KEY;
     expectRefused(await send('POST', '/api/triggers/rules',
       { ...base, match_mode: 'conditions', match_config: { ...COND, code: 'return true;' } }));
     expectRefused(await send('POST', '/api/triggers/rules',
@@ -281,25 +291,27 @@ describe('POST /api/triggers/rules (create)', () => {
     expectRefused(await send('POST', '/api/triggers/rules', { ...base, match_mode: 'Code', match_config: MATCH_CODE }));
   });
 
-  test('fails closed: an absent or unknown mode with a config is gated (admin: created as conditions, or the validator 400s it)', async () => {
-    mockAuth = STAFF;
+  test('fails closed: an absent or unknown mode with a config is gated (staff: created as conditions, or the validator 400s it)', async () => {
+    mockAuth = ROUTE_KEY;
     expectRefused(await send('POST', '/api/triggers/rules', { ...base, match_config: COND })); // createRule would default to conditions
+    mockAuth = STAFF;
+    expect((await send('POST', '/api/triggers/rules', { ...base, match_config: COND })).status).toBe(200);
     for (const body of [
       { ...base, match_mode: 'regex', match_config: COND },
       { ...base, match_mode: 'conditions', match_config: COND, transform_mode: 'xslt', transform_config: MAPPER },
       { ...base, match_mode: null, match_config: COND },
     ]) {
-      mockAuth = STAFF;
+      mockAuth = ROUTE_KEY;
       expectRefused(await send('POST', '/api/triggers/rules', body));
-      mockAuth = ADMIN;
+      mockAuth = STAFF;
       expect((await send('POST', '/api/triggers/rules', body)).status).toBe(400);
     }
   });
 });
 
 describe('PUT /api/triggers/rules/:id (update)', () => {
-  test('staff switching a rule to code, or editing code: 403, nothing written', async () => {
-    mockAuth = STAFF;
+  test('a route-scoped key switching a rule to code, or editing code: 403, nothing written', async () => {
+    mockAuth = ROUTE_KEY;
     expectRefused(await send('PUT', '/api/triggers/rules/2', { transform_mode: 'code', transform_config: TRANSFORM_CODE }));
     expectRefused(await send('PUT', '/api/triggers/rules/2', { match_mode: 'code', match_config: MATCH_CODE }));
     // config-only edit of a rule whose STORED transform / match is code
@@ -308,24 +320,26 @@ describe('PUT /api/triggers/rules/:id (update)', () => {
   });
 
   test('fails closed on the STORED mode: a config-only edit of a code rule is gated even when the config is not code-shaped', async () => {
-    mockAuth = STAFF;
+    mockAuth = ROUTE_KEY;
     expectRefused(await send('PUT', '/api/triggers/rules/1', { transform_config: MAPPER }));
     expectRefused(await send('PUT', '/api/triggers/rules/3', { match_config: COND }));
-    mockAuth = ADMIN; // past the gate the service writes it (it would run as empty code → non-match)
+    mockAuth = STAFF; // past the gate the service writes it (it would run as empty code → non-match)
     expect((await send('PUT', '/api/triggers/rules/3', { match_config: COND })).status).toBe(200);
   });
 
-  test('staff config-only edit with a code-shaped config on a non-code rule: 403 (the mode-flip race)', async () => {
-    mockAuth = STAFF;
+  test('a route-scoped key\'s config-only edit with a code-shaped config on a non-code rule: 403 (the mode-flip race)', async () => {
+    mockAuth = ROUTE_KEY;
     expectRefused(await send('PUT', '/api/triggers/rules/2', { transform_config: { code: 'return {};' } }));
     expectRefused(await send('PUT', '/api/triggers/rules/2', { match_config: 'return true' }));
   });
 
-  test('admin editing code: updated', async () => {
-    mockAuth = ADMIN;
+  test('staff switching a rule to code, or editing code: updated', async () => {
+    mockAuth = STAFF;
     const r = await send('PUT', '/api/triggers/rules/1', { transform_config: TRANSFORM_CODE });
     expect(r.status).toBe(200);
     expect(r.db.writes().filter((w) => /^\s*UPDATE trigger_rules\b/.test(w.sql))).toHaveLength(1);
+    expect((await send('PUT', '/api/triggers/rules/2', { match_mode: 'code', match_config: MATCH_CODE })).status).toBe(200);
+    expect((await send('PUT', '/api/triggers/rules/3', { match_config: MATCH_CODE })).status).toBe(200);
     expect(hits()).toBe(0); // saving runs nothing
   });
 
@@ -336,15 +350,18 @@ describe('PUT /api/triggers/rules/:id (update)', () => {
     expect(r.db.writes().filter((w) => /^\s*UPDATE trigger_rules\b/.test(w.sql))).toHaveLength(1);
   });
 
-  test('staff re-sending the WHOLE code rule (the native editor\'s real payload): refused — documented interaction', async () => {
-    mockAuth = STAFF;
+  test('re-sending the WHOLE code rule (the native editor\'s real payload): staff saves it; a route-scoped key is refused', async () => {
     const rule = storedRule(1);
-    expectRefused(await send('PUT', '/api/triggers/rules/1', {
+    const whole = {
       event_type: rule.event_type, name: 'renamed', description: null, active: 1, position: 0, min_interval_s: 0,
       match_mode: rule.match_mode, match_config: rule.match_config,
       transform_mode: rule.transform_mode, transform_config: rule.transform_config,
       actions: ACTIONS,
-    }));
+    };
+    mockAuth = STAFF;
+    expect((await send('PUT', '/api/triggers/rules/1', whole)).status).toBe(200);
+    mockAuth = ROUTE_KEY;
+    expectRefused(await send('PUT', '/api/triggers/rules/1', whole));
   });
 
   test('staff re-sending the WHOLE non-code rule (the native editor\'s real payload): allowed', async () => {
@@ -364,8 +381,8 @@ describe('PUT /api/triggers/rules/:id (update)', () => {
     expect(r.status).toBe(200);
   });
 
-  test('an unknown rule id is a 404 before any judgement (staff and admin alike)', async () => {
-    for (const auth of [STAFF, ADMIN]) {
+  test('an unknown rule id is a 404 before any judgement (staff and a route-scoped key alike)', async () => {
+    for (const auth of [STAFF, ROUTE_KEY]) {
       mockAuth = auth;
       const r = await send('PUT', '/api/triggers/rules/99', { transform_mode: 'code', transform_config: TRANSFORM_CODE });
       expect(r.status).toBe(404);
@@ -376,7 +393,7 @@ describe('PUT /api/triggers/rules/:id (update)', () => {
 
 describe('left open on purpose: routes that take no code body', () => {
   test('POST /api/triggers/test runs STORED rules only — a code body riding it is ignored', async () => {
-    mockAuth = STAFF;
+    mockAuth = ROUTE_KEY;
     const r = await send('POST', '/api/triggers/test', {
       event_type: 'case.stage_advanced', envelope: ENVELOPE,
       match_mode: 'code', match_config: MATCH_CODE, transform_mode: 'code', transform_config: TRANSFORM_CODE,

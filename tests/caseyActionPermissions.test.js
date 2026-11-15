@@ -234,7 +234,8 @@ const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/api.contactRelation
   // 403), no role or capability; the per-row lock lives in reportService.
   'routes/api.reports.js',
   // A20.2 / A20.3: the ingest rule routes — jwtOrApiKey, plus the ingest code
-  // gate (automations.manage) on requests that carry a code body only.
+  // gate on requests that carry a code body (any staff JWT passes it; an API
+  // key needs automations.manage).
   'routes/api.emailIngest.js', 'routes/api.phoneIngest.js',
   // A10: the checklist routes — jwtOrApiKey only; isSuperuser gates the tag
   // write and the personal-list detach, neither of which a card sends (pinned
@@ -762,10 +763,12 @@ describe('P2 — what the canonical write route gates on (all 91 shipped kinds)'
 
   // A20.2 / A20.3: the ingest rule routes gate on authentication, plus the
   // ingest code gate on a request that CARRIES a code body (match or
-  // transform): a roleless staff token reaches createRule with a conditions
-  // body and is refused 403 with a code body — so a Casey code card applies
-  // only for automations.manage holders, by the route, not the card.
-  test.each(['email', 'phone'])('ingest_rule (%s): conditions reach the service rolelessly; a code body needs automations.manage', async (ch) => {
+  // transform), which every staff JWT passes — the body runs in the QuickJS
+  // guest (lib/ingestCodeGate.js; only an API key without automations.manage
+  // is refused, pinned by tests/ingestCodeGate.routes.test.js). So a roleless
+  // staff token reaches createRule with a conditions body AND with a code
+  // body: a Casey code card applies for any staff user.
+  test.each(['email', 'phone'])('ingest_rule (%s): conditions and code bodies alike reach the service rolelessly', async (ch) => {
     const svc = require(path.join(REPO, `services/${ch}IngestRuleService`));
     const spy = jest.spyOn(svc, 'createRule').mockImplementation(async () => ({ id: 1, actions: [] }));
     try {
@@ -777,12 +780,13 @@ describe('P2 — what the canonical write route gates on (all 91 shipped kinds)'
         expect({ roles: roles.join(',') || 'none', status: res.status, reached: spy.mock.calls.length })
           .toEqual({ roles: roles.join(',') || 'none', status: 201, reached: 1 });
       }
-      spy.mockClear();
-      const code = await call(a, { method: 'POST', path: `/api/${ch}-ingest/rules` }, bearer(token({ roles: ['staff'] })),
-        { ...base, match_mode: 'code', match_config: { code: 'return true;' } });
-      expect(code.status).toBe(403);
-      expect(code.body.missingCapability).toBe('automations.manage');
-      expect(spy).not.toHaveBeenCalled();
+      for (const roles of [['staff'], []]) {
+        spy.mockClear();
+        const code = await call(a, { method: 'POST', path: `/api/${ch}-ingest/rules` }, bearer(token({ roles })),
+          { ...base, match_mode: 'code', match_config: { code: 'return true;' } });
+        expect({ roles: roles.join(',') || 'none', status: code.status, reached: spy.mock.calls.length })
+          .toEqual({ roles: roles.join(',') || 'none', status: 201, reached: 1 });
+      }
       const admin = await call(a, { method: 'POST', path: `/api/${ch}-ingest/rules` }, bearer(token({ roles: ['admin', 'staff'] })),
         { ...base, transform_mode: 'code', transform_config: { code: 'return input;' } });
       expect(admin.status).toBe(201);

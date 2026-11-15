@@ -12777,9 +12777,9 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
 //   - an empty condition group (match-all, or an always-false `or`) is
 //     refused: an empty set matches EVERY message.
 // CODE modes (QuickJS guest, 8327d9e): Casey may write a code match or
-// transform body; the card shows it whole and the native route's ingest code
-// gate (lib/ingestCodeGate.js) decides — only a user holding
-// automations.manage can apply it, and the card says so up front.
+// transform body; the card shows it whole, flags it (draft.code) and is
+// danger-styled. The native route's ingest code gate (lib/ingestCodeGate.js)
+// takes a code body from any staff JWT — it runs in the guest engine.
 // http actions are NOT authored yet (A17.4b's literal-URL / named-credential
 // contract is unbuilt; an ingest http action ships every matching client
 // message to a URL). Existing http actions may be renamed, toggled,
@@ -13354,7 +13354,6 @@ async function normalizeIngestRuleAction(db, value, evidence) {
       actions,
       order: await ingestRuleOrder(db, t, position),
       code: { match: match.code, transform: transform.code },
-      requires_capability: match.code || transform.code ? 'automations.manage' : null,
       notes,
       evidence: jobDraftEvidence(value.evidence, evidence),
     };
@@ -13420,7 +13419,6 @@ async function normalizeIngestRuleAction(db, value, evidence) {
       live_text: ingestLiveText(base), revert_text: INGEST_REVERT_TEXT,
       changes: out, before,
       code: { match: matchCode, transform: transformCode },
-      requires_capability: matchCode || transformCode ? 'automations.manage' : null,
       notes, expected_base: base.expected_base, evidence: base.refs,
     };
   }

@@ -729,18 +729,16 @@ it:
 
 ## From the code-bodies guest-engine slice (2026-10-26) — deferred
 
-- **Relax the `automations.manage` code gates — Fred's decision, after a
-  soak.** Trigger (`lib/triggerCodeGate.js`), ingest (`lib/ingestCodeGate.js`)
-  and hook (B5) code bodies now run in the QuickJS guest, the same boundary
-  that let SAFE `custom_code` steps open to all staff. The gates were kept
-  exactly as they were in the moving slice on purpose; whether (and when) to
-  open code authoring on these sites to all staff is Fred's call once the
-  guest has run live bodies for a while. Note a hook transform can still
-  read inbound headers and an `http` target can still send data out — opening
-  hooks is a data-flow decision, not only a sandbox one.
+- **Relax the hooks `automations.manage` gate — Fred's decision.** Hook (B5)
+  filter and transform bodies run in the QuickJS guest, the boundary that
+  opened SAFE `custom_code` steps and trigger / ingest code bodies to all
+  staff. But a hook transform can still read inbound headers and an `http`
+  target can still send data out — opening hooks is a data-flow decision,
+  not only a sandbox one.
 - **Casey's ingest preview could take unsaved bodies.** It refuses them
   because a model-composed body would have run in-process; that reason is
-  gone. A separate decision (it would also need the gate question above).
+  gone, and the ingest code gate no longer refuses staff. A separate
+  decision.
 - **test-match's syntax pre-check still uses V8's parser** (compile-only
   `new Function`, never called) because its error text is pinned by
   `tests/fixtures/ingestRuleTestRoutes.golden.json`. Switching it to the guest

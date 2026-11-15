@@ -42,7 +42,9 @@
  *       pre-slice code returned (tests/fixtures/ingestNativeGolden.json,
  *       recorded from 2c1c86a by the same call sequence,
  *       tests/helpers/ingestNativeSequence.js) plus one key,
- *       definition_updated_at, on every rule object.
+ *       definition_updated_at, on every rule object — and one step's answer
+ *       changed on purpose since (update-invalid: the ingest code gate no
+ *       longer refuses staff, so the validator answers; overlaid in the test).
  *   No action is ever dispatched: actionDispatchers.dispatch and
  *   hookService.executeHook are spied and must stay uncalled.
  */
@@ -58,6 +60,9 @@ jest.mock('../lib/auth.jwtOrApiKey', () =>
   jest.fn((req, _res, next) => { req.auth = mockAuth; next(); }));
 
 const STAFF = { type: 'jwt', userId: 2, username: 'staff', roles: ['staff'] };
+// The one caller the ingest code gate still refuses: an API key whose scopes
+// lack automations.manage (lib/ingestCodeGate.js).
+const ROUTE_KEY = { type: 'api_key', key_label: 'route-bot', scopes: ['route:/api/email-ingest', 'route:/api/phone-ingest'] };
 const KEY = { type: 'api_key', key_id: 17, key_label: 'casey-mgr', scopes: null };
 const ALWAYS = { operator: 'and', conditions: [] };
 const SECRET_URL = 'https://hooks.example.com/t/SECRET-TOKEN-abc123';
@@ -167,7 +172,18 @@ maybe('ingest rule edit stamp + change log + precondition on real MySQL', () => 
       const steps = await H.runNativeSequence(srv.send, ch, { workflowId: WF });
       const stamps = [];
       const got = H.normalize(steps, { stamps });
-      expect(got).toEqual(GOLDEN.channels[ch]);
+      // One deliberate delta since the recording: the ingest code gate takes
+      // a code body from any staff JWT (lib/ingestCodeGate.js), so
+      // `update-invalid` ({ match_mode: 'regex' } — an unknown mode, which
+      // the gate reads as code-carrying) now reaches the validator's 400
+      // instead of the gate's 403. Anchored on the recorded 403.
+      const recorded = GOLDEN.channels[ch].filter((s) => s.step === 'update-invalid');
+      expect(recorded.map((s) => s.status)).toEqual([403]);
+      const expected = GOLDEN.channels[ch].map((s) => (s.step !== 'update-invalid' ? s : {
+        step: s.step, status: 400,
+        body: { error: 'validation_failed', field: 'match_mode', message: 'must be one of conditions|code' },
+      }));
+      expect(got).toEqual(expected);
       // every rule object carried the stamp, as the ISO instant GET returns
       const ruleObjects = steps.reduce((n, s) => n + (s.body && s.body.rule ? 1 : 0)
         + (s.body && Array.isArray(s.body.rules) ? s.body.rules.length : 0), 0);
@@ -430,9 +446,11 @@ maybe('ingest rule edit stamp + change log + precondition on real MySQL', () => 
         expect([JSON.stringify(eb), res.status, res.body.field]).toEqual([JSON.stringify(eb), 400, 'expected_base']);
       }
       expect(await snapshot(ch)).toEqual(before);
-      // staff + a code body + a stale base: the gate's 403, not a 409
+      // a key without automations.manage + a code body + a stale base: the gate's 403, not a 409
+      mockAuth = ROUTE_KEY;
       const gated = await srv.send('PUT', `${base}/rules/${r.id}`,
         { match_mode: 'code', match_config: { code: 'return true;' }, expected_base: { definition_updated_at: '2020-01-01T00:00:00.000Z' } });
+      mockAuth = STAFF;
       expect(gated.status).toBe(403);
       expect(gated.body.missingCapability).toBe('automations.manage');
       expect(await snapshot(ch)).toEqual(before);

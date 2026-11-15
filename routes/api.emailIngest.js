@@ -55,9 +55,9 @@ const { refusePromotionalIngestRule, refusePromotionalIngestAction, refusePromot
 const changeLog = require('../services/ingestRuleChangeLog');
 const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency');
 // Code-mode bodies run in the QuickJS guest engine in the sandbox child
-// (lib/guestCode.js) — every writer and tester that accepts one still refuses
-// it without automations.manage (lib/ingestCodeGate.js; CLAUDE.md, the
-// custom_code invariant).
+// (lib/guestCode.js) — every writer and tester that accepts one takes it from
+// any staff JWT and refuses it from an API key without automations.manage
+// (lib/ingestCodeGate.js; CLAUDE.md, the custom_code invariant).
 
 
 // ─────────────────────────────────────────────────────────────

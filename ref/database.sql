@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-11T20:08:53.542Z
+-- Generated: 2026-11-15T03:06:03.299Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:c37b3d17a70665584b904847583ca6d6
+-- Fingerprint: sha256:a58513200e490520d359f9a19eb39208
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -998,7 +998,7 @@ CREATE TABLE `comm_unsub_tokens` (
   `channel` enum('email') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'email' COMMENT 'email only: SMS opt-out is a keyword (P2), never a link',
   `destination` varchar(254) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'normalized address (contactEmailService.normalizeEmail) — the consent subject every /u/ action records against',
   `topic_key` varchar(40) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'comm_topics.topic_key of the send; the one-click POST opts out of THIS (D4). A topic deleted since mint falls back to scope marketing',
-  `campaign_id` int DEFAULT NULL COMMENT 'campaigns.id of the send that minted it (NULL: test/smoke mints)',
+  `campaign_id` int DEFAULT NULL COMMENT 'campaigns.id of the campaign send that minted it. NULL = a triggered promotional send (campaignService.sendPromotional, C7: one recipient, no campaign row, contact_id attributed) or a test/smoke mint',
   `contact_id` int unsigned DEFAULT NULL COMMENT 'best-effort attribution at mint; consent belongs to the destination, not the contact',
   `send_ref` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'campaign_results id / provider message id passed at mint; copied onto the consent event (comm_consent_events.send_ref)',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'UTC mint time',

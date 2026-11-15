@@ -1393,9 +1393,9 @@ refuses a number that has opted out of texts (an email opt-out is marketing-only
 stay "passthrough" (the whole message). Casey does not write new regular expressions (they run on every
 message), a rule that matches every message, or actions that send the message
 to an outside web address; it tells you to add those by hand. A rule whose
-conditions or transform are code can be written by Casey too, and the card
-shows the code — but only an administrator, IT or SU user can apply it (the
-server refuses it for everyone else). The off switch is the
+conditions or transform are code can be written by Casey too: the card shows
+the code, says it runs in the isolated sandbox engine, and is styled as a
+warning so you read it line by line; any staff user can apply it. The off switch is the
 `casey_ingest_authoring_enabled` setting.
 
 ## Models and files

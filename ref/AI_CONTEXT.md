@@ -24,6 +24,20 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Trigger + ingest code bodies open to all staff (11-15, Fred's ruling):**
+  `lib/triggerCodeGate.js` (trigger rule POST/PUT, `test-draft`) and
+  `lib/ingestCodeGate.js` (email/phone ingest rule + suppression writes,
+  `test-match` / `test-transform`) take a code body from ANY staff JWT,
+  roleless included — the body runs in the QuickJS guest (§26 "The shared
+  engine"), the boundary that already opened SAFE `custom_code` steps. An API
+  key carrying one still needs `automations.manage` (NULL scopes hold it; a
+  scoped key only when its scopes name it) — the gates' fail-closed detection
+  now decides only that, 403 `missingCapability`. UNCHANGED: hooks (B5,
+  whole-route `automations.manage` — a data-flow decision, `ref/plans.md`)
+  and STANDARD `custom_code` (`lib/codeStepGate.js` + the scheduled-jobs
+  writers). Casey's ingest cards drop `requires_capability`: a code card is
+  flagged by `draft.code` (its card line + danger styling) and applies for
+  any staff user. Prompts: assistant_answer 39, assistant_plan 36.
 - **U9b-P4 + the Calendar column picker (11-12):** the shell's Events tab is
   RETIRED (markup, EVENTS_COLUMNS, tabEventsGet, its bus reader, the `events`
   launcher item, LIST_CSV.events / EVENT_CSV_COLUMNS); `?open=tabEvents`
@@ -423,7 +437,8 @@ body. Governing migrations in `ref/migrations/`.*
   refuses a forward); NOT workflow-draft authorable), `send_email`/`send_sms`
   from a quoted literal firm sender, no `http` actions (A17.4b unbuilt; existing ones may be renamed /
   toggled / moved / removed, never re-pointed). Code-mode bodies are
-  authorable; the route's ingest code gate decides (automations.manage).
+  authorable and apply for any staff user (the route's ingest code gate
+  refuses only an API key without automations.manage).
   Off switch `casey_ingest_authoring_enabled`. Plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A20.2/A20.3.
 - **Ingest rules: edit stamp + change log + stale-edit precondition (A20
@@ -780,8 +795,8 @@ body. Governing migrations in `ref/migrations/`.*
   row UPDATE), so it is not an edit stamp; action writes do not move it —
   the edit stamp is `definition_updated_at` (A20 slice 1, entry above);
   (2) `code` match/transform/suppression bodies ran IN THIS PROCESS via
-  `new Function` — now the QuickJS guest; every route that accepts one
-  needs `automations.manage` (§27 "Code mode"); (3) a throwing match is
+  `new Function` — now the QuickJS guest, so every route that accepts one
+  takes it from any staff JWT (§27 "Code mode"); (3) a throwing match is
   a console warning only, never recorded on the execution row; (4) email
   firm-to-firm mail runs Layer 3. Plan: ref/ASK_CASEY_ACTIONS_PLAN.md A20.
 - **Workflow step routes: expected_base precondition + save-time closures
@@ -3211,18 +3226,17 @@ constructor walk-back reach `process.env`). Lane `events` for live rules,
 `preview` for `test` / `test-draft`. Async: `_evaluateMatch` /
 `_runTransform` / `evaluateDraft` are awaited everywhere. 15 s wall
 (`TRIGGER_CODE_TIMEOUT_MS`), timeout error keeps the throttled-instance hint.
-No `Intl`. Every route that ACCEPTS a code body still requires
-`automations.manage`
-(`lib/triggerCodeGate.js`, 403 `missingCapability`; non-code modes stay open
-to all staff): rule POST/PUT that touch a code-mode side, and
+No `Intl`. Every route that ACCEPTS a code body takes it from any staff JWT
+and refuses it from an API key without `automations.manage`
+(`lib/triggerCodeGate.js`, 403 `missingCapability`; non-code modes are never
+judged): rule POST/PUT that touch a code-mode side, and
 `test-draft` with any side not literally a non-code mode. Same invariants as
 §27 "Code mode": fail closed on mode (anything but `conditions` /
 `passthrough` / `mapper` counts as code) and on code-shaped config; a PUT is
-judged against the STORED mode for the side it touches; the native editor
-re-sends the whole rule, so a user without the capability cannot save any
-edit to a code-mode rule. `test` and `replay` take no code body (stored rules
-only) and stay open. The gate is unchanged by the engine move; relaxing it is
-Fred's decision after a soak (`ref/plans.md`).
+judged against the STORED mode for the side it touches. `test` and `replay`
+take no code body (stored rules only) and stay open. Staff were opened by
+Fred's ruling once the bodies ran in the guest; hooks stay gated
+(`ref/plans.md`).
 
 **The shared engine (`lib/guestCode.js`)** runs every code body except
 `custom_code` (§10) — §16 hook filters / transforms, §26 triggers, §27–§28
@@ -3374,20 +3388,19 @@ transform → matched + synthetic failed `transform` outcome, no actions). No
 previews run the same engine — `test-match` batches its corpus into one child
 (`guestCode.batchRunner`), and Casey's preview captures warnings through a
 per-call `warn` sink, not a console patch. Every route that ACCEPTS a code
-body still requires `automations.manage` (`lib/ingestCodeGate.js`, both channels;
-403 `missingCapability`; non-code modes stay open to all staff): rule
+body takes it from any staff JWT and refuses it from an API key without
+`automations.manage` (`lib/ingestCodeGate.js`, both channels;
+403 `missingCapability`; non-code modes are never judged): rule
 and suppression POST/PUT that touch a code-mode side, and `test-match` /
 `test-transform` with a code body. Invariants: detection fails closed — any
 mode other than `conditions` (match) or `passthrough`/`mapper` (transform)
 counts as code, and a write's config shaped like code (a string, or an object
 with a `code` key) counts whatever the mode says; a PUT that leaves both code
-sides untouched passes, but the native editors re-send the whole record, so a
-user without the capability cannot save any edit to a code-mode rule or
-suppression. `duplicate` ignores its body and stays open. Casey's
+sides untouched passes. `duplicate` ignores its body and stays open. Casey's
 `automation.preview_ingest_rule` previews stored rules only; Casey's
-code-carrying rule cards go through this gate like any other caller. The gate is
-unchanged by the engine move; relaxing it is Fred's decision after a soak
-(`ref/plans.md`). Engine limits and lanes: §26 "The shared engine". §28
+code-carrying rule cards go through this gate like any other caller (any
+staff user applies them). Staff were opened by Fred's ruling once the bodies
+ran in the guest (`ref/plans.md`). Engine limits and lanes: §26 "The shared engine". §28
 shares all of this.
 
 ### Edit stamp, change log, stale-edit precondition
@@ -3733,10 +3746,10 @@ app-settings key's `alsoWrite` — today `fe-lead_sources`, §32),
 automations.manage (/api/hooks management +
 pages create-hook, and every writer of a STANDARD-mode code body: workflow
 step routes + test-step and Casey's step preview via lib/codeStepGate, the
-scheduled-jobs POST/PATCH, email/phone ingest rule + suppression writes and
-tests via lib/ingestCodeGate, trigger rule POST/PUT + test-draft via
-lib/triggerCodeGate — safe mode is open to all staff; CLAUDE.md lists the
-sites), users.impersonate (View-as start, §3). app-settings decides the capability PER KEY from its
+scheduled-jobs POST/PATCH — safe mode is open to all staff; for email/phone
+ingest rule + suppression writes and tests (lib/ingestCodeGate) and trigger
+rule POST/PUT + test-draft (lib/triggerCodeGate) it gates only an API key
+carrying a code body — any staff JWT passes; CLAUDE.md lists the sites), users.impersonate (View-as start, §3). app-settings decides the capability PER KEY from its
 registry home (§32). Roles UI: users pane
 (su grants/revokes need an SU caller; nobody removes their own su).
 

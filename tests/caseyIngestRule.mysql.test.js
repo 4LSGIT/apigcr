@@ -32,7 +32,8 @@
  *     structured 409 with nothing written — the rendering the card refuses on;
  *     the GET the click-time precheck reads returns the same instant;
  *   - code mode reaches the route and the route's ingest code gate decides:
- *     403 for plain staff (nothing written), applied for automations.manage;
+ *     applied for plain staff (any staff JWT), 403 for an API key without
+ *     automations.manage (nothing written);
  *   - the read surface: definition_updated_at on the rule row, the change log
  *     as field-level 'change' rows.
  *   No action is ever dispatched: actionDispatchers.dispatch and
@@ -51,6 +52,7 @@ jest.mock('../lib/auth.jwtOrApiKey', () =>
 
 const STAFF = { type: 'jwt', userId: 2, username: 'staff', roles: ['staff'] };
 const ADMIN = { type: 'jwt', userId: 6, username: 'it', roles: ['it', 'staff'] };
+const ROUTE_KEY = { type: 'api_key', key_label: 'route-bot', scopes: ['route:/api/email-ingest', 'route:/api/phone-ingest'] };
 
 maybe('Casey ingest-rule authoring end to end on real MySQL', () => {
   const fs = require('fs');
@@ -374,18 +376,19 @@ maybe('Casey ingest-rule authoring end to end on real MySQL', () => {
       expect(a).toMatchObject({ action_type: 'internal_function', active: 1, config: staff.actions[0].config });
     });
 
-    test('CODE mode: the route\'s ingest code gate decides — 403 for plain staff (nothing written), applied for automations.manage', async () => {
+    test('CODE mode: the route\'s ingest code gate decides — 403 for an API key without automations.manage (nothing written), applied for plain staff', async () => {
       const draft = await svc.normalizeActionDraft(pool, { kind: 'ingest_rule.create.v1', channel: ch, name: `${ch} code rule`,
         match_mode: 'code', match_config: { code: 'return String(input.subject || input.message || "").includes("341");' },
         transform_mode: 'passthrough', evidence: [] }, []);
-      expect(draft.requires_capability).toBe('automations.manage');
+      expect(draft.code).toEqual({ match: true, transform: false });
+      expect(draft).not.toHaveProperty('requires_capability');
       const before = await snapshot(ch);
-      const refused = await apply(ch, draft, STAFF);
+      const refused = await apply(ch, draft, ROUTE_KEY);
       expect(refused.status).toBe(403);
       expect(refused.body.missingCapability).toBe('automations.manage');
       expect(await snapshot(ch)).toEqual(before);
       expect((await q('SELECT COUNT(*) AS n FROM request_idempotency WHERE idem_key = ?', [draft.draft_id]))[0].n).toBe(0);
-      const ok = await apply(ch, draft, ADMIN);
+      const ok = await apply(ch, draft, STAFF);
       expect(ok.status).toBe(201);
       expect(await ruleRow(ch, ok.body.rule.id)).toMatchObject({ active: 0, match_mode: 'code', match_config: draft.rule.match_config });
     });

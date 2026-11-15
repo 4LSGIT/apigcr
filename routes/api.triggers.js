@@ -23,9 +23,9 @@
  * carry `.status` (400 validation, 404 unknown row), anything else 500.
  *
  * Code bodies: POST/PUT rules and test-draft that CARRY a code match or
- * transform additionally need automations.manage (lib/triggerCodeGate.js —
- * kept unchanged when the code moved to the QuickJS guest engine in the
- * sandbox child, lib/guestCode.js; relaxing it is Fred's call after a soak).
+ * transform are open to any staff JWT — the body runs in the QuickJS guest
+ * engine in the sandbox child (lib/guestCode.js); an API key carrying one
+ * still needs automations.manage (lib/triggerCodeGate.js).
  * /test and /replay take no code body: they run STORED rules only.
  */
 
@@ -51,9 +51,9 @@ function refusePromotionalActions(auth, body) {
   return null;
 }
 // Code-mode bodies run in the QuickJS guest engine in the sandbox child
-// (lib/guestCode.js) — every writer and tester that accepts one still refuses
-// it without automations.manage (lib/triggerCodeGate.js; CLAUDE.md, the
-// custom_code invariant).
+// (lib/guestCode.js) — every writer and tester that accepts one takes it from
+// any staff JWT and refuses it from an API key without automations.manage
+// (lib/triggerCodeGate.js; CLAUDE.md, the custom_code invariant).
 
 function fail(res, err) {
   const status = err.status || 500;

@@ -16,7 +16,8 @@
  *      definition_updated_at and must equal the live stamp; the grammar is
  *      built field by field (no empty groups, no NEW regex, closed action
  *      configs, allowlisted functions, literal firm senders, no http); code
- *      bodies are allowed and flagged as automations.manage-only; the family
+ *      bodies are allowed and flagged (draft.code — the card's code line and
+ *      danger styling; the route takes them from any staff JWT); the family
  *      flag is real;
  *   2. the browser's fixed request builder (run out of public/assistant.html
  *      itself): create pins active:0 and sends exactly the normalized rule +
@@ -63,7 +64,7 @@ function constSrc(src, name) {
   throw new Error(`const ${name} unterminated`);
 }
 const BROWSER = ['ingestRulePath', 'ingestRuleId', 'ingestRuleLabel', 'ingestRuleValue', 'ingestRuleHead', 'ingestRuleSideText',
-  'ingestRuleActionLine', 'ingestRuleText', 'ingestRuleRequest', 'ingestRuleDispatch', 'ingestRuleResult', 'ingestRulePrecheck'];
+  'ingestRuleActionLine', 'ingestRuleCarriesCode', 'ingestRuleText', 'ingestRuleRequest', 'ingestRuleDispatch', 'ingestRuleResult', 'ingestRulePrecheck'];
 function browser(P = {}) {
   const src = [constSrc(html, 'INGEST_RULE_ACTION_KINDS'), constSrc(html, 'INGEST_RULE_PATHS'),
     constSrc(html, 'INGEST_RULE_UPDATE_FIELDS'), constSrc(html, 'INGEST_ACTION_UPDATE_FIELDS'),
@@ -141,8 +142,9 @@ describe('ingest_rule.create.v1 — a rule born inactive', () => {
       kind: 'ingest_rule.create.v1', status: 'draft', channel: 'email',
       rule: { name: 'Trustee notices', position: 0, match_mode: 'conditions', match_config: COND, transform_mode: 'passthrough', transform_config: null },
       actions: [{ action_type: 'workflow', config: { workflow_id: 24 }, side_effect: 'starts-workflow' }],
-      code: { match: false, transform: false }, requires_capability: null,
+      code: { match: false, transform: false },
     });
+    expect(out).not.toHaveProperty('requires_capability');
     expect(out.actions[0].summary).toMatch(/starts workflow #24 "Court deadlines"/);
     expect(out.order).toMatch(/evaluated after 4 active rules/);
     expect(out).not.toHaveProperty('rule.active');   // active is the builder's pin, never the model's
@@ -180,12 +182,13 @@ describe('ingest_rule.create.v1 — a rule born inactive', () => {
       .rejects.toThrow(/takes no transform_config/);
   });
 
-  test('CODE match/transform bodies are allowed and flagged: only automations.manage can apply them', async () => {
+  test('CODE match/transform bodies are allowed and flagged as code (no capability claim: any staff user applies them)', async () => {
     const out = await normalizeActionDraft(fakeDb(), create({ match_mode: 'code', match_config: { code: 'return input.subject.includes("341");' },
       transform_mode: 'code', transform_config: 'return { n: 1 };' }), []);
     expect(out.rule.match_config).toEqual({ code: 'return input.subject.includes("341");' });
     expect(out.rule.transform_config).toEqual({ code: 'return { n: 1 };' });
-    expect(out).toMatchObject({ code: { match: true, transform: true }, requires_capability: 'automations.manage' });
+    expect(out).toMatchObject({ code: { match: true, transform: true } });
+    expect(out).not.toHaveProperty('requires_capability');
     await expect(normalizeActionDraft(fakeDb(), create({ match_mode: 'code', match_config: { code: '   ' } }), []))
       .rejects.toThrow(/in code mode is/);
   });
@@ -539,13 +542,17 @@ describe('the browser\'s fixed request builder (run from public/assistant.html)'
     expect(reader).not.toHaveBeenCalled();
   });
 
-  test('the card text says LIVE for an active rule, shows before/after, the code capability, and the change log', async () => {
+  test('the card text says LIVE for an active rule, shows before/after, the code line, and the change log', async () => {
     const upd = await normalizeActionDraft(fakeDb(), { kind: 'ingest_rule.update.v1', email_ingest_rule_id: 12,
       changes: { transform_mode: 'code', transform_config: { code: 'return { n: 1 };' } }, evidence: REF }, ruleEvidence());
+    expect(upd.code).toEqual({ match: false, transform: true });
+    expect(upd).not.toHaveProperty('requires_capability');
     const text = b.ingestRuleText(upd);
     expect(text).toMatch(/Live: LIVE: this rule is ACTIVE/);
     expect(text).toMatch(/transform_mode — before: passthrough\ntransform_mode — after: code/);
-    expect(text).toMatch(/only a user holding automations\.manage can apply it/);
+    expect(text).toMatch(/Code: this card carries a code body\. It runs in the isolated sandbox engine/);
+    expect(text).not.toMatch(/automations\.manage/);
+    expect(b.ingestRuleText({ ...upd, code: { match: false, transform: false } })).not.toMatch(/Code: this card carries a code body/);
     expect(text).toMatch(/Undo: every change is recorded before\/after in the rule's change log/);
     expect(b.ingestRuleLabel({ kind: 'ingest_rule.set_active.v1', active: 1 })).toBe('Activate ingest rule');
     expect(b.ingestRuleLabel({ kind: 'ingest_rule.set_active.v1', active: 0 })).toBe('Deactivate ingest rule');
