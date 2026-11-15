@@ -134,7 +134,7 @@ concurrent caller winning the insert race is not an error there.
 | `/checklists/:id/items` | POST | Add an item |
 | `/checkitems/:id` | PATCH, DELETE | Update name/status (answers the item row plus its list's `checklist` {id, link_type, link}, for the sync bus), or remove (answers the same `checklist` echo) |
 | `/checklists/:id/items/order` | PUT | Reorder: `{item_ids}` = every item on the list, once each, in the new order. One transaction rewrites `position` to 1..N; 409 (nothing written, the current `item_ids` in the answer) when the set is not exactly the list's items, 400 on a note or a bad / repeated id. Answers the list in its new order. Gate: authentication only, like the item routes. No surface but Ask Casey's reorder card sends it |
-| `/checklists/upsert-items` | POST | Find-or-create the `docs_needed` list and upsert items |
+| `/checklists/upsert-items` | POST | Find-or-create the `docs_needed` list and upsert items: each new item replaces the existing item sharing its first 22 characters, then is added unchecked. Not one transaction. Answers `{status, checklist}` (the whole list), which the sync bus announces as `checklist:case:<case_id>`. Ask Casey's docs-list card and the sending form call it |
 
 **Public — unauthenticated, `case_id` is the only capability:**
 

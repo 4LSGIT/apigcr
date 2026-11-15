@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 92 shipped kinds:
+ * These tests ask that claim two questions for all 93 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 92 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 93 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -161,6 +161,8 @@ const KINDS = [
   { kind: 'checklist.item.delete.v1', method: 'DELETE', path: '/checkitems/1' },
   // A10X: the atomic reorder route built for the reorder card.
   { kind: 'checklist.items.reorder.v1', method: 'PUT', path: '/checklists/1/items/order' },
+  // A10X: the docs-list upsert route (the sending form's own).
+  { kind: 'checklist.items.upsert.v1', method: 'POST', path: '/checklists/upsert-items' },
   // A11: the Documents page's own registry routes (routes/api.documents.js).
   { kind: 'document.update.v1', method: 'PATCH', path: '/api/documents/1' },
   { kind: 'document.link.v1', method: 'POST', path: '/api/documents/1/links' },
@@ -300,19 +302,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 92 kinds (no database)
+// SECTION 1 — the route-level gate, for all 93 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 92 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 93 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 92 kinds cover 80 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(92);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(80);
+  test('the 93 kinds cover 81 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(93);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(81);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -320,7 +322,7 @@ describe('P2 — what the canonical write route gates on (all 92 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 92', async () => {
+  test('no token: every kind is 401 — authentication is required for all 93', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -443,7 +445,8 @@ describe('P2 — what the canonical write route gates on (all 92 shipped kinds)'
   // all six handlers: past the gate, the stub db's empty rows read as 'not
   // found' (404) or a created row (201), never 401/403. The A10X reorder PUT
   // is the item routes' gate (authentication only) — the stub db has no
-  // transaction connection, so it answers 500: past the gate either way.
+  // transaction connection, so it answers 500: past the gate either way. The
+  // upsert-items POST is jwtOrApiKey only too (no case_id in this body: 400).
   test('A10 route file: no capability gate; isSuperuser only behind the tag and detach checks', async () => {
     const src = read('routes/api.checklists.js');
     expect(/requireAuth/.test(src)).toBe(false);
@@ -452,7 +455,7 @@ describe('P2 — what the canonical write route gates on (all 92 shipped kinds)'
     expect(src).toContain("return auth?.type === 'api_key' || isSuperuser(auth);");
     for (const mount of ["router.post('/checklists', jwtOrApiKey", "router.post('/checklists/:id/items', jwtOrApiKey", "router.patch('/checkitems/:id', jwtOrApiKey",
       "router.patch('/checklists/:id', jwtOrApiKey", "router.delete('/checklists/:id', jwtOrApiKey", "router.delete('/checkitems/:id', jwtOrApiKey",
-      "router.put('/checklists/:id/items/order', jwtOrApiKey"]) {
+      "router.put('/checklists/:id/items/order', jwtOrApiKey", "router.post('/checklists/upsert-items', jwtOrApiKey"]) {
       expect(src).toContain(mount);
     }
     const a = app();

@@ -117,8 +117,8 @@ function fnSrc(html, name) {
 function browserPrechecks(api) {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'assistant.html'), 'utf8');
   const names = ['checklistFoldTitle', 'checklistParentLabel', 'checklistCreateBody', 'checklistRequest', 'checkitemRequest',
-    'checklistCreatePrecheck', 'checklistListPrecheck', 'checklistPrecheck', 'checkitemPrecheck'];
-  const src = `const CHECKLIST_LINK_TYPES = ['case', 'contact', 'user'];\n${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { checklistPrecheck, checkitemPrecheck };`;
+    'checklistCreatePrecheck', 'checklistListPrecheck', 'checklistPrecheck', 'checkitemPrecheck', 'checklistParentPrecheck'];
+  const src = `const CHECKLIST_LINK_TYPES = ['case', 'contact', 'user', 'appt', 'event', 'task'];\n${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { checklistPrecheck, checkitemPrecheck };`;
   return new Function('api', src)(api); // eslint-disable-line no-new-func
 }
 

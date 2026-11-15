@@ -2719,7 +2719,7 @@ describe('_sniff — checklist matchers (A10)', () => {
     expect(seen).toEqual([]);
   });
 
-  test('only the matched writes: GET, other verbs, upsert-items, a non-numeric id and an /api prefix are silent', () => {
+  test('only the matched writes: GET, other verbs, a non-numeric id and an /api prefix are silent', () => {
     const w = mkWindow();
     const seen = spy(w);
     const row = { id: 12, link_type: 'case', link: 'AAAA', checklist: { id: 12, link_type: 'case', link: 'AAAA' } };
@@ -2731,7 +2731,7 @@ describe('_sniff — checklist matchers (A10)', () => {
     w.YC._sniff('DELETE', '/checklists/12/items', row);
     w.YC._sniff('POST',   '/checkitems/5', row);
     w.YC._sniff('PATCH',  '/checklists', row);
-    w.YC._sniff('POST',   '/checklists/upsert-items', row);
+    w.YC._sniff('PATCH',  '/checklists/upsert-items', row);
     w.YC._sniff('POST',   '/checklists/abc/items', row);
     w.YC._sniff('POST',   '/api/checklists', row);
     w.YC._sniff('PATCH',  '/api/checkitems/5', row);
@@ -2758,6 +2758,24 @@ describe('_sniff — checklist matchers (A10)', () => {
       { addr: 'checklist:case:AAAA', fields: { yc_refetch: 1 }, origin: 'auto:PUT /checklists/12/items/order' },
       { addr: 'checklist:user:1', fields: { yc_refetch: 1 }, origin: 'auto:PUT /checklists/12/items/order' },
     ]);
+  });
+
+  // A10X: the case's Docs Needed upsert (Casey's upsert card, the sending
+  // form) answers {status, checklist: the whole docs list} — the nested
+  // getter reads the list's address from `checklist`.
+  test('the docs-list upsert POST announces its case from the answered list; it fails closed and matches only POST', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    const answer = (t, l) => ({ status: 'success', checklist: { id: 31, title: 'Docs Needed', tag: 'docs_needed', link_type: t, link: l, items: [{ id: 9 }] } });
+    w.YC._sniff('POST', '/checklists/upsert-items', answer('case', 'AAAA'));
+    // Silent: an error answer, a list row at the top level (not the route's
+    // shape), a missing link, the other verbs, an /api prefix.
+    w.YC._sniff('POST', '/checklists/upsert-items', { status: 'error', message: 'case_id is required' });
+    w.YC._sniff('POST', '/checklists/upsert-items', { id: 31, link_type: 'case', link: 'BBBB' });
+    w.YC._sniff('POST', '/checklists/upsert-items', answer('case', ''));
+    for (const m of ['PUT', 'PATCH', 'DELETE', 'GET']) w.YC._sniff(m, '/checklists/upsert-items', answer('case', 'BBBB'));
+    w.YC._sniff('POST', '/api/checklists/upsert-items', answer('case', 'BBBB'));
+    expect(seen).toEqual([{ addr: 'checklist:case:AAAA', fields: { yc_refetch: 1 }, origin: 'auto:POST /checklists/upsert-items' }]);
   });
 
   test('it never wakes a case or contact page — the record row did not change', () => {

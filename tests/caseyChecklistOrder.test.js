@@ -81,6 +81,9 @@ function makeDb(over = {}) {
     if (flat === 'SELECT user, user_name FROM users WHERE user = ? LIMIT 1') {
       return [Number(params[0]) === 1 ? [{ user: 1, user_name: 'Stuart' }] : []];
     }
+    if (flat === "SELECT user, user_name FROM users WHERE user = ? AND user_auth LIKE 'authorized%' AND user_type <> 0 LIMIT 1") {
+      return [Number(params[0]) === 1 && !over.ownerInactive ? [{ user: 1, user_name: 'Stuart' }] : []];
+    }
     throw new Error(`unexpected query: ${flat}`);
   });
   return { query };
@@ -127,10 +130,11 @@ describe('the item set and the list', () => {
     await expect(run(reorder(412, ['5122', '5120', '5121']))).resolves.toMatchObject({ moved: 3 });
     await expect(run(reorder(412, [5122, 5120, 5121], { evidence: listRow(413) }))).rejects.toThrow('The list evidence does not identify checklist #412');
   });
-  test('a note, a one-item list, another user\'s list, a bill list and a missing list are refused', async () => {
+  test('a note, a one-item list, an inactive colleague\'s list, a bill list and a missing list are refused; an active colleague\'s is a card', async () => {
     await expect(run(reorder(414, [1, 2]))).rejects.toThrow('"Call log" (#414) is a NOTE');
     await expect(run(reorder(415, [5150, 5151]))).rejects.toThrow('"One thing" has one item — there is nothing to reorder');
-    await expect(run(reorder(417, [5171, 5170]))).rejects.toThrow('is another user\'s personal list — it belongs to Stuart (user #1)');
+    await expect(run(reorder(417, [5171, 5170]), { ownerInactive: true })).rejects.toThrow('is the personal list of Stuart (user #1), who is not an active staff member');
+    await expect(run(reorder(417, [5171, 5170]))).resolves.toMatchObject({ owner: { user_id: 1, name: 'Stuart' }, warnings: [expect.stringMatching(/^ANOTHER USER'S LIST/)] });
     await expect(run(reorder(418, [5181, 5180]))).rejects.toThrow('hangs off a bill');
     const lists = baseLists(); delete lists[412];
     await expect(run(reorder(), { lists })).rejects.toThrow('Checklist #412 no longer exists');
@@ -204,7 +208,7 @@ function familySrc(id) {
 }
 const FNS = ['checklistParentLabel', 'checklistListLine', 'checklistKnownOutcome', 'checklistEntity', 'checklistOpenPersonal', 'checklistOpen',
   'checklistEditListId', 'checklistReorderLabel', 'checklistReorderText', 'checklistReorderRequest', 'checklistReorderPrecheck',
-  'checklistReorderResult', 'checklistReorderKnownOutcome'];
+  'checklistReorderResult', 'checklistReorderKnownOutcome', 'checklistParentPrecheck'];
 function browser(api) {
   const src = [constSrc('CHECKLIST_REORDER_ACTION_KINDS'), ...FNS.map(fnSrc),
     `const families = [${familySrc('checklist_reorder')}];`,

@@ -89,6 +89,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'checkitemDeleteRequest', 'checklistEditPrecheck', 'checklistUpdateResult', 'checklistDeleteResult', 'checkitemDeleteResult', 'checklistEditKnownOutcome',
   // A10X: the reorder family (tests/caseyChecklistOrder.test.js drives it function by function).
   'checklistReorderLabel', 'checklistReorderText', 'checklistReorderRequest', 'checklistReorderPrecheck', 'checklistReorderResult', 'checklistReorderKnownOutcome',
+  // A10X: the owner / record re-read and the docs-list upsert family (tests/caseyChecklistUpsert.test.js).
+  'checklistParentPrecheck', 'checklistUpsertLabel', 'checklistUpsertText', 'checklistUpsertRequest', 'checklistUpsertPrecheck', 'checklistUpsertResult',
   'documentChars', 'documentNorm', 'documentFoldId', 'documentLabel', 'documentName', 'documentSize', 'documentShown', 'documentText',
   'documentId', 'documentUpdateBody', 'documentUpdateRequest', 'documentLinkRequest', 'documentLinkSignature', 'documentRead',
   'documentUpdatePrecheck', 'documentLinkPrecheck', 'documentUpdateResult', 'documentLinkResult', 'documentKnownOutcome',
@@ -160,7 +162,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CASE_REQUIREMENT_OVERRIDE_ACTION_KINDS'), constSrc(html, 'CASE_OVERRIDE_KEY'),
     constSrc(html, 'CHECKLIST_ACTION_KINDS'), constSrc(html, 'CHECKITEM_ACTION_KINDS'), constSrc(html, 'CHECKLIST_LINK_TYPES'),
     constSrc(html, 'CHECKLIST_EDIT_ACTION_KINDS'), constSrc(html, 'CHECKLIST_DELETE_ACTION_KINDS'), constSrc(html, 'CHECKITEM_DELETE_ACTION_KINDS'),
-    constSrc(html, 'CHECKLIST_REORDER_ACTION_KINDS'),
+    constSrc(html, 'CHECKLIST_REORDER_ACTION_KINDS'), constSrc(html, 'CHECKLIST_UPSERT_ACTION_KINDS'),
     constSrc(html, 'DOCUMENT_ACTION_KINDS'), constSrc(html, 'DOCLINK_ACTION_KINDS'), constSrc(html, 'DOCUMENT_FIELD_MAX'),
     constSrc(html, 'DOCSHARE_ACTION_KINDS'), constSrc(html, 'DOCUNLINK_ACTION_KINDS'), constSrc(html, 'DOCSHARE_LINK_MAX'),
     constSrc(html, 'CASE_DOCKET_ACTION_KINDS'), constSrc(html, 'CASE_DOCKET_FIELDS'), constSrc(html, 'CASE_DOCKET_NAMES'),
@@ -3913,7 +3915,11 @@ describe('A10 checklist cards (checklist.create / item.add / item.update)', () =
       [create({ list: { title: 'docs NEEDED ', list_kind: 'checklist', body: null, link_type: 'case', link: CASE_ID } }), 'client-facing docs list'],
       [create({ list: { title: 'Döcs Needed', list_kind: 'checklist', body: null, link_type: 'case', link: CASE_ID } }), 'client-facing docs list'],
       [create({ list: { title: 'x'.repeat(256), list_kind: 'checklist', body: null, link_type: 'case', link: CASE_ID } }), 'no usable title'],
-      [create({ list: { title: 'T', list_kind: 'checklist', body: null, link_type: 'appt', link: '5' } }), 'no usable record'],
+      // A10X: an appointment list is buildable now; a bill and an unknown kind are not.
+      [create({ list: { title: 'T', list_kind: 'checklist', body: null, link_type: 'bill', link: '5' } }), 'no usable record'],
+      [create({ list: { title: 'T', list_kind: 'checklist', body: null, link_type: 'board', link: '5' } }), 'no usable record'],
+      [create({ list: { title: 'T', list_kind: 'checklist', body: null, link_type: null, link: '5' } }), 'no usable record'],
+      [create({ list: { title: 'T', list_kind: 'checklist', body: null, link_type: 'appt', link: 'x5' } }), 'no usable record id'],
       [create({ list: { title: 'T', list_kind: 'checklist', body: null, link_type: 'contact', link: 'abc' } }), 'no usable record id'],
       [create({ list: { title: 'T', list_kind: 'note', body: null, link_type: 'case', link: CASE_ID } }), 'A note holds no items'],
       [create({ list: { title: 'T', list_kind: 'checklist', body: 'x', link_type: 'case', link: CASE_ID } }), 'A checklist holds no body'],
@@ -4015,8 +4021,10 @@ describe('A10 checklist cards (checklist.create / item.add / item.update)', () =
     expect([fam('checklist.items.reorder.v1').id, [...fam('checklist.items.reorder.v1').kinds], fam('checklist.items.reorder.v1').idField,
       fam('checklist.items.reorder.v1').appliedKey, !!fam('checklist.items.reorder.v1').stringReceipt])
       .toEqual(['checklist_reorder', ['checklist.items.reorder.v1'], 'checklist_id', 'result_checklist_reorder_id', false]);
-    // No upsert-many card in this slice.
-    expect(box.actionFamily({ kind: 'checklist.items.upsert.v1' })).toBe(null);
+    // A10X: the docs-list upsert family (driven in tests/caseyChecklistUpsert.test.js).
+    expect([fam('checklist.items.upsert.v1').id, [...fam('checklist.items.upsert.v1').kinds], fam('checklist.items.upsert.v1').idField,
+      fam('checklist.items.upsert.v1').appliedKey, !!fam('checklist.items.upsert.v1').stringReceipt])
+      .toEqual(['checklist_upsert', ['checklist.items.upsert.v1'], 'checklist_id', 'result_checklist_upsert_id', false]);
     dom.window.close();
   });
 });

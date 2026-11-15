@@ -119,8 +119,10 @@ function fnSrc(html, name) {
 }
 function browserFns(api) {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'assistant.html'), 'utf8');
+  // checklistParentPrecheck / checklistParentLabel: A10X's owner + record
+  // re-read, which checklistEditPrecheck calls for every card but the delete.
   const names = ['checklistEditListId', 'checklistUpdateRequest', 'checklistDeleteRequest', 'checkitemDeleteRequest', 'checklistEditPrecheck',
-    'checklistUpdateResult', 'checklistDeleteResult', 'checkitemDeleteResult'];
+    'checklistUpdateResult', 'checklistDeleteResult', 'checkitemDeleteResult', 'checklistParentPrecheck', 'checklistParentLabel'];
   const src = `${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { ${names.join(', ')} };`;
   return new Function('api', src)(api); // eslint-disable-line no-new-func
 }

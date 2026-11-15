@@ -1130,15 +1130,20 @@
          PUT /checklists/:id/items/order  the WHOLE list in its new order
                                       (link_type, link) — A10X's atomic
                                       reorder
+         POST /checklists/upsert-items   {status, checklist: the WHOLE docs
+                                      list} — the case's Docs Needed upsert
+                                      (A10X: Casey's upsert card and the
+                                      sending form call it from a browser;
+                                      it announced nothing before)
        Fails closed on an unlinked list (link NULL — no record's board shows
-       it) and on a missing echo. Not matched: POST /checklists/upsert-items
-       (server-side Docs Needed upsert; no browser caller announces through
-       it). The id captures are digits-only, so /checklists/upsert-items can
-       never match the add-item or the per-list matcher. These routes live at
-       the ROOT (/checklists, not /api/checklists). */
+       it) and on a missing echo. The id captures are digits-only, so
+       /checklists/upsert-items can never match the add-item or the per-list
+       matcher. These routes live at the ROOT (/checklists, not
+       /api/checklists). */
     [/^\/checklists$/,               'checklist', checklistGetter(false), ['POST']],
     [/^\/checklists\/(\d+)\/items$/, 'checklist', checklistGetter(false), ['POST']],
     [/^\/checklists\/(\d+)\/items\/order$/, 'checklist', checklistGetter(false), ['PUT']],
+    [/^\/checklists\/upsert-items$/, 'checklist', checklistGetter(true), ['POST']],
     [/^\/checkitems\/(\d+)$/,        'checklist', checklistGetter(true),  ['PATCH', 'DELETE']],
     [/^\/checklists\/(\d+)$/,        'checklist', checklistGetter(false), ['PATCH', 'DELETE']],
 
@@ -1385,7 +1390,8 @@
    *
    * Array return (getter contract v2): the address is the list's link, which
    * no URL names. `nested` reads it from the /checkitems echo
-   * (`r.checklist`); the list routes answer the list row (or, for the DELETE,
+   * (`r.checklist`) and from the upsert-items answer's `checklist` (the whole
+   * docs list); the list routes answer the list row (or, for the DELETE,
    * its echoed {id, link_type, link}) itself. A re-homing PATCH also names
    * the board the list LEFT (`moved_from`), announced beside its new one.
    * Each address fails closed on its own: an unlinked side is skipped.

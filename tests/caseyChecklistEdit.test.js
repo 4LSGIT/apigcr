@@ -125,6 +125,13 @@ function makeDb(over = {}) {
     if (flat === 'SELECT user, user_name FROM users WHERE user = ? LIMIT 1') {
       return [Number(params[0]) === 1 ? [{ user: 1, user_name: 'Stuart' }] : []];
     }
+    // A10X: user 1 (Stuart) is active staff; an appointment's list is named from its row.
+    if (flat === "SELECT user, user_name FROM users WHERE user = ? AND user_auth LIKE 'authorized%' AND user_type <> 0 LIMIT 1") {
+      return [Number(params[0]) === 1 && !over.ownerInactive ? [{ user: 1, user_name: 'Stuart' }] : []];
+    }
+    if (flat.startsWith('SELECT a.appt_id, a.appt_type, a.appt_status,')) {
+      return [Number(params[0]) === 55 ? [{ appt_id: 55, appt_type: 'Strategy session', appt_status: 'Scheduled', at: '2026-11-20 10:00', contact_name: null }] : []];
+    }
     if (flat === 'SELECT user_auth, roles FROM users WHERE user = ? LIMIT 1') {
       const uid = Number(params[0]);
       return [[{ user_auth: 'authorized', roles: uid === SU ? 'staff,su' : 'staff' }]];
@@ -302,11 +309,12 @@ describe('checklist.update.v1 — rename a list, a note\'s done state, a note\'s
     expect((await run(upd(412, { title: 'PRE-FILING TO-DOS' }))).warnings).toEqual([]);
   });
 
-  test('the A10 record rules: another user\'s personal list (named), an appointment list, a gone list, uncited evidence', async () => {
-    await refuse(upd(417, { title: 'x' }), /^"Stuart to-dos" \(#417\) is another user's personal list — it belongs to Stuart \(user #1\)\. Casey works on your own personal lists only/);
-    // An update is never the superuser exception.
-    await refuse(upd(417, { title: 'x' }), /another user's personal list/, undefined, undefined, SU);
-    await refuse(upd(418, { title: 'x' }), /^"Appt prep" \(#418\) hangs off a appt — Casey works on lists of a case, a contact or your own personal list only/);
+  test('the record rules: an ACTIVE colleague\'s list and an appointment list are cards (A10X), an inactive owner is refused; a gone list, uncited evidence', async () => {
+    const theirs = await run(upd(417, { title: 'x' }));
+    expect([theirs.owner, theirs.parent.label, theirs.warnings[0]]).toEqual([{ user_id: 1, name: 'Stuart', label: 'Stuart (user #1)' }, 'Stuart (user #1)\'s personal list',
+      'ANOTHER USER\'S LIST: this is Stuart (user #1)\'s personal list — the route lets any staff member work on a colleague\'s list (delegation), and Stuart is not told: neither the route nor Casey sends anything.']);
+    await refuse(upd(417, { title: 'x' }), /^"Stuart to-dos" \(#417\) is the personal list of Stuart \(user #1\), who is not an active staff member \(retired or inactive\)/, { ownerInactive: true });
+    await expect(run(upd(418, { title: 'x' }))).resolves.toMatchObject({ parent: { link_type: 'appt', label: 'appointment #55 (Strategy session, 2026-11-20 10:00, Scheduled)' } });
     await expect(run(upd(416, { title: 'Fred errands' }))).resolves.toMatchObject({ parent: { label: 'your personal list' } });
     const lists = baseLists(); delete lists[412];
     await refuse(upd(412, { title: 'x' }), /^Checklist #412 no longer exists$/, { lists });
@@ -422,11 +430,11 @@ describe('checklist.item.delete.v1 — one item', () => {
     expect(card.automation.events).toEqual([]);
   });
 
-  test('a gone item, another user\'s list (even for a superuser), uncited evidence are refused', async () => {
+  test('a gone item and uncited evidence are refused; an active colleague\'s item is a card (A10X), an inactive owner\'s is refused', async () => {
     const lists = baseLists(); lists[412].items = lists[412].items.filter((i) => i.id !== 5121);
     await refuse(idel(5121), /^Checklist item #5121 no longer exists$/, { lists });
-    await refuse(idel(5170), /^"Stuart to-dos" \(#417\) is another user's personal list — it belongs to Stuart \(user #1\)\. Casey works on your own personal lists only/);
-    await refuse(idel(5170), /another user's personal list/, undefined, undefined, SU);
+    await expect(run(idel(5170))).resolves.toMatchObject({ owner: { user_id: 1 }, warnings: [expect.stringMatching(/^ANOTHER USER'S LIST: this is Stuart \(user #1\)'s personal list/), expect.stringMatching(/^NO UNDO/)] });
+    await refuse(idel(5170), /is the personal list of Stuart \(user #1\), who is not an active staff member/, { ownerInactive: true });
     await refuse(idel(5121, { evidence: itemRow(5120) }), /^The item evidence does not identify item #5121 — cite a row carrying its exact checkitem_id/);
   });
 });
@@ -505,7 +513,8 @@ function familySrc(id) {
 }
 const FNS = ['checklistParentLabel', 'checklistListLine', 'checklistKnownOutcome', 'checklistEntity', 'checklistOpenPersonal', 'checklistOpen',
   'checklistEditLabel', 'checklistEditShowText', 'checklistEditText', 'checklistEditListId', 'checklistUpdateRequest', 'checklistDeleteRequest',
-  'checkitemDeleteRequest', 'checklistEditPrecheck', 'checklistUpdateResult', 'checklistDeleteResult', 'checkitemDeleteResult', 'checklistEditKnownOutcome'];
+  'checkitemDeleteRequest', 'checklistEditPrecheck', 'checklistUpdateResult', 'checklistDeleteResult', 'checkitemDeleteResult', 'checklistEditKnownOutcome',
+  'checklistParentPrecheck'];
 function browser(api) {
   const src = [constSrc('CHECKLIST_EDIT_ACTION_KINDS'), constSrc('CHECKLIST_DELETE_ACTION_KINDS'), constSrc('CHECKITEM_DELETE_ACTION_KINDS'), ...FNS.map(fnSrc),
     `const families = [${familySrc('checklist_update')}, ${familySrc('checklist_delete')}, ${familySrc('checkitem_delete')}];`,

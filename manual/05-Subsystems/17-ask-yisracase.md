@@ -772,17 +772,20 @@ unless set to 0).
 
 ### Checklists and notes
 
-Casey can make **one checklist or note** on a case, on a contact, or as your
-own personal list, **add one item** to an existing checklist, **rename, check
+Casey can make **one checklist or note** on a case, a contact, an
+appointment, an event or a task, as your own personal list or a colleague's,
+or on no record at all (an unlinked list), **add one item** to an existing checklist, **rename, check
 off or reopen one item**, **rename one list or note**, **mark one note done or
 not done**, **replace one note's text**, **delete one list or note** (with its
-items), **delete one item** or **reorder a checklist's items** — one change per
-card, through the same routes the Notes & Lists tab uses (the reorder has its
-own route, because the tab has no reorder control: Casey's card is the way to
-put items in order). Ask in plain words ("make a pre-filing checklist on the
-Smith case with credit report and tax transcripts", "add 2024 W-2 to that
-list", "check off the credit report", "rename that list to Pre-filing 2026",
-"delete the old intake list", "put pay stubs first on that list").
+items), **delete one item**, **reorder a checklist's items** or **put items
+on a case's Docs Needed list** — one change per card, through the same routes
+the Notes & Lists tab and the sending form use (the reorder has its own route,
+because the tab has no reorder control: Casey's card is the way to put items
+in order). Ask in plain words ("make a pre-filing checklist on the Smith case
+with credit report and tax transcripts", "add 2024 W-2 to that list", "check
+off the credit report", "rename that list to Pre-filing 2026", "delete the old
+intake list", "put pay stubs first on that list", "make Stuart a to-do list
+for Monday", "add bank statements and the lease to the Smith docs list").
 
 - **A new list** shows the record it goes on, its title, whether it is a
   checklist or a note, and its starting items (up to 25 — each starts
@@ -796,6 +799,32 @@ list", "check off the credit report", "rename that list to Pre-filing 2026",
   note's done / not done, or the note's text (the new text replaces the old
   text whole). A checklist's done state follows its items, so only a note's
   can be set.
+- **A colleague's list** works like your own — make one for them, add to it,
+  check items off, rename it, reorder it — but only while they are active
+  staff (a retired or inactive colleague's list is refused, and so is a card
+  whose colleague stops being active before you apply it). The card names
+  them in its title and warns you: **they are not told** — neither the Notes &
+  Lists routes nor Casey sends anything. Deleting a colleague's whole list is
+  still for its owner or a superuser.
+- **Appointments, events and tasks** — the card names the record (an
+  appointment's type, time, status and client; an event's title and date; a
+  task's title and status) and checks it still exists when you apply. A task's
+  lists show only on the Browse view of More → Notes & Lists (no task screen
+  shows lists). **An unlinked list** hangs off nothing and shows under
+  Unlinked; other open boards do not hear about it until they reload. Bills
+  are not available (Casey has no way to read a bill).
+- **The Docs Needed list** — a card that puts up to 25 items on a case's
+  documents list, the way the sending form does: it finds the case's list (or
+  says it will make one), and each new item **replaces** the existing item
+  whose first 22 characters match. The card shows every item added and what it
+  replaces — a checked-off item that is replaced comes back **unchecked**, so
+  the client is asked for it again — and the whole list after. It always
+  shows in warning style: the client sees the list, the change is not made in
+  one step (if it fails partway, check the list before trying again), and it
+  names every trigger rule that runs when items are put on the list. Casey
+  refuses two new items that start with the same 22 characters, an item that
+  would match two existing items, and an item that differs from an existing
+  one only in capitals (it would sit beside it instead of replacing it).
 - **A reorder** lists every item in its old order and in its new order (the
   ones that move are marked) and saves the whole order in one step — nothing
   else on the list changes. It names every item on the list, so a list with
@@ -830,20 +859,22 @@ list", "check off the credit report", "rename that list to Pre-filing 2026",
     (add items to the existing one instead);
   - set a list's **tag**, change a list between checklist and note, or move it
     to another record;
-  - make a list for **another person**, or on a bill, appointment, task or
-    event, or change another person's personal list (a superuser may delete
-    one, with a warning);
+  - make a list on a **bill**, or work on a retired or inactive colleague's
+    list (a superuser may still delete one, with a warning);
   - add items to a **note**, give a checklist a body, or set a checklist's
     done state;
   - add an item whose name is already on the list (in any capitalisation), or
     make a change that changes nothing;
   - a title longer than the list can hold.
 - **Freshness.** When you confirm, the card re-reads the record's lists (a new
-  list) or the list, its text and every item on it (every other card). If
-  anything changed since the card was prepared, nothing is written; ask Casey
-  to prepare it again.
-- Once applied, the card opens the case or contact (a personal list points
-  you to More → Notes & Lists). After any of these cards — a new list, an
+  list), the list, its text and every item on it (every other card), or every
+  checklist on the case and its docs list (a Docs Needed card) — and, for a
+  colleague's list, whether they are still active staff, and for an
+  appointment, event or task, whether it still exists. If anything changed
+  since the card was prepared, nothing is written; ask Casey to prepare it
+  again.
+- Once applied, the card opens the case, contact, appointment, event or task
+  (a personal or unlinked list points you to More → Notes & Lists). After any of these cards — a new list, an
   added item, an item change, a list or note change, a delete — an open Notes
   & Lists tab for that record refreshes on its own, unless you are typing in
   it; then it refreshes when you click away. The Browse view of More → Notes &

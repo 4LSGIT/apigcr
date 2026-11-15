@@ -2345,8 +2345,8 @@ function caseOverrideKnownOutcome(e) {
 // {title, kind, body?, link_type, link, items?}, POST /checklists/:id/items
 // {name}, PATCH /checkitems/:id {name?, status?}. The server refused tag and
 // position by name, a CASE list titled "Docs Needed" (that title makes it the
-// client-facing docs list), a list for another user or on a bill / appt /
-// task / event, and duplicate item names; it flagged an item on a case's docs
+// client-facing docs list), a bill list (A10X released the other targets,
+// below), and duplicate item names; it flagged an item on a case's docs
 // list as CLIENT-VISIBLE and dry-ran the checkitem.completed /
 // checklist.completed trigger rules; and it baked the record's lists (create)
 // or the list and every item on it (item cards) into `expected`. The
@@ -2358,10 +2358,15 @@ function caseOverrideKnownOutcome(e) {
 // yc-sync bus (checklist:<link_type>:<link>), so an open Notes & Lists board
 // for that record reloads itself. Receipts: the integer checklist_id (create,
 // item add — both routes return the whole list) or checkitem_id (update —
-// the route returns the item row).
+// the route returns the item row). A10X lifted three refusals: a colleague's
+// personal list (an ACTIVE one — `draft.owner`, re-checked at the click
+// through GET /api/users/:id; the owner is not told), lists on an
+// appointment, event or task (re-read at the click through GET
+// /api/appts|events|tasks/:id) and unlinked lists (link_type / link null —
+// no record to re-read and no bus address). A bill stays refused.
 const CHECKLIST_ACTION_KINDS = new Set(['checklist.create.v1', 'checklist.item.add.v1']);
 const CHECKITEM_ACTION_KINDS = new Set(['checklist.item.update.v1']);
-const CHECKLIST_LINK_TYPES = ['case', 'contact', 'user'];
+const CHECKLIST_LINK_TYPES = ['case', 'contact', 'user', 'appt', 'event', 'task'];
 
 function checklistFoldTitle(value) {
   return String(value == null ? '' : value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
@@ -2369,14 +2374,16 @@ function checklistFoldTitle(value) {
 
 function checklistLabel(draft) {
   const kind = draft && draft.kind;
-  if (kind === 'checklist.create.v1') return draft.list && draft.list.list_kind === 'note' ? 'Create note' : 'Create checklist';
-  if (kind === 'checklist.item.add.v1') return 'Add checklist item';
+  const who = draft && draft.owner && draft.owner.name ? String(draft.owner.name) : '';
+  if (kind === 'checklist.create.v1') return `${draft.list && draft.list.list_kind === 'note' ? 'Create note' : 'Create checklist'}${who ? ` for ${who}` : ''}`;
+  const on = who ? ` (${who}'s list)` : '';
+  if (kind === 'checklist.item.add.v1') return `Add checklist item${on}`;
   if (kind === 'checklist.item.update.v1') {
     const c = draft.changes || {};
-    if (c.name == null && c.status === 'complete') return 'Check off item';
-    if (c.name == null && c.status === 'incomplete') return 'Reopen item';
-    if (c.name != null && c.status == null) return 'Rename item';
-    return 'Update checklist item';
+    if (c.name == null && c.status === 'complete') return `Check off item${on}`;
+    if (c.name == null && c.status === 'incomplete') return `Reopen item${on}`;
+    if (c.name != null && c.status == null) return `Rename item${on}`;
+    return `Update checklist item${on}`;
   }
   return 'Checklist action';
 }
@@ -2405,7 +2412,7 @@ function checklistText(draft) {
     } else {
       lines.push(`Items: ${items.length ? `${items.length} — ${items.map((n) => `"${n}"`).join('; ')}` : 'none yet'}`);
     }
-    lines.push(`Notes and lists already on this record: ${Number(draft.existing_total) || 0}`);
+    if (draft.existing_total != null) lines.push(`Notes and lists already on this record: ${Number(draft.existing_total) || 0}`);
   } else if (draft.kind === 'checklist.item.add.v1') {
     const before = (draft.items_before || []).map((i) => `"${i.name}" (${i.status || 'no status'})`);
     const more = Number(draft.items_total || 0) - before.length;
@@ -2435,9 +2442,12 @@ function checklistText(draft) {
     : draft.kind === 'checklist.item.add.v1' ? 'one new item on this list (and the list\'s derived status) — nothing else'
       : 'this one item\'s name and/or status (and the list\'s derived status) — nothing else'}.`,
   `Stale check: ${draft.kind === 'checklist.create.v1'
-    ? 'if a note or list is added to or removed from this record before you apply, nothing is written.'
-    : 'if the list or any item on it changes before you apply, nothing is written.'}`,
-  'Other open pages: this record\'s Notes & Lists board refreshes on its own.',
+    ? ((draft.list || {}).link_type == null ? 'an unlinked list has no record to change under it; the card itself is checked again before it is written.'
+      : 'if a note or list is added to or removed from this record before you apply, nothing is written.')
+    : 'if the list or any item on it changes before you apply, nothing is written.'}${draft.owner ? ` If ${draft.owner.name} is no longer an active staff member, nothing is written.` : ''}`,
+  (draft.list || {}).link == null
+    ? 'Other open pages: an unlinked list has no record address on the sync bus — another open board shows the change after it reloads.'
+    : 'Other open pages: this record\'s Notes & Lists board refreshes on its own.',
   `Notification: Casey sends nothing itself${draft.kind === 'checklist.item.update.v1' ? '; the trigger rules above are the only follow-on effects' : ''}.`);
   return lines.join('\n');
 }
@@ -2446,12 +2456,19 @@ function checklistCreateBody(draft) {
   const l = draft.list || {};
   const title = typeof l.title === 'string' ? l.title.trim() : '';
   if (!title || title.length > 255) throw new Error('This card has no usable title.');
-  if (!CHECKLIST_LINK_TYPES.includes(l.link_type)) throw new Error('This card has no usable record.');
-  const link = typeof l.link === 'string' ? l.link : '';
-  if (!(l.link_type === 'case' ? /^[A-Za-z0-9_-]{1,20}$/ : /^[1-9]\d{0,19}$/).test(link)) throw new Error('This card has no usable record id.');
-  if (l.link_type === 'case' && checklistFoldTitle(title) === 'docs needed') throw new Error('This card would make the case\'s client-facing docs list.');
   if (l.list_kind !== 'checklist' && l.list_kind !== 'note') throw new Error('This card has no usable list kind.');
-  const body = { title, kind: l.list_kind, link_type: l.link_type, link };
+  let body;
+  if (l.link_type == null) {
+    // An unlinked list: no record, so neither link field is sent (the route stores NULL).
+    if (l.link != null) throw new Error('This card has no usable record.');
+    body = { title, kind: l.list_kind };
+  } else {
+    if (!CHECKLIST_LINK_TYPES.includes(l.link_type)) throw new Error('This card has no usable record.');
+    const link = typeof l.link === 'string' ? l.link : '';
+    if (!(l.link_type === 'case' ? /^[A-Za-z0-9_-]{1,20}$/ : /^[1-9]\d{0,19}$/).test(link)) throw new Error('This card has no usable record id.');
+    if (l.link_type === 'case' && checklistFoldTitle(title) === 'docs needed') throw new Error('This card would make the case\'s client-facing docs list.');
+    body = { title, kind: l.list_kind, link_type: l.link_type, link };
+  }
   const items = Array.isArray(draft.items) ? draft.items : [];
   if (l.list_kind === 'note') {
     if (items.length) throw new Error('A note holds no items.');
@@ -2502,6 +2519,9 @@ async function checklistCreatePrecheck(draft) {
     try { await api(`/api/${l.link_type === 'case' ? 'cases' : 'contacts'}/${encodeURIComponent(l.link)}`, null, 'GET'); }
     catch (e) { if (e && e.status === 404) return `${checklistParentLabel(draft)} no longer exists. Nothing was written.`; throw e; }
   }
+  const gone = await checklistParentPrecheck(draft);
+  if (gone) return gone;
+  if (l.link_type == null) return ''; // an unlinked list: no record whose lists can change
   const got = await api('/checklists', { link_type: l.link_type, link: l.link, limit: 1000 }, 'GET');
   const rows = got && Array.isArray(got.checklists) ? got.checklists : null;
   if (!rows) throw new Error('the record\'s notes and lists could not be read');
@@ -2532,6 +2552,35 @@ async function checklistListPrecheck(draft) {
   if (JSON.stringify(sig) !== JSON.stringify((x.items || []).slice().sort())) {
     return `The items on "${l.title}" changed since this card was prepared (one was added, removed, renamed, checked or reopened). Nothing was written. Ask Casey to prepare it again.`;
   }
+  return checklistParentPrecheck(draft);
+}
+
+// A10X: the record a list hangs off, re-read where the list re-read cannot
+// see it — a colleague's personal list (the owner must still be ACTIVE staff:
+// GET /api/users/:id, user_auth 'authorized…' and user_type not 0, the
+// server's findAssignableStaff predicate) and an appointment / event / task
+// (GET /api/appts|events|tasks/:id — 404 = gone). '' when nothing changed.
+async function checklistParentPrecheck(draft) {
+  const p = draft.parent || {}; const o = draft.owner;
+  if (o && o.user_id != null) {
+    const uid = Number(o.user_id);
+    if (!Number.isSafeInteger(uid) || uid < 1) throw new Error('This card has no usable list owner.');
+    let got;
+    try { got = await api(`/api/users/${uid}`, null, 'GET'); }
+    catch (e) { if (e && e.status === 404) return `${o.label || `User #${uid}`} no longer exists as a user. Nothing was written.`; throw e; }
+    const u = (got && got.data) || {};
+    if (Number(u.user) !== uid) throw new Error('the list owner could not be read');
+    if (!/^authorized/i.test(String(u.user_auth == null ? '' : u.user_auth)) || Number(u.user_type) === 0) {
+      return `${o.label || `User #${uid}`} is no longer an active staff member (retired or inactive), so Casey no longer works on their list. Nothing was written.`;
+    }
+  }
+  const route = { appt: 'appts', event: 'events', task: 'tasks' }[p.link_type];
+  if (route) {
+    const id = Number(p.link);
+    if (!Number.isSafeInteger(id) || id < 1) throw new Error('This card has no usable record id.');
+    try { await api(`/api/${route}/${id}`, null, 'GET'); }
+    catch (e) { if (e && e.status === 404) return `${checklistParentLabel(draft)} no longer exists. Nothing was written.`; throw e; }
+  }
   return '';
 }
 
@@ -2551,7 +2600,8 @@ function checklistResult(draft, result) {
   if (!Number.isSafeInteger(id) || id < 1) throw new Error('The checklist route returned no usable list id');
   if (draft.kind === 'checklist.create.v1') {
     const l = draft.list || {};
-    if (String(result.link_type) !== l.link_type || String(result.link) !== l.link) throw new Error('The checklist route saved the list on another record');
+    const s = (v) => (v == null ? null : String(v));
+    if (s(result.link_type) !== s(l.link_type) || s(result.link) !== s(l.link)) throw new Error('The checklist route saved the list on another record');
   } else {
     if (id !== Number(draft.list.checklist_id)) throw new Error('The checklist route answered for another list');
     const name = draft.item.name.trim();
@@ -2578,9 +2628,9 @@ function checklistKnownOutcome(e) {
   return null;
 }
 
-// A personal list has no record page: point at the shell's Notes & Lists.
+// A personal or unlinked list has no record page: point at the shell's Notes & Lists.
 function checklistOpenPersonal(label) {
-  try { P.Swal?.fire({ icon: 'info', title: label || 'Your list', text: 'Your personal lists are under More → Notes & Lists.', heightAuto: false }); }
+  try { P.Swal?.fire({ icon: 'info', title: label || 'Your list', text: 'Personal lists are under More → Notes & Lists (Mine); unlinked lists under Unlinked.', heightAuto: false }); }
   catch (_) { /* outside the shell the chat line already names the list */ }
 }
 
@@ -2588,6 +2638,9 @@ function checklistEntity(draft) {
   const p = draft.parent || {};
   if (p.link_type === 'case') return { kind: 'case', id: String(p.case_id || p.link), label: String(p.case_number || p.case_id || p.link) };
   if (p.link_type === 'contact') return { kind: 'contact', id: String(p.contact_id || p.link), label: String(p.contact_name || p.link) };
+  if (p.link_type === 'appt') return { kind: 'appointment', id: String(p.appt_id || p.link), label: `appointment #${p.appt_id || p.link}` };
+  if (p.link_type === 'event') return { kind: 'event', id: String(p.event_id || p.link), label: `event #${p.event_id || p.link}` };
+  if (p.link_type === 'task') return { kind: 'task', id: String(p.task_id || p.link), label: `task #${p.task_id || p.link}` };
   return { kind: 'checklist', id: String((draft.list || {}).checklist_id || draft.result_checklist_id || ''), label: String((draft.list || {}).title || 'Your list') };
 }
 
@@ -2621,14 +2674,15 @@ const CHECKITEM_DELETE_ACTION_KINDS = new Set(['checklist.item.delete.v1']);
 function checklistEditLabel(draft) {
   const kind = draft && draft.kind;
   const note = ((draft && draft.list) || {}).kind === 'note';
+  const on = draft && draft.owner && draft.owner.name ? ` (${draft.owner.name}'s list)` : '';
   if (kind === 'checklist.delete.v1') return note ? 'Delete note' : 'Delete list';
-  if (kind === 'checklist.item.delete.v1') return 'Delete checklist item';
+  if (kind === 'checklist.item.delete.v1') return `Delete checklist item${on}`;
   if (kind === 'checklist.update.v1') {
     const keys = Object.keys(draft.changes || {});
-    if (keys.length === 1 && keys[0] === 'title') return note ? 'Rename note' : 'Rename list';
-    if (keys.length === 1 && keys[0] === 'status') return draft.changes.status === 'complete' ? 'Mark note done' : 'Mark note not done';
-    if (keys.length === 1 && keys[0] === 'body') return 'Edit note text';
-    return note ? 'Update note' : 'Update list';
+    if (keys.length === 1 && keys[0] === 'title') return `${note ? 'Rename note' : 'Rename list'}${on}`;
+    if (keys.length === 1 && keys[0] === 'status') return `${draft.changes.status === 'complete' ? 'Mark note done' : 'Mark note not done'}${on}`;
+    if (keys.length === 1 && keys[0] === 'body') return `Edit note text${on}`;
+    return `${note ? 'Update note' : 'Update list'}${on}`;
   }
   return 'Checklist action';
 }
@@ -2745,7 +2799,9 @@ async function checklistEditPrecheck(draft) {
   if (JSON.stringify(sig) !== JSON.stringify((x.items || []).slice().sort())) {
     return `The items on "${l.title}" changed since this card was prepared (one was added, removed, renamed, checked or reopened). Nothing was written. Ask Casey to prepare it again.`;
   }
-  return '';
+  // A delete keeps A10.2's rule (a superuser, any owner); every other card
+  // re-checks a colleague owner and an appointment / event / task record.
+  return draft.kind === 'checklist.delete.v1' ? '' : checklistParentPrecheck(draft);
 }
 
 // PATCH /checklists/:id answers the whole list: the reviewed list, every
@@ -2799,8 +2855,7 @@ function checklistEditKnownOutcome(e) {
 const CHECKLIST_REORDER_ACTION_KINDS = new Set(['checklist.items.reorder.v1']);
 
 function checklistReorderLabel(draft) {
-  void draft;
-  return 'Reorder checklist items';
+  return `Reorder checklist items${draft && draft.owner && draft.owner.name ? ` (${draft.owner.name}'s list)` : ''}`;
 }
 
 function checklistReorderText(draft) {
@@ -2850,7 +2905,7 @@ async function checklistReorderPrecheck(draft) {
   if (JSON.stringify(got.items.map((i) => Number(i.id))) !== JSON.stringify(order)) {
     return `The order of the items on "${l.title}" changed since this card was prepared (someone reordered them). Nothing was written. Ask Casey to prepare it again.`;
   }
-  return '';
+  return checklistParentPrecheck(draft);
 }
 
 // The PUT answers the whole list in its new order: exactly the reviewed one.
@@ -2871,6 +2926,106 @@ function checklistReorderKnownOutcome(e) {
     return { status: 'Refused — nothing written', text: 'Refused — nothing written: the list\'s items changed between the check and the write (an item was added or removed), so the route reordered nothing. Ask Casey to read the list again.' };
   }
   return checklistKnownOutcome(e);
+}
+
+// Docs-list upsert (A10X) — POST /checklists/upsert-items {case_id, items},
+// the sending form's own route: find-or-create the case's docs list (tag
+// docs_needed; an untagged "Docs Needed" title match is re-tagged), delete the
+// existing item sharing each new item's first 22 characters, insert every new
+// item unchecked; then checklist.items_upserted fires. The server computed
+// that exact diff (items dropped, items added, the list after), refused a
+// diff the route would make surprising (two new items with one prefix, a
+// prefix matching two items, a near-duplicate by capitalisation), named every
+// active trigger rule on the event and baked every case checklist's id / tag
+// / title (what decides the route's find) and the docs list's status and
+// items into `expected`. The click re-reads GET /checklists (the case's
+// checklists with their items) and the case, and refuses on ANY difference
+// BEFORE the claim. The route is not one transaction: a failure after the
+// claim reads as possibly PART-applied. On yc-sync since A10X. Receipt: the
+// integer checklist_id of the list the route wrote.
+const CHECKLIST_UPSERT_ACTION_KINDS = new Set(['checklist.items.upsert.v1']);
+
+function checklistUpsertLabel(draft) {
+  return draft && draft.target ? 'Update the docs list' : 'Create the docs list';
+}
+
+function checklistUpsertText(draft) {
+  const t = draft.target; const st = draft.list_status || {};
+  const lines = ['Docs list proposal — not applied', `Action: ${checklistUpsertLabel(draft)}`, `Case: ${checklistParentLabel(draft)}`,
+    `Docs list: ${t ? `"${t.title}" (list #${t.checklist_id}${t.tag ? `, tag ${t.tag}` : ', no tag'}${t.status ? `, ${t.status}` : ''})` : 'none yet — the route makes "Docs Needed" (tag docs_needed)'}`];
+  (draft.items_in || []).forEach((n) => {
+    const d = (draft.dropped || []).find((x) => x.replaced_by === n);
+    lines.push(`Add: "${n}" (unchecked)${d ? ` — replaces #${d.checkitem_id} "${d.name}" (${d.status || 'no status'})` : ''}`);
+  });
+  if (!(draft.dropped || []).length) lines.push('Delete: nothing — no existing item shares a new item\'s first 22 characters.');
+  const after = (draft.items_after || []).map((i) => `"${i.name}"${i.fresh ? ' (new)' : ` (${i.status || 'no status'})`}`);
+  const more = Number(draft.items_after_total || 0) - after.length;
+  lines.push(`Items before: ${Number(draft.items_before_total) || 0}; after (${Number(draft.items_after_total) || 0}, in the board's order): ${after.join('; ')}${more > 0 ? ` (+${more} more)` : ''}`,
+    `List status: ${st.from || (t ? 'unset' : 'new')} → ${st.to}`);
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  const a = draft.automation || {}; const acting = a.lines || [];
+  lines.push(acting.length
+    ? `Automation: ${Number(a.rules_checked) || 0} active trigger rule(s) on checklist.items_upserted checked; ${acting.length} would act:`
+    : `Automation: no active trigger rule acts on checklist.items_upserted (${Number(a.rules_checked) || 0} checked).`);
+  acting.forEach((x) => lines.push(`Automation: ${x}`));
+  if (acting.length) lines.push('Automation: what those actions cause in turn is not followed here.');
+  lines.push('Stale check: if any checklist on the case, the docs list or any item on it changes before you apply, nothing is written.',
+    'Notification: Casey sends nothing itself; the trigger rules above are the only follow-on effects.');
+  return lines.join('\n');
+}
+
+function checklistUpsertRequest(draft) {
+  const caseId = typeof (draft.parent || {}).case_id === 'string' ? draft.parent.case_id : '';
+  if (!/^[A-Za-z0-9_-]{1,20}$/.test(caseId)) throw new Error('This card has no usable case.');
+  const items = Array.isArray(draft.items_in) ? draft.items_in : [];
+  if (!items.length || items.length > 25 || items.some((n) => typeof n !== 'string' || !n.trim() || n !== n.trim() || n.length > 255)) throw new Error('This card\'s items are unusable.');
+  return { path: '/checklists/upsert-items', method: 'POST', body: { case_id: caseId, items: items.slice() } };
+}
+
+// Every case checklist (id, tag, title — what the route's find reads), the
+// docs list's status and every item on it, re-read and compared whole.
+async function checklistUpsertPrecheck(draft) {
+  const caseId = checklistUpsertRequest(draft).body.case_id; // a card that cannot be written is never read
+  const x = draft.expected || {};
+  if (x.case_id !== caseId) throw new Error('this card\'s case does not match its review');
+  try { await api(`/api/cases/${encodeURIComponent(caseId)}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `${checklistParentLabel(draft)} no longer exists. Nothing was written.`; throw e; }
+  const got = await api('/checklists', { link_type: 'case', link: caseId, kind: 'checklist', include: 'items', limit: 1000 }, 'GET');
+  const rows = got && Array.isArray(got.checklists) ? got.checklists : null;
+  if (!rows || Number(got.total) !== rows.length) throw new Error('the case\'s checklists could not be read');
+  const lists = rows.map((r) => `${Number(r.id)}:${r.tag == null ? '' : r.tag}:${r.title == null ? '' : r.title}`).sort();
+  if (JSON.stringify(lists) !== JSON.stringify((x.lists || []).slice().sort())) {
+    return `The checklists on ${checklistParentLabel(draft)} changed since this card was prepared (one was added, removed, renamed or re-tagged), so the docs list the route finds may differ. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  if (x.target_id != null) {
+    const t = rows.find((r) => Number(r.id) === Number(x.target_id));
+    const s = (v) => (v == null ? null : String(v));
+    if (!t || !Array.isArray(t.items) || s(t.status) !== s(x.target_status)) {
+      return `The docs list on ${checklistParentLabel(draft)} changed since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+    }
+    const sig = t.items.map((i) => `${Number(i.id)}:${i.status == null ? '' : i.status}:${i.name == null ? '' : i.name}`).sort();
+    if (JSON.stringify(sig) !== JSON.stringify((x.items || []).slice().sort())) {
+      return `The items on the docs list of ${checklistParentLabel(draft)} changed since this card was prepared (one was added, removed, renamed, checked or reopened). Nothing was written. Ask Casey to prepare it again.`;
+    }
+  }
+  return '';
+}
+
+// The route answers {status:'success', checklist: the whole list}: the reviewed
+// list (or a new one on the case), every new item on it unchecked.
+function checklistUpsertResult(draft, result) {
+  const l = result && result.status === 'success' ? result.checklist : null;
+  const id = Number(l && l.id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('The docs-list route returned no usable list id');
+  const x = draft.expected || {};
+  if (x.target_id != null && id !== Number(x.target_id)) throw new Error('The docs-list route wrote another list');
+  if (String(l.link_type) !== 'case' || String(l.link) !== checklistUpsertRequest(draft).body.case_id) throw new Error('The docs-list route wrote a list on another record');
+  const items = Array.isArray(l.items) ? l.items : [];
+  for (const n of checklistUpsertRequest(draft).body.items) {
+    if (!items.some((i) => i && i.name === n && i.status === 'incomplete')) throw new Error('The docs-list route did not return every new item');
+  }
+  return { checklist_id: id };
 }
 
 // Documents (A11). Change ONE registered document's staff title / type / tags,
@@ -6772,6 +6927,27 @@ const ACTION_FAMILIES = [
       button: `Open ${checklistEntity(draft).label}`,
     }),
     reviewWarning: 'Review the item, the list status after, every pipeline step and trigger rule it moves — a delete cannot be undone. Nothing is sent by Casey itself. Canceling writes nothing.',
+    open: checklistOpen,
+  },
+  {
+    // A10X: the upsert receipts the integer checklist_id of the docs list it wrote (found or created).
+    id: 'checklist_upsert', kinds: CHECKLIST_UPSERT_ACTION_KINDS, title: 'Docs list', noun: 'checklist', errorNoun: 'docs-list upsert',
+    label: checklistUpsertLabel, text: checklistUpsertText, request: checklistUpsertRequest, result: checklistUpsertResult,
+    idField: 'checklist_id', appliedKey: 'result_checklist_upsert_id',
+    // Always: the client sees the docs list, and checklist.items_upserted fires.
+    danger: () => true,
+    precheck: checklistUpsertPrecheck,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    ambiguousText: (detail) => `Outcome unknown — the docs list may be PART-updated: the route replaces items one at a time and did not confirm the result${detail ? ` (${detail})` : ''}. Open the case's Notes & Lists and check the docs list before asking Casey again. Do not apply this card again.`,
+    resultText: (payload) => `checklist #${payload.checklist_id}`,
+    entity: (draft) => checklistEntity(draft),
+    failure: 'The docs-list upsert could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — docs list #${draft.result_checklist_upsert_id} updated`,
+      warning: `${(draft.items_in || []).length} item(s) were put on the docs list of ${checklistParentLabel(draft)} using your signed-in account — the client sees them now. The trigger rules listed above run from this change.`,
+      button: `Open ${checklistEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review every item added and every item it replaces, the list after, and every trigger rule — the client sees the docs list the moment it is saved. Nothing is sent by Casey itself. Canceling writes nothing.',
     open: checklistOpen,
   },
   {

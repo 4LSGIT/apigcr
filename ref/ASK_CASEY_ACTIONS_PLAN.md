@@ -9,7 +9,7 @@ reschedule-later; one phone/email/address subrecord create, narrow update or
 history-preserving end. Since then: A6 (contact relations and roles — create and
 update), A7 group A (case notes, case alerts, contact notes), A7 groups B/C (any
 other case field, 2026-11-09; the docket's replace / clear, A7e), A7c (case docket adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
-advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer) + A9.4 (requirement override set / clear), A10 + A10.2 (checklists and items; list rename / note edit, list and item delete) + A10X (the atomic item reorder), A11 + A11.2 (documents —
+advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer) + A9.4 (requirement override set / clear), A10 + A10.2 (checklists and items; list rename / note edit, list and item delete) + A10X (the atomic item reorder; colleague, appointment / event / task and unlinked lists; the docs-list upsert), A11 + A11.2 (documents —
 update and link; share and unlink), A11.1 (a case's Dropbox folder — candidates-only relink),
 A12 + A12.2 + A12.3 (form drafts and submission links; draft discard and PDF filing; appointment
 records; submitting a stored draft), A12.4 (form templates — publish, visibility, version restore,
@@ -31,9 +31,9 @@ of its plan stands in those sections.
 
 ## Review briefing
 
-The shipped baseline is 92 proposal kinds (the action ledger's `KINDS`
+The shipped baseline is 93 proposal kinds (the action ledger's `KINDS`
 registry; `tests/caseyActionPermissions.test.js` pins the inventory against it)
-in 48 browser families: the record families — Tasks, Events, Appointments,
+in 49 browser families: the record families — Tasks, Events, Appointments,
 contact phone / email / address rows, contact relations and roles, case and
 contact notes and case alerts, case contacts, case pipeline moves, the case
 docket, the case's Dropbox folder, checklists and their items, documents and their links (edit, link, unlink, share), form drafts, submission links,
@@ -1448,16 +1448,18 @@ DELETE. `normalizeCaseRequirementOverrideAction`:
   `tests/assistantUi.test.js`, `tests/assistantPromptKinds.test.js`,
   `tests/caseyActionPermissions.test.js` (78 kinds / 66 mounts).
 
-#### A10: Checklists and checklist items — create, item add and item update shipped 2026-11-01, edits and deletes (A10.2) 2026-11-11, reorder (A10X) 2026-11-15
+#### A10: Checklists and checklist items — create, item add and item update shipped 2026-11-01, edits and deletes (A10.2) 2026-11-11, reorder, released targets and the docs-list upsert (A10X) 2026-11-15
 
 Creating a checklist or note, adding one item, and updating / completing one
 item; A10.2 adds the page's own edits of an existing list (rename, a note's
 done state and text) and its deletes (a list, an item); A10X adds the reorder
 of every item of one list through an atomic route built for it (the page has
-no reorder control of its own). Template expansion and upsert-many stay
-separate because they create or affect many records. The parent record is
-resolved server-side, the card shows the item counts, and A10's, A10.2's and
-A10X's writes are all on the sync bus.
+no reorder control of its own), releases the colleague / appointment / event /
+task / unlinked targets, and adds the docs-list upsert (template expansion —
+many items onto a case's client-facing docs list, one reviewed card). The
+parent record is resolved server-side, the card shows the item counts, and
+A10's, A10.2's and A10X's writes are all on the sync bus (an unlinked list has
+no address on it).
 
 **What the routes guard.** Little. The Notes & Lists routes
 (`routes/api.checklists.js`, mounted at the ROOT — `/checklists`,
@@ -1482,18 +1484,19 @@ items?}), `checklist.item.add.v1` (POST `/checklists/:id/items` {name}) and
   note (`list_kind` "note", optional body) on a case (`link` = the exact
   case_id, cited by an evidence row), a contact (the exact contact_id, cited)
   or the ASKING user's own personal list (no evidence needed; the ledger claim
-  is per user, so only the asker can apply it). The draft key is `list_kind`;
+  is per user, so only the asker can apply it) — and, since A10X, an active
+  colleague's personal list, an appointment / event / task, or no record
+  (below). The draft key is `list_kind`;
   the browser maps it to the route's `kind`.
 - **Refused by name**, before anything is read where it is a field: `tag` and
   `position` anywhere (the draft or an initial item); a CASE list or note
   titled "Docs Needed" (folded the way the column's collation compares —
-  case, accents, trailing spaces); a list for another user; a list on a bill,
-  appointment, task or event (item cards refuse lists of those kinds and
-  unlinked lists too); a title or item name over 255; a note body over
+  case, accents, trailing spaces); a list on a bill (A10X released the other
+  targets); a title or item name over 255; a note body over
   lib/noteLimits; a note with items; a checklist with a body; more than 25
   initial items; an item name already on the list or twice in the initial
   items (trimmed, case-insensitive — stricter than the route); an item card on
-  a NOTE; another user's personal list; a no-op update; a record with more
+  a NOTE; a retired or inactive colleague's personal list; a no-op update; a record with more
   than 200 lists or a list with more than 200 items (not reviewable on one
   card).
 - **Disclosed, not refused:** a list with the same title already on the
@@ -1640,8 +1643,8 @@ for it first (`routes/api.checklists.js`).
   the item routes' gate (reordering someone's personal list is collaboration on
   its items, not a detach). Answers the whole list in its new order (the GET
   shape); emits no event, leaves the status alone.
-- **The card.** The A10 family rules (a case, a contact or the asker's own
-  personal list); refused: a note, a list of fewer than two items, a set that
+- **The card.** The family's list rules (any list but a bill's; a colleague's
+  only while they are active staff — the released targets below); refused: a note, a list of fewer than two items, a set that
   is not exactly the list's (the missing / foreign ids named), a repeat, an
   order that changes nothing, more than 200 items. Shows EVERY item before →
   after (moved ones marked) and how many change place; a docs list is
@@ -1667,9 +1670,77 @@ for it first (`routes/api.checklists.js`).
   `tests/assistantUi.test.js`, `tests/assistantPromptKinds.test.js`,
   `tests/caseyActionPermissions.test.js`.
 
-**Deferred** (`ref/plans.md`): lists for another user (except a superuser's
-delete); lists on bills, appointments, tasks and events; upsert-many and
-template expansion.
+**Shipped contract (A10X released targets + the docs-list upsert,
+2026-11-15 — Fred: "release means allow").** Same switch.
+- **A colleague's personal list.** Every card but the list delete takes an
+  ACTIVE staff member's personal list — create with link_type "user" and their
+  id (no evidence: the task drafts' assignee rule), and item add / update /
+  delete, list update and reorder on one. Active = `taskService.
+  findAssignableStaff`'s predicate (`user_auth LIKE 'authorized%' AND user_type
+  <> 0`); a retired, inactive or missing owner is refused at proposal and, at
+  the click, by GET `/api/users/:id` (`user_auth` /^authorized/i, `user_type` ≠
+  0). The card names the owner in its title ("Create checklist for Stuart",
+  "Add checklist item (Stuart's list)") and an ANOTHER USER'S LIST warning; the
+  owner is NOT told (the route sends nothing — ruled default). The list
+  DELETE keeps A10.2's rule: the owner or a superuser (the route's detach
+  gate), any owner, no active check.
+- **Appointments, events, tasks.** Create cites the exact appt_id / event_id /
+  task_id; every card names the record from its row (`appointment #55
+  (Strategy session, 2026-11-20 10:00, Scheduled — Dana)`, `event #77 ("341
+  meeting", 2026-12-01, Scheduled)`, `task #88 ("Prepare schedules",
+  Pending)`) and the click re-reads GET `/api/appts|events|tasks/:id` (404 →
+  refused; not for a delete). Where it shows: the appointment dialog's and the
+  event form's Notes & Lists; a task's only on the Browse view (no task screen
+  shows lists).
+- **Unlinked lists.** Create with link_type "none": no link fields sent (the
+  route stores NULL / NULL — the board's Unlinked view), no record to re-read,
+  a same-title unlinked list warned (compared by the engine). No bus address:
+  `checklistGetter` fails closed on a NULL link, so every card on an unlinked
+  list says another open board shows the change after it reloads.
+- **Bills stay refused** — no bills table or read route, so a bill cannot be
+  named or checked (the task drafts' rule), on create and on every card on a
+  bill list.
+- **The docs-list upsert.** `checklist.items.upsert.v1` {case_id, items} →
+  POST `/checklists/upsert-items` (the sending form's route). The card
+  evaluates the route's FIND_DOCS_SQL (a verbatim copy, same engine) and
+  computes its exact diff: each new item (trimmed) drops THE existing item
+  sharing its first 22 characters (JS substring, case-sensitive; the route
+  reads the items once), every new item is inserted unchecked at position
+  i+1; the list after in the board's order (position NULL first, ties by id,
+  new ids last); the status after (always incomplete). Refused (stricter than
+  the route): 0 or > 25 items, an object, an empty or > 255 name, a repeat, two
+  new items sharing a 22-character prefix (the route inserts both and drops
+  one match), a prefix matching two existing items (the route's unordered read
+  drops one, unfixed), a near-duplicate by capitalisation (the route would add
+  it beside), > 200 case checklists or docs items. Warnings: CLIENT-VISIBLE
+  (always), ASKS AGAIN (a checked item replaced unchecked), REOPENS THE LIST,
+  CREATES THE DOCS LIST / TAGS THE LIST (the route self-heals an untagged
+  title match), NOT ONE STEP (no transaction — a failure after the claim reads
+  as possibly part-applied: the family's ambiguousText), AUTOMATION naming
+  every ACTIVE rule on `checklist.items_upserted` by name and id ("none" when
+  none) plus the dry run (`casePipelineAutomation`, which now also returns the
+  rule names). `expected` = every case CHECKLIST's id:tag:title (what decides
+  the find), the docs list's status and items; the click re-reads GET
+  `/checklists?link_type=case&link=&kind=checklist&include=items` and GET
+  `/api/cases/:id`. Result check: the reviewed list (or, creating, a list on
+  the case) with every new item unchecked. Receipt `checklist_id`; browser
+  family `checklist_upsert` (always danger).
+- **Sync.** POST `/checklists/upsert-items` joined yc-sync
+  (`checklist:<link_type>:<link>` from the answer's `checklist`) — also for the
+  sending form's own browser call (`sendingform-bk.html`), which announced
+  nothing before.
+- Tests: `tests/caseyChecklistRelease.test.js` and
+  `tests/caseyChecklistUpsert.test.js` (mocked; browser lifted by name), gated
+  `tests/caseyChecklistRelease.mysql.test.js` (the route makes a list for a
+  retired user, the card refuses by the real predicate; record labels; the
+  unlinked create) and `tests/caseyChecklistUpsert.mysql.test.js` (the card's
+  diff equals the route's answer item for item; find / create / re-tag; the
+  refused surprises are real; rule names from the real table), plus the A10 /
+  A10.2 / A10X suites updated for the released refusals.
+
+**Deferred** (`ref/plans.md`): a list on a bill (no bills table or read
+route); a native reorder control; the upsert route's missing transaction; the
+docs predicate's title fallback (native).
 
 #### A11: Documents — update and link shipped 2026-11-02
 

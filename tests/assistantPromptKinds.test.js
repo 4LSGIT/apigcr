@@ -410,24 +410,25 @@ describe('A9 — every stage teaches the pipeline cards, the unmet-requirement r
 // client-visible docs-list disclosure.
 describe('A10 — every stage teaches the checklist cards, their evidence aliases and their refusals', () => {
   test('the plan carries its own bullet with the reads the cards cite', () => {
-    expect(planPrompt).toContain('Reviewed checklist actions are available: make ONE checklist or note on a case, a contact or the signed-in user\'s\n  own personal list');
+    expect(planPrompt).toContain('Reviewed checklist actions are available: make ONE checklist or note on a case, a contact, an appointment, an\n  event, a task, the signed-in user\'s own personal list, an active colleague\'s personal list, or on no record at all\n  (unlinked)');
     expect(planPrompt).toContain('checklists.id AS checklist_id');
     expect(planPrompt).toContain('checkitems.id AS checkitem_id');
-    expect(planPrompt).toContain('The server refuses any tag or position, a case list titled "Docs\n  Needed"');
+    expect(planPrompt).toContain('The server refuses any tag or position, a case list titled "Docs\n  Needed", a list on a bill, a list of a retired or inactive colleague');
   });
   test('the investigate stage names the proposal family and its aliases', () => {
-    expect(investigatePrompt).toContain('and\n  checklist proposals, which need a row carrying the record\'s exact case_id or contact_id for a new list');
+    expect(investigatePrompt).toContain('and\n  checklist proposals, which need a row carrying the record\'s exact case_id, contact_id, appt_id, event_id or task_id\n  for a new list');
     expect(investigatePrompt).toContain('checkitems.id AS checkitem_id for an item change');
   });
   test('the answer and repair stages teach the shapes, the refusals and the docs-list disclosure', () => {
     expect(answerPrompt).toContain('Checklist rules (A10');
     expect(answerPrompt).toContain('a "tag" or "position" field anywhere');
     expect(answerPrompt).toContain('a case list titled "Docs Needed" (that title makes it the\n    client-facing docs list');
-    expect(answerPrompt).toContain('a list for ANOTHER user, or on a bill, appointment, task or event');
+    expect(answerPrompt).toContain('a list on a bill (bills have no record Casey can read); a retired or inactive\n    colleague\'s list');
+    expect(answerPrompt).not.toContain('a list for ANOTHER user');
     expect(answerPrompt).toContain('An item on a case\'s docs list is VISIBLE TO THE CLIENT');
     expect(answerPrompt).toContain('case-pipeline/checklist/document/direct-send');
     expect(repairPrompt).toContain('never objects with tag / position / status');
-    expect(repairPrompt).toContain('Never "tag", never\n  a case list titled "Docs Needed"');
+    expect(repairPrompt).toContain('Never "tag", never a case list titled "Docs Needed", never a bill list');
     expect(repairPrompt).toContain('evidence carries the exact checkitem_id; never position or tag');
   });
 });
@@ -479,6 +480,32 @@ describe('A10X — every stage teaches the reorder card', () => {
     expect(answerPrompt).not.toContain('not on\n    the live-update bus');
     expect(answerPrompt).toContain('Every checklist write is on\n    the live-update bus');
     expect(repairPrompt).toContain('- checklist.items.reorder.v1: kind,checklist_id,item_ids,evidence — item_ids = EVERY item\'s exact checkitem_id once\n  each, in the new order (first = top)');
+  });
+});
+
+// A10X (second slice): the released deferrals and the docs-list upsert card.
+// Pins that every stage teaches a colleague's list (active staff, not told),
+// the appointment / event / task / unlinked lists, the bill refusal, and the
+// upsert: its read, its shape, its 22-character rule, the client-visible list
+// and the trigger rules the card names.
+describe('A10X — every stage teaches the released list targets and the docs-list upsert', () => {
+  test('the plan names the targets, the colleague read and the upsert read', () => {
+    expect(planPrompt).toContain('(a\n  colleague\'s list: their users row — user, user_name; none for the user\'s own list or an unlinked one)');
+    expect(planPrompt).toContain('And it puts items on ONE\n  case\'s Docs Needed list (the sending form\'s upsert');
+    expect(planPrompt).not.toContain('a list for another user or on a bill / appointment / task / event');
+  });
+  test('the investigate stage names the record ids and the upsert\'s case row', () => {
+    expect(investigatePrompt).toContain('(nothing for the user\'s own list, a colleague\'s or an unlinked one; a colleague is named by their\n  user id), a row carrying the case\'s exact case_id for a docs-list upsert');
+  });
+  test('the answer and repair stages teach the targets, the owner rule and the upsert', () => {
+    expect(answerPrompt).toContain('an ACTIVE colleague\'s personal list (link_type\n    "user", link = their user id) or no record at all (link_type "none", no link — an unlinked list)');
+    expect(answerPrompt).toContain('and they are NOT told — the route sends nothing and neither does Casey; say so.');
+    expect(answerPrompt).toContain('{"kind":"checklist.items.upsert.v1","case_id":"7KQ2M9XA","items":[');
+    expect(answerPrompt).toContain('deletes the existing item whose first 22 characters equal each new item\'s');
+    expect(answerPrompt).toContain('a checked item replaced is asked for AGAIN');
+    expect(answerPrompt).toContain('every active trigger rule on\n    checklist.items_upserted (named on the card)');
+    expect(repairPrompt).toContain('or "none" (an\n  unlinked list, no link)');
+    expect(repairPrompt).toContain('- checklist.items.upsert.v1: kind,case_id,items,evidence — items = 1-25 item names (never objects), no two sharing\n  their first 22 characters');
   });
 });
 

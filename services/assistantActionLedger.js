@@ -59,6 +59,9 @@ const KINDS = new Map([
   ['checklist.item.delete.v1', 'checkitem_id'],
   // A10X: the reorder receipts the LIST (the PUT answers it in its new order).
   ['checklist.items.reorder.v1', 'checklist_id'],
+  // A10X: the docs-list upsert receipts the LIST it wrote (the route answers
+  // {status, checklist} — found or created).
+  ['checklist.items.upsert.v1', 'checklist_id'],
   // A11: the update receipts the DOCUMENT (the PATCH returns the row); the
   // link receipts the new document_links row (the POST returns every link
   // row, ids included — the one matching the reviewed target is the receipt).

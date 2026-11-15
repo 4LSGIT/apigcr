@@ -215,8 +215,8 @@ body. Governing migrations in `ref/migrations/`.*
   subscribed through the HOST's bus (`P.YC`; the page's own yc-sync.js serves
   YCForm's `form:` listener) — parked while hidden
   or while a card is typed in / a "+ Role" card is open (`roleApi` stamps every
-  write); YCForm stamps `_lastDraftWrite` on its draft DELETE too. Not on the
-  bus: POST `/checklists/upsert-items`; checklistsView.html's Browse view subscribes to
+  write); YCForm stamps `_lastDraftWrite` on its draft DELETE too. POST
+  `/checklists/upsert-items` joined the bus in A10X (below); checklistsView.html's Browse view subscribes to
   `checklist:*` itself (first page re-read, parked while a row is open or the
   page hidden). Tests: `tests/ycSync.test.js`,
   `tests/contactUi.sync.test.js`, `tests/contactFormRoles.sync.test.js`,
@@ -1212,11 +1212,11 @@ body. Governing migrations in `ref/migrations/`.*
   `tag` / `position` anywhere (before any read); a CASE list titled "Docs
   Needed" (folded like general_ci — the portal's docs predicate is
   `tag='docs_needed' OR title='Docs Needed'`, so the title alone makes the
-  client-facing docs list; that list is upsert-items' alone); a list for
-  another user (personal lists = the asker's own) and bill / appt / task /
-  event lists; a note with items / a checklist with a body; > 25 initial items;
-  duplicate item names (trimmed, case-insensitive); item cards on a note or
-  on another user's list. Disclosed: a duplicate title (warning); an item on a
+  client-facing docs list; that list is upsert-items' alone); a bill list
+  (A10X released the colleague / appt / event / task / unlinked targets — the
+  A10X bullets below); a note with items / a checklist with a body; > 25 initial items;
+  duplicate item names (trimmed, case-insensitive); item cards on a note.
+  Disclosed: a duplicate title (warning); an item on a
   case's DOCS list is CLIENT-VISIBLE (portal + unauthenticated
   `/api/public/docs/:caseId`) — the flag is the portal predicate run by the
   engine in the normalizer's list read; a list it reopens. The update mirrors
@@ -1280,6 +1280,41 @@ body. Governing migrations in `ref/migrations/`.*
   `/checklists/:id`); the 409 is a refusal; receipt `checklist_id`. Tests:
   `tests/caseyChecklistOrder.test.js`, gated
   `tests/caseyChecklistOrder.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A10.
+- **Casey list targets released + the docs-list upsert card (A10X, 11-15 —
+  "release means allow"):** every checklist card but the list DELETE works on
+  an ACTIVE colleague's personal list (create with link_type 'user' + their
+  id; owner named on the card, NOT told — the route sends nothing; a retired /
+  inactive / missing owner refused by `taskService.findAssignableStaff`'s
+  predicate and at the click by GET `/api/users/:id`, `user_auth` /^authorized/
+  and `user_type` ≠ 0); the delete keeps A10.2's superuser rule. Lists on an
+  appointment / event / task: named from the row, cited by the exact appt_id /
+  event_id / task_id, re-read at the click through GET
+  `/api/appts|events|tasks/:id` (not for a delete). Unlinked lists:
+  link_type "none" → no link sent (route stores NULL / NULL), no record
+  re-read, and NO bus address (checklistGetter fails closed — the cards say
+  so). A BILL stays refused (no bills table or read route). New kind
+  `checklist.items.upsert.v1` {case_id, items} → POST
+  `/checklists/upsert-items` (the sending form's route): the card evaluates
+  the route's FIND_DOCS_SQL (verbatim copy) and computes its exact diff —
+  each new item drops THE existing item sharing its first 22 characters (JS
+  substring, case-sensitive), every new item inserted unchecked at i+1 (the
+  list after in GET order, position NULL first) — and refuses what would
+  surprise: two new items sharing a prefix, a prefix matching two items (the
+  route's unordered read picks one), a capitalisation near-duplicate.
+  Warnings: CLIENT-VISIBLE, ASKS AGAIN (a checked item replaced unchecked),
+  REOPENS, CREATES / TAGS, NOT ONE STEP (the route has no transaction — a
+  failure reads as possibly part-applied), and AUTOMATION naming every ACTIVE
+  rule on `checklist.items_upserted` (`casePipelineAutomation` now also
+  returns `rules` {id, name}). `expected` = every case checklist's id:tag:title
+  (what decides the find) + the docs list's status + items; re-read at the
+  click (GET `/checklists?link_type=case&link=&kind=checklist&include=items`
+  + GET `/api/cases/:id`). Receipt `checklist_id`. SYNC: POST
+  `/checklists/upsert-items` is now on yc-sync (its answer's `checklist`
+  {link_type, link}, `checklistGetter(true)`) — also for the sending form's
+  browser call (sendingform-bk.html), which announced nothing before. Tests:
+  `tests/caseyChecklistRelease.test.js`, `tests/caseyChecklistUpsert.test.js`,
+  gated `tests/caseyChecklistRelease.mysql.test.js`,
+  `tests/caseyChecklistUpsert.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A10.
 - **Casey document cards (A11, 11-02):** kinds `document.update.v1` (PATCH
   `/api/documents/:id` {title?, doc_type?, tags?}) and `document.link.v1` (POST
   `/api/documents/:id/links` {link_type, link_id, relation?}) — the Documents

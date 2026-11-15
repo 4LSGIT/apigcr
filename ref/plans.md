@@ -1299,27 +1299,30 @@ Share and unlink shipped as A11.2 (ASK_CASEY_ACTIONS_PLAN).
 
 ## From the Ask Casey arc — A10 checklists (2026-11-01) — deferred
 
-- **Lists for another user.** The native route lets anyone make a personal
-  list FOR a colleague and add to it (delegation is its point); Casey makes
-  and changes only the asker's own (A10.2's one exception: a superuser's
-  delete, mirroring the route's detach gate). A card for someone else's list
-  needs a ruling on who may assign to whom and whether the owner is told.
-- **Lists on bills, appointments, tasks and events (and unlinked lists).**
-  Refused by name on create and on item cards; a card would have to name and
-  freshness-check those records. The board covers them natively.
-- **Upsert-many and template expansion** (POST `/checklists/upsert-items`:
-  find-or-create the case's docs list, drop items matching the first 22
-  characters, insert fresh; emits `checklist.items_upserted`, which trigger
-  rule 14 listens to) — a fan-out onto the client-facing docs list.
+- **Lists on a bill.** A10X released colleague, appointment, event, task and
+  unlinked lists to Casey; a bill list stays refused because there is no bills
+  table or read route, so a card cannot name or freshness-check the bill (the
+  task drafts' rule). Needs a bills source first.
+- **Native: POST `/checklists/upsert-items` is not one transaction** (found
+  building A10X's upsert card). It finds or creates the docs list, then deletes
+  and inserts item by item on the pool, so a failure partway leaves some items
+  replaced and others not (Casey's card warns NOT ONE STEP and reads a failure
+  as possibly part-applied). It also reads the existing items once, unordered:
+  two new items with one 22-character prefix are both inserted, and a prefix
+  matching two existing items drops whichever the read returns first (the card
+  refuses both shapes). A `withTransaction` span (retries 1 — the emit is
+  already post-response) and an `ORDER BY id` would make it atomic and
+  deterministic.
 - **A native reorder control.** The atomic route exists (A10X: PUT
   `/checklists/:id/items/order`, one transaction, 409 on a stale set) and Ask
   Casey's reorder card is its only caller; checklistView.html still has no
   drag handle or move buttons. A board control would call the same route.
 - **Sync gaps left on the native side.** Every list and item write a page
-  makes is on the bus (`checklist:<link_type>:<link>`) except POST
-  `/checklists/upsert-items`, which announces nothing (its callers are
-  server-side; an open docs board stays stale until its tab is re-entered).
-  The global board's Mine and Unlinked views iframe `checklistView.html` and
+  makes is on the bus (`checklist:<link_type>:<link>`) — POST
+  `/checklists/upsert-items` since A10X (Casey's upsert card and the sending
+  form's own browser call; server-side callers still announce nothing, as no
+  server write does) — except a write to an UNLINKED list, which has no record
+  address (checklistGetter fails closed). The global board's Mine and Unlinked views iframe `checklistView.html` and
   inherit that page's `checklist:*` subscriber; its **Browse** view
   (`checklistsView.html`'s own `browseRow` renderer) subscribes to
   `checklist:*` itself since 2026-11-11 (first page re-read; an open row's

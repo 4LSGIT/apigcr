@@ -108,7 +108,7 @@ function fnSrc(html, name) {
 }
 function browserReorder(api) {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'assistant.html'), 'utf8');
-  const names = ['checklistEditListId', 'checklistReorderRequest', 'checklistReorderPrecheck', 'checklistReorderResult'];
+  const names = ['checklistEditListId', 'checklistReorderRequest', 'checklistReorderPrecheck', 'checklistReorderResult', 'checklistParentPrecheck', 'checklistParentLabel'];
   const src = `${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { checklistReorderRequest, checklistReorderPrecheck, checklistReorderResult };`;
   return new Function('api', src)(api); // eslint-disable-line no-new-func
 }

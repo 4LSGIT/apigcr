@@ -89,6 +89,16 @@ function makeDb(over = {}) {
       for (const [id, l] of Object.entries(lists)) if (l.items.some((i) => i.id === Number(params[0]))) return [[{ checklist_id: Number(id) }]];
       return [[]];
     }
+    // A10X: a colleague's list (user 1 Stuart is active staff, user 2 is retired) and the record kinds.
+    if (flat === 'SELECT user, user_name FROM users WHERE user = ? LIMIT 1') {
+      return [{ 1: [{ user: 1, user_name: 'Stuart' }], 2: [{ user: 2, user_name: 'Retired' }] }[Number(params[0])] || []];
+    }
+    if (flat === "SELECT user, user_name FROM users WHERE user = ? AND user_auth LIKE 'authorized%' AND user_type <> 0 LIMIT 1") {
+      return [Number(params[0]) === 1 ? [{ user: 1, user_name: 'Stuart' }] : []];
+    }
+    if (flat.startsWith('SELECT a.appt_id, a.appt_type, a.appt_status,')) {
+      return [Number(params[0]) === 55 ? [{ appt_id: 55, appt_type: 'Strategy session', appt_status: 'Scheduled', at: '2026-11-20 10:00', contact_name: 'Dana Client' }] : []];
+    }
     throw new Error(`unexpected query: ${flat}`);
   });
   return { query };
@@ -192,19 +202,24 @@ describe('link types and evidence', () => {
     await refuse(create(), /^Case 7KQ2M9XA no longer exists$/, { caseMissing: true });
     await refuse(create({ link_type: 'contact', link: 77, evidence: [{ query_id: 'q2', row_number: 1 }] }), /^Contact 77 no longer exists$/, { contactMissing: true });
   });
-  test('a personal list is the ASKING user\'s own — another user\'s is refused by name; no evidence is needed', async () => {
+  test('a personal list: the asker\'s own needs no evidence; an ACTIVE colleague\'s is a card naming them (A10X); an inactive one is refused', async () => {
     const card = await run(create({ link_type: 'user', link: undefined, evidence: [] }));
-    expect([card.list.link_type, card.list.link, card.parent.label, card.evidence]).toEqual(['user', '6', 'your personal list', []]);
+    expect([card.list.link_type, card.list.link, card.parent.label, card.evidence, card.owner]).toEqual(['user', '6', 'your personal list', [], null]);
     expect((await run(create({ link_type: 'user', link: '6', evidence: undefined }))).list.link).toBe('6');
-    await refuse(create({ link_type: 'user', link: 1, evidence: [] }), /^A personal list for another user \(user #1\) is not available to Casey — it makes YOUR personal lists only/);
+    const theirs = await run(create({ link_type: 'user', link: 1, evidence: [] }));
+    expect([theirs.list.link, theirs.parent.label, theirs.owner]).toEqual(['1', 'Stuart (user #1)\'s personal list', { user_id: 1, name: 'Stuart', label: 'Stuart (user #1)' }]);
+    expect(theirs.warnings).toContain('ANOTHER USER\'S LIST: this makes a personal list FOR Stuart (user #1) — it shows under their own lists on the Notes & Lists page, not yours, and Stuart is not told: neither the route nor Casey sends anything.');
+    await refuse(create({ link_type: 'user', link: 2, evidence: [] }), /^A personal list for Retired \(user #2\) is not available — they are not an active staff member \(retired or inactive\)/);
     await refuse(create({ link_type: 'user', evidence: [] }), /^A personal list needs a signed-in staff user$/, undefined, undefined, null);
   });
-  test.each([['bill', /^A list on a bill is not available/], ['appt', /^A list on an appointment is not available/],
-    ['task', /^A list on a task is not available/], ['event', /^A list on an event is not available/]])('a %s list is refused by name', async (t, re) => {
-    await refuse(create({ link_type: t, link: '5' }), re);
+  test('a bill list is refused by name (no bills table or read route); appt / task / event lists need the record\'s exact cited id (A10X)', async () => {
+    await refuse(create({ link_type: 'bill', link: '5' }), /^A list on a bill is not available to Casey — bills have no verifiable record source/);
+    await refuse(create({ link_type: 'appt', link: '5' }), /^The list evidence does not identify appointment 5 — cite a row carrying its exact appt_id/);
+    await refuse(create({ link_type: 'task', link: '5' }), /^The list evidence does not identify task 5 — cite a row carrying its exact task_id/);
+    await refuse(create({ link_type: 'event', link: '5' }), /^The list evidence does not identify event 5 — cite a row carrying its exact event_id/);
   });
-  test('no link type at all is refused, naming the three', async () => {
-    await refuse(create({ link_type: undefined }), /^A new list needs link_type: "case" .* "contact" .* or "user"/);
+  test('no link type at all is refused, naming every kind and "none"', async () => {
+    await refuse(create({ link_type: undefined }), /^A new list needs link_type: "case" .* "contact" .* "appt" \/ "event" \/ "task" .* "user" .* or "none"/);
   });
 });
 
@@ -268,8 +283,9 @@ describe('the item add card', () => {
     await refuse(add(414), /^"Call log" \(#414\) is a NOTE, not a checklist — notes hold freeform text, never items/);
     await refuse(add(499, 'x', { evidence: [{ query_id: 'q3', row_number: 1 }] }), /^The item evidence does not identify checklist #499/);
     await refuse(add(499, 'x', { evidence: [{ query_id: 'q9', row_number: 1 }] }), /evidence is outside this investigation/);
-    await refuse(add(417), /^"Stuart to-dos" \(#417\) is another user's personal list \(user #1\)/);
-    await refuse(add(418), /^"Appt prep" \(#418\) hangs off a appt — Casey works on lists of a case, a contact or your own personal list only/);
+    // A10X: an active colleague's list and an appointment's list are cards now.
+    await expect(run(add(417))).resolves.toMatchObject({ owner: { user_id: 1, name: 'Stuart' }, parent: { label: 'Stuart (user #1)\'s personal list' } });
+    await expect(run(add(418))).resolves.toMatchObject({ owner: null, parent: { link_type: 'appt', label: 'appointment #55 (Strategy session, 2026-11-20 10:00, Scheduled — Dana Client)' } });
     await expect(run(add(416, 'Book CLE'))).resolves.toMatchObject({ parent: { link_type: 'user', label: 'your personal list' } });
   });
   test('a duplicate name (trimmed, any capitalisation) is refused — stricter than the route', async () => {
@@ -375,14 +391,14 @@ describe('the item update card', () => {
     expect(card.automation.lines).toEqual(['Trigger rule #31 "Code rule" could not be evaluated for this item (GUEST_CODE_BUSY) — it MAY run: runs hook "x"']);
     expect(card.warnings).toEqual(['AUTOMATION: at least one trigger rule could not be evaluated for this change — read its line; it may run.']);
   });
-  test('your own list\'s item is fine; another user\'s list item, a wrong citation and a missing item are refused', async () => {
+  test('your own and an active colleague\'s list item are fine (A10X); a wrong citation and a missing item are refused', async () => {
     await expect(run(update(5160))).resolves.toMatchObject({ parent: { link_type: 'user' } });
     const lists = baseLists();
     lists[417].items = [{ id: 5170, name: 'x', status: 'incomplete', position: 1 }];
     await refuse(update(5170, { evidence: [{ query_id: 'q5', row_number: 1 }] }), /^The item evidence does not identify item #5170/, { lists },
       [...EVIDENCE, { id: 'q5', rows: [{ checkitem_id: 5171 }] }]);
-    await refuse(update(5170, { evidence: [{ query_id: 'q5', row_number: 1 }] }), /^"Stuart to-dos" \(#417\) is another user's personal list/, { lists },
-      [...EVIDENCE, { id: 'q5', rows: [{ checkitem_id: 5170 }] }]);
+    const theirs = await run(update(5170, { evidence: [{ query_id: 'q5', row_number: 1 }] }), { lists }, [...EVIDENCE, { id: 'q5', rows: [{ checkitem_id: 5170 }] }]);
+    expect([theirs.owner.user_id, theirs.warnings[0]]).toEqual([1, 'ANOTHER USER\'S LIST: this is Stuart (user #1)\'s personal list — the route lets any staff member work on a colleague\'s list (delegation), and Stuart is not told: neither the route nor Casey sends anything.']);
     await refuse(update(5199, { evidence: [{ query_id: 'q5', row_number: 1 }] }), /^Checklist item #5199 no longer exists$/, undefined,
       [...EVIDENCE, { id: 'q5', rows: [{ checkitem_id: 5199 }] }]);
   });
