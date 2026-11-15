@@ -45,6 +45,11 @@ const KINDS = new Map([
   // A11.1: the receipt is the case whose Dropbox folder was claimed — the
   // STRING case_id path (the relink route answers {result:{case_id, …}}).
   ['case.folder.relink.v1', 'case_id'],
+  // A11.1X: the undo is the same route (the same STRING case_id); the dismiss
+  // receipts the case whose cache row was stamped (the route answers
+  // {updated, case_ids, dismissed} — case_ids[0] is the reviewed case).
+  ['case.folder.relink.undo.v1', 'case_id'],
+  ['case.folder.dismiss.v1', 'case_id'],
   // A10: create and item add receipt the LIST (both routes return the whole
   // list, and the new item is one row of it); the item update receipts the
   // ITEM (the PATCH returns that row).

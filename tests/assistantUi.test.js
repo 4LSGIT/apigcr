@@ -102,8 +102,11 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'caseDocketPrecheck', 'caseDocketResult', 'caseDocketKnownOutcome',
   'caseFieldsLabel', 'caseFieldsCaseLabel', 'caseFieldsCanon', 'caseFieldsText', 'caseFieldsDanger', 'caseFieldsBody', 'caseFieldsRequest',
   'caseFieldsPrecheck', 'caseFieldsDocketPrecheck', 'caseFieldsResult', 'caseFieldsKnownOutcome',
-  'caseFolderLabel', 'caseFolderCaseLabel', 'caseFolderText', 'caseFolderRequest', 'caseFolderPrecheck', 'caseFolderResult',
+  'caseFolderIsUndo', 'caseFolderIsTyped', 'caseFolderLabel', 'caseFolderCaseLabel', 'caseFolderText', 'caseFolderRequest', 'caseFolderPrecheck', 'caseFolderResult',
   'caseFolderKnownOutcome', 'caseFolderAppliedMessage',
+  // A11.1X: the relink-queue dismissal family.
+  'caseFolderDismissLabel', 'caseFolderDismissText', 'caseFolderDismissRequest', 'caseFolderDismissPrecheck', 'caseFolderDismissResult',
+  'caseFolderDismissKnownOutcome', 'caseFolderDismissAppliedMessage',
   'formCanonical', 'formDataHash', 'formIso', 'formRecordLabel', 'formLabel', 'formTitle', 'formText', 'formRecordPath', 'formDraftRequest',
   'formDraftPrecheck', 'formDraftResult', 'formDraftKnownOutcome', 'formLinkRequest', 'formLinkPrecheck', 'formLinkResult', 'formLinkKnownOutcome', 'formEntity', 'formOpen',
   // A12.2: the discard and PDF families (tests/caseyFormDiscardPdf.test.js drives them function by function).
@@ -169,7 +172,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CASE_DOCKET_MAX'), constSrc(html, 'CASE_DOCKET_CONTROL'),
     constSrc(html, 'CASE_FIELDS_ACTION_KINDS'), constSrc(html, 'CASE_FIELDS_MAX'), constSrc(html, 'CASE_FIELDS_REFUSED_NAMES'), constSrc(html, 'CASE_FIELDS_COLUMN'),
     constSrc(html, 'CASE_FIELDS_DOCKET_SEARCH_MAX'),
-    constSrc(html, 'CASE_FOLDER_ACTION_KINDS'), constSrc(html, 'CASE_FOLDER_PATH_MAX'), constSrc(html, 'CASE_FOLDER_CONTROL'),
+    constSrc(html, 'CASE_FOLDER_ACTION_KINDS'), constSrc(html, 'CASE_FOLDER_PATH_MAX'), constSrc(html, 'CASE_FOLDER_CONTROL'), constSrc(html, 'CASE_FOLDER_DISMISS_ACTION_KINDS'),
     constSrc(html, 'FORM_DRAFT_ACTION_KINDS'), constSrc(html, 'FORM_LINK_ACTION_KINDS'), constSrc(html, 'FORM_DATA_MAX_BYTES'),
     constSrc(html, 'FORM_DISCARD_ACTION_KINDS'), constSrc(html, 'FORM_PDF_ACTION_KINDS'), constSrc(html, 'FORM_PDF_PLACEMENTS'), constSrc(html, 'FORM_PDF_WARNINGS_KEPT'),
     constSrc(html, 'FORM_SUBMIT_ACTION_KINDS'), constSrc(html, 'FORM_TEMPLATE_ACTION_KINDS'), constSrc(html, 'FORM_TEMPLATE_VISIBILITIES'),
@@ -5574,8 +5577,201 @@ describe('A11.1 case folder card (case.folder.relink)', () => {
     expect(host.querySelector('.action-draft-status').textContent).toBe('Applied — case folder linked');
     expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open 25-12345', 'Copy details']);
     const f = box.actionFamily({ kind: 'case.folder.relink.v1' });
-    expect([[...f.kinds], f.idField, f.appliedKey, !!f.stringReceipt]).toEqual([['case.folder.relink.v1'], 'case_id', 'result_folder_case_id', true]);
-    for (const kind of ['case.folder.unlink.v1', 'case.folder.dismiss.v1', 'case.folder.bulk_relink.v1', 'document.relink.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    // A11.1X: the undo shares the family (same route, same receipt); the dismiss is its own.
+    expect([[...f.kinds], f.idField, f.appliedKey, !!f.stringReceipt]).toEqual([['case.folder.relink.v1', 'case.folder.relink.undo.v1'], 'case_id', 'result_folder_case_id', true]);
+    expect(box.actionFamily({ kind: 'case.folder.relink.undo.v1' }).id).toBe('case_folder');
+    const g = box.actionFamily({ kind: 'case.folder.dismiss.v1' });
+    expect([g.id, [...g.kinds], g.idField, g.appliedKey, !!g.stringReceipt]).toEqual(['case_folder_dismiss', ['case.folder.dismiss.v1'], 'case_id', 'result_folder_dismiss_case_id', true]);
+    for (const kind of ['case.folder.unlink.v1', 'case.folder.bulk_relink.v1', 'case.folder.undismiss.v1', 'case.folder.relink.undo.v2', 'document.relink.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
+  });
+});
+
+// A11.1X (2026-11-15): a TYPED path and the UNDO on the case folder family —
+// both re-read the case AND ask Dropbox for the folder before the claim — and
+// the relink-queue dismissal family (never danger; updated 0 is a refusal).
+describe('A11.1X typed path, undo and relink-queue dismissal', () => {
+  const CASE_ID = '7KQ2M9XA';
+  const TYPED = '/law/closed/ old files - smith';
+  const OLD = '/law/active/ 7 - smith, dana - 25-12345';
+  const NEW_LINK = 'https://www.dropbox.com/scl/fo/old';
+  const base = (over = {}) => ({ action_draft: {
+    draft_id: '7b7b7b7b-1b2c-4d3e-8f40-123456789abc', status: 'draft', received_at: Date.now(),
+    case: { case_id: CASE_ID, label: '25-12345', case_number: '25-12345', case_number_full: null, clients: ['Smith, Dana'] },
+    current: { path: '/law/potential/smith', path_display: '/Law/Potential/Smith', link: NEW_LINK, resolve_error: null, dismissed_at: null },
+    prediction: { attach: 5, detach: 0 }, automation: { events: ['case.updated'], lines: [], rules_checked: 1, quiet: 1 },
+    effects: ['Matched on: NOTHING — a typed path, not one of the panel\'s candidates.'], warnings: ['NOT A CANDIDATE: neither the case number nor a client\'s name is in this folder\'s name.'],
+    no_undo: 'There is no undo button on this card.', evidence: [], case_ids: ['X'], ...over } });
+  const typedDraft = (over = {}) => base({ kind: 'case.folder.relink.v1',
+    folder: { path: TYPED, path_display: '/Law/Closed/ Old Files - Smith', files: 5, newest: null, confidence: 'typed', matched_on: null, inside_case_id: null, nested_case_ids: [], root: '/law', listed_files: 3, listed_folders: 0, listing_truncated: false, newest_listed: null },
+    expected: { case_dropbox: NEW_LINK, current_path: '/law/potential/smith', path: TYPED, files: 5, already_linked_to: null, typed: 1 }, ...over });
+  const undoDraft = (over = {}) => base({ kind: 'case.folder.relink.undo.v1',
+    folder: { path: OLD, path_display: '/Law/Active/ 7 - Smith, Dana - 25-12345', files: 12, newest: null, confidence: 'docket', matched_on: '25-12345', inside_case_id: null, nested_case_ids: [], root: '/law', listed_files: 2, listed_folders: 1, listing_truncated: false, newest_listed: null },
+    audit: { log_id: 48211, at_text: '2026-11-10 09:30', by: 'Fred (user 6)', old_path: OLD, old_link: 'https://www.dropbox.com/scl/fo/older', new_path: '/law/potential/smith', new_link: NEW_LINK, linked_docs: 3, detached_docs: 2 },
+    effects: ['Audit entry: #48211 on 2026-11-10 09:30 firm time by Fred (user 6) re-linked the case.'], warnings: [],
+    no_undo: 'This undo is itself a re-link with its own audit entry.',
+    expected: { case_dropbox: NEW_LINK, current_path: '/law/potential/smith', path: OLD, files: 12, already_linked_to: null, log_id: 48211, typed: 1 }, ...over });
+  const dismissDraft = (over = {}) => base({ kind: 'case.folder.dismiss.v1', undo: false,
+    cache: { path: '/law/potential/smith', path_display: '/Law/Potential/Smith', resolved_at: '2026-10-30T12:00:00.000Z', resolve_error: null, dismissed_at: null, dismissed_by: null },
+    queue: { in_queue: true, has_links: false, candidates: 2, proposable: 2 },
+    effects: ['Cached folder: "/Law/Potential/Smith" (resolved 2026-10-30).', 'Relink queue now: IN the queue — shown.'], warnings: ['THIS CASE HAS 2 CANDIDATE FOLDERS: dismissing says "nothing to do here" although a folder may fit.'],
+    no_undo: undefined, expected: { dismissed_at: null, current_path: '/law/potential/smith', case_dropbox: NEW_LINK }, ...over });
+  const candidatesGet = (over = {}) => ({ status: 'success', case_id: CASE_ID, current_path: '/law/potential/smith', current_link: NEW_LINK, dismissed_at: null, candidates: [], ...over });
+  const relinked = async (_p, body) => ({ status: 'success', result: { case_id: body.case_id, old_path: '/law/potential/smith', new_path: body.folder_path, requested_path: body.folder_path,
+    shared_link: 'https://www.dropbox.com/scl/fo/new', linked_docs: 5, detached_docs: 3, scanned_docs: 5, cache: { resolved: 1 }, warnings: [], elapsed_ms: 40 } });
+  const dismissed = async (_p, body) => ({ status: 'success', updated: 1, case_ids: [body.case_id], dismissed: !body.undo });
+  function harness(message, { got = candidatesGet(), gone = false, list = async () => ({ entries: [], count: 0, truncated: false }), write, confirm = true } = {}) {
+    const writes = []; const gets = []; const lists = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); if (gone) throw Object.assign(new Error('Case not found'), { status: 404 }); return got; }
+      if (path === '/api/dropbox/list') { lists.push(body); return list(body); }
+      writes.push({ path, body, method, headers }); return write(path, body, method);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a111x' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) } };
+    const history = []; const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, lists, ledger, P, history, openEntity, sandbox }));
+  }
+  const notFolder = async () => { throw Object.assign(new Error('dropbox: POST /2/files/list_folder → 409: path/not_folder/..'), { status: 409, body: { status: 'error', message: 'dropbox: POST /2/files/list_folder → 409: path/not_folder/..' } }); };
+
+  test('a TYPED path: the case is re-read, Dropbox is asked for the folder (one list call, one entry), the candidates are not consulted, ONE POST of the typed path', async () => {
+    const m = typedDraft();
+    const x = await harness(m, { write: relinked });
+    expect(x.sandbox.actionFamily(m.action_draft).id).toBe('case_folder');
+    expect(x.gets).toEqual([`/api/documents/relink/${CASE_ID}/candidates`]);
+    expect(x.lists).toEqual([{ path: TYPED, recursive: false, max_entries: 1 }]);
+    expect(x.writes).toEqual([{ path: '/api/documents/relink', method: 'POST', headers: undefined, body: { case_id: CASE_ID, folder_path: TYPED } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_folder_case_id: CASE_ID });
+    expect(x.history[0].text).toBe(`Link case folder applied to case ${CASE_ID}: it now points at "${TYPED}" — detached 3, attached 5.`);
+    const dialog = x.P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Link case folder' });
+    for (const line of [`Folder: ${TYPED} (a typed path — NOT one of the panel's candidates)`, 'Dropbox: shown as "/Law/Closed/ Old Files - Smith", under sync root "/law"; 3 file(s) and 0 subfolder(s) listed directly',
+      'Warning: NOT A CANDIDATE', 'Stale check: if the case\'s link or cached folder changes before you apply, or the folder is gone from Dropbox or is not a folder any more, nothing is written']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+  });
+  test('a typed or undo folder gone from Dropbox (or a file now) refuses BEFORE the claim; the case\'s link still has to match; a Dropbox outage leaves the card retryable', async () => {
+    for (const make of [typedDraft, undoDraft]) {
+      const gone = make();
+      const g = await harness(gone, { list: notFolder, write: relinked });
+      expect([g.writes, g.ledger]).toEqual([[], []]);
+      expect(gone.action_draft.refusal_error).toBe(`The folder "${gone.action_draft.folder.path}" is no longer in Dropbox, or is not a folder any more (dropbox: POST /2/files/list_folder → 409: path/not_folder/..). Nothing was written. Ask Casey to prepare it again.`);
+      const moved = make();
+      const mv = await harness(moved, { got: candidatesGet({ current_link: 'https://www.dropbox.com/scl/fo/someone-else' }), write: relinked });
+      expect([mv.writes, mv.lists]).toEqual([[], []]);
+      expect(moved.action_draft.refusal_error).toMatch(/^The Dropbox folder of case 25-12345 changed since this card was prepared/);
+      const outage = make();
+      const o = await harness(outage, { list: async () => { throw Object.assign(new Error('Service Unavailable'), { status: 503 }); }, write: relinked });
+      expect([o.writes, o.ledger]).toEqual([[], []]);
+      expect(outage.action_draft.action_error).toMatch(/^Could not re-check the record before applying \(Service Unavailable\)/);
+      const noCase = make();
+      await harness(noCase, { gone: true, write: relinked });
+      expect(noCase.action_draft.refusal_error).toBe('Case 25-12345 no longer exists. Nothing was written.');
+    }
+  });
+  test('the UNDO card: its own title and header lines, the same route with the old folder, "again" in the applied line, its own applied status', async () => {
+    const m = undoDraft();
+    const x = await harness(m, { write: relinked });
+    expect(x.lists).toEqual([{ path: OLD, recursive: false, max_entries: 1 }]);
+    expect(x.writes).toEqual([{ path: '/api/documents/relink', method: 'POST', headers: undefined, body: { case_id: CASE_ID, folder_path: OLD } }]);
+    expect(x.ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a111x', result: { case_id: CASE_ID } } }]);
+    expect(x.history[0].text).toBe(`Undo case folder re-link applied to case ${CASE_ID}: it now points at "${OLD}" again — detached 3, attached 5.`);
+    const dialog = x.P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ title: 'Undo case folder re-link', icon: 'warning', focusCancel: true, confirmButtonText: 'Undo case folder re-link' });
+    for (const line of ['Case folder undo proposal — not applied', `Folder: ${OLD} (the folder the case pointed at before its latest re-link)`,
+      `Audit entry undone: #48211 on 2026-11-10 09:30 firm time by Fred (user 6) — from "${OLD}" to "/law/potential/smith"`,
+      'Dropbox: shown as "/Law/Active/ 7 - Smith, Dana - 25-12345", under sync root "/law"; 2 file(s) and 1 subfolder(s) listed directly',
+      'No undo: This undo is itself a re-link with its own audit entry.']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    const host = dom.window.document.createElement('div');
+    box.hydrateActionDraft(box.actionFamily(m.action_draft), host, m, m.action_draft);
+    expect(host.querySelector('.action-draft-status').textContent).toBe('Applied — re-link undone');
+    const plain = typedDraft(); plain.action_draft.status = 'applied'; plain.action_draft.result_folder_case_id = CASE_ID;
+    const host2 = dom.window.document.createElement('div');
+    box.hydrateActionDraft(box.actionFamily(plain.action_draft), host2, plain, plain.action_draft);
+    expect(host2.querySelector('.action-draft-status').textContent).toBe('Applied — case folder linked');
+    dom.window.close();
+  });
+  test('the DISMISS card: never danger, re-reads the case, ONE POST of exactly {case_id} (undo adds undo:true), the STRING receipt, its own applied copy', async () => {
+    const m = dismissDraft();
+    const x = await harness(m, { write: dismissed });
+    expect(x.sandbox.actionFamily(m.action_draft).id).toBe('case_folder_dismiss');
+    expect(x.gets).toEqual([`/api/documents/relink/${CASE_ID}/candidates`]);
+    expect(x.lists).toEqual([]);
+    expect(x.writes).toEqual([{ path: '/api/documents/relink/dismiss', method: 'POST', headers: undefined, body: { case_id: CASE_ID } }]);
+    expect(x.ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a111x', result: { case_id: CASE_ID } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_folder_dismiss_case_id: CASE_ID });
+    expect(x.history[0].text).toBe(`Dismiss case from relink queue applied to case ${CASE_ID}: it is dismissed from the Documents relink panel's queue. No document or link changed.`);
+    expect(x.history[0].entities).toEqual([{ kind: 'case', id: CASE_ID, label: '25-12345' }]);
+    expect(x.openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345');
+    const dialog = x.P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ title: 'Dismiss case from relink queue', icon: 'question', focusCancel: false, confirmButtonText: 'Dismiss case from relink queue' });
+    for (const line of ['Relink queue proposal — not applied', `Case: 25-12345 (case ${CASE_ID}) — Smith, Dana`, 'Cached folder: /Law/Potential/Smith',
+      'Dismissed now: no; in the panel\'s queue: yes; candidate folders: 2', 'Warning: THIS CASE HAS 2 CANDIDATE FOLDERS',
+      'Writes: two columns on the case\'s folder-cache row (relink_dismissed_at, relink_dismissed_by)', 'Notification: none. No trigger rule runs — no event fires.']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+    const u = dismissDraft({ undo: true, cache: { path: '/law/potential/smith', path_display: '/Law/Potential/Smith', dismissed_at: '2026-09-01T10:00:00.000Z', dismissed_by: 6 }, expected: { dismissed_at: '2026-09-01T10:00:00.000Z', current_path: '/law/potential/smith', case_dropbox: NEW_LINK } });
+    const y = await harness(u, { got: candidatesGet({ dismissed_at: '2026-09-01T10:00:00.000Z' }), write: dismissed });
+    expect(y.writes[0].body).toEqual({ case_id: CASE_ID, undo: true });
+    expect(y.P.Swal.fire.mock.calls[0][0].title).toBe('Return case to relink queue');
+    expect(y.history[0].text).toBe(`Return case to relink queue applied to case ${CASE_ID}: it is back in the Documents relink panel's queue. No document or link changed.`);
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    for (const [msg, status] of [[m, 'Applied — dismissed from the relink queue'], [u, 'Applied — back in the relink queue']]) {
+      const host = dom.window.document.createElement('div');
+      box.hydrateActionDraft(box.actionFamily(msg.action_draft), host, msg, msg.action_draft);
+      expect(host.querySelector('.action-draft-status').textContent).toBe(status);
+    }
+    dom.window.close();
+  });
+  test('the dismiss freshness and outcomes: a changed dismissal or folder refuses before the claim; updated 0 is a refusal; a mismatched answer is ambiguous; a bad card never reads', async () => {
+    for (const [got, why] of [
+      [candidatesGet({ dismissed_at: '2026-11-14T10:00:00.000Z' }), 'The relink-queue dismissal of case 25-12345 changed since this card was prepared (someone dismissed it). Nothing was written. Ask Casey to prepare it again.'],
+      [candidatesGet({ current_path: '/law/active/x' }), 'The Dropbox folder of case 25-12345 changed since this card was prepared'],
+      [candidatesGet({ current_link: null }), 'The Dropbox folder of case 25-12345 changed since this card was prepared'],
+    ]) {
+      const d = dismissDraft();
+      const x = await harness(d, { got, write: dismissed });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(d.action_draft.refusal_error).toContain(why);
+    }
+    const un = dismissDraft({ undo: true, expected: { dismissed_at: '2026-09-01T10:00:00.000Z', current_path: '/law/potential/smith', case_dropbox: NEW_LINK } });
+    await harness(un, { got: candidatesGet({ dismissed_at: null }), write: dismissed });
+    expect(un.action_draft.refusal_error).toBe('The relink-queue dismissal of case 25-12345 changed since this card was prepared (someone un-dismissed it). Nothing was written. Ask Casey to prepare it again.');
+    const unreadable = dismissDraft();
+    const ur = await harness(unreadable, { got: { status: 'success', case_id: CASE_ID, current_link: NEW_LINK, current_path: '/law/potential/smith' }, write: dismissed });
+    expect([ur.writes, ur.ledger]).toEqual([[], []]);
+    expect(unreadable.action_draft.action_error).toMatch(/^Could not re-check the record before applying \(the folder candidates could not be read\)/);
+    const none = dismissDraft();
+    const n = await harness(none, { write: async (_p, body) => ({ status: 'success', updated: 0, case_ids: [body.case_id], dismissed: true }) });
+    expect(none.action_draft.status).not.toBe('applied');
+    expect(none.action_draft.refusal_error).toBe('Refused — nothing written: the case has no folder-cache row any more (its cached folder was removed since the card was prepared), so there was nothing to stamp.');
+    expect(n.history).toEqual([]);
+    for (const answer of [{ status: 'success', updated: 1, case_ids: ['OTHER123'], dismissed: true }, { status: 'success', updated: 1, case_ids: [CASE_ID], dismissed: false },
+      { status: 'success', updated: 2, case_ids: [CASE_ID], dismissed: true }, { status: 'success', updated: 1, case_ids: [CASE_ID, 'OTHER123'], dismissed: true }, { status: 'success' }]) {
+      const a = dismissDraft();
+      await harness(a, { write: async () => answer });
+      expect(a.action_draft.status).not.toBe('applied');
+      expect(a.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    }
+    const bad = dismissDraft({ case: { case_id: 'bad id!' } });
+    const b = await harness(bad, { write: dismissed });
+    expect([b.gets, b.writes, b.ledger]).toEqual([[], [], []]);
+    expect(bad.action_draft.action_error).toContain('no usable case id');
+    const badUndo = dismissDraft({ undo: 'yes' });
+    const bu = await harness(badUndo, { write: dismissed });
+    expect([bu.gets, bu.writes]).toEqual([[], []]);
+    expect(badUndo.action_draft.action_error).toContain('no usable undo flag');
+    // A 400 (a malformed id the route refuses) is a refusal by the shared rule.
+    const r400 = dismissDraft();
+    await harness(r400, { write: async () => { throw Object.assign(new Error('one or more case ids are malformed'), { status: 400 }); } });
+    expect(r400.action_draft.refusal_error).toBe('Refused — nothing written (one or more case ids are malformed). Ask Casey to prepare it again.');
   });
 });

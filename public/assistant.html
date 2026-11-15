@@ -4907,12 +4907,23 @@ function mailAttachmentsAppliedMessage(draft, payload, replayed) {
 // wrote nothing and reads as a refusal, never a success; the route's 409 (a
 // folder another case took meanwhile) is a refusal. The route is on the
 // yc-sync bus (case:<id> with case_dropbox; doclink:case:<id>). Receipt: the
-// STRING case_id (stringReceipt). There is no undo.
-const CASE_FOLDER_ACTION_KINDS = new Set(['case.folder.relink.v1']);
+// STRING case_id (stringReceipt).
+// A11.1X (2026-11-15) in the same family: case.folder.relink.undo.v1 — the
+// SAME route with the latest audit entry's old_path (the server read the
+// entry, proved the old folder in Dropbox and pinned the case's link to the
+// entry's new_link in `expected`); and a TYPED path on case.folder.relink.v1
+// (`folder.confidence` 'typed', `expected.typed`), proved by the server's
+// document.folder read. For both, the click re-reads the case's candidates
+// (its link and cached path) and asks POST /api/dropbox/list for the folder:
+// gone or a file → refused before the claim. A separate family,
+// case.folder.dismiss.v1, stamps the relink-queue dismissal (below).
+const CASE_FOLDER_ACTION_KINDS = new Set(['case.folder.relink.v1', 'case.folder.relink.undo.v1']);
 const CASE_FOLDER_PATH_MAX = 1024;
 const CASE_FOLDER_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
-function caseFolderLabel() { return 'Link case folder'; }
+function caseFolderIsUndo(draft) { return !!draft && draft.kind === 'case.folder.relink.undo.v1'; }
+function caseFolderIsTyped(draft) { return !!draft && !!draft.folder && draft.folder.confidence === 'typed'; }
+function caseFolderLabel(draft) { return caseFolderIsUndo(draft) ? 'Undo case folder re-link' : 'Link case folder'; }
 
 function caseFolderCaseLabel(draft) {
   const c = (draft && draft.case) || {};
@@ -4921,10 +4932,13 @@ function caseFolderCaseLabel(draft) {
 
 function caseFolderText(draft) {
   const c = draft.case || {}; const f = draft.folder || {};
-  const lines = ['Case folder proposal — not applied', `Action: ${caseFolderLabel(draft)}`,
+  const a0 = draft.audit || {};
+  const lines = [caseFolderIsUndo(draft) ? 'Case folder undo proposal — not applied' : 'Case folder proposal — not applied', `Action: ${caseFolderLabel(draft)}`,
     `Case: ${caseFolderCaseLabel(draft)} (case ${c.case_id})${(c.clients || []).length ? ` — ${c.clients.join('; ')}` : ''}`,
-    `Folder: ${f.path}`,
+    `Folder: ${f.path}${caseFolderIsUndo(draft) ? ' (the folder the case pointed at before its latest re-link)' : caseFolderIsTyped(draft) ? ' (a typed path — NOT one of the panel\'s candidates)' : ''}`,
     `Registered files under it: ${Number(f.files) || 0}${f.newest ? ` (newest ${String(f.newest).slice(0, 10)})` : ''}`];
+  if (caseFolderIsUndo(draft)) lines.push(`Audit entry undone: #${a0.log_id} on ${a0.at_text || '?'} firm time by ${a0.by || '?'} — from "${a0.old_path || ''}" to "${a0.new_path || ''}"`);
+  if (caseFolderIsUndo(draft) || caseFolderIsTyped(draft)) lines.push(`Dropbox: ${f.path_display ? `shown as "${f.path_display}", ` : ''}under sync root "${f.root || '?'}"; ${Number(f.listed_files) || 0} file(s) and ${Number(f.listed_folders) || 0} subfolder(s) listed directly${f.listing_truncated ? ' (at least)' : ''}`);
   (draft.warnings || []).forEach((x) => lines.push(`Warning: ${x}`));
   (draft.effects || []).forEach((x) => lines.push(`Effect: ${x}`));
   const a = draft.automation || {}; const acting = a.lines || [];
@@ -4935,7 +4949,9 @@ function caseFolderText(draft) {
   if (acting.length) lines.push('Automation: what those actions cause in turn is not followed here.');
   lines.push(`No undo: ${draft.no_undo || 'There is no undo button; a wrong folder is repaired by re-linking the right one.'}`,
     'Writes: the case\'s Dropbox link, its folder cache, the sync\'s links between this case and documents (detached outside the folder, attached inside), its relink-queue dismissal and one audit entry — through the Documents relink panel\'s own confirm. No other case field.',
-    'Stale check: if the case\'s link or cached folder changes, or the folder is claimed by another case, drops out of the candidates or changes its file count before you apply, nothing is written; the route itself refuses a folder another case took meanwhile.',
+    caseFolderIsUndo(draft) || caseFolderIsTyped(draft)
+      ? 'Stale check: if the case\'s link or cached folder changes before you apply, or the folder is gone from Dropbox or is not a folder any more, nothing is written; the route itself refuses a folder another case took meanwhile.'
+      : 'Stale check: if the case\'s link or cached folder changes, or the folder is claimed by another case, drops out of the candidates or changes its file count before you apply, nothing is written; the route itself refuses a folder another case took meanwhile.',
     'Other open pages: open case pages take the new link and the case\'s Documents tab refreshes on its own.',
     'Notification: Casey sends nothing itself; the trigger rules above are the only follow-on effects.');
   return lines.join('\n');
@@ -4964,7 +4980,19 @@ async function caseFolderPrecheck(draft) {
   }
   const s = (v) => (v == null ? null : String(v));
   if (s(got.current_link) !== s(x.case_dropbox) || s(got.current_path) !== s(x.current_path)) {
-    return `The Dropbox folder of ${name} changed since this card was prepared (someone re-linked it, or its link or cached folder changed). Nothing was written. Ask Casey to read the candidates again.`;
+    return `The Dropbox folder of ${name} changed since this card was prepared (someone re-linked it, or its link or cached folder changed). Nothing was written. Ask Casey to ${caseFolderIsUndo(draft) ? 'prepare it again' : 'read the candidates again'}.`;
+  }
+  // A11.1X: a typed or undo folder is not a candidate — Dropbox itself must
+  // still hold it as a folder (the route's step 2, asked before the claim).
+  if (caseFolderIsUndo(draft) || caseFolderIsTyped(draft)) {
+    let listed;
+    try { listed = await api('/api/dropbox/list', { path: req.body.folder_path, recursive: false, max_entries: 1 }, 'POST'); }
+    catch (e) {
+      if (e && (e.status === 409 || e.status === 404)) return `The folder "${req.body.folder_path}" is no longer in Dropbox, or is not a folder any more (${(e.body && e.body.message) || e.message || 'Dropbox refused the listing'}). Nothing was written. Ask Casey to prepare it again.`;
+      throw e;
+    }
+    if (!listed || !Array.isArray(listed.entries)) throw new Error('the Dropbox folder could not be read');
+    return '';
   }
   const c = got.candidates.find((r) => r && r.path === req.body.folder_path);
   if (!c) return `The folder "${req.body.folder_path}" is no longer a candidate for ${name} (it moved, was renamed or emptied). Nothing was written. Ask Casey to read the candidates again.`;
@@ -5015,7 +5043,94 @@ function caseFolderAppliedMessage(draft, payload, replayed) {
   if (replayed) return `${caseFolderLabel(draft)} had already been applied to case ${payload.case_id}; nothing was done a second time.`;
   const o = draft.relink_outcome || {};
   const notes = (o.warnings || []).length ? ` Notes: ${o.warnings.join('; ')}.` : '';
-  return `${caseFolderLabel(draft)} applied to case ${payload.case_id}: it now points at "${o.new_path || (draft.folder || {}).path}" — detached ${Number(o.detached) || 0}, attached ${Number(o.linked) || 0}.${notes}`;
+  return `${caseFolderLabel(draft)} applied to case ${payload.case_id}: it now points at "${o.new_path || (draft.folder || {}).path}"${caseFolderIsUndo(draft) ? ' again' : ''} — detached ${Number(o.detached) || 0}, attached ${Number(o.linked) || 0}.${notes}`;
+}
+
+// Relink-queue dismissal (A11.1X). case.folder.dismiss.v1 {case_id, undo?} →
+// POST /api/documents/relink/dismiss — the Documents relink panel's own
+// Dismiss / un-dismiss, ONE case per card (the route's array form is the
+// panel's "Dismiss all"; a bulk Casey dismiss is refused by the server). It
+// stamps two columns on the case's folder-cache row and changes NOTHING else
+// (no link, no case field, nothing in Dropbox, no event, no log entry), so it
+// is never danger-styled. The server refused a case with no cache row (the
+// route would stamp nothing) and a state already equal to the one asked for,
+// and baked the dismissal, the cached path and the case's link into
+// `expected`; the click re-reads GET /api/documents/relink/:caseId/candidates
+// and refuses on any difference BEFORE the claim. The route answers
+// {updated, case_ids, dismissed}: updated 0 (the row vanished) is a refusal,
+// never a success. Receipt: the STRING case_id. The route is on no bus:
+// case_folder_cache is not a bus-watched entity and no open page shows it.
+const CASE_FOLDER_DISMISS_ACTION_KINDS = new Set(['case.folder.dismiss.v1']);
+
+function caseFolderDismissLabel(draft) { return draft && draft.undo ? 'Return case to relink queue' : 'Dismiss case from relink queue'; }
+
+function caseFolderDismissText(draft) {
+  const c = draft.case || {}; const k = draft.cache || {}; const q = draft.queue || {};
+  const lines = ['Relink queue proposal — not applied', `Action: ${caseFolderDismissLabel(draft)}`,
+    `Case: ${caseFolderCaseLabel(draft)} (case ${c.case_id})${(c.clients || []).length ? ` — ${c.clients.join('; ')}` : ''}`,
+    `Cached folder: ${k.path_display || k.path || 'none resolved'}`,
+    `Dismissed now: ${k.dismissed_at ? `yes (${String(k.dismissed_at).slice(0, 10)})` : 'no'}; in the panel's queue: ${q.in_queue ? 'yes' : 'no'}; candidate folders: ${Number(q.candidates) || 0}`];
+  (draft.warnings || []).forEach((x) => lines.push(`Warning: ${x}`));
+  (draft.effects || []).forEach((x) => lines.push(`Effect: ${x}`));
+  lines.push('Writes: two columns on the case\'s folder-cache row (relink_dismissed_at, relink_dismissed_by) through the Documents relink panel\'s own route. No document link, no case field, nothing in Dropbox, no event, no log entry.',
+    'Stale check: if the case\'s dismissal, cached folder or Dropbox link changes before you apply, nothing is written.',
+    'Other open pages: none show the dismissal; the Documents relink panel reads it when it is next opened.',
+    'Notification: none. No trigger rule runs — no event fires.');
+  return lines.join('\n');
+}
+
+function caseFolderDismissRequest(draft) {
+  const caseId = actionStringReceipt(draft.case && typeof draft.case.case_id === 'string' ? draft.case.case_id : '');
+  if (!caseId) throw new Error('This card has no usable case id.');
+  if (draft.undo !== undefined && typeof draft.undo !== 'boolean') throw new Error('This card has no usable undo flag.');
+  return { path: '/api/documents/relink/dismiss', method: 'POST', body: draft.undo === true ? { case_id: caseId, undo: true } : { case_id: caseId } };
+}
+
+async function caseFolderDismissPrecheck(draft) {
+  const req = caseFolderDismissRequest(draft);
+  const x = draft.expected || {};
+  const name = `case ${caseFolderCaseLabel(draft)}`;
+  let got;
+  try { got = await api(`/api/documents/relink/${encodeURIComponent(req.body.case_id)}/candidates`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `Case ${caseFolderCaseLabel(draft)} no longer exists. Nothing was written.`; throw e; }
+  if (!got || String(got.case_id) !== req.body.case_id || !('dismissed_at' in got) || !('current_link' in got) || !('current_path' in got)) {
+    throw new Error('the folder candidates could not be read');
+  }
+  const s = (v) => (v == null ? null : String(v));
+  if (s(got.dismissed_at) !== s(x.dismissed_at)) {
+    return `The relink-queue dismissal of ${name} changed since this card was prepared (someone ${got.dismissed_at ? 'dismissed' : 'un-dismissed'} it). Nothing was written. Ask Casey to prepare it again.`;
+  }
+  if (s(got.current_link) !== s(x.case_dropbox) || s(got.current_path) !== s(x.current_path)) {
+    return `The Dropbox folder of ${name} changed since this card was prepared (someone re-linked it, or its link or cached folder changed). Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function caseFolderDismissResult(draft, result) {
+  const r = result && result.status === 'success' ? result : null;
+  const caseId = actionStringReceipt(draft.case && draft.case.case_id);
+  if (!r || !caseId || !Array.isArray(r.case_ids) || r.case_ids.length !== 1 || r.case_ids[0] !== caseId || r.dismissed !== (draft.undo !== true)) {
+    throw new Error('The dismiss route did not confirm the case');
+  }
+  // The row vanished between the re-read and the stamp: nothing was written.
+  if (Number(r.updated) === 0) throw Object.assign(new Error('nothing stamped'), { caseFolderDismissNone: true });
+  if (Number(r.updated) !== 1) throw new Error('The dismiss route did not confirm the stamp');
+  return { case_id: caseId };
+}
+
+// A 400 (a malformed id) is a refusal by the shared rule; `updated: 0` is the
+// route's own "nothing to stamp"; anything else stays ambiguous.
+function caseFolderDismissKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  if (e && e.caseFolderDismissNone === true) {
+    return { status: 'Refused — nothing written', text: 'Refused — nothing written: the case has no folder-cache row any more (its cached folder was removed since the card was prepared), so there was nothing to stamp.' };
+  }
+  return null;
+}
+
+function caseFolderDismissAppliedMessage(draft, payload, replayed) {
+  if (replayed) return `${caseFolderDismissLabel(draft)} had already been applied to case ${payload.case_id}; nothing was done a second time.`;
+  return `${caseFolderDismissLabel(draft)} applied to case ${payload.case_id}: it is ${draft.undo ? 'back in the Documents relink panel\'s queue' : 'dismissed from the Documents relink panel\'s queue'}. No document or link changed.`;
 }
 
 // Safe code jobs (safe-mode S3). The body runs ONCE in the QuickJS guest
@@ -7206,11 +7321,33 @@ const ACTION_FAMILIES = [
     entity: (draft) => ({ kind: 'case', id: String(draft.case && draft.case.case_id), label: caseFolderCaseLabel(draft) }),
     failure: 'The case folder could not be linked.',
     appliedCopy: (draft) => ({
-      status: 'Applied — case folder linked',
-      warning: `Case ${caseFolderCaseLabel(draft)} now points at "${(draft.relink_outcome && draft.relink_outcome.new_path) || (draft.folder || {}).path}", using your signed-in account. There is no undo: a wrong folder is repaired by re-linking the right one.${(draft.automation || {}).lines && draft.automation.lines.length ? ' The trigger rules listed above run from this change.' : ''}`,
+      status: caseFolderIsUndo(draft) ? 'Applied — re-link undone' : 'Applied — case folder linked',
+      warning: `Case ${caseFolderCaseLabel(draft)} now points at "${(draft.relink_outcome && draft.relink_outcome.new_path) || (draft.folder || {}).path}"${caseFolderIsUndo(draft) ? ' again' : ''}, using your signed-in account. This is now the case's latest re-link: Casey can undo it from its audit entry, or re-link the right folder.${(draft.automation || {}).lines && draft.automation.lines.length ? ' The trigger rules listed above run from this change.' : ''}`,
       button: `Open ${caseFolderCaseLabel(draft)}`,
     }),
-    reviewWarning: 'Review the case, the folder, what the case points at now, the files that attach and the links that are detached, and every trigger rule it runs. There is no undo. Nothing is sent by Casey itself. Canceling writes nothing.',
+    reviewWarning: 'Review the case, the folder, what the case points at now, the files that attach and the links that are detached, and every trigger rule it runs. Only the latest re-link can be undone, and only through another reviewed card. Nothing is sent by Casey itself. Canceling writes nothing.',
+    open: (draft) => openEntity('case', String(draft.case && draft.case.case_id), caseFolderCaseLabel(draft)),
+  },
+  {
+    // A11.1X: the receipt is the STRING case_id — the dismiss route answers {updated, case_ids, dismissed}.
+    id: 'case_folder_dismiss', kinds: CASE_FOLDER_DISMISS_ACTION_KINDS, title: 'Relink queue', noun: 'relink queue note', errorNoun: 'dismissal',
+    label: caseFolderDismissLabel, text: caseFolderDismissText, request: caseFolderDismissRequest, result: caseFolderDismissResult,
+    idField: 'case_id', appliedKey: 'result_folder_dismiss_case_id', stringReceipt: true,
+    // Never: it changes no link, no case field and nothing in Dropbox — a note on the panel's queue, reversible.
+    danger: () => false,
+    precheck: caseFolderDismissPrecheck,
+    knownOutcome: caseFolderDismissKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `case ${payload.case_id}`,
+    appliedMessage: caseFolderDismissAppliedMessage,
+    entity: (draft) => ({ kind: 'case', id: String(draft.case && draft.case.case_id), label: caseFolderCaseLabel(draft) }),
+    failure: 'The relink-queue note could not be written.',
+    appliedCopy: (draft) => ({
+      status: draft.undo ? 'Applied — back in the relink queue' : 'Applied — dismissed from the relink queue',
+      warning: `Case ${caseFolderCaseLabel(draft)} is ${draft.undo ? 'back in' : 'dismissed from'} the Documents relink panel's queue, stamped with your signed-in account. No document or link changed; ${draft.undo ? 'a dismiss card' : 'a card with undo'} (or the panel) reverses it.`,
+      button: `Open ${caseFolderCaseLabel(draft)}`,
+    }),
+    reviewWarning: 'Review the case, its cached folder and whether a candidate folder fits it. Nothing about documents or links changes; the note is reversible. Nothing is sent. Canceling writes nothing.',
     open: (draft) => openEntity('case', String(draft.case && draft.case.case_id), caseFolderCaseLabel(draft)),
   },
   {

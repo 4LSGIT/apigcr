@@ -1118,25 +1118,30 @@ COMMENTs.)
 
 ## From the Ask Casey arc — A11.1 case folder relink (2026-11-03) — deferred
 
-- **Free-typed folder paths.** The relink route accepts any path (applyRelink
-  stats a folder with no registered files in Dropbox), but no screen sends one —
-  the panel offers its candidates only — and the model cannot stat a folder it
-  has not read. A card for a typed path needs a provider read of the folder
-  (exists, is a folder, under an enabled root, what it holds) and its own
-  not-a-candidate disclosure. Casey starts stricter than the route (manager
-  judgment, flagged to Fred).
-- **Dismiss / undo-dismiss through Casey** (POST `/api/documents/relink/dismiss`
-  {case_id | case_ids, undo?}) — a note on the queue that changes no link; a
-  card would be cheap, but the queue is the panel's working surface.
+Released 2026-11-15 (A11.1X, Fred: "release means allow"; plan doc A11.1
+"Released"): free-typed folder paths (proved by the typed `document.folder`
+read, with a NOT A CANDIDATE danger line), dismiss / undo-dismiss
+(`case.folder.dismiss.v1`, one case per card) and a single-case undo of the
+LATEST re-link (`case.folder.relink.undo.v1`, through the same route). Still
+deferred:
+
 - **Unlinking on the folder card** — a re-link detaches only the sync's own
-  links outside the new folder; one document's link is A11.2's unlink card.
-- **An undo verb for a claim** — deferred (Fred delegated, manager ruled 2026-11-03). The audit log entry
-  (`log_extra.relink`) keeps the old path and the old link; an undo would
-  re-point the case at the old link and re-attach the old folder's files —
-  which is a re-link of the old folder, and the old folder is not always still
-  a candidate.
+  links outside the new folder; one document's link is A11.2's unlink card
+  (`document.unlink.v1`).
+- **An undo of an OLDER re-link** (not the latest entry) — the undo card
+  refuses it: undo the latest first, one step at a time; each undo is itself a
+  re-link with its own entry.
 - **Bulk anything — NEVER.** The route header: "a bulk verb would exist to save
-  eight clicks and would be the single most dangerous button in the app."
+  eight clicks and would be the single most dangerous button in the app." That
+  covers a bulk undo and a bulk Casey dismiss too: the dismiss route's array
+  form stays the PANEL's ("Dismiss all" over its own queue); Casey's card
+  reaches cases the queue never lists, where a bulk dismiss is a bulk re-link's
+  ask in disguise.
+- **A typed path's click precheck cannot compare the registered file count**
+  (no browser-reachable read gives one; the candidates GET lists candidates
+  only) — it proves the case (link, cached path) and the folder (POST
+  `/api/dropbox/list`). A `GET /api/documents/relink/folder?path=` read route
+  would close that; not needed yet.
 - **Native gaps found while tracing (not Casey's):**
   - The panel lists only its QUEUE (a cached folder resolving cleanly and no
     attributed document): a case with no `case_dropbox` at all (the 15 cases

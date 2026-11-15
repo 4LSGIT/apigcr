@@ -1977,10 +1977,100 @@ evidence} → that route.
   `tests/caseyRelink.mysql.test.js`, `tests/assistantUi.test.js`,
   `tests/ycSync.test.js`.
 
-**Deferred** (`ref/plans.md`): free-typed folder paths; relink dismiss /
-undo-dismiss through Casey; unlinking on the folder card (one document's link
-is A11.2's unlink card); an undo verb for a claim (pending Fred); bulk
-anything — NEVER.
+**Deferred** (`ref/plans.md`): unlinking on the folder card (one document's
+link is A11.2's unlink card); bulk anything — NEVER. Free-typed paths, the
+dismiss and the undo were released 2026-11-15 — below.
+
+**Released 2026-11-15 (A11.1X — Fred: "release means allow").** Three of the
+deferrals shipped under the same switch, the same family boundary and the same
+twin (`tests/caseyRelink.test.js`, `tests/caseyRelink.mysql.test.js`):
+
+- **Typed folder path** on `case.folder.relink.v1`. A `folder_path` no
+  candidate row lists is proposable when a NEW typed read `document.folder`
+  {path} of the EXACT path (cited; the candidates read of the case is still
+  required) proved it: `documentFolderRead` → `dropboxService.getMetadata`
+  (must be a FolderMetadata) + a non-recursive `listFolder` capped at 500
+  entries, through the documents sync's own credential (the service's
+  `_resolveCredential` — never a caller-chosen id), plus the enabled root it
+  sits under (`listRoots` + `_underRoot`, applyRelink's out_of_root
+  predicate), the registered files under it, the cases whose sync links those
+  files carry, and `_loadFolderOwners` for who holds it (409 guard), who sits
+  inside it and what it sits inside. The read's head row carries `exists`,
+  `is_folder`, `under_enabled_root`, `root`, `listed_files` /
+  `listed_folders` / `listing_truncated` / `newest_listed`,
+  `registered_files`, `already_linked_to`, `inside_case_id`,
+  `nested_case_ids`, `held_by`, `proposable`; one row per nested case
+  folder. The normalizer refuses from the read's row (not there, a file, under
+  no enabled root) and again from its own re-read at proposal (`caseFolderFacts`:
+  gone, a file, no root, another case's — the route's 409 wording), then the
+  card replaces the lane line with the Dropbox proof and carries the danger
+  line **NOT A CANDIDATE: neither the case number nor a client's name is in
+  this folder's name**; `folder.confidence` is `'typed'`, `expected.typed`
+  1. Click: the candidates GET still proves the case (link + cached path);
+  then POST `/api/dropbox/list` {path, recursive:false, max_entries:1} proves
+  the folder — a 409 / 404 (gone, a file) refuses before the claim; the
+  candidate checks (listed, owners, file count) are skipped for a typed path
+  (no browser-reachable read gives a registered count). The route's own 400
+  (no enabled root) and 409 stay the authority, pinned in the twin.
+- **Dismiss / undo-dismiss** `case.folder.dismiss.v1` {case_id, undo?} →
+  POST `/api/documents/relink/dismiss` {case_id[, undo:true]} — ONE case per
+  card; `case_ids` and the other bulk keys are refused by name ("one card per
+  case; the Documents relink panel dismisses many at once") because Casey's
+  card reaches cases outside the queue, where a bulk dismiss is a bulk re-link's
+  ask in disguise. Evidence: a `sql.read` row with the exact case_id. Refused
+  after the read: a gone case; **no `case_folder_cache` row** (the route's
+  UPDATE would stamp nothing — `setRelinkDismissed`'s docblock); the state
+  already equal to the one asked for (already dismissed on D by X / not
+  dismissed). The card: the cached folder (path_display, resolved_at,
+  resolve_error), the dismissal now, whether the case is in the queue
+  (`relinkQueue`'s predicate: a resolved path and no `document_links` row for
+  the case — read live, not from the panel), the two-column write and **NOTHING
+  ELSE** (no link, no case field, nothing in Dropbox, no event, no log entry —
+  the dismiss route writes none), the panel effect, the reversal, the one-case
+  line; dismissing a case that HAS proposable candidates is allowed with a
+  warning naming them (default ruling, flagged). Never danger-styled. No
+  automation dry run (no event). `expected` = dismissed_at, cached path, the
+  case's link; the click re-reads the candidates GET (its head carries
+  `dismissed_at`) and refuses on a difference. Result: `{updated, case_ids,
+  dismissed}` must echo the case and the requested state; `updated: 0` (the
+  row vanished) is a refusal, never a success; a 400 refuses by the shared rule.
+  Receipt: STRING case_id; browser family `case_folder_dismiss` (applied key
+  `result_folder_dismiss_case_id`). **No bus matcher**: `case_folder_cache` is
+  not a bus-watched entity and no open page shows the dismissal.
+- **Single-case undo of the latest re-link** `case.folder.relink.undo.v1`
+  {case_id, log_id} → the SAME POST `/api/documents/relink` with the audit
+  entry's `old_path` (applyRelink end to end — every guard applies; no new
+  write route; the relink bus matcher covers it). Evidence: a `sql.read` row
+  with the exact case_id AND a `sql.read` row of `log` carrying the entry's
+  `log_id` — `log_extra` is outside the report manifest, so the SERVER reads
+  the entry (type `update`, link_type `case`, this case, subject "Case
+  Dropbox folder re-linked", `log_extra.relink`) and refuses anything else.
+  Then, in order: **not the latest** entry of the case (the newest by log_id —
+  "undo that one first"); `old_path` NULL (the case had no cached folder
+  before — nothing to go back to); the sync off; `cases.case_dropbox` no
+  longer equal to the entry's `new_link` (someone moved it since); the
+  current folder already the old one; the old folder gone / a file / under no
+  enabled root / another case's now (`caseFolderFacts`). The card: the entry
+  (#id, firm-local time via `DATE_FORMAT`, who — `users.user_name` or
+  "Automations"), old → current → back-to-old paths, the old folder's Dropbox
+  proof, the lane if it is a candidate today else the NOT A CANDIDATE danger
+  line, the re-minted link (usually the one the entry recorded), attach /
+  detach predicted with `caseFolderPredict` on the old folder (the re-link's
+  own attachments are what detaches), nested / inside-of, filing goes BACK
+  (files filed since stay where they are), the dismissal it clears, and that
+  the undo is itself a re-link writing a NEW entry (reversed the same way).
+  `expected` = the entry's new_link as the case's link, the cached path, the
+  old path, `log_id`, `typed` 1 (the browser treats it like a typed folder:
+  candidates GET for the case + POST `/api/dropbox/list` for the folder).
+  Receipt: STRING case_id, the `case_folder` family (title "Undo case folder
+  re-link", applied status "Applied — re-link undone"). NOT released: an undo
+  of anything but the latest entry; any bulk form.
+- Shared: the three kinds and the read join `casey_document_relink_enabled`;
+  prompts plan 40 / investigate 19 / answer 43 / repair 29 teach the read, the
+  typed rule, both cards and the audit-row query; the relink card's by-name
+  DISMISS / UNDO refusal now points at the two cards and its `no_undo` line
+  names the undo card; the request detector learns dismiss / undo / put-back
+  phrasing. Permissions matrix 95 kinds / 82 mounts; ledger 71 kinds.
 
 #### A11.2: Documents — share and unlink shipped 2026-11-11
 

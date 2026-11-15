@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 93 shipped kinds:
+ * These tests ask that claim two questions for all 95 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 93 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 95 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -151,6 +151,10 @@ const KINDS = [
   { kind: 'case.docket.adopt.v1', method: 'PATCH', path: '/api/cases/1/docket' },
   // A11.1: the Documents relink panel's own confirm (routes/api.documents.js).
   { kind: 'case.folder.relink.v1', method: 'POST', path: '/api/documents/relink' },
+  // A11.1X: the undo is the SAME confirm route (the entry's old folder); the
+  // dismiss is the panel's own Dismiss (routes/api.documents.js), one case.
+  { kind: 'case.folder.relink.undo.v1', method: 'POST', path: '/api/documents/relink' },
+  { kind: 'case.folder.dismiss.v1', method: 'POST', path: '/api/documents/relink/dismiss' },
   // A10: the Notes & Lists routes, mounted at the ROOT (routes/api.checklists.js).
   { kind: 'checklist.create.v1', method: 'POST', path: '/checklists' },
   { kind: 'checklist.item.add.v1', method: 'POST', path: '/checklists/1/items' },
@@ -302,19 +306,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 93 kinds (no database)
+// SECTION 1 — the route-level gate, for all 95 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 93 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 95 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 93 kinds cover 81 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(93);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(81);
+  test('the 95 kinds cover 82 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(95);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(82);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -322,7 +326,7 @@ describe('P2 — what the canonical write route gates on (all 93 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 93', async () => {
+  test('no token: every kind is 401 — authentication is required for all 95', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);

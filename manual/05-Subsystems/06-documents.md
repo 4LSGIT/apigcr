@@ -220,10 +220,16 @@ silently undoes somebody's filing decision.
 
 **From Ask Casey.** Casey can prepare the same re-link for one case as a card
 you confirm (see [Ask Casey → A case's Dropbox folder](17-ask-yisracase.md)).
-It offers only the strict suggestions above — never a surname-only match —
-also for cases this queue does not list (a case with no folder at all), and its
-card counts the documents that attach and the ones that are detached before
-you confirm.
+It offers the strict suggestions above — never a surname-only match — also for
+cases this queue does not list (a case with no folder at all), and its card
+counts the documents that attach and the ones that are detached before you
+confirm. Casey can also take a folder path you **type**: it first reads the
+folder in Dropbox (does it exist, is it a folder, is it under a sync root, what
+is in it) and the card then carries a warning that the folder is **not one of
+the suggestions** — neither the case number nor the client's name is in its
+name — so you know only your word ties it to the case. And Casey can **undo
+the latest re-link** of a case (from the activity-log entry it wrote), which
+is itself a re-link back to the old folder.
 
 ### Dismissing
 
@@ -233,7 +239,10 @@ do here." It can be undone with the checkbox at the bottom of the block.
 
 **Dismiss all** does the same for every case in the "no matching folder" strip at
 once. Safe for exactly the same reason, and the only realistic way to clear a few
-hundred dead leads.
+hundred dead leads. Casey can dismiss or un-dismiss too, **one case per card**
+(it will tell you to use this panel's Dismiss all for many), also for a case
+this queue does not list — the stamp is then only a note on the case's folder
+cache.
 
 ### Checking your work
 
@@ -251,7 +260,9 @@ that clears those, and dismissing is the right answer for them.
 **"A case shows no documents but I know they exist."**
 Find the case in the re-link queue and look at its suggestions. If nothing is
 suggested, search Dropbox by hand — the folder may be named in a way nothing can
-match. There is no way to type a path in directly; ask IT.
+match. This panel has no field for a typed path; ask Casey to link the folder
+you found (it reads the folder first and warns that it is not a suggestion), or
+ask IT.
 
 **"Documents from the wrong client are on a case."**
 Tell IT immediately, with both case numbers. Do not try to fix it by re-linking.

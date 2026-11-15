@@ -27,6 +27,31 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey case folder extras (A11.1X, 11-15, Fred: "release means allow"):**
+  same switch `casey_document_relink_enabled`, same twin. (1) A TYPED
+  `folder_path` on `case.folder.relink.v1` is proposable when a new typed read
+  `document.folder` {path} of the EXACT path (cited; the case's candidates
+  read still required) proved it — `documentFolderRead`: `getMetadata` (a
+  FolderMetadata) + non-recursive `listFolder` (≤ 500 entries) through the
+  documents sync's credential, the enabled root it sits under, registered files,
+  `_loadFolderOwners` (holder / nested / inside); re-read at proposal; the
+  card's lane line becomes the Dropbox proof plus a NOT A CANDIDATE danger line
+  (`folder.confidence` 'typed'). (2) `case.folder.dismiss.v1` {case_id,
+  undo?} → POST `/api/documents/relink/dismiss`, ONE case (bulk keys refused by
+  name — the array form is the panel's), refused with no cache row or a state
+  already equal; never danger; no event, no log entry, NO bus matcher
+  (`case_folder_cache` is not bus-watched); `updated: 0` = refusal; family
+  `case_folder_dismiss`. (3) `case.folder.relink.undo.v1` {case_id, log_id} →
+  the SAME POST `/api/documents/relink` with the audit entry's `old_path`
+  (no new write route): the entry is cited from a `sql.read` of `log`
+  (`log_extra` is outside the manifest — the server reads it), must be the
+  case's LATEST "Case Dropbox folder re-linked" entry, `old_path` non-null,
+  and `cases.case_dropbox` must still equal its `new_link`; the old folder is
+  proved like a typed path; the undo writes its own entry. Browser prechecks for
+  typed / undo: the candidates GET (case link + cached path) + POST
+  `/api/dropbox/list` {path, max_entries:1} (409 / 404 → refused before the
+  claim). Receipts: STRING case_id. Prompts plan 40 / investigate 19 / answer 43
+  / repair 29. Plan: ASK_CASEY_ACTIONS_PLAN A11.1 "Released". Bulk stays NEVER.
 - **Trigger + ingest code bodies open to all staff (11-15, Fred's ruling):**
   `lib/triggerCodeGate.js` (trigger rule POST/PUT, `test-draft`) and
   `lib/ingestCodeGate.js` (email/phone ingest rule + suppression writes,

@@ -43,8 +43,12 @@ suite('P5 ledger on real MySQL', () => {
   // The pin is deliberate: every kind added to the registry is a conscious
   // choice, so this count moves with it (A10: 57 + the three checklist kinds;
   // A11: + the two document kinds; A7c: + the docket kind; A12: + the two form kinds;
-  // A13: + the two mail kinds; A11.1: + the folder kind; A7 groups B/C: + the case fields kind).
-  test('all 69 kinds register without evidence; duplicate issuance, foreign actors and malformed inputs are refused', async () => {
+  // A13: + the two mail kinds; A11.1: + the folder kind; A7 groups B/C: + the case fields kind;
+  // A11.1X: + the folder undo and dismiss kinds). Found stale at 69 on 2026-11-15
+  // (A11.1X) while the registry held 93 — this twin is gated on YC_TEST_MYSQL_URL
+  // and CI never runs it; tests/caseyActionPermissions.test.js pins the same
+  // count against the matrix and is the one that fails first in CI.
+  test('all 95 kinds register without evidence; duplicate issuance, foreign actors and malformed inputs are refused', async () => {
     const outcomes = [];
     for (const [kind] of ledger.KINDS) {
       const d = await issue(kind);
@@ -59,7 +63,7 @@ suite('P5 ledger on real MySQL', () => {
       try { await op(); errors.push('accepted'); } catch (e) { errors.push(e.status || e.code); }
     }
     expect({ count: ledger.KINDS.size, outcomes: [...new Set(outcomes)], errors,
-      foreignRead: await ledger.read(db, 7, [d.draft_id]) }).toEqual({ count: 69, outcomes: ['not-applied'],
+      foreignRead: await ledger.read(db, 7, [d.draft_id]) }).toEqual({ count: 95, outcomes: ['not-applied'],
       errors: ['ER_DUP_ENTRY', 'ER_NO_REFERENCED_ROW_2', 400, 403, 400, 400, 404], foreignRead: [] });
   });
   test('committed claim fences two tabs, a business rollback cannot release it, and fresh or old claims remain unknown', async () => {

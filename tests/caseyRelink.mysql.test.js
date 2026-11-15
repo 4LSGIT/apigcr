@@ -51,6 +51,17 @@
  *   - The browser's precheck passes on a fresh card and refuses once the case
  *     moved; its answer check accepts the real answer; the answer's key set is
  *     the one tests/ycSync.test.js pins the bus matcher with.
+ *   - A11.1X (2026-11-15): a TYPED PATH — the document.folder read's facts on
+ *     real rows (registered files, owners, the enabled root), the normalizer's
+ *     card for a folder no lane finds, the route applying it, and the ROUTE's
+ *     own 400 (no enabled root) and 409 (another case's folder) as the
+ *     authority; the DISMISS — the real route's {updated, case_ids, dismissed}
+ *     through the browser's result check, the un-dismiss, `updated: 0` for a
+ *     case with no cache row read as a refusal; the UNDO — the real audit
+ *     entry read back from `log`, the card's counts equal to what applyRelink
+ *     then does, the end state back to the old folder, the first entry no
+ *     longer undoable (a newer exists), and the old folder gone from Dropbox.
+ *     Dropbox listFolder joins the stub (the folder read lists one page).
  */
 'use strict';
 
@@ -70,19 +81,20 @@ jest.mock('../services/dropboxService', () => ({
   getOrCreateSharedLink: jest.fn(),
   getSharedLinkMetadata: jest.fn(),
   getMetadata: jest.fn(),
+  listFolder: jest.fn(),
 }));
 const domainEvents = require('../lib/domainEvents');
 const dropbox = require('../services/dropboxService');
 const sync = require('../services/documentSyncService');
 const svc = require('../services/assistantService');
-const { normalizeActionDraft, relinkCandidatesRead, compactRows } = svc;
+const { normalizeActionDraft, relinkCandidatesRead, documentFolderRead, compactRows } = svc;
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const d = URL_ ? describe : describe.skip;
 // Production SESSION sql_mode (verified live 2026-09-25; CLAUDE.md "SQL mode is relaxed").
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
 const TABLES = ['cases', 'contacts', 'case_relate', 'documents', 'document_links', 'case_folder_cache', 'document_sync_roots',
-  'app_settings', 'log', 'trigger_rules', 'trigger_rule_actions'];
+  'app_settings', 'log', 'trigger_rules', 'trigger_rule_actions', 'users'];
 
 function schemaFor(tables) {
   const lines = fs.readFileSync(path.join(__dirname, '..', 'ref', 'database.sql'), 'utf8').split('\n');
@@ -143,8 +155,9 @@ function browserChecks(api) {
     if (!m) throw new Error(`${n} not found`);
     return m[0];
   });
-  const names = ['actionStringReceipt', 'caseFolderCaseLabel', 'caseFolderRequest', 'caseFolderPrecheck', 'caseFolderResult', 'caseFolderKnownOutcome'];
-  const src = `${consts.join('\n')}\n${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { caseFolderRequest, caseFolderPrecheck, caseFolderResult, caseFolderKnownOutcome };`;
+  const names = ['actionStringReceipt', 'caseFolderIsUndo', 'caseFolderIsTyped', 'caseFolderCaseLabel', 'caseFolderRequest', 'caseFolderPrecheck', 'caseFolderResult', 'caseFolderKnownOutcome',
+    'caseFolderDismissRequest', 'caseFolderDismissPrecheck', 'caseFolderDismissResult', 'caseFolderDismissKnownOutcome'];
+  const src = `${consts.join('\n')}\n${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { caseFolderRequest, caseFolderPrecheck, caseFolderResult, caseFolderKnownOutcome, caseFolderDismissRequest, caseFolderDismissPrecheck, caseFolderDismissResult, caseFolderDismissKnownOutcome };`;
   return new Function('api', src)(api); // eslint-disable-line no-new-func
 }
 
@@ -159,6 +172,8 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
   const D = '/law/active/ 13 - jones, amy';                      // R3's cached folder
   const DS = `${D}/smith, dana docs`;                            // name lane; INSIDE R3's folder
   const OLD = '/law/potential/smith, dana';                      // R1's current folder
+  const T = '/law/closed/ closed files - 2019';                  // A11.1X: no lane finds it — a TYPED path
+  const R4 = 'A111NOCF';                                         // A11.1X: a case with NO cache row
   const OLD_LINK = 'https://www.dropbox.com/scl/fo/old-r1';
   const linkFor = (p) => `https://www.dropbox.com/scl/fo/${encodeURIComponent(p)}`;
 
@@ -179,8 +194,9 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
     await q('INSERT INTO document_sync_roots (id, path, enabled) VALUES (1, ?, 1)', [ROOT]);
     await q(`INSERT INTO cases (case_id, case_number, case_number_full, case_type, case_stage, pipeline_phase, case_dropbox) VALUES
       (?, '25-12345', NULL, 'Bankruptcy', 'Filed', 'case', ?), (?, NULL, NULL, 'Bankruptcy', NULL, 'intake', ?),
-      (?, '24-99999', NULL, 'Bankruptcy', NULL, 'case', ?), (?, NULL, NULL, 'Bankruptcy', NULL, 'intake', ?)`,
-    [R1, OLD_LINK, R2, linkFor(C), R3, linkFor(D), RN, linkFor(`${A}/joint - lee`)]);
+      (?, '24-99999', NULL, 'Bankruptcy', NULL, 'case', ?), (?, NULL, NULL, 'Bankruptcy', NULL, 'intake', ?),
+      (?, NULL, NULL, 'Bankruptcy', NULL, 'intake', NULL)`,
+    [R1, OLD_LINK, R2, linkFor(C), R3, linkFor(D), RN, linkFor(`${A}/joint - lee`), R4]);
     await q(`INSERT INTO contacts (contact_id, contact_kind, contact_name, contact_fname, contact_lname) VALUES
       (8001, 'person', 'Dana Smith', 'Dana', 'Smith'), (8002, 'person', 'Amy Jones', 'Amy', 'Jones')`);
     // contact_lfm_name is the m3 trigger's in production; set it the way it stores it.
@@ -198,6 +214,7 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
       [131, `${D}/j1.pdf`], [132, `${DS}/s1.pdf`],
       [141, `${OLD}/o1.pdf`], [142, `${OLD}/o2.pdf`], [143, `${OLD}/o3.pdf`],
       [151, `${A}/gone.pdf`],
+      [161, `${T}/t1.pdf`], [162, `${T}/sub/t2.pdf`],
     ];
     for (const [id, p] of docs) {
       await q(`INSERT INTO documents (id, external_id, name, path, path_lower, status, server_modified) VALUES (?, ?, ?, ?, ?, ?, '2026-10-01 10:00:00')`,
@@ -255,6 +272,7 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
     app.use((req, _res, next) => { req.db = pool; next(); });
     app.use(require('../routes/api.documents'));
     // The page's api(path, body, method): a non-2xx throws with .status / .body (apiSend's contract).
+    app.use(require('../routes/api.dropbox')); // the browser's folder precheck (POST /api/dropbox/list) — listFolder is the stub
     browser = browserChecks(async (p, body, method) => {
       const res = await call(app, method, p, method === 'GET' ? undefined : body);
       if (res.status >= 400) throw Object.assign(new Error(res.body.message || `HTTP ${res.status}`), { status: res.status, body: res.body });
@@ -278,7 +296,18 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
       return { '.tag': 'folder', id: `id:${p}`, path_lower: p, path_display: p };
     });
     dropbox.getMetadata.mockReset().mockImplementation(async () => { throw new Error('getMetadata must not be called for a folder with registered files'); });
+    dropbox.listFolder.mockReset().mockImplementation(async () => { throw new Error('listFolder is asked only for a typed or undo folder'); });
   });
+  // A11.1X: Dropbox holds `paths` as folders (one file listed each); anything else is path/not_found.
+  function dropboxHolds(...paths) {
+    const notFound = () => Object.assign(new Error('dropbox: POST /2/files/get_metadata → 409: path/not_found/..'), { status: 409, errorSummary: 'path/not_found/..' });
+    const has = (p) => paths.some((x) => String(p).toLowerCase() === x.toLowerCase());
+    dropbox.getMetadata.mockImplementation(async (_db, { path: p }) => { if (!has(p)) throw notFound(); return { '.tag': 'folder', id: `id:${p}`, path_lower: String(p).toLowerCase(), path_display: String(p).replace(/\b\w/g, (c) => c.toUpperCase()) }; });
+    dropbox.listFolder.mockImplementation(async (_db, { path: p }) => { if (!has(p)) throw notFound(); return { entries: [{ '.tag': 'file', name: 'listed.pdf', path_lower: `${String(p).toLowerCase()}/listed.pdf`, server_modified: '2026-10-02T10:00:00Z' }, { '.tag': 'folder', name: 'sub' }], count: 2, truncated: false }; });
+  }
+  // The log rows a model's sql.read of the audit trail returns (compacted like every evidence row).
+  const auditRows = async (caseId) => compactRows(await q(
+    "SELECT log_id, DATE_FORMAT(log_date, '%Y-%m-%d %H:%i:%s') AS log_date, log_by, log_subject FROM log WHERE log_link_type = 'case' AND log_link_id = ? AND log_subject = 'Case Dropbox folder re-linked' ORDER BY log_id DESC", [caseId]));
 
   test('THE CONJUNCTIVE NAME LANE — a surname-only folder is not a candidate; the docket and full-name lanes are, in the panel\'s order, with counts, owners, nesting and the dismissal', async () => {
     const read = await relinkCandidatesRead(pool, R1);
@@ -389,5 +418,168 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
     expect(await browser.caseFolderPrecheck(c)).toBe('');
     await q('DELETE FROM cases WHERE case_id = ?', [R1]);
     expect(await browser.caseFolderPrecheck(c)).toBe('Case 25-12345 no longer exists. Nothing was written.');
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // A11.1X — the released extras
+  // ═══════════════════════════════════════════════════════════════════════
+
+  test('A11.1X TYPED PATH — the folder read\'s facts on real rows; the card for a folder no lane finds; the route applies it; the route\'s 400 and 409 are the authority', async () => {
+    dropboxHolds(T, '/elsewhere/x');
+    // The read: real registered count (t1 and sub/t2), the enabled root, no owner, Dropbox's listing.
+    const read = await documentFolderRead(pool, T);
+    expect(read.rows).toHaveLength(1);
+    expect(read.rows[0]).toMatchObject({ row_type: 'folder', path: T, path_lower: T, exists: 1, is_folder: 1, under_enabled_root: 1, root: ROOT, listed_files: 1, listed_folders: 1, listing_truncated: 0,
+      newest_listed: '2026-10-02T10:00:00.000Z', registered_files: 2, registered_newest: '2026-10-01T10:00:00.000Z', already_linked_to: null, inside_case_id: null, nested_case_ids: null, held_by: null, proposable: 1 });
+    expect(dropbox.getMetadata.mock.calls.map((c) => c[1])).toEqual([{ path: T }]);
+    expect(dropbox.listFolder.mock.calls.map((c) => c[1])).toEqual([{ path: T, recursive: false, maxEntries: 500 }]);
+    // T is NOT a candidate for R1 (its name holds neither the docket nor "smith dana").
+    expect((await relinkCandidatesRead(pool, R1)).rows.some((r) => r.path === T)).toBe(false);
+    const ev = [...await evidenceFor(R1), { id: 'q4', kind: 'document.folder', purpose: 'the typed folder', rows: compactRows(read.rows) }];
+    const c = await normalizeActionDraft(pool, { kind: 'case.folder.relink.v1', case_id: R1, folder_path: T, evidence: [{ query_id: 'q1', row_number: 1 }, { query_id: 'q4', row_number: 1 }] }, ev, { currentUserId: 6 });
+    expect(c.folder).toMatchObject({ path: T, confidence: 'typed', matched_on: null, files: 2, root: ROOT, listed_files: 1, listed_folders: 1 });
+    expect(c.warnings[0]).toBe('NOT A CANDIDATE: neither the case number nor a client\'s name (Smith, Dana) is in this folder\'s name (" closed files - 2019") — the panel would never suggest it, and nothing but your word ties it to this case. Every file under it attaches to this case: be sure it is this client\'s folder.');
+    expect(c.effects[0]).toMatch(/^Matched on: NOTHING — a typed path, not one of the panel's candidates\. A Dropbox read through the document sync's account proved it: it exists and is a folder \(shown as ".*"\), it sits under the sync root "\/law", and it holds 1 file directly \(newest 2026-10-02\) and 1 subfolder; 2 registered files are under it\.$/);
+    expect(c.prediction).toEqual({ under_total: 2, held_total: 0, held_by: [], attach: 2, nested: 0, scanned: 2, truncated: false, detach: 2, human_kept: 1 });
+    expect(c.expected).toEqual({ case_dropbox: OLD_LINK, current_path: OLD, path: T, files: 2, already_linked_to: null, typed: 1 });
+    // The browser: the case re-read and the real /api/dropbox/list (the stub behind the real route) pass; the request is the typed pair.
+    expect(await browser.caseFolderPrecheck(c)).toBe('');
+    expect(dropbox.listFolder.mock.calls.at(-1)[1]).toMatchObject({ path: T, recursive: false, maxEntries: 1 });
+    const rq = browser.caseFolderRequest(c);
+    expect(rq).toEqual({ path: '/api/documents/relink', method: 'POST', body: { case_id: R1, folder_path: T } });
+    const res = await call(app, rq.method, rq.path, rq.body);
+    expect(res.status).toBe(200);
+    expect([res.body.result.linked_docs, res.body.result.detached_docs, res.body.result.new_path]).toEqual([2, 2, T]);
+    expect(browser.caseFolderResult(c, res.body)).toEqual({ case_id: R1 });
+    expect(await r1Links()).toEqual([[142, 'path', 6], [161, 'path', null], [162, 'path', null]]);
+    expect((await q('SELECT case_dropbox FROM cases WHERE case_id = ?', [R1]))[0].case_dropbox).toBe(linkFor(T));
+    // Gone from Dropbox before the click: the browser refuses through the real route's 409.
+    dropboxHolds();
+    expect(await browser.caseFolderPrecheck({ ...c, expected: { ...c.expected, case_dropbox: linkFor(T), current_path: T } })).toMatch(/^The folder ".*" is no longer in Dropbox, or is not a folder any more \(dropbox: POST \/2\/files\/get_metadata → 409: path\/not_found\/\.\.\)\. Nothing was written\./);
+    // A typed path under NO enabled root: the read says so, the normalizer refuses from the read's row AND from its own re-read, and the route itself answers 400.
+    dropboxHolds(T, '/elsewhere/x');
+    const away = await documentFolderRead(pool, '/elsewhere/x');
+    expect(away.rows[0]).toMatchObject({ exists: 1, is_folder: 1, under_enabled_root: 0, root: null, proposable: 0 });
+    const evAway = [...await evidenceFor(R1), { id: 'q4', kind: 'document.folder', purpose: 'f', rows: compactRows(away.rows) }];
+    await expect(normalizeActionDraft(pool, { kind: 'case.folder.relink.v1', case_id: R1, folder_path: '/elsewhere/x', evidence: [{ query_id: 'q1', row_number: 1 }, { query_id: 'q4', row_number: 1 }] }, evAway, { currentUserId: 6 }))
+      .rejects.toThrow('"/elsewhere/x" is under NO enabled sync root');
+    const r400 = await call(app, 'POST', '/api/documents/relink', { case_id: R1, folder_path: '/elsewhere/x' });
+    expect([r400.status, r400.body.message]).toEqual([400, 'that folder is not under any enabled sync root, so its documents would never be registered — add a root for it first, or pick a folder inside one']);
+    // A typed path another case holds: the read names the owner; the normalizer refuses; the route 409s.
+    dropboxHolds(C);
+    const held = await documentFolderRead(pool, C);
+    expect(held.rows[0]).toMatchObject({ already_linked_to: R2, proposable: 0 });
+    expect(held.rows[0].note).toMatch(new RegExp(`^ANOTHER CASE'S FOLDER \\(case ${R2}\\)`));
+    const evHeld = [...await evidenceFor(R1), { id: 'q4', kind: 'document.folder', purpose: 'f', rows: compactRows(held.rows) }];
+    // C IS a candidate row of R1 (name lane, held by R2), so the candidate path answers first: the 409 wording, naming R2.
+    await expect(normalizeActionDraft(pool, { kind: 'case.folder.relink.v1', case_id: R1, folder_path: C, evidence: [{ query_id: 'q1', row_number: 1 }, { query_id: 'q4', row_number: 1 }] }, evHeld, { currentUserId: 6 }))
+      .rejects.toThrow(/^(ANOTHER CASE HOLDS THIS FOLDER|Cite the candidate row)/);
+    expect((await call(app, 'POST', '/api/documents/relink', { case_id: R1, folder_path: C })).status).toBe(409);
+  });
+
+  test('A11.1X DISMISS — the un-dismiss and the dismiss through the real route and the browser\'s result check; a case with no cache row is refused and the route\'s updated: 0 reads as a refusal', async () => {
+    const ev = (caseId) => [{ id: 'q1', kind: 'sql.read', purpose: 'case', rows: compactRows([{ case_id: caseId }]) }];
+    const dismissCard = (caseId, undo) => normalizeActionDraft(pool, { kind: 'case.folder.dismiss.v1', case_id: caseId, ...(undo ? { undo: true } : {}), evidence: [{ query_id: 'q1', row_number: 1 }] }, ev(caseId), { currentUserId: 6 });
+    // R1 is dismissed (seeded 2026-09-01 by 6) and has attributed documents (o1-o3): not in the queue.
+    await expect(dismissCard(R1, false)).rejects.toThrow('Case 25-12345 is already dismissed from the relink queue (2026-09-01, by user 6) — nothing to do; a card with undo:true returns it to the queue');
+    const un = await dismissCard(R1, true);
+    expect(un).toMatchObject({ kind: 'case.folder.dismiss.v1', undo: true, cache: { path: OLD, path_display: '/Law/Potential/Smith, Dana', dismissed_at: '2026-09-01T10:00:00.000Z', dismissed_by: 6 }, queue: { in_queue: false, has_links: true, candidates: 4, proposable: 2 } });
+    expect(un.effects.slice(0, 3)).toEqual(['Cached folder: "/Law/Potential/Smith, Dana" (resolved ' + String(un.cache.resolved_at).slice(0, 10) + ').', 'Dismissal now: dismissed on 2026-09-01 by user 6.',
+      'Relink queue now: NOT in the queue (the case already has documents attributed) — the dismissal stamp is only a note on the cache row.']);
+    expect(un.expected).toEqual({ dismissed_at: '2026-09-01T10:00:00.000Z', current_path: OLD, case_dropbox: OLD_LINK });
+    expect(await browser.caseFolderDismissPrecheck(un)).toBe('');
+    const rq = browser.caseFolderDismissRequest(un);
+    expect(rq).toEqual({ path: '/api/documents/relink/dismiss', method: 'POST', body: { case_id: R1, undo: true } });
+    const res = await call(app, rq.method, rq.path, rq.body);
+    expect([res.status, res.body]).toEqual([200, { status: 'success', updated: 1, case_ids: [R1], dismissed: false }]);
+    expect(browser.caseFolderDismissResult(un, res.body)).toEqual({ case_id: R1 });
+    expect(await q('SELECT relink_dismissed_at, relink_dismissed_by FROM case_folder_cache WHERE case_id = ?', [R1])).toEqual([{ relink_dismissed_at: null, relink_dismissed_by: null }]);
+    // Nothing else moved: no link, no case column, no log entry, no event.
+    expect(await r1Links()).toEqual([[141, 'path', null], [142, 'path', 6], [143, 'path', null]]);
+    expect((await q('SELECT case_dropbox FROM cases WHERE case_id = ?', [R1]))[0].case_dropbox).toBe(OLD_LINK);
+    expect([(await q('SELECT COUNT(*) AS n FROM log'))[0].n, domainEvents.emit.mock.calls.length]).toEqual([0, 0]);
+    // The stale card's re-read refuses now (someone un-dismissed it); the state already equal refuses at proposal.
+    expect(await browser.caseFolderDismissPrecheck(un)).toBe('The relink-queue dismissal of case 25-12345 changed since this card was prepared (someone un-dismissed it). Nothing was written. Ask Casey to prepare it again.');
+    await expect(dismissCard(R1, true)).rejects.toThrow('Case 25-12345 is not dismissed from the relink queue — there is no dismissal to undo');
+    // R2 (cache row C, one attributed document, no contacts: no candidates): the dismiss, stamped by the signed-in user.
+    const d2 = await dismissCard(R2, false);
+    expect(d2.queue).toEqual({ in_queue: false, has_links: true, candidates: 0, proposable: 0 });
+    expect(d2.warnings).toEqual([]);
+    expect(d2.effects).toContain('Candidates: the panel\'s lanes find no folder for this case — the usual reason to dismiss (the client never sent a document).');
+    expect(await browser.caseFolderDismissPrecheck(d2)).toBe('');
+    const r2 = await call(app, 'POST', '/api/documents/relink/dismiss', browser.caseFolderDismissRequest(d2).body);
+    expect(r2.body).toEqual({ status: 'success', updated: 1, case_ids: [R2], dismissed: true });
+    expect(browser.caseFolderDismissResult(d2, r2.body)).toEqual({ case_id: R2 });
+    const [row] = await q('SELECT relink_dismissed_at, relink_dismissed_by FROM case_folder_cache WHERE case_id = ?', [R2]);
+    expect([row.relink_dismissed_at instanceof Date, row.relink_dismissed_by]).toEqual([true, 6]);
+    // RN sits in the QUEUE (a resolved folder, no attributed document) and has candidates? none (no contacts, no docket): the queue line says shown.
+    const dn = await dismissCard(RN, false);
+    expect(dn.queue).toEqual({ in_queue: true, has_links: false, candidates: 0, proposable: 0 });
+    expect(dn.effects[2]).toBe('Relink queue now: IN the queue (a cached folder and no document attributed to the case) — shown.');
+    // R4 has no cache row: the normalizer refuses; the route stamps nothing (updated 0), which the browser reads as a refusal.
+    await expect(dismissCard(R4, false)).rejects.toThrow(`Case ${R4} has no folder-cache row — it has never been in the relink queue (the queue is the cache's rows), and the dismiss route would stamp nothing. There is nothing to dismiss`);
+    const r4 = await call(app, 'POST', '/api/documents/relink/dismiss', { case_id: R4 });
+    expect(r4.body).toEqual({ status: 'success', updated: 0, case_ids: [R4], dismissed: true });
+    let thrown = null;
+    try { browser.caseFolderDismissResult({ case: { case_id: R4 }, undo: false }, r4.body); } catch (e) { thrown = e; }
+    expect(browser.caseFolderDismissKnownOutcome(thrown)).toEqual({ status: 'Refused — nothing written', text: 'Refused — nothing written: the case has no folder-cache row any more (its cached folder was removed since the card was prepared), so there was nothing to stamp.' });
+    // The route's bulk form stays the PANEL's: the normalizer refuses case_ids by name before any read.
+    await expect(normalizeActionDraft(pool, { kind: 'case.folder.dismiss.v1', case_id: R1, case_ids: [R1, R2], evidence: [{ query_id: 'q1', row_number: 1 }] }, ev(R1), { currentUserId: 6 })).rejects.toThrow(/^BULK refused \(case_ids\): one card per case/);
+  });
+
+  test('A11.1X UNDO — the real audit entry, the card\'s counts equal to what applyRelink then does, the end state back to the old folder, the first entry no longer undoable, the old folder gone', async () => {
+    dropboxHolds(OLD, A);
+    // The re-link the COUNTS test proves (R1: OLD → A), through the route.
+    const first = await call(app, 'POST', '/api/documents/relink', { case_id: R1, folder_path: A });
+    expect(first.status).toBe(200);
+    expect(await r1Links()).toEqual([[101, 'path', null], [103, 'path', null], [105, 'path', null], [142, 'path', 6]]);
+    const rows = await auditRows(R1);
+    expect(rows).toHaveLength(1);
+    const logId = Number(rows[0].log_id);
+    const ev = [...await evidenceFor(R1), { id: 'q3', kind: 'sql.read', purpose: 'the relink audit entries', rows }];
+    const undoCard = (id) => normalizeActionDraft(pool, { kind: 'case.folder.relink.undo.v1', case_id: R1, log_id: id, evidence: [{ query_id: 'q1', row_number: 1 }, { query_id: 'q3', row_number: 1 }] }, ev, { currentUserId: 6 });
+    const c = await undoCard(logId);
+    expect(c.audit).toEqual({ log_id: logId, at_text: rows[0].log_date.slice(0, 16), by: 'user 6', old_path: OLD, old_link: OLD_LINK, new_path: A, new_link: linkFor(A), linked_docs: 3, detached_docs: 2 });
+    // OLD is a name-lane candidate of R1 today (its segment holds "smith, dana").
+    expect(c.folder).toMatchObject({ path: OLD, confidence: 'name', matched_on: 'Smith, Dana', files: 3, root: ROOT });
+    expect(c.effects[3]).toBe('Matched on: the name lane — every required word of the client name "Smith, Dana" (surname and first given name) appears in the folder\'s name (the old folder is one of the panel\'s candidates today).');
+    // o2 carries a PERSON's relation-path link (held, stays); o1 / o3 attach; p1, p3, p5 (the re-link's own attachments) detach; o2 is the kept human link.
+    expect(c.prediction).toEqual({ under_total: 3, held_total: 1, held_by: [{ case_id: R1, n: 1 }], attach: 2, nested: 0, scanned: 2, truncated: false, detach: 3, human_kept: 1 });
+    expect(c.warnings).toEqual(['DETACHES 3 DOCUMENTS: 3 of this case\'s links the sync made to files OUTSIDE the old folder — the files the re-link being undone attached, among them — are deleted, and those files leave the case\'s Documents tab. Only machine links go — 1 link a person made (or with another relation) stays.']);
+    expect(c.expected).toEqual({ case_dropbox: linkFor(A), current_path: A, path: OLD, files: 3, already_linked_to: null, log_id: logId, typed: 1 });
+    expect([c.automation.rules_checked, c.automation.lines]).toEqual([2, ['Trigger rule #1 "Folder fixed" runs: starts workflow #77 ("Folder flow")']]);
+    // The browser: the case re-read and the real /api/dropbox/list pass; the request is the SAME route with the old folder.
+    expect(await browser.caseFolderPrecheck(c)).toBe('');
+    const rq = browser.caseFolderRequest(c);
+    expect(rq).toEqual({ path: '/api/documents/relink', method: 'POST', body: { case_id: R1, folder_path: OLD } });
+    const res = await call(app, rq.method, rq.path, rq.body);
+    expect(res.status).toBe(200);
+    expect([res.body.result.linked_docs, res.body.result.detached_docs, res.body.result.old_path, res.body.result.new_path]).toEqual([c.prediction.attach, c.prediction.detach, A, OLD]);
+    expect(browser.caseFolderResult(c, res.body)).toEqual({ case_id: R1 });
+    // End state: back on the old folder, o1 / o3 re-attached by the sync, o2 kept, the re-link's attachments gone; p2 stays R2's.
+    expect(await r1Links()).toEqual([[141, 'path', null], [142, 'path', 6], [143, 'path', null]]);
+    expect((await q('SELECT case_dropbox FROM cases WHERE case_id = ?', [R1]))[0].case_dropbox).toBe(linkFor(OLD));
+    expect(await q('SELECT path_lower FROM case_folder_cache WHERE case_id = ?', [R1])).toEqual([{ path_lower: OLD }]);
+    // Two entries now; the second records the undo as a re-link A → OLD; the first is no longer the latest.
+    const rows2 = await auditRows(R1);
+    expect(rows2).toHaveLength(2);
+    const [{ log_extra }] = await q('SELECT log_extra FROM log WHERE log_id = ?', [Number(rows2[0].log_id)]);
+    const extra = typeof log_extra === 'string' ? JSON.parse(log_extra) : log_extra;
+    expect([extra.relink.old_path, extra.relink.new_path, extra.relink.old_link, extra.relink.new_link]).toEqual([A, OLD, linkFor(A), linkFor(OLD)]);
+    await expect(undoCard(logId)).rejects.toThrow(new RegExp(`^A NEWER RE-LINK EXISTS for case 25-12345: entry #${Number(rows2[0].log_id)} \\(${rows2[0].log_date.slice(0, 16)} firm time\\) is the latest\\. Only the latest re-link can be undone`));
+    // The stale card's re-read refuses (the case moved on).
+    expect(await browser.caseFolderPrecheck(c)).toMatch(/^The Dropbox folder of case 25-12345 changed since this card was prepared/);
+    // The second entry IS undoable (back to A) — until its old folder is gone from Dropbox.
+    const ev2 = [...await evidenceFor(R1), { id: 'q3', kind: 'sql.read', purpose: 'audit', rows: rows2 }];
+    const undo2 = (over = {}) => normalizeActionDraft(pool, { kind: 'case.folder.relink.undo.v1', case_id: R1, log_id: Number(rows2[0].log_id), evidence: [{ query_id: 'q1', row_number: 1 }, { query_id: 'q3', row_number: 1 }], ...over }, ev2, { currentUserId: 6 });
+    const back = await undo2();
+    expect(back.folder).toMatchObject({ path: A, confidence: 'docket' });
+    dropboxHolds(OLD);
+    await expect(undo2()).rejects.toThrow(`THE OLD FOLDER IS GONE: "${A}" no longer exists in Dropbox (moved, renamed or deleted since ${rows2[0].log_date.slice(0, 16)})`);
+    // Citing an entry of ANOTHER case, or a non-relink entry, is refused; so is a link that moved on.
+    await expect(undo2({ log_id: 999999 })).rejects.toThrow(/^Cite the audit entry/);
+    await q("UPDATE cases SET case_dropbox = 'https://www.dropbox.com/scl/fo/moved-by-hand' WHERE case_id = ?", [R1]);
+    dropboxHolds(OLD, A);
+    await expect(undo2()).rejects.toThrow(`Case 25-12345's Dropbox link is no longer the one entry #${Number(rows2[0].log_id)} wrote — someone changed it since`);
   });
 });

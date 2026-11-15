@@ -1088,9 +1088,9 @@ describe('A11.1 — every stage teaches the case folder card, the candidates rea
     expect(planPrompt).toContain('document.relink.candidates ({"case_id":"7KQ2M9XA"} — ONE\n  case\'s Dropbox folder candidates');
     expect(planPrompt).toContain('case_folder_cache is NOT in the curated schema, so never sql.read it');
     expect(planPrompt).toContain('Reviewed case folder actions are available: link ONE case to ONE Dropbox folder');
-    expect(planPrompt).toContain('only a folder it lists can be proposed, copied\n  exactly');
+    expect(planPrompt).toContain('a folder it lists can be proposed, copied\n  exactly');
     expect(planPrompt).toContain('several\n  cases or folders at once (there is no bulk re-link)');
-    expect(planPrompt).toContain('There is no undo.');
+    expect(planPrompt).toContain('Only the latest entry can be undone.');
   });
   test('the investigate stage names the read kind and the proposal family', () => {
     expect(investigatePrompt).toContain('document.relink.candidates\n  ({"case_id"} — one case\'s Dropbox folder candidates');
@@ -1101,12 +1101,45 @@ describe('A11.1 — every stage teaches the case folder card, the candidates rea
     expect(answerPrompt).toContain('{"kind":"case.folder.relink.v1","case_id":"7KQ2M9XA","folder_path":');
     expect(answerPrompt).toContain('"folder_path" MUST be the "path" of a candidate row\n    from a document.relink.candidates read of THAT case, copied character for character');
     expect(answerPrompt).toContain('a candidate whose already_linked_to names\n    another case');
-    expect(answerPrompt).toContain('(there is NO bulk re-link, on purpose)');
-    expect(answerPrompt).toContain('and has no typed-path field.');
-    expect(answerPrompt).toContain('that there is NO\n    UNDO');
+    expect(answerPrompt).toContain('(there is NO bulk re-link, no bulk undo and no bulk dismiss through Casey, on purpose)');
+    expect(answerPrompt).toContain('suggestions behind a second confirmation, and has no typed-path field.');
+    expect(answerPrompt).toContain('that there is NO\n    UNDO BUTTON');
     expect(answerPrompt).toContain('ingest-rule/report-draft/case-docket/form/mail-triage/case-folder actions.');
     expect(repairPrompt).toContain('case.folder.relink.v1: kind,case_id,folder_path,evidence — folder_path is EXACTLY the "path" of a candidate row');
-    expect(repairPrompt).toContain('never a dismiss / undo / unlink / weak / force key');
+    expect(repairPrompt).toContain('never a dismiss / undo /\n  unlink / weak / force key');
+  });
+});
+
+// A11.1X (released 2026-11-15): the typed path (its document.folder read),
+// the dismiss card and the undo card — taught to every stage, and no stage
+// still says a dismiss or an undo is unavailable.
+describe('A11.1X — every stage teaches the typed path, the folder read, the dismiss and undo cards', () => {
+  test('the plan and investigate stages name the document.folder read and the two new cards', () => {
+    expect(planPrompt).toContain('document.folder ({"path":"/law office/cases/…"}');
+    expect(planPrompt).toContain('a folder the user TYPED or Casey found elsewhere can be proposed only after a document.folder read of that\n  exact path');
+    expect(planPrompt).toContain('dismiss ONE case from the relink queue or return\n  it (case.folder.dismiss');
+    expect(planPrompt).toContain('undo the case\'s LATEST\n  re-link (case.folder.relink.undo');
+    expect(planPrompt).toContain("log_subject = 'Case Dropbox folder re-linked' ORDER BY log_id DESC");
+    expect(investigatePrompt).toContain('document.folder ({"path"} — one Dropbox folder path as the documents sync sees it');
+    expect(investigatePrompt).toContain('a typed path only with a document.folder read of that exact path');
+    expect(investigatePrompt).toContain('an undo of the latest re-link also needs a sql.read row of the\n  log table');
+  });
+  test('the answer stage carries both shapes and the three rule blocks; the repair stage the field lists', () => {
+    expect(answerPrompt).toContain('{"kind":"case.folder.dismiss.v1","case_id":"7KQ2M9XA","undo":false,');
+    expect(answerPrompt).toContain('{"kind":"case.folder.relink.undo.v1","case_id":"7KQ2M9XA","log_id":48211,');
+    expect(answerPrompt).toContain('the "path" of a document.folder read of that exact path whose row says exists = 1, is_folder = 1 and\n    under_enabled_root = 1');
+    expect(answerPrompt).toContain('case.folder.dismiss.v1 dismisses ONE case from the relink queue ("undo": true returns it)');
+    expect(answerPrompt).toContain('case.folder.relink.undo.v1 undoes ONE case\'s LATEST re-link');
+    expect(answerPrompt).toContain('undoing anything\n    but the latest re-link');
+    expect(repairPrompt).toContain('case.folder.dismiss.v1: kind,case_id,undo?,evidence — ONE case (never case_ids / all)');
+    expect(repairPrompt).toContain('case.folder.relink.undo.v1: kind,case_id,log_id,evidence — log_id is the case\'s LATEST');
+  });
+  test('no stage still teaches the retired exclusions', () => {
+    for (const [name, text] of [['plan', planPrompt], ['investigate', investigatePrompt], ['answer', answerPrompt], ['repair', repairPrompt]]) {
+      for (const old of ['dismissing a case from the relink queue,\n  unlinking', 'no screen takes a typed path', 'dismissing or un-dismissing a case in the relink queue, undoing a\n    re-link']) {
+        expect({ name, old, present: text.includes(old) }).toEqual({ name, old, present: false });
+      }
+    }
   });
 });
 

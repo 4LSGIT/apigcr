@@ -967,13 +967,18 @@ the Smith case to its Dropbox folder", "the Jones case points at the wrong
 folder — fix it"). Casey reads the case and the panel's own **folder
 suggestions** for it, and works only on a folder that list shows.
 
-- **Only a suggested folder.** The suggestions are the panel's strict ones: a
-  folder whose name holds the case's docket number, or **every** required word
-  of a client's name (surname and first name). Surname-only matches — usually a
-  different client — are never offered by Casey (the panel shows them behind a
-  toggle and a second tick). A folder you type or describe is not proposable:
-  no screen takes a typed path; ask IT. Casey works for any case — also one
-  with no folder at all, which the panel's queue never lists.
+- **A suggested folder, or a folder you type.** The suggestions are the
+  panel's strict ones: a folder whose name holds the case's docket number, or
+  **every** required word of a client's name (surname and first name).
+  Surname-only matches — usually a different client — are never offered by
+  Casey (the panel shows them behind a toggle and a second tick). A folder you
+  **type** (or one Casey found elsewhere) can be proposed only after Casey has
+  **read it in Dropbox**: it exists, it is a folder, it sits under one of the
+  document sync's roots (a folder under none is refused — the sync would never
+  see it), what it holds, and whether another case already holds it. The card
+  then carries a warning: **not one of the suggestions — neither the case
+  number nor the client's name is in this folder's name**. Casey works for any
+  case — also one with no folder at all, which the panel's queue never lists.
 - **The card** names the case and the folder (its path and how many registered
   files are under it), what the case points at now, and:
   - the case's **Dropbox link is rewritten** with the folder's permanent shared
@@ -993,20 +998,46 @@ suggestions** for it, and works only on a folder that list shows.
   - that a case marked dismissed in the re-link queue has the dismissal
     cleared, and every trigger rule the case update would run (any rule that could
     not be checked **may** run).
-- **There is no undo.** A wrong folder is fixed by re-linking the right one —
-  that also detaches the wrong folder's files — or by unlinking documents one
-  by one and clearing the case's Dropbox link by hand. The activity-log entry
-  keeps the old path and link. The card is always styled as a warning.
+- **No undo button — but the latest re-link can be undone.** Ask Casey to
+  undo a case's re-link: it reads the activity-log entry the re-link wrote
+  ("Case Dropbox folder re-linked"), checks that it is the case's **latest**
+  re-link (an older one cannot be undone until the newer ones are, one step at
+  a time), that the case still points where that entry left it, and that the
+  old folder still exists in Dropbox, and prepares an **Undo case folder
+  re-link** card: the entry (when, by whom), the paths before → now → back,
+  the old folder's Dropbox facts, whether it is a suggestion today (if not, the
+  same not-a-suggestion warning), the files that re-attach and the ones that
+  detach (the re-link's own attachments among them), that filing goes back to
+  the old folder (what was filed into the current folder since stays there),
+  and that the undo is itself a re-link with its own log entry. Otherwise a
+  wrong folder is fixed by re-linking the right one — that also detaches the
+  wrong folder's files — or by unlinking documents one by one and clearing the
+  case's Dropbox link by hand. The card is always styled as a warning.
+- **The re-link queue.** Casey can **dismiss** one case from the Documents
+  panel's re-link queue, or **return** it ("put it back"): a note on the queue
+  that changes **nothing** — no document, no link, no case field, nothing in
+  Dropbox, no event, no log entry. The card shows the case's cached folder,
+  whether it is dismissed now, whether it is in the panel's queue at all (a
+  case with attributed documents is not — the note then only sits on its folder
+  cache), and warns when the case **has** suggested folders (link one instead;
+  a re-link clears the dismissal). It refuses a case with no folder cache (it
+  was never in the queue), a case already in the state asked for, and several
+  cases at once — one card per case; the panel's **Dismiss all** clears many.
 - **What Casey will not do, and says so:**
   - take a folder another case already holds (two cases never share one);
   - re-link a case to the folder it already points at;
-  - re-link several cases or folders at once — there is no bulk re-link;
-  - dismiss or un-dismiss a case in the queue, undo a re-link, or unlink;
-  - use a surname-only match or a folder that is not suggested.
-- **Freshness.** When you confirm, the card re-reads the suggestions. If the
-  case was re-linked or its link changed, the folder was claimed by another
-  case, dropped out of the suggestions, or its file count changed since the
-  card was prepared, nothing is written; ask Casey to prepare it again. If the
+  - re-link, undo or dismiss several cases or folders at once — there is no
+    bulk re-link;
+  - undo anything but the case's latest re-link;
+  - unlink on this card (one document's link is the document unlink card);
+  - use a surname-only match, or a typed folder it has not read in Dropbox.
+- **Freshness.** When you confirm, the card re-reads the case. If the case was
+  re-linked or its link changed, or — for a suggested folder — the folder was
+  claimed by another case, dropped out of the suggestions or changed its file
+  count since the card was prepared, nothing is written; for a typed folder or
+  an undo, Casey also asks Dropbox whether the folder is still there (gone, or
+  a file now → nothing is written). A dismiss card refuses if the case's
+  dismissal or cached folder changed. Ask Casey to prepare it again. If the
   document sync is switched off, nothing is written and the card says so.
 - Once applied, the card says how many files were detached and attached (and
   any notes) and opens the case. Open case pages take the new link, and the
@@ -1594,7 +1625,10 @@ signed-in user's readable mailboxes, never message text) and `mail.message`
 (one message's headers and the start of its plain text, read as the sender's
 words) — the typed `document.relink.candidates` read (one case's Dropbox folder
 suggestions, the Documents re-link panel's own strict list, and the folder the
-case points at now), the typed `esign.requests` read (one contact's or one
+case points at now), the typed `document.folder` read (one Dropbox folder path
+as the document sync sees it — does it exist, is it a folder, which sync root
+it sits under, what it holds, which case holds it or sits inside it; the read a
+typed folder on a case folder card must cite), the typed `esign.requests` read (one contact's or one
 case's e-signature requests — status, document, dates, the person the
 reminders go to and whether reminders are running; never the signers' email
 addresses, the provider's records or any signing link) — and the typed automation reads —

@@ -1189,6 +1189,37 @@ const CASE_FOLDER_FREE_KEY = /^(?:path|folder|dropbox_path|dropbox_folder|new_pa
 const CASE_FOLDER_PATH_MAX = 1024;
 // The new shared link is minted at the click; the dry run reads this stand-in.
 const CASE_FOLDER_LINK_STANDIN = 'https://www.dropbox.com/(the folder shared link minted when the card is applied)';
+// A11.1X (Fred, 2026-11-15: "release means allow") — two more kinds and one
+// more typed read on the SAME switch.
+//   · case.folder.dismiss.v1 {case_id, undo?} → POST /api/documents/relink/dismiss
+//     (setRelinkDismissed: two columns on case_folder_cache — no link, no cases
+//     row, no provider call, no event, no log entry). ONE case per card: the
+//     route's array form is the PANEL's bulk, and a bulk Casey dismiss over
+//     cases the queue never lists is a bulk re-link's ask in disguise.
+//   · case.folder.relink.undo.v1 {case_id, log_id} → the SAME POST
+//     /api/documents/relink with the audit entry's old_path (applyRelink end to
+//     end — every guard applies; no new write route). The entry is the LATEST
+//     "Case Dropbox folder re-linked" log row of the case, cited from a
+//     sql.read of `log` (log_extra is outside the report manifest, so the
+//     server reads it); the case's link must still equal the entry's new_link.
+//   · a TYPED folder path on case.folder.relink.v1: a path no candidate row
+//     lists is proposable when a document.folder read of the EXACT path
+//     (documentFolderRead: dropboxService.getMetadata + a non-recursive
+//     listFolder through the documents sync's credential, never a caller's)
+//     proves it exists, is a folder and sits under an enabled sync root, and no
+//     other case's cache row holds it; the card carries a NOT A CANDIDATE
+//     danger line. Click prechecks: the candidates GET for the case, plus POST
+//     /api/dropbox/list for a typed or undo folder (gone / a file → refused).
+// Bulk anything stays NEVER.
+const CASE_FOLDER_DISMISS_ACTION_KINDS = new Set(['case.folder.dismiss.v1']);
+const CASE_FOLDER_DISMISS_KEYS = new Set(['kind', 'case_id', 'undo', 'evidence']);
+const CASE_FOLDER_UNDO_ACTION_KINDS = new Set(['case.folder.relink.undo.v1']);
+const CASE_FOLDER_UNDO_KEYS = new Set(['kind', 'case_id', 'log_id', 'evidence']);
+// applyRelink's audit entry (logService.createLogEntry): type, link_type, subject.
+const CASE_FOLDER_AUDIT_SUBJECT = 'Case Dropbox folder re-linked';
+// document.folder: direct entries listed per read (non-recursive). Enough to
+// describe a case folder; a bigger one reads as listing_truncated.
+const DOCUMENT_FOLDER_LIST_CAP = 500;
 const CONTACT_PHONE_UPDATE_KEYS = new Set(['label', 'is_primary', 'sms_optout', 'mms_capable', 'notes']);
 const CONTACT_EMAIL_UPDATE_KEYS = new Set(['label', 'is_primary', 'email_optout', 'notes']);
 const CONTACT_ADDRESS_UPDATE_KEYS = new Set(['address1', 'address2', 'city', 'state', 'zip', 'country', 'label', 'is_primary', 'notes']);
@@ -9950,6 +9981,397 @@ async function normalizeMailAttachmentsAction(db, value, evidence, { currentUser
 function caseFolderError(message) { return httpError(422, message); }
 
 function caseFolderSync() { return require('./documentSyncService'); } // lazy (convention)
+function caseFolderDropbox() { return require('./dropboxService'); } // lazy (convention)
+
+// The cases whose SYNC link (relation 'path') the active files under a folder
+// already carry — the files applyRelink's add-only step 7 skips. `like` is the
+// folder's escaped subtree.
+async function caseFolderHeldBy(db, like) {
+  const { RELATION_PATH } = require('./documentService');
+  const [heldBy] = await db.query(
+    `SELECT dl.link_id AS case_id, COUNT(DISTINCT d.id) AS n
+       FROM documents d
+       JOIN document_links dl ON dl.document_id = d.id AND dl.link_type = 'case' AND dl.relation = ?
+      WHERE d.status = 'active' AND d.path_lower IS NOT NULL AND d.path_lower LIKE ?
+      GROUP BY dl.link_id
+      ORDER BY n DESC, dl.link_id
+      LIMIT 6`, [RELATION_PATH, like]);
+  return (Array.isArray(heldBy) ? heldBy : []).map((r) => ({ case_id: String(r.case_id), n: Number(r.n) || 0 }));
+}
+
+// Everything applyRelink's own guards and the sync know about ONE folder path,
+// read-only, through the documents sync's credential (dropboxService resolves
+// it — never a caller-chosen one): exists / is a folder (getMetadata), the
+// enabled sync root it sits under (the route's out_of_root predicate), its
+// direct listing (non-recursive, capped at DOCUMENT_FOLDER_LIST_CAP), the
+// registered files under it, the cases whose sync links those files carry,
+// and the cache rows that hold it, sit inside it or enclose it
+// (_loadFolderOwners — the 409 guard's own index). `selfCaseId` is left out
+// of the owner / nesting answers (a case's own folder is not another case's).
+async function caseFolderFacts(db, pathRaw, selfCaseId = null) {
+  const sync = caseFolderSync(); const dropbox = caseFolderDropbox();
+  const path = dropbox.normalizePath(String(pathRaw == null ? '' : pathRaw));
+  const lower = String(path).toLowerCase();
+  const out = {
+    path, path_lower: lower, path_display: null, exists: false, is_folder: false, root: null,
+    listed_files: 0, listed_folders: 0, listing_truncated: false, newest_listed: null,
+    registered_files: 0, registered_newest: null,
+    already_linked_to: [], inside_case_id: null, nested_case_ids: [], nested_case_folders: [], held_by: [],
+  };
+  if (!lower) return out; // the account root is never a case folder
+  const roots = (await sync.listRoots(db)).filter((r) => r && r.enabled).map((r) => String(r.path).toLowerCase());
+  out.root = roots.find((r) => lower !== r && sync._underRoot(lower, r)) || null;
+  let meta = null;
+  try { meta = await dropbox.getMetadata(db, { path }); }
+  catch (e) { if (!dropbox.isPathNotFoundError(e)) throw e; }
+  if (meta) {
+    out.exists = true;
+    out.is_folder = meta['.tag'] === 'folder';
+    out.path_display = meta.path_display ? String(meta.path_display) : null;
+    if (out.is_folder) {
+      const list = await dropbox.listFolder(db, { path, recursive: false, maxEntries: DOCUMENT_FOLDER_LIST_CAP });
+      let newest = 0;
+      for (const e of (list && Array.isArray(list.entries) ? list.entries : [])) {
+        const tag = e && e['.tag'];
+        if (tag === 'file') {
+          out.listed_files += 1;
+          const t = e.server_modified ? Date.parse(String(e.server_modified)) : NaN;
+          if (Number.isFinite(t) && t > newest) { newest = t; out.newest_listed = new Date(t).toISOString(); }
+        } else if (tag === 'folder') out.listed_folders += 1;
+      }
+      out.listing_truncated = !!(list && list.truncated);
+    }
+  }
+  const self = selfCaseId == null ? null : String(selfCaseId);
+  const { owners, under } = await sync._loadFolderOwners(db);
+  out.already_linked_to = [...(owners.get(lower) || [])].filter((id) => id !== self).sort();
+  out.nested_case_ids = [...(under.get(lower) || [])].filter((id) => id !== self).sort();
+  out.inside_case_id = sync._nearestOwnedAncestor(lower, owners, self);
+  for (const [p, ids] of owners) {
+    if (!p.startsWith(`${lower}/`)) continue;
+    for (const id of ids) if (id !== self) out.nested_case_folders.push({ case_id: id, path: p });
+  }
+  out.nested_case_folders.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.case_id < b.case_id ? -1 : 1));
+  const like = `${sync._likeEscape(lower)}/%`;
+  const [[reg]] = await db.query(
+    `SELECT COUNT(*) AS n, MAX(server_modified) AS newest
+       FROM documents WHERE status = 'active' AND path_lower IS NOT NULL AND path_lower LIKE ?`, [like]);
+  out.registered_files = Number(reg && reg.n) || 0;
+  out.registered_newest = reg && reg.newest ? reg.newest : null;
+  out.held_by = await caseFolderHeldBy(db, like);
+  return out;
+}
+
+// The document.folder read (A11.1X): ONE Dropbox folder path as the documents
+// sync sees it — a head row of facts (exists, is a folder, the enabled root it
+// sits under, its direct listing, the registered files under it, who holds it
+// or sits inside it) and one row per other case's folder nested inside it. A
+// typed path on a case.folder.relink.v1 card is proposable only when this
+// read's head row lists it exactly.
+async function documentFolderRead(db, pathRaw) {
+  const f = await caseFolderFacts(db, pathRaw);
+  if (!f.path_lower) {
+    return { rows: [{ row_type: 'folder', path: '/', exists: 0, is_folder: 0, under_enabled_root: 0, proposable: 0,
+      note: 'The Dropbox account root is not a folder a case can be linked to' }], truncated: false };
+  }
+  const joined = (v) => (Array.isArray(v) && v.length ? v.map(String).join(', ') : null);
+  const seg = f.path.slice(f.path.lastIndexOf('/') + 1);
+  const proposable = f.exists && f.is_folder && !!f.root && !f.already_linked_to.length;
+  const why = !f.exists ? 'NOT IN DROPBOX — nothing to propose; check the spelling (leading spaces in a segment count), or search Dropbox'
+    : !f.is_folder ? 'A FILE, not a folder — a case folder must be a folder'
+      : !f.root ? 'UNDER NO ENABLED SYNC ROOT — the document sync will never see it, so its documents would never register; the relink route refuses it (400). Add a sync root for it first (More → Documents → Sync) or pick a folder inside one'
+        : f.already_linked_to.length ? `ANOTHER CASE'S FOLDER (case ${f.already_linked_to.join(', ')}) — never proposable (the route answers 409)`
+          : 'A folder a case may be linked to (case.folder.relink.v1 with this exact "path", citing this row) when it is this client\'s folder';
+  const head = {
+    row_type: 'folder', path: f.path, path_lower: f.path_lower, path_display: f.path_display, folder_name: seg,
+    exists: f.exists ? 1 : 0, is_folder: f.is_folder ? 1 : 0, under_enabled_root: f.root ? 1 : 0, root: f.root,
+    listed_files: f.listed_files, listed_folders: f.listed_folders, listing_truncated: f.listing_truncated ? 1 : 0, newest_listed: f.newest_listed,
+    registered_files: f.registered_files, registered_newest: documentIso(f.registered_newest),
+    already_linked_to: joined(f.already_linked_to), inside_case_id: f.inside_case_id, nested_case_ids: joined(f.nested_case_ids),
+    held_by: f.held_by.length ? f.held_by.map((h) => `${h.case_id} (${h.n})`).join('; ') : null,
+    proposable: proposable ? 1 : 0,
+    note: `${why}. Read through the documents sync's own Dropbox account: exists ${f.exists ? 'yes' : 'no'}, folder ${f.is_folder ? 'yes' : 'no'}, enabled sync root ${f.root ? `"${f.root}"` : 'NONE'}; ${f.listed_files} file${f.listed_files === 1 ? '' : 's'} and ${f.listed_folders} subfolder${f.listed_folders === 1 ? '' : 's'} listed directly${f.listing_truncated ? ` (at least — the listing stops at ${DOCUMENT_FOLDER_LIST_CAP} entries)` : ''}; ${f.registered_files} registered file${f.registered_files === 1 ? '' : 's'} under it in YisraCase${f.held_by.length ? ` — files already carrying a case's sync link stay with that case (${head_held(f)})` : ''}${f.inside_case_id ? `; INSIDE case ${f.inside_case_id}'s folder` : ''}${f.nested_case_ids.length ? `; ${f.nested_case_ids.length} other case folder${f.nested_case_ids.length === 1 ? '' : 's'} nested inside it (rows below)` : ''}. Whether it is a CANDIDATE for a case (its number or a client's name in the folder's name) is the document.relink.candidates read's question, not this one's.`,
+  };
+  const rows = f.nested_case_folders.map((x) => ({ row_type: 'nested_case_folder', case_id: x.case_id, path: x.path, parent_path: f.path,
+    note: `Case ${x.case_id}'s cached folder sits inside "${f.path}"; its files stay on that case after a re-link of the parent` }));
+  return { rows: [head, ...rows], truncated: false };
+}
+function head_held(f) { return f.held_by.map((h) => `${h.n} on case ${h.case_id}`).join('; '); }
+
+// Who a log_by number is, in the house words (0 = Automations).
+async function caseFolderActorName(db, by) {
+  const n = Number(by);
+  if (!Number.isSafeInteger(n) || n <= 0) return 'Automations';
+  const [rows] = await db.query('SELECT user, user_name FROM users WHERE user = ? LIMIT 1', [n]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  return row && row.user_name ? `${String(row.user_name).slice(0, 60)} (user ${n})` : `user ${n}`;
+}
+
+// A11.1X — case.folder.dismiss.v1: a note on the relink queue for ONE case.
+async function normalizeCaseFolderDismissAction(db, value, evidence, { currentUserId = null } = {}) {
+  if (require('../lib/firmConfig').cfg('casey_document_relink_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const extra = Object.keys(value).filter((k) => !CASE_FOLDER_DISMISS_KEYS.has(k));
+  const bulk = extra.filter((k) => CASE_FOLDER_BULK_KEY.test(k));
+  if (bulk.length) {
+    throw caseFolderError(`BULK refused (${bulk.join(', ')}): one card per case; the Documents relink panel dismisses many at once (its "Dismiss all"). Casey's card is the only screen that reaches cases outside the panel's queue, and a bulk dismiss there is a bulk re-link's ask in disguise`);
+  }
+  if (extra.length) {
+    throw caseFolderError(`A dismiss card carries unsupported fields: ${extra.join(', ')} — it takes case_id, undo and evidence only`);
+  }
+  const caseId = typeof value.case_id === 'string' ? value.case_id.trim() : '';
+  if (!/^[A-Za-z0-9_-]{1,20}$/.test(caseId)) throw caseFolderError('A dismiss card needs the case\'s exact case_id');
+  if (value.undo !== undefined && typeof value.undo !== 'boolean') throw caseFolderError('A dismiss card\'s "undo" is true (return the case to the queue) or omitted (dismiss it)');
+  const undo = value.undo === true;
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  const list = Array.isArray(evidence) ? evidence : [];
+  const rowsOf = (q) => (q && Array.isArray(q.rows) ? q.rows : []);
+  const caseCited = refs.some((ref) => {
+    const q = list.find((x) => x && x.id === ref.query_id);
+    if (!q || (q.kind !== undefined && q.kind !== 'sql.read')) return false;
+    const row = rowsOf(q)[ref.row_number - 1];
+    return !!row && row.case_id != null && String(row.case_id) === caseId;
+  });
+  if (!caseCited) {
+    throw caseFolderError(`The dismiss evidence does not identify case ${caseId} — cite a sql.read row carrying its exact case_id (read the case first)`);
+  }
+
+  const sync = caseFolderSync();
+  const fresh = await sync.relinkCandidates(db, caseId);
+  if (!fresh) throw caseFolderError(`Case ${caseId} no longer exists`);
+  const id = String(fresh.case_id);
+  const label = String(fresh.case_number_full || fresh.case_number || '').trim().slice(0, 40) || id;
+  // The route's UPDATE is keyed on the cache row: no row, nothing stamped
+  // (setRelinkDismissed's docblock — the queue is DERIVED from the cache).
+  const [[cache]] = await db.query(
+    `SELECT path_lower, path_display, resolved_at, resolve_error, relink_dismissed_at, relink_dismissed_by
+       FROM case_folder_cache WHERE case_id = ? LIMIT 1`, [id]);
+  if (!cache) {
+    throw caseFolderError(`Case ${label} has no folder-cache row — it has never been in the relink queue (the queue is the cache's rows), and the dismiss route would stamp nothing. There is nothing to ${undo ? 'un-dismiss' : 'dismiss'}`);
+  }
+  const dismissed = !!cache.relink_dismissed_at;
+  if (dismissed === !undo) {
+    throw caseFolderError(dismissed
+      ? `Case ${label} is already dismissed from the relink queue (${String(documentIso(cache.relink_dismissed_at)).slice(0, 10)}, by ${await caseFolderActorName(db, cache.relink_dismissed_by)}) — nothing to do; a card with undo:true returns it to the queue`
+      : `Case ${label} is not dismissed from the relink queue — there is no dismissal to undo`);
+  }
+  const [[linked]] = await db.query(
+    `SELECT EXISTS(SELECT 1 FROM document_links WHERE link_type = 'case' AND link_id = ?) AS linked`, [id]);
+  const hasLinks = !!Number(linked && linked.linked);
+  const resolved = !!(cache.path_lower && String(cache.path_lower).trim());
+  const inQueue = resolved && !hasLinks; // relinkQueue's predicate
+  const effects = []; const warnings = [];
+  const clients = (fresh.client_names || []).map((s) => String(s).trim().slice(0, 120)).filter(Boolean);
+  const shown = cache.path_display || cache.path_lower;
+  effects.push(resolved
+    ? `Cached folder: "${String(shown).slice(0, 300)}" (resolved ${String(documentIso(cache.resolved_at)).slice(0, 10)}${cache.resolve_error ? `; its last resolve failed: ${String(cache.resolve_error).slice(0, 160)}` : ''}).`
+    : `Cached folder: none — the case's Dropbox link has never resolved to a folder${cache.resolve_error ? ` (${String(cache.resolve_error).slice(0, 160)})` : ''}.`);
+  effects.push(dismissed
+    ? `Dismissal now: dismissed on ${String(documentIso(cache.relink_dismissed_at)).slice(0, 10)} by ${await caseFolderActorName(db, cache.relink_dismissed_by)}.`
+    : 'Dismissal now: not dismissed.');
+  effects.push(inQueue
+    ? `Relink queue now: IN the queue (a cached folder and no document attributed to the case)${dismissed ? ' — hidden as dismissed' : ' — shown'}.`
+    : `Relink queue now: NOT in the queue (${hasLinks ? 'the case already has documents attributed' : 'its folder never resolved'}) — the dismissal stamp is only a note on the cache row.`);
+  const cands = Array.isArray(fresh.candidates) ? fresh.candidates : [];
+  const proposable = cands.filter((c) => !(Array.isArray(c.already_linked_to) && c.already_linked_to.length) && !(fresh.current_path && c.path === fresh.current_path));
+  if (!undo && proposable.length) {
+    warnings.push(`THIS CASE HAS ${proposable.length} CANDIDATE FOLDER${proposable.length === 1 ? '' : 'S'} (${proposable.slice(0, 3).map((c) => `"${String(c.path).slice(0, 160)}"`).join(', ')}${proposable.length > 3 ? ', …' : ''}): dismissing says "nothing to do here" although a folder may fit. Link the right one instead (a re-link clears the dismissal), or be sure none of them is this client's.`);
+  } else {
+    effects.push(cands.length
+      ? `Candidates: the panel's lanes find ${cands.length} folder${cands.length === 1 ? '' : 's'} for this case, none proposable${fresh.candidates_truncated ? ' (more matched than listed)' : ''}.`
+      : 'Candidates: the panel\'s lanes find no folder for this case — the usual reason to dismiss (the client never sent a document).');
+  }
+  effects.push(undo
+    ? 'Writes: two columns on the case\'s folder-cache row — relink_dismissed_at and relink_dismissed_by are CLEARED. NOTHING ELSE: no document link is made or removed, no case field changes, nothing in Dropbox changes, no event fires, no log entry is written.'
+    : 'Writes: two columns on the case\'s folder-cache row — relink_dismissed_at is set to now and relink_dismissed_by to you. NOTHING ELSE: no document link is made or removed, no case field changes, nothing in Dropbox changes, no event fires, no log entry is written (the stamp itself records who and when).');
+  effects.push(undo
+    ? `Panel: the Documents relink panel shows the case in its queue again${inQueue ? '' : ' once it qualifies (a cached folder and no attributed document)'}.`
+    : `Panel: the Documents relink panel hides the case from its queue (visible again under "show dismissed")${inQueue ? '' : ' — it is not listed there today anyway'}.`);
+  effects.push(undo ? 'Reversal: a dismiss card (or the panel) dismisses it again.' : 'Reversal: a card with undo:true (or the panel\'s checkbox) returns it to the queue.');
+  effects.push('One case: this card stamps ONE case; the panel\'s "Dismiss all" clears many at once.');
+  return {
+    draft_id: crypto.randomUUID(), kind: 'case.folder.dismiss.v1', status: 'draft', undo,
+    case: { case_id: id, label, case_number: fresh.case_number || null, case_number_full: fresh.case_number_full || null, clients: clients.slice(0, 4) },
+    cache: {
+      path: cache.path_lower || null, path_display: cache.path_display || null, resolved_at: documentIso(cache.resolved_at), resolve_error: cache.resolve_error || null,
+      dismissed_at: documentIso(cache.relink_dismissed_at), dismissed_by: cache.relink_dismissed_by ?? null,
+    },
+    queue: { in_queue: inQueue, has_links: hasLinks, candidates: cands.length, proposable: proposable.length },
+    effects, warnings,
+    expected: { dismissed_at: documentIso(cache.relink_dismissed_at), current_path: cache.path_lower || null, case_dropbox: fresh.current_link || null },
+    evidence: refs,
+  };
+}
+
+// A11.1X — case.folder.relink.undo.v1: re-link the case to the folder its
+// LATEST re-link audit entry came from, through POST /api/documents/relink.
+async function normalizeCaseFolderUndoAction(db, value, evidence, { currentUserId = null } = {}) {
+  if (require('../lib/firmConfig').cfg('casey_document_relink_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const extra = Object.keys(value).filter((k) => !CASE_FOLDER_UNDO_KEYS.has(k));
+  const bulk = extra.filter((k) => CASE_FOLDER_BULK_KEY.test(k));
+  if (bulk.length) {
+    throw caseFolderError(`BULK refused (${bulk.join(', ')}): an undo card undoes ONE case's latest re-link. There is no bulk re-link in YisraCase, on purpose — "a bulk verb would exist to save eight clicks and would be the single most dangerous button in the app" (the relink route's own header) — and no bulk undo either`);
+  }
+  const free = extra.filter((k) => CASE_FOLDER_FREE_KEY.test(k) || /folder_path|old_path|new_path/i.test(k));
+  if (free.length) {
+    throw caseFolderError(`FOLDER refused (${free.join(', ')}): an undo card names no folder — the folder comes from the cited audit entry's old_path. Name the entry in "log_id"`);
+  }
+  if (extra.length) {
+    throw caseFolderError(`An undo card carries unsupported fields: ${extra.join(', ')} — it takes case_id, log_id and evidence only`);
+  }
+  const caseId = typeof value.case_id === 'string' ? value.case_id.trim() : '';
+  if (!/^[A-Za-z0-9_-]{1,20}$/.test(caseId)) throw caseFolderError('An undo card needs the case\'s exact case_id');
+  const rawLog = value.log_id;
+  const logId = typeof rawLog === 'number' ? rawLog : (typeof rawLog === 'string' && /^\d{1,10}$/.test(rawLog.trim()) ? Number(rawLog.trim()) : NaN);
+  if (!Number.isSafeInteger(logId) || logId < 1) throw caseFolderError('An undo card needs "log_id": the log_id of the case\'s "Case Dropbox folder re-linked" log entry (sql.read the log table for it)');
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  const list = Array.isArray(evidence) ? evidence : [];
+  const rowsOf = (q) => (q && Array.isArray(q.rows) ? q.rows : []);
+  const sqlRow = (ref) => {
+    const q = list.find((x) => x && x.id === ref.query_id);
+    if (!q || (q.kind !== undefined && q.kind !== 'sql.read')) return null;
+    return rowsOf(q)[ref.row_number - 1] || null;
+  };
+  const caseCited = refs.some((ref) => { const row = sqlRow(ref); return !!row && row.case_id != null && String(row.case_id) === caseId; });
+  if (!caseCited) {
+    throw caseFolderError(`The undo evidence does not identify case ${caseId} — cite a sql.read row carrying its exact case_id (read the case first)`);
+  }
+  const entryCited = refs.some((ref) => { const row = sqlRow(ref); return !!row && row.log_id != null && String(row.log_id) === String(logId); });
+  if (!entryCited) {
+    throw caseFolderError(`Cite the audit entry: the evidence must include a sql.read row of the log table carrying log_id ${logId} (SELECT log_id, log_date, log_by FROM log WHERE log_link_type = 'case' AND log_link_id = '${caseId}' AND log_subject = '${CASE_FOLDER_AUDIT_SUBJECT}' ORDER BY log_id DESC)`);
+  }
+
+  const sync = caseFolderSync();
+  const fresh = await sync.relinkCandidates(db, caseId);
+  if (!fresh) throw caseFolderError(`Case ${caseId} no longer exists`);
+  const id = String(fresh.case_id);
+  const label = String(fresh.case_number_full || fresh.case_number || '').trim().slice(0, 40) || id;
+  const [[entry]] = await db.query(
+    `SELECT log_id, log_type, log_link_type, log_link_id, log_by, log_subject, log_extra,
+            DATE_FORMAT(log_date, '%Y-%m-%d %H:%i') AS at_text
+       FROM log WHERE log_id = ? LIMIT 1`, [logId]);
+  let relink = null;
+  if (entry) {
+    const x = typeof entry.log_extra === 'string' ? (() => { try { return JSON.parse(entry.log_extra); } catch (_) { return null; } })() : entry.log_extra;
+    relink = x && typeof x === 'object' && x.relink && typeof x.relink === 'object' ? x.relink : null;
+  }
+  if (!entry || entry.log_type !== 'update' || entry.log_link_type !== 'case' || String(entry.log_link_id) !== id || entry.log_subject !== CASE_FOLDER_AUDIT_SUBJECT || !relink) {
+    throw caseFolderError(`Log entry #${logId} is not a "${CASE_FOLDER_AUDIT_SUBJECT}" entry of case ${label} — only that entry (type update, on this case, with its relink record) can be undone`);
+  }
+  const [[latest]] = await db.query(
+    `SELECT log_id, DATE_FORMAT(log_date, '%Y-%m-%d %H:%i') AS at_text FROM log
+      WHERE log_link_type = 'case' AND log_link_id = ? AND log_subject = ? ORDER BY log_id DESC LIMIT 1`, [id, CASE_FOLDER_AUDIT_SUBJECT]);
+  if (!latest || Number(latest.log_id) !== logId) {
+    throw caseFolderError(`A NEWER RE-LINK EXISTS for case ${label}: entry #${latest ? Number(latest.log_id) : '?'} (${latest ? latest.at_text : '?'} firm time) is the latest. Only the latest re-link can be undone — undo that one first (one step at a time; each undo is itself a re-link with its own entry)`);
+  }
+  const oldPath = relink.old_path ? String(relink.old_path) : null;
+  if (!oldPath) {
+    throw caseFolderError(`Entry #${logId} recorded no previous folder (the case had no cached folder before that re-link${relink.old_link ? ', only a link that never resolved' : ''}) — there is nothing to re-link back to. To clear the case's folder, unlink its documents one by one and clear the Dropbox link by hand`);
+  }
+  if (!await sync.isSyncEnabled(db)) {
+    throw caseFolderError('THE DOCUMENT SYNC IS SWITCHED OFF (documents_sync_enabled is not "1"): the relink route does nothing while the sync engine is off, so this card could only be skipped. Nothing is proposed — the switch is in Settings');
+  }
+  const [[prior]] = await db.query('SELECT * FROM cases WHERE case_id = ? LIMIT 1', [id]);
+  if (!prior) throw caseFolderError(`Case ${caseId} no longer exists`);
+  const newLink = relink.new_link ? String(relink.new_link) : null;
+  if (!newLink || String(prior.case_dropbox || '') !== newLink) {
+    throw caseFolderError(`Case ${label}'s Dropbox link is no longer the one entry #${logId} wrote${prior.case_dropbox ? '' : ' (it is blank now)'} — someone changed it since, so that entry is not what the case's current state came from. Nothing to undo from it`);
+  }
+  const oldLower = oldPath.toLowerCase();
+  if (fresh.current_path && fresh.current_path === oldLower) {
+    throw caseFolderError(`That changes nothing — case ${label} already points at "${oldPath.slice(0, 200)}"`);
+  }
+  const facts = await caseFolderFacts(db, oldPath, id);
+  if (!facts.exists) {
+    throw caseFolderError(`THE OLD FOLDER IS GONE: "${oldPath.slice(0, 200)}" no longer exists in Dropbox (moved, renamed or deleted since ${entry.at_text}) — there is nothing to re-link back to. Link the right folder instead (a document.folder read proves a folder; the candidates read lists the panel's)`);
+  }
+  if (!facts.is_folder) throw caseFolderError(`"${oldPath.slice(0, 200)}" is a FILE in Dropbox now, not a folder — nothing to re-link back to`);
+  if (!facts.root) {
+    throw caseFolderError(`"${oldPath.slice(0, 200)}" is under NO enabled sync root any more: the document sync would never walk it, and the relink route refuses it (400). Add a sync root for it first, or link another folder`);
+  }
+  if (facts.already_linked_to.length) {
+    throw caseFolderError(`ANOTHER CASE HOLDS THE OLD FOLDER: "${oldPath.slice(0, 200)}" is case ${facts.already_linked_to.join(', ')}'s folder now — re-linking it here would put both clients' documents on both cases, and the route refuses it (409). Never proposable; if that case is the wrong one, fix it first`);
+  }
+  const cand = (fresh.candidates || []).find((c) => c.path === oldLower) || null;
+  const p = await caseFolderPredict(db, id, oldLower);
+  const heldLabels = await documentTargetLabels(db, p.held_by.map((h) => ({ link_type: 'case', link_id: h.case_id })));
+  const caseName = (cid) => heldLabels({ link_type: 'case', link_id: cid });
+  const n = (k, one, many) => `${k.toLocaleString('en-US')} ${k === 1 ? one : many}`;
+  const effects = []; const warnings = [];
+  const clients = (fresh.client_names || []).map((s) => String(s).trim().slice(0, 120)).filter(Boolean);
+  const by = await caseFolderActorName(db, entry.log_by);
+  effects.push(`Audit entry: #${logId} on ${entry.at_text} firm time by ${by} re-linked the case from "${oldPath.slice(0, 300)}" to "${String(relink.new_path || fresh.current_path || '').slice(0, 300)}" (detached ${Number(relink.detached_docs) || 0}, attached ${Number(relink.linked_docs) || 0}). It is the case's latest re-link.`);
+  effects.push(`Paths: before that re-link "${oldPath.slice(0, 300)}" → now "${String(fresh.current_path_display || fresh.current_path || relink.new_path || '').slice(0, 300)}" → back to "${oldPath.slice(0, 300)}".`);
+  effects.push(`Old folder: still in Dropbox (shown as "${String(facts.path_display || oldPath).slice(0, 300)}"), under the sync root "${facts.root}", ${n(facts.listed_files, 'file', 'files')} directly${facts.listing_truncated ? ' (at least — the listing was cut off)' : ''}${facts.newest_listed ? ` (newest ${String(facts.newest_listed).slice(0, 10)})` : ''} and ${n(facts.listed_folders, 'subfolder', 'subfolders')}; ${n(facts.registered_files, 'registered file is', 'registered files are')} under it.`);
+  if (cand) {
+    effects.push(`Matched on: ${cand.confidence === 'docket'
+      ? `the docket lane — the case number "${String(cand.matched_on || '').slice(0, 40)}" appears in the folder's name`
+      : `the name lane — every required word of the client name "${String(cand.matched_on || '').slice(0, 120)}" (surname and first given name) appears in the folder's name`} (the old folder is one of the panel's candidates today).`);
+  } else {
+    warnings.push(`NOT A CANDIDATE: neither the case number nor a client's name${clients.length ? ` (${clients.join('; ')})` : ''} is in the old folder's name ("${String(facts.path.slice(facts.path.lastIndexOf('/') + 1)).slice(0, 160)}") — the panel would not suggest it. The entry says the case pointed there once; nothing else ties it to this client. Be sure the undo is right.`);
+  }
+  effects.push(`Case link: the case's Dropbox link (cases.case_dropbox) is REWRITTEN — from ${newLink.slice(0, 300)} — to the old folder's permanent Dropbox shared link: Dropbox's existing link for it (usually the one the entry recorded${relink.old_link ? `, ${String(relink.old_link).slice(0, 300)}` : ''}), else a NEW one created with public visibility (anyone holding it can open the folder).`);
+  const heldNamed = p.held_by.map((h) => `${n(h.n, 'file', 'files')} on ${String(h.case_id) === id ? 'this case already' : caseName(h.case_id)}`);
+  effects.push(`Attaches NOW: ${p.truncated ? 'at least ' : ''}${n(p.attach, 'registered file', 'registered files')} of the ${p.under_total.toLocaleString('en-US')} under the old folder get the sync's link to this case again and show on its Documents tab at once — silently: no document.linked event fires for them.${p.held_total ? ` ${n(p.held_total, 'file already carries', 'files already carry')} the sync's link to a case and stay${p.held_total === 1 ? 's' : ''} as ${p.held_total === 1 ? 'it is' : 'they are'} (${heldNamed.join('; ')}${p.held_total > p.held_by.reduce((s, h) => s + h.n, 0) ? '; …' : ''}).` : ''}${p.nested ? ` ${n(p.nested, 'file sits', 'files sit')} inside another case's folder nested there and stay${p.nested === 1 ? 's' : ''} with that case.` : ''}`);
+  if (p.detach) {
+    warnings.push(`DETACHES ${n(p.detach, 'DOCUMENT', 'DOCUMENTS')}: ${p.detach === 1 ? 'one of this case\'s links' : `${p.detach.toLocaleString('en-US')} of this case's links`} the sync made to files OUTSIDE the old folder — the files the re-link being undone attached, among them — ${p.detach === 1 ? 'is' : 'are'} deleted, and those files leave the case's Documents tab. Only machine links go — ${n(p.human_kept, 'link a person made (or with another relation) stays', 'links people made (or with another relation) stay')}.`);
+  } else {
+    effects.push(`Detaches: nothing — the case holds no sync-made link to a file outside the old folder. Links people made are never touched (${p.human_kept.toLocaleString('en-US')} on this case).`);
+  }
+  if (p.truncated) {
+    warnings.push(`LARGE FOLDER: only the first ${sync.RELINK_ATTRIBUTION_CAP.toLocaleString('en-US')} unattached files under the folder are considered now; the recurring sweep attaches the rest later.`);
+  }
+  if (facts.nested_case_ids.length) {
+    const ids = facts.nested_case_ids;
+    effects.push(`Nested case folders: ${ids.slice(0, 8).join(', ')}${ids.length > 8 ? ` (+${ids.length - 8} more)` : ''} ${ids.length === 1 ? 'has its' : 'have their'} own folder inside the old one; ${ids.length === 1 ? 'its' : 'their'} files stay on ${ids.length === 1 ? 'that case' : 'those cases'} (a file belongs to the innermost case folder).`);
+  }
+  if (facts.inside_case_id) {
+    warnings.push(`INSIDE ANOTHER CASE'S FOLDER: the old folder sits inside case ${facts.inside_case_id}'s folder. Its files that already carry that case's sync link stay there and do not attach here (counted above); files added later attach to THIS case. Joint debtors can make this right — make sure it is.`);
+  }
+  effects.push('Documents tab: the case\'s Documents tab lists the old folder\'s files again from now on (staff only — the client portal lists no documents).');
+  effects.push('Filing: from now on everything YisraCase files into "the case folder" goes back to the OLD folder — client uploads from the portal and the public documents link (its "Client Uploads" subfolder), filed form PDFs (Forms), signed e-sign documents (Signed Documents), and automation steps that use {{case_dropbox}}. Anything filed into the current folder since the re-link stays where it is.');
+  if (fresh.dismissed_at) {
+    effects.push(`Relink queue: this case was dismissed from the relink queue (${String(documentIso(fresh.dismissed_at)).slice(0, 10)}); applying clears the dismissal.`);
+  }
+  effects.push('If Dropbox cannot resolve the link at once, the link still changes but nothing attaches or detaches until the next folder-cache run — the result says so.');
+  effects.push(`Audit: this undo is itself a re-link — one NEW log entry on the case ("${CASE_FOLDER_AUDIT_SUBJECT}") records who did it, the current path and link as the old ones, the old folder as the new one, and the counts. Entry #${logId} stays.`);
+  const { buildEnvelope, buildChanges } = require('../lib/domainEvents');
+  const nextFields = { case_dropbox: CASE_FOLDER_LINK_STANDIN };
+  const changes = buildChanges(prior, nextFields, ['case_dropbox']);
+  const automation = await casePipelineAutomation(db, buildEnvelope('case.updated', {
+    case_id: id, ...(currentUserId != null ? { actor: { user_id: currentUserId } } : {}), source: 'documents_relink',
+    data: { ...prior, ...nextFields }, changes, extra: { updated_fields: ['case_dropbox'] },
+  }), 'case.updated', 'this undo');
+  if (automation.lines.some((l) => l.outcome === 'unknown')) warnings.push('AUTOMATION: at least one trigger rule could not be evaluated for this undo — read its line; it may run.');
+  effects.push('Trigger event: case.updated fires (source "documents_relink", field case_dropbox) when the link actually changes — every active rule on it that would act is listed below, checked against a stand-in for the re-minted link (it is minted when you apply).');
+  return {
+    draft_id: crypto.randomUUID(), kind: 'case.folder.relink.undo.v1', status: 'draft',
+    case: { case_id: id, label, case_number: fresh.case_number || null, case_number_full: fresh.case_number_full || null, clients: clients.slice(0, 4) },
+    folder: {
+      path: oldPath, path_display: facts.path_display, files: p.under_total, newest: documentIso(facts.registered_newest),
+      confidence: cand ? cand.confidence : 'typed', matched_on: cand ? String(cand.matched_on || '').slice(0, 120) : null,
+      inside_case_id: facts.inside_case_id, nested_case_ids: facts.nested_case_ids.slice(0, 20),
+      root: facts.root, listed_files: facts.listed_files, listed_folders: facts.listed_folders, listing_truncated: facts.listing_truncated, newest_listed: facts.newest_listed,
+    },
+    current: {
+      path: fresh.current_path || null, path_display: fresh.current_path_display || null, link: fresh.current_link || null,
+      resolve_error: fresh.resolve_error || null, dismissed_at: documentIso(fresh.dismissed_at),
+    },
+    audit: {
+      log_id: logId, at_text: entry.at_text, by, old_path: oldPath, old_link: relink.old_link || null,
+      new_path: relink.new_path || null, new_link: newLink, linked_docs: Number(relink.linked_docs) || 0, detached_docs: Number(relink.detached_docs) || 0,
+    },
+    prediction: p,
+    automation: { events: ['case.updated'], lines: automation.lines.map((l) => l.text), rules_checked: automation.rules_checked, quiet: automation.quiet },
+    effects, warnings,
+    no_undo: 'This undo is itself a re-link with its own audit entry; it is reversed the same way — an undo card on that new entry — or by re-linking the right folder. Files filed into the current folder since the re-link stay there.',
+    expected: { case_dropbox: newLink, current_path: fresh.current_path || null, path: oldPath, files: p.under_total, already_linked_to: null, log_id: logId, typed: 1 },
+    evidence: refs,
+  };
+}
 
 // The document.relink.candidates read (A11.1): ONE case's head row (its
 // docket, clients, the folder it points at now, its dismissal) and one row
@@ -9996,14 +10418,7 @@ async function caseFolderPredict(db, caseId, folderLower) {
                                  WHERE dl.document_id = d.id AND dl.link_type = 'case' AND dl.relation = ?)), 0) AS held
        FROM documents d
       WHERE d.status = 'active' AND d.path_lower IS NOT NULL AND d.path_lower LIKE ?`, [RELATION_PATH, like]);
-  const [heldBy] = await db.query(
-    `SELECT dl.link_id AS case_id, COUNT(DISTINCT d.id) AS n
-       FROM documents d
-       JOIN document_links dl ON dl.document_id = d.id AND dl.link_type = 'case' AND dl.relation = ?
-      WHERE d.status = 'active' AND d.path_lower IS NOT NULL AND d.path_lower LIKE ?
-      GROUP BY dl.link_id
-      ORDER BY n DESC, dl.link_id
-      LIMIT 6`, [RELATION_PATH, like]);
+  const heldBy = await caseFolderHeldBy(db, like);
   // Step 7's candidate rows (_attributeUnderFolder): active, under the folder,
   // holding no sync path-link to ANY case (add-only), by id, capped.
   const [rows] = await db.query(
@@ -10038,7 +10453,7 @@ async function caseFolderPredict(db, caseId, folderLower) {
   const scanned = Array.isArray(rows) ? rows.length : 0;
   return {
     under_total: Number(under && under.total) || 0, held_total: Number(under && under.held) || 0,
-    held_by: (Array.isArray(heldBy) ? heldBy : []).map((r) => ({ case_id: String(r.case_id), n: Number(r.n) || 0 })),
+    held_by: heldBy,
     attach, nested, scanned, truncated: scanned >= sync.RELINK_ATTRIBUTION_CAP,
     detach: Number(det && det.n) || 0, human_kept: Number(kept && kept.n) || 0,
   };
@@ -10059,7 +10474,7 @@ async function normalizeCaseFolderAction(db, value, evidence, { currentUserId = 
   }
   hit = named(CASE_FOLDER_DISMISS_KEY);
   if (hit.length) {
-    throw caseFolderError(`DISMISS / UNDO refused (${hit.join(', ')}): dismissing a case from the relink queue, un-dismissing it and undoing a re-link are not available to Casey — the user dismisses in the Documents relink panel, and a wrong re-link is repaired by re-linking the right folder`);
+    throw caseFolderError(`DISMISS / UNDO refused (${hit.join(', ')}) on a re-link card: dismissing or un-dismissing a case in the relink queue is its own card (case.folder.dismiss.v1 — one case; undo:true to un-dismiss), and undoing the case's latest re-link is its own card (case.folder.relink.undo.v1, citing the case's "${CASE_FOLDER_AUDIT_SUBJECT}" log entry)`);
   }
   hit = named(CASE_FOLDER_UNLINK_KEY);
   if (hit.length) {
@@ -10071,7 +10486,7 @@ async function normalizeCaseFolderAction(db, value, evidence, { currentUserId = 
   }
   hit = named(CASE_FOLDER_FREE_KEY);
   if (hit.length) {
-    throw caseFolderError(`FREE-TYPED FOLDERS refused (${hit.join(', ')}): name the folder in "folder_path", copied exactly from a document.relink.candidates row of this case. A folder that is not a candidate is never proposable`);
+    throw caseFolderError(`FREE-TYPED FOLDERS refused (${hit.join(', ')}): name the folder in "folder_path" — a candidate's path copied exactly from a document.relink.candidates row of this case, or a path a document.folder read of that exact path has proved (it exists, is a folder and sits under an enabled sync root), copied exactly as that read lists it`);
   }
   if (extra.length) {
     throw caseFolderError(`A folder card carries unsupported fields: ${extra.join(', ')} — it takes case_id, folder_path and evidence only`);
@@ -10110,19 +10525,39 @@ async function normalizeCaseFolderAction(db, value, evidence, { currentUserId = 
     throw caseFolderError(`The candidates read in this investigation is for ${others.length ? `case ${others.join(', ')}` : 'no case'}, not case ${caseId} — read case ${caseId}'s candidates (a folder is proposed only for the case it was found for)`);
   }
   const isCandidate = (r) => !!r && r.row_type === 'candidate' && String(r.case_id) === caseId;
+  // A11.1X: a path no candidate row lists is proposable only when a
+  // document.folder read of the EXACT path (cited) proved it.
+  let typedRead = null;
   if (!mine.some((q) => rowsOf(q).some((r) => isCandidate(r) && r.path === folder))) {
     const folded = mine.some((q) => rowsOf(q).some((r) => isCandidate(r) && String(r.path || '').trim().toLowerCase() === folder.trim().toLowerCase()));
-    throw caseFolderError(folded
-      ? `"${folder.slice(0, 200)}" differs from the candidate's path in capitalisation or spacing — copy folder_path EXACTLY as the candidates read lists it`
-      : `NOT A CANDIDATE: "${folder.slice(0, 200)}" is not one of the folders the candidates read listed for case ${caseId}. Casey proposes only a listed folder, never one found any other way (typed, searched for, taken from a document's path). Pick it in the Documents relink panel (More → Documents → Sync): for a case in its queue it lists the same candidates plus surname-only suggestions behind a second confirmation. A folder neither lists cannot be linked from any screen — the panel has no typed-path field; ask IT`);
-  }
-  const candidateCited = refs.some((ref) => {
-    const q = mine.find((x) => x.id === ref.query_id);
-    const row = q ? rowsOf(q)[ref.row_number - 1] : null;
-    return isCandidate(row) && row.path === folder;
-  });
-  if (!candidateCited) {
-    throw caseFolderError(`Cite the candidate row: the evidence must include the document.relink.candidates row whose path is "${folder.slice(0, 200)}"`);
+    if (folded) throw caseFolderError(`"${folder.slice(0, 200)}" differs from the candidate's path in capitalisation or spacing — copy folder_path EXACTLY as the candidates read lists it`);
+    const folderReads = list.filter((q) => q && q.kind === 'document.folder');
+    const headOfFolder = (q) => rowsOf(q).find((r) => r && r.row_type === 'folder');
+    typedRead = folderReads.find((q) => { const h = headOfFolder(q); return !!h && h.path === folder; }) || null;
+    if (!typedRead) {
+      const near = folderReads.some((q) => { const h = headOfFolder(q); return !!h && String(h.path || '').trim().toLowerCase() === folder.trim().toLowerCase(); });
+      throw caseFolderError(near
+        ? `"${folder.slice(0, 200)}" differs from the path the document.folder read lists in capitalisation or spacing — copy folder_path EXACTLY as that read lists it`
+        : `NOT A CANDIDATE: "${folder.slice(0, 200)}" is not one of the folders the candidates read listed for case ${caseId}. Casey proposes a listed folder, or a folder a document.folder read of that EXACT path has proved — it exists in Dropbox, it is a folder and it sits under an enabled sync root — copied as the read lists it and cited. A path typed, searched for or taken from a document's path is never proposed unread: read it first (document.folder {"path": …}). The Documents relink panel (More → Documents → Sync) lists only its candidates and has no typed-path field`);
+    }
+    const head = headOfFolder(typedRead);
+    if (!refs.some((ref) => ref.query_id === typedRead.id && rowsOf(typedRead)[ref.row_number - 1] === head)) {
+      throw caseFolderError(`Cite the folder row: the evidence must include the document.folder row whose path is "${folder.slice(0, 200)}"`);
+    }
+    if (String(head.exists) !== '1') throw caseFolderError(`The document.folder read found nothing at "${folder.slice(0, 200)}" in Dropbox — nothing to propose`);
+    if (String(head.is_folder) !== '1') throw caseFolderError(`"${folder.slice(0, 200)}" is a FILE in Dropbox, not a folder — a case folder must be a folder`);
+    if (String(head.under_enabled_root) !== '1') {
+      throw caseFolderError(`"${folder.slice(0, 200)}" is under NO enabled sync root: the document sync would never walk it, so its documents would never register — the relink route refuses it too (400). Add a sync root for it first (More → Documents → Sync), or pick a folder inside one`);
+    }
+  } else {
+    const candidateCited = refs.some((ref) => {
+      const q = mine.find((x) => x.id === ref.query_id);
+      const row = q ? rowsOf(q)[ref.row_number - 1] : null;
+      return isCandidate(row) && row.path === folder;
+    });
+    if (!candidateCited) {
+      throw caseFolderError(`Cite the candidate row: the evidence must include the document.relink.candidates row whose path is "${folder.slice(0, 200)}"`);
+    }
   }
 
   const sync = caseFolderSync();
@@ -10133,29 +10568,47 @@ async function normalizeCaseFolderAction(db, value, evidence, { currentUserId = 
   }
   const id = String(fresh.case_id);
   const label = String(fresh.case_number_full || fresh.case_number || '').trim().slice(0, 40) || id;
-  const cand = (fresh.candidates || []).find((c) => c.path === folder);
+  const cand = (fresh.candidates || []).find((c) => c.path === folder) || null;
+  let facts = null;
   if (!cand) {
-    throw caseFolderError(`"${folder.slice(0, 200)}" is no longer a candidate for case ${label} — the folder moved, was renamed or emptied, or the case changed since it was read. Read the candidates again`);
-  }
-  if (Array.isArray(cand.already_linked_to) && cand.already_linked_to.length) {
+    if (!typedRead) {
+      throw caseFolderError(`"${folder.slice(0, 200)}" is no longer a candidate for case ${label} — the folder moved, was renamed or emptied, or the case changed since it was read. Read the candidates again`);
+    }
+    // The typed path, re-read at proposal: applyRelink's own preconditions.
+    facts = await caseFolderFacts(db, folder, id);
+    if (!facts.exists) throw caseFolderError(`"${folder.slice(0, 200)}" no longer exists in Dropbox (it moved, was renamed or deleted since the read) — read the folder again`);
+    if (!facts.is_folder) throw caseFolderError(`"${folder.slice(0, 200)}" is a FILE in Dropbox, not a folder — a case folder must be a folder`);
+    if (!facts.root) {
+      throw caseFolderError(`"${folder.slice(0, 200)}" is under NO enabled sync root: the document sync would never walk it, so its documents would never register — the relink route refuses it too (400). Add a sync root for it first (More → Documents → Sync), or pick a folder inside one`);
+    }
+    if (facts.already_linked_to.length) {
+      throw caseFolderError(`ANOTHER CASE HOLDS THIS FOLDER: "${folder.slice(0, 200)}" is already case ${facts.already_linked_to.join(', ')}'s folder — linking it here as well would put both clients' documents on both cases, and the route refuses it (409). Never proposable; if that case is the wrong one, fix it first`);
+    }
+  } else if (Array.isArray(cand.already_linked_to) && cand.already_linked_to.length) {
     throw caseFolderError(`ANOTHER CASE HOLDS THIS FOLDER: "${folder.slice(0, 200)}" is already case ${cand.already_linked_to.join(', ')}'s folder — linking it here as well would put both clients' documents on both cases, and the route refuses it (409). Never proposable; if that case is the wrong one, fix it first`);
   }
-  if (fresh.current_path && fresh.current_path === folder) {
+  const folderLower = String(folder).toLowerCase();
+  if (fresh.current_path && fresh.current_path === folderLower) {
     throw caseFolderError(`That changes nothing — case ${label} already points at "${folder.slice(0, 200)}"`);
   }
   const [[prior]] = await db.query('SELECT * FROM cases WHERE case_id = ? LIMIT 1', [id]);
   if (!prior) throw caseFolderError(`Case ${caseId} no longer exists`);
 
-  const p = await caseFolderPredict(db, id, folder);
+  const p = await caseFolderPredict(db, id, folderLower);
   const heldLabels = await documentTargetLabels(db, p.held_by.map((h) => ({ link_type: 'case', link_id: h.case_id })));
   const caseName = (cid) => heldLabels({ link_type: 'case', link_id: cid });
   const n = (k, one, many) => `${k.toLocaleString('en-US')} ${k === 1 ? one : many}`;
   const effects = []; const warnings = [];
   const clients = (fresh.client_names || []).map((s) => String(s).trim().slice(0, 120)).filter(Boolean);
-  const lane = cand.confidence === 'docket'
-    ? `the docket lane — the case number "${String(cand.matched_on || '').slice(0, 40)}" appears in the folder's name`
-    : `the name lane — every required word of the client name "${String(cand.matched_on || '').slice(0, 120)}" (surname and first given name) appears in the folder's name`;
-  effects.push(`Matched on: ${lane}.`);
+  if (cand) {
+    const lane = cand.confidence === 'docket'
+      ? `the docket lane — the case number "${String(cand.matched_on || '').slice(0, 40)}" appears in the folder's name`
+      : `the name lane — every required word of the client name "${String(cand.matched_on || '').slice(0, 120)}" (surname and first given name) appears in the folder's name`;
+    effects.push(`Matched on: ${lane}.`);
+  } else {
+    effects.push(`Matched on: NOTHING — a typed path, not one of the panel's candidates. A Dropbox read through the document sync's account proved it: it exists and is a folder (shown as "${String(facts.path_display || folder).slice(0, 300)}"), it sits under the sync root "${facts.root}", and it holds ${n(facts.listed_files, 'file', 'files')} directly${facts.listing_truncated ? ' (at least — the listing was cut off)' : ''}${facts.newest_listed ? ` (newest ${String(facts.newest_listed).slice(0, 10)})` : ''} and ${n(facts.listed_folders, 'subfolder', 'subfolders')}; ${n(facts.registered_files, 'registered file is', 'registered files are')} under it.`);
+    warnings.push(`NOT A CANDIDATE: neither the case number nor a client's name${clients.length ? ` (${clients.join('; ')})` : ''} is in this folder's name ("${String(facts.path.slice(facts.path.lastIndexOf('/') + 1)).slice(0, 160)}") — the panel would never suggest it, and nothing but your word ties it to this case. Every file under it attaches to this case: be sure it is this client's folder.`);
+  }
   effects.push(fresh.current_path
     ? `Now points at: "${String(fresh.current_path_display || fresh.current_path).slice(0, 300)}"${fresh.resolve_error ? ` (its last resolve failed: ${String(fresh.resolve_error).slice(0, 160)})` : ''}.`
     : `Now points at: no folder${fresh.current_link ? ` (the case has a Dropbox link, but it has never resolved to a folder${fresh.resolve_error ? `: ${String(fresh.resolve_error).slice(0, 160)}` : ''})` : ''}.`);
@@ -10170,12 +10623,13 @@ async function normalizeCaseFolderAction(db, value, evidence, { currentUserId = 
   if (p.truncated) {
     warnings.push(`LARGE FOLDER: only the first ${sync.RELINK_ATTRIBUTION_CAP.toLocaleString('en-US')} unattached files under the folder are considered now; the recurring sweep attaches the rest later.`);
   }
-  const nestedIds = Array.isArray(cand.nested_case_ids) ? cand.nested_case_ids.map(String) : [];
+  const nestedIds = cand ? (Array.isArray(cand.nested_case_ids) ? cand.nested_case_ids.map(String) : []) : facts.nested_case_ids;
+  const insideId = cand ? cand.inside_case_id : facts.inside_case_id;
   if (nestedIds.length) {
     effects.push(`Nested case folders: ${nestedIds.slice(0, 8).join(', ')}${nestedIds.length > 8 ? ` (+${nestedIds.length - 8} more)` : ''} ${nestedIds.length === 1 ? 'has its' : 'have their'} own folder inside this one; ${nestedIds.length === 1 ? 'its' : 'their'} files stay on ${nestedIds.length === 1 ? 'that case' : 'those cases'} (a file belongs to the innermost case folder).`);
   }
-  if (cand.inside_case_id) {
-    warnings.push(`INSIDE ANOTHER CASE'S FOLDER: this folder sits inside case ${cand.inside_case_id}'s folder. Its files that already carry that case's sync link stay there and do not attach here (counted above); files added later attach to THIS case. Joint debtors can make this right — make sure it is.`);
+  if (insideId) {
+    warnings.push(`INSIDE ANOTHER CASE'S FOLDER: this folder sits inside case ${insideId}'s folder. Its files that already carry that case's sync link stay there and do not attach here (counted above); files added later attach to THIS case. Joint debtors can make this right — make sure it is.`);
   }
   effects.push('Documents tab: the case\'s Documents tab lists the folder\'s files from now on (staff only — the client portal lists no documents).');
   effects.push('Filing: from now on everything YisraCase files into "the case folder" goes to THIS folder — client uploads from the portal and the public documents link (its "Client Uploads" subfolder), filed form PDFs (Forms), signed e-sign documents (Signed Documents), and automation steps that use {{case_dropbox}}. The case page\'s Dropbox panel shows it once the case page is reopened.');
@@ -10186,7 +10640,7 @@ async function normalizeCaseFolderAction(db, value, evidence, { currentUserId = 
     effects.push('Candidates: more folders matched than the panel lists — be sure this is the right one.');
   }
   effects.push('If Dropbox cannot resolve the new link at once, the link still changes but nothing attaches or detaches until the next folder-cache run — the result says so.');
-  effects.push('Audit: one log entry on the case ("Case Dropbox folder re-linked") records who did it, the old path and old link, the new path and link, and the counts.');
+  effects.push('Audit: one log entry on the case ("Case Dropbox folder re-linked") records who did it, the old path and old link, the new path and link, and the counts — the entry an undo card cites.');
 
   // Downstream automation: the case.updated envelope updateCase emits for
   // applyRelink step 4. The link itself is minted at the click: a stand-in.
@@ -10203,9 +10657,13 @@ async function normalizeCaseFolderAction(db, value, evidence, { currentUserId = 
   return {
     draft_id: crypto.randomUUID(), kind: 'case.folder.relink.v1', status: 'draft',
     case: { case_id: id, label, case_number: fresh.case_number || null, case_number_full: fresh.case_number_full || null, clients: clients.slice(0, 4) },
-    folder: {
+    folder: cand ? {
       path: cand.path, files: Number(cand.files) || 0, newest: documentIso(cand.newest), confidence: cand.confidence,
       matched_on: String(cand.matched_on || '').slice(0, 120), inside_case_id: cand.inside_case_id || null, nested_case_ids: nestedIds.slice(0, 20),
+    } : {
+      path: folder, path_display: facts.path_display, files: p.under_total, newest: documentIso(facts.registered_newest), confidence: 'typed', matched_on: null,
+      inside_case_id: facts.inside_case_id, nested_case_ids: nestedIds.slice(0, 20),
+      root: facts.root, listed_files: facts.listed_files, listed_folders: facts.listed_folders, listing_truncated: facts.listing_truncated, newest_listed: facts.newest_listed,
     },
     current: {
       path: fresh.current_path || null, path_display: fresh.current_path_display || null, link: fresh.current_link || null,
@@ -10214,10 +10672,13 @@ async function normalizeCaseFolderAction(db, value, evidence, { currentUserId = 
     prediction: p,
     automation: { events: ['case.updated'], lines: automation.lines.map((l) => l.text), rules_checked: automation.rules_checked, quiet: automation.quiet },
     effects, warnings,
-    no_undo: 'There is no undo button. To recover, re-link the correct folder (which retracts these sync links) or unlink documents one by one and clear the case\'s Dropbox link by hand; the audit entry keeps the old path and the old link.',
-    expected: {
+    no_undo: 'There is no undo button on this card. While this stays the case\'s latest re-link, an undo card (case.folder.relink.undo.v1, citing its audit entry) re-links the old folder, which retracts these sync links; otherwise re-link the correct folder, or unlink documents one by one and clear the case\'s Dropbox link by hand. The audit entry keeps the old path and the old link.',
+    expected: cand ? {
       case_dropbox: fresh.current_link || null, current_path: fresh.current_path || null,
       path: cand.path, files: Number(cand.files) || 0, already_linked_to: null,
+    } : {
+      case_dropbox: fresh.current_link || null, current_path: fresh.current_path || null,
+      path: folder, files: p.under_total, already_linked_to: null, typed: 1,
     },
     evidence: refs,
   };
@@ -14676,6 +15137,8 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && MAIL_ACTION_KINDS.has(value.kind)) return normalizeMailAction(db, value, evidence, { currentUserId });
   if (value && MAIL_ATTACHMENTS_ACTION_KINDS.has(value.kind)) return normalizeMailAttachmentsAction(db, value, evidence, { currentUserId });
   if (value && CASE_FOLDER_ACTION_KINDS.has(value.kind)) return normalizeCaseFolderAction(db, value, evidence, { currentUserId });
+  if (value && CASE_FOLDER_DISMISS_ACTION_KINDS.has(value.kind)) return normalizeCaseFolderDismissAction(db, value, evidence, { currentUserId });
+  if (value && CASE_FOLDER_UNDO_ACTION_KINDS.has(value.kind)) return normalizeCaseFolderUndoAction(db, value, evidence, { currentUserId });
   if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Action kind is unavailable');
   if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
   if (!onlyKeys(value, TASK_CREATE_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
@@ -14897,14 +15360,19 @@ function taskDraftRequested(question, history = []) {
   // A11.1: a Dropbox folder claimed for a case ("link the Smith folder to her
   // case", "relink the case's Dropbox folder", "point the case at that folder").
   const folderRelink = /\b(?:dropbox|folders?)\b/i.test(text) &&
-    /\b(?:draft|propose|prepare|re-?link|link|attach|connect|associate|point|claim|assign|set|fix|repair|change|switch|update)\b/i.test(request);
+    /\b(?:draft|propose|prepare|re-?link|link|attach|connect|associate|point|claim|assign|set|fix|repair|change|switch|update|undo|revert|roll ?back|put back|restore)\b/i.test(request);
+  // A11.1X: the relink queue's dismissal ("dismiss the Smith case from the
+  // relink queue", "put it back in the queue"), and undoing a re-link named as
+  // such ("undo the re-link on 7KQ2M9XA").
+  const folderQueue = /\b(?:re-?link(?:ed|ing)?|relink queue|dismiss(?:al|ed)?)\b/i.test(text) &&
+    /\b(?:dismiss|un-?dismiss|undo|revert|roll ?back|put\b[^.?!\n]{0,40}\bback|restore|return)\b/i.test(request);
   // A7 groups B/C: another case field set, changed or cleared ("set the file
   // date on the Smith case", "change her trustee to …", "clear the show cause
   // date"). A case-field noun with a case noun and an edit verb.
   const caseFields = /\b(?:(?:open|file|filing|close|closing|discharge|objection|preference|341|show[ -]?cause|due|confirmation|hearing)\s+dates?|dates? (?:filed|opened|closed|discharged)|judge|trustee|chapter|caption|our role|lead source|case source|source ref|primary reason|341 (?:link|status|docs|amend\w*|notes)|show[ -]?cause|objection|preference|180|matrix|schedules|filing fee|final installment|docs (?:due|missing)|garnish\w*|reaffirm\w*|redemption|(?:1st|2nd|first|second) course|pre-?petition|post-?petition|fee (?:application|order|amounts?|due)|funding app|plan (?:filed|cos)|dismissal notice|outcome|follow-?up email|7 ?steps|custom fields?|case fields?|cf_\w+)\b/i.test(text) &&
     /\b(?:case|file|matter|debtor|client)s?\b/i.test(text) &&
     /\b(?:draft|propose|prepare|set|change|update|edit|correct|fix|enter|record|put|fill|mark|check|uncheck|clear|empty|remove|blank|switch|assign)\b/i.test(request);
-  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || requirementOverride || checklist || documentEdit || docketAdopt || caseFields || formWork || formTemplate || mailTriage || mailAttachments || folderRelink || job || workflow || hook || sequence || send || ingestRule ||
+  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || requirementOverride || checklist || documentEdit || docketAdopt || caseFields || formWork || formTemplate || mailTriage || mailAttachments || folderRelink || folderQueue || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 
@@ -15147,6 +15615,15 @@ function validateStep(query, index) {
     if (!/^[A-Za-z0-9_-]{1,20}$/.test(caseId)) throw httpError(422, `Step ${id} needs the case's exact case_id`);
     return { id, kind, purpose, case_id: caseId };
   }
+  // A11.1X — ONE Dropbox folder path as the documents sync sees it (typed: a
+  // provider read through the sync's credential; never sql.read-able).
+  if (kind === 'document.folder') {
+    const p = typeof query.path === 'string' ? query.path : '';
+    if (!p.startsWith('/') || p === '/' || p.length > CASE_FOLDER_PATH_MAX || CASE_DOCKET_CONTROL.test(p)) {
+      throw httpError(422, `Step ${id} document.folder needs "path": one full Dropbox folder path starting with "/" (not the root; no line breaks or control characters)`);
+    }
+    return { id, kind, purpose, path: p };
+  }
   // A9.2 — ONE case's resolved pipeline: its stages (both lanes), their
   // requirements with the resolver's statuses, its position and history
   // (typed: the pipeline tables are outside the curated schema).
@@ -15377,6 +15854,7 @@ function stepFingerprint(step) {
   if (kind === 'mail.message') return `${kind}:${Number(step.mail_message_id)}`;
   if (kind === 'mail.attachments.preview') return `${kind}:${Number(step.mail_message_id)}:${String(step.case_id || '')}`;
   if (kind === 'document.relink.candidates') return `${kind}:${String(step.case_id || '')}`;
+  if (kind === 'document.folder') return `${kind}:${String(step.path || '').toLowerCase()}`;
   if (kind === 'case.pipeline') return `${kind}:${String(step.case_id || '')}`;
   if (kind === 'esign.requests') return step.case_id != null ? `${kind}:case:${String(step.case_id)}` : `${kind}:contact:${Number(step.contact_id)}`;
   if (kind === 'automation.definition') return `${kind}:${recordFingerprint(step)}:${step.version === undefined ? 'current' : Number(step.version)}`;
@@ -15680,6 +16158,13 @@ async function executeReadStep(db, query, { auth, userId }) {
     // A11.1: on the app pool (case_folder_cache stays outside the report
     // manifest); the panel's own read, never with weak matches.
     const out = await relinkCandidatesRead(db, query.case_id);
+    rows = out.rows;
+    rowCount = rows.length;
+    truncated = out.truncated;
+  } else if (query.kind === 'document.folder') {
+    // A11.1X: Dropbox through the documents sync's credential plus the app
+    // pool (case_folder_cache and document_links stay outside the manifest).
+    const out = await documentFolderRead(db, query.path);
     rows = out.rows;
     rowCount = rows.length;
     truncated = out.truncated;
@@ -16272,7 +16757,7 @@ module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
-  normalizeActionDraft, contactRelationsRead, formTemplateRead, formTemplateStateRead, mailSearchRead, mailMessageRead, mailAttachmentsPreviewRead, relinkCandidatesRead, esignRequestsRead, casePipelineRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
+  normalizeActionDraft, contactRelationsRead, formTemplateRead, formTemplateStateRead, mailSearchRead, mailMessageRead, mailAttachmentsPreviewRead, relinkCandidatesRead, documentFolderRead, esignRequestsRead, casePipelineRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
   repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan, answerSystemAppend, answerMaxTokens,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,
