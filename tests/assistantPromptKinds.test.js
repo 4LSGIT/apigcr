@@ -433,29 +433,52 @@ describe('A10 — every stage teaches the checklist cards, their evidence aliase
 });
 
 // A10.2: the checklist family's edits of an existing list. Pins that every
-// stage teaches the three kinds, the evidence each cites, that there is NO
-// reorder (the page has none — a stage that does not know it invents one), the
-// by-name refusals, and that a delete is said to be permanent.
-describe('A10.2 — every stage teaches the list update / delete / item delete cards, and that there is no reorder', () => {
-  test('the plan extends the checklist bullet with the reads the cards cite and the missing reorder', () => {
+// stage teaches the three kinds, the evidence each cites, the by-name
+// refusals, and that a delete is said to be permanent. (A10.2 also taught
+// "no reorder"; A10X replaced that with the reorder card — pinned below.)
+describe('A10.2 — every stage teaches the list update / delete / item delete cards', () => {
+  test('the plan extends the checklist bullet with the reads the cards cite', () => {
     expect(planPrompt).toContain('The same family renames ONE list or note, sets ONE note\'s done state or replaces its text, deletes ONE list or note\n  with its items, or deletes ONE item');
-    expect(planPrompt).toContain('There is no reorder action (the page has none).');
+    expect(planPrompt).not.toContain('There is no reorder action');
   });
   test('the investigate stage names the aliases for the new cards', () => {
     expect(investigatePrompt).toContain('checkitems.id AS checkitem_id for an item change or an item delete');
     expect(investigatePrompt).toContain('checklists.id AS checklist_id for a rename, a note edit or a list delete');
   });
-  test('the answer and repair stages teach the shapes, the refusals, no reorder and NO UNDO', () => {
+  test('the answer and repair stages teach the shapes, the refusals and NO UNDO', () => {
     for (const kind of ['checklist.update.v1', 'checklist.delete.v1', 'checklist.item.delete.v1']) {
       expect({ kind, answer: answerPrompt.includes(`{"kind":"${kind}"`), repair: repairPrompt.includes(`- ${kind}: kind,`) }).toEqual({ kind, answer: true, repair: true });
     }
-    expect(answerPrompt).toContain('There is NO reorder card — the page cannot reorder\n    items either; say so.');
+    expect(answerPrompt).not.toContain('There is NO reorder card');
     expect(answerPrompt).toContain('"list_kind" (a list\'s kind\n    never changes), "link" / "link_type" (a list is never moved to another record)');
     expect(answerPrompt).toContain('except that a superuser may delete one (the route allows it; the card warns)');
     expect(answerPrompt).toContain('that a delete has NO UNDO');
     expect(repairPrompt).toContain('never tag, list_kind, link, link_type or items');
-    expect(repairPrompt).not.toContain('checklist.items.reorder');
-    expect(answerPrompt).not.toContain('checklist.items.reorder');
+  });
+});
+
+// A10X: the reorder card — the atomic route PUT /checklists/:id/items/order.
+// Pins that every stage teaches it: the plan reads EVERY item in order, the
+// investigate stage names the per-item alias, the answer and repair stages the
+// shape (item_ids = every item once, first = top), its refusals and that the
+// page has no reorder control of its own; and that the stale "not on the
+// live-update bus" sentence is gone.
+describe('A10X — every stage teaches the reorder card', () => {
+  test('the plan reads the list and ALL its items in order', () => {
+    expect(planPrompt).toContain('It also REORDERS every item of ONE checklist in one step (the page\n  itself has no reorder control)');
+    expect(planPrompt).toContain('ALL its\n  items in their current order (checkitems.id AS checkitem_id, name, status, position)');
+  });
+  test('the investigate stage names every item\'s alias for a reorder', () => {
+    expect(investigatePrompt).toContain('plus EVERY item\'s row with\n  checkitems.id AS checkitem_id for a reorder');
+  });
+  test('the answer and repair stages teach the shape, the refusals and that the card is the reorder UI', () => {
+    expect(answerPrompt).toContain('{"kind":"checklist.items.reorder.v1","checklist_id":412,"item_ids":[5122,5120,5121]');
+    expect(answerPrompt).toContain('"item_ids" lists EVERY item\'s exact checkitem_id once,\n    in the new order (first = top)');
+    expect(answerPrompt).toContain('a missing or extra item, a note, a list of one item and\n    an order that changes nothing');
+    expect(answerPrompt).toContain('The Notes & Lists page has no reorder control of its own — this card is the way to\n    reorder');
+    expect(answerPrompt).not.toContain('not on\n    the live-update bus');
+    expect(answerPrompt).toContain('Every checklist write is on\n    the live-update bus');
+    expect(repairPrompt).toContain('- checklist.items.reorder.v1: kind,checklist_id,item_ids,evidence — item_ids = EVERY item\'s exact checkitem_id once\n  each, in the new order (first = top)');
   });
 });
 

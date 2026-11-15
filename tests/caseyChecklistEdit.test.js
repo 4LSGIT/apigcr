@@ -8,8 +8,8 @@
  *                              (the page's editTitle / toggleNoteDone / saveBody)
  *   checklist.delete.v1      → DELETE /checklists/:id   (deleteList — items cascade)
  *   checklist.item.delete.v1 → DELETE /checkitems/:id   (deleteItem)
- * There is no reorder kind: the page has no item reorder and the routes no
- * atomic reorder route (manager ruling (a), 2026-11-11).
+ * A10.2 shipped no reorder kind (no atomic route then); A10X built PUT
+ * /checklists/:id/items/order and its card — tests/caseyChecklistOrder.test.js.
  *
  * The contract pinned here (mocked db; the resolver and the checklist
  * detector are the REAL services/requirementService + requirementDetectors,
@@ -229,7 +229,7 @@ describe('checklist.update.v1 — rename a list, a note\'s done state, a note\'s
       'Writes: this list\'s title — nothing else (no item, no tag, no record).',
       'Trigger event: none — this route emits no event (a note\'s done state deliberately emits none), so no trigger rule runs.',
       'Pipeline: no step changes — a step\'s checklist detector reads only a case\'s tagged CHECKLISTS and their derived status, never a note, a title or a note\'s text.',
-      'Other open pages: PATCH /checklists/:id is announced on the sync bus — another open Notes & Lists board for this record refreshes on its own (one with unsaved note text or the caret in a field refreshes once that is done); the global Notes & Lists page\'s Browse view does not listen and shows the old list until it reloads.']);
+      'Other open pages: PATCH /checklists/:id is announced on the sync bus — another open Notes & Lists board for this record refreshes on its own (one with unsaved note text or the caret in a field refreshes once that is done); the global Notes & Lists page\'s Browse view reloads its first page too (it waits while a row\'s editor is open or the page is hidden).']);
     expect(card.evidence).toEqual([expect.objectContaining(listRow(412)[0])]);
   });
 
@@ -324,7 +324,7 @@ describe('checklist.delete.v1 — a list or note, its items with it', () => {
       'Pipeline: every step of case 25-12345-abc keeps its status — its checklist steps were re-resolved over this change.',
       'Writes: one DELETE — the list and its 2 item rows (the items go with it by the database\'s cascade); nothing else.',
       'Trigger event: none — deleting a list emits no event, so no trigger rule runs.',
-      'Other open pages: DELETE /checklists/:id is announced on the sync bus — another open Notes & Lists board for this record refreshes on its own (one with unsaved note text or the caret in a field refreshes once that is done); the global Notes & Lists page\'s Browse view does not listen and shows the old list until it reloads.']);
+      'Other open pages: DELETE /checklists/:id is announced on the sync bus — another open Notes & Lists board for this record refreshes on its own (one with unsaved note text or the caret in a field refreshes once that is done); the global Notes & Lists page\'s Browse view reloads its first page too (it waits while a row\'s editor is open or the page is hidden).']);
     expect(card.items_before).toEqual([{ name: 'Pull credit report', status: 'incomplete' }, { name: 'Order transcripts', status: 'complete' }]);
     expect(card.pipeline).toEqual([]);
     expect(card.expected.items).toEqual(['5120:incomplete:Pull credit report', '5121:complete:Order transcripts']);
@@ -388,7 +388,7 @@ describe('checklist.item.delete.v1 — one item', () => {
       'Pipeline: every step of case 25-12345-abc keeps its status — its checklist steps were re-resolved over this change.',
       'Trigger event: none — deleting an item emits checklist.completed only when it completes the list, and this one does not.',
       'Writes: one DELETE of this item; the route then recomputes "Pre-filing to-dos"\'s derived status — nothing else.',
-      'Other open pages: DELETE /checkitems/:id is announced on the sync bus — another open Notes & Lists board for this record refreshes on its own (one with unsaved note text or the caret in a field refreshes once that is done); the global Notes & Lists page\'s Browse view does not listen and shows the old list until it reloads.']);
+      'Other open pages: DELETE /checkitems/:id is announced on the sync bus — another open Notes & Lists board for this record refreshes on its own (one with unsaved note text or the caret in a field refreshes once that is done); the global Notes & Lists page\'s Browse view reloads its first page too (it waits while a row\'s editor is open or the page is hidden).']);
   });
 
   test('the last OPEN item of the docs list: the list completes, checklist.completed is dry-run, its step goes done (danger)', async () => {
@@ -458,7 +458,8 @@ describe('the ledger and the request detector', () => {
     expect(ledger.KINDS.get('checklist.update.v1')).toBe('checklist_id');
     expect(ledger.KINDS.get('checklist.delete.v1')).toBe('checklist_id');
     expect(ledger.KINDS.get('checklist.item.delete.v1')).toBe('checkitem_id');
-    expect(ledger.KINDS.has('checklist.items.reorder.v1')).toBe(false);
+    // A10X: the reorder kind exists since the atomic route does (tests/caseyChecklistOrder.test.js).
+    expect(ledger.KINDS.get('checklist.items.reorder.v1')).toBe('checklist_id');
   });
   test.each([
     'Delete the pre-filing checklist',

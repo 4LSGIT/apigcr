@@ -87,6 +87,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   // A10.2: the list update / delete / item delete families (tests/caseyChecklistEdit.test.js drives them function by function).
   'checklistEditLabel', 'checklistEditShowText', 'checklistEditText', 'checklistEditListId', 'checklistUpdateRequest', 'checklistDeleteRequest',
   'checkitemDeleteRequest', 'checklistEditPrecheck', 'checklistUpdateResult', 'checklistDeleteResult', 'checkitemDeleteResult', 'checklistEditKnownOutcome',
+  // A10X: the reorder family (tests/caseyChecklistOrder.test.js drives it function by function).
+  'checklistReorderLabel', 'checklistReorderText', 'checklistReorderRequest', 'checklistReorderPrecheck', 'checklistReorderResult', 'checklistReorderKnownOutcome',
   'documentChars', 'documentNorm', 'documentFoldId', 'documentLabel', 'documentName', 'documentSize', 'documentShown', 'documentText',
   'documentId', 'documentUpdateBody', 'documentUpdateRequest', 'documentLinkRequest', 'documentLinkSignature', 'documentRead',
   'documentUpdatePrecheck', 'documentLinkPrecheck', 'documentUpdateResult', 'documentLinkResult', 'documentKnownOutcome',
@@ -158,6 +160,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CASE_REQUIREMENT_OVERRIDE_ACTION_KINDS'), constSrc(html, 'CASE_OVERRIDE_KEY'),
     constSrc(html, 'CHECKLIST_ACTION_KINDS'), constSrc(html, 'CHECKITEM_ACTION_KINDS'), constSrc(html, 'CHECKLIST_LINK_TYPES'),
     constSrc(html, 'CHECKLIST_EDIT_ACTION_KINDS'), constSrc(html, 'CHECKLIST_DELETE_ACTION_KINDS'), constSrc(html, 'CHECKITEM_DELETE_ACTION_KINDS'),
+    constSrc(html, 'CHECKLIST_REORDER_ACTION_KINDS'),
     constSrc(html, 'DOCUMENT_ACTION_KINDS'), constSrc(html, 'DOCLINK_ACTION_KINDS'), constSrc(html, 'DOCUMENT_FIELD_MAX'),
     constSrc(html, 'DOCSHARE_ACTION_KINDS'), constSrc(html, 'DOCUNLINK_ACTION_KINDS'), constSrc(html, 'DOCSHARE_LINK_MAX'),
     constSrc(html, 'CASE_DOCKET_ACTION_KINDS'), constSrc(html, 'CASE_DOCKET_FIELDS'), constSrc(html, 'CASE_DOCKET_NAMES'),
@@ -4008,8 +4011,12 @@ describe('A10 checklist cards (checklist.create / item.add / item.update)', () =
       .toEqual([['checklist_update', ['checklist.update.v1'], 'checklist_id', 'result_checklist_update_id', false],
         ['checklist_delete', ['checklist.delete.v1'], 'checklist_id', 'result_checklist_delete_id', false],
         ['checkitem_delete', ['checklist.item.delete.v1'], 'checkitem_id', 'result_checkitem_delete_id', false]]);
-    // No reorder (the page has none) and no upsert-many (no UI).
-    for (const kind of ['checklist.items.reorder.v1', 'checklist.upsert.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    // A10X: the reorder family (driven in tests/caseyChecklistOrder.test.js).
+    expect([fam('checklist.items.reorder.v1').id, [...fam('checklist.items.reorder.v1').kinds], fam('checklist.items.reorder.v1').idField,
+      fam('checklist.items.reorder.v1').appliedKey, !!fam('checklist.items.reorder.v1').stringReceipt])
+      .toEqual(['checklist_reorder', ['checklist.items.reorder.v1'], 'checklist_id', 'result_checklist_reorder_id', false]);
+    // No upsert-many card in this slice.
+    expect(box.actionFamily({ kind: 'checklist.items.upsert.v1' })).toBe(null);
     dom.window.close();
   });
 });

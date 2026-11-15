@@ -1127,6 +1127,9 @@
                                       board it left must hear too
          DELETE /checklists/:id       {status, message} + the deleted row's
                                       {id, link_type, link}, echoed for this
+         PUT /checklists/:id/items/order  the WHOLE list in its new order
+                                      (link_type, link) — A10X's atomic
+                                      reorder
        Fails closed on an unlinked list (link NULL — no record's board shows
        it) and on a missing echo. Not matched: POST /checklists/upsert-items
        (server-side Docs Needed upsert; no browser caller announces through
@@ -1135,6 +1138,7 @@
        the ROOT (/checklists, not /api/checklists). */
     [/^\/checklists$/,               'checklist', checklistGetter(false), ['POST']],
     [/^\/checklists\/(\d+)\/items$/, 'checklist', checklistGetter(false), ['POST']],
+    [/^\/checklists\/(\d+)\/items\/order$/, 'checklist', checklistGetter(false), ['PUT']],
     [/^\/checkitems\/(\d+)$/,        'checklist', checklistGetter(true),  ['PATCH', 'DELETE']],
     [/^\/checklists\/(\d+)$/,        'checklist', checklistGetter(false), ['PATCH', 'DELETE']],
 

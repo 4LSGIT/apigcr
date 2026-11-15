@@ -776,11 +776,13 @@ Casey can make **one checklist or note** on a case, on a contact, or as your
 own personal list, **add one item** to an existing checklist, **rename, check
 off or reopen one item**, **rename one list or note**, **mark one note done or
 not done**, **replace one note's text**, **delete one list or note** (with its
-items) or **delete one item** — one change per card, through the same routes
-the Notes & Lists tab uses. Ask in plain words ("make a pre-filing checklist
-on the Smith case with credit report and tax transcripts", "add 2024 W-2 to
-that list", "check off the credit report", "rename that list to Pre-filing
-2026", "delete the old intake list").
+items), **delete one item** or **reorder a checklist's items** — one change per
+card, through the same routes the Notes & Lists tab uses (the reorder has its
+own route, because the tab has no reorder control: Casey's card is the way to
+put items in order). Ask in plain words ("make a pre-filing checklist on the
+Smith case with credit report and tax transcripts", "add 2024 W-2 to that
+list", "check off the credit report", "rename that list to Pre-filing 2026",
+"delete the old intake list", "put pay stubs first on that list").
 
 - **A new list** shows the record it goes on, its title, whether it is a
   checklist or a note, and its starting items (up to 25 — each starts
@@ -794,6 +796,12 @@ that list", "check off the credit report", "rename that list to Pre-filing
   note's done / not done, or the note's text (the new text replaces the old
   text whole). A checklist's done state follows its items, so only a note's
   can be set.
+- **A reorder** lists every item in its old order and in its new order (the
+  ones that move are marked) and saves the whole order in one step — nothing
+  else on the list changes. It names every item on the list, so a list with
+  an item added or removed since the card was prepared is refused, and so is
+  a list someone reordered meanwhile. On a case's Docs Needed list the client
+  sees the new order.
 - **A delete** always shows in warning style and says it **cannot be undone**:
   a list card shows how many items go with it (done and open) and names them;
   a note card shows the length of its text; an item card shows the item and
@@ -822,8 +830,6 @@ that list", "check off the credit report", "rename that list to Pre-filing
     (add items to the existing one instead);
   - set a list's **tag**, change a list between checklist and note, or move it
     to another record;
-  - put items in a particular **order** — the Notes & Lists tab cannot reorder
-    items either;
   - make a list for **another person**, or on a bill, appointment, task or
     event, or change another person's personal list (a superuser may delete
     one, with a warning);
@@ -841,7 +847,8 @@ that list", "check off the credit report", "rename that list to Pre-filing
   added item, an item change, a list or note change, a delete — an open Notes
   & Lists tab for that record refreshes on its own, unless you are typing in
   it; then it refreshes when you click away. The Browse view of More → Notes &
-  Lists does not, and shows the old list until you reopen it.
+  Lists reloads its first page too (once you go back from an open list, or
+  return to a hidden tab).
 
 The off switch for these cards is the `casey_checklists_enabled` setting (on
 unless set to 0).

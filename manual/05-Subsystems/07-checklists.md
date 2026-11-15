@@ -40,6 +40,7 @@ is shown as a badge you can't edit: staff own titles, machines own tags.
 | Add items to a note, or a body to a checklist | The two shapes are mutually exclusive |
 | Convert a note into a checklist or back | It would strand your text or your items, so it's refused rather than guessing which to lose |
 | Delete someone else's personal list, or re-home it away from them | It's theirs |
+| Drag items into a new order | The board has no reorder control. Ask Casey to reorder a list instead — its reviewed card shows every item before and after, and saves the whole order in one step |
 
 **But you can absolutely work on someone else's list** — create one for them,
 add items, tick them off, rename them. Delegation is the point. Only
@@ -132,6 +133,7 @@ concurrent caller winning the insert race is not an error there.
 | `/checklists/:id` | GET, PATCH, DELETE | One list (+items); DELETE cascades items. For the sync bus the PATCH answers the list plus `moved_from` {link_type, link} when it re-homed it, and the DELETE echoes the deleted row's {id, link_type, link} |
 | `/checklists/:id/items` | POST | Add an item |
 | `/checkitems/:id` | PATCH, DELETE | Update name/status (answers the item row plus its list's `checklist` {id, link_type, link}, for the sync bus), or remove (answers the same `checklist` echo) |
+| `/checklists/:id/items/order` | PUT | Reorder: `{item_ids}` = every item on the list, once each, in the new order. One transaction rewrites `position` to 1..N; 409 (nothing written, the current `item_ids` in the answer) when the set is not exactly the list's items, 400 on a note or a bad / repeated id. Answers the list in its new order. Gate: authentication only, like the item routes. No surface but Ask Casey's reorder card sends it |
 | `/checklists/upsert-items` | POST | Find-or-create the `docs_needed` list and upsert items |
 
 **Public — unauthenticated, `case_id` is the only capability:**

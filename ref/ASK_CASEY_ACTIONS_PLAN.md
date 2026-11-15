@@ -9,7 +9,7 @@ reschedule-later; one phone/email/address subrecord create, narrow update or
 history-preserving end. Since then: A6 (contact relations and roles — create and
 update), A7 group A (case notes, case alerts, contact notes), A7 groups B/C (any
 other case field, 2026-11-09; the docket's replace / clear, A7e), A7c (case docket adopt), A8 (case contacts — add, role change, remove), A9 + A9.1 (pipeline
-advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer) + A9.4 (requirement override set / clear), A10 + A10.2 (checklists and items; list rename / note edit, list and item delete), A11 + A11.2 (documents —
+advance and move; off-ramp = exit) + A9.2 (the typed `case.pipeline` read) + A9.3 (the cross-pipeline transfer) + A9.4 (requirement override set / clear), A10 + A10.2 (checklists and items; list rename / note edit, list and item delete) + A10X (the atomic item reorder), A11 + A11.2 (documents —
 update and link; share and unlink), A11.1 (a case's Dropbox folder — candidates-only relink),
 A12 + A12.2 + A12.3 (form drafts and submission links; draft discard and PDF filing; appointment
 records; submitting a stored draft), A12.4 (form templates — publish, visibility, version restore,
@@ -31,9 +31,9 @@ of its plan stands in those sections.
 
 ## Review briefing
 
-The shipped baseline is 91 proposal kinds (the action ledger's `KINDS`
+The shipped baseline is 92 proposal kinds (the action ledger's `KINDS`
 registry; `tests/caseyActionPermissions.test.js` pins the inventory against it)
-in 47 browser families: the record families — Tasks, Events, Appointments,
+in 48 browser families: the record families — Tasks, Events, Appointments,
 contact phone / email / address rows, contact relations and roles, case and
 contact notes and case alerts, case contacts, case pipeline moves, the case
 docket, the case's Dropbox folder, checklists and their items, documents and their links (edit, link, unlink, share), form drafts, submission links,
@@ -1448,15 +1448,16 @@ DELETE. `normalizeCaseRequirementOverrideAction`:
   `tests/assistantUi.test.js`, `tests/assistantPromptKinds.test.js`,
   `tests/caseyActionPermissions.test.js` (78 kinds / 66 mounts).
 
-#### A10: Checklists and checklist items — create, item add and item update shipped 2026-11-01, edits and deletes (A10.2) 2026-11-11
+#### A10: Checklists and checklist items — create, item add and item update shipped 2026-11-01, edits and deletes (A10.2) 2026-11-11, reorder (A10X) 2026-11-15
 
 Creating a checklist or note, adding one item, and updating / completing one
 item; A10.2 adds the page's own edits of an existing list (rename, a note's
-done state and text) and its deletes (a list, an item). Template expansion and
-upsert-many stay separate because they create or affect many records; reorder
-does not exist on the page or as an atomic route. The parent record is resolved
-server-side, the card shows the item counts, and A10's and A10.2's writes are
-all on the sync bus.
+done state and text) and its deletes (a list, an item); A10X adds the reorder
+of every item of one list through an atomic route built for it (the page has
+no reorder control of its own). Template expansion and upsert-many stay
+separate because they create or affect many records. The parent record is
+resolved server-side, the card shows the item counts, and A10's, A10.2's and
+A10X's writes are all on the sync bus.
 
 **What the routes guard.** Little. The Notes & Lists routes
 (`routes/api.checklists.js`, mounted at the ROOT — `/checklists`,
@@ -1555,10 +1556,8 @@ the case and contact pages' Notes & Lists tabs, which iframe it) uses:
 `/checklists/:id` (the page's editTitle / toggleNoteDone / saveBody),
 `checklist.delete.v1` {checklist_id} → DELETE `/checklists/:id` (deleteList) and
 `checklist.item.delete.v1` {checkitem_id} → DELETE `/checkitems/:id`
-(deleteItem). There is no reorder kind: the page has no item reorder (no drag
-handler, no position write) and the routes no atomic reorder — only one
-`position` per PATCH `/checkitems/:id`, which no surface sends (manager ruling,
-2026-11-11).
+(deleteItem). The page has no item reorder (no drag handler, no position
+write); reorder is its own kind on an atomic route built for it (A10X, below).
 - **Refused by name**, before anything is read: `tag` (system field, SU-only)
   and `position` anywhere; on an update `list_kind` (a list's kind never changes
   — the route 400s it), `link` / `link_type` (the page never moves a list) and
@@ -1616,17 +1615,61 @@ handler, no position write) and the routes no atomic reorder — only one
 - **Sync.** PATCH and DELETE `/checklists/:id` and DELETE `/checkitems/:id`
   are on yc-sync (`checklist:<link_type>:<link>`; the DELETEs echo the record,
   a re-homing PATCH adds `moved_from`), so another open board for the record
-  refreshes; the global page's Browse view does not listen (each card says
-  so; `ref/plans.md`).
+  refreshes, and so does the global page's Browse view (its own `checklist:*`
+  subscriber since 2026-11-11; each card says so).
 - Tests: `tests/caseyChecklistEdit.test.js` (mocked; the real resolver over a
   fake db; browser lifted by name), gated `tests/caseyChecklistEdit.mysql.test.js`
   (the real routes; the projection equals the real resolver after the real
   write), `tests/assistantUi.test.js`, `tests/assistantPromptKinds.test.js`,
   `tests/caseyActionPermissions.test.js`.
 
+**Shipped contract (A10X reorder, 2026-11-15 — Fred: "release means allow").**
+One kind behind the same switch: `checklist.items.reorder.v1` {checklist_id,
+item_ids} → PUT `/checklists/:id/items/order` {item_ids}, a NATIVE route built
+for it first (`routes/api.checklists.js`).
+- **The route.** `item_ids` = EVERY item on the list, each once, in the new
+  order; it rewrites `position` to 1..N in ONE transaction (`withTransaction`,
+  retries 1 — pure DB): the list row FOR UPDATE, its items FOR UPDATE, the id
+  set compared, one CASE UPDATE. 400 for a non-array, a non-positive or
+  fractional id, a repeat, more than 1000 ids, or a NOTE; 404 for no list; 409
+  — nothing written — when the set is not exactly the list's current items
+  (the answer carries the current `item_ids`). An item add in flight holds the
+  FK's shared lock on the list, so a reorder that starts meanwhile waits and
+  then 409s (the items' FOR UPDATE also waits on it under REPEATABLE READ; the
+  list lock is what holds under READ COMMITTED). Gate: authentication only —
+  the item routes' gate (reordering someone's personal list is collaboration on
+  its items, not a detach). Answers the whole list in its new order (the GET
+  shape); emits no event, leaves the status alone.
+- **The card.** The A10 family rules (a case, a contact or the asker's own
+  personal list); refused: a note, a list of fewer than two items, a set that
+  is not exactly the list's (the missing / foreign ids named), a repeat, an
+  order that changes nothing, more than 200 items. Shows EVERY item before →
+  after (moved ones marked) and how many change place; a docs list is
+  CLIENT-VISIBLE (the portal and the public documents link list items in
+  position order); no event, no pipeline step (the detector counts items),
+  on the bus.
+- **Freshness / outcomes.** `expected` = the A10.2 list expectation plus the
+  item ORDER; the click re-reads GET `/checklists/:id` and refuses if the list,
+  any item or the order changed; a forged order (not a permutation of the
+  reviewed one) is never read. The route's 409 and the 404 are refusals
+  (`knownOutcome`). The result check requires the answer's items in exactly the
+  reviewed order. Receipt: the integer `checklist_id`. Browser family
+  `checklist_reorder` (danger with a warning).
+- **Native UI:** none — the Notes & Lists page still has no reorder control;
+  the card is the reorder UI (manual 05/07 says so).
+- **Sync.** PUT `/checklists/:id/items/order` is on yc-sync
+  (`checklist:<link_type>:<link>`, read off the answered list).
+- Tests: `tests/caseyChecklistOrder.test.js` (mocked; browser lifted by name),
+  gated `tests/caseyChecklistOrder.mysql.test.js` (the real route: the order
+  written, every refusal writing nothing, the wait-then-409 against an
+  uncommitted add, two racing reorders ending in one order; the card and the
+  browser re-read over the real GET), `tests/ycSync.test.js`,
+  `tests/assistantUi.test.js`, `tests/assistantPromptKinds.test.js`,
+  `tests/caseyActionPermissions.test.js`.
+
 **Deferred** (`ref/plans.md`): lists for another user (except a superuser's
-delete); lists on bills, appointments, tasks and events; reorder — no surface
-offers it and no route does it atomically; upsert-many and template expansion.
+delete); lists on bills, appointments, tasks and events; upsert-many and
+template expansion.
 
 #### A11: Documents — update and link shipped 2026-11-02
 

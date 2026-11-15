@@ -2738,6 +2738,28 @@ describe('_sniff — checklist matchers (A10)', () => {
     expect(seen).toEqual([]);
   });
 
+  // A10X: the atomic reorder (PUT /checklists/:id/items/order) answers the
+  // whole list in its new order — the same row shape the per-list matcher
+  // reads — so the board for that record reloads.
+  test('the atomic reorder PUT announces the record from its answer; it fails closed and matches only PUT on that path', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    const list = (t, l) => ({ id: 12, title: 'T', kind: 'checklist', link_type: t, link: l, items: [{ id: 6, position: 1 }, { id: 5, position: 2 }] });
+    w.YC._sniff('PUT', '/checklists/12/items/order', list('case', 'AAAA'));
+    w.YC._sniff('PUT', '/checklists/12/items/order', list('user', '1'));
+    // Silent: an unlinked list, an error answer, the other verbs, a
+    // non-numeric id, an /api prefix.
+    w.YC._sniff('PUT', '/checklists/12/items/order', list(null, null));
+    w.YC._sniff('PUT', '/checklists/12/items/order', { status: 'error', message: 'item_ids must be exactly the list\'s 2 current items', item_ids: [5, 6] });
+    for (const m of ['POST', 'PATCH', 'DELETE', 'GET']) w.YC._sniff(m, '/checklists/12/items/order', list('case', 'BBBB'));
+    w.YC._sniff('PUT', '/checklists/abc/items/order', list('case', 'BBBB'));
+    w.YC._sniff('PUT', '/api/checklists/12/items/order', list('case', 'BBBB'));
+    expect(seen).toEqual([
+      { addr: 'checklist:case:AAAA', fields: { yc_refetch: 1 }, origin: 'auto:PUT /checklists/12/items/order' },
+      { addr: 'checklist:user:1', fields: { yc_refetch: 1 }, origin: 'auto:PUT /checklists/12/items/order' },
+    ]);
+  });
+
   test('it never wakes a case or contact page — the record row did not change', () => {
     const w = mkWindow();
     const seen = [];

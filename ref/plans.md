@@ -1307,15 +1307,14 @@ Share and unlink shipped as A11.2 (ASK_CASEY_ACTIONS_PLAN).
 - **Lists on bills, appointments, tasks and events (and unlinked lists).**
   Refused by name on create and on item cards; a card would have to name and
   freshness-check those records. The board covers them natively.
-- **Reorder** — no surface offers it (checklistView.html has no item reorder)
-  and no route does it atomically: the only lever is one `position` per PATCH
-  `/checkitems/:id`, so a card would be N non-atomic writes that can leave a
-  half-applied order. Needs a reorder UI and an atomic route first; `position`
-  is refused by name today.
 - **Upsert-many and template expansion** (POST `/checklists/upsert-items`:
   find-or-create the case's docs list, drop items matching the first 22
   characters, insert fresh; emits `checklist.items_upserted`, which trigger
   rule 14 listens to) — a fan-out onto the client-facing docs list.
+- **A native reorder control.** The atomic route exists (A10X: PUT
+  `/checklists/:id/items/order`, one transaction, 409 on a stale set) and Ask
+  Casey's reorder card is its only caller; checklistView.html still has no
+  drag handle or move buttons. A board control would call the same route.
 - **Sync gaps left on the native side.** Every list and item write a page
   makes is on the bus (`checklist:<link_type>:<link>`) except POST
   `/checklists/upsert-items`, which announces nothing (its callers are

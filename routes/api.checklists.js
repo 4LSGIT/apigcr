@@ -11,6 +11,7 @@
  * POST   /checklists/:id/items                add item
  * PATCH  /checkitems/:id                      update item (name, status)
  * DELETE /checkitems/:id                      delete item
+ * PUT    /checklists/:id/items/order          reorder EVERY item (one transaction)
  * POST   /checklists/upsert-items             find-or-create docs checklist (tag='docs_needed') + upsert items
  *
  * Public (no auth):
@@ -85,6 +86,7 @@ const uploadTarget = require('../services/uploadTargetService');
 const { getSetting } = require('../services/settingsService');
 const { cfg } = require('../lib/firmConfig');
 const { escapeLike } = require('../lib/escapeLike');
+const { withTransaction } = require('../lib/withTransaction');
 // R1.5: services/pipelineService and lib/alerting were required here ONLY for
 // the retained→docs advance in upsert-items and its failure alert. That advance
 // is now a trigger rule (see the note at its former site), and grep confirms
@@ -958,6 +960,107 @@ router.delete('/checkitems/:id', jwtOrApiKey, async (req, res) => {
   } catch (err) {
     console.error('DELETE /checkitems/:id error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to delete item' });
+  }
+});
+
+/**
+ * PUT /checklists/:id/items/order
+ *
+ * Body: { item_ids: [<checkitem id>, ...] } — EVERY item on the list, each
+ * exactly once, in the new order. Rewrites `position` to 1..N in that order.
+ *
+ * ATOMIC. One transaction (pure DB — withTransaction retries:1): the list row
+ * is read FOR UPDATE, then its items FOR UPDATE, the id set compared, and one
+ * UPDATE writes every position. An item added meanwhile cannot slip past the
+ * comparison: inserting a checkitem takes a shared lock on its parent
+ * checklists row (the FK check), which the list's FOR UPDATE holds, so the
+ * insert waits for this commit — or, if it got there first, this transaction
+ * waits for it and then sees it (409). The items' FOR UPDATE alone also waits
+ * on an uncommitted insert under the default REPEATABLE READ (next-key
+ * locks); the list lock is what still holds where gap locks do not (READ
+ * COMMITTED), and it serializes against a delete of the list. Proven on a
+ * real engine in tests/caseyChecklistOrder.mysql.test.js. Before this route
+ * the only lever was one
+ * `position` per PATCH /checkitems/:id, i.e. N writes that could leave a
+ * half-applied order.
+ *
+ * Refusals, all before any write:
+ *   400  item_ids not an array of positive whole ids, a repeated id, or more
+ *        than MAX_ORDER_ITEMS; the list is a NOTE (no items, ever)
+ *   404  no such list
+ *   409  the set is not EXACTLY the list's current item ids (one missing, one
+ *        extra or foreign) — the answer carries the current `item_ids` so a
+ *        caller can re-read; nothing is written
+ *
+ * GATE: the same as the item routes' — authentication only (jwtOrApiKey).
+ * Reordering someone's personal list is collaboration on its items, not a
+ * detach, so mayDetachPersonal does not apply (see the OWNERSHIP header).
+ *
+ * Answers the whole list in its new order (getChecklistWithItems — the GET
+ * /checklists/:id shape), whose link_type / link the yc-sync matcher
+ * announces as `checklist:<link_type>:<link>`. Emits no domain event and
+ * leaves the list's status alone (an order is not a completion).
+ */
+const MAX_ORDER_ITEMS = 1000;
+
+router.put('/checklists/:id/items/order', jwtOrApiKey, async (req, res) => {
+  const raw = req.body ? req.body.item_ids : undefined;
+  if (!Array.isArray(raw)) {
+    return res.status(400).json({ status: 'error', message: "item_ids must be an array of the list's item ids, in the new order" });
+  }
+  if (raw.length > MAX_ORDER_ITEMS) {
+    return res.status(400).json({ status: 'error', message: `item_ids may name at most ${MAX_ORDER_ITEMS} items` });
+  }
+  const ids = [];
+  for (const v of raw) {
+    const n = typeof v === 'number' ? v : (typeof v === 'string' && /^\d{1,15}$/.test(v) ? Number(v) : NaN);
+    if (!Number.isSafeInteger(n) || n < 1) {
+      return res.status(400).json({ status: 'error', message: 'item_ids must hold positive whole item ids only' });
+    }
+    ids.push(n);
+  }
+  if (new Set(ids).size !== ids.length) {
+    return res.status(400).json({ status: 'error', message: 'item_ids names an item more than once — name each item exactly once' });
+  }
+
+  try {
+    const out = await withTransaction(req.db, async (conn) => {
+      const [[list]] = await conn.query(
+        'SELECT id, kind FROM checklists WHERE id = ? FOR UPDATE', [req.params.id]
+      );
+      if (!list) return { code: 404, body: { status: 'error', message: 'Checklist not found' } };
+      if (list.kind === 'note') {
+        return { code: 400, body: { status: 'error',
+          message: 'That is a note, not a checklist — notes hold freeform text, not items, so there is nothing to order.' } };
+      }
+      const [rows] = await conn.query(
+        'SELECT id FROM checkitems WHERE checklist_id = ? ORDER BY id ASC FOR UPDATE', [list.id]
+      );
+      const current = rows.map(r => Number(r.id));
+      const have = new Set(current);
+      const want = new Set(ids);
+      const missing = current.filter(id => !want.has(id));
+      const extra = ids.filter(id => !have.has(id));
+      if (missing.length || extra.length) {
+        return { code: 409, body: { status: 'error',
+          message: `item_ids must be exactly the list's ${current.length} current item${current.length === 1 ? '' : 's'}`
+                 + `${missing.length ? ` — missing ${missing.length}` : ''}${extra.length ? ` — ${extra.length} not on this list` : ''}. `
+                 + 'Nothing was reordered; re-read the list and send its items again.',
+          item_ids: current } };
+      }
+      if (ids.length) {
+        await conn.query(
+          `UPDATE checkitems SET position = CASE id ${ids.map(() => 'WHEN ? THEN ?').join(' ')} END
+            WHERE checklist_id = ? AND id IN (?)`,
+          [...ids.flatMap((id, i) => [id, i + 1]), list.id, ids]
+        );
+      }
+      return { code: 200, body: await getChecklistWithItems(conn, list.id) };
+    }, { retries: 1 });
+    res.status(out.code).json(out.body);
+  } catch (err) {
+    console.error('PUT /checklists/:id/items/order error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to reorder items' });
   }
 });
 

@@ -772,8 +772,14 @@ const CASE_REQUIREMENT_NOTE_MAX = 255;
 // one (the route's mayDetachPersonal). All three routes are on the sync bus
 // (`checklist:<link_type>:<link>`, public/js/yc-sync.js), so an open Notes &
 // Lists board for the record refreshes.
+// A10X (same switch) adds the reorder: checklist.items.reorder.v1 → PUT
+// /checklists/:id/items/order {item_ids} — the ATOMIC route built for it (one
+// transaction; a set that is not exactly the list's items is the route's 409).
+// The card names EVERY item before → after and refuses a set that is not the
+// list's, a note, a list of one item and an order that changes nothing; the
+// click re-reads the list and refuses if its items or their order changed.
 const CHECKLIST_ACTION_KINDS = new Set(['checklist.create.v1', 'checklist.item.add.v1', 'checklist.item.update.v1',
-  'checklist.update.v1', 'checklist.delete.v1', 'checklist.item.delete.v1']);
+  'checklist.update.v1', 'checklist.delete.v1', 'checklist.item.delete.v1', 'checklist.items.reorder.v1']);
 const CHECKLIST_KEYS = {
   'checklist.create.v1': new Set(['kind', 'title', 'list_kind', 'body', 'link_type', 'link', 'items', 'evidence']),
   'checklist.item.add.v1': new Set(['kind', 'checklist_id', 'name', 'evidence']),
@@ -781,6 +787,7 @@ const CHECKLIST_KEYS = {
   'checklist.update.v1': new Set(['kind', 'checklist_id', 'title', 'status', 'body', 'evidence']),
   'checklist.delete.v1': new Set(['kind', 'checklist_id', 'evidence']),
   'checklist.item.delete.v1': new Set(['kind', 'checkitem_id', 'evidence']),
+  'checklist.items.reorder.v1': new Set(['kind', 'checklist_id', 'item_ids', 'evidence']),
 };
 // A10.2: fields an update card refuses BY NAME (before the generic unknown-field
 // refusal) — each is something the page does not offer on an existing list.
@@ -5875,7 +5882,7 @@ async function checklistPipelineShift(db, list, parent, project) {
   return { changed, text: `PIPELINE: on ${parent.label}, ${lines.join('; ')} — the step's checklist detector reads this list${changed.length > 1 ? 's' : ''} by tag; the Steps panel, the board and Casey's pipeline cards follow it at once.` };
 }
 
-const CHECKLIST_ON_BUS = (route) => `Other open pages: ${route} is announced on the sync bus — another open Notes & Lists board for this record refreshes on its own (one with unsaved note text or the caret in a field refreshes once that is done); the global Notes & Lists page's Browse view does not listen and shows the old list until it reloads.`;
+const CHECKLIST_ON_BUS = (route) => `Other open pages: ${route} is announced on the sync bus — another open Notes & Lists board for this record refreshes on its own (one with unsaved note text or the caret in a field refreshes once that is done); the global Notes & Lists page's Browse view reloads its first page too (it waits while a row's editor is open or the page is hidden).`;
 
 async function normalizeChecklistUpdate(db, value, evidence, currentUserId) {
   const checklistId = Number(value.checklist_id);
@@ -6073,6 +6080,60 @@ async function normalizeChecklistItemDelete(db, value, evidence, currentUserId) 
   };
 }
 
+// ── A10X: reorder every item of one checklist ─────────────────────────────
+// PUT /checklists/:id/items/order {item_ids} rewrites every position to 1..N
+// in ONE transaction and answers 409 when the set is not exactly the list's
+// current items (routes/api.checklists.js). Real-engine twin:
+// tests/caseyChecklistOrder.mysql.test.js.
+async function normalizeChecklistReorder(db, value, evidence, currentUserId) {
+  const checklistId = Number(value.checklist_id);
+  if (!Number.isSafeInteger(checklistId) || checklistId < 1) throw checklistError('A reorder needs the list\'s exact positive checklist_id');
+  if (!Array.isArray(value.item_ids) || !value.item_ids.length) {
+    throw checklistError('A reorder needs "item_ids": EVERY item\'s exact checkitem_id, once each, in the new order (first = top)');
+  }
+  const ids = value.item_ids.map((v) => (typeof v === 'number' || (typeof v === 'string' && /^\d{1,15}$/.test(v)) ? Number(v) : NaN));
+  if (ids.some((n) => !Number.isSafeInteger(n) || n < 1)) throw checklistError('item_ids must hold exact positive checkitem_ids only');
+  if (new Set(ids).size !== ids.length) throw checklistError('item_ids names an item more than once — name each item exactly once');
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!checklistRowCited(refs, evidence, (row) => Number(row.checklist_id) === checklistId)) {
+    throw checklistError(`The list evidence does not identify checklist #${checklistId} — cite a row carrying its exact checklist_id (read the list first: checklists.id AS checklist_id)`);
+  }
+  const target = await checklistEditTarget(db, checklistId, currentUserId, 'reorder', { itemCap: true });
+  const { list, items, parent } = target;
+  if (list.kind === 'note') throw checklistError(`"${list.title}" (#${list.checklist_id}) is a NOTE — notes hold freeform text, never items, so there is nothing to order (the route refuses it)`);
+  if (items.length < 2) throw checklistError(`"${list.title}" has ${items.length ? 'one item' : 'no items'} — there is nothing to reorder`);
+  const byId = new Map(items.map((i) => [i.checkitem_id, i]));
+  const want = new Set(ids);
+  const missing = items.filter((i) => !want.has(i.checkitem_id));
+  const extra = ids.filter((id) => !byId.has(id));
+  if (missing.length || extra.length) {
+    const said = [missing.length && `missing ${missing.slice(0, 5).map((i) => `#${i.checkitem_id} "${i.name}"`).join(', ')}${missing.length > 5 ? ` (+${missing.length - 5} more)` : ''}`,
+      extra.length && `not on this list: #${extra.slice(0, 5).join(', #')}${extra.length > 5 ? ` (+${extra.length - 5} more)` : ''}`].filter(Boolean).join('; ');
+    throw checklistError(`A reorder names EVERY item on "${list.title}" exactly once (${items.length} items) — ${said}. Nothing is proposed (the route refuses any other set)`);
+  }
+  const before = items.map((i) => i.checkitem_id);
+  if (before.every((id, i) => id === ids[i])) throw checklistError(`The items on "${list.title}" are already in that order — that changes nothing`);
+  const moved = ids.filter((id, i) => before[i] !== id).length;
+  const row = (id) => { const i = byId.get(id); return { checkitem_id: id, name: i.name, status: i.status }; };
+  const warnings = []; const effects = [];
+  if (list.docs_list) {
+    warnings.push(`${CHECKLIST_DOCS_WARNING(parent)} The client portal and the public documents link list its items in this order, so the client sees the new order at once.`);
+  }
+  effects.push(`Writes: ONE transaction rewrites every item's position on "${list.title}" to 1-${ids.length} in the order below (${moved} of ${ids.length} items change place) — no name, status or other list changes; if any item was added or removed meanwhile the route writes nothing (409).`);
+  effects.push(`List status: stays ${list.status || 'unset'} — an order is not a completion.`);
+  effects.push('Trigger event: none — reordering emits no event, so no trigger rule runs.');
+  effects.push('Pipeline: no step changes — a step\'s checklist detector counts a tagged list\'s items and reads its status, never their order.');
+  effects.push(CHECKLIST_ON_BUS('PUT /checklists/:id/items/order'));
+  return {
+    draft_id: crypto.randomUUID(), kind: 'checklist.items.reorder.v1', status: 'draft',
+    list, parent,
+    order_before: before.map(row), order_after: ids.map(row), moved, items_total: items.length,
+    effects, warnings,
+    expected: { ...checklistEditExpected(list, items), order: before },
+    evidence: refs,
+  };
+}
+
 async function normalizeChecklistAction(db, value, evidence, { currentUserId = null } = {}) {
   // The per-family switch: '0' and the A10 kinds do not exist.
   if (require('../lib/firmConfig').cfg('casey_checklists_enabled') === '0') {
@@ -6095,6 +6156,7 @@ async function normalizeChecklistAction(db, value, evidence, { currentUserId = n
   if (kind === 'checklist.update.v1') return normalizeChecklistUpdate(db, value, evidence, currentUserId);
   if (kind === 'checklist.delete.v1') return normalizeChecklistDelete(db, value, evidence, currentUserId);
   if (kind === 'checklist.item.delete.v1') return normalizeChecklistItemDelete(db, value, evidence, currentUserId);
+  if (kind === 'checklist.items.reorder.v1') return normalizeChecklistReorder(db, value, evidence, currentUserId);
   return normalizeChecklistItemUpdate(db, value, evidence, currentUserId);
 }
 
@@ -14336,9 +14398,9 @@ function taskDraftRequested(question, history = []) {
   // A10 / A10.2: a checklist, a note-and-list card or one item — made, added
   // to, renamed, edited, checked off or deleted. The noun names a
   // checklist (a bare "list" is too common — "list the cases"); "check off" /
-  // "tick off" carry their own noun.
+  // "tick off" carry their own noun. A10X: reordered, sorted or moved.
   const checklist = (/\b(?:check ?lists?|(?:list|checklist) items?|docs needed|personal list|to-?do list|notes? (?:and|&) lists?)\b/i.test(text) &&
-      /\b(?:draft|propose|prepare|create|make|start|add|put|append|check|tick|mark|complete|finish|uncheck|untick|reopen|rename|retitle|update|change|edit|delete|remove|erase|drop)\b/i.test(request)) ||
+      /\b(?:draft|propose|prepare|create|make|start|add|put|append|check|tick|mark|complete|finish|uncheck|untick|reopen|rename|retitle|update|change|edit|delete|remove|erase|drop|re-?order|rearrange|sort|move)\b/i.test(request)) ||
     /\b(?:check|tick|cross)\s+(?:it\s+|that\s+|them\s+|this\s+)?off\b/i.test(request);
   // A11: a document's title / type / tags, or a link to a case or contact.
   // The noun is a document (a bare "file" is too often the case file); the

@@ -216,8 +216,9 @@ body. Governing migrations in `ref/migrations/`.*
   YCForm's `form:` listener) — parked while hidden
   or while a card is typed in / a "+ Role" card is open (`roleApi` stamps every
   write); YCForm stamps `_lastDraftWrite` on its draft DELETE too. Not on the
-  bus: POST `/checklists/upsert-items`; checklistsView.html's Browse view
-  listens to nothing (`ref/plans.md`). Tests: `tests/ycSync.test.js`,
+  bus: POST `/checklists/upsert-items`; checklistsView.html's Browse view subscribes to
+  `checklist:*` itself (first page re-read, parked while a row is open or the
+  page hidden). Tests: `tests/ycSync.test.js`,
   `tests/contactUi.sync.test.js`, `tests/contactFormRoles.sync.test.js`,
   `tests/formRender.sync.test.js`, `tests/contactRelations.routeEcho.test.js`.
 - **Server-side form submit (11-11):** `POST /api/forms/submissions/submit-draft`
@@ -1243,8 +1244,8 @@ body. Governing migrations in `ref/migrations/`.*
   `/checklists/:id` {title?, status?, body?}; status / body on a NOTE only, the
   route's rule), `checklist.delete.v1` (DELETE `/checklists/:id`, items by the FK
   cascade) and `checklist.item.delete.v1` (DELETE `/checkitems/:id`, which
-  recomputes the derived status and may emit `checklist.completed`). NO reorder
-  kind: the page has none and no route reorders atomically. Refused by name:
+  recomputes the derived status and may emit `checklist.completed`). Reorder
+  is its own kind (A10X, next bullet). Refused by name:
   `tag`, `position`, `list_kind`, `link` / `link_type`, `items` (update). The
   title width is read from information_schema (characters); a rename into
   "Docs Needed" on a case is refused, out of a title-only docs list warned.
@@ -1262,6 +1263,23 @@ body. Governing migrations in `ref/migrations/`.*
   sync-bus bullet below). Tests:
   `tests/caseyChecklistEdit.test.js`, gated
   `tests/caseyChecklistEdit.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A10.
+- **Atomic item reorder + its Casey card (A10X, 11-15):** NATIVE route PUT
+  `/checklists/:id/items/order` {item_ids} (routes/api.checklists.js, bare
+  `jwtOrApiKey` — the item routes' gate): `item_ids` = EVERY item once, in the
+  new order; one `withTransaction` (retries 1) reads the list FOR UPDATE, its
+  items FOR UPDATE, compares the set and writes `position` 1..N in one CASE
+  UPDATE. 400 bad ids / repeat / > 1000 / a note; 404; 409 (set not exactly the
+  list's, answer carries the current `item_ids`) — all before any write.
+  Invariant: an item insert takes the FK's shared lock on its list, so it and a
+  reorder serialize (a reorder that meets an uncommitted add waits, then 409s).
+  Answers the list in its new order; no event; status untouched; on yc-sync
+  (`checklist:<link_type>:<link>`). The Notes & Lists page has no reorder
+  control — Casey's `checklist.items.reorder.v1` (same switch) is the UI: every
+  item before → after, refused for a note / < 2 items / a set not the list's /
+  a no-op; `expected` adds the ORDER, re-read at the click (GET
+  `/checklists/:id`); the 409 is a refusal; receipt `checklist_id`. Tests:
+  `tests/caseyChecklistOrder.test.js`, gated
+  `tests/caseyChecklistOrder.mysql.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A10.
 - **Casey document cards (A11, 11-02):** kinds `document.update.v1` (PATCH
   `/api/documents/:id` {title?, doc_type?, tags?}) and `document.link.v1` (POST
   `/api/documents/:id/links` {link_type, link_id, relation?}) — the Documents

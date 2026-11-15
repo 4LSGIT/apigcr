@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-10T20:24:19.931Z_  
-_849 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 326, PUT: 40, _ALL: 3_
+_Generated 2026-11-15T04:08:11.264Z_  
+_850 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 326, PUT: 41, _ALL: 3_
 
 ## Global middleware chain
 
@@ -777,6 +777,7 @@ _849 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 326, PUT: 40, _ALL:
 | GET | `/checklists/:id` | `jwtOrApiKey` | — |
 | PATCH | `/checklists/:id` | `jwtOrApiKey` | — |
 | POST | `/checklists/:id/items` | `jwtOrApiKey` | — |
+| PUT | `/checklists/:id/items/order` | `jwtOrApiKey` | — |
 | POST | `/checklists/upsert-items` | `jwtOrApiKey` | — |
 
 ## /clio-code
@@ -1129,4 +1130,4 @@ _849 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 326, PUT: 40, _ALL:
 
 ---
 
-_849 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 326, PUT: 40, _ALL: 3_
+_850 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 326, PUT: 41, _ALL: 3_

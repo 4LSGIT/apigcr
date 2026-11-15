@@ -2784,6 +2784,95 @@ function checklistEditKnownOutcome(e) {
   return checklistKnownOutcome(e);
 }
 
+// Checklist reorder (A10X) — PUT /checklists/:id/items/order {item_ids}, the
+// ATOMIC route built for this card: one transaction rewrites every item's
+// position to 1..N in the reviewed order, and a set that is not exactly the
+// list's current items is the route's 409 before any write. The Notes & Lists
+// page itself has no reorder control; this card is the way to reorder. The
+// server refused a note, a list of one item, a set that is not the list's and
+// an order that changes nothing; it flagged a docs list as CLIENT-VISIBLE (the
+// portal lists items in this order); and it baked the list (title, kind,
+// record, tag, status), every item and their ORDER into `expected`. The click
+// re-reads GET /checklists/:id and refuses on any difference BEFORE the claim.
+// The route is on the yc-sync bus (`checklist:<link_type>:<link>`). Receipt:
+// the integer checklist_id (the PUT answers the whole list in its new order).
+const CHECKLIST_REORDER_ACTION_KINDS = new Set(['checklist.items.reorder.v1']);
+
+function checklistReorderLabel(draft) {
+  void draft;
+  return 'Reorder checklist items';
+}
+
+function checklistReorderText(draft) {
+  const before = Array.isArray(draft.order_before) ? draft.order_before : [];
+  const after = Array.isArray(draft.order_after) ? draft.order_after : [];
+  const lines = ['Checklist proposal — not applied', `Action: ${checklistReorderLabel(draft)}`, `List: ${checklistListLine(draft)}`,
+    `Items: ${after.length} (${Number(draft.moved) || 0} change place)`, 'Order before:'];
+  before.forEach((i, n) => lines.push(`  ${n + 1}. "${i.name}" (#${i.checkitem_id}, ${i.status || 'no status'})`));
+  lines.push('Order after:');
+  after.forEach((i, n) => lines.push(`  ${n + 1}. "${i.name}" (#${i.checkitem_id})${before[n] && Number(before[n].checkitem_id) === Number(i.checkitem_id) ? '' : ' — moved'}`));
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  lines.push('Stale check: if the list, any item on it or their order changes before you apply, nothing is written.',
+    'Notification: Casey sends nothing itself.');
+  return lines.join('\n');
+}
+
+function checklistReorderRequest(draft) {
+  const id = checklistEditListId(draft);
+  const after = Array.isArray(draft.order_after) ? draft.order_after : [];
+  const ids = after.map((i) => Number(i && i.checkitem_id));
+  if (ids.length < 2 || ids.some((n) => !Number.isSafeInteger(n) || n < 1) || new Set(ids).size !== ids.length) throw new Error('This card has no usable item order.');
+  return { path: `/checklists/${id}/items/order`, method: 'PUT', body: { item_ids: ids } };
+}
+
+// The list, every item on it and their order, re-read and compared whole.
+async function checklistReorderPrecheck(draft) {
+  const ids = checklistReorderRequest(draft).body.item_ids; // a card that cannot be written is never read
+  const l = draft.list || {}; const x = draft.expected || {};
+  const order = Array.isArray(x.order) ? x.order.map(Number) : [];
+  const sorted = (a) => JSON.stringify(a.slice().sort((p, q) => p - q));
+  if (sorted(ids) !== sorted(order)) throw new Error('this card\'s order does not match its review');
+  const id = checklistEditListId(draft);
+  let got;
+  try { got = await api(`/checklists/${id}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `The list "${l.title}" no longer exists. Nothing was written.`; throw e; }
+  if (!got || Number(got.id) !== id || !Array.isArray(got.items)) throw new Error('the list could not be read');
+  const s = (v) => (v == null ? null : String(v));
+  if (s(got.title) !== s(x.title) || s(got.kind) !== s(x.kind) || s(got.link_type) !== s(x.link_type)
+    || s(got.link) !== s(x.link) || s(got.tag) !== s(x.tag) || s(got.status) !== s(x.status)) {
+    return `The list "${l.title}" changed since this card was prepared (its title, kind, record, tag or status). Nothing was written. Ask Casey to prepare it again.`;
+  }
+  const sig = got.items.map((i) => `${Number(i.id)}:${i.status == null ? '' : i.status}:${i.name == null ? '' : i.name}`).sort();
+  if (JSON.stringify(sig) !== JSON.stringify((x.items || []).slice().sort())) {
+    return `The items on "${l.title}" changed since this card was prepared (one was added, removed, renamed, checked or reopened). Nothing was written. Ask Casey to prepare it again.`;
+  }
+  if (JSON.stringify(got.items.map((i) => Number(i.id))) !== JSON.stringify(order)) {
+    return `The order of the items on "${l.title}" changed since this card was prepared (someone reordered them). Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+// The PUT answers the whole list in its new order: exactly the reviewed one.
+function checklistReorderResult(draft, result) {
+  const id = Number(result && result.id);
+  if (!Number.isSafeInteger(id) || id !== checklistEditListId(draft)) throw new Error('The checklist route did not answer for the reviewed list');
+  const want = checklistReorderRequest(draft).body.item_ids;
+  const got = result && Array.isArray(result.items) ? result.items.map((i) => Number(i && i.id)) : [];
+  if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error('The checklist route did not save the reviewed order');
+  return { checklist_id: id };
+}
+
+// The route's set check (409) and the A10 404s are written before any row.
+function checklistReorderKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const message = String((e && e.message) || (e && e.body && e.body.message) || '');
+  if (e && e.status === 409 && /item_ids must be exactly/.test(message)) {
+    return { status: 'Refused — nothing written', text: 'Refused — nothing written: the list\'s items changed between the check and the write (an item was added or removed), so the route reordered nothing. Ask Casey to read the list again.' };
+  }
+  return checklistKnownOutcome(e);
+}
+
 // Documents (A11). Change ONE registered document's staff title / type / tags,
 // or link ONE document to ONE case or contact, through the Documents page's
 // own routes: PATCH /api/documents/:id {title?, doc_type?, tags?} and POST
@@ -6683,6 +6772,27 @@ const ACTION_FAMILIES = [
       button: `Open ${checklistEntity(draft).label}`,
     }),
     reviewWarning: 'Review the item, the list status after, every pipeline step and trigger rule it moves — a delete cannot be undone. Nothing is sent by Casey itself. Canceling writes nothing.',
+    open: checklistOpen,
+  },
+  {
+    // A10X: the reorder receipts the integer checklist_id (the PUT answers the list in its new order).
+    id: 'checklist_reorder', kinds: CHECKLIST_REORDER_ACTION_KINDS, title: 'Reorder checklist', noun: 'checklist', errorNoun: 'reorder',
+    label: checklistReorderLabel, text: checklistReorderText, request: checklistReorderRequest, result: checklistReorderResult,
+    idField: 'checklist_id', appliedKey: 'result_checklist_reorder_id',
+    // A docs list the client sees in this order.
+    danger: (draft) => (draft.warnings || []).length > 0,
+    precheck: checklistReorderPrecheck,
+    knownOutcome: checklistReorderKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `checklist #${payload.checklist_id}`,
+    entity: (draft) => checklistEntity(draft),
+    failure: 'The reorder could not be applied.',
+    appliedCopy: (draft) => ({
+      status: `Applied — list #${draft.result_checklist_reorder_id} reordered`,
+      warning: `The ${Number(draft.items_total) || 0} items on "${(draft.list || {}).title}" on ${checklistParentLabel(draft)} were saved in the new order using your signed-in account.`,
+      button: `Open ${checklistEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review the order before and after — every item\'s place is saved in one step, and nothing else changes. Nothing is sent. Canceling writes nothing.',
     open: checklistOpen,
   },
   {
