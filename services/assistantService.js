@@ -189,10 +189,31 @@ const HOOK_ACTION_KINDS = new Set(['hook.create.v1']);
 // consent-checked here and again by the browser at click time. The body is
 // resolved HERE (resolverService, strict) and the card shows — and the fixed
 // request builder sends — exactly that resolved text; neither route resolves
-// placeholders. No attachments, cc/bcc, MMS, reply threading, or scheduling.
+// placeholders. An EMAIL may carry cc / bcc (each entry a contact's active
+// email row cited exactly like the To — never a typed address; the route's
+// own dedupe, To beats Cc beats Bcc, and its recipient cap are mirrored
+// here), answer a stored message (in_reply_to_message_fk — the mail_message_id
+// of a cited mail.search / mail.message row, resolved through the hub's own
+// replyDefaults, whose To must be the cited row's address) and be FILED to a
+// case (case_id — the composer's Case field: the hub links the sent copy to
+// the case's log after the send). Released by Fred 2026-11-15 ("release
+// means allow"). STILL REFUSED, by name, because the hub itself has no route
+// for them: attachments / MMS media and scheduled sends. An SMS is unchanged
+// (its case_id feeds placeholders only).
 const SEND_ACTION_KINDS = new Set(['sms.send.v1', 'email.send.v1']);
 const SMS_SEND_KEYS = new Set(['kind', 'contact_id', 'phone_id', 'line_id', 'message', 'case_id', 'evidence']);
-const EMAIL_SEND_KEYS = new Set(['kind', 'contact_id', 'email_id', 'mailbox_id', 'subject', 'body', 'case_id', 'evidence']);
+const EMAIL_SEND_KEYS = new Set(['kind', 'contact_id', 'email_id', 'mailbox_id', 'subject', 'body', 'case_id',
+  'cc', 'bcc', 'in_reply_to_message_fk', 'quote_original', 'evidence']);
+// Fields a model keeps reaching for that NO native route takes: the refusal
+// names the field and says why (the hub cannot do it either), so the repair
+// stage drops it instead of re-spelling it.
+const SEND_UNBUILT_FIELDS = Object.freeze({
+  attachments: 'attach a file to a send', attachment: 'attach a file to a send', attachment_urls: 'attach a file to a send',
+  attachment_url: 'attach a file to a send', media_url: 'attach a file (MMS media) to a send', media_urls: 'attach a file (MMS media) to a send',
+  media: 'attach a file (MMS media) to a send', files: 'attach a file to a send',
+  send_at: 'schedule a send', scheduled_time: 'schedule a send', scheduled_at: 'schedule a send', schedule: 'schedule a send',
+  delay: 'schedule a send', send_later: 'schedule a send',
+});
 // Mirrors of services/mailbox/mailboxSendService.js SUBJECT_MAX / TEXT_MAX
 // (pinned against validateSendBody in tests/caseySendAction.test.js). The SMS
 // cap is phoneCommsService.SMS_MAX_CHARS, read directly.
@@ -13499,7 +13520,16 @@ async function resolveSendText(db, text, refs, field) {
   return resolved;
 }
 
-async function sendActionCase(db, value, refs, evidence, contactId) {
+/**
+ * The send's case: cited in evidence (the rule of every case-bound card) and
+ * existing. For an SMS it only feeds {{cases.*}} placeholders and must be a
+ * case of the recipient contact (unchanged). For an EMAIL it is the
+ * composer's Case field — the hub FILES the sent copy to the case — so a case
+ * the recipient is not on is allowed (the hub allows it: mail to a trustee
+ * about a client's case) and the card says so (linked_to_recipient). The
+ * route re-checks existence before dispatch (an unknown case is its 400).
+ */
+async function sendActionCase(db, value, refs, evidence, contactId, { sms = true } = {}) {
   if (value == null || value === '') return null;
   const id = String(value).trim();
   if (!id || id.length > 64 || !/^[A-Za-z0-9_-]+$/.test(id)) throw httpError(422, 'Send case_id is invalid');
@@ -13510,13 +13540,135 @@ async function sendActionCase(db, value, refs, evidence, contactId) {
   });
   if (!cited) throw httpError(422, 'Send case_id must appear in a cited evidence row');
   const [rows] = await db.query(
-    `SELECT c.case_id, COALESCE(NULLIF(c.case_number_full, ''), NULLIF(c.case_number, ''), c.case_id) AS label
-       FROM cases c JOIN case_relate cr ON cr.case_relate_case_id = c.case_id
-      WHERE c.case_id = ? AND cr.case_relate_client_id = ? LIMIT 1`,
-    [id, contactId]);
+    `SELECT c.case_id, COALESCE(NULLIF(c.case_number_full, ''), NULLIF(c.case_number, ''), c.case_id) AS label,
+            EXISTS(SELECT 1 FROM case_relate cr WHERE cr.case_relate_case_id = c.case_id AND cr.case_relate_client_id = ?) AS linked
+       FROM cases c WHERE c.case_id = ? LIMIT 1`,
+    [contactId, id]);
   const row = Array.isArray(rows) ? rows[0] : null;
   if (!row) throw httpError(422, 'Send case is unavailable or not linked to the recipient contact');
-  return { case_id: String(row.case_id), label: String(row.label || id).slice(0, 200) };
+  const linked = !!Number(row.linked);
+  if (sms && !linked) throw httpError(422, 'Send case is unavailable or not linked to the recipient contact');
+  return sms
+    ? { case_id: String(row.case_id), label: String(row.label || id).slice(0, 200) }
+    : { case_id: String(row.case_id), label: String(row.label || id).slice(0, 200), linked_to_recipient: linked };
+}
+
+/**
+ * One recipient row, reloaded: active, on this contact, consent read the way
+ * the send route reads it (optoutService — see normalizeSendAction). `role`
+ * is 'to' | 'cc' | 'bcc' for the refusal text; the shape is the card's
+ * recipient object, the same for every list.
+ */
+async function sendRecipientRow(db, config, sms, contactId, recordId, role) {
+  const who = role === 'to' ? 'recipient' : `${role} recipient`;
+  const [[contact]] = await db.query(
+    'SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1', [contactId]);
+  if (!contact) throw httpError(422, `Send ${who} contact is unavailable`);
+  const row = await config.get(db, recordId);
+  if (!row || Number(row.contact_id) !== contactId) throw httpError(422, `Send ${who} ${config.idField} ${recordId} is not on contact ${contactId}`);
+  if (row.end_date != null) throw httpError(422, `Send ${who} ${config.idField} ${recordId} has ended — only an active ${sms ? 'phone' : 'email'} can receive a send`);
+  const bit = (v) => v === 1 || v === true || v === '1';
+  const optout = require('./optoutService'); // lazy require (convention)
+  const consentChannel = sms ? 'sms' : 'email';
+  const consent = (await optout.consentVersions(db, consentChannel, [row[config.valueField]]))
+    .get(optout.normalizeDestination(consentChannel, row[config.valueField])) || { opted_out: false, version: '0' };
+  const expectedUpdatedAt = contactActionTimestamp(row.updated_at);
+  if (!expectedUpdatedAt) throw httpError(422, `Send ${who} row has no usable concurrency version`);
+  const contactName = contactActionText(contact.contact_name, 'contact label', 200) || `Contact ${contactId}`;
+  const value10 = String(row[config.valueField] || '');
+  if (sms && !/^\d{10}$/.test(value10)) throw httpError(422, `Send ${who} phone is not a 10-digit US number`);
+  if (!sms) {
+    // The mail route's own recipient parser, so the card never offers an address it would refuse.
+    try { require('./mailbox/mailboxSendService').parseRecipient(value10, role); }
+    catch (_) { throw httpError(422, `Send ${who} email is not an address the mail route accepts`); }
+  }
+  return {
+    contact_id: contactId, contact_name: contactName, [config.idField]: recordId,
+    [config.valueField]: value10, label: String(row.label || 'Other'),
+    is_primary: bit(row.is_primary), expected_updated_at: expectedUpdatedAt,
+    opted_out: consent.opted_out === true, consent_version: consent.version,
+  };
+}
+
+/**
+ * An email's cc / bcc list: `[{contact_id, email_id}, …]`, each entry cited
+ * by an evidence row carrying both ids (the To's own rule — an address is
+ * never typed) and reloaded through sendRecipientRow. Order kept.
+ */
+async function sendEmailList(db, raw, role, refs, evidence, config) {
+  if (raw === undefined || raw === null) return [];
+  const max = require('./mailbox/mailboxSendService').MAX_RECIPIENTS;
+  if (!Array.isArray(raw)) throw httpError(422, `Email send ${role} must be a list of {contact_id, email_id} — each a contact's active email row cited in evidence, never a typed address`);
+  if (raw.length > max) throw httpError(422, `Email send ${role} lists ${raw.length} recipients — at most ${max} (To, Cc and Bcc together): the Comms hub is not a bulk sender`);
+  const out = [];
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || !onlyKeys(entry, new Set(['contact_id', 'email_id']))) {
+      throw httpError(422, `Email send ${role}[${i}] must be {contact_id, email_id} — an address is never typed; cite the contact's active email row`);
+    }
+    const contactId = contactActionId(entry.contact_id, `${role} contact id`);
+    const recordId = contactActionId(entry.email_id, `${role} email id`);
+    if (!contactEvidenceSupports(refs, evidence, contactId, config, recordId)) {
+      throw httpError(422, `Email send ${role}[${i}] (contact ${contactId}, email_id ${recordId}) must be cited by an evidence row carrying both that exact contact_id and email_id`);
+    }
+    out.push(await sendRecipientRow(db, config, false, contactId, recordId, role));
+  }
+  return out;
+}
+
+/**
+ * A reply (in_reply_to_message_fk): the message must be a cited
+ * mail.search / mail.message row of this chat, and the hub's own
+ * replyDefaults (GET /api/mail/messages/:id/reply) decides the From and the
+ * To — the mailbox the hub would answer from, the original's sender (its
+ * recipients for own mail). Casey replies to ONE recipient, and that
+ * address must be the cited To row's: the To is never typed, and a sender
+ * with no active contact row is answered from Comms, not from a card.
+ * Returns the card's `reply` object or null (not a reply).
+ */
+async function sendReplyContext(db, userId, value, refs, evidence, recipient) {
+  const raw = value.in_reply_to_message_fk;
+  const hasQuote = Object.prototype.hasOwnProperty.call(value, 'quote_original');
+  if (raw === undefined || raw === null) {
+    if (hasQuote) throw httpError(422, 'Email send quote_original applies only to a reply — give in_reply_to_message_fk (the mail_message_id of the email being answered) or drop it');
+    return null;
+  }
+  const fk = typeof raw === 'number' ? raw : (typeof raw === 'string' && /^\d{1,19}$/.test(raw.trim()) ? Number(raw.trim()) : NaN);
+  if (!Number.isSafeInteger(fk) || fk < 1) throw httpError(422, 'Email send in_reply_to_message_fk must be the exact positive mail_message_id of the email being answered');
+  if (!mailCited(refs, evidence, fk)) {
+    throw httpError(422, `Email send in_reply_to_message_fk ${fk} must be the mail_message_id of a mail.search / mail.message read row cited in evidence — read the email first and cite its row`);
+  }
+  if (hasQuote && typeof value.quote_original !== 'boolean') throw httpError(422, 'Email send quote_original must be true or false');
+  const sendSvc = require('./mailbox/mailboxSendService');
+  let defaults;
+  try {
+    defaults = await sendSvc.replyDefaults(db, userId, fk, value.mailbox_id === undefined || value.mailbox_id === null ? {} : { mailbox_id: value.mailbox_id });
+  } catch (err) {
+    if (err && Number.isInteger(err.status) && err.status < 500) {
+      throw httpError(422, err.status === 404
+        ? `Email send cannot reply to message #${fk}: it does not exist, or it is in a mailbox the user holds no read grant on`
+        : `Email send cannot reply to message #${fk}: ${err.message}`);
+    }
+    throw err;
+  }
+  if (defaults.mailbox_id == null) throw httpError(422, `Email send cannot reply to message #${fk}: no mailbox the user can send from can answer it`);
+  const to = Array.isArray(defaults.to) ? defaults.to : [];
+  if (to.length !== 1) {
+    throw httpError(422, `Replying to message #${fk} would go to ${to.length ? `${to.length} addresses (${to.map((a) => a.email).join(', ')})` : 'no address'} — Casey replies to ONE recipient; answer it from Comms`);
+  }
+  if (String(to[0].email).toLowerCase() !== String(recipient.email).toLowerCase()) {
+    throw httpError(422, `Replying to message #${fk} goes to ${to[0].email}, not to the cited email row (${recipient.email}) — cite that address's active contact_emails row, or send a new email instead of a reply`);
+  }
+  const subject = String(defaults.subject || '');
+  if (subject.length > EMAIL_SEND_SUBJECT_MAX) throw httpError(422, `Replying to message #${fk}: its subject is too long to reuse — give a subject of at most ${EMAIL_SEND_SUBJECT_MAX} characters`);
+  return {
+    mail_message_id: fk,
+    mailbox_id: Number(defaults.mailbox_id),
+    subject,
+    quote_original: hasQuote ? value.quote_original : true,
+    quote_header: defaults.quote && defaults.quote.header ? String(defaults.quote.header).slice(0, 300) : null,
+    quote_chars: defaults.quote && typeof defaults.quote.text === 'string' ? defaults.quote.text.length : 0,
+  };
 }
 
 const SEND_GRANTS_SQL = 'SELECT channel_id FROM channel_grants WHERE user = ? AND channel_type = ? AND can_send = 1';
@@ -13600,7 +13752,13 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
   const allowed = sms ? SMS_SEND_KEYS : EMAIL_SEND_KEYS;
   const unknown = Object.keys(value).filter((k) => !allowed.has(k));
   if (unknown.length) {
-    throw httpError(422, `${sms ? 'SMS' : 'Email'} send carries unsupported fields: ${unknown.join(', ')} — it takes ${[...allowed].filter((k) => k !== 'kind').join(', ')} (no attachments, cc/bcc, media, scheduling or free-typed recipients)`);
+    const unbuilt = unknown.filter((k) => SEND_UNBUILT_FIELDS[k]);
+    const why = unbuilt.length
+      ? ` ${unbuilt.map((k) => `"${k}": the Comms hub itself cannot ${SEND_UNBUILT_FIELDS[k]} (no native route exists), so neither can a card — tell the user to do that part from Comms by hand`).join('; ')}.`
+      : '';
+    throw httpError(422, `${sms ? 'SMS' : 'Email'} send carries unsupported fields: ${unknown.join(', ')} — it takes ${[...allowed].filter((k) => k !== 'kind').join(', ')} (${sms
+      ? 'no attachments / MMS media, cc/bcc, scheduling or free-typed recipients'
+      : 'no attachments, scheduling, HTML body or free-typed recipients — cc/bcc are lists of {contact_id, email_id} cited like the To'}).${why}`);
   }
   const userId = currentUserId == null || currentUserId === '' ? NaN : Number(currentUserId);
   if (!Number.isSafeInteger(userId) || userId < 1) throw httpError(422, 'A send needs the signed-in staff user');
@@ -13624,36 +13782,11 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
   // refuse (optoutService.assertNotOptedOut). consent_version moves on ANY
   // consent change for the destination, so the card's click-time re-check
   // (the contact list route's row.consent) catches a change no row write made.
-  const [[contact]] = await db.query(
-    'SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1', [contactId]);
-  if (!contact) throw httpError(422, 'Send recipient contact is unavailable');
-  const row = await config.get(db, recordId);
-  if (!row || Number(row.contact_id) !== contactId) throw httpError(422, `Send recipient ${config.idField} ${recordId} is not on contact ${contactId}`);
-  if (row.end_date != null) throw httpError(422, `Send recipient ${config.idField} ${recordId} has ended — only an active ${sms ? 'phone' : 'email'} can receive a send`);
-  const bit = (v) => v === 1 || v === true || v === '1';
-  const optout = require('./optoutService'); // lazy require (convention)
-  const consentChannel = sms ? 'sms' : 'email';
-  const consent = (await optout.consentVersions(db, consentChannel, [row[config.valueField]]))
-    .get(optout.normalizeDestination(consentChannel, row[config.valueField])) || { opted_out: false, version: '0' };
-  const optedOut = consent.opted_out === true;
-  const expectedUpdatedAt = contactActionTimestamp(row.updated_at);
-  if (!expectedUpdatedAt) throw httpError(422, 'Send recipient row has no usable concurrency version');
-  const contactName = contactActionText(contact.contact_name, 'contact label', 200) || `Contact ${contactId}`;
-  const value10 = String(row[config.valueField] || '');
-  if (sms && !/^\d{10}$/.test(value10)) throw httpError(422, 'Send recipient phone is not a 10-digit US number');
-  if (!sms) {
-    // The mail route's own recipient parser, so the card never offers an address it would refuse.
-    try { require('./mailbox/mailboxSendService').parseRecipient(value10, 'to'); }
-    catch (_) { throw httpError(422, 'Send recipient email is not an address the mail route accepts'); }
-  }
-  const recipient = {
-    contact_id: contactId, contact_name: contactName, [config.idField]: recordId,
-    [config.valueField]: value10, label: String(row.label || 'Other'),
-    is_primary: bit(row.is_primary), expected_updated_at: expectedUpdatedAt,
-    opted_out: optedOut, consent_version: consent.version,
-  };
+  // Every recipient — the To, and an email's cc / bcc — is reloaded the same
+  // way (sendRecipientRow).
+  const recipient = await sendRecipientRow(db, config, sms, contactId, recordId, 'to');
 
-  const caseRecord = await sendActionCase(db, value.case_id, refs, evidence, contactId);
+  const caseRecord = await sendActionCase(db, value.case_id, refs, evidence, contactId, { sms });
   const resolveRefs = { contacts: { contact_id: contactId }, ...(caseRecord ? { cases: { case_id: caseRecord.case_id } } : {}) };
   const base = { draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft', recipient, case: caseRecord, evidence: refs };
 
@@ -13668,20 +13801,56 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
       templated: resolved !== value.message.trim(), ssn_warning: sendMentionsSsn(value.message, resolved) };
   }
 
-  if (typeof value.subject !== 'string' || !value.subject.trim()) throw httpError(422, 'Email send subject is required');
-  if (/[\u0000-\u001f\u007f]/.test(value.subject)) throw httpError(422, 'Email send subject must be one line (no line breaks, tabs or control characters)');
+  // cc / bcc: the To's rule per entry, then the route's own dedupe (one
+  // address once — To beats Cc beats Bcc) and its cap, so the card lists
+  // exactly what the route will send to.
+  const ccRows = await sendEmailList(db, value.cc, 'cc', refs, evidence, config);
+  const bccRows = await sendEmailList(db, value.bcc, 'bcc', refs, evidence, config);
+  const seenAddr = new Set([recipient.email.toLowerCase()]);
+  let duplicatesDropped = 0;
+  const dedupe = (list) => list.filter((r) => {
+    const e = r.email.toLowerCase();
+    if (seenAddr.has(e)) { duplicatesDropped += 1; return false; }
+    seenAddr.add(e);
+    return true;
+  });
+  const cc = dedupe(ccRows);
+  const bcc = dedupe(bccRows);
+  const maxRecipients = require('./mailbox/mailboxSendService').MAX_RECIPIENTS;
+  if (seenAddr.size > maxRecipients) {
+    throw httpError(422, `Email send has ${seenAddr.size} recipients — at most ${maxRecipients} (To, Cc and Bcc together): the Comms hub is not a bulk sender`);
+  }
+
+  // A reply: the hub's defaults decide From and To (sendReplyContext); the
+  // subject may be omitted and defaults to the hub's "Re: …".
+  const reply = await sendReplyContext(db, userId, value, refs, evidence, recipient);
+  const subjectGiven = value.subject !== undefined && value.subject !== null;
+  if (!subjectGiven && !reply) throw httpError(422, 'Email send subject is required');
+  if (subjectGiven && (typeof value.subject !== 'string' || !value.subject.trim())) throw httpError(422, 'Email send subject is required');
+  if (subjectGiven && /[\u0000-\u001f\u007f]/.test(value.subject)) throw httpError(422, 'Email send subject must be one line (no line breaks, tabs or control characters)');
   if (typeof value.body !== 'string' || !value.body.trim()) throw httpError(422, 'Email send body is required');
-  const subject = (await resolveSendText(db, value.subject, resolveRefs, 'subject')).trim();
+  const subject = subjectGiven ? (await resolveSendText(db, value.subject, resolveRefs, 'subject')).trim() : reply.subject;
   if (!subject) throw httpError(422, 'Email send subject is empty once its placeholders resolve');
   if (/[\u0000-\u001f\u007f]/.test(subject)) throw httpError(422, 'Email send subject must stay one line once its placeholders resolve');
   if (subject.length > EMAIL_SEND_SUBJECT_MAX) throw httpError(422, `Email send subject exceeds ${EMAIL_SEND_SUBJECT_MAX} characters`);
   const body = (await resolveSendText(db, value.body.replace(/\r\n?/g, '\n'), resolveRefs, 'body')).replace(/\r\n?/g, '\n').trim();
   if (!body) throw httpError(422, 'Email send body is empty once its placeholders resolve');
   if (body.length > EMAIL_SEND_BODY_MAX) throw httpError(422, `Email send body exceeds ${EMAIL_SEND_BODY_MAX} characters`);
-  const sender = await sendEmailSender(db, userId, value.mailbox_id);
-  return { ...base, sender, subject, body,
-    templated: subject !== value.subject.trim() || body !== value.body.replace(/\r\n?/g, '\n').trim(),
-    ssn_warning: sendMentionsSsn(`${value.subject}\n${value.body}`, `${subject}\n${body}`) };
+  // The sender: the one named, else on a reply the mailbox the hub would
+  // answer from, else the user's only explicit grant. On a reply the two must
+  // agree (a named box the user cannot send as was refused just above).
+  const sender = await sendEmailSender(db, userId, value.mailbox_id === undefined || value.mailbox_id === null
+    ? (reply ? reply.mailbox_id : value.mailbox_id) : value.mailbox_id);
+  if (reply && sender.mailbox_id !== reply.mailbox_id) {
+    throw httpError(422, `The user cannot reply to message #${reply.mail_message_id} from mailbox ${sender.mailbox_id} — the hub answers it from mailbox ${reply.mailbox_id}`);
+  }
+  // Omitted on a reply = the hub's pick, said so on the card ("defaulted").
+  if (reply && (value.mailbox_id === undefined || value.mailbox_id === null)) sender.defaulted = true;
+  return { ...base, sender, subject, body, cc, bcc, reply,
+    recipients: 1 + cc.length + bcc.length, duplicates_dropped: duplicatesDropped,
+    subject_defaulted: !subjectGiven,
+    templated: (subjectGiven && subject !== value.subject.trim()) || body !== value.body.replace(/\r\n?/g, '\n').trim(),
+    ssn_warning: sendMentionsSsn(`${subjectGiven ? value.subject : ''}\n${value.body}`, `${subject}\n${body}`) };
 }
 
 // ── A20.2 / A20.3: email and phone ingest-rule authoring ──────────────────

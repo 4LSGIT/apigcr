@@ -6371,20 +6371,38 @@ function reportDraftResult(draft, result) {
 // — the route answers 409 opted_out, the user's explicit confirm resends ONCE
 // with the acknowledge_optout flag, and the route audits acknowledged_optout. The
 // request builder never sets it.
+// A14X (Fred 2026-11-15, "release means allow"): an EMAIL card may carry cc /
+// bcc (each a reviewed contact row, same rule as the To, re-read at click
+// time like it), answer a stored message (draft.reply — the hub's own reply
+// defaults; the precheck re-reads GET /api/mail/messages/:id/reply and refuses
+// when the message is gone or would now come from another mailbox) and be
+// FILED to a case (draft.case → case_id; the hub links the sent copy to the
+// case's log after the send — the card says the link may lag). Attachments
+// and scheduled sends stay refused: the hub itself cannot do them.
 const SEND_ACTION_KINDS = new Set(['sms.send.v1', 'email.send.v1']);
 
 function sendIsSms(draft) { return draft.kind === 'sms.send.v1'; }
 
 function sendActionLabel(draft) { return sendIsSms(draft) ? 'Send text message' : 'Send email'; }
 
-function sendRecipientLine(draft) {
-  const r = draft.recipient || {};
+function sendRecipientLine(draft, recipient) {
+  const r = recipient || draft.recipient || {};
   const value = sendIsSms(draft) ? String(r.phone || '').replace(/^(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3') : String(r.email || '');
-  return `${r.contact_name} — ${value} (${r.label}${r.is_primary ? ', primary' : ''})`;
+  return `${r.contact_name} — ${value} (${r.label}${r.is_primary ? ', primary' : ''})${recipient && r.opted_out === true ? ' — OPTED OUT' : ''}`;
 }
 
 function sendOptoutText(draft) {
   return `This recipient opted out of ${sendIsSms(draft) ? 'SMS' : 'email'}`;
+}
+
+// An email's cc / bcc lists (arrays of recipient objects; [] or absent on an SMS).
+function sendCcList(draft) { return !sendIsSms(draft) && Array.isArray(draft.cc) ? draft.cc : []; }
+function sendBccList(draft) { return !sendIsSms(draft) && Array.isArray(draft.bcc) ? draft.bcc : []; }
+// Every recipient the card reviewed, in route order: To, then Cc, then Bcc.
+function sendAllRecipients(draft) {
+  return [{ role: 'To', recipient: draft.recipient || {} },
+    ...sendCcList(draft).map((r) => ({ role: 'Cc', recipient: r })),
+    ...sendBccList(draft).map((r) => ({ role: 'Bcc', recipient: r }))];
 }
 
 // The fixed facts, one "Label: value" line each — every value is a server
@@ -6394,18 +6412,43 @@ function sendFactLines(draft) {
   const sms = sendIsSms(draft);
   const s = draft.sender || {};
   const optedOut = !!(draft.recipient && draft.recipient.opted_out === true);
-  const lines = [`To: ${sendRecipientLine(draft)}`,
-    `${sms ? 'From line' : 'From'}: ${s.label}${s.defaulted ? ' (your only send grant)' : ''}`];
-  if (draft.case) lines.push(`Case: ${draft.case.label} (placeholders only — the send is not filed to the case by this card)`);
-  if (!sms) lines.push(`Subject: ${draft.subject}`);
+  const cc = sendCcList(draft);
+  const bcc = sendBccList(draft);
+  const lines = [`To: ${sendRecipientLine(draft)}`];
+  if (cc.length) lines.push(`Cc: ${cc.map((r) => sendRecipientLine(draft, r)).join('; ')}`);
+  if (bcc.length) {
+    lines.push(`Bcc: ${bcc.map((r) => sendRecipientLine(draft, r)).join('; ')}`);
+    lines.push(`WARNING: Bcc — the other recipients will not see ${bcc.length === 1 ? 'this address' : 'these addresses'}`);
+  }
+  if (!sms && draft.duplicates_dropped > 0) lines.push(`Duplicates: ${draft.duplicates_dropped} address${draft.duplicates_dropped === 1 ? ' was' : 'es were'} listed twice and kept once (To before Cc before Bcc, as Comms does)`);
+  lines.push(`${sms ? 'From line' : 'From'}: ${s.label}${s.defaulted ? (draft.reply ? ' (the mailbox Comms would reply from)' : ' (your only send grant)') : ''}`);
+  if (!sms && draft.reply) {
+    lines.push(`In reply to: message #${draft.reply.mail_message_id}${draft.reply.quote_header ? ` (${draft.reply.quote_header.replace(/ wrote:$/, '')})` : ''} — threaded into that conversation`);
+    lines.push(draft.reply.quote_original
+      ? `Quoted original: appended under your text${draft.reply.quote_header ? ` ("${draft.reply.quote_header}" …)` : ''}, as Comms does`
+      : 'Quoted original: NOT included — only your text is sent');
+  }
+  if (sms) {
+    if (draft.case) lines.push(`Case: ${draft.case.label} (placeholders only — the text is not filed to the case by this card)`);
+  } else if (draft.case) {
+    lines.push(`Case: ${draft.case.label} — this email is FILED to case ${draft.case.case_id}: its sent copy joins the case's log after the send (the link runs afterwards and may lag minutes to a couple of hours; if it fails, IT is alerted)`);
+    if (draft.case.linked_to_recipient === false) lines.push(`WARNING: case ${draft.case.case_id} is not a case of ${(draft.recipient || {}).contact_name || 'the recipient'}`);
+  } else {
+    lines.push('Case: none — this email is not filed to any case (Casey never picks a case for you; name the case to file it there)');
+  }
+  if (!sms) lines.push(`Subject: ${draft.subject}${draft.subject_defaulted ? ' (the reply subject Comms would use)' : ''}`);
   if (sms && draft.segments) lines.push(`Length: ${String(draft.message).length} characters, ${draft.segments.encoding}, about ${draft.segments.segments} SMS segment${draft.segments.segments === 1 ? '' : 's'}`);
   if (draft.templated) lines.push('Placeholders: already filled in from the records — what you see is exactly what is sent');
   if (draft.ssn_warning) lines.push('WARNING: this message contains a Social Security number');
-  lines.push(`Audience: one recipient. No attachments, cc/bcc, ${sms ? 'media' : 'reply threading'} or scheduling.`);
-  lines.push(optedOut
-    ? `Consent: OPTED OUT — ${sendOptoutText(draft).replace(/^This/, 'this')}. Sending asks you to confirm past the opt-out (as Comms does), and the send is recorded as an acknowledged opt-out.`
+  const total = 1 + cc.length + bcc.length;
+  lines.push(sms
+    ? 'Audience: one recipient. No attachments, media, cc/bcc or scheduling.'
+    : `Audience: ${total === 1 ? 'one recipient' : `${total} recipients`}. No attachments or scheduled send — the Comms hub itself cannot do either.`);
+  const optedCount = sendAllRecipients(draft).filter((x) => x.recipient.opted_out === true).length;
+  lines.push(optedOut || optedCount
+    ? `Consent: OPTED OUT — ${optedCount > 1 || !optedOut ? `${optedCount} recipient${optedCount === 1 ? '' : 's'} opted out of ${sms ? 'SMS' : 'email'}` : sendOptoutText(draft).replace(/^This/, 'this')}. Sending asks you to confirm past the opt-out (as Comms does), and the send is recorded as an acknowledged opt-out.`
     : sms ? 'Consent: checked — the recipient has not opted out; re-checked when you click.'
-      : 'Consent: a direct email is operational — an email opt-out covers marketing only and never stops it.');
+      : `Consent: a direct email is operational — an email opt-out covers marketing only and never stops it${total > 1 ? '; every recipient is re-checked when you click' : ''}.`);
   lines.push(`Effect: sends NOW from your signed-in account under your own ${sms ? 'line' : 'mailbox'} access. It cannot be recalled.`);
   return lines;
 }
@@ -6423,6 +6466,12 @@ function sendDraftFields(fields, draft) {
     danger.textContent = sendOptoutText(draft);
     fields.append(danger);
   }
+  for (const x of sendAllRecipients(draft).slice(1)) {
+    if (x.recipient.opted_out !== true) continue;
+    const danger = document.createElement('div'); danger.className = 'action-draft-danger';
+    danger.textContent = `${x.role} recipient ${x.recipient.contact_name} (${x.recipient.email}) opted out of email`;
+    fields.append(danger);
+  }
   appendDraftFieldsFromText(fields, ['', ...sendFactLines(draft)].join('\n'));
   const term = document.createElement('dt'); term.textContent = sendIsSms(draft) ? 'Message' : 'Body';
   const detail = document.createElement('dd'); detail.className = 'action-draft-message';
@@ -6433,8 +6482,10 @@ function sendDraftFields(fields, draft) {
 function sendConfirmText(draft) {
   const r = draft.recipient || {};
   const value = sendIsSms(draft) ? String(r.phone || '') : String(r.email || '');
+  const others = sendAllRecipients(draft).slice(1);
+  const more = others.length ? ` (and ${others.length} more: ${others.map((x) => `${x.role} ${x.recipient.email}`).join(', ')})` : '';
   const optout = r.opted_out === true ? ` ${sendOptoutText(draft)} — you will be asked to confirm past the opt-out.` : '';
-  return `This sends NOW to ${r.contact_name} ${value}. It cannot be recalled.${optout}\n\n${sendDraftText(draft)}`;
+  return `This sends NOW to ${r.contact_name} ${value}${more}. It cannot be recalled.${optout}\n\n${sendDraftText(draft)}`;
 }
 
 function sendActionRequest(draft) {
@@ -6452,7 +6503,25 @@ function sendActionRequest(draft) {
   }
   const mailbox = Number(s.mailbox_id);
   if (!Number.isSafeInteger(mailbox) || mailbox < 1 || !r.email || typeof draft.subject !== 'string' || !draft.subject) throw new Error('This email has no usable mailbox, recipient or subject.');
-  return { path: '/api/mail/send', method: 'POST', body: { mailbox_id: mailbox, to: [String(r.email)], subject: draft.subject, body_text: text }, idempotent: true };
+  // Exactly the reviewed recipients and ids — cc / bcc are the reviewed rows'
+  // addresses, the reply is the reviewed message id, the case the reviewed id.
+  const addr = (x) => { if (!x || typeof x.email !== 'string' || !x.email) throw new Error('This email has an unusable cc/bcc recipient.'); return x.email; };
+  const body = { mailbox_id: mailbox, to: [String(r.email)], subject: draft.subject, body_text: text };
+  const cc = sendCcList(draft).map(addr);
+  const bcc = sendBccList(draft).map(addr);
+  if (cc.length) body.cc = cc;
+  if (bcc.length) body.bcc = bcc;
+  if (draft.reply) {
+    const fk = Number(draft.reply.mail_message_id);
+    if (!Number.isSafeInteger(fk) || fk < 1 || Number(draft.reply.mailbox_id) !== mailbox) throw new Error('This reply has no usable original message or mailbox.');
+    body.in_reply_to_message_fk = fk;
+    body.quote_original = draft.reply.quote_original === true;
+  }
+  if (draft.case) {
+    if (typeof draft.case.case_id !== 'string' || !/^[A-Za-z0-9_-]{1,20}$/.test(draft.case.case_id)) throw new Error('This email has no usable case to file to.');
+    body.case_id = draft.case.case_id;
+  }
+  return { path: '/api/mail/send', method: 'POST', body, idempotent: true };
 }
 
 // Click-time freshness through the canonical reads: the contact and its
@@ -6465,33 +6534,65 @@ function sendActionRequest(draft) {
 // with the current state up front. The send route re-checks consent itself; a
 // race past this read meets its 409 and the user's confirm.
 async function sendPrecheck(draft) {
+  // EVERY reviewed recipient — the To, then an email's Cc and Bcc rows.
+  for (const x of sendAllRecipients(draft)) {
+    const why = await sendRecipientPrecheck(draft, x.recipient, x.role);
+    if (why) return why;
+  }
+  if (!sendIsSms(draft) && draft.reply) return sendReplyPrecheck(draft);
+  return '';
+}
+
+// One recipient row through the canonical reads (the To's rule, per row).
+async function sendRecipientPrecheck(draft, r, role) {
   const sms = sendIsSms(draft);
-  const r = draft.recipient || {};
+  const who = role === 'To' ? '' : ` (${role}: ${r.contact_name || 'recipient'})`;
   const id = Number(r.contact_id);
   const contact = await api(`/api/contacts/${id}`, null, 'GET');
   const c = contact && contact.contact;
-  if (!c) return 'The recipient contact no longer exists. Nothing was sent.';
+  if (!c) return `The recipient contact${who} no longer exists. Nothing was sent.`;
   const list = await api(`/api/contacts/${id}/${sms ? 'phones' : 'emails'}`, null, 'GET');
   const rows = (list && (sms ? list.phones : list.emails)) || [];
   const rowId = Number(sms ? r.phone_id : r.email_id);
   const row = rows.find((x) => Number(x.id) === rowId);
   const stamp = row && row.updated_at ? new Date(row.updated_at).toISOString() : '';
-  if (!row || row.end_date) return `That ${sms ? 'number' : 'address'} is no longer active on the contact. Nothing was sent.`;
+  if (!row || row.end_date) return `That ${sms ? 'number' : 'address'}${who} is no longer active on the contact. Nothing was sent.`;
   if (!row.consent || typeof row.consent.opted_out !== 'boolean') {
-    return `Could not re-check the ${sms ? 'number' : 'address'}'s consent. Nothing was sent. Ask Casey to prepare it again.`;
+    return `Could not re-check the ${sms ? 'number' : 'address'}'s consent${who}. Nothing was sent. Ask Casey to prepare it again.`;
   }
   const optedNow = row.consent.opted_out === true;
   if (optedNow !== (r.opted_out === true)) {
     return optedNow
-      ? `That ${sms ? 'number' : 'address'} has opted out since this card was prepared. Nothing was sent. Ask Casey to prepare it again — the new card shows the opt-out.`
-      : `That ${sms ? 'number' : 'address'} is no longer opted out — its consent changed since this card was prepared. Nothing was sent. Ask Casey to prepare it again.`;
+      ? `That ${sms ? 'number' : 'address'}${who} has opted out since this card was prepared. Nothing was sent. Ask Casey to prepare it again — the new card shows the opt-out.`
+      : `That ${sms ? 'number' : 'address'}${who} is no longer opted out — its consent changed since this card was prepared. Nothing was sent. Ask Casey to prepare it again.`;
   }
   if (String(row.consent.version) !== String(r.consent_version)) {
-    return `That ${sms ? 'number' : 'address'}'s consent changed since this card was prepared. Nothing was sent. Ask Casey to prepare it again.`;
+    return `That ${sms ? 'number' : 'address'}'s consent${who} changed since this card was prepared. Nothing was sent. Ask Casey to prepare it again.`;
   }
   if (String(sms ? row.phone : row.email) !== String(sms ? r.phone : r.email) || stamp !== r.expected_updated_at) {
-    return `That ${sms ? 'number' : 'address'} changed since this card was prepared. Nothing was sent. Ask Casey to prepare it again.`;
+    return `That ${sms ? 'number' : 'address'}${who} changed since this card was prepared. Nothing was sent. Ask Casey to prepare it again.`;
   }
+  return '';
+}
+
+// A reply's original, through the hub's own reply-defaults read: the message
+// must still exist (and be readable), and the hub must still answer it from
+// the reviewed mailbox, to the reviewed address. A 404 is a refusal (the
+// message is gone or unreadable), any other failure leaves the card retryable.
+async function sendReplyPrecheck(draft) {
+  const reply = draft.reply || {};
+  const fk = Number(reply.mail_message_id);
+  let d;
+  try { d = await api(`/api/mail/messages/${fk}/reply?mailbox_id=${encodeURIComponent(String(Number(reply.mailbox_id)))}`, null, 'GET'); }
+  catch (e) {
+    if (e && e.status === 404) return `The email this replies to (message #${fk}) no longer exists, or you can no longer read it. Nothing was sent.`;
+    throw e;
+  }
+  if (!d || Number(d.in_reply_to_message_fk) !== fk) return `Could not re-check the email this replies to (message #${fk}). Nothing was sent. Ask Casey to prepare it again.`;
+  if (Number(d.mailbox_id) !== Number(reply.mailbox_id)) return `This reply would now come from a different mailbox than the one reviewed. Nothing was sent. Ask Casey to prepare it again.`;
+  const to = Array.isArray(d.to) ? d.to.map((a) => String(a && a.email || '').toLowerCase()) : [];
+  const reviewed = String((draft.recipient || {}).email || '').toLowerCase();
+  if (to.length !== 1 || to[0] !== reviewed) return `The reply's recipient changed since this card was prepared. Nothing was sent. Ask Casey to prepare it again.`;
   return '';
 }
 
@@ -6518,10 +6619,22 @@ function sendActionResult(draft, result) {
       provider_id: provider.id != null ? String(provider.id).slice(0, 100) : null };
   }
   const warnings = Array.isArray(result.warnings) ? result.warnings.map((w) => String(w && w.code || '')).filter(Boolean) : [];
+  const total = 1 + sendCcList(draft).length + sendBccList(draft).length;
+  let outcome = warnings.includes('recipients_rejected')
+    ? (total > 1 ? 'sent, but the mail server refused one or more recipients' : 'sent, but the mail server refused the recipient')
+    : 'sent — the mail server accepted it';
+  // The Case field's link (S2P §G): the hub reports what became of it.
+  const link = result.case_link && typeof result.case_link === 'object' ? String(result.case_link.state || '') : '';
+  if (draft.case) {
+    outcome += link === 'linked' ? `; logged on case ${draft.case.case_id} now`
+      : link === 'pending' ? `; the case ${draft.case.case_id} link follows once the sent copy is stored (minutes to a couple of hours)`
+        : link === 'failed' ? `; the case ${draft.case.case_id} link FAILED — IT was alerted; link the sent copy by hand from Comms`
+          : `; case ${draft.case.case_id} link state unknown — check the sent copy in Comms`;
+  }
   return { contact_id: contactId, email_log_id: Number(result.email_log_id) || null,
-    outcome: warnings.includes('recipients_rejected') ? 'sent, but the mail server refused the recipient' : 'sent — the mail server accepted it',
+    outcome,
     provider_id: result.provider_message_id != null ? String(result.provider_message_id).slice(0, 200) : null,
-    warnings };
+    warnings, ...(draft.case ? { case_id: draft.case.case_id, case_link_state: link || null } : {}) };
 }
 
 function sendResultText(payload) {

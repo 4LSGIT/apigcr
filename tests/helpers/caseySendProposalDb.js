@@ -26,8 +26,15 @@ function makeDb(over = {}) {
       { contact_id: 1400, contact_name: 'Other Person', contact_fname: 'Other', contact_lname: 'Person', contact_ssn: '' },
     ],
     contact_phones: [{ id: 12, contact_id: 1309, phone: '3135550001', label: 'Mobile', is_primary: 1, sms_optout: 0, end_date: null, updated_at: STAMP }],
-    contact_emails: [{ id: 13, contact_id: 1309, email: 'pat@example.com', label: 'Personal', is_primary: 1, email_optout: 0, end_date: null, updated_at: STAMP }],
-    cases: [{ case_id: 'CASE1', case_number: '26-40001', case_number_full: '2:26-bk-40001', case_type: 'Chapter 7' }],
+    contact_emails: [
+      { id: 13, contact_id: 1309, email: 'pat@example.com', label: 'Personal', is_primary: 1, email_optout: 0, end_date: null, updated_at: STAMP },
+      // A14X: a second address on the same contact and one on another contact — cc / bcc rows.
+      { id: 14, contact_id: 1309, email: 'pat.work@example.com', label: 'Work', is_primary: 0, email_optout: 0, end_date: null, updated_at: STAMP },
+      { id: 15, contact_id: 1400, email: 'other@example.com', label: 'Personal', is_primary: 1, email_optout: 0, end_date: null, updated_at: STAMP },
+    ],
+    // CASE3 exists but is nobody's case here (the email Case field may name it; an SMS may not).
+    cases: [{ case_id: 'CASE1', case_number: '26-40001', case_number_full: '2:26-bk-40001', case_type: 'Chapter 7' },
+      { case_id: 'CASE3', case_number: '26-40003', case_number_full: '2:26-bk-40003', case_type: 'Chapter 13' }],
     case_relate: [{ case_relate_case_id: 'CASE1', case_relate_client_id: 1309 }],
     channel_grants: [{ user: USER, channel_type: 'phone_line', channel_id: 3, can_send: 1 }, { user: USER, channel_type: 'mailbox', channel_id: 5, can_send: 1 }],
     consent_states: [],
@@ -46,10 +53,11 @@ function makeDb(over = {}) {
       }
       if (/FROM contact_phones cp .* WHERE cp\.id = \?$/.test(s)) return [T.contact_phones.filter((r) => r.id === Number(p[0]))];
       if (/FROM contact_emails ce .* WHERE ce\.id = \?$/.test(s)) return [T.contact_emails.filter((r) => r.id === Number(p[0]))];
-      if (/^SELECT c\.case_id, COALESCE\(NULLIF\(c\.case_number_full, ''\)/.test(s)) {
-        const linked = T.case_relate.some((r) => r.case_relate_case_id === p[0] && r.case_relate_client_id === Number(p[1]));
-        const c = T.cases.find((x) => x.case_id === p[0]);
-        return [linked && c ? [{ case_id: c.case_id, label: c.case_number_full || c.case_number || c.case_id }] : []];
+      // sendActionCase: the case by id, with EXISTS(case_relate link to the contact) as `linked` (params: contact, case).
+      if (/^SELECT c\.case_id, COALESCE\(NULLIF\(c\.case_number_full, ''\), NULLIF\(c\.case_number, ''\), c\.case_id\) AS label, EXISTS\(SELECT 1 FROM case_relate cr WHERE cr\.case_relate_case_id = c\.case_id AND cr\.case_relate_client_id = \?\) AS linked FROM cases c WHERE c\.case_id = \? LIMIT 1$/.test(s)) {
+        const c = T.cases.find((x) => x.case_id === p[1]);
+        const linked = T.case_relate.some((r) => r.case_relate_case_id === p[1] && r.case_relate_client_id === Number(p[0]));
+        return [c ? [{ case_id: c.case_id, label: c.case_number_full || c.case_number || c.case_id, linked: linked ? 1 : 0 }] : []];
       }
       if (s === 'SELECT channel_id FROM channel_grants WHERE user = ? AND channel_type = ? AND can_send = 1') {
         return [T.channel_grants.filter((g) => g.user === Number(p[0]) && g.channel_type === p[1] && g.can_send).map((g) => ({ channel_id: g.channel_id }))];

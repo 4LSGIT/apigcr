@@ -409,6 +409,23 @@ body. Governing migrations in `ref/migrations/`.*
   the key. Native callers without a
   key are unchanged. Off switch `casey_send_enabled`. Plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A14.
+- **Casey email sends: cc/bcc, reply, Case field (A14X, 11-15, "release
+  means allow"):** `email.send.v1` also takes `cc` / `bcc` (lists of
+  `{contact_id, email_id}`, each under the To's evidence + reload rule; the
+  route's dedupe — To beats Cc beats Bcc — and `MAX_RECIPIENTS` mirrored at
+  proposal; EVERY recipient re-read at click; Bcc warned on the card),
+  `in_reply_to_message_fk` + `quote_original` (a cited `mail.message` /
+  `mail.search` row; From and To come from `mailboxSendService.replyDefaults`
+  — ONE recipient, and the To must be the cited row's address; the subject
+  defaults to the hub's `Re: …`; the precheck re-reads
+  `GET /api/mail/messages/:id/reply?mailbox_id=` and refuses on a 404 or a
+  different mailbox / To), and `case_id` as the composer's Case field (the
+  hub's `mail_sent_case_link` runs after the send and the card says the link
+  may lag; cited + existing, the recipient need not be on it — flagged
+  `linked_to_recipient`; never inferred). Attachments / MMS media and
+  scheduled sends stay refused BY NAME — the hub has no route for them.
+  SMS unchanged. Same flag, same route gates; no route change. Plan: A14
+  "Released 2026-11-15".
 - **Casey authors email/phone ingest rules (A20.2 + A20.3, 10-27):** six
   kinds, each ONE request to the rule editor's own route —
   `ingest_rule.create.v1` (`POST /api/{ch}-ingest/rules`, born `active: 0`

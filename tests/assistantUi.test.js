@@ -135,8 +135,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'ingestRulePath', 'ingestRuleId', 'ingestRuleLabel', 'ingestRuleValue', 'ingestRuleHead', 'ingestRuleSideText', 'ingestRuleActionLine',
   'ingestRuleCarriesCode', 'ingestRuleText', 'ingestRuleRequest', 'ingestRuleDispatch', 'ingestRuleResult', 'ingestRulePrecheck', 'openIngestRuleRecord',
   'openAutomationRecord',
-  'sendIsSms', 'sendActionLabel', 'sendRecipientLine', 'sendOptoutText', 'sendFactLines', 'sendDraftText', 'sendDraftFields', 'sendConfirmText', 'sendActionRequest',
-  'sendPrecheck', 'sendActionDispatch', 'sendActionResult', 'sendResultText', 'openSendRecord',
+  'sendIsSms', 'sendActionLabel', 'sendRecipientLine', 'sendOptoutText', 'sendCcList', 'sendBccList', 'sendAllRecipients', 'sendFactLines', 'sendDraftText', 'sendDraftFields', 'sendConfirmText', 'sendActionRequest',
+  'sendPrecheck', 'sendRecipientPrecheck', 'sendReplyPrecheck', 'sendActionDispatch', 'sendActionResult', 'sendResultText', 'openSendRecord',
   'reportDraftLabel', 'reportSsnText', 'reportVizText', 'reportCardText', 'reportDraftFields', 'reportConfirmText', 'reportDraftRequest', 'reportDraftResult',
   'actionFamily', 'isActionDraft', 'actionStringReceipt', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
   'executeActionDraft', 'applyActionResults', 'hydrateActionDraft'];
@@ -2503,13 +2503,27 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
     if (!('consent' in email)) email.consent = { opted_out: false, version: '0' };
     if (phone.consent === undefined) delete phone.consent;
     if (email.consent === undefined) delete email.consent;
+    // A14X: a second address of Pat (cc), another contact (bcc) and the hub's reply-defaults read.
+    const work = { id: 14, email: 'pat.work@example.com', email_optout: 0, end_date: null, updated_at: STAMP, consent: { opted_out: false, version: '0' }, ...(over.work || {}) };
+    const other = { id: 15, email: 'other@example.com', email_optout: 0, end_date: null, updated_at: STAMP, consent: { opted_out: false, version: '0' }, ...(over.other || {}) };
+    const replyRead = over.reply === undefined ? { status: 'success', in_reply_to_message_fk: 501, mailbox_id: 5, to: [{ email: 'pat@example.com', name: 'Pat One' }], subject: 'Re: Hello' } : over.reply;
     return (path) => {
       if (path === '/api/contacts/1309') return { contact };
       if (path === '/api/contacts/1309/phones') return { status: 'success', phones: over.noRow ? [] : [phone] };
-      if (path === '/api/contacts/1309/emails') return { status: 'success', emails: over.noRow ? [] : [email] };
+      if (path === '/api/contacts/1309/emails') return { status: 'success', emails: over.noRow ? [] : [email, work] };
+      if (path === '/api/contacts/1400') return over.noOther ? { contact: null } : { contact: { contact_id: 1400 } };
+      if (path === '/api/contacts/1400/emails') return { status: 'success', emails: [other] };
+      if (path === '/api/mail/messages/501/reply?mailbox_id=5') { if (typeof replyRead === 'function') return replyRead(); return replyRead; }
       return undefined;
     };
   };
+  // An A14X email: cc Pat's work address, bcc another contact, a reply to message #501, filed to a case.
+  const fullEmail = (over = {}) => emailDraft({
+    cc: [{ contact_id: 1309, contact_name: 'Pat One', email_id: 14, email: 'pat.work@example.com', label: 'Work', is_primary: false, expected_updated_at: STAMP, consent_version: '0', opted_out: false }],
+    bcc: [{ contact_id: 1400, contact_name: 'Other Person', email_id: 15, email: 'other@example.com', label: 'Personal', is_primary: true, expected_updated_at: STAMP, consent_version: '0', opted_out: false }],
+    reply: { mail_message_id: 501, mailbox_id: 5, subject: 'Re: Hello', quote_original: true, quote_header: 'On Mon, Oct 26, 2026 at 10:00 AM, Pat One <pat@example.com> wrote:', quote_chars: 12 },
+    subject: 'Re: Hello', subject_defaulted: true, case: { case_id: 'CASE1', label: '2:26-bk-40001', linked_to_recipient: true }, recipients: 3, duplicates_dropped: 0, ...over });
+  const mailOk = async () => ({ status: 'success', email_log_id: 991, provider_message_id: '1a2b', warnings: [], case_link: { state: 'pending', job_id: 77 } });
   // The page's opt-out helper, for real (public/js/optoutAck.js in a JSDOM
   // window, as the page loads it); window.confirm answers `answer`.
   function optoutHelper(answer) {
@@ -2788,6 +2802,154 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
     const cancelled = await run(opted(smsDraft()), { confirm: false });
     const dialog = cancelled.P.Swal.fire.mock.calls[0][0];
     expect(dialog.text).toMatch(/^This sends NOW to Pat One 3135550001\. It cannot be recalled\. This recipient opted out of SMS — you will be asked to confirm past the opt-out\.\n\nText message proposal — not sent\nWARNING: This recipient opted out of SMS\n/);
+  });
+
+  // ── A14X (released 2026-11-15): cc / bcc, reply threading, the Case field ──
+  test('A14X: the precheck re-reads EVERY recipient and the reply\'s original, then ONE POST carries exactly the reviewed lists, ids and case', async () => {
+    const m = fullEmail();
+    const { writes, gets, history } = await run(m, { write: mailOk });
+    expect(gets).toEqual(['/api/contacts/1309', '/api/contacts/1309/emails', '/api/contacts/1309', '/api/contacts/1309/emails',
+      '/api/contacts/1400', '/api/contacts/1400/emails', '/api/mail/messages/501/reply?mailbox_id=5']);
+    expect(writes).toEqual([{ path: '/api/mail/send', method: 'POST',
+      body: { mailbox_id: 5, to: ['pat@example.com'], cc: ['pat.work@example.com'], bcc: ['other@example.com'], subject: 'Re: Hello', body_text: 'Dear Pat,\n\nSee you Tuesday.',
+        in_reply_to_message_fk: 501, quote_original: true, case_id: 'CASE1' },
+      headers: { 'Idempotency-Key': m.action_draft.draft_id } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_send_contact_id: 1309 });
+    expect(history[0].text).toBe('Email to Pat One: contact #1309: sent — the mail server accepted it; the case CASE1 link follows once the sent copy is stored (minutes to a couple of hours) (email log #991).');
+    expect(history[0].action_result).toMatchObject({ kind: 'email.send.v1', case_id: 'CASE1', case_link_state: 'pending' });
+    // No reply, no case, no copies: the plain body — no cc/bcc/reply/case keys at all.
+    const plain = emailDraft();
+    const p = await run(plain, { write: async () => ({ status: 'success', email_log_id: 1, warnings: [] }) });
+    expect(p.gets).toEqual(['/api/contacts/1309', '/api/contacts/1309/emails']);
+    expect(p.writes[0].body).toEqual({ mailbox_id: 5, to: ['pat@example.com'], subject: 'Your case', body_text: 'Dear Pat,\n\nSee you Tuesday.' });
+  });
+
+  test('A14X: the builder sends only reviewed ids — never a typed address, a reply from another mailbox, or a malformed case', () => {
+    const { actionFamily } = actionSandbox();
+    const family = actionFamily({ kind: 'email.send.v1' });
+    expect(() => family.request(fullEmail({ cc: [{ contact_id: 1309, email_id: 14 }] }).action_draft)).toThrow(/unusable cc\/bcc recipient/);
+    expect(() => family.request(fullEmail({ reply: { mail_message_id: 501, mailbox_id: 6, quote_original: true } }).action_draft)).toThrow(/no usable original message or mailbox/);
+    expect(() => family.request(fullEmail({ reply: { mail_message_id: 0, mailbox_id: 5 } }).action_draft)).toThrow(/no usable original message or mailbox/);
+    expect(() => family.request(fullEmail({ case: { case_id: 'CASE1; DROP', label: 'x' } }).action_draft)).toThrow(/no usable case/);
+    // Empty lists add no keys; a non-reply sends neither reply key; quote_original is sent as a strict boolean.
+    expect(family.request(fullEmail({ cc: [], bcc: [], reply: null, case: null }).action_draft).body).toEqual({ mailbox_id: 5, to: ['pat@example.com'], subject: 'Re: Hello', body_text: 'Dear Pat,\n\nSee you Tuesday.' });
+    expect(family.request(fullEmail({ reply: { mail_message_id: 501, mailbox_id: 5, quote_original: 'yes' } }).action_draft).body.quote_original).toBe(false);
+    // The model's text never reaches the route: a draft carrying a typed `to` list is ignored.
+    expect(family.request(fullEmail({ to: ['evil@x.test'] }).action_draft).body.to).toEqual(['pat@example.com']);
+  });
+
+  test('A14X: click-time freshness covers the copies and the original — any changed recipient, a gone or re-homed original refuses BEFORE the claim', async () => {
+    const cases = [
+      [{ work: { end_date: '2026-10-26' } }, /^That address \(Cc: Pat One\) is no longer active on the contact\. Nothing was sent\.$/],
+      [{ other: { consent: { opted_out: false, version: '3' } } }, /^That address's consent \(Bcc: Other Person\) changed since this card was prepared/],
+      [{ other: { email: 'moved@example.com' } }, /^That address \(Bcc: Other Person\) changed since this card was prepared/],
+      [{ noOther: true }, /^The recipient contact \(Bcc: Other Person\) no longer exists/],
+      [{ other: { consent: undefined } }, /^Could not re-check the address's consent \(Bcc: Other Person\)/],
+      [{ reply: () => { throw Object.assign(new Error('Message not found'), { status: 404 }); } }, /^The email this replies to \(message #501\) no longer exists, or you can no longer read it\. Nothing was sent\.$/],
+      [{ reply: { status: 'success', in_reply_to_message_fk: 501, mailbox_id: 6, to: [{ email: 'pat@example.com' }] } }, /^This reply would now come from a different mailbox than the one reviewed/],
+      [{ reply: { status: 'success', in_reply_to_message_fk: 501, mailbox_id: 5, to: [{ email: 'trustee@court.test' }] } }, /^The reply's recipient changed since this card was prepared/],
+      [{ reply: { status: 'success', in_reply_to_message_fk: 501, mailbox_id: 5, to: [{ email: 'pat@example.com' }, { email: 'x@y.test' }] } }, /^The reply's recipient changed/],
+      [{ reply: { status: 'success', in_reply_to_message_fk: 77, mailbox_id: 5, to: [{ email: 'pat@example.com' }] } }, /^Could not re-check the email this replies to \(message #501\)/],
+    ];
+    for (const [over, why] of cases) {
+      const m = fullEmail();
+      const { writes, ledger } = await run(m, { read: reads(over), write: mailOk });
+      expect({ over, writes: writes.length, ledger: ledger.length, status: m.action_draft.status }).toEqual({ over, writes: 0, ledger: 0, status: 'draft' });
+      expect(m.action_draft.refusal_error).toMatch(why);
+    }
+    // The To's own messages are unchanged (no role suffix).
+    const to = fullEmail();
+    await run(to, { read: reads({ email: { end_date: '2026-10-26' } }), write: mailOk });
+    expect(to.action_draft.refusal_error).toBe('That address is no longer active on the contact. Nothing was sent.');
+    // A reply read that fails for another reason leaves the card retryable (nothing claimed).
+    const f = fullEmail();
+    const failed = await run(f, { read: reads({ reply: () => { throw new Error('offline'); } }), write: mailOk });
+    expect([failed.writes.length, failed.ledger.length]).toEqual([0, 0]);
+    expect(f.action_draft.action_error).toMatch(/Could not re-check the record before applying \(offline\)\. Nothing was sent/);
+    expect(f.action_draft).not.toHaveProperty('refusal_error');
+    // The reply read is skipped when the card is not a reply; the copies are still re-read.
+    const noReply = fullEmail({ reply: null });
+    const nr = await run(noReply, { write: mailOk });
+    expect(nr.gets).not.toContain('/api/mail/messages/501/reply?mailbox_id=5');
+    expect(nr.gets).toContain('/api/contacts/1400/emails');
+    expect(noReply.action_draft.status).toBe('applied');
+  });
+
+  test('A14X: the card says who is copied, warns on Bcc, names the reply and the quote, discloses the case filing and its lag — or that nothing is filed', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const { document } = dom.window;
+    const { hydrateActionDraft, actionFamily } = actionSandbox({ document, navigator: dom.window.navigator });
+    const family = actionFamily({ kind: 'email.send.v1' });
+    const sendConfirmText = (d) => family.confirmText(d);
+    const sendDraftText = (d) => family.text(d);
+    const full = fullEmail({ duplicates_dropped: 1, sender: { mailbox_id: 5, label: '#5 Rena <rena@4lsg.com>', address: 'rena@4lsg.com', defaulted: true } });
+    const host = document.createElement('div');
+    hydrateActionDraft(family, host, full, full.action_draft);
+    const rows = [...host.querySelectorAll('dt')].map((dt) => [dt.textContent, dt.nextElementSibling.textContent]);
+    const row = (k) => rows.filter(([key]) => key === k).map(([, v]) => v);
+    expect(row('To')).toEqual(['Pat One — pat@example.com (Personal, primary)']);
+    expect(row('Cc')).toEqual(['Pat One — pat.work@example.com (Work)']);
+    expect(row('Bcc')).toEqual(['Other Person — other@example.com (Personal, primary)']);
+    expect(row('WARNING')).toEqual(['Bcc — the other recipients will not see this address']);
+    expect(row('Duplicates')).toEqual(['1 address was listed twice and kept once (To before Cc before Bcc, as Comms does)']);
+    expect(row('From')).toEqual(['#5 Rena <rena@4lsg.com> (the mailbox Comms would reply from)']);
+    expect(row('In reply to')).toEqual(['message #501 (On Mon, Oct 26, 2026 at 10:00 AM, Pat One <pat@example.com>) — threaded into that conversation']);
+    expect(row('Quoted original')).toEqual(['appended under your text ("On Mon, Oct 26, 2026 at 10:00 AM, Pat One <pat@example.com> wrote:" …), as Comms does']);
+    expect(row('Case')).toEqual(["2:26-bk-40001 — this email is FILED to case CASE1: its sent copy joins the case's log after the send (the link runs afterwards and may lag minutes to a couple of hours; if it fails, IT is alerted)"]);
+    expect(row('Subject')).toEqual(['Re: Hello (the reply subject Comms would use)']);
+    expect(row('Audience')).toEqual(['3 recipients. No attachments or scheduled send — the Comms hub itself cannot do either.']);
+    expect(row('Consent')).toEqual(['a direct email is operational — an email opt-out covers marketing only and never stops it; every recipient is re-checked when you click.']);
+    expect(rows[rows.length - 1]).toEqual(['Body', 'Dear Pat,\n\nSee you Tuesday.']);
+    // The dialog names the copies.
+    expect(sendConfirmText(full.action_draft)).toMatch(/^This sends NOW to Pat One pat@example.com \(and 2 more: Cc pat.work@example.com, Bcc other@example.com\)\. It cannot be recalled\.\n\n/);
+    // No quote; an unfiled email; a case the recipient is not on.
+    const quiet = sendDraftText(fullEmail({ reply: { mail_message_id: 501, mailbox_id: 5, quote_original: false, quote_header: null }, case: null, cc: [], bcc: [] }).action_draft);
+    expect(quiet).toContain('\nIn reply to: message #501 — threaded into that conversation\nQuoted original: NOT included — only your text is sent\n');
+    expect(quiet).toContain('\nCase: none — this email is not filed to any case (Casey never picks a case for you; name the case to file it there)\n');
+    expect(quiet).toContain('\nAudience: one recipient. No attachments or scheduled send — the Comms hub itself cannot do either.\n');
+    expect(quiet).not.toMatch(/\nCc:|\nBcc:|WARNING: Bcc/);
+    const stranger = sendDraftText(fullEmail({ case: { case_id: 'CASE3', label: '2:26-bk-40003', linked_to_recipient: false } }).action_draft);
+    expect(stranger).toContain('\nWARNING: case CASE3 is not a case of Pat One\n');
+    // Plain email (as before A14X): no new lines, the old audience wording gone.
+    const plain = sendDraftText(emailDraft().action_draft);
+    expect(plain).toContain('\nCase: none — this email is not filed to any case');
+    expect(plain).toContain('\nAudience: one recipient. No attachments or scheduled send — the Comms hub itself cannot do either.\n');
+    expect(plain).not.toMatch(/reply threading|In reply to|Cc:/);
+    // SMS: nothing new.
+    const text = sendDraftText(smsDraft({ case: { case_id: 'CASE1', label: '2:26-bk-40001' } }).action_draft);
+    expect(text).toContain('\nCase: 2:26-bk-40001 (placeholders only — the text is not filed to the case by this card)\n');
+    expect(text).toContain('\nAudience: one recipient. No attachments, media, cc/bcc or scheduling.\n');
+    // An opted-out copy is a danger line of its own, after the To's.
+    const opted = fullEmail({ bcc: [{ ...fullEmail().action_draft.bcc[0], opted_out: true }] });
+    const host2 = document.createElement('div');
+    hydrateActionDraft(family, host2, opted, opted.action_draft);
+    expect([...host2.querySelectorAll('.action-draft-danger')].map((d) => d.textContent)).toEqual(['Bcc recipient Other Person (other@example.com) opted out of email']);
+    expect(sendDraftText(opted.action_draft)).toContain('\nBcc: Other Person — other@example.com (Personal, primary) — OPTED OUT\n');
+    expect(sendDraftText(opted.action_draft)).toMatch(/\nConsent: OPTED OUT — 1 recipient opted out of email\. Sending asks you to confirm/);
+  });
+
+  test('A14X: a 409 opted_out naming a copied address meets the same confirm — ONE acknowledged resend with the cc/bcc intact; the result carries the case link state', async () => {
+    const m = fullEmail();
+    const optout = optoutHelper(true);
+    const err409 = Object.assign(new Error('Other Person other@example.com (contact #1400) has opted out of email.'), { status: 409, body: { status: 'error', code: 'opted_out', message: 'Other Person other@example.com (contact #1400) has opted out of email.' } });
+    const { writes } = await run(m, { optout, write: async (path, body) => { if (!body.acknowledge_optout) throw err409; return { ...(await mailOk()), case_link: { state: 'linked' } }; } });
+    expect(optout.asked).toEqual(['Other Person other@example.com (contact #1400) has opted out of email.\n\nSend anyway?']);
+    expect(writes.map((w) => [w.body.acknowledge_optout === true, w.body.cc, w.body.bcc, w.body.case_id])).toEqual([
+      [false, ['pat.work@example.com'], ['other@example.com'], 'CASE1'], [true, ['pat.work@example.com'], ['other@example.com'], 'CASE1']]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_send_contact_id: 1309 });
+    // Every link state has its own words.
+    const { actionFamily } = actionSandbox();
+    const sendActionResult = (draft, result) => actionFamily({ kind: 'email.send.v1' }).result(draft, result);
+    const d = fullEmail().action_draft;
+    const base = { status: 'success', email_log_id: 5, warnings: [] };
+    expect(sendActionResult(d, { ...base, case_link: { state: 'linked' } }).outcome).toBe('sent — the mail server accepted it; logged on case CASE1 now');
+    expect(sendActionResult(d, { ...base, case_link: { state: 'failed' } }).outcome).toBe('sent — the mail server accepted it; the case CASE1 link FAILED — IT was alerted; link the sent copy by hand from Comms');
+    expect(sendActionResult(d, { ...base }).outcome).toBe('sent — the mail server accepted it; case CASE1 link state unknown — check the sent copy in Comms');
+    expect(sendActionResult(d, { ...base, warnings: [{ code: 'recipients_rejected' }], case_link: { state: 'pending' } }).outcome)
+      .toBe('sent, but the mail server refused one or more recipients; the case CASE1 link follows once the sent copy is stored (minutes to a couple of hours)');
+    const noCase = sendActionResult(fullEmail({ case: null }).action_draft, { ...base, case_link: { state: null } });
+    expect(noCase).toEqual({ contact_id: 1309, email_log_id: 5, outcome: 'sent — the mail server accepted it', provider_id: null, warnings: [] });
   });
 
   test('reopening a chat whose send claim never recorded shows the send\'s own unknown wording', () => {

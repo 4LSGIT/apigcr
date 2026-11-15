@@ -2976,7 +2976,9 @@ strong idempotency, and an unambiguous delivered/queued/failed result.
 
 **As shipped.** Two kinds on the P1 card engine, `sms.send.v1` →
 `POST /api/phone-lines/:id/sms` `{to, message}` and `email.send.v1` →
-`POST /api/mail/send` `{mailbox_id, to:[address], subject, body_text}` — the
+`POST /api/mail/send` `{mailbox_id, to:[address], subject, body_text}` (plus
+`cc`, `bcc`, `in_reply_to_message_fk`, `quote_original`, `case_id` since the
+2026-11-15 release below) — the
 comms hub's own routes, so the user's per-channel `can_send` grant, SU step-up,
 per-user send rate, daily mail budget and `admin_audit_log` row all apply
 unchanged. These are the one family whose route IS an authorization seat
@@ -3041,12 +3043,56 @@ unchanged. These are the one family whose route IS an authorization seat
   opens the contact on its Communications tab.
 - **Off switch:** `casey_send_enabled` ('0' = both kinds do not exist).
 
-**Deliberate narrowings:** no attachments, MMS/media, cc/bcc, HTML body,
-reply threading (`in_reply_to_message_fk`), scheduling, multi-recipient or
-bulk sends, and the email's composer Case field (`case_id` → case link) is
-NOT sent — a case only feeds placeholders. Appointment cards carry their own
-client confirmation under this bar (A4.1 *Client confirmations*). Each narrowing
-is filed in `ref/plans.md`. **Humans and Casey:** since the opt-out
+**Released 2026-11-15 (Fred: "release means allow") — email only.** Three of
+the original narrowings shipped through the same `email.send.v1` kind, the
+same `POST /api/mail/send` (the route already took the fields; no route
+change) and the same `casey_send_enabled` switch:
+- **cc / bcc** — `cc` / `bcc` are lists of `{contact_id, email_id}`, each
+  entry under the To's own rule (an evidence row carrying both ids; reloaded
+  `end_date IS NULL` on that contact; consent recorded per recipient; the
+  mail route's `parseRecipient`); the route's dedupe (one address once — To
+  beats Cc beats Bcc) and its `MAX_RECIPIENTS` cap are mirrored at proposal
+  (the dropped count is shown). The card lists To / Cc / Bcc apart, each
+  recipient's opt-out state, and a `WARNING: Bcc — the other recipients will
+  not see this address` line (ruled default: Bcc allowed, warned). The
+  click-time precheck re-reads EVERY recipient; a 409 `opted_out` naming any
+  address meets the same `optoutAck` confirm (one acknowledged resend under
+  the same key). Evidence is 1-8 refs, so a card carries at most 8 recipients.
+- **Reply threading** — `in_reply_to_message_fk` is the `mail_message_id` of a
+  cited `mail.message` / `mail.search` row; the hub's own
+  `mailboxSendService.replyDefaults` decides From (the mailbox Comms would
+  reply from; a named `mailbox_id` must be one the hub would use) and To (the
+  original's sender; the user's own mail → its recipients). Ruled defaults:
+  Casey replies to ONE recipient, and that address must be the cited To row's
+  (`contact_id` + `email_id` stay required — a sender with no active contact
+  row, or own mail with several recipients, is answered from Comms, never from
+  a card); the subject may be omitted (the hub's `Re: …`, capped like a typed
+  one and sent explicitly by the builder); `quote_original` (default true)
+  appends the hub's quote. The card shows the original, the mailbox the hub
+  picked and the quote header. Precheck: `GET /api/mail/messages/:id/reply
+  ?mailbox_id=` must still answer with the reviewed mailbox and the reviewed
+  To (a 404 is a refusal; another failure leaves the card retryable).
+- **The Case field** — `case_id` is now the composer's Case field: the hub
+  links the sent copy to the case's log (`mail_sent_case_link`, S2P §G) after
+  the send, and the card says so with the lag (the job's first try is +6 min;
+  a no-copy SMTP send logs at send time; a failure alerts IT). Ruled
+  defaults: the case must be cited and exist (the rule of every case-bound
+  card); the recipient need not be on it — the hub allows that (mail to a
+  trustee about a client's case) — but the card warns `case X is not a case
+  of <recipient>` (`linked_to_recipient`); when the user named no case the
+  email goes unfiled and the card says so — a case is NEVER inferred, even
+  when the contact is on exactly one (a filing decision). The result reads
+  the route's `case_link.state` back onto the card (`linked` / `pending` /
+  `failed`, each in its own words). An SMS `case_id` is unchanged:
+  placeholders only, the recipient's own case.
+
+**Still refused, by name:** attachments / MMS media and scheduled sends — the
+hub itself has no route for either (`mailboxSendService` has no attachment
+field; nothing schedules a send), so a native feature comes first
+(`ref/plans.md`); the normalizer's refusal says exactly that ("the Comms hub
+itself cannot attach a file to a send / schedule a send"). Also HTML bodies,
+several To recipients and bulk sends. Appointment cards carry their own
+client confirmation under this bar (A4.1 *Client confirmations*). **Humans and Casey:** since the opt-out
 ruling (2026-10-27) both native routes WARN a person sending from Comms (409
 `opted_out` until `acknowledge_optout:true`), and Casey's card takes the same
 confirm (ruling 17).

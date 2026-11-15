@@ -1326,10 +1326,32 @@ It cannot be recalled.*
   are plain text up to 1000 characters and the card shows roughly how many SMS
   segments it will take; emails are a one-line subject and a plain-text body.
   If the message contains a Social Security number the card warns you.
-- **What it doesn't do.** No attachments, pictures (MMS), cc/bcc, replies into
-  an existing thread, scheduled sends, or messages to several people. The
-  email is not filed to a case by the card (a case is only used to fill in
-  case placeholders). An appointment's own confirmation rides on its
+- **Copies (email only).** Casey can Cc or Bcc other people — each one an
+  active email address of a contact from its lookup, listed on the card apart
+  from the To with its own opt-out state; a Bcc gets a warning line that the
+  other recipients will not see that address. At most 10 recipients in all,
+  as in Comms, and an address listed twice is kept once (To, then Cc, then
+  Bcc). Every recipient is re-checked when you click.
+- **Replies (email only).** Ask Casey to answer an email it has shown you
+  ("reply to that and say…"). The card names the message, the mailbox Comms
+  would reply from (you may name another box you can send from), the subject
+  (*Re: …* unless you gave one) and whether the original is quoted under your
+  text (it is, unless you say not to). The reply goes to the email's sender,
+  who must be a contact whose address Casey looked up; mail from someone who
+  is not a contact is answered from Comms. When you click, Casey checks the
+  email still exists and still answers from the same box to the same person.
+- **Filing to a case (email only).** Name a case and the email is filed to it
+  like the Comms **Case** field: the card says *this email is FILED to case …*
+  and that the sent copy joins the case's log after the send — minutes to a
+  couple of hours later (if the link fails, IT is alerted and **Link to case**
+  in Comms still works). The case need not be the recipient's own; if it
+  isn't, the card warns. When you name no case the card says *not filed to
+  any case* — Casey never picks one for you, even when the client has only one
+  case. A text's case only fills in placeholders, as before.
+- **What it doesn't do.** No attachments or pictures (MMS) and no scheduled
+  sends — Comms itself cannot do either, so neither can a card; no messages
+  to several people at once (one To; copies are Cc/Bcc). Texts get none of
+  the email extras. An appointment's own confirmation rides on its
   appointment card instead (see *Appointment actions*).
 - **When you click.** Casey re-checks the number or address first; if it ended,
   changed, or its consent changed since the card was prepared (an opt-out or
@@ -1343,7 +1365,9 @@ It cannot be recalled.*
   a provider error after the message left — the card says *Outcome unknown*
   and offers no way to send again: check the Communications tab or the comms
   log before asking Casey to send it again. A refusal you can read (no send
-  access, an inactive line, the send limit) says nothing was sent.
+  access, an inactive line, the send limit) says nothing was sent. A filed
+  email's result also says how the case link went: logged now, following once
+  the sent copy is stored, or failed (IT alerted).
 
 The off switch is the `casey_send_enabled` setting.
 
@@ -1602,8 +1626,9 @@ or `event.cancel.v1` proposal. It may instead be one `appt.create.v1`,
 one `contact.phone.*.v1`, `contact.email.*.v1`, or `contact.address.*.v1`
 create/update/end proposal described above. It may instead be one
 `sms.send.v1` or `email.send.v1` proposal: one text or one email sent now to
-one contact row, with the fully resolved message on the card (see *Sending a
-text or email*). It may instead be one
+one contact row — an email may also copy other contacts (Cc/Bcc), reply to an
+email Casey has shown and be filed to a case — with the fully resolved message
+on the card (see *Sending a text or email*). It may instead be one
 `job.code_safe.create.v1` proposal: a one-time scheduled job whose JavaScript
 body runs in safe mode (the isolated QuickJS engine — no network, no database,
 no email/SMS; see the workflows chapter's `custom_code` section). It may

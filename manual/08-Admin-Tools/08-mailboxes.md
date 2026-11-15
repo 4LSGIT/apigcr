@@ -569,6 +569,12 @@ anyone who may send from at least one box.
     above). If the copy cannot be saved, the email still went out — you are
     told, and IT gets a warning. Like other Sent mail of these boxes it is
     not put on any log by itself — use **Link to case** on it.
+- **Ask Casey** sends through this same path: its email card may copy
+  contacts (Cc/Bcc), reply to an email it has shown you and fill the **Case**
+  field, under your own send access, the 10-recipient limit, the opt-out
+  question and the case-link behaviour above. It cannot attach a file or
+  schedule a send, because Comms cannot (Ask Casey chapter, *Sending a text
+  or email*).
 - **Daily limit.** Each sending account (one Google account, or one SMTP
   login) may send a set number of emails in any 24 hours — counting
   automation emails through the same account, and attempts the provider

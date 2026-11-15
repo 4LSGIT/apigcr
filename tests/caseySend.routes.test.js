@@ -37,6 +37,13 @@
  *              acknowledged_optout; Cancel sends nothing. An email opt-out is
  *              marketing-only (YisraMail D18): a direct email is never marked,
  *              warned or acknowledged.
+ *   A14X       (released 2026-11-15) an email card's cc / bcc, reply and Case
+ *              field reach SMTP and the hub's tail exactly as reviewed: the
+ *              REAL replyDefaults picks From and To on the world, the thread
+ *              headers and the quote are the hub's, the mail_sends row carries
+ *              the case and its link job is queued; the ROUTE refuses an
+ *              unknown case, an unreadable parent and an over-cap list before
+ *              anything leaves (the card is never the only gate).
  */
 
 'use strict';
@@ -88,7 +95,10 @@ function fnSrc(name) {
   throw new Error(`function ${name} unbalanced`);
 }
 // eslint-disable-next-line no-new-func
-const sendActionRequest = new Function(`${fnSrc('sendIsSms')}\n${fnSrc('sendActionRequest')}\nreturn sendActionRequest;`)();
+const sendActionRequest = new Function(`${fnSrc('sendIsSms')}\n${fnSrc('sendCcList')}\n${fnSrc('sendBccList')}\n${fnSrc('sendActionRequest')}\nreturn sendActionRequest;`)();
+// The page's result reader (the Case field's link state lands on the card from it).
+// eslint-disable-next-line no-new-func
+const sendActionResult = new Function(`${fnSrc('sendIsSms')}\n${fnSrc('sendCcList')}\n${fnSrc('sendBccList')}\n${fnSrc('sendActionResult')}\nreturn sendActionResult;`)();
 // The page's dispatch, bound to the REAL helper (run in a JSDOM window, as the
 // page loads it) and an apiSend-shaped caller of the real routes.
 // eslint-disable-next-line no-new-func
@@ -437,6 +447,86 @@ describe('email: card → POST /api/mail/send → SMTP', () => {
     expect(again.json).toMatchObject({ status: 'success', replayed: true, mailbox_id: 1 });
     expect(mockSendMail).toHaveBeenCalledTimes(1);
     expect(world.W.T.admin_audit_log.filter((a) => a.tool === 'mail_send' && a.status === 'sent')).toHaveLength(1);
+  });
+
+  // ── A14X (released 2026-11-15): cc / bcc, a reply, the Case field ──
+  const EVID_X = [{ id: 'q1', purpose: 'Client emails', rows: [
+    { contact_id: 1309, contact_name: 'Pat One', email_id: 13, case_id: 'CASE1' },
+    { contact_id: 1309, email_id: 14 }, { contact_id: 1400, email_id: 15 },
+  ] }, { id: 'q2', kind: 'mail.message', purpose: 'The email', rows: [{ row_type: 'message', mail_message_id: 501, mailbox_id: 1 }] }];
+  const CITE_X = [{ query_id: 'q1', row_number: 1 }, { query_id: 'q1', row_number: 2 }, { query_id: 'q1', row_number: 3 }, { query_id: 'q2', row_number: 1 }];
+
+  test('A14X: a reply with cc, bcc and the Case field — the hub picks From and To; SMTP gets exactly the reviewed lists, thread headers and quote; the sent copy is queued for the case link', async () => {
+    const world = mailWorld();
+    world.W.caseRow('CASE1', '26-40001', '2:26-bk-40001');
+    world.W.message(501, { mailbox_id: 1, from_addr: 'Pat One <pat@example.com>', to_addrs: 'billing@firm.test', subject: 'Hello', body_text: 'Can we talk?' });
+    const draft = await assistant.normalizeActionDraft(proposalDb(world.W),
+      { kind: 'email.send.v1', contact_id: 1309, email_id: 13, body: 'Yes {{contacts.contact_fname}}, Tuesday works.', case_id: 'CASE1',
+        cc: [{ contact_id: 1309, email_id: 14 }], bcc: [{ contact_id: 1400, email_id: 15 }], in_reply_to_message_fk: 501, evidence: CITE_X },
+      EVID_X, { currentUserId: SENDER });
+    // The REAL replyDefaults on the world: the box the mail was sent to, "Re: …", the sender as To.
+    expect(draft).toMatchObject({ subject: 'Re: Hello', subject_defaulted: true, sender: { mailbox_id: 1, address: 'billing@firm.test', defaulted: true },
+      reply: { mail_message_id: 501, mailbox_id: 1, quote_original: true, quote_chars: 'Can we talk?'.length }, case: { case_id: 'CASE1', linked_to_recipient: true },
+      recipient: { email: 'pat@example.com' }, cc: [{ email: 'pat.work@example.com' }], bcc: [{ email: 'other@example.com' }], recipients: 3 });
+    expect(draft.reply.quote_header).toMatch(/^On .*, Pat One <pat@example.com> wrote:$/);
+    const request = sendActionRequest(draft);
+    expect(request.body).toEqual({ mailbox_id: 1, to: ['pat@example.com'], cc: ['pat.work@example.com'], bcc: ['other@example.com'], subject: 'Re: Hello',
+      body_text: 'Yes Pat, Tuesday works.', in_reply_to_message_fk: 501, quote_original: true, case_id: 'CASE1' });
+
+    current = world;
+    const r = await post(request.path, request.body, tok(SENDER), { 'Idempotency-Key': draft.draft_id });
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ status: 'success', in_reply_to_message_fk: 501, thread_key: 'm501@x.test', recipients: 3, case_link: { state: 'pending' } });
+    expect(r.json.case_link.job_id).toBeGreaterThan(0);
+    expect(mockSendMail).toHaveBeenCalledTimes(1);
+    const sent = mockSendMail.mock.calls[0][0];
+    expect([sent.to, sent.cc, sent.bcc, sent.subject]).toEqual(['pat@example.com', 'pat.work@example.com', 'other@example.com', 'Re: Hello']);
+    expect([sent.inReplyTo, sent.references]).toEqual(['<m501@x.test>', '<m501@x.test>']);
+    expect(sent.text.startsWith('Yes Pat, Tuesday works.\n\nOn ')).toBe(true);
+    expect(sent.text).toMatch(/Pat One <pat@example.com> wrote:\n> Can we talk\?$/);
+    const sends = world.W.T.mail_sends;
+    expect(sends).toHaveLength(1);
+    expect(sends[0]).toMatchObject({ mailbox_id: 1, user: SENDER, case_id: 'CASE1', case_link_state: 'pending', case_log_id: null });
+    const linkJobs = world.W.T.scheduled_jobs.filter((j) => JSON.parse(j.data).type === 'mail_sent_case_link');
+    expect(linkJobs).toHaveLength(1);
+    expect(JSON.parse(linkJobs[0].data)).toMatchObject({ case_id: 'CASE1', send_id: sends[0].id, mailbox_id: 1, user: SENDER });
+    // The page reads the link state back onto the card.
+    const payload = sendActionResult(draft, r.json);
+    expect(payload).toMatchObject({ contact_id: 1309, case_id: 'CASE1', case_link_state: 'pending',
+      outcome: 'sent — the mail server accepted it; the case CASE1 link follows once the sent copy is stored (minutes to a couple of hours)' });
+    // D18: nothing acknowledged; one audited send.
+    const audit = world.W.T.admin_audit_log.filter((a) => a.tool === 'mail_send');
+    expect(audit.map((a) => a.status)).toEqual(['sent']);
+    expect(JSON.stringify(audit[0].details)).not.toContain('acknowledged_optout');
+    // Without quote_original the quote stays out and the headers stay in.
+    mockSendMail.mockClear();
+    const noQuote = await assistant.normalizeActionDraft(proposalDb(world.W),
+      { kind: 'email.send.v1', contact_id: 1309, email_id: 13, body: 'Short answer.', in_reply_to_message_fk: 501, quote_original: false, evidence: CITE_X },
+      EVID_X, { currentUserId: SENDER });
+    const req2 = sendActionRequest(noQuote);
+    expect(req2.body).toEqual({ mailbox_id: 1, to: ['pat@example.com'], subject: 'Re: Hello', body_text: 'Short answer.', in_reply_to_message_fk: 501, quote_original: false });
+    const r2 = await post(req2.path, req2.body, tok(SENDER), { 'Idempotency-Key': noQuote.draft_id });
+    expect(r2.status).toBe(200);
+    const sent2 = mockSendMail.mock.calls[0][0];
+    expect([sent2.text, sent2.inReplyTo, sent2.cc, sent2.bcc]).toEqual(['Short answer.', '<m501@x.test>', undefined, undefined]);
+    expect(world.W.T.mail_sends[1]).toMatchObject({ case_id: null, case_link_state: null });
+  });
+
+  test('A14X: the route, not the card, is the gate — an unknown case, an unreadable parent and an over-cap list are refused before anything leaves', async () => {
+    const world = mailWorld(); current = world;
+    world.W.caseRow('CASE1', '26-40001');
+    world.W.message(501, { mailbox_id: 1, from_addr: 'Pat One <pat@example.com>', to_addrs: 'billing@firm.test', subject: 'Hello' });
+    const base = { mailbox_id: 1, to: ['pat@example.com'], subject: 'S', body_text: 'B' };
+    const unknownCase = await post('/api/mail/send', { ...base, case_id: 'NOPE' }, tok(SENDER), { 'Idempotency-Key': 'x-case-nope' });
+    expect([unknownCase.status, unknownCase.json.message]).toEqual([400, 'case_id "NOPE" is not a case']);
+    const noParent = await post('/api/mail/send', { ...base, in_reply_to_message_fk: 999 }, tok(SENDER), { 'Idempotency-Key': 'x-parent-999' });
+    expect([noParent.status, noParent.json.message]).toEqual([404, 'Message not found']);
+    const over = await post('/api/mail/send', { ...base, cc: Array.from({ length: 10 }, (_, i) => `c${i}@x.test`) }, tok(SENDER), { 'Idempotency-Key': 'x-cap-over' });
+    expect([over.status, over.json.message]).toEqual([400, 'at most 10 recipients (To, Cc and Bcc together) — the hub is not a bulk sender']);
+    expect(mockSendMail).not.toHaveBeenCalled();
+    expect(world.W.T.mail_sends).toEqual([]);
+    // Pre-dispatch refusals release every claim.
+    expect(world.db.rows.filter((r) => /^x-/.test(r.idem_key))).toEqual([]);
   });
 
   test('an SMTP failure keeps the claim; a refusal (no send grant) releases it', async () => {

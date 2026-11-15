@@ -1035,12 +1035,19 @@ COMMENTs.)
 
 ## From the Ask Casey arc — A14 direct sends (2026-10-27) — deferred
 
-- **Attachments / MMS, cc/bcc, reply threading, scheduled sends** for Casey
-  send cards — each its own reviewed shape (a fetched attachment URL still
-  stays model-uninventable).
-- **The email Case field.** The card does not send `case_id`, so a Casey email
-  is not case-linked by the hub's `mail_sent_case_link` path; offering it
-  means disclosing the case-link job on the card.
+- **Attachments / MMS media and scheduled sends — native route first.** Released
+  by Fred 2026-11-15 together with cc/bcc, reply threading and the Case field
+  (those three shipped, A14X), but the Comms hub itself has neither:
+  `POST /api/mail/send` has no attachment field (only the campaign/Pabbly
+  path takes URL attachments) and no route schedules a send; SMS has no MMS
+  send. Casey keeps refusing both BY NAME ("the Comms hub itself cannot attach
+  a file to a send / schedule a send"). Either is a native hub feature first;
+  a Casey shape follows (a fetched attachment URL stays model-uninventable).
+- **Casey replies narrowed to ONE cited contact recipient** (A14X): a reply to
+  a sender with no active contact row, or to own mail whose hub To is several
+  addresses, is refused and answered from Comms. Widening it means a recipient
+  shape with no contact row behind it (no click-time contact re-read, no
+  Communications-tab receipt).
 - **Appointment-card confirmations: two unchecked edges.** The click-time
   re-read checks the client's own phone/email rows for an opt-out; an active
   row for that number/address on ANOTHER contact (the route's opt-out reader
