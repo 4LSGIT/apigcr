@@ -833,14 +833,19 @@ describe('bag containment', () => {
     expect(manifest.TABLES.contacts.note).toMatch(/`custom`.*denylist/);
   });
 
-  test('query_db strips `custom` from rows, `*` included', async () => {
+  test('query_db strips `custom` from `*` rows and refuses a step that names it', async () => {
     const rows = [{ case_id: 'A', case_stage: 'Open', custom: { cf_x: 'secretish' } }];
     const db = { query: async () => [rows.map(r => ({ ...r }))] };
     const out = await dbFns.query_db({ select: ['*'], from: 'cases' }, db);
     expect(out.output).toEqual([{ case_id: 'A', case_stage: 'Open' }]);
-    const out2 = await dbFns.query_db({ select: ['contacts.custom', 'contacts.contact_id'], from: 'contacts' },
-      { query: async () => [[{ contact_id: 1, custom: {} }]] });
-    expect(out2.output).toEqual([{ contact_id: 1 }]);
+    // Naming the bag is refused before any query runs (it used to be stripped
+    // from the rows after the fact; since the blocked-column refusal, a step
+    // that asks for it fails instead of quietly getting less than it asked for).
+    let queried = false;
+    await expect(dbFns.query_db({ select: ['contacts.custom', 'contacts.contact_id'], from: 'contacts' },
+      { query: async () => { queried = true; return [[{ contact_id: 1, custom: {} }]]; } }))
+      .rejects.toThrow(/contacts\.custom, a blocked column/);
+    expect(queried).toBe(false);
   });
 });
 

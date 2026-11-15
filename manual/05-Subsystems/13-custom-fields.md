@@ -398,7 +398,7 @@ key from an unknown one. `listAll` (the editor's list) always reads the DB.
 - **The bag never travels whole.** `custom` is stripped by name from event
   envelopes (`lib/domainEvents.js`), refused by the placeholder resolver
   (`BLOCKED_COLUMNS`) and the report validator (`DENIED_COLUMNS`), dropped
-  from `query_db` rows, and stripped from the petition intake's
+  from `query_db` `*` rows (a step that names it is refused), and stripped from the petition intake's
   `get_contacts` rows (S3 — that payload keeps `contact_ssn` by ruling, for
   Form 121 prep; no other outbound flow does). What *does* travel is each
   active field's own column: every `SELECT *` (event envelopes included)

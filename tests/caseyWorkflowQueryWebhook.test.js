@@ -131,7 +131,7 @@ describe('A17.4a — query_db steps', () => {
       .rejects.toThrow(/cases has no column "case_nmber"\. Its columns: case_id, case_number, case_status, case_open_date$/);
   });
 
-  test('blocked columns are refused in EVERY position — the runtime only strips them from output', async () => {
+  test('blocked columns are refused in EVERY position (the runtime refuses them too since 2026-11-15; Casey says so before any query)', async () => {
     for (const params of [
       { select: ['users.password'], from: 'users' },
       { select: ['users.user'], from: 'users', where: [{ column: 'users.password_hash', op: 'LIKE', value: 'a%' }] },
@@ -143,8 +143,14 @@ describe('A17.4a — query_db steps', () => {
   });
 
   test('Casey\'s floor over the runtime: token / credential columns are refused; SSN-class columns follow the automation ruling', async () => {
+    // The bearer tokens are on the runtime's own blocked list since 2026-11-15
+    // (lib/internal_functions/db.js QUERY_DB_BLOCKED_COLUMNS), so that refusal
+    // speaks first; Casey's floor still catches the chat-denied names the
+    // runtime does not block (draft_key, track_token, attachments, delivery_info).
     await expect(normalizeActionDraft(db(), draft([qdb({ select: ['users.user'], from: 'users', where: [{ column: 'users.reset_token', op: 'IS NOT NULL' }] })]), []))
-      .rejects.toThrow(/reset_token is a token or credential column; Casey never authors a read of it/);
+      .rejects.toThrow(/users\.reset_token is a blocked column; query_db never reads it/);
+    await expect(normalizeActionDraft(db(), draft([qdb({ select: ['users.user'], from: 'users', where: [{ column: 'users.draft_key', op: 'IS NOT NULL' }] })]), []))
+      .rejects.toThrow(/draft_key is a token or credential column; Casey never authors a read of it/);
     const cols = { ...COLS, contacts: [...COLS.contacts, 'contact_ssn'] };
     const ssnDb = db();
     const inner = ssnDb.query;
@@ -194,7 +200,7 @@ describe('A17.4a — query_db steps', () => {
   test('the normalizer reads the function\'s OWN rule sets, not a copy', () => {
     const rules = require(path.join(__dirname, '..', 'lib', 'internal_functions')).__QUERY_DB_RULES;
     expect([...rules.tables]).toContain('cases');
-    expect(rules.blockedColumns.users).toEqual(['password', 'password_hash']);
+    expect(rules.blockedColumns.users).toEqual(['password', 'password_hash', 'reset_token']);
     expect(Object.isFrozen(rules)).toBe(true);
   });
 

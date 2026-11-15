@@ -10361,12 +10361,13 @@ function normalizeQueryDbParams(raw, at) {
     if ((rules.blockedColumns[table] || []).includes(m[2])) {
       throw httpError(422, `${at}: query_db ${role} "${value}" — ${table}.${m[2]} is a blocked column; query_db never reads it`);
     }
-    // Casey's own floor on top of the runtime's: the chat-denied token and
-    // credential names (users.reset_token, contacts.contact_token, …) are
-    // never authored into a read either — the runtime blocks only passwords
-    // and the custom bag. SSN / DOB are NOT refused here: since the
-    // 2026-09-24 ruling contact_ssn is an ordinary column to automation, and
-    // the card lists every column read.
+    // Casey's own floor on top of the runtime's: every chat-denied token and
+    // credential name is refused here too. The runtime's list (passwords, the
+    // custom bag and, since 2026-11-15, the four bearer tokens) speaks first
+    // above; this catches the chat-denied names it does not block (draft_key,
+    // track_token, attachments, delivery_info). SSN / DOB are NOT refused
+    // here: since the 2026-09-24 ruling contact_ssn is an ordinary column to
+    // automation, and the card lists every column read.
     if (ASSISTANT_DENIED.includes(m[2].toLowerCase()) && !QUERY_DB_CASEY_ALLOWED_DENIED.has(m[2].toLowerCase())) {
       throw httpError(422, `${at}: query_db ${role} "${value}" — ${m[2]} is a token or credential column; Casey never authors a read of it`);
     }

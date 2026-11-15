@@ -1873,6 +1873,7 @@ tests/processAlertMeta.test.js
 tests/processJobs.longJobConnection.test.js
 tests/processJobs.targeted.test.js
 tests/queryAiLoadOrder.test.js
+tests/queryDbBlockedColumns.test.js
 tests/quoMessageTransform.test.js
 tests/rcConsentSync.test.js
 tests/rcRenewSubscriptions.test.js
