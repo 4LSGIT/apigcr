@@ -397,10 +397,13 @@ amendments, which bind every slice that touches hosts:
   (the schema's first view) never reaches ref/database.sql and db:ref:check
   cannot see it drift. Its migration record is its definition of record
   meanwhile.
-- **automations.manage siblings**: the capability gates only hooks (+ pages
-  create-hook). Workflows / sequences / triggers / ingest management in the
-  same Automation Manager stay open to all staff — a visible inconsistency,
-  accepted as the first step.
+- **automations.manage siblings**: the capability gates hooks (+ pages
+  create-hook) and, since safe-mode S2, every STANDARD `custom_code` writer
+  (`lib/codeStepGate.js`: workflow step routes, test-step, scheduled-jobs
+  POST/PATCH). Trigger + ingest CODE bodies left the gate for staff JWTs on
+  2026-11-15 (9ec44a0; an API key still needs it). Workflows / sequences /
+  triggers / ingest management in the same Automation Manager otherwise stay
+  open to all staff — a visible inconsistency, accepted as the first step.
 - **Deny rows the Firm tab never shows** (ui-custom S3.4 review N4): Who sees
   what lists per-USER denies of items that exist. (a) A per-user deny of a firm
   item later deleted stays in `entitlement_denies` with no row to remove it from

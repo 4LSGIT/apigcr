@@ -2,7 +2,7 @@
 # Last updated: 2026-09-14 — compressed to skeleton form (~900 lines from ~3,100); §0 deltas folded into body; per-column facts moved to schema COMMENTs in ref/database.sql
 
 <!-- ================= CURRENCY ================= -->
-<!-- Reviewed-through: 662f02b (docs review #3, 2026-10-27). This doc is a   -->
+<!-- Reviewed-through: c0c97bc (docs review #4, 2026-11-15). This doc is a   -->
 <!-- SKELETON: what each subsystem is + the non-guessable invariants +       -->
 <!-- pointers. Depth lives in manual/, schema truth in ref/database.sql      -->
 <!-- (read its COMMENTs), route truth in ref/routes.md, working rules in     -->
@@ -10,9 +10,12 @@
 <!-- KNOWN MISSING SECTIONS (debt: docs/20260914_coverage_gaps): e-sign,     -->
 <!-- portal, YisraForms/templates, reports, pipeline engine, document sync,  -->
 <!-- booking landings. manual/ is authoritative for those meanwhile.        -->
-<!-- CONSCIOUS DEFERRALS (review #3): §0's Casey / opt-out / ingest-rule /   -->
-<!-- mailbox / court-parser entries stay until their arcs close (tier 2);    -->
-<!-- §0 entries with no numbered section wait for the sections above.        -->
+<!-- CONSCIOUS DEFERRALS (review #4): §0's Ask Casey (A*/P*/R*) and mailbox   -->
+<!-- (S2/S3/S-PH) entries stay until their arcs close (tier 2); the court    -->
+<!-- NEF, forms/sync-bus (11-11..14) and Sept (G2/G4/W1/DBKQ/FIL1/Manage/   -->
+<!-- SYNC-1) entries wait for the sections above. Custom fields, CTA links   -->
+<!-- and recipient consent got sections 36-38 in review #4; YisraMail C*/T*  -->
+<!-- folded into §17.                                                        -->
 <!-- Doc-debt queue: scratch ns=docs. File doc≠code divergences there at    -->
 <!-- discovery; each arc fixes its own before it closes (CLAUDE.md,         -->
 <!-- Living documentation). A DOCS_REVIEW.md run, on request, updates this. -->
@@ -66,25 +69,6 @@ body. Governing migrations in `ref/migrations/`.*
   `tests/caseyWorkflowStep.test.js`, gated
   `tests/caseyQueryDbColumns.mysql.test.js`; plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A17.4a / A17.4b.
-- **U9b-P4 + the Calendar column picker (11-12):** the shell's Events tab is
-  RETIRED (markup, EVENTS_COLUMNS, tabEventsGet, its bus reader, the `events`
-  launcher item, LIST_CSV.events / EVENT_CSV_COLUMNS); `?open=tabEvents`
-  aliases to `tabCalendar` in wsOpenTarget; saved layouts naming `events`
-  drop it at render. The Appointments tab STAYS (staff use it; audit log
-  10-13..11-10). `fe-event_types` is a `retired` registry key (never served,
-  never edited); `getEventTypeOptions()` reads the calendar-type registry via
-  `loadEventTypeOptions()` (one GET `/api/calendar-types?kind=hearing,
-  deadline,conference,other&active=1` per page, built-in list on failure) and
-  `newEventDialog` awaits it. The Calendar list has a column picker
-  (CALX_COLUMNS, `yc.calendar.cols_off|cols_on|cols_order.<uid>`; defaults =
-  the original seven; off by default: Date, Time, Contact — every client from
-  `display.contacts` — Case, Status) and an export choice (All columns /
-  As shown on screen). `/api/calendar-range` `include_labels` adds
-  `display.contacts: [{id, name, role}]` (row's own contact first, then the
-  anchored case's Primary + Secondary debtors) in the same contacts query
-  (UNION ALL; the budget stays one query). A saved copy of the old Events
-  tab may live as a Tool (it calls only `/api/events` + `/api/calendar-types`).
-
 - **The public form's draft precondition (11-14):** POST
   `/api/ext/forms/:form_key/draft` takes `expected_updated_at` — the server
   draft's stamp the page last saw (the D1 GET's `draft.updated_at`, then each
@@ -113,7 +97,6 @@ body. Governing migrations in `ref/migrations/`.*
   change to the stock save is re-ported there). A park the caret still holds
   waits for focusout as before. `tests/formsPages.sync.test.js` MID-RE-READ /
   MID-SAVE (the stub holds the in-flight request).
-
 
 - **The draft POST's precondition (11-11):** POST `/api/forms/draft` takes an
   optional `expected_draft_id` + `expected_updated_at` (both set: the row the
@@ -360,17 +343,6 @@ body. Governing migrations in `ref/migrations/`.*
   in the browser as `Failed — partly written` (`caseTransferKnownOutcome`).
   Same switch `casey_case_pipeline_enabled`; tests
   `tests/caseyPipelineTransfer{,.mysql}.test.js`; plan ASK_CASEY_ACTIONS_PLAN A9.3.
-- **`PATCH /api/cases/:id` refuses a docket another case holds (11-09):** when
-  the body carries `case_number` / `case_number_full`, the route (the Case
-  Details forms' and Casey's case-fields card's writer) answers 400 over 20
-  code points and 409 `{conflict}` when another case holds the value in either
-  column (`caseService.checkCaseNumberCollision` — whole-text, general_ci +
-  PAD SPACE), before any write; a null / '' clear is checked by neither, and
-  the adopt-only "no replace" guard stays on `/docket`. `routes/api.cases.js`
-  calls `caseService.docketWriteRefusal`, which the automation `update_case`
-  function runs too (the step fails, `err.code` `DOCKET_COLLISION` /
-  `DOCKET_WIDTH`, instead of writing); `tests/caseDocketGuard.test.js`, the
-  real engine in `tests/caseyCaseFields.mysql.test.js`.
 - **Casey's workflow definition read carries the start contract (A17.7c, 11-09):**
   every workflow row of `automation.definition` (`services/automationReadService.js`)
   has `test_input_keys` (keys of `workflows.test_input`, sorted — never its
@@ -470,24 +442,6 @@ body. Governing migrations in `ref/migrations/`.*
   refuses only an API key without automations.manage).
   Off switch `casey_ingest_authoring_enabled`. Plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A20.2/A20.3.
-- **Ingest rules: edit stamp + change log + stale-edit precondition (A20
-  slice 1, 10-27):** `{email,phone}_ingest_rules.definition_updated_at`
-  (DATETIME(3)) is THE edit stamp; `updated_at` moves on every match and is
-  not. Every rule / rule-action writer (create, update, delete, duplicate,
-  action add/update/delete) runs in ONE transaction:
-  lock the rule `FOR UPDATE` → optional `expected_base:
-  {definition_updated_at}` (P11's shape; stale → 409 `{error, conflict:
-  {changed, expected, actual}}`, nothing written) → write → if the
-  definition really changed (stored rows read back, key-order-blind), move
-  the stamp (`GREATEST(now, prev + 1 ms)`, `updated_at` assigned to itself)
-  and append `{email,phone}_ingest_rule_changes` (kind, actor user / key /
-  label, the rule WITH its actions before/after, `http` URL + literal header
-  values redacted, 256 KB per-side cap → size + sha256 marker). Invariants:
-  an action write moves its PARENT's stamp; the match bump never names the
-  stamp; a no-op save moves nothing; the log is append-only (a test greps for
-  an UPDATE/DELETE) and outlives its rule (no FK); lock order is rule then
-  action. `services/ingestRuleChangeLog.js`; migration
-  `scripts/ingestRuleEditStampAndChangeLog.js`. No read route yet. §27, §28.
 - **Read-loop continuation (R1, 10-26):** a stop in
   `assistantService.CONTINUABLE_STOPS` (round/step/row/time/token budget)
   returns `continuation`, a token SEALED by `lib/assistantContinuation.js`
@@ -553,261 +507,6 @@ body. Governing migrations in `ref/migrations/`.*
   8.4.11): a DROP does not fail on `yc_report`'s per-column grant — the grant
   stays ORPHANED in `mysql.columns_priv` (inert; it re-attaches to a later
   column of the same name) until a re-provision or targeted REVOKE clears it.
-- **Hook credential headers are stripped before storage (2026-11-02):** `lib/hookCredentialHeaders` (static names + the hook's own `auth_config.header` + every hook's configured header, cached 30 s; any case) is applied by the receiver, `recordExecution` and `executeHook`'s entry, so new raw_input, captured_sample, spool, transform_output, delivery, workflow and sequence copies are clean. Older rows still hold x-hook-key / RingCentral's Verification-Token (~32.8k) until `scripts/hookExecutionsHeaderScrub.js --apply` runs AFTER the deploy. A new header-borne hook auth adds its default name there.
-- **Designs library (YisraMail C3a, 2026-11-04 — §17 below; ref/YISRAMAIL_DESIGN.md §6.3
-  "As built (C3a)"):** `email_designs` + `/api/email-designs` (list / get / create /
-  update / archive; plain staff) and `campaigns.design_id` (provenance, email only,
-  existing + non-archived). EVERY save runs `lib/emailDesignRules.validateDesign` —
-  the C3 spike's rules 1–10 on `design_json` AND `html` independently, REFUSED
-  (400 `design_rejected` + rule + detail), never stripped; the footer slot = the last
-  `mj-section` (css-class `yc-footer`) holding only the `<!-- yc:footer-slot -->`
-  comment, which `campaignService.injectFooter` must inject at. Invariants: the
-  validator is the security boundary (the editor's canvas CSP is defence in depth —
-  a crafted request skips the editor); it stays linear (parse5 guarded: nesting ≤ 128,
-  ≤ 256 attributes per tag by a pre-parse scan that is exact only because `<script>`,
-  `<svg>`, `<math>`, `<select>` and `<frameset>` are refused first — never admit one
-  without revisiting the scan; ≤ 400 conditional comments, html ≤ 512 KB); a new
-  URL-valued merge tag a design may START a URL with joins `URL_LEADING_TAGS` there.
-- **Marketing send path (YisraMail C2, 2026-11-04 — §17 below; ref/YISRAMAIL_DESIGN.md
-  §6.4 / §6.5 "As built (C2)"), DARK until G1:** `executeSend`'s marketing
-  branch mints one unsub token per send (after the reservation, `send_ref` =
-  result id, re-used across a definite retry), renders from the campaign's
-  write-once `campaigns.send_snapshot` (MRPC 7.2(b)), injects the compliance
-  footer (at `<!-- yc:footer-slot -->` or before `</body>`), asserts footer +
-  unsubscribe URL in the FINAL html AND text before any provider call, and
-  sends with List-Unsubscribe / -Post / List-Id, Reply-To, tags and
-  `log_body:false` (email_log without the body). The transport HOLD
-  (`email_credentials.held_at`) is set by the §6.5 rates or an SES
-  account-level refusal, pauses every marketing campaign on it, and only an
-  audited SU release lifts it. Invariants: a new caller of `bulk:true` never
-  gets `log_body` (fenced to sends carrying List-Unsubscribe); a throw in the
-  token / render step clears the reservation (C1's scheduled→sending flip
-  after it can still leave a row `unknown` — a missed send, never a
-  duplicate); an email attachment is `https://` only and no adapter reads a
-  local file (`disableFileAccess` in smtp + gmail — nodemailer reads any
-  non-URL `path` from disk); a campaign attachment is passed ONCE.
-- **Designer editor mode (YisraMail C3b, 2026-11-04 — ref/YISRAMAIL_DESIGN.md
-  §6.3 "As built (C3b)"; manual 11-campaign-manager.md "Designer"):**
-  `campaign.html`'s third editor mode, `public/js/campaignDesigner.js`
-  (`YcDesigner`). GrapesJS 0.23.8 + grapesjs-mjml 1.0.8 load from jsdelivr
-  with pinned SRI ONLY when Designer is picked. Invariants: the canvas keeps the
-  CSP `frameContent` (stored markup must not run in a same-origin frame that
-  reaches `parent.apiSend` — test it by behaviour, the meta is rewritten away);
-  the footer block holds ONLY the `<!-- yc:footer-slot -->` comment (C2 injects
-  AT it; visible text there would ship), is re-normalized + locked after every
-  load, stays last in `mj-body`, and its preview is a VIEW of the comment —
-  never in the model or the export; `mjml-import` / `core:canvas-clear` refuse
-  and history is cleared after every load (else undo / import remove the
-  footer); the RTE toolbar has no strike-through (Chrome writes `<strike>`, which
-  the save validator refuses — a new RTE action must emit only allowed tags);
-  rich-text editing is ended before every export; images go only
-  through `AssetPicker.pick` (never the GrapesJS asset manager / base64). The
-  editor is NOT a security boundary (C3a's save rules + C2's assert are).
-  `getBody()` is async in campaign.html. Native block drag is a hand check.
-- **Segments + reporting (YisraMail C4, 2026-11-05 — ref/YISRAMAIL_DESIGN.md
-  §6.2 / §6.5 "As built (C4)"; manual 11-campaign-manager.md "Saved segments" /
-  "Daily digest"):** `campaign_segments` = a NAMED compose filter
-  (`campaignSegmentService` validates every save against exactly the
-  GET /campaigns/contacts keys, unknown key = 400 `segment_rejected`, `{}` =
-  everyone; never class/topic), re-run at pick — recipients still freeze at
-  create, consent re-asked at send. `getCampaign` adds `delivery` +
-  `transport` for marketing EMAIL only (delivered by set-once `delivered_at` —
-  a complaint OUTRANKS delivered in `delivery_status`, so never count
-  delivered by status; unsubs from the ledger by `send_ref` AND source ∈
-  one_click/unsub_page/pref_page — provider_bounce/provider_complaint rows
-  carry the SAME send_ref and are not unsubs; the join CAST pinned
-  `COLLATE utf8mb4_general_ci` or it is an illegal mix). Daily digest:
-  `mail_bounce_digest` (uiHidden, CTA-denied) over
-  `mailEventService.bounceDigestData`, recurring job 12:00 UTC
-  (`ref/migrations/2026-11-05_yisramail_c4_mail_digest_job.sql` — SU console,
-  AFTER the backend deploy); sends only on activity; kill
-  `campaign_bounce_digest_enabled`='0' (fresh read); recipient
-  `campaign_bounce_digest_email` → `alert_recipients`; activity with no
-  recipient THROWS (failed-job sweep visibility).
-- **Promotional automations (YisraMail C7, 2026-11-05 — ref/YISRAMAIL_DESIGN.md
-  §6.4 "As built (C7)"; manual 03-YisraFlow/05-internal-functions.md
-  "Promotional sends"):** `campaignService.sendPromotional` = ONE recipient,
-  NO campaign row — a `send_email` step with `promotional:true` + `topic`
-  takes the full marketing path (kill switch 422, consent by topic with
-  opted-out → `{sent:false, skipped:'opted_out'}` — skip, never fail; real
-  token with `campaign_id` NULL; footer + post-render assert; marketing
-  headers/Reply-To; bulk transport only, named via `marketing_sender` or the
-  firm's ONLY bulk row; held → 422). Invariants: no campaign_results row →
-  invisible to transportHealth/digest, bounces still suppress via the
-  uncorrelated ledger write; email_log keeps the body (the MRPC record);
-  `design_id` loads a Designer template at RUN time and resolves its merge
-  tags against `contact_id` IN the function (operational: same resolver, no
-  footer, reaches opt-outs — D18); SMS promotional refused (D1). AUTHORING is
-  D13-gated: `lib/promotionalSendGate.js` (campaigns.bulk) at EVERY writer —
-  workflow steps/test-step/preview, sequence steps, scheduled jobs, trigger
-  actions + hook targets (params_mapping: the KEY's presence is gated, fail
-  closed); a new internal-function writer joins it in the same slice. CTA
-  plans refuse promotional at mint (clicker text would be re-resolved by
-  renderMarketing). Casey authors promotional (impact card states the
-  marketing semantics; save gate still binds) but never invents design_id.
-  `from` is save-required unless promotional is the literal true
-  (`requiredUnless`); include_signature on promotional is REFUSED;
-  send_email's ctaInputParams stays exactly to/subject/html — no C7 param
-  may become a clicker input without review. Account-level SES refusal holds
-  the transport and fails the step; promotional steps carry no retry policy
-  (an ambiguous failure may have sent; no reservation row to dedupe).
-- **Open/click tracking (YisraMail C6, 2026-11-05 — ref/YISRAMAIL_DESIGN.md
-  §6.5 "As built (C6)"):** SES Open/Click events are ENGAGEMENT, a separate
-  axis from delivery: mailEventService branches on them before the
-  delivery/ledger path — `campaign_results.opened_at`/`clicked_at` set once
-  (a click stamps both), one `campaign_clicks` row per correlated Click
-  (idempotent on provider_event_id — INSERT IGNORE, hook retries double
-  nothing), never delivery_status / the consent ledger / the health sweep.
-  Uncorrelated engagement (C7 triggered sends) stores nothing. Stats lead
-  with clicks (opens are Apple-MPP-inflated). Unsub/preference links carry
-  `ses:no-track` wherever they appear — the footer's, and body anchors via
-  campaignService.addNoTrack — so an unsubscribe is never a click. Over-cap
-  OPERATIONAL campaigns ride the same config set: tracked too (Fred may order
-  the plans.md no-track toggle). LIVE since 2026-11-05: shapes captured
-  (fixtures open.json/click.json); an open/click SES flags as a likely bot
-  (`isBotEvent`, a STRING on the wire — Likely/true ignored, anything else
-  counts) never stamps engagement. The
-  tracking domain is a CNAME to CloudFront (origin r.us-east-2.awstrack.me,
-  Host forwarded, ACM cert in us-east-1) — HTTPS needs the CDN, a bare
-  awstrack CNAME serves the wrong cert (design doc §6.5 As-built C6).
-  `widget: 'email_design'` renders send_email's design_id as a named dropdown
-  in both step editors (automationManager caches /api/email-designs once).
-- **Campaign hardening (YisraMail C1, 2026-11-03 — §17 below; ref/YISRAMAIL_DESIGN.md
-  §6.1 / §6.4 "As built (C1)"):** campaigns have a class (operational |
-  marketing), an operational cap with an audited `campaigns.bulk` over-cap
-  path, the dark `marketing_send_enabled` kill switch, a send reservation
-  (`sending` / `unknown`, at most once), a pump, a cron per-tick
-  `campaign_send` quota (5) and `paused`. The deferral sentinel
-  (`lib/job_executor` `deferJob`, honoured by `routes/process_jobs.js`) is new
-  job-system plumbing: a job may say "run me again at T" without using an
-  attempt — only an executor's own code can say it (a Symbol mark).
-- **Provider email events (YisraMail T2, 2026-11-02 — ref/YISRAMAIL_DESIGN.md
-  §5.4 "As built"):** SES → EventBridge → hook `ses-events` → internal function
-  `mail_event_ingest` (`services/mailEventService`). Hard bounces and
-  complaints become email `marketing` opt-outs through `recordConsent`
-  (idempotent on `<eventbridge id>:<recipient>`); `campaign_results` carries
-  delivery columns that only move up the precedence; C2 reads
-  `transportHealth`. Parsed shapes are confirmed on captured events
-  (`tests/fixtures/ses-events/*.json`); Reject / DeliveryDelay / Rendering
-  Failure stay on AWS's documented shape (`*.assumed.json`, `VERIFY(step0)`).
-- **Marketing transport fence (YisraMail T1, 2026-11-01 — ref/YISRAMAIL_DESIGN.md
-  §5.2 "As built" holds the option, refusal and driver contract):**
-  `email_credentials.bulk_ok = 1` marks a marketing (bulk) transport (the SES
-  row); only `emailService.sendEmailDirect(…, {bulk:true})` — C2's marketing
-  path, and since C1 an operational campaign confirmed over the cap (D16, no
-  footer, no headers) — may send from it, and its marketing-only options
-  (`headers`, `reply_to`, `tags`, C2's `log_body`) exist nowhere else.
-  An `events_driver` (bulk rows only) adds the provider's headers at send.
-  Invariants: every reader that lists or picks a sender filters
-  `bulk_ok = 0`, and a new one must too; a caller that synthesizes an
-  `emailRow` from a real row carries `bulk_ok`; no other row shares a bulk
-  row's SMTP login and no mailbox sends through it (the editor refuses both —
-  the hub's budget groups by login).
-- **Recipient consent (YisraMail P1, 2026-10-29 — ref/YISRAMAIL_DESIGN.md
-  §4.1–§4.4, "As built"):** consent belongs to a DESTINATION (10-digit number
-  / lowercased address), per channel and SCOPE, in `comm_consent_state` (THE
-  truth) with an append-only ledger `comm_consent_events` (the proof) and
-  `comm_topics`. ONE reader and ONE writer: `services/optoutService.js`
-  (`findOptedOut` / `assertNotOptedOut` / `optoutGate` / `*OptedOutSql` /
-  `consentVersions`; `recordConsent(conn, …)` on the CALLER's connection —
-  event (UNIQUE source+provider_event_id → no-op), guarded upsert (newest
-  `(occurred_at, id)` wins), sync of the active row's cache flag). The row
-  flags are a CACHE for one release, dual-read (state OR flag) and dual-written:
-  `contact_phones.sms_optout` = SMS scope `all`, `contact_emails.email_optout`
-  = email scope `marketing`. WHAT A SEND CHECKS: operational (the default)
-  SMS → `all`; operational EMAIL → nothing (D18: an email opt-out is
-  marketing-only — send_email, forwards, request_decision, the mail hub, CTA
-  and `/internal/email` sends and the appt/booking confirmations all send);
-  `klass:'marketing'` → `marketing`/`all` + topic (a campaign asks by its
-  class since C1: `campaignService.consentOptsFor` — operational email asks
-  nothing). For SMS the 2026-10-27 rule stands (D19): AUTOMATION
-  REFUSES (`OptOutRefusal`, code `RECIPIENT_OPTED_OUT` → workflow step
-  `skipped`, sequence `skipped`/`recipient_opted_out`, never `failed`; appt /
-  booking / manage confirmations skip the channel, logged); STAFF ARE WARNED
-  (`POST /api/phone-lines/:id/sms`, JWT callers of `/internal/{sms,mms}`, the
-  SU CTA send → 409 `opted_out` until `acknowledge_optout:true`, gate before
-  the limiter and the idempotency claim; `public/js/optoutAck.js`); API-key
-  callers get 422. LOCK ORDER everywhere: the destination's contact row,
-  then its state row — a row writer holds its row by primary key and passes
-  it to recordConsent (`rowId`: no further row lock, cache sync by id); a
-  direct caller's recordConsent locks the active row through `*_active_uniq`
-  first. Never re-lock a held row through that index (a deadlock against a
-  waiting direct caller). Flag-deciding state reads are `FOR SHARE`, the
-  post-upsert read `FOR UPDATE`; the consent-bearing contact saves re-run
-  their pure-DB span once on `ER_LOCK_DEADLOCK` (`retryOnDeadlock` — the
-  state-gap cycle, design §4.4), as the direct writers' `consentTx` already do (P2 / P3 / P4). The app's row
-  writers (contactPhone/EmailService create/update, contactService aggregate
-  + scalar + createContact) go through optoutService on their own
-  transaction: a new row is written, then `bornRow` sets its flag from the
-  state (never an opt-in; a correction carries the old number's consent as
-  `row_replace`, a transfer donor's flag only where the destination has no
-  state); an active row's flag goes through `decideRowFlag`'s three-way
-  compare — the contact form sends each loaded row's `*_optout_base`; a
-  resent unchanged value records nothing, a change against moved consent is
-  409 `consent_changed` — then `applyRowDecision` (one `staff` event).
-  Opt-in needs a signed-in user: an API key gets 422 `opt_in_needs_staff`
-  (opt-out is fine, evidence `via:'api_key'`). `update_db` / `insert_db`
-  cannot write the flags (WRITE_POLICY block) and realign every row they
-  touch from the state (`syncRowCaches`, no event);
-  `scripts/reviveScalarReplacedValues.js` revives rows outside that rule (its
-  header). Override audits record `acknowledged_optout` (contact ids) AND
-  `acknowledged_optout_destinations`. A hit for a destination no row holds
-  has null `contact_id` / `row_id`. Exempt by design: the portal login PIN and
-  the Quo opt-out confirmation (P2, below). Migration:
-  `scripts/yisramailP1MigrateConsent.js`. Manual: 01-YisraCase-overview/02-contacts.md,
-  03-YisraFlow/08-error-policies.md.
-  **Email unsubscribe (P3, 10-30 — design §4.5 "As built"):** one
-  `comm_unsub_tokens` row per marketing send (minted by C2's marketing send
-  through `services/unsubService.mintOrReuseUnsubToken(conn, …)`), a bearer for ONE address's MARKETING consent only (D18: no control
-  stops case mail; recordConsent refuses an email `all`). Three public routes,
-  `routes/unsubActions.js`, landing origin, sessionless: `GET /u/:token` (the
-  page — never mutates), `POST /u/:token` (RFC 8058 one-click: any content
-  type, body ignored, 200 EMPTY, never a redirect, NO per-IP limiter — a 429
-  would drop a mail provider's unsubscribe), `POST /u/:token/prefs` (the form;
-  10/min/IP; the GET 30/min/IP). Sources `one_click` (the token's topic, D4),
-  `unsub_page` (topic / "stop all" = `marketing`), `pref_page` (checkboxes —
-  ticking a topic after "stop all" opts `marketing` back in). Idempotent on
-  STATE (a scope is written only when its state changes); tokens never
-  expire; `used_at` = first POST. No oracle: unknown token → neutral page /
-  200 empty; bogus topic → 422 for any token. Locks: token `FOR UPDATE`, then
-  a PLAIN state read, then recordConsent's own order. Every response:
-  no-store, noindex, `Referrer-Policy: no-referrer`. The free-text note → one
-  post-commit task for firm setting `consent_task_user_id` (unset → daily IT
-  warning; the note stays in `evidence.note`). The marketing footer is a
-  BLOCK (`lib/complianceFooter.js`, throws on a hole), not a placeholder;
-  its scalars are resolver pseudo-tables (§8). Migration:
-  `scripts/yisramailP3Migrate.js`. Manual: 06-Client-Facing/07-email-unsubscribe.md.
-  **Inbound SMS opt-out (P2, 10-30 — design §4.6 "As built"):**
-  `services/phoneConsentService.js` decides, `recordConsent` writes — inbound
-  keywords (ingest step 2b, incoming SMS only; `sms_keyword`, key
-  `'<provider>:<message id>'`, occurred_at = the provider's `ts`; START & co.
-  only while opted out; the raw body rides in `evidence`, hence the sensitive
-  tier), RingCentral 413 verdicts (`phoneDeliveryService`, every sighting,
-  ledger lookup first) and the read-only RC reconcile (`provider_optout`;
-  never a push — D15; dark: `sms_rc_consent_sync_enabled` unset, the consent
-  API is 403 CMN-408 for the connected user). Each is one pure-DB transaction
-  in the direct-caller lock order (the active row through
-  `phone_active_uniq`, passed on as `rowId`) with one `ER_LOCK_DEADLOCK`
-  retry. Post-commit, never thrown: a stranded-client task (a TRANSITION into
-  opted out on a contact with an open Primary/Secondary case) and a review
-  task for plain-language revocations (one open per number,
-  `task_dedupe_key 'consent_review:<number>'`), both to
-  `consent_task_user_id` through P3's `unsubService.resolveAssignee` (an
-  ACTIVE user, else the same daily `consent_task_unassigned` warning, no
-  task). No confirmation text from YC: RC and Quo confirm every word YC
-  honors themselves (Quo REVOKE + OPT OUT proven live 2026-10-30), and the
-  `consent_sms_confirm` job P2 shipped for the words Quo's docs omit was
-  removed the same day. The nightly
-  `sms_consent_sync` (CTA-denied) runs the reconcile and the inbound liveness
-  alert (`sms_inbound_liveness_hours`); `scripts/yisramailP2CheckInbound.js`
-  checks wf 17/18's `phone_log` wiring. Manual:
-  01-YisraCase-overview/17-text-opt-outs.md.
-  **Staff consent UI (P4, 11-01 — design §4.7 "As built"):** staff read
-  consent only through optoutService (`consentSummary`, `consentHistory` —
-  evidence through the `redactEvidence` allow-list); `routes/api.consent.js`
-  holds the history / export / preview routes and the SU suppression import,
-  which writes only via `recordConsent`, one transaction per destination.
-  Manual: 01-YisraCase-overview/02-contacts.md.
 - **Casey reads email/phone ingest rules (A20.0/A20.1, 10-26):** the P12
   kinds take `email_ingest_rule_id` / `phone_ingest_rule_id` (definition,
   references), `email_ingest_execution_id` / `phone_ingest_execution_id` or a
@@ -828,47 +527,6 @@ body. Governing migrations in `ref/migrations/`.*
   takes it from any staff JWT (§27 "Code mode"); (3) a throwing match is
   a console warning only, never recorded on the execution row; (4) email
   firm-to-firm mail runs Layer 3. Plan: ref/ASK_CASEY_ACTIONS_PLAN.md A20.
-- **Workflow step routes: expected_base precondition + save-time closures
-  (A17.4, 10-24):** the five step-mutating routes in `routes/workflows.js`
-  (insert, PUT, PATCH, DELETE, reorder) take an optional `expected_base`
-  `{draft_version, step_count, step_fingerprint?}` checked inside the write
-  transaction under the parent-row `FOR UPDATE`; a mismatch is a structured
-  409 `{conflict:{changed, expected, actual}}` and nothing is written.
-  `draft_version` is `workflows.draft_version` as the proposer saw it (null =
-  read the published steps); the fingerprint is
-  `lib/versionDiff.stepFingerprint` — sha256 over `canonical()` of
-  {type, config, error_policy, label, note}, key-order-insensitive (MySQL
-  re-orders JSON keys on write). Optional for native callers; every Casey
-  step card sends it. Save-time, same slice: unknown `function_name`,
-  undeclared param keys, and `params:null` are refused by
-  `validateInternalFunctionParams` (shared with scheduled-jobs routes — a
-  deliberately-bogus test job like the old `no_such_function_alert_test` rows
-  can no longer be CREATED through the route); `error_policy` must be an
-  object with `strategy` in the engine's four values. `BRANCH_TARGET_PARAMS`
-  + terminal sentinels moved to `lib/versionDiff.js` (routes import them).
-  `POST /workflows/:id/steps` honours `Idempotency-Key` (scope
-  `workflows.step_insert`). Tests: `tests/workflows.expectedBase.test.js`,
-  `tests/caseyWorkflowStep.test.js`; plan: ref/ASK_CASEY_ACTIONS_PLAN.md
-  A17.4/P11.
-- **Sequence step routes: expected_base precondition + save-time
-  validation (P11 sequence half, 10-26):** the five step-mutating routes in
-  `routes/sequences.js` (insert, PUT, PATCH, DELETE, reorder) take the same
-  optional `expected_base` `{draft_version, step_count, step_fingerprint?}`
-  as the workflow routes — checked inside the write transaction under the
-  `sequence_templates` parent-row `FOR UPDATE`, before `ensureDraft`; a
-  mismatch is the same structured 409 and nothing is written. The fingerprint
-  is `lib/versionDiff.sequenceStepFingerprint` — sha256 over `canonical()` of
-  {action_type, action_config, timing, condition, fire_guard, error_policy};
-  every input is in the `GET /sequences/templates/:id` response. Save-time
-  (POST / PUT, and PATCH when it writes action_type or action_config):
-  `lib/internal_functions` `__validateSequenceFunctionStep` refuses, for
-  sms/email/task/internal_function, a missing / unknown / `__`-helper /
-  workflow-only `function_name` and runs `validateInternalFunctionParams`
-  (undeclared keys, params null as {}, required params). Publish and
-  draft-diff still run only `validateStepConfig` (re-checking params at
-  publish is open, ref/plans.md). Tests: `tests/sequences.stepValidation.test.js`,
-  gated real-engine `tests/sequences.expectedBase.mysql.test.js`; plan:
-  ref/ASK_CASEY_ACTIONS_PLAN.md P11.
 - **Casey authors send steps (ruling 15, 10-27):** `send_sms` /
   `send_email` are on the WORKFLOW allowlist too (class `external-send`), so
   workflow draft / step insert / step edit cards carry sends. Sender rule,
@@ -1784,96 +1442,6 @@ body. Governing migrations in `ref/migrations/`.*
   - `routes/internal/phoneTest.js` is gone. Migration
     `2026-10-12_phone_sph.sql` goes BEFORE the backend (it seeds the
     default-line grants the gate needs).
-- **CTA links are live end to end (10-07, arc S0–S4):** SU-minted bearer
-  links (`4lsg.com/c/<token>`) whose option buttons run frozen plans of
-  registry internal functions as user 0. Design (canonical, review-folded):
-  `ref/CTA_DESIGN.md`; operators: `manual/08-Admin-Tools/07-cta-links.md`;
-  code: `services/ctaService.js` (substrate), `routes/ctaActions.js` (/c/),
-  `routes/api.cta.js` (SU mgmt + send), `lib/ctaLinks.js` ([[tokens]]/email),
-  `lib/internal_functions/cta.js` (`cta_expiry_sweep`, `create_cta`),
-  `public/ctaManager.html` (Admin → CTA Links pane; mirrors `deriveState` /
-  `isStaleRunning` / `CTA_FN_DENYLIST` client-side as hints only).
-  What a session touching unrelated code needs to know:
-  - **A new internal function with `__meta` is CTA-eligible by default**
-    (unless `controlFlow`, `__`-prefixed, or in `CTA_FN_DENYLIST`). The
-    explicit eligible-set test in `tests/ctaService.test.js` fails on every
-    registry addition, so eligibility is a reviewed decision, not a
-    surprise. Low stakes — mints are SU-gated and audited, plans are frozen
-    at mint, and a runtime guard fails any step returning
-    `delayed_until`/`next_step` — but decide, don't rubber-stamp.
-  - **Standing rule (review R3): `cta_links`/`cta_executions` never enter
-    `QUERY_DB_ALLOWED_TABLES` or `WRITE_POLICY`** — tokens and password
-    hashes live there in the clear (v1 posture; hashing filed to the
-    access-control arc).
-  - **Clicker inputs are live (10-08, §12):** options may declare typed,
-    length-capped inputs bound via `[[input:name]]` into params a function
-    opens with `__meta.ctaInputParams` (snapshot:
-    `tests/ctaInputs.test.js` — opening a param is the same reviewed
-    decision as function eligibility) — as the param's whole value, or
-    (S3i, 10-11) inline inside a `kind:'content'` param's text, never a
-    recipient, and **only on SU mints** — `create_cta` text has been
-    through `{{...}}` and may be a lead's words, so a marker in it stays a
-    mint error. `ctaService.applyBindings` is the ONE substitution (mint
-    samples and click alike): per-occurrence, one pass, function
-    replacement — keep it that way. Non-html inputs bound into
-    `html:true` params are escaped at substitution. Enums may carry
-    page-only `display:'radio'` + `choice_labels`; the value is always the
-    choice. **Landmine:** input
-    `pattern`s run on V8's linear-time regex engine — the Dockerfile `CMD`'s
-    `--enable-experimental-regexp-engine` is load-bearing; if the boot log
-    says UNAVAILABLE, pattern-bearing mints refuse.
-  - /c/ lives in ALL THREE pageLanding sets (allowed, migrated,
-    credentialed), `C_POST_RE` tested before `C_VALUE_RE`; raw `plan_result`
-    is SU-only (`/api/cta/:id/executions`); timeouts run via the recurring
-    `cta_expiry_sweep` job (claim-first, no per-CTA jobs — PATCH never
-    touches scheduled_jobs); CTA passwords are mint-scoped bcrypt secrets,
-    never user passwords; workflow mints (`create_cta`) are exempt from the
-    active-SU click check via `mint_source='workflow'` and refuse password
-    protection and `dry_run`.
-- **Custom fields are live end to end (arc S0–S6 + CFG-1, 09-24 → 10-13):** admin-defined
-  fields on cases and contacts. `field_defs` is the registry; values live in
-  one JSON column per entity (`cases.custom`, `contacts.custom`); a reconciler
-  keeps one typed **VIRTUAL generated column named exactly the `field_key`**
-  (always `cf_*`) per active def. Design: `ref/CUSTOM_FIELDS_DESIGN.md`
-  (living; §7 says what shipped). Operators: `manual/05-Subsystems/13-custom-fields.md`.
-  What a session touching unrelated code needs to know:
-  - **`SELECT *` on `cases`/`contacts` now carries `cf_` columns** you did not
-    write and cannot write — they are generated. Never UPDATE one (ER 3105);
-    `mergeCases` skips them via `GENERATION_EXPRESSION <> ''`.
-  - **The raw `custom` bag never travels whole**: it is on the domainEvents
-    scrub list, `resolverService.BLOCKED_COLUMNS`, the report `DENIED_COLUMNS`,
-    `query_db`, and stripped from the petition egress. Only NAMED `cf_`
-    columns ride those surfaces. Do not "fix" that by adding the bag back.
-  - **Never read or compare `custom->>'$.k'` in SQL** — the virtual column is
-    the only comparison surface (a matching functional index can silently flip
-    raw `->>` results; measured). `tests/customFields.s2.test.js` greps
-    `lib/ services/ routes/` for it, comments included.
-  - **The only writers** are `caseService.updateCase` / `contactService.updateContact`;
-    `fieldDefService.splitCustomFields` + `customAssignment` compose one
-    `JSON_SET`/`JSON_REMOVE` into the same UPDATE as the core columns. At
-    creation the only thing written is a def's `default_value` (S6), stamped
-    once by the create chokepoints below; a `cf_` key in a create payload is a
-    400 — values go through PATCH.
-  - **One INSERT per table:** `caseService.createCase` is the ONLY
-    `INSERT INTO cases` and `contactService.createContact` the only
-    `INSERT INTO contacts` — both pinned by a filesystem-grep test, so a new
-    create path calls them rather than writing its own INSERT.
-  - **`validation.required` is enforced ONLY by the renderer**
-    (`public/js/yc-custom-fields.js`), never the chokepoint — a partial PATCH
-    that omits a required key must succeed.
-  - **Reports:** `lib/reportSchema/manifest.js` stays hand-maintained; the
-    custom fields are appended per request by
-    `lib/reportSchema/customFieldsAppendix.js` through the new
-    `aiService.call({ systemAppend })` option.
-  - **Log:** a cf_ change on a CONTACT writes an app-side row from inside
-    `updateContact`'s transaction, shaped like `after_contact_update`'s.
-    Cases write none — `updateCase` logs no core-column edit either, and there
-    is no `after_case_update` trigger (`ref/plans.md`).
-  - **The Clio ids are custom fields:** `cf_clio_matter` (case) and
-    `cf_clio_id` (contact), migrated 09-25 (S5-A). The old columns
-    `cases.clio_matter`, `cases.case_clio_id` and `contacts.contact_clio_id`
-    were DROPPED 10-13 (S5-B) — read and write the Clio ids only by the `cf_`
-    keys.
 - **G2 document generation (09-01):** `contract_templates.purpose`
   ('esign'|'generate'|'both') + `file_subfolder`;
   `services/documentGenerateService.js`; internal fn
@@ -2012,7 +1580,14 @@ vocab = the contact roster (`contact_roles` role rows via `lib/trusteeRoster`;
 `fe-trustees` setting and `judges`/`trustees` tables removed 2026-09-24). `bk_*` columns deliberately
 loose (sheet parity) — don't tighten. `case_relate` links contacts
 (Primary/Secondary/Other/Bystander); portal visibility requires
-Primary|Secondary.
+Primary|Secondary. `PATCH /api/cases/:id` (the Case Details forms', Casey's
+and every API caller's writer) and the automation `update_case` function
+refuse a `case_number` / `case_number_full` over 20 code points (400) or held
+by another case in either column (409 `{conflict}`;
+`caseService.checkCaseNumberCollision` — whole-text, general_ci + PAD SPACE;
+`docketWriteRefusal`, `err.code` `DOCKET_COLLISION` / `DOCKET_WIDTH`) before
+any write; a null / '' clear is checked by neither; `/docket` keeps the
+adopt-only no-replace guard (11-09; `tests/caseDocketGuard.test.js`).
 
 **Linkable pattern:** `*_link_type` + `*_link_id` on tasks/log/checklists/
 events; bare `*_link` columns are legacy. For log `link_type` 'phone'/'email',
@@ -2114,7 +1689,8 @@ cannot repaint a later run. Execution remains in the top shell. Operator view: m
   persists them: the hook receiver drops every credential header
   `lib/hookCredentialHeaders` names (the static set, the hook's own
   `auth_config.header`, every hook's configured header) before persisting
-  anything (§0 entry), the
+  anything (11-02; history scrubbed by `scripts/hookExecutionsHeaderScrub.js`,
+  0 rows hold one as of 2026-11-15), the
   apiTester audit log redacts the same set, the client diag ring records
   method/url/status only. `jwt_api_audit_log` (`lib/auth.jwtOrApiKey`
   logJwtApiAttempt) drops by NAME — every header matching
@@ -2243,6 +1819,31 @@ foreach pass 1,001, fails the run + critical alert (manual/03-YisraFlow/02
 § Loop protection). Versioning (draft/publish) per
 `manual/03-YisraFlow/16` — workflows + sequences only, NOT trigger rules.
 
+**Step-route preconditions (A17.4 / P11, 10-24):** the five step-mutating
+routes in `routes/workflows.js` (insert, PUT, PATCH, DELETE, reorder) take an
+optional `expected_base` `{draft_version, step_count, step_fingerprint?}`
+checked inside the write transaction under the parent-row `FOR UPDATE`; a
+mismatch is a structured 409 `{conflict:{changed, expected, actual}}` and
+nothing is written. `draft_version` is `workflows.draft_version` as the
+proposer saw it (null = the published steps); the fingerprint is
+`lib/versionDiff.stepFingerprint` — sha256 over `canonical()` of {type,
+config, error_policy, label, note}, key-order-insensitive (MySQL re-orders
+JSON keys on write). Optional for native callers (the editor sends none —
+ref/plans.md); every Casey step card sends it. `POST /workflows/:id/publish`
+takes the same shape with `draft_fingerprint` (`lib/versionDiff.
+draftFingerprint`, the ordered per-step fingerprints hashed together) inside
+the publish transaction. `POST /workflows/:id/steps` honours `Idempotency-Key`
+(scope `workflows.step_insert`); `POST /workflows/:id/start` takes one too
+(scope `workflows.start`, SEND rule `releaseOnRefusalOnly`: only a pre-INSERT
+4xx releases the claim, a 5xx or lost ack keeps it; a replay answers the FIRST
+run's body with `replayed: true`). Save-time: an unknown `function_name`,
+undeclared param keys and `params:null` are refused by
+`validateInternalFunctionParams` (shared with the scheduled-jobs routes);
+`error_policy` must be an object whose `strategy` is one of the four.
+`BRANCH_TARGET_PARAMS` + the terminal sentinels live in `lib/versionDiff.js`.
+Tests: `tests/workflows.expectedBase.test.js`, `tests/caseyWorkflowPublish.test.js`,
+`tests/caseyWorkflowStart.test.js`.
+
 ## 7. SEQUENCE ENGINE
 
 Enroll: `POST /sequences/enroll {contact_id, template_type, trigger_data}`.
@@ -2265,6 +1866,25 @@ substituted value is JSON-escaped, so a resolved quote cannot break the parse
 `{{…}}` in a client SMS). Campaign EMAIL bodies pass `escape:'html'` (preview
 and send — `campaignService.bodyEscapeFor`; subjects and SMS bodies never): a
 substituted value can't become markup. Other resolver callers pass no escape.
+
+**Step-route preconditions (P11 sequence half, 10-26):** the five step-mutating
+routes in `routes/sequences.js` take the same optional `expected_base` as the
+workflow routes (§6), checked under the `sequence_templates` parent-row
+`FOR UPDATE` before `ensureDraft`; the fingerprint is
+`lib/versionDiff.sequenceStepFingerprint` over {action_type, action_config,
+timing, condition, fire_guard, error_policy} (every input is in
+`GET /sequences/templates/:id`). `POST /sequences/templates/:id/publish` takes
+`{draft_version, step_count, draft_fingerprint}` — `sequenceDraftFingerprint`
+= the ordered step fingerprints PLUS the draft version row's
+`template_condition` (the PUT writes that without moving `draft_version` or
+any step). Save-time (POST / PUT, and PATCH writing action_type or
+action_config): `lib/internal_functions` `__validateSequenceFunctionStep`
+refuses, for sms/email/task/internal_function, a missing / unknown /
+`__`-helper / workflow-only `function_name` and runs
+`validateInternalFunctionParams`; publish and draft-diff still run only
+`validateStepConfig` (re-checking params at publish is open, ref/plans.md).
+Tests: `tests/sequences.stepValidation.test.js`, gated
+`tests/sequences.expectedBase.mysql.test.js`, `tests/caseySequencePublish.test.js`.
 
 ## 8. UNIVERSAL RESOLVER
 
@@ -2410,6 +2030,34 @@ tabs), `campaign.html`, `checklistView(s).html` (§19), `eventform.html`,
 `connections.html` (§21). Swal popups render in the PARENT DOM — inline
 `onclick=` in Swal html resolves against parent scope and breaks for
 iframe-defined functions; bind in `didOpen` instead.
+
+**List tabs (Cases / Contacts / Appointments / Calendar; custom_table_view
+arc, Nov 2026):** each tab renders from a column model and a ROW CACHE
+(`appts`, `events`, …): every fetch outcome — success, empty, error —
+reassigns the cache and re-renders, and the colsRender functions render rows
+unconditionally (CLAUDE.md invariant: a skipped assignment resurrects dead
+rows under live action buttons). The Columns modal (`ycColsDialog` in
+scripts.js) sets visibility AND order, saved per browser and per user
+(`yc.<tab>.cols_off|cols_on|cols_order.<uid>`; Calendar `CALX_COLUMNS`,
+defaults = the original seven, Date / Time / Contact / Case / Status off by
+default); export offers All columns / As shown on screen. Custom fields
+flagged `list_column` ride the Cases and Contacts pickers (`fieldDefService`
+`composeListCf` / `queryListWithCf` / `parseCfParam` — one home for both
+lists; `cf_court` seeded ON, `scripts/customTableS4ListColumnFlag.js`).
+Filters take multiple values (Case Type incl. (type, subtype) pairs and
+Other (unlisted), Stage, Role, Appt Status). The shell's Events tab is
+RETIRED (U9b-P4, 11-12: markup, `EVENTS_COLUMNS`, `tabEventsGet`, its bus
+reader, the `events` launcher item, `LIST_CSV.events`; `?open=tabEvents`
+aliases to `tabCalendar` in wsOpenTarget; saved layouts naming `events` drop
+it at render) — the Appointments tab STAYS. `fe-event_types` is a `retired`
+registry key; `getEventTypeOptions()` reads the calendar-type registry via
+`loadEventTypeOptions()` (one GET `/api/calendar-types?kind=hearing,deadline,
+conference,other&active=1` per page, built-in list on failure) and
+`newEventDialog` awaits it. `/api/calendar-range` `include_labels` adds
+`display.contacts: [{id, name, role}]` (the row's own contact first, then the
+anchored case's Primary + Secondary debtors) in the same contacts query
+(UNION ALL — the budget stays one query). Manual:
+01-YisraCase-overview/08-events.md, 05-Subsystems/13-custom-fields.md.
 
 **Phone layout (≤768px):** one breakpoint, everything phone-specific inside
 it, desktop untouched. Shared patterns, all documented where they live:
@@ -2791,7 +2439,15 @@ token, no rows written.
 `/api/email-designs` (`emailDesignService`); every save validated by
 `lib/emailDesignRules` (rules 1–10, reject never strip, both legs). `createCampaign`
 takes `design_id` (email only; existing, non-archived) as provenance — the send
-still renders `campaigns.body`.
+still renders `campaigns.body`. The footer slot = the last `mj-section`
+(css-class `yc-footer`) holding only the `<!-- yc:footer-slot -->` comment,
+where `injectFooter` injects. The validator is the security boundary (the
+editor's canvas CSP is defence in depth — a crafted request skips the editor)
+and stays linear: parse5 guarded by a pre-parse scan (nesting ≤ 128, ≤ 256
+attributes per tag — exact only because `<script>`, `<svg>`, `<math>`,
+`<select>` and `<frameset>` are refused first; never admit one without
+revisiting the scan), ≤ 400 conditional comments, html ≤ 512 KB; a new
+URL-valued merge tag a design may START a URL with joins `URL_LEADING_TAGS`.
 **At most once:** the row is INSERTed `sending` (attempt id
 `<job id>:<attempt>`) before the provider call; a later attempt finding it
 `sending` records `unknown` and never resends; a DEFINITE provider error (a
@@ -2830,7 +2486,13 @@ email campaign's sender from `email_credentials` — unknown → 400; a
 `bulk_ok` (marketing transport) row → 400 for an operational campaign within
 the cap (allowed over it, D16; required for marketing). A within-cap sender
 made bulk after create fails each send with the permanent
-`bulk_sender_refused`. ref/YISRAMAIL_DESIGN.md §5.2.
+`bulk_sender_refused`. Invariants: every reader that lists or picks a sender
+filters `bulk_ok = 0` (a new one must too); a caller that synthesizes an
+`emailRow` from a real row carries `bulk_ok`; no other row shares a bulk row's
+SMTP login and no mailbox sends through it (the editor refuses both — the hub's
+budget groups by login); an `events_driver` (bulk rows only) adds the
+provider's headers at send, and the marketing-only options (`headers`,
+`reply_to`, `tags`, `log_body`) exist nowhere else. ref/YISRAMAIL_DESIGN.md §5.2.
 **Delivery state (YisraMail T2):** `campaign_results` gains
 `provider_message_id`, `delivery_status` (complained > bounced_hard > rejected
 > delivered > bounced_soft > unknown — never downgraded), `delivered_at` /
@@ -2839,6 +2501,87 @@ made bulk after create fails each send with the permanent
 `mail_event_ingest` from provider events; `recordResult` never touches them
 (C1's `sent` update writes `provider_message_id` only when none is stored).
 ref/YISRAMAIL_DESIGN.md §5.4.
+
+**Designer editor (C3b — ref/YISRAMAIL_DESIGN.md §6.3 "As built (C3b)"; manual 11-campaign-manager.md "Designer"):**
+`campaign.html`'s third editor mode, `public/js/campaignDesigner.js`
+(`YcDesigner`). GrapesJS 0.23.8 + grapesjs-mjml 1.0.8 load from jsdelivr
+with pinned SRI ONLY when Designer is picked. Invariants: the canvas keeps the
+CSP `frameContent` (stored markup must not run in a same-origin frame that
+reaches `parent.apiSend` — test it by behaviour, the meta is rewritten away);
+the footer block holds ONLY the `<!-- yc:footer-slot -->` comment (C2 injects
+AT it; visible text there would ship), is re-normalized + locked after every
+load, stays last in `mj-body`, and its preview is a VIEW of the comment —
+never in the model or the export; `mjml-import` / `core:canvas-clear` refuse
+and history is cleared after every load (else undo / import remove the
+footer); the RTE toolbar has no strike-through (Chrome writes `<strike>`, which
+the save validator refuses — a new RTE action must emit only allowed tags);
+rich-text editing is ended before every export; images go only
+through `AssetPicker.pick` (never the GrapesJS asset manager / base64). The
+editor is NOT a security boundary (C3a's save rules + C2's assert are).
+`getBody()` is async in campaign.html. Native block drag is a hand check.
+**Segments + reporting (C4 — ref/YISRAMAIL_DESIGN.md §6.2 / §6.5 "As built (C4)"; manual 11-campaign-manager.md "Saved segments" / "Daily digest"):** `campaign_segments` = a NAMED compose filter
+(`campaignSegmentService` validates every save against exactly the
+GET /campaigns/contacts keys, unknown key = 400 `segment_rejected`, `{}` =
+everyone; never class/topic), re-run at pick — recipients still freeze at
+create, consent re-asked at send. `getCampaign` adds `delivery` +
+`transport` for marketing EMAIL only (delivered by set-once `delivered_at` —
+a complaint OUTRANKS delivered in `delivery_status`, so never count
+delivered by status; unsubs from the ledger by `send_ref` AND source ∈
+one_click/unsub_page/pref_page — provider_bounce/provider_complaint rows
+carry the SAME send_ref and are not unsubs; the join CAST pinned
+`COLLATE utf8mb4_general_ci` or it is an illegal mix). Daily digest:
+`mail_bounce_digest` (uiHidden, CTA-denied) over
+`mailEventService.bounceDigestData`, recurring job 12:00 UTC
+(`ref/migrations/2026-11-05_yisramail_c4_mail_digest_job.sql` — SU console,
+AFTER the backend deploy); sends only on activity; kill
+`campaign_bounce_digest_enabled`='0' (fresh read); recipient
+`campaign_bounce_digest_email` → `alert_recipients`; activity with no
+recipient THROWS (failed-job sweep visibility).
+**Promotional automations (C7 — ref/YISRAMAIL_DESIGN.md §6.4 "As built (C7)"; manual 03-YisraFlow/05-internal-functions.md "Promotional sends"):** `campaignService.sendPromotional` = ONE recipient,
+NO campaign row — a `send_email` step with `promotional:true` + `topic`
+takes the full marketing path (kill switch 422, consent by topic with
+opted-out → `{sent:false, skipped:'opted_out'}` — skip, never fail; real
+token with `campaign_id` NULL; footer + post-render assert; marketing
+headers/Reply-To; bulk transport only, named via `marketing_sender` or the
+firm's ONLY bulk row; held → 422). Invariants: no campaign_results row →
+invisible to transportHealth/digest, bounces still suppress via the
+uncorrelated ledger write; email_log keeps the body (the MRPC record);
+`design_id` loads a Designer template at RUN time and resolves its merge
+tags against `contact_id` IN the function (operational: same resolver, no
+footer, reaches opt-outs — D18); SMS promotional refused (D1). AUTHORING is
+D13-gated: `lib/promotionalSendGate.js` (campaigns.bulk) at EVERY writer —
+workflow steps/test-step/preview, sequence steps, scheduled jobs, trigger
+actions + hook targets (params_mapping: the KEY's presence is gated, fail
+closed); a new internal-function writer joins it in the same slice. CTA
+plans refuse promotional at mint (clicker text would be re-resolved by
+renderMarketing). Casey authors promotional (impact card states the
+marketing semantics; save gate still binds) but never invents design_id.
+`from` is save-required unless promotional is the literal true
+(`requiredUnless`); include_signature on promotional is REFUSED;
+send_email's ctaInputParams stays exactly to/subject/html — no C7 param
+may become a clicker input without review. Account-level SES refusal holds
+the transport and fails the step; promotional steps carry no retry policy
+(an ambiguous failure may have sent; no reservation row to dedupe).
+**Open/click tracking (C6 — ref/YISRAMAIL_DESIGN.md §6.5 "As built (C6)"):** SES Open/Click events are ENGAGEMENT, a separate
+axis from delivery: mailEventService branches on them before the
+delivery/ledger path — `campaign_results.opened_at`/`clicked_at` set once
+(a click stamps both), one `campaign_clicks` row per correlated Click
+(idempotent on provider_event_id — INSERT IGNORE, hook retries double
+nothing), never delivery_status / the consent ledger / the health sweep.
+Uncorrelated engagement (C7 triggered sends) stores nothing. Stats lead
+with clicks (opens are Apple-MPP-inflated). Unsub/preference links carry
+`ses:no-track` wherever they appear — the footer's, and body anchors via
+campaignService.addNoTrack — so an unsubscribe is never a click. Over-cap
+OPERATIONAL campaigns ride the same config set: tracked too (Fred may order
+the plans.md no-track toggle). LIVE since 2026-11-05: shapes captured
+(fixtures open.json/click.json); an open/click SES flags as a likely bot
+(`isBotEvent`, a STRING on the wire — Likely/true ignored, anything else
+counts) never stamps engagement. The
+tracking domain is a CNAME to CloudFront (origin r.us-east-2.awstrack.me,
+Host forwarded, ACM cert in us-east-1) — HTTPS needs the CDN, a bare
+awstrack CNAME serves the wrong cert (design doc §6.5 As-built C6).
+`widget: 'email_design'` renders send_email's design_id as a named dropdown
+in both step editors (automationManager caches /api/email-designs once).
 
 ## 18. TASK SYSTEM
 
@@ -3159,9 +2902,12 @@ window = tomorrow → next workday INCLUSIVE (covers closures). Recipients:
 
 **fe-\* settings pattern:** firmData exposes app_settings keyed `fe-*` only
 (prefix stripped, JSON-parsed) — frontend-readable settings without
-backend changes; secrets stay non-fe. First user: `fe-event_types`.
+backend changes; secrets stay non-fe. First user was `fe-event_types`, a
+`retired` registry key since U9b-P4 (11-12): event types come from the
+calendar-type registry (§12 List tabs).
 
-Frontend: shell tabEvents + `event-updated` broadcast; entity tabs lazy
+Frontend: the Calendar tab (the shell's Events tab is retired, U9b-P4) +
+`event-updated` broadcast; entity tabs lazy
 `refreshEvents()`; `newEventDialog` shared; rows return raw date/time,
 client formats. Events hold their own notes/lists (event-scope is the only
 unambiguous anchor for docket-linked rows).
@@ -4511,7 +4257,7 @@ by default; SQL must precede backend, then frontend).
 
 No bus change was needed. `public/js/yc-sync.js` already maps the canonical
 create/update/complete/cancel calls to `event:<id>` refetch markers, and the
-Events tab, Calendar, case, and contact readers already subscribe. There is no
+Calendar (the Events tab is retired, U9b-P4), case, and contact readers already subscribe. There is no
 Casey emit. Event batch, delete/reopen, and calendar selection are not part of
 A3; Appointments use the separate A4 contract below.
 
@@ -4797,3 +4543,215 @@ gate is visibility only); operator chapter manual 08/12.
   name shares its history (each ns_create row marks a beginning). The page's
   "History by name" box reaches a deleted namespace (it is not listed). Indexes
   (ns, k, id) and (ns, id). No retention yet (`ref/plans.md`).
+
+## ═══════════════════════════════════════════════════════════════
+## 36. CUSTOM FIELDS (custom-fields arc, Sept–Oct 2026)
+## ═══════════════════════════════════════════════════════════════
+
+**Custom fields (arc S0–S6 + CFG-1, 09-24 → 10-13):** admin-defined
+fields on cases and contacts. `field_defs` is the registry; values live in
+one JSON column per entity (`cases.custom`, `contacts.custom`); a reconciler
+keeps one typed **VIRTUAL generated column named exactly the `field_key`**
+(always `cf_*`) per active def. Design: `ref/CUSTOM_FIELDS_DESIGN.md`
+(living; §7 says what shipped). Operators: `manual/05-Subsystems/13-custom-fields.md`.
+What a session touching unrelated code needs to know:
+- **`SELECT *` on `cases`/`contacts` now carries `cf_` columns** you did not
+  write and cannot write — they are generated. Never UPDATE one (ER 3105);
+  `mergeCases` skips them via `GENERATION_EXPRESSION <> ''`.
+- **The raw `custom` bag never travels whole**: it is on the domainEvents
+  scrub list, `resolverService.BLOCKED_COLUMNS`, the report `DENIED_COLUMNS`,
+  `query_db`, and stripped from the petition egress. Only NAMED `cf_`
+  columns ride those surfaces. Do not "fix" that by adding the bag back.
+- **Never read or compare `custom->>'$.k'` in SQL** — the virtual column is
+  the only comparison surface (a matching functional index can silently flip
+  raw `->>` results; measured). `tests/customFields.s2.test.js` greps
+  `lib/ services/ routes/` for it, comments included.
+- **The only writers** are `caseService.updateCase` / `contactService.updateContact`;
+  `fieldDefService.splitCustomFields` + `customAssignment` compose one
+  `JSON_SET`/`JSON_REMOVE` into the same UPDATE as the core columns. At
+  creation the only thing written is a def's `default_value` (S6), stamped
+  once by the create chokepoints below; a `cf_` key in a create payload is a
+  400 — values go through PATCH.
+- **One INSERT per table:** `caseService.createCase` is the ONLY
+  `INSERT INTO cases` and `contactService.createContact` the only
+  `INSERT INTO contacts` — both pinned by a filesystem-grep test, so a new
+  create path calls them rather than writing its own INSERT.
+- **`validation.required` is enforced ONLY by the renderer**
+  (`public/js/yc-custom-fields.js`), never the chokepoint — a partial PATCH
+  that omits a required key must succeed.
+- **Reports:** `lib/reportSchema/manifest.js` stays hand-maintained; the
+  custom fields are appended per request by
+  `lib/reportSchema/customFieldsAppendix.js` through the new
+  `aiService.call({ systemAppend })` option.
+- **Log:** a cf_ change on a CONTACT writes an app-side row from inside
+  `updateContact`'s transaction, shaped like `after_contact_update`'s.
+  Cases write none — `updateCase` logs no core-column edit either, and there
+  is no `after_case_update` trigger (`ref/plans.md`).
+- **The Clio ids are custom fields:** `cf_clio_matter` (case) and
+  `cf_clio_id` (contact), migrated 09-25 (S5-A). The old columns
+  `cases.clio_matter`, `cases.case_clio_id` and `contacts.contact_clio_id`
+  were DROPPED 10-13 (S5-B) — read and write the Clio ids only by the `cf_`
+  keys.
+
+## ═══════════════════════════════════════════════════════════════
+## 37. CTA LINKS — SU-MINTED ACTION LINKS (CTA arc, Oct 2026)
+## ═══════════════════════════════════════════════════════════════
+
+**CTA links (arc S0–S4, live 10-07):** SU-minted bearer
+links (`4lsg.com/c/<token>`) whose option buttons run frozen plans of
+registry internal functions as user 0. Design (canonical, review-folded):
+`ref/CTA_DESIGN.md`; operators: `manual/08-Admin-Tools/07-cta-links.md`;
+code: `services/ctaService.js` (substrate), `routes/ctaActions.js` (/c/),
+`routes/api.cta.js` (SU mgmt + send), `lib/ctaLinks.js` ([[tokens]]/email),
+`lib/internal_functions/cta.js` (`cta_expiry_sweep`, `create_cta`),
+`public/ctaManager.html` (Admin → CTA Links pane; mirrors `deriveState` /
+`isStaleRunning` / `CTA_FN_DENYLIST` client-side as hints only).
+What a session touching unrelated code needs to know:
+- **A new internal function with `__meta` is CTA-eligible by default**
+  (unless `controlFlow`, `__`-prefixed, or in `CTA_FN_DENYLIST`). The
+  explicit eligible-set test in `tests/ctaService.test.js` fails on every
+  registry addition, so eligibility is a reviewed decision, not a
+  surprise. Low stakes — mints are SU-gated and audited, plans are frozen
+  at mint, and a runtime guard fails any step returning
+  `delayed_until`/`next_step` — but decide, don't rubber-stamp.
+- **Standing rule (review R3): `cta_links`/`cta_executions` never enter
+  `QUERY_DB_ALLOWED_TABLES` or `WRITE_POLICY`** — tokens and password
+  hashes live there in the clear (v1 posture; hashing filed to the
+  access-control arc).
+- **Clicker inputs are live (10-08, §12):** options may declare typed,
+  length-capped inputs bound via `[[input:name]]` into params a function
+  opens with `__meta.ctaInputParams` (snapshot:
+  `tests/ctaInputs.test.js` — opening a param is the same reviewed
+  decision as function eligibility) — as the param's whole value, or
+  (S3i, 10-11) inline inside a `kind:'content'` param's text, never a
+  recipient, and **only on SU mints** — `create_cta` text has been
+  through `{{...}}` and may be a lead's words, so a marker in it stays a
+  mint error. `ctaService.applyBindings` is the ONE substitution (mint
+  samples and click alike): per-occurrence, one pass, function
+  replacement — keep it that way. Non-html inputs bound into
+  `html:true` params are escaped at substitution. Enums may carry
+  page-only `display:'radio'` + `choice_labels`; the value is always the
+  choice. **Landmine:** input
+  `pattern`s run on V8's linear-time regex engine — the Dockerfile `CMD`'s
+  `--enable-experimental-regexp-engine` is load-bearing; if the boot log
+  says UNAVAILABLE, pattern-bearing mints refuse.
+- /c/ lives in ALL THREE pageLanding sets (allowed, migrated,
+  credentialed), `C_POST_RE` tested before `C_VALUE_RE`; raw `plan_result`
+  is SU-only (`/api/cta/:id/executions`); timeouts run via the recurring
+  `cta_expiry_sweep` job (claim-first, no per-CTA jobs — PATCH never
+  touches scheduled_jobs); CTA passwords are mint-scoped bcrypt secrets,
+  never user passwords; workflow mints (`create_cta`) are exempt from the
+  active-SU click check via `mint_source='workflow'` and refuse password
+  protection and `dry_run`.
+
+## ═══════════════════════════════════════════════════════════════
+## 38. RECIPIENT CONSENT & UNSUBSCRIBE (YisraMail P1–P4, Oct–Nov 2026)
+## ═══════════════════════════════════════════════════════════════
+
+Consent is the gate every promotional send asks (§17 marketing, C7); the
+campaign side is §17. Design: `ref/YISRAMAIL_DESIGN.md` §4 ("As built" per slice).
+
+**Consent core (P1, 10-29 — ref/YISRAMAIL_DESIGN.md §4.1–§4.4 "As built"):** consent belongs to a DESTINATION (10-digit number
+/ lowercased address), per channel and SCOPE, in `comm_consent_state` (THE
+truth) with an append-only ledger `comm_consent_events` (the proof) and
+`comm_topics`. ONE reader and ONE writer: `services/optoutService.js`
+(`findOptedOut` / `assertNotOptedOut` / `optoutGate` / `*OptedOutSql` /
+`consentVersions`; `recordConsent(conn, …)` on the CALLER's connection —
+event (UNIQUE source+provider_event_id → no-op), guarded upsert (newest
+`(occurred_at, id)` wins), sync of the active row's cache flag). The row
+flags are a CACHE for one release, dual-read (state OR flag) and dual-written:
+`contact_phones.sms_optout` = SMS scope `all`, `contact_emails.email_optout`
+= email scope `marketing`. WHAT A SEND CHECKS: operational (the default)
+SMS → `all`; operational EMAIL → nothing (D18: an email opt-out is
+marketing-only — send_email, forwards, request_decision, the mail hub, CTA
+and `/internal/email` sends and the appt/booking confirmations all send);
+`klass:'marketing'` → `marketing`/`all` + topic (a campaign asks by its
+class since C1: `campaignService.consentOptsFor` — operational email asks
+nothing). For SMS the 2026-10-27 rule stands (D19): AUTOMATION
+REFUSES (`OptOutRefusal`, code `RECIPIENT_OPTED_OUT` → workflow step
+`skipped`, sequence `skipped`/`recipient_opted_out`, never `failed`; appt /
+booking / manage confirmations skip the channel, logged); STAFF ARE WARNED
+(`POST /api/phone-lines/:id/sms`, JWT callers of `/internal/{sms,mms}`, the
+SU CTA send → 409 `opted_out` until `acknowledge_optout:true`, gate before
+the limiter and the idempotency claim; `public/js/optoutAck.js`); API-key
+callers get 422. LOCK ORDER everywhere: the destination's contact row,
+then its state row — a row writer holds its row by primary key and passes
+it to recordConsent (`rowId`: no further row lock, cache sync by id); a
+direct caller's recordConsent locks the active row through `*_active_uniq`
+first. Never re-lock a held row through that index (a deadlock against a
+waiting direct caller). Flag-deciding state reads are `FOR SHARE`, the
+post-upsert read `FOR UPDATE`; the consent-bearing contact saves re-run
+their pure-DB span once on `ER_LOCK_DEADLOCK` (`retryOnDeadlock` — the
+state-gap cycle, design §4.4), as the direct writers' `consentTx` already do (P2 / P3 / P4). The app's row
+writers (contactPhone/EmailService create/update, contactService aggregate
++ scalar + createContact) go through optoutService on their own
+transaction: a new row is written, then `bornRow` sets its flag from the
+state (never an opt-in; a correction carries the old number's consent as
+`row_replace`, a transfer donor's flag only where the destination has no
+state); an active row's flag goes through `decideRowFlag`'s three-way
+compare — the contact form sends each loaded row's `*_optout_base`; a
+resent unchanged value records nothing, a change against moved consent is
+409 `consent_changed` — then `applyRowDecision` (one `staff` event).
+Opt-in needs a signed-in user: an API key gets 422 `opt_in_needs_staff`
+(opt-out is fine, evidence `via:'api_key'`). `update_db` / `insert_db`
+cannot write the flags (WRITE_POLICY block) and realign every row they
+touch from the state (`syncRowCaches`, no event);
+`scripts/reviveScalarReplacedValues.js` revives rows outside that rule (its
+header). Override audits record `acknowledged_optout` (contact ids) AND
+`acknowledged_optout_destinations`. A hit for a destination no row holds
+has null `contact_id` / `row_id`. Exempt by design: the portal login PIN and
+the Quo opt-out confirmation (P2, below). Migration:
+`scripts/yisramailP1MigrateConsent.js`. Manual: 01-YisraCase-overview/02-contacts.md,
+03-YisraFlow/08-error-policies.md.
+**Email unsubscribe (P3, 10-30 — design §4.5 "As built"):** one
+`comm_unsub_tokens` row per marketing send (minted by C2's marketing send
+through `services/unsubService.mintOrReuseUnsubToken(conn, …)`), a bearer for ONE address's MARKETING consent only (D18: no control
+stops case mail; recordConsent refuses an email `all`). Three public routes,
+`routes/unsubActions.js`, landing origin, sessionless: `GET /u/:token` (the
+page — never mutates), `POST /u/:token` (RFC 8058 one-click: any content
+type, body ignored, 200 EMPTY, never a redirect, NO per-IP limiter — a 429
+would drop a mail provider's unsubscribe), `POST /u/:token/prefs` (the form;
+10/min/IP; the GET 30/min/IP). Sources `one_click` (the token's topic, D4),
+`unsub_page` (topic / "stop all" = `marketing`), `pref_page` (checkboxes —
+ticking a topic after "stop all" opts `marketing` back in). Idempotent on
+STATE (a scope is written only when its state changes); tokens never
+expire; `used_at` = first POST. No oracle: unknown token → neutral page /
+200 empty; bogus topic → 422 for any token. Locks: token `FOR UPDATE`, then
+a PLAIN state read, then recordConsent's own order. Every response:
+no-store, noindex, `Referrer-Policy: no-referrer`. The free-text note → one
+post-commit task for firm setting `consent_task_user_id` (unset → daily IT
+warning; the note stays in `evidence.note`). The marketing footer is a
+BLOCK (`lib/complianceFooter.js`, throws on a hole), not a placeholder;
+its scalars are resolver pseudo-tables (§8). Migration:
+`scripts/yisramailP3Migrate.js`. Manual: 06-Client-Facing/07-email-unsubscribe.md.
+**Inbound SMS opt-out (P2, 10-30 — design §4.6 "As built"):**
+`services/phoneConsentService.js` decides, `recordConsent` writes — inbound
+keywords (ingest step 2b, incoming SMS only; `sms_keyword`, key
+`'<provider>:<message id>'`, occurred_at = the provider's `ts`; START & co.
+only while opted out; the raw body rides in `evidence`, hence the sensitive
+tier), RingCentral 413 verdicts (`phoneDeliveryService`, every sighting,
+ledger lookup first) and the read-only RC reconcile (`provider_optout`;
+never a push — D15; dark: `sms_rc_consent_sync_enabled` unset, the consent
+API is 403 CMN-408 for the connected user). Each is one pure-DB transaction
+in the direct-caller lock order (the active row through
+`phone_active_uniq`, passed on as `rowId`) with one `ER_LOCK_DEADLOCK`
+retry. Post-commit, never thrown: a stranded-client task (a TRANSITION into
+opted out on a contact with an open Primary/Secondary case) and a review
+task for plain-language revocations (one open per number,
+`task_dedupe_key 'consent_review:<number>'`), both to
+`consent_task_user_id` through P3's `unsubService.resolveAssignee` (an
+ACTIVE user, else the same daily `consent_task_unassigned` warning, no
+task). No confirmation text from YC: RC and Quo confirm every word YC
+honors themselves (Quo REVOKE + OPT OUT proven live 2026-10-30), and the
+`consent_sms_confirm` job P2 shipped for the words Quo's docs omit was
+removed the same day. The nightly
+`sms_consent_sync` (CTA-denied) runs the reconcile and the inbound liveness
+alert (`sms_inbound_liveness_hours`); `scripts/yisramailP2CheckInbound.js`
+checks wf 17/18's `phone_log` wiring. Manual:
+01-YisraCase-overview/17-text-opt-outs.md.
+**Staff consent UI (P4, 11-01 — design §4.7 "As built"):** staff read
+consent only through optoutService (`consentSummary`, `consentHistory` —
+evidence through the `redactEvidence` allow-list); `routes/api.consent.js`
+holds the history / export / preview routes and the SU suppression import,
+which writes only via `recordConsent`, one transaction per destination.
+Manual: 01-YisraCase-overview/02-contacts.md.
