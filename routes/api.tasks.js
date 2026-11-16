@@ -22,6 +22,25 @@ const taskService = require('../services/taskService');
 const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency');
 
 /**
+ * An EMAIL link (comms-polish-2 C2: link_type 'email', link_id =
+ * mail_messages.id) names a stored message whose SUBJECT the task then shows
+ * to everyone who can see the task. So the writer must be a person who can
+ * read that message in the Comms hub (mailReadService.loadVisible — the
+ * caller's readable mailboxes and alias slices; 404 otherwise, no oracle):
+ * an API key or a workflow has no mailbox and cannot make one (403). Both
+ * writers of the link run it: POST /api/tasks and PATCH /api/tasks/:id.
+ * Resolves to nothing for every other link type.
+ */
+async function assertEmailLinkReadable(req, linkType, linkId) {
+  if (linkType !== 'email') return;
+  if (!req.auth || req.auth.type !== 'jwt' || !req.auth.userId) {
+    throw Object.assign(new Error('an email link needs a signed-in reader of that mailbox'), { status: 403 });
+  }
+  const mailRead = require('../services/mailbox/mailReadService'); // lazy: the mail store is not every task caller's concern
+  await mailRead.loadVisible(req.db, req.auth.userId, linkId);      // throws 404 'Message not found' when the caller cannot read it
+}
+
+/**
  * Optional free-text note on complete / delete. Clamped (not rejected) at 500
  * chars — it's a human textarea, and a 501-char note should still complete the
  * task. Returns null for absent/empty/whitespace so callers can do
@@ -101,6 +120,7 @@ router.post('/api/tasks', jwtOrApiKey, async (req, res) => {
   }
 
   try {
+    await assertEmailLinkReadable(req, req.body.link_type, req.body.link_id);
     // Optional `Idempotency-Key` header: a repeat of the same key replays the
     // first create's result instead of making a second task. A caller that
     // sends no key is unaffected (lib/requestIdempotency.js).
@@ -126,8 +146,9 @@ router.post('/api/tasks', jwtOrApiKey, async (req, res) => {
     if (sendIdempotencyError(res, err)) return;
     // createTask's input refusals (over-long title/desc/source) carry status
     // 400. A 500 here raises a route_500 alert for what is a caller mistake.
-    if (err && err.status === 400) {
-      return res.status(400).json({ status: 'error', message: err.message });
+    // …and the email-link gate's 403 / 404 (assertEmailLinkReadable) — a caller's refusal, not a server fault.
+    if (err && Number.isInteger(err.status) && err.status >= 400 && err.status < 500) {
+      return res.status(err.status).json({ status: 'error', message: err.message });
     }
     console.error('POST /api/tasks error:', err);
     res.status(500).json({ status: 'error', message: err.message });
@@ -137,11 +158,18 @@ router.post('/api/tasks', jwtOrApiKey, async (req, res) => {
 // ─── UPDATE (generic patch) ───────────────────────────────────────────────────
 router.patch('/api/tasks/:id(\\d+)', jwtOrApiKey, async (req, res) => {
   try {
+    if (req.body && req.body.task_link_type === 'email') await assertEmailLinkReadable(req, 'email', req.body.task_link_id);
+    // …and a new id alone on a task that is ALREADY an email link (the stored type decides) — else a link could be repointed past the gate
+    if (req.body && req.body.task_link_id !== undefined && req.body.task_link_type === undefined) {
+      const cur = await taskService.getTask(req.db, req.params.id);
+      if (cur && cur.link && cur.link.type === 'email') await assertEmailLinkReadable(req, 'email', req.body.task_link_id);
+    }
     const task = await taskService.updateTask(req.db, req.params.id, req.body, req.auth?.userId);
     res.json({ status: 'success', title: 'Updated', message: 'Task updated', data: task });
   } catch (err) {
-    console.error('PATCH /api/tasks/:id error:', err);
-    const status = err.message.includes('blocked') ? 400
+    if (!(Number.isInteger(err.status) && err.status < 500)) console.error('PATCH /api/tasks/:id error:', err);
+    const status = Number.isInteger(err.status) ? err.status           // the link gates' 403 / 404, updateTask's 400
+                 : err.message.includes('blocked') ? 400
                  : err.message.includes('not found') ? 404
                  : 500;
     res.status(status).json({ status: 'error', message: err.message });

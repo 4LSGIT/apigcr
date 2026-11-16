@@ -188,6 +188,31 @@ describe('the badge and the active item, run for real', () => {
     expect(t.calls).toEqual([['GET', '/api/mail/mailboxes'], ['GET', '/api/phone-lines/readable']]);
   });
 
+  test('comms-polish-2 C2: openCommsMessage opens the Comms tab, then the pane — directly when it is booted, else held as the rest email~m<id>; a bad id does nothing', () => {
+    const SRC = between('    function openCommsMessage(id) {', '    window.openCommsMessage = openCommsMessage;');
+    const boot = ({ booted }) => {
+      const dom = new JSDOM('<!DOCTYPE html><body><div id="tabComms"><iframe></iframe></div></body>', { runScripts: 'outside-only' });
+      const w = dom.window;
+      const opened = []; const held = []; const tabs = [];
+      w.eval('var E = (id) => document.getElementById(id);');
+      w.openMainTab = (t) => tabs.push(t);
+      w.ycSubTab = { host: { hold: (frame, rest) => held.push([frame.tagName, rest]) } };
+      const frame = w.document.querySelector('#tabComms iframe');
+      if (booted) Object.defineProperty(frame, 'contentWindow', { value: { ycOpenMessage: (id) => opened.push(id) } });
+      else Object.defineProperty(frame, 'contentWindow', { value: {} });
+      w.eval(SRC);
+      return { w, opened, held, tabs };
+    };
+    const warm = boot({ booted: true });
+    expect(warm.w.openCommsMessage('4477')).toBe(true);
+    expect([warm.tabs, warm.opened, warm.held]).toEqual([['tabComms'], ['4477'], []]);
+    const cold = boot({ booted: false });
+    expect(cold.w.openCommsMessage(4478)).toBe(true);
+    expect([cold.tabs, cold.opened, cold.held]).toEqual([['tabComms'], [], [['IFRAME', 'email~m4478']]]);
+    expect([cold.w.openCommsMessage(''), cold.w.openCommsMessage('abc'), cold.w.openCommsMessage(null)]).toEqual([false, false, false]);
+    expect(cold.tabs).toHaveLength(1);                                       // the bad ids opened nothing
+  });
+
   test('comms-polish-2 B: the phone lines\' unread conversations add to the badge; a failed phone read counts 0 and mail still shows', async () => {
     const byUrl = (phone) => (url) => url === '/api/phone-lines/readable' ? phone() : { mailboxes: [{ inbox_unread: 3 }] };
     const t = boot({ api: byUrl(() => ({ lines: [{ id: 1, unread: 2 }], unread_total: 2 })) });

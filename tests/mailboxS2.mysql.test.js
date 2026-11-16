@@ -178,6 +178,40 @@ maybe('mailbox S2 on real MySQL', () => {
     expect(ids(await call('GET', '/api/mail/messages?from_domain=court.test', { t: tok(SU) }))).toEqual([202]);
   });
 
+  test('comms-polish-2 C1: the body search on the engine — the FULLTEXT index from the script (TWICE), every word a required prefix across subject + body, the LIKE half kept, mark-all with q clears the same set', async () => {
+    const ft = require('../scripts/commsPolish2MailFulltext');
+    await q('ALTER TABLE mail_messages DROP INDEX ft_mail_messages_text').catch(() => {});   // a real first apply
+    const r1 = await ft.run(pool, { apply: true, say: () => {} });
+    expect([r1.ok, r1.line]).toEqual([true, expect.stringMatching(/^GO/)]);
+    const r2 = await ft.run(pool, { apply: true, say: () => {} });                              // idempotent: the script is the IF NOT EXISTS
+    expect([r2.ok, r2.line]).toEqual([true, expect.stringMatching(/^GO/)]);
+    const idx = await q(`SELECT INDEX_TYPE, COLUMN_NAME FROM information_schema.STATISTICS
+                         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mail_messages' AND INDEX_NAME = 'ft_mail_messages_text' ORDER BY SEQ_IN_INDEX`);
+    expect(idx.map((r) => [r.INDEX_TYPE, r.COLUMN_NAME])).toEqual([['FULLTEXT', 'subject'], ['FULLTEXT', 'body_text']]);
+    await msg(106, 1, { subject: 'Docs for the Trustee', body_text: 'Please find my PAYSTUB and the October statement attached.', date: '2026-10-01 12:50:00' });
+    await msg(107, 1, { subject: 'Re: lunch', body_text: 'paystubs are boring', date: '2026-10-01 12:51:00' });
+    const find = async (qq) => ids(await call('GET', `/api/mail/messages?q=${encodeURIComponent(qq)}`, { t: tok(SU) }));
+    expect(await find('paystub')).toEqual([107, 106]);             // the BODY alone, as a prefix, case-blind (newest first)
+    expect(await find('paystub october')).toEqual([106]);          // every word, across subject AND body
+    expect(await find('trustee statement')).toEqual([106]);        // one word from each column
+    expect(await find('paystub zzz')).toEqual([]);
+    expect(await find('the october')).toEqual([106]);              // a stopword is dropped, not required
+    expect((await find('Re')).sort()).toEqual([107, 202]);         // under 3 characters: the From / Subject LIKEs alone (no MATCH) — "Re: lunch" and "noREply@court.test"
+    expect(await find('court.test')).toEqual([202]);               // the From LIKE half still finds an address fragment
+    // Mark all read with the search on clears exactly what the list shows (the one scopeWhere)
+    expect((await call('POST', '/api/mail/read', { t: tok(READER), body: { all: true, filters: { q: 'paystub october' } } })).json.marked).toBe(1);
+    expect((await q('SELECT message_fk FROM mail_read_state WHERE user = ? ORDER BY message_fk', [READER])).map((r) => r.message_fk)).toEqual([106]);
+    // the walk is still the mailbox index (the MATCH is evaluated per row in the OR, not the access path)
+    const svc = require('../services/mailbox/mailReadService');
+    const recorded = [];
+    const rec = { query: (sql, p) => { recorded.push([sql, p]); return pool.query(sql, p); } };
+    await svc.listMessages(rec, SU, { q: 'paystub' });
+    const list = recorded.find(([sql]) => /MATCH\(m\.subject, m\.body_text\)/.test(sql));
+    expect(list).toBeTruthy();
+    const plan = await q(`EXPLAIN ${list[0]}`, list[1]);
+    expect(plan.filter((r) => r.table === 'm').every((r) => /idx_mail_messages_mailbox/.test(String(r.key)))).toBe(true);
+  });
+
   test('read state: idempotent single writes; bulk counts NEW rows only (mysql2 sets CLIENT_FOUND_ROWS)', async () => {
     await call('POST', '/api/mail/messages/101/read', { t: tok(READER) });
     await call('POST', '/api/mail/messages/101/read', { t: tok(READER) });

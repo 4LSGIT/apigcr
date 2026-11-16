@@ -6662,6 +6662,28 @@
     }
     window.commsBadgeSet = commsBadgeSet;
     window.commsBadgeRefresh = commsBadgeRefresh;
+    /**
+     * Open the Comms hub at ONE stored email — a task's email link
+     * (comms-polish-2 C2; tasks.html openLinked). The tab first (openMainTab
+     * loads the pane's iframe on its first open); then the pane: directly when
+     * it is booted (its ycOpenMessage), else held as its workspace rest
+     * `email~m<id>` for its boot (ycSubTab.host.hold — comms.html takes it).
+     * Returns false for a bad id or no pane; never throws (a caller's click).
+     */
+    function openCommsMessage(id) {
+      const mid = String(id == null ? '' : id).replace(/\D/g, '');
+      if (!mid) return false;
+      try {
+        openMainTab('tabComms');
+        const frame = E('tabComms') ? E('tabComms').querySelector(':scope > iframe') : null;
+        if (!frame) return false;
+        const w = frame.contentWindow;
+        if (w && typeof w.ycOpenMessage === 'function') { w.ycOpenMessage(mid); return true; }
+        if (window.ycSubTab) ycSubTab.host.hold(frame, `email~m${mid}`);
+        return true;
+      } catch (_) { return false; }
+    }
+    window.openCommsMessage = openCommsMessage;
     setInterval(() => {
       if (document.visibilityState === 'visible' && user?.user) commsBadgeRefresh();
     }, 5 * 60 * 1000);

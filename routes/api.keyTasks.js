@@ -60,7 +60,9 @@ const { readonlyApiKeyAuth, requireKeyScope } = require('../lib/auth.readonly');
 const taskService = require('../services/taskService');
 
 const CREATE_LIMIT = 20;   // per rolling hour per root key — Fred-approved, 2026-10-15
-const LINK_TYPES = ['contact', 'case', 'appt', 'bill', 'event'];   // the tasks.task_link_type enum
+// The tasks.task_link_type enum MINUS 'email' (comms-polish-2 C2): an email link
+// needs a reader who can see the message, and a session key reads no mailbox.
+const LINK_TYPES = ['contact', 'case', 'appt', 'bill', 'event'];
 const LIST_STATUSES = ['Incomplete', 'All', 'Pending', 'Due Today', 'Overdue', 'Completed', 'Deleted'];
 const CREATE_FIELDS = ['to', 'title', 'desc', 'start', 'due', 'link_type', 'link_id', 'send_assignment_email', 'notify'];
 const EDIT_FIELDS = ['to', 'title', 'desc', 'start', 'due', 'link_type', 'link_id', 'notify'];

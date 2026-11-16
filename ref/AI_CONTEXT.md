@@ -55,8 +55,28 @@ body. Governing migrations in `ref/migrations/`.*
   badge, open → POST read, Mark unread, Mark all read, counts re-read after
   every write; the shell's Comms badge = mail + phone (both the pane's
   `commsBadgePush` and index.html's `commsBadgeRefresh`). Design §4.4 "Read
-  state"; manual 08 "Phone lines — Comms". Bundle C (mail FULLTEXT search,
-  task→email link) follows with its migration.
+  state"; manual 08 "Phone lines — Comms". The badge total counts NUMBERS
+  (`unreadCounts` → `{ byLine, distinct }`); a read write touches only the
+  lines the number used and reads through the pane's `through_id` (never
+  past the newest).
+- **Comms polish bundle C — body search + the task's email link
+  (comms-polish-2, 11-16):** FULLTEXT `ft_mail_messages_text (subject,
+  body_text)` (migration `2026-11-16_mail_fulltext_search.sql`; no INSTANT
+  ALTER on `mail_messages` from now on — INPLACE rebuilds, seconds); the
+  list's `?q=` adds `MATCH … AGAINST ('+w1* +w2*' IN BOOLEAN MODE)` from
+  `mailReadService.ftQueryOf` (3+ chars, no stopwords, ≤ 8 words, every one a
+  required prefix) beside the From / Subject LIKEs. `tasks.task_link_type`
+  gains `email` (`2026-11-16_tasks_link_type_email.sql`; `task_link_id` =
+  `mail_messages.id`; `taskService.TASK_LINK_TYPES` validates on create and
+  update — relaxed sql_mode stores '' for an unknown enum value; an email link
+  is written only by a signed-in reader of that message — routes/api.tasks.js
+  `assertEmailLinkReadable` → `mailReadService.loadVisible`, 404 / 403 for an
+  API key — because the task shows the subject to everyone who sees the task;
+  key tasks and workflow steps keep the five older types); the task dialog's
+  **This email** chip (default when the message is on no case); the Tasks page opens
+  it via `openCommsMessage(id)` (index.html) → `ycOpenMessage` (comms.html)
+  or the workspace rest `email~m<id>`. Design §4.4 "Body search + the task's
+  email link"; manual 08.
 - **Casey case folder extras (A11.1X, 11-15, Fred: "release means allow"):**
   same switch `casey_document_relink_enabled`, same twin. (1) A TYPED
   `folder_path` on `case.folder.relink.v1` is proposable when a new typed read

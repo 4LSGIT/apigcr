@@ -326,8 +326,25 @@ describe('E — Task from email', () => {
       ['26-11111', 'true'],    // the message's case, pre-picked (E)
       ['26-22222', 'false'],   // a related client case
       ['Doe, Jane', 'false'],  // a related contact
+      ['This email', 'false'], // the message itself (comms-polish-2 C2)
       ['None', 'false'],
     ]);
+  });
+
+  test('comms-polish-2 C2: a message on no case links the task to the EMAIL by default; the POST carries link_type email + the message id', async () => {
+    const posted = [];
+    const { window, doc } = await boot({
+      handler: standard({ 'POST /api/tasks': (b) => { posted.push(b); return { status: 'success', data: { id: 9 } }; } }),
+    });
+    await openThread(window, doc);
+    doc.querySelector('.menu-btn').click();
+    [...doc.querySelectorAll('.mmenu button')].find((b) => b.textContent === 'Task…').click();
+    const chips = [...doc.querySelectorAll('#task-links .fchip')];
+    expect(chips.map((c) => [c.textContent.trim(), c.getAttribute('aria-pressed')])).toEqual([['This email', 'true'], ['None', 'false']]);
+    doc.getElementById('task-save').click();
+    await tick(window, 60);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatchObject({ link_type: 'email', link_id: '11', source: 'comms' });
   });
 
   test('comms-polish-2: Assign to offers active staff only — never Automation (0) nor an inactive user (D3b); the caller stays the default', async () => {

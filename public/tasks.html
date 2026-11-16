@@ -694,6 +694,8 @@ function renderRows(total) {
 // Linked-to navigation — the shell's addFile opens the case/contact file.
 function openLinked(title, type, id) {
   try {
+    // an email link (comms-polish-2 C2) opens the Comms hub at that message; everything else is a file
+    if (type === 'email') { window.top.openCommsMessage(id); return; }
     window.top.addFile(title, type === 'contact' ? 'client' : 'case', id);
   } catch (_) { }
 }
@@ -980,7 +982,7 @@ function newTaskDialog(task) {
   const lType = isEdit ? (t.link?.type || '') : (isEntity ? linkType : '');
   const lId   = isEdit ? (t.link?.id   || '') : (isEntity ? linkId   : '');
   const showLink  = !!(lType && lId);
-  const linkLabel = lType === 'case' ? 'Case' : 'Client';
+  const linkLabel = { case: 'Case', contact: 'Client', email: 'Email', appt: 'Appointment', bill: 'Bill', event: 'Event' }[lType] || 'Client';
 
   const userOpts =
     '<option value="" disabled selected hidden>— select assignee —</option>' +

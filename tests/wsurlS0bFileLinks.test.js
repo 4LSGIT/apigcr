@@ -264,6 +264,26 @@ describe('wsurl S0b — tasks.html linked-to cell (real page, both hosts)', () =
     expect(top.__calls).toEqual([[title, 'case', 'ABCD2345']]);
   }
 
+  test('an EMAIL link (comms-polish-2 C2) opens Comms at the message through the shell\'s openCommsMessage — never addFile', async () => {
+    const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', { url: 'https://app.4lsg.com/tasks.html', runScripts: 'dangerously' });
+    const win = dom.window; const top = win;
+    top.__calls = [];
+    top.openCommsMessage = (id) => { top.__calls.push(['comms', id]); return true; };
+    top.apiSend = async (url, method) => (url === '/api/tasks' && method === 'GET'
+      ? { data: [{ id: 1, title: 't', status: 'Pending', priority: 2, due: null, assigned_to: 6, assigned_by: 6, link: { id: '4477', type: 'email', title: TASK_TITLE } }], total: 1 }
+      : { status: 'success' });
+    top.firmData = { users: [{ user: 6, user_name: 'Fred Ross' }], firmTimezone: 'America/Detroit' };
+    top.user = { user: 6, user_name: 'Fred Ross' };
+    top.addFile = (...a) => { top.__calls.push(a); };
+    win.document.body.innerHTML = BODY;
+    win.eval(SWAL_STUB + '\n' + SCRIPTS + '\n' + YCPAGER + '\n' + INLINE);
+    await new Promise((r) => win.setTimeout(r, 50));
+    const a = win.document.querySelector('#tasksTable a.tk-linked');
+    expect([a.textContent, a.dataset.linkType]).toEqual([TASK_TITLE, 'email']);
+    click(win, a);
+    expect(top.__calls).toEqual([['comms', '4477']]);
+  });
+
   test.each([['backslash', TASK_TITLE], ['quote', QUOTE_LABEL]])(
     'directly under the shell (%s title)', async (_, title) => {
       const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>',

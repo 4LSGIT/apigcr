@@ -323,14 +323,14 @@ function makeWorld() {
 
   // ── the list: parse the UNION ALL ──
   const BRANCH_RE = new RegExp(
-    '^\\(SELECT ' + esc(LIST_COLS) + ' FROM mail_messages m FORCE INDEX \\((idx_mail_messages_mailbox_date|idx_mail_messages_mailbox_inbox_date)\\) ' + esc(JOINS) +
+    '^\\(SELECT ' + esc(LIST_COLS) + ' FROM mail_messages m FORCE INDEX \\((idx_mail_messages_mailbox_date|idx_mail_messages_mailbox_inbox_date)(?:, ft_mail_messages_text)?\\) ' + esc(JOINS) +
     ' WHERE m\\.mailbox_id = \\?(.*?) ORDER BY m\\.date DESC, m\\.id DESC LIMIT \\?\\)$'
   );
   // S3-R alias branch: the ALIAS id bound into the projection, the parent
   // walked on (mailbox_id, date) — never the Inbox index (slice rows are
   // archived; the slice's own Inbox rule rides the predicates).
   const BRANCH2_RE = new RegExp(
-    '^\\(SELECT ' + esc(ALIAS_LIST_COLS) + ' FROM mail_messages m FORCE INDEX \\(idx_mail_messages_mailbox_date\\) ' + esc(JOINS) +
+    '^\\(SELECT ' + esc(ALIAS_LIST_COLS) + ' FROM mail_messages m FORCE INDEX \\(idx_mail_messages_mailbox_date(?:, ft_mail_messages_text)?\\) ' + esc(JOINS) +
     ' WHERE m\\.mailbox_id = \\?(.*?) ORDER BY m\\.date DESC, m\\.id DESC LIMIT \\?\\)$'
   );
   function esc(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -447,6 +447,18 @@ function makeWorld() {
       }
       else if (frag === '(m.from_addr LIKE ? OR m.subject LIKE ?)') {
         const a = p[pi++]; const bb = p[pi++]; preds.push(j => like(j.m.from_addr, a) || like(j.m.subject, bb));
+      }
+      // comms-polish-2 C1: MATCH(subject, body_text) AGAINST ('+w1* +w2*' IN BOOLEAN MODE) — every
+      // required prefix matches some token of subject + body (InnoDB's tokenizer: runs of letters /
+      // digits; case-blind). tests/mailboxS2.mysql.test.js holds the engine to this on the index.
+      else if (frag === '(m.from_addr LIKE ? OR m.subject LIKE ? OR MATCH(m.subject, m.body_text) AGAINST (? IN BOOLEAN MODE))') {
+        const a = p[pi++]; const bb = p[pi++]; const ft = String(p[pi++]);
+        const need = ft.split(/\s+/).filter(Boolean).map(t => t.replace(/^\+/, '').replace(/\*$/, '').toLowerCase());
+        preds.push(j => {
+          if (like(j.m.from_addr, a) || like(j.m.subject, bb)) return true;
+          const toks = (`${j.m.subject || ''} ${j.m.body_text || ''}`).toLowerCase().match(/[\p{L}\p{N}_]+/gu) || [];   // '_' is a word character to InnoDB
+          return need.length > 0 && need.every(n => toks.some(t => t.startsWith(n)));
+        });
       }
       else throw new Error(`mailboxS2World: unknown list predicate: ${frag}`);
     }

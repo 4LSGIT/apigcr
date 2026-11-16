@@ -201,6 +201,34 @@ describe('comms hub pane', () => {
     expect(doc.querySelectorAll('#msg-list .msg')[1].querySelector('.chip.case').textContent).toContain('26-11111');
   });
 
+  test('comms-polish-2 C2: ycOpenMessage opens ONE stored message by id (a task\'s email link) — booted, and cold through the workspace rest email~m<id>; an unreadable id opens nothing', async () => {
+    const one = { 'GET /api/mail/messages/11': () => ({ messages: [THREAD.messages[0]] }), 'GET /api/mail/messages/999': () => { throw Object.assign(new Error('Message not found'), { status: 404 }); } };
+    // booted pane: the shell calls it directly
+    const a = await boot({ handler: standard(one) });
+    expect(await a.window.ycOpenMessage('11')).toBe(true);
+    await tick(a.window, 80);
+    expect(a.calls.map((c) => c.url)).toContain('/api/mail/messages/11');
+    expect(a.calls.map((c) => c.url)).toContain('/api/mail/threads/root%40x.test');
+    expect(a.doc.getElementById('thread-head').hidden).toBe(false);
+    expect(a.doc.getElementById('thread-subject').textContent).toBe(`Subject ${EVIL}`);
+    expect(a.doc.getElementById('email').hidden).toBe(false);
+    // an id the caller cannot read: nothing opens, no page error
+    const b = await boot({ handler: standard(one) });
+    expect(await b.window.ycOpenMessage(999)).toBe(false);
+    expect(b.doc.getElementById('thread-head').hidden).toBe(true);
+    expect(b.errors).toEqual([]);
+    // cold: the shell held the rest for boot (ycSubTab.leaf.take), the pane takes it and opens the message
+    const c = await boot({ handler: standard(one), before: (w) => { w.ycSubTab = { leaf: { take: () => 'email~m11', report: () => {} } }; } });
+    await tick(c.window, 120);
+    expect(c.calls.map((x) => x.url)).toContain('/api/mail/messages/11');
+    expect(c.doc.getElementById('thread-subject').textContent).toBe(`Subject ${EVIL}`);
+    // a rest that is not a message id opens nothing (and never reaches a selector)
+    const d = await boot({ handler: standard(one), before: (w) => { w.ycSubTab = { leaf: { take: () => 'email~m11x', report: () => {} } }; } });
+    await tick(d.window, 80);
+    expect(d.calls.some((x) => /\/api\/mail\/messages\/\d/.test(x.url))).toBe(false);
+    expect(d.errors).toEqual([]);
+  });
+
   test('hostile envelope fields render as TEXT — no element is created from them', async () => {
     const { window, doc } = await boot({ handler: standard() });
     const row = doc.querySelector('#msg-list .msg');

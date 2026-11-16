@@ -1007,12 +1007,14 @@ async function listTasks(db, {
        uf.user AS from_id, uf.user_name AS from_name,
        ut.user AS to_id,   ut.user_name AS to_name,
        co.contact_id, co.contact_name,
-       ca.case_id, ca.case_number, ca.case_number_full
+       ca.case_id, ca.case_number, ca.case_number_full,
+       mm.subject AS mail_subject
      FROM tasks t
      LEFT JOIN users    uf ON t.task_from = uf.user
      LEFT JOIN users    ut ON t.task_to   = ut.user
      LEFT JOIN contacts co ON (t.task_link_type = 'contact' AND t.task_link_id = co.contact_id)
      LEFT JOIN cases    ca ON (t.task_link_type = 'case'    AND t.task_link_id = ca.case_id)
+     LEFT JOIN mail_messages mm ON (t.task_link_type = 'email' AND mm.id = CAST(t.task_link_id AS UNSIGNED))
      ${whereSQL}
      ${orderSQL}
      LIMIT ? OFFSET ?`,
@@ -1022,6 +1024,14 @@ async function listTasks(db, {
   const data = rows.map(r => shapeRow(r));
   return { data, total };
 }
+
+/**
+ * What task_link_id may name (tasks.task_link_type's enum). App-validated on
+ * create: sql_mode is relaxed, so an unknown value would be stored as '' with
+ * a warning instead of failing. 'email' = mail_messages.id (comms-polish-2
+ * C2, migration 2026-11-16_tasks_link_type_email.sql).
+ */
+const TASK_LINK_TYPES = new Set(['contact', 'case', 'appt', 'bill', 'event', 'email']);
 
 function shapeRow(r) {
   let link = null;
@@ -1035,6 +1045,8 @@ function shapeRow(r) {
     link = { type: 'bill', id: r.task_link_id, title: `Bill #${r.task_link_id}` };
   else if (r.task_link_type === 'event')
     link = { type: 'event', id: r.task_link_id, title: `Event #${r.task_link_id}` };
+  else if (r.task_link_type === 'email')   // the message's subject; a pruned / unknown message keeps its id
+    link = { type: 'email', id: r.task_link_id, title: r.mail_subject != null ? (String(r.mail_subject) || '(no subject)') : `Email #${r.task_link_id}` };
 
   return {
     id:      r.task_id,
@@ -1065,10 +1077,12 @@ async function getTask(db, taskId) {
        uf.user AS from_id, uf.user_name AS from_name,
        ut.user AS to_id,   ut.user_name AS to_name,
        co.contact_id, co.contact_name,
-       ca.case_id, ca.case_number, ca.case_number_full
+       ca.case_id, ca.case_number, ca.case_number_full,
+       mm.subject AS mail_subject
      FROM tasks t
      LEFT JOIN users    uf ON t.task_from = uf.user
      LEFT JOIN users    ut ON t.task_to   = ut.user
+     LEFT JOIN mail_messages mm ON (t.task_link_type = 'email' AND mm.id = CAST(t.task_link_id AS UNSIGNED))
      LEFT JOIN contacts co ON (
        (t.task_link_type = 'contact' AND t.task_link_id = co.contact_id)
        OR (t.task_link_type IS NULL AND t.task_link = co.contact_id)
@@ -1190,6 +1204,9 @@ async function createTask(db, {
   const badInput = (message) => Object.assign(new Error(message), { status: 400 });
   if (!title) throw badInput('createTask requires title');
   if (!to)    throw badInput('createTask requires to');
+  if (link_type != null && link_type !== '' && !TASK_LINK_TYPES.has(String(link_type))) {
+    throw badInput(`createTask: link_type must be one of ${[...TASK_LINK_TYPES].join(', ')}`);
+  }
 
   // sql_mode is NOT strict → an overlong value truncates SILENTLY. Throw instead.
   if (String(title).length  > 100)  throw badInput('createTask: title exceeds 100 chars');
@@ -1286,6 +1303,10 @@ async function updateTask(db, taskId, fields, actingUserId = 0, logExtra = {}) {
 
   const blocked = Object.keys(fields).filter(k => !ALLOWED.has(k));
   if (blocked.length) throw new Error(`updateTask: blocked fields: ${blocked.join(', ')}`);
+  // the link type's vocabulary, on update as on create (relaxed sql_mode would store '' for an unknown value)
+  if (fields.task_link_type != null && fields.task_link_type !== '' && !TASK_LINK_TYPES.has(String(fields.task_link_type))) {
+    throw Object.assign(new Error(`updateTask: task_link_type must be one of ${[...TASK_LINK_TYPES].join(', ')}`), { status: 400 });
+  }
 
   // Blank date -> NULL before binding: task_start / task_due are DATE columns
   // and non-strict sql_mode would turn '' into '0000-00-00'. task_id 1039
@@ -1546,6 +1567,7 @@ async function countRecentSessionKeyTasks(db, rootKeyId) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 module.exports = {
+  TASK_LINK_TYPES, // comms-polish-2 C2
   listTasks,
   getTask,
   getTaskHistory,

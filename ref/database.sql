@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-16T03:15:00.476Z
+-- Generated: 2026-11-16T06:28:27.007Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:0a7b0761b606e9c83b342dd19fb35af6
+-- Fingerprint: sha256:8131226d348942f7bc901fc3fc7035f1
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -3847,7 +3847,7 @@ CREATE TABLE `tasks` (
   `task_start` date DEFAULT NULL,
   `task_due` date DEFAULT NULL,
   `task_link` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `task_link_type` enum('contact','case','appt','bill','event') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `task_link_type` enum('contact','case','appt','bill','event','email') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'What task_link_id names: contact (contacts.contact_id), case (cases.case_id), appt, bill, event, or — comms-polish-2 C2, 2026-11-16 — email (mail_messages.id, the Comms hub''s stored message; the tasks page opens Comms at it). App-validated too (taskService TASK_LINK_TYPES): relaxed sql_mode would store '''' for an unknown value',
   `task_link_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `task_title` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `task_desc` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -5218,7 +5218,8 @@ ALTER TABLE `mail_messages`
   ADD KEY `idx_mail_messages_thread_key` (`thread_key`(191)),
   ADD KEY `idx_mail_messages_mailbox_ingested` (`mailbox_id`,`ingested_at`),
   ADD KEY `idx_mail_messages_mailbox_provider` (`mailbox_id`,`provider_id`),
-  ADD KEY `idx_mail_messages_mailbox_inbox_date` (`mailbox_id`,`in_inbox`,`date`);
+  ADD KEY `idx_mail_messages_mailbox_inbox_date` (`mailbox_id`,`in_inbox`,`date`),
+  ADD FULLTEXT KEY `ft_mail_messages_text` (`subject`,`body_text`);
 
 --
 -- Indexes for table `mail_read_state`

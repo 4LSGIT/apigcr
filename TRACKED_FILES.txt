@@ -669,7 +669,9 @@ ref/migrations/2026-11-09_docs_intake_digest.console.js
 ref/migrations/2026-11-09_mail_attachment_notices.sql
 ref/migrations/2026-11-11_form_submissions_updated_at_ms.sql
 ref/migrations/2026-11-15_comm_unsub_tokens_campaign_id_comment.sql
+ref/migrations/2026-11-16_mail_fulltext_search.sql
 ref/migrations/2026-11-16_phone_read_state.sql
+ref/migrations/2026-11-16_tasks_link_type_email.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -885,7 +887,9 @@ scripts/commsArchive/s0_harness/suite_precheck.sh
 scripts/commsArchive/s0_harness/suite_stages.sh
 scripts/commsArchive/s0_harness/t.sh
 scripts/commsArchive/s0_infra.sh
+scripts/commsPolish2MailFulltext.js
 scripts/commsPolish2PhoneReadState.js
+scripts/commsPolish2TasksEmailLink.js
 scripts/commsSummariesSkipReasonComment.js
 scripts/commsTranscribeS2Migrate.js
 scripts/courtBacktest.js
@@ -1771,6 +1775,7 @@ tests/logservice.buildcontactlogwhere.test.js
 tests/machineKeyScopes.test.js
 tests/mailEventHook.routes.test.js
 tests/mailEventIngest.mysql.test.js
+tests/mailFtSearch.test.js
 tests/mailboxFetchMerge.test.js
 tests/mailboxGmailParity.console.test.js
 tests/mailboxIngestStateComment.test.js
@@ -1941,6 +1946,8 @@ tests/taskCreate.badInput400.test.js
 tests/taskQueue.accel.test.js
 tests/taskService.status.test.js
 tests/taskService.test.js
+tests/tasksEmailLink.mysql.test.js
+tests/tasksEmailLink.test.js
 tests/tasksUi.boot.test.js
 tests/templateRenderService.test.js
 tests/test-credential-crypto.js

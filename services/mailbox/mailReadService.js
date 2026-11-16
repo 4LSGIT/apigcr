@@ -1195,12 +1195,57 @@ function scopeWhere(filters, cursor, entry = null) {
     where.push('(m.from_addr LIKE ? OR m.from_addr LIKE ?)');
     params.push(`%@${e}`, `%@${e}>`);
   }
+  let usesFt = false;
   if (filters.q) {
     const like = `%${escapeLike(filters.q)}%`;
-    where.push('(m.from_addr LIKE ? OR m.subject LIKE ?)');
-    params.push(like, like);
+    const ft = ftQueryOf(filters.q);
+    if (ft) {
+      usesFt = true;
+      // comms-polish-2 C1: the body too — every searchable word of q as a
+      // word prefix somewhere in the subject or the body (ft_mail_messages_text,
+      // migration 2026-11-16_mail_fulltext_search.sql); From and Subject keep
+      // the substring match, so a partial address or a 2-letter word still finds.
+      where.push('(m.from_addr LIKE ? OR m.subject LIKE ? OR MATCH(m.subject, m.body_text) AGAINST (? IN BOOLEAN MODE))');
+      params.push(like, like, ft);
+    } else {
+      where.push('(m.from_addr LIKE ? OR m.subject LIKE ?)');
+      params.push(like, like);
+    }
   }
-  return { extra: where.length ? ` AND ${where.join(' AND ')}` : '', params };
+  // ft: the list's FORCE INDEX must NAME the FULLTEXT index too — an index hint
+  // that leaves it out makes MATCH an error (ER_FT_MATCHING_KEY_NOT_FOUND).
+  return { extra: where.length ? ` AND ${where.join(' AND ')}` : '', params, ft: usesFt };
+}
+
+// InnoDB's default stopword list (information_schema.INNODB_FT_DEFAULT_STOPWORD,
+// innodb_ft_enable_stopword ON live): a word on it is never indexed, so a
+// '+word*' for it would match nothing — the builder drops it, as it drops
+// words under innodb_ft_min_token_size (3 live).
+const FT_STOPWORDS = new Set(['a', 'about', 'an', 'are', 'as', 'at', 'be', 'by', 'com', 'de', 'en', 'for', 'from', 'how', 'i', 'in', 'is', 'it',
+  'la', 'of', 'on', 'or', 'that', 'the', 'this', 'to', 'was', 'what', 'when', 'where', 'who', 'will', 'with', 'und', 'www']);
+const FT_MIN_TOKEN = 3;
+const FT_MAX_WORDS = 8;
+/**
+ * The boolean-mode query for a search box's text, or '' when none of it is
+ * searchable: the words (runs of letters / digits / '_' — InnoDB's tokenizer
+ * counts the underscore as a word character, so "Paystub_October.pdf" is one
+ * word) of
+ * FT_MIN_TOKEN+ characters that are not stopwords, lower-cased, each
+ * required as a prefix — '+paystub* +october*'. At most FT_MAX_WORDS (a
+ * pasted paragraph is not a search). Pure: the pane's search box, the saved
+ * view's q and Mark all read's filter all go through scopeWhere.
+ */
+function ftQueryOf(q) {
+  const words = String(q == null ? '' : q).toLowerCase().match(/[\p{L}\p{N}_]+/gu) || [];
+  const seen = new Set();
+  const out = [];
+  for (const w of words) {
+    if (w.length < FT_MIN_TOKEN || FT_STOPWORDS.has(w) || seen.has(w)) continue;
+    seen.add(w);
+    out.push(`+${w}*`);
+    if (out.length >= FT_MAX_WORDS) break;
+  }
+  return out.join(' ');
 }
 
 /**
@@ -1237,7 +1282,9 @@ async function listMessages(db, userId, query = {}) {
 
   // Per-branch WHERE beyond the mailbox (identical for every DIRECT branch;
   // an alias branch carries its own slice predicates — ALIAS SLICE, header).
-  const { extra, params: wParams } = scopeWhere(filters, cursor);
+  const { extra, params: wParams, ft } = scopeWhere(filters, cursor);
+  // the FULLTEXT index joins the hint when the predicate MATCHes (scopeWhere.ft); the walk stays the mailbox index (the OR cannot be served by it — the twin's EXPLAIN)
+  const hint = (idx, withFt) => `FORCE INDEX (${idx}${withFt ? ', ft_mail_messages_text' : ''})`;
 
   const branches = [];
   const params = [];
@@ -1251,7 +1298,7 @@ async function listMessages(db, userId, query = {}) {
   const index = filters.all_folders || filters.sent_only ? 'idx_mail_messages_mailbox_date' : 'idx_mail_messages_mailbox_inbox_date';
   for (const id of plan.direct) {
     branches.push(
-      `(SELECT ${LIST_COLS} FROM mail_messages m FORCE INDEX (${index})${JOINS}
+      `(SELECT ${LIST_COLS} FROM mail_messages m ${hint(index, ft)}${JOINS}
          WHERE m.mailbox_id = ?${extra}
          ORDER BY m.date DESC, m.id DESC LIMIT ?)`
     );
@@ -1264,7 +1311,7 @@ async function listMessages(db, userId, query = {}) {
   for (const e of plan.aliases) {
     const w = scopeWhere(filters, cursor, e);
     branches.push(
-      `(SELECT ${ALIAS_LIST_COLS} FROM mail_messages m FORCE INDEX (idx_mail_messages_mailbox_date)${JOINS}
+      `(SELECT ${ALIAS_LIST_COLS} FROM mail_messages m ${hint('idx_mail_messages_mailbox_date', w.ft)}${JOINS}
          WHERE m.mailbox_id = ?${w.extra}
          ORDER BY m.date DESC, m.id DESC LIMIT ?)`
     );
@@ -2256,6 +2303,7 @@ async function caseLink(db, userId, messageId, body) {
 
 
 module.exports = {
+  ftQueryOf, FT_STOPWORDS, FT_MIN_TOKEN, FT_MAX_WORDS, // comms-polish-2 C1
   summary,
   listMessages,
   getThread,

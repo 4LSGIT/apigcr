@@ -725,7 +725,7 @@
         <select id="view-sel" aria-label="Saved view"></select>
         <button class="btn mb-btn" type="button" id="mb-btn" aria-expanded="false" aria-controls="mb-panel" title="Choose which mailboxes this list combines" hidden><span class="mb-dots" id="mb-dots"></span><span id="mb-label">All mailboxes</span><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
         <span class="brk" aria-hidden="true"></span>
-        <input type="search" id="f-q" placeholder="From or subject — from:court.gov for a domain" aria-label="Search from or subject; from:domain filters the sender domain" maxlength="200">
+        <input type="search" id="f-q" placeholder="Words in the email, from or subject — from:court.gov for a domain" aria-label="Search the email's words, from or subject; from:domain filters the sender domain" maxlength="200">
         <button class="btn" type="button" id="fbar-btn" aria-expanded="true" aria-controls="fbar" title="Show or hide the filters"><i class="fa-solid fa-filter" aria-hidden="true"></i> <span id="fbar-n">Filters</span></button>
         <button class="btn icon" type="button" id="sel-btn" aria-pressed="false" aria-label="Select emails" title="Select emails — a click then ticks an email instead of opening it, to file the attachments of several together"><i class="fa-regular fa-square-check" aria-hidden="true"></i><span class="cb-label"> Select</span></button>
         <button class="btn icon" type="button" id="refresh-btn" title="Refresh — and check the mail servers now (they are checked every 5 minutes anyway)" aria-label="Refresh"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
@@ -3021,6 +3021,8 @@ function taskLinkChoices(m) {
     seen.add(`contact:${p.contact_id}`);
     out.push({ type: 'contact', id: String(p.contact_id), label: p.name || `contact ${p.contact_id}`, icon: p.kind === 'org' ? 'fa-building' : 'fa-user' });
   }
+  // comms-polish-2 C2: the task can link back to the email itself (tasks.task_link_type 'email' = this stored message)
+  if (m && m.id) out.push({ type: 'email', id: String(m.id), label: 'This email', icon: 'fa-envelope' });
   return out;
 }
 
@@ -3051,7 +3053,8 @@ function openTaskModal(m, opts = {}) {
   // — the related cases / contacts are one-click chips, "None" stays allowed.
   const msgCase = m.log_status && m.log_status.state === 'case' ? m.log_status.case : m.case;
   const def = opts.choices ? (opts.defaultLink || null)
-    : msgCase ? choices.find((c) => c.type === 'case' && c.id === String(msgCase.case_id)) || null : null;
+    : msgCase ? choices.find((c) => c.type === 'case' && c.id === String(msgCase.case_id)) || null
+      : choices.find((c) => c.type === 'email') || null;   // no case: the task links to the email (C2)
   state.task = { m, choices, link: def };
   E('task-title-h').textContent = opts.heading || 'Task from this email';
   E('task-msg').classList.remove('show');
@@ -3911,8 +3914,10 @@ async function init() {
   // an unknown token) only reports '' so the shell's URL settles on tabComms.
   try {
     const rest = window.ycSubTab ? ycSubTab.leaf.take() : null;
-    const tab = rest ? String(rest).split('~')[0] : '';
+    const segs = rest ? String(rest).split('~') : [];
+    const tab = segs[0] || '';
     if (tab === 'phone' || tab === 'team') showTab(tab);
+    else if (tab === 'email' && /^m\d+$/.test(segs[1] || '')) { ycSubTab.leaf.report(''); ycOpenMessage(segs[1].slice(1)); } // email~m<id> (C2)
     else if (rest) ycSubTab.leaf.report('');
   } catch (_) { /* stay on Email */ }
 
@@ -4075,6 +4080,30 @@ function phRemembered() {
 }
 
 /** Email | Phone | Team. The panes stay in the DOM; only one shows. */
+/**
+ * Open the Email tab at ONE stored message (comms-polish-2 C2): the shell's
+ * openCommsMessage calls it directly on a booted pane, or holds the workspace
+ * rest `email~m<id>` for boot (below). The message is read on its own
+ * (GET /api/mail/messages/:id — the caller's readable boxes only), then its
+ * conversation opens like a list click; it need not be on the loaded page.
+ */
+async function ycOpenMessage(id) {
+  const mid = String(id == null ? '' : id).replace(/\D/g, '');
+  if (!mid) return false;
+  showTab('email');
+  try {
+    const data = await api(`/api/mail/messages/${mid}`, 'GET');
+    const m = Array.isArray(data && data.messages) ? data.messages[0] : null;
+    if (!m) { toast('That email is not in a mailbox you can read'); return false; }
+    await openMessage(m);
+    return true;
+  } catch (err) {
+    toast(`Couldn't open that email: ${err.message}`);
+    return false;
+  }
+}
+window.ycOpenMessage = ycOpenMessage;
+
 function showTab(which) {
   for (const k of ['email', 'phone', 'team']) {
     const on = k === which;

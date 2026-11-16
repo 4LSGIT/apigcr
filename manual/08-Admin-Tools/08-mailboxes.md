@@ -306,8 +306,10 @@ Comms](#phone-lines--comms), below).
   tag), the same for everyone — chosen in Admin → Mailboxes (Colour, above).
   Narrow it with the **mailbox picker** (tick
   any combination of boxes — say shoshana@ and billing@ together), the
-  search (sender or subject — not the message text; type **from:court.gov**
-  in it to keep one sender domain), and
+  search (words in the email — subject or body, every word you type as the
+  start of a word in it, two-letter words and "the"-type words aside — or
+  part of the sender address or subject; type **from:court.gov** in it to
+  keep one sender domain), and
   the filter buttons (a pressed button is on): **Inbox** / **Sent** / **All
   folders** (one at a time — **Sent** is the mail the boxes sent: Google's
   Sent label, or a polled Sent folder; **All folders** is everything; a
@@ -468,8 +470,9 @@ Comms](#phone-lines--comms), below).
   task is yours unless you assign it, due today (**+1 business day** moves
   it past a weekend), and **Link** offers the email's case, the
   conversation's client cases and contacts, or none. **Open tasks** on the
-  confirmation jumps to the Tasks tab. The task does not link back to the
-  email yet. **Assign to** lists active staff only.
+  confirmation jumps to the Tasks tab. **Link** also offers **This email**
+  (the task then opens this message from the Tasks page); it is the default
+  when the email is on no case. **Assign to** lists active staff only.
 - **In this conversation** (under the subject) starts as one line — the
   first person and their case, with **+N ▸** to open the full strip: every
   contact in the conversation — sender first — with the cases

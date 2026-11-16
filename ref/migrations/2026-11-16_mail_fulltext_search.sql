@@ -1,0 +1,42 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 2026-11-16 — comms-polish-2 bundle C1: the Comms Email tab searches the
+-- BODY of mail, not only From and Subject.
+--
+--   A. FULLTEXT INDEX ft_mail_messages_text (subject, body_text) on
+--      mail_messages. The list's ?q= becomes
+--        from_addr LIKE %q% OR subject LIKE %q%
+--        OR MATCH(subject, body_text) AGAINST ('+w1* +w2* …' IN BOOLEAN MODE)
+--      with w = the query's words of 3+ letters/digits that are not InnoDB
+--      stopwords (services/mailbox/mailReadService.js ftQueryOf) — every word
+--      must appear (as a word prefix) somewhere in the subject or the body.
+--      Mark all read with a search on clears the same set (the one scopeWhere).
+--
+-- ── ORDER OF OPERATIONS ─────────────────────────────────────────────────────
+-- SQL FIRST, then backend + frontend (house order): the C1 list predicate
+-- names MATCH(subject, body_text), which is an error (ER_FT_MATCHING_KEY_NOT_FOUND)
+-- without the index. Nothing in the app names the index before C1 deploys,
+-- so running it early is harmless. Run through
+-- scripts/commsPolish2MailFulltext.js (CHECK, then --apply; it is the
+-- idempotency: MySQL has no ADD INDEX IF NOT EXISTS), not by hand.
+--
+-- ── ALGORITHMS / COST (measured on the scratch 8.4.11 and sized live) ──────
+-- The FIRST FULLTEXT index on an InnoDB table adds the hidden FTS_DOC_ID
+-- column and REBUILDS the table (ALGORITHM=INPLACE, LOCK=SHARED — on 8.4.11
+-- LOCK=NONE is refused, "Fulltext index creation requires a lock": reads go
+-- on, WRITES to mail_messages wait for the seconds the build takes, so the
+-- ingest worker's next poll simply lands after it; lock_wait_timeout 10 in
+-- the script). mail_messages live 2026-11-16: 4,164 rows, 10.2 MB of body_text
+-- (avg 3.1 KB, max 168 KB) — seconds. Index size is a fraction of that.
+-- CONSEQUENCE, like contacts and comms_transcripts: a table with a FULLTEXT
+-- index cannot take ALGORITHM=INSTANT ALTERs any more — a later ADD COLUMN on
+-- mail_messages is INPLACE (a rebuild of the same seconds), not instant.
+-- innodb_ft_min_token_size is 3 and innodb_ft_enable_stopword ON (live),
+-- which is why the query builder drops shorter words and stopwords itself.
+--
+-- ── ROLLBACK ────────────────────────────────────────────────────────────────
+-- ALTER TABLE mail_messages DROP INDEX ft_mail_messages_text; — only before
+-- C1 deploys (after it, every searched list names the index).
+-- ─────────────────────────────────────────────────────────────────────────────
+
+ALTER TABLE `mail_messages`
+  ADD FULLTEXT INDEX `ft_mail_messages_text` (`subject`, `body_text`);
