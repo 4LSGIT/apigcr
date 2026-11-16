@@ -39,7 +39,7 @@ Reference material that lives next to the code. Three tiers:
   `EMAIL_ATTACHMENTS_DESIGN.md` (email attachments → Dropbox, docs@ first),
   `EMAIL_PROVIDER_PLAN.md` (draft), `CHAT_DESIGN.md`
   (design only), `DOCUMENTS_V3_DESIGN.md` (YCv3 storage providers,
-  folders and onboarding — draft, rulings pending), and `AUDIT_TENANCY.md` (the tenancy arc's input inventory).
+  folders and onboarding — ratified 2026-11-17, no arc open), and `AUDIT_TENANCY.md` (the tenancy arc's input inventory).
 - `gas.js` — deployed Apps Script source, kept byte-identical to the live
   script. Cite it by FUNCTION name (`services/emailIngestService.js` cites
   `forwardTestTrigger()`), never by line number — the file is re-pasted from the

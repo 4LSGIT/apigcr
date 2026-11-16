@@ -1,6 +1,6 @@
 # Documents & Storage — YCv3 Design (living doc)
 
-**Status: DRAFT, reviewed 2026-11-16 · not active development · awaiting Fred's rulings on §10.**
+**Status: DESIGN RATIFIED 2026-11-17 (Fred's rulings on §10 a–g folded in) · not active development · no arc open.**
 Living doc — edit stale claims in place, present tense; git history carries the dating. Doc≠code divergences found mid-work go to the docs-debt queue (scratch `ns=docs`), per house rule.
 Provenance: exploration session 2026-10-26, self-review 2026-11-16 (live figures re-measured that day through the readonly SQL endpoint). Every claim about v2 was read from source: `services/documentSourceService.js`, `services/filePlacementService.js`, `services/documentSyncService.js`, `services/caseService.js` (`ensureCaseDropboxFolder`), `ref/plans.md` ("YC 3.0 — Tenancy plan"), `ref/AUDIT_TENANCY.md`. Companion: `ref/EMAIL_ATTACHMENTS_DESIGN.md` (one writer on today's Dropbox path).
 Parent: `ref/plans.md` → "YC 3.0 direction" (driver pattern extends to storage). No scratch state key: this doc is the state until an arc opens.
@@ -26,7 +26,7 @@ What exists:
 - **Path attribution is a Dropbox-sync strategy**, not a model property: `case_folder_cache` (case → folder `external_id` + `path_lower`) and `_matchCase` walking a file's directory chain upward.
 - **The placement ladder** (`filePlacementService.placeAndRegister`): case folder → auto-create via `ensureCaseDropboxFolder` (always raises a task) → the caller's unsorted bin, per-case subfolder `"{case_id} - {lfm name}"` + a move task; contact/appt/unlinked → loose in the bin with an identity prefix, no task. `esignFilingService` carries its own copy (known, deliberate, its own slice).
 - **Folder creation is templated and lazy**: `dropbox_case_folder_templates` (app_settings JSON; stage `potential|active` × `case_type[:subtype]` → path template + subfolders), substituted from the case row and its primary contact; adopt-before-create probe; the shared link lands in `cases.case_dropbox` (a URL — the binding is a human link, not a handle).
-- **Hard-wired to Dropbox** (bypassing the seam): every WRITER — `filePlacementService`, `esignFilingService`, `uploadTargetService`, `emailAttachmentFilingService`, `emailAttachmentCommsService`, `documentIngestService`, portal docs, `/api/documents/upload-link` → direct browser→Dropbox upload → `upload-commit` — plus `caseService.ensureCaseDropboxFolder`, the sync engine, `assistantService`, `routes/freelook.js`, `routes/api.dropbox.js`. The tenancy audit already lists the firm-specific residue: credential id 8 (×2), four hardcoded bin paths, `dropbox_credential_id`, `dropbox_case_folder_templates`.
+- **Hard-wired to Dropbox** (bypassing the seam): every WRITER — `filePlacementService`, `esignFilingService`, `uploadTargetService`, `emailAttachmentFilingService`, `emailAttachmentCommsService`, `documentIngestService`, portal docs, `/api/documents/upload-link` → direct browser→Dropbox upload → `upload-commit` — plus `caseService.ensureCaseDropboxFolder`, the sync engine, `assistantService`, `routes/freelook.js`, `routes/api.dropbox.js` — **and the workflow engine's provider-named functions** (`lib/internal_functions/dropbox.js`: `dropbox_move`, `dropbox_create_folder`, `dropbox_ensure_case_folder`, `dropbox_save_url`, `dropbox_list_folder`, `dropbox_get_shared_link`), which live by NAME inside tenant-authored definitions: workflow 28 "Filed Case Dropbox Move" moves a case folder from the Potential tree to the Active tree when a docket number lands, and workflow 48 files Jotform PDFs (verified live 2026-11-17). Automation is a third writer class, and its function names are data, not code. The tenancy audit already lists the firm-specific residue: credential id 8 (×2), four hardcoded bin paths, `dropbox_credential_id`, `dropbox_case_folder_templates`.
 
 ## 2. The central split: human-managed vs app-owned storage
 
@@ -90,14 +90,14 @@ Vocabulary, as Fred framed it (2026-11-16): a "folder" is first a **tag** — a 
 
 The tag half is already generic: `link_type` carries `'case' | 'contact' | 'appt'` today, a file may hold several links, and contact/appt files are placed loose in a bin with an identity prefix. Only the physical half is case-only.
 
-**Ruling proposed: a SETTING, not a hardcode, with `case` ON and `contact` OFF by default.**
+**Ruled (Fred, 2026-11-17): a SETTING, not a hardcode. The PLATFORM default is the nested `contact → case` tree; 4LSG is seeded explicitly case-only.** 4LSG's layout is 4LSG's config, not the product's default (tenancy invariant 8: never copy live 4lsg settings as defaults).
 
-- Hardcoding "contacts get folders" is wrong for tenant zero: SS's tree has no contact folders, and the app would mint thousands he never asked for — a breach of invariant zero.
-- Hardcoding "contacts never get folders" is wrong for tenant #2: a `Clients/<name>/<matter>` tree is the single most common firm convention, which needs contact folders AND case folders nested under them.
-- So `storage_folders` (per tenant, one `settingsRegistry` entry) = `{ case: { templates… }, contact: { templates… } | null }`, where a case template may reference `{contact_folder}` (the primary contact's bound folder, created on demand). Inner-platform guard: kinds are `case` and `contact` only; `appt` and anything else stay tag + bin, never a folder.
+- Hardcoding "contacts get folders" is wrong for tenant zero: SS's tree has no contact folders, and the app would mint thousands he never asked for — a breach of invariant zero. Hence the explicit 4LSG seed.
+- Hardcoding "contacts never get folders" is wrong for the product: a `Clients/<name>/<matter>` tree is the prevalent firm convention (the default shape in the mainstream practice-management and DMS products), which needs contact folders AND case (matter) folders nested under them. Hence the platform default.
+- So `storage_folders` (per tenant, one `settingsRegistry` entry) = `{ case: { templates… }, contact: { templates… } | null }`, where a case template may reference `{contact_folder}` (the primary contact's bound folder, created on demand). The engine must support the nesting from day one — it is the default, not an option. Inner-platform guard: kinds are `case` and `contact` only; `appt` and anything else stay tag + bin, never a folder.
 - **Physical placement follows the PRIMARY link: case, else contact, else bin.** Every other link is a tag only. One file, one location — a file linked to a case and two contacts sits in the case folder and shows on all three tabs.
 - **Lazy creation**, as today: a folder is created on first need (intake, first file, explicit "create folder"), never for every row of the entity table.
-- **The app never moves or renames a folder it did not just create.** Stage moves (Active → Closed) stay human on 4LSG; a tenant that wants the app to do it opts into an explicit rule later (§10 e). Id-stable bindings survive either way.
+- **Core never moves or renames a folder implicitly; automation moves it explicitly.** Today's lead→case move IS automatic — workflow 28 does it with `dropbox_move` when a docket number lands — and that is the right shape: a tenant-authored step in config, not a hidden side effect in `caseService`. v3 keeps it exactly so, with provider-neutral `storage_*` functions (§9 D1) a tenant wires into its own stage rules. Closing a case stays human on 4LSG because SS never automated it, not because the app forbids it. Id-stable bindings survive either way.
 
 ## 7. Onboarding an existing firm's storage ("work with the mess, don't organize it")
 
@@ -118,7 +118,7 @@ Independent of the tenancy P0 chain; D1–D3 are the audit's Dropbox isolation i
 
 | Slice | What | 4LSG gate (§0) |
 |---|---|---|
-| D1 seam completion | grow the provider interface (`upload`, `ensureFolder`, `directUpload`, `listChanges`); route every writer in §1 through `documentSourceService`; fold the e-sign ladder copy in (its own sub-slice) | replay gate: identical recorded Dropbox calls on the fixture |
+| D1 seam completion | grow the provider interface (`upload`, `ensureFolder`, `directUpload`, `listChanges`); route every writer in §1 through `documentSourceService`; fold the e-sign ladder copy in (its own sub-slice); add provider-neutral `storage_*` internal functions and keep every `dropbox_*` name as a permanent alias — those names sit inside live workflow definitions (wf 28, 48) and a rename there is a silent break of a tenant's automation | replay gate: identical recorded Dropbox calls on the fixture; wf 28 + 48 definitions byte-identical and dry-run green |
 | D2 de-hardcode | credential 8, the four bins, templates → `settingsRegistry` entries, defaults = today's literals | resolved-config byte diff |
 | D3 binding generalization | entity↔folder binding rows; `case_dropbox` read-through alias; `storage_folders` config with `contact: null` seeded for 4LSG | replay gate + alias inventory |
 | D4 provider-dispatched attribution + name rules | `_matchCase` strategies; `nameRules` validation at template save | sync tick from the committed SHA in a detached worktree reproduces main's upserts (count + sample) |
@@ -127,13 +127,15 @@ Independent of the tenancy P0 chain; D1–D3 are the audit's Dropbox isolation i
 
 ## 10. Open decisions — Fred rules
 
-a. **Opaque keys + DB path for app-owned storage** (recommended strongly) vs mirrored real paths.
-b. **One provider per tenant** by default (recommended); `documents.source` per row stays the mechanism.
-c. **Portal docs and e-sign filings follow the tenant's provider** (recommended — a firm wants everything in its tree); app-owned only when the tenant has none.
-d. **Folders are a setting**: case ON, contact OFF by default; nesting via `{contact_folder}` (recommended, §6).
-e. **Folder rename/move on entity change is never automatic** (recommended); an opt-in rule is a later feature.
-f. **DMS-native class deferred** until a real tenant (recommended).
-g. **Whether a NEW tenant may bring a messy class-A tree the way 4LSG did** — if yes (recommended), the sync engine's onboarding path (page budgets, `backfill_done` semantics, the attribution sweep) is a provisioning feature to preserve, not 4LSG history.
+Ruled by Fred 2026-11-17.
+
+a. **Opaque keys + DB path for app-owned storage.** Ruled yes.
+b. **One provider per tenant** by default; `documents.source` per row stays the mechanism. Ruled yes.
+c. **Portal docs, e-sign filings and generated documents follow the tenant's provider**; app-owned only when the tenant has none. Ruled yes. Note on templates: e-sign and generation TEMPLATES are not in storage at all — `contract_templates` rows (HTML body or stored PDF + `placement_json`, inline images base64 in the column), so there is nothing provider-specific to follow; only their OUTPUT (the signed / generated PDF) is placed, and it follows this ruling.
+d. **Folders are a setting; the platform default is the nested `contact → case` tree; 4LSG seeded case-only.** Ruled (§6).
+e. **Core never moves a folder implicitly; automation moves it explicitly** — the lead→case move already works that way (wf 28). Ruled; the original "never automatic" wording was wrong and is retired (§6).
+f. **DMS-native class deferred** until a real tenant. Ruled yes — with the correction that it is deferred for lack of a tenant and of API access (NetDocuments and iManage gate their APIs behind partner programs), not for difficulty: model-wise it is the SIMPLEST class, because the DMS already holds client/matter metadata and the registry would read attribution from a profile field instead of walking anything.
+g. **A new tenant may bring a messy class-A tree.** Ruled yes: the sync engine's onboarding path (page budgets, `backfill_done` semantics, the attribution sweep) is a provisioning feature to preserve, not 4LSG history.
 
 ## 11. Rejected
 
