@@ -27,6 +27,36 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Comms polish bundle A (comms-polish-2, 11-16):** Email tab: the card's
+  ⋯ menu anchors to its button's LEFT edge (`.mmenu { left: 0 }`, `.flip`
+  to the right only when it would overrun `.thread-body` — the right-anchored
+  menu hung off the column's left edge and its overflow clipped it); File
+  attachments shows progress (a spinner on the row being filed, the button
+  counts "Filing N of M…"); the task dialog's Assign-to offers active staff
+  only (D3b, user 0 never); the related strip's contacts carry an
+  **All communications** chip → the contact's Communications tab
+  (`openContact(c, 'send')` → `addFile(name, 'client', '<id>&tab=send')`).
+  Phone tab: thread items carry `log_id` + `case` (one `caseTagsFor` probe
+  per page; design §4.4 "Case link + task"), logged bubbles get **Link to
+  case** (`PUT /api/log/:id/about`; picker = the Email tab's, suggestions the
+  contact's cases), the head gets **All communications** and **Task…**
+  (`openTaskModal(m, opts)`).
+- **Comms polish bundle B — phone read state (comms-polish-2, 11-16):** table
+  `phone_read_state` (per user, per (line, outside number); migration
+  `2026-11-16_phone_read_state.sql`, applied live 11-16 with 8 global
+  baselines at MAX(id) 14092). Unread = the newest INCOMING text or
+  missed/unanswered incoming call id > the user's read-through: own row (0 =
+  marked unread by hand, beats baselines) else max(line baseline '*', global
+  '*'/'*'). Lists carry `unread` (per-line only with `{ userId }` —
+  automation gets null and never touches the table); `GET
+  /api/phone-lines/readable` carries per-line `unread` + `unread_total`;
+  writes `POST/DELETE …/conversations/:party/read`, `POST …/:id/read`, and
+  `all/` forms (humans only). Pane: lines read at boot for the Phone tab
+  badge, open → POST read, Mark unread, Mark all read, counts re-read after
+  every write; the shell's Comms badge = mail + phone (both the pane's
+  `commsBadgePush` and index.html's `commsBadgeRefresh`). Design §4.4 "Read
+  state"; manual 08 "Phone lines — Comms". Bundle C (mail FULLTEXT search,
+  task→email link) follows with its migration.
 - **Casey case folder extras (A11.1X, 11-15, Fred: "release means allow"):**
   same switch `casey_document_relink_enabled`, same twin. (1) A TYPED
   `folder_path` on `case.folder.relink.v1` is proposable when a new typed read

@@ -38,6 +38,25 @@
  * SUPPRESSED EVENTS (phone_event_log.suppressed = 1: spam / noise the
  * suppression layer kept off the log) are excluded from every read.
  *
+ * READ STATE (comms-polish-2 B, 2026-11-16; table phone_read_state, migration
+ * 2026-11-16_phone_read_state.sql). PER USER, per conversation = (line,
+ * outside number) — the same number on two lines is two conversations, as the
+ * per-line lists show them; the All-numbers row is unread when ANY of its
+ * lines is. A conversation is UNREAD when its newest UNREAD-MAKING event — an
+ * incoming text, or a missed / unanswered incoming call (MISSED_STATUSES; an
+ * answered call and anything outgoing never make it unread) — has an id above
+ * the user's read-through for it: the conversation's own row when one exists
+ * (0 in it = marked unread by hand, so it beats every baseline), else the
+ * larger of the line's "Mark all read" baseline (other_party '*') and the
+ * user's global baseline (line '*', party '*' — seeded at the migration to
+ * that day's MAX(id), so launch showed no backlog), else 0. Opening a
+ * conversation marks it read through the newest event it has NOW (the route,
+ * on the pane's POST — never a GET side effect). Counts (the badges) walk
+ * the readable lines' unread-making rows grouped by (line, party) — one
+ * statement over idx_phone_event_line, ~3K rows live — and compare in JS.
+ * The list reads take { userId } in opts; without it they carry no `unread`
+ * (null), so an automation read never touches the table.
+ *
  * ACCESS is resolved by the ROUTE through mailboxService (getAccess /
  * listReadable / listSendable — D6 enforcement seat); this service takes an
  * already-authorized line. The one exception is staffSendGate, the grant
@@ -85,6 +104,9 @@ const PARTY_RE = /^\d{3,15}$/;
 // 'Accepted' / 'Call connected' / '', so an unanswered RingCentral call
 // reads as answered — no signal to go on).
 const MISSED_STATUSES = new Set(['no-answer', 'missed']);
+// Read state: the SQL twin of "an incoming text, or a missed / unanswered incoming call" (MISSED_STATUSES above — keep the two lists equal; tests/phoneSPH.routes.test.js pins it).
+const UNREAD_EVENT_SQL = "direction = 'incoming' AND (event_type = 'sms' OR LOWER(JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status'))) IN ('no-answer', 'missed'))";
+const READ_ALL = '*'; // phone_read_state's baseline marker (a line's Mark-all-read row; the global row is '*' / '*')
 
 function httpError(status, message, extra) {
   const err = new Error(message);
@@ -314,15 +336,49 @@ function lastItem(r) {
     : { id: Number(r.id), kind: 'sms', direction: r.direction, snippet: snippet(r.body), at: eventAt(r.ts, r.processed_at) };
 }
 
-/** One item of a conversation thread. */
-function threadItem(r) {
+/**
+ * The case a logged item is ABOUT (log.log_about_type = 'case', the log's
+ * secondary attribution — the Email tab's "Link to case" writes the same
+ * column through mail's case-link; the phone pane writes it through
+ * PUT /api/log/:id/about), by log_id: { case_id, case_number } — one PK probe
+ * per thread page, so the thread walks themselves are unchanged
+ * (comms-polish-2 A4, 2026-11-16). case_number is the full docket when the
+ * case has one (the hub's one meaning of the pair). A case id that is not a
+ * cases row keeps its id and a null number.
+ * @returns {Map<number, {case_id:string, case_number:string|null}>}
+ */
+async function caseTagsFor(db, logIds) {
+  const ids = [...new Set((logIds || []).filter((x) => x != null).map(Number).filter(Number.isFinite))];
+  const out = new Map();
+  if (!ids.length) return out;
+  const [rows] = await db.query(
+    `SELECT l.log_id, l.log_about_id AS case_id, c.case_number, c.case_number_full
+       FROM log l
+       LEFT JOIN cases c ON c.case_id = l.log_about_id
+      WHERE l.log_id IN (?) AND l.log_about_type = 'case'`,
+    [ids]
+  );
+  // case_number = the full docket when the case has one, else the short one — the hub's one meaning of {case_id, case_number} (mailReadService, linkCase)
+  for (const r of rows) if (r.case_id != null) out.set(Number(r.log_id), { case_id: String(r.case_id), case_number: r.case_number_full ? String(r.case_number_full) : r.case_number == null ? null : String(r.case_number) });
+  return out;
+}
+
+/**
+ * One item of a conversation thread. `log_id` is its firm-log row (null when
+ * the ingest did not log it); `case` is the case that row is about, or null
+ * (`tags` from caseTagsFor).
+ */
+function threadItem(r, tags = new Map()) {
+  const logId = r.log_id == null ? null : Number(r.log_id);
   return r.event_type === 'call'
     ? {
       id: Number(r.id),
       kind: 'call',
       direction: r.direction,
       at: eventAt(r.started_at, r.processed_at),
-      logged: r.log_id != null,
+      logged: logId != null,
+      log_id: logId,
+      case: logId != null ? tags.get(logId) || null : null,
       ...callFields(r),
     }
     : {
@@ -331,7 +387,9 @@ function threadItem(r) {
       direction: r.direction,
       body: r.body == null ? '' : String(r.body),
       at: eventAt(r.ts, r.processed_at),
-      logged: r.log_id != null,
+      logged: logId != null,
+      log_id: logId,
+      case: logId != null ? tags.get(logId) || null : null,
       // Outbound delivery verdict (phone-delivery S3) — null until the sync
       // has stamped the row (incoming rows and calls stay null forever).
       // Vocabulary: ref/PHONE_DELIVERY_DESIGN.md §3; code is tooltip-only.
@@ -568,6 +626,145 @@ function keysetOf(query, params) {
 // Reads
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Read state (header "READ STATE") — phone_read_state, per user
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The user's rows over some lines (+ the global baseline): Map "line|party" → read_through_id. */
+async function readRows(db, userId, lineNumbers) {
+  const uid = Number(userId);
+  if (!Number.isInteger(uid) || uid < 0) return new Map();
+  const [rows] = await db.query(
+    `SELECT line_number, other_party, read_through_id FROM phone_read_state
+      WHERE user = ? AND (line_number IN (?) OR line_number = '*')`,
+    [uid, lineNumbers.length ? lineNumbers : ['']]
+  );
+  const m = new Map();
+  for (const r of rows) m.set(`${r.line_number}|${r.other_party}`, Number(r.read_through_id) || 0);
+  return m;
+}
+/** The id a conversation is read through for the user: its own row, else the larger baseline, else 0. */
+function readThrough(rows, line, party) {
+  const own = rows.get(`${line}|${party}`);
+  if (own != null) return own;
+  return Math.max(rows.get(`${line}|${READ_ALL}`) || 0, rows.get(`${READ_ALL}|${READ_ALL}`) || 0);
+}
+/** Newest unread-making event id per (line, party), for the given parties on the given lines: Map "line|party" → id. */
+async function lastIncoming(db, lineNumbers, parties) {
+  const m = new Map();
+  if (!lineNumbers.length || !parties.length) return m;
+  const [rows] = await db.query(
+    `SELECT line_number, other_party, MAX(id) AS last_in_id FROM phone_event_log
+      WHERE other_party IN (?) AND line_number IN (?) AND suppressed = 0 AND ${UNREAD_EVENT_SQL}
+      GROUP BY line_number, other_party`,
+    [parties, lineNumbers]
+  );
+  for (const r of rows) m.set(`${r.line_number}|${r.other_party}`, Number(r.last_in_id));
+  return m;
+}
+const isUnread = (rows, lastIn, line, party) => {
+  const id = lastIn.get(`${line}|${party}`);
+  return id != null && id > readThrough(rows, line, party);
+};
+/** `unread` per page row for a per-line list; null throughout when no userId. */
+async function unreadOfPage(db, userId, lineNumber, parties) {
+  if (userId == null) return () => null;
+  const [rows, lastIn] = await Promise.all([readRows(db, userId, [lineNumber]), lastIncoming(db, [lineNumber], parties)]);
+  return (party) => isUnread(rows, lastIn, lineNumber, party);
+}
+
+/**
+ * Unread conversations on the readable lines: { byLine: Map line_number → n
+ * (the rail's per-line counts), distinct: the number of NUMBERS unread on at
+ * least one line (the Phone tab badge, the shell's Comms badge, All numbers'
+ * count — a number texting two lines is one conversation there) }. One walk
+ * of the lines' unread-making rows grouped by (line, party) — FORCE
+ * idx_phone_event_line like the list walks (tests/phoneSPH.mysql.test.js
+ * pins the plan; ~58 ms over all 20 lines live, 2026-11-16) — compared in
+ * JS with the user's rows.
+ */
+async function unreadCounts(db, userId, lineNumbers) {
+  const out = new Map();
+  const parties = new Set();
+  if (!lineNumbers.length) return { byLine: out, distinct: 0 };
+  const rows = await readRows(db, userId, lineNumbers);
+  const [groups] = await db.query(
+    `SELECT line_number, other_party, MAX(id) AS last_in_id
+       FROM phone_event_log FORCE INDEX (idx_phone_event_line)
+      WHERE line_number IN (?) AND suppressed = 0 AND other_party IS NOT NULL AND ${UNREAD_EVENT_SQL}
+      GROUP BY line_number, other_party`,
+    [lineNumbers]
+  );
+  for (const g of groups) {
+    const line = String(g.line_number);
+    if (Number(g.last_in_id) > readThrough(rows, line, String(g.other_party))) {
+      out.set(line, (out.get(line) || 0) + 1);
+      parties.add(String(g.other_party));
+    }
+  }
+  return { byLine: out, distinct: parties.size };
+}
+
+async function upsertRead(db, userId, lineNumber, party, through) {
+  await db.query(
+    `INSERT INTO phone_read_state (user, line_number, other_party, read_through_id, read_at)
+     VALUES (?, ?, ?, ?, UTC_TIMESTAMP())
+     ON DUPLICATE KEY UPDATE read_through_id = ?, read_at = UTC_TIMESTAMP()`,
+    [Number(userId), lineNumber, party, through, through]
+  );
+}
+
+/**
+ * Mark one conversation read or unread for the user, on the given lines the
+ * number actually appears on (never a row for a line it never used — All
+ * numbers passes every readable line). Read = through the newest event the
+ * conversation has NOW, or through `throughId` when the pane says what it
+ * showed (a text landing between the pane's read and this write stays
+ * unread), never past the newest; unread = 0 (its own row, so it beats the
+ * baselines). Returns { other_party, unread, lines } as the lists would now
+ * show it.
+ */
+async function setConversationRead(db, userId, lineNumbers, party, read, { throughId = null } = {}) {
+  if (!PARTY_RE.test(String(party || ''))) throw httpError(400, 'conversation must be a phone number (digits)');
+  const [used] = await db.query(
+    'SELECT DISTINCT line_number FROM phone_event_log WHERE other_party = ? AND line_number IN (?) AND suppressed = 0',
+    [String(party), lineNumbers.length ? lineNumbers : ['']]
+  );
+  const lines = used.map((r) => String(r.line_number)).filter((n) => lineNumbers.includes(n));
+  if (!lines.length) return { other_party: String(party), unread: false, lines: 0 };
+  let through = 0;
+  if (read) {
+    const [[r]] = await db.query(
+      'SELECT MAX(id) AS m FROM phone_event_log WHERE other_party = ? AND line_number IN (?) AND suppressed = 0',
+      [String(party), lines]
+    );
+    const max = Number(r && r.m) || 0;
+    const t = throughId == null || throughId === '' ? null : Number(throughId);
+    through = Number.isInteger(t) && t > 0 ? Math.min(t, max) : max;
+  }
+  for (const n of lines) await upsertRead(db, userId, n, String(party), through);
+  const [rows, lastIn] = await Promise.all([readRows(db, userId, lines), lastIncoming(db, lines, [String(party)])]);
+  return { other_party: String(party), unread: lines.some((n) => isUnread(rows, lastIn, n, String(party))), lines: lines.length };
+}
+
+/**
+ * "Mark all read" on lines: each line's baseline moves to the newest event on
+ * it now, and the user's per-conversation rows on it go (a hand-marked
+ * unread would otherwise outlive the sweep). Baseline first, rows after: a
+ * failure between leaves conversations read or unread, never lost.
+ */
+async function setLinesRead(db, userId, lineNumbers) {
+  if (!lineNumbers.length) return { lines: 0 };
+  const [[r]] = await db.query('SELECT MAX(id) AS m FROM phone_event_log WHERE line_number IN (?) AND suppressed = 0', [lineNumbers]);
+  const through = Number(r && r.m) || 0;
+  for (const n of lineNumbers) await upsertRead(db, userId, n, READ_ALL, through);
+  await db.query(
+    'DELETE FROM phone_read_state WHERE user = ? AND line_number IN (?) AND other_party <> ?',
+    [Number(userId), lineNumbers, READ_ALL]
+  );
+  return { lines: lineNumbers.length, read_through_id: through };
+}
+
 /**
  * Conversations on a line — one per other_party, texts AND calls (a number
  * that only ever called has one too; calls joined the list 2026-10-12, after
@@ -581,7 +778,7 @@ function keysetOf(query, params) {
  * ref/plans.md has the threshold note.
  * @returns {{conversations:[{other_party, count, last_id, last, contact}], next_cursor}}
  */
-async function listConversations(db, line, query = {}) {
+async function listConversations(db, line, query = {}, { userId = null } = {}) {
   const limit = pageLimit(query.limit);
   const before = convoCursor(query);
   const kind = convoKind(query);
@@ -609,6 +806,7 @@ async function listConversations(db, line, query = {}) {
     for (const r of rows) latest.set(Number(r.id), r);
   }
   const names = await contactsFor(db, page.map(g => String(g.other_party)));
+  const unreadOf = await unreadOfPage(db, userId, line.phone_number, page.map(g => String(g.other_party)));
   return {
     conversations: page.map((g) => {
       const r = latest.get(Number(g.last_id));
@@ -618,6 +816,7 @@ async function listConversations(db, line, query = {}) {
         last_id: Number(g.last_id),
         last: r ? lastItem(r) : null,
         contact: names.get(String(g.other_party)) || null,
+        unread: unreadOf(String(g.other_party)),
         ...matchOf(s, g.other_party),
       };
     }),
@@ -661,10 +860,11 @@ async function listMessages(db, line, party, query = {}) {
   );
   const page = rows.slice(0, limit);
   const names = await contactsFor(db, [String(party)]);
+  const tags = await caseTagsFor(db, page.map((r) => r.log_id));
   return {
     other_party: String(party),
     contact: names.get(String(party)) || null,
-    messages: page.map(threadItem).reverse(),
+    messages: page.map((r) => threadItem(r, tags)).reverse(),
     next_cursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null,
   };
 }
@@ -765,6 +965,9 @@ async function listAllConversations(db, userId, query = {}) {
     for (const r of rows) latest.set(Number(r.id), r);
   }
   const names = await contactsFor(db, page.map(g => String(g.other_party)));
+  const parties = page.map(g => String(g.other_party));
+  const [rsRows, lastIn] = await Promise.all([readRows(db, userId, numbers), lastIncoming(db, numbers, parties)]);
+  const unreadOf = (g) => String(g.line_numbers || '').split(',').filter(Boolean).some((n) => isUnread(rsRows, lastIn, n, String(g.other_party)));
   return {
     conversations: page.map((g) => {
       const r = latest.get(Number(g.last_id));
@@ -773,6 +976,7 @@ async function listAllConversations(db, userId, query = {}) {
         count: Number(g.n),
         last_id: Number(g.last_id),
         line_ids: lineIdsOf(g.line_numbers, idOf),
+        unread: unreadOf(g),
         last: r ? { ...lastItem(r), line_id: idOf.get(String(r.line_number)) || null } : null,
         contact: names.get(String(g.other_party)) || null,
         ...matchOf(s, g.other_party),
@@ -818,10 +1022,11 @@ async function listAllMessages(db, userId, party, query = {}) {
     [String(party), numbers]
   );
   const page = rows.slice(0, limit);
+  const tags = await caseTagsFor(db, page.map((r) => r.log_id));
   return {
     ...empty,
     line_ids: lineIdsOf(used.map(u => u.line_number).join(','), idOf),
-    messages: page.map(r => ({ ...threadItem(r), line_id: idOf.get(String(r.line_number)) || null })).reverse(),
+    messages: page.map(r => ({ ...threadItem(r, tags), line_id: idOf.get(String(r.line_number)) || null })).reverse(),
     next_cursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null,
   };
 }
@@ -922,6 +1127,14 @@ module.exports = {
   firstSeen,
   sendSms,
   contactsFor,
+  caseTagsFor,
+  // read state (comms-polish-2 B)
+  readableScope,
+  unreadCounts,
+  setConversationRead,
+  setLinesRead,
+  UNREAD_EVENT_SQL,
+  READ_ALL,
   // helpers (routes + tests)
   normalizeTo,
   validateMessage,

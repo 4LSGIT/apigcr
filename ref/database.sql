@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-15T03:06:03.299Z
+-- Generated: 2026-11-16T03:15:00.476Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:a58513200e490520d359f9a19eb39208
+-- Fingerprint: sha256:0a7b0761b606e9c83b342dd19fb35af6
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2977,6 +2977,21 @@ CREATE TABLE `phone_log_suppressions` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `phone_read_state`
+--
+
+DROP TABLE IF EXISTS `phone_read_state`;
+CREATE TABLE `phone_read_state` (
+  `user` tinyint NOT NULL COMMENT 'users.user (FK by convention); the state is PER USER, like mail_read_state',
+  `line_number` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'phone_lines.phone_number = phone_event_log.line_number (10 digits): read state is per LINE — the same outside number on two lines is two conversations (the Phone tab lists them so). ''*'' with other_party ''*'' = the user''s global baseline (seeded at the migration)',
+  `other_party` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'phone_event_log.other_party. ''*'' = the line''s "Mark all read" baseline (every conversation on the line read through read_through_id, unless its own row says otherwise)',
+  `read_through_id` int unsigned NOT NULL COMMENT 'phone_event_log.id: events of the conversation with id <= this are read for this user. UNREAD when the newest incoming text or missed/unanswered incoming call has a larger id. A conversation''s own row WINS over the baselines; 0 in it = marked unread by hand. Writers: phoneCommsService setConversationRead / setLinesRead only',
+  `read_at` datetime NOT NULL COMMENT 'UTC (the pool runs UTC) — when the row was last written'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='PER-USER read state of the Comms Phone tab (comms-polish-2 B, 2026-11-16; migration 2026-11-16_phone_read_state.sql): conversations = (line, outside number). Rows outlive their events (no FK) — harmless. The rule lives in services/phoneCommsService.js "Read state"; manual/08-Admin-Tools/08-mailboxes.md "Phone lines — Comms"';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `pipeline_stage_requirements`
 --
 
@@ -5304,6 +5319,12 @@ ALTER TABLE `phone_lines`
 ALTER TABLE `phone_log_suppressions`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_active` (`active`);
+
+--
+-- Indexes for table `phone_read_state`
+--
+ALTER TABLE `phone_read_state`
+  ADD PRIMARY KEY (`user`,`line_number`,`other_party`);
 
 --
 -- Indexes for table `pipeline_stage_requirements`

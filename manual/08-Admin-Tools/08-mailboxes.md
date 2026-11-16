@@ -457,7 +457,9 @@ Comms](#phone-lines--comms), below).
     types off the usual document list, and large files (over 15 MB unless
     Config says otherwise). File shows them and asks **Yes, file them**.
   - Filing goes one email at a time, each with its own result line ("Filed 2
-    files · linked to the case"); one email failing stops nothing else. The
+    files · linked to the case"); while it runs, the email being filed spins
+    and the button counts ("Filing 1 of 3…"); one email failing stops nothing
+    else. The
     summary says what landed; to retry a failed email, open File attachments
     again — what landed already shows as filed. Closing the window refreshes
     the list and the conversation.
@@ -467,12 +469,15 @@ Comms](#phone-lines--comms), below).
   it past a weekend), and **Link** offers the email's case, the
   conversation's client cases and contacts, or none. **Open tasks** on the
   confirmation jumps to the Tasks tab. The task does not link back to the
-  email yet.
+  email yet. **Assign to** lists active staff only.
 - **In this conversation** (under the subject) starts as one line — the
   first person and their case, with **+N ▸** to open the full strip: every
   contact in the conversation — sender first — with the cases
   they are a client on, open ones first. Click a name to open the contact,
-  a case to open the case. The firm's own addresses are never listed, and an
+  a case to open the case, and the speech-bubbles icon beside a name
+  (**All communications** on the full strip) to open that contact's
+  **Communications** tab — every email, text and call with them in one feed.
+  The firm's own addresses are never listed, and an
   attorney or trustee shows as a name without their cases.
 - **Add to a client** (the dashed names on the same strip) lists the
   addresses in the conversation that no contact has yet — the first three,
@@ -660,8 +665,26 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
 **Where:** Comms → **Phone**. It loads the first time you open it.
 
 - **Lines.** On a wide screen the lines are listed on the left (with your
-  access: **R** read · **S** send · **M** manage); on a narrow one pick the
+  access: **R** read · **S** send · **M** manage, and the number of
+  conversations on the line you have not read); on a narrow one pick the
   line in the bar. Your last line is remembered in this browser.
+- **Read / unread is yours alone** (as in Email). A conversation is unread
+  for you when it has an incoming text, or a missed or unanswered incoming
+  call, newer than the last time you opened it — an answered call, or
+  anything the firm sent, never makes it unread. Unread rows stand out in
+  the list (a blue dot, bold); opening one marks it read for you, not for
+  the other people on the line; **Mark unread** in the conversation's header
+  puts it back. **Mark all read** (in the status line, when there is
+  anything to clear) marks every conversation on the list's lines read for
+  you — the one line, or every line you can read under **All numbers**. The
+  **Phone** tab shows your unread total, each line its own, and the
+  sidebar's Comms badge adds it to your unread mail. When the feature
+  arrived (2026-11-16) everything already there counted as read, so only
+  what came in afterwards shows as unread; a user given phone access later
+  starts with every conversation unread (as in Email) — **Mark all read**
+  under **All numbers** clears the history in one go. The badge counts
+  numbers, not lines: a number that texted two of your lines is one unread
+  conversation.
 - **All numbers** (first in the list when you can read more than one line)
   shows every line at once: one row per number, tagged with the lines it
   used. Opening it shows its texts and calls on all of them together, each
@@ -673,7 +696,8 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   (the default) lists the line's conversations — one per number that
   texted or called the line (or was texted or called from it), newest
   activity first, the contact's name when the number belongs to a client on
-  file (**Open contact** opens their file). A row whose latest event was a
+  file (**Open contact** opens their file; **All communications** opens
+  their Communications tab — email, texts and calls together). A row whose latest event was a
   call shows the call instead of a text (**Missed call** in red, "Incoming
   call · 3m 05s", "Outgoing call · no answer"). Opening one shows the texts as
   bubbles — yours on the right, theirs on the left — with the **calls** with
@@ -684,7 +708,14 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   number (**#12345**, at the right of its time line; a text you just sent
   gets one once the phone system confirms it) — click it to select it, then
   copy, to point someone at exactly that text or call. Typing it into the
-  search box (below) finds that text or call again.
+  search box (below) finds that text or call again. A text or call the
+  phone system logged also ends with **Link to case** — or the case it is
+  already on: click to put it on a case's log (the picker offers the
+  contact's cases first, then a search), or to move it to another; a text
+  or call that was never logged has nothing to link. **Task…** in the
+  conversation's header creates a task from it, like the Email tab's: the
+  title and description start from the latest texts and calls, **Link**
+  offers the cases its items are on (the newest pre-picked) and the contact.
 - **Texts** is the same list for texts only: a number that only ever called
   is not in it, and each row shows its latest text. It filters the list, not
   the conversation — opening a number still shows its calls among the texts.

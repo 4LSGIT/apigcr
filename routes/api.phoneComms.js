@@ -6,7 +6,21 @@
  *
  *   GET    /api/phone-lines/readable                 lines the caller can READ (SU: all;
  *                                                    attorney: all, send/manage from grants;
- *                                                    others: can_read grants) — the pane's rail
+ *                                                    others: can_read grants) — the pane's rail;
+ *                                                    each line carries `unread` (the caller's
+ *                                                    unread conversations on it), the page
+ *                                                    `unread_total` (comms-polish-2 B)
+ *   READ STATE (comms-polish-2 B, per user — phoneCommsService "READ STATE"):
+ *   POST   /api/phone-lines/all/read                 mark every readable line all read
+ *   POST   /api/phone-lines/all/conversations/:party/read    mark the number read on every
+ *   DELETE /api/phone-lines/all/conversations/:party/read    readable line / unread
+ *   POST   /api/phone-lines/:id/read                 can_read — mark the line all read
+ *   POST   /api/phone-lines/:id/conversations/:party/read    can_read — mark read (through its
+ *   DELETE /api/phone-lines/:id/conversations/:party/read    newest event now, or {through_id}:
+ *                                                    what the pane showed, never past the
+ *                                                    newest) / unread
+ *   The conversation lists carry `unread` per row (a GET never writes it:
+ *   the pane POSTs when it opens one).
  *   GET    /api/phone-lines/all/conversations        every READABLE line at once ("All numbers"):
  *                                                    one row per OUTSIDE number, newest first,
  *                                                    line_ids + last.line_id ?kind=&q=&cursor=&limit=
@@ -242,7 +256,10 @@ router.get('/api/phone-lines/readable', jwtOrApiKey, requireJwt, async (req, res
   try {
     const uid = req.auth.userId;
     const [su, lines] = await Promise.all([mbx.isSuperuser(req.db, uid), mbx.listReadable(req.db, uid, CHANNEL)]);
-    res.json({ status: 'success', viewer: { su }, lines });
+    const counts = await phone.unreadCounts(req.db, uid, lines.map((l) => l.phone_number));
+    // unread_total counts NUMBERS (one per conversation, however many lines it used), as All numbers lists them
+    const out = lines.map((l) => ({ ...l, unread: counts.byLine.get(String(l.phone_number)) || 0 }));
+    res.json({ status: 'success', viewer: { su }, lines: out, unread_total: counts.distinct });
   } catch (err) {
     sendError(res, 'GET /api/phone-lines/readable', err);
   }
@@ -281,6 +298,27 @@ router.get('/api/phone-lines/all/conversations/:party', jwtOrApiKey, requireJwt,
     sendError(res, 'GET /api/phone-lines/all/conversations/:party', err);
   }
 });
+
+// ─── Read state, All numbers: every READABLE line at once ───
+router.post('/api/phone-lines/all/read', jwtOrApiKey, requireJwt, async (req, res) => {
+  try {
+    const { numbers } = await phone.readableScope(req.db, req.auth.userId);
+    res.json({ status: 'success', all: true, ...(await phone.setLinesRead(req.db, req.auth.userId, numbers)) });
+  } catch (err) {
+    sendError(res, 'POST /api/phone-lines/all/read', err);
+  }
+});
+for (const [method, read] of [['post', true], ['delete', false]]) {
+  router[method]('/api/phone-lines/all/conversations/:party/read', jwtOrApiKey, requireJwt, async (req, res) => {
+    try {
+      const { numbers } = await phone.readableScope(req.db, req.auth.userId);
+      if (!numbers.length) return res.status(404).json({ status: 'error', message: 'No phone line is shared with you' });
+      res.json({ status: 'success', all: true, ...(await phone.setConversationRead(req.db, req.auth.userId, numbers, req.params.party, read, { throughId: read && req.body ? req.body.through_id : null })) });
+    } catch (err) {
+      sendError(res, `${method.toUpperCase()} /api/phone-lines/all/conversations/:party/read`, err);
+    }
+  });
+}
 
 router.get('/api/phone-lines/all/calls', jwtOrApiKey, requireJwt, async (req, res) => {
   try {
@@ -404,7 +442,7 @@ router.get('/api/phone-lines/:id/conversations', jwtOrApiKey, requireJwt, async 
   try {
     if (lineIdOf(req, res) == null) return;
     const { line } = await phone.resolveRead(req.db, req.auth.userId, req.params.id);
-    const out = await phone.listConversations(req.db, line, req.query || {});
+    const out = await phone.listConversations(req.db, line, req.query || {}, { userId: req.auth.userId });
     res.json({ status: 'success', line_id: line.id, ...out });
   } catch (err) {
     sendError(res, 'GET /api/phone-lines/:id/conversations', err);
@@ -424,6 +462,28 @@ router.get('/api/phone-lines/:id/conversations/:party', jwtOrApiKey, requireJwt,
     sendError(res, 'GET /api/phone-lines/:id/conversations/:party', err);
   }
 });
+
+// ─── Read state, one line (can_read) ───
+router.post('/api/phone-lines/:id/read', jwtOrApiKey, requireJwt, async (req, res) => {
+  try {
+    if (lineIdOf(req, res) == null) return;
+    const { line } = await phone.resolveRead(req.db, req.auth.userId, req.params.id);
+    res.json({ status: 'success', line_id: line.id, ...(await phone.setLinesRead(req.db, req.auth.userId, [line.phone_number])) });
+  } catch (err) {
+    sendError(res, 'POST /api/phone-lines/:id/read', err);
+  }
+});
+for (const [method, read] of [['post', true], ['delete', false]]) {
+  router[method]('/api/phone-lines/:id/conversations/:party/read', jwtOrApiKey, requireJwt, async (req, res) => {
+    try {
+      if (lineIdOf(req, res) == null) return;
+      const { line } = await phone.resolveRead(req.db, req.auth.userId, req.params.id);
+      res.json({ status: 'success', line_id: line.id, ...(await phone.setConversationRead(req.db, req.auth.userId, [line.phone_number], req.params.party, read, { throughId: read && req.body ? req.body.through_id : null })) });
+    } catch (err) {
+      sendError(res, `${method.toUpperCase()} /api/phone-lines/:id/conversations/:party/read`, err);
+    }
+  });
+}
 
 // ─── GET /api/phone-lines/:id/calls ───
 router.get('/api/phone-lines/:id/calls', jwtOrApiKey, requireJwt, async (req, res) => {

@@ -358,6 +358,34 @@ describe('the dialog', () => {
     expect(errors).toEqual([]);
   });
 
+  test('comms-polish-2: while it files, the row being filed spins and the button counts ("Filing 1 of 2…"); the spinners leave with the results', async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const std = standard();
+    const handler = async (url, method, payload) => {
+      if (/\/messages\/11\/attachments\/file$/.test(url)) await gate;   // the first email's filing hangs until released
+      return std(url, method, payload);
+    };
+    const { window, doc } = await boot({ handler });
+    await openThread(window, doc);
+    doc.querySelector('.atts .att-file').click();
+    await tick(window, 60);
+    expect(doc.getElementById('fd-go').textContent).toBe('File 2 files, move 1');
+    doc.getElementById('fd-go').click();
+    await tick(window, 40);
+    const go = doc.getElementById('fd-go');
+    expect([go.textContent.trim(), go.disabled, !!go.querySelector('.fa-spinner.fa-spin')]).toEqual(['Filing 1 of 2…', true, true]);
+    const res = (id) => doc.querySelector(`#fd-body .fd-msg[data-id="${id}"] .fd-res`);
+    expect([res(11).classList.contains('busy'), !!res(11).querySelector('.fa-spin'), res(11).textContent.trim()]).toEqual([true, true, 'Filing…']);
+    expect([res(12).classList.contains('busy'), !!res(12).querySelector('.fa-spin'), res(12).textContent.trim()]).toEqual([true, false, 'Waiting…']); // queued: no spinner
+    expect(doc.getElementById('fd-cancel').disabled).toBe(true);
+    release();
+    await tick(window, 120);
+    expect(doc.querySelectorAll('#fd-body .fa-spin')).toHaveLength(0);
+    expect(res(11).textContent).toBe('Filed 1 file · moved 1 · linked to the case');
+    expect(go.hidden).toBe(true);                                              // the button (spinner and all) is gone
+  });
+
   test('a failed email stops nothing; the summary says so; unticking a confirm part drops the confirm step', async () => {
     const { window, doc, calls } = await boot({
       handler: standard({

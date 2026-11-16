@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-15T04:08:11.264Z_  
-_850 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 326, PUT: 41, _ALL: 3_
+_Generated 2026-11-16T03:14:53.028Z_  
+_856 routes total — DELETE: 70, GET: 351, PATCH: 61, POST: 330, PUT: 41, _ALL: 3_
 
 ## Global middleware chain
 
@@ -531,10 +531,13 @@ _850 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 326, PUT: 41, _ALL:
 | GET | `/api/phone-lines/:id/calls` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/phone-lines/:id/conversations` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/phone-lines/:id/conversations/:party` | `jwtOrApiKey`, `requireJwt` | — |
+| DELETE | `/api/phone-lines/:id/conversations/:party/read` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/phone-lines/:id/conversations/:party/read` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/phone-lines/:id/grants` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/phone-lines/:id/grants` | `jwtOrApiKey`, `requireJwt` | — |
 | DELETE | `/api/phone-lines/:id/grants/:grantId` | `jwtOrApiKey`, `requireJwt` | — |
 | PATCH | `/api/phone-lines/:id/grants/:grantId` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/phone-lines/:id/read` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/phone-lines/:id/sms` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/phone-lines/admin` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/phone-lines/admin` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
@@ -545,6 +548,9 @@ _850 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 326, PUT: 41, _ALL:
 | GET | `/api/phone-lines/all/calls` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/phone-lines/all/conversations` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/phone-lines/all/conversations/:party` | `jwtOrApiKey`, `requireJwt` | — |
+| DELETE | `/api/phone-lines/all/conversations/:party/read` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/phone-lines/all/conversations/:party/read` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/phone-lines/all/read` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/phone-lines/first-seen` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/phone-lines/readable` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/phone-lines/sendable` | `jwtOrApiKey`, `requireJwt` | — |
@@ -1130,4 +1136,4 @@ _850 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 326, PUT: 41, _ALL:
 
 ---
 
-_850 routes total — DELETE: 68, GET: 351, PATCH: 61, POST: 326, PUT: 41, _ALL: 3_
+_856 routes total — DELETE: 70, GET: 351, PATCH: 61, POST: 330, PUT: 41, _ALL: 3_

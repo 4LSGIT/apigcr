@@ -74,7 +74,8 @@ async function boot({ handler, width = 1024 } = {}) {
   window.firmData = {
     firmTimezone: 'America/Detroit',
     currentUser: { user: 2, user_name: 'Rena R' },
-    users: [{ user: 1, user_name: 'Stuart S' }, { user: 2, user_name: 'Rena R' }, { user: 6, user_name: 'IT' }],
+    // 0 = Automation, 9 = inactive: neither is an assignee (comms-polish-2, D3b)
+    users: [{ user: 0, user_name: 'Automation', active: true }, { user: 1, user_name: 'Stuart S' }, { user: 2, user_name: 'Rena R' }, { user: 6, user_name: 'IT' }, { user: 9, user_name: 'Gone', active: false }],
   };
   const calls = [];
   window.apiSend = async (url, method = 'GET', payload = null, headers = {}, opts = {}) => {
@@ -240,6 +241,30 @@ describe('D.1 — the ⋯ menu', () => {
     expect(doc.querySelectorAll('.mmenu')).toHaveLength(0);
   });
 
+  test('comms-polish-2: the menu hangs from the button\'s LEFT edge (a right-anchored one hung off the column and was clipped); .flip only when it would overrun the column', async () => {
+    const { window, doc } = await boot({ handler: standard() });
+    await openThread(window, doc);
+    doc.querySelector('.menu-btn').click();
+    const menu = doc.querySelector('.mmenu');
+    expect(menu.classList.contains('flip')).toBe(false);
+    // This harness loads the body and scripts, not <head>'s <style>: hold the rules in the page's source
+    const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'public', 'comms.html'), 'utf8');
+    expect(css).toMatch(/\.mmenu \{\s*position: absolute; left: 0; top: calc\(100% \+ 2px\);/);
+    expect(css).toMatch(/\.mmenu\.flip \{ left: auto; right: 0; \}/);
+    doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    // geometry where the left-anchored menu would run past the column's right edge → flipped
+    const orig = window.Element.prototype.getBoundingClientRect;
+    window.Element.prototype.getBoundingClientRect = function () {
+      if (this.classList.contains('mmenu')) return { left: 300, right: 480, width: 180, top: 0, bottom: 0, height: 0 };
+      if (this.classList.contains('thread-body')) return { left: 0, right: 400, width: 400, top: 0, bottom: 0, height: 0 };
+      return orig.call(this);
+    };
+    try {
+      doc.querySelector('.menu-btn').click();
+      expect(doc.querySelector('.mmenu').classList.contains('flip')).toBe(true);
+    } finally { window.Element.prototype.getBoundingClientRect = orig; }
+  });
+
   test('menu items: read state, Plain text/Formatted, Taller, Task…, Always show images', async () => {
     const { window, doc } = await boot({ handler: standard() });
     await openThread(window, doc);
@@ -303,6 +328,16 @@ describe('E — Task from email', () => {
       ['Doe, Jane', 'false'],  // a related contact
       ['None', 'false'],
     ]);
+  });
+
+  test('comms-polish-2: Assign to offers active staff only — never Automation (0) nor an inactive user (D3b); the caller stays the default', async () => {
+    const { window, doc } = await boot({ handler: standard() });
+    await openThread(window, doc);
+    doc.querySelector('.menu-btn').click();
+    [...doc.querySelectorAll('.mmenu button')].find((b) => b.textContent === 'Task…').click();
+    const sel = doc.getElementById('task-to');
+    expect([...sel.options].map((o) => [o.value, o.textContent])).toEqual([['1', 'Stuart S'], ['2', 'Rena R'], ['6', 'IT']]);
+    expect(sel.value).toBe('2');
   });
 
   test('+1 business day skips the weekend; the caps are counted and enforced before the POST', async () => {

@@ -25,6 +25,17 @@
  *   - the seed's NOT EXISTS dropped (re-run duplicates → ER_DUP_ENTRY) → the migration test
  *   - the index dropped / reordered (processed_at, line_number) → the plan test
  *   - the conversation GROUP BY on (other_party, direction)  → engine = world
+ *   - comms-polish-2 A4: caseTagsFor's join (the thread items' `case`) — the
+ *     seed below points three line-1 ↔ P1 items at log rows about a case, a
+ *     contact and a case id with no cases row; the thread comparisons cover it
+ *     (a mutation returning the short docket, or dropping the about_type
+ *     predicate, splits engine from world).
+ *   - comms-polish-2 B (read state): the migration's seed (every authorized
+ *     user, once, at MAX(id)); unread flags / counts / the writes engine =
+ *     world across users, lines and All numbers after new incoming texts,
+ *     a missed call, an answered call and an outgoing text; the counts walk
+ *     on idx_phone_event_line. A mutation of UNREAD_EVENT_SQL (answered calls
+ *     counted, the LOWER dropped) or of the "own row wins" rule splits them.
  */
 
 'use strict';
@@ -36,6 +47,7 @@ const URL_ = process.env.YC_TEST_MYSQL_URL;
 const maybe = URL_ ? describe : describe.skip;
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
 const MIGRATION = path.join(__dirname, '..', 'ref', 'migrations', '2026-10-12_phone_sph.sql');
+const RS_MIGRATION = path.join(__dirname, '..', 'ref', 'migrations', '2026-11-16_phone_read_state.sql'); // comms-polish-2 B
 
 maybe('S-PH phone reads on real MySQL', () => {
   const mysql = require('mysql2/promise');
@@ -73,6 +85,7 @@ maybe('S-PH phone reads on real MySQL', () => {
     await q("DELETE FROM case_relate WHERE case_relate_case_id LIKE 'CASE000%'");
     await q("DELETE FROM cases WHERE case_id LIKE 'CASE000%'");
     await q('DELETE FROM contacts WHERE contact_id IN (501, 502, 503, 504, 505, 506) OR contact_id >= 700000');
+    await q('DELETE FROM log WHERE log_id >= 9001 AND log_id <= 9100'); // comms-polish-2 A4 seed
     await q(`DELETE FROM users WHERE user IN (${SEEDED_USERS.join(',')})`);
     await q("INSERT INTO credentials (id, name, type) VALUES (1, 'RC', 'oauth2'), (2, 'Quo', 'api_key')");
     for (const l of LINES) {
@@ -87,11 +100,17 @@ maybe('S-PH phone reads on real MySQL', () => {
     await q(`INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, roles, default_phone)
              VALUES (8, 'gone', 1, 'Gone', 'f', 'l', 'xx', 'disabled', 0, 'staff', '2484179800')`);
     await q('SET FOREIGN_KEY_CHECKS = 1');
+    // comms-polish-2 B: the read-state table exists for every read below (the
+    // seed's baselines sit at MAX(id) = 0 here — no events yet — which reads as
+    // "no row", the world's state); the B test re-applies it at the real MAX(id).
+    await q('DROP TABLE IF EXISTS phone_read_state');
+    await conn.query(fs.readFileSync(RS_MIGRATION, 'utf8'));
   });
   afterAll(async () => {
     if (conn) await conn.end();
     if (pool) {
       await q('DELETE FROM users WHERE user = 8').catch(() => {});
+      await q('DELETE FROM log WHERE log_id >= 9001 AND log_id <= 9100').catch(() => {});
       await q("DELETE FROM case_relate WHERE case_relate_case_id LIKE 'CASE000%'").catch(() => {});
       await q("DELETE FROM cases WHERE case_id LIKE 'CASE000%'").catch(() => {});
       await pool.end();
@@ -150,6 +169,23 @@ maybe('S-PH phone reads on real MySQL', () => {
     }
     const rows = await q('SELECT id, line_number FROM phone_event_log ORDER BY id');
     expect(rows.map(r => [r.id, r.line_number])).toEqual(W.T.phone_event_log.map(e => [e.id, lineOf(e)]));
+    // comms-polish-2 A4: firm-log rows for the case-tag probe — about a case
+    // WITH a full docket, about a contact, about a case id with no cases row —
+    // on the first three line-1 ↔ P1 items, in both worlds. The case row is
+    // CASE0004 (the afterAll's LIKE 'CASE000%' cleans it); the search seed
+    // below re-inserts every W.T.cases row, so the engine copy goes at the end
+    // of the thread comparison and the world keeps its own.
+    W.kase('CASE0004', { number: '26-70004', full: '26-70004-mbm' });
+    await q('INSERT INTO cases (case_id, case_number, case_number_full) VALUES (?, ?, ?)', ['CASE0004', '26-70004', '26-70004-mbm']);
+    const tags = [W.logRow({ about: { type: 'case', id: 'CASE0004' } }), W.logRow({ about: { type: 'contact', id: '501' } }), W.logRow({ about: { type: 'case', id: 'NOSUCH' } })];
+    for (const l of W.T.log) {
+      await q(`INSERT INTO log (log_id, log_type, log_date, log_link, log_link_type, log_link_id, log_about_type, log_about_id, log_by, log_data, log_message)
+               VALUES (?, 'sms', UTC_TIMESTAMP(), 'contact', 'contact', '501', ?, ?, 6, '', '')`, [l.log_id, l.log_about_type, l.log_about_id]);
+    }
+    const picks = W.T.phone_event_log.filter(e => lineOf(e) === S.L1 && e.other_party === S.P1 && Number(e.suppressed) === 0).slice(0, 3);
+    expect(picks).toHaveLength(3);
+    picks.forEach((e, i) => { e.log_id = tags[i]; });
+    for (const e of picks) await q('UPDATE phone_event_log SET log_id = ? WHERE id = ?', [e.log_id, e.id]);
   });
 
   test('ENGINE = WORLD: listReadable / listSendable / getAccess for SU, attorney, grantee, nobody', async () => {
@@ -212,6 +248,13 @@ maybe('S-PH phone reads on real MySQL', () => {
       for (const party of [S.P1, S.P2, S.P3, S.P4, '22395', S.L1, S.L3]) {
         expect([user, party, await pages(phone.listAllMessages, pool, user, party)]).toEqual([user, party, await pages(phone.listAllMessages, W.db, user, party)]);
       }
+    }
+    // the A4 tags came through on both sides (not two empty answers agreeing)
+    {
+      const t = await phone.listMessages(pool, { id: 1, phone_number: S.L1 }, S.P1, {});
+      const tagged = t.messages.filter(m => m.log_id != null).map(m => [m.log_id, m.case]);
+      expect(tagged).toEqual([[9001, { case_id: 'CASE0004', case_number: '26-70004-mbm' }], [9002, null], [9003, { case_id: 'NOSUCH', case_number: null }]]);
+      await q("DELETE FROM cases WHERE case_id = 'CASE0004'"); // the search seed re-inserts W.T.cases
     }
     const all = await phone.listAllConversations(pool, 6, {});
     expect(all.conversations.map(c => [c.other_party, c.count, c.line_ids])).toEqual([[S.P4, 1, [6]], [S.P1, 4, [1, 6]], [S.P2, 3, [1, 6]], ['22395', 1, [1]]]);
@@ -489,5 +532,83 @@ maybe('S-PH phone reads on real MySQL', () => {
       expect([label, walkOf(plans)]).toEqual([label, walkOf(base.plans)]);
       if (!label.startsWith('all')) expect([label, walkOf(plans)]).toEqual([label, ['idx_phone_event_line', 'ref']]);
     }
+  });
+  test('comms-polish-2 B: phone_read_state migration TWICE; ENGINE = WORLD on unread flags, counts and the writes; the counts walk uses idx_phone_event_line', async () => {
+    const RS = fs.readFileSync(RS_MIGRATION, 'utf8');
+    const lines = W.T.phone_lines.map(l => l.phone_number);
+    // the plan first, while the filler line's volume is still there: the counts walk is one idx_phone_event_line range over the lines
+    {
+      const recorded = [];
+      const rec = { query: (sql, p) => { recorded.push([sql, p]); return pool.query(sql, p); } };
+      await phone.unreadCounts(rec, 6, lines);
+      const walk = recorded.find(([sql]) => /FORCE INDEX \(idx_phone_event_line\)/.test(sql));
+      expect(walk).toBeTruthy();
+      const plan = await q(`EXPLAIN ${walk[0]}`, walk[1]);
+      expect([plan[0].key, plan[0].type]).toEqual(['idx_phone_event_line', 'range']);
+    }
+    // the filler rows are engine-only (never in the world): out before any comparison; then the migration at the REAL MAX(id)
+    await q('DELETE FROM phone_event_log WHERE id NOT IN (?)', [W.T.phone_event_log.map(e => e.id)]);   // every engine-only row (the plan tests' volume)
+    await q('DROP TABLE IF EXISTS phone_read_state');
+    const [{ max_id }] = await q('SELECT COALESCE(MAX(id), 0) AS max_id FROM phone_event_log');
+    expect(Number(max_id)).toBe(Math.max(...W.T.phone_event_log.map(e => e.id)));
+    await conn.query(RS);
+    const baselines = () => q("SELECT user, read_through_id FROM phone_read_state WHERE line_number = '*' AND other_party = '*' ORDER BY user");
+    const b1 = await baselines();
+    await conn.query(RS); // idempotent: no second row, no baseline moved
+    expect(await baselines()).toEqual(b1);
+    const authorized = USERS.filter(u => u.user > 0 && u.user_auth === 'authorized').map(u => u.user).sort((a, b) => a - b);
+    expect(b1.map(r => r.user)).toEqual(authorized);                 // user 8 (disabled) and 0 left out
+    expect([...new Set(b1.map(r => Number(r.read_through_id)))]).toEqual([Number(max_id)]);
+    expect(Number((await q("SELECT COUNT(*) AS n FROM phone_read_state WHERE user = 8"))[0].n)).toBe(0);
+    // the world mirrors the seed
+    W.T.phone_read_state = b1.map(r => ({ user: Number(r.user), line_number: '*', other_party: '*', read_through_id: Number(r.read_through_id), read_at: new Date() }));
+
+    const L = [{ id: 1, phone_number: S.L1 }, { id: 3, phone_number: S.L3 }, { id: 6, phone_number: S.L6 }];
+    const users = [6, 1, 22];
+    const cmp = async (label, fn) => expect([label, await fn(pool)]).toEqual([label, await fn(W.db)]);
+    const sweep = async (label) => {
+      for (const u of users) {
+        await cmp(`${label} counts u${u}`, (db) => phone.unreadCounts(db, u, lines).then(r => [[...r.byLine.entries()].sort(), r.distinct]));
+        for (const ln of L) await cmp(`${label} convos u${u} l${ln.id}`, (db) => phone.listConversations(db, ln, {}, { userId: u }).then(r => r.conversations.map(c => [c.other_party, c.unread])));
+        await cmp(`${label} all u${u}`, (db) => phone.listAllConversations(db, u, {}).then(r => r.conversations.map(c => [c.other_party, c.unread])));
+      }
+    };
+    await sweep('baseline');                                          // everything read: the baseline is MAX(id)
+    expect((await phone.unreadCounts(pool, 6, lines)).byLine.size).toBe(0);
+    // new activity, inserted on both sides
+    const ins = async (id) => {
+      const e = W.T.phone_event_log.find(x => x.id === id);
+      await q(`INSERT INTO phone_event_log (id, provider, provider_ref, event_type, direction, from_number, to_number, other_party, body, suppressed, log_id, raw_extra, processed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [e.id, e.provider, e.provider_ref, e.event_type, e.direction, e.from_number, e.to_number, e.other_party, e.body, e.suppressed, e.log_id, e.raw_extra, e.processed_at]);
+      return id;
+    };
+    // ids ABOVE the baseline, as production's AUTO_INCREMENT gives them (the world's own counter trails the seeds' explicit ids)
+    let nextId = Number(max_id);
+    const fresh = (id) => { expect(id).toBe(nextId); return ins(id); };
+    await fresh(W.sms(S.L1, S.P1, 'incoming', { body: 'B: new', id: ++nextId }));                                                       // unread-making
+    await fresh(W.call(S.L6, S.P2, 'incoming', { id: ++nextId, raw_extra: JSON.stringify({ line: S.L6, provider_status: 'No-Answer' }) })); // missed (mixed case)
+    await fresh(W.call(S.L3, S.L1, 'incoming', { id: ++nextId }));                                                                        // answered: not unread-making
+    await fresh(W.sms(S.L1, '22395', 'outgoing', { body: 'ours', id: ++nextId }));                                                   // ours: never
+    await fresh(W.sms(S.L6, S.P4, 'incoming', { body: 'B: suppressed', suppressed: 1, id: ++nextId }));                              // suppressed: never
+    await sweep('new activity');
+    const c6 = await phone.unreadCounts(pool, 6, lines);
+    expect([[...c6.byLine.entries()].sort(), c6.distinct]).toEqual([[[S.L6, 1], [S.L1, 1]], 2]);   // string order: 2484… before 2485…
+    // the writes, compared, then everything again
+    await cmp('read P1 on L1 (u6)', (db) => phone.setConversationRead(db, 6, [S.L1], S.P1, true));
+    await cmp('unread 22395 on L1 (u6, by hand — its own row at 0 beats the baseline)', (db) => phone.setConversationRead(db, 6, [S.L1], '22395', false));
+    await cmp('read P2 everywhere (u1)', (db) => phone.setConversationRead(db, 1, lines, S.P2, true));
+    await sweep('after marks');
+    expect((await phone.listConversations(pool, L[0], {}, { userId: 6 })).conversations.find(c => c.other_party === '22395').unread).toBe(true);
+    await cmp('all read L6 (u6)', (db) => phone.setLinesRead(db, 6, [S.L6]));
+    await cmp('all read every line (u22)', (db) => phone.setLinesRead(db, 22, lines));
+    await sweep('after sweeps');
+    expect((await phone.unreadCounts(pool, 22, lines)).byLine.size).toBe(0);
+    // the rows themselves agree (read_at aside)
+    const pick = (r) => [Number(r.user), String(r.line_number), String(r.other_party), Number(r.read_through_id)];
+    const sortRows = (a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b));
+    expect((await q('SELECT user, line_number, other_party, read_through_id FROM phone_read_state')).map(pick).sort(sortRows))
+      .toEqual(W.T.phone_read_state.map(pick).sort(sortRows));
+    await q('DROP TABLE phone_read_state');
   });
 });

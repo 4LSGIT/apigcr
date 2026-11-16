@@ -120,7 +120,7 @@ describe('access resolution (mailboxService, phone_line)', () => {
     expect(ids(r.json.lines)).toEqual([1, 2, 3, 4, 6, 7]);
     expect(r.json.lines.find((l) => l.id === 7)).toMatchObject({ active: false, can_read: true, can_send: true, can_manage: true });
     for (const l of r.json.lines) {
-      expect(Object.keys(l).sort()).toEqual(['active', 'can_manage', 'can_read', 'can_send', 'display_name', 'id', 'mms_capable', 'phone_number', 'provider']);
+      expect(Object.keys(l).sort()).toEqual(['active', 'can_manage', 'can_read', 'can_send', 'display_name', 'id', 'mms_capable', 'phone_number', 'provider', 'unread']); // unread: comms-polish-2 B
     }
     expect(r.text).not.toMatch(/credential_id|provider_id|PNx/);
   });
@@ -299,11 +299,11 @@ describe('reads', () => {
     expect(t.messages.map((m) => [m.id, m.kind, m.direction])).toEqual([[3, 'call', 'incoming'], [4, 'sms', 'incoming'], [17, 'call', 'outgoing']]);
     const row3 = W.T.phone_event_log.find((e) => e.id === 3);
     expect(t.messages[0]).toEqual({
-      id: 3, kind: 'call', direction: 'incoming', at: JSON.parse(row3.raw_extra).started_at, logged: false,
+      id: 3, kind: 'call', direction: 'incoming', at: JSON.parse(row3.raw_extra).started_at, logged: false, log_id: null, case: null,
       duration_s: 85, status: 'completed', unanswered: false, missed: false,
     });
     const row4 = W.T.phone_event_log.find((e) => e.id === 4);
-    expect(t.messages[1]).toEqual({ id: 4, kind: 'sms', direction: 'incoming', body: 'P2 texts', at: JSON.parse(row4.raw_extra).ts, logged: false, delivery: null });
+    expect(t.messages[1]).toEqual({ id: 4, kind: 'sms', direction: 'incoming', body: 'P2 texts', at: JSON.parse(row4.raw_extra).ts, logged: false, log_id: null, case: null, delivery: null });
     // nobody answered OUR call: unanswered, but only an incoming one is "missed"
     expect(t.messages[2]).toMatchObject({ kind: 'call', status: 'no-answer', unanswered: true, missed: false, duration_s: 40, at: '2026-10-01T12:20:00.000Z' });
     // line 6 ↔ P1 is one missed call; line 6 ↔ P4 one call with no direction and no times
@@ -315,6 +315,42 @@ describe('reads', () => {
     for (const l of [1, 6]) {
       expect((await call('GET', `/api/phone-lines/${l}/conversations/${S.P4}`, { t: T.su() })).json.messages.some((m) => m.id === 6)).toBe(false);
     }
+  });
+
+  test('comms-polish-2 A4: a thread item carries its log_id and the case its log row is ABOUT; one probe per page, none without logged items', async () => {
+    const S = SPH_SEED(W);
+    const P = '3137770001';
+    W.kase('CASEA', { number: '26-70001', full: '26-70001-mbm' });            // the tag carries the FULL docket when there is one
+    W.kase('CASEC', { number: '26-70003' });                                  // …else the short one
+    const onCase = W.logRow({ about: { type: 'case', id: 'CASEA' } });
+    const onShort = W.logRow({ about: { type: 'case', id: 'CASEC' } });
+    const onContact = W.logRow({ about: { type: 'contact', id: '501' } });
+    const gone = W.logRow({ about: { type: 'case', id: 'NOSUCH' } });   // a case id with no cases row keeps its id, number null
+    const a = W.sms(S.L1, P, 'incoming', { body: 'a', log_id: onCase });
+    const b = W.sms(S.L1, P, 'outgoing', { body: 'b', log_id: onContact });
+    const c = W.sms(S.L1, P, 'incoming', { body: 'c', log_id: gone });
+    const d = W.call(S.L1, P, 'incoming');                                // unlogged
+    const e = W.sms(S.L1, P, 'incoming', { body: 'e', log_id: onShort });
+    const before = W.statements.length;
+    const t = (await call('GET', `/api/phone-lines/1/conversations/${P}`, { t: T.su() })).json;
+    expect(t.messages.map((m) => [m.id, m.logged, m.log_id, m.case])).toEqual([
+      [a, true, onCase, { case_id: 'CASEA', case_number: '26-70001-mbm' }],
+      [b, true, onContact, null],
+      [c, true, gone, { case_id: 'NOSUCH', case_number: null }],
+      [d, false, null, null],
+      [e, true, onShort, { case_id: 'CASEC', case_number: '26-70003' }],
+    ]);
+    const probes = W.statements.slice(before).filter((s) => /^SELECT l\.log_id, l\.log_about_id AS case_id/.test(s.sql));
+    expect(probes).toHaveLength(1);
+    expect(probes[0].params[0].slice().sort((x, y) => x - y)).toEqual([onCase, onContact, gone, onShort].sort((x, y) => x - y));
+    // All numbers: the same tags, each item with its line
+    const all = (await call('GET', `/api/phone-lines/all/conversations/${P}`, { t: T.su() })).json;
+    expect(all.messages.map((m) => [m.id, m.log_id, m.case && m.case.case_number, m.line_id])).toEqual([[a, onCase, '26-70001-mbm', 1], [b, onContact, null, 1], [c, gone, null, 1], [d, null, null, 1], [e, onShort, '26-70003', 1]]);
+    // a page with nothing logged issues no probe
+    const b2 = W.statements.length;
+    const none = (await call('GET', `/api/phone-lines/1/conversations/${S.P2}`, { t: T.su() })).json;
+    expect(none.messages.every((m) => m.log_id === null && m.case === null)).toBe(true);
+    expect(W.statements.slice(b2).some((s) => /log_about_id/.test(s.sql))).toBe(false);
   });
 
   test('delivery verdict rides the thread item (phone-delivery S3): stamped rows carry it, everything else is null', async () => {
@@ -496,6 +532,123 @@ describe('All numbers — /api/phone-lines/all/*', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+describe('read state — comms-polish-2 B (phone_read_state, per user)', () => {
+  // SPH_SEED's unread-making events (an incoming text, a missed / unanswered incoming call), with no read-state rows:
+  //   line 1: P1 (texts 1, 13), P2 (text 4; call 3 is answered), 22395 (text 9)   → 3 conversations
+  //   line 3: L1 (text 8, the line-to-line copy)                                   → 1
+  //   line 6: P1 (call 10, no-answer); P2 is an outgoing call; P4 has no direction → 1
+  const readable = async (t) => { const r = (await call('GET', '/api/phone-lines/readable', { t })).json; return [Object.fromEntries(r.lines.map((l) => [l.id, l.unread])), r.unread_total]; };
+  const flags = async (t, line) => Object.fromEntries((await call('GET', `/api/phone-lines/${line}/conversations`, { t })).json.conversations.map((c) => [c.other_party, c.unread]));
+
+  test('no rows yet: every conversation with unread-making activity is unread; counts per line + total; outgoing / answered calls never count', async () => {
+    const S = SPH_SEED(W);
+    expect(await readable(T.su())).toEqual([{ 1: 3, 2: 0, 3: 1, 4: 0, 6: 1, 7: 0 }, 4]);   // the total counts NUMBERS: P1 is on lines 1 and 6, once
+    expect(await flags(T.su(), 1)).toEqual({ [S.P1]: true, [S.P2]: true, '22395': true, [S.L3]: false });   // L3's row on line 1 is OUR text (7)
+    expect(await flags(T.su(), 6)).toEqual({ [S.P1]: true, [S.P2]: false, [S.P4]: false });
+    W.sms(S.L6, S.P2, 'outgoing', { body: 'ours' });
+    W.call(S.L6, S.P4, 'incoming');                                                  // answered (provider_status completed)
+    expect(await flags(T.su(), 6)).toEqual({ [S.P4]: false, [S.P2]: false, [S.P1]: true });
+    W.call(S.L6, S.P4, 'incoming', { raw_extra: JSON.stringify({ line: S.L6, provider_status: 'MISSED' }) }); // case-insensitive
+    expect((await flags(T.su(), 6))[S.P4]).toBe(true);
+    expect(await readable(T.su())).toEqual([{ 1: 3, 2: 0, 3: 1, 4: 0, 6: 2, 7: 0 }, 5]);   // P4 is new: 5 numbers
+  });
+
+  test('open → POST …/read (through the newest event NOW); a later incoming makes it unread again; DELETE marks unread by hand', async () => {
+    const S = SPH_SEED(W);
+    const r = (await call('POST', `/api/phone-lines/6/conversations/${S.P1}/read`, { t: T.su() })).json;
+    expect(r).toMatchObject({ status: 'success', line_id: 6, other_party: S.P1, unread: false });
+    expect((await flags(T.su(), 6))[S.P1]).toBe(false);
+    expect((await readable(T.su()))[0][6]).toBe(0);
+    expect(W.T.phone_read_state).toEqual([{ user: 6, line_number: S.L6, other_party: S.P1, read_through_id: 10, read_at: expect.any(Date) }]);
+    W.sms(S.L6, S.P1, 'outgoing', { body: 'we answer' });                            // ours: still read
+    expect((await flags(T.su(), 6))[S.P1]).toBe(false);
+    const again = W.sms(S.L6, S.P1, 'incoming', { body: 'they answer' });
+    expect((await flags(T.su(), 6))[S.P1]).toBe(true);
+    // read through what the pane SHOWED (through_id): the newer text keeps it unread; never past the newest
+    const partial = (await call('POST', `/api/phone-lines/6/conversations/${S.P1}/read`, { t: T.su(), body: { through_id: 10 } })).json;
+    expect([partial.unread, W.T.phone_read_state[0].read_through_id]).toEqual([true, 10]);
+    expect((await call('POST', `/api/phone-lines/6/conversations/${S.P1}/read`, { t: T.su(), body: { through_id: 999999 } })).json.unread).toBe(false);
+    expect(W.T.phone_read_state[0].read_through_id).toBe(again);                      // clamped to the newest
+    // read again, plain: through the newest event (the new text)
+    await call('POST', `/api/phone-lines/6/conversations/${S.P1}/read`, { t: T.su() });
+    expect(W.T.phone_read_state[0].read_through_id).toBe(again);
+    // by hand: unread (its own row at 0 — beats any baseline)
+    const d = (await call('DELETE', `/api/phone-lines/6/conversations/${S.P1}/read`, { t: T.su() })).json;
+    expect(d).toMatchObject({ other_party: S.P1, unread: true });
+    expect(W.T.phone_read_state[0].read_through_id).toBe(0);
+    expect((await readable(T.su()))[0][6]).toBe(1);
+    // per USER: Stuart's view of line 6 is untouched by the SU's rows (attorney read bypass on the seed? no — grant him)
+    W.grant(1, 6, { can_read: 1 });
+    expect((await flags(T.ss(), 6))[S.P1]).toBe(true);
+    expect(W.T.phone_read_state.filter((x) => x.user === 1)).toEqual([]);
+    // a bad party is a 400 before any write; nobody is a 404 (no oracle); an API key is refused (humans only)
+    expect((await call('POST', '/api/phone-lines/6/conversations/abc/read', { t: T.su() })).status).toBe(400);
+    expect((await call('POST', `/api/phone-lines/6/conversations/${S.P1}/read`, { t: T.nobody() })).status).toBe(404);
+    expect((await call('POST', `/api/phone-lines/6/conversations/${S.P1}/read`, { apiKey: 'yci_phone_sph_internal' })).status).toBe(403);
+  });
+
+  test('Mark all read on a line: a baseline row at the line\'s newest event, the user\'s conversation rows on it gone; only later activity counts; the global baseline the same for every line', async () => {
+    const S = SPH_SEED(W);
+    await call('DELETE', `/api/phone-lines/1/conversations/${S.P2}/read`, { t: T.su() });   // a hand-marked unread row the sweep must clear
+    const r = (await call('POST', '/api/phone-lines/1/read', { t: T.su() })).json;
+    expect(r).toMatchObject({ status: 'success', line_id: 1, lines: 1 });
+    expect(W.T.phone_read_state).toEqual([{ user: 6, line_number: S.L1, other_party: '*', read_through_id: r.read_through_id, read_at: expect.any(Date) }]);
+    expect(await readable(T.su())).toEqual([{ 1: 0, 2: 0, 3: 1, 4: 0, 6: 1, 7: 0 }, 2]);
+    const n = W.sms(S.L1, S.P2, 'incoming', { body: 'new' });
+    expect(await flags(T.su(), 1)).toEqual({ [S.P2]: true, [S.P1]: false, '22395': false, [S.L3]: false });
+    expect(n).toBeGreaterThan(r.read_through_id);
+    // the global baseline (the migration's seed): everything up to it read, on every line, for that user only
+    W.T.phone_read_state.push({ user: 1, line_number: '*', other_party: '*', read_through_id: n, read_at: new Date() });
+    W.grant(1, 1, { can_read: 1 }); W.grant(1, 6, { can_read: 1 });
+    expect(await readable(T.ss())).toEqual([{ 1: 0, 2: 0, 3: 0, 4: 0, 6: 0, 7: 0 }, 0]);   // Stuart: the attorney READ bypass sees every line
+    W.sms(S.L6, S.P1, 'incoming', { body: 'after the baseline' });
+    expect(await readable(T.ss())).toEqual([{ 1: 0, 2: 0, 3: 0, 4: 0, 6: 1, 7: 0 }, 1]);
+    expect((await readable(T.su()))[0][1]).toBe(1);                                   // the SU still sees P2's new text
+    // a hand-marked unread (its own row at 0) beats the baseline, even when the baseline is past every event
+    await call('POST', '/api/phone-lines/all/read', { t: T.ss() });
+    expect(await readable(T.ss())).toEqual([{ 1: 0, 2: 0, 3: 0, 4: 0, 6: 0, 7: 0 }, 0]);
+    expect((await call('DELETE', `/api/phone-lines/6/conversations/${S.P1}/read`, { t: T.ss() })).json).toMatchObject({ unread: true });
+    expect(await readable(T.ss())).toEqual([{ 1: 0, 2: 0, 3: 0, 4: 0, 6: 1, 7: 0 }, 1]);
+    expect((await flags(T.ss(), 6))[S.P1]).toBe(true);
+  });
+
+  test('All numbers: a row is unread when ANY of its lines is; the all/ writes cover every readable line', async () => {
+    const S = SPH_SEED(W);
+    const all = async (t) => Object.fromEntries((await call('GET', '/api/phone-lines/all/conversations', { t })).json.conversations.map((c) => [c.other_party, c.unread]));
+    expect(await all(T.su())).toEqual({ [S.P4]: false, [S.P1]: true, [S.P2]: true, '22395': true });
+    await call('POST', `/api/phone-lines/6/conversations/${S.P1}/read`, { t: T.su() });  // line 6 read; line 1 still unread
+    expect((await all(T.su()))[S.P1]).toBe(true);
+    const r = (await call('POST', `/api/phone-lines/all/conversations/${S.P1}/read`, { t: T.su() })).json;
+    expect(r).toMatchObject({ all: true, other_party: S.P1, unread: false, lines: 2 });
+    // rows only where the number appears (lines 1 and 6) — never one per readable line
+    expect(W.T.phone_read_state.filter((x) => x.other_party === S.P1).map((x) => x.line_number).sort()).toEqual([S.L1, S.L6].sort());
+    // a number with nothing on the lines writes nothing
+    expect((await call('POST', '/api/phone-lines/all/conversations/3139999999/read', { t: T.su() })).json).toMatchObject({ unread: false, lines: 0 });
+    expect(W.T.phone_read_state.some((x) => x.other_party === '3139999999')).toBe(false);
+    expect((await all(T.su()))[S.P1]).toBe(false);
+    const d = (await call('DELETE', `/api/phone-lines/all/conversations/${S.P1}/read`, { t: T.su() })).json;
+    expect(d).toMatchObject({ all: true, unread: true });
+    const sweep = (await call('POST', '/api/phone-lines/all/read', { t: T.su() })).json;
+    expect(sweep).toMatchObject({ all: true, lines: W.T.phone_lines.length });
+    expect(await readable(T.su())).toEqual([{ 1: 0, 2: 0, 3: 0, 4: 0, 6: 0, 7: 0 }, 0]);
+    expect(W.T.phone_read_state.every((x) => x.other_party === '*')).toBe(true);
+    // nobody: 404 on the all/ conversation writes; the all/ sweep over no lines writes nothing
+    expect((await call('POST', `/api/phone-lines/all/conversations/${S.P1}/read`, { t: T.nobody() })).status).toBe(404);
+    expect((await call('POST', '/api/phone-lines/all/read', { t: T.nobody() })).json).toMatchObject({ lines: 0 });
+  });
+
+  test('automation reads carry no read state: the service without a userId answers unread: null and never touches phone_read_state; the SQL predicate names exactly MISSED_STATUSES', async () => {
+    const S = SPH_SEED(W);
+    const before = W.statements.length;
+    const c = await phone.listConversations(W.db, { id: 1, phone_number: S.L1 }, {});
+    expect(c.conversations.map((x) => x.unread)).toEqual([null, null, null, null]);
+    expect(W.statements.slice(before).some((s) => /phone_read_state/.test(s.sql))).toBe(false);
+    const quoted = [...phone.UNREAD_EVENT_SQL.matchAll(/'([a-z-]+)'/g)].map((m) => m[1]).filter((s) => !['incoming', 'sms'].includes(s));
+    expect(quoted.sort()).toEqual([...phone.MISSED_STATUSES].sort());
+  });
+});
+
 describe('send — POST /api/phone-lines/:id/sms', () => {
   const sms = (line, t, body, extra = {}) => call('POST', `/api/phone-lines/${line}/sms`, { t, body, ...extra });
 

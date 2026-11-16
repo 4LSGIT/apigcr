@@ -238,6 +238,8 @@
   /* ── Thread (S2P density: the email starts HIGH — §D targets) ── */
   .thread-head { display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
   .thread-head h2 { margin: 0; font-size: 13px; font-weight: 700; line-height: 1.3; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  /* the phone head's actions: a wrapping group that never widens the column (comms-polish-2) */
+  .ph-acts { display: flex; flex-wrap: wrap; gap: 6px; flex: 0 1 auto; min-width: 0; justify-content: flex-end; }
   .back-btn { display: none; }
   .thread-body { overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: 6px 8px 20px; }
   .thread-note { font-size: 10.5px; color: var(--text-muted); margin: 0 2px 5px; }
@@ -283,15 +285,21 @@
   .logline { display: flex; flex-wrap: wrap; gap: 3px 7px; align-items: center; padding: 0 10px 4px; font-size: 11px; color: var(--text-muted); min-width: 0; }
   .logline .chip.case { max-width: 220px; }
   .logline .linkish { flex: 0 0 auto; }
-  /* The ⋯ menu: real buttons, Escape closes, one open at a time (D.1). */
+  /* The ⋯ menu: real buttons, Escape closes, one open at a time (D.1).
+     Anchored to the button's LEFT edge: the ⋯ sits at the header's left
+     (D.1), and a right-anchored menu hung off the thread column's left edge,
+     where .thread-body's overflow clipped it (Fred, 2026-11-16). showMenu
+     adds .flip (right edge) only when the left anchor would overrun the
+     column. */
   .mmenu-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
   .mmenu {
-    position: absolute; right: 0; top: calc(100% + 2px); z-index: 30; min-width: 180px; max-width: calc(100vw - 32px);
+    position: absolute; left: 0; top: calc(100% + 2px); z-index: 30; min-width: 180px; max-width: calc(100vw - 32px);
     background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow);
     display: flex; flex-direction: column; padding: 4px;
   }
   .mmenu button { border: 0; background: none; color: var(--text); font: inherit; font-size: 12px; text-align: left; padding: 7px 9px; border-radius: 4px; cursor: pointer; white-space: normal; overflow-wrap: anywhere; }
   .mmenu button:hover, .mmenu button:focus-visible { background: var(--hover); }
+  .mmenu.flip { left: auto; right: 0; }
   .mactions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 8px; }
   .notice {
     margin: 0 10px 5px; padding: 3px 8px; border-radius: 4px; font-size: 11.5px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
@@ -320,7 +328,8 @@
   .related .who { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; margin-right: 6px; }
   .related .chip { max-width: 100%; }
   .chip.person { cursor: pointer; color: var(--text); }
-  .chip.person:hover, .chip.case:hover, .chip.add:hover { border-color: var(--accent-2); }
+  .chip.allc { cursor: pointer; color: var(--text); }
+  .chip.person:hover, .chip.case:hover, .chip.add:hover, .chip.allc:hover { border-color: var(--accent-2); }
   /* an address no contact holds: dashed = "not on file yet", click to add it to a client */
   .chip.add { cursor: pointer; color: var(--text); border-style: dashed; background: transparent; }
   .pick-list li.sugg .l1 { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
@@ -553,6 +562,9 @@
   .bub .bt { display: block; margin-top: 3px; font-size: 10.5px; opacity: 0.8; white-space: normal; }
   /* The item's reference id (#<phone_event_log.id>) at the time line's end — one click selects it to copy. */
   .bub .bt .ph-ref { float: right; margin-left: 8px; -webkit-user-select: all; user-select: all; cursor: text; }
+  /* comms-polish-2 A4: the item's case (its log row's about-link) — a link to set or change it */
+  .bub .bt .ph-case { font-size: inherit; padding: 0; }
+  .bub .bt .ph-case i { margin-right: 3px; }
   /* The bubble a "#<id>" search led to (phJumpStep): a ring for PH_HIT_MS, pulsed once on arrival — still, without the
      pulse, under reduced motion. box-shadow: no layout change. */
   .bub.ph-hit { box-shadow: 0 0 0 2px var(--accent); animation: ph-hit 1.2s ease-out 1; }
@@ -656,6 +668,8 @@
     .phone.show-thread .list-col { display: none; }
     .bub { max-width: 92%; }
     .back-btn { display: inline-flex; }
+    #ph-head { flex-wrap: wrap; }                 /* the actions take a row of their own under the title */
+    #ph-head .ph-acts { flex: 1 1 100%; justify-content: flex-start; }
     .chip { max-width: 120px; }
     .att .nm { max-width: 110px; }
     .modal.viewer { height: calc(100vh - 24px); padding: 8px; }
@@ -682,7 +696,7 @@
     <div class="tab-strip" role="tablist">
       <button class="tab on" type="button" role="tab" aria-selected="true" aria-controls="email" id="tab-email"><i class="fa-solid fa-envelope"></i> Email <span class="tab-n" id="tab-email-n" title="Unread in your inboxes"></span></button>
       <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="phone" id="tab-phone"
-              title="Texts and calls on the firm's phone lines you have access to"><i class="fa-solid fa-phone"></i> Phone</button>
+              title="Texts and calls on the firm's phone lines you have access to"><i class="fa-solid fa-phone"></i> Phone <span class="tab-n" id="tab-phone-n" title="Unread conversations on the lines you can read"></span></button>
       <!-- Reserved: key "team" (id tab-team, badge tab-team-n) is what deep links / &tab= will use — keep it stable. -->
       <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="team" id="tab-team"
               title="Team chat — coming soon"><i class="fa-solid fa-comments"></i> Team <span class="tab-n" id="tab-team-n" title="Unread team messages"></span></button>
@@ -782,7 +796,7 @@
         <span class="brk" aria-hidden="true"></span>
         <input type="search" id="ph-q" placeholder="Number, name, case number or #ref" aria-label="Search texts and calls by phone number, contact name, case number or #reference number" maxlength="100" autocomplete="off">
       </div>
-      <div class="status-line"><span id="ph-status"></span></div>
+      <div class="status-line"><span id="ph-status"></span><button class="btn small" type="button" id="ph-readall" hidden title="Mark every conversation on this list's lines read, for you">Mark all read</button></div>
       <div id="ph-error"></div>
       <ul class="msg-list" id="ph-list" aria-live="polite"></ul>
       <!-- comms archive S6 fills this ("In call transcripts"); it listens for the ph-search event on #phone -->
@@ -793,7 +807,13 @@
       <div class="thread-head" id="ph-head" hidden>
         <button class="btn icon back-btn" type="button" id="ph-back" title="Back to the list"><i class="fa-solid fa-arrow-left"></i></button>
         <h2 id="ph-title"></h2>
-        <button class="btn small" type="button" id="ph-contact" hidden><i class="fa-solid fa-user" aria-hidden="true"></i> Open contact</button>
+        <!-- the head's actions wrap as a group (a row of their own on a phone — four buttons overran 320px, survey 2026-11-16) -->
+        <span class="ph-acts">
+          <button class="btn small" type="button" id="ph-contact" hidden><i class="fa-solid fa-user" aria-hidden="true"></i> Open contact</button>
+          <button class="btn small" type="button" id="ph-allc" hidden title="All communications with this contact — email, texts and calls (their Communications tab)"><i class="fa-solid fa-comments" aria-hidden="true"></i> All communications</button>
+          <button class="btn small" type="button" id="ph-task" hidden title="Create a task from this conversation"><i class="fa-solid fa-list-check" aria-hidden="true"></i> Task…</button>
+          <button class="btn small" type="button" id="ph-unread" hidden title="Mark this conversation unread (read state is yours alone)"><i class="fa-regular fa-envelope" aria-hidden="true"></i> Mark unread</button>
+        </span>
         <button class="btn small" type="button" id="ph-addc" hidden title="Attach this number to a contact, or create a new contact with it"><i class="fa-solid fa-user-plus" aria-hidden="true"></i> Add to contact</button>
       </div>
       <div class="thread-body" id="ph-body">
@@ -1310,8 +1330,9 @@ function renderMailboxPicker() {
   const total = state.unreadDistinct;
   E('tab-email-n').textContent = total ? String(total) : '';
   // The shell's sidebar Comms badge (index.html commsBadgeSet): this page
-  // just counted it, so hand it over rather than make the shell fetch again.
-  try { if (typeof P.commsBadgeSet === 'function') P.commsBadgeSet(total); } catch (_) { /* decoration */ }
+  // just counted it, so hand it over rather than make the shell fetch again —
+  // mail's distinct unread + the Phone tab's unread conversations (B).
+  commsBadgePush();
   // Compose shows when the summary says the person may send as any box
   // (viewer.can_send — a send-only identity included, S3.1) or a box they
   // read lets them send (canSendAny). The identity list itself loads when a
@@ -1805,9 +1826,19 @@ async function addToClient(u) {
   dlg(u.email, 'email', () => { if (seq === state.threadSeq && anchor != null) loadRelated(anchor, seq); }, { earliest, name: u.name || '' });
 }
 
-function openContact(c) {
-  try { P.addFile(String(c.name || c.contact_id), 'client', String(c.contact_id)); }
+/** Open a contact's file; `sub` = a tab of it ('send' is Communications — every email, text and call with them). */
+function openContact(c, sub) {
+  try { P.addFile(String(c.name || c.contact_id), 'client', sub ? `${c.contact_id}&tab=${sub}` : String(c.contact_id)); }
   catch (_) { toast('Could not open the contact'); }
+}
+/** The "All communications" chip: the contact's Communications tab — email, texts and calls with them in one feed (comms-polish-2, Fred 2026-11-16). */
+function allCommsChip(c, { iconOnly = false } = {}) {
+  const name = c.name || `contact ${c.contact_id}`;
+  return h('span', {
+    className: 'chip allc', role: 'button', tabindex: '0', title: `All communications with ${name} — email, texts and calls (their Communications tab)`,
+    'aria-label': iconOnly ? `All communications with ${name}` : null,
+    onclick: (e) => { e.stopPropagation(); openContact(c, 'send'); }, onkeydown: (e) => { if (e.key === 'Enter') openContact(c, 'send'); },
+  }, icon('fa-comments'), iconOnly ? null : ' All communications');
 }
 
 function relatedCaseChip(c) {
@@ -1849,6 +1880,7 @@ function renderRelated() {
         className: 'chip person', role: 'button', tabindex: '0', title: `Open ${first.name || 'contact'}`,
         onclick: () => openContact(first), onkeydown: (e) => { if (e.key === 'Enter') openContact(first); },
       }, icon(first.kind === 'org' ? 'fa-building' : 'fa-user'), first.name || (first.emails || [])[0] || `contact ${first.contact_id}`) : null,
+      first ? allCommsChip(first, { iconOnly: true }) : null,
       first && first.cases && first.cases[0] ? relatedCaseChip(first.cases[0]) : null,
       !first && adds.length ? h('span', { className: 'lbl' }, `${adds.length} address${adds.length === 1 ? '' : 'es'} not on file`) : null,
       rest || adds.length ? h('button', {
@@ -1865,6 +1897,7 @@ function renderRelated() {
         className: 'chip person', title: `Open ${c.name || 'contact'} (${(c.emails || []).join(', ')})`, role: 'button', tabindex: '0',
         onclick: () => openContact(c), onkeydown: (e) => { if (e.key === 'Enter') openContact(c); },
       }, icon(c.kind === 'org' ? 'fa-building' : 'fa-user'), c.name || (c.emails || [])[0] || `contact ${c.contact_id}`),
+      allCommsChip(c),
       ...(c.cases || []).map(relatedCaseChip))));
   }
   if (adds.length) {
@@ -2065,6 +2098,14 @@ function showMenu(btn, items) {
       onclick: () => { closeMenu(); fn(); },
     }, label)));
   btn.parentElement.append(menu);
+  // Left-anchored (CSS); flipped to the right edge only when that would run
+  // past the scrolling column (a menu off a button near the right edge).
+  const col = btn.closest('.thread-body');
+  if (col) {
+    const r = menu.getBoundingClientRect();
+    const c = col.getBoundingClientRect();
+    if (r.width && r.right > c.right - 4) menu.classList.add('flip');
+  }
   btn.setAttribute('aria-expanded', 'true');
   openMenu = { el: menu, btn };
   const first = menu.querySelector('button');
@@ -2406,6 +2447,7 @@ function pickCase(c) {
   const p = state.picker;
   if (!p) return;
   if (p.mode === 'file') { closeCaseLink(); faSetCase(c); return; } // email attachments S3
+  if (p.mode === 'phone') { linkPhoneCase(p.m, c); return; }        // a phone item's log row (A4)
   if (p.mode === 'compose') { // S2P §G: the composer's Case field
     const cmp = p.composer;
     closeCaseLink();
@@ -2789,7 +2831,9 @@ function faMessage(m, lock) {
     wrap.append(h('label', { className: 'fd-part fd-move' + (lock || !fa.case ? ' off' : '') }, mv,
       h('span', { className: 'fd-name' }, `Move the ${plural(m.move.count, 'file')} already filed to ${where || 'another place'} into this case`)));
   }
-  if (res) wrap.append(h('div', { className: `fd-res ${res.tone}`, role: res.tone === 'err' ? 'alert' : null }, res.text));
+  // The row being filed spins (Fred, 2026-11-16: "Filing…" alone read as stuck); the queued rows just wait.
+  if (res) wrap.append(h('div', { className: `fd-res ${res.tone}`, role: res.tone === 'err' ? 'alert' : null },
+    res.spin ? icon('fa-spinner fa-spin') : null, res.spin ? ' ' : null, res.text));
   return wrap;
 }
 
@@ -2826,7 +2870,7 @@ function faButtons() {
   if (fa.done) return;
   const n = faCount();
   go.disabled = !!fa.busy || !fa.data || !fa.case || !(n.files + n.moved) || (fa.folderMode === 'other' && !fa.folder.trim());
-  go.textContent = fa.busy ? 'Filing…'
+  const label = fa.busy ? (fa.progress ? `Filing ${fa.progress.i} of ${fa.progress.n}…` : 'Filing…')
     : fa.confirming ? 'Yes, file them'
       : !fa.data ? 'File'
         : !fa.case ? 'Pick a case first'
@@ -2834,6 +2878,7 @@ function faButtons() {
             : fa.folderMode === 'other' && !fa.folder.trim() ? 'Pick a folder'
             : n.files && n.moved ? `File ${plural(n.files, 'file')}, move ${n.moved}`
             : n.moved ? `Move ${plural(n.moved, 'file')}` : `File ${plural(n.files, 'file')}`;
+  go.replaceChildren(...(fa.busy ? [icon('fa-spinner fa-spin'), ' '] : []), label);
 }
 
 async function faGo() {
@@ -2851,13 +2896,15 @@ async function faGo() {
     return { m, parts: parts.map((p) => p.part), confirm: parts.filter((p) => p.confirm).map((p) => p.part), move: !!(m.move && fa.moves.get(m.id)) };
   }).filter((j) => j.parts.length || j.move);
   for (const j of jobs) fa.results.set(j.m.id, { tone: 'busy', text: 'Waiting…' });
+  fa.progress = { i: 0, n: jobs.length };
   faRender();
   let filedN = 0;
   let movedN = 0;
   let okN = 0;
   let badN = 0;
   for (const j of jobs) {
-    fa.results.set(j.m.id, { tone: 'busy', text: 'Filing…' });
+    fa.progress = { i: fa.progress.i + 1, n: jobs.length };
+    fa.results.set(j.m.id, { tone: 'busy', text: 'Filing…', spin: true });
     faRender();
     const body = { case_id: fa.case.case_id, parts: j.parts, confirm: j.confirm, move: j.move, link: fa.link };
     if (batch) body.batch = batch;
@@ -2991,25 +3038,34 @@ function paintTaskLinks() {
   E('task-links').replaceChildren(...t.choices.map(chip), chip(null));
 }
 
-function openTaskModal(m) {
+/**
+ * The task dialog over an email (default) or, with `opts`, over anything else
+ * (the phone pane's conversation, A4): { heading, choices, defaultLink, head,
+ * body, subject } replace what is read off the message.
+ */
+function openTaskModal(m, opts = {}) {
   closeMenu();
-  const subject = m.subject || '(no subject)';
-  const choices = taskLinkChoices(m);
+  const subject = opts.subject || m.subject || '(no subject)';
+  const choices = opts.choices || taskLinkChoices(m);
   // Default link = the MESSAGE's case (E); without one, nothing is auto-picked
   // — the related cases / contacts are one-click chips, "None" stays allowed.
   const msgCase = m.log_status && m.log_status.state === 'case' ? m.log_status.case : m.case;
-  const def = msgCase ? choices.find((c) => c.type === 'case' && c.id === String(msgCase.case_id)) || null : null;
+  const def = opts.choices ? (opts.defaultLink || null)
+    : msgCase ? choices.find((c) => c.type === 'case' && c.id === String(msgCase.case_id)) || null : null;
   state.task = { m, choices, link: def };
+  E('task-title-h').textContent = opts.heading || 'Task from this email';
   E('task-msg').classList.remove('show');
   E('task-title').value = `Follow up: ${subject}`.slice(0, TASK_TITLE_MAX);
   const me = Number(P.firmData && P.firmData.currentUser && P.firmData.currentUser.user);
-  const users = ((P.firmData && P.firmData.users) || []).slice().sort((a, b) => a.user - b.user);
+  // Active staff only (firmData `active`, D3b; user 0 is Automation — a task
+  // for nobody). A new task has no current value to keep.
+  const users = ((P.firmData && P.firmData.users) || []).filter((u) => Number(u.user) > 0 && u.active !== false).sort((a, b) => a.user - b.user);
   E('task-to').replaceChildren(...users.map((u) => h('option', { value: String(u.user) }, u.user_name || `User #${u.user}`)));
   if (users.some((u) => Number(u.user) === me)) E('task-to').value = String(me);
   E('task-due').value = firmToday();
   // Description: who/when/subject + the first lines of the text body, capped.
-  const head = `Email from ${personName(m.from_addr)} on ${fullDate(m.date)}: ${subject}`;
-  const body = String(m.body_text || '').replace(/\r\n?/g, '\n').trim();
+  const head = opts.head || `Email from ${personName(m.from_addr)} on ${fullDate(m.date)}: ${subject}`;
+  const body = String(opts.body != null ? opts.body : (m.body_text || '')).replace(/\r\n?/g, '\n').trim();
   let desc = head;
   if (body) desc = `${head}\n\n${body}`;
   E('task-desc').value = desc.slice(0, TASK_DESC_MAX);
@@ -3916,6 +3972,7 @@ window.ycBecameVisible = () => {
   if (phoneShown()) { phoneRefresh(); return; }
   loadSummary().catch(() => {});
   loadList({ silent: true });
+  phCountsRefresh(); // the Phone tab badge and the phone half of the shell's badge, while the Email tab shows (B)
 };
 
 // ═══ Phone tab (slice S-PH) ═════════════════════════════════
@@ -3929,7 +3986,12 @@ window.ycBecameVisible = () => {
 // /api/phone-lines/:id/sms) is offered only where the line grants can_send
 // and is active; the provider's webhook echo then lands the copy in
 // phone_event_log, so an open conversation is re-read a few times after a
-// send. No unread tracking in v1. Every body / name / number is TEXT (h()).
+// send. Read state (comms-polish-2 B): per user, per (line, number) — the
+// server's `unread` on each list row (phoneCommsService "READ STATE"), the
+// lines' counts and the tab badge from GET /api/phone-lines/readable (read at
+// boot for the badge, reused by the tab's first open); opening a conversation
+// POSTs …/read, Mark unread DELETEs it, Mark all read POSTs …/read on the
+// list's lines; every write re-reads the counts. Every body / name / number is TEXT (h()).
 const PH_LINE_KEY = 'yc-comms-phone-line';
 var PH_RECHECK_MS = [3000, 10000, 30000];
 const PH_MAX = 1000; // the server's SMS_MAX_CHARS
@@ -3953,6 +4015,8 @@ const ph = {
   pending: [],        // sent from here, not echoed yet: { lineId, party, body, at }
   timers: [],
   sending: false,
+  unreadTotal: 0,     // GET /api/phone-lines/readable unread_total (the tab badge; the shell's Comms badge adds it to mail's)
+  linesLoaded: false, // readable fetched at boot (badge) — phoneBoot reuses it once
 };
 
 function fmtPhone(n) {
@@ -4028,18 +4092,54 @@ function showTab(which) {
 function announceTab(which) { document.dispatchEvent(new CustomEvent('comms-tab', { detail: { tab: which } })); }
 const phoneShown = () => !E('phone').hidden;
 
+/**
+ * The readable lines with the caller's unread counts: the rail's numbers, the
+ * Phone tab badge and the shell's Comms badge (mail + phone). Read once at
+ * boot (the badge shows before the tab is opened), again after every read
+ * write and on Refresh. Returns false when the read failed.
+ */
+async function phCountsRefresh() {
+  try {
+    const data = await api('/api/phone-lines/readable', 'GET');
+    ph.lines = Array.isArray(data && data.lines) ? data.lines : [];
+    ph.unreadTotal = Number(data && data.unread_total) || 0;
+    ph.linesLoaded = true;
+  } catch (_) {
+    return false;
+  }
+  phPaintCounts();
+  return true;
+}
+/** The tab badge + the shell's Comms badge (mail's distinct unread + phone's); the rail repaints when it exists. */
+function phPaintCounts() {
+  E('tab-phone-n').textContent = ph.unreadTotal ? String(ph.unreadTotal) : '';
+  commsBadgePush();
+  if (ph.booted) renderPhoneLines();
+}
+/** Hand the shell ONE number for its sidebar badge: mail + phone (index.html commsBadgeSet). */
+function commsBadgePush() {
+  try { if (typeof P.commsBadgeSet === 'function') P.commsBadgeSet((Number(state.unreadDistinct) || 0) + (Number(ph.unreadTotal) || 0)); } catch (_) { /* decoration */ }
+}
+
 async function phoneBoot() {
   ph.booted = true;
   E('ph-status').textContent = 'Loading…';
   showError(E('ph-error'), '');
-  try {
-    const data = await api('/api/phone-lines/readable', 'GET');
-    ph.lines = Array.isArray(data && data.lines) ? data.lines : [];
-  } catch (err) {
-    ph.booted = false; // the next visit tries again
-    E('ph-status').textContent = '';
-    showError(E('ph-error'), `Couldn't load your phone lines: ${err.message}`);
-    return;
+  if (!ph.linesLoaded) {
+    // the boot-time read failed (or never ran): read now, and say so if it fails again
+    try {
+      const data = await api('/api/phone-lines/readable', 'GET');
+      ph.lines = Array.isArray(data && data.lines) ? data.lines : [];
+      ph.unreadTotal = Number(data && data.unread_total) || 0;
+      ph.linesLoaded = true;
+      E('tab-phone-n').textContent = ph.unreadTotal ? String(ph.unreadTotal) : '';
+      commsBadgePush();
+    } catch (err) {
+      ph.booted = false; // the next visit tries again
+      E('ph-status').textContent = '';
+      showError(E('ph-error'), `Couldn't load your phone lines: ${err.message}`);
+      return;
+    }
   }
   const want = phRemembered();
   if (want === PH_ALL && ph.lines.length > 1) {
@@ -4062,7 +4162,8 @@ function renderPhoneLines() {
   const all = ph.lines.length > 1 ? h('button', {
     className: 'vitem all' + (allOn ? ' on' : ''), type: 'button', 'aria-current': allOn ? 'true' : null, dataset: { line: PH_ALL },
     title: 'Every line you can read at once — one row per number', onclick: () => selectLine(PH_ALL),
-  }, h('span', { className: 'nm' }, 'All numbers', h('span', { className: 'sub' }, `${ph.lines.length} lines`))) : null;
+  }, h('span', { className: 'nm' }, 'All numbers', h('span', { className: 'sub' }, `${ph.lines.length} lines`)),
+    ph.unreadTotal ? h('span', { className: 'cnt', title: 'Unread conversations, all lines' }, String(ph.unreadTotal)) : null) : null;
   E('ph-rail-lines').replaceChildren(...[all].filter(Boolean), ...ph.lines.map((l) => {
     const on = l.id === ph.lineId;
     return h('button', {
@@ -4073,8 +4174,10 @@ function renderPhoneLines() {
       // "inactive" rides the sub-line: a long name's ellipsis would hide it
       h('span', { className: 'nm' }, phLineName(l),
         (l.display_name || !l.active) ? h('span', { className: 'sub' }, [l.display_name ? fmtPhone(l.phone_number) : '', l.active ? '' : 'inactive'].filter(Boolean).join(' · ')) : null),
+      l.unread ? h('span', { className: 'cnt', title: 'Unread conversations on this line, for you' }, String(l.unread)) : null,
       h('span', { className: 'acc', title: 'Your access: R read · S send · M manage' }, accessLabel(l)));
   }));
+  E('ph-readall').hidden = !(allOn ? ph.unreadTotal : (phLine() && phLine().unread));
   const sel = E('ph-line-sel');
   sel.replaceChildren(...(all ? [h('option', { value: PH_ALL }, 'All numbers')] : []),
     ...ph.lines.map((l) => h('option', { value: String(l.id) }, phLineLabelText(l))));
@@ -4256,7 +4359,7 @@ function convoRow(c) {
   const last = c.last || {};
   const mine = last.direction === 'outgoing';
   const li = h('li', {
-    className: 'msg' + (ph.party === c.other_party ? ' selected' : ''), dataset: { party: c.other_party }, tabindex: '0', role: 'button',
+    className: 'msg' + (c.unread ? ' unread' : '') + (ph.party === c.other_party ? ' selected' : ''), dataset: { party: c.other_party }, tabindex: '0', role: 'button',
     onclick: () => phOpenRow(c.other_party, c.contact),
     onkeydown: (e) => { if (e.key === 'Enter') phOpenRow(c.other_party, c.contact); },
   },
@@ -4381,14 +4484,65 @@ async function openConversation(party, contact, { silent = false, older = false,
       next = prev.next;
     }
     ph.thread = { party, contact: (data && data.contact) || contact || null, messages, next, line_ids: (data && data.line_ids) || null,
-      archiveAdmin: !!(data && data.archive_admin) };
+      archiveAdmin: !!(data && data.archive_admin), cases: prev ? prev.cases : undefined };   // the contact's cases survive a quiet re-read
     paintHead(party, ph.thread.contact, ph.thread.line_ids);
     paintCompose(party);
     renderPhoneThread({ keepScroll: older, quiet: silent && !!prev });
     phJumpStep();
+    if (!older && !silent) phMarkRead(party, scope);
   } catch (err) {
     if (seq !== ph.tseq) return;
     if (!silent) E('ph-body').replaceChildren(h('div', { className: 'inline-error' }, `Couldn't open this conversation: ${err.message}`));
+  }
+}
+
+// ── Read state writers (comms-polish-2 B) ──────────────────
+/** The list row of a party, re-flagged in place (no refetch); the counts come from the server. */
+function phFlagRow(party, unread) {
+  for (const r of ph.rows) if (r.other_party === party) r.unread = unread;
+  const li = [...E('ph-list').querySelectorAll('.msg[data-party]')].find((x) => x.dataset.party === party) || null;
+  if (li) li.classList.toggle('unread', !!unread);
+}
+/** Opened: read through its newest event now, for you. Quiet on failure — the next open tries again. */
+async function phMarkRead(party, scope) {
+  const row = ph.rows.find((r) => r.other_party === party);
+  if (!row || !row.unread) return; // nothing to write
+  // through what this pane SHOWED (its newest item), so a text landing between the thread read and this write stays unread
+  const shown = ph.thread && ph.thread.party === party ? ph.thread.messages.reduce((m, x) => Math.max(m, Number(x.id) || 0), 0) : 0;
+  try {
+    const out = await api(`/api/phone-lines/${scope}/conversations/${encodeURIComponent(party)}/read`, 'POST', shown ? { through_id: shown } : null);
+    phFlagRow(party, !!(out && out.unread));
+    phCountsRefresh();
+  } catch (_) { /* the dot stays; the next open tries again */ }
+}
+async function phMarkUnread(party) {
+  const scope = phScope();
+  if (scope == null) return;
+  try {
+    const out = await api(`/api/phone-lines/${scope}/conversations/${encodeURIComponent(party)}/read`, 'DELETE');
+    phFlagRow(party, out && out.unread !== undefined ? !!out.unread : true);
+    phCountsRefresh();
+    toast('Marked unread');
+  } catch (err) {
+    toast(`Couldn't mark it unread: ${err.message}`);
+  }
+}
+/** Mark all read on the list's lines (one line, or every readable line under All numbers). */
+async function phMarkAllRead() {
+  const scope = phScope();
+  if (scope == null) return;
+  const b = E('ph-readall');
+  b.disabled = true;
+  try {
+    await api(`/api/phone-lines/${scope}/read`, 'POST');
+    for (const r of ph.rows) r.unread = false;
+    for (const li of E('ph-list').querySelectorAll('.msg.unread')) li.classList.remove('unread');
+    await phCountsRefresh();
+    toast('All read');
+  } catch (err) {
+    toast(`Couldn't mark all read: ${err.message}`);
+  } finally {
+    b.disabled = false;
   }
 }
 
@@ -4402,6 +4556,15 @@ function paintHead(party, contact, lineIds) {
   const b = E('ph-contact');
   b.hidden = !known;
   b.onclick = known ? () => openContact({ contact_id: contact.contact_id, name: contact.name }) : null;
+  const ac = E('ph-allc');
+  ac.hidden = !known;
+  ac.onclick = known ? () => openContact({ contact_id: contact.contact_id, name: contact.name }, 'send') : null;
+  const tk = E('ph-task');
+  tk.hidden = false;
+  tk.onclick = () => openPhoneTask();
+  const mu = E('ph-unread');
+  mu.hidden = false;
+  mu.onclick = () => phMarkUnread(party);
   // A number no contact holds: attach it to one, or create one with it
   // (contact_phones are US 10-digit — short codes are not offered).
   const add = E('ph-addc');
@@ -4531,8 +4694,103 @@ function renderPhoneThread({ keepScroll = false, quiet = false } = {}) {
 /** A bubble's time line; in All numbers, "· via <line>". */
 const phBubbleTime = (m) => `${bubbleTime(m.at)}${phIsAll() && m.line_id != null ? ` · via ${phLineShort(m.line_id)}` : ''}`;
 /** A bubble's foot: its time line plus the item's reference id ("#<id>", select-all to copy) — what staff quote to point at one item. */
-const phBubbleFoot = (m) => h('span', { className: 'bt' },
-  h('span', { className: 'ph-ref', title: 'Reference number — click to select, then copy' }, `#${m.id}`), phBubbleTime(m));
+const phBubbleFoot = (m) => {
+  const tag = phCaseTag(m);
+  return h('span', { className: 'bt' },
+    h('span', { className: 'ph-ref', title: 'Reference number — click to select, then copy' }, `#${m.id}`),
+    ...(tag ? [tag, ' · '] : []), phBubbleTime(m));
+};
+
+// ── Link to case (comms-polish-2 A4, Fred 2026-11-16) ─────────
+// A logged text or call (item.log_id — the ingest's firm-log row) can be put
+// on a case: the log row's ABOUT-link (PUT /api/log/:id/about, the same
+// column the Email tab's Link to case sets through mail's case-link), one
+// item at a time, like the Email tab. An item the ingest did not log has no
+// row to link and shows nothing. The picker is the Email tab's (ONE case
+// picker for every job); its suggestions are the contact's cases
+// (GET /api/contacts/:id/cases, read once per open conversation).
+/** The foot's case tag: "Link to case", or the case it is on (click to change). Nothing for an unlogged item. */
+function phCaseTag(m) {
+  if (m.log_id == null) return null;
+  const c = m.case;
+  return h('button', {
+    className: 'linkish ph-case' + (c ? ' on' : ''), type: 'button',
+    title: c ? `On case ${c.case_number || c.case_id} — click to move it to another case` : "Put this text or call on a case's log",
+    onclick: (e) => { e.stopPropagation(); openPhoneCaseLink(m); },
+  }, icon('fa-briefcase'), c ? (c.case_number || c.case_id) : 'Link to case');
+}
+/** The open conversation's contact's cases, read once (null contact → none). */
+async function phoneContactCases() {
+  const t = ph.thread;
+  if (!t || !t.contact || !t.contact.contact_id) return [];
+  if (Array.isArray(t.cases)) return t.cases;
+  try {
+    const data = await api(`/api/contacts/${encodeURIComponent(t.contact.contact_id)}/cases`, 'GET');
+    t.cases = (Array.isArray(data && data.cases) ? data.cases : []).filter((c) => c && c.case_id != null)
+      .map((c) => ({ case_id: c.case_id, case_number: c.case_number_full || c.case_number || null, case_stage: c.case_stage || null, case_type: c.case_type || null, who: t.contact.name || '' }));
+  } catch (_) { t.cases = []; }
+  return t.cases;
+}
+async function openPhoneCaseLink(m) {
+  const sugg = await phoneContactCases();
+  if (!ph.thread || !ph.thread.messages.some((x) => x.id === m.id)) return; // the conversation changed while the cases loaded
+  openCasePicker({ mode: 'phone', m, sugg, suggLabel: 'This contact\'s cases' }, {
+    title: 'Link to a case',
+    hint: m.case ? `This ${m.kind === 'call' ? 'call' : 'text'} is on case ${m.case.case_number || m.case.case_id}; picking another moves its log entry there.`
+      : `This ${m.kind === 'call' ? 'call' : 'text'} is on the firm log; this links that entry to the case.`,
+  });
+}
+async function linkPhoneCase(m, c) {
+  if (ph.linking) return; // one PUT at a time
+  ph.linking = true;
+  try {
+    await api(`/api/log/${encodeURIComponent(m.log_id)}/about`, 'PUT', { about_type: 'case', about_id: c.case_id });
+    // A quiet re-read while the picker was open replaces the item objects: tag the CURRENT one by id
+    const cur = (ph.thread && ph.thread.messages.find((x) => x.id === m.id)) || m;
+    cur.case = { case_id: String(c.case_id), case_number: c.case_number_full || c.case_number || null };
+    closeCaseLink();
+    renderPhoneThread({ quiet: true });
+    toast(`Linked to ${cur.case.case_number || cur.case.case_id}`);
+  } catch (err) {
+    const box = E('case-msg');
+    box.textContent = err.message || 'Linking failed';
+    box.classList.add('show');
+  } finally {
+    ph.linking = false;
+  }
+}
+/**
+ * Task… from the phone pane (A4): the Email tab's task dialog over this
+ * conversation — title and description from who it is with and its latest
+ * items, link chips = the cases its items are on (the newest first, the
+ * first one pre-picked) and the contact.
+ */
+function openPhoneTask() {
+  const t = ph.thread;
+  if (!t) return;
+  const who = t.contact && t.contact.name ? t.contact.name : fmtPhone(t.party);
+  const when = (m) => { const x = Date.parse(m.at); return Number.isNaN(x) ? 0 : x; };
+  const items = [...t.messages].sort((a, b) => when(b) - when(a) || b.id - a.id);
+  const last = items[0] || null;
+  const choices = [];
+  const seen = new Set();
+  for (const m of items) {
+    if (!m.case || !m.case.case_id || seen.has(m.case.case_id)) continue;
+    seen.add(m.case.case_id);
+    choices.push({ type: 'case', id: String(m.case.case_id), label: m.case.case_number || m.case.case_id, icon: 'fa-briefcase' });
+  }
+  if (t.contact && t.contact.contact_id) choices.push({ type: 'contact', id: String(t.contact.contact_id), label: who, icon: 'fa-user' });
+  const lines = items.slice(0, 3).reverse().map((m) => m.kind === 'call'
+    ? `${phCallLabel(m)} (${fullDate(m.at)})`
+    : `${m.direction === 'outgoing' ? 'You' : who}: ${phBlank(m.body) ? 'Attachment' : m.body}`);
+  openTaskModal({ subject: `${who} (texts and calls)`, date: last ? last.at : null }, {
+    heading: 'Task from this conversation',
+    choices,
+    defaultLink: choices.length && choices[0].type === 'case' ? choices[0] : null,
+    head: `Texts and calls with ${who} (${fmtPhone(t.party)})${last ? ` — latest ${fullDate(last.at)}` : ''}`,
+    body: lines.join('\n'),
+  });
+}
 
 /**
  * A call in the conversation: one small box — what happened, when — plus,
@@ -5298,6 +5556,7 @@ async function sendNewText() {
 }
 
 function phoneRefresh() {
+  phCountsRefresh();
   if (!ph.booted) return phoneBoot();
   phoneLoad({ silent: true });
   if (ph.party) openConversation(ph.party, ph.thread && ph.thread.contact, { silent: true });
@@ -5307,6 +5566,8 @@ function wirePhone() {
   E('tab-email').addEventListener('click', () => showTab('email'));
   E('tab-phone').addEventListener('click', () => showTab('phone'));
   E('tab-team').addEventListener('click', () => showTab('team'));
+  E('ph-readall').addEventListener('click', phMarkAllRead);
+  phCountsRefresh(); // the Phone tab badge before the tab is opened (B)
   E('ph-line-sel').addEventListener('change', () => { const v = E('ph-line-sel').value; selectLine(v === PH_ALL ? PH_ALL : Number(v)); });
   E('ph-from-sel').addEventListener('change', () => { E('ph-from-sel').dataset.picked = '1'; });
   E('ph-v-sms').addEventListener('click', () => setPhoneView('sms'));
@@ -5323,7 +5584,7 @@ function wirePhone() {
     if (e.key === 'Escape' && E('ph-q').value) { e.preventDefault(); E('ph-q').value = ''; phSetQuery(''); }
     if (e.key === 'Enter') { e.preventDefault(); phSearchEnter(); }
   });
-  E('ph-refresh').addEventListener('click', () => { phoneLoad(); if (ph.party) openConversation(ph.party, ph.thread && ph.thread.contact, { silent: true }); });
+  E('ph-refresh').addEventListener('click', () => { phCountsRefresh(); phoneLoad(); if (ph.party) openConversation(ph.party, ph.thread && ph.thread.contact, { silent: true }); });
   E('ph-back').addEventListener('click', closePhoneThread);
   E('ph-text').addEventListener('input', phCount);
   E('ph-text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) phoneSend(); });

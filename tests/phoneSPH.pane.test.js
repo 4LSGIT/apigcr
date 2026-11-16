@@ -86,20 +86,23 @@ async function bootPage({ url, html, libs, handler, width = 1200, before = null 
 // comms.html — Phone tab
 // ─────────────────────────────────────────────────────────────────────────────
 
+// comms-polish-2 B: each line carries the caller's unread conversations; the page an unread_total
 const LINES = [
-  { id: 1, phone_number: '2485592400', display_name: 'Stuart', provider: 'ringcentral', active: true, mms_capable: true, can_read: true, can_send: true, can_manage: false },
-  { id: 3, phone_number: '2489655355', display_name: 'Rena', provider: 'quo', active: true, mms_capable: false, can_read: true, can_send: false, can_manage: false },
-  { id: 7, phone_number: '2480000007', display_name: 'retired', provider: 'quo', active: false, mms_capable: false, can_read: true, can_send: true, can_manage: false },
+  { id: 1, phone_number: '2485592400', display_name: 'Stuart', provider: 'ringcentral', active: true, mms_capable: true, can_read: true, can_send: true, can_manage: false, unread: 2 },
+  { id: 3, phone_number: '2489655355', display_name: 'Rena', provider: 'quo', active: true, mms_capable: false, can_read: true, can_send: false, can_manage: false, unread: 0 },
+  { id: 7, phone_number: '2480000007', display_name: 'retired', provider: 'quo', active: false, mms_capable: false, can_read: true, can_send: true, can_manage: false, unread: 1 },
 ];
+const UNREAD_TOTAL = 3;
 const CONVOS = [
-  { other_party: '3135550001', count: 3, last_id: 13, last: { id: 13, direction: 'incoming', snippet: `hi ${EVIL}`, at: '2026-10-08T14:00:00.000Z' }, contact: { contact_id: 501, name: `Pat ${EVIL}` } },
-  { other_party: '22395', count: 1, last_id: 9, last: { id: 9, direction: 'incoming', snippet: 'Your code is 1234', at: '2026-10-07T14:00:00.000Z' }, contact: null },
+  { other_party: '3135550001', count: 3, last_id: 13, unread: true, last: { id: 13, direction: 'incoming', snippet: `hi ${EVIL}`, at: '2026-10-08T14:00:00.000Z' }, contact: { contact_id: 501, name: `Pat ${EVIL}` } },
+  { other_party: '22395', count: 1, last_id: 9, unread: false, last: { id: 9, direction: 'incoming', snippet: 'Your code is 1234', at: '2026-10-07T14:00:00.000Z' }, contact: null },
 ];
 const MSGS = {
   other_party: '3135550001', contact: { contact_id: 501, name: 'Pat One' }, next_cursor: '1759000000000.1',
   messages: [
-    { id: 2, direction: 'outgoing', body: 'reply', at: '2026-10-08T13:00:00.000Z', logged: true },
-    { id: 13, direction: 'incoming', body: `body ${EVIL}\nline two`, at: '2026-10-08T14:00:00.000Z', logged: true },
+    // comms-polish-2 A4: log_id + the case the log row is about (13 is on one, 2 is not)
+    { id: 2, direction: 'outgoing', body: 'reply', at: '2026-10-08T13:00:00.000Z', logged: true, log_id: 902, case: null },
+    { id: 13, direction: 'incoming', body: `body ${EVIL}\nline two`, at: '2026-10-08T14:00:00.000Z', logged: true, log_id: 913, case: { case_id: 'CASEA', case_number: '26-70001' } },
   ],
 };
 const CALLS = {
@@ -133,7 +136,9 @@ function commsHandler(over = {}) {
     if (url === '/api/mail/views') return { views: [] };
     if (url === '/api/mail/views/counts') return { counts: {} };
     if (url === '/api/mail/messages') return { messages: [], next_cursor: null };
-    if (url === '/api/phone-lines/readable') return { viewer: { su: false }, lines: fresh(LINES) };
+    if (url === '/api/phone-lines/readable') return { viewer: { su: false }, lines: fresh(LINES), unread_total: UNREAD_TOTAL };
+    if (/^\/api\/phone-lines\/(\d+|all)\/conversations\/\d+\/read$/.test(url)) return { status: 'success', other_party: url.split('/')[5], unread: method === 'DELETE' };
+    if (/^\/api\/phone-lines\/(\d+|all)\/read$/.test(url) && method === 'POST') return { status: 'success', lines: 1 };
     if (/^\/api\/phone-lines\/\d+\/conversations$/.test(url)) return { conversations: fresh(CONVOS), next_cursor: null };
     if (/^\/api\/phone-lines\/\d+\/conversations\/\d+$/.test(url)) return fresh(MSGS);
     if (/^\/api\/phone-lines\/\d+\/calls$/.test(url)) return fresh(CALLS);
@@ -153,7 +158,9 @@ describe('comms.html — Phone tab', () => {
   test('lazy: nothing phone-shaped until the tab opens; then readable → rail + picker → Conversations of the first ACTIVE line', async () => {
     const env = await bootComms();
     const { doc, calls, errors } = env;
-    expect(phoneCalls(calls)).toEqual([]);
+    // B: the readable lines are read at boot — the Phone tab badge shows before the tab is opened — and nothing else is
+    expect(phoneCalls(calls).map((c) => c.url)).toEqual(['/api/phone-lines/readable']);
+    expect(doc.getElementById('tab-phone-n').textContent).toBe(String(UNREAD_TOTAL));
     await openPhone(env);
     expect(errors).toEqual([]);
     expect(doc.getElementById('email').hidden).toBe(true);
@@ -162,11 +169,13 @@ describe('comms.html — Phone tab', () => {
     expect(phoneCalls(calls).map((c) => c.url)).toEqual(['/api/phone-lines/readable', '/api/phone-lines/1/conversations']);
     const rail = [...doc.querySelectorAll('#ph-rail-lines .vitem')];
     expect(rail.map((b) => b.dataset.line)).toEqual(['all', '1', '3', '7']);
-    expect(rail[0].textContent).toBe('All numbers3 lines');
+    expect(rail[0].textContent).toBe(`All numbers3 lines${UNREAD_TOTAL}`);   // B: the total rides All numbers
     expect(rail[0].getAttribute('aria-current')).toBeNull();
     expect(rail[1].getAttribute('aria-current')).toBe('true');
     expect(rail[1].querySelector('.acc').textContent).toBe('R·S');
     expect(rail[2].querySelector('.acc').textContent).toBe('R');
+    // B: the lines' unread counts ride the rail (none on a line with 0; All numbers carries the total)
+    expect(rail.map((b) => (b.querySelector('.cnt') || {}).textContent || '')).toEqual([String(UNREAD_TOTAL), '2', '', '1']);
     expect(rail[3].querySelector('.sub').textContent).toBe('(248) 000-0007 · inactive');
     expect([...doc.getElementById('ph-line-sel').options].map((o) => o.value)).toEqual(['all', '1', '3', '7']);
     // the toggle: Texts | All | Calls, All by default (no kind on the list read)
@@ -279,7 +288,7 @@ describe('comms.html — Phone tab', () => {
     doc.getElementById('ph-text').value = '  On my way ';
     doc.getElementById('ph-send').click();
     await tick(window, 20);
-    expect(calls.filter((c) => c.method === 'POST').map((c) => [c.url, c.payload]))
+    expect(calls.filter((c) => c.method === 'POST' && !/\/read$/.test(c.url)).map((c) => [c.url, c.payload]))   // opening POSTed …/read (B)
       .toEqual([['/api/phone-lines/1/sms', { to: '3135550001', message: 'On my way' }]]);
     expect(doc.querySelector('#ph-body .bub.pending').textContent).toMatch(/On my way.*waiting/s);
     expect(doc.getElementById('ph-text').value).toBe('');
@@ -638,6 +647,150 @@ describe('comms.html — Phone tab', () => {
     expect(doc.getElementById('phone').classList.contains('show-thread')).toBe(true);
     doc.getElementById('ph-back').click();
     expect(doc.getElementById('phone').classList.contains('show-thread')).toBe(false);
+  });
+
+  test('comms-polish-2: All communications opens the contact on their Communications tab; Task… opens the task dialog over the conversation', async () => {
+    const env = await bootComms({ over: { 'GET /api/phone-lines/1/conversations/22395': () => fresh(MIXED) } }); // 22395: no contact, nothing logged
+    await openPhone(env);
+    const { doc, window, calls } = env;
+    doc.querySelector('#ph-list .msg[data-party="3135550001"]').click();
+    await tick(window, 60);
+    const ac = doc.getElementById('ph-allc');
+    expect(ac.hidden).toBe(false);
+    ac.click();
+    expect(calls.find((c) => c.addFile)).toEqual({ addFile: ['Pat One', 'client', '501&tab=send'] });
+    const tk = doc.getElementById('ph-task');
+    expect(tk.hidden).toBe(false);
+    tk.click();
+    expect(doc.getElementById('task-backdrop').classList.contains('open')).toBe(true);
+    expect(doc.getElementById('task-title-h').textContent).toBe('Task from this conversation');
+    expect(doc.getElementById('task-title').value).toBe('Follow up: Pat One (texts and calls)');
+    const desc = doc.getElementById('task-desc').value;
+    expect(desc).toMatch(/^Texts and calls with Pat One \(\(313\) 555-0001\) — latest .+\n\nYou: reply\nPat One: body /);
+    expect(window.top.__pwned).toBeUndefined();                                  // the body rides as TEXT (a textarea value)
+    // chips: the case its items are on (pre-picked), the contact, None
+    expect([...doc.querySelectorAll('#task-links .fchip')].map((c) => [c.textContent.trim(), c.getAttribute('aria-pressed')]))
+      .toEqual([['26-70001', 'true'], ['Pat One', 'false'], ['None', 'false']]);
+    doc.getElementById('task-cancel').click();
+    // a number no contact holds: no All communications; Task… names the number and offers only None
+    doc.querySelector('#ph-list .msg[data-party="22395"]').click();
+    await tick(window, 60);
+    expect(doc.getElementById('ph-allc').hidden).toBe(true);
+    doc.getElementById('ph-task').click();
+    expect(doc.getElementById('task-title').value).toBe('Follow up: 22395 (texts and calls)');
+    expect([...doc.querySelectorAll('#task-links .fchip')].map((c) => c.textContent.trim())).toEqual(['None']);
+    doc.getElementById('task-cancel').click();
+    // an EMAIL task opened afterwards gets the email heading back (the page function, as the ⋯ menu calls it)
+    window.openTaskModal({ subject: 'Plan objection', from_addr: 'jane@client.test', date: '2026-10-08T13:00:00.000Z', body_text: 'plain body' });
+    expect(doc.getElementById('task-title-h').textContent).toBe('Task from this email');
+    expect(doc.getElementById('task-title').value).toBe('Follow up: Plan objection');
+  });
+
+  test('comms-polish-2: Link to case on LOGGED bubbles — the case it is on, or the link; a pick PUTs the log row\'s about-link and the tag updates; unlogged items carry nothing', async () => {
+    const puts = [];
+    const env = await bootComms({ over: {
+      'GET /api/contacts/501/cases': () => ({ cases: [
+        { case_id: 'CASEB', case_number: '26-70002', case_number_full: '26-70002-mbm', case_type: 'Chapter 7', case_stage: 'Open' },
+        { case_id: 'CASEA', case_number: '26-70001', case_number_full: '26-70001-mbm', case_type: 'Chapter 13', case_stage: 'Filed' },
+      ] }),
+      'PUT /api/log/902/about': (p) => { puts.push(p); return { status: 'success', log_id: 902, log_about_type: p.about_type, log_about_id: p.about_id }; },
+      'PUT /api/log/913/about': (p) => { puts.push(p); return { status: 'success', log_id: 913, log_about_type: p.about_type, log_about_id: p.about_id }; },
+      'GET /api/phone-lines/1/conversations/22395': () => fresh(MIXED),         // a thread with nothing logged
+    } });
+    await openPhone(env);
+    const { doc, window, calls } = env;
+    doc.querySelector('#ph-list .msg[data-party="3135550001"]').click();
+    await tick(window, 60);
+    const tagOf = (id) => doc.querySelector(`#ph-body .bub[data-id="${id}"] .ph-case`);
+    expect([tagOf(13).textContent, tagOf(13).classList.contains('on'), tagOf(2).textContent, tagOf(2).classList.contains('on')])
+      .toEqual(['26-70001', true, 'Link to case', false]);
+    tagOf(2).click();
+    await tick(window, 60);
+    expect(calls.some((c) => c.url === '/api/contacts/501/cases')).toBe(true);
+    expect(doc.getElementById('case-backdrop').classList.contains('open')).toBe(true);
+    expect(doc.getElementById('case-sugg-label').textContent).toBe("This contact's cases");
+    expect([...doc.querySelectorAll('#case-sugg li .l1')].map((x) => x.textContent)).toEqual(['26-70002-mbmOpen', '26-70001-mbmFiled']);
+    doc.querySelector('#case-sugg li').click();
+    await tick(window, 60);
+    expect(puts).toEqual([{ about_type: 'case', about_id: 'CASEB' }]);
+    expect(doc.getElementById('case-backdrop').classList.contains('open')).toBe(false);
+    expect([tagOf(2).textContent, tagOf(2).classList.contains('on')]).toEqual(['26-70002-mbm', true]);
+    // a quiet re-read (the post-send echo check) replaces the item objects: the cache survives it, and a pick tags the CURRENT item
+    window.openConversation('3135550001', { contact_id: 501, name: 'Pat One' }, { silent: true });
+    await tick(window, 60);
+    tagOf(13).click();
+    await tick(window, 60);
+    expect(calls.filter((c) => c.url === '/api/contacts/501/cases')).toHaveLength(1);
+    expect(doc.getElementById('case-hint').textContent).toBe('This text is on case 26-70001; picking another moves its log entry there.');
+    // another quiet re-read while the picker is open, then the pick: the tag lands on the item now shown
+    window.openConversation('3135550001', { contact_id: 501, name: 'Pat One' }, { silent: true });
+    await tick(window, 60);
+    doc.querySelector('#case-sugg li').click();
+    await tick(window, 60);
+    expect(puts[1]).toEqual({ about_type: 'case', about_id: 'CASEB' });
+    expect(tagOf(13).textContent).toBe('26-70002-mbm');
+    // a conversation whose items were never logged: no tags at all
+    doc.getElementById('ph-back').click();
+    doc.querySelector('#ph-list .msg[data-party="22395"]').click();
+    await tick(window, 60);
+    expect(doc.querySelectorAll('#ph-body .ph-case')).toHaveLength(0);
+  });
+
+  test('comms-polish-2 B: unread rows; opening one POSTs …/read and re-reads the counts; Mark unread DELETEs; Mark all read POSTs the line; the shell badge gets mail + phone', async () => {
+    const badges = [];
+    const env = await bootComms({ before: (w) => { w.commsBadgeSet = (n) => badges.push(n); } });
+    await openPhone(env);
+    const { doc, window, calls } = env;
+    expect(badges[badges.length - 1]).toBe(UNREAD_TOTAL);                          // mail's 0 + phone's 3 (one number for the sidebar)
+    const rows = [...doc.querySelectorAll('#ph-list .msg')];
+    expect(rows.map((r) => [r.dataset.party, r.classList.contains('unread')])).toEqual([['3135550001', true], ['22395', false]]);
+    expect(doc.getElementById('ph-readall').hidden).toBe(false);                 // line 1 has unread
+    const reads = () => calls.filter((c) => /\/read$/.test(c.url)).map((c) => `${c.method} ${c.url}`);
+    rows[0].click();
+    await tick(window, 80);
+    expect(reads()).toEqual(['POST /api/phone-lines/1/conversations/3135550001/read']);
+    expect(calls.find((c) => /\/read$/.test(c.url)).payload).toEqual({ through_id: 13 });   // what the pane showed (nit 5)
+    expect(rows[0].classList.contains('unread')).toBe(false);
+    expect(calls.filter((c) => c.url === '/api/phone-lines/readable')).toHaveLength(2); // boot + after the write
+    // a row that was not unread writes nothing when opened
+    rows[1].click();
+    await tick(window, 80);
+    expect(reads()).toHaveLength(1);
+    // Mark unread on the open conversation
+    doc.querySelector('#ph-list .msg[data-party="3135550001"]').click();
+    await tick(window, 80);
+    expect(reads()).toHaveLength(1);                                             // already read: no second POST
+    expect(doc.getElementById('ph-unread').hidden).toBe(false);
+    doc.getElementById('ph-unread').click();
+    await tick(window, 80);
+    expect(reads()[1]).toBe('DELETE /api/phone-lines/1/conversations/3135550001/read');
+    expect(doc.querySelector('#ph-list .msg[data-party="3135550001"]').classList.contains('unread')).toBe(true);
+    // Mark all read on the line
+    doc.getElementById('ph-readall').click();
+    await tick(window, 80);
+    expect(reads()[2]).toBe('POST /api/phone-lines/1/read');
+    expect(doc.querySelectorAll('#ph-list .msg.unread')).toHaveLength(0);
+    // Refresh re-reads the counts too
+    const n = calls.filter((c) => c.url === '/api/phone-lines/readable').length;
+    doc.getElementById('ph-refresh').click();
+    await tick(window, 80);
+    expect(calls.filter((c) => c.url === '/api/phone-lines/readable').length).toBe(n + 1);
+  });
+
+  test('comms-polish-2 B: a failed boot-time lines read leaves no badge; the first open reads again and explains a second failure', async () => {
+    let fail = true;
+    const env = await bootComms({ over: { 'GET /api/phone-lines/readable': () => { if (fail) throw new Error('down'); return { viewer: { su: false }, lines: fresh(LINES), unread_total: 1 }; } } });
+    const { doc, window, calls } = env;
+    expect(doc.getElementById('tab-phone-n').textContent).toBe('');
+    await openPhone(env);
+    expect(doc.getElementById('ph-error').textContent).toMatch(/Couldn't load your phone lines: down/);
+    fail = false;
+    doc.getElementById('tab-email').click();
+    doc.getElementById('tab-phone').click();
+    await tick(window, 80);
+    expect(calls.filter((c) => c.url === '/api/phone-lines/readable')).toHaveLength(3);
+    expect(doc.getElementById('tab-phone-n').textContent).toBe('1');
+    expect(doc.querySelectorAll('#ph-rail-lines .vitem')).toHaveLength(4);
   });
 
   test('the contact button opens the contact through the shell', async () => {

@@ -26,6 +26,9 @@
  *   - checklistsView.html "Lists for": inactive users under an "Inactive — view
  *     only" group at the end; the selection survives.
  *   - automationManager.html user suggestions: active users only.
+ *   - comms.html Task… "Assign to" (create-only): active staff, never user 0
+ *     — pinned in tests/mailboxS2P.pane.test.js (the hub's own harness),
+ *     comms-polish-2 2026-11-16.
  *
  * Run: npx jest tests/assignPickersActive.test.js
  */

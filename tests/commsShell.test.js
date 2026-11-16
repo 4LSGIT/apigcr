@@ -144,7 +144,7 @@ describe('the badge and the active item, run for real', () => {
   test('readable mailboxes → badge = INBOX unread over them; the entry + Home button stay shown', async () => {
     const t = boot({ api: () => ({ mailboxes: [{ inbox_unread: 3 }, { inbox_unread: '4' }, {}] }) });
     await t.w.commsBadgeRefresh();
-    expect(t.calls).toEqual([['GET', '/api/mail/mailboxes']]);
+    expect(t.calls).toEqual([['GET', '/api/mail/mailboxes'], ['GET', '/api/phone-lines/readable']]);   // B: mail + phone, together
     expect([t.shown('sbComms'), t.shown('homeComms'), t.shown('sbCommsBadge'), t.badge().textContent]).toEqual([true, true, true, '7']);
     // all read: entry stays, badge goes
     t.w.commsBadgeSet(0);
@@ -185,7 +185,20 @@ describe('the badge and the active item, run for real', () => {
     Object.defineProperty(t.w.document, 'visibilityState', { configurable: true, get: () => 'visible' });
     t.intervals[0][0]();
     await tick();
-    expect(t.calls).toEqual([['GET', '/api/mail/mailboxes']]);
+    expect(t.calls).toEqual([['GET', '/api/mail/mailboxes'], ['GET', '/api/phone-lines/readable']]);
+  });
+
+  test('comms-polish-2 B: the phone lines\' unread conversations add to the badge; a failed phone read counts 0 and mail still shows', async () => {
+    const byUrl = (phone) => (url) => url === '/api/phone-lines/readable' ? phone() : { mailboxes: [{ inbox_unread: 3 }] };
+    const t = boot({ api: byUrl(() => ({ lines: [{ id: 1, unread: 2 }], unread_total: 2 })) });
+    await t.w.commsBadgeRefresh();
+    expect(t.badge().textContent).toBe('5');
+    const down = boot({ api: byUrl(() => { throw new Error('502'); }) });
+    await down.w.commsBadgeRefresh();
+    expect([down.shown('sbCommsBadge'), down.badge().textContent]).toEqual([true, '3']);
+    const mailDown = boot({ api: (url) => { if (url === '/api/mail/mailboxes') throw new Error('502'); return { unread_total: 4 }; } });
+    await mailDown.w.commsBadgeRefresh();
+    expect(mailDown.badge().textContent).toBe('4');
   });
 
   // More Features' row is a firm PAGE item since C4: it carries its page tab

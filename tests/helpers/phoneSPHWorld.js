@@ -62,6 +62,16 @@ const KEYSET = ' AND (processed_at < ? OR (processed_at = ? AND id < ?))';
 const ORDER_TAIL = ' ORDER BY processed_at DESC, id DESC LIMIT ?';
 const CONTACTS = 'SELECT cp.phone, c.contact_id, c.contact_name FROM contact_phones cp JOIN contacts c ON c.contact_id = cp.contact_id WHERE cp.phone_active_uniq IN (?)';
 const FIRST_SEEN = 'SELECT MIN(processed_at) AS first_at FROM phone_event_log WHERE other_party = ? AND line_number IN (?) AND suppressed = 0';
+// comms-polish-2 B: read state (phoneCommsService "READ STATE") — statement text lifted from the service at patch time
+const RS_ROWS = "SELECT line_number, other_party, read_through_id FROM phone_read_state WHERE user = ? AND (line_number IN (?) OR line_number = '*')";
+const RS_LAST_IN = "SELECT line_number, other_party, MAX(id) AS last_in_id FROM phone_event_log WHERE other_party IN (?) AND line_number IN (?) AND suppressed = 0 AND direction = 'incoming' AND (event_type = 'sms' OR LOWER(JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status'))) IN ('no-answer', 'missed')) GROUP BY line_number, other_party";
+const RS_COUNTS = "SELECT line_number, other_party, MAX(id) AS last_in_id FROM phone_event_log FORCE INDEX (idx_phone_event_line) WHERE line_number IN (?) AND suppressed = 0 AND other_party IS NOT NULL AND direction = 'incoming' AND (event_type = 'sms' OR LOWER(JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status'))) IN ('no-answer', 'missed')) GROUP BY line_number, other_party";
+const RS_UPSERT = "INSERT INTO phone_read_state (user, line_number, other_party, read_through_id, read_at) VALUES (?, ?, ?, ?, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE read_through_id = ?, read_at = UTC_TIMESTAMP()";
+const RS_MAX_PARTY = "SELECT MAX(id) AS m FROM phone_event_log WHERE other_party = ? AND line_number IN (?) AND suppressed = 0";
+const RS_MAX_LINES = "SELECT MAX(id) AS m FROM phone_event_log WHERE line_number IN (?) AND suppressed = 0";
+const RS_DELETE = "DELETE FROM phone_read_state WHERE user = ? AND line_number IN (?) AND other_party <> ?";
+// comms-polish-2 A4: the case a logged item is about (one probe per thread page; phoneCommsService.caseTagsFor)
+const CASE_TAGS = "SELECT l.log_id, l.log_about_id AS case_id, c.case_number, c.case_number_full FROM log l LEFT JOIN cases c ON c.case_id = l.log_about_id WHERE l.log_id IN (?) AND l.log_about_type = 'case'";
 // Search (slice PS): the list reads' predicate (its three params follow the
 // statement's FIRST param in all four), the two name matchers and the ref
 // matcher's PK lookup.
@@ -130,13 +140,15 @@ function makeWorld() {
     contact_phones: [],
     cases: [],
     case_relate: [],
+    log: [],              // comms-polish-2 A4: firm-log rows the thread items point at (log_id → about-link)
+    phone_read_state: [], // comms-polish-2 B: { user, line_number, other_party, read_through_id, read_at }
     admin_audit_log: [],
     jwt_api_audit_log: [],
     mailboxes: [],
     app_settings: {},     // key → value (comms archive S4: comms_archive_admins)
     comms_media: [],      // comms archive S4: the thread decoration reads it (empty = no archive)
   };
-  const seq = { channel_grants: 0, phone_event_log: 0, admin_audit_log: 0 };
+  const seq = { channel_grants: 0, phone_event_log: 0, admin_audit_log: 0, log: 9000 };
   const statements = [];
   let clock = Date.parse('2026-10-01T12:00:00Z');
 
@@ -186,6 +198,12 @@ function makeWorld() {
     T.contact_phones.push({ id: T.contact_phones.length + 1, contact_id: contactId, phone, end_date: ended ? '2026-01-01' : null });
   };
   /** A case and its relations: relates = [[contact_id, type], …]. */
+  /** A firm-log row (what a phone event's log_id points at); `about` = { type, id } or nothing. Returns its log_id. */
+  W.logRow = ({ about = null } = {}) => {
+    const row = { log_id: ++seq.log, log_about_type: about ? about.type : null, log_about_id: about ? String(about.id) : null };
+    T.log.push(row);
+    return row.log_id;
+  };
   W.kase = (caseId, { number = null, full = null, caption = null } = {}, relates = []) => {
     T.cases.push({ case_id: caseId, case_number: number, case_number_full: full, case_caption: caption });
     for (const [client, type] of relates) {
@@ -283,6 +301,62 @@ function makeWorld() {
       const ci = (x) => String(x).toLowerCase();
       rows.sort((a, b) => (ci(a.case_id) < ci(b.case_id) ? 1 : ci(a.case_id) > ci(b.case_id) ? -1 : 0) || a.phone.localeCompare(b.phone));
       return [rows.slice(0, Number(p[4]))];
+    }
+
+    // ── comms-polish-2 B: read state ──
+    // the unread-making rows: an incoming text, or a missed / unanswered incoming call (provider_status in raw_extra)
+    const statusOf = (e) => { try { const j = JSON.parse(e.raw_extra || 'null'); return j && j.provider_status != null ? String(j.provider_status).toLowerCase() : null; } catch (_) { return null; } };
+    const unreadMaking = (e) => e.direction === 'incoming' && (e.event_type === 'sms' || ['no-answer', 'missed'].includes(statusOf(e)));
+    const groupLastIn = (rows) => {
+      const g = new Map();
+      for (const e of rows) { const k = `${lineOf(e)}|${e.other_party}`; g.set(k, Math.max(g.get(k) || 0, e.id)); }
+      return [...g.entries()].map(([k, id]) => ({ line_number: k.split('|')[0], other_party: k.split('|')[1], last_in_id: id }));
+    };
+    if (sql === RS_ROWS) {
+      const lines = new Set(p[1].map(String));
+      return [T.phone_read_state.filter(r => r.user === Number(p[0]) && (lines.has(String(r.line_number)) || r.line_number === '*'))
+        .map(r => ({ line_number: r.line_number, other_party: r.other_party, read_through_id: r.read_through_id }))];
+    }
+    if (sql === RS_LAST_IN) {
+      const parties = new Set(p[0].map(String));
+      const lines = new Set(p[1].map(String));
+      return [groupLastIn(T.phone_event_log.filter(e => e.other_party != null && parties.has(String(e.other_party)) && lineOf(e) != null && lines.has(String(lineOf(e))) && Number(e.suppressed) === 0 && unreadMaking(e)))];
+    }
+    if (sql === RS_COUNTS) {
+      const lines = new Set(p[0].map(String));
+      return [groupLastIn(T.phone_event_log.filter(e => lineOf(e) != null && lines.has(String(lineOf(e))) && Number(e.suppressed) === 0 && e.other_party != null && unreadMaking(e)))];
+    }
+    if (sql === RS_UPSERT) {
+      const [user, line, party, through] = [Number(p[0]), String(p[1]), String(p[2]), Number(p[3])];
+      const row = T.phone_read_state.find(r => r.user === user && r.line_number === line && r.other_party === party);
+      if (row) { row.read_through_id = Number(p[4]); row.read_at = new Date(clock); return [{ affectedRows: 2 }]; }
+      T.phone_read_state.push({ user, line_number: line, other_party: party, read_through_id: through, read_at: new Date(clock) });
+      return [{ affectedRows: 1 }];
+    }
+    if (sql === RS_MAX_PARTY) {
+      const lines = new Set(p[1].map(String));
+      const ids = T.phone_event_log.filter(e => e.other_party === String(p[0]) && lineOf(e) != null && lines.has(String(lineOf(e))) && Number(e.suppressed) === 0).map(e => e.id);
+      return [[{ m: ids.length ? Math.max(...ids) : null }]];
+    }
+    if (sql === RS_MAX_LINES) {
+      const lines = new Set(p[0].map(String));
+      const ids = T.phone_event_log.filter(e => lineOf(e) != null && lines.has(String(lineOf(e))) && Number(e.suppressed) === 0).map(e => e.id);
+      return [[{ m: ids.length ? Math.max(...ids) : null }]];
+    }
+    if (sql === RS_DELETE) {
+      const lines = new Set(p[1].map(String));
+      const before = T.phone_read_state.length;
+      T.phone_read_state = T.phone_read_state.filter(r => !(r.user === Number(p[0]) && lines.has(String(r.line_number)) && r.other_party !== String(p[2])));
+      return [{ affectedRows: before - T.phone_read_state.length }];
+    }
+
+    // ── comms-polish-2 A4: the thread page's case tags ──
+    if (sql === CASE_TAGS) {
+      const ids = new Set((p[0] || []).map(Number));
+      return [T.log.filter(l => ids.has(Number(l.log_id)) && l.log_about_type === 'case').map(l => {
+        const c = T.cases.find(x => String(x.case_id) === String(l.log_about_id));
+        return { log_id: l.log_id, case_id: l.log_about_id, case_number: c ? c.case_number : null, case_number_full: c ? c.case_number_full : null };
+      })];
     }
 
     // ── auth middleware + audit ──

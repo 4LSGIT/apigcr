@@ -161,7 +161,8 @@ describe('compose (S3)', () => {
     const { doc, calls, errors } = await boot({ handler: standard() });
     expect(errors).toEqual([]);
     // + the admin-tools slot's archive-admin flag (read once per load — tests/commsAdminTools.pane.test.js)
-    expect(calls.map((c) => c.url)).toEqual(['/api/comms-archive/admin', '/api/mail/mailboxes', '/api/mail/views', '/api/mail/messages']);
+    // + the phone lines first (comms-polish-2 B: the Phone tab badge before the tab is opened)
+    expect(calls.map((c) => c.url)).toEqual(['/api/phone-lines/readable', '/api/comms-archive/admin', '/api/mail/mailboxes', '/api/mail/views', '/api/mail/messages']);
     expect([doc.getElementById('compose-btn').hidden, doc.getElementById('rail-compose').hidden]).toEqual([false, false]);
     const ro = await boot({ handler: standard(), mailboxes: MB.map((m) => ({ ...m, can_send: false })) });
     expect([ro.doc.getElementById('compose-btn').hidden, ro.doc.getElementById('rail-compose').hidden]).toEqual([true, true]);

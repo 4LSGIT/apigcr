@@ -193,7 +193,8 @@ describe('comms hub pane', () => {
     expect(doc.getElementById('team').hidden).toBe(true);
     expect(doc.getElementById('email').hidden).toBe(false);
     // + the admin-tools slot's archive-admin flag (read once per load — tests/commsAdminTools.pane.test.js)
-    expect(calls.map((c) => c.url)).toEqual(['/api/comms-archive/admin', '/api/mail/mailboxes', '/api/mail/views', '/api/mail/messages']);
+    // + the phone lines first (comms-polish-2 B: the Phone tab badge before the tab is opened)
+    expect(calls.map((c) => c.url)).toEqual(['/api/phone-lines/readable', '/api/comms-archive/admin', '/api/mail/mailboxes', '/api/mail/views', '/api/mail/messages']);
     expect(doc.querySelectorAll('#msg-list .msg')).toHaveLength(2);
     expect(doc.querySelector('#msg-list .msg').classList.contains('unread')).toBe(true);
     // mailbox chips because two boxes are readable; the case chip on row 2
@@ -569,11 +570,15 @@ describe('comms hub pane', () => {
     const strip = doc.getElementById('thread-related');
     // S2P (D.3): ONE line first — the first contact, their first case, how much more
     expect([strip.hidden, strip.textContent]).toEqual([false, 'In this conversation:Doe, Jane26-22222 · Open+2 ▸']);
+    const allc = strip.querySelector('.chip.allc');   // icon-only on the one-liner, named for the screen reader
+    expect([allc.textContent, allc.getAttribute('aria-label')]).toEqual(['', 'All communications with Doe, Jane']);
     strip.querySelector('.rel-more').click();
-    expect(strip.textContent).toBe('In this conversation:Doe, Jane26-22222 · OpenAcme Trustee LLCAdd to a client:new@person.test');
+    // comms-polish-2: every contact gets an "All communications" chip (their Communications tab — email, texts and calls)
+    expect(strip.textContent).toBe('In this conversation:Doe, Jane All communications26-22222 · OpenAcme Trustee LLC All communicationsAdd to a client:new@person.test');
     strip.querySelector('.chip.person').click();
     strip.querySelector('.chip.case').click();
-    expect(calls.filter((c) => c.addFile).map((c) => c.addFile)).toEqual([['Doe, Jane', 'client', '500'], ['26-22222', 'case', 'CaseB2']]);
+    strip.querySelector('.chip.allc').click();
+    expect(calls.filter((c) => c.addFile).map((c) => c.addFile)).toEqual([['Doe, Jane', 'client', '500'], ['26-22222', 'case', 'CaseB2'], ['Doe, Jane', 'client', '500&tab=send']]);
     // the link-to-case picker (now on the log-status line — A.2) offers the same cases first
     [...doc.querySelectorAll('.logline button')].find((b) => /Link to case/.test(b.textContent)).click();
     expect([...doc.querySelectorAll('#case-sugg li .l1')].map((x) => x.textContent)).toEqual(['26-22222Open']);
@@ -623,7 +628,7 @@ describe('comms hub pane', () => {
     dialogs[0][2]({ action: 'attached', contact_id: 900 });
     await tick(window, 40);
     expect(calls.filter((c) => c.url === '/api/mail/messages/11/related')).toHaveLength(before + 1);
-    expect(strip.textContent).toBe('In this conversation:Smith, AnnAdd to a client:dee@new.testBobcarl@new.test'); // still expanded
+    expect(strip.textContent).toBe('In this conversation:Smith, Ann All communicationsAdd to a client:dee@new.testBobcarl@new.test'); // still expanded
     // first-seen failing never blocks the dialog (it falls back to the log, then today)
     seenFails = true;
     strip.querySelector('.chip.add').click();
