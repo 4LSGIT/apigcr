@@ -1238,6 +1238,9 @@ async function searchCases(db, { q = '', limit = 20 } = {}) {
 // {{contact_name}} {{date}} (firm-local YYYY-MM-DD). Unknown placeholders
 // pass through literally (visible in the folder name — easy to spot).
 
+/** The storage provider the firm's documents live in (D2 makes this a per-tenant setting). */
+const STORAGE_SOURCE = 'dropbox';
+
 const DEFAULT_CASE_FOLDER_TEMPLATES = {
   potential: {
     default: "/  Law Office/   Cases/  Potential Cases/  Potential - {{case_type}}/ {{lfm_name}} - {{case_id}} - {{date}}",
@@ -1309,7 +1312,7 @@ async function _loadCaseFolderTemplates(db) {
  * @throws on unknown case, Dropbox failure, or missing shared link
  */
 async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
-  const dropboxService = require('./dropboxService');     // deferred require (convention)
+  const storage = require('./documentSourceService').get(STORAGE_SOURCE);   // deferred require (convention)
   const { nowLocal } = require('./timezoneService');
 
   const [[caseRow]] = await db.query(
@@ -1379,24 +1382,23 @@ async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
   // being the thing that creates the duplicate.
   let existingLink = null;
   try {
-    const meta = await dropboxService.getMetadata(db, { path });
+    const meta = await storage.stat(db, path);
     if (meta && (meta['.tag'] === 'folder' || meta.folderish || meta.id)) {
-      existingLink = await dropboxService.getOrCreateSharedLink(db, { path });
+      existingLink = await storage.ensureSharedLink(db, path);
       console.log(`[CASE_DROPBOX] adopted pre-existing folder for case ${caseId}: ${path}`);
     }
   } catch (err) {
-    if (!dropboxService.isPathNotFoundError || !dropboxService.isPathNotFoundError(err)) {
+    if (!storage.isNotFound(err)) {
       console.warn(`[CASE_DROPBOX] pre-existing folder probe failed for ${caseId}, creating: ${err.message}`);
     }
   }
 
   const result = existingLink
     ? { path, existed: true, subfolders_created: [], shared_link: existingLink }
-    : await dropboxService.createFolderWithOptions(db, {
-        path,
-        subfolders,
-        shareLink: true,
-      });
+    : await (async () => {
+        const made = await storage.ensureFolder(db, { path }, { subfolders, humanLink: true });
+        return { path: made.path, existed: made.existed, subfolders_created: made.subfolders, shared_link: made.humanLink };
+      })();
   if (!result.shared_link) {
     throw new Error(`ensureCaseDropboxFolder: folder created at "${result.path}" but no shared link returned`);
   }
