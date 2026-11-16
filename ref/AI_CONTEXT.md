@@ -1885,7 +1885,12 @@ change-logged/revertable; the Pabbly 341 UPDATE did this until 2026-10-12.
 `updateCase` does the same on any write carrying `case_number_full` onto a case
 with no judge — `caseService.judgeFillFromDocket`, which the Casey docket /
 case-fields / form-submit cards call to predict it — and `intakeCase` sets both
-on create; a set judge is never changed); trustee
+on create; a set judge is never changed. A REASSIGNMENT — a court email whose
+full docket differs from the stored one only in the suffix — moves
+`case_number_full` (guarded, change-logged and revertable; refused on a
+collision or a flip-back within 3 days of the reverse move) and the judge text
+follows when it named the OLD suffix's judge, retired judges included —
+`courtExecutor` `judgeTextNamesSuffix`); trustee
 vocab = the contact roster (`contact_roles` role rows via `lib/trusteeRoster`;
 `fe-trustees` setting and `judges`/`trustees` tables removed 2026-09-24). `bk_*` columns deliberately
 loose (sheet parity) — don't tighten. `case_relate` links contacts

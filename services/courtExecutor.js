@@ -69,7 +69,9 @@
 //   fill_only  (write only if current NULL/''): case_file_date, case_judge, case_close_date,
 //                                               case_discharge_date
 //              (case_judge is also filled executor-side from the docket
-//               suffix before dispatch — NEFs never name the judge)
+//               suffix before dispatch — NEFs never name the judge — and
+//               follows a court-moved suffix on a reassignment; see the
+//               re-suffix blocks)
 //   overwrite  (write if new !== current)     : case_chapter, case_trustee, case_objection,
 //                                               show_cause (datetime — normally
 //                                               written executor-side on an OSC,
@@ -317,6 +319,53 @@ async function flushChangeRows(db, rows, courtLogId) {
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
+ * Does `judgeText` name the judge whose role carries this docket's suffix?
+ * For the re-suffix (reassignment) judge follow: the text follows the suffix
+ * only if it named the judge the OLD suffix designated. Exact ci name, else
+ * first + last (the drift caseRoleResolver's relaxed pass absorbs).
+ *
+ * Deliberately NOT in lib/caseRoleResolver: it counts INACTIVE judge roles (a
+ * retired judge's cases are exactly the ones a court reassigns in bulk), and
+ * every contact_roles query in that module must carry the one
+ * `cr.active = 1` Ask Casey's role-shift projection rewrites
+ * (tests/caseyContactRelationsRemove.test.js pins it). This is a name
+ * comparison, not a link resolver, so no projection needs to see it.
+ * Exactly one role must carry the suffix. Never throws (false).
+ *
+ * @param {object} db
+ * @param {?string} judgeText
+ * @param {?string} caseNumberFull
+ * @returns {Promise<boolean>}
+ */
+async function judgeTextNamesSuffix(db, judgeText, caseNumberFull) {
+  try {
+    const { _docketSuffix } = require('../lib/caseRoleResolver'); // lazy (convention)
+    const { parseName } = require('../lib/parseName');
+    const text = String(judgeText == null ? '' : judgeText).replace(/\s+/g, ' ').trim();
+    const suffix = _docketSuffix(caseNumberFull);
+    if (!text || !suffix) return false;
+    const [rows] = await db.query(
+      `SELECT c.contact_name, c.contact_fname, c.contact_lname
+         FROM contact_roles r
+         JOIN contacts c ON c.contact_id = r.contact_id
+        WHERE r.role = 'judge'
+          AND LOWER(JSON_UNQUOTE(JSON_EXTRACT(r.attrs, '$.judge_3'))) = ?`,
+      [suffix]
+    );
+    if (rows.length !== 1) return false;
+    const row = rows[0];
+    const low = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().toLowerCase();
+    if (low(row.contact_name) && low(row.contact_name) === text.toLowerCase()) return true;
+    const p = parseName(text);
+    return !!(p.firstName && p.lastName && low(row.contact_fname) && low(row.contact_lname)
+      && low(p.firstName) === low(row.contact_fname) && low(p.lastName) === low(row.contact_lname));
+  } catch (err) {
+    console.warn('[courtExecutor] judgeTextNamesSuffix failed (treated as no match):', err.message);
+    return false;
+  }
+}
+
+/**
  * @param {object} db    mysql2 promise pool (write-capable; req.db)
  * @param {object} opts
  * @param {object} opts.payload  court_extract JSON
@@ -373,12 +422,15 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
     case_id:              (r && r.case_id) ?? null,
     case_number:          (r && r.case_number) ?? null,
     // S1: `case_number_full` reads the value PATCHED by the fill block below
-    // (STEP 2), and `would_fill_docket` closes over `fillFull` set there.
-    // Safe: resolvedSummary is only ever called via finish(), which runs
-    // after STEP 2 on every path — a call added before STEP 2 would throw
-    // (fillFull is in its temporal dead zone until then).
+    // (STEP 2), and `would_fill_docket` / `would_resuffix_docket` close over
+    // `fillFull` / `resuffixFrom` set there. Safe: resolvedSummary is only
+    // ever called via finish(), which runs after STEP 2 on every path — a call
+    // added before STEP 2 would throw (both are in their temporal dead zone
+    // until then).
     case_number_full:     (r && r.case_number_full) ?? null,
     would_fill_docket:    !!fillFull,
+    would_resuffix_docket: !!resuffixFrom, // the stored docket it replaces: previous_case_number_full
+    previous_case_number_full: resuffixFrom,
     primary_contact_id:   (r && r.primary_contact_id) ?? null,
     primary_contact_name: (r && r.primary_contact_name) ?? null,
   });
@@ -424,6 +476,32 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
   ) {
     fillFull = rawDocket;
     resolved.case_number_full = rawDocket; // in-memory: identity tokens, role twins, emit
+  }
+
+  // Docket RE-SUFFIX (judge reassignment, 2026-11-16). The court reassigns a
+  // case by moving its docket suffix ('26-50408-mar' → '26-50408-mlo') — by an
+  // explicit "ORDER ... FOR REASSIGNMENT OF JUDGE" NEF (which already carries
+  // the new suffix), or silently (a retiring judge's cases: 25-47301 kept
+  // '-tjt' while the court mails '-mar'). Either way every later NEF carries
+  // the new suffix and resolves through courtResolve's bare fallback, so the
+  // stored docket and judge stayed stale. Detection: the case holds a full
+  // docket, the email's full docket differs from it ONLY in the suffix
+  // (2–4 letters; capitalisation alone is not a change), the bare number is
+  // the case's case_number (the fallback path), and the same grounding gate
+  // as S1 — the new docket appears literally in the email.
+  const bareOf = (d) => String(d == null ? '' : d).trim().replace(/-[a-z]+$/i, '');
+  const storedFull = String(resolved.case_number_full == null ? '' : resolved.case_number_full).trim();
+  let resuffixFrom = null;
+  if (
+    resolved.found && !fillFull && storedFull &&
+    /^.+-[a-z]{2,4}$/i.test(rawDocket) &&
+    rawDocket.toLowerCase() !== storedFull.toLowerCase() &&
+    bareOf(rawDocket) === bareOf(storedFull) &&
+    bareOf(rawDocket) === String(resolved.case_number == null ? '' : resolved.case_number).trim() &&
+    `${subject || ''}\n${body || ''}`.toLowerCase().includes(rawDocket.toLowerCase())
+  ) {
+    resuffixFrom = storedFull;
+    resolved.case_number_full = rawDocket; // in-memory; restored below if the write is refused
   }
 
   // Caption stamp: the first court email to name a case with no caption sets
@@ -938,12 +1016,12 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
   // Inside the dispatch try, before any action runs: a throw here (collision
   // check / UPDATE) must hit the HARDEN #1 audit-on-error catch below like
   // any dispatch failure.
-  let docketCollided = false; // judge fill below must not read a docket that was refused
+  let docketRefused = false; // the judge block below must not read a docket that was refused
   if (fillFull && !effectiveDryRun) {
     const { checkCaseNumberCollision } = require('./caseService'); // lazy, roleResolver pattern
     const conflict = await checkCaseNumberCollision(db, resolved.case_id, { case_number_full: fillFull });
     if (conflict) {
-      docketCollided = true;
+      docketRefused = true;
       skipped.push({ type: 'fill_docket', reason: 'docket_collision',
                      conflict_case_id: conflict.case_id });
     } else {
@@ -960,6 +1038,53 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
     }
   } else if (fillFull && effectiveDryRun) {
     pushChange('case', resolved.case_id, 'case_number_full', null, fillFull); // plan row, dry_run=1
+  }
+
+  // Re-suffix persist (the STEP 2 detection; judge reassignment). Same paths
+  // as S1's fill. REFUSED — docket and judge stay as stored, and the
+  // in-memory docket is put back — when:
+  //   (a) the case moved AWAY from this exact suffix in the last 3 days (a
+  //       delayed NEF entered before the reassignment must not flip it back;
+  //       a genuine re-reassignment that fast is left to a human — the skip
+  //       entry names it);
+  //   (b) another case holds the new docket (live only, as S1);
+  //   (c) the stored docket changed since resolve (guarded UPDATE, 0 rows).
+  // The change row carries the OLD docket, so revertCourtActions restores it
+  // (S1's fill rows, old NULL, stay unrevertable).
+  if (resuffixFrom) {
+    const [back] = await db.query(
+      `SELECT id FROM ai_change_log
+        WHERE entity_type='case' AND entity_id=? AND field='case_number_full'
+          AND dry_run=0 AND undone_at IS NULL
+          AND LOWER(old_value)=LOWER(?) AND LOWER(new_value)=LOWER(?)
+          AND created_at >= NOW() - INTERVAL 3 DAY
+        ORDER BY id DESC LIMIT 1`,
+      [resolved.case_id, rawDocket, resuffixFrom]
+    );
+    let refusal = back.length ? { reason: 'stale_suffix', change_log_id: back[0].id } : null;
+    if (!refusal && !effectiveDryRun) {
+      const { checkCaseNumberCollision } = require('./caseService'); // lazy, roleResolver pattern
+      const conflict = await checkCaseNumberCollision(db, resolved.case_id, { case_number_full: rawDocket });
+      if (conflict) refusal = { reason: 'docket_collision', conflict_case_id: conflict.case_id };
+    }
+    if (!refusal && !effectiveDryRun) {
+      const [r] = await db.query(
+        `UPDATE cases SET case_number_full=? WHERE case_id=? AND case_number_full=?`,
+        [rawDocket, resolved.case_id, resuffixFrom]
+      );
+      if (r.affectedRows === 1) {
+        pushChange('case', resolved.case_id, 'case_number_full', resuffixFrom, rawDocket);
+      } else {
+        refusal = { reason: 'raced' };
+      }
+    } else if (!refusal) {
+      pushChange('case', resolved.case_id, 'case_number_full', resuffixFrom, rawDocket); // plan row, dry_run=1
+    }
+    if (refusal) {
+      docketRefused = true;
+      resolved.case_number_full = resuffixFrom;
+      skipped.push({ type: 'resuffix_docket', ...refusal, from: resuffixFrom, to: rawDocket });
+    }
   }
 
   // The caption fill rides the same paths as the docket fill above.
@@ -996,7 +1121,16 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
   // When the judge is already set and S1 filled the docket THIS run, only the
   // twin is re-resolved: S1's raw UPDATE bypasses updateCase's twin hook, and
   // the suffix is the resolver's primary key.
-  if (resolved.case_number_full && !docketCollided) {
+  //
+  // When the docket was RE-SUFFIXED this run (a reassignment), a set judge
+  // FOLLOWS the suffix only if its text named the judge the OLD suffix
+  // designated (judgeTextNamesSuffix, module scope — retired judges count):
+  // then it becomes the new suffix's judge, change-logged like the fill.
+  // Text already naming the new judge, or naming someone else, stays —
+  // the twin alone re-resolves (suffix first), and "someone else" is a skip
+  // entry for review. A new suffix on no active judge role leaves the text
+  // and says so (suffix_not_on_roster: the roster needs that judge).
+  if (resolved.case_number_full && !docketRefused) {
     try {
       if (!curCaseRow) {
         const [rows] = await db.query(
@@ -1021,6 +1155,37 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
           }
         } else if (hit) {
           pushChange('case', resolved.case_id, 'case_judge', '', hit.name); // plan row, dry_run=1
+        }
+      } else if (resuffixFrom) {
+        const newFull = resolved.case_number_full;
+        const relink = async () => {
+          if (effectiveDryRun) return;
+          const cid = await roleResolver.resolveJudge(db, { case_number_full: newFull, case_judge: curJudge });
+          await db.query(`UPDATE cases SET case_judge_contact_id=? WHERE case_id=?`, [cid, resolved.case_id]);
+        };
+        const newHit = await roleResolver.judgeFromDocket(db, newFull);
+        if (!newHit) {
+          skipped.push({ type: 'judge_follow', reason: 'suffix_not_on_roster', docket: newFull });
+          await relink();
+        } else if (await judgeTextNamesSuffix(db, curJudge, newFull)) {
+          await relink(); // the text already names the new judge
+        } else if (await judgeTextNamesSuffix(db, curJudge, resuffixFrom)) {
+          if (!effectiveDryRun) {
+            const [r] = await db.query(
+              `UPDATE cases SET case_judge=?, case_judge_contact_id=?
+                WHERE case_id=? AND case_judge=?`,
+              [newHit.name, newHit.contact_id, resolved.case_id, curCaseRow.case_judge]
+            );
+            if (r.affectedRows === 1) {
+              curCaseRow.case_judge = newHit.name;
+              pushChange('case', resolved.case_id, 'case_judge', curJudge, newHit.name);
+            }
+          } else {
+            pushChange('case', resolved.case_id, 'case_judge', curJudge, newHit.name); // plan row, dry_run=1
+          }
+        } else {
+          skipped.push({ type: 'judge_follow', reason: 'judge_text_not_old_judge', judge: curJudge.slice(0, 100) });
+          await relink();
         }
       } else if (fillFull && !effectiveDryRun) {
         const cid = await roleResolver.resolveJudge(db, {
@@ -1700,8 +1865,9 @@ async function revertCourtActions(db, { messageId, changeLogIds, dryRun = true, 
 
   const reverted = [];
   const skipped = [];
-  // slice 6: cases whose case_judge / case_trustee / case_chapter were
-  // restored — their twins get re-resolved once, after the loop.
+  // slice 6: cases whose case_judge / case_trustee / case_chapter (or a
+  // re-suffixed case_number_full) were restored — their twins get
+  // re-resolved once, after the loop.
   const roleTwinCases = new Set();
 
   const stamp = async (id) => {
@@ -1717,6 +1883,30 @@ async function revertCourtActions(db, { messageId, changeLogIds, dryRun = true, 
 
     // ── case/<col> ──────────────────────────────────────────────────────
     if (entity_type === 'case') {
+      // A RE-SUFFIX row (judge reassignment) carries the OLD docket and is
+      // restorable: case_number_full has no policy entry (it is never an AI
+      // column), so it is handled here — when the case still holds the new
+      // docket and no other case took the old one. S1's fill rows (old NULL
+      // or '') stay unrevertable: they re-fill on the next notice.
+      if (field === 'case_number_full' && old_value != null && String(old_value).trim() !== '') {
+        const [cur] = await db.query(
+          `SELECT case_number_full AS v FROM cases WHERE case_id=? LIMIT 1`, [entity_id]
+        );
+        if (!cur.length) { skipped.push({ change_log_id: id, reason: 'entity_missing' }); continue; }
+        if (String(cur[0].v == null ? '' : cur[0].v).trim() !== String(new_value == null ? '' : new_value).trim()) {
+          skipped.push({ change_log_id: id, reason: 'modified_since' }); continue;
+        }
+        const { checkCaseNumberCollision } = require('./caseService'); // lazy, roleResolver pattern
+        const conflict = await checkCaseNumberCollision(db, entity_id, { case_number_full: old_value });
+        if (conflict) { skipped.push({ change_log_id: id, reason: 'docket_collision', conflict_case_id: conflict.case_id }); continue; }
+        if (!dryRun) {
+          await db.query(`UPDATE cases SET case_number_full=? WHERE case_id=?`, [old_value, entity_id]);
+          roleTwinCases.add(String(entity_id)); // the suffix is the judge link's primary key
+        }
+        await stamp(id);
+        reverted.push({ change_log_id: id, entity_type, entity_id: String(entity_id), field, action: 'restored' });
+        continue;
+      }
       const policy = CASE_FIELD_POLICY[field];
       if (!policy) { skipped.push({ change_log_id: id, reason: 'unrevertable' }); continue; }
 
@@ -2023,5 +2213,6 @@ module.exports = {
     toDatePart, toTimePart,
     titlesMatch, _titleCore, titlesSimilarLoose, _titleNorm,
     findDuplicateEvent, buildIdentityTokens,
+    judgeTextNamesSuffix,
   },
 };
