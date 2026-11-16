@@ -3682,6 +3682,14 @@
        "wait": false
       }
      ]
+    },
+    {
+     "fn": "createFolder",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Unsorted Client Uploads/ Plain"
+      }
+     ]
     }
    ],
    "effects": [],
@@ -3738,6 +3746,10 @@
     {
      "tag": "folder",
      "path": "/  Law Office/   Cases/  Unsorted Client Uploads"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads/ Plain"
     },
     {
      "tag": "folder",
@@ -5264,6 +5276,29 @@
        "toPath": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Forms/Form 121.pdf"
       }
      ]
+    },
+    {
+     "fn": "saveUrl",
+     "args": [
+      {
+       "filename": " Order.pdf",
+       "sharedLink": "https://www.dropbox.com/scl/fo/fake0001?dl=0",
+       "subfolder": "court docs",
+       "timeoutMs": 90000,
+       "url": "https://court.example/doc1/0007.pdf",
+       "wait": true
+      }
+     ]
+    },
+    {
+     "fn": "saveUrl",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Unsorted Client Uploads/ slow.pdf",
+       "url": "https://example.invalid/slow.pdf",
+       "wait": false
+      }
+     ]
     }
    ],
    "effects": [
@@ -5763,12 +5798,37 @@
      }
     },
     {
+     "kind": "d1f.importUrl",
+     "metadata": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:06Z",
+      "content_hash": "0043137cf045eba43d10c3c56c286301ee4436875ad175048b4b8aeb8d65193f",
+      "id": "id:f0006",
+      "is_downloadable": true,
+      "name": " Order.pdf",
+      "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/court docs/ Order.pdf",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/court docs/ order.pdf",
+      "rev": "rev000006",
+      "server_modified": "2026-11-17T12:00:06Z",
+      "size": 18
+     },
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/court docs/ Order.pdf",
+     "status": "complete"
+    },
+    {
+     "kind": "d1f.importUrl",
+     "async_job_id": "job1",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads/ slow.pdf",
+     "status": "in_progress"
+    },
+    {
      "kind": "d1a.declarations",
      "capabilities": {
       "changeNotify": false,
       "directUpload": true,
       "humanLink": true,
       "humanManaged": true,
+      "importUrl": true,
       "listChanges": true
      },
      "nameRules": {
@@ -5822,6 +5882,15 @@
     {
      "tag": "folder",
      "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Correspondence - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/court docs"
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/court docs/ Order.pdf",
+     "size": 18
     },
     {
      "tag": "folder",

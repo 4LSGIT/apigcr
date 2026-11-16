@@ -52,6 +52,8 @@ const PATCHED = [
   'createFolder', '_resolveCredential', 'resolveLocation',
   // D1d2
   'listFolder',
+  // D1f
+  'renamePath', 'saveUrl',
 ];
 const real = {};
 
@@ -77,6 +79,9 @@ beforeEach(() => {
   dropbox.resolveLocation        = jest.fn(async (db, cred, o) => '/  law office/   cases/  active cases/ case a');
   // D1d2
   dropbox.listFolder             = jest.fn(async () => ({ entries: [{ '.tag': 'folder', name: 'Client Uploads' }], count: 1, truncated: false }));
+  // D1f
+  dropbox.renamePath             = jest.fn(async () => ({ metadata: { id: 'id:R' } }));
+  dropbox.saveUrl                = jest.fn(async (db, o) => ({ status: 'complete', path: o.path || `<${o.sharedLink}>/${o.filename}`, metadata: { '.tag': 'file', id: 'id:S' } }));
 });
 
 afterEach(() => { jest.clearAllMocks(); });
@@ -107,10 +112,10 @@ describe('registry', () => {
     const p = sources.get('dropbox');
     for (const fn of ['stat', 'tempViewUrl', 'download', 'move', 'rename', 'remove', 'ensureSharedLink',
       'upload', 'ensureFolder', 'directUpload', 'listChanges', 'isCursorReset', 'isNotFound', 'isTransient',
-      'context', 'resolveHumanLink', 'joinPath', 'list']) {
+      'context', 'resolveHumanLink', 'joinPath', 'list', 'importUrl']) {
       expect(typeof p[fn]).toBe('function');
     }
-    expect(p.capabilities).toEqual({ humanManaged: true, directUpload: true, humanLink: true, listChanges: true, changeNotify: false });
+    expect(p.capabilities).toEqual({ humanManaged: true, directUpload: true, humanLink: true, listChanges: true, changeNotify: false, importUrl: true });
     expect(Object.isFrozen(p.capabilities)).toBe(true);
     expect(Object.isFrozen(p.nameRules)).toBe(true);
   });
@@ -364,16 +369,47 @@ describe('dropbox provider — D1a writes and folders', () => {
     await p().list(DB, { humanLink: 'https://www.dropbox.com/scl/fo/a?dl=0' }, { recursive: true, max: 4000 }, { credentialId: 8 });
     expect(dropbox.listFolder).toHaveBeenLastCalledWith(DB, { sharedLink: 'https://www.dropbox.com/scl/fo/a?dl=0', recursive: true, maxEntries: 4000, credentialId: 8 });
     folderMeta();
-    await p().list(DB, { folder: FOLDER }, { recursive: false });
+    await p().list(DB, { folder: FOLDER }, { recursive: false });   // a boolean is sent as given (the automation functions send false)
+    expect(dropbox.listFolder).toHaveBeenLastCalledWith(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A', recursive: false });
+    await p().list(DB, { folder: FOLDER }, {});
     expect(dropbox.listFolder).toHaveBeenLastCalledWith(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A' });
     await expect(p().list(DB, {})).rejects.toThrow('needs path, folder or humanLink');
   });
 
-  test('move passes autorename only when asked — the refile relies on it, the S1 callers never sent it', async () => {
+  test('move passes autorename as given when boolean (the refile sends true, the automation function sends false), nothing otherwise', async () => {
     await p().move(DB, FID, '/  Dest/x.pdf', { credentialId: 8, autorename: true });
     expect(dropbox.movePath).toHaveBeenLastCalledWith(DB, { fromPath: FID, toPath: '/  Dest/x.pdf', autorename: true, credentialId: 8 });
     await p().move(DB, FID, '/  Dest/x.pdf', { autorename: false });
+    expect(dropbox.movePath).toHaveBeenLastCalledWith(DB, { fromPath: FID, toPath: '/  Dest/x.pdf', autorename: false });
+    await p().move(DB, FID, '/  Dest/x.pdf');
     expect(dropbox.movePath).toHaveBeenLastCalledWith(DB, { fromPath: FID, toPath: '/  Dest/x.pdf' });
+  });
+
+  test('D1f: move / rename / remove by a human link, rename by a path — the provider\'s own calls; a handle still takes the detour', async () => {
+    const link = 'https://www.dropbox.com/scl/fo/a?dl=0';
+    await p().move(DB, { humanLink: link }, '/  Active/ Case A', { autorename: false });
+    expect(dropbox.movePath).toHaveBeenLastCalledWith(DB, { fromSharedLink: link, toPath: '/  Active/ Case A', autorename: false });
+    await p().remove(DB, { humanLink: link });
+    expect(dropbox.deletePath).toHaveBeenLastCalledWith(DB, { sharedLink: link });
+    await p().rename(DB, { humanLink: link }, ' Smith, John');
+    expect(dropbox.renamePath).toHaveBeenLastCalledWith(DB, { sharedLink: link, newName: ' Smith, John' });
+    await p().rename(DB, '/  Active/ Case A', ' Smith, John', { credentialId: 8 });
+    expect(dropbox.renamePath).toHaveBeenLastCalledWith(DB, { path: '/  Active/ Case A', newName: ' Smith, John', credentialId: 8 });
+    expect(dropbox.getMetadata).not.toHaveBeenCalled();
+    await p().rename(DB, FID, 'b.xlsx');
+    expect(dropbox.getMetadata).toHaveBeenCalledWith(DB, { path: FID });   // the handle: resolve, then move
+    await expect(p().move(DB, { nope: 1 }, '/x')).rejects.toThrow('needs humanLink');
+    await expect(p().remove(DB, '')).rejects.toThrow('a source is required');
+  });
+
+  test('D1f: importUrl by path or inside a human link; wait and timeout only when given', async () => {
+    const link = 'https://www.dropbox.com/scl/fo/a?dl=0';
+    const r = await p().importUrl(DB, { humanLink: link, name: ' x.pdf', subfolder: 'court docs' }, 'https://court.example/1.pdf', { wait: true, timeoutMs: 90000 });
+    expect(dropbox.saveUrl).toHaveBeenLastCalledWith(DB, { url: 'https://court.example/1.pdf', sharedLink: link, filename: ' x.pdf', subfolder: 'court docs', wait: true, timeoutMs: 90000 });
+    expect(r.status).toBe('complete');
+    await p().importUrl(DB, { path: '/  Bin/ x.pdf' }, 'https://court.example/1.pdf', {}, { credentialId: 8 });
+    expect(dropbox.saveUrl).toHaveBeenLastCalledWith(DB, { url: 'https://court.example/1.pdf', path: '/  Bin/ x.pdf', credentialId: 8 });
+    await expect(p().importUrl(DB, { path: '/x' }, '')).rejects.toThrow('requires url');
   });
 
   test('the error predicates are dropboxService\'s own verdicts', () => {

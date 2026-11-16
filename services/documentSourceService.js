@@ -71,8 +71,18 @@
  *       not the sync engine's resumable listChanges. dest: { path } |
  *       { folder: externalId } | { humanLink }. Entries are the provider's own
  *       shape (D1d2; normalized with the attribution strategies in D4).
- *   move(db, externalId, toPath, { autorename? }) — autorename lets the provider
- *       pick "name (1)" on a collision instead of failing (the refile's contract).
+ *   move(db, from, toPath, { autorename? }) — autorename lets the provider pick
+ *       "name (1)" on a collision instead of failing (the refile's contract); a
+ *       boolean is sent as given (the automation functions send false explicitly).
+ *   move / rename / remove take `from` as an externalId, a path, or { humanLink }
+ *       (D1f: the automation functions address a case folder by the link in
+ *       cases.case_dropbox until the binding row exists, D3). rename by a path or
+ *       a human link delegates to the provider's rename; only an "id:" handle takes
+ *       the resolve-then-move detour (the handle-chop trap below).
+ *   importUrl(db, dest, url, { wait?, timeoutMs? }) -> { status, path, metadata? | async_job_id }
+ *       A provider-side transfer from a URL — no bytes through this process. A
+ *       CAPABILITY (`capabilities.importUrl`): a provider without it has to fetch
+ *       and upload through the app (D5).
  *   ensureFolder's `externalId` is the handle when the provider learned it for
  *   free (Dropbox: a folder it just CREATED) or when opts.handle === true (one
  *   get_metadata more on an adopted folder); otherwise null. `path` is the
@@ -165,6 +175,16 @@ async function _folderPath(db, externalId, opts) {
   return p;
 }
 
+/** An externalId / path string, or { humanLink }, as dropboxService's {path | sharedLink} pair. */
+function _from(from) {
+  if (from && typeof from === 'object') {
+    if (!from.humanLink || typeof from.humanLink !== 'string') throw new Error('document storage: a source object needs humanLink');
+    return { sharedLink: from.humanLink };
+  }
+  if (!from || typeof from !== 'string') throw new Error('document storage: a source is required');
+  return { path: from };
+}
+
 function _needName(dest, field) {
   const v = dest && dest[field];
   if (!v || typeof v !== 'string') throw new Error(`document storage: ${field} is required`);
@@ -203,6 +223,7 @@ const dropboxProvider = {
     humanLink: true,       // shared links
     listChanges: true,     // files/list_folder + /continue, one cursor
     changeNotify: false,   // no webhook wired; the tick polls the cursor (the baseline)
+    importUrl: true,       // files/save_url — the transfer runs on Dropbox's side
   }),
   nameRules: dropboxNameRules,
 
@@ -223,10 +244,12 @@ const dropboxProvider = {
     return dropbox.downloadFile(db, { path: externalId, ..._dbxOpts(opts) });
   },
 
-  async move(db, externalId, toPath, opts = {}) {
+  async move(db, from, toPath, opts = {}) {
+    const src = _from(from);
     return dropbox.movePath(db, {
-      fromPath: externalId, toPath,
-      ...(opts.autorename === true ? { autorename: true } : {}),
+      ...(src.path != null ? { fromPath: src.path } : { fromSharedLink: src.sharedLink }),
+      toPath,
+      ...(typeof opts.autorename === 'boolean' ? { autorename: opts.autorename } : {}),
       ..._dbxOpts(opts),
     });
   },
@@ -244,13 +267,20 @@ const dropboxProvider = {
    * So: resolve the handle to its real path first, compose the sibling path
    * from path_display (leading/embedded spaces intact — never trim), and move.
    */
-  async rename(db, externalId, newName, opts = {}) {
+  async rename(db, from, newName, opts = {}) {
     if (!newName || typeof newName !== 'string') {
       throw new Error('document rename requires newName');
     }
     if (newName.includes('/')) {
       throw new Error('document rename: newName must not contain "/" — use move to relocate');
     }
+    const src = _from(from);
+    if (src.sharedLink || !/^id:/.test(src.path)) {
+      // a real path or a human link: the provider's rename derives the parent
+      // correctly (the chop below bites HANDLES only)
+      return dropbox.renamePath(db, { ...src, newName, ..._dbxOpts(opts) });
+    }
+    const externalId = src.path;
 
     const meta = await dropboxProvider.stat(db, externalId, opts);
     const current = meta && (meta.path_display || meta.path_lower);
@@ -269,8 +299,8 @@ const dropboxProvider = {
     });
   },
 
-  async remove(db, externalId, opts = {}) {
-    return dropbox.deletePath(db, { path: externalId, ..._dbxOpts(opts) });
+  async remove(db, from, opts = {}) {
+    return dropbox.deletePath(db, { ..._from(from), ..._dbxOpts(opts) });
   },
 
   /** Permanent public link (get-or-create). Returns the URL string. */
@@ -399,7 +429,7 @@ const dropboxProvider = {
   /** A bounded read of a folder's children — the exact files/list_folder call the filers make. */
   async list(db, dest = {}, { recursive, max } = {}, opts = {}) {
     const bound = {
-      ...(recursive === true ? { recursive: true } : {}),
+      ...(typeof recursive === 'boolean' ? { recursive } : {}),
       ...(Number(max) > 0 ? { maxEntries: Number(max) } : {}),
       ..._dbxOpts(opts),
     };
@@ -407,6 +437,20 @@ const dropboxProvider = {
     if (dest.folder) return dropbox.listFolder(db, { path: await _folderPath(db, dest.folder, opts), ...bound });
     if (dest.path == null) throw new Error('document storage: list needs path, folder or humanLink');
     return dropbox.listFolder(db, { path: dest.path, ...bound });
+  },
+
+  /** A provider-side transfer from a URL into dest (files/save_url); wait/timeout sent only when given. */
+  async importUrl(db, dest = {}, url, { wait, timeoutMs } = {}, opts = {}) {
+    if (!url || typeof url !== 'string') throw new Error('document storage: importUrl requires url');
+    const target = dest.path
+      ? { path: dest.path }
+      : { sharedLink: dest.humanLink, filename: dest.name, subfolder: dest.subfolder };
+    return dropbox.saveUrl(db, {
+      url, ...target,
+      ...(wait !== undefined ? { wait: wait === true } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      ..._dbxOpts(opts),
+    });
   },
 
   isCursorReset: (err) => dropbox.isCursorResetError(err),

@@ -132,6 +132,10 @@ const EXPECTED_ELIGIBLE = [
   'run_error_sweep', 'run_event_digest', 'run_task_digest', 'send_email', 'send_mms',
   'send_sms', 'set_log_about', 'set_setting', 'set_system_alert_status', 'set_var',
   'start_workflow',
+  // storage-seam D1f-1: the storage_* names take the dropbox_* names' disposition
+  // (eligible); the dropbox_* aliases stay until D1f-3 deletes them.
+  'storage_delete', 'storage_ensure_case_folder', 'storage_ensure_folder', 'storage_human_link',
+  'storage_import_url', 'storage_list', 'storage_move', 'storage_rename',
   'sweep_calendar_missed', 'sweep_trigger_executions', 'update_appointment', 'update_case',
   'update_contact', 'update_db', 'update_event', 'update_log', 'validate_case_trustee',
 ];

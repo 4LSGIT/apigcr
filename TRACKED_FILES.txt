@@ -101,6 +101,7 @@ lib/internal_functions/pipeline.js
 lib/internal_functions/portalCallback.js
 lib/internal_functions/reports.js
 lib/internal_functions/sequences.js
+lib/internal_functions/storage.js
 lib/internal_functions/system.js
 lib/internal_functions/tasks.js
 lib/internal_functions/timing.js
