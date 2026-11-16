@@ -13,6 +13,28 @@
  *                                           the send
  *   seedSentReadState(db, data, {final})    the deferred read-state seed
  *                                           (lib/job_executor 'mail_sent_read_seed')
+ *   loadAttachments(db, ids)                the `documents` rows a send attaches,
+ *                                           checked (active, size known, caps) — 400s
+ *   fetchAttachments(db, docs)              their bytes (documentSourceService) as
+ *                                           nodemailer {filename, content} — 502s
+ *   Scheduled sends live beside this file: services/mailbox/mailboxScheduledSendService.js.
+ *
+ * ── ATTACHMENTS (hub-send extras, 2026-11-16) ────────────────────────────────
+ * Registered documents only — body key `attachments: [{document_id}]` (bare
+ * ids accepted and normalised to that shape, so a stored validated body
+ * round-trips). ACCESS = anyone who can send: `documents` carries no per-case
+ * grant and GET /api/documents/:id/raw serves any staff the same way, so a
+ * sender may attach any registered file. Checked BEFORE the daily budget and
+ * before any Dropbox call (loadAttachments: each id an ACTIVE row with a KNOWN
+ * size — /raw's rule: "we do not know how big this is" is not a reason to
+ * find out by buffering it — under the caps below; duplicates collapse);
+ * the bytes are fetched BEFORE dispatch (fetchAttachments), every file, and
+ * any fetch failure is a 502 `ATTACHMENT_FETCH_FAILED` with `expose` — nothing
+ * was sent, the file is named. Filename = documents.name; the content type is
+ * left to MailComposer (inferred from the filename): `documents.mime` is what
+ * the provider claimed at registration, never verified, and a wrong declared
+ * type on a sent file is worse than none. The SAME inline attachments go into
+ * the Sent APPEND copy. Nothing new is written to mail_sends (no migration).
  *
  * ── THE GRANT CHECK IS HERE, ON THE INTERACTIVE SEAT (D6) ────────────────────
  * can_send via mailboxService.getAccess — SU bypass = full access (S0), and
@@ -95,6 +117,7 @@ const { loadConnectionRow, folderConfig, htmlToText } = require('./mailboxIngest
 const logService = require('../logService');
 const { inferDirection, firmDomains } = require('../emailIngestService');
 const read = require('./mailReadService');
+const sources = require('../documentSourceService');
 const { getSetting } = require('../settingsService');
 const { utcToLocal } = require('../timezoneService');
 const mailboxColor = require('../../public/js/mailboxColor');
@@ -102,6 +125,20 @@ const mailboxColor = require('../../public/js/mailboxColor');
 const { httpError } = mbx;
 
 const MAX_RECIPIENTS = 10;          // To + Cc + Bcc, after de-duplication
+// ── Attachment caps (header, ATTACHMENTS) ──
+// The arithmetic, pinned: the Gmail adapter's budget is GMAIL_MAX_BYTES (25 MiB)
+// minus MIME_OVERHEAD_BYTES (1 MiB) = 24 MiB of BASE64 (gmail.js
+// ATTACHMENT_BASE64_BUDGET), and base64 is 4/3 of the raw bytes, so the raw
+// ceiling the adapter accepts is 24 × 3/4 = 18 MiB. 15 MiB raw → 20 MiB of
+// base64, 4 MiB under the budget for the headers, bodies and quoted original.
+// (20 MB raw — the first draft of this cap — is 26.7 MB of base64, OVER the
+// budget: the adapter would throw after every Dropbox fetch, a 502 the sender
+// cannot act on.) Memory: dropboxService buffers a download in full, twice
+// over in the worst case (routes/api.documents.js RAW_INLINE_MAX_BYTES), so a
+// send holds ≤ 2 × 15 MiB of attachment bytes plus the compiled MIME.
+const MAX_ATTACHMENTS = 10;                       // files per message, after duplicate ids collapse
+const ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024;    // one file (documents.size — known, or refused)
+const ATTACHMENTS_TOTAL_BYTES = 15 * 1024 * 1024; // all files together
 const SUBJECT_MAX = 500;
 const TEXT_MAX = 200_000;           // characters of the new text
 const HTML_MAX = 500_000;
@@ -134,6 +171,8 @@ const BODY_KEYS = Object.freeze([
   // The staff sender's acknowledgement of an opted-out recipient — read by
   // the route's opt-out gate (services/optoutService.js), nothing here.
   'acknowledge_optout',
+  // Registered documents to attach: [{document_id}] (header, ATTACHMENTS).
+  'attachments',
 ]);
 
 const EMAIL_RE = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[^\s@<>()[\]\\,;:"]+$/;
@@ -235,6 +274,27 @@ function recipientList(v, label) {
   if (v.length > MAX_RECIPIENTS * 3) throw httpError(400, `${label} has too many entries`);
   return v.map(x => parseRecipient(x, label));
 }
+
+/**
+ * attachments → unique document ids in request order, ≤ MAX_ATTACHMENTS.
+ * The documented shape is [{document_id}]; a bare id is accepted and means
+ * the same (the stored body of a scheduled send carries the id list).
+ */
+function attachmentIds(v) {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) throw httpError(400, 'attachments must be an array of {document_id}');
+  if (v.length > MAX_ATTACHMENTS * 3) throw httpError(400, 'attachments has too many entries');
+  const ids = [];
+  for (const x of v) {
+    const raw = x && typeof x === 'object' && !Array.isArray(x) ? x.document_id : x;
+    const id = toId(raw, 'attachments: document_id');
+    if (!ids.includes(id)) ids.push(id);
+  }
+  if (ids.length > MAX_ATTACHMENTS) throw httpError(400, `at most ${MAX_ATTACHMENTS} attachments on one message`);
+  return ids;
+}
+
+const mb = (n) => `${(n / (1024 * 1024)).toFixed(n % (1024 * 1024) ? 1 : 0)} MB`;
 
 /** "Name" <a@b> | a@b — names are cleanName()d, so the quoting is safe. */
 function formatAddr(r) {
@@ -397,6 +457,84 @@ function validateSendBody(body) {
     out.case_id = c;
   }
   if (!out.in_reply_to_message_fk && !out.subject) throw httpError(400, 'subject is required');
+  // Attachments: shape here (ids); the rows are checked against `documents`
+  // BEFORE dispatch (loadAttachments) and the bytes fetched before it.
+  out.attachments = attachmentIds(body.attachments);
+  return out;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Attachments (header, ATTACHMENTS)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ATTACHMENT_COLS = 'id, source, external_id, name, size, status';
+
+/**
+ * The `documents` rows behind `ids`, in request order, each checked: present
+ * (400 naming the id), status 'active' (400 naming the file — deleted or
+ * missing), a KNOWN size (NULL → 400: the /raw rule), ≤ ATTACHMENT_MAX_BYTES,
+ * and together ≤ ATTACHMENTS_TOTAL_BYTES. No provider call here.
+ * → [{document_id, source, external_id, name, size}]
+ */
+async function loadAttachments(db, ids) {
+  if (!ids || !ids.length) return [];
+  const [rows] = await db.query(`SELECT ${ATTACHMENT_COLS} FROM documents WHERE id IN (?)`, [ids]);
+  const byId = new Map(rows.map(r => [Number(r.id), r]));
+  const out = [];
+  let total = 0;
+  for (const id of ids) {
+    const r = byId.get(id);
+    if (!r) throw httpError(400, `attachments: document #${id} is not a registered document`);
+    const name = oneLine(r.name) || `document-${id}`;
+    if (r.status !== 'active') {
+      throw httpError(400, `attachments: "${name}" has been ${r.status === 'deleted' ? 'deleted from storage' : 'reported missing'} — remove it to send`);
+    }
+    const size = r.size == null ? null : Number(r.size);
+    if (size == null || !Number.isFinite(size)) {
+      throw httpError(400, `attachments: the size of "${name}" is not known, so it cannot be attached (re-register it in Documents)`);
+    }
+    if (size > ATTACHMENT_MAX_BYTES) throw httpError(400, `attachments: "${name}" is ${mb(size)} — at most ${mb(ATTACHMENT_MAX_BYTES)} per file`);
+    total += size;
+    if (total > ATTACHMENTS_TOTAL_BYTES) throw httpError(400, `attachments: together they come to more than ${mb(ATTACHMENTS_TOTAL_BYTES)}`);
+    out.push({ document_id: id, source: r.source, external_id: r.external_id, name, size });
+  }
+  return out;
+}
+
+function attachmentFetchError(doc, why) {
+  const e = httpError(502, `The message was not sent: the attachment "${doc.name}" could not be fetched from storage (${why}).`);
+  e.code = 'ATTACHMENT_FETCH_FAILED';
+  e.expose = true; // the route shows a 5xx message only when told to (SEND_FAILED's pattern)
+  return e;
+}
+
+/**
+ * The bytes of every attachment, through the registry's provider
+ * (documentSourceService `download` → {buffer}), as nodemailer inline
+ * attachments {filename, content}. Any failure → 502 ATTACHMENT_FETCH_FAILED
+ * naming the file, before anything is dispatched. A file that has grown past
+ * the cap since registration is refused the same way (the registry's size is
+ * what was checked; the Gmail budget is what the cap protects).
+ */
+async function fetchAttachments(db, docs) {
+  const out = [];
+  let total = 0;
+  for (const d of docs) {
+    let r;
+    try {
+      r = await sources.get(d.source).download(db, d.external_id);
+    } catch (err) {
+      throw attachmentFetchError(d, oneLine(err && err.message).slice(0, 200) || 'no detail');
+    }
+    const buffer = r && r.buffer;
+    if (!Buffer.isBuffer(buffer)) throw attachmentFetchError(d, 'storage returned no bytes');
+    total += buffer.length;
+    if (buffer.length > ATTACHMENT_MAX_BYTES || total > ATTACHMENTS_TOTAL_BYTES) {
+      throw attachmentFetchError(d, `it is ${mb(buffer.length)} in storage, larger than the ${mb(d.size)} the registry recorded — re-register it in Documents`);
+    }
+    out.push({ filename: d.name, content: buffer });
+  }
   return out;
 }
 
@@ -504,7 +642,21 @@ async function listIdentities(db, userId) {
   });
   // Stable: each group keeps listSendable's address order.
   identities.sort((a, b) => Number(a.send_only) - Number(b.send_only));
-  return { identities, max_recipients: MAX_RECIPIENTS };
+  // The composer's courtesy caps, from the server's constants (the server
+  // decides; the page mirrors). The schedule window comes from the scheduler
+  // module — required here, not at load (it requires this file).
+  const sched = require('./mailboxScheduledSendService');
+  return {
+    identities,
+    max_recipients: MAX_RECIPIENTS,
+    limits: {
+      max_attachments: MAX_ATTACHMENTS,
+      attachment_max_bytes: ATTACHMENT_MAX_BYTES,
+      attachments_total_bytes: ATTACHMENTS_TOTAL_BYTES,
+      schedule_min_ahead_ms: sched.MIN_AHEAD_MS,
+      schedule_max_ahead_ms: sched.MAX_AHEAD_MS,
+    },
+  };
 }
 
 /**
@@ -548,6 +700,15 @@ async function loadParent(db, userId, messageId, label = 'message id') {
     throw httpError(404, 'Message not found');
   }
   return row;
+}
+
+/** The composer's Case field: the `cases` row, or 400 (S2P §G — checked BEFORE dispatch; the scheduler checks it at scheduling too). */
+async function loadCase(db, caseId) {
+  const [[cs]] = await db.query(
+    'SELECT case_id, case_number, case_number_full FROM cases WHERE case_id = ? LIMIT 1', [caseId]
+  );
+  if (!cs) throw httpError(400, `case_id "${caseId}" is not a case`);
+  return cs;
 }
 
 /**
@@ -774,16 +935,15 @@ async function sendFromMailbox(db, userId, mailboxId, bodyIn) {
 
   // S2P §G: the Case field is validated BEFORE dispatch — an unknown case is
   // a 400 and nothing leaves (caseLink's own rule, run early).
-  let caseRow = null;
-  if (body.case_id) {
-    const [[cs]] = await db.query(
-      'SELECT case_id, case_number, case_number_full FROM cases WHERE case_id = ? LIMIT 1', [body.case_id]
-    );
-    if (!cs) throw httpError(400, `case_id "${body.case_id}" is not a case`);
-    caseRow = cs;
-  }
+  const caseRow = body.case_id ? await loadCase(db, body.case_id) : null;
+  // Attachments (header): the rows checked — active, size known, under the
+  // caps — before the budget and before any Dropbox call; the bytes fetched
+  // after the budget and before the dispatch, so a 429 costs no provider
+  // round trip and a fetch failure sends nothing.
+  const attachDocs = await loadAttachments(db, body.attachments);
 
   await checkBudget(db, cred, mailbox);
+  const attachments = await fetchAttachments(db, attachDocs);
 
   // ── bodies ──
   const newText = body.body_text != null && body.body_text.trim() ? body.body_text.replace(/\r\n?/g, '\n') : null;
@@ -827,6 +987,7 @@ async function sendFromMailbox(db, userId, mailboxId, bodyIn) {
       subject,
       text: bodies.text,
       html: bodies.html,
+      attachments, // inline {filename, content} — both adapters take them as is
       ...(ccStr && { cc: ccStr }),
       ...(bccStr && { bcc: bccStr }),
       ...(threading && threading.inReplyTo && { in_reply_to: threading.inReplyTo }),
@@ -873,6 +1034,7 @@ async function sendFromMailbox(db, userId, mailboxId, bodyIn) {
           subject,
           text: bodies.text,
           html: bodies.html,
+          ...(attachments.length && { attachments }), // the SAME files — the sender's own record
           messageId: `<${rfcId}>`,
           date: sentAt,
           ...(threading && threading.inReplyTo && { inReplyTo: threading.inReplyTo }),
@@ -1044,6 +1206,7 @@ async function sendFromMailbox(db, userId, mailboxId, bodyIn) {
 
   const recipients = body.to.length + body.cc.length + body.bcc.length;
   console.log(`[mailSend] user ${userId} sent as mailbox ${mailbox.id} (${cred.provider}) to ${recipients} recipient(s)` +
+    `${attachDocs.length ? ` with ${attachDocs.length} attachment(s)` : ''}` +
     `${parent ? ` replying to message ${parent.id}` : ''}; email_log ${emailLogId ?? 'not found'}`);
   return {
     mailbox_id: Number(mailbox.id),
@@ -1055,6 +1218,7 @@ async function sendFromMailbox(db, userId, mailboxId, bodyIn) {
     in_reply_to_message_fk: parent ? Number(parent.id) : null,
     gmail_thread_id: threadId,
     recipients,
+    attachments: attachDocs.map(d => ({ document_id: d.document_id, name: d.name, size: d.size })),
     append,
     read_seed: readSeed,
     send_row_id: sendRowId,
@@ -1243,9 +1407,13 @@ module.exports = {
   sendFromMailbox,
   seedSentReadState,
   linkSentCase,
-  // exported for tests
+  loadAttachments,
+  fetchAttachments,
+  // the scheduler's pre-dispatch checks (mailboxScheduledSendService) + tests
   validateSendBody,
   resolveIdentity,
+  loadParent,
+  loadCase,
   threadingFor,
   quoteOf,
   composeBodies,
@@ -1259,6 +1427,9 @@ module.exports = {
   folderPolled,
   compileMessage,
   MAX_RECIPIENTS,
+  MAX_ATTACHMENTS,
+  ATTACHMENT_MAX_BYTES,
+  ATTACHMENTS_TOTAL_BYTES,
   DEFAULT_DAILY_BUDGET,
   BUDGET_SETTING,
   SEND_PROVIDERS,

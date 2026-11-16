@@ -513,6 +513,36 @@
   .cf-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .cf-count { font-size: 11px; color: var(--text-muted); margin-left: auto; }
   .cf-count.over { color: var(--danger); font-weight: 700; }
+  /* ── Attachments · Send later · Scheduled (hub-send extras, 2026-11-16) ──
+     Files are chips (name · size · ×) from the Attach picker (registered
+     documents); Send later opens a firm-time date + time row under the
+     actions; the Scheduled list is a modal (rail entry + the composer's
+     footer). Every value shown is TEXT. */
+  .cf-files { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; min-width: 0; padding-top: 4px; }
+  .achip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; padding: 1px 0 1px 8px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: 12px; }
+  .achip .nm { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .achip .sz { color: var(--text-muted); white-space: nowrap; }
+  .achip button { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 0 7px; font-size: 14px; line-height: 1; font-family: inherit; }
+  .cf-later { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0; padding: 8px; border: 1px dashed var(--border); border-radius: 4px; }
+  .cf-later[hidden] { display: none; }
+  .cf-later .cf-lbl { flex: 0 0 auto; padding-top: 0; }
+  .composer .cf-later input.cf-when[type="datetime-local"] { flex: 1 1 200px; width: auto; min-width: 0; max-width: 260px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; font: inherit; font-size: 13px; }
+  .cf-later .yc-hint { flex: 1 1 100%; margin: 0; }
+  .doc-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .doc-row .l1 { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .doc-row .sz { flex: 0 0 auto; color: var(--text-muted); font-size: 11.5px; white-space: nowrap; }
+  .pick-list li[aria-disabled="true"] { opacity: 0.6; cursor: default; }
+  .pick-list li[aria-disabled="true"]:hover { border-color: var(--border); }
+  .sched-item { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); min-width: 0; }
+  .sched-item .when { font-weight: 700; }
+  .sched-item .st { font-size: 11.5px; padding: 1px 7px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); white-space: nowrap; }
+  .sched-item .st.failed, .sched-item .st.unknown { color: var(--danger-on-soft); background: var(--danger-soft); border-color: var(--danger); }
+  .sched-item .st.sent { color: var(--ok-on-soft); background: var(--ok-soft); border-color: var(--ok); }
+  .sched-item .what { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; font-size: 12.5px; color: var(--text-muted); }
+  .sched-item .acts { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-left: auto; }
+  .rail .rail-sched { padding: 6px 12px 0; font-size: 12px; }
+  /* both open OVER the New message modal (same rule as #case-backdrop) */
+  #doc-backdrop, #sched-backdrop { z-index: 110; }
 
   /* ── Phone tab (S-PH): the firm's phone lines — texts + call log ──────
      The Email tab's three columns, line-shaped: lines (rail ≥1000px, else a
@@ -709,6 +739,7 @@
     <!-- ── Rail: views + mailboxes (desktop; phones keep the menus in the bar) ── -->
     <aside class="rail" id="rail" aria-label="Views and mailboxes">
       <div class="rail-compose"><button class="btn primary" type="button" id="rail-compose" hidden><i class="fa-solid fa-pen" aria-hidden="true"></i> Compose</button></div>
+      <div class="rail-sched"><button class="linkish" type="button" id="rail-sched" hidden title="Emails you scheduled to go out later">Scheduled</button></div>
       <div class="ph">Views <button class="linkish" type="button" id="rail-manage" title="Rename, update, delete or make a view the default">Manage</button>
         <button class="btn icon rail-x" type="button" id="rail-hide" aria-controls="rail" aria-expanded="true" title="Hide views and mailboxes (more room for the conversation)"><i class="fa-solid fa-angles-left" aria-hidden="true"></i></button></div>
       <div id="rail-views"></div>
@@ -948,6 +979,30 @@
   </div>
 </div>
 
+<!-- ── Attach a document (hub-send extras) — registered documents only; opens over the composer ── -->
+<div class="modal-backdrop" id="doc-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="doc-title">
+    <h3 id="doc-title">Attach a document</h3>
+    <div class="modal-err" id="doc-msg" role="alert"></div>
+    <div id="doc-case-wrap" hidden><label class="check"><input type="checkbox" id="doc-case-only" checked> <span id="doc-case-lbl"></span></label></div>
+    <input type="search" id="doc-q" placeholder="Part of the file name" aria-label="Search documents" maxlength="100" autocomplete="off">
+    <span class="yc-hint">Registered documents (the Documents tab). The file itself is fetched when the email goes out — up to <span id="doc-caps"></span>.</span>
+    <ul class="pick-list" id="doc-results"></ul>
+    <div class="modal-actions"><button class="btn" type="button" id="doc-cancel">Cancel</button></div>
+  </div>
+</div>
+
+<!-- ── Scheduled sends (hub-send extras) — the caller's own; Cancel confirms in-page ── -->
+<div class="modal-backdrop" id="sched-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="sched-title">
+    <h3 id="sched-title">Scheduled sends</h3>
+    <div class="modal-err" id="sched-msg" role="alert"></div>
+    <span class="yc-hint">Emails you scheduled, in firm time. One can be cancelled until it goes out; one that could not be sent is reported to you by email.</span>
+    <div id="sched-list"></div>
+    <div class="modal-actions"><button class="btn" type="button" id="sched-close">Close</button></div>
+  </div>
+</div>
+
 <!-- ── New message (S3) — the composer is built by the script ── -->
 <div class="modal-backdrop" id="compose-backdrop">
   <div class="modal compose" role="dialog" aria-modal="true" aria-labelledby="compose-title">
@@ -1109,6 +1164,12 @@ const state = {
   composer: null,       // the ONE open composer (new-message modal or a reply box)
   drafts: new Map(),    // draft key → unsent composer state — this page's lifetime only, never storage
   sentWatch: null,      // { timer, key } — re-reading a conversation until a reply's copy arrives
+  // hub-send extras (2026-11-16): attachments + scheduled sends
+  attachLimits: { max_attachments: 10, attachment_max_bytes: 15 * 1024 * 1024, attachments_total_bytes: 15 * 1024 * 1024 }, // the server's (identities.limits)
+  schedule: { min_ahead_ms: 2 * 60_000, max_ahead_ms: 30 * 86_400_000 },                                                      // idem
+  scheduled: null,      // GET /api/mail/send/scheduled rows — loaded when asked for, never at boot
+  schedConfirm: null,   // the scheduled send whose Cancel awaits its in-page confirm
+  docPicker: null,      // the composer the Attach picker is open for
 };
 
 /**
@@ -1339,6 +1400,7 @@ function renderMailboxPicker() {
   // composer opens — boot makes no extra call.
   E('compose-btn').hidden = !canSendAny();
   E('rail-compose').hidden = !canSendAny();
+  E('rail-sched').hidden = !canSendAny(); // the Scheduled list: the same people (its rows are the caller's own)
   btn.title = sel && sel.length ? sel.map((id) => boxById(id).address).join(', ') : 'Choose which mailboxes this list combines';
   panel.replaceChildren(
     h('label', { className: 'mb-opt' }, h('input', {
@@ -3272,6 +3334,11 @@ async function ensureIdentities() {
   const data = await api('/api/mail/identities', 'GET');
   state.identities = Array.isArray(data && data.identities) ? data.identities : [];
   if (data && Number.isInteger(data.max_recipients)) state.maxRecipients = data.max_recipients;
+  // the composer's courtesy caps come from the server (it decides; this page mirrors)
+  const L = data && data.limits && typeof data.limits === 'object' ? data.limits : {};
+  for (const k of ['max_attachments', 'attachment_max_bytes', 'attachments_total_bytes']) if (Number.isInteger(L[k]) && L[k] > 0) state.attachLimits[k] = L[k];
+  if (Number.isInteger(L.schedule_min_ahead_ms) && L.schedule_min_ahead_ms > 0) state.schedule.min_ahead_ms = L.schedule_min_ahead_ms;
+  if (Number.isInteger(L.schedule_max_ahead_ms) && L.schedule_max_ahead_ms > 0) state.schedule.max_ahead_ms = L.schedule_max_ahead_ms;
   return state.identities;
 }
 
@@ -3333,7 +3400,7 @@ function makeComposer(opts) {
   const saved = state.drafts.get(key);
   const d = opts.defaults || {};
   const firstSendable = sendableIdentities()[0] || null;
-  const c = saved ? { ...saved, to: [...saved.to], cc: [...saved.cc], bcc: [...saved.bcc], caseSugg: [...(saved.caseSugg || [])] } : {
+  const c = saved ? { ...saved, to: [...saved.to], cc: [...saved.cc], bcc: [...saved.bcc], caseSugg: [...(saved.caseSugg || [])], attachments: [...(saved.attachments || [])] } : {
     kind: opts.kind, key,
     parentId: opts.parentId || null, threadKey: opts.threadKey || null, convo: opts.convo || null, all: !!opts.all,
     identityId: d.mailbox_id != null ? d.mailbox_id : (firstSendable ? firstSendable.id : null),
@@ -3348,6 +3415,8 @@ function makeComposer(opts) {
     // auto-picked among several.
     caseSel: opts.caseDefault ? { case_id: opts.caseDefault.case_id, case_number: opts.caseDefault.case_number || null } : null,
     caseSugg: (opts.caseSugg || []).map((x) => ({ case_id: x.case_id, case_number: x.case_number || null })),
+    // hub-send extras: picked documents [{document_id, name, size}]; Send later open + its firm-time pick
+    attachments: [], later: false, sendAt: '',
     signature: null, dirty: false,
   };
   if (c.signature === null) { const i = identityById(c.identityId); c.signature = !!(i && i.signature); }
@@ -3388,12 +3457,15 @@ function buildComposer(c) {
   ui.sigLabel = h('label', { className: 'check sig-label', title: 'The mailbox\'s own signature (Connections → Email Senders), added below your text' }, ui.sigBox, 'Add signature');
 
   ui.caseField = h('div', { className: 'cf-field chips', style: 'display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding-top:4px' });
+  ui.files = h('div', { className: 'cf-field cf-files' });
   const kids = [ui.err,
     h('div', { className: 'cf-row' }, h('span', { className: 'cf-lbl' }, 'From'), h('div', { className: 'cf-field' }, ui.idents, ui.identNote)),
     ui.rows.to.row, ui.rows.cc.row, ui.rows.bcc.row,
     h('div', { className: 'cf-row' }, h('span', { className: 'cf-lbl' }, 'Subject'), h('div', { className: 'cf-field' }, ui.subject)),
     // S2P §G: the optional Case field — the sent copy reaches that case's log.
     h('div', { className: 'cf-row case-row' }, h('span', { className: 'cf-lbl' }, 'Case'), ui.caseField),
+    // hub-send extras: registered documents to attach — the server fetches the bytes at send time
+    h('div', { className: 'cf-row files-row' }, h('span', { className: 'cf-lbl' }, 'Files'), ui.files),
     ui.body, ui.sigLabel];
   if (c.kind === 'reply' && c.quote) {
     ui.quoteBox = h('input', { type: 'checkbox', className: 'quote-box' });
@@ -3406,15 +3478,29 @@ function buildComposer(c) {
       h('div', { className: 'qtext' }, c.quote.text || '')));
   }
   ui.send = h('button', { className: 'btn primary send-btn', type: 'button', onclick: () => sendComposer(c) }, icon('fa-paper-plane'), 'Send');
+  // hub-send extras: Send later — a firm-time date + time row under the actions; the server keeps the window
+  ui.later = h('button', { className: 'btn later-btn', type: 'button', 'aria-expanded': 'false', title: 'Pick a date and time (firm time) for this email to go out', onclick: () => toggleLater(c) }, icon('fa-clock'), 'Send later');
   ui.discard = h('button', { className: 'btn discard-btn', type: 'button', onclick: () => discardComposer(c) }, 'Discard');
   ui.count = h('span', { className: 'cf-count' });
-  kids.push(h('div', { className: 'cf-actions' }, ui.send, ui.discard, ui.count),
-    h('span', { className: 'yc-hint' }, 'Sent mail shows in the mailbox\'s list after its next check — about 5 minutes.'));
+  ui.when = h('input', { type: 'datetime-local', className: 'cf-when', 'aria-label': 'Send at (firm time)', step: '60' });
+  ui.when.addEventListener('input', () => { c.sendAt = ui.when.value; touch(c); });
+  ui.schedBtn = h('button', { className: 'btn primary small sched-btn', type: 'button', onclick: () => scheduleComposer(c) }, icon('fa-clock'), 'Schedule');
+  ui.laterBox = h('div', { className: 'cf-later' },
+    h('span', { className: 'cf-lbl' }, 'Send at'), ui.when, ui.schedBtn,
+    h('button', { className: 'linkish later-off', type: 'button', onclick: () => { c.later = false; paintLater(c); } }, 'Not now'),
+    h('span', { className: 'yc-hint' }, `Firm time (${firmTz()}) — at least ${Math.round(state.schedule.min_ahead_ms / 60_000)} minutes from now, within ` +
+      `${Math.round(state.schedule.max_ahead_ms / 86_400_000)} days. The email is checked again when it goes out; you are emailed if it cannot be sent.`));
+  ui.laterBox.hidden = true;
+  ui.schedLink = h('button', { className: 'linkish sched-link', type: 'button', title: 'Emails you scheduled to go out later', onclick: openScheduled }, schedLabel());
+  kids.push(h('div', { className: 'cf-actions' }, ui.send, ui.later, ui.discard, ui.count), ui.laterBox,
+    h('span', { className: 'yc-hint' }, 'Sent mail shows in the mailbox\'s list after its next check — about 5 minutes. ', ui.schedLink));
   c.el = h('div', { className: 'composer', dataset: { kind: c.kind } }, ...kids);
   paintIdentities(c);
   paintRows(c);
   paintCount(c);
   paintCase(c);
+  paintFiles(c);
+  paintLater(c);
 }
 
 /**
@@ -3739,26 +3825,42 @@ async function openReply(m, all) {
   mountComposer(c); // closes the open one, its text kept (refused while that one is still sending)
 }
 
-async function sendComposer(c) {
-  if (c.sending) return;
+/** The checks before any call, and the exact payload the composer shows (Send and Send later share it) — or null, the error shown. */
+function composerPayload(c) {
   composerError(c, '');
-  for (const f of Object.values(c.ui.rows)) if (f.input.value.trim() && !commitTyped(c, f)) return;
+  for (const f of Object.values(c.ui.rows)) if (f.input.value.trim() && !commitTyped(c, f)) return null;
   const ident = identityById(c.identityId);
-  if (!ident || !ident.sendable) { composerError(c, 'Pick a mailbox to send from.'); return; }
-  if (!c.to.length) { composerError(c, 'Add at least one recipient in To.'); return; }
-  if (totalRecipients(c) > state.maxRecipients) { composerError(c, `At most ${state.maxRecipients} recipients.`); return; }
-  if (c.kind === 'new' && !c.subject.trim()) { composerError(c, 'Add a subject.'); return; }
-  if (!c.body.trim()) { composerError(c, 'Write a message first.'); return; }
+  if (!ident || !ident.sendable) { composerError(c, 'Pick a mailbox to send from.'); return null; }
+  if (!c.to.length) { composerError(c, 'Add at least one recipient in To.'); return null; }
+  if (totalRecipients(c) > state.maxRecipients) { composerError(c, `At most ${state.maxRecipients} recipients.`); return null; }
+  if (c.kind === 'new' && !c.subject.trim()) { composerError(c, 'Add a subject.'); return null; }
+  if (!c.body.trim()) { composerError(c, 'Write a message first.'); return null; }
   const out1 = (r) => (r.name ? { email: r.email, name: r.name } : r.email);
   const payload = { mailbox_id: ident.id, to: c.to.map(out1), subject: c.subject.trim(), body_text: c.body };
   if (c.cc.length) payload.cc = c.cc.map(out1);
   if (c.bcc.length) payload.bcc = c.bcc.map(out1);
   if (ident.signature) payload.signature = !!c.signature;
   if (c.caseSel && c.caseSel.case_id) payload.case_id = c.caseSel.case_id; // §G: the sent copy reaches this case's log
+  if (c.attachments.length) payload.attachments = c.attachments.map((a) => ({ document_id: a.document_id })); // registered documents, by id
   if (c.kind === 'reply') { payload.in_reply_to_message_fk = c.parentId; payload.quote_original = !!(c.quote && c.includeQuote); }
-  c.sending = true;
-  c.ui.send.disabled = true;
-  c.ui.send.replaceChildren(icon('fa-spinner'), 'Sending…');
+  return { payload, ident };
+}
+
+/** In flight: Send, Send later and Schedule all disabled; Send shows the verb. */
+function composerBusy(c, on, label) {
+  c.sending = on;
+  c.ui.send.disabled = on;
+  c.ui.later.disabled = on;
+  c.ui.schedBtn.disabled = on;
+  c.ui.send.replaceChildren(icon(on ? 'fa-spinner' : 'fa-paper-plane'), on ? label : 'Send');
+}
+
+async function sendComposer(c) {
+  if (c.sending) return;
+  const built = composerPayload(c);
+  if (!built) return;
+  const { payload, ident } = built;
+  composerBusy(c, true, 'Sending…');
   try {
     const out = await sendApi('/api/mail/send', 'POST', payload);
     c.sending = false; // sent: now it may close (closeComposer refuses one in flight)
@@ -3779,9 +3881,35 @@ async function sendComposer(c) {
     // comes back with this error when they return — say so now
     if (!c.el.isConnected) toast(`Not sent: ${msg}`, 8000);
   } finally {
-    c.sending = false;
-    c.ui.send.disabled = false;
-    c.ui.send.replaceChildren(icon('fa-paper-plane'), 'Send');
+    composerBusy(c, false);
+  }
+}
+
+/** Send later: the same payload + send_at (the firm-time pick as an instant) → POST /api/mail/send/schedule. */
+async function scheduleComposer(c) {
+  if (c.sending) return;
+  const built = composerPayload(c);
+  if (!built) return;
+  c.sendAt = c.ui.when.value;
+  const iso = firmLocalToIso(c.sendAt);
+  if (!iso) { composerError(c, 'Pick a date and time to send it.'); return; }
+  const t = Date.parse(iso);
+  if (t < Date.now() + state.schedule.min_ahead_ms) { composerError(c, `Pick a time at least ${Math.round(state.schedule.min_ahead_ms / 60_000)} minutes from now.`); return; }
+  if (t > Date.now() + state.schedule.max_ahead_ms) { composerError(c, `Pick a time within ${Math.round(state.schedule.max_ahead_ms / 86_400_000)} days.`); return; }
+  const payload = { ...built.payload, send_at: iso };
+  composerBusy(c, true, 'Scheduling…');
+  try {
+    const out = await sendApi('/api/mail/send/schedule', 'POST', payload);
+    c.sending = false; // scheduled: now it may close
+    closeComposer(c, { keepDraft: false });
+    toast(`Scheduled for ${schedWhen((out && out.send_at) || iso)} from ${(out && out.from) || built.ident.address}. Cancel it under Scheduled until then.`, 6000);
+    loadScheduled().catch(() => {});
+  } catch (err) {
+    const msg = (err && err.message) || 'Scheduling failed — nothing was scheduled.';
+    composerError(c, msg);
+    if (!c.el.isConnected) toast(`Not scheduled: ${msg}`, 8000);
+  } finally {
+    composerBusy(c, false);
   }
 }
 
@@ -3815,6 +3943,222 @@ function stopSentWatch() {
   state.sentWatch = null;
 }
 
+// ── Attachments · Send later · Scheduled (hub-send extras, 2026-11-16) ──
+/*
+ * Attach: REGISTERED documents only (GET /api/documents — the registry; the
+ * server fetches the bytes at send time, never this page). The picker
+ * searches by name; with a case on the composer it opens on that case's
+ * files (link_type / link_id) and "Only files of …" unticks to a plain
+ * search. Chips: name · size · ×. The courtesy caps mirror the server's
+ * (identities.limits — the server decides). Send later: a firm-time date +
+ * time (datetime-local) sent as an instant (firmLocalToIso; the server keeps
+ * the window). Scheduled: the caller's own scheduled sends (rail entry + the
+ * composer's footer link) with Cancel behind an in-page two-step confirm; a
+ * 409's text is shown as the server gives it. Nothing here loads at boot —
+ * the list loads when the Scheduled entry opens, or after a schedule.
+ */
+const fmtBytes = (n) => { n = Number(n) || 0; return n >= 1048576 ? `${(n / 1048576).toFixed(n % 1048576 ? 1 : 0)} MB` : (n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`); };
+const totalBytes = (c) => c.attachments.reduce((n, a) => n + (Number(a.size) || 0), 0);
+
+function paintFiles(c) {
+  const f = c.ui && c.ui.files;
+  if (!f) return;
+  const L = state.attachLimits;
+  const kids = c.attachments.map((a) => h('span', { className: 'achip', title: a.name, dataset: { doc: String(a.document_id) } },
+    icon('fa-paperclip'), h('span', { className: 'nm' }, a.name), h('span', { className: 'sz' }, fmtBytes(a.size)),
+    h('button', { type: 'button', 'aria-label': `Remove ${a.name}`, onclick: () => { c.attachments = c.attachments.filter((x) => x.document_id !== a.document_id); touch(c); paintFiles(c); } }, '×')));
+  kids.push(h('button', { className: 'linkish attach-btn', type: 'button', onclick: () => openDocPicker(c) }, c.attachments.length ? 'Attach another…' : 'Attach a document…'));
+  if (c.attachments.length) kids.push(h('span', { className: 'yc-hint', style: 'margin:0' }, `${c.attachments.length} of ${L.max_attachments} · ${fmtBytes(totalBytes(c))} of ${fmtBytes(L.attachments_total_bytes)}`));
+  f.replaceChildren(...kids);
+}
+
+/** The courtesy caps (the server decides): why this document cannot be attached, or null. */
+function attachRefusal(c, d) {
+  const L = state.attachLimits;
+  if (c.attachments.some((a) => a.document_id === d.id)) return 'Already attached';
+  if (d.status && d.status !== 'active') return 'Deleted from storage';
+  if (d.size == null || !Number.isFinite(Number(d.size))) return 'Size unknown — cannot be attached';
+  if (Number(d.size) > L.attachment_max_bytes) return `Over ${fmtBytes(L.attachment_max_bytes)} — too large to attach`;
+  if (c.attachments.length >= L.max_attachments) return `At most ${L.max_attachments} files`;
+  if (totalBytes(c) + Number(d.size) > L.attachments_total_bytes) return `Together over ${fmtBytes(L.attachments_total_bytes)}`;
+  return null;
+}
+function addAttachment(c, d) {
+  const why = attachRefusal(c, d);
+  if (why) { E('doc-msg').textContent = why; E('doc-msg').classList.add('show'); return false; }
+  c.attachments.push({ document_id: d.id, name: d.name, size: Number(d.size) });
+  touch(c);
+  paintFiles(c);
+  return true;
+}
+
+let docTimer = null;
+let docSeq = 0;
+function openDocPicker(c) {
+  const L = state.attachLimits;
+  if (c.attachments.length >= L.max_attachments) { composerError(c, `At most ${L.max_attachments} files on one message.`); return; }
+  state.docPicker = c;
+  E('doc-msg').classList.remove('show');
+  E('doc-q').value = '';
+  const cs = c.caseSel;
+  E('doc-case-wrap').hidden = !cs;
+  E('doc-case-only').checked = !!cs;
+  E('doc-case-lbl').textContent = cs ? `Only files of ${cs.case_number || cs.case_id}` : '';
+  E('doc-caps').textContent = `${L.max_attachments} files, ${fmtBytes(L.attachment_max_bytes)} each, ${fmtBytes(L.attachments_total_bytes)} together`;
+  E('doc-results').replaceChildren();
+  E('doc-backdrop').classList.add('open');
+  E('doc-q').focus();
+  searchDocs();
+}
+function closeDocPicker() { E('doc-backdrop').classList.remove('open'); state.docPicker = null; }
+async function searchDocs() {
+  const c = state.docPicker;
+  if (!c) return;
+  const q = E('doc-q').value.trim();
+  const caseOnly = !!(c.caseSel && E('doc-case-only').checked);
+  const seq = ++docSeq;
+  if (!q && !caseOnly) { E('doc-results').replaceChildren(h('li', { className: 'empty' }, 'Type part of a file name')); return; }
+  const params = { limit: 20 };
+  if (q) params.q = q;
+  if (caseOnly) { params.link_type = 'case'; params.link_id = c.caseSel.case_id; }
+  let rows = [];
+  try {
+    const data = await api('/api/documents', 'GET', params);
+    rows = Array.isArray(data && data.documents) ? data.documents : [];
+  } catch (err) {
+    if (seq === docSeq) { E('doc-msg').textContent = `Couldn't search documents: ${err.message}`; E('doc-msg').classList.add('show'); }
+    return;
+  }
+  if (seq !== docSeq || state.docPicker !== c) return;
+  E('doc-results').replaceChildren(...(rows.length ? rows.map((d) => {
+    const why = attachRefusal(c, d);
+    const pick = () => { if (!why && addAttachment(c, d)) closeDocPicker(); };
+    return h('li', {
+      tabindex: '0', 'aria-disabled': why ? 'true' : null, title: why || `Attach ${d.name}`, dataset: { doc: String(d.id) },
+      onclick: pick, onkeydown: (e) => { if (e.key === 'Enter') pick(); },
+    },
+      h('div', { className: 'doc-row' }, h('span', { className: 'l1' }, d.title || d.name), h('span', { className: 'sz' }, d.size == null ? 'size unknown' : fmtBytes(d.size))),
+      h('div', { className: 'l2' }, [d.title && d.title !== d.name ? d.name : '', d.doc_type, why].filter(Boolean).join(' · ')));
+  }) : [h('li', { className: 'empty' }, 'No documents match')]));
+}
+
+// Firm time ↔ instant. The shell exposes the zone (P.firmData.firmTimezone);
+// the server takes the instant.
+function firmParts(d) {
+  const f = new Intl.DateTimeFormat('en-US', { timeZone: firmTz(), hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return Object.fromEntries(f.formatToParts(d).filter((x) => x.type !== 'literal').map((x) => [x.type, x.value]));
+}
+/** 'YYYY-MM-DDTHH:MM' read as FIRM wall-clock time → the instant as ISO (UTC): the zone's offset at the guessed instant, taken twice so a DST edge settles. */
+function firmLocalToIso(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(v || ''));
+  if (!m) return null;
+  const wall = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  if (!Number.isFinite(wall)) return null;
+  let guess = wall;
+  for (let i = 0; i < 2; i++) {
+    const p = firmParts(new Date(guess));
+    const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+    guess = wall - (asUtc - guess);
+  }
+  return new Date(guess).toISOString();
+}
+/** The default pick: the next full hour at least an hour away, in firm time. */
+function defaultSendAt() {
+  const p = firmParts(new Date(Date.now() + 2 * 3600_000));
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:00`;
+}
+function schedWhen(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : fmt(d, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+function toggleLater(c) {
+  c.later = !c.later;
+  if (c.later && !c.sendAt) c.sendAt = defaultSendAt();
+  paintLater(c);
+  if (c.later) c.ui.when.focus();
+}
+function paintLater(c) {
+  const ui = c.ui;
+  if (!ui || !ui.laterBox) return;
+  ui.laterBox.hidden = !c.later;
+  ui.later.setAttribute('aria-expanded', c.later ? 'true' : 'false');
+  ui.when.value = c.sendAt || '';
+}
+
+// The Scheduled list (the caller's own — GET /api/mail/send/scheduled)
+async function loadScheduled() {
+  const data = await api('/api/mail/send/scheduled', 'GET');
+  state.scheduled = Array.isArray(data && data.scheduled) ? data.scheduled : [];
+  paintSchedCount();
+  return state.scheduled;
+}
+const schedPending = () => (state.scheduled || []).filter((s) => s.status === 'pending' || s.status === 'running').length;
+function schedLabel() { return state.scheduled ? `Scheduled (${schedPending()})` : 'Scheduled'; }
+function paintSchedCount() {
+  E('rail-sched').textContent = schedLabel();
+  const c = state.composer;
+  if (c && c.ui && c.ui.schedLink) c.ui.schedLink.textContent = schedLabel();
+}
+async function openScheduled() {
+  state.schedConfirm = null;
+  E('sched-msg').classList.remove('show');
+  E('sched-backdrop').classList.add('open');
+  E('sched-list').replaceChildren(h('div', { className: 'empty' }, 'Loading…'));
+  try { await loadScheduled(); } catch (err) {
+    E('sched-msg').textContent = `Couldn't load your scheduled sends: ${err.message}`;
+    E('sched-msg').classList.add('show');
+    state.scheduled = state.scheduled || [];
+  }
+  renderScheduled();
+}
+function closeScheduled() { E('sched-backdrop').classList.remove('open'); state.schedConfirm = null; }
+/** The row's state for the pill: the job status, refined by the recorded outcome. */
+function schedState(s) {
+  if (s.status === 'completed') return 'sent';
+  if (s.status === 'failed') return s.outcome && s.outcome.state === 'unknown' ? 'unknown' : 'failed';
+  return s.status; // pending | running | cancelled
+}
+const SCHED_TEXT = { pending: 'Scheduled', running: 'Sending now', sent: 'Sent', failed: 'Not sent', unknown: 'Unknown — check Sent', cancelled: 'Cancelled' };
+function renderScheduled() {
+  const rows = state.scheduled || [];
+  if (!rows.length) { E('sched-list').replaceChildren(h('div', { className: 'empty' }, 'Nothing scheduled. Write a message and pick Send later.')); return; }
+  E('sched-list').replaceChildren(...rows.map((s) => {
+    const st = schedState(s);
+    const who = [...(s.to || []), ...(s.cc || []), ...(s.bcc || [])].map((r) => r.name || r.email);
+    const files = (s.attachments || []);
+    const fileNote = files.length ? ` · ${files.length} file${files.length === 1 ? '' : 's'}${files.some((a) => a.status !== 'active') ? ' (one no longer exists — the send will fail)' : ''}` : '';
+    const acts = [];
+    if (s.status === 'pending') {
+      if (state.schedConfirm === s.id) {
+        acts.push(h('span', { className: 'yc-hint', style: 'margin:0' }, 'Cancel this send?'),
+          h('button', { className: 'btn small sched-yes', type: 'button', onclick: () => cancelScheduledSend(s.id) }, 'Yes, cancel it'),
+          h('button', { className: 'btn small sched-no', type: 'button', onclick: () => { state.schedConfirm = null; renderScheduled(); } }, 'Keep'));
+      } else {
+        acts.push(h('button', { className: 'btn small sched-cancel', type: 'button', onclick: () => { state.schedConfirm = s.id; renderScheduled(); } }, 'Cancel'));
+      }
+    }
+    return h('div', { className: 'sched-item', dataset: { id: String(s.id), state: st } },
+      h('span', { className: 'when' }, schedWhen(s.send_at)),
+      h('span', { className: `st ${st}` }, SCHED_TEXT[st] || st),
+      h('span', { className: 'acts' }, ...acts),
+      h('div', { className: 'what' }, `${s.subject || '(a reply)'} — to ${who.join(', ')} · from ${(s.mailbox && s.mailbox.address) || 'mailbox'}${fileNote}` +
+        ((st === 'failed' || st === 'unknown') && s.outcome && s.outcome.message ? ` · ${s.outcome.message}` : '')));
+  }));
+}
+async function cancelScheduledSend(id) {
+  E('sched-msg').classList.remove('show');
+  try {
+    await api(`/api/mail/send/scheduled/${id}`, 'DELETE');
+    toast('Cancelled — it will not be sent.');
+  } catch (err) {
+    E('sched-msg').textContent = (err && err.message) || 'Could not cancel it.'; // the server's 409 text, as given
+    E('sched-msg').classList.add('show');
+  }
+  state.schedConfirm = null;
+  try { await loadScheduled(); } catch (_) { /* the list stays as it was */ }
+  renderScheduled();
+}
+
 // ── Wiring ──────────────────────────────────────────────────
 async function init() {
   wirePhone();
@@ -3843,6 +4187,14 @@ async function init() {
   E('compose-btn').addEventListener('click', () => openCompose());
   E('rail-compose').addEventListener('click', () => openCompose());
   E('compose-close').addEventListener('click', () => { if (state.composer && state.composer.kind === 'new') closeComposer(state.composer, { keepDraft: true }); });
+  // hub-send extras: the Attach picker and the Scheduled list
+  E('rail-sched').addEventListener('click', openScheduled);
+  E('doc-q').addEventListener('input', () => { clearTimeout(docTimer); docTimer = setTimeout(searchDocs, 250); });
+  E('doc-case-only').addEventListener('change', searchDocs);
+  E('doc-cancel').addEventListener('click', closeDocPicker);
+  E('doc-backdrop').addEventListener('click', (e) => { if (e.target === E('doc-backdrop')) closeDocPicker(); });
+  E('sched-close').addEventListener('click', closeScheduled);
+  E('sched-backdrop').addEventListener('click', (e) => { if (e.target === E('sched-backdrop')) closeScheduled(); });
   window.addEventListener('beforeunload', (e) => {
     // In-memory drafts die with the page: ask before letting that happen.
     if (!unsentWork()) return;
@@ -3902,6 +4254,8 @@ async function init() {
     else if (E('ph-new-backdrop').classList.contains('open')) closeNewText();
     else if (E('task-backdrop').classList.contains('open')) closeTaskModal();
     else if (E('viewer-backdrop').classList.contains('open')) closeViewer();
+    else if (E('doc-backdrop').classList.contains('open')) closeDocPicker();
+    else if (E('sched-backdrop').classList.contains('open')) closeScheduled();
     else if (E('case-backdrop').classList.contains('open')) closeCaseLink();
     else if (E('fd-backdrop').classList.contains('open')) closeFileDialog();
     else if (E('views-backdrop').classList.contains('open')) closeViews();

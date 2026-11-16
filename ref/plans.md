@@ -1035,12 +1035,16 @@ COMMENTs.)
 
 - **Attachments / MMS media and scheduled sends — native route first.** Released
   by Fred 2026-11-15 together with cc/bcc, reply threading and the Case field
-  (those three shipped, A14X), but the Comms hub itself has neither:
-  `POST /api/mail/send` has no attachment field (only the campaign/Pabbly
-  path takes URL attachments) and no route schedules a send; SMS has no MMS
-  send. Casey keeps refusing both BY NAME ("the Comms hub itself cannot attach
-  a file to a send / schedule a send"). Either is a native hub feature first;
-  a Casey shape follows (a fetched attachment URL stays model-uninventable).
+  (those three shipped, A14X). The NATIVE hub features shipped 2026-11-16
+  (hub-send extras, `ref/MAILBOX_SYSTEM_DESIGN.md` §4.2): `POST /api/mail/send`
+  takes `attachments: [{document_id}]` (registered documents, fetched at send
+  time) and `POST /api/mail/send/schedule` + `GET`/`DELETE
+  /api/mail/send/scheduled` schedule a send. The CASEY SHAPE FOLLOWS — a new
+  slice: `email.send.v1` gains `attachments` (document ids CITED from a
+  `document.*` read — a fetched attachment URL stays model-uninventable) and
+  a `send_at` (or a sibling `email.schedule.v1` kind) whose precheck re-reads
+  the documents and the window; until then Casey keeps refusing both BY NAME.
+  SMS still has no MMS send (no native route).
 - **Casey replies narrowed to ONE cited contact recipient** (A14X): a reply to
   a sender with no active contact row, or to own mail whose hub To is several
   addresses, is refused and answered from Comms. Widening it means a recipient
@@ -2064,8 +2068,9 @@ Active surfaces with known next steps.
 - **YisraHook v1.1.** Sync response, custom response shape per route, log retention policy.
 
 - **Comms hub send — after v1 (mailbox S3, 2026-10-11; design §4.2 "As built (S3)").** Left out of v1 on purpose:
-  - **Attachments** (compose + forward). Forwarding a stored message's files must use the API's `inline` flag, never `cid` (AI_CONTEXT §0). Bodies are plain text in v1 (the server builds the HTML).
-  - **Forward**, **server-side drafts** (the pane keeps one in memory per page), **scheduled send**, **signature management** (v1 uses the send credential's own signature, only when its address is the box's).
+  - **Forwarding a stored message's attachments** (a `mail_messages` part as an attachment of a new send — `mailAttachmentService.fetchPartBuffer` exists; the obvious next scope after the 2026-11-16 hub-send extras, which attach REGISTERED documents by id). Must use the API's `inline` flag, never `cid` (AI_CONTEXT §0). Bodies are plain text in v1 (the server builds the HTML).
+  - **Forward**, **server-side drafts** (the pane keeps one in memory per page), **signature management** (v1 uses the send credential's own signature, only when its address is the box's). **Edit a scheduled send** (cancel + a composer prefilled from the row — the list carries no body today; add `body_text` to `GET /api/mail/send/scheduled` first).
+  - **A kill switch for the hub's send features** — none of them has one (send, attachments, scheduled sends alike); a scheduled send that must not go out is cancelled from its list, and the scheduler as a whole stops with `scheduled_jobs.active`.
   - **Reply-To** is not captured at ingest, so replies go to From. Capture it (a `mail_messages` column) if a list/no-reply sender makes that wrong in practice.
   - **Budget query cost**: the per-transport COUNT walks every `email_log` row of its `source` (ref on `ux_email_log_source_message`; ~1.7k gmail rows at ship). Add `(source, processed_at)` if outbound volume grows ~10×.
   - **Alias slice cost** (S3-R): each readable alias box's summary count (every Comms open, every 5-min badge refresh, every mark-read) and view count walks ALL of its parent's rows through the label/LIKE/REGEXP slice predicate (EXPLAIN live 2026-10-12: ref on mailbox_id, 157 rows). Fine at hundreds/thousands; if the parent grows into the tens of thousands, a multi-valued index on `gmail_labels` (`CAST(gmail_labels AS CHAR(255) ARRAY)`) serves the label half, and the address half can move to a stored `mail_messages` address list or a per-alias membership table filled at ingest.

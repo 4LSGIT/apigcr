@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-16T03:14:53.028Z_  
-_856 routes total — DELETE: 70, GET: 351, PATCH: 61, POST: 330, PUT: 41, _ALL: 3_
+_Generated 2026-11-16T09:08:31.848Z_  
+_859 routes total — DELETE: 71, GET: 352, PATCH: 61, POST: 331, PUT: 41, _ALL: 3_
 
 ## Global middleware chain
 
@@ -480,6 +480,9 @@ _856 routes total — DELETE: 70, GET: 351, PATCH: 61, POST: 330, PUT: 41, _ALL:
 | GET | `/api/mail/messages/:id/reply` | `jwtOrApiKey`, `requireJwt` | `getReplyDefaults` |
 | POST | `/api/mail/read` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/mail/send` | `jwtOrApiKey`, `requireJwt` | `sendMail` |
+| POST | `/api/mail/send/schedule` | `jwtOrApiKey`, `requireJwt` | `scheduleMail` |
+| GET | `/api/mail/send/scheduled` | `jwtOrApiKey`, `requireJwt` | `listScheduledMail` |
+| DELETE | `/api/mail/send/scheduled/:id` | `jwtOrApiKey`, `requireJwt` | `cancelScheduledMail` |
 | GET | `/api/mail/threads/:threadKey` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/mail/views` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/mail/views` | `jwtOrApiKey`, `requireJwt` | — |
@@ -1136,4 +1139,4 @@ _856 routes total — DELETE: 70, GET: 351, PATCH: 61, POST: 330, PUT: 41, _ALL:
 
 ---
 
-_856 routes total — DELETE: 70, GET: 351, PATCH: 61, POST: 330, PUT: 41, _ALL: 3_
+_859 routes total — DELETE: 71, GET: 352, PATCH: 61, POST: 331, PUT: 41, _ALL: 3_

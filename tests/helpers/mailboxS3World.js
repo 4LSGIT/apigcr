@@ -8,7 +8,10 @@
  *   mailboxService.listSendable, services/mailbox/mailboxSendService (identity,
  *   parent, budget, email_log lookup, Sent APPEND connection row, the seed
  *   job and its probes), the email adapters' email_log INSERTs, lib/alerting's
- *   system_alerts / alert_state writes, admin_audit_log, settingsService.
+ *   system_alerts / alert_state writes, admin_audit_log, settingsService —
+ *   and, since the hub-send extras (2026-11-16), `documents` (attachments),
+ *   mailboxScheduledSendService's scheduled_jobs statements (its exported
+ *   SQL) and lib/requestIdempotency's four statements (its exported SQL).
  * Unknown statements still THROW (the S2 world's fallthrough), so a new or
  * edited S3 query fails a test instead of returning nothing. The SQL itself
  * runs on MySQL 8 in tests/mailboxS3.mysql.test.js (gated).
@@ -68,6 +71,31 @@ function makeWorld() {
     return row.id;
   };
   W.setting = (key, value) => { T.app_settings.push({ key, value }); };
+
+  // ── hub-send extras (attachments + scheduled sends) ──
+  Object.assign(T, { documents: [], request_idempotency: [] });
+  seq.request_idempotency = 0;
+  /** A registered document (active, a 1 MB pdf by default). */
+  W.doc = (id, over = {}) => {
+    T.documents.push({ id, source: 'dropbox', external_id: `id:doc${id}`, name: `Document ${id}.pdf`, size: 1024 * 1024, status: 'active', ext: 'pdf', mime: 'application/pdf', ...over });
+    return id;
+  };
+  /** The person's own address (users.email — where a failed scheduled send is reported). */
+  W.setEmail = (user, email) => { const u = T.users.find(x => x.user === Number(user)); if (u) u.email = email; };
+  /** A request_idempotency row as the claim leaves it (in_flight, now) — `over` ages or settles it. */
+  W.claim = (over = {}) => {
+    const row = { id: ++seq.request_idempotency, user_id: 0, scope: 'mail.send', idem_key: 'k', status: 'in_flight', result: null, updated_at: new Date(), ...over };
+    T.request_idempotency.push(row);
+    return row;
+  };
+  const SCHED = require('../../services/mailbox/mailboxScheduledSendService').SQL;
+  const IDEM = require('../../lib/requestIdempotency').SQL;
+  const jobData = (j) => parseJsonCol(j.data);
+  // JSON_EXTRACT(data,'$.user') = ? — a JSON NUMBER equals a bound INTEGER only:
+  // a string parameter becomes a JSON string on the engine and matches nothing
+  // (tests/mailboxSendExtras.mysql.test.js proves both halves).
+  const ownJob = (j, type, user) => j.type === 'one_time' && !!jobData(j) && jobData(j).type === type
+    && typeof user === 'number' && Number(jobData(j).user) === user;
 
   const mailboxRow = (id) => T.mailboxes.find(b => b.id === Number(id));
   const byAddr = (a, b) => String(a.address).localeCompare(String(b.address));
@@ -240,12 +268,106 @@ function makeWorld() {
       return [b ? [{ id: b.id, address: b.address }] : []];
     }
 
-    // ── the read-state seed job ──
+    // ── the read-state seed job (and the case-link job, and a scheduled send — the same INSERT) ──
     if (sql === "INSERT INTO scheduled_jobs (type, scheduled_time, status, name, data, max_attempts, backoff_seconds) VALUES ('one_time', ?, 'pending', ?, ?, ?, ?)") {
       rec();
-      const row = { id: ++seq.scheduled_jobs, type: 'one_time', scheduled_time: p[0], status: 'pending', name: p[1], data: p[2], max_attempts: p[3], backoff_seconds: p[4] };
+      const row = { id: ++seq.scheduled_jobs, type: 'one_time', scheduled_time: p[0], status: 'pending', active: 1, name: p[1], data: p[2], max_attempts: p[3], backoff_seconds: p[4],
+        attempts: 0, created_at: new Date(), updated_at: new Date() };
       T.scheduled_jobs.push(row);
       return [{ affectedRows: 1, insertId: row.id }];
+    }
+
+    // ── hub-send extras: attachments (documents) ──
+    if (sql === 'SELECT id, source, external_id, name, size, status FROM documents WHERE id IN (?)') {
+      rec();
+      const ids = new Set(p[0].map(Number));
+      return [T.documents.filter(d => ids.has(Number(d.id))).map(d => ({ id: d.id, source: d.source, external_id: d.external_id, name: d.name, size: d.size, status: d.status }))];
+    }
+    if (sql === norm(SCHED.documents)) {
+      rec();
+      const ids = new Set(p[0].map(Number));
+      return [T.documents.filter(d => ids.has(Number(d.id))).map(d => ({ id: d.id, name: d.name, status: d.status }))];
+    }
+
+    // ── hub-send extras: scheduled sends (mailboxScheduledSendService.SQL) ──
+    if (sql === norm(SCHED.mailboxes)) {
+      rec();
+      const ids = new Set(p[0].map(Number));
+      return [T.mailboxes.filter(b => ids.has(Number(b.id))).map(b => ({ id: b.id, address: b.address }))];
+    }
+    if (sql === norm(SCHED.list)) {
+      rec();
+      const [type, user, days] = p;
+      const since = Date.now() - Number(days) * 86_400_000;
+      const rows = T.scheduled_jobs
+        .filter(j => ownJob(j, type, user) && (['pending', 'running'].includes(j.status) || (j.updated_at && new Date(j.updated_at).getTime() >= since)))
+        .sort((a, b) => new Date(a.scheduled_time) - new Date(b.scheduled_time) || a.id - b.id)
+        // mysql2 hands a JSON column back PARSED
+        .map(j => ({ id: j.id, status: j.status, scheduled_time: new Date(j.scheduled_time), data: clone(jobData(j)), created_at: j.created_at ? new Date(j.created_at) : null, updated_at: j.updated_at ? new Date(j.updated_at) : null }));
+      return [rows];
+    }
+    if (sql === norm(SCHED.cancel)) {
+      rec();
+      const [id, type, user] = p;
+      const j = T.scheduled_jobs.find(x => x.id === Number(id) && x.status === 'pending' && ownJob(x, type, user));
+      if (j) { j.status = 'cancelled'; j.active = 0; j.updated_at = new Date(); }
+      return [{ affectedRows: j ? 1 : 0 }];
+    }
+    if (sql === norm(SCHED.peek)) {
+      rec();
+      const [id, type, user] = p;
+      const j = T.scheduled_jobs.find(x => x.id === Number(id) && ownJob(x, type, user));
+      return [j ? [{ status: j.status }] : []];
+    }
+    if (sql === norm(SCHED.outcome)) {
+      rec();
+      const [json, id] = p;
+      const j = T.scheduled_jobs.find(x => x.id === Number(id));
+      if (j) { const d = jobData(j) || {}; d.outcome = JSON.parse(json); j.data = JSON.stringify(d); j.updated_at = new Date(); }
+      return [{ affectedRows: j ? 1 : 0 }];
+    }
+    if (sql === norm(SCHED.senderEmail)) {
+      rec();
+      const u = T.users.find(x => x.user === Number(p[0]));
+      return [u ? [{ email: u.email ?? null }] : []];
+    }
+    // the sender notice: emailService.sendEmail's credential lookup
+    if (sql === 'SELECT * FROM email_credentials WHERE email = ? LIMIT 1') {
+      rec();
+      const c = T.email_credentials.find(x => ci(x.email, p[0]));
+      return [c ? [clone(c)] : []];
+    }
+
+    // ── lib/requestIdempotency (the scheduled send's double-send fence; the route's Idempotency-Key) ──
+    if (sql === norm(IDEM.claim)) {
+      rec();
+      const [user_id, scope, idem_key] = p;
+      if (T.request_idempotency.some(r => r.user_id === user_id && r.scope === scope && r.idem_key === idem_key)) {
+        throw Object.assign(new Error('Duplicate entry'), { code: 'ER_DUP_ENTRY' });
+      }
+      const row = { id: ++seq.request_idempotency, user_id, scope, idem_key, status: 'in_flight', result: null, updated_at: new Date() };
+      T.request_idempotency.push(row);
+      return [{ affectedRows: 1, insertId: row.id }];
+    }
+    if (sql === norm(IDEM.read)) {
+      rec();
+      const [user_id, scope, idem_key] = p;
+      const r = T.request_idempotency.find(x => x.user_id === user_id && x.scope === scope && x.idem_key === idem_key);
+      return [r ? [{ id: r.id, status: r.status, result: r.result == null ? null : clone(r.result), age_s: Math.floor((Date.now() - new Date(r.updated_at).getTime()) / 1000) }] : []];
+    }
+    if (sql === norm(IDEM.settle)) {
+      rec();
+      const [json, id] = p;
+      const r = T.request_idempotency.find(x => x.id === Number(id) && x.status === 'in_flight');
+      if (!r) return [{ affectedRows: 0 }];
+      r.status = 'applied'; r.result = JSON.parse(json); r.updated_at = new Date();
+      return [{ affectedRows: 1 }];
+    }
+    if (sql === norm(IDEM.release)) {
+      rec();
+      const i = T.request_idempotency.findIndex(x => x.id === Number(p[0]) && x.status === 'in_flight');
+      if (i >= 0) T.request_idempotency.splice(i, 1);
+      return [{ affectedRows: i >= 0 ? 1 : 0 }];
     }
     if (sql === 'SELECT id FROM mail_messages WHERE mailbox_id IN (?) AND date >= ? AND provider_id = ?') {
       rec();

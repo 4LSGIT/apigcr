@@ -558,13 +558,42 @@ anyone who may send from at least one box.
   **Add signature** (ticked when the box has a signature of its own —
   Connections → Email Senders) adds it under your text. A reply quotes the
   original under your text; **Original message** → untick **Include it** to
-  leave it out. Attachments cannot be sent from Comms yet.
-- **Send** sends straight away — there is no undo and no scheduling. While
-  it says **Sending…** the window stays open; if the mail server refuses one
-  of several recipients you are told which.
+  leave it out.
+- **Files** attaches documents the firm already has on file — the Documents
+  tab's registered files, not an upload from your computer. **Attach a
+  document…** searches them by name; when the message has a **Case**, the
+  picker opens on that case's files (untick *Only files of …* to search
+  everything). Each attached file is a chip with its size and a **×**. Up to
+  10 files, 15 MB each and 15 MB together; a file whose size is not known, or
+  that has been deleted from storage, cannot be attached. The file itself is
+  read from storage when the email goes out — if it cannot be read, nothing is
+  sent and you are told which file. Anyone who may send may attach any
+  registered document.
+- **Send** sends straight away — there is no undo. While it says
+  **Sending…** the window stays open; if the mail server refuses one of
+  several recipients you are told which.
   **✕** (or Esc) closes the window and keeps what you wrote until the page
   is reloaded — nothing is saved on the server; **Discard** throws it away;
   leaving the page with unsent text asks first.
+- **Send later** opens a date and time (firm time) under the buttons —
+  **Schedule** books the email to go out then: at least two minutes from
+  now, at most 30 days out. Everything is checked when you schedule
+  (recipients, the box, the case, the files) and again when it goes out; the
+  daily sending limit counts at send time. The email is sent as you, from the
+  box you picked, exactly once — a hiccup on the server never sends it twice.
+  **Scheduled (n)** — in the left column, and at the foot of the New message
+  window — lists your own scheduled emails (nobody sees anyone else's, a
+  superuser included): when, to whom, from which box, how many files, and
+  for the last seven days what became of each. **Cancel** → **Yes, cancel
+  it** stops one before it goes out; one that is going out right now, or
+  already went, says so. There is no edit: cancel it and write it again. If a
+  scheduled email cannot be sent — Send access on the box taken away, the
+  box switched off, a file deleted since, the daily limit reached — it is not
+  retried: you get an email about it (to your own address in YisraCase), IT
+  gets an alert, and the list shows *Not sent* with the reason; send it again
+  by hand once the problem is fixed. *Unknown — check Sent* means the server
+  cannot tell whether it went: look in the box's Sent folder before sending
+  it again.
 - **Where it shows.** A sent email appears after the box's next check —
   about 2 minutes — under **Sent**, already marked read for you; an open
   conversation re-reads itself for a few minutes after you reply.
@@ -580,9 +609,9 @@ anyone who may send from at least one box.
 - **Ask Casey** sends through this same path: its email card may copy
   contacts (Cc/Bcc), reply to an email it has shown you and fill the **Case**
   field, under your own send access, the 10-recipient limit, the opt-out
-  question and the case-link behaviour above. It cannot attach a file or
-  schedule a send, because Comms cannot (Ask Casey chapter, *Sending a text
-  or email*).
+  question and the case-link behaviour above. It does not yet attach files or
+  schedule a send — Comms can (above); Casey's own version follows, and until
+  then it says so by name (Ask Casey chapter, *Sending a text or email*).
 - **Daily limit.** Each sending account (one Google account, or one SMTP
   login) may send a set number of emails in any 24 hours — counting
   automation emails through the same account, and attempts the provider
@@ -592,9 +621,10 @@ anyone who may send from at least one box.
   emailed (the hourly alert digest; once a day per account). Automations
   are not stopped by it. Separately, more than 30 sends by one person within
   10 minutes are refused for a few minutes.
-- Every send, refused send and failed send is recorded in `admin_audit_log`
-  under the tool `mail_send` — who, which box, how many recipients; never
-  the text or the addresses.
+- Every send, refused send, failed send, scheduled send and cancellation is
+  recorded in `admin_audit_log` under the tool `mail_send` — who, which box,
+  how many recipients, which document ids; never the text, the addresses or
+  the file names.
 
 ## Send-as addresses (one Google account, many addresses)
 

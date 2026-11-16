@@ -1169,6 +1169,7 @@ services/mailbox/imapTransport.js
 services/mailbox/mailAttachmentService.js
 services/mailbox/mailReadService.js
 services/mailbox/mailboxIngestService.js
+services/mailbox/mailboxScheduledSendService.js
 services/mailbox/mailboxSendService.js
 services/mailboxService.js
 services/oauthService.js
@@ -1812,6 +1813,9 @@ tests/mailboxS3.transport.test.js
 tests/mailboxS3R.mysql.test.js
 tests/mailboxS3R.pane.test.js
 tests/mailboxS3R.read.test.js
+tests/mailboxSendExtras.mysql.test.js
+tests/mailboxSendExtras.pane.test.js
+tests/mailboxSendExtras.send.test.js
 tests/mailboxStreakClock.test.js
 tests/maintenanceGate.test.js
 tests/manageSelfService.policy.test.js

@@ -27,6 +27,38 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Comms hub send extras — attachments + scheduled sends (11-16; design
+  §4.2 "Attachments" / "Scheduled sends"; manual 08 "Sending mail"):**
+  `POST /api/mail/send` takes `attachments: [{document_id}]` — REGISTERED
+  documents only, any staff who can send may attach any registered file
+  (`documents` has no per-case grant, like `/api/documents/:id/raw`); checked
+  before the budget and any Dropbox call (`mailboxSendService.loadAttachments`:
+  active, size KNOWN — NULL refused — ≤ 10 files, ≤ 15 MiB each and together:
+  24 MiB of Gmail base64 budget × 3/4 = 18 MiB raw ceiling, 15 leaves room for
+  the bodies), bytes fetched after the budget and before dispatch
+  (`fetchAttachments` → 502 `ATTACHMENT_FETCH_FAILED`, nothing sent; the route
+  RELEASES an Idempotency-Key claim on it), filename = `documents.name`, type
+  inferred by MailComposer (never `documents.mime`), the same files in the
+  Sent APPEND copy. Scheduled sends: `services/mailbox/mailboxScheduledSendService.js`
+  — `POST /api/mail/send/schedule` (the send body + `send_at` WITH a zone, ≥ 2
+  min ≤ 30 d; every pre-dispatch check of the send in its order, NOT the
+  budget; the opt-out answer stored with the job; `Idempotency-Key` scope
+  `mail.schedule`) → ONE `scheduled_jobs` row (`one_time`, `max_attempts 1`,
+  `data.type mail_scheduled_send`, the VALIDATED body); `GET
+  /api/mail/send/scheduled` own rows only (SU too; the user bound as a NUMBER
+  in `JSON_EXTRACT(data,'$.user') = ?` — a string matches nothing; a scan,
+  accepted); `DELETE …/:id` ONE conditional UPDATE (pending only; 404 / 409
+  saying which state). Executor `mail_scheduled_send` → `runScheduledSend`:
+  `sendFromMailbox` AS the sender inside `withIdempotency` (pool, scope
+  `mail.send`, key `scheduled:<job id>`, `releaseOnRefusalOnly`) — the
+  15-minute stuck-job sweep replays or stops, never sends twice; outcome
+  JSON_SET on the row; failed / unknown THROW (no retry) and tell the sender
+  (their `users.email`) + ONE `error` alert `mail_scheduled_send_failed`.
+  Pane: Files row + Attach picker (`GET /api/documents`, the composer's case
+  as the default filter), Send later (firm-time pick → instant,
+  `firmLocalToIso`), Scheduled (n) in the rail + composer footer with a
+  two-step Cancel; the list never loads at boot. Tests:
+  `mailboxSendExtras.send` / `.mysql` / `.pane`.
 - **Comms polish bundle A (comms-polish-2, 11-16):** Email tab: the card's
   ⋯ menu anchors to its button's LEFT edge (`.mmenu { left: 0 }`, `.flip`
   to the right only when it would overrun `.thread-body` — the right-anchored

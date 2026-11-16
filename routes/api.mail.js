@@ -62,9 +62,10 @@
  *                                             → {mailbox_id, to, cc, subject, quote, over_cap}
  *   POST   /api/mail/send                     {mailbox_id, to:[…], cc?, bcc?, subject,
  *                                             body_text | body_html, in_reply_to_message_fk?,
- *                                             quote_original?, signature?}
+ *                                             quote_original?, signature?, case_id?,
+ *                                             attachments?: [{document_id}]}
  *                                             → {email_log_id, provider_message_id, thread_key,
- *                                                append, read_seed, warnings}
+ *                                                append, read_seed, attachments, warnings}
  *            400 bad body · 403 read-only access · 404 no access / no mailbox · 409 the box
  *            cannot send (inactive, no / unusable credential) · 429 daily budget or your own
  *            send rate · 502 the provider refused (nothing sent) · 401 elevation_required
@@ -75,6 +76,38 @@
  *            result (+ replayed:true) instead of sending twice; a failure after
  *            dispatch KEEPS the claim (releaseOnRefusalOnly) → 409 in_flight/unknown,
  *            never a second send. No key = the old behaviour, untouched.
+ *            ATTACHMENTS (hub-send extras, 2026-11-16): registered `documents` rows by
+ *            id — ANY staff who can send may attach ANY registered file (documents carry
+ *            no per-case grant; /api/documents/:id/raw serves any staff the same way).
+ *            Each must be active with a known size; ≤ 10 files, 15 MiB each and together
+ *            (mailboxSendService ATTACHMENTS). Checked before the budget and before any
+ *            Dropbox call; the bytes are fetched before dispatch — a fetch failure is a
+ *            502 ATTACHMENT_FETCH_FAILED naming the file, nothing sent, and it RELEASES
+ *            an Idempotency-Key claim (pre-dispatch, like a 4xx).
+ *
+ *   Scheduled sends (hub-send extras — services/mailbox/mailboxScheduledSendService.js):
+ *   POST   /api/mail/send/schedule            the send body + send_at (ISO-8601 WITH a zone;
+ *                                             ≥ 2 min and ≤ 30 days out) → {job_id, send_at,
+ *                                             from, recipients, attachments}. Runs every
+ *                                             pre-dispatch check the send runs, in its order
+ *                                             (SU step-up — the schedule IS the write; body;
+ *                                             opt-out 409 until acknowledged, the answer
+ *                                             stored with the job; the per-user limiter;
+ *                                             identity; parent; case; documents) — NOT the
+ *                                             daily budget (send-time). Idempotency-Key under
+ *                                             scope mail.schedule (a create). ONE
+ *                                             scheduled_jobs row (one_time, max_attempts 1,
+ *                                             data.type mail_scheduled_send).
+ *   GET    /api/mail/send/scheduled           {scheduled:[…]} — the CALLER's rows only (an SU
+ *                                             too): pending / running, plus completed, failed
+ *                                             and cancelled ones from the last 7 days; each
+ *                                             carries outcome, mailbox, to/cc/bcc, subject,
+ *                                             case_id, attachments (names resolved now, a
+ *                                             deleted one marked) — never the bodies
+ *   DELETE /api/mail/send/scheduled/:id       cancel a PENDING one (one conditional UPDATE);
+ *                                             404 not yours / not a scheduled send; 409 when
+ *                                             running (may already have gone), completed,
+ *                                             failed or cancelled — the text says which
  *
  * Auto-mounted (server.js readdirSync); req.db injected. UI: public/comms.html.
  * Service: services/mailbox/mailReadService.js. Spec: ref/MAILBOX_SYSTEM_DESIGN.md
@@ -104,6 +137,7 @@ const { makeLimiter } = require('../lib/rateLimiter');
 const svc = require('../services/mailbox/mailReadService');
 const filingComms = require('../services/emailAttachmentCommsService');
 const send = require('../services/mailbox/mailboxSendService');
+const sched = require('../services/mailbox/mailboxScheduledSendService');
 const optout = require('../services/optoutService');
 const mbx = require('../services/mailboxService');
 const { idempotentRequest, sendIdempotencyError, releaseOnRefusalOnly } = require('../lib/requestIdempotency');
@@ -333,6 +367,22 @@ router.get('/api/mail/messages/:id/reply', ...guard, async function getReplyDefa
   } catch (err) { sendError(res, 'GET /api/mail/messages/:id/reply', err); }
 });
 
+/** The distinct document ids a body names (for the audit row — never the names), or []. */
+function attachmentIdsOf(body) {
+  if (!Array.isArray(body.attachments)) return [];
+  return [...new Set(body.attachments.map(a => Number(a && typeof a === 'object' ? a.document_id : a)).filter(n => Number.isInteger(n) && n > 0))];
+}
+
+/**
+ * The send route's idempotency release rule: a pre-dispatch refusal (any 4xx)
+ * AND the pre-dispatch 502 of an attachment that could not be fetched —
+ * nothing was sent either way, so the key may be retried as-is. Every other
+ * 5xx may follow a message that went out and keeps the claim.
+ */
+function releaseBeforeDispatch(err) {
+  return releaseOnRefusalOnly(err) || !!(err && err.code === 'ATTACHMENT_FETCH_FAILED');
+}
+
 // ─── POST /api/mail/send ───
 router.post('/api/mail/send', ...guard, async function sendMail(req, res) {
   const uid = req.auth.userId;
@@ -340,6 +390,7 @@ router.post('/api/mail/send', ...guard, async function sendMail(req, res) {
   const meta = {
     mailbox_id: Number(body.mailbox_id) || null,
     in_reply_to_message_fk: Number(body.in_reply_to_message_fk) || null,
+    attachments: attachmentIdsOf(body),
   };
   try {
     // S0 rule: an SU acting through the bypass needs step-up on a WRITE.
@@ -376,7 +427,7 @@ router.post('/api/mail/send', ...guard, async function sendMail(req, res) {
       return res.status(429).json({ status: 'error', message: 'Too many sends from you in a few minutes — wait a little and try again.' });
     }
     const { value: out, replayed } = await idempotentRequest(req, 'mail.send',
-      () => send.sendFromMailbox(req.db, uid, body.mailbox_id, body), { releaseOnError: releaseOnRefusalOnly });
+      () => send.sendFromMailbox(req.db, uid, body.mailbox_id, body), { releaseOnError: releaseBeforeDispatch });
     // A replay sent nothing, so it is not audited as a send.
     if (replayed) return res.json({ status: 'success', ...out, replayed: true });
     auditSend(req, 'sent', {
@@ -396,6 +447,86 @@ router.post('/api/mail/send', ...guard, async function sendMail(req, res) {
       auditSend(req, err.status === 429 ? 'refused_budget' : 'send_failed', meta, err.message);
     }
     sendError(res, 'POST /api/mail/send', err);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Scheduled sends (hub-send extras — mailboxScheduledSendService)
+// ─────────────────────────────────────────────────────────────
+
+// ─── POST /api/mail/send/schedule ───  the send body + send_at
+router.post('/api/mail/send/schedule', ...guard, async function scheduleMail(req, res) {
+  const uid = req.auth.userId;
+  const raw = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  // send_at is the schedule's, not the send's: validateSendBody refuses unknown keys.
+  const { send_at: sendAtRaw, ...body } = raw;
+  const meta = {
+    mailbox_id: Number(body.mailbox_id) || null,
+    in_reply_to_message_fk: Number(body.in_reply_to_message_fk) || null,
+    attachments: attachmentIdsOf(body),
+    send_at: typeof sendAtRaw === 'string' ? sendAtRaw.slice(0, 40) : null,
+  };
+  try {
+    // The same order as the send (its comments apply): the SU step-up first —
+    // the schedule IS the write — then the body (+ send_at), the opt-out gate
+    // (its answer travels with the job, so the send never asks again), the
+    // limiter, then the service's identity / parent / case / documents checks.
+    if (await mbx.isSuperuser(req.db, uid)
+        && !(!stepupEnabled() || verifyElevationToken(req.headers['x-su-elevation'], uid))) {
+      auditSend(req, 'rejected_no_elevation', meta);
+      return res.status(401).json({
+        error: 'Elevation required — confirm your password to schedule a send as a mailbox through superuser access.',
+        code: 'elevation_required',
+      });
+    }
+    const parsed = send.validateSendBody(body);
+    const sendAt = sched.parseSendAt(sendAtRaw);
+    const gate = await optout.optoutGate(req.db, {
+      channel: 'email', dest: [...parsed.to, ...parsed.cc, ...parsed.bcc], acknowledged: parsed.acknowledge_optout,
+    });
+    if (gate.refusal) {
+      auditSend(req, 'refused_opted_out', meta);
+      return res.status(gate.refusal.status).json(gate.refusal.body);
+    }
+    if (sendLimited(`u${uid}`)) {
+      return res.status(429).json({ status: 'error', message: 'Too many sends from you in a few minutes — wait a little and try again.' });
+    }
+    // A create, not a send: the default release rule (a failed insert wrote nothing).
+    const { value: out, replayed } = await idempotentRequest(req, 'mail.schedule',
+      () => sched.scheduleSend(req.db, uid, body, { sendAt, acknowledgedOptout: parsed.acknowledge_optout }));
+    if (replayed) return res.json({ status: 'success', ...out, replayed: true });
+    auditSend(req, 'scheduled', {
+      ...meta,
+      job_id: out.job_id,
+      send_at: out.send_at,
+      recipients: out.recipients,
+      ...(gate.overridden.length ? optout.overrideAudit(gate.overridden) : {}),
+    });
+    res.status(201).json({ status: 'success', ...out });
+  } catch (err) {
+    if (sendIdempotencyError(res, err)) return;
+    sendError(res, 'POST /api/mail/send/schedule', err);
+  }
+});
+
+// ─── GET /api/mail/send/scheduled ───  the caller's own
+router.get('/api/mail/send/scheduled', ...guard, async function listScheduledMail(req, res) {
+  try {
+    res.json({ status: 'success', ...(await sched.listScheduled(req.db, req.auth.userId)) });
+  } catch (err) { sendError(res, 'GET /api/mail/send/scheduled', err); }
+});
+
+// ─── DELETE /api/mail/send/scheduled/:id ───  cancel a pending one
+router.delete('/api/mail/send/scheduled/:id', ...guard, async function cancelScheduledMail(req, res) {
+  try {
+    const out = await sched.cancelScheduled(req.db, req.auth.userId, req.params.id);
+    auditSend(req, 'cancelled', { job_id: out.id });
+    res.json({ status: 'success', ...out });
+  } catch (err) {
+    if (err && err.status === 409 && err.code) {
+      return res.status(409).json({ status: 'error', message: err.message, code: err.code });
+    }
+    sendError(res, 'DELETE /api/mail/send/scheduled/:id', err);
   }
 });
 
