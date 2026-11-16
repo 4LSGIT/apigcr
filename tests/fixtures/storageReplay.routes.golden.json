@@ -1,0 +1,471 @@
+{
+ "scenarios": {
+  "8 routes: upload-link, upload-commit, raw": {
+   "calls": [
+    {
+     "fn": "getTemporaryUploadLink",
+     "args": [
+      {
+       "filename": "W2 2025.pdf",
+       "sharedLink": "https://www.dropbox.com/scl/fo/fake0001?dl=0"
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/W2 2025.pdf"
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17"
+      }
+     ]
+    },
+    {
+     "fn": "createFolderWithOptions",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17",
+       "shareLink": true,
+       "subfolders": [
+        "Client Uploads"
+       ]
+      }
+     ]
+    },
+    {
+     "fn": "getTemporaryUploadLink",
+     "args": [
+      {
+       "filename": "Pay stub.pdf",
+       "sharedLink": "https://www.dropbox.com/scl/fo/fake0002?dl=0",
+       "subfolder": "Client Uploads"
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17/Client Uploads/Pay stub.pdf"
+      }
+     ]
+    },
+    {
+     "fn": "getTemporaryUploadLink",
+     "args": [
+      {
+       "filename": "Lease.pdf",
+       "sharedLink": "https://www.dropbox.com/scl/fo/gone0000?dl=0"
+      }
+     ]
+    },
+    {
+     "fn": "getTemporaryUploadLink",
+     "args": [
+      {
+       "filename": "Lease.pdf",
+       "sharedLink": "https://www.dropbox.com/scl/fo/gone0000?dl=0",
+       "subfolder": "Client Uploads"
+      }
+     ]
+    },
+    {
+     "fn": "getTemporaryUploadLink",
+     "args": [
+      {
+       "filename": "Lease.pdf",
+       "path": "/  Law Office/   Cases/  Unsorted Client Uploads/deadLnk1 - Lee, Ann"
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Unsorted Client Uploads/deadLnk1 - Lee, Ann"
+      }
+     ]
+    },
+    {
+     "fn": "getTemporaryUploadLink",
+     "args": [
+      {
+       "filename": "ID.png",
+       "path": "/  Law Office/   Cases/  Unsorted Client Uploads"
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Unsorted Client Uploads/ID.png"
+      }
+     ]
+    },
+    {
+     "fn": "getTemporaryUploadLink",
+     "args": [
+      {
+       "filename": "misc.docx",
+       "path": "/  Law Office/   Cases/  Unsorted Client Uploads"
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Unsorted Client Uploads/misc.docx"
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "id:f0002"
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "id:f9999"
+      }
+     ]
+    },
+    {
+     "fn": "downloadFile",
+     "args": [
+      {
+       "path": "id:f0001"
+      }
+     ]
+    }
+   ],
+   "effects": [
+    {
+     "kind": "registry.registerWritten",
+     "createdBy": 6,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:01Z",
+      "content_hash": "a6c2fbeb1e88d52c7876979f4fe31a2de31e860e8b1d467762e579a0e3fdaa70",
+      "id": "id:f0001",
+      "is_downloadable": true,
+      "name": "W2 2025.pdf",
+      "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/W2 2025.pdf",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/w2 2025.pdf",
+      "rev": "rev000001",
+      "server_modified": "2026-11-17T12:00:01Z",
+      "size": 11
+     },
+     "eventSource": "upload",
+     "links": [
+      {
+       "id": "hjSFMabb",
+       "type": "case"
+      }
+     ],
+     "source": "dropbox"
+    },
+    {
+     "kind": "cases.case_dropbox",
+     "case_dropbox": "https://www.dropbox.com/scl/fo/fake0002?dl=0",
+     "case_id": "k9PotLd2"
+    },
+    {
+     "kind": "task.create",
+     "desc": "Case k9PotLd2 had no Dropbox folder linked, so one was created automatically when a client uploaded documents: https://www.dropbox.com/scl/fo/fake0002?dl=0\n\nIf this case already had a folder that was never linked, move its contents into the new folder (or move the uploads into the old one and re-link it on the case page).",
+     "from": 0,
+     "link_id": "k9PotLd2",
+     "link_type": "case",
+     "source": "client_upload",
+     "title": "Review auto-created Dropbox folder: k9PotLd2",
+     "to": 22
+    },
+    {
+     "kind": "registry.registerWritten",
+     "createdBy": 6,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:02Z",
+      "content_hash": "50b93ae41917c313915c84c95d63549c9afc61871c57b711d040499b294985af",
+      "id": "id:f0002",
+      "is_downloadable": true,
+      "name": "Pay stub.pdf",
+      "path_display": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17/Client Uploads/Pay stub.pdf",
+      "path_lower": "/  law office/   cases/  potential cases/  potential - bankruptcy/ doe, jane - k9potld2 - 2026-11-17/client uploads/pay stub.pdf",
+      "rev": "rev000002",
+      "server_modified": "2026-11-17T12:00:02Z",
+      "size": 13
+     },
+     "eventSource": "upload",
+     "links": [
+      {
+       "id": "k9PotLd2",
+       "type": "case"
+      }
+     ],
+     "source": "dropbox"
+    },
+    {
+     "kind": "registry.registerWritten",
+     "createdBy": 6,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:03Z",
+      "content_hash": "4bb0d057a264e528182ef3a6b93d1d6e2da3d8b7a65a5f9209bede0220b3d93c",
+      "id": "id:f0003",
+      "is_downloadable": true,
+      "name": "deadLnk1 - Lee, Ann",
+      "path_display": "/  Law Office/   Cases/  Unsorted Client Uploads/deadLnk1 - Lee, Ann",
+      "path_lower": "/  law office/   cases/  unsorted client uploads/deadlnk1 - lee, ann",
+      "rev": "rev000003",
+      "server_modified": "2026-11-17T12:00:03Z",
+      "size": 14
+     },
+     "eventSource": "upload",
+     "links": [
+      {
+       "id": "deadLnk1",
+       "type": "case"
+      }
+     ],
+     "source": "dropbox"
+    },
+    {
+     "kind": "registry.registerWritten",
+     "createdBy": 6,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:04Z",
+      "content_hash": "d013614dc14a37ee20fe92005737ab7d3427e7e93580ad56ef8a42205e7f7a4e",
+      "id": "id:f0004",
+      "is_downloadable": true,
+      "name": "ID.png",
+      "path_display": "/  Law Office/   Cases/  Unsorted Client Uploads/ID.png",
+      "path_lower": "/  law office/   cases/  unsorted client uploads/id.png",
+      "rev": "rev000004",
+      "server_modified": "2026-11-17T12:00:04Z",
+      "size": 9
+     },
+     "eventSource": "upload",
+     "links": [
+      {
+       "id": "502",
+       "type": "contact"
+      }
+     ],
+     "source": "dropbox"
+    },
+    {
+     "kind": "registry.registerWritten",
+     "createdBy": 6,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:05Z",
+      "content_hash": "9c53fa3ca6756ee84492a2f5e05fc3ef989127e45c8d863fecf9f57d50186659",
+      "id": "id:f0005",
+      "is_downloadable": true,
+      "name": "misc.docx",
+      "path_display": "/  Law Office/   Cases/  Unsorted Client Uploads/misc.docx",
+      "path_lower": "/  law office/   cases/  unsorted client uploads/misc.docx",
+      "rev": "rev000005",
+      "server_modified": "2026-11-17T12:00:05Z",
+      "size": 10
+     },
+     "eventSource": "upload",
+     "links": [],
+     "source": "dropbox"
+    }
+   ],
+   "http": [
+    {
+     "label": "case A link",
+     "status": 200,
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/W2 2025.pdf",
+     "placement": "case"
+    },
+    {
+     "label": "case A commit",
+     "status": 201,
+     "link_id": "hjSFMabb",
+     "link_type": "case",
+     "relation": "upload"
+    },
+    {
+     "label": "case B link (no folder → ladder creates)",
+     "status": 200,
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17/Client Uploads/Pay stub.pdf",
+     "placement": "created"
+    },
+    {
+     "label": "case B commit",
+     "status": 201,
+     "link_id": "k9PotLd2",
+     "link_type": "case",
+     "relation": "upload"
+    },
+    {
+     "label": "case D link (dead folder → unsorted_case)",
+     "status": 200,
+     "note": "This case has no working Dropbox folder, so the file goes to the unsorted uploads folder. It is still linked to the case here.",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads/deadLnk1 - Lee, Ann",
+     "placement": "unsorted_case"
+    },
+    {
+     "label": "case D commit",
+     "status": 201,
+     "link_id": "deadLnk1",
+     "link_type": "case",
+     "relation": "upload"
+    },
+    {
+     "label": "contact link (unsorted_contact)",
+     "status": 200,
+     "note": "Contacts have no Dropbox folder convention, so this file goes to the unsorted uploads folder and is linked to the contact here. Move it wherever it belongs — the link follows the file.",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads/ID.png",
+     "placement": "unsorted_contact"
+    },
+    {
+     "label": "contact commit",
+     "status": 201,
+     "link_id": "502",
+     "link_type": "contact",
+     "relation": "upload"
+    },
+    {
+     "label": "global link (unsorted_global)",
+     "status": 200,
+     "note": "No case or contact is selected, so this file goes to the unsorted uploads folder unattached. Link it to a case from the documents list.",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads/misc.docx",
+     "placement": "unsorted_global"
+    },
+    {
+     "label": "global commit",
+     "status": 201
+    },
+    {
+     "label": "commit of a file outside the issued folder is refused",
+     "status": 400,
+     "message": "that file is not in the folder this upload was issued for"
+    },
+    {
+     "label": "commit of a file that never landed is a 404",
+     "status": 404,
+     "message": "that file is not in Dropbox — the upload did not complete, so there is nothing to register"
+    },
+    {
+     "label": "both owners refused",
+     "status": 400,
+     "message": "provide case_id OR contact_id, not both — one upload has one owner"
+    },
+    {
+     "label": "404 case",
+     "status": 404,
+     "message": "Case not found"
+    },
+    {
+     "label": "raw read-back",
+     "status": 200,
+     "type": "application/pdf",
+     "disposition": "inline; filename=\"W2 2025.pdf\"; filename*=UTF-8''W2%202025.pdf",
+     "bytes": 11
+    }
+   ],
+   "provider_state": [
+    {
+     "tag": "folder",
+     "path": "/  Law Office"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads"
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/W2 2025.pdf",
+     "size": 11
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17/Client Uploads"
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17/Client Uploads/Pay stub.pdf",
+     "size": 13
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads"
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads/deadLnk1 - Lee, Ann",
+     "size": 14
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads/ID.png",
+     "size": 9
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads/misc.docx",
+     "size": 10
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted E-Signed Documents"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Form Submissions"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Generated Documents"
+    }
+   ]
+  }
+ }
+}

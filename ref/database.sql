@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-16T06:28:27.007Z
+-- Generated: 2026-11-16T15:48:41.118Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:8131226d348942f7bc901fc3fc7035f1
+-- Fingerprint: sha256:44789e83bb202eff6c3672710c239904
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -937,10 +937,10 @@ CREATE TABLE `checklists1` (
 DROP TABLE IF EXISTS `comm_consent_events`;
 CREATE TABLE `comm_consent_events` (
   `id` bigint unsigned NOT NULL,
-  `channel` enum('email','sms') COLLATE utf8mb4_general_ci NOT NULL,
+  `channel` enum('email','sms') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'sms | email: the channel of the destination (MMS is recorded as sms, optoutService.CHANNELS). Picks the scope vocabulary: sms has all + topics, email has marketing + topics',
   `destination` varchar(254) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'normalized: 10 digits (contactPhoneService.normalizePhone) | trimmed lowercased address (contactEmailService.normalizeEmail)',
   `scope` varchar(40) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'sms: all | topic; email: marketing | topic. There is NO email all (D18: an email opt-out is marketing-only)',
-  `action` enum('opt_out','opt_in') COLLATE utf8mb4_general_ci NOT NULL,
+  `action` enum('opt_out','opt_in') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'opt_out | opt_in (app-validated, optoutService.ACTIONS). Sets comm_consent_state.state to opted_out | opted_in when (occurred_at, id) is newest. An opt_in is recorded by staff (a signed-in user; automation and API keys are refused), by the preference page, or by an SMS START keyword while the number is opted out; providers and imports only opt out',
   `source` varchar(32) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'staff | unsub_page | one_click | pref_page | sms_keyword | sms_review | provider_optout | provider_bounce | provider_complaint | import | web_form | migration | row_replace (app-validated, optoutService.SOURCES)',
   `provider_event_id` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'dedup key with source (uk_source_event): a provider event id, or migration:phone|email:<row id>; NULL never collides',
   `occurred_at` datetime(3) NOT NULL COMMENT 'UTC; when it happened (provider time when known). Orders the state: (occurred_at, id) newest wins',
@@ -960,10 +960,10 @@ CREATE TABLE `comm_consent_events` (
 
 DROP TABLE IF EXISTS `comm_consent_state`;
 CREATE TABLE `comm_consent_state` (
-  `channel` enum('email','sms') COLLATE utf8mb4_general_ci NOT NULL,
+  `channel` enum('email','sms') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'sms | email, as comm_consent_events.channel (MMS is sms). Primary key (channel, destination, scope)',
   `destination` varchar(254) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'same normalization as comm_consent_events.destination',
-  `scope` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
-  `state` enum('opted_out','opted_in') COLLATE utf8mb4_general_ci NOT NULL,
+  `scope` varchar(40) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'as comm_consent_events.scope: sms all | topic, email marketing | topic (no email all, D18). A send reads sms all (every text) and email marketing (marketing mail only), plus the topic row of a topic send. A row exists only for a scope an event has set',
+  `state` enum('opted_out','opted_in') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'opted_out | opted_in: the newest decision by (occurred_at, id). opted_out blocks a send that checks this scope. An opt_in topic (comm_topics.consent_model) sends ONLY to a destination whose topic row is opted_in, so no row = not sendable there; an opt_out topic sends unless opted_out',
   `occurred_at` datetime(3) NOT NULL COMMENT 'occurred_at of the event that set this row',
   `last_event_id` bigint unsigned NOT NULL COMMENT 'comm_consent_events.id that set this row; an event wins only if (occurred_at, id) is newer',
   `updated_at` datetime(3) NOT NULL

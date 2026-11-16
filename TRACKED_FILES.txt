@@ -1026,6 +1026,7 @@ scripts/seedRoleContacts.js
 scripts/settingsArcMigrate.js
 scripts/sharedValuesHistoryMigrate.js
 scripts/sharedValuesMigrate.js
+scripts/storageConfigDump.js
 scripts/sweep_validate_live.js
 scripts/test_availability.js
 scripts/test_court_revert.js
@@ -1619,6 +1620,10 @@ tests/fixtures/slice26/tpl5_code.js
 tests/fixtures/slice26/tpl5_draft_definition.json
 tests/fixtures/slice26/tpl6_code.js
 tests/fixtures/slice26/tpl6_draft_definition.json
+tests/fixtures/storageReplay.golden.json
+tests/fixtures/storageReplay.mysql.golden.json
+tests/fixtures/storageReplay.routes.golden.json
+tests/fixtures/storageReplay.workflowSteps.json
 tests/formBuilderSimpleHandoff.test.js
 tests/formBuilder_phaseA.test.js
 tests/formBuilder_phaseB.test.js
@@ -1680,11 +1685,13 @@ tests/helpers/mailboxS3World.js
 tests/helpers/optoutFake.js
 tests/helpers/phoneConsentWorld.js
 tests/helpers/phoneSPHWorld.js
+tests/helpers/recordingDropbox.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
 tests/helpers/settingsApiFake.js
 tests/helpers/sharedValuesEngine.js
 tests/helpers/shellHtml.js
+tests/helpers/storageReplayWorld.js
 tests/helpers/toolShell.js
 tests/helpers/u6aEventsDb.js
 tests/helpers/uiConfigStore.js
@@ -1951,6 +1958,10 @@ tests/smtpAdapter.deliveryInfo.test.js
 tests/sqlGuard.secretTables.test.js
 tests/ssnModifiers.test.js
 tests/startupInit.maintenance.test.js
+tests/storageConfigDump.test.js
+tests/storageReplay.mysql.test.js
+tests/storageReplay.routes.test.js
+tests/storageReplay.test.js
 tests/su.stepup.test.js
 tests/systemAlertStatusFn.test.js
 tests/taskCreate.badInput400.test.js

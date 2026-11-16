@@ -2565,6 +2565,9 @@ module.exports = {
   docketTooLongMessage,
   docketConflictMessage,
   ensureCaseDropboxFolder,
+  // the code defaults behind app_settings dropbox_case_folder_templates —
+  // read by scripts/storageConfigDump.js so the dump never retypes a path
+  DEFAULT_CASE_FOLDER_TEMPLATES,
   listCaseSequences,
   listCaseWorkflows,
   mergeCases

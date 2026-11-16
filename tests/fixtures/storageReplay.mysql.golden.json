@@ -1,0 +1,446 @@
+{
+ "scenarios": {
+  "B1 registry: relation path under the cached case folder, upload elsewhere, contact link, re-registration updates in place, a folder is refused": {
+   "calls": [
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith/Scan.pdf"
+      }
+     ]
+    }
+   ],
+   "results": [
+    {
+     "document": "id:b0001",
+     "links": [
+      {
+       "link_type": "case",
+       "link_id": "hjSFMabb",
+       "relation": "path",
+       "created": true
+      }
+     ]
+    },
+    {
+     "document": "id:b0002",
+     "links": [
+      {
+       "link_type": "case",
+       "link_id": "deadLnk1",
+       "relation": "upload",
+       "created": true
+      }
+     ]
+    },
+    {
+     "document": "id:b0003",
+     "links": [
+      {
+       "link_type": "contact",
+       "link_id": "502",
+       "relation": "upload",
+       "created": true
+      }
+     ]
+    },
+    {
+     "document": "id:b0001",
+     "links": [
+      {
+       "link_type": "case",
+       "link_id": "hjSFMabb",
+       "relation": "path",
+       "created": false
+      }
+     ]
+    },
+    {
+     "document": "id:f0001",
+     "links": [
+      {
+       "link_type": "case",
+       "link_id": "hjSFMabb",
+       "relation": "path",
+       "created": true
+      }
+     ]
+    }
+   ],
+   "folder_refused": {
+    "ok": false,
+    "error": "documentIngestService: refusing to register a folder"
+   },
+   "state": {
+    "documents": [
+     {
+      "external_id": "id:b0001",
+      "name": "W2 (renamed).pdf",
+      "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/W2 (renamed).pdf",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client uploads/w2 (renamed).pdf",
+      "size": 11,
+      "status": "active",
+      "rev": "r2",
+      "pending_delete": false
+     },
+     {
+      "external_id": "id:b0002",
+      "name": "Lease.pdf",
+      "path": "/  Law Office/   Cases/  Unsorted Client Uploads/deadLnk1 - Lee, Ann/Lease.pdf",
+      "path_lower": "/  law office/   cases/  unsorted client uploads/deadlnk1 - lee, ann/lease.pdf",
+      "size": 20,
+      "status": "active",
+      "rev": "r1",
+      "pending_delete": false
+     },
+     {
+      "external_id": "id:b0003",
+      "name": "ID.png",
+      "path": "/  Law Office/   Cases/  Unsorted Client Uploads/ID.png",
+      "path_lower": "/  law office/   cases/  unsorted client uploads/id.png",
+      "size": 30,
+      "status": "active",
+      "rev": "r1",
+      "pending_delete": false
+     },
+     {
+      "external_id": "id:f0001",
+      "name": "Scan.pdf",
+      "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith/Scan.pdf",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client docs - john smith/scan.pdf",
+      "size": 9,
+      "status": "active",
+      "rev": "rev000001",
+      "pending_delete": false
+     }
+    ],
+    "links": [
+     {
+      "document": "id:b0001",
+      "link_type": "case",
+      "link_id": "hjSFMabb",
+      "relation": "path",
+      "created_by": 6
+     },
+     {
+      "document": "id:b0002",
+      "link_type": "case",
+      "link_id": "deadLnk1",
+      "relation": "upload",
+      "created_by": null
+     },
+     {
+      "document": "id:b0003",
+      "link_type": "contact",
+      "link_id": "502",
+      "relation": "upload",
+      "created_by": 6
+     },
+     {
+      "document": "id:f0001",
+      "link_type": "case",
+      "link_id": "hjSFMabb",
+      "relation": "path",
+      "created_by": null
+     }
+    ],
+    "case_folder_cache": [
+     {
+      "case_id": "hjSFMabb",
+      "folder_external_id": "id:F0005",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13",
+      "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13",
+      "resolve_error": null
+     }
+    ],
+    "sync_roots": [],
+    "events": [
+     {
+      "type": "document.created",
+      "source": "upload"
+     },
+     {
+      "type": "document.linked",
+      "case_id": "hjSFMabb",
+      "source": "upload"
+     },
+     {
+      "type": "document.created",
+      "source": "generated_doc"
+     },
+     {
+      "type": "document.linked",
+      "case_id": "deadLnk1",
+      "source": "generated_doc"
+     },
+     {
+      "type": "document.created",
+      "source": "upload"
+     },
+     {
+      "type": "document.linked",
+      "contact_id": 502,
+      "source": "upload"
+     },
+     {
+      "type": "document.updated",
+      "source": "upload"
+     },
+     {
+      "type": "document.created",
+      "source": "upload"
+     },
+     {
+      "type": "document.linked",
+      "case_id": "hjSFMabb",
+      "source": "upload"
+     }
+    ]
+   },
+   "provider_state": [
+    {
+     "tag": "folder",
+     "path": "/  Law Office"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith"
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith/Scan.pdf",
+     "size": 9
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads"
+    }
+   ]
+  },
+  "B2 sync: backfill page, incremental page with a move and a deletion, then the cache refresh": {
+   "calls": [
+    {
+     "fn": "listFolderPage",
+     "args": [
+      {
+       "limit": 2000,
+       "path": "/  Law Office/   Cases/  Active Cases",
+       "recursive": true
+      }
+     ]
+    },
+    {
+     "fn": "listFolderContinue",
+     "args": [
+      {
+       "cursor": "cur:1"
+      }
+     ]
+    },
+    {
+     "fn": "listFolderContinue",
+     "args": [
+      {
+       "cursor": "cur:2"
+      }
+     ]
+    },
+    {
+     "fn": "getSharedLinkMetadata",
+     "args": [
+      {
+       "url": "https://www.dropbox.com/scl/fo/gone0000?dl=0"
+      }
+     ]
+    },
+    {
+     "fn": "getSharedLinkMetadata",
+     "args": [
+      {
+       "url": "https://www.dropbox.com/scl/fo/fake0001?dl=0"
+      }
+     ]
+    }
+   ],
+   "results": [
+    {
+     "root_id": 1,
+     "path": "/  Law Office/   Cases/  Active Cases",
+     "mode": "backfill",
+     "pages": 1,
+     "files": 2,
+     "linked": 1,
+     "deleted": 0,
+     "folder_heals": 0,
+     "stop": "page_cap"
+    },
+    {
+     "root_id": 1,
+     "path": "/  Law Office/   Cases/  Active Cases",
+     "mode": "incremental",
+     "pages": 1,
+     "files": 1,
+     "linked": 0,
+     "deleted": 1,
+     "folder_heals": 0,
+     "stop": "complete"
+    },
+    {
+     "root_id": 1,
+     "path": "/  Law Office/   Cases/  Active Cases",
+     "mode": "incremental",
+     "pages": 1,
+     "files": 0,
+     "linked": 0,
+     "deleted": 0,
+     "folder_heals": 0,
+     "stop": "complete"
+    }
+   ],
+   "refresh": {
+    "resolved": 1,
+    "failed": 1,
+    "out_of_root": [],
+    "scanned": 2,
+    "candidates": 2,
+    "limit": 300,
+    "targeted": true,
+    "timed_out": false,
+    "failures": [
+     {
+      "case_id": "deadLnk1",
+      "error": "dropbox shared_link/not_found/.. (409)"
+     }
+    ]
+   },
+   "state": {
+    "documents": [
+     {
+      "external_id": "id:s0001",
+      "name": "2026-06-01 Intake.pdf",
+      "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith/2026-06-01 Intake.pdf",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client docs - john smith/2026-06-01 intake.pdf",
+      "size": 1200,
+      "status": "active",
+      "rev": "r2",
+      "pending_delete": false
+     },
+     {
+      "external_id": "id:s0002",
+      "name": " loose scan.pdf",
+      "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ loose scan.pdf",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ loose scan.pdf",
+      "size": 300,
+      "status": "active",
+      "rev": "r1",
+      "pending_delete": true
+     }
+    ],
+    "links": [
+     {
+      "document": "id:s0001",
+      "link_type": "case",
+      "link_id": "hjSFMabb",
+      "relation": "path",
+      "created_by": null
+     }
+    ],
+    "case_folder_cache": [
+     {
+      "case_id": "deadLnk1",
+      "folder_external_id": null,
+      "path_lower": null,
+      "path_display": null,
+      "resolve_error": "dropbox shared_link/not_found/.. (409)"
+     },
+     {
+      "case_id": "hjSFMabb",
+      "folder_external_id": "id:F0005",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13",
+      "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13",
+      "resolve_error": null
+     }
+    ],
+    "sync_roots": [
+     {
+      "id": 1,
+      "path": "/  Law Office/   Cases/  Active Cases",
+      "backfill_done": 1,
+      "sync_cursor": "cur:3",
+      "last_error": null,
+      "stats": {
+       "mode": "incremental",
+       "stop": "complete",
+       "files": 0,
+       "pages": 1,
+       "linked": 0,
+       "deleted": 0,
+       "folder_heals": 0
+      }
+     }
+    ],
+    "events": [
+     {
+      "type": "document.updated",
+      "source": "system"
+     }
+    ]
+   },
+   "provider_state": [
+    {
+     "tag": "folder",
+     "path": "/  Law Office"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads"
+    }
+   ]
+  }
+ }
+}

@@ -1118,4 +1118,7 @@ module.exports = {
   _resolveCredential,
   _rpc,
   httpHeaderSafeJson,
+  // the code default behind app_settings dropbox_credential_id — read by
+  // scripts/storageConfigDump.js so the dump never retypes it
+  DEFAULT_CREDENTIAL_ID,
 };

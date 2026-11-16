@@ -1,0 +1,272 @@
+{
+ "captured": "2026-11-17 from workflow_steps WHERE config LIKE '%dropbox\\_%' (24 rows; 20 call dropbox_* — the other 4 are get_setting rows naming a dropbox_* setting key)",
+ "sanitized": "shared_link literals → {{case_dropbox}}; the court ECF url → {{court_doc_url}}; no credentials present",
+ "steps": [
+  {
+   "step_id": 223,
+   "workflow_id": 1,
+   "version": 1,
+   "step_number": 8,
+   "label": null,
+   "function_name": "dropbox_save_url",
+   "params": {
+    "url": "{{court_doc_url}}",
+    "wait": true,
+    "filename": "26-44274-mar \"Minute Entry. Hearing Adjourned (BK)\" Ch 13",
+    "subfolder": "court docs",
+    "shared_link": "{{case_dropbox}}"
+   }
+  },
+  {
+   "step_id": 206,
+   "workflow_id": 28,
+   "version": 1,
+   "step_number": 4,
+   "label": null,
+   "function_name": "dropbox_move",
+   "params": {
+    "to_path": "{{active_path}}",
+    "from_shared_link": "{{case_dropbox}}"
+   }
+  },
+  {
+   "step_id": 207,
+   "workflow_id": 28,
+   "version": 1,
+   "step_number": 5,
+   "label": null,
+   "function_name": "dropbox_create_folder",
+   "params": {
+    "path": "{{active_path}}",
+    "subfolders": [
+     "Docket - {{contact_name}} - {{case_subtype}} - {{case_number}}",
+     "Drafts - {{contact_name}}",
+     "Client Docs - {{contact_name}}",
+     "Correspondence - {{contact_name}}"
+    ]
+   }
+  },
+  {
+   "step_id": 209,
+   "workflow_id": 28,
+   "version": 1,
+   "step_number": 7,
+   "label": null,
+   "function_name": "dropbox_ensure_case_folder",
+   "params": {
+    "case_id": "{{case_id}}"
+   }
+  },
+  {
+   "step_id": 761,
+   "workflow_id": 28,
+   "version": 2,
+   "step_number": 4,
+   "label": null,
+   "function_name": "dropbox_move",
+   "params": {
+    "to_path": "{{active_path}}",
+    "from_shared_link": "{{case_dropbox}}"
+   }
+  },
+  {
+   "step_id": 762,
+   "workflow_id": 28,
+   "version": 2,
+   "step_number": 5,
+   "label": null,
+   "function_name": "dropbox_create_folder",
+   "params": {
+    "path": "{{active_path}}",
+    "subfolders": [
+     " Docket - {{contact_name}} - {{case_subtype}} - {{case_number}}",
+     " Drafts - {{contact_name}}",
+     " Client Docs - {{contact_name}}",
+     " Correspondence - {{contact_name}}"
+    ]
+   }
+  },
+  {
+   "step_id": 764,
+   "workflow_id": 28,
+   "version": 2,
+   "step_number": 7,
+   "label": null,
+   "function_name": "dropbox_ensure_case_folder",
+   "params": {
+    "case_id": "{{case_id}}"
+   }
+  },
+  {
+   "step_id": 583,
+   "workflow_id": 48,
+   "version": 1,
+   "step_number": 6,
+   "label": "Case folder",
+   "function_name": "dropbox_ensure_case_folder",
+   "params": {
+    "case_id": "{{jf_case_id}}"
+   }
+  },
+  {
+   "step_id": 585,
+   "workflow_id": 48,
+   "version": 1,
+   "step_number": 8,
+   "label": "Unsorted folder",
+   "function_name": "dropbox_create_folder",
+   "params": {
+    "path": "{{unsorted_path}}",
+    "share_link": true
+   }
+  },
+  {
+   "step_id": 586,
+   "workflow_id": 48,
+   "version": 1,
+   "step_number": 9,
+   "label": "Save PDF + register",
+   "function_name": "dropbox_save_url",
+   "params": {
+    "url": "https://www.jotform.com/server.php?action=getSubmissionPDF&sid={{jf_submission_id}}&formID={{jf_form_id}}&apikey={{JotformKey}}",
+    "wait": true,
+    "case_id": "{{jf_case_id}}",
+    "filename": "{{jf_filename}}",
+    "shared_link": "{{dest_link}}"
+   }
+  },
+  {
+   "step_id": 588,
+   "workflow_id": 48,
+   "version": 1,
+   "step_number": 11,
+   "label": "Share link",
+   "function_name": "dropbox_get_shared_link",
+   "params": {
+    "path": "{{dbx_path}}"
+   }
+  },
+  {
+   "step_id": 613,
+   "workflow_id": 48,
+   "version": 2,
+   "step_number": 6,
+   "label": "Case folder",
+   "function_name": "dropbox_ensure_case_folder",
+   "params": {
+    "case_id": "{{jf_case_id}}"
+   }
+  },
+  {
+   "step_id": 615,
+   "workflow_id": 48,
+   "version": 2,
+   "step_number": 8,
+   "label": "Unsorted folder",
+   "function_name": "dropbox_create_folder",
+   "params": {
+    "path": "{{unsorted_path}}",
+    "share_link": true
+   }
+  },
+  {
+   "step_id": 616,
+   "workflow_id": 48,
+   "version": 2,
+   "step_number": 9,
+   "label": "Save PDF + register",
+   "function_name": "dropbox_save_url",
+   "params": {
+    "url": "https://www.jotform.com/server.php?action=getSubmissionPDF&sid={{jf_submission_id}}&formID={{jf_form_id}}&apikey={{JotformKey}}",
+    "wait": true,
+    "case_id": "{{jf_case_id}}",
+    "filename": "{{jf_filename}}",
+    "timeout_ms": 90000,
+    "shared_link": "{{dest_link}}"
+   }
+  },
+  {
+   "step_id": 619,
+   "workflow_id": 48,
+   "version": 2,
+   "step_number": 12,
+   "label": "Re-list folder",
+   "function_name": "dropbox_list_folder",
+   "params": {
+    "shared_link": "{{dest_link}}"
+   }
+  },
+  {
+   "step_id": 622,
+   "workflow_id": 48,
+   "version": 2,
+   "step_number": 15,
+   "label": "Share link",
+   "function_name": "dropbox_get_shared_link",
+   "params": {
+    "path": "{{dbx_path}}"
+   }
+  },
+  {
+   "step_id": 651,
+   "workflow_id": 48,
+   "version": 3,
+   "step_number": 6,
+   "label": "Case folder",
+   "function_name": "dropbox_ensure_case_folder",
+   "params": {
+    "case_id": "{{jf_case_id}}"
+   }
+  },
+  {
+   "step_id": 653,
+   "workflow_id": 48,
+   "version": 3,
+   "step_number": 8,
+   "label": "Unsorted folder",
+   "function_name": "dropbox_create_folder",
+   "params": {
+    "path": "{{unsorted_path}}",
+    "share_link": true
+   }
+  },
+  {
+   "step_id": 654,
+   "workflow_id": 48,
+   "version": 3,
+   "step_number": 9,
+   "label": "Save PDF + register",
+   "function_name": "dropbox_save_url",
+   "params": {
+    "url": "https://www.jotform.com/server.php?action=getSubmissionPDF&sid={{jf_submission_id}}&formID={{jf_form_id}}&apikey={{JotformKey}}",
+    "wait": true,
+    "case_id": "{{jf_case_id}}",
+    "filename": "{{jf_filename}}",
+    "timeout_ms": 90000,
+    "shared_link": "{{dest_link}}"
+   }
+  },
+  {
+   "step_id": 657,
+   "workflow_id": 48,
+   "version": 3,
+   "step_number": 12,
+   "label": "Re-list folder",
+   "function_name": "dropbox_list_folder",
+   "params": {
+    "shared_link": "{{dest_link}}"
+   }
+  },
+  {
+   "step_id": 660,
+   "workflow_id": 48,
+   "version": 3,
+   "step_number": 15,
+   "label": "Share link",
+   "function_name": "dropbox_get_shared_link",
+   "params": {
+    "path": "{{dbx_path}}"
+   }
+  }
+ ]
+}
