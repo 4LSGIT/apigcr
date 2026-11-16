@@ -46,6 +46,8 @@ const DB   = { /* opaque — the provider only passes it through */ };
 const PATCHED = [
   'getMetadata', 'getTemporaryLink', 'downloadFile',
   'movePath', 'deletePath', 'getOrCreateSharedLink',
+  // D1a
+  'uploadFile', 'createFolderWithOptions', 'getTemporaryUploadLink', 'listFolderPage', 'listFolderContinue',
 ];
 const real = {};
 
@@ -59,6 +61,12 @@ beforeEach(() => {
   dropbox.movePath              = jest.fn(async () => ({ metadata: { id: FID } }));
   dropbox.deletePath            = jest.fn(async () => ({ deleted: true, path: DISP }));
   dropbox.getOrCreateSharedLink = jest.fn(async () => 'https://www.dropbox.com/s/abc/x?dl=0');
+  // D1a
+  dropbox.uploadFile             = jest.fn(async (db, o) => ({ '.tag': 'file', id: 'id:new', name: 'n', path_display: o.path || `<${o.sharedLink}>/${o.subfolder || ''}/${o.filename}` }));
+  dropbox.createFolderWithOptions = jest.fn(async (db, o) => ({ path: o.path, existed: false, subfolders_created: (o.subfolders || []).map((n) => ({ path: `${o.path}/${n}`, existed: false })), shared_link: o.shareLink ? 'https://www.dropbox.com/scl/fo/new?dl=0' : null }));
+  dropbox.getTemporaryUploadLink = jest.fn(async (db, o) => ({ link: 'https://content.dropboxapi.com/apitul/1/x', path: `${o.path || '<link>'}/${o.subfolder ? o.subfolder + '/' : ''}${o.filename}` }));
+  dropbox.listFolderPage         = jest.fn(async () => ({ entries: [{ '.tag': 'file', id: 'id:a' }], cursor: 'c1', has_more: true }));
+  dropbox.listFolderContinue     = jest.fn(async () => ({ entries: [], cursor: 'c2', has_more: false }));
 });
 
 afterEach(() => { jest.clearAllMocks(); });
@@ -87,9 +95,13 @@ describe('registry', () => {
 
   test('the dropbox provider implements the whole interface', () => {
     const p = sources.get('dropbox');
-    for (const fn of ['stat', 'tempViewUrl', 'download', 'move', 'rename', 'remove', 'ensureSharedLink']) {
+    for (const fn of ['stat', 'tempViewUrl', 'download', 'move', 'rename', 'remove', 'ensureSharedLink',
+      'upload', 'ensureFolder', 'directUpload', 'listChanges', 'isCursorReset', 'isNotFound', 'isTransient']) {
       expect(typeof p[fn]).toBe('function');
     }
+    expect(p.capabilities).toEqual({ humanManaged: true, directUpload: true, humanLink: true, listChanges: true, changeNotify: false });
+    expect(Object.isFrozen(p.capabilities)).toBe(true);
+    expect(Object.isFrozen(p.nameRules)).toBe(true);
   });
 
   test('register rejects junk rather than poisoning the map', () => {
@@ -210,5 +222,121 @@ describe('dropbox provider — rename (does NOT delegate to renamePath)', () => 
     dropbox.getMetadata = jest.fn(async () => ({ '.tag': 'file', id: FID, path_lower: '/  law office/a.xlsx' }));
     await p().rename(DB, FID, 'B.xlsx');
     expect(dropbox.movePath.mock.calls[0][1].toPath).toBe('/  law office/B.xlsx');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// D1a — writes, folders, direct upload, listing, declarations
+// ─────────────────────────────────────────────────────────────
+
+describe('dropbox provider — D1a writes and folders', () => {
+  const p = () => sources.get('dropbox');
+  const FOLDER = 'id:FOLDER0001';
+  const folderMeta = () => { dropbox.getMetadata = jest.fn(async () => ({ '.tag': 'folder', id: FOLDER, path_display: '/  Law Office/   Cases/  Active Cases/ Case A' })); };
+
+  test('upload by path: mode add + autorename, exactly as every writer uploads', async () => {
+    await p().upload(DB, { path: '/  Bin/ x.pdf' }, Buffer.from('b'), { credentialId: 8 });
+    expect(dropbox.uploadFile).toHaveBeenCalledWith(DB, { path: '/  Bin/ x.pdf', content: Buffer.from('b'), mode: 'add', autorename: true, credentialId: 8 });
+  });
+
+  test('upload into a folder by handle: resolve-then-join keeps every leading space, subfolder optional', async () => {
+    folderMeta();
+    await p().upload(DB, { folder: FOLDER, name: ' x.pdf', subfolder: 'Client Uploads' }, 'text');
+    expect(dropbox.getMetadata).toHaveBeenCalledWith(DB, { path: FOLDER });
+    expect(dropbox.uploadFile).toHaveBeenCalledWith(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A/Client Uploads/ x.pdf', content: 'text', mode: 'add', autorename: true });
+    await p().upload(DB, { folder: FOLDER, name: 'y.pdf' }, 'text');
+    expect(dropbox.uploadFile).toHaveBeenLastCalledWith(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A/y.pdf', content: 'text', mode: 'add', autorename: true });
+  });
+
+  test('upload inside a human link delegates the resolution to dropboxService', async () => {
+    await p().upload(DB, { humanLink: 'https://www.dropbox.com/scl/fo/a?dl=0', name: 'z.pdf', subfolder: 'Forms' }, 'text');
+    expect(dropbox.uploadFile).toHaveBeenCalledWith(DB, { sharedLink: 'https://www.dropbox.com/scl/fo/a?dl=0', filename: 'z.pdf', subfolder: 'Forms', content: 'text', mode: 'add', autorename: true });
+    expect(dropbox.getMetadata).not.toHaveBeenCalled();
+  });
+
+  test('upload refuses: no content, a name with "/", a file handle as the folder, path AND name', async () => {
+    await expect(p().upload(DB, { path: '/x' })).rejects.toThrow('requires content');
+    await expect(p().upload(DB, { folder: FOLDER, name: 'a/b' }, 'x')).rejects.toThrow('must not contain "/"');
+    await expect(p().upload(DB, { folder: FID, name: 'a.pdf' }, 'x')).rejects.toThrow('is not a folder');
+    await expect(p().upload(DB, { path: '/x', name: 'a' }, 'x')).rejects.toThrow('not both');
+    await expect(p().upload(DB, { name: 'a.pdf' }, 'x')).rejects.toThrow('needs path, folder or humanLink');
+  });
+
+  test('ensureFolder by path: createFolderWithOptions + one get_metadata for the handle; link only when asked', async () => {
+    folderMeta();
+    const r = await p().ensureFolder(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A/' }, { subfolders: ['Client Uploads', ' Docket'], humanLink: true, credentialId: 8 });
+    expect(dropbox.createFolderWithOptions).toHaveBeenCalledWith(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A', subfolders: ['Client Uploads', ' Docket'], shareLink: true, credentialId: 8 });
+    expect(dropbox.getMetadata).toHaveBeenCalledWith(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A', credentialId: 8 });
+    expect(r).toEqual({
+      externalId: FOLDER, path: '/  Law Office/   Cases/  Active Cases/ Case A', existed: false,
+      subfolders: [{ path: '/  Law Office/   Cases/  Active Cases/ Case A/Client Uploads', existed: false }, { path: '/  Law Office/   Cases/  Active Cases/ Case A/ Docket', existed: false }],
+      humanLink: 'https://www.dropbox.com/scl/fo/new?dl=0',
+    });
+    await p().ensureFolder(DB, { path: '/  Bin' });
+    expect(dropbox.createFolderWithOptions).toHaveBeenLastCalledWith(DB, { path: '/  Bin', subfolders: [], shareLink: false });
+  });
+
+  test('ensureFolder under a parent handle; an adopted folder reports existed and still returns its handle', async () => {
+    folderMeta();
+    dropbox.createFolderWithOptions = jest.fn(async (db, o) => ({ path: o.path, existed: true, subfolders_created: [], shared_link: null }));
+    const r = await p().ensureFolder(DB, { parent: FOLDER, name: ' Signed Documents' });
+    expect(dropbox.createFolderWithOptions).toHaveBeenCalledWith(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A/ Signed Documents', subfolders: [], shareLink: false });
+    expect(r).toMatchObject({ externalId: FOLDER, existed: true, humanLink: null, subfolders: [] });
+  });
+
+  test('ensureFolder refuses the root and ambiguous destinations', async () => {
+    await expect(p().ensureFolder(DB, { path: '/' })).rejects.toThrow('refuses the root');
+    await expect(p().ensureFolder(DB, {})).rejects.toThrow('needs path or parent + name');
+    await expect(p().ensureFolder(DB, { path: '/a', name: 'b' })).rejects.toThrow('not both');
+    await expect(p().ensureFolder(DB, { parent: FOLDER, name: 'a/b' })).rejects.toThrow('must not contain "/"');
+    expect(dropbox.createFolderWithOptions).not.toHaveBeenCalled();
+  });
+
+  test('directUpload: a POST target with the destination path; humanLink, folder handle and path forms; duration passthrough', async () => {
+    const a = await p().directUpload(DB, { humanLink: 'https://www.dropbox.com/scl/fo/a?dl=0', filename: 'W2.pdf', subfolder: 'Client Uploads' });
+    expect(dropbox.getTemporaryUploadLink).toHaveBeenCalledWith(DB, { sharedLink: 'https://www.dropbox.com/scl/fo/a?dl=0', subfolder: 'Client Uploads', filename: 'W2.pdf' });
+    expect(a).toEqual({ url: 'https://content.dropboxapi.com/apitul/1/x', method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, path: '<link>/Client Uploads/W2.pdf', expiresInSec: 7200 });
+    folderMeta();
+    await p().directUpload(DB, { folder: FOLDER, filename: 'W2.pdf', subfolder: 'Client Uploads' }, { durationSec: 600, credentialId: 8 });
+    expect(dropbox.getTemporaryUploadLink).toHaveBeenLastCalledWith(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A/Client Uploads', filename: 'W2.pdf', duration: 600, credentialId: 8 });
+    await p().directUpload(DB, { folder: FOLDER, filename: 'W2.pdf' });
+    expect(dropbox.getTemporaryUploadLink).toHaveBeenLastCalledWith(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A', filename: 'W2.pdf' });
+    const c = await p().directUpload(DB, { path: '/  Bin/', filename: 'W2.pdf', subfolder: 'deadLnk1 - Lee, Ann' });
+    expect(dropbox.getTemporaryUploadLink).toHaveBeenLastCalledWith(DB, { path: '/  Bin/deadLnk1 - Lee, Ann', filename: 'W2.pdf' });
+    expect(c.expiresInSec).toBe(7200);
+    await expect(p().directUpload(DB, { path: '/x' })).rejects.toThrow('filename is required');
+    await expect(p().directUpload(DB, { filename: 'a' })).rejects.toThrow('needs path, folder or humanLink');
+  });
+
+  test('listChanges: no cursor = the first recursive page of root; a cursor = the page after it; hasMore is a real boolean', async () => {
+    const first = await p().listChanges(DB, { root: '/  Law Office/   Cases/  Active Cases', limit: 500 }, { credentialId: 8 });
+    expect(dropbox.listFolderPage).toHaveBeenCalledWith(DB, { path: '/  Law Office/   Cases/  Active Cases', recursive: true, limit: 500, credentialId: 8 });
+    expect(first).toEqual({ entries: [{ '.tag': 'file', id: 'id:a' }], cursor: 'c1', hasMore: true });
+    const next = await p().listChanges(DB, { cursor: 'c1' });
+    expect(dropbox.listFolderContinue).toHaveBeenCalledWith(DB, { cursor: 'c1' });
+    expect(dropbox.listFolderPage).toHaveBeenCalledTimes(1);
+    expect(next).toEqual({ entries: [], cursor: 'c2', hasMore: false });
+    await expect(p().listChanges(DB, {})).rejects.toThrow('needs root or cursor');
+  });
+
+  test('the error predicates are dropboxService\'s own verdicts', () => {
+    const reset = Object.assign(new Error('x'), { status: 409, errorSummary: 'reset/..' });
+    const gone = Object.assign(new Error('x'), { status: 409, errorSummary: 'path/not_found/..' });
+    expect([p().isCursorReset(reset), p().isCursorReset(gone)]).toEqual([true, false]);
+    expect([p().isNotFound(gone), p().isNotFound(reset)]).toEqual([true, false]);
+    expect(p().isTransient(Object.assign(new Error('x'), { status: 503 }))).toBe(true);
+    expect(p().isTransient(gone)).toBe(false);
+  });
+
+  test('nameRules say what the writers already enforce: the e-sign illegal set, the segment-end trim, leading spaces kept', () => {
+    const r = p().nameRules;
+    expect(r).toMatchObject({ caseSensitive: false, leadingSpaces: 'preserved', maxSegmentChars: 255, duplicateNames: 'autorename' });
+    expect(r.validateName('  Active Cases')).toEqual({ ok: true });
+    expect(r.validateName('Legacy Signature Properties, Inc.')).toEqual({ ok: false, reason: 'ends with a period or a space' });
+    expect(r.validateName('a/b')).toEqual({ ok: false, reason: 'illegal character' });
+    expect(r.validateName('a:b')).toEqual({ ok: false, reason: 'illegal character' });
+    expect(r.validateName('')).toEqual({ ok: false, reason: 'empty' });
+    expect(r.validateName('x'.repeat(256))).toEqual({ ok: false, reason: 'longer than 255 characters' });
+    expect(new RegExp(r.illegal).test('"')).toBe(true);
   });
 });

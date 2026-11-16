@@ -23,14 +23,47 @@
  * untouched, so every location-taking dropboxService function accepts an
  * externalId in its `path` slot with no special-casing here.
  *
- * ── PROVIDER INTERFACE ────────────────────────────────────────────────────
+ * ── PROVIDER INTERFACE (storage-seam D1a; ref/DOCUMENTS_V3_DESIGN.md §4) ──
+ * Reads and row-level operations (Documents S1):
  *   stat(db, externalId, opts?)             -> provider metadata object
  *   tempViewUrl(db, externalId, opts?)      -> { url, metadata }   (expiring)
  *   download(db, externalId, opts?)         -> { buffer, metadata }
  *   move(db, externalId, toPath, opts?)     -> provider result
  *   rename(db, externalId, newName, opts?)  -> provider result
  *   remove(db, externalId, opts?)           -> provider result
- *   ensureSharedLink(db, externalId, opts?) -> string (permanent URL)
+ *   ensureSharedLink(db, externalId, opts?) -> string (permanent human URL)
+ *
+ * Writes and folders (D1a — the ops the writers in ref/DOCUMENTS_V3_DESIGN.md
+ * §1 will be rerouted onto in D1b–f; NO writer calls them yet):
+ *   upload(db, dest, content, opts?)        -> provider entry (post-autorename truth)
+ *       dest: { path }                                 a full destination path
+ *           | { folder: externalId, name, subfolder? } inside a folder, by its stable handle
+ *           | { humanLink, name, subfolder? }          inside the folder a human link opens
+ *   ensureFolder(db, dest, opts?)           -> { externalId, path, existed, subfolders, humanLink }
+ *       dest: { path } | { parent: externalId, name };  opts: { subfolders?: [names], humanLink?: bool }
+ *       Idempotent: an existing folder is adopted, never duplicated.
+ *   directUpload(db, dest, opts?)           -> { url, method, headers, path, expiresInSec }
+ *       dest: { path, filename } | { folder: externalId, filename, subfolder? }
+ *           | { humanLink, filename, subfolder? };  opts: { durationSec? }
+ *       A pre-authorized target the BROWSER sends the bytes to; the app never
+ *       sees them. The `path` is the destination the commit step verifies.
+ *   listChanges(db, { root, cursor?, limit? }, opts?) -> { entries, cursor, hasMore }
+ *       One page of a resumable listing: no cursor = the first page of `root`
+ *       (recursive), a cursor = the page after it — paging through the initial
+ *       listing and delta-ing from it are the SAME call, which is the sync
+ *       engine's "one cursor, two questions" (documentSyncService header).
+ *       Entries are the provider's own shape until D4 normalizes them with the
+ *       attribution strategies; the predicates below classify its errors.
+ *   isCursorReset(err) / isNotFound(err) / isTransient(err) -> boolean
+ *
+ * Declarations (data, not calls):
+ *   capabilities  frozen { humanManaged, directUpload, humanLink, listChanges, changeNotify }
+ *                 — the app CHECKS these; it never assumes a provider can do a thing.
+ *   nameRules     frozen { caseSensitive, illegal, trimSegmentEnd, leadingSpaces,
+ *                 maxSegmentChars, duplicateNames } + validateName(name) -> { ok, reason? }
+ *                 — what a name may be on this provider, as the writers already
+ *                 enforce it (the e-sign convention's ILLEGAL_IN_NAME, caseService's
+ *                 _trimPathSegments). D4 wires validateName into template save.
  *
  * `opts` is provider-specific passthrough; for Dropbox it carries
  * { credentialId } and nothing else.
@@ -93,7 +126,63 @@ function _dbxOpts(opts = {}) {
   return opts.credentialId != null ? { credentialId: opts.credentialId } : {};
 }
 
+/**
+ * The real path of a folder handle. Every location-taking dropboxService
+ * function accepts "id:…" for the item ITSELF, but a destination INSIDE a
+ * folder needs the folder's path first — the same resolve-then-join the
+ * writers do today with a shared link (resolveLocation + joinPath).
+ */
+async function _folderPath(db, externalId, opts) {
+  const meta = await dropboxProvider.stat(db, externalId, opts);
+  if (!meta || meta['.tag'] !== 'folder') {
+    throw new Error(`document storage: ${externalId} is not a folder`);
+  }
+  const p = meta.path_display || meta.path_lower;
+  if (!p) throw new Error(`document storage: ${externalId} has no resolvable path (shared/team content?)`);
+  return p;
+}
+
+function _needName(dest, field) {
+  const v = dest && dest[field];
+  if (!v || typeof v !== 'string') throw new Error(`document storage: ${field} is required`);
+  if (v.includes('/')) throw new Error(`document storage: ${field} must not contain "/"`);
+  return v;
+}
+
+/** The e-sign convention every writer sanitizes with (filePlacementService, uploadTargetService, esignFilingService). */
+// eslint-disable-next-line no-control-regex
+const ILLEGAL_IN_NAME = /[/\\:*?"<>|\u0000-\u001f]/;
+/** caseService._trimPathSegments: a segment may not end in '.' or ' ' (Windows drops both). */
+const TRIM_SEGMENT_END = /[. ]+$/;
+const MAX_SEGMENT_CHARS = 255;
+
+const dropboxNameRules = Object.freeze({
+  caseSensitive: false,              // path_lower is the identity; "Docket" and "docket" collide
+  illegal: ILLEGAL_IN_NAME.source,
+  trimSegmentEnd: TRIM_SEGMENT_END.source,
+  leadingSpaces: 'preserved',        // "  Active Cases" is the firm's sort order — never trimmed
+  maxSegmentChars: MAX_SEGMENT_CHARS,
+  duplicateNames: 'autorename',      // a second "x.pdf" lands as "x (1).pdf"
+  /** @returns {{ok: boolean, reason?: string}} */
+  validateName(name) {
+    if (typeof name !== 'string' || name === '') return { ok: false, reason: 'empty' };
+    if (ILLEGAL_IN_NAME.test(name)) return { ok: false, reason: 'illegal character' };
+    if (TRIM_SEGMENT_END.test(name)) return { ok: false, reason: 'ends with a period or a space' };
+    if (name.length > MAX_SEGMENT_CHARS) return { ok: false, reason: `longer than ${MAX_SEGMENT_CHARS} characters` };
+    return { ok: true };
+  },
+});
+
 const dropboxProvider = {
+  capabilities: Object.freeze({
+    humanManaged: true,    // staff live in Dropbox's own UI: the registry MIRRORS it (design §2 class A)
+    directUpload: true,    // files/get_temporary_upload_link
+    humanLink: true,       // shared links
+    listChanges: true,     // files/list_folder + /continue, one cursor
+    changeNotify: false,   // no webhook wired; the tick polls the cursor (the baseline)
+  }),
+  nameRules: dropboxNameRules,
+
   async stat(db, externalId, opts = {}) {
     return dropbox.getMetadata(db, { path: externalId, ..._dbxOpts(opts) });
   },
@@ -161,6 +250,106 @@ const dropboxProvider = {
   async ensureSharedLink(db, externalId, opts = {}) {
     return dropbox.getOrCreateSharedLink(db, { path: externalId, ..._dbxOpts(opts) });
   },
+
+  // ── D1a: writes and folders ──────────────────────────────────────────────
+
+  /**
+   * Put bytes. Returns files/upload's metadata — the post-autorename truth
+   * the registry is written from (documentIngestService.registerWritten takes
+   * it as `entry`). mode 'add' + autorename, exactly as every writer uploads.
+   */
+  async upload(db, dest = {}, content, opts = {}) {
+    if (content == null) throw new Error('document storage: upload requires content');
+    const common = { content, mode: 'add', autorename: true, ..._dbxOpts(opts) };
+    if (dest.path) {
+      if (dest.name || dest.folder || dest.humanLink) throw new Error('document storage: give path OR a folder + name, not both');
+      return dropbox.uploadFile(db, { path: dest.path, ...common });
+    }
+    const name = _needName(dest, 'name');
+    if (dest.humanLink) {
+      return dropbox.uploadFile(db, { sharedLink: dest.humanLink, filename: name, subfolder: dest.subfolder, ...common });
+    }
+    if (!dest.folder) throw new Error('document storage: upload needs path, folder or humanLink');
+    const folder = await _folderPath(db, dest.folder, opts);
+    return dropbox.uploadFile(db, { path: dropbox.joinPath(folder, dest.subfolder, name), ...common });
+  },
+
+  /**
+   * A folder that exists when this returns, with its stable handle. Creating
+   * is idempotent on the provider (create_folder_v2 conflict = adopt); the
+   * handle costs one get_metadata because the create reply carries none for
+   * an adopted folder.
+   */
+  async ensureFolder(db, dest = {}, opts = {}) {
+    let path;
+    if (dest.path) {
+      if (dest.parent || dest.name) throw new Error('document storage: give path OR parent + name, not both');
+      path = dropbox.normalizePath(dest.path);
+    } else {
+      if (!dest.parent) throw new Error('document storage: ensureFolder needs path or parent + name');
+      const name = _needName(dest, 'name');
+      path = dropbox.joinPath(await _folderPath(db, dest.parent, opts), name);
+    }
+    if (!path) throw new Error('document storage: ensureFolder refuses the root');
+    const subfolders = Array.isArray(opts.subfolders) ? opts.subfolders : [];
+    const made = await dropbox.createFolderWithOptions(db, {
+      path, subfolders, shareLink: opts.humanLink === true, ..._dbxOpts(opts),
+    });
+    const meta = await dropbox.getMetadata(db, { path, ..._dbxOpts(opts) });
+    return {
+      externalId: meta.id,
+      path: meta.path_display || made.path,
+      existed: made.existed,
+      subfolders: made.subfolders_created || [],
+      humanLink: made.shared_link || null,
+    };
+  },
+
+  /**
+   * A pre-authorized upload target for the browser (files/get_temporary_upload_link):
+   * POST the bytes as the body. The app never handles them; the commit step
+   * stats what landed at `path`.
+   */
+  async directUpload(db, dest = {}, opts = {}) {
+    const filename = _needName(dest, 'filename');
+    const duration = Number(opts.durationSec) > 0 ? Number(opts.durationSec) : undefined;
+    const common = { filename, ...(duration ? { duration } : {}), ..._dbxOpts(opts) };
+    let r;
+    if (dest.humanLink) {
+      r = await dropbox.getTemporaryUploadLink(db, { sharedLink: dest.humanLink, subfolder: dest.subfolder, ...common });
+    } else if (dest.folder) {
+      const folder = await _folderPath(db, dest.folder, opts);
+      r = await dropbox.getTemporaryUploadLink(db, { path: dropbox.joinPath(folder, dest.subfolder), ...common });
+    } else if (dest.path) {
+      r = await dropbox.getTemporaryUploadLink(db, { path: dropbox.joinPath(dest.path, dest.subfolder), ...common });
+    } else {
+      throw new Error('document storage: directUpload needs path, folder or humanLink');
+    }
+    return {
+      url: r.link,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      path: r.path,
+      expiresInSec: duration || 7200,     // dropboxService.getTemporaryUploadLink's default
+    };
+  },
+
+  /** One page of the resumable listing; the cursor is the only state between pages. */
+  async listChanges(db, { root, cursor, limit } = {}, opts = {}) {
+    const page = cursor
+      ? await dropbox.listFolderContinue(db, { cursor, ..._dbxOpts(opts) })
+      : await (() => {
+          if (root == null) throw new Error('document storage: listChanges needs root or cursor');
+          return dropbox.listFolderPage(db, {
+            path: root, recursive: true, ...(Number(limit) > 0 ? { limit: Number(limit) } : {}), ..._dbxOpts(opts),
+          });
+        })();
+    return { entries: page.entries || [], cursor: page.cursor, hasMore: Boolean(page.has_more) };
+  },
+
+  isCursorReset: (err) => dropbox.isCursorResetError(err),
+  isNotFound:    (err) => dropbox.isPathNotFoundError(err),
+  isTransient:   (err) => dropbox.isTransientError(err),
 };
 
 register('dropbox', dropboxProvider);
@@ -171,4 +360,5 @@ module.exports = {
   list,
   // exported for tests / direct reuse
   dropboxProvider,
+  dropboxNameRules,
 };

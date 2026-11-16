@@ -345,6 +345,32 @@ scenario('12 documentSourceService: the dropbox provider\'s stat / tempViewUrl /
   expect(sources.list()).toEqual(['dropbox']);
 });
 
+// ── 13. D1a: the seam's write / folder / direct-upload / listing ops (no writer uses them yet)
+scenario('13 documentSourceService D1a: upload, ensureFolder, directUpload, listChanges by every destination form', async ({ db, world }) => {
+  const sources = require('../services/documentSourceService');
+  const p = sources.get('dropbox');
+  const caseA = fake.node(W.CASE_A_FOLDER);
+  const link = world.cases.hjSFMabb.case_dropbox;
+  const e = (kind, data) => world.effects.push({ kind, ...W.scrub(data) });
+  e('d1a.upload', await p.upload(db, { path: `${W.BINS.uploads}/ loose.pdf` }, PDF('loose')));
+  e('d1a.upload', await p.upload(db, { folder: caseA.id, name: ' W2 2025.pdf', subfolder: 'Client Uploads' }, PDF('w2'), { credentialId: 8 }));
+  e('d1a.upload', await p.upload(db, { humanLink: link, name: 'Form 121.pdf', subfolder: 'Forms' }, PDF('f121')));
+  e('d1a.upload', await p.upload(db, { humanLink: link, name: 'Form 121.pdf', subfolder: 'Forms' }, PDF('f121 again')));   // autorename
+  e('d1a.ensureFolder', await p.ensureFolder(db, { path: `${W.POTENTIAL_ROOT}/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17` }, { subfolders: ['Client Uploads'], humanLink: true }));
+  e('d1a.ensureFolder', await p.ensureFolder(db, { path: W.CASE_A_FOLDER }, { humanLink: true }));                  // adopted, existing link
+  e('d1a.ensureFolder', await p.ensureFolder(db, { parent: caseA.id, name: ' Signed Documents' }, { credentialId: 8 }));
+  e('d1a.directUpload', await p.directUpload(db, { humanLink: link, filename: 'Lease.pdf', subfolder: 'Client Uploads' }));
+  e('d1a.directUpload', await p.directUpload(db, { folder: caseA.id, filename: 'Lease.pdf', subfolder: 'Client Uploads' }, { durationSec: 900 }));
+  e('d1a.directUpload', await p.directUpload(db, { folder: caseA.id, filename: 'Lease.pdf' }));
+  e('d1a.directUpload', await p.directUpload(db, { path: W.BINS.uploads, filename: 'Lease.pdf', subfolder: 'deadLnk1 - Lee, Ann' }));
+  const first = await p.listChanges(db, { root: W.ACTIVE_ROOT, limit: 2000 });
+  e('d1a.listChanges', { ...first, entries: first.entries.map((x) => x.path_display) });
+  const next = await p.listChanges(db, { cursor: first.cursor });
+  e('d1a.listChanges', { ...next, entries: next.entries.length });
+  e('d1a.declarations', { capabilities: p.capabilities, nameRules: { ...p.nameRules, validateName: undefined } });
+  await expect(p.ensureFolder(db, { parent: fake.node(`${W.CASE_A_FOLDER}/Client Uploads/2026-06-01 Intake.pdf`).id, name: 'x' })).rejects.toThrow('is not a folder');
+});
+
 // ── coverage: every provider function a writer can reach is recorded somewhere
 test('coverage: every dropboxService export is hit by a scenario here or in the routes golden, or is a listed exclusion', () => {
   const actual = jest.requireActual('../services/dropboxService');
