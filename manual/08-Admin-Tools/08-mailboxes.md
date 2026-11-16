@@ -352,10 +352,12 @@ Comms](#phone-lines--comms), below).
   **New** tag (and a blue left edge), so you can still see what arrived since
   you last looked; **Mark unread** / **Mark read** in a message's **⋯** menu
   switches it (the tag then says **Unread**). An Ask Casey card that marks a
-  message read or unread or links it to a case — and **Mark unread** or a case
-  link made on another Comms page or a Comms tab in this browser — updates an
-  open Comms page without a reload (**Mark read** and **Mark all read** made
-  elsewhere show on its next refresh).
+  message read or unread, marks several read, links it to a case or takes it
+  off one — and **Mark read**, **Mark unread**, a case link, an **Unlink** or a
+  **Mark all read** made on another Comms page or a Comms tab in this browser
+  — updates an open Comms page without a reload (a Mark all read made
+  elsewhere re-reads the list and the counts; messages open in the
+  conversation show their new state when you open it again).
   YisraCase never marks anything read on the mail server, so Outlook and
   webmail are unaffected. **Mark all read** clears exactly what the list
   shows — the ticked boxes and the filters on screen, including pages not
@@ -369,7 +371,14 @@ Comms](#phone-lines--comms), below).
   opens the full addresses and which of your boxes hold the message.
 - **Under the header, one line says where the email stands with the log** —
   and it is where you act on that:
-  - *On the log of 26-41823 · Change* — it is on that case's log;
+  - *On the log of 26-41823 · Change · Unlink* — it is on that case's log.
+    **Change** moves it to another case; **Unlink** takes it off the case
+    after a confirm in the line itself (*Take it off 26-41823? The entry stays
+    on the firm log.* — Yes, unlink / Keep). The log entry is not deleted: it
+    stays on the firm log under the other party and in that person's
+    Communications tab; only the case's Comms and Log tabs stop listing it.
+    If it was already taken off — by someone else, or an Ask Casey card — the
+    line says so instead;
   - *On the firm log, not on a case · Link to case*;
   - *Still syncing; its log entry is on the way* — the 5-minute sync has it
     and the log entry follows;
@@ -499,7 +508,9 @@ Comms](#phone-lines--comms), below).
   does not emit to rules, Sent mail) it is added now, dated when it was sent.
   "Still being processed" means the 5-minute sync has not finished with that
   message; "arrived in the last few minutes" means another sync may still log
-  it — both clear within about 10 minutes.
+  it — both clear within about 10 minutes. **Unlink** (on the log line of an
+  email that is on a case) is the reverse: the entry comes off the case and
+  stays on the firm log.
 - **Saved views** (the bookmark button) keep the ticked mailboxes plus the
   filters under a name; one can be your default. **Update** on a view
   replaces its mailboxes and filters with the ones on screen. A view only

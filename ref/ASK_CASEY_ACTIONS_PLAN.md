@@ -2870,7 +2870,7 @@ switch, in the same `form_template` family, with the same receipt
   hash either; the card's click-time re-read is the only check (a save between
   the re-read and the PUT is not caught — the builder has the same gap).
 
-#### A13: Message triage — mail read state and case link shipped 2026-11-02 (no drafts: none exist)
+#### A13: Message triage — mail read state and case link shipped 2026-11-02 (no drafts: none exist); unlink + bulk read released 2026-11-16 (A13X)
 
 The slice as planned: mark a known message read/unread, link one message to a
 case, or prepare a non-sent email/SMS draft where a canonical draft operation
@@ -2949,12 +2949,16 @@ message ids only, never text):
 
 **Shipped contract.** Two kinds behind one switch: `mail.read.v1` (POST or
 DELETE `/api/mail/messages/:id/read`) and `mail.case_link.v1` (POST
-`/api/mail/messages/:id/case-link` {case_id}).
-- **Refused by name**, before anything is read: bulk (`all`, `ids`,
-  `mail_message_ids`, `filters`, `mailbox_ids`, a list as `mail_message_id`);
-  any key shaped like another mail operation (draft, send, reply, forward,
-  flag, answer, archive, delete, move, unlink, relink, label, log_id, about);
-  any other unknown key. A card needs a signed-in user.
+`/api/mail/messages/:id/case-link` {case_id}); since 2026-11-16 two more,
+`mail.case_unlink.v1` and `mail.read.bulk.v1` (the "Released 2026-11-16"
+passage below).
+- **Refused by name**, before anything is read: bulk keys on a ONE-message
+  card (`all`, `ids`, `mail_message_ids`, `filters`, `mailbox_ids`, a list as
+  `mail_message_id` — the text names the bulk read card that takes them); any
+  key shaped like another mail operation (draft, send, reply, forward, flag,
+  answer, archive, delete, move, unlink, relink, label, log_id, about — the
+  text names the unlink card: its own kind, never a key); any other unknown
+  key. A card needs a signed-in user.
 - **Evidence:** the message's row from a `mail.search` / `mail.message` read
   of this investigation (`row_type` message, its `mail_message_id`) — nothing
   else can carry one; a link also cites a row with the case's exact case_id.
@@ -2966,7 +2970,8 @@ DELETE `/api/mail/messages/:id/read`) and `mail.case_link.v1` (POST
   Message-ID) that the user can read is still unread: the single-message
   route marks ONE copy, and the hub shows an email unread while ANY copy is,
   so the card would change nothing visible (the hub's own Mark read and
-  open-to-read use the bulk route over every copy; the user does it there).
+  open-to-read use the bulk route over every copy; since 2026-11-16 the card
+  names `mail.read.bulk.v1` with that one id, which marks every copy).
   Marking unread with copies is allowed and disclosed. Card: the message
   (mailbox, from, subject, date, place), read state before → after, **for you
   only** (read state is per person — nobody else's changes, the server's Seen
@@ -3033,12 +3038,124 @@ DELETE `/api/mail/messages/:id/read`) and `mail.case_link.v1` (POST
   `tests/caseyMailTriage.mysql.test.js`, `tests/caseyMailTriage.panes.test.js`,
   `tests/assistantUi.test.js`, `tests/ycSync.test.js`.
 
-**Deferred** (`ref/plans.md`): bulk read, SMS / call triage (no route),
-drafts (none exist), unlinking, flags (flagged / answered), archive, reading
-an HTML-only body. Since 2026-11-11 a link to a message already on ANOTHER
-case is not refused: the card moves it, disclosed as a danger line (MOVES THE
-EMAIL OFF ANOTHER CASE) — Fred's standing rule, the Comms case tag makes the
-same move silently; the A13b filing card's Link behaves the same.
+**Released 2026-11-16 (A13X — Fred, "release means allow").** Two of the
+deferrals below shipped, the first with the NATIVE route it needed:
+- **Unlink — `DELETE /api/mail/messages/:id/case-link`** (routes/api.mail.js,
+  same `guard`; `mailReadService.caseUnlink`): `loadVisible` (404, no oracle),
+  then inside one `withTransaction` (`retries: 1`, the message row `FOR
+  UPDATE`) the log row is resolved EXACTLY as `caseLink` resolves it — the
+  stamp, else `existingLogId` (the lowest-id copy's stamp, else `priorLogId`;
+  factored out of caseLink, shared, never a second copy) — and
+  `logService.setLogAbout(conn, {log_id, about_type: null})` clears the
+  about-link. The log row and the `mail_messages.log_id` stamp are KEPT (the
+  entry stays on the firm log under its link — the other party); the unlink
+  never stamps an unstamped message, creates nothing and deletes nothing.
+  409 says which "not on a case" it is: `This message is not on a case: it is
+  not on the log.` / `… its log entry is on the firm log (attributed to
+  contact 77), not on a case.` / caseLink's own `The log entry this message
+  points at no longer exists.` — so a repeat refuses instead of writing.
+  Answers `{id, log_id, case: {case_id, case_number}}` — the case it came OFF
+  (a case row that no longer exists still comes off; `case_number` null). No
+  new audit (case-link has none). Sync: yc-sync matches the DELETE —
+  `mail:<id>` {log_id, case_id: null} + the OLD case's `comms:case:<case_id>`
+  marker; the hub repaints the open card's line to "On the firm log, not on a
+  case" and re-reads the list when a listed row showed a case (a row already
+  off a case — its own write — is skipped); the Comms tab needed NO change
+  (its `mail:*` 'case_id' handler fires on a present key whatever the value,
+  and the old case's tab re-reads on the marker — `tests/caseyMailTriage.panes`
+  proves both). Hub UI: the open card's log line gains **Unlink** beside
+  Change, a two-step confirm in the line itself ("Take it off 25-1? The
+  entry stays on the firm log." · Yes, unlink / Keep); the 409 text is shown
+  as given.
+- **`mail.case_unlink.v1`** {mail_message_id, evidence} → that DELETE. The
+  normalizer predicts caseUnlink read-only with the same resolution
+  (`mailResolvedLog`, now shared with the link and filing predictions) and
+  refuses first, in the route's words: not on the log; on the firm log only
+  (its attribution said); a dead stamp. Card: the message, the case it LEAVES
+  (from the log row's about-link — never a case_id the model names; a deleted
+  case row is labelled so), the log entry that STAYS (id, type, date, how it
+  was found, its link = the other party, its text length), danger line
+  `LEAVES CASE 25-70001: … Comms tab and Log tab stop listing this email once
+  applied. Nothing is deleted — a link card puts it back`, no event / rule /
+  notification. `expected` = the stamp, the resolved log id and the case
+  (`stamp_log_id`, `log_id`, `case_id`); the click re-reads GET
+  `/api/mail/messages/:id` and refuses when the message is off the case, on
+  another case, unreadable, or its log entry changed. Browser family
+  `mail_unlink` (a SIBLING of `mail_link` — its own request, precheck,
+  result, known outcomes; danger = any warning, i.e. always). Receipt
+  `log_id`. Entity: the EMAIL (find it in Comms), not the case it left.
+- **`mail.read.bulk.v1`** → POST `/api/mail/read`, two shapes, one card each,
+  "for you only", no event / log / rule:
+  (a) `{mail_message_ids: [...]}` — every id a `mail.search` / `mail.message`
+  row of this chat (each cited), ≤ 50 (`MAIL_BULK_CITED_MAX`); each message
+  is read AS THE USER (`getMessage`), its readable COPIES (same RFC
+  Message-ID, `mailOtherCopies` — a copy in a box the user cannot read never
+  rides) are added, already-read ones (every copy) are skipped and said, and
+  the exact list of still-unread ids is FROZEN in `expected.ids` — this is
+  how "mark this email read" works when copies exist (the single card's
+  COPIES refusal now points here). The request sends exactly those ids; the
+  precheck re-reads each cited message (GET `/api/mail/messages/:id`, its own
+  state; a copy flipped since only lowers `marked`); the result requires
+  `1 ≤ marked ≤ count` and every answered id among those sent.
+  (b) `{all: true, mailbox_ids?, filters?}` — ONLY when the user asked for a
+  whole mailbox / view / list (the prompts say so; the server cannot read the
+  user's words). The count is predicted by the NEW
+  `mailReadService.countMarkRead`, the READ-ONLY twin of `markRead {all}`:
+  both are built by `bulkAllScope` (the body validated as markRead validates
+  it — the 400s are the refusal in the hub's words — readable ∩ mailbox_ids,
+  `branchPlan`, and ONE statement body per branch that the INSERT … SELECT and
+  the COUNT share byte for byte). Refused: a mailbox the user cannot read
+  (named by number), no readable mailbox, a filter key the vocabulary lacks,
+  a count of 0, a count over 500 (`MAIL_BULK_ALL_MAX` — what the precheck's
+  page walk can verify). Card: each mailbox by address and id, each filter
+  in words (`MAIL_FILTER_WORDS`), the scope sentence, the count; danger past
+  100 (`MAIL_BULK_DANGER`: "THIS MARKS N EMAILS READ FOR YOU … no undo").
+  `expected` = the resolved readable mailbox ids, the cleaned filters, the
+  count; the request is built from those, never the model's fields. The
+  click re-counts: no filters → Σ `inbox_unread` over the scoped boxes from
+  GET `/api/mail/mailboxes` (the same predicate; an alias whose parent is in
+  scope is dropped, as `branchPlan` drops it); with filters → the hub's own
+  list, GET `/api/mail/messages?mailbox_ids&unread_only=1&<filters>&limit=100`
+  walked cursor by cursor (raw rows = Σ copies per merged row; a 6th page =
+  more than reviewed); any difference refuses. Receipt: the COUNT the route
+  marked (`marked`, ≥ 1 by the browser's own check — a bulk has no single
+  message to name). Family `mail_read_bulk`.
+  Sync: the route's `{ids}` form now ANSWERS `ids` — the readable, still-unread
+  ids it marks (one SELECT before the INSERT, the INSERT's own predicate;
+  ≤ BULK_READ_MAX by construction) — and yc-sync matches POST `/api/mail/read`:
+  one `mail:<id>` {unread: false} per answered id up to 50
+  (`MAIL_BULK_ANNOUNCE_MAX`), else — more ids, or the `{all}` form's bare
+  count — ONE `mail:bulk` marker the hub treats as "re-read the list and the
+  counts" (its open conversation's cards are NOT touched: which copies were
+  marked is not said; they repaint on the next open). Silent when `marked` is
+  0. The hub skips its OWN bulk marker (`state.bulkSelf` around Mark all read
+  — local dispatch reaches the writer too).
+- Refusal texts changed to name what is still refused and the card that
+  takes the rest: bulk keys on a one-message card → "the bulk read card
+  (mail.read.bulk.v1)"; other-operation keys → the four cards by name, then
+  "drafting (no draft operation), flagging, archiving, deleting, moving a
+  message by naming the case it leaves (link it to the wanted case instead),
+  text / call triage". Prompts: plan 41→42, investigate 20→21, answer 44→45,
+  repair 30→31. Permissions matrix 100 kinds / 84 mounts → 102 / 86 (+ DELETE
+  case-link, + POST /api/mail/read: 403 for an API key, 404 without a grant,
+  `{marked: 0, ids: []}` for an empty scope); ledger +2. Tests:
+  `tests/mailboxS2.routes.test.js` (the route on the fake world: 409s, the
+  stamp kept, copy / source resolution, no-oracle 404, the `ids` answer),
+  `tests/caseyMailTriage.test.js` (+ both cards), gated
+  `tests/caseyMailTriage.mysql.test.js` (the real DELETE inside its FOR UPDATE
+  span — only the about-link changes; predict, mark, compare for both bulk
+  shapes; the browser's checks on the real answers), `tests/ycSync.test.js`,
+  `tests/caseyMailTriage.panes.test.js` (Unlink control, the null-case
+  repaint, `mail:bulk`, the Comms tab unchanged), `tests/assistantUi.test.js`,
+  `tests/assistantPromptKinds.test.js`, `tests/caseyActionPermissions.test.js`.
+
+**Still deferred** (`ref/plans.md`): SMS / call triage (no route), drafts
+(none exist), flags (flagged / answered), archive, reading an HTML-only body,
+bulk UNREAD (the hub has none), a bulk read past 500 in one card. Since
+2026-11-11 a link to a message already on ANOTHER case is not refused: the
+card moves it, disclosed as a danger line (MOVES THE EMAIL OFF ANOTHER CASE) —
+Fred's standing rule, the Comms case tag makes the same move silently; the
+A13b filing card's Link behaves the same.
 
 #### A13b: File an email's attachments to a case — shipped 2026-11-10
 

@@ -12,9 +12,10 @@
  * tests/assistantUi.test.js):
  *   1. the casey_mail_triage_enabled switch ('0' = dark; unset = on) and the
  *      signed-in-user requirement;
- *   2. refused BY NAME before anything is read: bulk (all / ids / a list of
- *      ids), any other mail operation (draft, flag, archive, unlink …),
- *      anything else unknown;
+ *   2. refused BY NAME before anything is read: bulk keys on a ONE-message
+ *      card (all / ids / a list of ids — the bulk read card takes them), any
+ *      other mail operation (draft, flag, archive, an `unlink` KEY — the
+ *      unlink is its own kind …), anything else unknown;
  *   3. the evidence: the message row comes from a TYPED mail read; a link also
  *      cites the case's exact case_id;
  *   4. the read card: a message the user cannot read, the no-op, the COPIES
@@ -29,7 +30,16 @@
  *      user (filters mapped onto listMessages), no bodies in mail.search, a
  *      2,000-character plain-text excerpt in mail.message with the
  *      untrusted-sender note, a not-found row for a message the user cannot read;
- *   7. the ledger receipt and the request detector.
+ *   7. the ledger receipt and the request detector;
+ *   8. A13X (2026-11-16): the unlink card — caseUnlink's resolution predicted
+ *      read-only (the stamp, a copy's, another source's), its 409s refused
+ *      first (not on the log; on the firm log only / attributed elsewhere; a
+ *      dead stamp), the case it leaves, the log row that STAYS, the danger
+ *      line, `expected`; and the bulk read card — (a) cited messages with
+ *      every readable copy riding along, already-read ones skipped, the
+ *      50 cap, every id cited; (b) the whole-mailbox form through
+ *      countMarkRead (spied here; real on the twin), the scope in words, the
+ *      0 / 500 / unreadable-mailbox refusals, the danger past 100.
  *
  * The routes the cards write through, the grants, the read-state idempotency
  * and the caseLink bridge run on a real engine in
@@ -125,6 +135,9 @@ const EVIDENCE = [SEARCH, CASES];
 const readCard = (over = {}) => ({ kind: 'mail.read.v1', mail_message_id: 88123, read: true, evidence: [{ query_id: 'q1', row_number: 2 }], ...over });
 const linkCard = (over = {}) => ({ kind: 'mail.case_link.v1', mail_message_id: 88123, case_id: CASE_ID,
   evidence: [{ query_id: 'q1', row_number: 2 }, { query_id: 'q2', row_number: 1 }], ...over });
+// A13X
+const unlinkCard = (over = {}) => ({ kind: 'mail.case_unlink.v1', mail_message_id: 88123, evidence: [{ query_id: 'q1', row_number: 2 }], ...over });
+const bulkCard = (over = {}) => ({ kind: 'mail.read.bulk.v1', mail_message_ids: [88123], evidence: [{ query_id: 'q1', row_number: 2 }], ...over });
 const run = (value, opts, evidence = EVIDENCE, userId = 6) => normalizeActionDraft(setup(opts), value, evidence, { currentUserId: userId });
 const refuse = (value, re, opts, evidence) => expect(run(value, opts, evidence)).rejects.toThrow(re);
 
@@ -144,22 +157,26 @@ describe('the per-family switch and the signed-in user', () => {
 });
 
 describe('refused by name before anything is read', () => {
-  test.each([['all'], ['ids'], ['mail_message_ids'], ['filters'], ['mailbox_ids']])('bulk (%s) on both kinds', async (k) => {
-    await refuse(readCard({ [k]: true }), new RegExp(`^BULK refused \\(${k}\\): a mail card acts on ONE message`));
-    await refuse(linkCard({ [k]: true }), new RegExp(`^BULK refused \\(${k}\\)`));
+  test.each([['all'], ['ids'], ['mail_message_ids'], ['filters'], ['mailbox_ids']])('bulk (%s) on the one-message kinds names the bulk card', async (k) => {
+    await refuse(readCard({ [k]: true }), new RegExp(`^BULK refused \\(${k}\\): a mail read card acts on ONE message\\. Several messages read at once — or everything a list shows — is the bulk read card \\(mail\\.read\\.bulk\\.v1`));
+    await refuse(linkCard({ [k]: true }), new RegExp(`^BULK refused \\(${k}\\): a mail case link card acts on ONE message`));
+    await refuse(unlinkCard({ [k]: true }), new RegExp(`^BULK refused \\(${k}\\): a mail case unlink card acts on ONE message`));
     expect([calls.sql, calls.getMessage]).toEqual([[], []]);
   });
   test('a list of ids is bulk too', async () => {
     await refuse(readCard({ mail_message_id: [88123, 99] }), 'BULK refused: mail_message_id is a list — a mail card acts on ONE message');
     expect(calls.getMessage).toEqual([]);
   });
-  test.each([['draft'], ['send_now'], ['flagged'], ['archive'], ['delete'], ['unlink'], ['relink_from'], ['log_id'], ['about_type']])('another mail operation (%s)', async (k) => {
-    await refuse(readCard({ [k]: 1 }), new RegExp(`^OTHER MAIL OPERATIONS refused \\(${k}\\): Casey marks ONE message read or unread for you, or links ONE message to ONE case\\. Drafting \\(the mail hub has no draft operation\\)`));
+  test.each([['draft'], ['send_now'], ['flagged'], ['archive'], ['delete'], ['unlink'], ['relink_from'], ['log_id'], ['about_type']])('another mail operation (%s) — the text names the unlink and bulk cards and what is still unavailable', async (k) => {
+    await refuse(readCard({ [k]: 1 }), new RegExp(`^OTHER MAIL OPERATIONS refused \\(${k}\\): Casey marks ONE message read or unread for you \\(mail\\.read\\.v1\\), links ONE message to ONE case \\(mail\\.case_link\\.v1\\), takes ONE message off its case \\(mail\\.case_unlink\\.v1 — its own card, never a key on another\\) or marks several messages read \\(mail\\.read\\.bulk\\.v1\\)\\. Still not available to Casey: drafting \\(the mail hub has no draft operation\\), flagging, archiving, deleting, moving a message by naming the case it leaves`));
+    await refuse(bulkCard({ [k]: 1 }), new RegExp(`^OTHER MAIL OPERATIONS refused \\(${k}\\)`));
     expect([calls.sql, calls.getMessage]).toEqual([[], []]);
   });
   test('any other unknown key', async () => {
     await refuse(readCard({ mailbox_id: 3 }), 'A mail read card carries unsupported fields: mailbox_id — it takes mail_message_id, read and evidence only');
     await refuse(linkCard({ foo: 1 }), 'A mail case link card carries unsupported fields: foo — it takes mail_message_id, case_id and evidence only');
+    await refuse(unlinkCard({ case_id: CASE_ID }), 'A mail case unlink card carries unsupported fields: case_id — it takes mail_message_id and evidence only');
+    await refuse(bulkCard({ view: 2 }), 'A bulk read card carries unsupported fields: view — it takes mail_message_ids and evidence, or all: true with mailbox_ids / filters');
     expect(calls.getMessage).toEqual([]);
   });
   test('a bad id, a non-boolean read, a bad case id', async () => {
@@ -420,14 +437,176 @@ describe('the typed mail reads', () => {
   });
 });
 
-describe('the ledger receipt and the request detector', () => {
-  test('receipts: the message id (read) and the bridged log id (link)', () => {
-    expect([ledger.KINDS.get('mail.read.v1'), ledger.KINDS.get('mail.case_link.v1')]).toEqual(['mail_message_id', 'log_id']);
+// ── A13X: the unlink card ──────────────────────────────────────────────────
+const ON_CASE = { log_id: 5001, log_type: 'email', log_date: new Date('2026-10-30T11:00:00Z'), log_about_type: 'case', log_about_id: CASE_ID,
+  log_link_type: 'email', log_link_id: 'dana@example.com', message_chars: 22 };
+const THE_CASE = { case_id: CASE_ID, case_number: '25-12345', case_number_full: null };
+describe('mail.case_unlink.v1 — caseUnlink predicted read-only', () => {
+  test("'0' darkens it; no user refuses it; the message must be cited and readable", async () => {
+    process.env.CASEY_MAIL_TRIAGE_ENABLED = '0';
+    await expect(run(unlinkCard())).rejects.toThrow(/^Action kind is unavailable$/);
+    delete process.env.CASEY_MAIL_TRIAGE_ENABLED;
+    await expect(run(unlinkCard(), {}, EVIDENCE, null)).rejects.toThrow('Mail triage needs a signed-in user');
+    await refuse(unlinkCard({ evidence: [{ query_id: 'q1', row_number: 3 }] }), 'The evidence does not identify message #88123');
+    await refuse(unlinkCard(), 'Message #88123 is not a message you can read', { visible: false });
   });
-  test('a mark-read / link-to-case request forces the draft path; a question does not', () => {
+  test('the stamped row on a case: the card names the case it leaves, the entry that STAYS (under the other party), the danger line; expected pins stamp + log + case', async () => {
+    const card = await run(unlinkCard(), { msg: MSG({ log_id: 5001, log_status: { state: 'case', case: THE_CASE, log_id: 5001, via: 'stamped' } }), log: ON_CASE, otherCase: THE_CASE });
+    expect(card).toMatchObject({ kind: 'mail.case_unlink.v1', status: 'draft',
+      message: { mail_message_id: 88123, mailbox: 'intake@firm.test', subject: 'Pay stubs' },
+      case: { case_id: CASE_ID, case_number: '25-12345', label: 'case 25-12345', exists: true },
+      log: { log_id: 5001, via: 'stamped', type: 'email', link: 'email dana@example.com', message_chars: 22 },
+      expected: { stamp_log_id: 5001, log_id: 5001, case_id: CASE_ID } });
+    expect(card.warnings).toEqual(["LEAVES CASE 25-12345: case 25-12345's Comms tab and Log tab stop listing this email once applied. Nothing is deleted — a link card puts it back if it belongs there."]);
+    expect(card.effects[0]).toMatch(/^Clears the case link of log entry #5001 \(a "email" entry dated .*\): the entry STAYS on the firm log and in the Communications tabs under email dana@example.com \(the other party\), with its stored text \(22 characters\) unchanged; the message keeps its log stamp\.$/);
+    expect(card.effects.join('\n')).toMatch(/deletes nothing and sends nothing/);
+    expect(calls.sql.some((q) => /^(UPDATE|INSERT|DELETE)/i.test(q))).toBe(false);
+    // the copy lookup never runs for a stamped row
+    expect(calls.sql.some((q) => q.startsWith('SELECT log_id FROM mail_messages WHERE message_id = ?'))).toBe(false);
+  });
+  test("resolved as caseUnlink does: a copy's stamp, then another source's row (via said; expected.stamp_log_id null)", async () => {
+    const viaCopy = await run(unlinkCard(), { copyStamp: { log_id: 5001 }, log: ON_CASE, otherCase: THE_CASE });
+    expect(viaCopy.log).toMatchObject({ log_id: 5001, via: 'copy' });
+    expect(viaCopy.expected).toEqual({ stamp_log_id: null, log_id: 5001, case_id: CASE_ID });
+    expect(viaCopy.effects[0]).toContain('found through a copy of this email in another mailbox');
+    const viaSource = await run(unlinkCard(), { prior: 5001, log: ON_CASE, otherCase: THE_CASE });
+    expect(viaSource.log).toMatchObject({ log_id: 5001, via: 'source' });
+    expect(viaSource.effects[0]).toContain('written by another mail source that logged this email');
+  });
+  test("refused first, in the route's words: not on the log; on the firm log only; attributed elsewhere; a dead stamp", async () => {
+    await refuse(unlinkCard(), 'That changes nothing — message #88123 is not on a case: it is not on the log. (The route refuses it: "This message is not on a case: it is not on the log.")');
+    await refuse(unlinkCard(), 'That changes nothing — message #88123 is not on a case: log entry #5001 is on the firm log, not on a case. (The route refuses it: "This message is not on a case: its log entry is on the firm log, not on a case.")',
+      { msg: MSG({ log_id: 5001 }), log: { ...ON_CASE, log_about_type: null, log_about_id: null } });
+    await refuse(unlinkCard(), 'is on the firm log (attributed to contact 1309), not on a case. (The route refuses it: "This message is not on a case: its log entry is on the firm log (attributed to contact 1309), not on a case.")',
+      { msg: MSG({ log_id: 5001 }), log: { ...ON_CASE, log_about_type: 'contact', log_about_id: '1309' } });
+    await refuse(unlinkCard(), 'The log entry this message points at no longer exists (log #9999) — the route refuses the unlink (409)', { msg: MSG({ log_id: 9999 }), log: null });
+  });
+  test('a case row that no longer exists: still proposed (the log row says case), labelled as such', async () => {
+    const card = await run(unlinkCard(), { msg: MSG({ log_id: 5001 }), log: { ...ON_CASE, log_about_id: 'GONE1' }, otherCase: null });
+    expect(card.case).toEqual({ case_id: 'GONE1', case_number: null, label: 'case GONE1 (a case row that no longer exists)', exists: false });
+    expect(card.expected.case_id).toBe('GONE1');
+  });
+});
+
+// ── A13X: the bulk read card ───────────────────────────────────────────────
+const SEARCH3 = { id: 'q1', kind: 'mail.search', purpose: 'mail', rows: [{ row_type: 'search' }, { row_type: 'message', mail_message_id: '88123' }, { row_type: 'message', mail_message_id: '99' }, { row_type: 'message', mail_message_id: '77' }] };
+describe('mail.read.bulk.v1 — (a) the cited messages, with their copies', () => {
+  test('the shape: exactly one of mail_message_ids / all; a singular id, a read flag, mailbox_ids without all, an empty list, a bad id', async () => {
+    await refuse({ kind: 'mail.read.bulk.v1', mail_message_id: 88123, evidence: [] }, 'A bulk read card takes "mail_message_ids" (a list of cited message ids) — ONE message is the mail.read.v1 card');
+    await refuse(bulkCard({ read: false }), 'A bulk read card only marks READ — the hub has no bulk unread');
+    await refuse(bulkCard({ all: true }), 'A bulk read card takes exactly one shape');
+    await refuse({ kind: 'mail.read.bulk.v1', evidence: [] }, 'A bulk read card takes exactly one shape');
+    await refuse(bulkCard({ mailbox_ids: [3] }), 'mailbox_ids / filters go with all: true');
+    await refuse(bulkCard({ mail_message_ids: [] }), 'A bulk read card needs "mail_message_ids": a non-empty list');
+    await refuse(bulkCard({ mail_message_ids: [88123, 'x'] }), 'A mail card needs the exact positive mail_message_id');
+    expect([calls.sql, calls.getMessage]).toEqual([[], []]);
+  });
+  test('the cap and the evidence: more than 50 ids refused before any read; every id must be a cited mail row', async () => {
+    await refuse(bulkCard({ mail_message_ids: Array.from({ length: 51 }, (_, i) => 1000 + i) }), 'BULK CAP: 51 messages cited — a bulk read card takes up to 50');
+    await refuse(bulkCard({ mail_message_ids: [88123, 99, 555], evidence: [{ query_id: 'q1', row_number: 2 }, { query_id: 'q1', row_number: 3 }] }), 'The evidence does not identify message #555 — cite each row', {}, [SEARCH3, CASES]);
+    await refuse(bulkCard({ mail_message_ids: [88123, 99], evidence: [{ query_id: 'q1', row_number: 2 }] }), 'The evidence does not identify message #99', {}, [SEARCH3, CASES]);
+    expect(calls.getMessage).toEqual([]);
+  });
+  test('one unread message with an unread copy: both ids go; the copies rule is said; expected freezes the ids and the cited state', async () => {
+    const copies = [{ id: 88124, mailbox_id: 5, folder: 'INBOX', from_addr: 'x', to_addrs: null, cc_addrs: null, gmail_labels: null, unread: 1 }];
+    const card = await run(bulkCard(), { copies });
+    expect(card).toMatchObject({ kind: 'mail.read.bulk.v1', status: 'draft', mode: 'ids', count: 2, copies: 1, skipped: [],
+      expected: { mode: 'ids', ids: [88123, 88124], count: 2, cited: [{ mail_message_id: 88123, unread: true }] } });
+    expect(card.messages).toEqual([expect.objectContaining({ mail_message_id: 88123, copies: 1, unread: true, copies_unread: 1, ids: [88123, 88124] })]);
+    expect(card.effects[0]).toBe('Marks 2 stored messages READ for YOU only: 1 email you cited plus 1 other copy of them you can read (the same email stored in another mailbox or folder — the hub shows an email unread while ANY copy is, so every copy goes). Read state is per person: everyone else keeps their own, and neither the mail server\'s Seen flag nor the sender is told.');
+    expect(card.warnings).toEqual([]);
+  });
+  test('a copy the user cannot read does not ride; an already-read message (every copy) is skipped and said; all read = nothing to do', async () => {
+    const copies = [{ id: 88124, mailbox_id: 5, folder: 'INBOX', from_addr: 'x', to_addrs: null, cc_addrs: null, gmail_labels: null, unread: 1 }];
+    const card = await run(bulkCard(), { copies, copyAccess: { 5: false } });
+    expect(card.expected.ids).toEqual([88123]);
+    await refuse(bulkCard(), 'That changes nothing — message #88123 is already read for you (every stored copy of it)', { msg: MSG({ unread: false }) });
+    // two cited: one read (skipped), one unread
+    const both = await normalizeActionDraft(setupMany({ 88123: MSG({ unread: false }), 99: MSG({ id: 99, unread: true, message_id: 'z@mail.example' }) }),
+      bulkCard({ mail_message_ids: [88123, 99], evidence: [{ query_id: 'q1', row_number: 2 }, { query_id: 'q1', row_number: 3 }] }), [SEARCH3, CASES], { currentUserId: 6 });
+    expect(both.skipped.map((r) => r.mail_message_id)).toEqual([88123]);
+    expect(both.expected).toMatchObject({ ids: [99], count: 1, cited: [{ mail_message_id: 99, unread: true }] });
+    expect(both.effects).toContain('Skipped — already read for you (every copy): message #88123.');
+  });
+});
+
+// Several messages with their own states: getMessage answers per id; the
+// copies query answers none (each a lone copy).
+function setupMany(byId) {
+  const base = setup({ msg: MSG() });
+  spies.push(jest.spyOn(mailRead, 'getMessage').mockImplementation(async (_db, uid, id) => {
+    calls.getMessage.push([uid, id]);
+    const m = byId[id];
+    if (!m) throw Object.assign(new Error('Message not found'), { status: 404 });
+    return { thread_key: m.thread_key, subject: m.subject, truncated: false, messages: [{ ...m }] };
+  }));
+  const inner = base.query;
+  base.query = async (sql, params) => {
+    const flat = sql.replace(/\s+/g, ' ').trim();
+    if (flat.startsWith('SELECT m.id, m.mailbox_id, m.folder, m.from_addr, m.to_addrs, m.cc_addrs, m.gmail_labels, (rs.message_fk IS NULL) AS unread FROM mail_messages m LEFT JOIN mail_read_state rs')) { calls.sql.push(flat); return [[]]; }
+    return inner(sql, params);
+  };
+  return base;
+}
+
+describe('mail.read.bulk.v1 — (b) a whole mailbox / view, through countMarkRead', () => {
+  const MBS = [{ id: 3, address: 'intake@firm.test', alias_of: null }, { id: 4, address: 'billing@firm.test', alias_of: null }];
+  let countSpy;
+  const withCount = (impl) => { if (countSpy) countSpy.mockRestore(); countSpy = jest.spyOn(mailRead, 'countMarkRead').mockImplementation(impl); spies.push(countSpy); };
+  const allCard = (over = {}) => ({ kind: 'mail.read.bulk.v1', all: true, evidence: [], ...over });
+  afterEach(() => { countSpy = null; });
+  test('"all" must be true; the body goes to the service as given, its 400 is the refusal in the hub\'s words', async () => {
+    await refuse(allCard({ all: 'yes' }), 'A whole-mailbox bulk read needs "all": true');
+    withCount(async () => { throw Object.assign(new Error('filters: unknown key "starred" (allowed: unread_only, has_case, no_case, client_only, has_files, not_filed, all_folders, sent_only, from_domain, q)'), { status: 400 }); });
+    await refuse(allCard({ filters: { starred: true } }), 'The bulk scope is refused (the hub\'s own rule): filters: unknown key "starred" (allowed: unread_only, has_case');
+    expect(countSpy).toHaveBeenCalledWith(expect.anything(), 6, { all: true, filters: { starred: true } });
+    const seen = [];
+    withCount(async (_db, uid, body) => { seen.push([uid, body]); return { count: 3, mailboxes: MBS, filters: {} }; });
+    await run(allCard({ mailbox_ids: [3, 4] }));
+    expect(seen).toEqual([[6, { all: true, mailbox_ids: [3, 4] }]]);
+  });
+  test('a mailbox the user cannot read is refused by number; no readable mailbox at all; a count of 0; past the 500 cap', async () => {
+    withCount(async () => ({ count: 3, mailboxes: [MBS[0]], filters: {} }));
+    await refuse(allCard({ mailbox_ids: [3, 9] }), 'No mailbox #9 that you can read — it does not exist or you hold no read grant on it');
+    withCount(async () => ({ count: 0, mailboxes: [], filters: {} }));
+    await refuse(allCard(), 'You can read no mailbox, so there is nothing to mark');
+    withCount(async () => ({ count: 0, mailboxes: MBS, filters: { from_domain: 'court.test' } }));
+    await refuse(allCard({ filters: { from_domain: 'court.test' } }), 'That changes nothing — nothing is unread for you in the Inbox of intake@firm.test, billing@firm.test — from the domain court.test');
+    withCount(async () => ({ count: 501, mailboxes: MBS, filters: {} }));
+    await refuse(allCard(), 'BULK CAP: 501 unread messages in the Inbox of intake@firm.test, billing@firm.test — more than the 500 a card takes');
+  });
+  test('the card: each mailbox by address, each filter in words, the count; danger past 100; expected freezes the resolved ids, the cleaned filters and the count', async () => {
+    withCount(async () => ({ count: 7, mailboxes: MBS, filters: {} }));
+    const plain = await run(allCard());
+    expect(plain).toMatchObject({ kind: 'mail.read.bulk.v1', mode: 'all', count: 7, filters: {}, filter_words: [], scope: 'the Inbox of intake@firm.test, billing@firm.test',
+      mailboxes: [{ mailbox_id: 3, address: 'intake@firm.test', alias_of: null }, { mailbox_id: 4, address: 'billing@firm.test', alias_of: null }],
+      expected: { mode: 'all', mailbox_ids: [3, 4], filters: {}, count: 7, filtered: false }, warnings: [] });
+    expect(plain.effects[0]).toBe("Marks every unread message the hub's list shows for the Inbox of intake@firm.test, billing@firm.test — 7 right now — READ for YOU only: the same scope and filters Comms' Mark all read uses (every page, never the mailbox behind a filter). Read state is per person: everyone else keeps their own, and neither the mail server's Seen flag nor the sender is told.");
+    expect(plain.effects[1]).toBe('Mailboxes: intake@firm.test (#3), billing@firm.test (#4). Filters: none beyond the Inbox scope.');
+    withCount(async () => ({ count: 101, mailboxes: [MBS[1]], filters: { all_folders: true, has_files: true, from_domain: 'court.test', q: 'notice' } }));
+    const big = await run(allCard({ mailbox_ids: [4], filters: { all_folders: true, has_files: true, from_domain: 'court.test', q: 'notice' } }));
+    expect(big.scope).toBe('every folder of billing@firm.test — every folder, not just the Inbox; with attachments; from the domain court.test; matching "notice"');
+    expect(big.warnings).toEqual(["THIS MARKS 101 EMAILS READ FOR YOU: more than 100, and there is no undo (the hub's Mark unread is one message at a time)."]);
+    expect(big.expected).toEqual({ mode: 'all', mailbox_ids: [4], filters: { all_folders: true, has_files: true, from_domain: 'court.test', q: 'notice' }, count: 101, filtered: true });
+    withCount(async () => ({ count: 2, mailboxes: [MBS[0]], filters: { sent_only: true } }));
+    expect((await run(allCard({ filters: { sent_only: true } }))).scope).toBe('the Sent mail of intake@firm.test — the Sent scope only');
+  });
+});
+
+describe('the ledger receipt and the request detector', () => {
+  test('receipts: the message id (read), the bridged log id (link), the cleared log id (unlink), the count (bulk)', () => {
+    expect([ledger.KINDS.get('mail.read.v1'), ledger.KINDS.get('mail.case_link.v1'), ledger.KINDS.get('mail.case_unlink.v1'), ledger.KINDS.get('mail.read.bulk.v1')])
+      .toEqual(['mail_message_id', 'log_id', 'log_id', 'marked']);
+  });
+  test('a mark-read / link-to-case / unlink request forces the draft path; a question does not', () => {
     expect(taskDraftRequested('Mark the email from the trustee as read')).toBe(true);
     expect(taskDraftRequested('Mark that message unread')).toBe(true);
     expect(taskDraftRequested("Link Dana's last email to her case")).toBe(true);
+    expect(taskDraftRequested("Take the trustee's email off the case")).toBe(true);
+    expect(taskDraftRequested("Unlink that email from Dana's case")).toBe(true);
+    expect(taskDraftRequested('Remove the message from the file')).toBe(true);
+    expect(taskDraftRequested('Mark everything in the billing inbox read')).toBe(true);
     expect(taskDraftRequested('What did the trustee email say?')).toBe(false);
+    expect(taskDraftRequested('Which case is that email on?')).toBe(false);
   });
 });

@@ -112,6 +112,12 @@ const KINDS = new Map([
   // bridged — reused or created — which it returns as log_id.
   ['mail.read.v1', 'mail_message_id'],
   ['mail.case_link.v1', 'log_id'],
+  // A13X (2026-11-16): the unlink receipts the log row that came off the case
+  // (the route answers it as log_id, like the link); the bulk read receipts
+  // the COUNT the route marked (`marked`, ≥ 1 by the browser's own check — a
+  // bulk has no single message to name).
+  ['mail.case_unlink.v1', 'log_id'],
+  ['mail.read.bulk.v1', 'marked'],
   // A13b: the receipt is the email whose attachments were filed (the file
   // route answers its id; a file's document id is absent for one already
   // filed, and the log_id only when linked).

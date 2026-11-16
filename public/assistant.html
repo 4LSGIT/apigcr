@@ -4580,6 +4580,11 @@ function formTemplateOpen(draft) {
 // tab repaints. Receipts: the integer mail_message_id (read) and log_id (link).
 const MAIL_READ_ACTION_KINDS = new Set(['mail.read.v1']);
 const MAIL_LINK_ACTION_KINDS = new Set(['mail.case_link.v1']);
+// A13X: the unlink (DELETE /api/mail/messages/:id/case-link — the log row
+// stays, the case goes) and the bulk read (POST /api/mail/read {ids} | {all,
+// mailbox_ids, filters} — the hub's own route, the scope frozen on the card).
+const MAIL_UNLINK_ACTION_KINDS = new Set(['mail.case_unlink.v1']);
+const MAIL_BULK_ACTION_KINDS = new Set(['mail.read.bulk.v1']);
 
 function mailLabel(draft) {
   if (draft && draft.kind === 'mail.case_link.v1') return 'Link email to case';
@@ -4749,6 +4754,195 @@ function mailEntity(draft) {
 function mailOpen(draft) {
   const e = mailEntity(draft);
   openEntity(e.kind, e.id, e.label);
+}
+
+// ── A13X: the unlink card ──────────────────────────────────────────────────
+function mailUnlinkText(draft) {
+  const l = draft.log || {};
+  const lines = ['Email case unlink proposal — not applied', 'Action: Take email off case', `Email: ${mailMessageLine(draft)}`,
+    `Leaves: ${mailCaseLabel(draft)}${draft.case && draft.case.exists === false ? ' (a case row that no longer exists)' : ''}`,
+    `Log entry: #${l.log_id} (a "${l.type}" entry${l.link ? `, under ${l.link}` : ''}) STAYS on the firm log — only its case link is cleared`];
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  lines.push('Writes: the log entry\'s case link, cleared — nothing is deleted, created or stamped; the email and its mailbox are untouched.',
+    'Stale check: if the message leaves the case, moves to another case, loses its log entry or stops being readable for you before you apply, nothing is written.',
+    'Other open pages: an open comms hub, or this case\'s Comms tab, in this browser refreshes on its own; the case\'s Log tab drops it when reopened.',
+    'Notification: Casey sends nothing; unlinking runs no trigger rule.');
+  return lines.join('\n');
+}
+
+function mailUnlinkRequest(draft) {
+  const id = mailMessageIdOf(draft);
+  const caseId = typeof ((draft && draft.case) || {}).case_id === 'string' ? draft.case.case_id : '';
+  if (!caseId) throw new Error('This card has no usable case.');
+  return { path: `/api/mail/messages/${id}/case-link`, method: 'DELETE', body: null };
+}
+
+async function mailUnlinkPrecheck(draft) {
+  mailUnlinkRequest(draft); // a card that cannot be written is never read
+  const id = mailMessageIdOf(draft);
+  const x = draft.expected || {};
+  const label = mailCaseLabel(draft);
+  const m = await mailReadMessage(id);
+  if (!m) return `Message #${id} is no longer one you can read (it was removed, or your access to its mailbox changed). Nothing was written.`;
+  const st = m.log_status || {};
+  const linked = st.state === 'case' && st.case && st.case.case_id != null ? String(st.case.case_id) : '';
+  if (!linked) return `Message #${id} is no longer on ${label} — someone took it off since this card was prepared. Nothing was written.`;
+  if (linked.toLowerCase() !== String(x.case_id || '').toLowerCase()) {
+    return `Message #${id} is now on another case (${st.case.case_number || linked}), not ${label} — it moved since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  const num = (v) => (v == null ? null : Number(v));
+  if (num(m.log_id) !== num(x.stamp_log_id) || num(st.log_id) !== num(x.log_id)) {
+    return `Message #${id}'s log entry changed since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function mailUnlinkResult(draft, result) {
+  const id = mailMessageIdOf(draft);
+  const x = draft.expected || {};
+  const logId = Number(result && result.log_id);
+  if (!result || result.status !== 'success' || Number(result.id) !== id || !Number.isSafeInteger(logId) || logId < 1) throw new Error('The mail route did not confirm the unlink');
+  if (!result.case || String(result.case.case_id).toLowerCase() !== String(x.case_id || '').toLowerCase()) throw new Error('The mail route did not take it off the reviewed case');
+  return { log_id: logId };
+}
+
+// The unlink route's 409s — all before any write: not on the log, on the firm
+// log but not on a case (its attribution said), a dead stamp. The shared 4xx
+// rule covers 404; anything else stays ambiguous.
+function mailUnlinkKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const message = String((e && e.body && e.body.message) || (e && e.message) || '');
+  if (e && e.status === 409 && (/^This message is not on a case: /.test(message) || /^The log entry this message points at no longer exists\.$/.test(message))) {
+    return { status: 'Refused — nothing written', text: `Refused — nothing written: ${message} Ask Casey to prepare it again if it should still change.` };
+  }
+  return null;
+}
+
+// ── A13X: the bulk read card ───────────────────────────────────────────────
+function mailBulkLabel(draft) {
+  const n = Number((draft && draft.count) || 0);
+  return draft && draft.mode === 'all' ? `Mark ${n} emails read` : `Mark ${n} message${n === 1 ? '' : 's'} read`;
+}
+
+function mailBulkText(draft) {
+  const lines = ['Bulk email read-state proposal — not applied', `Action: ${mailBulkLabel(draft)} (for you only)`];
+  if (draft.mode === 'all') {
+    lines.push(`Scope: ${draft.scope || 'the mailboxes below'}`);
+    for (const mb of draft.mailboxes || []) lines.push(`Mailbox: ${mb.address} (#${mb.mailbox_id})`);
+    lines.push(`Filters: ${(draft.filter_words || []).length ? draft.filter_words.join('; ') : 'none beyond the Inbox scope'}`,
+      `Count now: ${Number(draft.count) || 0} unread — the server marks whatever matches when you apply, and refuses if the count moved`);
+  } else {
+    for (const r of draft.messages || []) {
+      lines.push(`Email: ${mailMessageLine({ message: r })}${r.copies_unread ? ` + ${r.copies_unread} unread cop${r.copies_unread === 1 ? 'y' : 'ies'}` : ''}`);
+    }
+    for (const r of draft.skipped || []) lines.push(`Skipped (already read for you): #${r.mail_message_id} "${r.subject || '(no subject)'}"`);
+    lines.push(`Messages marked: ${Number(draft.count) || 0}${draft.copies ? ` (${draft.copies} of them copies of the emails you cited)` : ''}`);
+  }
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  lines.push('Writes: rows of YOUR read state for these messages — nothing else, and nobody else\'s.',
+    draft.mode === 'all'
+      ? 'Stale check: if a mailbox stops being readable for you, or the number of unread messages in this scope changes, before you apply, nothing is written.'
+      : 'Stale check: if a cited message\'s read state changes, or it stops being readable for you, before you apply, nothing is written (its copies are re-read by the route itself).',
+    'Other open pages: an open comms hub in this browser repaints on its own.',
+    'Notification: none — read state is private to you.');
+  return lines.join('\n');
+}
+
+// The request is built from the FROZEN scope (`expected`), never from the
+// model's loose fields: the exact ids, or the resolved readable mailbox ids
+// and the cleaned filters.
+function mailBulkRequest(draft) {
+  const x = (draft && draft.expected) || {};
+  if (x.mode === 'ids') {
+    const ids = Array.isArray(x.ids) ? x.ids.map(Number) : [];
+    if (!ids.length || ids.some((n) => !Number.isSafeInteger(n) || n < 1) || ids.length > 500) throw new Error('This card has no usable message ids.');
+    return { path: '/api/mail/read', method: 'POST', body: { ids } };
+  }
+  if (x.mode === 'all') {
+    const mbs = Array.isArray(x.mailbox_ids) ? x.mailbox_ids.map(Number) : [];
+    if (!mbs.length || mbs.some((n) => !Number.isSafeInteger(n) || n < 1)) throw new Error('This card has no usable mailbox scope.');
+    if (!Number.isSafeInteger(Number(x.count)) || Number(x.count) < 1) throw new Error('This card has no usable count.');
+    const body = { all: true, mailbox_ids: mbs };
+    if (x.filters && typeof x.filters === 'object' && Object.keys(x.filters).length) body.filters = x.filters;
+    return { path: '/api/mail/read', method: 'POST', body };
+  }
+  throw new Error('This card has no usable scope.');
+}
+
+// Freshness. ids: each cited message re-read (GET /api/mail/messages/:id —
+// gone / unreadable refuses; its own read state must be as reviewed). all:
+// every scoped mailbox still readable (GET /api/mail/mailboxes), then the
+// count — the Inbox scope with no filters from the summary's inbox_unread
+// (the same predicate as the route's; an alias whose parent is in the scope
+// is dropped, as branchPlan drops it), a filtered scope by walking the hub's
+// own list with unread_only (raw rows = Σ copies per row) up to the card's cap.
+async function mailBulkPrecheck(draft) {
+  const req = mailBulkRequest(draft); // a card that cannot be written is never read
+  const x = draft.expected || {};
+  if (x.mode === 'ids') {
+    const cited = Array.isArray(x.cited) ? x.cited : [];
+    if (!cited.length) throw new Error('This card has no cited messages.');
+    const states = await Promise.all(cited.map((c) => mailReadMessage(Number(c.mail_message_id))));
+    for (let i = 0; i < cited.length; i++) {
+      const id = Number(cited[i].mail_message_id);
+      if (!states[i]) return `Message #${id} is no longer one you can read (it was removed, or your access to its mailbox changed). Nothing was written.`;
+      if (states[i].unread !== !!cited[i].unread) return `Message #${id} is now ${states[i].unread ? 'unread' : 'read'} for you — its read state changed since this card was prepared. Nothing was written.`;
+    }
+    return '';
+  }
+  const sum = await api('/api/mail/mailboxes', null, 'GET');
+  if (!sum || !Array.isArray(sum.mailboxes)) throw new Error('the mailboxes could not be read');
+  const byId = new Map(sum.mailboxes.map((mb) => [Number(mb.id), mb]));
+  const missing = req.body.mailbox_ids.filter((id) => !byId.has(id));
+  if (missing.length) return `Mailbox #${missing.join(', #')} is no longer one you can read. Nothing was written.`;
+  let count = 0;
+  if (!x.filtered) {
+    const inScope = new Set(req.body.mailbox_ids);
+    for (const id of req.body.mailbox_ids) {
+      const mb = byId.get(id);
+      if (mb.alias_of != null && inScope.has(Number(mb.alias_of))) continue; // the parent branch lists every slice row
+      count += Number(mb.inbox_unread) || 0;
+    }
+  } else {
+    const params = { mailbox_ids: req.body.mailbox_ids.join(','), unread_only: 1, limit: 100 };
+    for (const [k, v] of Object.entries(req.body.filters || {})) params[k] = v === true ? 1 : v;
+    let cursor = null;
+    for (let page = 0; page < 6; page++) {
+      const got = await api('/api/mail/messages', cursor ? { ...params, cursor } : params, 'GET');
+      if (!got || !Array.isArray(got.messages)) throw new Error('the mail list could not be read');
+      for (const m of got.messages) count += Array.isArray(m.copies) && m.copies.length ? m.copies.length : 1;
+      cursor = got.next_cursor || null;
+      if (!cursor) break;
+      if (page === 5) count = Number.POSITIVE_INFINITY; // more than the walk can see: not the reviewed count
+    }
+  }
+  if (count !== Number(x.count)) {
+    return `The scope now holds ${Number.isFinite(count) ? count : 'more than 600'} unread message${count === 1 ? '' : 's'}, not the ${Number(x.count)} this card reviewed — it changed since the card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function mailBulkResult(draft, result) {
+  const req = mailBulkRequest(draft);
+  const x = draft.expected || {};
+  const marked = Number(result && result.marked);
+  if (!result || result.status !== 'success' || !Number.isSafeInteger(marked)) throw new Error('The mail route did not confirm the bulk read');
+  if (marked < 1 || marked > Number(x.count)) throw new Error(`The mail route marked ${marked} message${marked === 1 ? '' : 's'} — not within the reviewed ${Number(x.count)}`);
+  if (x.mode === 'ids' && Array.isArray(result.ids)) {
+    const sent = new Set(req.body.ids);
+    if (result.ids.some((id) => !sent.has(Number(id)))) throw new Error('The mail route marked a message this card did not send');
+  }
+  return { marked };
+}
+
+function mailBulkEntity(draft) {
+  if (draft.mode !== 'all' && Array.isArray(draft.messages) && draft.messages.length === 1) {
+    const m = draft.messages[0];
+    return { kind: 'mail', id: String(m.mail_message_id || ''), label: `"${String(m.subject || '(no subject)').slice(0, 80)}"` };
+  }
+  return { kind: 'mail', id: '', label: 'Comms → Email' };
 }
 
 // Email attachments filed to a case (A13b). ONE email's attachments into ONE
@@ -7636,11 +7830,54 @@ const ACTION_FAMILIES = [
     failure: 'The email could not be linked.',
     appliedCopy: (draft) => ({
       status: `Applied — email linked (log entry #${draft.result_mail_link_log_id})`,
-      warning: `Message #${(draft.message || {}).mail_message_id} is now linked to ${mailCaseLabel(draft)} through log entry #${draft.result_mail_link_log_id}, using your signed-in account. It shows on the case's Comms and Log tabs; a link card cannot unlink it (the Comms tab's case tag can), and linking it to another case later moves it, with a warning.`,
+      warning: `Message #${(draft.message || {}).mail_message_id} is now linked to ${mailCaseLabel(draft)} through log entry #${draft.result_mail_link_log_id}, using your signed-in account. It shows on the case's Comms and Log tabs; an unlink card (or Unlink on the Comms log line) takes it off again, and linking it to another case later moves it, with a warning.`,
       button: `Open ${mailEntity(draft).label}`,
     }),
     reviewWarning: 'Review the email, the case, the log entry it reuses or creates (a created entry copies the email\'s text into the case\'s log) and whether the sender is a contact on the case. Canceling writes nothing.',
     open: mailOpen,
+  },
+  {
+    // A13X: the receipt is the integer log_id whose case link was cleared.
+    id: 'mail_unlink', kinds: MAIL_UNLINK_ACTION_KINDS, title: 'Email case unlink', noun: 'email unlink', errorNoun: 'email unlink',
+    label: () => 'Take email off case', text: mailUnlinkText, request: mailUnlinkRequest, result: mailUnlinkResult,
+    idField: 'log_id', appliedKey: 'result_mail_unlink_log_id',
+    // Always a danger line: the case's Comms and Log tabs stop listing it.
+    danger: (draft) => (draft.warnings || []).length > 0,
+    precheck: mailUnlinkPrecheck,
+    knownOutcome: mailUnlinkKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `log entry #${payload.log_id}`,
+    entity: (draft) => mailEntity(draft),
+    failure: 'The email could not be taken off the case.',
+    appliedCopy: (draft) => ({
+      status: `Applied — email taken off ${mailCaseLabel(draft)} (log entry #${draft.result_mail_unlink_log_id})`,
+      warning: `Message #${(draft.message || {}).mail_message_id} is no longer on ${mailCaseLabel(draft)}, using your signed-in account. Its log entry #${draft.result_mail_unlink_log_id} stays on the firm log under the other party; a link card puts it back on a case.`,
+      button: `Open ${mailEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review the email and the case it leaves: its Comms and Log tabs stop listing this email. The log entry itself stays. Canceling writes nothing.',
+    open: mailOpen,
+  },
+  {
+    // A13X: the receipt is the COUNT the bulk route marked (≥ 1 by mailBulkResult).
+    id: 'mail_read_bulk', kinds: MAIL_BULK_ACTION_KINDS, title: 'Bulk email read state', noun: 'bulk read', errorNoun: 'bulk read-state change',
+    label: mailBulkLabel, text: mailBulkText, request: mailBulkRequest, result: mailBulkResult,
+    idField: 'marked', appliedKey: 'result_mail_read_bulk_marked',
+    // A whole-mailbox scope past the danger count (no undo at that size).
+    danger: (draft) => (draft.warnings || []).length > 0,
+    precheck: mailBulkPrecheck,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `${payload.marked} message${Number(payload.marked) === 1 ? '' : 's'}`,
+    entity: (draft) => mailBulkEntity(draft),
+    failure: 'The messages could not be marked read.',
+    appliedCopy: (draft) => ({
+      status: `Applied — ${draft.result_mail_read_bulk_marked} message${Number(draft.result_mail_read_bulk_marked) === 1 ? '' : 's'} marked read`,
+      warning: `${draft.result_mail_read_bulk_marked} message${Number(draft.result_mail_read_bulk_marked) === 1 ? ' is' : 's are'} now read for you only, using your signed-in account. Nobody else's read state changed.`,
+      button: 'Where to find them',
+    }),
+    reviewWarning: (draft) => (draft.mode === 'all'
+      ? 'Review the mailboxes, the filters and the count: everything the Comms list shows for that scope is marked read for YOU, every page, with no undo at this size. Canceling writes nothing.'
+      : 'Review each message and the copies that ride along. It changes YOUR read state only. Canceling writes nothing.'),
+    open: (draft) => { const e = mailBulkEntity(draft); openEntity(e.kind, e.id, e.label); },
   },
   {
     // A13b: the receipt is the integer mail_message_id whose attachments were filed.

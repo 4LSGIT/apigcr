@@ -3050,14 +3050,57 @@ describe('_sniff — mail matchers (A13)', () => {
     expect(seen).toEqual([]);
   });
 
-  test('only the one-message writes: GET, the bulk mark-read, other verbs, views and send are silent', () => {
+  test('the UNLINK (A13X): the message with NO case and the OLD case\'s comms; fails closed without the log id, the case or for another message', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('DELETE', '/api/mail/messages/88123/case-link', { status: 'success', id: 88123, log_id: 5001, case: { case_id: 'AAAA', case_number: '25-12345' } });
+    expect(seen).toEqual([
+      { addr: 'mail:88123', fields: { log_id: 5001, case_id: null }, origin: 'auto:DELETE /api/mail/messages/88123/case-link' },
+      { addr: 'comms:case:AAAA', fields: { yc_refetch: 1 }, origin: 'auto:DELETE /api/mail/messages/88123/case-link' },
+    ]);
+    seen.length = 0;
+    w.YC._sniff('DELETE', '/api/mail/messages/88123/case-link', { status: 'success', id: 88123, case: { case_id: 'AAAA' } });
+    w.YC._sniff('DELETE', '/api/mail/messages/88123/case-link', { status: 'success', id: 88123, log_id: 5001 });
+    w.YC._sniff('DELETE', '/api/mail/messages/88123/case-link', { status: 'success', id: 99, log_id: 5001, case: { case_id: 'AAAA' } });
+    w.YC._sniff('DELETE', '/api/mail/messages/88123/case-link', { status: 'error', message: 'This message is not on a case: it is not on the log.' });
+    expect(seen).toEqual([]);
+  });
+
+  test('the BULK read (A13X): one {unread:false} per answered id up to 50, else ONE mail:bulk marker; silent when nothing was marked', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/mail/read', { status: 'success', marked: 2, ids: [11, 12] });
+    expect(seen).toEqual([
+      { addr: 'mail:11', fields: { unread: false }, origin: 'auto:POST /api/mail/read' },
+      { addr: 'mail:12', fields: { unread: false }, origin: 'auto:POST /api/mail/read' },
+    ]);
+    seen.length = 0;
+    const many = Array.from({ length: 51 }, (_, i) => 100 + i);
+    w.YC._sniff('POST', '/api/mail/read', { status: 'success', marked: 51, ids: many });
+    w.YC._sniff('POST', '/api/mail/read', { status: 'success', marked: 7 }); // the {all} form: a count, no ids
+    expect(seen).toEqual([
+      { addr: 'mail:bulk', fields: { yc_refetch: 1 }, origin: 'auto:POST /api/mail/read' },
+      { addr: 'mail:bulk', fields: { yc_refetch: 1 }, origin: 'auto:POST /api/mail/read' },
+    ]);
+    seen.length = 0;
+    const fifty = Array.from({ length: 50 }, (_, i) => 200 + i);
+    w.YC._sniff('POST', '/api/mail/read', { status: 'success', marked: 50, ids: fifty });
+    expect(seen.map((x) => x.addr)).toEqual(fifty.map((id) => `mail:${id}`));
+    seen.length = 0;
+    w.YC._sniff('POST', '/api/mail/read', { status: 'success', marked: 0, ids: [] });
+    w.YC._sniff('POST', '/api/mail/read', { status: 'success', marked: 0 });
+    w.YC._sniff('POST', '/api/mail/read', { status: 'error', message: 'ids must be a non-empty array' });
+    expect(seen).toEqual([]);
+  });
+
+  test('only the mail writes: GET, other verbs, views and send are silent', () => {
     const w = mkWindow();
     const seen = spy(w);
     const body = { status: 'success', id: 1, unread: false, log_id: 2, case: { case_id: 'AAAA' }, marked: 3 };
     w.YC._sniff('GET',    '/api/mail/messages/1', body);
-    w.YC._sniff('POST',   '/api/mail/read', body);
+    w.YC._sniff('GET',    '/api/mail/read', body);
     w.YC._sniff('PATCH',  '/api/mail/messages/1/read', body);
-    w.YC._sniff('DELETE', '/api/mail/messages/1/case-link', body);
+    w.YC._sniff('PATCH',  '/api/mail/messages/1/case-link', body);
     w.YC._sniff('POST',   '/api/mail/messages/abc/read', body);
     w.YC._sniff('POST',   '/api/mail/views', body);
     w.YC._sniff('POST',   '/api/mail/send', body);

@@ -39,6 +39,15 @@
  *   - The browser's prechecks pass on a fresh card and refuse after a change
  *     (read state flipped, message linked since); the answer checks accept the
  *     real answers.
+ *   - A13X (2026-11-16): the UNLINK route — DELETE /api/mail/messages/:id/
+ *     case-link clears the about-link inside its FOR UPDATE span and nothing
+ *     else (the log row and the stamp stay), its 409s in the route's words
+ *     (not on the log / on the firm log only / a dead stamp), the card's
+ *     prediction = the route's answer, the browser's precheck after a change;
+ *     and the BULK read — the cited card's ids are what the route marks (its
+ *     answered `ids`), the whole-mailbox card's predicted COUNT is what the
+ *     route marks (predict, mark, compare — the same predicate text), the
+ *     browser's count precheck from the real summary / list.
  */
 'use strict';
 
@@ -118,8 +127,9 @@ function fnSrc(html, name) {
 function browserChecks(api) {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'assistant.html'), 'utf8');
   const names = ['mailMessageIdOf', 'mailCaseLabel', 'mailReadRequest', 'mailReadMessage', 'mailReadPrecheck', 'mailReadResult',
-    'mailLinkRequest', 'mailLinkPrecheck', 'mailLinkResult'];
-  const src = `${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { mailReadRequest, mailReadPrecheck, mailReadResult, mailLinkRequest, mailLinkPrecheck, mailLinkResult };`;
+    'mailLinkRequest', 'mailLinkPrecheck', 'mailLinkResult',
+    'mailUnlinkRequest', 'mailUnlinkPrecheck', 'mailUnlinkResult', 'mailBulkRequest', 'mailBulkPrecheck', 'mailBulkResult'];
+  const src = `${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { mailReadRequest, mailReadPrecheck, mailReadResult, mailLinkRequest, mailLinkPrecheck, mailLinkResult, mailUnlinkRequest, mailUnlinkPrecheck, mailUnlinkResult, mailBulkRequest, mailBulkPrecheck, mailBulkResult };`;
   return new Function('api', src)(api); // eslint-disable-line no-new-func
 }
 
@@ -219,7 +229,9 @@ d('the Casey mail cards on real MySQL (A13)', () => {
         if (!rows.length) throw Object.assign(new Error('Case not found'), { status: 404 });
         return { case: rows[0] };
       }
-      const res = await call(app, method, p, method === 'GET' ? undefined : body);
+      // apiSend turns a GET payload into the query string
+      const url = method === 'GET' && body && typeof body === 'object' ? `${p}?${new URLSearchParams(body).toString()}` : p;
+      const res = await call(app, method, url, method === 'GET' ? undefined : body);
       if (res.status >= 400) throw Object.assign(new Error(res.body.message || `HTTP ${res.status}`), { status: res.status, body: res.body });
       return res.body;
     });
@@ -239,6 +251,10 @@ d('the Casey mail cards on real MySQL (A13)', () => {
   const readCard = (id, read = true) => ({ kind: 'mail.read.v1', mail_message_id: id, read, evidence: [{ query_id: 'q1', row_number: 2 }] });
   const linkCard = (id, caseId = C1) => ({ kind: 'mail.case_link.v1', mail_message_id: id, case_id: caseId,
     evidence: [{ query_id: 'q1', row_number: 2 }, { query_id: 'q2', row_number: caseId === C1 ? 1 : 2 }] });
+  const unlinkCard = (id) => ({ kind: 'mail.case_unlink.v1', mail_message_id: id, evidence: [{ query_id: 'q1', row_number: 2 }] });
+  const bulkIdsCard = (ids) => ({ kind: 'mail.read.bulk.v1', mail_message_ids: ids, evidence: ids.map((_, i) => ({ query_id: 'q1', row_number: i + 2 })) });
+  const bulkAllCard = (over = {}) => ({ kind: 'mail.read.bulk.v1', all: true, evidence: [], ...over });
+  const normMany = (card, ids, user = 7) => normalizeActionDraft(pool, card, evidence(ids), { currentUserId: user });
   const norm = (card, user = 7) => normalizeActionDraft(pool, card, evidence([card.mail_message_id]), { currentUserId: user });
   const readRows = async (user) => q('SELECT user, message_fk FROM mail_read_state WHERE user = ? ORDER BY message_fk', [user]);
 
@@ -366,5 +382,130 @@ d('the Casey mail cards on real MySQL (A13)', () => {
     expect(await browser.mailLinkPrecheck(card)).toBe('');
     await q('UPDATE mail_messages SET log_id = 4001 WHERE id = 501');
     expect(await browser.mailLinkPrecheck(card)).toMatch(/^Message #501's log entry changed since this card was prepared/);
+  });
+
+  // ── A13X: the unlink ──
+  test('UNLINK: the card predicts the route; the route clears ONLY the about-link (the row, its text and the stamp stay); the repeat is a 409 the card refuses first', async () => {
+    // put 505 (stamped → log 4001) on C1 through the real link route
+    const link = await call(app, 'POST', '/api/mail/messages/505/case-link', { case_id: C1 });
+    expect([link.status, link.body.log_id]).toEqual([200, 4001]);
+    const card = await norm(unlinkCard(505));
+    expect(card).toMatchObject({ kind: 'mail.case_unlink.v1', case: { case_id: C1, case_number: '25-70001', label: 'case 25-70001', exists: true },
+      log: { log_id: 4001, via: 'stamped', type: 'email', link: 'email dana@example.com', message_chars: 12 },
+      expected: { stamp_log_id: 4001, log_id: 4001, case_id: C1 } });
+    expect(card.warnings).toEqual(["LEAVES CASE 25-70001: case 25-70001's Comms tab and Log tab stop listing this email once applied. Nothing is deleted — a link card puts it back if it belongs there."]);
+    expect(await browser.mailUnlinkPrecheck(card)).toBe('');
+    const rq = browser.mailUnlinkRequest(card);
+    expect(rq).toEqual({ path: '/api/mail/messages/505/case-link', method: 'DELETE', body: null });
+    const before = await q('SELECT log_type, log_link_type, log_link_id, log_message, log_data, log_by FROM log WHERE log_id = 4001');
+    const res = await call(app, rq.method, rq.path);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: 'success', id: 505, log_id: 4001, case: { case_id: C1, case_number: '25-70001' } });
+    expect(browser.mailUnlinkResult(card, res.body)).toEqual({ log_id: 4001 });
+    const [row] = await q('SELECT log_type, log_link_type, log_link_id, log_message, log_data, log_by, log_about_type, log_about_id FROM log WHERE log_id = 4001');
+    expect(row).toEqual({ ...before[0], log_about_type: null, log_about_id: null });
+    expect((await q('SELECT log_id FROM mail_messages WHERE id = 505'))[0].log_id).toBe(4001); // the stamp stays
+    expect((await q('SELECT COUNT(*) AS n FROM log'))[0].n).toBe(3); // nothing created or deleted
+    // the hub's read agrees; the precheck now refuses; the card refuses first; the route 409s in its words
+    const got = await call(app, 'GET', '/api/mail/messages/505');
+    expect(got.body.messages[0].log_status).toMatchObject({ state: 'logged', log_id: 4001 });
+    expect(await browser.mailUnlinkPrecheck(card)).toBe('Message #505 is no longer on case 25-70001 — someone took it off since this card was prepared. Nothing was written.');
+    await expect(norm(unlinkCard(505))).rejects.toThrow('That changes nothing — message #505 is not on a case: log entry #4001 is on the firm log, not on a case. (The route refuses it: "This message is not on a case: its log entry is on the firm log, not on a case.")');
+    const again = await call(app, 'DELETE', '/api/mail/messages/505/case-link');
+    expect([again.status, again.body.message]).toEqual([409, 'This message is not on a case: its log entry is on the firm log, not on a case.']);
+    expect((await q('SELECT log_about_type FROM log WHERE log_id = 4001'))[0].log_about_type).toBeNull();
+  });
+
+  test("UNLINK resolves a copy's stamp and another source's row exactly as the link does; not-on-the-log and a dead stamp are 409s the card refuses in the same words; no grant → 404", async () => {
+    // 506 is unstamped; its copy 507 carries 4002. Link 506 through the copy, then unlink 506 — the same row.
+    expect((await call(app, 'POST', '/api/mail/messages/506/case-link', { case_id: C2 })).body.log_id).toBe(4002);
+    const viaCopy = await norm(unlinkCard(506));
+    // the link stamped 506 itself, so the card now sees the stamp (route parity: so does caseUnlink)
+    expect(viaCopy.log).toMatchObject({ log_id: 4002, via: 'stamped' });
+    expect(viaCopy.case.case_id).toBe(C2);
+    const r1 = await call(app, 'DELETE', '/api/mail/messages/506/case-link');
+    expect(r1.body).toMatchObject({ id: 506, log_id: 4002, case: { case_id: C2 } });
+    // 508: another source's execution row → log 4003, put on C1 by the link; unlink an UNSTAMPED twin path: clear the stamp first to exercise priorLogId on the route
+    expect((await call(app, 'POST', '/api/mail/messages/508/case-link', { case_id: C1 })).body.log_id).toBe(4003);
+    await q('UPDATE mail_messages SET log_id = NULL WHERE id = 508');
+    const viaSource = await norm(unlinkCard(508));
+    expect(viaSource.log).toMatchObject({ log_id: 4003, via: 'source' });
+    expect(viaSource.expected).toEqual({ stamp_log_id: null, log_id: 4003, case_id: C1 });
+    const r2 = await call(app, 'DELETE', '/api/mail/messages/508/case-link');
+    expect(r2.body).toMatchObject({ id: 508, log_id: 4003, case: { case_id: C1 } });
+    expect((await q('SELECT log_id FROM mail_messages WHERE id = 508'))[0].log_id).toBeNull(); // the unlink never stamps
+    // not on the log at all
+    await expect(norm(unlinkCard(501))).rejects.toThrow('That changes nothing — message #501 is not on a case: it is not on the log. (The route refuses it: "This message is not on a case: it is not on the log.")');
+    const none = await call(app, 'DELETE', '/api/mail/messages/501/case-link');
+    expect([none.status, none.body.message]).toEqual([409, 'This message is not on a case: it is not on the log.']);
+    // a dead stamp
+    await q('UPDATE mail_messages SET log_id = 9999 WHERE id = 501');
+    await expect(norm(unlinkCard(501))).rejects.toThrow('The log entry this message points at no longer exists (log #9999)');
+    const dead = await call(app, 'DELETE', '/api/mail/messages/501/case-link');
+    expect([dead.status, dead.body.message]).toEqual([409, 'The log entry this message points at no longer exists.']);
+    // no grant: 404, nothing written
+    await expect(norm(unlinkCard(502))).rejects.toThrow('Message #502 is not a message you can read');
+    expect((await call(app, 'DELETE', '/api/mail/messages/502/case-link')).status).toBe(404);
+  });
+
+  // ── A13X: the bulk read ──
+  test('BULK (cited): the card\'s frozen ids are exactly what the route marks and answers; copies ride along; the browser checks pass on the real answers', async () => {
+    // 503 (box 1) and 504 (box 3) are one email; both unread for 7.
+    const card = await normMany(bulkIdsCard([503]), [503]);
+    expect(card).toMatchObject({ mode: 'ids', count: 2, copies: 1, expected: { mode: 'ids', ids: [503, 504], count: 2, cited: [{ mail_message_id: 503, unread: true }] } });
+    expect(await browser.mailBulkPrecheck(card)).toBe('');
+    const rq = browser.mailBulkRequest(card);
+    expect(rq).toEqual({ path: '/api/mail/read', method: 'POST', body: { ids: [503, 504] } });
+    const res = await call(app, rq.method, rq.path, rq.body);
+    expect(res.body).toEqual({ status: 'success', marked: 2, ids: [503, 504] });
+    expect(browser.mailBulkResult(card, res.body)).toEqual({ marked: 2 });
+    expect(await readRows(7)).toEqual([{ user: 7, message_fk: 503 }, { user: 7, message_fk: 504 }]);
+    expect(await readRows(8)).toEqual([]);
+    // the single read card refuses the copies case and names the bulk card; the bulk card refuses the no-op afterwards; the precheck refuses the flipped state
+    await expect(norm(readCard(505))).resolves.toMatchObject({ kind: 'mail.read.v1' });
+    await expect(normMany(bulkIdsCard([503]), [503])).rejects.toThrow('That changes nothing — message #503 is already read for you (every stored copy of it)');
+    expect(await browser.mailBulkPrecheck(card)).toBe('Message #503 is now read for you — its read state changed since this card was prepared. Nothing was written.');
+    // a repeat of the route is a no-op with empty ids; a mix of cited messages skips the read one
+    expect((await call(app, 'POST', '/api/mail/read', { ids: [503, 504] })).body).toEqual({ status: 'success', marked: 0, ids: [] });
+    const mixed = await normMany(bulkIdsCard([503, 501]), [503, 501]);
+    expect(mixed.skipped.map((r) => r.mail_message_id)).toEqual([503]);
+    expect(mixed.expected.ids).toEqual([501]);
+    // 502 is not readable: refused by the card; the route silently marks nothing for it
+    await expect(normMany(bulkIdsCard([502]), [502])).rejects.toThrow('Message #502 is not a message you can read');
+    expect((await call(app, 'POST', '/api/mail/read', { ids: [502] })).body).toEqual({ status: 'success', marked: 0, ids: [] });
+  });
+
+  test('BULK (whole mailbox): predict, mark, compare — the card\'s count IS the route\'s marked, with and without filters; the browser re-counts from the real summary / list', async () => {
+    // Everything 7 can read in the Inbox: boxes 1 (501, 503, 505, 506, 508, 509) + 3 (504, 507) = 8 unread.
+    const card = await norm(bulkAllCard());
+    expect(card).toMatchObject({ mode: 'all', count: 8, scope: 'the Inbox of intake@firm.test, billing@firm.test', expected: { mode: 'all', mailbox_ids: [1, 3], filters: {}, count: 8, filtered: false } });
+    expect(card.mailboxes).toEqual([{ mailbox_id: 1, address: 'intake@firm.test', alias_of: null }, { mailbox_id: 3, address: 'billing@firm.test', alias_of: null }]);
+    expect(await browser.mailBulkPrecheck(card)).toBe('');
+    // a filtered scope: box 1, subject matching q — 'Pay stubs' hits 501 only (the FULLTEXT index is not built here; q falls back to LIKE on subject / sender)
+    const filtered = await norm(bulkAllCard({ mailbox_ids: [1], filters: { q: 'Pay stubs' } }));
+    expect(filtered).toMatchObject({ count: 1, scope: 'the Inbox of intake@firm.test — matching "Pay stubs"', expected: { mailbox_ids: [1], filters: { q: 'Pay stubs' }, count: 1, filtered: true } });
+    expect(await browser.mailBulkPrecheck(filtered)).toBe('');
+    const frq = browser.mailBulkRequest(filtered);
+    expect(frq).toEqual({ path: '/api/mail/read', method: 'POST', body: { all: true, mailbox_ids: [1], filters: { q: 'Pay stubs' } } });
+    const fres = await call(app, frq.method, frq.path, frq.body);
+    expect(fres.body).toEqual({ status: 'success', marked: 1 });
+    expect(browser.mailBulkResult(filtered, fres.body)).toEqual({ marked: 1 });
+    expect(await readRows(7)).toEqual([{ user: 7, message_fk: 501 }]);
+    // the unfiltered card is now stale by one: the summary says 7
+    expect(await browser.mailBulkPrecheck(card)).toBe('The scope now holds 7 unread messages, not the 8 this card reviewed — it changed since the card was prepared. Nothing was written. Ask Casey to prepare it again.');
+    const fresh = await norm(bulkAllCard());
+    expect(fresh.count).toBe(7);
+    const rq = browser.mailBulkRequest(fresh);
+    const res = await call(app, rq.method, rq.path, rq.body);
+    expect(res.body).toEqual({ status: 'success', marked: 7 });
+    expect(browser.mailBulkResult(fresh, res.body)).toEqual({ marked: 7 });
+    expect((await readRows(7)).length).toBe(8);
+    expect(await readRows(8)).toEqual([]); // per user
+    // nothing left: the card refuses; a box the user cannot read is refused by number; a bad filter in the hub's words
+    await expect(norm(bulkAllCard())).rejects.toThrow('That changes nothing — nothing is unread for you in the Inbox of intake@firm.test, billing@firm.test');
+    await expect(norm(bulkAllCard({ mailbox_ids: [2] }))).rejects.toThrow('No mailbox #2 that you can read');
+    await expect(norm(bulkAllCard({ filters: { starred: true } }))).rejects.toThrow('The bulk scope is refused (the hub\'s own rule): filters: unknown key "starred"');
+    // the SU reads box 2 too: 502 is the one unread there
+    expect((await normalizeActionDraft(pool, bulkAllCard({ mailbox_ids: [2] }), [], { currentUserId: 6 })).count).toBe(1);
   });
 });

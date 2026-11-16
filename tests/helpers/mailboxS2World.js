@@ -715,6 +715,16 @@ function makeWorld() {
       }
       return [{ affectedRows: n }];
     };
+    // A13X: the {ids} form's own SELECT, read before the INSERT — the ids the
+    // route answers (the same predicate, the same params minus the first user).
+    const IDS_SEL_HEAD = 'SELECT m.id FROM mail_messages m LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id WHERE m.id IN (?) AND ';
+    const IDS_SEL_TAIL = ' AND rs.message_fk IS NULL ORDER BY m.id ASC';
+    if (sql.startsWith(IDS_SEL_HEAD) && sql.endsWith(IDS_SEL_TAIL)) {
+      const ids = new Set(p[1].map(Number));
+      const d = parseDisj(sql.slice(IDS_SEL_HEAD.length, sql.length - IDS_SEL_TAIL.length), p, 2);
+      if (d.pi !== p.length) throw new Error('mailboxS2World: bulk read id-select params mismatch');
+      return [T.mail_messages.filter(x => ids.has(x.id) && d.test(x) && !isRead(p[0], x.id)).sort((a, b) => a.id - b.id).map(x => ({ id: x.id }))];
+    }
     const IDS_HEAD = 'INSERT INTO mail_read_state (user, message_fk, read_at) SELECT ?, m.id, UTC_TIMESTAMP() FROM mail_messages m LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id WHERE m.id IN (?) AND ';
     const IDS_TAIL = ' AND rs.message_fk IS NULL ON DUPLICATE KEY UPDATE read_at = mail_read_state.read_at';
     if (sql.startsWith(IDS_HEAD) && sql.endsWith(IDS_TAIL)) {
@@ -840,6 +850,23 @@ function makeWorld() {
       const x = T.mail_messages.find(r => r.id === Number(p[1]) && r.log_id == null);
       if (x) x.log_id = Number(p[0]);
       return [{ affectedRows: x ? 1 : 0 }];
+    }
+    // ── case UNLINK (A13X) ──
+    if (sql === 'SELECT id, message_id, provider_id, log_id FROM mail_messages WHERE id = ? LIMIT 1 FOR UPDATE') {
+      const x = T.mail_messages.find(r => r.id === Number(p[0]));
+      return [x ? [{ id: x.id, message_id: x.message_id, provider_id: x.provider_id, log_id: x.log_id }] : []];
+    }
+    if (sql === "SELECT l.log_about_type, l.log_about_id, c.case_number, c.case_number_full FROM log l LEFT JOIN cases c ON l.log_about_type = 'case' AND c.case_id = l.log_about_id WHERE l.log_id = ? LIMIT 1") {
+      const l = logRow(p[0]);
+      if (!l) return [[]];
+      const c = l.log_about_type === 'case' ? T.cases.find(x => ci(x.case_id, l.log_about_id)) : null;
+      return [[{ log_about_type: l.log_about_type == null ? null : l.log_about_type, log_about_id: l.log_about_id == null ? null : l.log_about_id,
+        case_number: c ? c.case_number : null, case_number_full: c ? c.case_number_full : null }]];
+    }
+    if (sql === 'UPDATE log SET log_about_type = NULL, log_about_id = NULL WHERE log_id = ?') {
+      const l = logRow(p[0]);
+      if (l) { l.log_about_type = null; l.log_about_id = null; }
+      return [{ affectedRows: l ? 1 : 0 }];
     }
 
     // ── logService.createLogEntry ──

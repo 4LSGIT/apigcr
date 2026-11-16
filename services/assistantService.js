@@ -1175,14 +1175,38 @@ const FORM_TEMPLATE_NAMED = 10;
 // operation exists anywhere in the mail or phone hub, and the phone hub has no
 // read-marking or case-link route, so drafts and SMS triage are not here.
 // One per-family switch, casey_mail_triage_enabled (on unless '0').
-const MAIL_ACTION_KINDS = new Set(['mail.read.v1', 'mail.case_link.v1']);
+// A13X (Fred, 2026-11-16, "release means allow"): two more kinds behind the
+// same switch — mail.case_unlink.v1 → DELETE /api/mail/messages/:id/case-link
+// (the native unlink, built with it: the log row's about-link is cleared, the
+// row and the stamp stay) and mail.read.bulk.v1 → POST /api/mail/read, the
+// hub's own bulk route, with the scope SPELLED OUT on the card: the cited
+// messages (≤ MAIL_BULK_CITED_MAX) plus every readable copy of each — how
+// "mark this email read" works when copies exist — or, only when the user
+// asked for a whole mailbox / view, {all, mailbox_ids?, filters?} with the
+// count predicted by the service's own predicate (countMarkRead).
+const MAIL_ACTION_KINDS = new Set(['mail.read.v1', 'mail.case_link.v1', 'mail.case_unlink.v1', 'mail.read.bulk.v1']);
 const MAIL_READ_KEYS = new Set(['kind', 'mail_message_id', 'read', 'evidence']);
 const MAIL_LINK_KEYS = new Set(['kind', 'mail_message_id', 'case_id', 'evidence']);
-// More than one message, or "everything the list shows": the bulk route
-// (POST /api/mail/read) — refused by name.
+const MAIL_UNLINK_KEYS = new Set(['kind', 'mail_message_id', 'evidence']);
+const MAIL_BULK_KEYS = new Set(['kind', 'mail_message_ids', 'all', 'mailbox_ids', 'filters', 'evidence']);
+// More than one message, or "everything the list shows", on a ONE-message
+// card: refused by name — the bulk read card takes them.
 const MAIL_BULK_KEY = /^(?:all|ids|mail_message_ids|message_ids|messages|mailbox_ids|filters|view)$/i;
 // Keys that read as another mail operation: refused by name.
 const MAIL_OTHER_OP_KEY = /draft|send|reply|forward|flag|answer|archiv|delete|trash|spam|move|unlink|relink|label|star|log_?id|about/i;
+// The bulk read card: cited messages per card; the count past which an
+// {all} card is a danger line; the most an {all} card marks (the hub's own
+// BULK_READ_MAX for the {ids} form — the browser's precheck re-counts the
+// scope page by page, so the cap is also what it can verify).
+const MAIL_BULK_CITED_MAX = 50;
+const MAIL_BULK_DANGER = 100;
+const MAIL_BULK_ALL_MAX = 500;
+// The hub's filter vocabulary, in words (mailReadService FILTER_KEYS).
+const MAIL_FILTER_WORDS = Object.freeze({
+  unread_only: 'unread only', has_case: 'on a case', no_case: 'not on a case', client_only: 'client mail only',
+  has_files: 'with attachments', not_filed: 'with attachments not yet filed', all_folders: 'every folder, not just the Inbox',
+  sent_only: 'the Sent scope only',
+});
 // mail.search: rows returned, and the newest matches the hub's list hands back
 // in one page (mailReadService PAGE_MAX) — the from-address / since filters
 // run over that page.
@@ -9775,19 +9799,23 @@ async function mailMessageRead(db, userId, id) {
   return { rows: [row], truncated: false };
 }
 
-// Refused by name before anything is read: bulk, then any other mail
-// operation, then anything else unknown.
+// Refused by name before anything is read: bulk keys on a ONE-message card,
+// then any other mail operation, then anything else unknown. The texts name
+// the card that DOES take it (A13X): several messages → mail.read.bulk.v1;
+// unlinking → mail.case_unlink.v1 (its own kind, never a key on another card).
+const MAIL_OTHER_OPS_TEXT = 'Casey marks ONE message read or unread for you (mail.read.v1), links ONE message to ONE case (mail.case_link.v1), takes ONE message off its case (mail.case_unlink.v1 — its own card, never a key on another) or marks several messages read (mail.read.bulk.v1). Still not available to Casey: drafting (the mail hub has no draft operation), flagging, archiving, deleting, moving a message by naming the case it leaves (link it to the wanted case instead), and text / call triage; sending is a separate email card';
+const MAIL_CARD_FIELDS = Object.freeze({ read: 'mail_message_id, read', 'case link': 'mail_message_id, case_id', 'case unlink': 'mail_message_id' });
 function mailRefuseKeys(extra, which) {
   const bulk = extra.filter((k) => MAIL_BULK_KEY.test(k));
   if (bulk.length) {
-    throw mailError(`BULK refused (${bulk.join(', ')}): a mail card acts on ONE message. Marking several messages — or everything a list shows — read is the hub's bulk route, which Casey does not use; the user does that in Comms`);
+    throw mailError(`BULK refused (${bulk.join(', ')}): a mail ${which} card acts on ONE message. Several messages read at once — or everything a list shows — is the bulk read card (mail.read.bulk.v1: mail_message_ids, or all with mailbox_ids / filters); linking and unlinking are one message per card`);
   }
   const ops = extra.filter((k) => MAIL_OTHER_OP_KEY.test(k));
   if (ops.length) {
-    throw mailError(`OTHER MAIL OPERATIONS refused (${ops.join(', ')}): Casey marks ONE message read or unread for you, or links ONE message to ONE case. Drafting (the mail hub has no draft operation), flagging, archiving, deleting, moving, relinking to another case and unlinking are not available to Casey; sending is a separate email card`);
+    throw mailError(`OTHER MAIL OPERATIONS refused (${ops.join(', ')}): ${MAIL_OTHER_OPS_TEXT}`);
   }
   if (extra.length) {
-    throw mailError(`A mail ${which} card carries unsupported fields: ${extra.join(', ')} — it takes ${which === 'read' ? 'mail_message_id, read' : 'mail_message_id, case_id'} and evidence only`);
+    throw mailError(`A mail ${which} card carries unsupported fields: ${extra.join(', ')} — it takes ${MAIL_CARD_FIELDS[which]} and evidence only`);
   }
 }
 
@@ -9866,7 +9894,7 @@ async function normalizeMailRead(db, value, evidence, currentUserId) {
   const copies = await mailOtherCopies(db, currentUserId, m);
   const unreadOthers = copies.filter((c) => c.unread);
   if (wantRead && unreadOthers.length) {
-    throw mailError(`COPIES refused: this email is stored ${copies.length + 1} times in mail you can read, and ${unreadOthers.length} other cop${unreadOthers.length > 1 ? 'ies are' : 'y is'} still unread for you (message${unreadOthers.length > 1 ? 's' : ''} #${unreadOthers.map((c) => c.id).join(', #')}). The single-message route marks ONE copy, so the hub would keep showing the email unread — the user marks it read in Comms (opening it marks every copy)`);
+    throw mailError(`COPIES refused: this email is stored ${copies.length + 1} times in mail you can read, and ${unreadOthers.length} other cop${unreadOthers.length > 1 ? 'ies are' : 'y is'} still unread for you (message${unreadOthers.length > 1 ? 's' : ''} #${unreadOthers.map((c) => c.id).join(', #')}). The single-message route marks ONE copy, so the hub would keep showing the email unread — propose a mail.read.bulk.v1 card with this one id instead: it marks every copy you can read`);
   }
   const msg = mailCardMessage(m);
   const effects = [];
@@ -9952,6 +9980,28 @@ async function normalizeMailCaseLink(db, value, evidence, currentUserId) {
   };
 }
 
+// The log row a message resolves to, READ-ONLY, in caseLink's / caseUnlink's
+// order (mailReadService existingLogId: the message's own stamp → the
+// lowest-id copy's stamp → another source's execution row, priorLogId), with
+// how it was found. Shared by the link, unlink and filing predictions.
+// @returns {{logId:number|null, via:'stamped'|'copy'|'source'|null}}
+async function mailResolvedLog(db, mailRead, msg) {
+  let logId = msg.log_id == null ? null : Number(msg.log_id);
+  let via = logId ? 'stamped' : null;
+  if (!logId && msg.message_id) {
+    const [[cp]] = await db.query(
+      `SELECT log_id FROM mail_messages
+        WHERE message_id = ? AND id <> ? AND log_id IS NOT NULL
+        ORDER BY id ASC LIMIT 1`, [msg.message_id, msg.id]);
+    if (cp) { logId = Number(cp.log_id); via = 'copy'; }
+  }
+  if (!logId) {
+    const prior = await mailRead.priorLogId(db, msg);
+    if (prior) { logId = Number(prior); via = 'source'; }
+  }
+  return { logId, via };
+}
+
 // caseLink's outcome predicted READ-ONLY, with caseLink's own lookups in its
 // order (the message's stamp, a copy's stamp, priorLogId — else a created
 // entry) and its own refusals, plus the sender ↔ case-contact comparison.
@@ -9971,22 +10021,10 @@ async function mailLinkPrediction(db, id, record, { filing = false } = {}) {
        FROM mail_messages WHERE id = ? LIMIT 1`, [mailRead.STORE_ONLY_GRACE_MIN, id]);
   if (!msg) throw mailError(`Message #${id} no longer exists`);
 
-  // caseLink's resolution order: the message's own stamp, else a copy's stamp
-  // (lowest id), else another mail source's log row (priorLogId); only when
-  // none exists is a log row created.
-  let logId = msg.log_id == null ? null : Number(msg.log_id);
-  let via = logId ? 'stamped' : null;
-  if (!logId && msg.message_id) {
-    const [[cp]] = await db.query(
-      `SELECT log_id FROM mail_messages
-        WHERE message_id = ? AND id <> ? AND log_id IS NOT NULL
-        ORDER BY id ASC LIMIT 1`, [msg.message_id, msg.id]);
-    if (cp) { logId = Number(cp.log_id); via = 'copy'; }
-  }
-  if (!logId) {
-    const prior = await mailRead.priorLogId(db, msg);
-    if (prior) { logId = Number(prior); via = 'source'; }
-  }
+  // caseLink's resolution order (mailResolvedLog): the message's own stamp,
+  // else a copy's stamp (lowest id), else another mail source's log row
+  // (priorLogId); only when none exists is a log row created.
+  const { logId, via } = await mailResolvedLog(db, mailRead, msg);
 
   const { inferDirection, firmDomains } = require('./emailIngestService'); // lazy (convention)
   const domains = firmDomains();
@@ -10098,6 +10136,160 @@ async function mailLinkPrediction(db, id, record, { filing = false } = {}) {
   };
 }
 
+// A13X: the unlink — caseUnlink's outcome predicted READ-ONLY with the same
+// resolution (mailResolvedLog) and its 409s refused first in the route's own
+// words; the case it leaves is read from the log row's about-link.
+async function normalizeMailCaseUnlink(db, value, evidence, currentUserId) {
+  mailRefuseKeys(Object.keys(value).filter((k) => !MAIL_UNLINK_KEYS.has(k)), 'case unlink');
+  const id = mailMessageId(value);
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!mailCited(refs, evidence, id)) {
+    throw mailError(`The evidence does not identify message #${id} — cite its row from a mail.search or mail.message read (read the mail first)`);
+  }
+  const m = await mailLoad(db, currentUserId, id);
+  const mailRead = mailReadSvc();
+  // caseUnlink's own row read (getMessage carries the three columns it reads).
+  const { logId, via } = await mailResolvedLog(db, mailRead, { id: Number(m.id), message_id: m.message_id || null, provider_id: m.provider_id || null, log_id: m.log_id });
+  if (!logId) throw mailError(`That changes nothing — message #${id} is not on a case: it is not on the log. (The route refuses it: "${mailRead.UNLINK_NOT_LOGGED}")`);
+  const [[lr]] = await db.query(
+    `SELECT log_id, log_type, log_date, log_about_type, log_about_id, log_link_type, log_link_id,
+            CHAR_LENGTH(log_message) AS message_chars
+       FROM log WHERE log_id = ? LIMIT 1`, [logId]);
+  if (!lr) throw mailError(`The log entry this message points at no longer exists (log #${logId}${via === 'copy' ? ', through a copy of it in another mailbox' : ''}) — the route refuses the unlink (409). The message's log stamp needs a manual fix first`);
+  const aboutType = lr.log_about_type == null ? null : String(lr.log_about_type);
+  const aboutId = lr.log_about_id == null ? null : String(lr.log_about_id);
+  if (aboutType !== 'case' || !aboutId) {
+    throw mailError(`That changes nothing — message #${id} is not on a case: log entry #${logId} is on the firm log${aboutType ? ` (attributed to ${aboutType} ${aboutId})` : ''}, not on a case. (The route refuses it: "${mailRead.unlinkNotOnCase(aboutType, aboutId)}")`);
+  }
+  const [[cs]] = await db.query('SELECT case_id, case_number, case_number_full FROM cases WHERE case_id = ? LIMIT 1', [aboutId]);
+  const caseLabel = cs ? `case ${String(cs.case_number_full || cs.case_number || cs.case_id).trim()}` : `case ${aboutId} (a case row that no longer exists)`;
+  const chars = Number(lr.message_chars) || 0;
+  const party = `${lr.log_link_type || 'email'} ${lr.log_link_id || '(no address)'}`;
+  const effects = []; const warnings = [];
+  warnings.push(`LEAVES ${caseLabel.toUpperCase()}: ${caseLabel}'s Comms tab and Log tab stop listing this email once applied. Nothing is deleted — a link card puts it back if it belongs there.`);
+  effects.push(`Clears the case link of log entry #${logId} (a "${String(lr.log_type || '')}" entry dated ${mailWhen(lr.log_date)}${via === 'copy' ? ', found through a copy of this email in another mailbox' : via === 'source' ? ', written by another mail source that logged this email' : ''}): the entry STAYS on the firm log and in the Communications tabs under ${party} (the other party), with its stored text (${chars.toLocaleString('en-US')} characters) unchanged; the message keeps its log stamp.`);
+  effects.push('Where it shows afterwards: the comms hub\'s log line reads "On the firm log, not on a case"; an open comms hub or Comms tab in this browser refreshes on its own.');
+  effects.push('Trigger event: none — unlinking emits no event, runs no trigger rule or workflow, deletes nothing and sends nothing; nobody is notified.');
+  return {
+    draft_id: crypto.randomUUID(), kind: 'mail.case_unlink.v1', status: 'draft',
+    message: mailCardMessage(m),
+    case: { case_id: aboutId, case_number: cs ? (cs.case_number_full || cs.case_number || null) : null, label: caseLabel, exists: !!cs },
+    log: { log_id: logId, via, type: String(lr.log_type || ''), date: documentIso(lr.log_date), link: party, message_chars: chars },
+    effects, warnings,
+    expected: { stamp_log_id: m.log_id == null ? null : Number(m.log_id), log_id: logId, case_id: aboutId },
+    evidence: refs,
+  };
+}
+
+// A13X: the bulk read, scope spelled out. (a) {mail_message_ids} — every id a
+// cited mail row; the user-readable copies of each ride along (the hub's own
+// rule: an email is unread while ANY copy is), already-read ones are skipped
+// and said. (b) {all, mailbox_ids?, filters?} — the count predicted by
+// mailReadService.countMarkRead, the READ-ONLY twin of markRead {all} (same
+// scope, same predicate text), each mailbox named by address and each filter
+// in words. Both: for the signed-in user only; the browser re-reads the
+// message states / the count at the click and refuses when they moved.
+function mailBulkWords(filters) {
+  const words = [];
+  for (const k of Object.keys(filters || {})) {
+    if (k === 'from_domain') words.push(`from the domain ${filters[k]}`);
+    else if (k === 'q') words.push(`matching "${filters[k]}"`);
+    else if (filters[k]) words.push(MAIL_FILTER_WORDS[k] || k);
+  }
+  return words;
+}
+
+async function normalizeMailReadBulk(db, value, evidence, currentUserId) {
+  const extra = Object.keys(value).filter((k) => !MAIL_BULK_KEYS.has(k));
+  if (extra.includes('mail_message_id')) throw mailError('A bulk read card takes "mail_message_ids" (a list of cited message ids) — ONE message is the mail.read.v1 card');
+  if (extra.includes('read')) throw mailError('A bulk read card only marks READ — the hub has no bulk unread; mark one message unread with mail.read.v1');
+  const ops = extra.filter((k) => MAIL_OTHER_OP_KEY.test(k));
+  if (ops.length) throw mailError(`OTHER MAIL OPERATIONS refused (${ops.join(', ')}): ${MAIL_OTHER_OPS_TEXT}`);
+  if (extra.length) throw mailError(`A bulk read card carries unsupported fields: ${extra.join(', ')} — it takes mail_message_ids and evidence, or all: true with mailbox_ids / filters`);
+  const hasIds = Object.prototype.hasOwnProperty.call(value, 'mail_message_ids');
+  const hasAll = Object.prototype.hasOwnProperty.call(value, 'all');
+  if (hasIds === hasAll) throw mailError('A bulk read card takes exactly one shape: mail_message_ids (the cited messages), or all: true (a whole mailbox / view the user asked for)');
+  const uid = Number(currentUserId);
+  const mailRead = mailReadSvc();
+  // The cited form needs its rows; the whole-mailbox form cites nothing (the
+  // server reads the scope itself) — an evidence list it carries is kept.
+  const refs = hasIds || (Array.isArray(value.evidence) && value.evidence.length) ? taskDraftEvidence(value.evidence, evidence) : [];
+
+  if (hasIds) {
+    if (Object.prototype.hasOwnProperty.call(value, 'mailbox_ids') || Object.prototype.hasOwnProperty.call(value, 'filters')) {
+      throw mailError('mailbox_ids / filters go with all: true — a cited-messages card lists mail_message_ids only');
+    }
+    const raw = value.mail_message_ids;
+    if (!Array.isArray(raw) || !raw.length) throw mailError('A bulk read card needs "mail_message_ids": a non-empty list of exact ids from mail.search / mail.message rows');
+    const ids = [];
+    for (const x of raw) {
+      const n = mailMessageId({ mail_message_id: x });
+      if (!ids.includes(n)) ids.push(n);
+    }
+    if (ids.length > MAIL_BULK_CITED_MAX) throw mailError(`BULK CAP: ${ids.length} messages cited — a bulk read card takes up to ${MAIL_BULK_CITED_MAX}; split it, or ask for the whole mailbox or view (all: true)`);
+    const uncited = ids.filter((id) => !mailCited(refs, evidence, id));
+    if (uncited.length) throw mailError(`The evidence does not identify message${uncited.length > 1 ? 's' : ''} #${uncited.join(', #')} — cite each row from a mail.search or mail.message read (read the mail first)`);
+    const messages = []; const skipped = []; const sendIds = new Set(); let copiesRiding = 0;
+    for (const id of ids) {
+      const m = await mailLoad(db, uid, id);
+      const copies = await mailOtherCopies(db, uid, m);
+      const unreadIds = [...(m.unread ? [Number(m.id)] : []), ...copies.filter((c) => c.unread).map((c) => c.id)];
+      const row = { ...mailCardMessage(m), copies: copies.length, unread: !!m.unread, copies_unread: copies.filter((c) => c.unread).length, ids: unreadIds };
+      if (!unreadIds.length) { skipped.push(row); continue; }
+      messages.push(row);
+      for (const x of unreadIds) sendIds.add(x);
+      copiesRiding += unreadIds.filter((x) => x !== Number(m.id)).length;
+    }
+    if (!sendIds.size) throw mailError(`That changes nothing — ${ids.length === 1 ? `message #${ids[0]} is` : 'every cited message is'} already read for you (every stored copy of it)`);
+    const all = [...sendIds].sort((a, b) => a - b);
+    const effects = [];
+    effects.push(`Marks ${all.length} stored message${all.length === 1 ? '' : 's'} READ for YOU only: ${messages.length} email${messages.length === 1 ? '' : 's'} you cited${copiesRiding ? ` plus ${copiesRiding} other cop${copiesRiding === 1 ? 'y' : 'ies'} of them you can read (the same email stored in another mailbox or folder — the hub shows an email unread while ANY copy is, so every copy goes)` : ''}. Read state is per person: everyone else keeps their own, and neither the mail server's Seen flag nor the sender is told.`);
+    if (skipped.length) effects.push(`Skipped — already read for you (every copy): message${skipped.length > 1 ? 's' : ''} #${skipped.map((r) => r.mail_message_id).join(', #')}.`);
+    effects.push('Where it shows: the comms hub\'s list and its unread counts (yours only); an open copy of the hub in this browser repaints each message on its own.');
+    effects.push('Trigger event: none — read state emits no event, writes no log entry and runs no rule.');
+    return {
+      draft_id: crypto.randomUUID(), kind: 'mail.read.bulk.v1', status: 'draft', mode: 'ids',
+      messages, skipped, count: all.length, copies: copiesRiding, effects, warnings: [],
+      expected: { mode: 'ids', ids: all, count: all.length, cited: messages.map((r) => ({ mail_message_id: r.mail_message_id, unread: r.unread })) },
+      evidence: refs,
+    };
+  }
+
+  if (value.all !== true) throw mailError('A whole-mailbox bulk read needs "all": true (and only when the user asked for a whole mailbox, view or list)');
+  const body = { all: true };
+  if (Object.prototype.hasOwnProperty.call(value, 'mailbox_ids')) body.mailbox_ids = value.mailbox_ids;
+  if (Object.prototype.hasOwnProperty.call(value, 'filters')) body.filters = value.filters;
+  let pred;
+  try { pred = await mailRead.countMarkRead(db, uid, body); } catch (e) {
+    if (e && e.status === 400) throw mailError(`The bulk scope is refused (the hub's own rule): ${e.message}`);
+    throw e;
+  }
+  if (Array.isArray(value.mailbox_ids) || typeof value.mailbox_ids === 'string') {
+    const wanted = (Array.isArray(value.mailbox_ids) ? value.mailbox_ids : String(value.mailbox_ids).split(',')).map((x) => Number(String(x).trim())).filter((n) => Number.isSafeInteger(n) && n > 0);
+    const missing = wanted.filter((id) => !pred.mailboxes.some((mb) => mb.id === id));
+    if (missing.length) throw mailError(`No mailbox #${missing.join(', #')} that you can read — it does not exist or you hold no read grant on it`);
+  }
+  if (!pred.mailboxes.length) throw mailError('You can read no mailbox, so there is nothing to mark');
+  const words = mailBulkWords(pred.filters);
+  const scopeText = `${pred.filters.all_folders ? 'every folder of' : pred.filters.sent_only ? 'the Sent mail of' : 'the Inbox of'} ${pred.mailboxes.map((mb) => mb.address).join(', ')}${words.length ? ` — ${words.join('; ')}` : ''}`;
+  if (pred.count === 0) throw mailError(`That changes nothing — nothing is unread for you in ${scopeText}`);
+  if (pred.count > MAIL_BULK_ALL_MAX) throw mailError(`BULK CAP: ${pred.count.toLocaleString('en-US')} unread messages in ${scopeText} — more than the ${MAIL_BULK_ALL_MAX} a card takes; narrow it (one mailbox, a filter) or use Comms' Mark all read`);
+  const effects = []; const warnings = [];
+  if (pred.count > MAIL_BULK_DANGER) warnings.push(`THIS MARKS ${pred.count.toLocaleString('en-US')} EMAILS READ FOR YOU: more than ${MAIL_BULK_DANGER}, and there is no undo (the hub's Mark unread is one message at a time).`);
+  effects.push(`Marks every unread message the hub's list shows for ${scopeText} — ${pred.count.toLocaleString('en-US')} right now — READ for YOU only: the same scope and filters Comms' Mark all read uses (every page, never the mailbox behind a filter). Read state is per person: everyone else keeps their own, and neither the mail server's Seen flag nor the sender is told.`);
+  effects.push(`Mailboxes: ${pred.mailboxes.map((mb) => `${mb.address} (#${mb.id})`).join(', ')}. Filters: ${words.length ? words.join('; ') : 'none beyond the Inbox scope'}.`);
+  effects.push('Where it shows: the comms hub\'s list and its unread counts (yours only); an open copy of the hub in this browser re-reads its list on its own.');
+  effects.push('Trigger event: none — read state emits no event, writes no log entry and runs no rule.');
+  return {
+    draft_id: crypto.randomUUID(), kind: 'mail.read.bulk.v1', status: 'draft', mode: 'all',
+    mailboxes: pred.mailboxes.map((mb) => ({ mailbox_id: mb.id, address: mb.address, alias_of: mb.alias_of })),
+    filters: pred.filters, filter_words: words, scope: scopeText, count: pred.count,
+    effects, warnings,
+    expected: { mode: 'all', mailbox_ids: pred.mailboxes.map((mb) => mb.id).sort((a, b) => a - b), filters: pred.filters, count: pred.count, filtered: Object.keys(pred.filters).length > 0 },
+    evidence: refs,
+  };
+}
+
 async function normalizeMailAction(db, value, evidence, { currentUserId = null } = {}) {
   // The per-family switch: '0' and the A13 kinds do not exist.
   if (require('../lib/firmConfig').cfg('casey_mail_triage_enabled') === '0') {
@@ -10107,6 +10299,8 @@ async function normalizeMailAction(db, value, evidence, { currentUserId = null }
     throw mailError('Mail triage needs a signed-in user — mail grants and read state belong to a person');
   }
   if (value.kind === 'mail.read.v1') return normalizeMailRead(db, value, evidence, Number(currentUserId));
+  if (value.kind === 'mail.case_unlink.v1') return normalizeMailCaseUnlink(db, value, evidence, Number(currentUserId));
+  if (value.kind === 'mail.read.bulk.v1') return normalizeMailReadBulk(db, value, evidence, Number(currentUserId));
   return normalizeMailCaseLink(db, value, evidence, Number(currentUserId));
 }
 
@@ -15906,7 +16100,10 @@ function taskDraftRequested(question, history = []) {
   // trustee's email read", "link Dana's last email to her case").
   const mailTriage = /\b(?:e-?mails?|mail|messages?|inbox)\b/i.test(text) &&
     (/\bmark\b[^.?!\n]{0,40}\b(?:as\s+)?(?:read|unread|seen|unseen)\b/i.test(request) ||
-      /\b(?:link|attach|tag|associate|connect|file|put|add)\b[^.?!\n]{0,60}\b(?:to|under|on|with)\s+(?:the|this|that|his|her|their)?\s*(?:case|file|matter)\b/i.test(request));
+      /\b(?:link|attach|tag|associate|connect|file|put|add)\b[^.?!\n]{0,60}\b(?:to|under|on|with)\s+(?:the|this|that|his|her|their)?\s*(?:case|file|matter)\b/i.test(request) ||
+      // A13X: an unlink ("take the trustee's email off the case", "unlink it from her case").
+      /\b(?:unlink|un-link|detach|disconnect|remove|take)\b[^.?!\n]{0,60}\b(?:off|from)\s+(?:the|this|that|his|her|their|its)?\s*(?:case|file|matter)\b/i.test(request) ||
+      /\b(?:unlink|un-link|detach)\b/i.test(request));
   // A13b: an email's attachments filed to a case ("file the attachments from
   // Dana's email to her case", "save the PDFs she emailed into the Smith case's
   // Dropbox"). An attachment noun with a file / save / move verb.

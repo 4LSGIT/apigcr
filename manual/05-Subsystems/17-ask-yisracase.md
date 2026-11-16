@@ -1261,13 +1261,16 @@ The off switch for these cards is the `casey_form_templates_enabled` setting
 
 ### Email: read state and case links
 
-Casey can **mark one email read or unread for you**, or **link one email to
-one case** — one per card, through the same actions the Comms hub's own Mark
-read / Mark unread and **Link to case** use, and only on mail you can read
+Casey can **mark one email read or unread for you**, **link one email to one
+case**, **take one email off its case**, or **mark several emails read** —
+through the same actions the Comms hub's own Mark read / Mark unread, **Link to
+case**, **Unlink** and **Mark all read** use, and only on mail you can read
 there (your mailbox access applies exactly as in Comms). Ask in plain words
 ("mark the trustee's email from this morning as read", "link Dana's last email
-about pay stubs to her case"). Casey first searches your mail — sender,
-subject words, a day — and works only on a message that search found.
+about pay stubs to her case", "take that email off the Smith case", "mark the
+billing inbox read"). Casey first searches your mail — sender, subject words,
+a day — and works only on messages that search found (a whole-mailbox mark
+read names the mailbox instead).
 
 - **Finding mail.** Casey's mail search is the Comms hub's own list: the
   mailboxes you can read, the Inbox unless you ask for sent or all mail, newest
@@ -1282,9 +1285,29 @@ subject words, a day — and works only on a message that search found.
   difference. The mail server and the sender are never told.
 - **Copies.** The same email can be stored more than once (two mailboxes, or a
   folder and the Inbox). Comms shows it unread while ANY copy is unread, so
-  Casey will not mark one copy read while another copy you can read is still
-  unread — open it in Comms (that marks every copy). Marking it unread is fine;
-  the card lists the copies.
+  the one-message card will not mark one copy read while another copy you can
+  read is still unread — Casey offers the **several emails** card for that one
+  email instead, which marks every copy you can read (as opening it in Comms
+  does). Marking it unread is fine; the card lists the copies.
+- **Several emails read at once** (since 2026-11-16). Two shapes, each its own
+  card, each for you only:
+  - the emails Casey found — up to 50 per card, each listed with the copies
+    that go with it; emails already read for you are skipped and named;
+  - a whole mailbox, saved view or filtered list, only when you asked for one
+    ("mark everything in billing read", "mark the court notices in the intake
+    inbox read"): the card names each mailbox and each filter in words and
+    says how many unread emails that is right now — the same scope Comms'
+    **Mark all read** clears, every page. More than 100 is a warning (there is
+    no undo at that size); more than 500 is refused — narrow it, or use Comms.
+  Casey refuses when you click if an email's read state, or the count for a
+  whole-mailbox card, changed since the card was prepared.
+- **Taking an email off a case** (since 2026-11-16). The card shows the
+  email, the case it leaves, and the log entry — which **stays on the firm
+  log** under the other party (and in that contact's Communications tab):
+  only the case's Comms and Log tabs stop listing it. Nothing is deleted;
+  linking it again puts it back. It is always shown as a warning card. Casey
+  refuses when you click if the email is no longer on that case, moved to
+  another, or lost its log entry.
 - **A link card** shows the email, the case, and the log entry the link uses:
   - an email already on the firm log reuses its existing entry (the card says
     which, and how much of the email's text it holds);
@@ -1301,12 +1324,12 @@ subject words, a day — and works only on a message that search found.
   on, that the client portal never shows it, and that linking starts no
   automation. An open Comms hub or Comms tab in your browser updates on its own.
 - **What Casey will not do, and says so:**
-  - mark several emails, or a whole folder, read — use Comms;
   - draft an email: YisraCase has **no mail drafts** — Casey can send an email
     when you ask (a separate card you confirm), never a "draft" that sends;
   - work on texts or calls: they have no read or case-link action;
-  - unlink an email from a case — change the case tag on the Comms tab
-    (linking an email that is already on another case does move it, and the
+  - mark several emails unread (Comms has no such action either);
+  - move an email by naming the case it should leave — link it to the case it
+    belongs on (an email that is already on another case does move, and the
     card warns: an email shows on one case at a time);
   - flag, archive or delete mail.
 - Casey refuses when you click if the email's read state, its log entry or the

@@ -1161,29 +1161,34 @@ deferred:
 
 ## From the Ask Casey arc — A13 mail triage (2026-11-02) — deferred
 
-- **Bulk read** (POST `/api/mail/read` {ids | all}): the hub's Mark read and
-  open-to-read use it over every copy. A Casey card would need the count, the
-  scope (a view, a filter) and the copies spelled out; today the read card
-  refuses an email with another unread copy instead.
+Released 2026-11-16 (A13X, Fred: "release means allow"; plan doc A13
+"Released 2026-11-16"): **bulk read** (`mail.read.bulk.v1` — the cited
+messages with their copies, or a whole mailbox / view with the count predicted
+by `countMarkRead`, markRead's read-only twin) and **unlinking** (the native
+`DELETE /api/mail/messages/:id/case-link` + `mail.case_unlink.v1`; the hub's
+log line gained Unlink). Moving a message to another case was a disclosed move
+since 2026-11-11. What is left, and why:
+
 - **SMS / call triage.** The phone hub has no read-marking and no case-link
   route (phone_event_log rows join a case only through their log row's
   about-link); a canonical route comes first.
 - **Drafts.** No draft operation exists in the mail or phone hub (the comms
   composer keeps unsent text in the page only). A server-side draft store is
   a YisraMail / comms decision before it is a Casey card.
-- **Moving a message to another case, and unlinking.** `caseLink` already
-  moves (setLogAbout overwrites the about-link — the Comms tab's case tag
-  relies on it), silently; a Casey card would name both cases and the log
-  entry that moves, and unlinking needs a route (PUT `/api/log/:id/about`
-  with none is the log tool's, not the mail hub's).
 - **Flags (flagged / answered), archive, delete** — the hub writes no IMAP
   flags (read state is per user, never `\Seen`); nothing to call.
 - **Reading an HTML-only body.** `mail.message` returns body_text only; the
   worker's derived text (`emitText`) could serve HTML-only mail, behind the same
   untrusted-sender note.
-- **The hub's other writes on the bus.** Only the two one-message routes
-  announce (`mail:<id>`); the bulk POST `/api/mail/read` answers a count with no
-  ids, so another open hub does not hear a Mark-all-read until it reloads.
+- **Bulk UNREAD** — the hub has no route (Mark unread is one message); the
+  bulk card only marks read. **A whole-mailbox bulk read past 500** in one
+  card — `MAIL_BULK_ALL_MAX`, what the browser's page walk can re-count; the
+  hub's own Mark all read has no cap.
+- **The bulk marker and the open conversation.** A `mail:bulk` announcement
+  (the `{all}` form, or more than 50 ids) re-reads the hub's list and counts
+  but not the open conversation's cards — which copies were marked is not
+  said; they repaint on the next open. The `{all}` form could answer ids up
+  to a bound like the `{ids}` form does.
 - **Native gaps found while tracing (not Casey's):**
   - `log.log_message` is `varchar(10000)` but `caseLink` (and the ingest
     pipeline's `_bodyForLog`) caps the text at 50,000 characters: under the
@@ -1195,7 +1200,8 @@ deferred:
     `log_status` resolves copies and other sources — two answers to "which case
     is it on" in one payload.
   - POST `/api/log` and PUT `/api/log/:id/about` announce nothing on the sync
-    bus, so a Comms tab never hears a note or a case tag written elsewhere.
+    bus, so a Comms tab never hears a note or a case tag written elsewhere
+    (the mail hub's own unlink does announce since 2026-11-16).
 
 ## From the Ask Casey arc — A12 / A12.2 / A12.3 / A12.4 forms (2026-11-02, 2026-11-11) — deferred
 

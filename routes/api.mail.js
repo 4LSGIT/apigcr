@@ -17,7 +17,9 @@
  *   DELETE /api/mail/messages/:id/read        mark unread (idempotent)
  *   POST   /api/mail/read                     bulk mark read: {ids:[…≤500]} |
  *                                             {all:true, mailbox_ids?, filters?} = everything the
- *                                             list shows for that scope (every page)
+ *                                             list shows for that scope (every page) → {marked};
+ *                                             the {ids} form also answers `ids` — the rows it
+ *                                             marked, for the sync bus (A13X, 2026-11-16)
  *   GET    /api/mail/views                    the caller's saved views
  *   GET    /api/mail/views/counts             {counts: {<view id>: unread}} — each view's Inbox
  *                                             unread under its own mailboxes + filters
@@ -27,6 +29,12 @@
  *   POST   /api/mail/messages/:id/case-link   {case_id} — about-link the message's log row
  *                                             to a case; a store-only message gets its
  *                                             log row created first
+ *   DELETE /api/mail/messages/:id/case-link   take the message OFF its case (A13X): the log
+ *                                             row's about-link is cleared — the entry stays on
+ *                                             the firm log and the message keeps its stamp →
+ *                                             {id, log_id, case} (the case it came off); 409 when
+ *                                             it is not on a case (the text says which: not on
+ *                                             the log / on the firm log only / a dead stamp)
  *   Email attachments S3 — file attachments to a case from Comms
  *   (services/emailAttachmentCommsService.js; ref/EMAIL_ATTACHMENTS_DESIGN.md §9):
  *   POST   /api/mail/attachments/preview      {message_ids:[…≤50], case_id?} → each email's
@@ -262,6 +270,14 @@ router.post('/api/mail/messages/:id/case-link', ...guard, async (req, res) => {
     const out = await svc.caseLink(req.db, req.auth.userId, req.params.id, req.body);
     res.json({ status: 'success', ...out });
   } catch (err) { sendError(res, 'POST /api/mail/messages/:id/case-link', err); }
+});
+
+// ─── DELETE /api/mail/messages/:id/case-link ───  (A13X: the unlink)
+router.delete('/api/mail/messages/:id/case-link', ...guard, async (req, res) => {
+  try {
+    const out = await svc.caseUnlink(req.db, req.auth.userId, req.params.id);
+    res.json({ status: 'success', ...out });
+  } catch (err) { sendError(res, 'DELETE /api/mail/messages/:id/case-link', err); }
 });
 
 // ─── Email attachments S3: file attachments to a case ───

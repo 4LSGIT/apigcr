@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-16T09:08:31.848Z_  
-_859 routes total — DELETE: 71, GET: 352, PATCH: 61, POST: 331, PUT: 41, _ALL: 3_
+_Generated 2026-11-16T11:37:46.367Z_  
+_860 routes total — DELETE: 72, GET: 352, PATCH: 61, POST: 331, PUT: 41, _ALL: 3_
 
 ## Global middleware chain
 
@@ -473,6 +473,7 @@ _859 routes total — DELETE: 71, GET: 352, PATCH: 61, POST: 331, PUT: 41, _ALL:
 | GET | `/api/mail/messages` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/mail/messages/:id` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/mail/messages/:id/attachments/file` | `jwtOrApiKey`, `requireJwt` | — |
+| DELETE | `/api/mail/messages/:id/case-link` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/mail/messages/:id/case-link` | `jwtOrApiKey`, `requireJwt` | — |
 | DELETE | `/api/mail/messages/:id/read` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/mail/messages/:id/read` | `jwtOrApiKey`, `requireJwt` | — |
@@ -1139,4 +1140,4 @@ _859 routes total — DELETE: 71, GET: 352, PATCH: 61, POST: 331, PUT: 41, _ALL:
 
 ---
 
-_859 routes total — DELETE: 71, GET: 352, PATCH: 61, POST: 331, PUT: 41, _ALL: 3_
+_860 routes total — DELETE: 72, GET: 352, PATCH: 61, POST: 331, PUT: 41, _ALL: 3_

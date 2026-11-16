@@ -1230,13 +1230,35 @@
          POST /api/mail/messages/:id/case-link        { id, log_id,
                                                        log_created, case:
                                                        {case_id, case_number} }
+         DELETE /api/mail/messages/:id/case-link      { id, log_id, case:
+                                                       {case_id, case_number} }
+                                                     — the UNLINK (A13X): the
+                                                     message as `mail:<id>`
+                                                     {log_id, case_id: null}
+                                                     (the log row stays; the
+                                                     case goes) + the OLD
+                                                     case's `comms:case:<id>`
+                                                     marker, so its Comms tab
+                                                     drops the item.
+         POST /api/mail/read                          { marked, ids? } — the
+                                                     BULK read (A13X): with
+                                                     `ids` (the {ids} form,
+                                                     ≤ 50 of them) one
+                                                     `mail:<id>` {unread:
+                                                     false} each; more than
+                                                     50, or no ids (the {all}
+                                                     form), ONE `mail:bulk`
+                                                     marker — the hub re-reads
+                                                     its list and counts.
+                                                     SILENT when marked is 0.
        Readers: public/comms.html (the hub's list and open conversation) and
        public/entityCommunications.html (a case's or contact's Comms tab).
-       Fails closed without the id / case. Not matched: the bulk POST
-       /api/mail/read (its answer is a count, no ids — the hub repaints its
-       own rows; no Casey card sends it), the views, image senders, send. */
+       Fails closed without the id / case. Not matched: the views, image
+       senders, send. */
     [/^\/api\/mail\/messages\/(\d+)\/read$/,      'mail', mailReadGetter, ['POST', 'DELETE']],
     [/^\/api\/mail\/messages\/(\d+)\/case-link$/, 'mail', mailCaseLinkGetter, ['POST']],
+    [/^\/api\/mail\/messages\/(\d+)\/case-link$/, 'mail', mailCaseUnlinkGetter, ['DELETE']],
+    [/^\/api\/mail\/read$/,                        'mail', mailBulkReadGetter, ['POST']],
     /* File attachments (email attachments S3) — ONE email's attachments filed
        to a case from Comms (POST /api/mail/messages/:id/attachments/file):
        a file that landed (or was moved in) changed the case's DOCUMENT SET
@@ -1337,6 +1359,47 @@
       { addr: 'mail:' + id, fields: { log_id: r.log_id, case_id: caseId } },
       { addr: 'comms:case:' + caseId, fields: { yc_refetch: 1 } },
     ];
+  }
+
+  /* A13X: the bulk announcement switches from per-id values to one marker
+     past this many ids — a 500-id Mark read is one list re-read, not 500
+     row repaints across every open hub. */
+  var MAIL_BULK_ANNOUNCE_MAX = 50;
+
+  /**
+   * Mail case UNLINK (A13X): the message's log row with NO case, and the
+   * communications set of the case it came off.
+   *
+   * @param   {object} r   `{status, id, log_id, case:{case_id}}` — the OLD case
+   * @param   {string} id  the URL capture
+   * @returns {Array|null}
+   */
+  function mailCaseUnlinkGetter(r, id) {
+    if (!r || typeof r !== 'object' || !id || String(r.id) !== String(id)) return null;
+    var c = r['case'];
+    var caseId = c && c.case_id;
+    if (caseId == null || caseId === '' || r.log_id == null) return null;
+    return [
+      { addr: 'mail:' + id, fields: { log_id: r.log_id, case_id: null } },
+      { addr: 'comms:case:' + caseId, fields: { yc_refetch: 1 } },
+    ];
+  }
+
+  /**
+   * Bulk mark-read (A13X): each marked message with its real value when the
+   * route named them (≤ MAIL_BULK_ANNOUNCE_MAX), else ONE `mail:bulk` marker.
+   * Silent when nothing was marked.
+   *
+   * @param   {object} r  `{status, marked, ids?}`
+   * @returns {Array|null}
+   */
+  function mailBulkReadGetter(r) {
+    if (!r || typeof r !== 'object' || !(Number(r.marked) > 0)) return null;
+    var ids = Array.isArray(r.ids) ? r.ids.filter(function (x) { return Number.isInteger(Number(x)) && Number(x) > 0; }) : null;
+    if (ids && ids.length && ids.length <= MAIL_BULK_ANNOUNCE_MAX) {
+      return ids.map(function (x) { return { addr: 'mail:' + Number(x), fields: { unread: false } }; });
+    }
+    return [{ addr: 'mail:bulk', fields: { yc_refetch: 1 } }];
   }
 
   /**

@@ -27,6 +27,49 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **A13X — mail unlink (native route) + Casey unlink / bulk read (11-16;
+  plan doc A13 "Released 2026-11-16"; design §4.3 / §4.4 "Case UNLINK"; manual
+  08 "Reading mail — Comms", manual 05/17 "Email: read state and case
+  links"):** `DELETE /api/mail/messages/:id/case-link` →
+  `mailReadService.caseUnlink` (same guard; `loadVisible` 404; one
+  `withTransaction` `retries: 1`, the row `FOR UPDATE`; the log row resolved as
+  `caseLink` resolves it through the shared `existingLogId` — stamp → copy's
+  stamp → `priorLogId`; `setLogAbout(about_type null)`; the log row AND the
+  stamp are kept, nothing created / deleted / stamped; 409 in three texts —
+  not on the log / on the firm log only (attribution said) / dead stamp;
+  answers `{id, log_id, case}` = the case it came OFF). yc-sync matches the
+  DELETE (`mail:<id>` {log_id, case_id: null} + the OLD case's
+  `comms:case:<id>`); comms.html repaints the card's line to "On the firm log,
+  not on a case" and re-reads the list when a row showed a case; the Comms tab
+  needed no change (its 'case_id' subscriber fires on the key, whatever the
+  value — pinned). Hub UI: **Unlink** beside Change, a two-step confirm in the
+  log line. Casey: `mail.case_unlink.v1` {mail_message_id, evidence} (family
+  `mail_unlink`, receipt `log_id`; predicts with the shared `mailResolvedLog`;
+  refuses the three 409s first; the case it leaves is read from the log row;
+  danger line LEAVES CASE …; the click re-reads GET `/api/mail/messages/:id`)
+  and `mail.read.bulk.v1` → POST `/api/mail/read` (family `mail_read_bulk`,
+  receipt `marked`): (a) `{mail_message_ids}` ≤ 50 cited rows, each read as
+  the user, readable copies added, already-read skipped and said, the
+  still-unread ids FROZEN in `expected.ids` and sent exactly (the single read
+  card's COPIES refusal now names this card); (b) `{all, mailbox_ids?,
+  filters?}` only for a whole mailbox / view the user asked for — the count
+  from the NEW `countMarkRead`, markRead {all}'s read-only twin (both built by
+  `bulkAllScope`: one validation, one scope, one per-branch statement body
+  shared byte for byte), mailboxes by address, filters in words, refusals
+  (unreadable box by number, unknown filter in the hub's words, count 0,
+  count > 500 `MAIL_BULK_ALL_MAX`), danger > 100; the click re-counts from
+  GET `/api/mail/mailboxes` (no filters: Σ `inbox_unread`, an alias whose
+  parent is in scope dropped) or by walking GET `/api/mail/messages` with
+  `unread_only` (raw rows = Σ copies per row, ≤ 6 pages). The route's `{ids}`
+  form now answers `ids`; yc-sync matches POST `/api/mail/read`: ≤ 50 ids →
+  per-id `mail:<id>` {unread:false}, else `mail:bulk` (the hub re-reads list +
+  counts, skips its own via `state.bulkSelf`; open cards untouched); silent at
+  `marked` 0. Refusal texts name the four cards and what stays unavailable
+  (drafts, flags, archive, delete, move-by-key, SMS / call triage). Prompts
+  42 / 21 / 45 / 31; permissions 102 kinds / 86 mounts; ledger +2. Tests:
+  `tests/mailboxS2.routes.test.js`, `tests/caseyMailTriage.test.js`, gated
+  `tests/caseyMailTriage.mysql.test.js`, `tests/caseyMailTriage.panes.test.js`,
+  `tests/ycSync.test.js`, `tests/assistantUi.test.js`.
 - **Comms hub send extras — attachments + scheduled sends (11-16; design
   §4.2 "Attachments" / "Scheduled sends"; manual 08 "Sending mail"):**
   `POST /api/mail/send` takes `attachments: [{document_id}]` — REGISTERED
@@ -1350,7 +1393,8 @@ body. Governing migrations in `ref/migrations/`.*
   announce `mail:<id>` with real values ({unread} / {log_id, case_id}), the
   link also `comms:case:<case_id>`; comms.html and entityCommunications.html
   now load yc-sync and subscribe (the first log-row announcement anywhere —
-  POST `/api/log` and PUT `/api/log/:id/about` still announce nothing). Off
+  POST `/api/log` and PUT `/api/log/:id/about` still announce nothing; the
+  hub's unlink and bulk read announce since A13X, 11-16). Off
   switch `casey_mail_triage_enabled` (on unless '0'). Tests:
   `tests/caseyMailTriage.test.js`, gated `tests/caseyMailTriage.mysql.test.js`,
   `tests/caseyMailTriage.panes.test.js`; plan: ASK_CASEY_ACTIONS_PLAN A13.

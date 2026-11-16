@@ -135,7 +135,7 @@ describe('humans only', () => {
       ['GET', '/api/mail/threads/root%40x.test'], ['POST', '/api/mail/messages/101/read'],
       ['DELETE', '/api/mail/messages/101/read'], ['POST', '/api/mail/read'], ['GET', '/api/mail/views'],
       ['POST', '/api/mail/views'], ['PATCH', '/api/mail/views/1'], ['DELETE', '/api/mail/views/1'],
-      ['POST', '/api/mail/messages/101/case-link'], ['GET', '/api/mail/messages/101/related'],
+      ['POST', '/api/mail/messages/101/case-link'], ['DELETE', '/api/mail/messages/101/case-link'], ['GET', '/api/mail/messages/101/related'],
       ['GET', '/api/mail/image-senders'], ['POST', '/api/mail/image-senders'], ['DELETE', '/api/mail/image-senders/a%40b.test'],
     ];
     for (const [method, url] of routes) {
@@ -191,7 +191,7 @@ describe('grant matrix — the list, the summary, single messages', () => {
     expect(hidden.status).toBe(404);
     expect(absent.status).toBe(404);
     expect(hidden.json).toEqual(absent.json);
-    for (const [m, u] of [['POST', '/api/mail/messages/202/read'], ['DELETE', '/api/mail/messages/202/read']]) {
+    for (const [m, u] of [['POST', '/api/mail/messages/202/read'], ['DELETE', '/api/mail/messages/202/read'], ['DELETE', '/api/mail/messages/202/case-link']]) {
       expect((await call(m, u, { t: tok(READER) })).json).toEqual(absent.json);
     }
     expect(W.T.mail_read_state).toEqual([]);
@@ -585,9 +585,12 @@ describe('read state (per user, idempotent, never \\Seen)', () => {
 
   test('bulk {ids}: only the readable ones, new rows counted once', async () => {
     const r = await call('POST', '/api/mail/read', { t: tok(READER), body: { ids: [101, 102, 201, 202] } });
+    // A13X: the {ids} form answers the ids it marked — the readable, still-unread ones, ascending.
+    expect(r.json.ids).toEqual([101, 102]);
     expect(r.json).toMatchObject({ marked: 2 });
     expect(W.readSet(READER)).toEqual([101, 102]);
-    expect((await call('POST', '/api/mail/read', { t: tok(READER), body: { ids: [101, 102] } })).json.marked).toBe(0);
+    const again = await call('POST', '/api/mail/read', { t: tok(READER), body: { ids: [101, 102] } });
+    expect([again.json.marked, again.json.ids]).toEqual([0, []]);
   });
 
   test('bulk {all}: what the LIST shows for the readable scope (∩ mailbox_ids) — INBOX unless all_folders', async () => {
@@ -777,6 +780,82 @@ describe('S2-L: a Gmail All Mail box is scoped by its label snapshot', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// A13X: the UNLINK — DELETE /api/mail/messages/:id/case-link clears the log
+// row's about-link and nothing else: the row and the message's stamp stay. Its
+// 409s say which "not on a case" it is, so a repeat refuses instead of writing.
+describe('case unlink (A13X)', () => {
+  beforeEach(() => {
+    W.caseRow('CaseA1', '26-11111', '26-11111-tjt');
+    W.caseRow('CaseB2', '26-22222', null);
+  });
+  const unlink = (id, user = READER) => call('DELETE', `/api/mail/messages/${id}/case-link`, { t: tok(user) });
+
+  test('a message on a case comes off it: about-link cleared, the log row and the stamp kept, the OLD case answered', async () => {
+    const lid = W.logRow({ log_link_id: 's101@outside.test', log_about_type: 'case', log_about_id: 'CaseA1' });
+    W.T.mail_messages.find((m) => m.id === 101).log_id = lid;
+    const r = await unlink(101);
+    expect(r.status).toBe(200);
+    expect(r.json).toEqual({ status: 'success', id: 101, log_id: lid, case: { case_id: 'CaseA1', case_number: '26-11111-tjt' } });
+    expect(W.T.log).toHaveLength(1);
+    expect(W.T.log[0]).toMatchObject({ log_id: lid, log_about_type: null, log_about_id: null, log_link_id: 's101@outside.test' });
+    expect(W.T.mail_messages.find((m) => m.id === 101).log_id).toBe(lid); // the stamp stays
+    // a repeat: 409 "on the firm log, not on a case" — nothing written
+    const again = await unlink(101);
+    expect([again.status, again.json.message]).toEqual([409, 'This message is not on a case: its log entry is on the firm log, not on a case.']);
+    expect(W.T.log[0]).toMatchObject({ log_about_type: null, log_about_id: null });
+    // the list / message read agree: no case
+    const got = await call('GET', '/api/mail/messages/101', { t: tok(READER) });
+    expect(got.json.messages[0].log_status).toMatchObject({ state: 'logged', log_id: lid });
+  });
+
+  test('resolved exactly as caseLink does: a copy\'s stamp, then another source\'s row — and the message is NOT stamped by the unlink', async () => {
+    const lid = W.logRow({ log_about_type: 'case', log_about_id: 'CaseB2' });
+    W.T.mail_messages.find((m) => m.id === 102).log_id = lid; // box 1 copy carries the stamp; 201 (box 2) is its unstamped copy
+    const r = await unlink(201, SU);
+    expect(r.json).toMatchObject({ id: 201, log_id: lid, case: { case_id: 'CaseB2', case_number: '26-22222' } });
+    expect(W.T.log[0]).toMatchObject({ log_about_type: null, log_about_id: null });
+    expect(W.T.mail_messages.find((m) => m.id === 201).log_id).toBeNull();
+    // another source's execution row (the Apps Script source) — the same lookup caseLink uses
+    const sid = W.logRow({ log_about_type: 'case', log_about_id: 'CaseA1' });
+    W.execution({ message_id: '<m202@x.test>', log_id: sid });
+    const r2 = await unlink(202, SU);
+    expect(r2.json).toMatchObject({ id: 202, log_id: sid, case: { case_id: 'CaseA1' } });
+    expect(W.T.log.find((l) => l.log_id === sid)).toMatchObject({ log_about_type: null, log_about_id: null });
+    expect(W.T.mail_messages.find((m) => m.id === 202).log_id).toBeNull();
+  });
+
+  test('409 in its own words: not on the log at all; on the firm log attributed to something else; a dead stamp — nothing written', async () => {
+    const none = await unlink(103);
+    expect([none.status, none.json.message]).toEqual([409, 'This message is not on a case: it is not on the log.']);
+    const lid = W.logRow({ log_about_type: 'contact', log_about_id: '77' });
+    W.T.mail_messages.find((m) => m.id === 103).log_id = lid;
+    const contact = await unlink(103);
+    expect([contact.status, contact.json.message]).toEqual([409, 'This message is not on a case: its log entry is on the firm log (attributed to contact 77), not on a case.']);
+    expect(W.T.log[0]).toMatchObject({ log_about_type: 'contact', log_about_id: '77' });
+    W.T.mail_messages.find((m) => m.id === 104).log_id = 9999;
+    const dead = await unlink(104);
+    expect([dead.status, dead.json.message]).toEqual([409, 'The log entry this message points at no longer exists.']);
+  });
+
+  test('a case row that no longer exists still comes off (the log row said case); the answer carries the id without a number', async () => {
+    const lid = W.logRow({ log_about_type: 'case', log_about_id: 'GONE1' });
+    W.T.mail_messages.find((m) => m.id === 101).log_id = lid;
+    const r = await unlink(101);
+    expect(r.json).toMatchObject({ id: 101, log_id: lid, case: { case_id: 'GONE1', case_number: null } });
+    expect(W.T.log[0]).toMatchObject({ log_about_type: null, log_about_id: null });
+  });
+
+  test('the read grant is the authority: a reader without a grant on the box gets 404, nothing written; the attorney bypass reads it', async () => {
+    const lid = W.logRow({ log_about_type: 'case', log_about_id: 'CaseA1' });
+    W.T.mail_messages.find((m) => m.id === 202).log_id = lid; // box 2: READER holds no grant
+    const r = await unlink(202, READER);
+    expect(r.status).toBe(404);
+    expect(W.T.log[0]).toMatchObject({ log_about_type: 'case', log_about_id: 'CaseA1' });
+    expect((await unlink(202, SS)).status).toBe(200);
+    expect(W.T.log[0]).toMatchObject({ log_about_type: null });
+  });
+});
+
 describe('case link (about-link machinery)', () => {
   beforeEach(() => {
     W.caseRow('CaseA1', '26-11111', '26-11111-tjt');

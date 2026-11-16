@@ -16,10 +16,15 @@
  *   getThread(db, userId, threadKey)         one thread, merged across readable mailboxes (bodies)
  *   getMessage(db, userId, id)               one message (bodies) — threadless mail
  *   setRead(db, userId, id, read)            per-user read state, idempotent
- *   markRead(db, userId, body)               bulk: {ids} or {all, mailbox_ids?, filters?}
+ *   markRead(db, userId, body)               bulk: {ids} or {all, mailbox_ids?, filters?}; the {ids}
+ *                                            form also answers the ids it marked (A13X)
+ *   countMarkRead(db, userId, body)          READ-ONLY twin of markRead {all}: the rows it would
+ *                                            mark, from the same scope + predicates (A13X)
  *   listViews / createView / updateView / deleteView   inbox_views, caller-owned
  *   viewCounts(db, userId)                   unread per saved view (Inbox, the view's filters)
  *   caseLink(db, userId, id, body)           attach the message's log row to a case
+ *   caseUnlink(db, userId, id)               take the message's log row OFF its case (A13X): the
+ *                                            about-link only — the log row and the stamp stay
  *   loadVisible(db, userId, id)              the message's access check (ACCESS) — shared with
  *                                            emailAttachmentCommsService (Comms filing)
  *
@@ -132,6 +137,15 @@
  * would orphan), or — for a store-only folder — STORE_ONLY_GRACE_MIN after
  * the worker stored it, the window in which another source (the ~5-min Apps
  * Script cadence) can still post the same email.
+ *
+ * UNLINK (A13X, 2026-11-16): caseUnlink resolves the log row with the SAME
+ * lookups in the same order (existingLogId — shared, never a second copy) and
+ * clears the about-link (setLogAbout about_type null). It creates nothing,
+ * deletes nothing and writes no stamp: the log row stays on the firm log
+ * under its link (the other party) and the message keeps its stamp; only the
+ * case about-link goes. A message with no log row, or a log row that is not
+ * about a case, is a 409 that says which — so a repeat is a refusal, never a
+ * second write.
  *
  * NO MODULE-SCOPE STATE (design §2): every call reads the DB.
  */
@@ -1862,6 +1876,47 @@ async function setRead(db, userId, messageId, read) {
 }
 
 /**
+ * The {all} form's scope, shared by markRead and countMarkRead (A13X: the
+ * Casey bulk card predicts the count with THIS, so what it shows is what the
+ * route marks): the body validated as markRead does (unknown field, bad
+ * mailbox_ids, a filter key the vocabulary lacks → 400), the readable boxes ∩
+ * `mailbox_ids`, the branch plan and ONE statement body per branch — the
+ * FROM/WHERE text the INSERT … SELECT and the COUNT share, byte for byte.
+ * @returns {{ids:number[], filters:object, scope:Map, plan:{direct,aliases}, branches:{where:string, params:any[]}[]}}
+ */
+async function bulkAllScope(db, userId, body) {
+  const wanted = idList(body.mailbox_ids, 'mailbox_ids', VIEW_IDS_MAX);
+  const filters = strictFilters(body.filters);
+  const scope = await readableScope(db, Number(userId));
+  let ids = [...scope.keys()];
+  if (wanted) ids = ids.filter(id => wanted.includes(id));
+  const plan = ids.length ? branchPlan(scope, ids) : { direct: [], aliases: [] };
+  const branches = [];
+  if (plan.direct.length) {
+    const { extra, params } = scopeWhere(filters, null);
+    branches.push({ where: `m.mailbox_id IN (?) AND rs.message_fk IS NULL${extra}`, params: [plan.direct, ...params] });
+  }
+  // One statement per alias slice (ALIAS SLICE, header); the anti-join
+  // keeps overlapping slices from counting a row twice.
+  for (const e of plan.aliases) {
+    const w = scopeWhere(filters, null, e);
+    branches.push({ where: `m.mailbox_id = ? AND rs.message_fk IS NULL${w.extra}`, params: [Number(e.alias_of), ...w.params] });
+  }
+  return { ids, wanted, filters, scope, plan, branches };
+}
+
+function checkBulkBody(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw httpError(400, 'request body must be a JSON object');
+  for (const k of Object.keys(body)) {
+    if (!['ids', 'all', 'mailbox_ids', 'filters'].includes(k)) throw httpError(400, `unknown field "${k}"`);
+  }
+  const all = has(body, 'all') ? toBool(body.all, 'all') : false;
+  const hasIds = has(body, 'ids');
+  if (all === hasIds) throw httpError(400, 'send exactly one of ids or all: true');
+  return all;
+}
+
+/**
  * Bulk mark-read: exactly one of
  *   { ids: [..≤500] }                              those of them the caller can read
  *   { all: true, mailbox_ids?: [..], filters?: {} } every message the LIST would show
@@ -1873,47 +1928,26 @@ async function setRead(db, userId, messageId, read) {
  * anti-join keeps `marked` = rows newly marked (mysql2 sets CLIENT_FOUND_ROWS,
  * so an ON DUPLICATE no-op would otherwise count as affected); the ON
  * DUPLICATE clause only absorbs a concurrent writer.
- * @returns {{marked:number}} rows newly marked
+ * The {ids} form also answers `ids` (A13X): the requested ids the caller can
+ * read that were still unread when this call ran — the rows it marks — so the
+ * sync bus can announce each (public/js/yc-sync.js); ≤ BULK_READ_MAX by
+ * construction. The {all} form answers the count only (no ids: a bus marker).
+ * @returns {{marked:number, ids?:number[]}} rows newly marked
  */
 async function markRead(db, userId, body) {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) throw httpError(400, 'request body must be a JSON object');
-  for (const k of Object.keys(body)) {
-    if (!['ids', 'all', 'mailbox_ids', 'filters'].includes(k)) throw httpError(400, `unknown field "${k}"`);
-  }
-  const all = has(body, 'all') ? toBool(body.all, 'all') : false;
-  const hasIds = has(body, 'ids');
-  if (all === hasIds) throw httpError(400, 'send exactly one of ids or all: true');
+  const all = checkBulkBody(body);
   const uid = Number(userId);
   if (all) {
-    const wanted = idList(body.mailbox_ids, 'mailbox_ids', VIEW_IDS_MAX);
-    const filters = strictFilters(body.filters);
-    const scope = await readableScope(db, uid);
-    let ids = [...scope.keys()];
-    if (wanted) ids = ids.filter(id => wanted.includes(id));
+    const { ids, branches } = await bulkAllScope(db, uid, body);
     if (!ids.length) return { marked: 0 };
-    const plan = branchPlan(scope, ids);
     let marked = 0;
-    if (plan.direct.length) {
-      const { extra, params } = scopeWhere(filters, null);
+    for (const b of branches) {
       const [r] = await db.query(
         `INSERT INTO mail_read_state (user, message_fk, read_at)
          SELECT ?, m.id, UTC_TIMESTAMP() FROM mail_messages m${JOINS}
-          WHERE m.mailbox_id IN (?) AND rs.message_fk IS NULL${extra}
+          WHERE ${b.where}
          ON DUPLICATE KEY UPDATE read_at = mail_read_state.read_at`,
-        [uid, uid, plan.direct, ...params]
-      );
-      marked += Number(r && r.affectedRows) || 0;
-    }
-    // One statement per alias slice (ALIAS SLICE, header); the anti-join
-    // keeps overlapping slices from counting a row twice.
-    for (const e of plan.aliases) {
-      const w = scopeWhere(filters, null, e);
-      const [r] = await db.query(
-        `INSERT INTO mail_read_state (user, message_fk, read_at)
-         SELECT ?, m.id, UTC_TIMESTAMP() FROM mail_messages m${JOINS}
-          WHERE m.mailbox_id = ? AND rs.message_fk IS NULL${w.extra}
-         ON DUPLICATE KEY UPDATE read_at = mail_read_state.read_at`,
-        [uid, uid, Number(e.alias_of), ...w.params]
+        [uid, uid, ...b.params]
       );
       marked += Number(r && r.affectedRows) || 0;
     }
@@ -1924,7 +1958,18 @@ async function markRead(db, userId, body) {
   const want = idList(body.ids, 'ids', BULK_READ_MAX);
   const scope = await readableScope(db, uid);
   const disj = scopeDisjunction(branchPlan(scope, [...scope.keys()]));
-  if (!disj) return { marked: 0 };
+  if (!disj) return { marked: 0, ids: [] };
+  // The rows this call marks — the INSERT's own SELECT, read first (a
+  // concurrent writer can only make `marked` smaller; every id answered is
+  // read for the caller once this returns).
+  const [rows] = await db.query(
+    `SELECT m.id FROM mail_messages m
+       LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id
+      WHERE m.id IN (?) AND ${disj.sql} AND rs.message_fk IS NULL
+      ORDER BY m.id ASC`,
+    [uid, want, ...disj.params]
+  );
+  const ids = (Array.isArray(rows) ? rows : []).map(r => Number(r.id));
   const [r] = await db.query(
     `INSERT INTO mail_read_state (user, message_fk, read_at)
      SELECT ?, m.id, UTC_TIMESTAMP() FROM mail_messages m
@@ -1933,7 +1978,35 @@ async function markRead(db, userId, body) {
      ON DUPLICATE KEY UPDATE read_at = mail_read_state.read_at`,
     [uid, uid, want, ...disj.params]
   );
-  return { marked: Number(r && r.affectedRows) || 0 };
+  return { marked: Number(r && r.affectedRows) || 0, ids };
+}
+
+/**
+ * READ-ONLY twin of markRead {all} (A13X): how many rows that body would mark
+ * for the caller right now — the same validation, scope and statement bodies
+ * (bulkAllScope), a COUNT where the INSERT … SELECT writes. Also names the
+ * boxes in scope (address) so a card can say them. body: {all: true,
+ * mailbox_ids?, filters?} — the {ids} form is a 400 here.
+ * @returns {{count:number, mailboxes:{id:number, address:string, alias_of:number|null}[], filters:object}}
+ */
+async function countMarkRead(db, userId, body) {
+  const all = checkBulkBody(body);
+  if (!all) throw httpError(400, 'countMarkRead takes the all: true form only');
+  const uid = Number(userId);
+  const { ids, scope, filters, branches } = await bulkAllScope(db, uid, body);
+  let count = 0;
+  for (const b of branches) {
+    const [[r]] = await db.query(
+      `SELECT COUNT(*) AS n FROM mail_messages m${JOINS}
+        WHERE ${b.where}`,
+      [uid, ...b.params]
+    );
+    count += Number(r && r.n) || 0;
+  }
+  // Named in id order (listReadable's own order is by address) so a card reads the same whoever asks.
+  const mailboxes = [...ids].sort((a, b) => a - b).map(id => scope.get(id))
+    .map(r => ({ id: Number(r.id), address: r.address, alias_of: r.alias_of == null ? null : Number(r.alias_of) }));
+  return { count, mailboxes, filters };
 }
 
 
@@ -2178,6 +2251,28 @@ async function priorLogId(conn, msg) {
   return ex ? Number(ex.log_id) : null;
 }
 
+/**
+ * The log row that ALREADY carries an unstamped message, or null — caseLink's
+ * resolution after the stamp, in its order: the lowest-id COPY of the same
+ * mail (another mailbox or folder) carrying a stamp — link THAT row rather
+ * than logging the email twice — else another source's row (priorLogId: the
+ * Apps Script source logs the Workspace inbox while this mailbox stores it
+ * store-only). Shared by caseLink and caseUnlink (A13X), and mirrored
+ * read-only by the Casey cards (assistantService.mailResolvedLog).
+ */
+async function existingLogId(conn, msg) {
+  if (msg.message_id) {
+    const [[cp]] = await conn.query(
+      `SELECT log_id FROM mail_messages
+        WHERE message_id = ? AND id <> ? AND log_id IS NOT NULL
+        ORDER BY id ASC LIMIT 1`,
+      [msg.message_id, msg.id]
+    );
+    if (cp) return Number(cp.log_id);
+  }
+  return priorLogId(conn, msg);
+}
+
 /** The earlier of two instants (either may be null). */
 function earliest(a, b) {
   if (a && b) return a.getTime() <= b.getTime() ? a : b;
@@ -2216,21 +2311,7 @@ async function caseLink(db, userId, messageId, body) {
     let logId = msg.log_id == null ? null : Number(msg.log_id);
     let created = false;
 
-    if (!logId && msg.message_id) {
-      // A copy of the same mail (another mailbox or folder) already in the
-      // log: link THAT row rather than logging the email twice.
-      const [[cp]] = await conn.query(
-        `SELECT log_id FROM mail_messages
-          WHERE message_id = ? AND id <> ? AND log_id IS NOT NULL
-          ORDER BY id ASC LIMIT 1`,
-        [msg.message_id, msg.id]
-      );
-      if (cp) logId = Number(cp.log_id);
-    }
-
-    // Logged by another source while this mailbox stored it store-only (the
-    // Apps Script source logs the Workspace inbox today): link THAT row.
-    if (!logId) logId = await priorLogId(conn, msg);
+    if (!logId) logId = await existingLogId(conn, msg);
 
     if (!logId) {
       const [[mb]] = await conn.query(
@@ -2301,6 +2382,56 @@ async function caseLink(db, userId, messageId, body) {
   return { ...result, case: { case_id: cs.case_id, case_number: cs.case_number_full || cs.case_number || null } };
 }
 
+// The 409 texts the unlink answers (UNLINK, header). Pinned by the hub, the
+// Casey card's prediction and tests — change them together.
+const UNLINK_NOT_LOGGED = 'This message is not on a case: it is not on the log.';
+const UNLINK_LOG_GONE = 'The log entry this message points at no longer exists.';
+function unlinkNotOnCase(aboutType, aboutId) {
+  return `This message is not on a case: its log entry is on the firm log${aboutType ? ` (attributed to ${aboutType} ${aboutId})` : ''}, not on a case.`;
+}
+
+/**
+ * Take a message's log row OFF its case (UNLINK, header): the about-link is
+ * cleared (logService.setLogAbout, about_type null). The log row — found with
+ * caseLink's own lookups (the stamp, else existingLogId: a copy's stamp, else
+ * another source's row) — is kept, as is the message's stamp; nothing is
+ * created, deleted or stamped. 409 when there is nothing to take off: no log
+ * row, a log row that is not about a case (its attribution said), or a dead
+ * stamp — each in its own words, so a repeat refuses instead of writing.
+ * @returns {{id, log_id, case:{case_id, case_number}}} the case it came OFF
+ */
+async function caseUnlink(db, userId, messageId) {
+  const v = await loadVisible(db, userId, messageId);
+  return withTransaction(db, async (conn) => {
+    const [[msg]] = await conn.query(
+      'SELECT id, message_id, provider_id, log_id FROM mail_messages WHERE id = ? LIMIT 1 FOR UPDATE', [v.id]
+    );
+    if (!msg) throw httpError(404, 'Message not found');
+    let logId = msg.log_id == null ? null : Number(msg.log_id);
+    if (!logId) logId = await existingLogId(conn, msg);
+    if (!logId) throw httpError(409, UNLINK_NOT_LOGGED);
+    const [[lr]] = await conn.query(
+      `SELECT l.log_about_type, l.log_about_id, c.case_number, c.case_number_full
+         FROM log l LEFT JOIN cases c ON l.log_about_type = 'case' AND c.case_id = l.log_about_id
+        WHERE l.log_id = ? LIMIT 1`,
+      [logId]
+    );
+    // A stamp (or a copy's) pointing at a deleted row: caseLink's 409, same
+    // words. existingLogId's source lookup JOINs log, so only a stamp gets here.
+    if (!lr) throw httpError(409, UNLINK_LOG_GONE);
+    const aboutType = lr.log_about_type == null ? null : String(lr.log_about_type);
+    const aboutId = lr.log_about_id == null ? null : String(lr.log_about_id);
+    if (aboutType !== 'case' || !aboutId) throw httpError(409, unlinkNotOnCase(aboutType, aboutId));
+    try {
+      await logService.setLogAbout(conn, { log_id: logId, about_type: null });
+    } catch (err) {
+      if (err && err.code === 'LOG_NOT_FOUND') throw httpError(409, UNLINK_LOG_GONE);
+      throw err;
+    }
+    return { id: Number(msg.id), log_id: logId, case: { case_id: aboutId, case_number: lr.case_number_full || lr.case_number || null } };
+  }, { retries: 1 });
+}
+
 
 module.exports = {
   ftQueryOf, FT_STOPWORDS, FT_MIN_TOKEN, FT_MAX_WORDS, // comms-polish-2 C1
@@ -2316,6 +2447,11 @@ module.exports = {
   updateView,
   deleteView,
   caseLink,
+  caseUnlink,
+  countMarkRead,
+  UNLINK_NOT_LOGGED,
+  UNLINK_LOG_GONE,
+  unlinkNotOnCase,
   loadVisible,
   related,
   firstSeen,
@@ -2336,6 +2472,8 @@ module.exports = {
   // A13 (Ask Casey mail triage): the case-link card predicts caseLink's log
   // row — the same cross-source lookup and the same text cap — read-only.
   priorLogId,
+  existingLogId,
+  strictFilters,
   LOG_MESSAGE_SOFT_CAP,
   emailsIn,
   placeOf,

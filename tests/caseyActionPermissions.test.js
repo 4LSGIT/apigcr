@@ -212,6 +212,9 @@ const KINDS = [
   // card sends DELETE for "unread" on the same path — pinned below).
   { kind: 'mail.read.v1', method: 'POST', path: '/api/mail/messages/1/read' },
   { kind: 'mail.case_link.v1', method: 'POST', path: '/api/mail/messages/1/case-link' },
+  // A13X: the native unlink (built with the card) and the hub's own bulk route.
+  { kind: 'mail.case_unlink.v1', method: 'DELETE', path: '/api/mail/messages/1/case-link' },
+  { kind: 'mail.read.bulk.v1', method: 'POST', path: '/api/mail/read' },
   // A13b: the Comms File attachments dialog's own route (one email per request).
   { kind: 'mail.attachments.file.v1', method: 'POST', path: '/api/mail/messages/1/attachments/file' },
   // A16: the Reports editor's own create route.
@@ -323,9 +326,9 @@ describe('P2 — what the canonical write route gates on (all 100 shipped kinds)
 
   const app = appWith;
 
-  test('the 100 kinds cover 84 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(100);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(84);
+  test('the 102 kinds cover 86 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(102);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(86);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -333,7 +336,7 @@ describe('P2 — what the canonical write route gates on (all 100 shipped kinds)
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 100', async () => {
+  test('no token: every kind is 401 — authentication is required for all 102', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -751,22 +754,37 @@ describe('P2 — what the canonical write route gates on (all 100 shipped kinds)
   // alias slices). A roleless staff token with no grant on the message's
   // mailbox gets 404 'Message not found' — no existence oracle — on all three
   // mounts, and nothing is written.
-  test('mail.read.v1 / mail.case_link.v1: no role gate; the mailbox read grant is the authority (404 without it) behind the human-only guard', async () => {
+  test('mail.read.v1 / mail.case_link.v1 / mail.case_unlink.v1: no role gate; the mailbox read grant is the authority (404 without it) behind the human-only guard', async () => {
     const src = read('routes/api.mail.js');
     for (const mount of ["router.post('/api/mail/messages/:id/read', ...guard", "router.delete('/api/mail/messages/:id/read', ...guard",
-      "router.post('/api/mail/messages/:id/case-link', ...guard"]) expect(src).toContain(mount);
+      "router.post('/api/mail/messages/:id/case-link', ...guard", "router.delete('/api/mail/messages/:id/case-link', ...guard",
+      "router.post('/api/mail/read', ...guard"]) expect(src).toContain(mount);
     expect(src).toContain('const guard = [jwtOrApiKey, requireJwt];');
     const writes = [];
     // The gate's own fire-and-forget audit insert is not a mail write.
     const db = { query: async (sql) => { if (!/^\s*SELECT/i.test(sql) && !/INSERT INTO jwt_api_audit_log/.test(sql)) writes.push(sql); return [[], []]; } };
     const a = appWith(db);
     for (const roles of [['staff'], [], ['attorney']]) {
-      for (const [method, p, body] of [['POST', '/api/mail/messages/1/read', {}], ['DELETE', '/api/mail/messages/1/read', {}], ['POST', '/api/mail/messages/1/case-link', { case_id: 'ABC' }]]) {
+      for (const [method, p, body] of [['POST', '/api/mail/messages/1/read', {}], ['DELETE', '/api/mail/messages/1/read', {}], ['POST', '/api/mail/messages/1/case-link', { case_id: 'ABC' }],
+        ['DELETE', '/api/mail/messages/1/case-link', {}]]) {
         const res = await call(a, { method, path: p }, bearer(token({ roles })), body);
         expect({ roles: roles.join(',') || 'none', method, p, status: res.status, message: res.body.message })
           .toEqual({ roles: roles.join(',') || 'none', method, p, status: 404, message: 'Message not found' });
       }
+      // A13X: the bulk route with no readable mailbox marks nothing (the grant
+      // scoping is in the statement — an empty scope is {marked: 0, ids: []})
+      // and an API key is 403 before the service is asked.
+      const bulk = await call(a, { method: 'POST', path: '/api/mail/read' }, bearer(token({ roles })), { ids: [1, 2] });
+      expect({ roles: roles.join(',') || 'none', status: bulk.status, body: bulk.body }).toEqual({ roles: roles.join(',') || 'none', status: 200, body: { status: 'success', marked: 0, ids: [] } });
     }
+    const oldKey = process.env.INTERNAL_API_KEY;
+    process.env.INTERNAL_API_KEY = 'yci_casey_a13x_internal_test'; // secret-scan: allow
+    try {
+      for (const [method, p, body] of [['DELETE', '/api/mail/messages/1/case-link', {}], ['POST', '/api/mail/read', { ids: [1] }]]) {
+        const key = await call(a, { method, path: p }, { 'x-api-key': process.env.INTERNAL_API_KEY }, body);
+        expect({ method, p, status: key.status, message: key.body.message }).toEqual({ method, p, status: 403, message: 'Mail routes require a signed-in user' });
+      }
+    } finally { process.env.INTERNAL_API_KEY = oldKey; }
     expect(writes).toEqual([]);
   });
 

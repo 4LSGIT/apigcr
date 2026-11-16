@@ -11,9 +11,15 @@
  *        counts refresh. `mail:<id>` {log_id, case_id}: a listed row re-reads
  *        the list quietly; the open card's log line names the case; a row or
  *        card already on that case (the pane's own write) is skipped.
+ *        A13X: `mail:<id>` {log_id, case_id: null} (the UNLINK) — the open
+ *        card's line goes to "on the firm log, not on a case" and a listed
+ *        row showing a case re-reads the list; `mail:bulk` re-reads the list
+ *        and the counts, except during the pane's own bulk write.
  *   tab  `comms:case:<id>` re-reads a case tab's feed; `mail:<id>` {case_id}
  *        re-reads a tab showing that message under another case; parked while
  *        hidden, refreshed on return; a feed already showing the case skips.
+ *        A13X: an unlink's `case_id: null` re-reads a tab showing the message
+ *        under a case (the same handler — proven, not assumed).
  *
  * JSDOM loads no <script src>: yc-sync.js is evaluated by hand, like the
  * other helpers (tests/mailboxS2P.pane.test.js, tests/entityCommunications.widget.test.js).
@@ -71,7 +77,8 @@ async function bootHub(rows) {
     if (url === '/api/mail/views/counts') return { counts: {} };
     if (url === '/api/mail/messages' && method === 'GET') return { messages: fresh(rows), next_cursor: null };
     if (url === '/api/mail/threads/root%40x.test') return { thread_key: 'root@x.test', subject: 'Plan objection', truncated: false, messages: [{ ...fresh(rows[0]), unread: false, copies: fresh(rows[0].copies).map((c) => ({ ...c, unread: false })), body_text: 'b', body_html: null, attachments: [], from_email: 'jane@client.test', images_trusted: false }] };
-    if (url === '/api/mail/read' && method === 'POST') return { marked: (payload && payload.ids ? payload.ids.length : 0) };
+    if (url === '/api/mail/read' && method === 'POST') return { marked: (payload && payload.ids ? payload.ids.length : (payload && payload.all ? 3 : 0)), ids: payload && payload.ids ? payload.ids : undefined };
+    if (/^\/api\/mail\/messages\/\d+\/case-link$/.test(url) && method === 'DELETE') return { id: Number(url.split('/')[4]), log_id: 5, case: { case_id: 'AAAA', case_number: '25-1' } };
     if (/^\/api\/mail\/messages\/\d+\/related$/.test(url)) return { contacts: [], unmatched: [] };
     if (url === '/api/comms-archive/admin') return { archive_admin: false };
     return {};
@@ -138,7 +145,72 @@ describe('the comms hub hears mail:<id>', () => {
     await tick(window, 120);
     expect(doc.querySelector('.mcard .logline').textContent).toMatch(/Not on the log/);
     window.YC.emit('mail:11', { log_id: 5, case_id: 'AAAA' }, 'test');
-    expect(doc.querySelector('.mcard .logline').textContent).toMatch(/On the log of.*AAAA.*Change/s);
+    expect(doc.querySelector('.mcard .logline').textContent).toMatch(/On the log of.*AAAA.*Change.*Unlink/s);
+  });
+
+  // A13X: the unlink announcement and the hub's own Unlink control.
+  test('{log_id, case_id: null}: the open card\'s line goes off the case; a listed row showing a case re-reads the list; one already off it does not', async () => {
+    const onCase = ROW({ log_id: 5, log_status: { state: 'case', case: { case_id: 'AAAA', case_number: '25-1' }, log_id: 5, via: 'stamped' }, case: { case_id: 'AAAA', case_number: '25-1' } });
+    const { window, doc, calls } = await bootHub([onCase]);
+    rowEl(doc, 11).click();
+    await tick(window, 120);
+    // the thread fixture is the row with the case: the line names it
+    expect(doc.querySelector('.mcard .logline').textContent).toMatch(/On the log of.*25-1.*Change.*Unlink/s);
+    const before = gets(calls, '/api/mail/messages');
+    window.YC.emit('mail:11', { log_id: 5, case_id: null }, 'test');
+    expect(doc.querySelector('.mcard .logline').textContent).toMatch(/On the firm log, not on a case/);
+    expect(doc.querySelector('.mcard .logline').textContent).not.toMatch(/Unlink/);
+    await tick(window, 350);
+    expect(gets(calls, '/api/mail/messages')).toBe(before + 1);
+    // already off a case: nothing to do (this pane's own write)
+    const off = await bootHub([ROW({ log_id: 5, log_status: { state: 'logged', log_id: 5, via: 'stamped' } })]);
+    const b2 = gets(off.calls, '/api/mail/messages');
+    off.window.YC.emit('mail:11', { log_id: 5, case_id: null }, 'test');
+    await tick(off.window, 350);
+    expect(gets(off.calls, '/api/mail/messages')).toBe(b2);
+  });
+
+  test('Unlink on the open card: a two-step confirm in the line, then ONE DELETE of the case-link path; the line and the row repaint off the case', async () => {
+    const onCase = ROW({ log_id: 5, log_status: { state: 'case', case: { case_id: 'AAAA', case_number: '25-1' }, log_id: 5, via: 'stamped' }, case: { case_id: 'AAAA', case_number: '25-1' } });
+    const { window, doc, calls, errors } = await bootHub([onCase]);
+    rowEl(doc, 11).click();
+    await tick(window, 120);
+    const line = () => doc.querySelector('.mcard .logline');
+    line().querySelector('.unlink-btn').click();
+    expect(line().textContent).toMatch(/Take it off 25-1\? The entry stays on the firm log\./);
+    expect(calls.filter((c) => c.method === 'DELETE')).toEqual([]);
+    line().querySelector('.unlink-no').click();
+    expect(line().querySelector('.unlink-btn')).not.toBeNull();
+    line().querySelector('.unlink-btn').click();
+    line().querySelector('.unlink-yes').click();
+    await tick(window, 60);
+    expect(calls.filter((c) => c.method === 'DELETE')).toEqual([{ url: '/api/mail/messages/11/case-link', method: 'DELETE' }]);
+    expect(line().textContent).toMatch(/On the firm log, not on a case/);
+    expect(rowEl(doc, 11).textContent).not.toMatch(/25-1/);
+    expect(errors).toEqual([]);
+  });
+
+  test('mail:bulk re-reads the list and the counts — except the pane\'s own Mark all read, whose marker reaches it mid-flight', async () => {
+    const { window, calls } = await bootHub([ROW()]);
+    const lists = gets(calls, '/api/mail/messages'); const summaries = gets(calls, '/api/mail/mailboxes');
+    window.YC.emit('mail:bulk', { yc_refetch: 1 }, 'test');
+    await tick(window, 500);
+    expect([gets(calls, '/api/mail/messages'), gets(calls, '/api/mail/mailboxes')]).toEqual([lists + 1, summaries + 1]);
+    // The pane's own write: the shell sniffs the answer and dispatches locally
+    // BEFORE apiSend resolves — modelled here by emitting from the mock. The
+    // pane reloads once (its own loadList), not twice.
+    const inner = window.apiSend;
+    window.apiSend = async (url, method, payload) => {
+      const out = await inner(url, method, payload);
+      if (url === '/api/mail/read' && method === 'POST') window.YC.emit('mail:bulk', { yc_refetch: 1 }, 'auto:POST /api/mail/read');
+      return out;
+    };
+    window.confirm = () => true;
+    const l2 = gets(calls, '/api/mail/messages');
+    window.document.getElementById('readall-btn').click();
+    await tick(window, 600);
+    expect(calls.filter((c) => c.url === '/api/mail/read' && c.method === 'POST')).toHaveLength(1);
+    expect(gets(calls, '/api/mail/messages')).toBe(l2 + 1);
   });
 });
 
@@ -213,5 +285,30 @@ describe('the Comms tab hears comms:case:<id> and mail:<id>', () => {
     own.window.YC.emit('mail:41', { log_id: 7, case_id: 'aaaa' }, 'test');
     await tick(own.window, 350);
     expect(own.feeds()).toBe(m);
+  });
+
+  // A13X: the unlink — `case_id: null` — through the SAME handler (yc-sync
+  // delivers a field subscriber the message whenever the key is present,
+  // whatever its value), so the tab needed no change: proven here.
+  test('an unlink (case_id null) re-reads a tab showing the message under a case; a tab already showing it off a case does not', async () => {
+    const t = bootTab({ type: 'contact', id: '42', items: [MAILITEM({ case_id: 'AAAA' })] });
+    await tick(t.window, 30);
+    const n = t.feeds();
+    t.window.YC.emit('mail:41', { log_id: 7, case_id: null }, 'test');
+    await tick(t.window, 350);
+    expect(t.feeds()).toBe(n + 1);
+    const off = bootTab({ type: 'contact', id: '42', items: [MAILITEM()] });
+    await tick(off.window, 30);
+    const m = off.feeds();
+    off.window.YC.emit('mail:41', { log_id: 7, case_id: null }, 'test');
+    await tick(off.window, 350);
+    expect(off.feeds()).toBe(m);
+    // the OLD case's tab re-reads on its comms:case marker (the unlink announces it)
+    const old = bootTab();
+    await tick(old.window, 30);
+    const k = old.feeds();
+    old.window.YC.emit('comms:case:AAAA', { yc_refetch: 1 }, 'test');
+    await tick(old.window, 350);
+    expect(old.feeds()).toBe(k + 1);
   });
 });

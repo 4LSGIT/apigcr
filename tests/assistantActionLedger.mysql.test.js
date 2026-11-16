@@ -49,7 +49,7 @@ suite('P5 ledger on real MySQL', () => {
   // (A11.1X) while the registry held 93 — this twin is gated on YC_TEST_MYSQL_URL
   // and CI never runs it; tests/caseyActionPermissions.test.js pins the same
   // count against the matrix and is the one that fails first in CI.
-  test('all 100 kinds register without evidence; duplicate issuance, foreign actors and malformed inputs are refused', async () => {
+  test('all 102 kinds register without evidence; duplicate issuance, foreign actors and malformed inputs are refused', async () => {
     const outcomes = [];
     for (const [kind] of ledger.KINDS) {
       const d = await issue(kind);
@@ -64,7 +64,7 @@ suite('P5 ledger on real MySQL', () => {
       try { await op(); errors.push('accepted'); } catch (e) { errors.push(e.status || e.code); }
     }
     expect({ count: ledger.KINDS.size, outcomes: [...new Set(outcomes)], errors,
-      foreignRead: await ledger.read(db, 7, [d.draft_id]) }).toEqual({ count: 100, outcomes: ['not-applied'],
+      foreignRead: await ledger.read(db, 7, [d.draft_id]) }).toEqual({ count: 102, outcomes: ['not-applied'],
       errors: ['ER_DUP_ENTRY', 'ER_NO_REFERENCED_ROW_2', 400, 403, 400, 400, 404], foreignRead: [] });
   });
   test('committed claim fences two tabs, a business rollback cannot release it, and fresh or old claims remain unknown', async () => {

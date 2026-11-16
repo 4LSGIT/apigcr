@@ -119,6 +119,9 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'formTemplateKnownOutcome', 'formTemplateAppliedMessage', 'formTemplateOpenInfo', 'formTemplateEntity', 'formTemplateOpen',
   'mailLabel', 'mailCaseLabel', 'mailMessageLine', 'mailText', 'mailMessageIdOf', 'mailReadRequest', 'mailReadMessage', 'mailReadPrecheck',
   'mailReadResult', 'mailLinkRequest', 'mailLinkPrecheck', 'mailLinkResult', 'mailLinkKnownOutcome', 'mailOpenInfo', 'mailEntity', 'mailOpen',
+  // A13X: the unlink and bulk-read families.
+  'mailUnlinkText', 'mailUnlinkRequest', 'mailUnlinkPrecheck', 'mailUnlinkResult', 'mailUnlinkKnownOutcome',
+  'mailBulkLabel', 'mailBulkText', 'mailBulkRequest', 'mailBulkPrecheck', 'mailBulkResult', 'mailBulkEntity',
   // A13b: the attachment filing family (tests/caseyMailAttachments.test.js drives it function by function).
   'mailAttachmentsLabel', 'mailAttachmentsCaseLabel', 'mailAttachmentBytes', 'mailAttachmentVerdict', 'mailAttachmentMoveKey', 'mailAttachmentsText',
   'mailAttachmentsBatch', 'mailAttachmentsRequest', 'mailAttachmentsPrecheck', 'mailAttachmentsDispatch', 'mailAttachmentsResult',
@@ -177,6 +180,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'FORM_DISCARD_ACTION_KINDS'), constSrc(html, 'FORM_PDF_ACTION_KINDS'), constSrc(html, 'FORM_PDF_PLACEMENTS'), constSrc(html, 'FORM_PDF_WARNINGS_KEPT'),
     constSrc(html, 'FORM_SUBMIT_ACTION_KINDS'), constSrc(html, 'FORM_TEMPLATE_ACTION_KINDS'), constSrc(html, 'FORM_TEMPLATE_VISIBILITIES'),
     constSrc(html, 'MAIL_READ_ACTION_KINDS'), constSrc(html, 'MAIL_LINK_ACTION_KINDS'), constSrc(html, 'MAIL_ATTACHMENTS_ACTION_KINDS'),
+    constSrc(html, 'MAIL_UNLINK_ACTION_KINDS'), constSrc(html, 'MAIL_BULK_ACTION_KINDS'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
     constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEQUENCE_ENROLL_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
@@ -5342,12 +5346,192 @@ describe('A13 mail cards (mail.read / mail.case_link)', () => {
     expect([[...fr.kinds], fr.idField, fr.appliedKey, !!fr.stringReceipt]).toEqual([['mail.read.v1'], 'mail_message_id', 'result_mail_read_id', false]);
     expect([[...fl.kinds], fl.idField, fl.appliedKey, !!fl.stringReceipt]).toEqual([['mail.case_link.v1'], 'log_id', 'result_mail_link_log_id', false]);
     for (const kind of ['mail.draft.v1', 'mail.bulk_read.v1', 'mail.unlink.v1', 'mail.flag.v1', 'sms.read.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    // A13X: the two new kinds resolve to their own families.
+    expect([box.actionFamily({ kind: 'mail.case_unlink.v1' }).id, box.actionFamily({ kind: 'mail.read.bulk.v1' }).id]).toEqual(['mail_unlink', 'mail_read_bulk']);
     dom.window.close();
   });
 
   test('an email entity opens a where-to-find-it note, never a URL', () => {
     expect(html).toContain("else if (kind === 'mail') mailOpenInfo(label);");
     expect(html).toContain("mail: 'fa-envelope'");
+  });
+});
+
+// A13X: the unlink and the bulk read through the ONE shared engine.
+describe('A13X mail cards (mail.case_unlink / mail.read.bulk)', () => {
+  const CASE_ID = '7KQ2M9XA';
+  const JUNK = { ids: [1, 2], all: true, mailbox_ids: [9], log_id: 1, case_id: 'OTHER' };
+  const MESSAGE = { mail_message_id: 88123, mailbox_id: 3, mailbox: 'intake@firm.test', from: 'Dana Debtor <dana@example.com>', to: 'intake@firm.test',
+    subject: 'Pay stubs', date: '2026-10-30T15:04:00.000Z', place: 'Inbox' };
+  const unlinkMsg = (over = {}) => ({ action_draft: {
+    draft_id: 'bebebebe-1b2c-4d3e-8f40-123456789abc', kind: 'mail.case_unlink.v1', received_at: Date.now(), ...JUNK, status: 'draft',
+    message: { ...MESSAGE }, case: { case_id: CASE_ID, case_number: '25-12345', label: 'case 25-12345', exists: true },
+    log: { log_id: 5001, via: 'stamped', type: 'email', date: '2026-10-30T11:00:00.000Z', link: 'email dana@example.com', message_chars: 22 },
+    effects: ['Clears the case link of log entry #5001'], warnings: ["LEAVES CASE 25-12345: case 25-12345's Comms tab and Log tab stop listing this email once applied."],
+    expected: { stamp_log_id: 5001, log_id: 5001, case_id: CASE_ID }, evidence: [], ...over } });
+  const onCase = (over = {}) => ({ status: 'success', messages: [{ id: 88123, unread: true, log_id: 5001, log_status: { state: 'case', case: { case_id: CASE_ID, case_number: '25-12345' }, log_id: 5001, via: 'stamped' }, ...over }] });
+  const idsMsg = (over = {}) => ({ action_draft: {
+    draft_id: 'cfcfcfcf-1b2c-4d3e-8f40-123456789abc', kind: 'mail.read.bulk.v1', received_at: Date.now(), ...JUNK, status: 'draft', mode: 'ids',
+    messages: [{ ...MESSAGE, copies: 1, unread: true, copies_unread: 1, ids: [88123, 88124] }], skipped: [], count: 2, copies: 1,
+    effects: ['Marks 2 stored messages READ for YOU only'], warnings: [],
+    expected: { mode: 'ids', ids: [88123, 88124], count: 2, cited: [{ mail_message_id: 88123, unread: true }] }, evidence: [], ...over } });
+  const allMsg = (over = {}) => ({ action_draft: {
+    draft_id: 'dadadada-1b2c-4d3e-8f40-123456789abc', kind: 'mail.read.bulk.v1', received_at: Date.now(), ...JUNK, status: 'draft', mode: 'all',
+    mailboxes: [{ mailbox_id: 3, address: 'intake@firm.test', alias_of: null }, { mailbox_id: 4, address: 'billing@firm.test', alias_of: null }],
+    filters: {}, filter_words: [], scope: 'the Inbox of intake@firm.test, billing@firm.test', count: 7,
+    effects: ['Marks every unread message'], warnings: [],
+    expected: { mode: 'all', mailbox_ids: [3, 4], filters: {}, count: 7, filtered: false }, evidence: [], ...over } });
+  function runMail(message, { read, write, confirm = true }) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push({ path, body }); return read(path, body); }
+      writes.push({ path, body, method, headers }); return write(path, body, method);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a13x' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) } };
+    const history = []; const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, openEntity, sandbox }));
+  }
+  const unlinked = async () => ({ status: 'success', id: 88123, log_id: 5001, case: { case_id: CASE_ID, case_number: '25-12345' } });
+  const readOf = (msg) => (path) => { if (path === '/api/mail/messages/88123') { if (msg === null) throw Object.assign(new Error('Message not found'), { status: 404 }); return msg; } throw new Error(`unexpected read ${path}`); };
+
+  test('unlink: re-reads the message; ONE DELETE of exactly the case-link path, no body; the log_id receipt; always danger', async () => {
+    const m = unlinkMsg();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runMail(m, { read: readOf(onCase()), write: unlinked });
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('mail_unlink');
+    expect(gets.map((g) => g.path)).toEqual(['/api/mail/messages/88123']);
+    expect(writes).toEqual([{ path: '/api/mail/messages/88123/case-link', method: 'DELETE', headers: undefined, body: null }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a13x', result: { log_id: 5001 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_mail_unlink_log_id: 5001 });
+    expect(history[0].text).toBe('Take email off case applied to log entry #5001.');
+    // the entity is the EMAIL (find it in Comms), not the case it left
+    expect(openEntity).toHaveBeenCalledWith('mail', '88123', '"Pay stubs"');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Take email off case' });
+    for (const line of ['Email case unlink proposal — not applied', 'Leaves: case 25-12345',
+      'Log entry: #5001 (a "email" entry, under email dana@example.com) STAYS on the firm log — only its case link is cleared',
+      'Writes: the log entry\'s case link, cleared — nothing is deleted, created or stamped; the email and its mailbox are untouched.',
+      'Notification: Casey sends nothing; unlinking runs no trigger rule.']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+  });
+
+  test('unlink: freshness before the claim — gone, already off, moved to another case, the log entry changed; the builder needs a case', async () => {
+    const x = await runMail(unlinkMsg({ case: { case_id: '' } }), { read: readOf(onCase()), write: unlinked });
+    expect([x.gets, x.ledger, x.writes]).toEqual([[], [], []]);
+    for (const [msg, why] of [
+      [null, 'Message #88123 is no longer one you can read'],
+      [onCase({ log_status: { state: 'logged', log_id: 5001 } }), 'Message #88123 is no longer on case 25-12345 — someone took it off since this card was prepared. Nothing was written.'],
+      [onCase({ log_status: { state: 'case', case: { case_id: 'OTHER123', case_number: '24-9' }, log_id: 5001 } }), 'Message #88123 is now on another case (24-9), not case 25-12345 — it moved since this card was prepared.'],
+      [onCase({ log_id: 7, log_status: { state: 'case', case: { case_id: CASE_ID }, log_id: 7 } }), 'Message #88123\'s log entry changed since this card was prepared.'],
+    ]) {
+      const message = unlinkMsg();
+      const r = await runMail(message, { read: readOf(msg), write: unlinked });
+      expect({ why, writes: r.writes, ledger: r.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(message.action_draft.refusal_error).toContain(why);
+    }
+  });
+
+  test('unlink: outcomes — the route\'s 409s are refusals that wrote nothing; 404 refuses; a 500 and an answer for another case stay ambiguous', async () => {
+    const fail = (status, message) => async () => { throw Object.assign(new Error(message), { status, body: { status: 'error', message } }); };
+    for (const message of ['This message is not on a case: it is not on the log.', 'This message is not on a case: its log entry is on the firm log (attributed to contact 77), not on a case.',
+      'The log entry this message points at no longer exists.']) {
+      const m = unlinkMsg();
+      await runMail(m, { read: readOf(onCase()), write: fail(409, message) });
+      expect(m.action_draft.refusal_error).toBe(`Refused — nothing written: ${message} Ask Casey to prepare it again if it should still change.`);
+    }
+    const gone = unlinkMsg();
+    await runMail(gone, { read: readOf(onCase()), write: fail(404, 'Message not found') });
+    expect(gone.action_draft.refusal_error).toBe('Refused — nothing written (Message not found). Ask Casey to prepare it again.');
+    for (const write of [fail(500, 'boom'), fail(409, 'conflict'), async () => ({ ...(await unlinked()), case: { case_id: 'OTHER123' } }), async () => ({ ...(await unlinked()), log_id: null })]) {
+      const m = unlinkMsg();
+      await runMail(m, { read: readOf(onCase()), write });
+      expect(m.action_draft.ambiguous_error).toMatch(/may already have been applied|did not confirm the unlink|did not take it off the reviewed case/);
+    }
+  });
+
+  test('bulk (ids): re-reads every cited message; ONE POST of exactly the frozen ids (never the junk); the count receipt; refuses on a flipped state', async () => {
+    const m = idsMsg();
+    const { writes, gets, ledger, P, history, sandbox } = await runMail(m, { read: readOf({ status: 'success', messages: [{ id: 88123, unread: true }] }), write: async () => ({ status: 'success', marked: 2, ids: [88123, 88124] }) });
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('mail_read_bulk');
+    expect(gets.map((g) => g.path)).toEqual(['/api/mail/messages/88123']);
+    expect(writes).toEqual([{ path: '/api/mail/read', method: 'POST', headers: undefined, body: { ids: [88123, 88124] } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a13x', result: { marked: 2 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_mail_read_bulk_marked: 2 });
+    expect(history[0].text).toBe('Mark 2 messages read applied to 2 messages.');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'question', confirmButtonText: 'Mark 2 messages read' });
+    for (const line of ['Bulk email read-state proposal — not applied', 'Email: #88123 in intake@firm.test (Inbox) — from Dana Debtor <dana@example.com>, "Pay stubs", 2026-10-30 15:04 UTC + 1 unread copy',
+      'Messages marked: 2 (1 of them copies of the emails you cited)', 'Writes: rows of YOUR read state for these messages — nothing else, and nobody else\'s.']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+    const flipped = idsMsg();
+    const f = await runMail(flipped, { read: readOf({ status: 'success', messages: [{ id: 88123, unread: false }] }), write: async () => ({ status: 'success', marked: 2 }) });
+    expect([f.writes, f.ledger]).toEqual([[], []]);
+    expect(flipped.action_draft.refusal_error).toBe('Message #88123 is now read for you — its read state changed since this card was prepared. Nothing was written.');
+  });
+
+  test('bulk (ids): the result — marked outside 1..count, or an id the card did not send, is ambiguous; marked below the count (a concurrent writer) is applied', async () => {
+    for (const write of [async () => ({ status: 'success', marked: 0, ids: [] }), async () => ({ status: 'success', marked: 3 }), async () => ({ status: 'success', marked: 3, ids: [88123, 88124] }), async () => ({ status: 'success', marked: 2, ids: [88123, 5] })]) {
+      const m = idsMsg();
+      await runMail(m, { read: readOf({ status: 'success', messages: [{ id: 88123, unread: true }] }), write });
+      expect(m.action_draft.ambiguous_error).toMatch(/not within the reviewed 2|marked a message this card did not send/);
+    }
+    const partial = idsMsg();
+    await runMail(partial, { read: readOf({ status: 'success', messages: [{ id: 88123, unread: true }] }), write: async () => ({ status: 'success', marked: 1, ids: [88124] }) });
+    expect(partial.action_draft).toMatchObject({ status: 'applied', result_mail_read_bulk_marked: 1 });
+  });
+
+  test('bulk (all, no filters): the summary\'s inbox_unread over the frozen mailboxes must equal the count; a mailbox gone refuses; the body is all + the frozen ids', async () => {
+    const summary = (boxes) => (path) => { if (path === '/api/mail/mailboxes') return { status: 'success', mailboxes: boxes }; throw new Error(`unexpected read ${path}`); };
+    const m = allMsg();
+    const { writes, gets, P } = await runMail(m, { read: summary([{ id: 3, inbox_unread: 4, alias_of: null }, { id: 4, inbox_unread: 3, alias_of: null }, { id: 5, inbox_unread: 9, alias_of: null }]),
+      write: async () => ({ status: 'success', marked: 7 }) });
+    expect(gets.map((g) => g.path)).toEqual(['/api/mail/mailboxes']);
+    expect(writes).toEqual([{ path: '/api/mail/read', method: 'POST', headers: undefined, body: { all: true, mailbox_ids: [3, 4] } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_mail_read_bulk_marked: 7 });
+    expect(P.Swal.fire.mock.calls[0][0].text).toContain('Mailbox: intake@firm.test (#3)');
+    expect(P.Swal.fire.mock.calls[0][0].text).toContain('Count now: 7 unread');
+    for (const [boxes, why] of [
+      [[{ id: 3, inbox_unread: 4 }], 'Mailbox #4 is no longer one you can read. Nothing was written.'],
+      [[{ id: 3, inbox_unread: 5 }, { id: 4, inbox_unread: 3 }], 'The scope now holds 8 unread messages, not the 7 this card reviewed'],
+    ]) {
+      const x = allMsg();
+      const r = await runMail(x, { read: summary(boxes), write: async () => ({ status: 'success', marked: 7 }) });
+      expect([r.writes, r.ledger]).toEqual([[], []]);
+      expect(x.action_draft.refusal_error).toContain(why);
+    }
+    // an alias whose parent is in the scope is dropped from the sum (branchPlan's rule)
+    const al = allMsg({ mailboxes: [{ mailbox_id: 3, address: 'intake@firm.test', alias_of: null }, { mailbox_id: 6, address: 'it@firm.test', alias_of: 3 }], expected: { mode: 'all', mailbox_ids: [3, 6], filters: {}, count: 4, filtered: false }, count: 4 });
+    const ar = await runMail(al, { read: summary([{ id: 3, inbox_unread: 4, alias_of: null }, { id: 6, inbox_unread: 2, alias_of: 3 }]), write: async () => ({ status: 'success', marked: 4 }) });
+    expect(ar.writes).toHaveLength(1);
+    // danger past 100 = any warning
+    const big = allMsg({ warnings: ['THIS MARKS 101 EMAILS READ FOR YOU'], count: 101, expected: { mode: 'all', mailbox_ids: [3, 4], filters: {}, count: 101, filtered: false } });
+    const br = await runMail(big, { read: summary([{ id: 3, inbox_unread: 100 }, { id: 4, inbox_unread: 1 }]), write: async () => ({ status: 'success', marked: 101 }) });
+    expect(br.P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning', focusCancel: true });
+  });
+
+  test('bulk (all, filtered): the count is re-read by walking the hub\'s list with the frozen filters + unread_only (raw rows = copies per row), cursor by cursor', async () => {
+    const pages = { '': { messages: [{ id: 1, copies: [{ id: 1 }, { id: 2 }] }, { id: 3, copies: [{ id: 3 }] }], next_cursor: 'c2' }, c2: { messages: [{ id: 4 }], next_cursor: null } };
+    const list = (path, body) => {
+      if (path === '/api/mail/mailboxes') return { status: 'success', mailboxes: [{ id: 3, inbox_unread: 99 }] };
+      if (path === '/api/mail/messages') {
+        expect(body).toMatchObject({ mailbox_ids: '3', unread_only: 1, limit: 100, from_domain: 'court.test', has_files: 1 });
+        return { status: 'success', ...pages[body.cursor || ''] };
+      }
+      throw new Error(`unexpected read ${path}`);
+    };
+    const m = allMsg({ mailboxes: [{ mailbox_id: 3, address: 'intake@firm.test', alias_of: null }], filters: { from_domain: 'court.test', has_files: true }, filter_words: ['with attachments', 'from the domain court.test'],
+      count: 4, expected: { mode: 'all', mailbox_ids: [3], filters: { from_domain: 'court.test', has_files: true }, count: 4, filtered: true } });
+    const { writes, gets } = await runMail(m, { read: list, write: async () => ({ status: 'success', marked: 4 }) });
+    expect(gets.map((g) => g.path)).toEqual(['/api/mail/mailboxes', '/api/mail/messages', '/api/mail/messages']);
+    expect(writes).toEqual([{ path: '/api/mail/read', method: 'POST', headers: undefined, body: { all: true, mailbox_ids: [3], filters: { from_domain: 'court.test', has_files: true } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_mail_read_bulk_marked: 4 });
+    const moved = allMsg({ ...m.action_draft, status: 'draft', draft_id: 'e1e1e1e1-1b2c-4d3e-8f40-123456789abc', count: 5, expected: { ...m.action_draft.expected, count: 5 } });
+    const r = await runMail(moved, { read: list, write: async () => ({ status: 'success', marked: 5 }) });
+    expect(r.writes).toEqual([]);
+    expect(moved.action_draft.refusal_error).toContain('The scope now holds 4 unread messages, not the 5 this card reviewed');
   });
 });
 
