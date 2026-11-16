@@ -44,8 +44,16 @@
  *   case       cited + existing; an email FILES to it (linked_to_recipient is
  *              a flag), an SMS still needs the recipient's own case; no case
  *              is ever inferred.
- *   refused    attachments and scheduled sends, BY NAME, saying the hub itself
- *              cannot do them.
+ *   A14Y (released 2026-11-16 — the hub's own routes shipped the same day):
+ *   files      attachments is [{document_id}], each cited by an evidence row
+ *              carrying that document_id; re-read through the hub's OWN
+ *              loadAttachments (its query on the fake; its caps, its words);
+ *              duplicates collapse; the card lists name · size · id + total.
+ *   schedule   send_at parsed by the hub's OWN parseSendAt (its window, its
+ *              words), shown in firm time + UTC with the hub's window.
+ *   refused    MMS media (both channels) and any scheduling of a TEXT, BY
+ *              NAME, saying the hub itself cannot; an email's aliases of
+ *              attachments / send_at point at the real field.
  */
 
 'use strict';
@@ -69,10 +77,14 @@ const EVID = [{ id: 'q1', purpose: 'Client phones and emails', rows: [
 ] },
 // A typed mail read (the only evidence a reply may cite) and an untyped read carrying a look-alike id.
 { id: 'q2', kind: 'mail.message', purpose: 'The email', rows: [{ row_type: 'message', mail_message_id: 501, mailbox_id: 5, from: 'Pat One <pat@example.com>', subject: 'Hello' }] },
-{ id: 'q3', kind: 'sql.read', purpose: 'Look-alike', rows: [{ mail_message_id: 502, row_type: 'message' }] }];
+{ id: 'q3', kind: 'sql.read', purpose: 'Look-alike', rows: [{ mail_message_id: 502, row_type: 'message' }] },
+// A14Y: a documents read (documents.id AS document_id) — the rows an email may attach; row 8 names a document that does not exist.
+{ id: 'q4', kind: 'sql.read', purpose: 'Documents', rows: [1, 2, 3, 4, 5, 6, 7, 999].map((document_id) => ({ document_id, name: `doc ${document_id}` })) }];
 const CITE = [{ query_id: 'q1', row_number: 1 }];
 const ROW = (n, q = 'q1') => ({ query_id: q, row_number: n });
 const { makeDb, STAMP } = require('./helpers/caseySendProposalDb');
+const sched = require('../services/mailbox/mailboxScheduledSendService');
+const MiB = 1024 * 1024;
 
 const LINES = {
   3: { id: 3, phone_number: '2489655355', display_name: 'Rena', provider: 'quo', active: true },
@@ -286,19 +298,141 @@ describe('email.send.v1', () => {
     await expect(norm(email(), bad)).rejects.toThrow(/not an address the mail route accepts/);
   });
 
-  test('closed shape: attachments, html, scheduling and a typed To are refused by name; attachments / scheduling say the hub itself cannot', async () => {
-    for (const k of ['attachment_urls', 'attachments', 'body_html', 'scheduled_time', 'send_at', 'to', 'media_url']) {
+  test('closed shape: html, a typed To and MMS media are refused by name; the aliases of attachments / send_at point at the real field (A14Y)', async () => {
+    for (const k of ['attachment_urls', 'body_html', 'scheduled_time', 'to', 'media_url', 'files', 'send_later']) {
       await expect(norm(email({ [k]: 'x' }))).rejects.toThrow(new RegExp(`unsupported fields: ${k}`));
     }
-    await expect(norm(email({ attachment_urls: ['x'] }))).rejects.toThrow(/"attachment_urls": the Comms hub itself cannot attach a file to a send \(no native route exists\)/);
-    await expect(norm(email({ scheduled_time: '2026-12-01T10:00:00Z' }))).rejects.toThrow(/"scheduled_time": the Comms hub itself cannot schedule a send/);
-    await expect(norm(email({ send_at: 'tomorrow', attachments: [] }))).rejects.toThrow(/cannot schedule a send.*cannot attach a file|cannot attach a file.*cannot schedule a send/s);
-    // A plain unknown field gets the shape, not the "hub cannot" clause.
-    await expect(norm(email({ reply_all: true }))).rejects.toThrow(/unsupported fields: reply_all — it takes contact_id, email_id, mailbox_id, subject, body, case_id, cc, bcc, in_reply_to_message_fk, quote_original, evidence \(no attachments, scheduling, HTML body or free-typed recipients/);
-    await expect(norm(email({ reply_all: true }))).rejects.not.toThrow(/hub itself/);
-    // SMS: nothing new — cc/bcc stay refused there, and the text names media.
-    await expect(norm(sms({ media_url: 'x' }))).rejects.toThrow(/"media_url": the Comms hub itself cannot attach a file \(MMS media\) to a send/);
+    await expect(norm(email({ attachment_urls: ['x'] }))).rejects.toThrow(/"attachment_urls": use "attachments": a list of \{document_id\}, each the document_id of a registered document cited from a documents read/);
+    await expect(norm(email({ scheduled_time: '2026-12-01T10:00:00Z' }))).rejects.toThrow(/"scheduled_time": use "send_at": an ISO-8601 time WITH its zone/);
+    await expect(norm(email({ media_url: 'x' }))).rejects.toThrow(/"media_url": the Comms hub itself cannot attach MMS media to an email \(no native route exists\) — a registered document is attached with "attachments"/);
+    await expect(norm(email({ send_later: 'tomorrow', files: [] }))).rejects.toThrow(/use "send_at".*use "attachments"|use "attachments".*use "send_at"/s);
+    // A plain unknown field gets the shape, not a hint.
+    await expect(norm(email({ reply_all: true }))).rejects.toThrow(/unsupported fields: reply_all — it takes contact_id, email_id, mailbox_id, subject, body, case_id, cc, bcc, in_reply_to_message_fk, quote_original, attachments, send_at, evidence \(no HTML body or free-typed recipients — cc\/bcc are lists of \{contact_id, email_id\} cited like the To, attachments a list of \{document_id\} cited from a documents read, send_at an ISO-8601 time with its zone\)\.$/);
+    // SMS: still nothing — cc/bcc refused, attachments / media are MMS the hub cannot send, and no schedule exists for a text.
+    await expect(norm(sms({ media_url: 'x' }))).rejects.toThrow(/"media_url": the Comms hub itself cannot attach a file \(MMS media\) to a text \(no native route exists\), so neither can a card/);
+    await expect(norm(sms({ attachments: [{ document_id: 1 }] }))).rejects.toThrow(/"attachments": the Comms hub itself cannot attach a file \(MMS media\) to a text/);
+    await expect(norm(sms({ send_at: '2026-12-01T10:00:00Z' }))).rejects.toThrow(/"send_at": the Comms hub itself cannot schedule a text \(no native route exists\), so neither can a card — tell the user to send it later by hand/);
     await expect(norm(sms({ cc: 'x' }))).rejects.toThrow(/unsupported fields: cc — it takes .*\(no attachments \/ MMS media, cc\/bcc, scheduling or free-typed recipients\)/);
+    await expect(norm(sms({ cc: 'x' }))).rejects.not.toThrow(/hub itself/);
+  });
+
+  // ── A14Y: attachments ──
+  const DOC = (n) => ROW(n, 'q4');
+  const withFiles = (attachments, rows, over = {}) => email({ subject: 'Hi', case_id: undefined, attachments, evidence: [ROW(1), ...rows.map(DOC)], ...over });
+
+  test('attachments: each {document_id} is cited by a documents row and re-read through the hub\'s own loadAttachments; the card lists name · size · id, the total and the hub\'s caps', async () => {
+    const db = makeDb();
+    const d = await norm(withFiles([{ document_id: 1 }, { document_id: '6' }], [1, 6]), db);
+    expect(d.attachments).toEqual([{ document_id: 1, name: 'Petition.pdf', size: MiB }, { document_id: 6, name: 'Letter.docx', size: 2 * MiB }]);
+    expect(d).toMatchObject({ attachments_total_bytes: 3 * MiB, attachment_duplicates_dropped: 0, schedule: null,
+      attachment_limits: { max_attachments: sendSvc.MAX_ATTACHMENTS, attachment_max_bytes: sendSvc.ATTACHMENT_MAX_BYTES, attachments_total_bytes: sendSvc.ATTACHMENTS_TOTAL_BYTES } });
+    expect(d.attachment_limits).toEqual({ max_attachments: 10, attachment_max_bytes: 15 * MiB, attachments_total_bytes: 15 * MiB });
+    // ONE read, the hub's own statement, over the unique ids.
+    const reads = db.seen.filter((s) => /FROM documents/.test(s));
+    expect(reads).toEqual(['SELECT id, source, external_id, name, size, status FROM documents WHERE id IN (?)']);
+    // Nothing of the registry beyond id / name / size reaches the card (source, external_id stay server-side).
+    expect(Object.keys(d.attachments[0]).sort()).toEqual(['document_id', 'name', 'size']);
+    // No files: empty list, zero total — never undefined (the builder and the card read them).
+    expect(await norm(email())).toMatchObject({ attachments: [], attachments_total_bytes: 0, attachment_duplicates_dropped: 0 });
+    expect((await norm(email())).attachment_limits.max_attachments).toBe(10);
+  });
+
+  test('attachments: duplicates collapse (counted for the card) as the hub collapses them; seven files is a card\'s most (one of its 8 refs is the To) — the hub\'s count cap is kept and pinned', async () => {
+    const d = await norm(withFiles([{ document_id: 1 }, { document_id: 1 }, { document_id: 6 }, { document_id: 1 }], [1, 6]));
+    expect(d.attachments.map((f) => f.document_id)).toEqual([1, 6]);
+    expect(d).toMatchObject({ attachment_duplicates_dropped: 2, attachments_total_bytes: 3 * MiB });
+    // Seven small files, each cited: all seven read in ONE statement and listed in request order.
+    const many = makeDb();
+    for (let i = 10; i < 18; i++) many.T.documents.push({ id: i, source: 'dropbox', external_id: `id:doc${i}`, name: `F${i}.pdf`, size: 10, status: 'active' });
+    const evid = [...EVID.slice(0, 3), { id: 'q4', kind: 'sql.read', purpose: 'Documents', rows: Array.from({ length: 8 }, (_, i) => ({ document_id: 10 + i })) }];
+    const files = (n) => Array.from({ length: n }, (_, i) => ({ document_id: 10 + i }));
+    const refs = (n) => [ROW(1), ...Array.from({ length: n }, (_, i) => DOC(i + 1))];
+    const seven = await svc.normalizeActionDraft(many, email({ subject: 'Hi', case_id: undefined, attachments: files(7), evidence: refs(7) }), evid, { currentUserId: USER });
+    expect(seven.attachments.map((f) => f.document_id)).toEqual([10, 11, 12, 13, 14, 15, 16]);
+    expect(seven.attachments_total_bytes).toBe(70);
+    expect(many.seen.filter((s) => /FROM documents/.test(s))).toHaveLength(1);
+    // An eighth file needs a ninth ref: the evidence cap refuses first, so the hub's 10-file cap cannot be reached from a card.
+    await expect(svc.normalizeActionDraft(many, email({ subject: 'Hi', case_id: undefined, attachments: files(8), evidence: refs(8) }), evid, { currentUserId: USER })).rejects.toThrow(/1-8 evidence/);
+    // Parity: the hub's own validator draws its count line at MAX_ATTACHMENTS.
+    expect(sendSvc.MAX_ATTACHMENTS).toBe(10);
+    expect(() => sendSvc.validateSendBody({ mailbox_id: 5, to: ['pat@example.com'], subject: 's', body_text: 'b', attachments: Array.from({ length: 10 }, (_, i) => ({ document_id: i + 1 })) })).not.toThrow();
+    expect(() => sendSvc.validateSendBody({ mailbox_id: 5, to: ['pat@example.com'], subject: 's', body_text: 'b', attachments: Array.from({ length: 11 }, (_, i) => ({ document_id: i + 1 })) })).toThrow(/at most 10 attachments on one message/);
+  });
+
+  test('attachments: the hub\'s own refusals, in its words, before the card — not registered, deleted, missing, size unknown, over the per-file cap, over the total cap', async () => {
+    await expect(norm(withFiles([{ document_id: 999 }], [8]))).rejects.toThrow(/^Email send attachments: document #999 is not a registered document$/);
+    await expect(norm(withFiles([{ document_id: 3 }], [3]))).rejects.toThrow(/^Email send attachments: "Gone.pdf" has been deleted from storage — remove it to send$/);
+    await expect(norm(withFiles([{ document_id: 7 }], [7]))).rejects.toThrow(/^Email send attachments: "Missing.pdf" has been reported missing — remove it to send$/);
+    await expect(norm(withFiles([{ document_id: 4 }], [4]))).rejects.toThrow(/^Email send attachments: the size of "Unknown.bin" is not known, so it cannot be attached \(re-register it in Documents\)$/);
+    await expect(norm(withFiles([{ document_id: 5 }], [5]))).rejects.toThrow(/^Email send attachments: "Huge.zip" is 16 MB — at most 15 MB per file$/);
+    await expect(norm(withFiles([{ document_id: 2 }, { document_id: 6 }], [2, 6]))).rejects.toThrow(/^Email send attachments: together they come to more than 15 MB$/);
+    // A 5xx from the registry read is not dressed as a 422.
+    const broken = makeDb(); broken.T.documents = null;
+    await expect(norm(withFiles([{ document_id: 1 }], [1]), broken)).rejects.not.toMatchObject({ status: 422 });
+    // Parity: the same rows meet the same refusals in the hub's own loader.
+    await expect(sendSvc.loadAttachments(makeDb(), [3])).rejects.toThrow(/"Gone.pdf" has been deleted from storage/);
+    await expect(sendSvc.loadAttachments(makeDb(), [2, 6])).rejects.toThrow(/together they come to more than 15 MB/);
+  });
+
+  test('attachments shape: a file is never named, pathed or linked by hand — a string, a bare id, an extra key, a bad id and an un-cited id refuse by name', async () => {
+    await expect(norm(withFiles('Petition.pdf', [1]))).rejects.toThrow(/attachments must be a list of \{document_id\} — each the document_id of a registered document cited in evidence, never a file name, path or URL/);
+    await expect(norm(withFiles([1], [1]))).rejects.toThrow(/attachments\[0\] must be \{document_id\} — a file is never named, pathed or linked by hand/);
+    await expect(norm(withFiles([{ document_id: 1, name: 'Petition.pdf' }], [1]))).rejects.toThrow(/attachments\[0\] must be \{document_id\}/);
+    await expect(norm(withFiles([{ url: 'https://x.test/a.pdf' }], [1]))).rejects.toThrow(/attachments\[0\] must be \{document_id\}/);
+    for (const bad of ['x', 0, -1, 1.5, '1.5', [1]]) {
+      await expect(norm(withFiles([{ document_id: bad }], [1]))).rejects.toThrow(/attachments\[0\] document_id must be the exact positive id of a registered document/);
+    }
+    // Cited elsewhere is not cited: the ref must carry THAT document_id.
+    await expect(norm(withFiles([{ document_id: 6 }], [1]))).rejects.toThrow(/attachments\[0\] \(document 6\) must be cited by an evidence row carrying that exact document_id — read the documents table first/);
+    await expect(norm(withFiles([{ document_id: 1 }, { document_id: 6 }], [1]))).rejects.toThrow(/attachments\[1\] \(document 6\) must be cited/);
+    // A refused shape never reaches the registry.
+    const db = makeDb();
+    await expect(norm(withFiles([{ document_id: 6 }], [1]), db)).rejects.toThrow();
+    expect(db.seen.some((s) => /FROM documents/.test(s))).toBe(false);
+    // An empty list is no attachments.
+    expect((await norm(withFiles([], []))).attachments).toEqual([]);
+  });
+
+  // ── A14Y: send_at ──
+  const IN = (ms) => new Date(Date.now() + ms).toISOString();
+
+  test('send_at: parsed by the hub\'s own parseSendAt — the card carries the UTC instant, the firm-time wording, the zone and the hub\'s window', async () => {
+    const at = IN(3600_000);
+    const d = await norm(email({ send_at: at }));
+    expect(d.schedule).toEqual({
+      send_at: at, firm_time: expect.stringMatching(/^[A-Z][a-z]{2}, [A-Z][a-z]{2} \d{1,2}, \d{4} at \d{1,2}:\d{2} [AP]M E[SD]T$/), firm_zone: 'America/Detroit',
+      min_ahead_ms: sched.MIN_AHEAD_MS, max_ahead_ms: sched.MAX_AHEAD_MS, lag_s: 60,
+    });
+    expect([d.schedule.min_ahead_ms, d.schedule.max_ahead_ms]).toEqual([2 * 60_000, 30 * 86_400_000]);
+    // Firm time IS that instant: a fixed winter instant reads as Detroit EST.
+    const fixed = await norm(email({ send_at: '2026-12-01T15:30:00Z' }), makeDb());
+    expect(fixed.schedule).toMatchObject({ send_at: '2026-12-01T15:30:00.000Z', firm_time: 'Tue, Dec 1, 2026 at 10:30 AM EST' });
+    // An offset time is normalised to the same UTC instant.
+    expect((await norm(email({ send_at: '2026-12-01T10:30:00-05:00' }))).schedule.send_at).toBe('2026-12-01T15:30:00.000Z');
+    // A schedule carries everything else a send does — files, copies, a reply, a case.
+    const full = await norm(email({ send_at: at, attachments: [{ document_id: 1 }], cc: [{ contact_id: 1309, email_id: 14 }], evidence: [ROW(1), ROW(4), DOC(1)] }));
+    expect(full).toMatchObject({ schedule: { send_at: at }, attachments: [{ document_id: 1 }], cc: [{ email_id: 14 }], case: { case_id: 'CASE1' } });
+    // Not a schedule: null, never undefined (the builder reads it).
+    expect((await norm(email())).schedule).toBeNull();
+  });
+
+  test('send_at: the hub\'s window and format, in the hub\'s words — naive, past, inside the floor, beyond the ceiling, not a string; an SMS never schedules', async () => {
+    await expect(norm(email({ send_at: '2026-12-01T10:30:00' }))).rejects.toThrow(/^Email send send_at must be an ISO-8601 time with its zone \(…Z or ±hh:mm\)$/);
+    await expect(norm(email({ send_at: 'tomorrow 10am' }))).rejects.toThrow(/send_at must be an ISO-8601 time with its zone/);
+    await expect(norm(email({ send_at: IN(-60_000) }))).rejects.toThrow(/^Email send send_at must be at least 2 minutes from now$/);
+    await expect(norm(email({ send_at: IN(119_000) }))).rejects.toThrow(/at least 2 minutes from now/);
+    await expect(norm(email({ send_at: IN(31 * 86_400_000) }))).rejects.toThrow(/^Email send send_at must be within 30 days$/);
+    await expect(norm(email({ send_at: IN(121_000) }))).resolves.toMatchObject({ schedule: { send_at: expect.any(String) } });
+    await expect(norm(email({ send_at: IN(30 * 86_400_000 - 5000) }))).resolves.toMatchObject({ schedule: { send_at: expect.any(String) } });
+    for (const bad of [123, true, { at: 'x' }, ['2026-12-01T10:30:00Z']]) {
+      await expect(norm(email({ send_at: bad }))).rejects.toThrow(/send_at must be an ISO-8601 time with its zone/);
+    }
+    // Parity: the hub refuses the same instants with the same words.
+    expect(() => sched.parseSendAt(IN(119_000))).toThrow(/at least 2 minutes from now/);
+    expect(() => sched.parseSendAt(IN(31 * 86_400_000))).toThrow(/within 30 days/);
+    expect(() => sched.parseSendAt('2026-12-01T10:30:00')).toThrow(/with its zone/);
+    // A text has no schedule: refused by name before anything is read.
+    await expect(norm(sms({ send_at: IN(3600_000) }))).rejects.toThrow(/cannot schedule a text/);
   });
 
   // ── A14X: cc / bcc ──

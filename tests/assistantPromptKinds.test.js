@@ -989,6 +989,63 @@ describe('A14 direct sends across the stages', () => {
   });
 });
 
+// A14Y (2026-11-16, "release means allow" — the hub's own routes shipped the
+// same day): attachments and send_at on an email. Every stage refused both BY
+// NAME before; a stage still saying so refuses the new capability (the job
+// lesson again). MMS media and scheduling a TEXT stay refused everywhere.
+describe('A14Y — every stage teaches attachments and send_at on an email, the documents read, and that a text has neither', () => {
+  const stages = { answer: answerPrompt, plan: planPrompt, repair: repairPrompt, investigate: investigatePrompt };
+  const OLD_REFUSALS = ['the Comms hub itself cannot attach a file to a send or schedule', 'no attachments or\n  scheduling (the Comms hub itself cannot do either',
+    'no HTML, no attachments, no MMS/media, no scheduling', 'Attachments, MMS, scheduling, bulk sends and several To recipients are not'];
+
+  test('the old by-name refusals are gone from every stage', () => {
+    for (const [stage, src] of Object.entries(stages)) {
+      for (const phrase of OLD_REFUSALS) {
+        expect({ stage, phrase, present: src.includes(phrase) }).toEqual({ stage, phrase, present: false });
+      }
+    }
+    expect(fsRead('lib/settingsRegistry.js')).not.toContain('attachments and scheduled sends stay refused');
+  });
+
+  test('the answer stage carries the shape and the rules: cited document rows, the hub\'s caps, send_at with its zone, the schedule card\'s words', () => {
+    expect(answerPrompt).toContain('"attachments":[{"document_id":88412}],"send_at":"optional — 2026-11-17T14:30:00-05:00 (schedules it)"');
+    expect(answerPrompt).toContain('EMAIL files and timing (released 2026-11-16');
+    expect(answerPrompt).toContain('each the document_id of a REGISTERED document cited by an evidence row');
+    expect(answerPrompt).toContain('never a file name, path or URL, never an upload');
+    expect(answerPrompt).toContain('at most 10 files, 15 MB each and together — the hub\'s own caps');
+    expect(answerPrompt).toContain('an ISO-8601 time WITH its zone');
+    expect(answerPrompt).toContain('at least 2 minutes and at most 30 days ahead');
+    expect(answerPrompt).toContain('cancelled from Comms → Scheduled until');
+    expect(answerPrompt).toContain('Never schedule a TEXT (no route exists)');
+    expect(answerPrompt).toContain('the Comms hub itself cannot send MMS');
+  });
+
+  test('the plan stage asks for the documents read and knows a schedule needs none; the investigate stage names the row', () => {
+    expect(planPrompt).toContain('An email may ATTACH registered documents: plan a sql.read of the documents');
+    expect(planPrompt).toContain('documents.id AS document_id, name, size, status');
+    expect(planPrompt).toContain('An email may be\n  SCHEDULED (send_at');
+    expect(planPrompt).toContain('the Comms hub itself cannot send MMS or schedule a text');
+    expect(investigatePrompt).toContain('a documents row with documents.id AS document_id, name, size and status');
+    expect(investigatePrompt).toContain('a scheduled send needs no read');
+  });
+
+  test('the repair stage lists both fields, renames the aliases and keeps the text refusals', () => {
+    expect(repairPrompt).toContain('quote_original?,attachments?,send_at?,evidence');
+    expect(repairPrompt).toContain('rename attachment_urls / files to it');
+    expect(repairPrompt).toContain('rename scheduled_time / schedule / delay to it');
+    expect(repairPrompt).toContain('a naive time is refused — add the zone');
+    expect(repairPrompt).toContain('the Comms hub cannot send MMS or schedule a text (drop the field)');
+  });
+
+  test('the normalizer agrees with the stages: an email takes both fields, a text refuses both by name', () => {
+    const src = fsRead('services/assistantService.js');
+    expect(src).toMatch(/const EMAIL_SEND_KEYS = new Set\(\[[^\]]*'attachments', 'send_at'[^\]]*\]\)/);
+    expect(src).toMatch(/const SMS_SEND_KEYS = new Set\(\[(?:(?!attachments|send_at)[^\]])*\]\)/);
+    expect(src).toContain('cannot schedule a text (no native route exists)');
+    expect(src).not.toContain('SEND_UNBUILT_FIELDS');
+  });
+});
+
 function fsRead(p) { return require('fs').readFileSync(path.join(REPO, p), 'utf8'); }
 
 // A16 (ruling 16, Fred 2026-10-27): Casey drafts report SQL. A request to MAKE

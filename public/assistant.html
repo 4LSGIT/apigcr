@@ -6794,13 +6794,30 @@ function reportDraftResult(draft, result) {
 // defaults; the precheck re-reads GET /api/mail/messages/:id/reply and refuses
 // when the message is gone or would now come from another mailbox) and be
 // FILED to a case (draft.case → case_id; the hub links the sent copy to the
-// case's log after the send — the card says the link may lag). Attachments
-// and scheduled sends stay refused: the hub itself cannot do them.
+// case's log after the send — the card says the link may lag).
+// A14Y (2026-11-16, the hub's own routes shipped the same day): an EMAIL card
+// may carry FILES (draft.attachments — registered documents the server
+// re-read through the hub's own loadAttachments; the card lists name · size ·
+// document id and the total; the precheck re-reads GET /api/documents/:id
+// and refuses when a file is gone, not active, or its name / size moved; the
+// builder sends exactly the reviewed [{document_id}] — the bytes are fetched
+// by the hub at send time) and a SCHEDULE (draft.schedule — the hub's own
+// parseSendAt; shown in firm time and UTC; the builder posts the SAME body +
+// send_at to POST /api/mail/send/schedule, Idempotency-Key the draft_id; the
+// precheck re-checks the window against GET /api/mail/identities' limits; the
+// result reads job_id and send_at). Still refused by the server, by name: MMS
+// media and any scheduling of a TEXT (the hub has no route).
 const SEND_ACTION_KINDS = new Set(['sms.send.v1', 'email.send.v1']);
 
 function sendIsSms(draft) { return draft.kind === 'sms.send.v1'; }
 
-function sendActionLabel(draft) { return sendIsSms(draft) ? 'Send text message' : 'Send email'; }
+// A14Y: a schedule card (draft.schedule — the hub's parsed send_at, firm time, window) and its files.
+function sendIsSchedule(draft) { return !sendIsSms(draft) && !!(draft.schedule && typeof draft.schedule === 'object' && draft.schedule.send_at); }
+function sendAttachmentList(draft) { return !sendIsSms(draft) && Array.isArray(draft.attachments) ? draft.attachments : []; }
+// "Nothing was sent." on a send; a schedule card scheduled nothing either.
+function sendNothing(draft) { return sendIsSchedule(draft) ? 'Nothing was scheduled.' : 'Nothing was sent.'; }
+
+function sendActionLabel(draft) { return sendIsSms(draft) ? 'Send text message' : sendIsSchedule(draft) ? 'Schedule email' : 'Send email'; }
 
 function sendRecipientLine(draft, recipient) {
   const r = recipient || draft.recipient || {};
@@ -6854,26 +6871,42 @@ function sendFactLines(draft) {
     lines.push('Case: none — this email is not filed to any case (Casey never picks a case for you; name the case to file it there)');
   }
   if (!sms) lines.push(`Subject: ${draft.subject}${draft.subject_defaulted ? ' (the reply subject Comms would use)' : ''}`);
+  const files = sendAttachmentList(draft);
+  if (files.length) {
+    files.forEach((f, i) => lines.push(`File ${i + 1}: ${f.name} · ${mailAttachmentBytes(f.size)} · document #${Number(f.document_id)}`));
+    const lim = draft.attachment_limits || {};
+    lines.push(`Files: ${files.length === 1 ? 'one file' : `${files.length} files`}, ${mailAttachmentBytes(draft.attachments_total_bytes)} together${Number(lim.max_attachments) > 0
+      ? ` (Comms allows up to ${Number(lim.max_attachments)} files, ${mailAttachmentBytes(lim.attachment_max_bytes)} each and ${mailAttachmentBytes(lim.attachments_total_bytes)} together)` : ''}. Anyone who may send may attach any registered document — the Comms rule. The file itself is read from storage when the email goes out: a file deleted or changed between this card and your click is refused and nothing is sent.`);
+    if (draft.attachment_duplicates_dropped > 0) lines.push(`Duplicate files: ${draft.attachment_duplicates_dropped} listed twice and attached once`);
+  }
+  if (sendIsSchedule(draft)) {
+    const sc = draft.schedule;
+    const lag = Number(sc.lag_s) > 0 ? `${Math.round(Number(sc.lag_s) / 60) || 1} minute${Math.round(Number(sc.lag_s) / 60) === 1 ? '' : 's'}` : 'a minute';
+    lines.push(`Send at: ${sc.firm_time} (firm time, ${sc.firm_zone || 'America/Detroit'}) — ${sc.send_at} UTC. It goes out within about ${lag} after that, not before.`);
+    lines.push('Checked again at send time: Comms re-runs every check when it sends — your send access on the mailbox, the box itself, each file and the daily sending limit. If it is refused then, nothing goes out, you get an email at your own address and IT is alerted. Until then you can cancel it from Comms → Scheduled.');
+  }
   if (sms && draft.segments) lines.push(`Length: ${String(draft.message).length} characters, ${draft.segments.encoding}, about ${draft.segments.segments} SMS segment${draft.segments.segments === 1 ? '' : 's'}`);
   if (draft.templated) lines.push('Placeholders: already filled in from the records — what you see is exactly what is sent');
   if (draft.ssn_warning) lines.push('WARNING: this message contains a Social Security number');
   const total = 1 + cc.length + bcc.length;
   lines.push(sms
     ? 'Audience: one recipient. No attachments, media, cc/bcc or scheduling.'
-    : `Audience: ${total === 1 ? 'one recipient' : `${total} recipients`}. No attachments or scheduled send — the Comms hub itself cannot do either.`);
+    : `Audience: ${total === 1 ? 'one recipient' : `${total} recipients`}${files.length ? '' : '; no attachments'}.`);
   const optedCount = sendAllRecipients(draft).filter((x) => x.recipient.opted_out === true).length;
   lines.push(optedOut || optedCount
     ? `Consent: OPTED OUT — ${optedCount > 1 || !optedOut ? `${optedCount} recipient${optedCount === 1 ? '' : 's'} opted out of ${sms ? 'SMS' : 'email'}` : sendOptoutText(draft).replace(/^This/, 'this')}. Sending asks you to confirm past the opt-out (as Comms does), and the send is recorded as an acknowledged opt-out.`
     : sms ? 'Consent: checked — the recipient has not opted out; re-checked when you click.'
       : `Consent: a direct email is operational — an email opt-out covers marketing only and never stops it${total > 1 ? '; every recipient is re-checked when you click' : ''}.`);
-  lines.push(`Effect: sends NOW from your signed-in account under your own ${sms ? 'line' : 'mailbox'} access. It cannot be recalled.`);
+  lines.push(sendIsSchedule(draft)
+    ? `Effect: SCHEDULES this email to go out at ${draft.schedule.firm_time} from your signed-in account under your own mailbox access. Until then it can be cancelled from Comms → Scheduled; once sent it cannot be recalled.`
+    : `Effect: sends NOW from your signed-in account under your own ${sms ? 'line' : 'mailbox'} access. It cannot be recalled.`);
   return lines;
 }
 
 function sendDraftText(draft) {
   const sms = sendIsSms(draft);
   const optedOut = !!(draft.recipient && draft.recipient.opted_out === true);
-  return [`${sms ? 'Text message' : 'Email'} proposal — not sent`, ...(optedOut ? [`WARNING: ${sendOptoutText(draft)}`] : []), ...sendFactLines(draft),
+  return [`${sms ? 'Text message' : sendIsSchedule(draft) ? 'Scheduled email' : 'Email'} proposal — not ${sendIsSchedule(draft) ? 'scheduled' : 'sent'}`, ...(optedOut ? [`WARNING: ${sendOptoutText(draft)}`] : []), ...sendFactLines(draft),
     `${sms ? 'Message' : 'Body'}, exactly as sent, between the rules:`, '────────', sms ? draft.message : draft.body, '────────'].join('\n');
 }
 
@@ -6902,7 +6935,12 @@ function sendConfirmText(draft) {
   const others = sendAllRecipients(draft).slice(1);
   const more = others.length ? ` (and ${others.length} more: ${others.map((x) => `${x.role} ${x.recipient.email}`).join(', ')})` : '';
   const optout = r.opted_out === true ? ` ${sendOptoutText(draft)} — you will be asked to confirm past the opt-out.` : '';
-  return `This sends NOW to ${r.contact_name} ${value}${more}. It cannot be recalled.${optout}\n\n${sendDraftText(draft)}`;
+  const files = sendAttachmentList(draft);
+  const attached = files.length ? ` with ${files.length === 1 ? 'one file' : `${files.length} files`} attached` : '';
+  if (sendIsSchedule(draft)) {
+    return `This SCHEDULES an email to ${r.contact_name} ${value}${more}${attached} for ${draft.schedule.firm_time} (firm time). It can be cancelled from Comms → Scheduled until then; once sent it cannot be recalled.${optout}\n\n${sendDraftText(draft)}`;
+  }
+  return `This sends NOW to ${r.contact_name} ${value}${more}${attached}. It cannot be recalled.${optout}\n\n${sendDraftText(draft)}`;
 }
 
 function sendActionRequest(draft) {
@@ -6938,6 +6976,22 @@ function sendActionRequest(draft) {
     if (typeof draft.case.case_id !== 'string' || !/^[A-Za-z0-9_-]{1,20}$/.test(draft.case.case_id)) throw new Error('This email has no usable case to file to.');
     body.case_id = draft.case.case_id;
   }
+  // A14Y: exactly the reviewed document ids — never a name, path or URL.
+  const files = sendAttachmentList(draft);
+  if (files.length) {
+    body.attachments = files.map((f) => {
+      const id = Number(f && f.document_id);
+      if (!Number.isSafeInteger(id) || id < 1) throw new Error('This email has an unusable attachment.');
+      return { document_id: id };
+    });
+  }
+  // A14Y: a schedule card posts the SAME body + the reviewed send_at (the
+  // server's UTC instant) to the hub's schedule route, under the same key.
+  if (sendIsSchedule(draft)) {
+    const at = draft.schedule.send_at;
+    if (typeof at !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(at) || !Number.isFinite(Date.parse(at))) throw new Error('This scheduled email has no usable send time.');
+    return { path: '/api/mail/send/schedule', method: 'POST', body: { ...body, send_at: at }, idempotent: true };
+  }
   return { path: '/api/mail/send', method: 'POST', body, idempotent: true };
 }
 
@@ -6956,7 +7010,58 @@ async function sendPrecheck(draft) {
     const why = await sendRecipientPrecheck(draft, x.recipient, x.role);
     if (why) return why;
   }
-  if (!sendIsSms(draft) && draft.reply) return sendReplyPrecheck(draft);
+  if (!sendIsSms(draft) && draft.reply) {
+    const why = await sendReplyPrecheck(draft);
+    if (why) return why;
+  }
+  // A14Y: every reviewed file, then the schedule window.
+  for (const f of sendAttachmentList(draft)) {
+    const why = await sendAttachmentPrecheck(draft, f);
+    if (why) return why;
+  }
+  if (sendIsSchedule(draft)) return sendSchedulePrecheck(draft);
+  return '';
+}
+
+// A14Y: one reviewed file through the registry's own read (GET
+// /api/documents/:id). A 404 is a refusal (the file is no longer registered);
+// so is a row that is not active any more or whose name / size moved since
+// the card was prepared (the hub attaches by the registry's size — a changed
+// file is a different attachment). Any other failure leaves the card retryable.
+async function sendAttachmentPrecheck(draft, f) {
+  const id = Number(f && f.document_id);
+  const name = String((f && f.name) || `document #${id}`);
+  let d;
+  try { d = await api(`/api/documents/${id}`, null, 'GET'); }
+  catch (e) {
+    if (e && e.status === 404) return `The file "${name}" (document #${id}) is no longer registered. ${sendNothing(draft)}`;
+    throw e;
+  }
+  const doc = d && d.document;
+  if (!doc || Number(doc.id) !== id) return `Could not re-check the file "${name}" (document #${id}). ${sendNothing(draft)} Ask Casey to prepare it again.`;
+  if (doc.status !== 'active') return `The file "${name}" (document #${id}) has been ${doc.status === 'deleted' ? 'deleted from storage' : 'reported missing'} since this card was prepared. ${sendNothing(draft)} Ask Casey to prepare it again without it.`;
+  if (doc.size == null || Number(doc.size) !== Number(f.size) || String(doc.name) !== String(f.name)) {
+    return `The file "${name}" (document #${id}) changed since this card was prepared (its name or size). ${sendNothing(draft)} Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+// A14Y: the schedule window, re-checked against the hub's OWN numbers (GET
+// /api/mail/identities → limits — the same caps the Comms composer mirrors,
+// never a number of this page's). A card whose send_at has drifted inside
+// the floor is refused, not sent now; a read that fails leaves it retryable.
+async function sendSchedulePrecheck(draft) {
+  const sc = draft.schedule || {};
+  const at = Date.parse(String(sc.send_at || ''));
+  if (!Number.isFinite(at)) return `This scheduled email has no usable send time. ${sendNothing(draft)}`;
+  const ident = await api('/api/mail/identities', null, 'GET');
+  const lim = ident && ident.limits;
+  const min = lim ? Number(lim.schedule_min_ahead_ms) : NaN;
+  const max = lim ? Number(lim.schedule_max_ahead_ms) : NaN;
+  if (!Number.isFinite(min) || !Number.isFinite(max)) throw new Error('the scheduling window could not be read');
+  const now = Date.now();
+  if (at < now + min) return `The scheduled time (${sc.firm_time}) is now less than ${Math.round(min / 60_000)} minutes away. ${sendNothing(draft)} Ask Casey to prepare it again with a later time, or to send it now.`;
+  if (at > now + max) return `The scheduled time (${sc.firm_time}) is more than ${Math.round(max / 86_400_000)} days away. ${sendNothing(draft)} Ask Casey to prepare it again.`;
   return '';
 }
 
@@ -7035,11 +7140,25 @@ function sendActionResult(draft, result) {
       outcome: state ? `accepted by the provider (status ${String(state).slice(0, 40)})` : 'accepted by the provider',
       provider_id: provider.id != null ? String(provider.id).slice(0, 100) : null };
   }
+  // A14Y: a schedule answers {job_id, send_at} — the job is the record; the
+  // receipt stays the contact (the family's), the job id rides in the result.
+  if (sendIsSchedule(draft)) {
+    const jobId = Number(result.job_id);
+    if (!Number.isSafeInteger(jobId) || jobId < 1) throw new Error('The schedule returned no job id');
+    const sentAt = typeof result.send_at === 'string' ? result.send_at : '';
+    const when = sentAt && Date.parse(sentAt) === Date.parse(draft.schedule.send_at) ? draft.schedule.firm_time : (sentAt || draft.schedule.firm_time);
+    const n = Array.isArray(result.attachments) ? result.attachments.length : sendAttachmentList(draft).length;
+    return { contact_id: contactId, job_id: jobId, send_at: sentAt || String(draft.schedule.send_at),
+      outcome: `scheduled for ${when} (scheduled send #${jobId})${n ? `, ${n} file${n === 1 ? '' : 's'} attached` : ''} — cancel it from Comms → Scheduled before then`,
+      ...(draft.case ? { case_id: draft.case.case_id } : {}) };
+  }
   const warnings = Array.isArray(result.warnings) ? result.warnings.map((w) => String(w && w.code || '')).filter(Boolean) : [];
   const total = 1 + sendCcList(draft).length + sendBccList(draft).length;
   let outcome = warnings.includes('recipients_rejected')
     ? (total > 1 ? 'sent, but the mail server refused one or more recipients' : 'sent, but the mail server refused the recipient')
     : 'sent — the mail server accepted it';
+  const attachedN = sendAttachmentList(draft).length ? (Array.isArray(result.attachments) ? result.attachments.length : sendAttachmentList(draft).length) : 0;
+  if (attachedN) outcome += ` (${attachedN} file${attachedN === 1 ? '' : 's'} attached)`;
   // The Case field's link (S2P §G): the hub reports what became of it.
   const link = result.case_link && typeof result.case_link === 'object' ? String(result.case_link.state || '') : '';
   if (draft.case) {
@@ -8090,7 +8209,7 @@ const ACTION_FAMILIES = [
       'Find it under More → Reports. Run it there and use CSV to export.'),
   },
   {
-    id: 'send', kinds: SEND_ACTION_KINDS, title: 'Send now', noun: 'send', errorNoun: 'send',
+    id: 'send', kinds: SEND_ACTION_KINDS, title: (draft) => (sendIsSchedule(draft) ? 'Send later' : 'Send now'), noun: 'send', errorNoun: 'send',
     label: sendActionLabel, text: sendDraftText, request: sendActionRequest, result: sendActionResult,
     fields: sendDraftFields,
     idField: 'contact_id', appliedKey: 'result_send_contact_id',
@@ -8106,17 +8225,25 @@ const ACTION_FAMILIES = [
     refusal409: true,
     resultText: sendResultText,
     appliedMessage: (draft, payload, replayed) => replayed
-      ? `This ${sendIsSms(draft) ? 'text' : 'email'} to ${draft.recipient.contact_name} had already been sent; nothing was sent a second time.`
+      ? `This ${sendIsSms(draft) ? 'text' : 'email'} to ${draft.recipient.contact_name} had already been ${sendIsSchedule(draft) ? 'scheduled; nothing was scheduled' : 'sent; nothing was sent'} a second time.`
       : `${sendIsSms(draft) ? 'Text' : 'Email'} to ${draft.recipient.contact_name}: ${sendResultText(payload)}.`,
     entity: (draft, payload) => ({ kind: 'contact', id: String(payload.contact_id), label: draft.recipient.contact_name }),
     failure: 'The send could not be applied.',
-    ambiguousText: (detail) => `Outcome unknown — the message may or may not have gone out${detail ? ` (${detail})` : ''}. Check the contact's Communications tab or the comms log before resending. Do not apply this card again.`,
-    appliedCopy: (draft) => ({
+    ambiguousText: (detail, draft) => (draft && sendIsSchedule(draft)
+      ? `Outcome unknown — the email may or may not have been scheduled${detail ? ` (${detail})` : ''}. Check Comms → Scheduled before scheduling it again. Do not apply this card again.`
+      : `Outcome unknown — the message may or may not have gone out${detail ? ` (${detail})` : ''}. Check the contact's Communications tab or the comms log before resending. Do not apply this card again.`),
+    appliedCopy: (draft) => (sendIsSchedule(draft) ? {
+      status: `Scheduled — ${draft.recipient ? draft.recipient.contact_name : 'contact'}`,
+      warning: `Email to ${draft.recipient ? sendRecipientLine(draft) : 'the contact'} scheduled for ${draft.schedule.firm_time} using your signed-in account. It is listed under Comms → Scheduled, where it can be cancelled until it goes out; once sent it cannot be recalled.`,
+      button: 'Open conversation',
+    } : {
       status: `Sent — ${draft.recipient ? draft.recipient.contact_name : 'contact'}`,
       warning: `${sendIsSms(draft) ? 'Text' : 'Email'} sent to ${draft.recipient ? sendRecipientLine(draft) : 'the contact'} using your signed-in account. It cannot be recalled.`,
       button: 'Open conversation',
     }),
-    reviewWarning: 'This SENDS NOW — to a real client, from your own line or mailbox, and it cannot be recalled. Read the recipient and every word above: it is exactly what goes out. Canceling the dialog sends nothing.',
+    reviewWarning: (draft) => (sendIsSchedule(draft)
+      ? 'This SCHEDULES an email — to a real client, from your own mailbox — to go out at the time shown without asking you again. Read the recipient, the files and every word above: it is exactly what goes out. It can be cancelled from Comms → Scheduled until then; once sent it cannot be recalled. Canceling the dialog schedules nothing.'
+      : 'This SENDS NOW — to a real client, from your own line or mailbox, and it cannot be recalled. Read the recipient and every word above: it is exactly what goes out. Canceling the dialog sends nothing.'),
     markApplied: (draft, payload) => {
       draft.result_send_contact_id = Number(payload.contact_id);
       draft.result_send_label = draft.recipient ? String(draft.recipient.contact_name || 'Contact') : 'Contact';
@@ -8282,7 +8409,7 @@ async function executeActionDraft(message) {
       draft.refusal_error = family.refusalText ? family.refusalText(e.message || `HTTP ${e.status}`)
         : `The server refused this (${e.message || `HTTP ${e.status}`}). Nothing was written. Ask Casey to prepare the action again.`;
     } else if (claimed || outcome === 'unknown') {
-      draft.ambiguous_error = family.ambiguousText ? family.ambiguousText(e.message || '')
+      draft.ambiguous_error = family.ambiguousText ? family.ambiguousText(e.message || '', draft)
         : `This may already have been applied: the server claimed the request but never recorded its result (${e.message || 'no result recorded'}). Open the record and check before asking Casey to prepare it again. Do not apply this card again.`;
     } else if (outcome === 'in_flight') {
       draft.action_error = 'The same request is still being applied. Wait a moment, then check the record before trying again.';
@@ -8324,7 +8451,7 @@ function applyActionResults(messages, ledger = []) {
       if (row.kind === draft.kind && row.outcome === 'applied' && family && row.result) {
         draft.status = 'applied'; markActionApplied(family, draft, row.result);
       } else if (row.outcome !== 'not-applied' || row.kind !== draft.kind) {
-        draft.ambiguous_error = family && family.ambiguousText ? family.ambiguousText('')
+        draft.ambiguous_error = family && family.ambiguousText ? family.ambiguousText('', draft)
           : 'This may already have been applied: the server claimed the request but never recorded its result. Open the record and check before asking Casey to prepare it again. Do not apply this card again.';
       }
       continue;
@@ -8378,7 +8505,7 @@ function hydrateActionDraft(family, host, message, draft) {
   const appliedCopy = applied && family.appliedCopy ? family.appliedCopy(draft) : null;
 
   const head = document.createElement('div'); head.className = 'action-draft-head';
-  const title = document.createElement('b'); title.textContent = family.title;
+  const title = document.createElement('b'); title.textContent = typeof family.title === 'function' ? family.title(draft) : family.title;
   const status = document.createElement('span'); status.className = 'action-draft-status';
   status.textContent = applied ? (appliedCopy ? appliedCopy.status : `Applied — ${family.noun} #${appliedId}`)
     : draft.ambiguous_error ? 'Outcome unknown — check the record'

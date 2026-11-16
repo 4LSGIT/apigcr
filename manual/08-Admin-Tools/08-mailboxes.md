@@ -618,11 +618,14 @@ anyone who may send from at least one box.
     told, and IT gets a warning. Like other Sent mail of these boxes it is
     not put on any log by itself — use **Link to case** on it.
 - **Ask Casey** sends through this same path: its email card may copy
-  contacts (Cc/Bcc), reply to an email it has shown you and fill the **Case**
-  field, under your own send access, the 10-recipient limit, the opt-out
-  question and the case-link behaviour above. It does not yet attach files or
-  schedule a send — Comms can (above); Casey's own version follows, and until
-  then it says so by name (Ask Casey chapter, *Sending a text or email*).
+  contacts (Cc/Bcc), reply to an email it has shown you, fill the **Case**
+  field, attach registered documents (the same **Files** rules and limits —
+  Casey looks each file up in Documents first and re-checks it when you
+  click; at most seven on one card) and use **Send later** (the same window;
+  the card shows the firm time, and the scheduled email appears in your
+  **Scheduled** list here, where you cancel it), under your own send access,
+  the 10-recipient limit, the opt-out question and the case-link behaviour
+  above (Ask Casey chapter, *Sending a text or email*).
 - **Daily limit.** Each sending account (one Google account, or one SMTP
   login) may send a set number of emails in any 24 hours — counting
   automation emails through the same account, and attempts the provider

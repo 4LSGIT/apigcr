@@ -1449,10 +1449,34 @@ It cannot be recalled.*
   isn't, the card warns. When you name no case the card says *not filed to
   any case* — Casey never picks one for you, even when the client has only one
   case. A text's case only fills in placeholders, as before.
-- **What it doesn't do.** No attachments or pictures (MMS) and no scheduled
-  sends — Comms itself cannot do either, so neither can a card; no messages
-  to several people at once (one To; copies are Cc/Bcc). Texts get none of
-  the email extras. An appointment's own confirmation rides on its
+- **Files (email only).** Ask Casey to attach a document the firm already
+  has on file ("attach the petition we filed") and it looks the file up in
+  the Documents registry first — a file is never named by path or link, and
+  nothing is uploaded. The card lists each file (name, size, document
+  number), the total, and the same limits Comms applies (up to 10 files,
+  15 MB each and together; a deleted file or one whose size is not known is
+  refused before the card). A card can carry at most seven files. Anyone who
+  may send may attach any registered document, as in Comms. The file itself
+  is read from storage when the email goes out; when you click, Casey
+  re-checks each file and refuses if it was deleted, or its name or size
+  changed, since the card was prepared.
+- **Sending later (email only).** Say when ("email her the 341 date tomorrow
+  at 9:30") and the card becomes a *Send later* card: it shows the time in
+  firm time and in UTC, says the email goes out within about a minute after
+  it, and its button reads **Review & schedule email**. It uses Comms' own
+  **Send later**: at least two minutes from now, at most 30 days out; your
+  send access, the mailbox, the files and the daily sending limit are checked
+  again when it goes out — if it is refused then, nothing is sent, you get an
+  email at your own address and IT is alerted. Once scheduled, the card says
+  *Scheduled* and the result names the scheduled send; cancel it from
+  **Comms → Scheduled** before then (there is no cancel card). When you
+  click, Casey re-checks the time against Comms' window — a card prepared
+  earlier whose time is now less than two minutes away is refused, never
+  sent at once. A text cannot be scheduled.
+- **What it doesn't do.** No pictures or files on a text (MMS) and no
+  scheduled texts — Comms itself cannot do either, so neither can a card; no
+  messages to several people at once (one To; copies are Cc/Bcc). Texts get
+  none of the email extras. An appointment's own confirmation rides on its
   appointment card instead (see *Appointment actions*).
 - **When you click.** Casey re-checks the number or address first; if it ended,
   changed, or its consent changed since the card was prepared (an opt-out or
@@ -1466,9 +1490,12 @@ It cannot be recalled.*
   a provider error after the message left — the card says *Outcome unknown*
   and offers no way to send again: check the Communications tab or the comms
   log before asking Casey to send it again. A refusal you can read (no send
-  access, an inactive line, the send limit) says nothing was sent. A filed
-  email's result also says how the case link went: logged now, following once
-  the sent copy is stored, or failed (IT alerted).
+  access, an inactive line, the send limit, a file deleted meanwhile) says
+  nothing was sent. A filed email's result also says how the case link went:
+  logged now, following once the sent copy is stored, or failed (IT alerted).
+  A scheduled email's result says *scheduled for … (scheduled send #N)*; an
+  unclear outcome there reads *may or may not have been scheduled — check
+  Comms → Scheduled*.
 
 The off switch is the `casey_send_enabled` setting.
 

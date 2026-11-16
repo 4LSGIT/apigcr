@@ -609,10 +609,32 @@ body. Governing migrations in `ref/migrations/`.*
   different mailbox / To), and `case_id` as the composer's Case field (the
   hub's `mail_sent_case_link` runs after the send and the card says the link
   may lag; cited + existing, the recipient need not be on it — flagged
-  `linked_to_recipient`; never inferred). Attachments / MMS media and
-  scheduled sends stay refused BY NAME — the hub has no route for them.
-  SMS unchanged. Same flag, same route gates; no route change. Plan: A14
+  `linked_to_recipient`; never inferred). Attachments and scheduled sends
+  stayed refused BY NAME until A14Y (next bullet); MMS media still is — the
+  hub has no route for it. SMS unchanged. Same flag, same route gates; no route change. Plan: A14
   "Released 2026-11-15".
+- **Casey email sends: attachments + scheduled sends (A14Y, 11-16, "release
+  means allow" — the hub's own routes shipped the same day, 376b89f):**
+  `email.send.v1` also takes `attachments` (a list of `{document_id}`, each
+  CITED by an evidence row carrying that `document_id` — a `sql.read` over
+  `documents` or a typed row; never a name / path / URL; the normalizer runs
+  the hub's OWN `mailboxSendService.loadAttachments` — its query, its caps,
+  its words — and the card lists name · size · id, the total and the caps
+  from the constants; precheck `GET /api/documents/:id` per file refuses a
+  404 / non-active / moved name or size; the builder sends exactly the
+  reviewed ids; bytes are fetched by the hub at send time) and `send_at`
+  (the hub's own `parseSendAt` — ≥ 2 min ≤ 30 d, ISO WITH zone; shown in
+  firm time + UTC; the card becomes a SCHEDULE card and the SAME body +
+  `send_at` goes to `POST /api/mail/send/schedule`, Idempotency-Key the
+  draft_id (scope `mail.schedule`), the `optoutAck` 409 confirm reused;
+  precheck re-checks the window against `GET /api/mail/identities` →
+  `limits`; the result reads `job_id` / `send_at`). Same kind, same family,
+  same `casey_send_enabled`: the ledger receipt stays `contact_id` (keyed by
+  kind), `job_id` rides in the result. Engine (additive): a family's
+  `title` may be a function of the draft; `ambiguousText(detail, draft)`.
+  A card carries ≤ 7 files (8 refs, one the To). Still refused by name: MMS
+  media, scheduling a TEXT. Permissions matrix 101 rows / 100 kinds / 85
+  mounts. Plan: A14 "Released 2026-11-16".
 - **Casey authors email/phone ingest rules (A20.2 + A20.3, 10-27):** six
   kinds, each ONE request to the rule editor's own route —
   `ingest_rule.create.v1` (`POST /api/{ch}-ingest/rules`, born `active: 0`

@@ -22,7 +22,7 @@ const calendarTypeService = require('./calendarTypeService');
 const contactPhoneService = require('./contactPhoneService');
 const contactEmailService = require('./contactEmailService');
 const contactAddressService = require('./contactAddressService');
-const { FIRM_TZ, nowLocal, parseUserDateTime } = require('./timezoneService');
+const { FIRM_TZ, nowLocal, parseUserDateTime, utcToLocal } = require('./timezoneService');
 const { auditAdminAction } = require('../lib/auth.superuser');
 const { validateSql } = require('../lib/reportSchema/validator');
 const ticket = require('../lib/assistantTicket');
@@ -197,23 +197,53 @@ const HOOK_ACTION_KINDS = new Set(['hook.create.v1']);
 // replyDefaults, whose To must be the cited row's address) and be FILED to a
 // case (case_id — the composer's Case field: the hub links the sent copy to
 // the case's log after the send). Released by Fred 2026-11-15 ("release
-// means allow"). STILL REFUSED, by name, because the hub itself has no route
-// for them: attachments / MMS media and scheduled sends. An SMS is unchanged
-// (its case_id feeds placeholders only).
+// means allow"). A14Y (2026-11-16, the hub's own routes shipped the same
+// day): an EMAIL may carry `attachments` — [{document_id}], each the id of
+// a cited `documents` row (a sql.read over the registry, documents.id AS
+// document_id, or any typed read row carrying one — the recipients' rule:
+// never typed), re-read HERE through the hub's own loadAttachments (its
+// query, its caps, its refusals in its words) and again by the browser at
+// click time (GET /api/documents/:id) — and `send_at`, which turns the
+// card into a SCHEDULE card: the hub's parseSendAt (its window, its words),
+// shown in firm time and UTC; the fixed request goes to POST
+// /api/mail/send/schedule with the same body + send_at, Idempotency-Key the
+// draft_id (scope mail.schedule), and the click re-checks the window. The
+// hub re-checks the grant, the box, the documents and the daily budget AT
+// SEND TIME; a failure then emails the sender and alerts IT
+// (mailboxScheduledSendService.runScheduledSend). STILL REFUSED, by name,
+// because the hub itself has no route: MMS media and any scheduling of a
+// TEXT. An SMS is otherwise unchanged (its case_id feeds placeholders only).
 const SEND_ACTION_KINDS = new Set(['sms.send.v1', 'email.send.v1']);
 const SMS_SEND_KEYS = new Set(['kind', 'contact_id', 'phone_id', 'line_id', 'message', 'case_id', 'evidence']);
 const EMAIL_SEND_KEYS = new Set(['kind', 'contact_id', 'email_id', 'mailbox_id', 'subject', 'body', 'case_id',
-  'cc', 'bcc', 'in_reply_to_message_fk', 'quote_original', 'evidence']);
-// Fields a model keeps reaching for that NO native route takes: the refusal
-// names the field and says why (the hub cannot do it either), so the repair
-// stage drops it instead of re-spelling it.
-const SEND_UNBUILT_FIELDS = Object.freeze({
-  attachments: 'attach a file to a send', attachment: 'attach a file to a send', attachment_urls: 'attach a file to a send',
-  attachment_url: 'attach a file to a send', media_url: 'attach a file (MMS media) to a send', media_urls: 'attach a file (MMS media) to a send',
-  media: 'attach a file (MMS media) to a send', files: 'attach a file to a send',
-  send_at: 'schedule a send', scheduled_time: 'schedule a send', scheduled_at: 'schedule a send', schedule: 'schedule a send',
-  delay: 'schedule a send', send_later: 'schedule a send',
+  'cc', 'bcc', 'in_reply_to_message_fk', 'quote_original', 'attachments', 'send_at', 'evidence']);
+// Fields a model keeps reaching for. On an EMAIL the aliases point at the
+// real field (A14Y: `attachments` / `send_at`); what NO native route takes
+// — MMS media on either channel, any scheduling of a TEXT — is refused with
+// the reason (the hub cannot do it either), so the repair stage renames or
+// drops the field instead of re-spelling it.
+const SEND_ATTACH_HINT = 'use "attachments": a list of {document_id}, each the document_id of a registered document cited from a documents read (documents.id AS document_id) — never a file name, path or URL';
+const SEND_AT_HINT = 'use "send_at": an ISO-8601 time WITH its zone (…Z or ±hh:mm) at least 2 minutes and at most 30 days ahead — the Comms hub\'s own scheduled send';
+const SEND_MMS_EMAIL = 'the Comms hub itself cannot attach MMS media to an email (no native route exists) — a registered document is attached with "attachments": [{document_id}] cited from a documents read';
+const SEND_MMS_SMS = 'the Comms hub itself cannot attach a file (MMS media) to a text (no native route exists), so neither can a card — tell the user to send the file from Comms by hand';
+const SEND_SCHEDULE_SMS = 'the Comms hub itself cannot schedule a text (no native route exists), so neither can a card — tell the user to send it later by hand';
+const SEND_FIELD_HINTS = Object.freeze({
+  email: Object.freeze({
+    attachment: SEND_ATTACH_HINT, attachment_urls: SEND_ATTACH_HINT, attachment_url: SEND_ATTACH_HINT, files: SEND_ATTACH_HINT,
+    documents: SEND_ATTACH_HINT, document_ids: SEND_ATTACH_HINT, document_id: SEND_ATTACH_HINT,
+    media_url: SEND_MMS_EMAIL, media_urls: SEND_MMS_EMAIL, media: SEND_MMS_EMAIL,
+    scheduled_time: SEND_AT_HINT, scheduled_at: SEND_AT_HINT, schedule: SEND_AT_HINT, delay: SEND_AT_HINT, send_later: SEND_AT_HINT, scheduled_for: SEND_AT_HINT,
+  }),
+  sms: Object.freeze({
+    attachments: SEND_MMS_SMS, attachment: SEND_MMS_SMS, attachment_urls: SEND_MMS_SMS, attachment_url: SEND_MMS_SMS, files: SEND_MMS_SMS,
+    media_url: SEND_MMS_SMS, media_urls: SEND_MMS_SMS, media: SEND_MMS_SMS,
+    send_at: SEND_SCHEDULE_SMS, scheduled_time: SEND_SCHEDULE_SMS, scheduled_at: SEND_SCHEDULE_SMS, schedule: SEND_SCHEDULE_SMS,
+    delay: SEND_SCHEDULE_SMS, send_later: SEND_SCHEDULE_SMS, scheduled_for: SEND_SCHEDULE_SMS,
+  }),
 });
+// The scheduler's tick (Cloud Scheduler process-jobs, every minute, INFRA_GCP
+// §Cloud Scheduler): a scheduled send goes out up to this long after send_at.
+const SEND_SCHEDULE_LAG_S = 60;
 // Mirrors of services/mailbox/mailboxSendService.js SUBJECT_MAX / TEXT_MAX
 // (pinned against validateSendBody in tests/caseySendAction.test.js). The SMS
 // cap is phoneCommsService.SMS_MAX_CHARS, read directly.
@@ -14878,6 +14908,88 @@ async function sendReplyContext(db, userId, value, refs, evidence, recipient) {
   };
 }
 
+/**
+ * A14Y: an email's attachments — `[{document_id}, …]`, each id cited by an
+ * evidence row carrying that exact document_id (a sql.read over `documents`
+ * — documents.id AS document_id — or any typed read row carrying one; the
+ * recipients' own rule: a file is never named by hand). The hub's checks run
+ * HERE, before the card, in the hub's own code: the count cap and the
+ * duplicate collapse exactly as validateSendBody does them, then
+ * mailboxSendService.loadAttachments — the hub's query over `documents`, the
+ * hub's caps, the hub's reasons in its words (not registered; deleted /
+ * missing; size unknown; over the per-file cap; over the total cap). The card
+ * carries what the browser re-reads at click time (GET /api/documents/:id —
+ * name, size, status) and the fixed builder sends exactly these ids; the
+ * BYTES are fetched by the hub at send time (a file gone by then is the
+ * route's 400, reported on the card).
+ */
+async function sendAttachments(db, raw, refs, evidence) {
+  const none = { files: [], duplicates_dropped: 0, total_bytes: 0 };
+  if (raw === undefined || raw === null) return none;
+  const sendSvc = require('./mailbox/mailboxSendService'); // lazy require (convention)
+  if (!Array.isArray(raw)) throw httpError(422, 'Email send attachments must be a list of {document_id} — each the document_id of a registered document cited in evidence, never a file name, path or URL');
+  const ids = [];
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || !onlyKeys(entry, new Set(['document_id']))) {
+      throw httpError(422, `Email send attachments[${i}] must be {document_id} — a file is never named, pathed or linked by hand; cite its documents row and give that row's document_id`);
+    }
+    const id = typeof entry.document_id === 'number' ? entry.document_id
+      : (typeof entry.document_id === 'string' && /^\d{1,19}$/.test(entry.document_id.trim()) ? Number(entry.document_id.trim()) : NaN);
+    if (!Number.isSafeInteger(id) || id < 1) throw httpError(422, `Email send attachments[${i}] document_id must be the exact positive id of a registered document`);
+    if (!documentRowCited(refs, evidence, (row) => Number(row.document_id) === id)) {
+      throw httpError(422, `Email send attachments[${i}] (document ${id}) must be cited by an evidence row carrying that exact document_id — read the documents table first (documents.id AS document_id, name, size, status) and cite the file's row`);
+    }
+    ids.push(id);
+  }
+  if (!ids.length) return none;
+  const unique = [...new Set(ids)];
+  if (unique.length > sendSvc.MAX_ATTACHMENTS) {
+    throw httpError(422, `Email send attachments lists ${unique.length} files — at most ${sendSvc.MAX_ATTACHMENTS} attachments on one message (the Comms hub's own cap)`);
+  }
+  let rows;
+  try { rows = await sendSvc.loadAttachments(db, unique); }
+  catch (err) {
+    if (err && Number.isInteger(err.status) && err.status < 500) throw httpError(422, `Email send ${err.message}`);
+    throw err;
+  }
+  return {
+    files: rows.map((r) => ({ document_id: Number(r.document_id), name: String(r.name), size: Number(r.size) })),
+    duplicates_dropped: ids.length - unique.length,
+    total_bytes: rows.reduce((n, r) => n + Number(r.size), 0),
+  };
+}
+
+/**
+ * A14Y: `send_at` makes the card a SCHEDULE card. Parsed the hub's way —
+ * mailboxScheduledSendService.parseSendAt: ISO-8601 WITH a zone, inside
+ * [MIN_AHEAD_MS, MAX_AHEAD_MS], its refusals in its words — and shown in
+ * firm time (America/Detroit, Luxon) and UTC. The card also carries the hub's
+ * window so the browser can re-check it at click time against GET
+ * /api/mail/identities' limits (a stale card whose time is now inside the
+ * floor is refused, not sent). Returns the card's `schedule` or null.
+ */
+function sendSchedule(value) {
+  if (value.send_at === undefined || value.send_at === null) return null;
+  const sched = require('./mailbox/mailboxScheduledSendService'); // lazy require (convention)
+  if (typeof value.send_at !== 'string') throw httpError(422, 'Email send send_at must be an ISO-8601 time with its zone (…Z or ±hh:mm), e.g. 2026-11-17T14:30:00-05:00');
+  let at;
+  try { at = sched.parseSendAt(value.send_at); }
+  catch (err) {
+    if (err && Number.isInteger(err.status) && err.status < 500) throw httpError(422, `Email send ${err.message}`);
+    throw err;
+  }
+  const local = utcToLocal(at);
+  return {
+    send_at: at.toISOString(),
+    firm_time: local && local.isValid ? local.toFormat("ccc, LLL d, yyyy 'at' h:mm a ZZZZ") : at.toISOString(),
+    firm_zone: FIRM_TZ,
+    min_ahead_ms: sched.MIN_AHEAD_MS,
+    max_ahead_ms: sched.MAX_AHEAD_MS,
+    lag_s: SEND_SCHEDULE_LAG_S,
+  };
+}
+
 const SEND_GRANTS_SQL = 'SELECT channel_id FROM channel_grants WHERE user = ? AND channel_type = ? AND can_send = 1';
 
 async function sendExplicitGrants(db, userId, channelType) {
@@ -14959,13 +15071,12 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
   const allowed = sms ? SMS_SEND_KEYS : EMAIL_SEND_KEYS;
   const unknown = Object.keys(value).filter((k) => !allowed.has(k));
   if (unknown.length) {
-    const unbuilt = unknown.filter((k) => SEND_UNBUILT_FIELDS[k]);
-    const why = unbuilt.length
-      ? ` ${unbuilt.map((k) => `"${k}": the Comms hub itself cannot ${SEND_UNBUILT_FIELDS[k]} (no native route exists), so neither can a card — tell the user to do that part from Comms by hand`).join('; ')}.`
-      : '';
+    const hints = SEND_FIELD_HINTS[sms ? 'sms' : 'email'];
+    const hinted = unknown.filter((k) => hints[k]);
+    const why = hinted.length ? ` ${hinted.map((k) => `"${k}": ${hints[k]}`).join('; ')}.` : '';
     throw httpError(422, `${sms ? 'SMS' : 'Email'} send carries unsupported fields: ${unknown.join(', ')} — it takes ${[...allowed].filter((k) => k !== 'kind').join(', ')} (${sms
       ? 'no attachments / MMS media, cc/bcc, scheduling or free-typed recipients'
-      : 'no attachments, scheduling, HTML body or free-typed recipients — cc/bcc are lists of {contact_id, email_id} cited like the To'}).${why}`);
+      : 'no HTML body or free-typed recipients — cc/bcc are lists of {contact_id, email_id} cited like the To, attachments a list of {document_id} cited from a documents read, send_at an ISO-8601 time with its zone'}).${why}`);
   }
   const userId = currentUserId == null || currentUserId === '' ? NaN : Number(currentUserId);
   if (!Number.isSafeInteger(userId) || userId < 1) throw httpError(422, 'A send needs the signed-in staff user');
@@ -15053,7 +15164,14 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
   }
   // Omitted on a reply = the hub's pick, said so on the card ("defaulted").
   if (reply && (value.mailbox_id === undefined || value.mailbox_id === null)) sender.defaulted = true;
+  // A14Y: the files (the hub's own checks, before the card) and the schedule.
+  const attached = await sendAttachments(db, value.attachments, refs, evidence);
+  const schedule = sendSchedule(value);
+  const sendSvcCaps = require('./mailbox/mailboxSendService'); // lazy require (convention)
   return { ...base, sender, subject, body, cc, bcc, reply,
+    attachments: attached.files, attachments_total_bytes: attached.total_bytes, attachment_duplicates_dropped: attached.duplicates_dropped,
+    attachment_limits: { max_attachments: sendSvcCaps.MAX_ATTACHMENTS, attachment_max_bytes: sendSvcCaps.ATTACHMENT_MAX_BYTES, attachments_total_bytes: sendSvcCaps.ATTACHMENTS_TOTAL_BYTES },
+    schedule,
     recipients: 1 + cc.length + bcc.length, duplicates_dropped: duplicatesDropped,
     subject_defaulted: !subjectGiven,
     templated: (subjectGiven && subject !== value.subject.trim()) || body !== value.body.replace(/\r\n?/g, '\n').trim(),

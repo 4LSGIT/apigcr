@@ -208,6 +208,10 @@ const KINDS = [
   { kind: 'sequence.enroll.v1', method: 'POST', path: '/sequences/enroll' },
   { kind: 'sms.send.v1', method: 'POST', path: '/api/phone-lines/3/sms' },
   { kind: 'email.send.v1', method: 'POST', path: '/api/mail/send' },
+  // A14Y: a SCHEDULE card of the same kind posts to the hub's schedule route
+  // (the same guard, the same per-mailbox can_send seat, SU step-up) — a
+  // second mount of one kind, so the row count and the kind count differ.
+  { kind: 'email.send.v1', method: 'POST', path: '/api/mail/send/schedule' },
   // A13: the comms hub's one-message read-state and case-link routes (a read
   // card sends DELETE for "unread" on the same path — pinned below).
   { kind: 'mail.read.v1', method: 'POST', path: '/api/mail/messages/1/read' },
@@ -326,14 +330,15 @@ describe('P2 — what the canonical write route gates on (all 100 shipped kinds)
 
   const app = appWith;
 
-  test('the 102 kinds cover 86 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(102);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(86);
+  test('the 102 kinds (103 rows — email.send.v1 has two mounts) cover 87 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(103);
+    expect(new Set(KINDS.map((k) => k.kind)).size).toBe(102);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(87);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
     const ledger = require(path.join(REPO, 'services', 'assistantActionLedger'));
-    expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
+    expect([...new Set(KINDS.map((k) => k.kind))].sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
   test('no token: every kind is 401 — authentication is required for all 102', async () => {
@@ -741,6 +746,17 @@ describe('P2 — what the canonical write route gates on (all 100 shipped kinds)
       const mail = await call(a, { method: 'POST', path: '/api/mail/send' }, bearer(token({ roles: ['staff'] })),
         { mailbox_id: 1, to: ['pat@example.com'], subject: 's', body_text: 'b' });
       expect(mail.status).toBe(404);
+      // A14Y: the schedule mount — the same seat, checked before any row: a
+      // grantless staff token is 404 and no scheduled_jobs row is written.
+      const seen = [];
+      const recording = appWith({ query: async (sql) => { seen.push(String(sql)); return [[], []]; } });
+      const sched = await call(recording, { method: 'POST', path: '/api/mail/send/schedule' }, bearer(token({ roles: ['staff'] })),
+        { mailbox_id: 1, to: ['pat@example.com'], subject: 's', body_text: 'b', send_at: new Date(Date.now() + 3600_000).toISOString() });
+      expect(sched.status).toBe(404);
+      expect(seen.filter((q) => /INSERT INTO scheduled_jobs/.test(q))).toEqual([]);
+      const keyed = await call(recording, { method: 'POST', path: '/api/mail/send/schedule' }, { 'x-api-key': 'yck_test' },
+        { mailbox_id: 1, to: ['pat@example.com'], subject: 's', body_text: 'b', send_at: new Date(Date.now() + 3600_000).toISOString() });
+      expect([401, 403]).toContain(keyed.status);   // humans only, like the send
       expect(smsSpy).not.toHaveBeenCalled();
       expect(mailSpy).not.toHaveBeenCalled();
       expect(typeof mailSend.resolveIdentity).toBe('function');

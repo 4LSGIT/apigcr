@@ -3278,7 +3278,8 @@ strong idempotency, and an unambiguous delivered/queued/failed result.
 `POST /api/phone-lines/:id/sms` `{to, message}` and `email.send.v1` →
 `POST /api/mail/send` `{mailbox_id, to:[address], subject, body_text}` (plus
 `cc`, `bcc`, `in_reply_to_message_fk`, `quote_original`, `case_id` since the
-2026-11-15 release below) — the
+2026-11-15 release below, and `attachments` / a `send_at` that moves the
+request to `POST /api/mail/send/schedule` since the 2026-11-16 release) — the
 comms hub's own routes, so the user's per-channel `can_send` grant, SU step-up,
 per-user send rate, daily mail budget and `admin_audit_log` row all apply
 unchanged. These are the one family whose route IS an authorization seat
@@ -3386,11 +3387,63 @@ change) and the same `casey_send_enabled` switch:
   `failed`, each in its own words). An SMS `case_id` is unchanged:
   placeholders only, the recipient's own case.
 
-**Still refused, by name:** attachments / MMS media and scheduled sends — the
-hub itself has no route for either (`mailboxSendService` has no attachment
-field; nothing schedules a send), so a native feature comes first
-(`ref/plans.md`); the normalizer's refusal says exactly that ("the Comms hub
-itself cannot attach a file to a send / schedule a send"). Also HTML bodies,
+**Released 2026-11-16 (A14Y — Fred: "release means allow"; the hub's own
+routes shipped the same day, hub-send extras 376b89f) — email only.** Same
+kind, same switch:
+- **Attachments** — `attachments` is a list of `{document_id}`; each id MUST
+  be an evidence row's (a `sql.read` over `documents` — `documents.id AS
+  document_id`, name, size, status — or any typed read row carrying a
+  `document_id`), exactly as recipients must be rows: a file is never named
+  by path or URL, nothing is uploaded. The normalizer runs the hub's OWN
+  checks before the card — the count cap and duplicate collapse as
+  `validateSendBody` does them, then `mailboxSendService.loadAttachments`
+  (its query over `documents`, its caps `MAX_ATTACHMENTS` 10 /
+  `ATTACHMENT_MAX_BYTES` 15 MiB / `ATTACHMENTS_TOTAL_BYTES` 15 MiB, its
+  refusals verbatim: not registered, deleted / missing, size unknown, over the
+  per-file cap, over the total cap). A card can carry at most 7 files (its 8
+  evidence refs, one of them the To), so the hub's 10-file cap is never
+  reached from a card. The card lists each file (name · size · document id),
+  the total and the hub's caps (`attachment_limits`, from the constants —
+  never a second number), says anyone who may send may attach any registered
+  document (the hub's rule — `documents` has no per-case grant), and that
+  the bytes are read from storage at send time (a file gone by then is the
+  route's 400, read as a refusal). Precheck: `GET /api/documents/:id` per
+  file — a 404, a status other than `active`, or a moved name / size
+  refuses before the claim. The fixed builder sends EXACTLY the reviewed
+  `[{document_id}]`; the result counts the files the route answered.
+- **Scheduled sends** — `send_at` (ISO-8601 WITH a zone) makes the card a
+  SCHEDULE card: same evidence, consent and reply rules; the normalizer
+  parses it with the hub's own `mailboxScheduledSendService.parseSendAt`
+  (≥ 2 min, ≤ 30 d; its refusals verbatim) and the card shows the time in
+  firm time (America/Detroit, Luxon) and UTC with the hub's window and the
+  ~60 s scheduler lag. The fixed request goes to `POST /api/mail/send/schedule`
+  with the SAME body + `send_at` (the server's UTC instant), `Idempotency-Key`
+  = the draft_id (the route's scope `mail.schedule`); the 409 `opted_out`
+  confirm (`public/js/optoutAck.js`) is reused as is and the acknowledgement
+  travels with the job. Precheck re-checks the window against
+  `GET /api/mail/identities` → `limits` (the hub's live numbers): a stale
+  card whose time is now inside the floor is refused, never sent now. The
+  result reads `job_id` + `send_at` — "scheduled for <firm time> (scheduled
+  send #N) — cancel it from Comms → Scheduled before then"; the card and the
+  dialog disclose that the hub re-checks the grant, the box, the files and
+  the daily budget AT SEND TIME and that a failure then emails the sender and
+  alerts IT (`runScheduledSend`). Ruled defaults: the SAME family and kind
+  (the brief fixed the kind), so the ledger receipt stays `contact_id` — the
+  ledger's receipt field is keyed by kind; `job_id` rides in the result
+  payload and the chat line; "Open conversation" still opens the contact;
+  the card's title reads *Send later*, its button *Review & schedule email*,
+  its ambiguous wording "may or may not have been scheduled — check Comms →
+  Scheduled". The two engine changes are additive: a family's `title` may
+  be a function of the draft, and `ambiguousText` receives the draft.
+- **Refusals** now hint at the real field: an email's `attachment_urls` /
+  `files` / … → "use attachments: …", `scheduled_time` / `schedule` /
+  `delay` / … → "use send_at: …"; MMS media on an email says the hub cannot
+  (attach a registered document instead).
+
+**Still refused, by name:** MMS media (both channels) and any scheduling of a
+TEXT — the hub has no route for either (`ref/plans.md`); the normalizer's
+refusal says exactly that ("the Comms hub itself cannot attach a file (MMS
+media) to a text / schedule a text"). Also HTML bodies,
 several To recipients and bulk sends. Appointment cards carry their own
 client confirmation under this bar (A4.1 *Client confirmations*). **Humans and Casey:** since the opt-out
 ruling (2026-10-27) both native routes WARN a person sending from Comms (409

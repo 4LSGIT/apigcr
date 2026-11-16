@@ -44,6 +44,15 @@
  *              the case and its link job is queued; the ROUTE refuses an
  *              unknown case, an unreadable parent and an over-cap list before
  *              anything leaves (the card is never the only gate).
+ *   A14Y       (released 2026-11-16) the card's FILES reach SMTP as the hub's
+ *              inline attachments (the REAL loadAttachments / fetchAttachments
+ *              on the world, Dropbox's download spied at the provider object)
+ *              with exactly the reviewed ids; a SCHEDULE card lands on the
+ *              REAL POST /api/mail/send/schedule as ONE scheduled_jobs row
+ *              holding the VALIDATED body (attachments included, re-validating
+ *              as itself), nothing dispatched, the key (scope mail.schedule)
+ *              replaying; the ROUTES refuse a deleted file and a time inside
+ *              the floor before anything is written or sent.
  */
 
 'use strict';
@@ -75,6 +84,9 @@ const { encrypt } = require('../lib/credentialCrypto');
 const { _resetRateLimits } = require('../lib/auth.superuser');
 const assistant = require('../services/assistantService');
 const transport = require('../services/mailbox/imapTransport');
+const sources = require('../services/documentSourceService');
+const sendSvc = require('../services/mailbox/mailboxSendService');
+const sched = require('../services/mailbox/mailboxScheduledSendService');
 const { makeDb: makeProposalDb } = require('./helpers/caseySendProposalDb');
 const { makeWorld: makePhoneWorld } = require('./helpers/phoneSPHWorld');
 const { makeWorld: makeMailWorld } = require('./helpers/mailboxS3World');
@@ -95,10 +107,11 @@ function fnSrc(name) {
   throw new Error(`function ${name} unbalanced`);
 }
 // eslint-disable-next-line no-new-func
-const sendActionRequest = new Function(`${fnSrc('sendIsSms')}\n${fnSrc('sendCcList')}\n${fnSrc('sendBccList')}\n${fnSrc('sendActionRequest')}\nreturn sendActionRequest;`)();
+const SEND_HELPERS = ['sendIsSms', 'sendCcList', 'sendBccList', 'sendIsSchedule', 'sendAttachmentList'].map(fnSrc).join('\n');
+const sendActionRequest = new Function(`${SEND_HELPERS}\n${fnSrc('sendActionRequest')}\nreturn sendActionRequest;`)();
 // The page's result reader (the Case field's link state lands on the card from it).
 // eslint-disable-next-line no-new-func
-const sendActionResult = new Function(`${fnSrc('sendIsSms')}\n${fnSrc('sendCcList')}\n${fnSrc('sendBccList')}\n${fnSrc('sendActionResult')}\nreturn sendActionResult;`)();
+const sendActionResult = new Function(`${SEND_HELPERS}\n${fnSrc('sendActionResult')}\nreturn sendActionResult;`)();
 // The page's dispatch, bound to the REAL helper (run in a JSDOM window, as the
 // page loads it) and an apiSend-shaped caller of the real routes.
 // eslint-disable-next-line no-new-func
@@ -527,6 +540,122 @@ describe('email: card → POST /api/mail/send → SMTP', () => {
     expect(world.W.T.mail_sends).toEqual([]);
     // Pre-dispatch refusals release every claim.
     expect(world.db.rows.filter((r) => /^x-/.test(r.idem_key))).toEqual([]);
+  });
+
+  // ── A14Y (released 2026-11-16): attachments and scheduled sends ──
+  const MiB = 1024 * 1024;
+  const EVID_Y = [{ id: 'q1', purpose: 'Client emails', rows: [{ contact_id: 1309, contact_name: 'Pat One', email_id: 13, case_id: 'CASE1' }] },
+    { id: 'q4', kind: 'sql.read', purpose: 'Documents', rows: [{ document_id: 1, name: 'Petition.pdf' }, { document_id: 6, name: 'Letter.docx' }, { document_id: 3, name: 'Gone.pdf' }] }];
+  const CITE_Y = (...docRows) => [{ query_id: 'q1', row_number: 1 }, ...docRows.map((n) => ({ query_id: 'q4', row_number: n }))];
+  /** The registry rows the proposal fake carries, registered in the world under the same ids / names / sizes (the route reads the world). */
+  function fileWorld() {
+    const world = mailWorld();
+    world.W.doc(1, { name: 'Petition.pdf', size: MiB });
+    world.W.doc(6, { name: 'Letter.docx', size: 2 * MiB });
+    world.W.doc(3, { name: 'Gone.pdf', size: 1024, status: 'deleted' });
+    world.download = jest.spyOn(sources.dropboxProvider, 'download').mockImplementation(async (db, externalId) => ({ buffer: Buffer.from(`bytes-of-${externalId}`), metadata: {} }));
+    return world;
+  }
+
+  test('A14Y: the reviewed files reach SMTP as the hub\'s inline attachments — exactly the reviewed ids, the registry\'s names, Dropbox\'s bytes; the result counts them', async () => {
+    const world = fileWorld();
+    const draft = await assistant.normalizeActionDraft(proposalDb(world.W),
+      { kind: 'email.send.v1', contact_id: 1309, email_id: 13, mailbox_id: 1, subject: 'Your petition', body: 'Attached, {{contacts.contact_fname}}.',
+        attachments: [{ document_id: 1 }, { document_id: 6 }, { document_id: 1 }], evidence: CITE_Y(1, 2) },
+      EVID_Y, { currentUserId: SENDER });
+    expect(draft.attachments).toEqual([{ document_id: 1, name: 'Petition.pdf', size: MiB }, { document_id: 6, name: 'Letter.docx', size: 2 * MiB }]);
+    expect(draft).toMatchObject({ attachments_total_bytes: 3 * MiB, attachment_duplicates_dropped: 1, schedule: null });
+    const request = sendActionRequest(draft);
+    expect(request).toEqual({ path: '/api/mail/send', method: 'POST', idempotent: true,
+      body: { mailbox_id: 1, to: ['pat@example.com'], subject: 'Your petition', body_text: 'Attached, Pat.', attachments: [{ document_id: 1 }, { document_id: 6 }] } });
+    expect(world.download).not.toHaveBeenCalled();   // the proposal fetched no bytes
+
+    current = world;
+    const first = await post(request.path, request.body, tok(SENDER), { 'Idempotency-Key': draft.draft_id });
+    expect(first.status).toBe(200);
+    expect(first.json.attachments).toEqual([{ document_id: 1, name: 'Petition.pdf', size: MiB }, { document_id: 6, name: 'Letter.docx', size: 2 * MiB }]);
+    expect(world.download.mock.calls.map((c) => c[1])).toEqual(['id:doc1', 'id:doc6']);
+    expect(mockSendMail).toHaveBeenCalledTimes(1);
+    const sent = mockSendMail.mock.calls[0][0];
+    expect(sent.attachments.map((a) => [a.filename, a.content.toString('utf8'), Object.keys(a).sort().join(',')]))
+      .toEqual([['Petition.pdf', 'bytes-of-id:doc1', 'content,filename'], ['Letter.docx', 'bytes-of-id:doc6', 'content,filename']]);
+    expect([sent.to, sent.subject, sent.text]).toEqual(['pat@example.com', 'Your petition', 'Attached, Pat.']);
+    // The page's reader names the count; the receipt stays the contact.
+    const payload = sendActionResult(draft, first.json);
+    expect(payload).toMatchObject({ contact_id: 1309, outcome: 'sent — the mail server accepted it (2 files attached)' });
+    // A replay sends nothing and fetches nothing again.
+    const again = await post(request.path, request.body, tok(SENDER), { 'Idempotency-Key': draft.draft_id });
+    expect([again.status, again.json.replayed]).toEqual([200, true]);
+    expect(world.download).toHaveBeenCalledTimes(2);
+    expect(mockSendMail).toHaveBeenCalledTimes(1);
+    const audit = world.W.T.admin_audit_log.filter((a) => a.tool === 'mail_send' && a.status === 'sent');
+    expect(audit).toHaveLength(1);
+    expect(audit[0].details.attachments).toEqual([1, 6]);
+  });
+
+  test('A14Y: a schedule card lands on the REAL schedule route — ONE scheduled_jobs row holding the VALIDATED body with the files, nothing sent or fetched, the key replays under scope mail.schedule', async () => {
+    const world = fileWorld();
+    world.W.caseRow('CASE1', '26-40001', '2:26-bk-40001');
+    const sendAt = new Date(Date.now() + 3600_000).toISOString();
+    const draft = await assistant.normalizeActionDraft(proposalDb(world.W),
+      { kind: 'email.send.v1', contact_id: 1309, email_id: 13, mailbox_id: 1, subject: 'Tomorrow', body: 'See attached, {{contacts.contact_fname}}.',
+        case_id: 'CASE1', attachments: [{ document_id: 6 }], send_at: sendAt, evidence: CITE_Y(2) },
+      EVID_Y, { currentUserId: SENDER });
+    expect(draft.schedule).toMatchObject({ send_at: sendAt, firm_zone: 'America/Detroit', min_ahead_ms: sched.MIN_AHEAD_MS, max_ahead_ms: sched.MAX_AHEAD_MS, lag_s: 60 });
+    const request = sendActionRequest(draft);
+    expect(request).toEqual({ path: '/api/mail/send/schedule', method: 'POST', idempotent: true,
+      body: { mailbox_id: 1, to: ['pat@example.com'], subject: 'Tomorrow', body_text: 'See attached, Pat.', case_id: 'CASE1', attachments: [{ document_id: 6 }], send_at: sendAt } });
+
+    current = world;
+    const first = await post(request.path, request.body, tok(SENDER), { 'Idempotency-Key': draft.draft_id });
+    expect(first.status).toBe(201);
+    expect(first.json).toMatchObject({ status: 'success', job_id: expect.any(Number), send_at: sendAt, mailbox_id: 1, from: 'billing@firm.test', recipients: 1,
+      attachments: [{ document_id: 6, name: 'Letter.docx', size: 2 * MiB }] });
+    const jobs = world.W.T.scheduled_jobs.filter((j) => JSON.parse(j.data).type === sched.JOB_TYPE);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({ id: first.json.job_id, type: 'one_time', status: 'pending', max_attempts: 1, name: `Mail scheduled send — user #${SENDER} (mailbox #1)` });
+    expect(jobs[0].scheduled_time).toEqual(new Date(sendAt));
+    const data = JSON.parse(jobs[0].data);
+    expect(data).toMatchObject({ type: 'mail_scheduled_send', user: SENDER, mailbox_id: 1, acknowledged_optout: false });
+    // The stored body is the VALIDATED one — never the card's request — and re-validates as itself (what runScheduledSend hands sendFromMailbox).
+    expect(data.body).toEqual({ mailbox_id: 1, to: [{ email: 'pat@example.com', name: null }], cc: [], bcc: [], subject: 'Tomorrow', body_text: 'See attached, Pat.', body_html: null,
+      in_reply_to_message_fk: null, quote_original: true, signature: false, acknowledge_optout: false, case_id: 'CASE1', attachments: [6] });
+    expect(sendSvc.validateSendBody(data.body)).toEqual(data.body);
+    expect('send_at' in data.body).toBe(false);
+    expect(mockSendMail).not.toHaveBeenCalled();
+    expect(world.download).not.toHaveBeenCalled();     // bytes are fetched at SEND time
+    expect(world.W.T.mail_sends).toEqual([]);
+    // The page's reader: the job is the record; the receipt stays the contact.
+    const payload = sendActionResult(draft, first.json);
+    expect(payload).toEqual({ contact_id: 1309, job_id: first.json.job_id, send_at: sendAt, case_id: 'CASE1',
+      outcome: `scheduled for ${draft.schedule.firm_time} (scheduled send #${first.json.job_id}), 1 file attached — cancel it from Comms → Scheduled before then` });
+    // The same key schedules ONCE: the replay answers the first result, the row count stays one.
+    const again = await post(request.path, request.body, tok(SENDER), { 'Idempotency-Key': draft.draft_id });
+    expect([again.status, again.json.replayed, again.json.job_id]).toEqual([200, true, first.json.job_id]);
+    expect(world.W.T.scheduled_jobs.filter((j) => JSON.parse(j.data).type === sched.JOB_TYPE)).toHaveLength(1);
+    expect(world.db.rows).toEqual([expect.objectContaining({ scope: 'mail.schedule', idem_key: draft.draft_id, status: 'applied' })]);
+    const audit = world.W.T.admin_audit_log.filter((a) => a.tool === 'mail_send');
+    expect(audit.map((a) => a.status)).toEqual(['scheduled']);
+    expect(audit[0].details).toMatchObject({ job_id: first.json.job_id, send_at: sendAt, attachments: [6] });
+    expect(JSON.stringify(audit[0].details)).not.toMatch(/pat@|Tomorrow|See attached/);
+  });
+
+  test('A14Y: the routes, not the card, are the gate — a deleted file is a 400 naming it on both routes, a time inside the floor a 400 on the schedule route; nothing written, every claim released', async () => {
+    const world = fileWorld(); current = world;
+    const base = { mailbox_id: 1, to: ['pat@example.com'], subject: 'S', body_text: 'B' };
+    const gone = await post('/api/mail/send', { ...base, attachments: [{ document_id: 3 }] }, tok(SENDER), { 'Idempotency-Key': 'y-gone-send' });
+    expect([gone.status, gone.json.message]).toEqual([400, 'attachments: "Gone.pdf" has been deleted from storage — remove it to send']);
+    const goneLater = await post('/api/mail/send/schedule', { ...base, attachments: [{ document_id: 3 }], send_at: new Date(Date.now() + 3600_000).toISOString() }, tok(SENDER), { 'Idempotency-Key': 'y-gone-sched' });
+    expect([goneLater.status, goneLater.json.message]).toEqual([400, 'attachments: "Gone.pdf" has been deleted from storage — remove it to send']);
+    const soon = await post('/api/mail/send/schedule', { ...base, send_at: new Date(Date.now() + 60_000).toISOString() }, tok(SENDER), { 'Idempotency-Key': 'y-soon' });
+    expect([soon.status, soon.json.message]).toEqual([400, 'send_at must be at least 2 minutes from now']);
+    const naive = await post('/api/mail/send/schedule', { ...base, send_at: '2026-12-01T10:30:00' }, tok(SENDER), { 'Idempotency-Key': 'y-naive' });
+    expect([naive.status, naive.json.message]).toEqual([400, 'send_at must be an ISO-8601 time with its zone (…Z or ±hh:mm)']);
+    expect(mockSendMail).not.toHaveBeenCalled();
+    expect(world.download).not.toHaveBeenCalled();
+    expect(world.W.T.scheduled_jobs.filter((j) => JSON.parse(j.data).type === sched.JOB_TYPE)).toEqual([]);
+    expect(world.W.T.mail_sends).toEqual([]);
+    expect(world.db.rows.filter((x) => /^y-/.test(x.idem_key))).toEqual([]);
   });
 
   test('an SMTP failure keeps the claim; a refusal (no send grant) releases it', async () => {

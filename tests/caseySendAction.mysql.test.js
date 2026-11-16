@@ -8,8 +8,10 @@
  * the channel-access SQL it reaches through mailboxService / phoneCommsService /
  * mailboxSendService, and (A14X) the cc / bcc reloads and the hub's own
  * replyDefaults — loadParent on mail_messages, the From/To pick over the
- * caller's identities. Nothing is mocked; nothing can send (the normalizer
- * loads no route, adapter or transport).
+ * caller's identities — and (A14Y) the hub's own loadAttachments over the
+ * `documents` registry (status enum, a NULL size, bigint sizes against the
+ * hub's caps). Nothing is mocked; nothing can send (the normalizer loads no
+ * route, adapter or transport).
  *
  * ── GATED ON YC_TEST_MYSQL_URL — SKIPPED OTHERWISE ──────────────────────────
  *   YC_TEST_MYSQL_URL=mysql://root@127.0.0.1:3361/yc_a14send_test npx jest tests/caseySendAction.mysql.test.js --runInBand
@@ -31,7 +33,8 @@ const URL_ = process.env.YC_TEST_MYSQL_URL;
 const d = URL_ ? describe : describe.skip;
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
 const TABLES = ['users', 'contacts', 'contact_phones', 'contact_emails', 'cases', 'case_relate',
-  'channel_grants', 'phone_lines', 'mailboxes', 'email_credentials', 'mail_messages'];
+  'channel_grants', 'phone_lines', 'mailboxes', 'email_credentials', 'mail_messages', 'documents'];
+const MiB = 1024 * 1024;
 
 // Line-based extraction (column COMMENTs may hold ';'); constraint clauses
 // naming a table outside TABLES are dropped — this suite tests predicates.
@@ -65,7 +68,9 @@ d('A14 direct sends: the normalizer\'s SQL on real MySQL', () => {
   const q = async (sql, p) => (await pool.query(sql, p))[0];
   const EVID = [{ id: 'q1', purpose: 'Client', rows: [{ contact_id: 1309, phone_id: 12, email_id: 13, case_id: 'CASEA14' },
     { contact_id: 1309, email_id: 14 }, { contact_id: 1400, email_id: 15 }, { case_id: 'CASEB' }, { case_id: 'CASEX' }] },
-  { id: 'q2', kind: 'mail.message', purpose: 'Mail', rows: [501, 502, 503, 504].map((id) => ({ row_type: 'message', mail_message_id: id })) }];
+  { id: 'q2', kind: 'mail.message', purpose: 'Mail', rows: [501, 502, 503, 504].map((id) => ({ row_type: 'message', mail_message_id: id })) },
+  // A14Y: a documents read — rows 1..7 the registry rows seeded below, row 8 an id that does not exist.
+  { id: 'q4', kind: 'sql.read', purpose: 'Documents', rows: [1, 2, 3, 4, 5, 6, 7, 999].map((document_id) => ({ document_id })) }];
   const CITE = [{ query_id: 'q1', row_number: 1 }];
   const ROW = (n, q = 'q1') => ({ query_id: q, row_number: n });
   const RENA = 22;
@@ -116,6 +121,15 @@ d('A14 direct sends: the normalizer\'s SQL on real MySQL', () => {
     await MSG(502, 8, 'pat@example.com', 'nosend@4lsg.com');
     await MSG(503, 9, 'Pat One <pat@example.com>', 'stuart@4lsg.com');
     await MSG(504, 5, 'Trustee <trustee@court.test>', 'rena@4lsg.com');
+    // documents: 1 a 1 MB pdf; 2 a 14 MB pdf; 3 deleted; 4 size unknown (NULL); 5 over the per-file cap; 6 a 2 MB docx; 7 reported missing.
+    await q(`INSERT INTO documents (id, source, external_id, name, path, ext, size, status) VALUES
+             (1, 'dropbox', 'id:doc1', 'Petition.pdf', '/c/Petition.pdf', 'pdf', ${MiB}, 'active'),
+             (2, 'dropbox', 'id:doc2', 'Big.pdf', '/c/Big.pdf', 'pdf', ${14 * MiB}, 'active'),
+             (3, 'dropbox', 'id:doc3', 'Gone.pdf', '/c/Gone.pdf', 'pdf', 1024, 'deleted'),
+             (4, 'dropbox', 'id:doc4', 'Unknown.bin', '/c/Unknown.bin', 'bin', NULL, 'active'),
+             (5, 'dropbox', 'id:doc5', 'Huge.zip', '/c/Huge.zip', 'zip', ${16 * MiB}, 'active'),
+             (6, 'dropbox', 'id:doc6', 'Letter.docx', '/c/Letter.docx', 'docx', ${2 * MiB}, 'active'),
+             (7, 'dropbox', 'id:doc7', 'Missing.pdf', '/c/Missing.pdf', 'pdf', 2048, 'missing')`);
   });
   afterAll(async () => { if (pool) await pool.end(); });
 
@@ -210,6 +224,35 @@ d('A14 direct sends: the normalizer\'s SQL on real MySQL', () => {
     await expect(norm(reply(501, { mailbox_id: 8 }))).rejects.toThrow(/Mailbox 8 cannot be used: Read-only/);
     // The SU reaches every box through the bypass; with no grant rows the hub's pick is the message's own box.
     await expect(norm(reply(501), 6)).resolves.toMatchObject({ reply: { mailbox_id: 5 } });
+  });
+
+  test('A14Y attachments: the hub\'s own loadAttachments runs on the engine — the enum status, a NULL size, bigint sizes against the caps; the card carries numbers, the hub\'s words refuse', async () => {
+    const DOC = (n) => ROW(n, 'q4');
+    const files = (attachments, rows) => email({ subject: 'Hi', case_id: undefined, attachments, evidence: [ROW(1), ...rows.map(DOC)] });
+    const d = await norm(files([{ document_id: 1 }, { document_id: 6 }, { document_id: 1 }], [1, 6]));
+    expect(d.attachments).toEqual([{ document_id: 1, name: 'Petition.pdf', size: MiB }, { document_id: 6, name: 'Letter.docx', size: 2 * MiB }]);
+    expect(d).toMatchObject({ attachments_total_bytes: 3 * MiB, attachment_duplicates_dropped: 1 });
+    expect(typeof d.attachments[0].size).toBe('number');   // bigint unsigned → a JS number on the card, never a string
+    await expect(norm(files([{ document_id: 999 }], [8]))).rejects.toThrow(/^Email send attachments: document #999 is not a registered document$/);
+    await expect(norm(files([{ document_id: 3 }], [3]))).rejects.toThrow(/^Email send attachments: "Gone.pdf" has been deleted from storage — remove it to send$/);
+    await expect(norm(files([{ document_id: 7 }], [7]))).rejects.toThrow(/^Email send attachments: "Missing.pdf" has been reported missing — remove it to send$/);
+    await expect(norm(files([{ document_id: 4 }], [4]))).rejects.toThrow(/^Email send attachments: the size of "Unknown.bin" is not known, so it cannot be attached \(re-register it in Documents\)$/);
+    await expect(norm(files([{ document_id: 5 }], [5]))).rejects.toThrow(/^Email send attachments: "Huge.zip" is 16 MB — at most 15 MB per file$/);
+    await expect(norm(files([{ document_id: 2 }, { document_id: 6 }], [2, 6]))).rejects.toThrow(/^Email send attachments: together they come to more than 15 MB$/);
+    // Exactly at the per-file cap is allowed; one byte over is not (the engine's bigint compared to the hub's constant).
+    await q(`UPDATE documents SET size = ${15 * MiB} WHERE id = 2`);
+    await expect(norm(files([{ document_id: 2 }], [2]))).resolves.toMatchObject({ attachments: [{ document_id: 2, size: 15 * MiB }] });
+    await q(`UPDATE documents SET size = ${15 * MiB + 1} WHERE id = 2`);
+    await expect(norm(files([{ document_id: 2 }], [2]))).rejects.toThrow(/"Big.pdf" is 15\.0 MB — at most 15 MB per file/);
+    await q(`UPDATE documents SET size = ${14 * MiB} WHERE id = 2`);
+    // A file that becomes deleted between the read and the card: the next proposal refuses it.
+    await q("UPDATE documents SET status = 'deleted' WHERE id = 6");
+    await expect(norm(files([{ document_id: 6 }], [6]))).rejects.toThrow(/"Letter.docx" has been deleted from storage/);
+    await q("UPDATE documents SET status = 'active' WHERE id = 6");
+    // A schedule carries no SQL of its own: the files and the window on one card.
+    const at = new Date(Date.now() + 3600_000).toISOString();
+    const s = await norm(email({ subject: 'Hi', case_id: undefined, attachments: [{ document_id: 1 }], send_at: at, evidence: [ROW(1), DOC(1)] }));
+    expect(s).toMatchObject({ attachments: [{ document_id: 1 }], schedule: { send_at: at, firm_zone: 'America/Detroit', min_ahead_ms: 120000, max_ahead_ms: 2592000000 } });
   });
 
   test('sender predicates: a read-only grant, an inactive line and a box with no send credential refuse; omitted = the only send grant', async () => {

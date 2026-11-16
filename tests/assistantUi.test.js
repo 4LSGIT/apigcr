@@ -141,8 +141,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'ingestRulePath', 'ingestRuleId', 'ingestRuleLabel', 'ingestRuleValue', 'ingestRuleHead', 'ingestRuleSideText', 'ingestRuleActionLine',
   'ingestRuleCarriesCode', 'ingestRuleText', 'ingestRuleRequest', 'ingestRuleDispatch', 'ingestRuleResult', 'ingestRulePrecheck', 'openIngestRuleRecord',
   'openAutomationRecord',
-  'sendIsSms', 'sendActionLabel', 'sendRecipientLine', 'sendOptoutText', 'sendCcList', 'sendBccList', 'sendAllRecipients', 'sendFactLines', 'sendDraftText', 'sendDraftFields', 'sendConfirmText', 'sendActionRequest',
-  'sendPrecheck', 'sendRecipientPrecheck', 'sendReplyPrecheck', 'sendActionDispatch', 'sendActionResult', 'sendResultText', 'openSendRecord',
+  'sendIsSms', 'sendIsSchedule', 'sendAttachmentList', 'sendNothing', 'sendActionLabel', 'sendRecipientLine', 'sendOptoutText', 'sendCcList', 'sendBccList', 'sendAllRecipients', 'sendFactLines', 'sendDraftText', 'sendDraftFields', 'sendConfirmText', 'sendActionRequest',
+  'sendPrecheck', 'sendRecipientPrecheck', 'sendReplyPrecheck', 'sendAttachmentPrecheck', 'sendSchedulePrecheck', 'sendActionDispatch', 'sendActionResult', 'sendResultText', 'openSendRecord',
   'reportDraftLabel', 'reportSsnText', 'reportVizText', 'reportCardText', 'reportDraftFields', 'reportConfirmText', 'reportDraftRequest', 'reportDraftResult',
   'actionFamily', 'isActionDraft', 'actionStringReceipt', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
   'executeActionDraft', 'applyActionResults', 'hydrateActionDraft'];
@@ -2514,7 +2514,14 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
     const work = { id: 14, email: 'pat.work@example.com', email_optout: 0, end_date: null, updated_at: STAMP, consent: { opted_out: false, version: '0' }, ...(over.work || {}) };
     const other = { id: 15, email: 'other@example.com', email_optout: 0, end_date: null, updated_at: STAMP, consent: { opted_out: false, version: '0' }, ...(over.other || {}) };
     const replyRead = over.reply === undefined ? { status: 'success', in_reply_to_message_fk: 501, mailbox_id: 5, to: [{ email: 'pat@example.com', name: 'Pat One' }], subject: 'Re: Hello' } : over.reply;
+    // A14Y: the registry rows the card's files are re-read from, and the hub's limits.
+    const doc1 = over.doc1 === undefined ? { status: 'success', document: { id: 1, name: 'Petition.pdf', size: 1048576, status: 'active' }, links: [] } : over.doc1;
+    const doc6 = over.doc6 === undefined ? { status: 'success', document: { id: 6, name: 'Letter.docx', size: 2097152, status: 'active' }, links: [] } : over.doc6;
+    const identities = over.identities === undefined ? { status: 'success', identities: [], limits: { max_attachments: 10, attachment_max_bytes: 15728640, attachments_total_bytes: 15728640, schedule_min_ahead_ms: 120000, schedule_max_ahead_ms: 2592000000 } } : over.identities;
     return (path) => {
+      if (path === '/api/documents/1') { if (typeof doc1 === 'function') return doc1(); return doc1; }
+      if (path === '/api/documents/6') { if (typeof doc6 === 'function') return doc6(); return doc6; }
+      if (path === '/api/mail/identities') { if (typeof identities === 'function') return identities(); return identities; }
       if (path === '/api/contacts/1309') return { contact };
       if (path === '/api/contacts/1309/phones') return { status: 'success', phones: over.noRow ? [] : [phone] };
       if (path === '/api/contacts/1309/emails') return { status: 'success', emails: over.noRow ? [] : [email, work] };
@@ -2905,7 +2912,7 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
     expect(row('Quoted original')).toEqual(['appended under your text ("On Mon, Oct 26, 2026 at 10:00 AM, Pat One <pat@example.com> wrote:" …), as Comms does']);
     expect(row('Case')).toEqual(["2:26-bk-40001 — this email is FILED to case CASE1: its sent copy joins the case's log after the send (the link runs afterwards and may lag minutes to a couple of hours; if it fails, IT is alerted)"]);
     expect(row('Subject')).toEqual(['Re: Hello (the reply subject Comms would use)']);
-    expect(row('Audience')).toEqual(['3 recipients. No attachments or scheduled send — the Comms hub itself cannot do either.']);
+    expect(row('Audience')).toEqual(['3 recipients; no attachments.']);
     expect(row('Consent')).toEqual(['a direct email is operational — an email opt-out covers marketing only and never stops it; every recipient is re-checked when you click.']);
     expect(rows[rows.length - 1]).toEqual(['Body', 'Dear Pat,\n\nSee you Tuesday.']);
     // The dialog names the copies.
@@ -2914,14 +2921,14 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
     const quiet = sendDraftText(fullEmail({ reply: { mail_message_id: 501, mailbox_id: 5, quote_original: false, quote_header: null }, case: null, cc: [], bcc: [] }).action_draft);
     expect(quiet).toContain('\nIn reply to: message #501 — threaded into that conversation\nQuoted original: NOT included — only your text is sent\n');
     expect(quiet).toContain('\nCase: none — this email is not filed to any case (Casey never picks a case for you; name the case to file it there)\n');
-    expect(quiet).toContain('\nAudience: one recipient. No attachments or scheduled send — the Comms hub itself cannot do either.\n');
+    expect(quiet).toContain('\nAudience: one recipient; no attachments.\n');
     expect(quiet).not.toMatch(/\nCc:|\nBcc:|WARNING: Bcc/);
     const stranger = sendDraftText(fullEmail({ case: { case_id: 'CASE3', label: '2:26-bk-40003', linked_to_recipient: false } }).action_draft);
     expect(stranger).toContain('\nWARNING: case CASE3 is not a case of Pat One\n');
     // Plain email (as before A14X): no new lines, the old audience wording gone.
     const plain = sendDraftText(emailDraft().action_draft);
     expect(plain).toContain('\nCase: none — this email is not filed to any case');
-    expect(plain).toContain('\nAudience: one recipient. No attachments or scheduled send — the Comms hub itself cannot do either.\n');
+    expect(plain).toContain('\nAudience: one recipient; no attachments.\n');
     expect(plain).not.toMatch(/reply threading|In reply to|Cc:/);
     // SMS: nothing new.
     const text = sendDraftText(smsDraft({ case: { case_id: 'CASE1', label: '2:26-bk-40001' } }).action_draft);
@@ -2957,6 +2964,181 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
       .toBe('sent, but the mail server refused one or more recipients; the case CASE1 link follows once the sent copy is stored (minutes to a couple of hours)');
     const noCase = sendActionResult(fullEmail({ case: null }).action_draft, { ...base, case_link: { state: null } });
     expect(noCase).toEqual({ contact_id: 1309, email_log_id: 5, outcome: 'sent — the mail server accepted it', provider_id: null, warnings: [] });
+  });
+
+  // ── A14Y (released 2026-11-16): attachments and scheduled sends ──
+  const MiB = 1048576;
+  const FILES = [{ document_id: 1, name: 'Petition.pdf', size: MiB }, { document_id: 6, name: 'Letter.docx', size: 2 * MiB }];
+  const LIMITS = { max_attachments: 10, attachment_max_bytes: 15 * MiB, attachments_total_bytes: 15 * MiB };
+  const filesEmail = (over = {}) => emailDraft({ attachments: FILES, attachments_total_bytes: 3 * MiB, attachment_duplicates_dropped: 0, attachment_limits: LIMITS, schedule: null, cc: [], bcc: [], reply: null, ...over });
+  const SEND_AT = new Date(Date.now() + 3600_000).toISOString();
+  const SCHEDULE = { send_at: SEND_AT, firm_time: 'Tue, Dec 1, 2026 at 10:30 AM EST', firm_zone: 'America/Detroit', min_ahead_ms: 120000, max_ahead_ms: 2592000000, lag_s: 60 };
+  const scheduled = (over = {}) => filesEmail({ schedule: SCHEDULE, ...over });
+  const schedOk = async () => ({ status: 'success', job_id: 77, send_at: SEND_AT, mailbox_id: 5, from: 'rena@4lsg.com', recipients: 1, attachments: [{ document_id: 1, name: 'Petition.pdf', size: MiB }, { document_id: 6, name: 'Letter.docx', size: 2 * MiB }] });
+  const mailFilesOk = async () => ({ status: 'success', email_log_id: 991, warnings: [], attachments: [{ document_id: 1, name: 'Petition.pdf', size: MiB }, { document_id: 6, name: 'Letter.docx', size: 2 * MiB }] });
+
+  test('A14Y: the card lists each file (name · size · id), the total and the hub\'s caps, who may attach and when the bytes are read; a schedule card names the firm time, the UTC instant, the send-time re-checks and the cancel path', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const { document } = dom.window;
+    const { hydrateActionDraft, actionFamily } = actionSandbox({ document, navigator: dom.window.navigator });
+    const family = actionFamily({ kind: 'email.send.v1' });
+    const rowsOf = (m) => { const host = document.createElement('div'); hydrateActionDraft(family, host, m, m.action_draft); return { host, rows: [...host.querySelectorAll('dt')].map((dt) => [dt.textContent, dt.nextElementSibling.textContent]) }; };
+    const files = filesEmail({ attachment_duplicates_dropped: 1 });
+    const { host, rows } = rowsOf(files);
+    const row = (k) => rows.filter(([key]) => key === k).map(([, v]) => v);
+    expect(row('File 1')).toEqual(['Petition.pdf · 1.0 MB · document #1']);
+    expect(row('File 2')).toEqual(['Letter.docx · 2.0 MB · document #6']);
+    expect(row('Files')).toEqual(['2 files, 3.0 MB together (Comms allows up to 10 files, 15.0 MB each and 15.0 MB together). Anyone who may send may attach any registered document — the Comms rule. The file itself is read from storage when the email goes out: a file deleted or changed between this card and your click is refused and nothing is sent.']);
+    expect(row('Duplicate files')).toEqual(['1 listed twice and attached once']);
+    expect(row('Audience')).toEqual(['one recipient.']);
+    expect(row('Effect')).toEqual(['sends NOW from your signed-in account under your own mailbox access. It cannot be recalled.']);
+    expect(rows.some(([k]) => k === 'Send at')).toBe(false);
+    expect(host.querySelector('.action-draft-head b').textContent).toBe('Send now');
+    expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toContain('Review & send email');
+    expect(family.confirmText(files.action_draft)).toMatch(/^This sends NOW to Pat One pat@example.com with 2 files attached\. It cannot be recalled\.\n\n/);
+    expect(family.text(files.action_draft)).toMatch(/^Email proposal — not sent\n/);
+    // No files: the audience line says so; no File / Files / Duplicate rows at all.
+    const plain = rowsOf(emailDraft());
+    expect(plain.rows.filter(([k]) => /^(File|Files|Duplicate files|Send at)/.test(k))).toEqual([]);
+    expect(plain.rows.filter(([k]) => k === 'Audience').map(([, v]) => v)).toEqual(['one recipient; no attachments.']);
+    expect(family.text(emailDraft().action_draft)).not.toMatch(/Comms hub itself cannot/);
+    // Three recipients, one file.
+    expect(family.text(filesEmail({ attachments: FILES.slice(0, 1), attachments_total_bytes: MiB, cc: fullEmail().action_draft.cc, bcc: fullEmail().action_draft.bcc }).action_draft))
+      .toMatch(/\nFiles: one file, 1\.0 MB together \(Comms allows[^\n]*\n[\s\S]*\nAudience: 3 recipients\.\n/);
+    // The schedule card.
+    const sc = scheduled();
+    const s = rowsOf(sc);
+    const srow = (k) => s.rows.filter(([key]) => key === k).map(([, v]) => v);
+    expect(srow('Send at')).toEqual([`Tue, Dec 1, 2026 at 10:30 AM EST (firm time, America/Detroit) — ${SEND_AT} UTC. It goes out within about 1 minute after that, not before.`]);
+    expect(srow('Checked again at send time')).toEqual(['Comms re-runs every check when it sends — your send access on the mailbox, the box itself, each file and the daily sending limit. If it is refused then, nothing goes out, you get an email at your own address and IT is alerted. Until then you can cancel it from Comms → Scheduled.']);
+    expect(srow('Effect')).toEqual(['SCHEDULES this email to go out at Tue, Dec 1, 2026 at 10:30 AM EST from your signed-in account under your own mailbox access. Until then it can be cancelled from Comms → Scheduled; once sent it cannot be recalled.']);
+    expect(s.host.querySelector('.action-draft-head b').textContent).toBe('Send later');
+    expect(s.host.querySelector('.action-draft-status').textContent).toBe('Proposal — not applied');
+    expect([...s.host.querySelectorAll('button')].map((b) => b.textContent)).toContain('Review & schedule email');
+    expect(s.host.querySelector('.action-draft-next-warning').textContent).toBe('This SCHEDULES an email — to a real client, from your own mailbox — to go out at the time shown without asking you again. Read the recipient, the files and every word above: it is exactly what goes out. It can be cancelled from Comms → Scheduled until then; once sent it cannot be recalled. Canceling the dialog schedules nothing.');
+    expect(family.label(sc.action_draft)).toBe('Schedule email');
+    expect(family.text(sc.action_draft)).toMatch(/^Scheduled email proposal — not scheduled\n/);
+    expect(family.confirmText(sc.action_draft)).toMatch(/^This SCHEDULES an email to Pat One pat@example.com with 2 files attached for Tue, Dec 1, 2026 at 10:30 AM EST \(firm time\)\. It can be cancelled from Comms → Scheduled until then; once sent it cannot be recalled\.\n\n/);
+    // The send card keeps its own words; an SMS is untouched by either.
+    expect(host.querySelector('.action-draft-next-warning').textContent).toMatch(/^This SENDS NOW — to a real client/);
+    const text = family.text(smsDraft().action_draft);
+    expect(text).toContain('\nAudience: one recipient. No attachments, media, cc/bcc or scheduling.\n');
+    expect(text).not.toMatch(/Send at|Files/);
+  });
+
+  test('A14Y: the builder sends exactly the reviewed document ids and, on a schedule card, the SAME body + send_at to the schedule route; it refuses an unusable file or time', () => {
+    const { actionFamily } = actionSandbox();
+    const family = actionFamily({ kind: 'email.send.v1' });
+    expect(family.request(filesEmail().action_draft)).toEqual({ path: '/api/mail/send', method: 'POST', idempotent: true,
+      body: { mailbox_id: 5, to: ['pat@example.com'], subject: 'Your case', body_text: 'Dear Pat,\n\nSee you Tuesday.', attachments: [{ document_id: 1 }, { document_id: 6 }] } });
+    const sc = family.request(scheduled({ case: { case_id: 'CASE1', label: 'x', linked_to_recipient: true } }).action_draft);
+    expect(sc).toEqual({ path: '/api/mail/send/schedule', method: 'POST', idempotent: true,
+      body: { mailbox_id: 5, to: ['pat@example.com'], subject: 'Your case', body_text: 'Dear Pat,\n\nSee you Tuesday.', case_id: 'CASE1', attachments: [{ document_id: 1 }, { document_id: 6 }], send_at: SEND_AT } });
+    // Only the ids travel — never the names the card showed, nor anything typed into the list.
+    expect(family.request(filesEmail({ attachments: [{ document_id: 1, name: 'evil.exe', url: 'https://x' }] }).action_draft).body.attachments).toEqual([{ document_id: 1 }]);
+    expect(() => family.request(filesEmail({ attachments: ['Petition.pdf'] }).action_draft)).toThrow(/unusable attachment/);
+    expect(() => family.request(filesEmail({ attachments: [{ document_id: 0 }] }).action_draft)).toThrow(/unusable attachment/);
+    for (const bad of ['2026-12-01T10:30:00', '2026-12-01T10:30:00-05:00', 'tomorrow', 7]) {
+      expect(() => family.request(scheduled({ schedule: { ...SCHEDULE, send_at: bad } }).action_draft)).toThrow(/no usable send time/);
+    }
+    // An empty list adds no key; a null schedule is a send.
+    expect(family.request(filesEmail({ attachments: [] }).action_draft)).toEqual({ path: '/api/mail/send', method: 'POST', idempotent: true, body: { mailbox_id: 5, to: ['pat@example.com'], subject: 'Your case', body_text: 'Dear Pat,\n\nSee you Tuesday.' } });
+    expect(family.request(scheduled({ schedule: null }).action_draft).path).toBe('/api/mail/send');
+  });
+
+  test('A14Y: the precheck re-reads EVERY file and, on a schedule, the hub\'s window; a gone, deleted or changed file and a time now inside the floor refuse BEFORE the claim; an unreadable window leaves the card retryable', async () => {
+    const ok = scheduled();
+    const { writes, gets, ledger, history } = await run(ok, { write: schedOk });
+    expect(gets).toEqual(['/api/contacts/1309', '/api/contacts/1309/emails', '/api/documents/1', '/api/documents/6', '/api/mail/identities']);
+    expect(writes).toEqual([{ path: '/api/mail/send/schedule', method: 'POST', headers: { 'Idempotency-Key': ok.action_draft.draft_id },
+      body: { mailbox_id: 5, to: ['pat@example.com'], subject: 'Your case', body_text: 'Dear Pat,\n\nSee you Tuesday.', attachments: [{ document_id: 1 }, { document_id: 6 }], send_at: SEND_AT } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-send', result: { contact_id: 1309 } } }]);   // the receipt stays the contact
+    expect(ok.action_draft).toMatchObject({ status: 'applied', result_send_contact_id: 1309 });
+    expect(history[0].text).toBe('Email to Pat One: contact #1309: scheduled for Tue, Dec 1, 2026 at 10:30 AM EST (scheduled send #77), 2 files attached — cancel it from Comms → Scheduled before then.');
+    expect(history[0].action_result).toMatchObject({ kind: 'email.send.v1', contact_id: 1309, job_id: 77, send_at: SEND_AT });
+    // A plain send with files reads the files, never the window.
+    const sendFiles = filesEmail();
+    const sf = await run(sendFiles, { write: mailFilesOk });
+    expect(sf.gets).toEqual(['/api/contacts/1309', '/api/contacts/1309/emails', '/api/documents/1', '/api/documents/6']);
+    expect(sf.history[0].text).toBe('Email to Pat One: contact #1309: sent — the mail server accepted it (2 files attached) (email log #991).');
+    const refusals = [
+      [{ doc6: () => { throw Object.assign(new Error('Document not found'), { status: 404 }); } }, 'The file "Letter.docx" (document #6) is no longer registered. Nothing was scheduled.'],
+      [{ doc1: { status: 'success', document: { id: 1, name: 'Petition.pdf', size: MiB, status: 'deleted' } } }, 'The file "Petition.pdf" (document #1) has been deleted from storage since this card was prepared. Nothing was scheduled. Ask Casey to prepare it again without it.'],
+      [{ doc1: { status: 'success', document: { id: 1, name: 'Petition.pdf', size: MiB, status: 'missing' } } }, 'The file "Petition.pdf" (document #1) has been reported missing since this card was prepared. Nothing was scheduled. Ask Casey to prepare it again without it.'],
+      [{ doc6: { status: 'success', document: { id: 6, name: 'Letter.docx', size: 2 * MiB + 1, status: 'active' } } }, 'The file "Letter.docx" (document #6) changed since this card was prepared (its name or size). Nothing was scheduled. Ask Casey to prepare it again.'],
+      [{ doc6: { status: 'success', document: { id: 6, name: 'Letter (final).docx', size: 2 * MiB, status: 'active' } } }, 'The file "Letter.docx" (document #6) changed since this card was prepared (its name or size). Nothing was scheduled. Ask Casey to prepare it again.'],
+      [{ doc6: { status: 'success', document: { id: 6, name: 'Letter.docx', size: null, status: 'active' } } }, 'The file "Letter.docx" (document #6) changed since this card was prepared (its name or size). Nothing was scheduled. Ask Casey to prepare it again.'],
+      [{ doc1: { status: 'success', document: { id: 2, name: 'Petition.pdf', size: MiB, status: 'active' } } }, 'Could not re-check the file "Petition.pdf" (document #1). Nothing was scheduled. Ask Casey to prepare it again.'],
+    ];
+    for (const [over, why] of refusals) {
+      const m = scheduled();
+      const out = await run(m, { read: reads(over), write: schedOk });
+      expect({ over, writes: out.writes.length, ledger: out.ledger.length, status: m.action_draft.status, why: m.action_draft.refusal_error }).toEqual({ over, writes: 0, ledger: 0, status: 'draft', why });
+    }
+    // On a send card the same refusals end "Nothing was sent."
+    const sendGone = filesEmail();
+    await run(sendGone, { read: reads({ doc1: () => { throw Object.assign(new Error('Document not found'), { status: 404 }); } }), write: mailFilesOk });
+    expect(sendGone.action_draft.refusal_error).toBe('The file "Petition.pdf" (document #1) is no longer registered. Nothing was sent.');
+    // The window: a card whose time has drifted inside the floor, or beyond the ceiling, is refused — never sent now.
+    const soon = scheduled({ schedule: { ...SCHEDULE, send_at: new Date(Date.now() + 90_000).toISOString() } });
+    const so = await run(soon, { write: schedOk });
+    expect([so.writes.length, so.ledger.length, soon.action_draft.refusal_error]).toEqual([0, 0, 'The scheduled time (Tue, Dec 1, 2026 at 10:30 AM EST) is now less than 2 minutes away. Nothing was scheduled. Ask Casey to prepare it again with a later time, or to send it now.']);
+    const far = scheduled({ schedule: { ...SCHEDULE, send_at: new Date(Date.now() + 31 * 86_400_000).toISOString() } });
+    await run(far, { write: schedOk });
+    expect(far.action_draft.refusal_error).toBe('The scheduled time (Tue, Dec 1, 2026 at 10:30 AM EST) is more than 30 days away. Nothing was scheduled. Ask Casey to prepare it again.');
+    // The window is the HUB's number: a tighter floor from the server refuses what the card's own number would pass.
+    const tight = scheduled();
+    await run(tight, { read: reads({ identities: { status: 'success', identities: [], limits: { schedule_min_ahead_ms: 2 * 3600_000, schedule_max_ahead_ms: 2592000000 } } }), write: schedOk });
+    expect(tight.action_draft.refusal_error).toMatch(/is now less than 120 minutes away/);
+    // No limits in the answer: not a refusal — retryable (nothing claimed).
+    const noLim = scheduled();
+    const nl = await run(noLim, { read: reads({ identities: { status: 'success', identities: [] } }), write: schedOk });
+    expect([nl.writes.length, nl.ledger.length, noLim.action_draft.status]).toEqual([0, 0, 'draft']);
+    expect(noLim.action_draft.action_error).toMatch(/Could not re-check the record before applying \(the scheduling window could not be read\)/);
+    expect(noLim.action_draft).not.toHaveProperty('refusal_error');
+    // A failed document read (not a 404) is retryable too.
+    const off = filesEmail();
+    const o = await run(off, { read: reads({ doc1: () => { throw new Error('offline'); } }), write: mailFilesOk });
+    expect([o.writes.length, off.action_draft.action_error]).toEqual([0, 'Could not re-check the record before applying (offline). Nothing was sent or changed.']);
+  });
+
+  test('A14Y: a schedule\'s outcome words — the result, a replay, the applied card, the unknown wording on reopen; a 409 opted_out meets the same confirm with the files and send_at intact', async () => {
+    const { actionFamily, applyActionResults } = actionSandbox();
+    const family = actionFamily({ kind: 'email.send.v1' });
+    const d = scheduled().action_draft;
+    expect(family.result(d, { status: 'success', job_id: 9, send_at: SEND_AT })).toEqual({ contact_id: 1309, job_id: 9, send_at: SEND_AT,
+      outcome: 'scheduled for Tue, Dec 1, 2026 at 10:30 AM EST (scheduled send #9), 2 files attached — cancel it from Comms → Scheduled before then' });
+    // A server send_at that differs from the reviewed one is shown raw, never dressed in the reviewed firm time.
+    expect(family.result(scheduled({ attachments: [], attachments_total_bytes: 0 }).action_draft, { status: 'success', job_id: 9, send_at: '2026-12-02T15:30:00.000Z' }).outcome)
+      .toBe('scheduled for 2026-12-02T15:30:00.000Z (scheduled send #9) — cancel it from Comms → Scheduled before then');
+    expect(() => family.result(d, { status: 'success', send_at: SEND_AT })).toThrow(/no job id/);
+    expect(family.appliedMessage(d, { contact_id: 1309, outcome: 'x' }, true)).toBe('This email to Pat One had already been scheduled; nothing was scheduled a second time.');
+    expect(family.appliedMessage(emailDraft().action_draft, { contact_id: 1309, outcome: 'x' }, true)).toBe('This email to Pat One had already been sent; nothing was sent a second time.');
+    expect(typeof family.title).toBe('function');
+    expect([family.title(d), family.title(emailDraft().action_draft), family.title(smsDraft().action_draft)]).toEqual(['Send later', 'Send now', 'Send now']);
+    expect(family.appliedCopy({ ...d, result_send_contact_id: 1309 })).toEqual({ status: 'Scheduled — Pat One',
+      warning: 'Email to Pat One — pat@example.com (Personal, primary) scheduled for Tue, Dec 1, 2026 at 10:30 AM EST using your signed-in account. It is listed under Comms → Scheduled, where it can be cancelled until it goes out; once sent it cannot be recalled.', button: 'Open conversation' });
+    expect(family.ambiguousText('socket hang up', d)).toBe('Outcome unknown — the email may or may not have been scheduled (socket hang up). Check Comms → Scheduled before scheduling it again. Do not apply this card again.');
+    expect(family.ambiguousText('', emailDraft().action_draft)).toBe("Outcome unknown — the message may or may not have gone out. Check the contact's Communications tab or the comms log before resending. Do not apply this card again.");
+    // Reopening a chat whose schedule claim never recorded: the schedule's own wording.
+    const m = scheduled();
+    applyActionResults([m], [{ draft_id: m.action_draft.draft_id, kind: 'email.send.v1', outcome: 'unknown' }]);
+    expect(m.action_draft.ambiguous_error).toBe('Outcome unknown — the email may or may not have been scheduled. Check Comms → Scheduled before scheduling it again. Do not apply this card again.');
+    // A live ambiguous failure (a dead socket after the claim) reads the same way.
+    const dead = scheduled();
+    await run(dead, { write: async () => { throw Object.assign(new Error('socket hang up'), { status: 0 }); } });
+    expect(dead.action_draft.ambiguous_error).toBe('Outcome unknown — the email may or may not have been scheduled (socket hang up). Check Comms → Scheduled before scheduling it again. Do not apply this card again.');
+    // The 409 opted_out confirm on a schedule: ONE acknowledged resend, files and send_at intact, under the same key.
+    const o = scheduled();
+    const optout = optoutHelper(true);
+    const err409 = Object.assign(new Error('Pat One pat@example.com (contact #1309) has opted out of email.'), { status: 409, body: { status: 'error', code: 'opted_out', message: 'Pat One pat@example.com (contact #1309) has opted out of email.' } });
+    const { writes } = await run(o, { optout, write: async (path, body) => { if (!body.acknowledge_optout) throw err409; return schedOk(); } });
+    expect(optout.asked).toHaveLength(1);
+    expect(writes.map((w) => [w.path, w.body.acknowledge_optout === true, w.body.attachments, w.body.send_at, w.headers['Idempotency-Key']])).toEqual([
+      ['/api/mail/send/schedule', false, [{ document_id: 1 }, { document_id: 6 }], SEND_AT, o.action_draft.draft_id],
+      ['/api/mail/send/schedule', true, [{ document_id: 1 }, { document_id: 6 }], SEND_AT, o.action_draft.draft_id]]);
+    expect(o.action_draft).toMatchObject({ status: 'applied', result_send_contact_id: 1309 });
   });
 
   test('reopening a chat whose send claim never recorded shows the send\'s own unknown wording', () => {

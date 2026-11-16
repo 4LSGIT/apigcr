@@ -1033,18 +1033,22 @@ COMMENTs.)
 
 ## From the Ask Casey arc — A14 direct sends (2026-10-27) — deferred
 
-- **Attachments / MMS media and scheduled sends — native route first.** Released
-  by Fred 2026-11-15 together with cc/bcc, reply threading and the Case field
-  (those three shipped, A14X). The NATIVE hub features shipped 2026-11-16
-  (hub-send extras, `ref/MAILBOX_SYSTEM_DESIGN.md` §4.2): `POST /api/mail/send`
-  takes `attachments: [{document_id}]` (registered documents, fetched at send
-  time) and `POST /api/mail/send/schedule` + `GET`/`DELETE
-  /api/mail/send/scheduled` schedule a send. The CASEY SHAPE FOLLOWS — a new
-  slice: `email.send.v1` gains `attachments` (document ids CITED from a
-  `document.*` read — a fetched attachment URL stays model-uninventable) and
-  a `send_at` (or a sibling `email.schedule.v1` kind) whose precheck re-reads
-  the documents and the window; until then Casey keeps refusing both BY NAME.
-  SMS still has no MMS send (no native route).
+- **MMS media and scheduling a TEXT — native route first.** Email attachments
+  and scheduled email sends shipped: native 2026-11-16 (hub-send extras,
+  `ref/MAILBOX_SYSTEM_DESIGN.md` §4.2), the Casey shape the same day (A14Y:
+  `email.send.v1` `attachments` from cited `documents` rows, `send_at` →
+  `POST /api/mail/send/schedule`; plan doc A14 "Released 2026-11-16"). What
+  stays refused BY NAME, on both the SMS card and the phone hub: MMS media
+  (no native MMS send) and scheduling a text (nothing schedules an SMS). A
+  native phone-hub feature comes first; the Casey shape follows it.
+- **A14Y schedule card: receipt and cancel.** The ledger receipt of a
+  scheduled send is the contact (the receipt field is keyed by KIND and the
+  card kept `email.send.v1`); the job id rides only in the result payload and
+  the chat line. Casey offers no cancel of a scheduled send (the hub's
+  `DELETE /api/mail/send/scheduled/:id` exists; a `mail.schedule.cancel`
+  card would need a typed read of the caller's own scheduled list first).
+  Also unbuilt: a card can attach at most 7 files (8 evidence refs, one the
+  To) — the hub takes 10.
 - **Casey replies narrowed to ONE cited contact recipient** (A14X): a reply to
   a sender with no active contact row, or to own mail whose hub To is several
   addresses, is refused and answered from Comms. Widening it means a recipient

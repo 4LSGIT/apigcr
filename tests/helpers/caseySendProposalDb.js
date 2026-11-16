@@ -5,9 +5,10 @@
  * end-to-end suites (tests/caseySendAction.test.js, tests/caseySend.routes.test.js):
  * contacts, one contact_phones / contact_emails row, cases + case_relate,
  * channel_grants, resolverService's single JOIN SELECT evaluated from the
- * seed, and optoutService's consent reads (tests/helpers/optoutFake.js — the
- * row flags plus T.consent_states, comm_consent_state rows). Unknown
- * statements THROW. The same SQL runs on MySQL in
+ * seed, optoutService's consent reads (tests/helpers/optoutFake.js — the
+ * row flags plus T.consent_states, comm_consent_state rows) and, since A14Y,
+ * the `documents` registry as the hub's own loadAttachments reads it (its
+ * exact SELECT). Unknown statements THROW. The same SQL runs on MySQL in
  * tests/caseySendAction.mysql.test.js (gated).
  */
 
@@ -38,6 +39,17 @@ function makeDb(over = {}) {
     case_relate: [{ case_relate_case_id: 'CASE1', case_relate_client_id: 1309 }],
     channel_grants: [{ user: USER, channel_type: 'phone_line', channel_id: 3, can_send: 1 }, { user: USER, channel_type: 'mailbox', channel_id: 5, can_send: 1 }],
     consent_states: [],
+    // A14Y: the registry rows an email may attach — 1 a 1 MB pdf; 2 a 14 MB pdf; 3 deleted; 4 size unknown;
+    // 5 over the per-file cap; 6 a 2 MB docx; 7 reported missing.
+    documents: [
+      { id: 1, source: 'dropbox', external_id: 'id:doc1', name: 'Petition.pdf', size: 1024 * 1024, status: 'active' },
+      { id: 2, source: 'dropbox', external_id: 'id:doc2', name: 'Big.pdf', size: 14 * 1024 * 1024, status: 'active' },
+      { id: 3, source: 'dropbox', external_id: 'id:doc3', name: 'Gone.pdf', size: 1024, status: 'deleted' },
+      { id: 4, source: 'dropbox', external_id: 'id:doc4', name: 'Unknown.bin', size: null, status: 'active' },
+      { id: 5, source: 'dropbox', external_id: 'id:doc5', name: 'Huge.zip', size: 16 * 1024 * 1024, status: 'active' },
+      { id: 6, source: 'dropbox', external_id: 'id:doc6', name: 'Letter.docx', size: 2 * 1024 * 1024, status: 'active' },
+      { id: 7, source: 'dropbox', external_id: 'id:doc7', name: 'Missing.pdf', size: 2048, status: 'missing' },
+    ],
     ...over,
   };
   const seen = [];
@@ -58,6 +70,11 @@ function makeDb(over = {}) {
         const c = T.cases.find((x) => x.case_id === p[1]);
         const linked = T.case_relate.some((r) => r.case_relate_case_id === p[1] && r.case_relate_client_id === Number(p[0]));
         return [c ? [{ case_id: c.case_id, label: c.case_number_full || c.case_number || c.case_id, linked: linked ? 1 : 0 }] : []];
+      }
+      // A14Y: mailboxSendService.loadAttachments' own read (ATTACHMENT_COLS), as the hub issues it.
+      if (s === 'SELECT id, source, external_id, name, size, status FROM documents WHERE id IN (?)') {
+        const ids = new Set((Array.isArray(p[0]) ? p[0] : [p[0]]).map(Number));
+        return [T.documents.filter((d) => ids.has(Number(d.id))).map((d) => ({ ...d }))];
       }
       if (s === 'SELECT channel_id FROM channel_grants WHERE user = ? AND channel_type = ? AND can_send = 1') {
         return [T.channel_grants.filter((g) => g.user === Number(p[0]) && g.channel_type === p[1] && g.can_send).map((g) => ({ channel_id: g.channel_id }))];
