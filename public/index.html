@@ -3643,6 +3643,8 @@
         <option value="c.case_type">Case Type</option>
         <option value="c.case_stage">Case Stage</option>
         <option value="c.case_status">Case Status</option>
+        <option value="c.case_judge">Judge</option>
+        <option value="c.case_trustee">Trustee</option>
       </select>
       <select id="tabCasesOrder2" style="width: auto" data-type="sortDi" onchange="sortSelect(this)">
         <option value="ASC">Ascending</option>
@@ -3706,14 +3708,24 @@
         render: (C) => escText(C.file) },
       { key: 'close', label: 'Close Date', sort: 'c.case_close_date', default_on: true,
         render: (C) => escText(C.close) },
+      // Optional core columns (2026-11-16): default_on false, so the cols_on
+      // half of the storage governs them (as the cf columns) — off for
+      // everyone until turned on in the Columns picker. listCases already
+      // selects both (the CSV export reads them); the judge cell is the case's
+      // judge TEXT, which the court pipeline fills from the docket suffix.
+      { key: 'case_judge', label: 'Judge', sort: 'c.case_judge', default_on: false,
+        render: (C) => escText(C.case_judge || '') },
+      { key: 'case_trustee', label: 'Trustee', sort: 'c.case_trustee', default_on: false,
+        render: (C) => escText(C.case_trustee || '') },
     ];
     // Headers from the model, HERE, the statement after the declaration —
     // the table markup sits above this block, and nothing runs between that
     // could fail and leave the tab headerless. Once, at parse time, never on
     // fetch: sort()/sortSelect() paint the sort marks into these <th>s.
     // (The column picker below re-renders them deliberately, and repaints
-    // the marks via sortMarksSync.)
-    ycColsHeadRender(E('casesTable'), CASES_COLUMNS);
+    // the marks via sortMarksSync.) The default_on columns only: Judge /
+    // Trustee are in the static model but off until the picker turns them on.
+    ycColsHeadRender(E('casesTable'), CASES_COLUMNS.filter((c) => c.default_on));
 
     /* ── Column picker (S3a; the modal since R1) ─────────────────────────
        The Contacts picker's structural twin (S2's block, above its
@@ -3730,7 +3742,7 @@
        control: its CSS hides col-caption cells by mode, the picker decides
        whether the column renders at all — both read the same class, neither
        reads the other. */
-    let casesColsVis = CASES_COLUMNS;
+    let casesColsVis = CASES_COLUMNS.filter((c) => c.default_on);
     let casesEverSorted = false;   // marks repaint only after a real sort
 
     function casesColsKey() { return `cols_off.${(user && user.user) || 0}`; }

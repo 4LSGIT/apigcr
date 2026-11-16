@@ -267,7 +267,7 @@ const TABS = {
   cases: {
     fn: 'tabCasesGet', kind: 'cases', prelude: 'var offsets = {}, cases; function casesTypeTreeBuild() {} var casesColsDialog = () => {};',
     consts: ['CASES_COLUMNS'],                   // S3a: rows render via the model
-    post: 'var casesColsVis = CASES_COLUMNS; var casesCfFetched = [];',
+    post: 'var casesColsVis = CASES_COLUMNS.filter((c) => c.default_on); var casesCfFetched = [];',
     extra: ['casesStageValues', 'casesTypeValues', 'casesTypeOtherChecked', 'casesTypeListed', 'casesRenderRows', 'casesViewColumns', 'casesCfEnsure'],
     // Type is a .yc-multi tree (F3): the empty stub div = nothing checked =
     // no types param. Type coverage lives in caseTypeMultiFilter +
@@ -545,7 +545,7 @@ describe('export view — "As shown on screen" (S3c)', () => {
 
   const viewPage = (t, rows) => page(
     (url, params, n) => (n === 0 ? { total: rows.length, counter: rows.length } : t.list(rows)),
-    `${constSrc(INDEX, t.constName)} var ${t.vis} = ${t.constName};`);
+    `${constSrc(INDEX, t.constName)} var ${t.vis} = ${t.constName}.filter((c) => c.default_on);`);
 
   // Quote-aware CSV rows (the shared `parse` splits raw commas; view rows
   // carry quoted commas — dates, combined addresses).
@@ -584,7 +584,7 @@ describe('export view — "As shown on screen" (S3c)', () => {
     const t = VIEW_TABS[name];
     const w = viewPage(t, [t.row]);
     const cols = w.__lex(t.constName);
-    w[t.vis] = cols.filter((c) => c.key !== t.hide);        // the picker hid one
+    w[t.vis] = cols.filter((c) => c.default_on && c.key !== t.hide);        // the picker hid one
     w.__swalValue = { from: 1, to: 1, view: true };
     await w.exportListCsv(name, () => ({}), { viewColumns: () => w.__lex(t.vis) });
     const got = parseq(w.__files[0]);
@@ -666,7 +666,7 @@ describe('export view — "As shown on screen" (S3c)', () => {
       const t = VIEW_TABS.cases;
       const w = page(
         (url, params, n) => (n === 0 ? { total: ROWS.length } : t.list(ROWS)),
-        `${constSrc(INDEX, t.constName)} var ${t.vis} = ${t.constName};
+        `${constSrc(INDEX, t.constName)} var ${t.vis} = ${t.constName}.filter((c) => c.default_on);
          ${fnSrc(INDEX, 'casesViewColumns')}`,
         { casesTable: 'table' });
       if (mode != null) w.document.getElementById('casesTable').dataset.caption = mode;

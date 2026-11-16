@@ -155,9 +155,9 @@ function page({ userId = 6, storedOff, storedOn, defs = DEFS } = {}) {
     };
     ${constSrc(INDEX, 'CASES_COLUMNS')}
     ${constLine(INDEX, 'CASES_CF_KEY_RE')}
-    var casesColsVis = CASES_COLUMNS, casesEverSorted = false, casesCfFetched = [];
+    var casesColsVis = CASES_COLUMNS.filter((c) => c.default_on), casesEverSorted = false, casesCfFetched = [];
     ${PICKER_FNS.map((f) => fnSrc(INDEX, f)).join('\n')}
-    ycColsHeadRender(E('casesTable'), CASES_COLUMNS);   // the parse-time build
+    ycColsHeadRender(E('casesTable'), CASES_COLUMNS.filter((c) => c.default_on));   // the parse-time build
     casesColsInit();                                    // the loadUserContext builds
     window.__cfInit = casesCfInit;
     window.__go = tabCasesGet;
@@ -180,7 +180,8 @@ const setBox = (w, key, on) => {
   w.__save({ orderedKeys: w.__cols.map((c) => c.key), checkedKeys: [...checked] });
 };
 const settle = (w) => new Promise((r) => w.setTimeout(r, 0));
-const STATIC_N = 10;
+const STATIC_N = 12;   // the static model: 10 default columns + Judge / Trustee (default_on false)
+const DEFAULT_N = 10;  // what shows before anyone turns a column on
 
 describe('the registry append', () => {
   test('flagged active defs join the model (the modal lists it), hidden by default; the rest never do', async () => {
@@ -190,7 +191,7 @@ describe('the registry append', () => {
     expect(keys).toHaveLength(STATIC_N + 5);            // court, filed, rush, tags, hostile-label
     for (const k of ['cf_court', 'cf_filed', 'cf_rush', 'cf_tags', 'cf_hostile']) expect(keys).toContain(k);
     for (const k of ['cf_retired', 'cf_unflagged', 'cf_bad`key']) expect(keys).not.toContain(k);
-    expect(headTexts(w)).toHaveLength(STATIC_N);        // all cf hidden by default
+    expect(headTexts(w)).toHaveLength(DEFAULT_N);       // all cf hidden by default
     expect(w.__pwn).toBeUndefined();                    // hostile label never executed
     expect(w.document.querySelectorAll('img')).toHaveLength(0);
   });
@@ -208,7 +209,7 @@ describe('the registry append', () => {
     const w = page();
     w.__defsFail = true;
     await cfReady(w);
-    expect(headTexts(w)).toHaveLength(STATIC_N);
+    expect(headTexts(w)).toHaveLength(DEFAULT_N);
     await w.__go(0);
     expect(cells(w)).toHaveLength(2);                   // the tab still works
     const w2 = page({ defs: [] });
@@ -253,12 +254,12 @@ describe('the storage extension', () => {
   test('an old off-only stored value keeps working; unknown cols_on keys drop', async () => {
     const w = page({ storedOff: 'case_stage' });          // pre-S4 shape, no cols_on
     await cfReady(w);
-    expect(headTexts(w)).toHaveLength(STATIC_N - 1);
+    expect(headTexts(w)).toHaveLength(DEFAULT_N - 1);
     expect(headTexts(w)).not.toContain('Case Stage');
     const w2 = page({ storedOn: 'cf_gone,cf_court' });    // a retired cf key lingers
     await cfReady(w2);
     expect(headTexts(w2)).toContain('Court');
-    expect(headTexts(w2)).toHaveLength(STATIC_N + 1);
+    expect(headTexts(w2)).toHaveLength(DEFAULT_N + 1);
   });
 
   test("another window's cols_on save re-applies here and fetches the data", async () => {

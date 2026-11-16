@@ -84,7 +84,7 @@ async function boot({ userId = 6, stored, storageThrows = false } = {}) {
     var apiSend = async () => { window.fetches++; return { total: ${CASES.length}, cases: ${JSON.stringify(CASES)} }; };
     function openMainTab() {}
     ${slice('const CASES_COLUMNS', '// Headers from the model')}
-    var casesColsVis = CASES_COLUMNS;   // the picker's on-screen set (S3a)
+    var casesColsVis = CASES_COLUMNS.filter((c) => c.default_on);   // the picker's on-screen set (S3a)
     var casesCfFetched = [];            // + the cf fetch ledger (S4)
     var casesColsDialog = () => {};     // footRender's onColumns (R1)
     ${fnSrc(INDEX, 'casesRenderRows')}
@@ -92,7 +92,7 @@ async function boot({ userId = 6, stored, storageThrows = false } = {}) {
     ${slice('const CASES_CAPTION_MODES', '/** Sole opener for the Cases tab')}
     ${fnSrc(INDEX, 'openCasesTab')}
     ${fnSrc(INDEX, 'tabCasesGet')}
-    ycColsHeadRender(E('casesTable'), CASES_COLUMNS);   // the parse-time build
+    ycColsHeadRender(E('casesTable'), CASES_COLUMNS.filter((c) => c.default_on));   // the parse-time build
     window.__open = openCasesTab;
   `);
   w.__open();

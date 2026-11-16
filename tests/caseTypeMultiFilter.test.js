@@ -101,7 +101,7 @@ function page() {
     function getCaseTypeMap() { return ${JSON.stringify(MAP)}; }
     function casesStageValues() { return []; }
     ${constSrc(INDEX, 'CASES_COLUMNS')}
-    var casesColsVis = CASES_COLUMNS;   // S3b: the empty branch renders too
+    var casesColsVis = CASES_COLUMNS.filter((c) => c.default_on);   // S3b: the empty branch renders too
     var casesCfFetched = [];            // + the cf fetch ledger (S4)
     var casesColsDialog = () => {};     // footRender's onColumns (R1)
     ${fnSrc(INDEX, 'casesRenderRows')}

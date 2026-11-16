@@ -222,6 +222,9 @@ async function listCases(db, {
     "c.case_type": "c.case_type",
     "c.case_stage": "c.case_stage",
     "c.case_status": "c.case_status",
+    // The optional Judge / Trustee columns: blanks last both ways, as caption.
+    "c.case_judge": "(NULLIF(c.case_judge, '') IS NULL), c.case_judge",
+    "c.case_trustee": "(NULLIF(c.case_trustee, '') IS NULL), c.case_trustee",
   };
   const orderDir = sort_dir === "ASC" ? "ASC" : "DESC";
 

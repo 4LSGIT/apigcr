@@ -136,7 +136,7 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
       casesTable: 'table', casesTableFoot: 'div',
     }, `${PAGER} var offsets = {}, cases; function casesTypeTreeBuild() {}
         ${constSrc(INDEX, 'CASES_COLUMNS')}
-        var casesColsVis = CASES_COLUMNS;   // the picker's on-screen set (S3a)
+        var casesColsVis = CASES_COLUMNS.filter((c) => c.default_on);   // the picker's on-screen set (S3a)
         var casesCfFetched = [];            // + the cf fetch ledger (S4)
         ${fnSrc(INDEX, 'casesStageValues')}
         ${fnSrc(INDEX, 'casesTypeValues')}

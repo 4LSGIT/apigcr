@@ -1326,6 +1326,7 @@ tests/caseUi.detTab.test.js
 tests/caseUi.stepsPanel.test.js
 tests/caseUi.sync.test.js
 tests/caseUi.timeline.test.js
+tests/casesJudgeTrusteeColumns.test.js
 tests/caseyActionPermissions.test.js
 tests/caseyApptConfirm.mysql.test.js
 tests/caseyApptConfirm.test.js

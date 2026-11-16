@@ -84,6 +84,7 @@ const ALL_LABELS = ['Lead ID', 'Client Name', 'Caption', 'Case Number', 'Case Ty
   'Case Stage', 'Case Status', 'Open Date', 'File Date', 'Close Date'];
 const ALL_KEYS = ['case_id', 'contacts', 'case_caption', 'case_number', 'case_type',
   'case_stage', 'case_status', 'open', 'file', 'close'];
+const OPTIONAL_KEYS = ['case_judge', 'case_trustee'];   // default_on false (2026-11-16)
 const hideAllBut = (keep) => ALL_KEYS.filter((k) => k !== keep).join(',');
 const drop = (labels, i) => labels.filter((_, n) => n !== i);
 
@@ -130,9 +131,9 @@ function page({ userId = 6, storedOff, storageThrows = false, failFetch = false 
       return { total: window.__rows.length, cases: JSON.parse(JSON.stringify(window.__rows)) };
     };
     ${constSrc(INDEX, 'CASES_COLUMNS')}
-    var casesColsVis = CASES_COLUMNS, casesEverSorted = false, casesCfFetched = [];
+    var casesColsVis = CASES_COLUMNS.filter((c) => c.default_on), casesEverSorted = false, casesCfFetched = [];
     ${PICKER_FNS.map((f) => fnSrc(INDEX, f)).join('\n')}
-    ycColsHeadRender(E('casesTable'), CASES_COLUMNS);   // the parse-time build
+    ycColsHeadRender(E('casesTable'), CASES_COLUMNS.filter((c) => c.default_on));   // the parse-time build
     casesColsInit();                                    // the loadUserContext build
     window.__go = tabCasesGet;
     window.__cols = CASES_COLUMNS;
@@ -197,11 +198,17 @@ describe('zero visible change — the model renders what the template rendered',
   test('the model is well-formed: unique keys, labels, default_on, safe sort and cls shapes', () => {
     const w = page();
     const cols = w.__cols;
-    expect(cols).toHaveLength(10);
-    expect(cols.map((c) => c.key)).toEqual(ALL_KEYS);
+    // The ten default columns, then the optional core columns (2026-11-16):
+    // in the static model but default_on false — off until the picker turns
+    // them on (the cols_on half of the storage, as the cf columns).
+    expect(cols).toHaveLength(ALL_KEYS.length + OPTIONAL_KEYS.length);
+    expect(cols.map((c) => c.key)).toEqual([...ALL_KEYS, ...OPTIONAL_KEYS]);
+    expect(cols.filter((c) => c.default_on).map((c) => c.key)).toEqual(ALL_KEYS);
+    expect(cols.filter((c) => !c.default_on).map((c) => [c.key, c.label, c.sort]))
+      .toEqual([['case_judge', 'Judge', 'c.case_judge'], ['case_trustee', 'Trustee', 'c.case_trustee']]);
     for (const c of cols) {
       expect(typeof c.label).toBe('string');
-      expect(c.default_on).toBe(true);
+      expect(typeof c.default_on).toBe('boolean');
       // sort, label and cls are interpolated into header/cell markup, so the
       // contract (scripts.js) demands static code literals; pin safe shapes.
       if (c.sort != null) expect(c.sort).toMatch(/^[a-z_.]+$/);
@@ -219,7 +226,8 @@ describe('choosing columns', () => {
     setBox(w, 'case_stage', false);
     expect(w.fetches).toBe(1);                              // no refetch
     expect(w.localStorage.getItem('yc.cases.cols_off.6')).toBe('case_stage');
-    expect(w.localStorage.getItem('yc.cases.cols_order.6')).toBe(ALL_KEYS.join(','));
+    // order saves whole — every model key, the optional ones included
+    expect(w.localStorage.getItem('yc.cases.cols_order.6')).toBe([...ALL_KEYS, ...OPTIONAL_KEYS].join(','));
     expect(headTexts(w)).toEqual(drop(ALL_LABELS, 5));
     expect(cells(w)).toEqual(FROZEN.cells.map((r) => r.filter((_, i) => i !== 5)));
     expectAligned(w);
@@ -397,7 +405,7 @@ describe('failure paths stay aligned', () => {
     const w = page();
     const row = { ...FROZEN.rows[0], contacts: JSON.stringify(FROZEN.rows[0].contacts) };
     w.__row = row;
-    const html = w.eval('ycColsRowHtml(window.__cols, window.__row)');
+    const html = w.eval('ycColsRowHtml(window.__cols.filter((c) => c.default_on), window.__row)');
     const want = FROZEN.cells[0]
       .map((c, i) => `<td${FROZEN.tdAttrs[0][i] ? ` class="${FROZEN.tdAttrs[0][i]}"` : ''}>${c}</td>`).join('');
     expect(html).toBe(want);
@@ -496,6 +504,14 @@ describe('the shipped block', () => {
     expect(ths).toEqual(OLD_HEADER);
   });
 
+  test('before the picker applies, the on-screen set is the default columns only (Judge / Trustee wait for cols_on)', () => {
+    const { w, threw } = evalCasesBlock('() => {}');
+    expect(threw).toBeNull();
+    w.cases = FROZEN.rows.slice(0, 1);                    // a fetch that lands before casesColsInit
+    w.eval('casesRenderRows()');
+    expect(w.document.querySelectorAll('#casesTable tr')[1].cells).toHaveLength(ALL_KEYS.length);
+  });
+
   test('a sync-bus registration failure cannot leave the tab headerless', () => {
     // The build call sits ABOVE the block's YC.on registrations on purpose:
     // a yc-sync regression must not also strip the tab's headers. The block
@@ -567,5 +583,32 @@ describe('boot wiring', () => {
   test('loadUserContext calls casesColsInit as a live statement', () => {
     const init = fnSrc(INDEX, 'loadUserContext');
     expect(init).toMatch(/^\s*casesColsInit\(\);$/m);        // not commented out
+  });
+});
+
+describe('the optional Judge / Trustee columns (2026-11-16)', () => {
+  test('off by default; turning Judge on saves cols_on (not cols_off), renders it escaped, never refetches', async () => {
+    const w = page();
+    w.__rows = FROZEN.rows.map((r, i) => ({ ...r, case_judge: i ? 'Lisa S. Gretchko' : '<b>Hon.</b> X', case_trustee: 'K. Jin Lim' }));
+    await w.__go(0);
+    expect(headTexts(w)).toEqual(ALL_LABELS);
+    setBox(w, 'case_judge', true);
+    expect(w.fetches).toBe(1);                              // the rows already carry it
+    expect(w.localStorage.getItem('yc.cases.cols_on.6')).toBe('case_judge');
+    expect(w.localStorage.getItem('yc.cases.cols_off.6')).toBe('');
+    expect(headTexts(w)).toEqual([...ALL_LABELS, 'Judge']);
+    expect(cells(w).map((r) => r[r.length - 1])).toEqual(['&lt;b&gt;Hon.&lt;/b&gt; X', ...FROZEN.rows.slice(1).map(() => 'Lisa S. Gretchko')]);
+    expect(w.document.querySelector('#casesTable th:last-child').getAttribute('onclick')).toBe("sort(this, 'c.case_judge')");
+    expectAligned(w);
+  });
+
+  test('a stored cols_on shows them on the next load; hiding a default column leaves them alone', async () => {
+    const w = page();
+    w.localStorage.setItem('yc.cases.cols_on.6', 'case_trustee,case_judge');
+    w.__apply();
+    expect(headTexts(w)).toEqual([...ALL_LABELS, 'Judge', 'Trustee']);   // model order, not storage order
+    setBox(w, 'case_stage', false);
+    expect(headTexts(w)).toEqual([...drop(ALL_LABELS, 5), 'Judge', 'Trustee']);
+    expect(w.localStorage.getItem('yc.cases.cols_on.6')).toBe('case_judge,case_trustee');
   });
 });
