@@ -1290,21 +1290,7 @@ async function searchCases(db, { q = '', limit = 20 } = {}) {
 /** The storage provider the firm's documents live in (D2 makes this a per-tenant setting). */
 const STORAGE_SOURCE = 'dropbox';
 
-const DEFAULT_CASE_FOLDER_TEMPLATES = {
-  potential: {
-    default: "/  Law Office/   Cases/  Potential Cases/  Potential - {{case_type}}/ {{lfm_name}} - {{case_id}} - {{date}}",
-    subfolders: ["Client Uploads"],
-  },
-  active: {
-    default: "/  Law Office/   Cases/  Active Cases/  Active - {{case_type}}/ {{case_id}} - {{lfm_name}} - {{number}} - {{case_subtype}}",
-    subfolders: [
-      "Docket - {{contact_name}} - {{case_subtype}} - {{case_number}}",
-      "Drafts - {{contact_name}}",
-      "Client Docs - {{contact_name}}",
-      "Correspondence - {{contact_name}}",
-    ],
-  },
-};
+const DEFAULT_CASE_FOLDER_TEMPLATES = require('../lib/storageDefaults').STORAGE_DEFAULTS.dropbox_case_folder_templates;   // D2: the literals live in ONE place
 
 /**
  * A path SEGMENT may not end in '.' or ' ' — Windows drops both on create, so

@@ -28,7 +28,7 @@
  * Credential selection (params-first, app_settings fallback, hard default):
  *   credentialId : opts.credentialId
  *               ?? app_settings 'dropbox_credential_id'
- *               ?? DEFAULT_CREDENTIAL_ID (8 = "DropBox")
+ *               — no row = REFUSED (storage-seam D2: credential 8 is 4LSG's; another tenant must not inherit it)
  *
  *   ┌──────────────────────────────────────────────────────────────────┐
  *   │ SPACES IN PATHS ARE SIGNIFICANT — DO NOT TRIM                     │
@@ -126,7 +126,8 @@ const TRANSIENT_NET_CODES = new Set([
 // Hard fallback if neither opts nor app_settings provide a value.
 // Credential 8 = "DropBox" (oauth2, connected). Prefer the app_settings
 // binding ('dropbox_credential_id') so this can change without a deploy.
-const DEFAULT_CREDENTIAL_ID = 8;
+/** The error every operation raises when no credential is configured — named so a caller can tell config from outage. */
+const CREDENTIAL_MISSING = 'storage credential not configured — set app_settings dropbox_credential_id (Settings → System → Integrations)';
 
 // saveUrl polling defaults (files/save_url is async on Dropbox's side)
 const SAVE_URL_POLL_MS    = 1500;
@@ -203,20 +204,20 @@ function httpHeaderSafeJson(obj) {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Resolve the credential id for a call. opts wins, then app_settings
- * 'dropbox_credential_id', then the hard default.
+ * Resolve the credential id for a call: opts wins, then app_settings
+ * 'dropbox_credential_id'. NO hard default (storage-seam D2): the old fallback,
+ * 8, is 4LSG's credential — on another tenant it is a missing row or someone
+ * else's credential, so a missing row REFUSES with a named error instead.
  */
 async function _resolveCredential(db, opts = {}) {
   if (opts.credentialId != null) return opts.credentialId;
-  try {
-    const [[row]] = await db.query(
-      "SELECT `value` FROM app_settings WHERE `key` = 'dropbox_credential_id' LIMIT 1"
-    );
-    if (row?.value != null && row.value !== '') return row.value;
-  } catch (err) {
-    console.warn(`[DROPBOX] app_settings lookup failed, using default: ${err.message}`);
-  }
-  return DEFAULT_CREDENTIAL_ID;
+  const [[row]] = await db.query(
+    "SELECT `value` FROM app_settings WHERE `key` = 'dropbox_credential_id' LIMIT 1"
+  );
+  if (row?.value != null && String(row.value).trim() !== '') return row.value;
+  const err = new Error(CREDENTIAL_MISSING);
+  err.code = 'STORAGE_CREDENTIAL_MISSING';
+  throw err;
 }
 
 async function _authHeaders(db, credentialId, url) {
@@ -1118,7 +1119,5 @@ module.exports = {
   _resolveCredential,
   _rpc,
   httpHeaderSafeJson,
-  // the code default behind app_settings dropbox_credential_id — read by
-  // scripts/storageConfigDump.js so the dump never retypes it
-  DEFAULT_CREDENTIAL_ID,
+  CREDENTIAL_MISSING,
 };

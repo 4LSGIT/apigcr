@@ -75,7 +75,7 @@ const { resolveAlertAssignee } = require('./esignAlertService');
  * trailing CR/LF from a sloppy settings edit is stripped.
  */
 const UNSORTED_PATH_KEY     = 'dropbox_unsorted_uploads_path';
-const DEFAULT_UNSORTED_PATH = '/  Law Office/   Cases/  Unsorted Client Uploads';
+const DEFAULT_UNSORTED_PATH = require('../lib/storageDefaults').STORAGE_DEFAULTS.dropbox_unsorted_uploads_path;   // D2: the literal lives in ONE place
 
 /** Subfolder under the case folder — the legacy destination, unchanged. */
 const SUBFOLDER = 'Client Uploads';

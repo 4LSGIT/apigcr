@@ -137,6 +137,7 @@ lib/shellLinks.js
 lib/signatureValidation.js
 lib/sqlGuard.js
 lib/ssrfGuard.js
+lib/storageDefaults.js
 lib/taskQueue.js
 lib/token.js
 lib/trackingDomainCheck.js
@@ -1972,6 +1973,7 @@ tests/sqlGuard.secretTables.test.js
 tests/ssnModifiers.test.js
 tests/startupInit.maintenance.test.js
 tests/storageConfigDump.test.js
+tests/storageDefaults.test.js
 tests/storageReplay.mysql.test.js
 tests/storageReplay.routes.test.js
 tests/storageReplay.test.js

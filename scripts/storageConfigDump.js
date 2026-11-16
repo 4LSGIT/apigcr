@@ -16,8 +16,10 @@
  *
  * READ-ONLY: one connection from .env (app_settings is denied to every API
  * key, so this cannot ride the readonly endpoint), SELECT only. The defaults
- * are READ FROM THE SERVICES' EXPORTS, never retyped here — a changed literal
- * in a service changes this dump.
+ * are READ FROM THE SETTINGS REGISTRY (each key's `default`, lib/storageDefaults.js
+ * behind it — the same place the writers read), never retyped here — a changed
+ * default changes this dump. The credential has no default since D2: a missing
+ * row prints as MISSING, because every storage operation refuses without it.
  *
  *   node scripts/storageConfigDump.js            # the document + its sha256
  *   node scripts/storageConfigDump.js --sha-only # the sha256 line alone
@@ -33,6 +35,7 @@ const KEYS = Object.freeze([
   'dropbox_unsorted_uploads_path',
   'dropbox_unsorted_forms_path',
   'dropbox_unsorted_esign_path',
+  'dropbox_unsorted_court_docs_path',   // D2: freelook's fallback, formerly a literal
   'dropbox_case_folder_templates',
   'dropbox_unreachable',
 ]);
@@ -65,34 +68,32 @@ function resolvePath(raw, dflt) {
 }
 
 async function collect(db) {
-  // lazy requires (convention): these services pull in the world
-  const dropbox = require('../services/dropboxService');
-  const generate = require('../services/documentGenerateService');
-  const uploads = require('../services/uploadTargetService');
-  const forms = require('../services/formPdfService');
-  const esign = require('../services/esignFilingService');
-  const cases = require('../services/caseService');
+  // the defaults come from the registry (D2: lib/storageDefaults.js behind each
+  // key's `default`) — the one place the writers read them from too
+  const registry = require('../lib/settingsRegistry');
 
   const [rows] = await db.query('SELECT `key`, `value` FROM app_settings WHERE `key` IN (?)', [KEYS]);
   const row = {};
   for (const r of rows || []) row[r.key] = r.value;
 
   const bins = {
-    generated: { key: generate.UNSORTED_PATH_KEY, default: generate.DEFAULT_UNSORTED_PATH },
-    uploads:   { key: uploads.UNSORTED_PATH_KEY,  default: uploads.DEFAULT_UNSORTED_PATH },
-    forms:     { key: forms.UNSORTED_PATH_KEY,    default: forms.DEFAULT_UNSORTED_PATH },
-    esign:     { key: esign.UNSORTED_PATH_KEY,    default: esign.DEFAULT_UNSORTED_PATH },
+    generated:  'dropbox_unsorted_generated_path',
+    uploads:    'dropbox_unsorted_uploads_path',
+    forms:      'dropbox_unsorted_forms_path',
+    esign:      'dropbox_unsorted_esign_path',
+    court_docs: 'dropbox_unsorted_court_docs_path',
   };
   const unsorted = {};
-  for (const [name, b] of Object.entries(bins)) {
-    unsorted[name] = { key: b.key, code_default: b.default, ...resolvePath(row[b.key], b.default) };
+  for (const [name, key] of Object.entries(bins)) {
+    const dflt = registry.defaultOf(key);
+    unsorted[name] = { key, code_default: dflt, ...resolvePath(row[key], dflt) };
   }
 
-  // credential: dropboxService._resolveCredential returns the row's STRING or the number default
+  // credential: NO code default since D2 — dropboxService._resolveCredential refuses without a row
   const credRaw = row.dropbox_credential_id;
-  const credential = credRaw != null && credRaw !== ''
-    ? { value: String(credRaw), source: 'app_settings', code_default: dropbox.DEFAULT_CREDENTIAL_ID }
-    : { value: dropbox.DEFAULT_CREDENTIAL_ID, source: 'code_default', code_default: dropbox.DEFAULT_CREDENTIAL_ID };
+  const credential = credRaw != null && String(credRaw).trim() !== ''
+    ? { value: String(credRaw), source: 'app_settings', code_default: null }
+    : { value: null, source: 'MISSING — every storage operation refuses until the row exists', code_default: null };
 
   // templates: caseService._loadCaseFolderTemplates → {} on a missing/invalid row;
   // per stage, a key on the row wins and absent keys fall back to the code default
@@ -107,9 +108,10 @@ async function collect(db) {
       templatesSource = 'app_settings:invalid_json→code_default';
     }
   }
+  const TEMPLATE_DEFAULTS = registry.defaultOf('dropbox_case_folder_templates');
   const effective = {};
-  for (const stage of Object.keys(cases.DEFAULT_CASE_FOLDER_TEMPLATES)) {
-    effective[stage] = { ...cases.DEFAULT_CASE_FOLDER_TEMPLATES[stage], ...(map[stage] && typeof map[stage] === 'object' ? map[stage] : {}) };
+  for (const stage of Object.keys(TEMPLATE_DEFAULTS)) {
+    effective[stage] = { ...TEMPLATE_DEFAULTS[stage], ...(map[stage] && typeof map[stage] === 'object' ? map[stage] : {}) };
   }
   for (const stage of Object.keys(map)) {
     if (!(stage in effective) && map[stage] && typeof map[stage] === 'object') effective[stage] = { ...map[stage] };
@@ -118,7 +120,7 @@ async function collect(db) {
   return {
     credential,
     unsorted,
-    case_folder_templates: { source: templatesSource, code_default: cases.DEFAULT_CASE_FOLDER_TEMPLATES, row: map, effective },
+    case_folder_templates: { source: templatesSource, code_default: TEMPLATE_DEFAULTS, row: map, effective },
     dropbox_unreachable: row.dropbox_unreachable == null ? null : String(row.dropbox_unreachable),
   };
 }

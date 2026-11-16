@@ -134,6 +134,31 @@ test('14 freelook: a case with a folder, a case without, an unknown case, a refu
   }
 });
 
+test('D2: freelook\'s fallback folder is the dropbox_unsorted_court_docs_path row when set, the registry default otherwise', async () => {
+  fake.reset();
+  const world = W.baseFixture();
+  mockWorld.current = world;
+  db = W.makeDb(world);
+  seedBase(world);
+  const realFetch = global.fetch;
+  global.fetch = async (url, init) => (String(url).includes('uscourts.gov')
+    ? new Response(Buffer.from('%PDF-1.7 free look'), { status: 200, headers: { 'content-type': 'application/pdf' } })
+    : realFetch(url, init));
+  try {
+    const a = await post('/api/court/free-look', { url: 'https://ecf.mieb.uscourts.gov/doc1/0009', case_number: '99-00000', title: 'Order' });
+    expect(a.body.target).toBe('fallback');
+    expect(a.body.dropbox_path.startsWith('/  Law Office/   Cases/ _Unfiled Court Docs/')).toBe(true);
+    world.settings.dropbox_unsorted_court_docs_path = '/  Firm/ Court Docs\r\n';   // the row wins, trailing CR/LF stripped like every other bin
+    const b = await post('/api/court/free-look', { url: 'https://ecf.mieb.uscourts.gov/doc1/0010', case_number: '99-00000', title: 'Order' });
+    expect(b.body.dropbox_path.startsWith('/  Firm/ Court Docs/')).toBe(true);
+    world.settings.dropbox_unsorted_court_docs_path = '';                             // blank = unset = the default
+    const c = await post('/api/court/free-look', { url: 'https://ecf.mieb.uscourts.gov/doc1/0011', case_number: '99-00000', title: 'Order' });
+    expect(c.body.dropbox_path.startsWith('/  Law Office/   Cases/ _Unfiled Court Docs/')).toBe(true);
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
 test('8 routes: upload-link → browser upload → upload-commit, every placement; a foreign file refused; raw read-back', async () => {
   const name = '8 routes: upload-link, upload-commit, raw';
   fake.reset();

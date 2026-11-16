@@ -95,7 +95,7 @@ const SUBFOLDER = 'Signed Documents';
  * a sloppy settings edit is stripped.
  */
 const UNSORTED_PATH_KEY = 'dropbox_unsorted_esign_path';
-const DEFAULT_UNSORTED_PATH = '/  Law Office/   Cases/  Unsorted E-Signed Documents';
+const DEFAULT_UNSORTED_PATH = require('../lib/storageDefaults').STORAGE_DEFAULTS.dropbox_unsorted_esign_path;   // D2: the literal lives in ONE place
 
 /**
  * signing_requests.signed_pdf_path / cert_pdf_path are varchar(512) and

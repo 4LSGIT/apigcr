@@ -22,10 +22,21 @@ const SOURCE      = 'dropbox';
 const storage     = () => sources.get(SOURCE);
 
 // ── Config ───────────────────────────────────────────────────────────────────
-// Where docs we can't file on their case land. Leading spaces are
-// sort-significant in the firm tree — SET THIS to a real folder; it auto-creates
-// on first write. Fallback filename carries case_number + timestamp.
-const FALLBACK_DIR        = '/  Law Office/   Cases/ _Unfiled Court Docs';
+// Where docs we can't file on their case land: app_settings
+// dropbox_unsorted_court_docs_path, else lib/storageDefaults. Leading spaces are
+// sort-significant in the firm tree; the folder auto-creates on first write. Fallback filename carries case_number + timestamp.
+const FALLBACK_DIR_KEY    = 'dropbox_unsorted_court_docs_path';   // app_settings (registry: firm → Dropbox filing)
+const FALLBACK_DIR_DEFAULT = require('../lib/storageDefaults').STORAGE_DEFAULTS[FALLBACK_DIR_KEY];
+/** The row wins; blank or missing → the default (the same reading every other bin uses). */
+async function fallbackDir(db) {
+  try {
+    const raw = await require('../services/settingsService').getSetting(db, FALLBACK_DIR_KEY);   // lazy (convention)
+    if (raw != null && String(raw).replace(/[\r\n]+$/, '') !== '') return String(raw).replace(/[\r\n]+$/, '');
+  } catch (e) {
+    console.warn(`[free-look] ${FALLBACK_DIR_KEY} lookup failed, using default: ${e.message}`);
+  }
+  return FALLBACK_DIR_DEFAULT;
+}
 const COURT_SUBFOLDER     = 'court_docs';
 const ALLOWED_HOST_SUFFIX = '.uscourts.gov'; // SSRF guard on the inbound url
 const FETCH_TIMEOUT_MS    = 30000;
@@ -206,7 +217,7 @@ router.post('/api/court/free-look', jwtOrApiKey, async (req, res) => {
   const fbFile = ensurePdf(`${sanitizeName(case_number, 'unknown-case')} - ${sanitizeName(title, 'court-doc')} - ${nowStamp()}`);
   try {
     const meta = await storage().upload(db, {
-      path: `${FALLBACK_DIR.replace(/\/+$/, '')}/${fbFile}`,
+      path: `${(await fallbackDir(db)).replace(/\/+$/, '')}/${fbFile}`,
     }, buffer);
     await registerCourtDoc(db, meta, caseId);
     return res.json({

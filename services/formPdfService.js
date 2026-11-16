@@ -109,7 +109,7 @@ const SUBFOLDER = 'Forms';
  * the app_settings row just makes it visible and editable in admin.
  */
 const UNSORTED_PATH_KEY = 'dropbox_unsorted_forms_path';
-const DEFAULT_UNSORTED_PATH = '/  Law Office/   Cases/  Unsorted Form Submissions';
+const DEFAULT_UNSORTED_PATH = require('../lib/storageDefaults').STORAGE_DEFAULTS.dropbox_unsorted_forms_path;   // D2: the literal lives in ONE place
 
 /** app_settings key for the firm logo URL (the case-page header logo). */
 const LOGO_URL_KEY = 'fe-firm_logo_url';

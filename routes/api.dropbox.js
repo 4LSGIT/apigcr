@@ -33,7 +33,7 @@
  * handle stored in cases.case_dropbox) — see the service header.
  *
  * credential_id is accepted everywhere as an optional override; omit to use
- * the app_settings binding ('dropbox_credential_id') or the service default
+ * the app_settings binding ('dropbox_credential_id') — no service default since D2
  * (credential 8).
  *
  * NOTE: this is the side-by-side native replacement for the legacy

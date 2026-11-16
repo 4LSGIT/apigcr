@@ -69,7 +69,7 @@ const FIRM_TZ = process.env.FIRM_TIMEZONE || 'America/Detroit';
  * bins, so a missing app_settings row degrades rather than breaks.
  */
 const UNSORTED_PATH_KEY = 'dropbox_unsorted_generated_path';
-const DEFAULT_UNSORTED_PATH = '/  Law Office/   Cases/  Unsorted Generated Documents';
+const DEFAULT_UNSORTED_PATH = require('../lib/storageDefaults').STORAGE_DEFAULTS.dropbox_unsorted_generated_path;   // D2: the literal lives in ONE place
 
 /** documents envelope `source` / tasks.task_source / console prefix. */
 const EVENT_SOURCE = 'generated_doc';

@@ -103,6 +103,7 @@ describe('classification snapshot', () => {
     "dropbox_case_folder_templates": "firm firm dropbox ui json",
     "dropbox_credential_id": "system system integrations ui credential",
     "dropbox_unsorted_esign_path": "firm firm dropbox ui string",
+    "dropbox_unsorted_court_docs_path": "firm firm dropbox ui string",
     "dropbox_unsorted_forms_path": "firm firm dropbox ui string",
     "dropbox_unsorted_generated_path": "firm firm dropbox ui string",
     "dropbox_unsorted_uploads_path": "firm firm dropbox ui string",

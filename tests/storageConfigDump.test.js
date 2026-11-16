@@ -17,8 +17,10 @@ const dump = require('../scripts/storageConfigDump');
 const dbWith = (rows) => ({ query: jest.fn(async () => [rows, []]) });
 
 const EXPECTED_DEFAULTS = {
-  credential: { code_default: 8, source: 'code_default', value: 8 },
+  // D2: no credential default — a missing row is a refusal, and the dump says so
+  credential: { code_default: null, source: 'MISSING — every storage operation refuses until the row exists', value: null },
   unsorted: {
+    court_docs: { code_default: '/  Law Office/   Cases/ _Unfiled Court Docs',            key: 'dropbox_unsorted_court_docs_path', source: 'code_default', value: '/  Law Office/   Cases/ _Unfiled Court Docs' },
     esign:     { code_default: '/  Law Office/   Cases/  Unsorted E-Signed Documents',  key: 'dropbox_unsorted_esign_path',     source: 'code_default', value: '/  Law Office/   Cases/  Unsorted E-Signed Documents' },
     forms:     { code_default: '/  Law Office/   Cases/  Unsorted Form Submissions',    key: 'dropbox_unsorted_forms_path',     source: 'code_default', value: '/  Law Office/   Cases/  Unsorted Form Submissions' },
     generated: { code_default: '/  Law Office/   Cases/  Unsorted Generated Documents', key: 'dropbox_unsorted_generated_path', source: 'code_default', value: '/  Law Office/   Cases/  Unsorted Generated Documents' },
@@ -48,7 +50,7 @@ test('defaults: no rows → every value is the code default the services export,
   });
   expect(dump.KEYS).toEqual([
     'dropbox_credential_id', 'dropbox_unsorted_generated_path', 'dropbox_unsorted_uploads_path',
-    'dropbox_unsorted_forms_path', 'dropbox_unsorted_esign_path', 'dropbox_case_folder_templates', 'dropbox_unreachable',
+    'dropbox_unsorted_forms_path', 'dropbox_unsorted_esign_path', 'dropbox_unsorted_court_docs_path', 'dropbox_case_folder_templates', 'dropbox_unreachable',
   ]);
 });
 
@@ -60,7 +62,7 @@ test('rows win, exactly as the writers read them: CR/LF stripped, an empty row i
     { key: 'dropbox_unreachable', value: '1' },
     { key: 'dropbox_case_folder_templates', value: JSON.stringify({ active: { 'Bankruptcy:Ch 7': '/  X/ {{case_id}}', subfolders: [' A'] }, closed: { default: '/  Closed/ {{case_id}}' } }) },
   ]));
-  expect(doc.credential).toEqual({ value: '21', source: 'app_settings', code_default: 8 });
+  expect(doc.credential).toEqual({ value: '21', source: 'app_settings', code_default: null });
   expect(doc.unsorted.uploads.value).toBe('/  Firm/ Uploads');
   expect(doc.unsorted.uploads.source).toBe('app_settings');
   expect(doc.unsorted.forms).toEqual({ ...EXPECTED_DEFAULTS.unsorted.forms });
