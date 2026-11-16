@@ -466,6 +466,224 @@
      "path": "/  Law Office/   Cases/  Unsorted Generated Documents"
     }
    ]
+  },
+  "14 freelook: case folder / fallback folder / unknown case / bad host": {
+   "calls": [
+    {
+     "fn": "uploadFile",
+     "args": [
+      {
+       "autorename": true,
+       "content": {
+        "bytes": 18,
+        "sha256": "9e5e0998bc9289a8991bbe4afdf3b37a32c96e1d424463ae863dd9dca2310ef5"
+       },
+       "filename": "Minute Entry. Hearing Adjourned (BK).pdf",
+       "mode": "add",
+       "sharedLink": "https://www.dropbox.com/scl/fo/fake0001?dl=0",
+       "subfolder": "court_docs"
+      }
+     ]
+    },
+    {
+     "fn": "uploadFile",
+     "args": [
+      {
+       "autorename": true,
+       "content": {
+        "bytes": 18,
+        "sha256": "9e5e0998bc9289a8991bbe4afdf3b37a32c96e1d424463ae863dd9dca2310ef5"
+       },
+       "mode": "add",
+       "path": "/  Law Office/   Cases/ _Unfiled Court Docs/26-50001 - Order - 2026-11-17_15-00-00.pdf"
+      }
+     ]
+    },
+    {
+     "fn": "uploadFile",
+     "args": [
+      {
+       "autorename": true,
+       "content": {
+        "bytes": 18,
+        "sha256": "9e5e0998bc9289a8991bbe4afdf3b37a32c96e1d424463ae863dd9dca2310ef5"
+       },
+       "mode": "add",
+       "path": "/  Law Office/   Cases/ _Unfiled Court Docs/99-00000 - Notice - 2026-11-17_15-00-00.pdf"
+      }
+     ]
+    }
+   ],
+   "effects": [
+    {
+     "kind": "registry.registerWrittenSafe",
+     "createdBy": null,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:01Z",
+      "content_hash": "9e5e0998bc9289a8991bbe4afdf3b37a32c96e1d424463ae863dd9dca2310ef5",
+      "id": "id:f0001",
+      "is_downloadable": true,
+      "name": "Minute Entry. Hearing Adjourned (BK).pdf",
+      "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/court_docs/Minute Entry. Hearing Adjourned (BK).pdf",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/court_docs/minute entry. hearing adjourned (bk).pdf",
+      "rev": "rev000001",
+      "server_modified": "2026-11-17T12:00:01Z",
+      "size": 18
+     },
+     "eventSource": "court_freelook",
+     "links": [
+      {
+       "id": "hjSFMabb",
+       "type": "case"
+      }
+     ]
+    },
+    {
+     "kind": "registry.registerWrittenSafe",
+     "createdBy": null,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:02Z",
+      "content_hash": "9e5e0998bc9289a8991bbe4afdf3b37a32c96e1d424463ae863dd9dca2310ef5",
+      "id": "id:f0002",
+      "is_downloadable": true,
+      "name": "26-50001 - Order - 2026-11-17_15-00-00.pdf",
+      "path_display": "/  Law Office/   Cases/ _Unfiled Court Docs/26-50001 - Order - 2026-11-17_15-00-00.pdf",
+      "path_lower": "/  law office/   cases/ _unfiled court docs/26-50001 - order - 2026-11-17_15-00-00.pdf",
+      "rev": "rev000002",
+      "server_modified": "2026-11-17T12:00:02Z",
+      "size": 18
+     },
+     "eventSource": "court_freelook",
+     "links": [
+      {
+       "id": "aCtv7Num",
+       "type": "case"
+      }
+     ]
+    },
+    {
+     "kind": "registry.registerWrittenSafe",
+     "createdBy": null,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:03Z",
+      "content_hash": "9e5e0998bc9289a8991bbe4afdf3b37a32c96e1d424463ae863dd9dca2310ef5",
+      "id": "id:f0003",
+      "is_downloadable": true,
+      "name": "99-00000 - Notice - 2026-11-17_15-00-00.pdf",
+      "path_display": "/  Law Office/   Cases/ _Unfiled Court Docs/99-00000 - Notice - 2026-11-17_15-00-00.pdf",
+      "path_lower": "/  law office/   cases/ _unfiled court docs/99-00000 - notice - 2026-11-17_15-00-00.pdf",
+      "rev": "rev000003",
+      "server_modified": "2026-11-17T12:00:03Z",
+      "size": 18
+     },
+     "eventSource": "court_freelook",
+     "links": []
+    }
+   ],
+   "http": [
+    {
+     "label": "case with a folder",
+     "status": 200,
+     "dropbox_path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/court_docs/Minute Entry. Hearing Adjourned (BK).pdf",
+     "target": "case"
+    },
+    {
+     "label": "case without a folder → fallback",
+     "status": 200,
+     "dropbox_path": "/  Law Office/   Cases/ _Unfiled Court Docs/26-50001 - Order - 2026-11-17_15-00-00.pdf",
+     "reason": "no_case_dropbox",
+     "target": "fallback"
+    },
+    {
+     "label": "unknown case → fallback",
+     "status": 200,
+     "dropbox_path": "/  Law Office/   Cases/ _Unfiled Court Docs/99-00000 - Notice - 2026-11-17_15-00-00.pdf",
+     "reason": "no_case_row",
+     "target": "fallback"
+    },
+    {
+     "label": "refused host",
+     "status": 400,
+     "message": "url host must be *.uscourts.gov",
+     "stage": "validate"
+    }
+   ],
+   "provider_state": [
+    {
+     "tag": "folder",
+     "path": "/  Law Office"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/court_docs"
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/court_docs/Minute Entry. Hearing Adjourned (BK).pdf",
+     "size": 18
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted E-Signed Documents"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Form Submissions"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Generated Documents"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/ _Unfiled Court Docs"
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/ _Unfiled Court Docs/26-50001 - Order - 2026-11-17_15-00-00.pdf",
+     "size": 18
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/ _Unfiled Court Docs/99-00000 - Notice - 2026-11-17_15-00-00.pdf",
+     "size": 18
+    }
+   ]
   }
  }
 }

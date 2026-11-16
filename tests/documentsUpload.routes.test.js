@@ -58,7 +58,10 @@ jest.mock('../services/documentService', () => ({
 jest.mock('../services/documentSourceService', () => ({ get: jest.fn() }));
 jest.mock('../services/documentSyncService', () => ({}));
 jest.mock('../services/documentIngestService', () => ({ registerWritten: jest.fn() }));
-jest.mock('../services/dropboxService', () => ({ getTemporaryUploadLink: jest.fn() }));
+jest.mock('../services/dropboxService', () => ({
+  getTemporaryUploadLink: jest.fn(),
+  joinPath: jest.requireActual('../services/dropboxService').joinPath,   // the provider's path form joins through it
+}));
 jest.mock('../services/uploadTargetService', () => ({
   issueClientUploadLink: jest.fn(),
   unsortedBasePath:      jest.fn(),
@@ -75,6 +78,12 @@ const dropbox      = require('../services/dropboxService');
 const uploadTarget = require('../services/uploadTargetService');
 const tickets      = require('../lib/uploadTicket');
 const router       = require('../routes/api.documents');
+// storage-seam D1c: upload-link reaches Dropbox through the provider seam. The
+// REAL provider's directUpload, bound to the dropboxService mock above, so the
+// assertions below keep pinning the Dropbox-level facts (shared link, filename,
+// no subfolder) without a hand-written stand-in for the seam.
+const realProvider = jest.requireActual('../services/documentSourceService').dropboxProvider;
+const seamProvider = () => ({ directUpload: realProvider.directUpload });
 
 const CASE_FOLDER = '/  law office/   cases/ smith - c1';
 const UNSORTED    = '/  Law Office/   Cases/  Unsorted Client Uploads';
@@ -102,6 +111,7 @@ beforeEach(() => {
     path: `${CASE_FOLDER}/statement.pdf`,
   });
   uploadTarget.unsortedBasePath.mockResolvedValue(UNSORTED);
+  sources.get.mockReturnValue(seamProvider());
   ingest.registerWritten.mockResolvedValue({
     document: { id: 77, name: 'statement.pdf' },
     links: [{ link_type: 'case', link_id: 'C1', relation: 'path', created: true }],
@@ -117,6 +127,7 @@ const post = (path, body) => fetch(`${base}${path}`, {
 /** A provider whose stat returns a file at `path`. */
 function mkProvider(path = `${CASE_FOLDER}/statement.pdf`, over = {}) {
   const p = {
+    ...seamProvider(),
     stat: jest.fn(async () => ({
       '.tag': 'file', id: 'id:LANDED', name: path.split('/').pop(),
       path_display: path, path_lower: path.toLowerCase(),

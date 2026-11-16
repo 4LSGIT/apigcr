@@ -46,7 +46,12 @@ jest.mock('../services/documentIngestService', () => ({
     mockWorld.rows.set(document.id, document);
     return { document, links: (o.links || []).map((l) => ({ link_type: l.type, link_id: String(l.id), relation: 'upload', created: true })) };
   }),
-  registerWrittenSafe: jest.fn(), registerLandedInFolder: jest.fn(),
+  registerWrittenSafe: jest.fn(async (db, o) => {
+    const w = mockWorld.current;
+    w.effects.push({ kind: 'registry.registerWrittenSafe', ...mockWorld.scrub({ entry: o.entry, links: o.links, createdBy: o.createdBy, eventSource: o.eventSource }) });
+    return { ok: true, document: { id: 950 }, links: [] };
+  }),
+  registerLandedInFolder: jest.fn(),
 }));
 jest.mock('../lib/domainEvents', () => ({ ...jest.requireActual('../lib/domainEvents'), emit: jest.fn() }));
 let mockAuth = { userId: 6 };
@@ -58,6 +63,7 @@ const express = require('express');
 const W = require('./helpers/storageReplayWorld');
 const fake = require('../services/dropboxService').__fake;
 const router = require('../routes/api.documents');
+const freelook = require('../routes/freelook');
 
 const GOLDEN = path.join(__dirname, 'fixtures', 'storageReplay.routes.golden.json');
 const WRITE = process.env.STORAGE_GOLDEN_WRITE === '1';
@@ -70,6 +76,7 @@ const app = express();
 app.use(express.json());
 app.use((req, res, next) => { req.db = db; next(); });
 app.use(router);
+app.use(freelook);
 
 beforeAll(async () => {
   jest.useFakeTimers({ now: new Date('2026-11-17T15:00:00Z'), doNotFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate', 'nextTick', 'queueMicrotask', 'hrtime', 'performance'] });
@@ -94,6 +101,38 @@ function seedBase(world) {
   });
   world.cases.hjSFMabb.case_dropbox = links[W.CASE_A_FOLDER];
 }
+
+// ── 14. the free-look court-document capture: into the case folder, else the fallback folder
+test('14 freelook: a case with a folder, a case without, an unknown case, a refused host', async () => {
+  const name = '14 freelook: case folder / fallback folder / unknown case / bad host';
+  fake.reset();
+  const world = W.baseFixture();
+  mockWorld.current = world;
+  db = W.makeDb(world);
+  seedBase(world);
+  const realFetch = global.fetch;
+  // The court serves the PDF directly (the first branch of fetchFreeLook); the
+  // network is never touched — an *.uscourts.gov URL is the SSRF guard's input only.
+  global.fetch = async (url, init) => (String(url).includes('uscourts.gov')
+    ? new Response(Buffer.from('%PDF-1.7 free look'), { status: 200, headers: { 'content-type': 'application/pdf' } })
+    : realFetch(url, init));
+  const http = [];
+  try {
+    const step = async (label, body) => { const r = await post('/api/court/free-look', body); http.push({ label, status: r.status, ...mockWorld.scrub({ target: r.body.target, reason: r.body.reason, dropbox_path: r.body.dropbox_path, stage: r.body.stage, message: r.body.message }) }); };
+    await step('case with a folder', { url: 'https://ecf.mieb.uscourts.gov/doc1/0001?caseid=1&magic_num=2', case_number: '26-44274', title: 'Minute Entry. Hearing Adjourned (BK)' });
+    await step('case without a folder → fallback', { url: 'https://ecf.mieb.uscourts.gov/doc1/0002', case_number: '26-50001', title: 'Order' });
+    await step('unknown case → fallback', { url: 'https://ecf.mieb.uscourts.gov/doc1/0003', case_number: '99-00000', title: 'Notice' });
+    await step('refused host', { url: 'https://evil.example/doc1/0004', case_number: '26-44274', title: 'x' });
+  } finally {
+    global.fetch = realFetch;
+  }
+  const record = { calls: fake.calls.slice(), effects: world.effects.slice(), http, provider_state: fake.snapshot() };
+  records[name] = record;
+  if (!WRITE) {
+    expect(golden.scenarios[name]).toBeDefined();
+    expect(record).toEqual(golden.scenarios[name]);
+  }
+});
 
 test('8 routes: upload-link → browser upload → upload-commit, every placement; a foreign file refused; raw read-back', async () => {
   const name = '8 routes: upload-link, upload-commit, raw';

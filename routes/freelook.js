@@ -15,7 +15,11 @@
 const express     = require('express');
 const router      = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
-const dropbox     = require('../services/dropboxService');
+const sources     = require('../services/documentSourceService');
+
+/** The storage provider the firm's documents live in (D2 makes this a per-tenant setting). */
+const SOURCE      = 'dropbox';
+const storage     = () => sources.get(SOURCE);
 
 // ── Config ───────────────────────────────────────────────────────────────────
 // Where docs we can't file on their case land. Leading spaces are
@@ -181,12 +185,11 @@ router.post('/api/court/free-look', jwtOrApiKey, async (req, res) => {
   // 4. Store: primary (case folder / court_docs / title) → fallback on any failure
   if (caseDropbox) {
     try {
-      const meta = await dropbox.uploadFile(db, {
-        sharedLink: caseDropbox,
-        subfolder:  COURT_SUBFOLDER,
-        filename:   safeTitle,
-        content:    buffer,
-      });
+      const meta = await storage().upload(db, {
+        humanLink: caseDropbox,
+        subfolder: COURT_SUBFOLDER,
+        name:      safeTitle,
+      }, buffer);
       await registerCourtDoc(db, meta, caseId);
       return res.json({
         status: 'success', target: 'case', case_number,
@@ -202,10 +205,9 @@ router.post('/api/court/free-look', jwtOrApiKey, async (req, res) => {
   // 5. Fallback — the consumed doc must not be lost
   const fbFile = ensurePdf(`${sanitizeName(case_number, 'unknown-case')} - ${sanitizeName(title, 'court-doc')} - ${nowStamp()}`);
   try {
-    const meta = await dropbox.uploadFile(db, {
-      path:    `${FALLBACK_DIR.replace(/\/+$/, '')}/${fbFile}`,
-      content: buffer,
-    });
+    const meta = await storage().upload(db, {
+      path: `${FALLBACK_DIR.replace(/\/+$/, '')}/${fbFile}`,
+    }, buffer);
     await registerCourtDoc(db, meta, caseId);
     return res.json({
       status: 'success', target: 'fallback', reason: fallbackReason || 'unknown', case_number,

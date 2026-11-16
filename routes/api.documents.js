@@ -477,7 +477,7 @@ function parentLower(p) {
  */
 router.post('/api/documents/upload-link', jwtOrApiKey, async (req, res) => {
   try {
-    const dropbox     = require('../services/dropboxService');
+    const storage     = sources.get(DEFAULT_SOURCE);
     const uploadTarget = require('../services/uploadTargetService');
     const tickets     = require('../lib/uploadTicket');
 
@@ -512,7 +512,7 @@ router.post('/api/documents/upload-link', jwtOrApiKey, async (req, res) => {
 
       if (sharedLink) {
         try {
-          ({ link, path } = await dropbox.getTemporaryUploadLink(req.db, { sharedLink, filename }));
+          ({ url: link, path } = await storage.directUpload(req.db, { humanLink: sharedLink, filename }));
           placement = 'case';
         } catch (err) {
           console.warn(`[api.documents] upload-link: case folder unusable for ${caseId} (${err.message}) — falling back to the shared ladder`);
@@ -533,7 +533,7 @@ router.post('/api/documents/upload-link', jwtOrApiKey, async (req, res) => {
     } else {
       // Contact-scoped and global both land in the bare bin.
       const base = await uploadTarget.unsortedBasePath(req.db);
-      ({ link, path } = await dropbox.getTemporaryUploadLink(req.db, { path: base, filename }));
+      ({ url: link, path } = await storage.directUpload(req.db, { path: base, filename }));
       placement = contactId ? 'unsorted_contact' : 'unsorted_global';
       note = UPLOAD_PLACEMENT_NOTE[placement];
     }

@@ -87,6 +87,10 @@ function makeDb(w) {
       const ids = (params[0] || []).map(String);
       return rows(Object.values(w.cases).filter((c) => ids.includes(c.case_id) && c.case_dropbox).map((c) => ({ case_id: c.case_id, case_dropbox: c.case_dropbox })));
     }
+    if (/^SELECT case_id, case_dropbox FROM cases WHERE case_number = \?/.test(s)) {
+      const c = Object.values(w.cases).find((x) => x.case_number === String(params[0]));
+      return rows(c ? [{ case_id: c.case_id, case_dropbox: c.case_dropbox }] : []);
+    }
     if (/^SELECT .* FROM cases(?: c)? WHERE (?:c\.)?case_id = \?/.test(s)) {
       const c = w.cases[String(params[0])];
       return rows(c ? [{ ...c }] : []);
