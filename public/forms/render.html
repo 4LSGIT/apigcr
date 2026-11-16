@@ -2797,7 +2797,10 @@
                     + ' (schema v' + sub.schema_version + ')'
                     + (when ? ' \u2014 received ' + when : '')
                     + ' \u2014 ' + linkage;
-          if (res.schema_matched === false) {
+          if (res.definition_source === 'synthesized') {
+            VIEW.warn = 'This form has no published layout \u2014 the saved answers are listed'
+                      + ' under their field names.';
+          } else if (res.schema_matched === false) {
             VIEW.warn = 'No stored definition matches schema v' + sub.schema_version
                       + ' \u2014 rendering under the current v' + res.definition_schema_version
                       + '; answers for removed fields are not shown.';

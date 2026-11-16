@@ -233,7 +233,7 @@ await apiSend("/api/forms/submissions/253", "GET");
 
 ## GET /api/forms/submissions/:id/render (X4)
 
-The submission **plus the definition to render it under**, in one payload — feeds render.html's `?view_submission` mode. The definition is version-matched server-side: the current published definition when its `schema_version` equals the submission's; otherwise the **newest** `form_template_versions` row carrying that `schema_version`; otherwise the current definition flagged `schema_matched: false` (the renderer warns that answers for removed fields aren't shown). 404 when the submission, the template row, or any definition is missing. `submission.data` comes back parsed.
+The submission **plus the definition to render it under**, in one payload — feeds render.html's `?view_submission` mode. The definition is version-matched server-side: the current published definition when its `schema_version` equals the submission's; otherwise the **newest** `form_template_versions` row carrying that `schema_version`; otherwise the current definition flagged `schema_matched: false` (the renderer warns that answers for removed fields aren't shown); otherwise — no template row, or a template never published (the hand-built pages such as `contact-form.html`'s `contact_info`) — a definition **synthesized from the submission's own data** (`formService.synthesizeDefinition`: one "Saved answers" section, keys sorted, `id`/`*_id` keys left out, arrays of objects as repeaters), with `schema_matched: false`, `definition_schema_version: null`, the title falling back to the humanized `form_key`; the view and the PDF label it as having no published layout. `definition_source` names the step that answered: `published` | `version` | `current` | `synthesized`. 404 only when the submission is unknown. `submission.data` comes back parsed (for a synthesized definition, keys renamed only where a field could not carry the value as-is).
 
 **Response:**
 ```json
@@ -245,7 +245,8 @@ The submission **plus the definition to render it under**, in one payload — fe
   "link_type": "case",
   "definition": { "sections": [] },
   "definition_schema_version": 1,
-  "schema_matched": true
+  "schema_matched": true,
+  "definition_source": "published"
 }
 ```
 

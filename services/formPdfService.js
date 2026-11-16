@@ -433,7 +433,10 @@ function buildSubmissionHtml(bundle, opts = {}) {
   body += `<div class="meta">${metaBits.join(' &middot; ')}</div>`;
   body += '</div>';
 
-  if (schema_matched === false) {
+  if (bundle.definition_source === 'synthesized') {
+    body += '<div class="schema-note">Note: this form has no published layout, so the saved ' +
+      'answers are listed under their field names.</div>';
+  } else if (schema_matched === false) {
     body += '<div class="schema-note">Note: the form layout that produced this submission is no ' +
       'longer available. Answers are shown against the current layout; fields added since may ' +
       'appear blank and removed fields are not shown.</div>';

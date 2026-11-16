@@ -681,14 +681,21 @@ async function linkSubmission(db, id, linkType, linkId, userId) {
  *      layout-only republishes don't bump — and the newest one is the last
  *      layout that field set had);
  *   3. else the current published definition with schema_matched:false —
- *      the view renders what it can and the renderer warns.
+ *      the view renders what it can and the renderer warns;
+ *   4. else (no template row, or a template never published — the hand-built
+ *      pages, e.g. contact-form.html's contact_info, submit under keys with
+ *      no definition) a definition SYNTHESIZED from the submission's own data
+ *      (synthesizeDefinition below), schema_matched:false,
+ *      definition_schema_version:null. The view and the PDF label it.
  *
- * 404 when the submission is unknown, the template row is gone, or no
- * definition exists anywhere (never-published template).
+ * definition_source names the step that answered: 'published' | 'version' |
+ * 'current' | 'synthesized'.
+ *
+ * 404 only when the submission is unknown.
  *
  * data is returned PARSED (mysql2 may hand the json column back as either).
  *
- * @returns {{ submission, title, link_type, definition, definition_schema_version, schema_matched }}
+ * @returns {{ submission, title, link_type, definition, definition_schema_version, schema_matched, definition_source }}
  */
 async function getSubmissionForRender(db, id) {
   const sub = await getSubmission(db, id);   // throws 404 on unknown id
@@ -702,19 +709,20 @@ async function getSubmissionForRender(db, id) {
      FROM form_templates WHERE form_key = ? LIMIT 1`,
     [sub.form_key]
   );
-  if (!tpl) throw httpError(404, `No template exists for form_key "${sub.form_key}"`);
 
   const parseDef = (d) => (typeof d === 'string' ? JSON.parse(d) : d);
 
   let definition = null;
   let defSchemaVersion = null;
   let schemaMatched = false;
+  let source = null;
 
-  if (tpl.definition && tpl.schema_version === sub.schema_version) {
+  if (tpl && tpl.definition && tpl.schema_version === sub.schema_version) {
     definition = parseDef(tpl.definition);
     defSchemaVersion = tpl.schema_version;
     schemaMatched = true;
-  } else {
+    source = 'published';
+  } else if (tpl) {
     const [[ver]] = await db.query(
       `SELECT definition, schema_version FROM form_template_versions
        WHERE template_id = ? AND schema_version = ?
@@ -725,24 +733,189 @@ async function getSubmissionForRender(db, id) {
       definition = parseDef(ver.definition);
       defSchemaVersion = ver.schema_version;
       schemaMatched = true;
+      source = 'version';
     } else if (tpl.definition) {
       definition = parseDef(tpl.definition);
       defSchemaVersion = tpl.schema_version;
       schemaMatched = false;
+      source = 'current';
     }
   }
 
   if (!definition) {
-    throw httpError(404, `No published definition available for form_key "${sub.form_key}"`);
+    const synth = synthesizeDefinition(sub.data);
+    definition = synth.definition;
+    sub.data = synth.data;
+    source = 'synthesized';
   }
 
   return {
     submission: sub,
-    title: tpl.title,
-    link_type: tpl.link_type,
+    title: (tpl && tpl.title) || _humanizeKey(sub.form_key),
+    link_type: (tpl && tpl.link_type) || sub.link_type || '',
     definition,
     definition_schema_version: defSchemaVersion,
     schema_matched: schemaMatched,
+    definition_source: source,
+  };
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SYNTHESIZED DEFINITION — step 4 of getSubmissionForRender (2026-11-16)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// A read-only definition built from one submission's data, for keys with no
+// definition anywhere. It must be one the builder itself would accept — the
+// tests run every output through formTemplateService.validateDefinition — so
+// render.html and formPdfService draw it with no special case. Shape:
+//
+//   - one standard section "Saved answers", keys sorted case-insensitively,
+//     two narrow fields per row; textarea / checkgroup take a row alone;
+//   - then one repeater section per array of plain objects.
+//
+// Value → field type: string → text (textarea when multi-line or > 100
+// chars; ssn/phone/zip names get that mask, top level only — repeaters carry
+// no masks, contract §4.2); number / null → text; boolean → checkbox; array
+// of scalars → checkgroup whose options are its own values; empty array →
+// text (blank); array of plain objects → repeater (children: boolean →
+// checkbox, else text). Plain objects and mixed arrays → textarea of the
+// JSON.
+//
+// Left out: `id` and `*_id` keys, top level and in repeater items — record
+// ids, not answers.
+//
+// The returned data equals the input except where a field could not carry
+// the stored value as-is (it is a fresh object only then): a key failing the
+// contract's name rule is shown under a generated name `_k<n>` (label = the
+// raw key); a repeater child colliding with a top-level name (contact_info's
+// legacy flat `city` beside `addresses[].city`) gets a generated name in that
+// repeater's items; JSON-shown values become their JSON text; checkgroup
+// values become strings.
+
+const SYNTH_NAME_RE = /^[a-zA-Z0-9_]{1,50}$/;   // contract §4.3 (formTemplateService FIELD_NAME_RE)
+const SYNTH_ID_RE   = /(^|_)id$/i;
+const SYNTH_MASKS   = [[/(^|_)ssn$/i, 'ssn'], [/(^|_)phone\d*$/i, 'phone'], [/(^|_)zip$/i, 'zip']];
+
+function _humanizeKey(key) {
+  const s = String(key || '').replace(/_+/g, ' ').trim();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Form';
+}
+
+const _isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const _isScalar = (v) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
+
+function synthesizeDefinition(rawData) {
+  const src = _isPlainObject(rawData) ? rawData : {};
+  let data = src;
+  const put = (k, v) => { if (data === src) data = { ...src }; data[k] = v; };
+  const drop = (k) => { if (data === src) data = { ...src }; delete data[k]; };
+
+  const keys = Object.keys(src)
+    .filter((k) => !SYNTH_ID_RE.test(k))
+    .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()) || a.localeCompare(b));
+
+  // Top-level names (fields AND repeater keys share one namespace, §4.3).
+  const taken = new Set(Object.keys(src).filter((k) => SYNTH_NAME_RE.test(k)));
+  let seq = 0;
+  const fresh = (also) => {
+    let n;
+    do { n = `_k${++seq}`; } while (taken.has(n) || (also && also.has(n)));
+    taken.add(n);
+    return n;
+  };
+
+  const repeaterShape = (v) => {   // child keys when v is a renderable repeater, else null
+    if (!Array.isArray(v) || !v.length || !v.every(_isPlainObject)) return null;
+    const kids = [];
+    for (const item of v) {
+      for (const [ck, cv] of Object.entries(item)) {
+        if (SYNTH_ID_RE.test(ck)) continue;
+        if (!SYNTH_NAME_RE.test(ck) || !(cv == null || _isScalar(cv))) return null;
+        if (!kids.includes(ck)) kids.push(ck);
+      }
+    }
+    return kids.length ? kids : null;
+  };
+
+  const answers = [];    // { field, wide }
+  const reps = [];       // { name, label, items, kids }
+  for (const key of keys) {
+    let name = key;
+    const label = SYNTH_NAME_RE.test(key) ? _humanizeKey(key) : key;
+    if (!SYNTH_NAME_RE.test(key)) { name = fresh(); put(name, src[key]); drop(key); }
+    const v = src[key];
+
+    const kids = repeaterShape(v);
+    if (kids) { reps.push({ name, label, items: v, kids }); continue; }
+
+    if (Array.isArray(v) && v.length && v.every(_isScalar)) {
+      const options = [...new Set(v.map(String))].filter((o) => o !== '');
+      if (options.length) {
+        if (!v.every((x) => typeof x === 'string')) put(name, v.map(String));
+        answers.push({ field: { name, label, type: 'checkgroup', options }, wide: true });
+        continue;
+      }
+    }
+    if (Array.isArray(v) && (!v.length || v.every((x) => x === '' || x == null))) {
+      answers.push({ field: { name, label, type: 'text' }, wide: false });
+      continue;
+    }
+    if (Array.isArray(v) || _isPlainObject(v)) {
+      put(name, JSON.stringify(v, null, 2));
+      answers.push({ field: { name, label, type: 'textarea' }, wide: true });
+      continue;
+    }
+    if (typeof v === 'boolean') {
+      answers.push({ field: { name, label, type: 'checkbox' }, wide: false });
+      continue;
+    }
+    if (typeof v === 'string' && (v.includes('\n') || v.length > 100)) {
+      answers.push({ field: { name, label, type: 'textarea' }, wide: true });
+      continue;
+    }
+    const field = { name, label, type: 'text' };
+    const mask = SYNTH_MASKS.find(([re]) => re.test(key));
+    if (mask && typeof v === 'string') field.mask = mask[1];
+    answers.push({ field, wide: false });
+  }
+
+  const rows = [];
+  let pending = [];
+  const flush = () => { if (pending.length) rows.push({ fields: pending }); pending = []; };
+  for (const a of answers) {
+    if (a.wide) { flush(); rows.push({ fields: [a.field] }); continue; }
+    pending.push(a.field);
+    if (pending.length === 2) flush();
+  }
+  flush();
+
+  const sections = [];
+  if (rows.length) sections.push({ title: 'Saved answers', rows });
+  for (const r of reps) {
+    const sibling = new Set(r.kids);
+    const rename = {};
+    for (const ck of r.kids) if (taken.has(ck)) rename[ck] = fresh(sibling);
+    const fields = r.kids.map((ck) => ({
+      name: rename[ck] || ck,
+      label: _humanizeKey(ck),
+      type: r.items.every((it) => it[ck] == null || typeof it[ck] === 'boolean') &&
+            r.items.some((it) => typeof it[ck] === 'boolean') ? 'checkbox' : 'text',
+    }));
+    if (Object.keys(rename).length) {
+      put(r.name, r.items.map((it) => {
+        const out = {};
+        for (const [ck, cv] of Object.entries(it)) out[rename[ck] || ck] = cv;
+        return out;
+      }));
+    }
+    sections.push({ repeater: r.name, title: r.label, fields });
+  }
+  if (!sections.length) sections.push({ title: 'Saved answers', subtitle: 'No answers were saved.', rows: [] });
+
+  return {
+    definition: { note: 'Synthesized from the saved data — this form_key has no published definition.', sections },
+    data,
   };
 }
 
@@ -763,4 +936,5 @@ module.exports = {
   getSubmission,
   linkSubmission,
   getSubmissionForRender,
+  synthesizeDefinition,   // exported for tests
 };

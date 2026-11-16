@@ -2567,7 +2567,10 @@ dialog all accept them.
   (`formPdfService.fileSubmissionPdf` → `filePlacementService.placeAndRegister`).
   It renders the submitted row; a draft is a plain Error, so the route answers
   a 500 "submission N is a draft — only submitted forms can be rendered" before
-  any upload. The template-less 404s come from `getSubmissionForRender`. It
+  any upload. A template-less or never-published form_key no longer 404s
+  (2026-11-16): `getSubmissionForRender` synthesizes a definition from the
+  saved data (`definition_source: 'synthesized'`) and the card says the
+  answers print as a plain list. It
   uploads with `mode:'add', autorename:true` and registers a `documents` row
   (linked to the case or contact; appointment and unlinked submissions get no
   link), which emits `document.created` / `document.linked`. It is NOT

@@ -344,7 +344,9 @@ where the work happens:
   quietly.
 - **View** — the full answers, rendered read-only by the *same renderer* the
   submitter used (`render.html?view_submission=<id>`), under the definition
-  version the submission was made against. Nothing on the view can write.
+  version the submission was made against. A form with no published layout
+  (the hand-built pages) shows its saved answers as a plain list under their
+  field names, and says so. Nothing on the view can write.
 - **Link…** — adopt the submission onto its entity. The picker follows the
   template's `link_type` (the intake is a case-form, so you pick a case).
   Case-forms with a usable name + phone/email also offer **Create contact +

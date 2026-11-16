@@ -182,6 +182,7 @@ describe('X4 — getSubmissionForRender', () => {
     assert.deepStrictEqual(out.definition, def);
     assert.deepStrictEqual(out.submission.data, { a: 'x' }, 'json column normalized to an object');
     assert.strictEqual(out.title, 'Bankruptcy Intake');
+    assert.strictEqual(out.definition_source, 'published');
   });
 
   test('schema mismatch → newest version row with that schema_version wins', async () => {
@@ -193,11 +194,12 @@ describe('X4 — getSubmissionForRender', () => {
     const out = await formSvc.getSubmissionForRender(db, 286);
     assert.strictEqual(out.schema_matched, true);
     assert.deepStrictEqual(out.definition, def, 'archived definition, not the current one');
+    assert.strictEqual(out.definition_source, 'version');
     assert.ok(db.calls[2].sql.includes('ORDER BY id DESC LIMIT 1'),
       'NEWEST version row for that schema_version (layout-only republishes share it)');
   });
 
-  test('no version row → current definition flagged schema_matched:false; nothing anywhere → 404', async () => {
+  test('no version row → current definition flagged schema_matched:false', async () => {
     const db = stubDb([
       [subRow({ schema_version: 1 })],
       [{ id: 8, title: 'T', link_type: 'case', schema_version: 3, definition: JSON.stringify({ v: 'current' }) }],
@@ -206,17 +208,45 @@ describe('X4 — getSubmissionForRender', () => {
     const out = await formSvc.getSubmissionForRender(db, 286);
     assert.strictEqual(out.schema_matched, false);
     assert.deepStrictEqual(out.definition, { v: 'current' });
+    assert.strictEqual(out.definition_source, 'current');
+  });
 
-    await rejects(formSvc.getSubmissionForRender(stubDb([
-      [subRow()],
-      [{ id: 8, title: 'T', link_type: 'case', schema_version: 3, definition: null }],
-      [],
-    ]), 286), 404, 'No published definition');
+  // 2026-11-16: the hand-built pages (issn.html before template 7 was
+  // published, contact-form.html's contact_info) submit under keys with no
+  // definition — every View / PDF / File on them used to 404.
+  test('never-published template → definition synthesized from the data, the template\'s title and link_type kept', async () => {
+    const db = stubDb([
+      [subRow({ form_key: 'issn', data: JSON.stringify({ case_id: 'C1', marital_status: 'Married' }) })],
+      [{ id: 7, title: 'Initial Screening / Sign-up Notes', link_type: 'case', schema_version: 1, definition: null }],
+      [],                                    // no version row either
+    ]);
+    const out = await formSvc.getSubmissionForRender(db, 286);
+    assert.strictEqual(out.definition_source, 'synthesized');
+    assert.strictEqual(out.schema_matched, false);
+    assert.strictEqual(out.definition_schema_version, null, 'a synthesized definition has no version');
+    assert.strictEqual(out.title, 'Initial Screening / Sign-up Notes');
+    assert.strictEqual(out.link_type, 'case');
+    assert.deepStrictEqual(out.definition.sections,
+      [{ title: 'Saved answers', rows: [{ fields: [{ name: 'marital_status', label: 'Marital status', type: 'text' }] }] }],
+      'case_id is a record id, not an answer');
+    assert.deepStrictEqual(out.submission.data, { case_id: 'C1', marital_status: 'Married' }, 'data unchanged');
+  });
 
-    await rejects(formSvc.getSubmissionForRender(stubDb([
-      [subRow({ form_key: 'ghost' })],
-      [],                                    // template row gone
-    ]), 286), 404, 'No template exists');
+  test('no template row at all → synthesized; title from the form_key, link_type from the submission, no version lookup', async () => {
+    const db = stubDb([
+      [subRow({ form_key: 'contact_info', link_type: 'contact', link_id: '1309', data: JSON.stringify({ fname: 'Dana' }) })],
+      [],                                    // no template row
+    ]);
+    const out = await formSvc.getSubmissionForRender(db, 286);
+    assert.strictEqual(out.definition_source, 'synthesized');
+    assert.strictEqual(out.title, 'Contact info');
+    assert.strictEqual(out.link_type, 'contact');
+    assert.strictEqual(db.calls.length, 2, 'no template id → no form_template_versions query');
+    assert.strictEqual(out.definition.sections[0].rows[0].fields[0].name, 'fname');
+  });
+
+  test('an unknown submission is still a 404', async () => {
+    await rejects(formSvc.getSubmissionForRender(stubDb([[]]), 999), 404, 'Submission 999 not found');
   });
 });
 

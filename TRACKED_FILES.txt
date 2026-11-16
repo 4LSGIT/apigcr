@@ -1647,6 +1647,7 @@ tests/formRender.slice25B.test.js
 tests/formRender.slice26.test.js
 tests/formRender.sync.test.js
 tests/formRender.x6card.test.js
+tests/formSynthesizedDefinition.test.js
 tests/formTemplateOps.test.js
 tests/formTemplates_slice4_service.test.js
 tests/formbuilder.formdev.ui.test.js

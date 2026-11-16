@@ -8864,7 +8864,9 @@ async function normalizeFormPdfFile(db, value, evidence) {
   effects.push(linkType === 'case' || linkType === 'contact'
     ? `Registered: a document row for the new file, linked to ${where} — it joins that ${linkType}'s Documents tab (and, under "Include related", the related ${linkType === 'case' ? 'contacts\'' : 'cases\''}).`
     : `Registered: a document row for the new file, linked to nothing — it shows only on the Documents page${linkType === 'appt' ? ' (no document links to an appointment)' : ''}.`);
-  effects.push(`What it shows: "${title}" as the submitter saw it — the form version the submission was made under${bundle.schema_matched === false ? '; that version is gone, so the CURRENT form is used and answers to removed fields are not printed' : ''}; hidden fields are left out.`);
+  effects.push(bundle.definition_source === 'synthesized'
+    ? `What it shows: "${title}" has no published form layout (one of the hand-built form pages), so the saved answers are printed as a plain list under their field names; record-id fields are left out.`
+    : `What it shows: "${title}" as the submitter saw it — the form version the submission was made under${bundle.schema_matched === false ? '; that version is gone, so the CURRENT form is used and answers to removed fields are not printed' : ''}; hidden fields are left out.`);
   const triggers = require('./triggerService'); // lazy (convention)
   const events = ['document.created', ...(linkType === 'case' || linkType === 'contact' ? ['document.linked'] : [])];
   const ruleLines = [];

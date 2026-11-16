@@ -230,6 +230,41 @@ describe('view mode — variants', () => {
     expect(warn.textContent).toContain('current v3');
   });
 
+  // 2026-11-16 — a form_key with no definition anywhere: the server
+  // synthesizes one (formService.synthesizeDefinition). The REAL output is fed
+  // through the real renderer: its own warn line (not the schema one), top-
+  // level answers, a checkbox, and a repeater whose colliding child was
+  // renamed in the items.
+  test('synthesized definition: its own warn line, answers and repeater items populate', async () => {
+    const { synthesizeDefinition } = require(path.join(ROOT, 'services', 'formService'));
+    const { definition, data } = synthesizeDefinition({
+      contact_id: '1309', fname: 'Dana', city: 'Southfield', notes: 'flat',
+      phones: [{ id: '7', phone: '2485551212', notes: 'cell', sms_optout: true }],
+    });
+    const p = bootView({
+      payloadOver: {
+        title: 'Contact info', link_type: 'contact', definition,
+        definition_schema_version: null, schema_matched: false, definition_source: 'synthesized',
+        submission: { form_key: 'contact_info', data },
+      },
+    });
+    const w = await ready(p.dom);
+    const d = w.document;
+    const warn = d.querySelector('.ycr-view-warn');
+    expect(warn.textContent).toContain('no published layout');
+    expect(warn.textContent).not.toContain('schema v');
+    expect(d.querySelector('[name="fname"]').value).toBe('Dana');
+    expect(d.querySelector('[name="city"]').value).toBe('Southfield');
+    const items = d.querySelectorAll('.yc-repeater-item');
+    expect(items.length).toBe(1);
+    const notesName = definition.sections[1].fields.find((f) => f.label === 'Notes').name;
+    expect(items[0].querySelector('[name="phone"]').value).toBe('2485551212');
+    expect(items[0].querySelector(`[name="${notesName}"]`).value).toBe('cell');
+    expect(items[0].querySelector('[name="sms_optout"]').checked).toBe(true);
+    expect(d.querySelector('[name="notes"]').value).toBe('flat');   // the top-level one, not the item's
+    expect(d.getElementById('ycRenderForm').classList.contains('yc-readonly')).toBe(true);
+  });
+
   test('template code is NOT executed in view mode (preview-grade discipline)', async () => {
     const def = JSON.parse(JSON.stringify(VIEW_DEF));
     def.code = 'window.__pwned = true;';

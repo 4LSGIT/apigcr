@@ -354,9 +354,9 @@ d('the Casey form discard and PDF cards on real MySQL (A12.2)', () => {
     expect(await browser.formPdfPrecheck(c)).toBe('Submission #301 changed since this card was prepared (it was linked — the PDF would land somewhere else). Nothing was filed. Ask Casey to prepare it again.');
   });
 
-  test('the route\'s own 404s and its draft refusal (a 500 before any upload) beside the card\'s refusals; the browser reads them as refusals', async () => {
+  test('the route\'s own 404 and its draft refusal (a 500 before any upload) beside the card\'s refusals; the browser reads them as refusals — and a form with no template now files', async () => {
     await q(`INSERT INTO form_submissions (id, form_key, link_type, link_id, status, version, schema_version, data) VALUES
-      (401, '341_notes', 'case', ?, 'draft', 0, 3, '{}'), (402, 'gone_form', '', '', 'submitted', 1, 1, '{}')`, [C1]);
+      (401, '341_notes', 'case', ?, 'draft', 0, 3, '{}'), (402, 'gone_form', '', '', 'submitted', 1, 1, ?)`, [C1, JSON.stringify({ trustee_name: 'Jane Trustee' })]);
     const uploads = dropbox.uploadFile.mock.calls.length;
     const file = (id) => call(app, 'POST', `/api/forms/submissions/${id}/pdf/file`);
     const known = (res) => browser.formPdfKnownOutcome(Object.assign(new Error(res.body.message), { status: res.status, body: res.body }));
@@ -364,15 +364,19 @@ d('the Casey form discard and PDF cards on real MySQL (A12.2)', () => {
     expect([r404.status, r404.body.message, known(r404).status]).toEqual([404, 'Submission 999 not found', 'Refused — nothing filed']);
     const rDraft = await file(401);
     expect([rDraft.status, rDraft.body.message, known(rDraft).status]).toEqual([500, 'submission 401 is a draft — only submitted forms can be rendered', 'Refused — nothing filed']);
-    const rTpl = await file(402);
-    expect([rTpl.status, rTpl.body.message, known(rTpl).status]).toEqual([404, 'No template exists for form_key "gone_form"', 'Refused — nothing filed']);
     expect([dropbox.uploadFile.mock.calls.length, (await q('SELECT COUNT(*) AS n FROM documents'))[0].n]).toEqual([uploads, 0]);
-    // The card refuses each first.
+    // The card refuses the draft first.
     const ev = [{ id: 'q1', rows: [{ submission_id: 401 }, { submission_id: 402 }] }, { id: 'q2', rows: [{ case_id: C1 }] }];
     await expect(normalizeActionDraft(pool, { kind: 'form.pdf.file.v1', submission_id: 401, evidence: [{ query_id: 'q1', row_number: 1 }, { query_id: 'q2', row_number: 1 }] }, ev, { currentUserId: 6 }))
       .rejects.toThrow('A DRAFT has no PDF: #401 is a draft');
-    await expect(normalizeActionDraft(pool, { kind: 'form.pdf.file.v1', submission_id: 402, evidence: [{ query_id: 'q1', row_number: 2 }] }, ev, { currentUserId: 6 }))
-      .rejects.toThrow('The route cannot render submission #402: No template exists for form_key "gone_form"');
+    // 2026-11-16: a form_key with no template (the hand-built pages) renders
+    // under a definition synthesized from its data — no longer a 404. The card
+    // prepares it and says how it prints; the real route files it.
+    const c = JSON.parse(JSON.stringify(await normalizeActionDraft(pool, { kind: 'form.pdf.file.v1', submission_id: 402, evidence: [{ query_id: 'q1', row_number: 2 }] }, ev, { currentUserId: 6 })));
+    expect(c.effects).toContain('What it shows: "Gone form" has no published form layout (one of the hand-built form pages), so the saved answers are printed as a plain list under their field names; record-id fields are left out.');
+    const r402 = await file(402);
+    expect([r402.status, r402.body.file_name, r402.body.placement]).toEqual([200, c.file_name, 'unsorted']);
+    expect([dropbox.uploadFile.mock.calls.length, (await q('SELECT COUNT(*) AS n FROM documents'))[0].n]).toEqual([uploads + 1, 1]);
     await expect(normalizeActionDraft(pool, { kind: 'form.draft.delete.v1', submission_id: 402, evidence: [{ query_id: 'q1', row_number: 2 }] }, ev, { currentUserId: 6 }))
       .rejects.toThrow('#402 is a SUBMITTED form (version 1), not a draft');
   });

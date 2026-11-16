@@ -352,6 +352,12 @@ describe('the PDF filing', () => {
     const c = await run(pdf(), { render: { submission: subRow(), title: '341 Notes', definition: DEF, schema_matched: false } });
     expect(c.effects).toContain('What it shows: "341 Notes" as the submitter saw it — the form version the submission was made under; that version is gone, so the CURRENT form is used and answers to removed fields are not printed; hidden fields are left out.');
   });
+
+  test('a hand-built form with no published layout: the card says the answers print as a plain list', async () => {
+    const c = await run(pdf(), { render: { submission: subRow(), title: 'Contact info', definition: DEF, schema_matched: false, definition_source: 'synthesized' } });
+    expect(c.effects).toContain('What it shows: "Contact info" has no published form layout (one of the hand-built form pages), so the saved answers are printed as a plain list under their field names; record-id fields are left out.');
+    expect(c.effects.join('\n')).not.toContain('as the submitter saw it');
+  });
 });
 
 describe('appointment records on the A12 cards', () => {
