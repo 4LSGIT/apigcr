@@ -44,17 +44,27 @@
  *   - THE RE-READ after hand edits: a draft edit, a visibility edit and an
  *     appended version each refuse at the card's precheck.
  *   - A12X (2026-11-16): FIELD ADD / UPDATE / REMOVE through the real PUT —
- *     the draft the route stored IS the card's frozen next_definition (the
- *     browser's request sent that object; the result check accepted the
- *     route's row), the published definition, version and version rows are
- *     untouched; a hand edit between proposal and click refuses at the
- *     precheck; a removal the service would 400 (a dangling condition) is
- *     refused by the card before any write AND by the real route when PUT
- *     by hand. META: the title lands; a form_key rename is refused by the
- *     card and by the route. CREATE through the real POST: the new row holds
- *     the frozen definition, never published, internal; the same card then
- *     refuses (the key exists), as does the route (400). The current-version
- *     drafts a bump would strand are the real form_submissions rows.
+ *     the draft the route stored IS what the browser's builder sent, and it
+ *     hashes to the card's next_hash (A12Y: the card carries the operation and
+ *     the hash, never the definition; formTemplateBuild re-reads the draft
+ *     through the real GET, re-applies the operation with
+ *     public/js/formTemplateOps.js and sends the result only when it hashes
+ *     to what the server reviewed; the result check accepted the route's
+ *     row); the published definition, version and version rows are untouched;
+ *     a hand edit between proposal and click refuses at the precheck; a
+ *     removal the service would 400 (a dangling condition) is refused by the
+ *     card before any write AND by the real route when PUT by hand. META: the
+ *     title lands; a form_key rename is refused by the card and by the route.
+ *     CREATE through the real POST: the new row holds the definition rebuilt
+ *     from the reviewed field list (hashing to definition_hash), never
+ *     published, internal; the same card then refuses (the key exists), as
+ *     does the route (400). The current-version drafts a bump would strand
+ *     are the real form_submissions rows.
+ *   - A12Y, the dbkq-sized draft: a synthetic 149-section, ~82 KB draft
+ *     (tests/helpers/formTemplateDbkqShape.js) — the card is ~2.5 KB, the
+ *     click GETs the draft through the real route, re-derives the ~82 KB
+ *     result and PUTs it; the stored draft hashes to next_hash. A tampered
+ *     apply is refused by the builder and nothing is written.
  */
 'use strict';
 
@@ -68,6 +78,8 @@ const mysql = require('mysql2/promise');
 const AUTH = { roles: [] };
 jest.mock('../lib/auth.jwtOrApiKey', () => (req, _res, next) => { req.auth = { type: 'jwt', userId: 6, roles: AUTH.roles }; next(); });
 const { normalizeActionDraft, formTemplateStateRead } = require('../services/assistantService');
+const ops = require('../public/js/formTemplateOps');
+const { dbkqSizedDraft } = require('./helpers/formTemplateDbkqShape');
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const d = URL_ ? describe : describe.skip;
@@ -134,9 +146,10 @@ function fnSrc(html, name) {
 function browserChecks(api) {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'assistant.html'), 'utf8');
   const consts = ['FORM_TEMPLATE_VISIBILITIES', 'FORM_TEMPLATE_FIELD_KINDS', 'FORM_TEMPLATE_LINK_TYPES', 'FORM_TEMPLATE_FORM_KEY_RE'].map((n) => { const at = html.indexOf(`const ${n} =`); return html.slice(at, html.indexOf(';\n', at) + 1); });
-  const names = ['formCanonical', 'formDataHash', 'formIso', 'formTemplateName', 'formTemplateRequest', 'formTemplatePrecheck', 'formTemplateResult', 'formTemplateKnownOutcome'];
+  const names = ['formCanonical', 'formDataHash', 'formIso', 'formTemplateName', 'formTemplateRequest', 'formTemplateBuild', 'formTemplatePrecheck', 'formTemplateResult', 'formTemplateKnownOutcome'];
   const src = `${consts.join('\n')}\n${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { ${names.join(', ')} };`;
-  return new Function('api', 'crypto', 'TextEncoder', src)(api, crypto.webcrypto, TextEncoder); // eslint-disable-line no-new-func
+  // The page loads public/js/formTemplateOps.js (A12Y): the builder re-derives the definition with it.
+  return new Function('api', 'crypto', 'TextEncoder', 'YCFormTemplateOps', src)(api, crypto.webcrypto, TextEncoder, require('../public/js/formTemplateOps')); // eslint-disable-line no-new-func
 }
 
 const CASE = 'A124CASE';
@@ -152,6 +165,8 @@ const NEW_DEF = { sections: [{ title: 'New', rows: [{ fields: [field('a', 'text'
 // Key-order-insensitive comparison: MySQL re-orders JSON object keys on write.
 const canon = (v) => (Array.isArray(v) ? `[${v.map(canon).join(',')}]`
   : v && typeof v === 'object' ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}` : JSON.stringify(v));
+// The SHA-256 the card carries (the server's formDataHash over the shared module's canonical text).
+const sha = (v) => crypto.createHash('sha256').update(ops.canonical(v), 'utf8').digest('hex');
 
 d('the Casey form template cards on real MySQL (A12.4)', () => {
   let pool; let app; let browser;
@@ -206,7 +221,7 @@ d('the Casey form template cards on real MySQL (A12.4)', () => {
   const setRoles = async (roles) => { AUTH.roles = roles; await q('UPDATE users SET roles = ? WHERE user = 6', [roles.join(',')]); };
   async function apply(c) {
     expect(await browser.formTemplatePrecheck(c)).toBe('');
-    const req = browser.formTemplateRequest(c);
+    const req = await browser.formTemplateBuild(c); // A12Y: the definition is re-derived here, through the real GET
     const res = await call(app, req.method, req.path, req.body);
     return { req, res };
   }
@@ -360,7 +375,7 @@ d('the Casey form template cards on real MySQL (A12.4)', () => {
   // ── A12X: the field-level draft edits and the create, on the real routes ──
   const ASKED = 'Add a judge field to the case sheet, then create a vehicle intake form with the vehicle year and the lender.';
 
-  test('FIELD ADD: the route stores the card\'s frozen draft exactly; nothing publishes; the current-version draft it would strand is the real row; a hand edit in between refuses', async () => {
+  test('FIELD ADD: the route stores what the builder re-derived, hashing to the card\'s next_hash; nothing publishes; the current-version draft it would strand is the real row; a hand edit in between refuses', async () => {
     const saved = await call(app, 'POST', '/api/forms/draft', { form_key: 'a124_sheet', link_type: 'case', link_id: CASE, schema_version: 2, data: { trustee: 'T' } });
     expect(saved.status).toBe(200);
     const draftRow = (await q("SELECT id FROM form_submissions WHERE form_key = 'a124_sheet' AND status = 'draft'"))[0];
@@ -370,7 +385,8 @@ d('the Casey form template cards on real MySQL (A12.4)', () => {
     expect(c.stale_drafts).toMatchObject({ count: 1, records: [{ submission_id: draftRow.id, record: 'case 26-24001' }] });
     expect(c.warnings[0]).toMatch(/^DRAFTS ON THE CURRENT VERSION: 1 saved draft of this form was saved on version 2; the draft already changes the answer fields and this change keeps that, so once it is published \(as version 3\)/);
     const before = await tpl(1);
-    expect(canon(c.next_definition)).not.toBe(canon(asObj(before.draft_definition)));
+    expect([c.next_definition, c.apply]).toEqual([undefined, { section: 'sections[0]', field: { name: 'judge', type: 'text', label: 'Judge', required: true }, after: null }]);
+    expect(c.next_hash).not.toBe(sha(asObj(before.draft_definition)));
 
     // A hand edit between proposal and click: the precheck refuses, nothing is sent.
     await q('UPDATE form_templates SET draft_definition = JSON_SET(draft_definition, \'$.layout\', \'card\'), updated_at = ? WHERE id = 1', [new Date(c.expected.updated_at)]);
@@ -381,8 +397,9 @@ d('the Casey form template cards on real MySQL (A12.4)', () => {
     expect([req.method, req.path, Object.keys(req.body)]).toEqual(['PUT', '/api/form-templates/1', ['draft_definition']]);
     expect(res.status).toBe(200);
     const after = await tpl(1);
-    // What the route stored IS the frozen definition the card showed — and what the result check accepted.
-    expect(canon(asObj(after.draft_definition))).toBe(canon(c.next_definition));
+    // What the route stored IS what the builder sent — the bytes the card's hash vouches for — and what the result check accepted.
+    expect(canon(asObj(after.draft_definition))).toBe(canon(req.body.draft_definition));
+    expect(sha(asObj(after.draft_definition))).toBe(c.next_hash);
     expect(asObj(after.draft_definition).sections[0].rows.map((r) => r.fields.map((f) => f.name))).toEqual([['trustee', 'chapter', 'hearing'], ['judge']]);
     expect([canon(asObj(after.definition)), after.schema_version, after.visibility, String(after.published_at)]).toEqual([canon(asObj(before.definition)), 2, 'internal', String(before.published_at)]);
     expect(await versionIds(1)).toEqual([10, 11]);
@@ -394,12 +411,12 @@ d('the Casey form template cards on real MySQL (A12.4)', () => {
     expect(state).toMatchObject({ draft_state: 'differs from published', publishes_as: 3, fields_added: 2, fields_removed: 1 });
   });
 
-  test('FIELD UPDATE and REMOVE: the stored draft is the frozen one; a removal the service would 400 is refused by the card and by the route', async () => {
+  test('FIELD UPDATE and REMOVE: the stored draft is the re-derived one, hashing to next_hash; a removal the service would 400 is refused by the card and by the route', async () => {
     const u = await card('form.template.field.update.v1', 'a124_sheet', { field_name: 'chapter', changes: { required: true, options: ['7', '11', '13', '12'] } });
     expect(u.op).toMatchObject({ field: { key: 'chapter', detail: 'select, required' }, set: ['required', 'options'], dropped: [] });
     expect(u.diff.changed).toEqual([{ key: 'chapter', label: 'Chapter', what: 'now REQUIRED; options ["7","11","13"] → ["7","11","13","12"]' }]);
     const ru = await apply(u);
-    expect([ru.res.status, canon(asObj((await tpl(1)).draft_definition))]).toEqual([200, canon(u.next_definition)]);
+    expect([ru.res.status, canon(asObj((await tpl(1)).draft_definition)), sha(asObj((await tpl(1)).draft_definition))]).toEqual([200, canon(ru.req.body.draft_definition), u.next_hash]);
     expect(browser.formTemplateResult(u, ru.res.body)).toEqual({ template_id: 1 });
 
     const r = await card('form.template.field.remove.v1', 'a124_sheet', { field_name: 'hearing' });
@@ -407,7 +424,7 @@ d('the Casey form template cards on real MySQL (A12.4)', () => {
     const rr = await apply(r);
     expect(rr.res.status).toBe(200);
     const stored = asObj((await tpl(1)).draft_definition);
-    expect([canon(stored), stored.sections[0].rows[0].fields.map((f) => f.name)]).toEqual([canon(r.next_definition), ['trustee', 'chapter']]);
+    expect([canon(stored), sha(stored), stored.sections[0].rows[0].fields.map((f) => f.name)]).toEqual([canon(rr.req.body.draft_definition), r.next_hash, ['trustee', 'chapter']]);
     expect((await tpl(1)).schema_version).toBe(2);
 
     // A condition still names "chapter": the card refuses before any write; the same dangling target PUT by hand is the route's 400.
@@ -435,15 +452,16 @@ d('the Casey form template cards on real MySQL (A12.4)', () => {
     expect([renamed.status, renamed.body.message, (await tpl(1)).form_key]).toEqual([400, 'form_key is immutable once the template has been published', 'a124_sheet']);
   });
 
-  test('CREATE: the route stores the frozen definition under a free key (never published, internal); the same card then refuses, as does the route', async () => {
+  test('CREATE: the route stores the definition rebuilt from the reviewed field list under a free key (never published, internal); the same card then refuses, as does the route', async () => {
     const evidence = await read('');
     const value = { kind: 'form.template.create.v1', form_key: 'a124_vehicles', title: 'Vehicle Intake', link_type: 'case',
       fields: [{ name: 'vehicle_year', type: 'number', label: 'Vehicle year', min: 1950 }, { name: 'lender', type: 'select', label: 'Lender', options: ['Ally', 'Other'] }], evidence: [] };
     const c = JSON.parse(JSON.stringify(await normalizeActionDraft(pool, value, [evidence], { currentUserId: 6, question: ASKED })));
-    expect(c.definition).toEqual({ sections: [{ title: 'Section 1', rows: [{ fields: [value.fields[0]] }, { fields: [value.fields[1]] }] }] });
+    expect([c.definition, c.apply]).toEqual([undefined, { fields: value.fields }]);
     expect(await browser.formTemplatePrecheck(c)).toBe('');
-    const req = browser.formTemplateRequest(c);
-    expect([req.method, req.path, req.body.form_key, req.body.draft_definition]).toEqual(['POST', '/api/form-templates', 'a124_vehicles', c.definition]);
+    const req = await browser.formTemplateBuild(c);
+    expect([req.method, req.path, req.body.form_key, req.body.draft_definition]).toEqual(['POST', '/api/form-templates', 'a124_vehicles', { sections: [{ title: 'Section 1', rows: [{ fields: [value.fields[0]] }, { fields: [value.fields[1]] }] }] }]);
+    expect(sha(req.body.draft_definition)).toBe(c.definition_hash);
     const res = await call(app, req.method, req.path, req.body);
     expect(res.status).toBe(201);
     const made = res.body.template;
@@ -451,7 +469,8 @@ d('the Casey form template cards on real MySQL (A12.4)', () => {
     expect(receipt).toEqual({ template_id: made.id });
     const row = await tpl(made.id);
     expect([row.form_key, row.title, row.link_type, row.schema_version, row.visibility, row.definition, row.published_at, canon(asObj(row.draft_definition))])
-      .toEqual(['a124_vehicles', 'Vehicle Intake', 'case', 1, 'internal', null, null, canon(c.definition)]);
+      .toEqual(['a124_vehicles', 'Vehicle Intake', 'case', 1, 'internal', null, null, canon(req.body.draft_definition)]);
+    expect(sha(asObj(row.draft_definition))).toBe(c.definition_hash);
     expect(await versionIds(made.id)).toEqual([]);
     // The key is taken now: the same card's precheck refuses, a fresh card refuses, the route refuses.
     expect(await browser.formTemplatePrecheck(c)).toBe(`A form template with form key "a124_vehicles" already exists (template #${made.id}, "Vehicle Intake") — created since this card was prepared. Nothing was written.`);
@@ -464,5 +483,30 @@ d('the Casey form template cards on real MySQL (A12.4)', () => {
     expect(listed).toMatchObject({ template_id: made.id, published: 0, schema_version: 1 });
     const add = await card('form.template.field.add.v1', 'a124_vehicles', { field: { name: 'judge', type: 'text', label: 'Judge' } }, null, ASKED);
     expect([add.publish, add.op.placement]).toEqual([{ published: false, bumped: false, schema_version_after: 1 }, 'a new row (row 3) at the end of section "Section 1"']);
+  });
+
+  test('A12Y, a dbkq-sized draft (149 sections, ~82 KB): a ~2.5 KB card; the click GETs the draft, re-derives the whole result and PUTs it — the stored draft hashes to next_hash; a tampered apply writes nothing', async () => {
+    const big = dbkqSizedDraft();
+    expect(JSON.stringify(big).length).toBeGreaterThan(60000);
+    await q(`INSERT INTO form_templates (id, form_key, title, link_type, schema_version, definition, draft_definition)
+             VALUES (5, 'a12y_dbkq', 'Questionnaire', 'case', 1, NULL, ?)`, [JSON.stringify(big)]);
+    const anchor = big.sections[3].rows[0].fields[0].name;
+    const c = await card('form.template.field.add.v1', 'a12y_dbkq', { section: 'sections[3]', field: { name: 'judge', type: 'text', label: 'Judge' }, after: anchor }, null, ASKED);
+    expect(JSON.stringify(c).length).toBeLessThan(20000);
+    expect([c.next_definition, c.apply, c.publish]).toEqual([undefined, { section: 'sections[3]', field: { name: 'judge', type: 'text', label: 'Judge' }, after: anchor }, { published: false, bumped: false, schema_version_after: 1 }]);
+    // A tampered apply: the builder re-derives a different draft, its hash is not the reviewed one — refused, nothing written.
+    const tampered = JSON.parse(JSON.stringify(c)); tampered.apply.field.label = 'Judge!';
+    expect(await browser.formTemplatePrecheck(tampered)).toBe('');
+    await expect(browser.formTemplateBuild(tampered)).rejects.toMatchObject({ refusal: true, message: expect.stringMatching(/the template changed in a way the card did not foresee/) });
+    expect(canon(asObj((await tpl(5)).draft_definition))).toBe(canon(big));
+    // The real click: GET /:id (the ~82 KB draft), re-apply, PUT the whole result.
+    const { req, res } = await apply(c);
+    expect([req.method, req.path, Object.keys(req.body), res.status]).toEqual(['PUT', '/api/form-templates/5', ['draft_definition'], 200]);
+    expect(JSON.stringify(req.body.draft_definition).length).toBeGreaterThan(60000);
+    const stored = asObj((await tpl(5)).draft_definition);
+    expect([sha(stored), canon(stored), stored.sections.length]).toEqual([c.next_hash, canon(req.body.draft_definition), 149]);
+    expect(stored.sections[3].rows[0].fields.map((f) => f.name)).toEqual([anchor, 'judge']);
+    expect(browser.formTemplateResult(c, res.body)).toEqual({ template_id: 5 });
+    expect(await browser.formTemplatePrecheck(c)).toMatch(/changed since this card was prepared/);
   });
 });

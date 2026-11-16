@@ -48,16 +48,24 @@
  *   form.template.meta.v1         → PUT  /api/form-templates/:id {title}
  *   form.template.create.v1       → POST /api/form-templates
  * Pinned here: the one operation applied to a copy of the re-read draft, the
- * service's validateDefinition as the refusal, the frozen next_definition +
- * next_hash on the card, the field-level diff (the A12.4 helpers), the bump
- * and the current-version drafts it strands, the by-name refusals (authored
- * keys, $load, a rename, a form_key rename, a raw definition), the
- * user-named-field rule, the create's one-section builder and key check;
- * and the browser half: a request that sends the FROZEN definition (never
- * rebuilt — a card whose op / diff were tampered still sends the same
- * object), a precheck that re-hashes it and refuses a draft changed between
- * proposal and click, and a result check that compares what the route stored
- * with it.
+ * service's validateDefinition as the refusal, the field-level diff (the
+ * A12.4 helpers), the bump and the current-version drafts it strands, the
+ * by-name refusals (authored keys, $load, a rename, a form_key rename, a raw
+ * definition), the user-named-field rule, the create's one-section builder
+ * and key check.
+ * A12Y (2026-11-16, Fred: "cards carry the change, not the result"): the card
+ * carries the OPERATION (`apply`, as validated) and the SHA-256 of the
+ * canonical result (`next_hash` / `definition_hash`) — never the definition
+ * (an 85 KB questionnaire's draft made every card refuse). The operations
+ * live in public/js/formTemplateOps.js, ONE pure module the server requires
+ * and the page loads. Pinned here: no definition on any card; the browser's
+ * builder (formTemplateBuild) re-reads the draft, refuses if its hash moved,
+ * re-applies `apply` with the module and sends the result only when it hashes
+ * to next_hash (a tampered apply is refused, a tampered op / diff changes
+ * nothing); the precheck refuses a draft saved between proposal and click; the
+ * result check compares what the route stored with what was sent; the page
+ * and the server hash one fixture to the same hex; a dbkq-sized draft yields a
+ * card under 20 KB whose click re-derives the whole result.
  *
  * The routes' own behaviour runs on a real engine in
  * tests/caseyFormTemplates.mysql.test.js.
@@ -73,6 +81,8 @@ const REPO = path.join(__dirname, '..');
 const svc = require(path.join(REPO, 'services', 'assistantService'));
 const ledger = require(path.join(REPO, 'services', 'assistantActionLedger'));
 const fts = require(path.join(REPO, 'services', 'formTemplateService'));
+const ops = require(path.join(REPO, 'public', 'js', 'formTemplateOps'));
+const { dbkqSizedDraft } = require('./helpers/formTemplateDbkqShape');
 const { normalizeActionDraft, taskDraftRequested, formTemplateStateRead } = svc;
 
 const ME = 6;
@@ -182,6 +192,9 @@ const canon = (v) => (Array.isArray(v) ? `[${v.map(canon).join(',')}]`
   : v && typeof v === 'object' ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}` : JSON.stringify(v === undefined ? null : v));
 const sha = (v) => crypto.createHash('sha256').update(canon(v), 'utf8').digest('hex');
 const names = (fields) => fields.map((f) => f.name);
+// A12Y: the card carries the operation (`apply`) and the hash of the result, not the result — the shared module rebuilds it.
+const NAME12 = '"Case Sheet" (case_sheet, template #12)';
+const nextOf = (c, draft) => ops.apply(c.kind, draft, c.apply, NAME12);
 
 describe('the switch, the by-name refusals and the evidence', () => {
   test("'0' makes all nine kinds unavailable; casey_forms_enabled does not reach them", async () => {
@@ -392,16 +405,19 @@ describe('delete', () => {
 
 // ── A12X: the field-level draft edits and the create ───────────────────────
 describe('field add', () => {
-  test('a new row at the end of the named section; the frozen next_definition and its hash; the diff, the bump and the drafts it strands; authored keys copied verbatim', async () => {
+  test('a new row at the end of the named section; the operation and the hash of the result on the card (never the result); the diff, the bump and the drafts it strands; authored keys copied verbatim', async () => {
     const CODE = { ...DRAFT, code: 'x()', css: 'a{}' };
     const c = await run(fieldAdd(), { tpl: tplRow({ draft_definition: CODE, definition: { ...PUB, code: 'x()', css: 'a{}' } }), stale: [{ id: 501, link_type: 'case', link_id: 'AAA', updated_at: UPDATED }] }, EVIDENCE, ASKED);
     expect(c.kind).toBe('form.template.field.add.v1');
     expect(c.op).toEqual({ field: { key: 'hearing_judge', label: 'Hearing judge', detail: 'text' }, section: '"Case"', section_path: 'sections[0]', placement: 'a new row (row 2) at the end of section "Case"', after: null });
-    expect(c.next_definition.sections[0].rows.map((r) => names(r.fields))).toEqual([['trustee', 'chapter', 'hearing'], ['hearing_judge']]);
-    expect(c.next_definition.sections[0].rows[1].fields[0]).toEqual({ name: 'hearing_judge', type: 'text', label: 'Hearing judge' });
+    expect(c.next_definition).toBe(undefined);
+    expect(c.apply).toEqual({ section: 'sections[0]', field: { name: 'hearing_judge', type: 'text', label: 'Hearing judge' }, after: null });
+    const next = nextOf(c, CODE);
+    expect(next.sections[0].rows.map((r) => names(r.fields))).toEqual([['trustee', 'chapter', 'hearing'], ['hearing_judge']]);
+    expect(next.sections[0].rows[1].fields[0]).toEqual({ name: 'hearing_judge', type: 'text', label: 'Hearing judge' });
     // The authored keys ride through untouched (so the route's form_dev gate never trips); the repeater too.
-    expect([c.next_definition.code, c.next_definition.css, c.next_definition.sections[1]]).toEqual(['x()', 'a{}', CODE.sections[1]]);
-    expect(c.next_hash).toBe(sha(c.next_definition));
+    expect([next.code, next.css, next.sections[1]]).toEqual(['x()', 'a{}', CODE.sections[1]]);
+    expect(c.next_hash).toBe(sha(next));
     expect(c.diff.added).toEqual([{ key: 'hearing_judge', label: 'Hearing judge', detail: 'text' }]);
     expect([c.diff.removed, c.diff.changed, c.diff.layout_changed, c.diff.other_keys]).toEqual([[], [], true, []]);
     expect(c.diff.lines).toEqual(['ADDED: Hearing judge (hearing_judge) — text', 'The sections, rows or display-only items change too (wording, order, headings).']);
@@ -421,11 +437,13 @@ describe('field add', () => {
   test('"after" places it in that field\'s row; a repeater section takes its row list and the builder\'s type subset; a never-published template publishes first', async () => {
     const c = await run(fieldAdd({ after: 'trustee' }), {}, EVIDENCE, ASKED);
     expect(c.op.placement).toBe('right after "trustee" in row 1 of section "Case"');
-    expect(c.next_definition.sections[0].rows.map((r) => names(r.fields))).toEqual([['trustee', 'hearing_judge', 'chapter', 'hearing']]);
+    expect(c.apply.after).toBe('trustee');
+    expect(nextOf(c, DRAFT).sections[0].rows.map((r) => names(r.fields))).toEqual([['trustee', 'hearing_judge', 'chapter', 'hearing']]);
     expect(c.diff.layout_changed).toBe(true);
     const rep = await run(fieldAdd({ section: 'creditors', field: { name: 'amount', type: 'number', label: 'Amount' } }), {}, EVIDENCE, ASKED);
     expect(rep.op).toMatchObject({ field: { key: 'creditors.amount', label: 'Amount', detail: 'number', repeater: 'creditors' }, section: 'repeater "creditors"', placement: 'row field 2 of 2 in repeater "creditors"' });
-    expect(names(rep.next_definition.sections[1].fields)).toEqual(['creditor', 'amount']);
+    expect(rep.apply).toEqual({ section: 'sections[1]', field: { name: 'amount', type: 'number', label: 'Amount' }, after: null });
+    expect(names(nextOf(rep, DRAFT).sections[1].fields)).toEqual(['creditor', 'amount']);
     expect(rep.diff.added).toEqual([{ key: 'creditors.amount', label: 'Amount', detail: 'number', repeater: 'creditors' }]);
     await refuse(fieldAdd({ section: 'creditors', field: { name: 'amount', type: 'textarea', label: 'Amount' } }), /^field\.type "textarea" is not allowed inside repeater "creditors" — a repeater's row takes text, number, date, select, checkbox \(the form builder refuses the same drop\)$/, {}, EVIDENCE, ASKED);
     const SOLO = { sections: [{ title: 'Only', rows: [{ fields: [{ name: 'a', type: 'text', label: 'A' }] }] }] };
@@ -442,6 +460,9 @@ describe('field add', () => {
   test('refused: the section (missing with two, unknown, ambiguous, by path), a field that exists, "after" unknown, a field the user never named, authored keys, display-only types, unknown keys, $load, the service\'s own validation', async () => {
     await refuse(fieldAdd({ section: undefined }), /^"Case Sheet" \(case_sheet, template #12\) has 2 sections — name the one the field goes into in "section" \(its title\): "Case", repeater "creditors"$/, {}, EVIDENCE, ASKED);
     await refuse(fieldAdd({ section: 'Nope' }), /^"Case Sheet" \(case_sheet, template #12\) has no section "Nope" — its sections: "Case", repeater "creditors"$/, {}, EVIDENCE, ASKED);
+    // The module's refusal arrives as the card's own 422 (formTemplateApply wraps it), never a bare error.
+    await expect(run(fieldAdd({ section: 'Nope' }), {}, EVIDENCE, ASKED)).rejects.toMatchObject({ status: 422 });
+    await expect(run(fieldRemove('creditors.creditor'))).rejects.toMatchObject({ status: 422 });
     const TWICE = { sections: [DRAFT.sections[0], { title: 'case', rows: [] }] };
     await refuse(fieldAdd(), /^"Case" names 2 sections of "Case Sheet" \(case_sheet, template #12\) \(sections\[0\], sections\[1\]\) — name it by its path instead$/, { tpl: tplRow({ draft_definition: TWICE }) }, EVIDENCE, ASKED);
     const byPath = await run(fieldAdd({ section: 'sections[1]' }), { tpl: tplRow({ draft_definition: TWICE }) }, EVIDENCE, ASKED);
@@ -475,7 +496,8 @@ describe('field update', () => {
   test('sets the field\'s own keys and drops with null; the diff names each change; a label-only change keeps the version', async () => {
     const c = await run(fieldUpdate({ required: true, label: 'Chapter filed', options: ['7', '11', '13', '12'] }), { tpl: tplRow({ draft_definition: PUB }) });
     expect(c.op).toEqual({ field: { key: 'chapter', label: 'Chapter filed', detail: 'select, required' }, path: 'sections[0].rows[0].fields[1]', set: ['required', 'label', 'options'], dropped: [] });
-    expect(c.next_definition.sections[0].rows[0].fields[1]).toEqual({ name: 'chapter', type: 'select', label: 'Chapter filed', options: ['7', '11', '13', '12'], required: true });
+    expect([c.next_definition, c.apply]).toEqual([undefined, { field_name: 'chapter', changes: { required: true, label: 'Chapter filed', options: ['7', '11', '13', '12'] } }]);
+    expect(nextOf(c, PUB).sections[0].rows[0].fields[1]).toEqual({ name: 'chapter', type: 'select', label: 'Chapter filed', options: ['7', '11', '13', '12'], required: true });
     expect(c.diff.changed).toEqual([{ key: 'chapter', label: 'Chapter filed', what: 'label "Chapter" → "Chapter filed"; now REQUIRED; options ["7","13"] → ["7","11","13","12"]' }]);
     // layout_changed is the A12.4 helper's container compare — a changed field sits in a row, so it reads true (its line says so).
     expect([c.diff.added, c.diff.removed, c.diff.layout_changed]).toEqual([[], [], true]);
@@ -485,13 +507,14 @@ describe('field update', () => {
     expect(c.effects[0]).toBe('Changes answer field "Chapter filed" (chapter): sets required, label, options — afterwards select, required.');
     expect([c.warnings, c.stale_drafts.count]).toEqual([[], 0]);
     expect(calls.sql.some((q) => q.includes("status = 'draft' AND schema_version = ?"))).toBe(false);
-    expect(c.next_hash).toBe(sha(c.next_definition));
+    expect(c.next_hash).toBe(sha(nextOf(c, PUB)));
     const drop = await run(fieldUpdate({ required: null, apiColumn: null }, { field_name: 'trustee' }), { tpl: tplRow({ draft_definition: PUB }) });
     expect(drop.op).toMatchObject({ set: [], dropped: ['required', 'apiColumn'] });
-    expect(drop.next_definition.sections[0].rows[0].fields[0]).toEqual({ name: 'trustee', type: 'text', label: 'Trustee' });
+    expect(drop.apply).toEqual({ field_name: 'trustee', changes: { required: null, apiColumn: null } });
+    expect(nextOf(drop, PUB).sections[0].rows[0].fields[0]).toEqual({ name: 'trustee', type: 'text', label: 'Trustee' });
     expect(drop.diff.changed[0].what).toBe('no longer required; record column case_trustee → nothing');
     const cond = await run(fieldUpdate({ showWhen: { field: 'chapter', op: 'eq', value: '13' } }, { field_name: 'hearing' }));
-    expect(cond.next_definition.sections[0].rows[0].fields[2].showWhen).toEqual({ field: 'chapter', op: 'eq', value: '13' });
+    expect(nextOf(cond, DRAFT).sections[0].rows[0].fields[2].showWhen).toEqual({ field: 'chapter', op: 'eq', value: '13' });
     expect(cond.diff.layout_changed).toBe(true);
   });
 
@@ -528,16 +551,17 @@ describe('field remove', () => {
   test('removes ONE field; FIELD REMOVED names the record column it stops saving to; the emptied row is left', async () => {
     const c = await run(fieldRemove('trustee'));
     expect(c.op).toEqual({ field: { key: 'trustee', label: 'Trustee name', detail: 'text, saves to case_trustee' }, path: 'sections[0].rows[0].fields[0]' });
-    expect(c.next_definition.sections[0].rows.map((r) => names(r.fields))).toEqual([['chapter', 'hearing']]);
+    expect([c.next_definition, c.apply]).toEqual([undefined, { field_name: 'trustee' }]);
+    expect(nextOf(c, DRAFT).sections[0].rows.map((r) => names(r.fields))).toEqual([['chapter', 'hearing']]);
     expect(c.diff.removed).toEqual([{ key: 'trustee', label: 'Trustee name', detail: 'text, saves to case_trustee' }]);
     expect(c.warnings[0]).toBe('FIELD REMOVED: Trustee name (trustee) — once this draft is published, the form stops asking it; answers already stored in submissions and drafts keep it, and nothing saves to the case_trustee column from this form any more.');
     expect(c.publish).toEqual({ published: true, bumped: true, schema_version_after: 4 });
     expect(c.effects[0]).toBe('Removes answer field "Trustee name" (trustee) — text, saves to case_trustee — from the draft.');
-    expect(c.next_hash).toBe(sha(c.next_definition));
+    expect(c.next_hash).toBe(sha(nextOf(c, DRAFT)));
     const SOLO = { ...PUB, sections: [{ title: 'Case', rows: [{ fields: [PUB.sections[0].rows[0].fields[0]] }, { fields: [PUB.sections[0].rows[0].fields[1]] }] }, PUB.sections[1]] };
     const row = await run(fieldRemove('chapter'), { tpl: tplRow({ draft_definition: SOLO }) });
     expect(row.effects[0]).toBe('Removes answer field "Chapter" (chapter) — select — from the draft (its row is left empty).');
-    expect(row.next_definition.sections[0].rows.map((r) => names(r.fields))).toEqual([['trustee'], []]);
+    expect(nextOf(row, SOLO).sections[0].rows.map((r) => names(r.fields))).toEqual([['trustee'], []]);
     expect(row.warnings[0]).toBe('FIELD REMOVED: Chapter (chapter) — once this draft is published, the form stops asking it; answers already stored in submissions and drafts keep it.');
   });
 
@@ -554,7 +578,7 @@ describe('field remove', () => {
     await refuse(fieldRemove(''), /^A field remove names the field in "field_name"/);
     const TWO = JSON.parse(JSON.stringify(DRAFT)); TWO.sections[1].fields.push({ name: 'amount', type: 'number', label: 'Amount' });
     const rep = await run(fieldRemove('creditors.amount'), { tpl: tplRow({ draft_definition: TWO }) });
-    expect([rep.op.field, names(rep.next_definition.sections[1].fields)]).toEqual([{ key: 'creditors.amount', label: 'Amount', detail: 'number', repeater: 'creditors' }, ['creditor']]);
+    expect([rep.op.field, names(nextOf(rep, TWO).sections[1].fields)]).toEqual([{ key: 'creditors.amount', label: 'Amount', detail: 'number', repeater: 'creditors' }, ['creditor']]);
     expect(calls.sql.some((q) => /^(UPDATE|INSERT)/i.test(q))).toBe(false);
   });
 });
@@ -563,7 +587,7 @@ describe('meta (the title)', () => {
   test('the title from → to, no definition on the card; form_key and link_type refused by name with the reason', async () => {
     const c = await run(meta());
     expect(c.meta).toEqual({ title_from: 'Case Sheet', title_to: '341 Case Sheet' });
-    expect([c.next_definition, c.diff, c.warnings]).toEqual([undefined, undefined, []]);
+    expect([c.next_definition, c.apply, c.next_hash, c.diff, c.warnings]).toEqual([undefined, undefined, undefined, undefined, []]);
     expect(c.effects[0]).toBe('Retitles form template #12 (case_sheet): "Case Sheet" → "341 Case Sheet".');
     expect(c.effects[1]).toMatch(/^The title is the name the form is listed and headed by .* nothing publishes\.$/);
     expect(c.expected).toMatchObject({ template_id: 12, updated_at: UPDATED.toISOString(), version_ids: [341, 300] });
@@ -579,14 +603,17 @@ describe('meta (the title)', () => {
 });
 
 describe('create', () => {
-  test('one section, one row per reviewed field, frozen with its hash; the key checked; evidence optional', async () => {
+  test('one section, one row per reviewed field — the field list and the hash of the definition on the card (never the definition); the key checked; evidence optional', async () => {
     const c = await run(create(), {}, EVIDENCE, ASKED);
     expect(c.create).toEqual({ form_key: 'vehicle_intake', title: 'Vehicle Intake', link_type: 'case' });
-    expect(c.definition).toEqual({ sections: [{ title: 'Section 1', rows: [
+    expect(c.definition).toBe(undefined);
+    expect(c.apply).toEqual({ fields: [{ name: 'vehicle_year', type: 'number', label: 'Vehicle year' }, { name: 'lender', type: 'select', label: 'Lender', options: ['Ally', { value: 'other', label: 'Other' }] }] });
+    const def = ops.createDefinition(c.apply.fields);
+    expect(def).toEqual({ sections: [{ title: 'Section 1', rows: [
       { fields: [{ name: 'vehicle_year', type: 'number', label: 'Vehicle year' }] },
       { fields: [{ name: 'lender', type: 'select', label: 'Lender', options: ['Ally', { value: 'other', label: 'Other' }] }] },
     ] }] });
-    expect(c.definition_hash).toBe(sha(c.definition));
+    expect(c.definition_hash).toBe(sha(def));
     expect(c.fields).toEqual([{ key: 'vehicle_year', label: 'Vehicle year', detail: 'number' }, { key: 'lender', label: 'Lender', detail: 'select' }]);
     expect([c.fields_total, c.evidence, c.expected, c.warnings, c.template]).toEqual([2, [], { form_key: 'vehicle_intake' }, [], undefined]);
     expect(c.effects[0]).toBe('Creates form template "Vehicle Intake" (vehicle_intake), a case form, with ONE section ("Section 1") holding 2 answer fields, one per row: Vehicle year (vehicle_year) — number; Lender (lender) — select.');
@@ -655,7 +682,7 @@ function familySrc(id) {
   }
   throw new Error(`family ${id} unbalanced`);
 }
-const FNS = ['formCanonical', 'formDataHash', 'formIso', 'formTemplateLabel', 'formTemplateName', 'formTemplateText', 'formTemplateRequest', 'formTemplatePrecheck',
+const FNS = ['formCanonical', 'formDataHash', 'formIso', 'formTemplateLabel', 'formTemplateName', 'formTemplateText', 'formTemplateRequest', 'formTemplateBuild', 'formTemplatePrecheck',
   'formTemplateResult', 'formTemplateKnownOutcome', 'formTemplateAppliedMessage', 'formTemplateOpenInfo', 'formTemplateEntity', 'formTemplateOpen'];
 const CONSTS = ['FORM_TEMPLATE_ACTION_KINDS', 'FORM_TEMPLATE_VISIBILITIES', 'FORM_TEMPLATE_FIELD_KINDS', 'FORM_TEMPLATE_LINK_TYPES', 'FORM_TEMPLATE_FORM_KEY_RE'];
 function browser(api, deps = {}) {
@@ -663,7 +690,8 @@ function browser(api, deps = {}) {
     `const families = [${familySrc('form_template')}];`,
     `return { ${FNS.join(', ')}, families };`].join('\n');
   const P = { Swal: { fire: deps.fire || jest.fn() } };
-  return new Function('api', 'P', 'crypto', 'TextEncoder', src)(api, P, crypto.webcrypto, TextEncoder); // eslint-disable-line no-new-func
+  // The page loads public/js/formTemplateOps.js (A12Y): the builder re-derives the definition with it.
+  return new Function('api', 'P', 'crypto', 'TextEncoder', 'YCFormTemplateOps', src)(api, P, crypto.webcrypto, TextEncoder, ops); // eslint-disable-line no-new-func
 }
 
 describe('the browser: requests, the re-reads, result checks, outcomes, danger, text, entity', () => {
@@ -801,10 +829,11 @@ describe('the browser: requests, the re-reads, result checks, outcomes, danger, 
   });
 });
 
-// ── A12X in the browser: the frozen definition is what is sent ─────────────
-describe('the browser (A12X): the frozen definition, the re-hash and re-read, the result checks', () => {
+// ── A12X / A12Y in the browser: the card carries the CHANGE; the click re-derives the result ──
+describe('the browser (A12Y): the operation re-applied at the click, the hash gate, the re-read, the result checks', () => {
   let cAdd; let cUpd; let cRem; let cMeta; let cCreate;
   const TPL_JSON = JSON.parse(JSON.stringify(tplRow()));
+  const NAME = '"Case Sheet" (case_sheet)';
   beforeAll(async () => {
     const mk = async (value, opts) => {
       const card = JSON.parse(JSON.stringify(await normalizeActionDraft(setup(opts), value, EVIDENCE, { currentUserId: ME, question: ASKED })));
@@ -816,31 +845,6 @@ describe('the browser (A12X): the frozen definition, the re-hash and re-read, th
     cRem = await mk(fieldRemove('trustee'));
     cMeta = await mk(meta());
     cCreate = await mk(create());
-  });
-
-  test('the requests: the PUT body IS the card\'s next_definition (the same object, never rebuilt from op / diff); the title; the POST', () => {
-    const b = browser(jest.fn());
-    for (const c of [cAdd, cUpd, cRem]) {
-      const req = b.formTemplateRequest(c);
-      expect([req.path, req.method, Object.keys(req.body)]).toEqual(['/api/form-templates/12', 'PUT', ['draft_definition']]);
-      expect(req.body.draft_definition).toBe(c.next_definition);
-      // A card whose op / diff / field lines were altered still sends the frozen definition, untouched.
-      const tampered = { ...c, op: { field: { key: 'zzz', label: 'Z', detail: 'text' }, placement: 'elsewhere' }, diff: { added: [{ key: 'zzz' }], lines: ['ADDED: zzz'] } };
-      expect(b.formTemplateRequest(tampered).body.draft_definition).toBe(c.next_definition);
-      expect(() => b.formTemplateRequest({ ...c, next_definition: undefined })).toThrow('This card has no usable definition.');
-      expect(() => b.formTemplateRequest({ ...c, next_hash: 7 })).toThrow('This card has no usable definition.');
-      expect(() => b.formTemplateRequest({ ...c, next_definition: [] })).toThrow('This card has no usable definition.');
-    }
-    expect(b.formTemplateRequest(cMeta)).toEqual({ path: '/api/form-templates/12', method: 'PUT', body: { title: '341 Case Sheet' } });
-    expect(() => b.formTemplateRequest({ ...cMeta, meta: { title_to: ' ' } })).toThrow('This card has no usable title.');
-    const post = b.formTemplateRequest(cCreate);
-    expect([post.path, post.method, post.body.form_key, post.body.title, post.body.link_type]).toEqual(['/api/form-templates', 'POST', 'vehicle_intake', 'Vehicle Intake', 'case']);
-    expect(post.body.draft_definition).toBe(cCreate.definition);
-    expect(() => b.formTemplateRequest({ ...cCreate, create: { ...cCreate.create, form_key: 'Bad Key' } })).toThrow('This card has no usable form key.');
-    expect(() => b.formTemplateRequest({ ...cCreate, expected: { form_key: 'other' } })).toThrow('This card has no usable form key.');
-    expect(() => b.formTemplateRequest({ ...cCreate, create: { ...cCreate.create, link_type: 'matter' } })).toThrow('This card has no usable template settings.');
-    expect(() => b.formTemplateRequest({ ...cCreate, definition: { tabs: [] } })).toThrow('This card has no usable definition.');
-    expect(() => b.formTemplateRequest({ ...cCreate, definition_hash: null })).toThrow('This card has no usable definition.');
   });
 
   function reads({ tpl = TPL_JSON, versions = VERSIONS.map((v) => ({ id: v.id })), list = [TPL_JSON] } = {}) {
@@ -856,51 +860,180 @@ describe('the browser (A12X): the frozen definition, the re-hash and re-read, th
     return { api, gets };
   }
 
-  test('the re-read: the draft that was proposed from passes; a draft saved between proposal and click refuses; a frozen definition that no longer matches its hash refuses before any read', async () => {
+  test('the request shape: the field kinds and the create carry no definition (derive), the title; a card without apply / hash is unusable', () => {
+    const b = browser(jest.fn());
+    for (const c of [cAdd, cUpd, cRem]) {
+      expect(c.next_definition).toBe(undefined);
+      expect(b.formTemplateRequest(c)).toEqual({ path: '/api/form-templates/12', method: 'PUT', body: null, derive: true });
+      expect(() => b.formTemplateRequest({ ...c, apply: undefined })).toThrow('This card has no usable definition.');
+      expect(() => b.formTemplateRequest({ ...c, apply: [] })).toThrow('This card has no usable definition.');
+      expect(() => b.formTemplateRequest({ ...c, next_hash: 7 })).toThrow('This card has no usable definition.');
+    }
+    expect(b.formTemplateRequest(cMeta)).toEqual({ path: '/api/form-templates/12', method: 'PUT', body: { title: '341 Case Sheet' } });
+    expect(() => b.formTemplateRequest({ ...cMeta, meta: { title_to: ' ' } })).toThrow('This card has no usable title.');
+    expect(cCreate.definition).toBe(undefined);
+    expect(b.formTemplateRequest(cCreate)).toEqual({ path: '/api/form-templates', method: 'POST', body: { form_key: 'vehicle_intake', title: 'Vehicle Intake', link_type: 'case' }, derive: true });
+    expect(() => b.formTemplateRequest({ ...cCreate, create: { ...cCreate.create, form_key: 'Bad Key' } })).toThrow('This card has no usable form key.');
+    expect(() => b.formTemplateRequest({ ...cCreate, expected: { form_key: 'other' } })).toThrow('This card has no usable form key.');
+    expect(() => b.formTemplateRequest({ ...cCreate, create: { ...cCreate.create, link_type: 'matter' } })).toThrow('This card has no usable template settings.');
+    expect(() => b.formTemplateRequest({ ...cCreate, apply: { fields: [] } })).toThrow('This card has no usable definition.');
+    expect(() => b.formTemplateRequest({ ...cCreate, definition_hash: null })).toThrow('This card has no usable definition.');
+  });
+
+  test('the builder: re-reads the draft, re-applies `apply` with the shared module and sends the result ONLY when it hashes to next_hash — the same bytes the server reviewed', async () => {
+    for (const [c, draft] of [[cAdd, DRAFT], [cUpd, DRAFT], [cRem, DRAFT]]) {
+      const r = reads();
+      const req = await browser(r.api).formTemplateBuild(c);
+      expect(r.gets).toEqual(['/api/form-templates/12']);
+      expect([req.path, req.method, Object.keys(req.body)]).toEqual(['/api/form-templates/12', 'PUT', ['draft_definition']]);
+      // The server built the same object from the same draft and the same operation: the hash it put on the card.
+      expect(sha(req.body.draft_definition)).toBe(c.next_hash);
+      expect(req.body.draft_definition).toEqual(ops.apply(c.kind, draft, c.apply, NAME));
+      expect(req.body.draft_definition).not.toEqual(draft);
+    }
+    const added = (await browser(reads().api).formTemplateBuild(cAdd)).body.draft_definition;
+    expect(added.sections[0].rows.map((r) => names(r.fields))).toEqual([['trustee', 'chapter', 'hearing'], ['hearing_judge']]);
+    // The draft comes back from MySQL with its keys re-ordered: the same result, the same hash.
+    const reordered = JSON.parse(JSON.stringify(TPL_JSON));
+    reordered.draft_definition = Object.fromEntries(Object.entries(reordered.draft_definition).reverse());
+    expect(sha((await browser(reads({ tpl: reordered }).api).formTemplateBuild(cAdd)).body.draft_definition)).toBe(cAdd.next_hash);
+    // The display keys (op, diff, lines) are not what is applied: tampering them changes nothing that is sent.
+    const tampered = { ...cAdd, op: { field: { key: 'zzz', label: 'Z', detail: 'text' }, placement: 'elsewhere' }, diff: { added: [{ key: 'zzz' }], lines: ['ADDED: zzz'] } };
+    expect((await browser(reads().api).formTemplateBuild(tampered)).body.draft_definition).toEqual(added);
+    // The meta card has nothing to derive.
+    const r = reads();
+    expect(await browser(r.api).formTemplateBuild(cMeta)).toEqual({ path: '/api/form-templates/12', method: 'PUT', body: { title: '341 Case Sheet' } });
+    expect(r.gets).toEqual([]);
+  });
+
+  test('the builder refuses, before any write: a tampered apply (the hash moves), a draft saved between the re-check and the build, a gone template', async () => {
+    const refusal = async (card, api, text) => {
+      let err;
+      try { await browser(api).formTemplateBuild(card); } catch (e) { err = e; }
+      expect(err && err.refusal).toBe(true);
+      expect(err.message).toBe(text);
+    };
+    const foresee = `${NAME} — the template changed in a way the card did not foresee (re-applying the reviewed change does not give the draft that was reviewed). Nothing was written. Ask Casey to prepare it again.`;
+    // apply altered after the review: a different field, a different place, a different name, a changed value — each a different result, each refused.
+    const judge = JSON.parse(JSON.stringify(cAdd)); judge.apply.field.label = 'Judge';
+    await refusal(judge, reads().api, foresee);
+    const elsewhere = JSON.parse(JSON.stringify(cAdd)); elsewhere.apply.after = 'trustee';
+    await refusal(elsewhere, reads().api, foresee);
+    const other = JSON.parse(JSON.stringify(cRem)); other.apply.field_name = 'chapter';
+    await refusal(other, reads().api, foresee);
+    const more = JSON.parse(JSON.stringify(cUpd)); more.apply.changes.label = 'Chapter!';
+    await refusal(more, reads().api, foresee);
+    // An apply the module refuses (a section that is not there) is a refusal in the module's words.
+    const nowhere = JSON.parse(JSON.stringify(cAdd)); nowhere.apply.section = 'Nope';
+    await refusal(nowhere, reads().api, `${NAME} has no section "Nope" — its sections: "Case", repeater "creditors". Nothing was written. Ask Casey to prepare it again.`);
+    const orphan = JSON.parse(JSON.stringify(cRem)); orphan.apply.field_name = 'creditors.creditor';
+    await refusal(orphan, reads().api, `LAST ROW FIELD refused: "creditors.creditor" is the only row field of repeater "creditors" — a repeater needs one, so removing it means removing the repeater section, which is the form builder's. Nothing was written. Ask Casey to prepare it again.`);
+    // The draft moved (someone saved — the very change this card proposes, say): refused on the draft hash, before applying anything.
+    const saved = { ...TPL_JSON, draft_definition: ops.apply(cAdd.kind, DRAFT, cAdd.apply, NAME) };
+    await refusal(cAdd, reads({ tpl: saved }).api, `${NAME} changed since this card was prepared (its draft was saved again). Nothing was written. Ask Casey to read it again.`);
+    const gone = jest.fn(async () => { throw Object.assign(new Error('Template 12 not found'), { status: 404 }); });
+    await refusal(cAdd, gone, `${NAME} no longer exists — someone deleted it since this card was prepared. Nothing was written.`);
+    // A read that fails is not a refusal (the card stays retryable).
+    const boom = jest.fn(async () => { throw Object.assign(new Error('boom'), { status: 500 }); });
+    let readErr; try { await browser(boom).formTemplateBuild(cAdd); } catch (e) { readErr = e; }
+    expect([readErr.message, readErr.refusal, readErr.status]).toEqual(['boom', undefined, 500]);
+  });
+
+  test('a create rebuilds its definition from the reviewed field list and sends it only when it hashes to definition_hash', async () => {
+    const r = reads();
+    const req = await browser(r.api).formTemplateBuild(cCreate);
+    expect(r.gets).toEqual([]);
+    expect([req.path, req.method, req.body.form_key, req.body.title, req.body.link_type]).toEqual(['/api/form-templates', 'POST', 'vehicle_intake', 'Vehicle Intake', 'case']);
+    expect(req.body.draft_definition).toEqual({ sections: [{ title: 'Section 1', rows: [
+      { fields: [{ name: 'vehicle_year', type: 'number', label: 'Vehicle year' }] },
+      { fields: [{ name: 'lender', type: 'select', label: 'Lender', options: ['Ally', { value: 'other', label: 'Other' }] }] },
+    ] }] });
+    expect(sha(req.body.draft_definition)).toBe(cCreate.definition_hash);
+    const extra = JSON.parse(JSON.stringify(cCreate)); extra.apply.fields.push({ name: 'extra', type: 'text', label: 'Extra' });
+    await expect(browser(reads().api).formTemplateBuild(extra)).rejects.toMatchObject({ refusal: true,
+      message: '"Vehicle Intake" (vehicle_intake) — the field list on this card does not build the definition that was reviewed. Nothing was written. Ask Casey to prepare it again.' });
+    const relabeled = JSON.parse(JSON.stringify(cCreate)); relabeled.apply.fields[0].label = 'Year';
+    await expect(browser(reads().api).formTemplateBuild(relabeled)).rejects.toMatchObject({ refusal: true });
+  });
+
+  test('the re-read: the draft that was proposed from passes; a draft saved between proposal and click refuses; the title is not pinned', async () => {
     let r = reads();
     expect(await browser(r.api).formTemplatePrecheck(cAdd)).toBe('');
     expect(r.gets).toEqual(['/api/form-templates/12', '/api/form-templates/12/versions']);
     expect(await browser(reads().api).formTemplatePrecheck(cMeta)).toBe('');
-    // Someone saved the draft (the very change this card proposes, say) between proposal and click.
-    const saved = { ...TPL_JSON, draft_definition: cAdd.next_definition };
+    const saved = { ...TPL_JSON, draft_definition: ops.apply(cAdd.kind, DRAFT, cAdd.apply, NAME) };
     expect(await browser(reads({ tpl: saved }).api).formTemplatePrecheck(cAdd)).toBe('"Case Sheet" (case_sheet) changed since this card was prepared (its draft, published version or visibility). Nothing was written. Ask Casey to read it again.');
     const relabeled = JSON.parse(JSON.stringify(TPL_JSON)); relabeled.draft_definition.sections[0].rows[0].fields[0].label = 'Trustee!';
     expect(await browser(reads({ tpl: relabeled }).api).formTemplatePrecheck(cRem)).toMatch(/changed since this card was prepared/);
     expect(await browser(reads({ tpl: { ...TPL_JSON, title: 'Renamed' } }).api).formTemplatePrecheck(cMeta)).toBe('');  // the title is not in expected; the PUT overwrites it knowingly
     expect(await browser(reads({ tpl: { ...TPL_JSON, updated_at: '2026-11-10T12:00:01.000Z' } }).api).formTemplatePrecheck(cMeta)).toMatch(/changed since this card was prepared/);
-    // The frozen definition was altered after the card was prepared: refused on the hash, before any read.
+    // A card that cannot be built is never read.
     r = reads();
-    const altered = JSON.parse(JSON.stringify(cAdd)); altered.next_definition.sections[0].rows[1].fields[0].label = 'Judge';
-    expect(await browser(r.api).formTemplatePrecheck(altered)).toBe('"Case Sheet" (case_sheet) — this card\'s definition is not the one that was reviewed. Nothing was written. Ask Casey to prepare it again.');
+    await expect(browser(r.api).formTemplatePrecheck({ ...cAdd, apply: undefined })).rejects.toThrow('This card has no usable definition.');
     expect(r.gets).toEqual([]);
-    const reordered = JSON.parse(JSON.stringify(cAdd)); reordered.next_definition = Object.fromEntries(Object.entries(reordered.next_definition).reverse());
-    expect(await browser(reads().api).formTemplatePrecheck(reordered)).toBe('');
   });
 
-  test('a create re-hashes its definition and re-reads the list for its form key', async () => {
-    let r = reads();
+  test('a create re-reads the list for its form key', async () => {
+    const r = reads();
     expect(await browser(r.api).formTemplatePrecheck(cCreate)).toBe('');
     expect(r.gets).toEqual(['/api/form-templates']);
     expect(await browser(reads({ list: [TPL_JSON, { id: 44, form_key: 'vehicle_intake', title: 'Vehicles' }] }).api).formTemplatePrecheck(cCreate))
       .toBe('A form template with form key "vehicle_intake" already exists (template #44, "Vehicles") — created since this card was prepared. Nothing was written.');
-    r = reads();
-    const altered = JSON.parse(JSON.stringify(cCreate)); altered.definition.sections[0].rows.push({ fields: [{ name: 'extra', type: 'text', label: 'Extra' }] });
-    expect(await browser(r.api).formTemplatePrecheck(altered)).toBe('"Vehicle Intake" (vehicle_intake) — this card\'s definition is not the one that was reviewed. Nothing was written. Ask Casey to prepare it again.');
-    expect(r.gets).toEqual([]);
   });
 
-  test('the result checks: the route\'s row must hold the reviewed draft (key order ignored), the reviewed title, the new template\'s key and definition', () => {
-    const b = browser(jest.fn());
-    const reordered = Object.fromEntries(Object.entries(cAdd.next_definition).reverse());
-    expect(b.formTemplateResult(cAdd, { status: 'success', template: { id: 12, draft_definition: reordered } })).toEqual({ template_id: 12 });
-    expect(() => b.formTemplateResult(cAdd, { status: 'success', template: { id: 12, draft_definition: DRAFT } })).toThrow('The form templates route stored a different draft than the one reviewed — open it in the form builder');
-    expect(() => b.formTemplateResult(cAdd, { status: 'success', template: { id: 13, draft_definition: cAdd.next_definition } })).toThrow('The form templates route did not confirm the reviewed template');
+  test('the result checks: the route\'s row must hold what the builder sent (key order ignored), the reviewed title, the new template\'s key and definition', async () => {
+    const b = browser(reads().api);
+    const addCard = JSON.parse(JSON.stringify(cAdd));
+    // Before the builder ran, nothing was sent: the check cannot pass.
+    expect(() => b.formTemplateResult(addCard, { status: 'success', template: { id: 12, draft_definition: DRAFT } })).toThrow('The form templates route stored a different draft than the one reviewed — open it in the form builder');
+    const sentDef = (await b.formTemplateBuild(addCard)).body.draft_definition;
+    expect(JSON.stringify(addCard)).not.toContain('"__sent"'); // never serialized into the chat
+    const reordered = Object.fromEntries(Object.entries(sentDef).reverse());
+    expect(b.formTemplateResult(addCard, { status: 'success', template: { id: 12, draft_definition: reordered } })).toEqual({ template_id: 12 });
+    expect(() => b.formTemplateResult(addCard, { status: 'success', template: { id: 12, draft_definition: DRAFT } })).toThrow('The form templates route stored a different draft than the one reviewed — open it in the form builder');
+    expect(() => b.formTemplateResult(addCard, { status: 'success', template: { id: 13, draft_definition: sentDef } })).toThrow('The form templates route did not confirm the reviewed template');
     expect(b.formTemplateResult(cMeta, { status: 'success', template: { id: 12, title: '341 Case Sheet' } })).toEqual({ template_id: 12 });
     expect(() => b.formTemplateResult(cMeta, { status: 'success', template: { id: 12, title: 'Case Sheet' } })).toThrow('The form templates route did not confirm the reviewed title');
-    expect(b.formTemplateResult(cCreate, { status: 'success', template: { id: 44, form_key: 'vehicle_intake', draft_definition: cCreate.definition } })).toEqual({ template_id: 44 });
-    expect(() => b.formTemplateResult(cCreate, { status: 'success', template: { id: 44, form_key: 'other', draft_definition: cCreate.definition } })).toThrow('The form templates route did not confirm the new template');
-    expect(() => b.formTemplateResult(cCreate, { status: 'success', template: { id: 44, form_key: 'vehicle_intake', draft_definition: DRAFT } })).toThrow('The form templates route stored a different definition than the one reviewed — open it in the form builder');
-    expect(() => b.formTemplateResult(cCreate, { status: 'error' })).toThrow('The form templates route did not confirm the change');
+    const createCard = JSON.parse(JSON.stringify(cCreate));
+    const made = (await b.formTemplateBuild(createCard)).body.draft_definition;
+    expect(b.formTemplateResult(createCard, { status: 'success', template: { id: 44, form_key: 'vehicle_intake', draft_definition: made } })).toEqual({ template_id: 44 });
+    expect(() => b.formTemplateResult(createCard, { status: 'success', template: { id: 44, form_key: 'other', draft_definition: made } })).toThrow('The form templates route did not confirm the new template');
+    expect(() => b.formTemplateResult(createCard, { status: 'success', template: { id: 44, form_key: 'vehicle_intake', draft_definition: DRAFT } })).toThrow('The form templates route stored a different definition than the one reviewed — open it in the form builder');
+    expect(() => b.formTemplateResult(createCard, { status: 'error' })).toThrow('The form templates route did not confirm the change');
+  });
+
+  test('the page hashes exactly what the server hashed: one fixture (nested objects, arrays, unicode, key order) — expected.draft_hash, formDataHash and the module agree', async () => {
+    const FIX = { ...DRAFT, sections: [...DRAFT.sections, { title: 'Débiteur — ✓ 日本 "quoted"', rows: [{ fields: [{ name: 'z', type: 'text', label: 'Ünïcode   line', options: null, meta: { b: [1, { d: 2, c: [true, null, 'x'] }], a: 'é' } }] }] }] };
+    const shuffled = JSON.parse(JSON.stringify({ sections: FIX.sections.map((s) => Object.fromEntries(Object.entries(s).reverse())), onSubmit: FIX.onSubmit }));
+    const c = await normalizeActionDraft(setup({ tpl: tplRow({ draft_definition: shuffled }) }), meta(), EVIDENCE, { currentUserId: ME });
+    const b = browser(jest.fn());
+    expect(c.expected.draft_hash).toBe(await b.formDataHash(FIX));
+    expect(c.expected.draft_hash).toBe(crypto.createHash('sha256').update(ops.canonical(shuffled), 'utf8').digest('hex'));
+    expect(b.formCanonical(FIX)).toBe(ops.canonical(shuffled));
+  });
+
+  test('a dbkq-sized draft (149 sections, ~82 KB — over the 60,000-character card gate that refused every A12X card on it) now yields a small card whose click re-derives the whole result', async () => {
+    const big = dbkqSizedDraft();
+    expect(JSON.stringify(big).length).toBeGreaterThan(60000);
+    const c = JSON.parse(JSON.stringify(await normalizeActionDraft(setup({ tpl: tplRow({ ...NEVER, draft_definition: big }), versions: [] }),
+      fieldAdd({ section: 'sections[3]', field: { name: 'hearing_judge', type: 'text', label: 'Hearing judge' }, after: big.sections[3].rows[0].fields[0].name }), EVIDENCE, { currentUserId: ME, question: ASKED })));
+    spies.forEach((s) => s.mockRestore()); spies = [];
+    const size = JSON.stringify(c).length;
+    expect(size).toBeLessThan(20000);
+    expect([c.next_definition, typeof c.next_hash]).toEqual([undefined, 'string']);
+    expect(c.apply).toEqual({ section: 'sections[3]', field: { name: 'hearing_judge', type: 'text', label: 'Hearing judge' }, after: big.sections[3].rows[0].fields[0].name });
+    // The A12X shape (the whole result on the card) would have been refused by formTemplateSized.
+    const next = ops.apply(c.kind, big, c.apply, '"Case Sheet" (case_sheet, template #12)');
+    expect(JSON.stringify({ ...c, next_definition: next }).length).toBeGreaterThan(60000);
+    // The click: GET the 82 KB draft, re-apply, the full result goes out — hashed to what the server reviewed.
+    const r = reads({ tpl: { ...TPL_JSON, ...NEVER, draft_definition: big } });
+    const req = await browser(r.api).formTemplateBuild(c);
+    expect(JSON.stringify(req.body.draft_definition).length).toBeGreaterThan(60000);
+    expect(sha(req.body.draft_definition)).toBe(c.next_hash);
+    expect(req.body.draft_definition.sections[3].rows[0].fields.map((f) => f.name)).toEqual([big.sections[3].rows[0].fields[0].name, 'hearing_judge']);
+    expect(req.body.draft_definition.sections.length).toBe(149);
+    // eslint-disable-next-line no-console
+    console.log(`[A12Y] dbkq-sized draft ${JSON.stringify(big).length} chars: card ${size} chars (A12X shape would be ${JSON.stringify({ ...c, next_definition: next }).length})`);
   });
 
   test('labels, text, danger, applied copy and entity for the five', () => {
@@ -914,7 +1047,7 @@ describe('the browser (A12X): the frozen definition, the re-hash and re-read, th
     expect(text).toContain('Placement: a new row (row 2) at the end of section "Case"');
     expect(text).toContain('Draft change: ADDED: Hearing judge (hearing_judge) — text');
     expect(text).toContain('If published afterwards: version 4 (the answer fields change — the version bumps)');
-    expect(text).toContain('Writes: the template\'s DRAFT definition only — the whole draft as built when this card was prepared, sent exactly as reviewed; nothing is published, and the published form, its versions and every submission are untouched.');
+    expect(text).toContain('Writes: the template\'s DRAFT definition only — the whole draft, rebuilt when you apply from the template as it stands plus this one change and sent only if it is byte-for-byte what was reviewed; nothing is published, and the published form, its versions and every submission are untouched.');
     expect(b.formTemplateText(cUpd)).toContain('Sets: required');
     expect(b.formTemplateText(cRem)).toContain('Warning: FIELD REMOVED: Trustee name (trustee)');
     expect(b.formTemplateText(cMeta)).toContain('Title: "Case Sheet" → "341 Case Sheet"');

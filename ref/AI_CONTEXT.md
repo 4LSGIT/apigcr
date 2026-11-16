@@ -27,6 +27,39 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **A12Y — Casey template cards carry the CHANGE, not the result (11-16,
+  Fred: "such large cards are kind of pointless … casey needs to be able to
+  edit it" — the dbkq questionnaire's 85 KB draft made every A12X field card
+  refuse at the 60,000-character card gate; plan doc "Cards carry the change,
+  not the result" under A0 "UI contract", the standing rule):** the five
+  A12X kinds drop `next_definition` (a create's `definition`) and carry
+  `apply` — the operation as validated (add: the section's resolved PATH +
+  field + after; update: field_name + changes; remove: field_name; create:
+  fields) — beside `next_hash` / `definition_hash` and `expected`. The apply
+  functions moved into ONE pure module, `public/js/formTemplateOps.js`
+  (`canonical`, `sections`, `sectionRef`, `locate`, `references`, `fieldAdd`,
+  `fieldUpdate`, `fieldRemove`, `createDefinition`, `apply`; refusals thrown
+  with `code: 'FORM_TEMPLATE_OP'`, the A12X texts verbatim; the normalizer
+  wraps them as its 422), which the server `require`s (`formCanonical` IS its
+  `canonical`) and `assistant.html` loads (`formCanonical` delegates to it).
+  The page's builder `formTemplateBuild` (async; the engine takes a sync
+  builder's value as is and awaits a promise) re-reads GET `/:id`, refuses if
+  the draft's hash is not `expected.draft_hash`, re-applies `apply` with the
+  module, refuses unless the result hashes to `next_hash` ("the template
+  changed in a way the card did not foresee"), and only then PUTs it; a
+  builder throw with `refusal: true` is `refusal_error` before the claim
+  (nothing claimed or written). The result check compares the stored row with
+  what was sent (a non-enumerable `__sent` on the draft, never serialized).
+  `formTemplateSized` (60,000) stays as the net. Prompts unchanged
+  (42/21/45/31); no new kind / mount; no migration; no sync matcher. Tests:
+  `formTemplateOps.test.js` (bare-vm purity, one fixture hashed to the same
+  hex by the page's `formDataHash` and the server), `caseyFormTemplates`
+  (+ a synthetic dbkq-shaped 149-section ~82 KB draft →
+  `tests/helpers/formTemplateDbkqShape.js` — a ~2.5 KB card), gated
+  `caseyFormTemplates.mysql` (the click PUTs the ~82 KB re-derived result
+  through the real route; a tampered apply writes nothing), `assistantUi`
+  (the engine path). The four remaining 60,000-char gates are listed in
+  `ref/plans.md` to move to this shape when they next bind.
 - **A13X — mail unlink (native route) + Casey unlink / bulk read (11-16;
   plan doc A13 "Released 2026-11-16"; design §4.3 / §4.4 "Case UNLINK"; manual
   08 "Reading mail — Comms", manual 05/17 "Email: read state and case
@@ -112,16 +145,18 @@ body. Governing migrations in `ref/migrations/`.*
   `form.template.meta.v1` {template_id, title} → ONE PUT
   `/api/form-templates/:id` (`{draft_definition}` or `{title}`);
   `form.template.create.v1` {form_key, title, link_type, fields} → POST
-  `/api/form-templates` (`formTemplateCreateDefinition`: ONE section
+  `/api/form-templates` (`formTemplateOps.createDefinition`: ONE section
   "Section 1", one row per field). Invariants: NEVER a whole-definition
   replace — the normalizer re-reads the draft (`getTemplate`), applies the one
-  operation to a copy, runs the service's `validateDefinition` (its message is
-  the refusal), asserts `authoredKeyChanges(next, draft)` is empty and FREEZES
-  the result on the card (`next_definition` + SHA-256 `next_hash`; a create's
-  `definition` + `definition_hash`) with A12.4's `formTemplateExpected`; the
-  browser re-hashes the frozen definition, re-reads GET `/:id` + `/versions`
-  (a create: the list, for its form_key) and refuses on ANY difference, sends
-  the frozen definition as is, and compares the row the route answers with it
+  operation to a copy (`public/js/formTemplateOps.js`, the module the page
+  loads too), runs the service's `validateDefinition` (its message is the
+  refusal), asserts `authoredKeyChanges(next, draft)` is empty and puts the
+  operation (`apply`) and the SHA-256 of the result on the card (`next_hash`;
+  a create's `definition_hash`) with A12.4's `formTemplateExpected` — never
+  the result (A12Y, above); the browser re-reads GET `/:id` + `/versions` (a
+  create: the list, for its form_key) and refuses on ANY difference,
+  re-applies `apply` with the module and sends the result only when it hashes
+  to `next_hash`, and compares the row the route answers with what it sent
   key-order-insensitively. The diff is `formTemplateDefDiff` (no second copy);
   the card also shows the record column, the bump the next publish would make
   (`fieldSignature` of the new draft vs the PUBLISHED definition), the drafts
@@ -136,7 +171,7 @@ body. Governing migrations in `ref/migrations/`.*
   `after` = a field in it (absent: a new row at the end). The route's form_dev
   gate never trips (authored keys are copied verbatim). No sync matcher.
   Prompts 41/20/44/30. Tests: `caseyFormTemplates.test.js`, gated
-  `caseyFormTemplates.mysql.test.js` (the REAL PUT / POST, the frozen body),
+  `caseyFormTemplates.mysql.test.js` (the REAL PUT / POST, the re-derived body),
   `caseyActionPermissions.test.js` (100 kinds / 84 mounts); plan:
   ASK_CASEY_ACTIONS_PLAN A12.4 "Released 2026-11-16"; manual 05/17, 02/14.
 - **Comms polish bundle A (comms-polish-2, 11-16):** Email tab: the card's

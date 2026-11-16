@@ -10,6 +10,10 @@
 'use strict';
 
 const crypto = require('crypto');
+// The form template DRAFT operations (A12Y): ONE pure module the page loads too
+// (public/js/formTemplateOps.js — the mailboxColor precedent), so the click
+// re-applies a card's operation with the SAME functions and hashes the result.
+const formTemplateOps = require('../public/js/formTemplateOps');
 const aiService = require('./aiService');
 const reportService = require('./reportService');
 const commsSearch = require('./commsArchiveSearch');
@@ -1125,12 +1129,17 @@ const FORM_MASK_DIGITS = new Set(['phone', 'ssn', 'zip', 'ein']);
 //     standard section built here from the reviewed field list (one row per
 //     field, the builder's "Section 1")
 // The normalizer re-reads the DRAFT (getTemplate), builds the NEW definition
-// from it plus the one operation, runs the service's validateDefinition on it
-// (its message is the refusal) and stores that definition ON THE CARD
-// (next_definition) with the SHA-256 of the canonical current draft in
-// `expected`; the click re-reads GET /:id, refuses on ANY difference, and PUTs
-// the frozen definition — never rebuilt at the click, never anything the model
-// typed. The diff the card shows is formTemplateDefDiff (the A12.4 helpers).
+// from it plus the one operation (public/js/formTemplateOps.js — the SAME pure
+// functions the page loads), runs the service's validateDefinition on it (its
+// message is the refusal) and puts ON THE CARD the operation (`apply`, as
+// validated) with the SHA-256 of the canonical result (`next_hash`) and the
+// SHA-256 of the canonical current draft in `expected` — never the result
+// itself (A12Y, Fred 2026-11-16: "cards carry the change, not the result" —
+// the dbkq questionnaire's 85 KB draft made every A12X card refuse). The click
+// re-reads GET /:id, refuses on ANY difference, re-applies `apply` with the
+// module, refuses unless the result hashes to next_hash, and PUTs that result
+// — identical bytes, never anything the model typed. The diff the card shows
+// is formTemplateDefDiff (the A12.4 helpers).
 // Authored keys — code, hooks, css, embed / content items and their src /
 // href, a $load prefill or source — are refused BY NAME: they run or read in
 // every staff browser and are the builder's (its form_dev gate is the route's;
@@ -7424,17 +7433,13 @@ function formParse(data) {
 }
 
 // Key-order-insensitive serialization: MySQL re-orders JSON object keys on
-// write, so a hash of the stored draft must not depend on key order.
-function formCanonical(value) {
-  if (Array.isArray(value)) return `[${value.map(formCanonical).join(',')}]`;
-  if (value && typeof value === 'object') {
-    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${formCanonical(value[k])}`).join(',')}}`;
-  }
-  return JSON.stringify(value === undefined ? null : value);
-}
+// write, so a hash of the stored draft must not depend on key order. The one
+// implementation is the shared module's (the page hashes the same text).
+const formCanonical = formTemplateOps.canonical;
 
 // The stored draft's fingerprint; the browser computes the same SHA-256 over
-// the same canonical text at the click (assistant.html formDataHash).
+// the same canonical text at the click (assistant.html formDataHash —
+// tests/formTemplateOps.test.js pins the two hex strings equal).
 function formDataHash(data) {
   return crypto.createHash('sha256').update(formCanonical(data), 'utf8').digest('hex');
 }
@@ -9205,106 +9210,19 @@ async function normalizeFormTemplateDelete(db, value, evidence) {
 // updateTemplate: validateDefinition again, the form_dev gate — a no-op here,
 // the authored keys are copied verbatim — and ONE UPDATE of draft_definition).
 
-// Every section of a definition with the path validateDefinition names it by
-// (sections mode: sections[i]; tabs mode: stickyTop[i], tabs[t].sections[i],
-// stickyBottom[i] — the order extFormService.buildValueRegistry walks).
-function formTemplateSections(def) {
-  const out = [];
-  if (!def || typeof def !== 'object' || Array.isArray(def)) return out;
-  const push = (list, prefix) => {
-    if (!Array.isArray(list)) return;
-    list.forEach((s, i) => { if (s && typeof s === 'object' && !Array.isArray(s)) out.push({ section: s, path: `${prefix}[${i}]` }); });
-  };
-  if (Array.isArray(def.tabs)) {
-    push(def.stickyTop, 'stickyTop');
-    def.tabs.forEach((t, ti) => push(t && t.sections, `tabs[${ti}].sections`));
-    push(def.stickyBottom, 'stickyBottom');
-  } else {
-    push(def.sections, 'sections');
-  }
-  return out;
-}
+// The section walk, the section resolver, the field locator and the
+// dangling-reference scan are the shared module's (public/js/formTemplateOps.js
+// — the page runs the same code at the click). Their refusals arrive as
+// FORM_TEMPLATE_OP errors; formTemplateApply wraps them as the 422 a card owes.
+const formTemplateSections = formTemplateOps.sections;
+const formTemplateSectionRef = formTemplateOps.sectionRef;
+const formTemplateLocate = formTemplateOps.locate;
 
-function formTemplateSectionLabel(s) {
-  if (s.section.title) return `"${String(s.section.title).slice(0, 80)}"`;
-  if (Object.prototype.hasOwnProperty.call(s.section, 'repeater')) return `repeater "${s.section.repeater}"`;
-  return s.path;
-}
-
-// The section a card names: by its title (case-insensitive, spaces
-// collapsed), its repeater key, or its path (sections[2],
-// tabs[0].sections[1]); omitted only when the draft has ONE section.
-function formTemplateSectionRef(tpl, sections, ref) {
-  const want = ref == null ? '' : String(ref).trim();
-  const all = sections.map((s, index) => ({ ...s, index, label: formTemplateSectionLabel(s) }));
-  if (!want) {
-    if (all.length === 1) return all[0];
-    throw formError(`${formTemplateName(tpl)} has ${all.length} sections — name the one the field goes into in "section" (its title): ${all.map((s) => s.label).join(', ')}`);
+function formTemplateApply(fn) {
+  try { return fn(); } catch (e) {
+    if (e && e.code === 'FORM_TEMPLATE_OP') throw formError(e.message);
+    throw e;
   }
-  const norm = (s) => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim();
-  const hits = all.filter((s) => (s.section.title != null && norm(s.section.title) === norm(want)) || s.section.repeater === want || s.path === want);
-  if (!hits.length) throw formError(`${formTemplateName(tpl)} has no section "${want.slice(0, 80)}" — its sections: ${all.map((s) => s.label).join(', ')}`);
-  if (hits.length > 1) throw formError(`"${want.slice(0, 80)}" names ${hits.length} sections of ${formTemplateName(tpl)} (${hits.map((h) => h.path).join(', ')}) — name it by its path instead`);
-  return hits[0];
-}
-
-// Where ONE answer field lives: the array holding it, its index, its section
-// and (for a repeater's row field) the repeater key. The name is a top-level
-// field name or "<repeater>.<field>" — the keys of the card's diff
-// (formTemplateFlat).
-function formTemplateLocate(def, fieldName) {
-  const dot = fieldName.indexOf('.');
-  const rep = dot > 0 ? fieldName.slice(0, dot) : null;
-  const name = dot > 0 ? fieldName.slice(dot + 1) : fieldName;
-  for (const { section, path } of formTemplateSections(def)) {
-    if (Object.prototype.hasOwnProperty.call(section, 'repeater')) {
-      if (rep !== null && section.repeater === rep && Array.isArray(section.fields)) {
-        const i = section.fields.findIndex((f) => f && f.name === name);
-        if (i >= 0) return { holder: section.fields, index: i, field: section.fields[i], section, path: `${path}.fields[${i}]`, repeater: rep };
-      }
-      continue;
-    }
-    if (rep !== null) continue;
-    const rows = Array.isArray(section.rows) ? section.rows : [];
-    for (let r = 0; r < rows.length; r++) {
-      const row = rows[r];
-      if (!row || !Array.isArray(row.fields)) continue;
-      const i = row.fields.findIndex((f) => f && f.name === name);
-      if (i >= 0) return { holder: row.fields, index: i, field: row.fields[i], section, row, path: `${path}.rows[${r}].fields[${i}]`, repeater: null };
-    }
-  }
-  return null;
-}
-
-// Everything in a definition that still names a top-level field: conditions
-// (showWhen / showWhenAny / requiredWhen on sections, rows and fields) and
-// derive rules — what validateDefinition 400s as a dangling target once the
-// field is gone (the builder cascade-removes them after a confirm; a card
-// refuses instead and names them).
-function formTemplateReferences(def, name) {
-  const out = [];
-  const conds = (slot) => (slot == null ? [] : Array.isArray(slot) ? slot : [slot]);
-  const scan = (node, path) => {
-    if (!node || typeof node !== 'object') return;
-    for (const key of ['showWhen', 'showWhenAny', 'requiredWhen']) {
-      if (conds(node[key]).some((c) => c && c.field === name)) out.push(`${path}.${key}`);
-    }
-  };
-  for (const { section, path } of formTemplateSections(def)) {
-    scan(section, path);
-    if (Object.prototype.hasOwnProperty.call(section, 'repeater')) {
-      (Array.isArray(section.fields) ? section.fields : []).forEach((f, i) => scan(f, `${path}.fields[${i}]`));
-    } else {
-      (Array.isArray(section.rows) ? section.rows : []).forEach((row, r) => {
-        scan(row, `${path}.rows[${r}]`);
-        (row && Array.isArray(row.fields) ? row.fields : []).forEach((f, i) => scan(f, `${path}.rows[${r}].fields[${i}]`));
-      });
-    }
-  }
-  (Array.isArray(def.derive) ? def.derive : []).forEach((rule, i) => {
-    if (rule && (rule.target === name || rule.from === name)) out.push(`derive[${i}]`);
-  });
-  return out;
 }
 
 // One authored field object (a create's, an add's, or an update's changes):
@@ -9387,11 +9305,12 @@ function formTemplateNotNamed(field, verb) {
 }
 
 // The card an edit of the DRAFT shows (add / update / remove): the NEW
-// definition validated by the service and frozen on the card, diffed against
-// the current draft with the A12.4 helpers; what the next publish would do
-// (the version bump, the saved drafts it leaves behind) predicted from the
-// PUBLISHED definition with the service's own fieldSignature.
-async function formTemplateEditCard(db, { id, refs, tpl, fts, kind, next, what, op, headline, removed = null }) {
+// definition validated by the service — its hash on the card, the operation
+// that produced it (`apply`) beside it, the definition itself NOT — diffed
+// against the current draft with the A12.4 helpers; what the next publish
+// would do (the version bump, the saved drafts it leaves behind) predicted
+// from the PUBLISHED definition with the service's own fieldSignature.
+async function formTemplateEditCard(db, { id, refs, tpl, fts, kind, next, what, op, apply, headline, removed = null }) {
   const draft = tpl.draft_definition; const def = tpl.definition;
   const name = formTemplateName(tpl);
   try { fts.validateDefinition(next); } catch (e) {
@@ -9452,8 +9371,10 @@ async function formTemplateEditCard(db, { id, refs, tpl, fts, kind, next, what, 
       layout_changed: diff.layout_changed, other_keys: diff.other_keys, lines: formTemplateDiffLines(diff, 'change') },
     publish: { published, bumped: bumpNext, schema_version_after: publishesAs },
     stale_drafts: stale, usage, effects, warnings,
-    // The definition the click PUTs — built here, frozen here, never rebuilt.
-    next_definition: next, next_hash: formDataHash(next),
+    // The operation the click re-applies to the re-read draft (formTemplateOps,
+    // the module the page loads) and the hash its result must equal before the
+    // PUT — the definition itself never rides on the card (A12Y).
+    apply, next_hash: formDataHash(next),
     expected: formTemplateExpected(tpl, versions),
     evidence: refs,
   }, what);
@@ -9464,51 +9385,21 @@ async function normalizeFormTemplateFieldAdd(db, value, evidence, userText) {
   const field = value.field;
   formTemplateFieldCheck(field, 'field');
   const draft = tpl.draft_definition;
+  const name = formTemplateName(tpl);
   const sections = formTemplateSections(draft);
-  if (!sections.length) throw formError(`${formTemplateName(tpl)} has no section to add a field to — the user adds one in the form builder first`);
-  const target = formTemplateSectionRef(tpl, sections, value.section);
+  if (!sections.length) throw formError(`${name} has no section to add a field to — the user adds one in the form builder first`);
+  const target = formTemplateApply(() => formTemplateSectionRef(sections, value.section, name));
   const isRep = Object.prototype.hasOwnProperty.call(target.section, 'repeater');
   if (isRep) formTemplateFieldCheck(field, 'field', { repeater: target.section.repeater });
-  const key = isRep ? `${target.section.repeater}.${field.name}` : field.name;
-  if (formTemplateLocate(draft, key) || sections.some((s) => s.section.repeater === field.name)) {
-    throw formError(`FIELD EXISTS: ${formTemplateName(tpl)} already has a field or repeater named "${key}" — change it with form.template.field.update.v1, or pick another name`);
-  }
+  // The operation as the click re-applies it: the section by its PATH (the
+  // one resolution that cannot drift), the field as validated, `after` as given.
+  const apply = { section: target.path, field: JSON.parse(JSON.stringify(field)), after: value.after == null || String(value.after).trim() === '' ? null : String(value.after).trim() };
+  const built = formTemplateApply(() => formTemplateOps.fieldAdd(draft, apply, name));
   if (!formTemplateNamedBy(userText, refs, evidence)(field)) throw formTemplateNotNamed(field, 'adds');
-  const after = value.after == null || String(value.after).trim() === '' ? null : String(value.after).trim();
-  const next = JSON.parse(JSON.stringify(draft));
-  const tNext = formTemplateSections(next)[target.index].section;
-  const copy = JSON.parse(JSON.stringify(field));
-  let placed;
-  if (isRep) {
-    const list = Array.isArray(tNext.fields) ? tNext.fields : (tNext.fields = []);
-    let at = list.length;
-    if (after !== null) {
-      const i = list.findIndex((f) => f && f.name === after);
-      if (i < 0) throw formError(`"after" names "${after}", which is not a row field of repeater "${target.section.repeater}"`);
-      at = i + 1;
-    }
-    list.splice(at, 0, copy);
-    placed = `row field ${at + 1} of ${list.length} in repeater "${target.section.repeater}"`;
-  } else {
-    const rows = Array.isArray(tNext.rows) ? tNext.rows : (tNext.rows = []);
-    if (after !== null) {
-      let hit = null;
-      rows.forEach((row, r) => {
-        if (hit || !row || !Array.isArray(row.fields)) return;
-        const i = row.fields.findIndex((f) => f && f.name === after);
-        if (i >= 0) hit = { row, r, i };
-      });
-      if (!hit) throw formError(`"after" names "${after}", which is not a field of section ${target.label}`);
-      hit.row.fields.splice(hit.i + 1, 0, copy);
-      placed = `right after "${after}" in row ${hit.r + 1} of section ${target.label}`;
-    } else {
-      rows.push({ fields: [copy] });
-      placed = `a new row (row ${rows.length}) at the end of section ${target.label}`;
-    }
-  }
-  const line = formTemplateFieldLine({ key, f: copy, repeater: isRep ? target.section.repeater : null });
+  const { next, key, placed, after } = built;
+  const line = formTemplateFieldLine({ key, f: built.field, repeater: built.repeater });
   return formTemplateEditCard(db, { id, refs, tpl, fts, kind: 'form.template.field.add.v1', next, what: 'field add',
-    op: { field: line, section: target.label, section_path: target.path, placement: placed, after },
+    op: { field: line, section: target.label, section_path: target.path, placement: placed, after }, apply,
     headline: `Adds answer field "${line.label}" (${key}) — ${line.detail} — as ${placed}.` });
 }
 
@@ -9523,18 +9414,11 @@ async function normalizeFormTemplateFieldUpdate(db, value, evidence) {
     throw formError(`${formTemplateName(tpl)} has no answer field "${fieldName.slice(0, 60)}" in its draft — its fields: ${keys.slice(0, FORM_CARD_LIST).join(', ')}${keys.length > FORM_CARD_LIST ? ' …' : ''}`);
   }
   formTemplateFieldCheck(value.changes, 'changes', { changes: true, repeater: loc.repeater });
-  const next = JSON.parse(JSON.stringify(draft));
-  const target = formTemplateLocate(next, fieldName);
-  const changes = JSON.parse(JSON.stringify(value.changes));
-  const set = []; const dropped = [];
-  for (const [k, v] of Object.entries(changes)) {
-    if (v === null) { if (Object.prototype.hasOwnProperty.call(target.field, k)) { delete target.field[k]; dropped.push(k); } }
-    else { target.field[k] = v; set.push(k); }
-  }
-  if (!set.length && !dropped.length) throw formError(`NOTHING TO CHANGE: changes drops keys "${fieldName}" does not have`);
-  const line = formTemplateFieldLine({ key: fieldName, f: target.field, repeater: loc.repeater });
+  const apply = { field_name: fieldName, changes: JSON.parse(JSON.stringify(value.changes)) };
+  const { next, set, dropped, field } = formTemplateApply(() => formTemplateOps.fieldUpdate(draft, apply, formTemplateName(tpl)));
+  const line = formTemplateFieldLine({ key: fieldName, f: field, repeater: loc.repeater });
   return formTemplateEditCard(db, { id, refs, tpl, fts, kind: 'form.template.field.update.v1', next, what: 'field update',
-    op: { field: line, path: loc.path, set, dropped },
+    op: { field: line, path: loc.path, set, dropped }, apply,
     headline: `Changes answer field "${line.label}" (${fieldName}): ${[set.length ? `sets ${set.join(', ')}` : '', dropped.length ? `drops ${dropped.join(', ')}` : ''].filter(Boolean).join('; ')} — afterwards ${line.detail}.` });
 }
 
@@ -9551,22 +9435,14 @@ async function normalizeFormTemplateFieldRemove(db, value, evidence) {
     const keys = [...formTemplateFlat(draft).keys()];
     throw formError(`${formTemplateName(tpl)} has no answer field "${fieldName.slice(0, 60)}" in its draft — its fields: ${keys.slice(0, FORM_CARD_LIST).join(', ')}${keys.length > FORM_CARD_LIST ? ' …' : ''}`);
   }
-  if (!loc.repeater) {
-    const refsTo = formTemplateReferences(draft, fieldName);
-    if (refsTo.length) {
-      throw formError(`STILL REFERENCED refused: ${refsTo.join(', ')} ${refsTo.length === 1 ? 'names' : 'name'} "${fieldName}" (a visibility / required-when condition or a derive rule) — the draft would not save with a dangling target. Clear ${refsTo.length === 1 ? 'it' : 'them'} first (a field's condition with form.template.field.update.v1 {showWhen: null}; a section's, a row's or a derive rule in the form builder, whose delete cascade-removes them after a confirm)`);
-    }
-  }
-  if (loc.repeater && loc.holder.length === 1) {
-    throw formError(`LAST ROW FIELD refused: "${fieldName}" is the only row field of repeater "${loc.repeater}" — a repeater needs one, so removing it means removing the repeater section, which is the form builder's`);
-  }
-  const next = JSON.parse(JSON.stringify(draft));
-  const target = formTemplateLocate(next, fieldName);
-  target.holder.splice(target.index, 1);
+  // STILL REFERENCED and LAST ROW FIELD are the module's refusals (the page
+  // would raise the same at the click).
+  const apply = { field_name: fieldName };
+  const { next } = formTemplateApply(() => formTemplateOps.fieldRemove(draft, apply, formTemplateName(tpl)));
   const line = formTemplateFieldLine({ key: fieldName, f: loc.field, repeater: loc.repeater });
   const column = loc.field.apiColumn != null && loc.field.apiColumn !== '' ? formTemplateApiColumn(loc.field) : null;
   return formTemplateEditCard(db, { id, refs, tpl, fts, kind: 'form.template.field.remove.v1', next, what: 'field remove',
-    op: { field: line, path: loc.path }, removed: { key: fieldName, label: line.label, column },
+    op: { field: line, path: loc.path }, apply, removed: { key: fieldName, label: line.label, column },
     headline: `Removes answer field "${line.label}" (${fieldName}) — ${line.detail} — from the draft${loc.row && loc.holder.length === 1 ? ' (its row is left empty)' : ''}.` });
 }
 
@@ -9607,9 +9483,9 @@ async function normalizeFormTemplateMeta(db, value, evidence) {
 // builder's "Section 1" — with one row per reviewed field (the builder's own
 // click-to-add makes a row per drop too). Layout, settings, code and visibility
 // are the builder's afterwards; a new template is internal and unpublished.
-function formTemplateCreateDefinition(fields) {
-  return { sections: [{ title: 'Section 1', rows: fields.map((f) => ({ fields: [f] })) }] };
-}
+// The builder is the shared module's (the page rebuilds the same object from
+// the card's field list at the click and checks its hash).
+const formTemplateCreateDefinition = formTemplateOps.createDefinition;
 
 async function normalizeFormTemplateCreate(db, value, evidence, userText) {
   const keys = FORM_TEMPLATE_KEYS['form.template.create.v1'];
@@ -9669,8 +9545,10 @@ async function normalizeFormTemplateCreate(db, value, evidence, userText) {
     draft_id: crypto.randomUUID(), kind: 'form.template.create.v1', status: 'draft',
     create: { form_key: formKey, title, link_type: linkType },
     fields: lines, fields_total: fields.length,
-    // The definition the click POSTs — built here, frozen here, never rebuilt.
-    definition, definition_hash: formDataHash(definition),
+    // The reviewed field list the click rebuilds the definition from
+    // (formTemplateOps.createDefinition) and the hash it must equal before the
+    // POST — the definition itself never rides on the card (A12Y).
+    apply: { fields }, definition_hash: formDataHash(definition),
     effects, warnings: [],
     expected: { form_key: formKey },
     evidence: refs,

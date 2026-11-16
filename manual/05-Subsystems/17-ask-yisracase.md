@@ -1249,12 +1249,15 @@ stays as it is for everyone until a publish card (or the builder's Publish).
   and content items, the layout (sections, rows, tabs, chapters), the form
   settings (on-submit workflows, external options), a form-key rename, a
   field rename, adding or removing a whole section.
-- **Freshness.** The card holds the whole new draft exactly as it was built
-  when Casey prepared it; when you confirm, it re-reads the form and refuses
-  if anyone saved, published, restored or deleted it since — and sends that
-  frozen draft, never a rebuilt one. A form builder already open on the form
-  still holds the old draft, and its next Save would write it back — reopen
-  it first.
+- **Freshness.** The card holds the one change you reviewed and a
+  fingerprint of the draft it produces — not the whole draft, so a long
+  questionnaire no longer makes the card too big to offer. When you confirm,
+  it re-reads the form and refuses if anyone saved, published, restored or
+  deleted it since; then it rebuilds the new draft from the form as it stands
+  plus that one change and sends it only if it is byte-for-byte the draft
+  Casey reviewed — otherwise it refuses and asks you to have Casey prepare it
+  again. A form builder already open on the form still holds the old draft,
+  and its next Save would write it back — reopen it first.
 
 The off switch for these cards is the `casey_form_templates_enabled` setting
 (on unless set to 0).

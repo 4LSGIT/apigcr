@@ -436,7 +436,8 @@ function browser(api, deps = {}) {
   const src = [...CONSTS.map(constSrc), ...FNS.map(fnSrc),
     `const families = [${familySrc('form_discard')}, ${familySrc('form_pdf')}];`,
     `return { ${FNS.join(', ')}, families };`].join('\n');
-  return new Function('api', 'openEntity', 'crypto', 'TextEncoder', src)(api, deps.openEntity || jest.fn(), crypto.webcrypto, TextEncoder); // eslint-disable-line no-new-func
+  // The page's formCanonical is public/js/formTemplateOps.js's (A12Y) — supplied as the page loads it.
+  return new Function('api', 'openEntity', 'crypto', 'TextEncoder', 'YCFormTemplateOps', src)(api, deps.openEntity || jest.fn(), crypto.webcrypto, TextEncoder, require('../public/js/formTemplateOps')); // eslint-disable-line no-new-func
 }
 
 describe('the browser: fixed requests, the re-reads, result checks, outcomes, danger, text, entity', () => {

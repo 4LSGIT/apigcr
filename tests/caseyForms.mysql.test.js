@@ -128,7 +128,8 @@ function browserChecks(api) {
   const names = ['formCanonical', 'formDataHash', 'formIso', 'formRecordLabel', 'formTitle', 'formRecordPath', 'formDraftRequest', 'formDraftPrecheck',
     'formDraftResult', 'formDraftKnownOutcome', 'formLinkRequest', 'formLinkPrecheck', 'formLinkResult'];
   const src = `${max[0]}\n${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { formDraftRequest, formDraftPrecheck, formDraftResult, formDraftKnownOutcome, formLinkRequest, formLinkPrecheck, formLinkResult };`;
-  return new Function('api', src)(api); // eslint-disable-line no-new-func
+  // The page's formCanonical is public/js/formTemplateOps.js's (A12Y) — supplied as the page loads it.
+  return new Function('api', 'YCFormTemplateOps', src)(api, require('../public/js/formTemplateOps')); // eslint-disable-line no-new-func
 }
 
 const DEF = {

@@ -115,7 +115,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   // A12.3: the submit family (tests/caseyFormSubmit.test.js drives it function by function).
   'formSubmitRequest', 'formSubmitPrecheck', 'formSubmitResult', 'formSubmitKnownOutcome', 'formSubmitOutcomeText', 'formSubmitAppliedMessage',
   // A12.4: the form template family (tests/caseyFormTemplates.test.js drives it function by function).
-  'formTemplateLabel', 'formTemplateName', 'formTemplateText', 'formTemplateRequest', 'formTemplatePrecheck', 'formTemplateResult',
+  'formTemplateLabel', 'formTemplateName', 'formTemplateText', 'formTemplateRequest', 'formTemplateBuild', 'formTemplatePrecheck', 'formTemplateResult',
   'formTemplateKnownOutcome', 'formTemplateAppliedMessage', 'formTemplateOpenInfo', 'formTemplateEntity', 'formTemplateOpen',
   'mailLabel', 'mailCaseLabel', 'mailMessageLine', 'mailText', 'mailMessageIdOf', 'mailReadRequest', 'mailReadMessage', 'mailReadPrecheck',
   'mailReadResult', 'mailLinkRequest', 'mailLinkPrecheck', 'mailLinkResult', 'mailLinkKnownOutcome', 'mailOpenInfo', 'mailEntity', 'mailOpen',
@@ -179,6 +179,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'FORM_DRAFT_ACTION_KINDS'), constSrc(html, 'FORM_LINK_ACTION_KINDS'), constSrc(html, 'FORM_DATA_MAX_BYTES'),
     constSrc(html, 'FORM_DISCARD_ACTION_KINDS'), constSrc(html, 'FORM_PDF_ACTION_KINDS'), constSrc(html, 'FORM_PDF_PLACEMENTS'), constSrc(html, 'FORM_PDF_WARNINGS_KEPT'),
     constSrc(html, 'FORM_SUBMIT_ACTION_KINDS'), constSrc(html, 'FORM_TEMPLATE_ACTION_KINDS'), constSrc(html, 'FORM_TEMPLATE_VISIBILITIES'),
+    constSrc(html, 'FORM_TEMPLATE_FIELD_KINDS'), constSrc(html, 'FORM_TEMPLATE_LINK_TYPES'), constSrc(html, 'FORM_TEMPLATE_FORM_KEY_RE'),
     constSrc(html, 'MAIL_READ_ACTION_KINDS'), constSrc(html, 'MAIL_LINK_ACTION_KINDS'), constSrc(html, 'MAIL_ATTACHMENTS_ACTION_KINDS'),
     constSrc(html, 'MAIL_UNLINK_ACTION_KINDS'), constSrc(html, 'MAIL_BULK_ACTION_KINDS'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
@@ -191,7 +192,8 @@ function actionSandbox(deps = {}) {
     registry,
     'return { executeActionDraft, applyActionResults, actionFamily, isActionDraft, hydrateActionDraft };',
   ].join('\n');
-  const supplied = { P: {}, api: jest.fn(), render: jest.fn(), history: [], saveAssistantMessage: jest.fn(), openEntity: jest.fn(), input: { value: '', focus: jest.fn() }, document: undefined, navigator: undefined, ...deps };
+  // The page loads public/js/formTemplateOps.js (A12Y): formCanonical and the form template builder run on it.
+  const supplied = { P: {}, api: jest.fn(), render: jest.fn(), history: [], saveAssistantMessage: jest.fn(), openEntity: jest.fn(), input: { value: '', focus: jest.fn() }, document: undefined, navigator: undefined, YCFormTemplateOps: require(path.join(ROOT, 'public/js/formTemplateOps')), ...deps };
   const canonicalApi = supplied.api;
   const ledgerApi = deps.ledgerApi || (async (path) => path.endsWith('/claim')
     ? { outcome: 'in_flight', claimed: true, claim_token: 'receipt-test-token' } : { outcome: 'applied' });
@@ -6141,5 +6143,68 @@ describe('A11.1X typed path, undo and relink-queue dismissal', () => {
     const r400 = dismissDraft();
     await harness(r400, { write: async () => { throw Object.assign(new Error('one or more case ids are malformed'), { status: 400 }); } });
     expect(r400.action_draft.refusal_error).toBe('Refused — nothing written (one or more case ids are malformed). Ask Casey to prepare it again.');
+  });
+});
+
+describe('A12Y form template cards through the engine: the builder is awaited, re-derives the definition, and refuses before the claim', () => {
+  const ops = require(path.join(ROOT, 'public/js/formTemplateOps'));
+  const sha = (v) => require('crypto').createHash('sha256').update(ops.canonical(v), 'utf8').digest('hex');
+  const DRAFT = { sections: [{ title: 'Case', rows: [{ fields: [{ name: 'trustee', type: 'text', label: 'Trustee' }] }] }] };
+  const APPLY = { section: 'sections[0]', field: { name: 'judge', type: 'text', label: 'Judge' }, after: null };
+  const NEXT = ops.apply('form.template.field.add.v1', DRAFT, APPLY, '"Case Sheet" (case_sheet, template #12)');
+  const AT = '2026-11-10T12:00:00.000Z';
+  const TPL = { id: 12, form_key: 'case_sheet', title: 'Case Sheet', link_type: 'case', schema_version: 1, visibility: 'internal', definition: null, draft_definition: DRAFT, published_at: null, updated_at: AT };
+  const cardMsg = (over = {}) => ({ action_draft: {
+    draft_id: '9c9c9c9c-1b2c-4d3e-8f40-123456789abc', kind: 'form.template.field.add.v1', received_at: Date.now(), status: 'draft',
+    template: { template_id: 12, form_key: 'case_sheet', title: 'Case Sheet', link_type: 'case', visibility: 'internal', schema_version: 1, published: 0, published_at: null, updated_at: AT },
+    op: { field: { key: 'judge', label: 'Judge', detail: 'text' }, section: '"Case"', section_path: 'sections[0]', placement: 'a new row (row 2) at the end of section "Case"', after: null },
+    diff: { added: [{ key: 'judge', label: 'Judge', detail: 'text' }], removed: [], changed: [], added_total: 1, removed_total: 0, changed_total: 0, layout_changed: true, other_keys: [], lines: ['ADDED: Judge (judge) — text'] },
+    publish: { published: false, bumped: false, schema_version_after: 1 }, stale_drafts: { count: 0, records: [] }, usage: { submitted: 0, drafts: 0 },
+    effects: ['Adds answer field "Judge" (judge) — text — as a new row (row 2) at the end of section "Case".'], warnings: [],
+    apply: JSON.parse(JSON.stringify(APPLY)), next_hash: sha(NEXT),
+    expected: { template_id: 12, updated_at: AT, schema_version: 1, visibility: 'internal', published_at: null, definition_hash: null, draft_hash: sha(DRAFT), version_ids: [] },
+    evidence: [], ...over } });
+  function run(message, { draft = DRAFT } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (p, body, method) => {
+      if (method === 'GET') {
+        gets.push(p);
+        if (p === '/api/form-templates/12') return { status: 'success', template: { ...TPL, draft_definition: draft } };
+        if (p === '/api/form-templates/12/versions') return { status: 'success', versions: [] };
+        throw new Error(`unexpected GET ${p}`);
+      }
+      writes.push({ path: p, body, method });
+      return { status: 'success', template: { id: 12, draft_definition: body.draft_definition } };
+    });
+    const ledgerApi = jest.fn(async (p) => { ledger.push(p.endsWith('/claim') ? 'claim' : 'result'); return p.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a12y' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) } };
+    const sandbox = actionSandbox({ P, api, ledgerApi, history: [], openEntity: jest.fn(), saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger }));
+  }
+
+  test('the engine awaits the async builder: the PUT body is the definition re-derived from the re-read draft, hashing to next_hash; the card applies', async () => {
+    expect(fnSrc(html, 'executeActionDraft')).toContain("const request = built && typeof built.then === 'function' ? await built : built;");
+    const m = cardMsg();
+    const { writes, gets, ledger } = await run(m);
+    expect(gets).toEqual(['/api/form-templates/12', '/api/form-templates/12/versions', '/api/form-templates/12']);
+    expect(ledger).toEqual(['claim', 'result']);
+    expect(writes).toEqual([{ path: '/api/form-templates/12', method: 'PUT', body: { draft_definition: NEXT } }]);
+    expect(sha(writes[0].body.draft_definition)).toBe(m.action_draft.next_hash);
+    expect([m.action_draft.status, m.action_draft.result_form_template_id, m.action_draft.refusal_error, m.action_draft.ambiguous_error]).toEqual(['applied', 12, undefined, undefined]);
+    // The derived definition never rides on the card into the chat.
+    expect(JSON.stringify(m.action_draft)).not.toContain('"__sent"');
+  });
+
+  test('a builder refusal (a tampered apply; a draft saved between the re-check and the build) is a refusal before the claim — nothing claimed, nothing written, the card spent', async () => {
+    const tampered = cardMsg({ apply: { ...APPLY, field: { ...APPLY.field, label: 'Judge!' } } });
+    let r = await run(tampered);
+    expect([r.ledger, r.writes]).toEqual([[], []]);
+    expect(tampered.action_draft.refusal_error).toBe('"Case Sheet" (case_sheet) — the template changed in a way the card did not foresee (re-applying the reviewed change does not give the draft that was reviewed). Nothing was written. Ask Casey to prepare it again.');
+    expect([tampered.action_draft.ambiguous_error, tampered.action_draft.action_error, tampered.action_draft.status]).toEqual([undefined, undefined, 'draft']);
+    // The precheck's re-read refuses a saved draft first; the builder's own guard is the same refusal if the save lands between the two reads.
+    const moved = cardMsg();
+    r = await run(moved, { draft: NEXT });
+    expect([r.ledger, r.writes]).toEqual([[], []]);
+    expect(moved.action_draft.refusal_error).toBe('"Case Sheet" (case_sheet) changed since this card was prepared (its draft, published version or visibility). Nothing was written. Ask Casey to read it again.');
   });
 });

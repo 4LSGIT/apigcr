@@ -1237,9 +1237,22 @@ version restore and delete in A12.4 (ASK_CASEY_ACTIONS_PLAN A12.2–A12.4).
     conditions naming a removed field (the card refuses and names them
     instead), and a create of more than 40 fields.
 - **A save precondition** — `PUT /api/form-templates/:id` takes no expected
-  hash; the A12X card's click-time re-read is its only freshness check (a
-  save between the re-read and the PUT is not caught; the builder has the
-  same gap).
+  hash; the A12X card's click-time re-reads (the precheck's and, since A12Y,
+  the builder's own before it re-applies the operation) are its only freshness
+  checks (a save between the builder's read and the PUT is not caught; the
+  form builder has the same gap).
+- **Cards still carrying a large object** (ASK_CASEY_ACTIONS_PLAN "Cards carry
+  the change, not the result", A12Y 2026-11-16 — the template field cards
+  moved to operation + hashes, re-derived at the click through the shared
+  `public/js/formTemplateOps.js`). Four 60,000-character gates remain, all
+  under the chat's 100,000-character `assistantChatService.MAX_PAYLOAD`: the
+  form draft card (`FORM_CARD_MAX_CHARS` — the draft's answers ride on it), the
+  form submit card (the same constant), the case-fields card
+  (`CASE_FIELDS_CARD_MAX_CHARS`) and workflow drafts (`WORKFLOW_DRAFT_MAX_JSON`).
+  Move each to the same shape — the operation plus `expected` / `next_hash`,
+  one shared pure apply module, re-derivation and the hash gate at the click —
+  when it next binds; none has yet (the dbkq questionnaire bound the template
+  cards first).
 - **A publish precondition** — `POST /api/form-templates/:id/publish` takes no
   expected-draft token (the workflow publish route's P11 `expected_base`), so
   a draft saved between the A12.4 card's click-time re-read and the POST

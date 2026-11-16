@@ -341,6 +341,37 @@ At A0 this card deliberately had no write control. A1 later added reviewed
 creation through the existing `POST /api/tasks` route and explicitly discloses
 its assignment/start/due notification behavior.
 
+**Cards carry the change, not the result** (Fred, 2026-11-16: "such large
+cards are kind of pointless, the point in the card is that the user executes
+the actions … I am really not sure that a huge card has any advantage"). A
+reviewed card carries WHAT THE HUMAN DECIDES ON, plus pins — never the full
+object the route will receive:
+- the operation (the one change, exactly as the normalizer validated it);
+- its consequences (the field-level diff, effects, warnings — unchanged);
+- `expected.<object>_hash` = SHA-256 of the canonical (key-sorted) object the
+  card was reviewed against;
+- `next_hash` = SHA-256 of the canonical RESULT the normalizer produced by
+  applying the operation to that object (it still builds and validates the
+  result server-side — it just does not ship it).
+
+At the click the page re-reads the object, refuses if its hash moved,
+RE-APPLIES THE SAME OPERATION WITH THE SAME PURE FUNCTION the server used (one
+shared `public/js/<x>Ops.js` the server `require`s and the page loads — pure,
+loadable in a bare `vm`, hashing the same canonical text on both sides),
+hashes the result and refuses unless it equals `next_hash`; only then does it
+send. A matching hash means identical canonical bytes: "what was reviewed is
+what is sent" holds exactly as it did when the card carried the whole object,
+with nothing large on the card, and a tampered operation can never reach the
+route. The one worked example: the A12.4 form template field cards (A12Y) —
+`public/js/formTemplateOps.js`, the card's `apply` + `next_hash` (a create's
+`definition_hash`), `formTemplateBuild` in `assistant.html`, the engine
+awaiting an async builder and reading its `refusal: true` throw as a refusal
+before the claim. The dbkq questionnaire's 85 KB draft, which had made every
+field card refuse at the 60,000-character card gate, rides as a ~2.5 KB card.
+The cards that still carry a large object (the form draft and submit cards,
+case fields, workflow drafts) move to this shape when they next bind
+(`ref/plans.md`).
+
 ## Shipped test contract for A0
 
 Service tests:
@@ -2806,8 +2837,9 @@ switch, in the same `form_template` family, with the same receipt
   used) and so is `link_type` (no route changes it).
 - `form.template.create.v1` {form_key, title, link_type, fields} — ONE
   standard section, `"Section 1"` (the builder's default), one row per
-  reviewed field, built by `formTemplateCreateDefinition` in the service
-  layer; 1–40 fields of the same field keys, names unique; form_key
+  reviewed field, built by `createDefinition` of the shared
+  `public/js/formTemplateOps.js`; 1–40 fields of the same field keys, names
+  unique; form_key
   `^[a-z0-9_]{1,50}$` and free (checked at proposal and re-checked by the
   click against GET `/api/form-templates`; the route's 400 is the last
   word). Internal and never published. `evidence` may be empty.
@@ -2828,21 +2860,32 @@ switch, in the same `form_template` family, with the same receipt
   the A12.4 publish card. Danger whenever the card warns.
 - **Freshness is the whole safety story** — the PUT takes no precondition.
   At proposal the normalizer re-reads the DRAFT (`getTemplate`), builds the
-  NEW draft from it plus the one operation, runs the service's
-  `validateDefinition` on the result (its message is the refusal, DRAFT
-  INVALID), asserts `authoredKeyChanges(next, draft)` is empty (it always is
-  — the authored keys are copied verbatim), and stores on the card the
-  frozen `next_definition` with its SHA-256 (`next_hash`) and in `expected`
-  the template's `updated_at`, `schema_version`, visibility, published_at,
-  the hashes of the published and draft definitions and the version ids
-  (`formTemplateExpected`, as A12.4). The click re-hashes the frozen
-  definition, re-reads GET `/:id` and `/:id/versions` and refuses on ANY
-  difference; the request PUTs `{draft_definition: next_definition}` (or
-  `{title}`) — never rebuilt at the click, never anything the model typed;
-  the result check compares the row the route answers with the frozen
-  definition key-order-insensitively. A create re-hashes `definition`,
-  re-reads the list for its form_key, POSTs `{form_key, title, link_type,
-  draft_definition}` and checks the answered row's key and definition.
+  NEW draft from it plus the one operation with the shared
+  `public/js/formTemplateOps.js` (the SAME pure functions the page loads),
+  runs the service's `validateDefinition` on the result (its message is the
+  refusal, DRAFT INVALID), asserts `authoredKeyChanges(next, draft)` is empty
+  (it always is — the authored keys are copied verbatim), and puts on the
+  card the operation as validated (`apply`: add — the section's resolved
+  PATH, the field, `after`; update — `field_name`, `changes`; remove —
+  `field_name`) with the SHA-256 of the canonical result (`next_hash`) and in
+  `expected` the template's `updated_at`, `schema_version`, visibility,
+  published_at, the hashes of the published and draft definitions and the
+  version ids (`formTemplateExpected`, as A12.4) — the result itself never
+  rides on the card ("Cards carry the change, not the result", A12Y). The
+  click's precheck re-reads GET `/:id` and `/:id/versions` and refuses on ANY
+  difference; the BUILDER (`formTemplateBuild`, async — the engine awaits it)
+  re-reads the draft, refuses if its hash is not `expected.draft_hash`,
+  re-applies `apply` with the module, and refuses unless the result hashes to
+  `next_hash` ("the template changed in a way the card did not foresee");
+  only then does it PUT `{draft_definition}` (or `{title}`) — identical
+  bytes to what the server reviewed, never anything the model typed; a
+  builder refusal is a refusal before the claim (nothing claimed, nothing
+  written). The result check compares the row the route answers with what
+  was sent, key-order-insensitively. A create carries `apply.fields` +
+  `definition_hash`, re-reads the list for its form_key, rebuilds the
+  definition from the field list, hash-checks it, POSTs `{form_key, title,
+  link_type, draft_definition}` and checks the answered row's key and
+  definition.
 - **Refused by name**, with the reason: code, hooks, css, embed / content
   items and their keys (src, href, text, alt, height, maxWidth, align) — they
   run, embed or load in every staff browser and are the builder's (its
@@ -2856,19 +2899,26 @@ switch, in the same `form_template` family, with the same receipt
   embed / content items, a form_key rename, a link_type, more than 40 fields
   on a create.
 - Sync: none (no matcher for templates; none added). Tests: the A12.4 files,
-  extended — `caseyFormTemplates.test.js`, gated
-  `caseyFormTemplates.mysql.test.js` (the REAL PUT / POST, the frozen body,
-  the precheck refusing after a hand edit), `assistantUi.test.js`,
-  `assistantPromptKinds.test.js`, `caseyActionPermissions.test.js` (100
-  kinds / 84 mounts).
+  extended — `caseyFormTemplates.test.js` (+ the page and the server hashing
+  one fixture to the same hex; a dbkq-sized synthetic draft yielding a card
+  under 20 KB whose click re-derives the whole result), gated
+  `caseyFormTemplates.mysql.test.js` (the REAL PUT / POST, the re-derived
+  body hashing to the card, the precheck refusing after a hand edit, the
+  dbkq-sized draft PUT through the real route, a tampered `apply` writing
+  nothing), `formTemplateOps.test.js` (the module loads in a bare `vm`),
+  `assistantUi.test.js` (the engine awaiting the builder; a builder refusal
+  before the claim), `assistantPromptKinds.test.js`,
+  `caseyActionPermissions.test.js` (100 kinds / 84 mounts).
 
 **Not built**, each with its reason:
 - **A publish precondition on the route** — `publishTemplate` takes no
   expected-draft token (A17.6's P11 equivalent); the click's re-read is the
   only freshness check.
 - **A save precondition on the PUT** — `updateTemplate` takes no expected
-  hash either; the card's click-time re-read is the only check (a save between
-  the re-read and the PUT is not caught — the builder has the same gap).
+  hash either; the card's click-time re-reads (the precheck's, then the
+  builder's own, which applies the operation to the draft it just read) are
+  the only checks (a save between the builder's read and the PUT is not caught
+  — the form builder has the same gap).
 
 #### A13: Message triage — mail read state and case link shipped 2026-11-02 (no drafts: none exist); unlink + bulk read released 2026-11-16 (A13X)
 

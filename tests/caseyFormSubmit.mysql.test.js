@@ -123,7 +123,8 @@ function browserChecks(api) {
   const names = ['formCanonical', 'formDataHash', 'formIso', 'formRecordLabel', 'formTitle', 'formRecordPath', 'formSubmitRequest', 'formSubmitPrecheck',
     'formSubmitResult', 'formSubmitKnownOutcome', 'formSubmitOutcomeText'];
   const src = `${names.map((n) => fnSrc(html, n)).join('\n')}\nreturn { ${names.join(', ')} };`;
-  return new Function('api', src)(api); // eslint-disable-line no-new-func
+  // The page's formCanonical is public/js/formTemplateOps.js's (A12Y) — supplied as the page loads it.
+  return new Function('api', 'YCFormTemplateOps', src)(api, require('../public/js/formTemplateOps')); // eslint-disable-line no-new-func
 }
 
 const CASE = 'A123CASE';

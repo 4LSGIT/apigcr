@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
 <script src="/js/optoutAck.js"></script>
+<script src="/js/formTemplateOps.js"></script>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--page-bg); color: var(--text); font: 14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
@@ -3721,13 +3722,11 @@ const FORM_PDF_WARNINGS_KEPT = 6;
 // form_submissions.data — the same 64 KB bound the server checked.
 const FORM_DATA_MAX_BYTES = 64 * 1024;
 
-// The server's key-order-insensitive serialization (MySQL re-orders JSON keys).
+// The server's key-order-insensitive serialization (MySQL re-orders JSON keys)
+// — the ONE implementation, public/js/formTemplateOps.js, which the server
+// requires and this page loads (tests/formTemplateOps.test.js pins the hashes).
 function formCanonical(value) {
-  if (Array.isArray(value)) return `[${value.map(formCanonical).join(',')}]`;
-  if (value && typeof value === 'object') {
-    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${formCanonical(value[k])}`).join(',')}}`;
-  }
-  return JSON.stringify(value === undefined ? null : value);
+  return YCFormTemplateOps.canonical(value);
 }
 
 async function formDataHash(data) {
@@ -4279,15 +4278,21 @@ function formSubmitAppliedMessage(draft, payload, replayed) {
 // A12X (2026-11-16): the same family carries the FIELD-LEVEL draft edits and
 // the create — form.template.field.add.v1 / .field.update.v1 /
 // .field.remove.v1 and form.template.meta.v1 → PUT /api/form-templates/:id
-// ({draft_definition} — the WHOLE draft the server built and FROZE on the card
-// as next_definition, hashed in next_hash — or {title}); form.template.create.v1
-// → POST /api/form-templates ({form_key, title, link_type, draft_definition:
-// the frozen `definition`}). The browser never rebuilds a definition: the
-// precheck re-hashes the frozen one against the card's hash and re-reads the
-// template (or, for a create, the list — the form_key must still be free),
-// the request sends it as is, and the result check compares what the route
-// stored with it key-order-insensitively. The receipt is the template id (a
-// create's is the NEW row's id).
+// ({draft_definition} — the WHOLE draft — or {title}); form.template.create.v1
+// → POST /api/form-templates ({form_key, title, link_type, draft_definition}).
+// A12Y (Fred, 2026-11-16, "cards carry the change, not the result"): the card
+// carries the OPERATION (`apply`, as the server validated it) and the SHA-256
+// of the canonical result the server built from it (`next_hash`; a create's
+// `definition_hash`) — never the definition. The precheck re-reads the
+// template (or, for a create, the list — the form_key must still be free) and
+// refuses on any difference from `expected`; the BUILDER (formTemplateBuild,
+// async) re-reads the draft, refuses if its hash moved, re-applies `apply`
+// with the SAME pure functions the server used (public/js/formTemplateOps.js),
+// hashes the result and refuses unless it equals next_hash — only then is it
+// sent: equal hashes are identical bytes, so what was reviewed is what is
+// sent. The result check compares what the route stored with what was sent,
+// key-order-insensitively. The receipt is the template id (a create's is the
+// NEW row's id).
 const FORM_TEMPLATE_ACTION_KINDS = new Set(['form.template.publish.v1', 'form.template.visibility.v1', 'form.template.restore.v1', 'form.template.delete.v1',
   'form.template.field.add.v1', 'form.template.field.update.v1', 'form.template.field.remove.v1', 'form.template.meta.v1', 'form.template.create.v1']);
 const FORM_TEMPLATE_VISIBILITIES = ['internal', 'portal', 'public'];
@@ -4373,11 +4378,11 @@ function formTemplateText(draft) {
       : draft.kind === 'form.template.restore.v1'
         ? 'Writes: the template\'s DRAFT definition only — nothing is published; the published form, its versions and every submission are untouched.'
         : FORM_TEMPLATE_FIELD_KINDS.includes(draft.kind)
-          ? 'Writes: the template\'s DRAFT definition only — the whole draft as built when this card was prepared, sent exactly as reviewed; nothing is published, and the published form, its versions and every submission are untouched.'
+          ? 'Writes: the template\'s DRAFT definition only — the whole draft, rebuilt when you apply from the template as it stands plus this one change and sent only if it is byte-for-byte what was reviewed; nothing is published, and the published form, its versions and every submission are untouched.'
           : draft.kind === 'form.template.meta.v1'
             ? 'Writes: the template\'s title only — its definitions, versions, visibility and submissions are untouched; nothing is published.'
             : draft.kind === 'form.template.create.v1'
-              ? 'Writes: one new template row (never published, internal) with the definition reviewed here — nothing else changes.'
+              ? 'Writes: one new template row (never published, internal) with the definition built from the field list reviewed here — nothing else changes.'
               : 'Writes: deletes the template row and its version rows — there is no undo.',
   draft.kind === 'form.template.create.v1'
     ? 'Stale check: if a template with this form key appears before you apply, nothing is written.'
@@ -4391,10 +4396,10 @@ function formTemplateRequest(draft) {
     const c = draft.create || {}; const x = draft.expected || {};
     if (typeof c.form_key !== 'string' || !FORM_TEMPLATE_FORM_KEY_RE.test(c.form_key) || x.form_key !== c.form_key) throw new Error('This card has no usable form key.');
     if (typeof c.title !== 'string' || !c.title.trim() || !FORM_TEMPLATE_LINK_TYPES.includes(c.link_type)) throw new Error('This card has no usable template settings.');
-    const def = draft.definition;
-    if (!def || typeof def !== 'object' || Array.isArray(def) || !Array.isArray(def.sections) || typeof draft.definition_hash !== 'string') throw new Error('This card has no usable definition.');
-    // The frozen definition, as the server built it — never rebuilt here.
-    return { path: '/api/form-templates', method: 'POST', body: { form_key: c.form_key, title: c.title, link_type: c.link_type, draft_definition: def } };
+    const a = draft.apply;
+    if (!a || typeof a !== 'object' || !Array.isArray(a.fields) || !a.fields.length || typeof draft.definition_hash !== 'string') throw new Error('This card has no usable definition.');
+    // The definition is rebuilt from the reviewed field list by formTemplateBuild and sent only when it hashes to definition_hash.
+    return { path: '/api/form-templates', method: 'POST', body: { form_key: c.form_key, title: c.title, link_type: c.link_type }, derive: true };
   }
   const t = draft.template || {};
   const id = Number(t.template_id);
@@ -4403,10 +4408,10 @@ function formTemplateRequest(draft) {
   if (Number(x.template_id) !== id) throw new Error('This card has no usable stale check.');
   const base = `/api/form-templates/${id}`;
   if (FORM_TEMPLATE_FIELD_KINDS.includes(draft.kind)) {
-    const def = draft.next_definition;
-    if (!def || typeof def !== 'object' || Array.isArray(def) || typeof draft.next_hash !== 'string') throw new Error('This card has no usable definition.');
-    // The whole draft the server built and froze on the card — sent as is.
-    return { path: base, method: 'PUT', body: { draft_definition: def } };
+    const a = draft.apply;
+    if (!a || typeof a !== 'object' || Array.isArray(a) || typeof draft.next_hash !== 'string') throw new Error('This card has no usable definition.');
+    // The whole draft is rebuilt from the re-read template plus `apply` by formTemplateBuild and sent only when it hashes to next_hash.
+    return { path: base, method: 'PUT', body: null, derive: true };
   }
   if (draft.kind === 'form.template.meta.v1') {
     const m = draft.meta || {};
@@ -4432,21 +4437,55 @@ function formTemplateRequest(draft) {
   throw new Error('This card has no usable template operation.');
 }
 
+// The request the engine sends (the family's `request`): for the field-level
+// kinds and the create, the definition is DERIVED here at the click — the
+// template as it stands now (GET /:id) plus the card's `apply`, through the
+// same public/js/formTemplateOps.js functions the server ran — and sent only
+// when its canonical SHA-256 equals the hash reviewed (next_hash /
+// definition_hash). A refusal here carries `refusal: true`: the engine shows
+// it as a refusal (nothing was claimed or written), not as an ambiguous outcome.
+async function formTemplateBuild(draft) {
+  const req = formTemplateRequest(draft);
+  if (!req.derive) return req;
+  const name = formTemplateName(draft);
+  const refuse = (text) => Object.assign(new Error(text), { refusal: true });
+  const sent = (value) => { Object.defineProperty(draft, '__sent', { value: formCanonical(value), configurable: true }); return value; };
+  if (draft.kind === 'form.template.create.v1') {
+    let definition;
+    try { definition = YCFormTemplateOps.apply(draft.kind, null, draft.apply, name); }
+    catch (e) { throw refuse(`${e && e.code === 'FORM_TEMPLATE_OP' ? e.message : `${name} — the field list could not be built (${e && e.message || 'error'})`}. Nothing was written. Ask Casey to prepare it again.`); }
+    if (await formDataHash(definition) !== draft.definition_hash) throw refuse(`${name} — the field list on this card does not build the definition that was reviewed. Nothing was written. Ask Casey to prepare it again.`);
+    return { path: req.path, method: req.method, body: { ...req.body, draft_definition: sent(definition) } };
+  }
+  const id = Number(draft.template.template_id);
+  const x = draft.expected || {};
+  let got;
+  try { got = await api(`/api/form-templates/${id}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) throw refuse(`${name} no longer exists — someone deleted it since this card was prepared. Nothing was written.`); throw e; }
+  const t = got && got.template;
+  if (!t || Number(t.id) !== id || !('draft_definition' in t)) throw new Error('the template could not be read');
+  // The draft the operation is applied to must be the one the card was reviewed against.
+  if (await formDataHash(t.draft_definition) !== x.draft_hash) throw refuse(`${name} changed since this card was prepared (its draft was saved again). Nothing was written. Ask Casey to read it again.`);
+  let next;
+  // The module's own refusal (it names the template itself); anything else is named here.
+  try { next = YCFormTemplateOps.apply(draft.kind, t.draft_definition, draft.apply, name); }
+  catch (e) { throw refuse(`${e && e.code === 'FORM_TEMPLATE_OP' ? e.message : `${name} — the change could not be applied (${e && e.message || 'error'})`}. Nothing was written. Ask Casey to prepare it again.`); }
+  // Equal hashes are identical canonical bytes: this IS the draft that was reviewed.
+  if (await formDataHash(next) !== draft.next_hash) throw refuse(`${name} — the template changed in a way the card did not foresee (re-applying the reviewed change does not give the draft that was reviewed). Nothing was written. Ask Casey to prepare it again.`);
+  return { path: req.path, method: req.method, body: { draft_definition: sent(next) } };
+}
+
 async function formTemplatePrecheck(draft) {
   const req = formTemplateRequest(draft); // a card that cannot be written is never read
   const x = draft.expected || {};
   const name = formTemplateName(draft);
   if (draft.kind === 'form.template.create.v1') {
-    // The frozen definition must be the one reviewed; the form_key must still be free (the route's 400 is the last word).
-    if (await formDataHash(draft.definition) !== draft.definition_hash) return `${name} — this card's definition is not the one that was reviewed. Nothing was written. Ask Casey to prepare it again.`;
+    // The form_key must still be free (the route's 400 is the last word); the definition is rebuilt and hash-checked by formTemplateBuild.
     const list = await api('/api/form-templates', null, 'GET');
     if (!list || !Array.isArray(list.templates)) throw new Error('the templates could not be listed');
     const clash = list.templates.find((t) => t && String(t.form_key) === draft.create.form_key);
     if (clash) return `A form template with form key "${draft.create.form_key}" already exists (template #${clash.id}, "${String(clash.title || '')}") — created since this card was prepared. Nothing was written.`;
     return '';
-  }
-  if (FORM_TEMPLATE_FIELD_KINDS.includes(draft.kind) && await formDataHash(draft.next_definition) !== draft.next_hash) {
-    return `${name} — this card's definition is not the one that was reviewed. Nothing was written. Ask Casey to prepare it again.`;
   }
   const id = Number(draft.template.template_id);
   let got;
@@ -4480,15 +4519,16 @@ function formTemplateResult(draft, result) {
     const made = result.template || {};
     const nid = Number(made.id);
     if (!Number.isSafeInteger(nid) || nid < 1 || String(made.form_key) !== draft.create.form_key) throw new Error('The form templates route did not confirm the new template');
-    if (formCanonical(made.draft_definition) !== formCanonical(draft.definition)) throw new Error('The form templates route stored a different definition than the one reviewed — open it in the form builder');
+    // What the route stored IS what formTemplateBuild sent (and hash-checked against the review).
+    if (typeof draft.__sent !== 'string' || formCanonical(made.draft_definition) !== draft.__sent) throw new Error('The form templates route stored a different definition than the one reviewed — open it in the form builder');
     return { template_id: nid };
   }
   const id = Number(draft.template.template_id);
   if (FORM_TEMPLATE_FIELD_KINDS.includes(draft.kind)) {
     const t = result.template || {};
     if (Number(t.id) !== id) throw new Error('The form templates route did not confirm the reviewed template');
-    // What the route stored IS what the card showed (MySQL re-orders JSON keys; the compare does not care).
-    if (formCanonical(t.draft_definition) !== formCanonical(draft.next_definition)) throw new Error('The form templates route stored a different draft than the one reviewed — open it in the form builder');
+    // What the route stored IS what formTemplateBuild sent, hash-checked against the review (MySQL re-orders JSON keys; the compare does not care).
+    if (typeof draft.__sent !== 'string' || formCanonical(t.draft_definition) !== draft.__sent) throw new Error('The form templates route stored a different draft than the one reviewed — open it in the form builder');
     return { template_id: id };
   }
   if (draft.kind === 'form.template.meta.v1') {
@@ -7889,7 +7929,7 @@ const ACTION_FAMILIES = [
     // A12.4: one family for the four template cards; the receipt is the
     // reviewed template_id (a deleted template's is the id it had).
     id: 'form_template', kinds: FORM_TEMPLATE_ACTION_KINDS, title: 'Form template', noun: 'form template', errorNoun: 'form template change',
-    label: formTemplateLabel, text: formTemplateText, request: formTemplateRequest, result: formTemplateResult,
+    label: formTemplateLabel, text: formTemplateText, request: formTemplateBuild, result: formTemplateResult,
     idField: 'template_id', appliedKey: 'result_form_template_id',
     // Always for a delete (no undo) and an off-internal flip (exposure);
     // otherwise whenever the card warns (stale drafts, a public form, code,
@@ -8321,7 +8361,11 @@ async function executeActionDraft(message) {
   }
   let claimed = false;
   try {
-    const request = family.request(draft);
+    // A family's request may be built asynchronously (A12Y: the form template
+    // builder re-reads the draft and re-derives the definition it sends); a
+    // sync builder's value is taken as is — no extra tick for the other families.
+    const built = family.request(draft);
+    const request = built && typeof built.then === 'function' ? await built : built;
     const claim = await api(`/api/assistant/actions/${draft.draft_id}/claim`, {}, 'POST');
     if (claim.outcome === 'applied' && claim.result) {
       draft.status = 'applied'; draft.replayed = true;
@@ -8398,7 +8442,13 @@ async function executeActionDraft(message) {
     // row, and its coded 500 is a known failure whose row was cancelled. An
     // idempotency body or anything uncoded returns null and falls through.
     const known = claimed && typeof family.knownOutcome === 'function' ? family.knownOutcome(e) : null;
-    if (known) {
+    // A builder that refused BEFORE the claim (`refusal: true` — the form
+    // template builder's hash checks): nothing was claimed or written, and the
+    // card is spent, not ambiguous.
+    const builderRefused = !claimed && e && e.refusal === true;
+    if (builderRefused) {
+      draft.refusal_error = e.message;
+    } else if (known) {
       draft.refusal_error = known.text;
       if (known.status) draft.refusal_status = known.status;
     } else if (optoutDeclined) {
