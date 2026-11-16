@@ -99,6 +99,14 @@ const KINDS = new Map([
   ['form.template.visibility.v1', 'template_id'],
   ['form.template.restore.v1', 'template_id'],
   ['form.template.delete.v1', 'template_id'],
+  // A12X: the field-level draft edits and the title receipt the reviewed
+  // template (the PUT answers the row); the create receipts the NEW row the
+  // POST answers (template.id) — the one id a new template has.
+  ['form.template.field.add.v1', 'template_id'],
+  ['form.template.field.update.v1', 'template_id'],
+  ['form.template.field.remove.v1', 'template_id'],
+  ['form.template.meta.v1', 'template_id'],
+  ['form.template.create.v1', 'template_id'],
   // A13: a read card receipts the message whose read state it set (the route
   // answers {id, unread}); a case link receipts the log row the route
   // bridged — reused or created — which it returns as log_id.

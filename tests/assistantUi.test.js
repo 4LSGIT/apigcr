@@ -5120,10 +5120,12 @@ describe('A12 form cards (form.draft / form.submission.link)', () => {
     expect([[...fp.kinds], fp.idField, fp.appliedKey, !!fp.stringReceipt]).toEqual([['form.pdf.file.v1'], 'submission_id', 'result_form_pdf_id', false]);
     const fs3 = box.actionFamily({ kind: 'form.submit.v1' });
     expect([[...fs3.kinds], fs3.idField, fs3.appliedKey, !!fs3.stringReceipt, fs3.refusal409]).toEqual([['form.submit.v1'], 'submission_id', 'result_form_submit_id', false, true]);
-    // A12.4: the four template cards are ONE family (tests/caseyFormTemplates.test.js); still no unlink kind.
+    // A12.4: the four template cards are ONE family (tests/caseyFormTemplates.test.js); A12X adds the five
+    // field-level / title / create kinds to the SAME family; still no unlink kind and no whole-definition update.
     const ft = box.actionFamily({ kind: 'form.template.publish.v1' });
-    expect([[...ft.kinds], ft.idField, ft.appliedKey, !!ft.stringReceipt, !!ft.refusal409]).toEqual([['form.template.publish.v1', 'form.template.visibility.v1', 'form.template.restore.v1', 'form.template.delete.v1'], 'template_id', 'result_form_template_id', false, false]);
-    for (const kind of ['form.template.update.v1', 'form.template.create.v1', 'form.submission.unlink.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    expect([[...ft.kinds], ft.idField, ft.appliedKey, !!ft.stringReceipt, !!ft.refusal409]).toEqual([['form.template.publish.v1', 'form.template.visibility.v1', 'form.template.restore.v1', 'form.template.delete.v1',
+      'form.template.field.add.v1', 'form.template.field.update.v1', 'form.template.field.remove.v1', 'form.template.meta.v1', 'form.template.create.v1'], 'template_id', 'result_form_template_id', false, false]);
+    for (const kind of ['form.template.update.v1', 'form.submission.unlink.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
   });
 });

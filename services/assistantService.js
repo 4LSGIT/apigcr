@@ -1071,25 +1071,91 @@ const FORM_MASK_DIGITS = new Set(['phone', 'ssn', 'zip', 'ein']);
 // extFormService.buildValueRegistry (formFields), the bump is the service's
 // own fieldSignature, the executing-key scan its scanExternalRefusals, the
 // code gate its authoredKeyChanges, the workflow list formSubmitService's
-// wfListOf — never a second copy. Editing a definition (PUT) and creating a
-// template (POST) have no card: a definition is a large JSON the builder edits
-// visually, and a card cannot review it line by line. Real-engine twin:
+// wfListOf — never a second copy. Real-engine twin:
 // tests/caseyFormTemplates.mysql.test.js. Its own switch,
 // casey_form_templates_enabled (on unless '0') — firm-wide template
 // operations, not record edits.
-const FORM_TEMPLATE_ACTION_KINDS = new Set(['form.template.publish.v1', 'form.template.visibility.v1', 'form.template.restore.v1', 'form.template.delete.v1']);
+// A12X (Fred, 2026-11-16, "release means allow"): editing a definition (PUT
+// /api/form-templates/:id {draft_definition}) and creating a template (POST
+// /api/form-templates) — held back because a definition is a large JSON a card
+// cannot review line by line — as FIELD-LEVEL cards, never a whole-definition
+// replace, behind the same switch:
+//   * form.template.field.add.v1    {template_id, section?, field, after?} — ONE
+//     field into ONE section of the DRAFT (a new row at the end of a standard
+//     section, or right after `after` in its row; a repeater's row list)
+//   * form.template.field.update.v1 {template_id, field_name, changes} — the
+//     field's own keys (label, required, options, type, showWhen, …; null
+//     drops a key); never its name (a rename is a remove + an add)
+//   * form.template.field.remove.v1 {template_id, field_name} — ONE field;
+//     refused while a condition or derive rule still names it
+//   * form.template.meta.v1         {template_id, title} — the title only (a
+//     form_key rename changes every stored reader and link_type the record
+//     every submission links to: refused by name)
+//   * form.template.create.v1       {form_key, title, link_type, fields} — ONE
+//     standard section built here from the reviewed field list (one row per
+//     field, the builder's "Section 1")
+// The normalizer re-reads the DRAFT (getTemplate), builds the NEW definition
+// from it plus the one operation, runs the service's validateDefinition on it
+// (its message is the refusal) and stores that definition ON THE CARD
+// (next_definition) with the SHA-256 of the canonical current draft in
+// `expected`; the click re-reads GET /:id, refuses on ANY difference, and PUTs
+// the frozen definition — never rebuilt at the click, never anything the model
+// typed. The diff the card shows is formTemplateDefDiff (the A12.4 helpers).
+// Authored keys — code, hooks, css, embed / content items and their src /
+// href, a $load prefill or source — are refused BY NAME: they run or read in
+// every staff browser and are the builder's (its form_dev gate is the route's;
+// Casey copies the rest of the definition verbatim, so authoredKeyChanges is
+// always empty). A raw definition / draft_definition key is refused by name too.
+const FORM_TEMPLATE_ACTION_KINDS = new Set(['form.template.publish.v1', 'form.template.visibility.v1', 'form.template.restore.v1', 'form.template.delete.v1',
+  'form.template.field.add.v1', 'form.template.field.update.v1', 'form.template.field.remove.v1', 'form.template.meta.v1', 'form.template.create.v1']);
 const FORM_TEMPLATE_KEYS = Object.freeze({
   'form.template.publish.v1': new Set(['kind', 'template_id', 'evidence']),
   'form.template.visibility.v1': new Set(['kind', 'template_id', 'visibility', 'evidence']),
   'form.template.restore.v1': new Set(['kind', 'template_id', 'version_id', 'evidence']),
   'form.template.delete.v1': new Set(['kind', 'template_id', 'evidence']),
+  'form.template.field.add.v1': new Set(['kind', 'template_id', 'section', 'field', 'after', 'evidence']),
+  'form.template.field.update.v1': new Set(['kind', 'template_id', 'field_name', 'changes', 'evidence']),
+  'form.template.field.remove.v1': new Set(['kind', 'template_id', 'field_name', 'evidence']),
+  // meta takes form_key / link_type only to refuse them BY NAME with the reason (never to write them).
+  'form.template.meta.v1': new Set(['kind', 'template_id', 'title', 'form_key', 'link_type', 'evidence']),
+  'form.template.create.v1': new Set(['kind', 'form_key', 'title', 'link_type', 'fields', 'evidence']),
 });
 const FORM_TEMPLATE_TAKES = Object.freeze({
   'form.template.publish.v1': 'template_id',
   'form.template.visibility.v1': 'template_id and visibility ("internal", "portal" or "public")',
   'form.template.restore.v1': 'template_id and version_id',
   'form.template.delete.v1': 'template_id',
+  'form.template.field.add.v1': 'template_id, field (its name, type, label and the field keys) and, when the draft has more than one section, section (its title); after (a field name) is optional',
+  'form.template.field.update.v1': 'template_id, field_name and changes (the field keys to set; null drops one)',
+  'form.template.field.remove.v1': 'template_id and field_name',
+  'form.template.meta.v1': 'template_id and title',
+  'form.template.create.v1': 'form_key, title, link_type ("case", "contact" or "appt") and fields (1-40 of {name, type, label, required?, options?})',
 });
+// A12X: the field keys a card may author (ref/FORM_TEMPLATE_SCHEMA_V1.md §4.3 —
+// the answer field's own keys; validateDefinition keeps the last word on each).
+const FORM_TEMPLATE_FIELD_KEYS = new Set(['name', 'type', 'label', 'width', 'sublabel', 'placeholder', 'readonly', 'lockedMsg', 'apiColumn',
+  'prefill', 'prefillMode', 'mask', 'required', 'requiredWhen', 'requiredMessage', 'minLength', 'maxLength', 'pattern', 'patternMessage', 'email',
+  'options', 'allowOther', 'rows', 'showWhen', 'showWhenAny', 'columns', 'note', 'urlParam', 'optionsFrom', 'prefix', 'suffix', 'min', 'max', 'step']);
+// Refused by name on a field: what runs, embeds or reads in every staff
+// browser (an embed's iframe, a content item's image / link, authored code).
+const FORM_TEMPLATE_FIELD_REFUSED = Object.freeze({
+  src: 'an embed or content item\'s URL — display-only items are the builder\'s', href: 'a content item\'s link — display-only items are the builder\'s',
+  alt: 'a content item key', text: 'a content item key', height: 'an embed key', maxWidth: 'a content item key', align: 'a content item key',
+  code: 'authored JavaScript', hooks: 'a repo hook file', css: 'authored CSS', definition: 'a whole definition', draft_definition: 'a whole definition',
+});
+// The answer field types a card may add or set (the service's KNOWN_TYPES less
+// the two display-only types — embed executes an iframe, content carries no answer).
+const FORM_TEMPLATE_FIELD_TYPES = ['text', 'textarea', 'number', 'date', 'datetime', 'select', 'radio', 'checkbox', 'checkgroup', 'tags', 'hidden'];
+// What a repeater's row accepts (the builder's REPEATER_TYPES — contract §4.2).
+const FORM_TEMPLATE_REPEATER_TYPES = ['text', 'number', 'date', 'select', 'checkbox'];
+const FORM_TEMPLATE_OPTIONS_TYPES = ['select', 'radio', 'checkgroup'];
+// The service's own shapes (FORM_KEY_RE / FIELD_NAME_RE / LINK_TYPES; the title column is varchar(150)).
+const FORM_TEMPLATE_FORM_KEY_RE = /^[a-z0-9_]{1,50}$/;
+const FORM_TEMPLATE_FIELD_NAME_RE = /^[a-zA-Z0-9_]{1,50}$/;
+const FORM_TEMPLATE_LINK_TYPES = ['case', 'contact', 'appt'];
+const FORM_TEMPLATE_TITLE_MAX = 150;
+// A create's field list (the card lists them all; a longer form is the builder's).
+const FORM_TEMPLATE_CREATE_FIELDS_MAX = 40;
 // formTemplateService VISIBILITIES — the route's own set (its 400 names them).
 const FORM_TEMPLATE_VISIBILITIES = ['internal', 'portal', 'public'];
 // Keys that read as editing the definition itself: refused by name, with the reason.
@@ -7574,7 +7640,7 @@ function formRefuseKeys(extra, which) {
   }
   const ops = extra.filter((k) => FORM_OTHER_OP_KEY.test(k));
   if (ops.length) {
-    throw formError(`OTHER FORM OPERATIONS refused (${ops.join(', ')}): each form card does ONE thing — save ONE draft (form.draft.v1), link ONE submission (form.submission.link.v1), discard ONE draft (form.draft.delete.v1), file ONE submission's PDF (form.pdf.file.v1) or submit ONE stored draft (form.submit.v1). Publishing a template, changing its visibility, restoring a version into its draft and deleting a never-published template are the template cards (form.template.publish.v1 / form.template.visibility.v1 / form.template.restore.v1 / form.template.delete.v1, from a form.template.state read); editing a template's definition and unlinking a submission are not available to Casey — the user edits a template in the form builder (no screen unlinks)`);
+    throw formError(`OTHER FORM OPERATIONS refused (${ops.join(', ')}): each form card does ONE thing — save ONE draft (form.draft.v1), link ONE submission (form.submission.link.v1), discard ONE draft (form.draft.delete.v1), file ONE submission's PDF (form.pdf.file.v1) or submit ONE stored draft (form.submit.v1). Publishing a template, changing its visibility, restoring a version into its draft and deleting a never-published template are the template cards (form.template.publish.v1 / form.template.visibility.v1 / form.template.restore.v1 / form.template.delete.v1, from a form.template.state read), as are adding, changing or removing ONE of its answer fields (form.template.field.add.v1 / form.template.field.update.v1 / form.template.field.remove.v1), its title (form.template.meta.v1) and a new form (form.template.create.v1); unlinking a submission is not available to Casey (no screen unlinks)`);
   }
   if (extra.length) {
     throw formError(`A form ${which} card carries unsupported fields: ${extra.join(', ')} — it takes ${FORM_CARD_TAKES[which]} and evidence only`);
@@ -8794,9 +8860,9 @@ async function formTemplateTarget(db, value, evidence, what) {
   if (extra.length) {
     const edits = extra.filter((k) => FORM_TEMPLATE_EDIT_KEY.test(k));
     if (edits.length) {
-      throw formError(`TEMPLATE EDITING refused (${edits.join(', ')}): Casey publishes, changes the visibility of, restores a version of or deletes a template — it never edits a definition, title or form_key, and never creates a template. A definition is a large JSON the form builder edits visually, and a card cannot review it line by line: the user edits it in the form builder`);
+      throw formError(`TEMPLATE EDITING refused (${edits.join(', ')}): no template card takes a raw definition — a definition is a large JSON a card cannot review line by line. The draft is edited ONE field per card: add a field (form.template.field.add.v1), change one (form.template.field.update.v1), remove one (form.template.field.remove.v1); the title is form.template.meta.v1 and a new form is form.template.create.v1 (a reviewed field list). Code, hooks, CSS, embeds, the layout and a form_key rename stay the form builder's`);
     }
-    throw formError(`A form template ${what} card carries unsupported fields: ${extra.join(', ')} — it takes ${FORM_TEMPLATE_TAKES[value.kind]} and evidence only (each template card does ONE thing: publish the draft — form.template.publish.v1, change the visibility — form.template.visibility.v1, restore a version into the draft — form.template.restore.v1, or delete a never-published template — form.template.delete.v1)`);
+    throw formError(`A form template ${what} card carries unsupported fields: ${extra.join(', ')} — it takes ${FORM_TEMPLATE_TAKES[value.kind]} and evidence only (each template card does ONE thing: publish the draft — form.template.publish.v1, change the visibility — form.template.visibility.v1, restore a version into the draft — form.template.restore.v1, delete a never-published template — form.template.delete.v1, add / change / remove ONE answer field of the draft — form.template.field.add.v1 / form.template.field.update.v1 / form.template.field.remove.v1, set the title — form.template.meta.v1, or create a new form from a field list — form.template.create.v1)`);
   }
   const id = Number(value.template_id);
   if (!Number.isSafeInteger(id) || id < 1) throw formError(`A form template ${what} needs the template's exact positive template_id (from a form.template.state read)`);
@@ -9076,14 +9142,500 @@ async function normalizeFormTemplateDelete(db, value, evidence) {
   }, 'delete');
 }
 
-async function normalizeFormTemplateAction(db, value, evidence, { currentUserId = null } = {}) {
-  // The per-family switch: '0' and the A12.4 kinds do not exist.
+// ── A12X: field-level edits of the DRAFT, the title, a new form ────────────
+// The PUT takes no precondition, so the card IS the review: the normalizer
+// re-reads the draft, applies the one operation to a copy, has the service
+// validate the result, freezes that definition on the card and hashes the
+// draft it started from into `expected`; the click re-reads and refuses on any
+// difference, then PUTs the frozen definition (routes/api.formTemplates.js →
+// updateTemplate: validateDefinition again, the form_dev gate — a no-op here,
+// the authored keys are copied verbatim — and ONE UPDATE of draft_definition).
+
+// Every section of a definition with the path validateDefinition names it by
+// (sections mode: sections[i]; tabs mode: stickyTop[i], tabs[t].sections[i],
+// stickyBottom[i] — the order extFormService.buildValueRegistry walks).
+function formTemplateSections(def) {
+  const out = [];
+  if (!def || typeof def !== 'object' || Array.isArray(def)) return out;
+  const push = (list, prefix) => {
+    if (!Array.isArray(list)) return;
+    list.forEach((s, i) => { if (s && typeof s === 'object' && !Array.isArray(s)) out.push({ section: s, path: `${prefix}[${i}]` }); });
+  };
+  if (Array.isArray(def.tabs)) {
+    push(def.stickyTop, 'stickyTop');
+    def.tabs.forEach((t, ti) => push(t && t.sections, `tabs[${ti}].sections`));
+    push(def.stickyBottom, 'stickyBottom');
+  } else {
+    push(def.sections, 'sections');
+  }
+  return out;
+}
+
+function formTemplateSectionLabel(s) {
+  if (s.section.title) return `"${String(s.section.title).slice(0, 80)}"`;
+  if (Object.prototype.hasOwnProperty.call(s.section, 'repeater')) return `repeater "${s.section.repeater}"`;
+  return s.path;
+}
+
+// The section a card names: by its title (case-insensitive, spaces
+// collapsed), its repeater key, or its path (sections[2],
+// tabs[0].sections[1]); omitted only when the draft has ONE section.
+function formTemplateSectionRef(tpl, sections, ref) {
+  const want = ref == null ? '' : String(ref).trim();
+  const all = sections.map((s, index) => ({ ...s, index, label: formTemplateSectionLabel(s) }));
+  if (!want) {
+    if (all.length === 1) return all[0];
+    throw formError(`${formTemplateName(tpl)} has ${all.length} sections — name the one the field goes into in "section" (its title): ${all.map((s) => s.label).join(', ')}`);
+  }
+  const norm = (s) => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim();
+  const hits = all.filter((s) => (s.section.title != null && norm(s.section.title) === norm(want)) || s.section.repeater === want || s.path === want);
+  if (!hits.length) throw formError(`${formTemplateName(tpl)} has no section "${want.slice(0, 80)}" — its sections: ${all.map((s) => s.label).join(', ')}`);
+  if (hits.length > 1) throw formError(`"${want.slice(0, 80)}" names ${hits.length} sections of ${formTemplateName(tpl)} (${hits.map((h) => h.path).join(', ')}) — name it by its path instead`);
+  return hits[0];
+}
+
+// Where ONE answer field lives: the array holding it, its index, its section
+// and (for a repeater's row field) the repeater key. The name is a top-level
+// field name or "<repeater>.<field>" — the keys of the card's diff
+// (formTemplateFlat).
+function formTemplateLocate(def, fieldName) {
+  const dot = fieldName.indexOf('.');
+  const rep = dot > 0 ? fieldName.slice(0, dot) : null;
+  const name = dot > 0 ? fieldName.slice(dot + 1) : fieldName;
+  for (const { section, path } of formTemplateSections(def)) {
+    if (Object.prototype.hasOwnProperty.call(section, 'repeater')) {
+      if (rep !== null && section.repeater === rep && Array.isArray(section.fields)) {
+        const i = section.fields.findIndex((f) => f && f.name === name);
+        if (i >= 0) return { holder: section.fields, index: i, field: section.fields[i], section, path: `${path}.fields[${i}]`, repeater: rep };
+      }
+      continue;
+    }
+    if (rep !== null) continue;
+    const rows = Array.isArray(section.rows) ? section.rows : [];
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row || !Array.isArray(row.fields)) continue;
+      const i = row.fields.findIndex((f) => f && f.name === name);
+      if (i >= 0) return { holder: row.fields, index: i, field: row.fields[i], section, row, path: `${path}.rows[${r}].fields[${i}]`, repeater: null };
+    }
+  }
+  return null;
+}
+
+// Everything in a definition that still names a top-level field: conditions
+// (showWhen / showWhenAny / requiredWhen on sections, rows and fields) and
+// derive rules — what validateDefinition 400s as a dangling target once the
+// field is gone (the builder cascade-removes them after a confirm; a card
+// refuses instead and names them).
+function formTemplateReferences(def, name) {
+  const out = [];
+  const conds = (slot) => (slot == null ? [] : Array.isArray(slot) ? slot : [slot]);
+  const scan = (node, path) => {
+    if (!node || typeof node !== 'object') return;
+    for (const key of ['showWhen', 'showWhenAny', 'requiredWhen']) {
+      if (conds(node[key]).some((c) => c && c.field === name)) out.push(`${path}.${key}`);
+    }
+  };
+  for (const { section, path } of formTemplateSections(def)) {
+    scan(section, path);
+    if (Object.prototype.hasOwnProperty.call(section, 'repeater')) {
+      (Array.isArray(section.fields) ? section.fields : []).forEach((f, i) => scan(f, `${path}.fields[${i}]`));
+    } else {
+      (Array.isArray(section.rows) ? section.rows : []).forEach((row, r) => {
+        scan(row, `${path}.rows[${r}]`);
+        (row && Array.isArray(row.fields) ? row.fields : []).forEach((f, i) => scan(f, `${path}.rows[${r}].fields[${i}]`));
+      });
+    }
+  }
+  (Array.isArray(def.derive) ? def.derive : []).forEach((rule, i) => {
+    if (rule && (rule.target === name || rule.from === name)) out.push(`derive[${i}]`);
+  });
+  return out;
+}
+
+// One authored field object (a create's, an add's, or an update's changes):
+// its keys are the field's own (§4.3), never what runs or embeds in a
+// browser. validateDefinition keeps the last word on every value; this names
+// the refusals a card owes before the service sees the definition.
+function formTemplateFieldCheck(field, what, { changes = false, repeater = null } = {}) {
+  if (!field || typeof field !== 'object' || Array.isArray(field)) throw formError(`${what} must be an object`);
+  const keys = Object.keys(field);
+  if (!keys.length) throw formError(`${what} is empty`);
+  const refused = keys.filter((k) => Object.prototype.hasOwnProperty.call(FORM_TEMPLATE_FIELD_REFUSED, k));
+  if (refused.length) {
+    throw formError(`AUTHORED CONTENT refused (${refused.map((k) => `${k} — ${FORM_TEMPLATE_FIELD_REFUSED[k]}`).join('; ')}): code, hooks, CSS, embed and content items run, embed or load in every staff browser that opens the form — the form builder sets them (its form-developer gate applies there); Casey authors answer fields only`);
+  }
+  const unknown = keys.filter((k) => !FORM_TEMPLATE_FIELD_KEYS.has(k));
+  if (unknown.length) throw formError(`${what} has keys that are not field keys: ${unknown.join(', ')} — a field takes ${[...FORM_TEMPLATE_FIELD_KEYS].join(', ')}`);
+  if (changes && Object.prototype.hasOwnProperty.call(field, 'name')) {
+    throw formError('RENAME refused (changes.name): a renamed field is a REMOVED field and an ADDED one to the published form — its version bumps, every answer stored under the old name stops showing, and every condition naming it breaks. Remove the field and add the new one, each its own card');
+  }
+  if (!changes || Object.prototype.hasOwnProperty.call(field, 'type')) {
+    if (typeof field.type !== 'string' || !FORM_TEMPLATE_FIELD_TYPES.includes(field.type)) {
+      const displayOnly = field.type === 'embed' || field.type === 'content';
+      throw formError(`${what}.type must be one of ${FORM_TEMPLATE_FIELD_TYPES.join(', ')}${displayOnly ? ` — "${field.type}" is a display-only item the form builder places (an embed runs an iframe in every browser; a content item carries no answer)` : ''} — got ${field.type == null ? 'nothing' : `"${String(field.type).slice(0, 40)}"`}`);
+    }
+    if (repeater && !FORM_TEMPLATE_REPEATER_TYPES.includes(field.type)) {
+      throw formError(`${what}.type "${field.type}" is not allowed inside repeater "${repeater}" — a repeater's row takes ${FORM_TEMPLATE_REPEATER_TYPES.join(', ')} (the form builder refuses the same drop)`);
+    }
+  }
+  if (!changes) {
+    if (typeof field.name !== 'string' || !FORM_TEMPLATE_FIELD_NAME_RE.test(field.name)) {
+      throw formError(`${what}.name must match ^[a-zA-Z0-9_]{1,50}$ (letters, digits, underscores) — got ${field.name == null ? 'nothing' : `"${String(field.name).slice(0, 60)}"`}`);
+    }
+    if (field.type !== 'hidden' && (typeof field.label !== 'string' || !field.label.trim())) {
+      throw formError(`${what}.label is required (the question the form asks) — only a hidden field has none`);
+    }
+  }
+  for (const k of ['label', 'sublabel', 'placeholder', 'lockedMsg', 'patternMessage', 'requiredMessage', 'note', 'mask', 'width', 'prefillMode', 'urlParam', 'prefix', 'suffix', 'pattern']) {
+    if (field[k] != null && typeof field[k] !== 'string') throw formError(`${what}.${k} must be a string`);
+    if (typeof field[k] === 'string' && field[k].length > 2000) throw formError(`${what}.${k} is over 2000 characters`);
+  }
+  for (const k of ['required', 'readonly', 'email', 'allowOther']) {
+    if (field[k] != null && typeof field[k] !== 'boolean') throw formError(`${what}.${k} must be true or false`);
+  }
+  if (field.options != null) {
+    if (!Array.isArray(field.options) || !field.options.length) throw formError(`${what}.options must be a non-empty list of choices (strings, or {value, label})`);
+    if (field.options.length > 200) throw formError(`${what}.options lists ${field.options.length} choices — more than 200 is the form builder's`);
+    for (const o of field.options) {
+      const ok = (typeof o === 'string' && o.length <= 300)
+        || (o && typeof o === 'object' && !Array.isArray(o) && typeof o.value === 'string' && (o.label == null || typeof o.label === 'string')
+          && Object.keys(o).every((k) => k === 'value' || k === 'label'));
+      if (!ok) throw formError(`${what}.options entries must be strings or {value, label} objects`);
+    }
+  }
+  const loadish = (v) => typeof v === 'string' && v.trim().startsWith('$load');
+  if (loadish(field.prefill) || (field.optionsFrom && typeof field.optionsFrom === 'object' && loadish(field.optionsFrom.source))) {
+    throw formError('$LOAD refused: a $load prefill or options source reads the record\'s load payload by a grammar the form builder checks and previews — set it in the builder; Casey authors the field without it');
+  }
+}
+
+// A card never authors a question of its own: a field is named when its label,
+// its name, or its name with the underscores as spaces appears in the user's
+// recent messages or in the values of a cited evidence row (case-insensitive,
+// spaces collapsed). Returns the predicate.
+function formTemplateNamedBy(userText, refs, evidence) {
+  const norm = (s) => String(s == null ? '' : s).toLowerCase().replace(/[\s_]+/g, ' ').trim();
+  const pool = [norm(userText)];
+  for (const ref of refs) {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    if (row && typeof row === 'object') {
+      pool.push(norm(Object.values(row).map((v) => (v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))).join(' ')));
+    }
+  }
+  const text = pool.join('\n');
+  return (field) => [field.label, field.name].some((v) => { const n = norm(v); return n.length >= 2 && text.includes(n); });
+}
+
+function formTemplateNotNamed(field, verb) {
+  return formError(`"${field.label || field.name}" (${field.name}) is not a field the user asked for — a card ${verb} only a field whose label or name appears in the user's own words (or in a cited row). Use the user's words for the field, or ask which fields they want`);
+}
+
+// The card an edit of the DRAFT shows (add / update / remove): the NEW
+// definition validated by the service and frozen on the card, diffed against
+// the current draft with the A12.4 helpers; what the next publish would do
+// (the version bump, the saved drafts it leaves behind) predicted from the
+// PUBLISHED definition with the service's own fieldSignature.
+async function formTemplateEditCard(db, { id, refs, tpl, fts, kind, next, what, op, headline, removed = null }) {
+  const draft = tpl.draft_definition; const def = tpl.definition;
+  const name = formTemplateName(tpl);
+  try { fts.validateDefinition(next); } catch (e) {
+    if (e && e.status === 400) throw formError(`DRAFT INVALID refused: the route validates the definition before it saves the draft and would refuse this one (400) — ${e.message}`);
+    throw e;
+  }
+  if (formCanonical(next) === formCanonical(draft)) throw formError(`NOTHING TO CHANGE: the draft of ${name} already reads that way`);
+  const authored = fts.authoredKeyChanges(next, draft);
+  if (authored.length) throw formError(`AUTHORED CONTENT refused: this change would alter the form's ${authored.join(', ')} — the form builder's form-developer gate owns those; Casey copies them unchanged`);
+  const versions = await fts.listVersions(db, id);
+  const usage = await formTemplateUsage(db, tpl.form_key);
+  const diff = formTemplateDefDiff(draft, next);
+  const vNow = Number(tpl.schema_version) || 1;
+  const published = def != null;
+  const bumpNow = published && fts.fieldSignature(draft) !== fts.fieldSignature(def);
+  const bumpNext = published && fts.fieldSignature(next) !== fts.fieldSignature(def);
+  const publishesAs = published && bumpNext ? vNow + 1 : vNow;
+
+  // Drafts saved on the version this change would retire once published: the
+  // submit route (and the Casey submit card) refuses them (409) until re-saved.
+  let stale = { count: 0, records: [] };
+  if (bumpNext) {
+    const [rows] = await db.query(
+      `SELECT id, link_type, link_id, updated_at FROM form_submissions
+        WHERE form_key = ? AND status = 'draft' AND schema_version = ? ORDER BY updated_at DESC, id DESC`, [tpl.form_key, vNow]);
+    const list = Array.isArray(rows) ? rows : [];
+    const records = [];
+    for (const r of list.slice(0, FORM_TEMPLATE_NAMED)) {
+      const lt = String(r.link_type || '').toLowerCase();
+      const rec = FORM_LINK_TYPES.includes(lt) ? await formLinkRecord(db, lt, String(r.link_id)) : null;
+      records.push({ submission_id: Number(r.id), record: rec ? rec.label : `${lt || 'no record'} ${r.link_id || ''}`.trim(), updated_at: documentIso(r.updated_at) });
+    }
+    stale = { count: list.length, records };
+  }
+
+  const warnings = []; const effects = [headline];
+  if (removed) {
+    warnings.push(`FIELD REMOVED: ${removed.label} (${removed.key}) — once this draft is published, the form stops asking it; answers already stored in submissions and drafts keep it${removed.column ? `, and nothing saves to the ${removed.column} column from this form any more` : ''}.`);
+  }
+  if (diff.changed.some((c) => /(^|; )type /.test(c.what))) {
+    warnings.push('TYPE CHANGE: an answer already stored under the old type may not fit the new one (a date in a number field, a free text in a choice list); once published, the form validates new answers by the new type.');
+  }
+  if (stale.count) {
+    warnings.push(`DRAFTS ON THE CURRENT VERSION: ${stale.count} saved draft${stale.count === 1 ? '' : 's'} of this form ${stale.count === 1 ? 'was' : 'were'} saved on version ${vNow}; ${bumpNow ? 'the draft already changes the answer fields and this change keeps that' : 'this change alters the answer fields'}, so once it is published (as version ${publishesAs}) submitting ${stale.count === 1 ? 'it' : 'them'} is refused (409 — the submit route and the Casey submit card) until ${stale.count === 1 ? 'it is' : 'they are'} restored and re-saved on the form: ${stale.records.map((r) => `draft #${r.submission_id} for ${r.record}`).join('; ')}${stale.count > stale.records.length ? ' …' : ''}.`);
+  }
+  effects.push(`Writes the DRAFT of ${name} only — NOTHING PUBLISHES: ${published ? `the published version ${vNow}` : 'nothing is published yet, and the form stays unpublished'}, the visibility and every submission are untouched; the form changes for anyone who opens it only when the draft is published (a publish card, or the builder's Publish).`);
+  effects.push(published
+    ? `If published afterwards: version ${publishesAs} (${bumpNext ? `the answer fields differ from version ${vNow}, so the version bumps${bumpNow ? ' — the draft already did' : ''}` : 'no answer field differs from what is published, so the version stays'}).`
+    : `If published afterwards: version ${vNow} — the first publish of ${name}.`);
+  effects.push(`Usage: ${usage.submitted} submitted form${usage.submitted === 1 ? '' : 's'} and ${usage.drafts} saved draft${usage.drafts === 1 ? '' : 's'} of this form exist.`);
+  effects.push('Other open pages: nothing on the sync bus hears a template write — a form builder already open on this template still holds the OLD draft, and its next Save writes that old draft back over this change. Reopen it first.');
+  effects.push('Recorded: no audit row and no trigger event (the route records neither for a draft save).');
+  return formTemplateSized({
+    draft_id: crypto.randomUUID(), kind, status: 'draft',
+    template: formTemplateHead(tpl), op,
+    diff: { added: diff.added.slice(0, FORM_CARD_LIST), removed: diff.removed.slice(0, FORM_CARD_LIST), changed: diff.changed.slice(0, FORM_CARD_LIST),
+      added_total: diff.added.length, removed_total: diff.removed.length, changed_total: diff.changed.length,
+      layout_changed: diff.layout_changed, other_keys: diff.other_keys, lines: formTemplateDiffLines(diff, 'change') },
+    publish: { published, bumped: bumpNext, schema_version_after: publishesAs },
+    stale_drafts: stale, usage, effects, warnings,
+    // The definition the click PUTs — built here, frozen here, never rebuilt.
+    next_definition: next, next_hash: formDataHash(next),
+    expected: formTemplateExpected(tpl, versions),
+    evidence: refs,
+  }, what);
+}
+
+async function normalizeFormTemplateFieldAdd(db, value, evidence, userText) {
+  const { id, refs, tpl, fts } = await formTemplateTarget(db, value, evidence, 'field add');
+  const field = value.field;
+  formTemplateFieldCheck(field, 'field');
+  const draft = tpl.draft_definition;
+  const sections = formTemplateSections(draft);
+  if (!sections.length) throw formError(`${formTemplateName(tpl)} has no section to add a field to — the user adds one in the form builder first`);
+  const target = formTemplateSectionRef(tpl, sections, value.section);
+  const isRep = Object.prototype.hasOwnProperty.call(target.section, 'repeater');
+  if (isRep) formTemplateFieldCheck(field, 'field', { repeater: target.section.repeater });
+  const key = isRep ? `${target.section.repeater}.${field.name}` : field.name;
+  if (formTemplateLocate(draft, key) || sections.some((s) => s.section.repeater === field.name)) {
+    throw formError(`FIELD EXISTS: ${formTemplateName(tpl)} already has a field or repeater named "${key}" — change it with form.template.field.update.v1, or pick another name`);
+  }
+  if (!formTemplateNamedBy(userText, refs, evidence)(field)) throw formTemplateNotNamed(field, 'adds');
+  const after = value.after == null || String(value.after).trim() === '' ? null : String(value.after).trim();
+  const next = JSON.parse(JSON.stringify(draft));
+  const tNext = formTemplateSections(next)[target.index].section;
+  const copy = JSON.parse(JSON.stringify(field));
+  let placed;
+  if (isRep) {
+    const list = Array.isArray(tNext.fields) ? tNext.fields : (tNext.fields = []);
+    let at = list.length;
+    if (after !== null) {
+      const i = list.findIndex((f) => f && f.name === after);
+      if (i < 0) throw formError(`"after" names "${after}", which is not a row field of repeater "${target.section.repeater}"`);
+      at = i + 1;
+    }
+    list.splice(at, 0, copy);
+    placed = `row field ${at + 1} of ${list.length} in repeater "${target.section.repeater}"`;
+  } else {
+    const rows = Array.isArray(tNext.rows) ? tNext.rows : (tNext.rows = []);
+    if (after !== null) {
+      let hit = null;
+      rows.forEach((row, r) => {
+        if (hit || !row || !Array.isArray(row.fields)) return;
+        const i = row.fields.findIndex((f) => f && f.name === after);
+        if (i >= 0) hit = { row, r, i };
+      });
+      if (!hit) throw formError(`"after" names "${after}", which is not a field of section ${target.label}`);
+      hit.row.fields.splice(hit.i + 1, 0, copy);
+      placed = `right after "${after}" in row ${hit.r + 1} of section ${target.label}`;
+    } else {
+      rows.push({ fields: [copy] });
+      placed = `a new row (row ${rows.length}) at the end of section ${target.label}`;
+    }
+  }
+  const line = formTemplateFieldLine({ key, f: copy, repeater: isRep ? target.section.repeater : null });
+  return formTemplateEditCard(db, { id, refs, tpl, fts, kind: 'form.template.field.add.v1', next, what: 'field add',
+    op: { field: line, section: target.label, section_path: target.path, placement: placed, after },
+    headline: `Adds answer field "${line.label}" (${key}) — ${line.detail} — as ${placed}.` });
+}
+
+async function normalizeFormTemplateFieldUpdate(db, value, evidence) {
+  const { id, refs, tpl, fts } = await formTemplateTarget(db, value, evidence, 'field update');
+  const fieldName = String(value.field_name == null ? '' : value.field_name).trim();
+  if (!fieldName) throw formError('A field update names the field in "field_name" (a top-level field name, or "<repeater>.<field>" for a repeater\'s row field)');
+  const draft = tpl.draft_definition;
+  const loc = formTemplateLocate(draft, fieldName);
+  if (!loc) {
+    const keys = [...formTemplateFlat(draft).keys()];
+    throw formError(`${formTemplateName(tpl)} has no answer field "${fieldName.slice(0, 60)}" in its draft — its fields: ${keys.slice(0, FORM_CARD_LIST).join(', ')}${keys.length > FORM_CARD_LIST ? ' …' : ''}`);
+  }
+  formTemplateFieldCheck(value.changes, 'changes', { changes: true, repeater: loc.repeater });
+  const next = JSON.parse(JSON.stringify(draft));
+  const target = formTemplateLocate(next, fieldName);
+  const changes = JSON.parse(JSON.stringify(value.changes));
+  const set = []; const dropped = [];
+  for (const [k, v] of Object.entries(changes)) {
+    if (v === null) { if (Object.prototype.hasOwnProperty.call(target.field, k)) { delete target.field[k]; dropped.push(k); } }
+    else { target.field[k] = v; set.push(k); }
+  }
+  if (!set.length && !dropped.length) throw formError(`NOTHING TO CHANGE: changes drops keys "${fieldName}" does not have`);
+  const line = formTemplateFieldLine({ key: fieldName, f: target.field, repeater: loc.repeater });
+  return formTemplateEditCard(db, { id, refs, tpl, fts, kind: 'form.template.field.update.v1', next, what: 'field update',
+    op: { field: line, path: loc.path, set, dropped },
+    headline: `Changes answer field "${line.label}" (${fieldName}): ${[set.length ? `sets ${set.join(', ')}` : '', dropped.length ? `drops ${dropped.join(', ')}` : ''].filter(Boolean).join('; ')} — afterwards ${line.detail}.` });
+}
+
+async function normalizeFormTemplateFieldRemove(db, value, evidence) {
+  const { id, refs, tpl, fts } = await formTemplateTarget(db, value, evidence, 'field remove');
+  const fieldName = String(value.field_name == null ? '' : value.field_name).trim();
+  if (!fieldName) throw formError('A field remove names the field in "field_name" (a top-level field name, or "<repeater>.<field>" for a repeater\'s row field)');
+  const draft = tpl.draft_definition;
+  const loc = formTemplateLocate(draft, fieldName);
+  if (!loc) {
+    if (formTemplateSections(draft).some((s) => s.section.repeater === fieldName)) {
+      throw formError(`REPEATER refused: "${fieldName}" is a repeater section of ${formTemplateName(tpl)}, not a field — removing a whole section (and every answer row it holds) is the form builder's`);
+    }
+    const keys = [...formTemplateFlat(draft).keys()];
+    throw formError(`${formTemplateName(tpl)} has no answer field "${fieldName.slice(0, 60)}" in its draft — its fields: ${keys.slice(0, FORM_CARD_LIST).join(', ')}${keys.length > FORM_CARD_LIST ? ' …' : ''}`);
+  }
+  if (!loc.repeater) {
+    const refsTo = formTemplateReferences(draft, fieldName);
+    if (refsTo.length) {
+      throw formError(`STILL REFERENCED refused: ${refsTo.join(', ')} ${refsTo.length === 1 ? 'names' : 'name'} "${fieldName}" (a visibility / required-when condition or a derive rule) — the draft would not save with a dangling target. Clear ${refsTo.length === 1 ? 'it' : 'them'} first (a field's condition with form.template.field.update.v1 {showWhen: null}; a section's, a row's or a derive rule in the form builder, whose delete cascade-removes them after a confirm)`);
+    }
+  }
+  if (loc.repeater && loc.holder.length === 1) {
+    throw formError(`LAST ROW FIELD refused: "${fieldName}" is the only row field of repeater "${loc.repeater}" — a repeater needs one, so removing it means removing the repeater section, which is the form builder's`);
+  }
+  const next = JSON.parse(JSON.stringify(draft));
+  const target = formTemplateLocate(next, fieldName);
+  target.holder.splice(target.index, 1);
+  const line = formTemplateFieldLine({ key: fieldName, f: loc.field, repeater: loc.repeater });
+  const column = loc.field.apiColumn != null && loc.field.apiColumn !== '' ? formTemplateApiColumn(loc.field) : null;
+  return formTemplateEditCard(db, { id, refs, tpl, fts, kind: 'form.template.field.remove.v1', next, what: 'field remove',
+    op: { field: line, path: loc.path }, removed: { key: fieldName, label: line.label, column },
+    headline: `Removes answer field "${line.label}" (${fieldName}) — ${line.detail} — from the draft${loc.row && loc.holder.length === 1 ? ' (its row is left empty)' : ''}.` });
+}
+
+async function normalizeFormTemplateMeta(db, value, evidence) {
+  const { id, refs, tpl, fts } = await formTemplateTarget(db, value, evidence, 'meta');
+  if (value.form_key !== undefined) {
+    throw formError(`FORM KEY RENAME refused: "${tpl.form_key}" is the name every stored reader of this form carries — its public link /f/${tpl.form_key}, workflow / pipeline / portal definitions, and form_submissions.form_key on every submission and draft — so a rename breaks each of them silently (the route itself refuses it once the form is published or used). Renaming is the form builder's, and only for a never-published, unused form`);
+  }
+  if (value.link_type !== undefined) {
+    throw formError(`LINK TYPE refused: "${tpl.link_type}" is the kind of record every submission of this form links to — no route changes it (the builder sets it once, at creation)`);
+  }
+  if (value.title === undefined) throw formError('A form template meta card sets the title — give "title"');
+  const title = String(value.title == null ? '' : value.title).trim();
+  if (!title) throw formError('title must be a non-empty string (the route refuses an empty title, 400)');
+  if (title.length > FORM_TEMPLATE_TITLE_MAX) throw formError(`title is ${title.length} characters — the column holds ${FORM_TEMPLATE_TITLE_MAX}`);
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(title)) throw formError('title must not contain line breaks or control characters');
+  const from = String(tpl.title || '');
+  if (title === from) throw formError(`NOTHING TO CHANGE: ${formTemplateName(tpl)} is already titled "${from}"`);
+  const versions = await fts.listVersions(db, id);
+  const usage = await formTemplateUsage(db, tpl.form_key);
+  const effects = [
+    `Retitles form template #${id} (${tpl.form_key}): "${from}" → "${title}".`,
+    'The title is the name the form is listed and headed by (the form builder\'s list, the Forms tab, Casey\'s reads); the form_key, the definitions, the version and the visibility are untouched, and nothing publishes.',
+    `Usage: ${usage.submitted} submitted form${usage.submitted === 1 ? '' : 's'} and ${usage.drafts} saved draft${usage.drafts === 1 ? '' : 's'} of this form exist — none changes.`,
+    'Other open pages: nothing on the sync bus hears a template write — a form builder already open on this template shows the old title until it is reopened (its next Save sends the title it holds only when the user edited it there).',
+    'Recorded: no audit row and no trigger event (the route records neither for a title change).',
+  ];
+  return formTemplateSized({
+    draft_id: crypto.randomUUID(), kind: 'form.template.meta.v1', status: 'draft',
+    template: formTemplateHead(tpl), meta: { title_from: from, title_to: title },
+    usage, effects, warnings: [],
+    expected: formTemplateExpected(tpl, versions),
+    evidence: refs,
+  }, 'meta');
+}
+
+// The one deterministic shape a create builds: ONE standard section — the
+// builder's "Section 1" — with one row per reviewed field (the builder's own
+// click-to-add makes a row per drop too). Layout, settings, code and visibility
+// are the builder's afterwards; a new template is internal and unpublished.
+function formTemplateCreateDefinition(fields) {
+  return { sections: [{ title: 'Section 1', rows: fields.map((f) => ({ fields: [f] })) }] };
+}
+
+async function normalizeFormTemplateCreate(db, value, evidence, userText) {
+  const keys = FORM_TEMPLATE_KEYS['form.template.create.v1'];
+  const extra = Object.keys(value).filter((k) => !keys.has(k));
+  if (extra.length) {
+    const raw = extra.filter((k) => /definition|draft|code|css|hooks|section|tab|layout|external|visib|sticky|derive|onsubmit|endpoint/i.test(k));
+    if (raw.length) {
+      throw formError(`RAW DEFINITION refused (${raw.join(', ')}): a new form is built here from the reviewed field list — ONE standard section, one row per field; its layout, settings, on-submit workflows, code, CSS, hooks and visibility are set in the form builder afterwards (a new template starts internal and unpublished)`);
+    }
+    throw formError(`A form template create card carries unsupported fields: ${extra.join(', ')} — it takes ${FORM_TEMPLATE_TAKES['form.template.create.v1']}; evidence is optional (a cited row may name the fields)`);
+  }
+  const refs = value.evidence == null || (Array.isArray(value.evidence) && !value.evidence.length) ? [] : taskDraftEvidence(value.evidence, evidence);
+  const formKey = String(value.form_key == null ? '' : value.form_key).trim();
+  if (!FORM_TEMPLATE_FORM_KEY_RE.test(formKey)) {
+    throw formError(`form_key must match ^[a-z0-9_]{1,50}$ (lower-case letters, digits, underscores — the route refuses anything else, 400) — got ${formKey ? `"${formKey.slice(0, 60)}"` : 'nothing'}`);
+  }
+  const title = String(value.title == null ? '' : value.title).trim();
+  if (!title) throw formError('title is required (the route refuses an empty title, 400)');
+  if (title.length > FORM_TEMPLATE_TITLE_MAX) throw formError(`title is ${title.length} characters — the column holds ${FORM_TEMPLATE_TITLE_MAX}`);
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(title)) throw formError('title must not contain line breaks or control characters');
+  const linkType = String(value.link_type == null ? '' : value.link_type).trim();
+  if (!FORM_TEMPLATE_LINK_TYPES.includes(linkType)) throw formError(`link_type must be one of ${FORM_TEMPLATE_LINK_TYPES.join(', ')} (the kind of record every submission links to; the route refuses anything else, 400) — got ${linkType ? `"${linkType.slice(0, 40)}"` : 'nothing'}`);
+  if (!Array.isArray(value.fields) || !value.fields.length) throw formError('fields must list at least one answer field ({name, type, label, required?, options?})');
+  if (value.fields.length > FORM_TEMPLATE_CREATE_FIELDS_MAX) {
+    throw formError(`fields lists ${value.fields.length} answer fields — a card reviews up to ${FORM_TEMPLATE_CREATE_FIELDS_MAX}; create the form with its first fields and add the rest (one card each, or in the form builder)`);
+  }
+  const named = formTemplateNamedBy(userText, refs, evidence);
+  const seen = new Set(); const fields = [];
+  value.fields.forEach((f, i) => {
+    const what = `fields[${i + 1}]`;
+    formTemplateFieldCheck(f, what);
+    if (seen.has(f.name)) throw formError(`${what}.name "${f.name}" repeats an earlier field — names are unique form-wide`);
+    seen.add(f.name);
+    if (!named(f)) throw formTemplateNotNamed(f, 'creates a form with');
+    fields.push(JSON.parse(JSON.stringify(f)));
+  });
+  const fts = formTemplateSvc();
+  const definition = formTemplateCreateDefinition(fields);
+  try { fts.validateDefinition(definition); } catch (e) {
+    if (e && e.status === 400) throw formError(`DEFINITION INVALID refused: the route validates the definition before it creates the template and would refuse this one (400) — ${e.message}`);
+    throw e;
+  }
+  const authored = fts.authoredKeyChanges(definition, null);
+  if (authored.length) throw formError(`AUTHORED CONTENT refused: the definition would carry ${authored.join(', ')} — the form builder's form-developer gate owns those`);
+  const [rows] = await db.query('SELECT id FROM form_templates WHERE form_key = ? LIMIT 1', [formKey]);
+  const taken = Array.isArray(rows) ? rows[0] : null;
+  if (taken) throw formError(`FORM KEY TAKEN: form template #${Number(taken.id)} already has form_key "${formKey}" (the route refuses a duplicate, 400) — pick another key, or add fields to that template instead`);
+  const lines = fields.map((f) => formTemplateFieldLine({ key: f.name, f, repeater: null }));
+  const effects = [
+    `Creates form template "${title}" (${formKey}), a ${linkType} form, with ONE section ("Section 1") holding ${fields.length} answer field${fields.length === 1 ? '' : 's'}, one per row: ${lines.map((l) => `${l.label} (${l.key}) — ${l.detail}`).join('; ')}.`,
+    'The new template is NEVER PUBLISHED and INTERNAL: no form page offers it, no client can reach it and Casey cannot draft it until it is published (a publish card, or the builder\'s Publish); its visibility, layout, settings, on-submit workflows and any code are the form builder\'s.',
+    `The form_key is permanent once published and is the name every later reader uses (its link /f/${formKey}, workflow and pipeline steps, every submission).`,
+    'Other open pages: nothing on the sync bus hears a template write — an open form builder lists the new template when it is reopened.',
+    'Recorded: no audit row and no trigger event (the route records neither for a create).',
+  ];
+  return formTemplateSized({
+    draft_id: crypto.randomUUID(), kind: 'form.template.create.v1', status: 'draft',
+    create: { form_key: formKey, title, link_type: linkType },
+    fields: lines, fields_total: fields.length,
+    // The definition the click POSTs — built here, frozen here, never rebuilt.
+    definition, definition_hash: formDataHash(definition),
+    effects, warnings: [],
+    expected: { form_key: formKey },
+    evidence: refs,
+  }, 'create');
+}
+
+async function normalizeFormTemplateAction(db, value, evidence, { currentUserId = null, userText = '' } = {}) {
+  // The per-family switch: '0' and the A12.4 / A12X kinds do not exist.
   if (require('../lib/firmConfig').cfg('casey_form_templates_enabled') === '0') {
     throw httpError(422, 'Action kind is unavailable');
   }
   if (value.kind === 'form.template.publish.v1') return normalizeFormTemplatePublish(db, value, evidence);
   if (value.kind === 'form.template.visibility.v1') return normalizeFormTemplateVisibility(db, value, evidence, currentUserId);
   if (value.kind === 'form.template.restore.v1') return normalizeFormTemplateRestore(db, value, evidence, currentUserId);
+  if (value.kind === 'form.template.field.add.v1') return normalizeFormTemplateFieldAdd(db, value, evidence, userText);
+  if (value.kind === 'form.template.field.update.v1') return normalizeFormTemplateFieldUpdate(db, value, evidence);
+  if (value.kind === 'form.template.field.remove.v1') return normalizeFormTemplateFieldRemove(db, value, evidence);
+  if (value.kind === 'form.template.meta.v1') return normalizeFormTemplateMeta(db, value, evidence);
+  if (value.kind === 'form.template.create.v1') return normalizeFormTemplateCreate(db, value, evidence, userText);
   return normalizeFormTemplateDelete(db, value, evidence);
 }
 
@@ -15133,7 +15685,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && DOCUMENT_ACTION_KINDS.has(value.kind)) return normalizeDocumentAction(db, value, evidence, { currentUserId });
   if (value && CASE_DOCKET_ACTION_KINDS.has(value.kind)) return normalizeCaseDocketAction(db, value, evidence, { currentUserId });
   if (value && FORM_ACTION_KINDS.has(value.kind)) return normalizeFormAction(db, value, evidence, { currentUserId });
-  if (value && FORM_TEMPLATE_ACTION_KINDS.has(value.kind)) return normalizeFormTemplateAction(db, value, evidence, { currentUserId });
+  if (value && FORM_TEMPLATE_ACTION_KINDS.has(value.kind)) return normalizeFormTemplateAction(db, value, evidence, { currentUserId, userText: draftUserText(question, history) });
   if (value && MAIL_ACTION_KINDS.has(value.kind)) return normalizeMailAction(db, value, evidence, { currentUserId });
   if (value && MAIL_ATTACHMENTS_ACTION_KINDS.has(value.kind)) return normalizeMailAttachmentsAction(db, value, evidence, { currentUserId });
   if (value && CASE_FOLDER_ACTION_KINDS.has(value.kind)) return normalizeCaseFolderAction(db, value, evidence, { currentUserId });
@@ -15344,9 +15896,12 @@ function taskDraftRequested(question, history = []) {
     /\b(?:draft|propose|prepare|prefill|pre-fill|fill(?: in| out)?|start|save|submit|link|attach|adopt|assign|connect|associate|file\b[^.?!\n]{0,40}\b(?:to|under|on|with)|discard|delete|scrap|throw (?:out|away)|get rid of|(?:make|create|render|save|file|archive|put|store)\b[^.?!\n]{0,40}\bpdfs?)\b/i.test(request);
   // A12.4: a form template published, exposed / taken down, rolled back to a
   // version or deleted ("publish the intake form", "make the questionnaire
-  // public", "restore version 3 of the 341 notes", "delete that template").
+  // public", "restore version 3 of the 341 notes", "delete that template");
+  // A12X: a field added, changed or removed, the title changed, a form created
+  // ("add a hearing date field to the 341 notes", "make the trustee field
+  // required", "drop the notes field", "rename the form", "create a form").
   const formTemplate = /\b(?:form templates?|templates?|forms?|questionnaires?|dbkq|341 notes)\b/i.test(text) &&
-    /\b(?:publish|re-?publish|go live|make (?:it |the form )?live|visibility|expose|(?:make|set|switch|flip|turn)\b[^.?!\n]{0,40}\b(?:public|internal|portal|private|staff[ -]only)|take\b[^.?!\n]{0,40}\b(?:down|offline)|restore|roll ?back|revert|delete|remove)\b/i.test(request);
+    /\b(?:publish|re-?publish|go live|make (?:it |the form )?live|visibility|expose|(?:make|set|switch|flip|turn)\b[^.?!\n]{0,40}\b(?:public|internal|portal|private|staff[ -]only)|take\b[^.?!\n]{0,40}\b(?:down|offline)|restore|roll ?back|revert|delete|remove|add|insert|drop|change|edit|update|make\b[^.?!\n]{0,60}\b(?:required|optional)|re-?label|re-?name|re-?title|title|create|build|new form)\b/i.test(request);
   // A13: a known email marked read / unread, or linked to a case ("mark the
   // trustee's email read", "link Dana's last email to her case").
   const mailTriage = /\b(?:e-?mails?|mail|messages?|inbox)\b/i.test(text) &&

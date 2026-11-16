@@ -59,6 +59,43 @@ body. Governing migrations in `ref/migrations/`.*
   `firmLocalToIso`), Scheduled (n) in the rail + composer footer with a
   two-step Cancel; the list never loads at boot. Tests:
   `mailboxSendExtras.send` / `.mysql` / `.pane`.
+- **Casey field-level form template edits and creation (A12X, 11-16, Fred:
+  "release means allow"):** five kinds in the A12.4 `form_template` family,
+  same switch `casey_form_templates_enabled`, same receipt (`template_id`; a
+  create's is the NEW row's id): `form.template.field.add.v1` {template_id,
+  section?, field, after?}, `form.template.field.update.v1` {template_id,
+  field_name, changes — null drops a key, never `name`},
+  `form.template.field.remove.v1` {template_id, field_name} and
+  `form.template.meta.v1` {template_id, title} → ONE PUT
+  `/api/form-templates/:id` (`{draft_definition}` or `{title}`);
+  `form.template.create.v1` {form_key, title, link_type, fields} → POST
+  `/api/form-templates` (`formTemplateCreateDefinition`: ONE section
+  "Section 1", one row per field). Invariants: NEVER a whole-definition
+  replace — the normalizer re-reads the draft (`getTemplate`), applies the one
+  operation to a copy, runs the service's `validateDefinition` (its message is
+  the refusal), asserts `authoredKeyChanges(next, draft)` is empty and FREEZES
+  the result on the card (`next_definition` + SHA-256 `next_hash`; a create's
+  `definition` + `definition_hash`) with A12.4's `formTemplateExpected`; the
+  browser re-hashes the frozen definition, re-reads GET `/:id` + `/versions`
+  (a create: the list, for its form_key) and refuses on ANY difference, sends
+  the frozen definition as is, and compares the row the route answers with it
+  key-order-insensitively. The diff is `formTemplateDefDiff` (no second copy);
+  the card also shows the record column, the bump the next publish would make
+  (`fieldSignature` of the new draft vs the PUBLISHED definition), the drafts
+  on the current version that bump strands, FIELD REMOVED / TYPE CHANGE, and
+  that NOTHING PUBLISHES. Refused by name: code / hooks / css, embed and
+  content items and their keys, a `$load` prefill or source, a raw
+  definition, a rename (`changes.name`), a form_key rename, a link_type
+  change, a form_key in use, a field a condition or derive rule still names
+  (`formTemplateReferences`), a repeater's last row field. A field a card adds
+  or creates must be NAMED BY THE USER (label or name in their words, or a
+  cited row — `formTemplateNamedBy`). `section` = title / repeater key / path;
+  `after` = a field in it (absent: a new row at the end). The route's form_dev
+  gate never trips (authored keys are copied verbatim). No sync matcher.
+  Prompts 41/20/44/30. Tests: `caseyFormTemplates.test.js`, gated
+  `caseyFormTemplates.mysql.test.js` (the REAL PUT / POST, the frozen body),
+  `caseyActionPermissions.test.js` (100 kinds / 84 mounts); plan:
+  ASK_CASEY_ACTIONS_PLAN A12.4 "Released 2026-11-16"; manual 05/17, 02/14.
 - **Comms polish bundle A (comms-polish-2, 11-16):** Email tab: the card's
   ⋯ menu anchors to its button's LEFT edge (`.mmenu { left: 0 }`, `.flip`
   to the right only when it would overrun `.thread-body` — the right-anchored

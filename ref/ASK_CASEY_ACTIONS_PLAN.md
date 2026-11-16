@@ -2195,9 +2195,9 @@ than case / contact (no screen makes one; the Links dialog unlinks it).
 Start with a form draft or prefill and save/link it to a resolved record.
 Draft discard and PDF filing are A12.2's kinds, submitting a stored draft is
 A12.3's, and a template's publish, visibility change, version restore and
-delete are A12.4's. Editing a template's definition and creating a template
-have no card: a definition is a large JSON the form builder edits visually,
-and a card cannot review it line by line.
+delete are A12.4's. Editing a template's draft (one field per card — add,
+change, remove — and the title) and creating a template from a reviewed field
+list are A12X's (released 2026-11-16, in A12.4's section).
 Render the template/version, destination, material answers, overwrite behavior,
 and whether the operation makes anything client-visible.
 
@@ -2364,10 +2364,9 @@ link_id}).
   `tests/ycSync.test.js`.
 
 **Deferred** (`ref/plans.md`), each with its reason; discard, PDF filing and
-appointment records shipped in A12.2, submit in A12.3:
-- **Template editing and creation** — a definition is a large JSON the
-  form builder edits visually; a card cannot review it line by line
-  (publish, visibility, restore and delete shipped in A12.4).
+appointment records shipped in A12.2, submit in A12.3, publish / visibility /
+restore / delete in A12.4, field-level template edits and creation in A12X
+(2026-11-16):
 - **Unlinking a submission** — no screen does it.
 
 #### A12.2: Forms — draft discard, PDF filing, appointment records shipped 2026-11-11
@@ -2769,13 +2768,107 @@ version_id}, `form.template.delete.v1` {template_id}, each with evidence.
   and the code-changing restore), `tests/assistantPromptKinds.test.js`,
   `tests/assistantUi.test.js`, `tests/automationRead.test.js`.
 
+**Released 2026-11-16 (A12X — Fred: "release means allow").** Editing a
+definition (PUT `/api/form-templates/:id`) and creating a template (POST
+`/api/form-templates`) were held back because a definition is a large JSON a
+card cannot review line by line. They ship as FIELD-LEVEL cards — never a
+whole-definition replace — behind the same `casey_form_templates_enabled`
+switch, in the same `form_template` family, with the same receipt
+(`template_id`; a create's is the NEW row's id):
+- `form.template.field.add.v1` {template_id, section?, field, after?} — ONE
+  answer field into ONE section of the DRAFT. `section` is the section's
+  title (case-insensitive), its repeater key or its path (`sections[2]`,
+  `tabs[0].sections[1]`), and may be omitted only when the draft has one
+  section; `after` names a field in that section (the new field goes right
+  after it in its row); absent, the field becomes a NEW ROW at the end of the
+  section (a repeater's row list appends). The field's keys are §4.3's answer
+  field keys (`FORM_TEMPLATE_FIELD_KEYS`); its type one of the eleven answer
+  types (never embed / content); a repeater takes the builder's five
+  (text, number, date, select, checkbox). A name already in the form is
+  refused (FIELD EXISTS).
+- `form.template.field.update.v1` {template_id, field_name, changes} — ONE
+  field's own keys set (`null` drops a key); `field_name` is the diff's key
+  (`<repeater>.<field>` for a row field). `changes.name` is refused by name:
+  a rename is a REMOVED and an ADDED field to the published form (the
+  version bumps, stored answers under the old name stop showing, every
+  condition naming it breaks) — remove and add, each its own card.
+- `form.template.field.remove.v1` {template_id, field_name} — ONE field.
+  Refused while any showWhen / showWhenAny / requiredWhen or derive rule
+  still names it (STILL REFERENCED — the paths listed; the builder
+  cascade-removes after a confirm, the card does not), when it is a
+  repeater's only row field, or when the name is a repeater key (a section).
+  An emptied row is left in place (the minimal change).
+- `form.template.meta.v1` {template_id, title} — the title only (trimmed,
+  ≤ 150, no control characters; the same title is NOTHING TO CHANGE).
+  `form_key` is refused by name with the reason (it is the name every stored
+  reader carries — `/f/<key>`, workflow / pipeline / portal definitions,
+  `form_submissions.form_key`; the route itself refuses it once published or
+  used) and so is `link_type` (no route changes it).
+- `form.template.create.v1` {form_key, title, link_type, fields} — ONE
+  standard section, `"Section 1"` (the builder's default), one row per
+  reviewed field, built by `formTemplateCreateDefinition` in the service
+  layer; 1–40 fields of the same field keys, names unique; form_key
+  `^[a-z0-9_]{1,50}$` and free (checked at proposal and re-checked by the
+  click against GET `/api/form-templates`; the route's 400 is the last
+  word). Internal and never published. `evidence` may be empty.
+- **Evidence.** The template row is cited from `form.template.state` as in
+  A12.4. A field a card ADDS or CREATES must be one the user named: its label
+  or name (underscores as spaces) appears in the user's recent messages or in
+  a cited row's values — the plan's evidence rule applied to authored content;
+  never a question of Casey's own.
+- **The card shows the field-level diff** computed with `formTemplateDefDiff`
+  — the A12.4 helpers over `buildValueRegistry` / `fieldSignature` /
+  `scanExternalRefusals` / `authoredKeyChanges`, no second diff — plus the
+  record column the field saves to, whether the next publish would bump
+  `schema_version` (the service's `fieldSignature` of the NEW draft against
+  the PUBLISHED definition), the saved drafts on the current version that
+  bump would strand (409 at submit until re-saved — named by record), FIELD
+  REMOVED (stored answers keep it; nothing saves to its column any more),
+  TYPE CHANGE, and that NOTHING PUBLISHES — the draft changes; publishing is
+  the A12.4 publish card. Danger whenever the card warns.
+- **Freshness is the whole safety story** — the PUT takes no precondition.
+  At proposal the normalizer re-reads the DRAFT (`getTemplate`), builds the
+  NEW draft from it plus the one operation, runs the service's
+  `validateDefinition` on the result (its message is the refusal, DRAFT
+  INVALID), asserts `authoredKeyChanges(next, draft)` is empty (it always is
+  — the authored keys are copied verbatim), and stores on the card the
+  frozen `next_definition` with its SHA-256 (`next_hash`) and in `expected`
+  the template's `updated_at`, `schema_version`, visibility, published_at,
+  the hashes of the published and draft definitions and the version ids
+  (`formTemplateExpected`, as A12.4). The click re-hashes the frozen
+  definition, re-reads GET `/:id` and `/:id/versions` and refuses on ANY
+  difference; the request PUTs `{draft_definition: next_definition}` (or
+  `{title}`) — never rebuilt at the click, never anything the model typed;
+  the result check compares the row the route answers with the frozen
+  definition key-order-insensitively. A create re-hashes `definition`,
+  re-reads the list for its form_key, POSTs `{form_key, title, link_type,
+  draft_definition}` and checks the answered row's key and definition.
+- **Refused by name**, with the reason: code, hooks, css, embed / content
+  items and their keys (src, href, text, alt, height, maxWidth, align) — they
+  run, embed or load in every staff browser and are the builder's (its
+  form_dev gate is the route's; Casey never writes them); a `$load` prefill
+  or options source; a raw `definition` / `draft_definition` (and on a
+  create any sections / tabs / layout / external / onSubmit key); a rename;
+  a form_key rename; a link_type change. Unknown field keys are refused
+  naming the allowed set.
+- **What stays the builder's:** sections, rows, tabs, layout, chapters, the
+  form settings (onSubmit, endpoints, external, derive), code / css / hooks,
+  embed / content items, a form_key rename, a link_type, more than 40 fields
+  on a create.
+- Sync: none (no matcher for templates; none added). Tests: the A12.4 files,
+  extended — `caseyFormTemplates.test.js`, gated
+  `caseyFormTemplates.mysql.test.js` (the REAL PUT / POST, the frozen body,
+  the precheck refusing after a hand edit), `assistantUi.test.js`,
+  `assistantPromptKinds.test.js`, `caseyActionPermissions.test.js` (100
+  kinds / 84 mounts).
+
 **Not built**, each with its reason:
-- **Editing a definition (PUT) and creating a template (POST)** — a
-  definition is a large JSON the builder edits visually; a card cannot review
-  it line by line.
 - **A publish precondition on the route** — `publishTemplate` takes no
   expected-draft token (A17.6's P11 equivalent); the click's re-read is the
   only freshness check.
+- **A save precondition on the PUT** — `updateTemplate` takes no expected
+  hash either; the card's click-time re-read is the only check (a save between
+  the re-read and the PUT is not caught — the builder has the same gap).
 
 #### A13: Message triage — mail read state and case link shipped 2026-11-02 (no drafts: none exist)
 

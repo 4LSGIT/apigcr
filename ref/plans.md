@@ -1203,9 +1203,30 @@ Draft discard, PDF filing and appointment-linked forms shipped in A12.2,
 submitting a stored draft in A12.3, and a template's publish, visibility,
 version restore and delete in A12.4 (ASK_CASEY_ACTIONS_PLAN A12.2–A12.4).
 
-- **Template editing and creation** — PUT / POST `/api/form-templates`: a
-  definition is a large JSON the form builder edits visually, and a card
-  cannot review it line by line.
+- **Template editing and creation** — released 2026-11-16 (A12X) as
+  FIELD-LEVEL cards (one field added / changed / removed per card, the title,
+  a create from a reviewed field list — ASK_CASEY_ACTIONS_PLAN A12.4
+  "Released 2026-11-16"). Still the form builder's, each with its reason:
+  - **a form_key rename** — the key is the name every stored reader carries
+    (`/f/<key>`, workflow / pipeline / portal definitions,
+    `form_submissions.form_key`); a rename breaks each silently, and the
+    route refuses it once published or used;
+  - **a field rename** — a REMOVED plus an ADDED field to the published
+    schema (the version bumps, stored answers under the old name stop
+    showing, every condition naming it breaks); two cards instead;
+  - **authored keys** — `code`, `hooks`, `css`, embed / content items and
+    their `src` / `href`, a `$load` prefill or options source: they run,
+    embed or load in every staff browser; the builder's form_dev gate
+    governs them and Casey never writes them;
+  - **the layout and settings** — sections, rows, tabs, chapters, `layout`,
+    `onSubmit`, `endpoints`, `external`, `derive`, `link_type`, a repeater
+    section itself (adding or removing one), a cascade-remove of the
+    conditions naming a removed field (the card refuses and names them
+    instead), and a create of more than 40 fields.
+- **A save precondition** — `PUT /api/form-templates/:id` takes no expected
+  hash; the A12X card's click-time re-read is its only freshness check (a
+  save between the re-read and the PUT is not caught; the builder has the
+  same gap).
 - **A publish precondition** — `POST /api/form-templates/:id/publish` takes no
   expected-draft token (the workflow publish route's P11 `expected_base`), so
   a draft saved between the A12.4 card's click-time re-read and the POST

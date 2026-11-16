@@ -753,35 +753,67 @@ describe('A12.3 — every stage teaches the submit card; the deferral is gone', 
 // A12.4: the form builder's template operations. Every stage teaches the
 // four kinds and the form.template.state read they cite; NO stage still says
 // publishing / visibility / restore are form-builder-only (a stage still
-// saying so refuses the new kinds — the job lesson); editing and creating a
-// template stay named deferrals with their reason; no stage invents an
-// update / create kind.
+// saying so refuses the new kinds — the job lesson). A12X (2026-11-16)
+// released editing and creating as FIELD-LEVEL kinds: no stage may still call
+// them unavailable, and no stage may invent a whole-definition update kind.
 describe('A12.4 — every stage teaches the template cards and the form.template.state read', () => {
   test('the plan carries its own bullet, the read and what the server refuses; the old exclusion is gone', () => {
     expect(planPrompt).toContain('- Reviewed form template actions are available — the form builder\'s own controls, ONE template per card');
     expect(planPrompt).toContain('form.template.state ({"form_key":optional — omit it to list every template}');
     expect(planPrompt).toContain('a form.template.state read of the template by its form_key (no form_key lists\n  every template');
     expect(planPrompt).toContain('exposing a form (any visibility but internal) or restoring a version whose code differs from the draft for a user\n  without the form_dev role');
-    expect(planPrompt).toContain('Editing a\n  template\'s definition, title or form_key and creating a template are not available (the builder edits a\n  definition visually; a card cannot review it line by line)');
   });
   test('the investigate stage names the read and what a template proposal cites', () => {
     expect(investigatePrompt).toContain('form.template.state ({"form_key"?} — the form builder\'s view of the templates');
-    expect(investigatePrompt).toContain('and form template proposals (publish,\n  visibility, version restore, delete), which need a form.template.state read of the template');
+    expect(investigatePrompt).toContain('and form template proposals (publish,\n  visibility, version restore, delete, a field added / changed / removed, a title), which need a form.template.state\n  read of the template');
   });
-  test('the answer and repair stages teach all four shapes, the form_dev gate, and the editing deferral with its reason', () => {
+  test('the answer and repair stages teach all four shapes and the form_dev gate', () => {
     for (const kind of ['form.template.publish.v1', 'form.template.visibility.v1', 'form.template.restore.v1', 'form.template.delete.v1']) {
       expect({ kind, answer: answerPrompt.includes(`{"kind":"${kind}"`), repair: repairPrompt.includes(`- ${kind}: kind,template_id,`) }).toEqual({ kind, answer: true, repair: true });
     }
     expect(answerPrompt).toContain('Form template rules (A12.4');
     expect(answerPrompt).toContain('Anything but "internal" needs the form_dev role (or IT /\n    superuser).');
-    expect(answerPrompt).toContain('the builder edits a definition visually, and a card cannot review it line by line; the user does it there.');
     expect(repairPrompt).toContain('- form.template.restore.v1: kind,template_id,version_id,evidence — the template\'s row AND the version\'s row');
-    expect(repairPrompt).toContain('No template card takes a definition, title,\n  form_key or fields: editing and creating templates are not available');
     for (const p of [answerPrompt, repairPrompt, planPrompt, investigatePrompt]) {
       expect(p).not.toContain('Template editing / publishing / visibility');
       expect(p).not.toContain('Editing / publishing /\n    restoring a template');
       expect(p).not.toContain('form.template.update');
-      expect(p).not.toContain('form.template.create');
+    }
+  });
+});
+
+// A12X: field-level template edits and creation (Fred, 2026-11-16, "release
+// means allow"). Every stage teaches the five kinds; the plan names the
+// field-level rule and what the server refuses; the answer stage teaches the
+// shapes, the user-named-field rule and the by-name refusals; the repair
+// stage carries every shape; NO stage still says editing or creating a
+// template is unavailable (the job lesson: a stage that still says so refuses
+// the kind), and none offers a whole-definition replace.
+describe('A12X — every stage teaches the field-level template cards and the create', () => {
+  const KINDS = ['form.template.field.add.v1', 'form.template.field.update.v1', 'form.template.field.remove.v1', 'form.template.meta.v1', 'form.template.create.v1'];
+  test('the plan teaches the field-level rule, the create and the refusals', () => {
+    expect(planPrompt).toContain('Editing the\n  DRAFT is field-level, one card each (nothing publishes from these — publishing is its own card)');
+    expect(planPrompt).toContain('create a NEW template from a field list the user named (form.template.create');
+    expect(planPrompt).toContain('a field the user did not name, a field that already exists or does not, a field a condition still names,\n  a rename (changes.name), a form_key rename or link_type change, and a form_key already taken.');
+  });
+  test('the investigate stage lists the field edits and the create', () => {
+    expect(investigatePrompt).toContain('a NEW\n  template needs no row — a form.template.state read with no form_key lists the keys in use');
+  });
+  test('the answer and repair stages teach all five shapes, the user-named-field rule and the by-name refusals', () => {
+    for (const kind of KINDS) {
+      expect({ kind, answer: answerPrompt.includes(`{"kind":"${kind}"`), repair: repairPrompt.includes(`- ${kind}: kind,`) }).toEqual({ kind, answer: true, repair: true });
+    }
+    expect(answerPrompt).toContain('Field-level template edits (A12X — the DRAFT changes and NOTHING PUBLISHES; ONE field per card');
+    expect(answerPrompt).toContain('Every field a card adds or creates must be one the USER named');
+    expect(answerPrompt).toContain('Never changes.name — a rename is a remove and an add');
+    expect(answerPrompt).toContain('code, hooks, css, embed and content items (src,\n    href, text, height …), a $load prefill or options source, a raw definition / draft_definition / sections /\n    layout, a rename, a form_key rename, a link_type change, a form_key already taken');
+    expect(repairPrompt).toContain('- form.template.create.v1: kind,form_key,title,link_type,fields,evidence — fields are {name, type, label, required?,\n  options?} the user named');
+    expect(repairPrompt).toContain('No template card takes a raw definition — the form builder owns code, CSS, hooks, embeds,\n  the layout and form_key renames');
+    for (const p of [answerPrompt, repairPrompt, planPrompt, investigatePrompt]) {
+      expect(p).not.toContain('creating a template are not available');
+      expect(p).not.toContain('creating templates are not available');
+      expect(p).not.toContain('a card cannot review it line by line');
+      expect(p).not.toContain('form.template.update.v1');
     }
   });
 });

@@ -30,6 +30,7 @@ Working rules worth knowing:
 - **Repeaters accept only** `text`, `number`, `date`, `select`, `checkbox` — a blocked drop snaps back with a toast explaining why.
 - **Deletes are reference-aware** — deleting a field/row/section that other conditions depend on lists the affected nodes and cascade-removes the conditions after you confirm.
 - **Save draft** writes `draft_definition` only. Server validation failures surface verbatim next to the button, naming the offending JSON path.
+- **Ask Casey edits the draft too** (since 2026-11-16, [05-Subsystems/17-ask-yisracase.md](../05-Subsystems/17-ask-yisracase.md)): one field added, changed or removed per reviewed card, the title, or a new template from a field list — through this same Save and New template, never code, CSS, hooks, embeds, the layout or a form-key rename. A builder already open on that template still holds the **old** draft, and its next Save writes it back over Casey's change: reopen the template after a Casey card lands.
 
 ### Tabbed layout (Slice 2.6)
 

@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 95 shipped kinds:
+ * These tests ask that claim two questions for all 100 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 95 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 100 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -187,6 +187,13 @@ const KINDS = [
   { kind: 'form.template.visibility.v1', method: 'POST', path: '/api/form-templates/1/visibility' },
   { kind: 'form.template.restore.v1', method: 'POST', path: '/api/form-templates/1/versions/1/restore' },
   { kind: 'form.template.delete.v1', method: 'DELETE', path: '/api/form-templates/1' },
+  // A12X: the builder's Save (field-level draft edits and the title ride the
+  // one PUT) and its New template (POST) — routes/api.formTemplates.js.
+  { kind: 'form.template.field.add.v1', method: 'PUT', path: '/api/form-templates/1' },
+  { kind: 'form.template.field.update.v1', method: 'PUT', path: '/api/form-templates/1' },
+  { kind: 'form.template.field.remove.v1', method: 'PUT', path: '/api/form-templates/1' },
+  { kind: 'form.template.meta.v1', method: 'PUT', path: '/api/form-templates/1' },
+  { kind: 'form.template.create.v1', method: 'POST', path: '/api/form-templates' },
   { kind: 'job.code_safe.create.v1', method: 'POST', path: '/scheduled-jobs' },
   { kind: 'workflow.draft.v1', method: 'POST', path: '/workflows/bulk' },
   { kind: 'workflow.step_insert.v1', method: 'POST', path: '/workflows/1/steps' },
@@ -306,19 +313,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 95 kinds (no database)
+// SECTION 1 — the route-level gate, for all 100 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 95 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 100 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 95 kinds cover 82 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(95);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(82);
+  test('the 100 kinds cover 84 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(100);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(84);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -326,7 +333,7 @@ describe('P2 — what the canonical write route gates on (all 95 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 95', async () => {
+  test('no token: every kind is 401 — authentication is required for all 100', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -550,11 +557,12 @@ describe('P2 — what the canonical write route gates on (all 95 shipped kinds)'
   // token publishes and deletes (the handlers run), flips to internal, and is
   // 403 on "public" and on the code-changing restore; form_dev, it, su and an
   // API key pass both. Every 403 precedes the write (no UPDATE recorded).
-  test('A12.4 template routes: jwtOrApiKey; the form_dev predicate gates ONLY an off-internal flip and a code-changing restore', async () => {
+  test('A12.4 / A12X template routes: jwtOrApiKey; the form_dev predicate gates ONLY an off-internal flip, a code-changing restore and a code-changing save', async () => {
     const src = read('routes/api.formTemplates.js');
     expect(/requireAuth|isSuperuser|\bcan\(\s*req\.auth/.test(src)).toBe(false);
     for (const mount of ["router.post('/api/form-templates/:id/publish', jwtOrApiKey,", "router.post('/api/form-templates/:id/visibility', jwtOrApiKey,",
-      "router.post('/api/form-templates/:id/versions/:versionId/restore', jwtOrApiKey,", "router.delete('/api/form-templates/:id', jwtOrApiKey,"]) {
+      "router.post('/api/form-templates/:id/versions/:versionId/restore', jwtOrApiKey,", "router.delete('/api/form-templates/:id', jwtOrApiKey,",
+      "router.put('/api/form-templates/:id', jwtOrApiKey,", "router.post('/api/form-templates', jwtOrApiKey,"]) {
       expect(src).toContain(mount);
     }
     expect(src).toContain('const authzOf = (req) => ({ formDev: isFormDev(req.auth) });');
@@ -568,6 +576,7 @@ describe('P2 — what the canonical write route gates on (all 95 shipped kinds)'
       }
       if (/FROM form_template_versions\s+WHERE id = \? AND template_id = \?/.test(sql)) return [[{ id: 1, schema_version: 1, definition: { ...DRAFT, code: 'b' } }], []];
       if (/COUNT\(\*\) AS c FROM form_submissions/.test(sql)) return [[{ c: 0 }], []];
+      if (/^\s*INSERT INTO form_templates\s/i.test(sql)) { writes.push(sql.replace(/\s+/g, ' ').trim().slice(0, 44)); return [{ insertId: 1 }, []]; }
       if (/^\s*(UPDATE|DELETE|INSERT INTO form_template_versions)/i.test(sql)) { writes.push(sql.replace(/\s+/g, ' ').trim().slice(0, 44)); return [{ affectedRows: 1 }, []]; }
       return [[], []];
     } };
@@ -593,6 +602,29 @@ describe('P2 — what the canonical write route gates on (all 95 shipped kinds)'
         const expose = await call(a, k('form.template.visibility.v1'), auth, { visibility: 'public' });
         const restore = await call(a, k('form.template.restore.v1'), auth);
         expect([expose.status, expose.body.visibility, restore.status, restore.body.restored && restore.body.restored.version_id]).toEqual([200, 'public', 200, 1]);
+      }
+      // A12X: the PUT (the field-level draft edits and the title) and the POST
+      // (the create) are the same bare gate. A roleless staff token saves a
+      // draft that leaves code / hooks / css AS STORED (200), retitles (200) and
+      // creates a template without authored keys (201); it is 403 only when the
+      // draft would CHANGE an authored key — the same form_dev predicate, before
+      // any write. The Casey cards copy those keys verbatim, so their PUT never
+      // trips it; form_dev and an API key pass the code change.
+      for (const roles of [['staff'], [], ['attorney']]) {
+        writes = [];
+        const put = await call(a, k('form.template.field.add.v1'), bearer(token({ roles })), { draft_definition: DRAFT });
+        const title = await call(a, k('form.template.meta.v1'), bearer(token({ roles })), { title: 'Renamed' });
+        const create = await call(a, k('form.template.create.v1'), bearer(token({ roles })), { form_key: 'k2', title: 'K2', link_type: 'case', draft_definition: { sections: DRAFT.sections } });
+        const code = await call(a, k('form.template.field.update.v1'), bearer(token({ roles })), { draft_definition: { ...DRAFT, code: 'b' } });
+        expect({ roles: roles.join(',') || 'none', put: put.status, title: title.status, create: create.status,
+          code: [code.status, /^changing code requires form-developer authorization/.test(code.body.message)] })
+          .toEqual({ roles: roles.join(',') || 'none', put: 200, title: 200, create: 201, code: [403, true] });
+        expect(writes.map((w) => w.replace(/^(UPDATE form_templates SET \w+|INSERT INTO form_templates).*$/, '$1')))
+          .toEqual(['UPDATE form_templates SET draft_definition', 'UPDATE form_templates SET title', 'INSERT INTO form_templates']);
+      }
+      for (const auth of [bearer(token({ roles: ['form_dev'] })), { 'x-api-key': process.env.INTERNAL_API_KEY }]) {
+        const code = await call(a, k('form.template.field.update.v1'), auth, { draft_definition: { ...DRAFT, code: 'b' } });
+        expect(code.status).toBe(200);
       }
     } finally {
       if (oldKey === undefined) delete process.env.INTERNAL_API_KEY; else process.env.INTERNAL_API_KEY = oldKey;
@@ -832,7 +864,10 @@ const d = URL_ ? describe : describe.skip;
 // Production SESSION sql_mode (verified live 2026-09-25; CLAUDE.md "SQL mode is relaxed").
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
 const TABLES = ['users', 'contacts', 'cases', 'case_relate', 'tasks', 'log',
-  'scheduled_jobs', 'appts', 'events', 'contact_phones'];
+  'scheduled_jobs', 'appts', 'events', 'contact_phones',
+  // comms-polish-2 C (b748c6c): taskService.getTask LEFT JOINs mail_messages
+  // (an email-linked task's subject) — the twin needs the table, empty.
+  'mail_messages'];
 
 /** CREATE TABLE + its ALTER blocks for one table, line-based out of the dump.
  *  Line-based on purpose: column COMMENTs contain ';', so a regex to the next

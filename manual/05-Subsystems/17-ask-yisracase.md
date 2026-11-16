@@ -1132,10 +1132,9 @@ and uses only those.
   page (and the case's or contact's Documents tab) and the card lists any
   trigger rule that listens for new documents.
 - **What Casey will not do, and says so:**
-  - edit a form's fields or settings, create a form, or unlink a
-    submission — edit and create forms in the form builder (nothing unlinks);
-    publishing, visibility, restoring a version and deleting a never-published
-    form are the template cards below;
+  - unlink a submission (nothing unlinks); a form's fields, title and a new
+    form are the template cards below (one field per card), its layout,
+    settings and code the form builder's;
   - draft a form that was never published, or use a field the form does not
     have, a value of the wrong kind or a choice that is not on its list;
   - link a draft, a submission that is already linked, or a form to the wrong
@@ -1208,6 +1207,54 @@ published, its versions, and what still uses it. These change the form for
   deleted it since the card was prepared, nothing is written.
 - **Other open pages.** An open form builder does not refresh by itself —
   reopen it.
+
+#### Form templates: fields, title, a new form
+
+Since 2026-11-16 Casey also edits a form's **draft** — one field per card —
+and creates a new form, through the builder's own Save and New template. Ask
+in plain words ("add a hearing date field to the 341 notes", "make the trustee
+field required", "drop the notes field from the case sheet", "retitle the
+intake form", "create a vehicle intake form with year, make, model and
+lender"). These change the **draft only**: nothing publishes, and the form
+stays as it is for everyone until a publish card (or the builder's Publish).
+
+- **An add-field card** names the field (its label, name, type, whether it is
+  required, its choices, the record field it saves to) and where it goes: a
+  section you name (by its title), after a field you name, or as a new row
+  at the end of the section. Casey adds only a field **you asked for by
+  name** — it never invents a question — and never a field the form already
+  has.
+- **A change-field card** names the field and what changes (its label,
+  whether it is required, its choices, its type, its visibility condition).
+  Renaming a field is refused: to the published form a rename is a removed
+  field plus a new one (stored answers under the old name stop showing, and
+  every condition naming it breaks) — remove it and add the new one, each its
+  own card.
+- **A remove-field card** names the field; it is refused while a visibility
+  or required-when condition, or a date rule, still names the field (the card
+  says which — clear it first), and when the field is a repeater's only one.
+- **A retitle card** changes the title only. The form key never changes
+  through Casey: it is the name every link, workflow step and submission
+  carries.
+- **A create card** makes a new form — its key, title, record kind and a
+  list of up to 40 fields you named — with one section and one field per
+  row. It is **internal and never published** until you publish it; its
+  layout, settings and any code are the builder's.
+- **Every card shows the field-level difference** it will make, the record
+  field a changed field saves to, whether the next publish would bump the
+  form's version — and the **saved drafts on the current version** that bump
+  would strand (they cannot be submitted until restored and re-saved) — and
+  warns when a field is removed or its type changes.
+- **What stays the builder's, and Casey says so:** code, hooks, CSS, embeds
+  and content items, the layout (sections, rows, tabs, chapters), the form
+  settings (on-submit workflows, external options), a form-key rename, a
+  field rename, adding or removing a whole section.
+- **Freshness.** The card holds the whole new draft exactly as it was built
+  when Casey prepared it; when you confirm, it re-reads the form and refuses
+  if anyone saved, published, restored or deleted it since — and sends that
+  frozen draft, never a rebuilt one. A form builder already open on the form
+  still holds the old draft, and its next Save would write it back — reopen
+  it first.
 
 The off switch for these cards is the `casey_form_templates_enabled` setting
 (on unless set to 0).

@@ -4276,8 +4276,24 @@ function formSubmitAppliedMessage(draft, payload, replayed) {
 // yc-sync announces a template route (no matcher; an open form builder does
 // not listen) — the cards say so. One family, `form_template`; the receipt is
 // the reviewed template_id for all four.
-const FORM_TEMPLATE_ACTION_KINDS = new Set(['form.template.publish.v1', 'form.template.visibility.v1', 'form.template.restore.v1', 'form.template.delete.v1']);
+// A12X (2026-11-16): the same family carries the FIELD-LEVEL draft edits and
+// the create — form.template.field.add.v1 / .field.update.v1 /
+// .field.remove.v1 and form.template.meta.v1 → PUT /api/form-templates/:id
+// ({draft_definition} — the WHOLE draft the server built and FROZE on the card
+// as next_definition, hashed in next_hash — or {title}); form.template.create.v1
+// → POST /api/form-templates ({form_key, title, link_type, draft_definition:
+// the frozen `definition`}). The browser never rebuilds a definition: the
+// precheck re-hashes the frozen one against the card's hash and re-reads the
+// template (or, for a create, the list — the form_key must still be free),
+// the request sends it as is, and the result check compares what the route
+// stored with it key-order-insensitively. The receipt is the template id (a
+// create's is the NEW row's id).
+const FORM_TEMPLATE_ACTION_KINDS = new Set(['form.template.publish.v1', 'form.template.visibility.v1', 'form.template.restore.v1', 'form.template.delete.v1',
+  'form.template.field.add.v1', 'form.template.field.update.v1', 'form.template.field.remove.v1', 'form.template.meta.v1', 'form.template.create.v1']);
 const FORM_TEMPLATE_VISIBILITIES = ['internal', 'portal', 'public'];
+const FORM_TEMPLATE_FIELD_KINDS = ['form.template.field.add.v1', 'form.template.field.update.v1', 'form.template.field.remove.v1'];
+const FORM_TEMPLATE_LINK_TYPES = ['case', 'contact', 'appt'];
+const FORM_TEMPLATE_FORM_KEY_RE = /^[a-z0-9_]{1,50}$/;
 
 function formTemplateLabel(draft) {
   if (draft && draft.kind === 'form.template.visibility.v1') {
@@ -4286,11 +4302,16 @@ function formTemplateLabel(draft) {
   }
   if (draft && draft.kind === 'form.template.restore.v1') return 'Restore form version into draft';
   if (draft && draft.kind === 'form.template.delete.v1') return 'Delete form template';
+  if (draft && draft.kind === 'form.template.field.add.v1') return 'Add a form field';
+  if (draft && draft.kind === 'form.template.field.update.v1') return 'Change a form field';
+  if (draft && draft.kind === 'form.template.field.remove.v1') return 'Remove a form field';
+  if (draft && draft.kind === 'form.template.meta.v1') return 'Retitle form template';
+  if (draft && draft.kind === 'form.template.create.v1') return 'Create form template';
   return 'Publish form template';
 }
 
 function formTemplateName(draft) {
-  const t = (draft && draft.template) || {};
+  const t = (draft && draft.template) || (draft && draft.create) || {};
   return `"${String(t.title || t.form_key || 'form')}" (${t.form_key || '?'})`;
 }
 
@@ -4318,6 +4339,27 @@ function formTemplateText(draft) {
       `Version: ${v.schema_version} (version #${v.version_id}), published ${when(v.published_at)} by ${v.published_by || 'an unknown user'}${v.is_published ? ' — the version currently published' : ''}`,
       `Current draft: ${draft.draft_unpublished ? 'holds UNPUBLISHED edits — replaced and lost' : 'equals the published version — replaced'}`);
     for (const l of d.lines || []) lines.push(`Draft → version: ${l}`);
+  } else if (FORM_TEMPLATE_FIELD_KINDS.includes(draft.kind)) {
+    const o = draft.op || {}; const f = o.field || {}; const p = draft.publish || {}; const d = draft.diff || {}; const s = draft.stale_drafts || {};
+    const verb = draft.kind === 'form.template.field.add.v1' ? 'add' : draft.kind === 'form.template.field.update.v1' ? 'change' : 'remove';
+    lines.push(`Form field ${verb} proposal — not applied (the DRAFT changes; nothing publishes)`, `Action: ${formTemplateLabel(draft)}`, head,
+      `Field: ${f.label} (${f.key}) — ${f.detail}${f.repeater ? ` [repeater ${f.repeater}]` : ''}`);
+    if (o.placement) lines.push(`Placement: ${o.placement}`);
+    if (Array.isArray(o.set) && o.set.length) lines.push(`Sets: ${o.set.join(', ')}`);
+    if (Array.isArray(o.dropped) && o.dropped.length) lines.push(`Drops: ${o.dropped.join(', ')}`);
+    for (const l of d.lines || []) lines.push(`Draft change: ${l}`);
+    lines.push(`If published afterwards: version ${p.schema_version_after}${!p.published ? ' (first publish)' : p.bumped ? ' (the answer fields change — the version bumps)' : ' (same version)'}`);
+    lines.push(`Saved drafts on the current version affected: ${Number(s.count) || 0}`);
+    for (const r of s.records || []) lines.push(`Current-version draft: #${r.submission_id} for ${r.record}`);
+  } else if (draft.kind === 'form.template.meta.v1') {
+    const m = draft.meta || {};
+    lines.push('Form template title proposal — not applied', `Action: ${formTemplateLabel(draft)}`, head, `Title: "${m.title_from}" → "${m.title_to}"`);
+  } else if (draft.kind === 'form.template.create.v1') {
+    const c = draft.create || {};
+    lines.push('Form template create proposal — not applied', `Action: ${formTemplateLabel(draft)}`,
+      `New template: "${c.title}" (${c.form_key}), a ${c.link_type || '?'} form — internal, never published`,
+      `Answer fields: ${Number(draft.fields_total) || 0} (one section, one field per row)`);
+    for (const f of draft.fields || []) lines.push(`Field: ${f.label} (${f.key}) — ${f.detail}`);
   } else {
     lines.push('Form template delete proposal — not applied', `Action: ${formTemplateLabel(draft)}`, head,
       `Version rows: ${Number(draft.versions) || 0}`, `Stored definitions naming it: ${Number(draft.readers_total) || 0}`);
@@ -4330,19 +4372,47 @@ function formTemplateText(draft) {
       ? 'Writes: the template\'s visibility only — its definitions, versions and submissions are untouched; nothing is published.'
       : draft.kind === 'form.template.restore.v1'
         ? 'Writes: the template\'s DRAFT definition only — nothing is published; the published form, its versions and every submission are untouched.'
-        : 'Writes: deletes the template row and its version rows — there is no undo.',
-  'Stale check: if anyone saves, publishes, restores, re-exposes or deletes this template before you apply, nothing is written.',
+        : FORM_TEMPLATE_FIELD_KINDS.includes(draft.kind)
+          ? 'Writes: the template\'s DRAFT definition only — the whole draft as built when this card was prepared, sent exactly as reviewed; nothing is published, and the published form, its versions and every submission are untouched.'
+          : draft.kind === 'form.template.meta.v1'
+            ? 'Writes: the template\'s title only — its definitions, versions, visibility and submissions are untouched; nothing is published.'
+            : draft.kind === 'form.template.create.v1'
+              ? 'Writes: one new template row (never published, internal) with the definition reviewed here — nothing else changes.'
+              : 'Writes: deletes the template row and its version rows — there is no undo.',
+  draft.kind === 'form.template.create.v1'
+    ? 'Stale check: if a template with this form key appears before you apply, nothing is written.'
+    : 'Stale check: if anyone saves, publishes, restores, re-exposes or deletes this template before you apply, nothing is written.',
   'Notification: Casey sends nothing; no trigger rule runs.');
   return lines.join('\n');
 }
 
 function formTemplateRequest(draft) {
+  if (draft.kind === 'form.template.create.v1') {
+    const c = draft.create || {}; const x = draft.expected || {};
+    if (typeof c.form_key !== 'string' || !FORM_TEMPLATE_FORM_KEY_RE.test(c.form_key) || x.form_key !== c.form_key) throw new Error('This card has no usable form key.');
+    if (typeof c.title !== 'string' || !c.title.trim() || !FORM_TEMPLATE_LINK_TYPES.includes(c.link_type)) throw new Error('This card has no usable template settings.');
+    const def = draft.definition;
+    if (!def || typeof def !== 'object' || Array.isArray(def) || !Array.isArray(def.sections) || typeof draft.definition_hash !== 'string') throw new Error('This card has no usable definition.');
+    // The frozen definition, as the server built it — never rebuilt here.
+    return { path: '/api/form-templates', method: 'POST', body: { form_key: c.form_key, title: c.title, link_type: c.link_type, draft_definition: def } };
+  }
   const t = draft.template || {};
   const id = Number(t.template_id);
   if (!Number.isSafeInteger(id) || id < 1) throw new Error('This card has no usable template id.');
   const x = draft.expected || {};
   if (Number(x.template_id) !== id) throw new Error('This card has no usable stale check.');
   const base = `/api/form-templates/${id}`;
+  if (FORM_TEMPLATE_FIELD_KINDS.includes(draft.kind)) {
+    const def = draft.next_definition;
+    if (!def || typeof def !== 'object' || Array.isArray(def) || typeof draft.next_hash !== 'string') throw new Error('This card has no usable definition.');
+    // The whole draft the server built and froze on the card — sent as is.
+    return { path: base, method: 'PUT', body: { draft_definition: def } };
+  }
+  if (draft.kind === 'form.template.meta.v1') {
+    const m = draft.meta || {};
+    if (typeof m.title_to !== 'string' || !m.title_to.trim()) throw new Error('This card has no usable title.');
+    return { path: base, method: 'PUT', body: { title: m.title_to } };
+  }
   if (draft.kind === 'form.template.publish.v1') {
     const next = Number((draft.publish || {}).schema_version_after);
     if (!Number.isSafeInteger(next) || next < 1) throw new Error('This card has no usable version.');
@@ -4365,8 +4435,20 @@ function formTemplateRequest(draft) {
 async function formTemplatePrecheck(draft) {
   const req = formTemplateRequest(draft); // a card that cannot be written is never read
   const x = draft.expected || {};
-  const id = Number(draft.template.template_id);
   const name = formTemplateName(draft);
+  if (draft.kind === 'form.template.create.v1') {
+    // The frozen definition must be the one reviewed; the form_key must still be free (the route's 400 is the last word).
+    if (await formDataHash(draft.definition) !== draft.definition_hash) return `${name} — this card's definition is not the one that was reviewed. Nothing was written. Ask Casey to prepare it again.`;
+    const list = await api('/api/form-templates', null, 'GET');
+    if (!list || !Array.isArray(list.templates)) throw new Error('the templates could not be listed');
+    const clash = list.templates.find((t) => t && String(t.form_key) === draft.create.form_key);
+    if (clash) return `A form template with form key "${draft.create.form_key}" already exists (template #${clash.id}, "${String(clash.title || '')}") — created since this card was prepared. Nothing was written.`;
+    return '';
+  }
+  if (FORM_TEMPLATE_FIELD_KINDS.includes(draft.kind) && await formDataHash(draft.next_definition) !== draft.next_hash) {
+    return `${name} — this card's definition is not the one that was reviewed. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  const id = Number(draft.template.template_id);
   let got;
   try { got = await api(`/api/form-templates/${id}`, null, 'GET'); }
   catch (e) { if (e && e.status === 404) return `${name} no longer exists — someone deleted it since this card was prepared. Nothing was written.`; throw e; }
@@ -4393,8 +4475,27 @@ async function formTemplatePrecheck(draft) {
 
 function formTemplateResult(draft, result) {
   formTemplateRequest(draft);
-  const id = Number(draft.template.template_id);
   if (!result || result.status !== 'success') throw new Error('The form templates route did not confirm the change');
+  if (draft.kind === 'form.template.create.v1') {
+    const made = result.template || {};
+    const nid = Number(made.id);
+    if (!Number.isSafeInteger(nid) || nid < 1 || String(made.form_key) !== draft.create.form_key) throw new Error('The form templates route did not confirm the new template');
+    if (formCanonical(made.draft_definition) !== formCanonical(draft.definition)) throw new Error('The form templates route stored a different definition than the one reviewed — open it in the form builder');
+    return { template_id: nid };
+  }
+  const id = Number(draft.template.template_id);
+  if (FORM_TEMPLATE_FIELD_KINDS.includes(draft.kind)) {
+    const t = result.template || {};
+    if (Number(t.id) !== id) throw new Error('The form templates route did not confirm the reviewed template');
+    // What the route stored IS what the card showed (MySQL re-orders JSON keys; the compare does not care).
+    if (formCanonical(t.draft_definition) !== formCanonical(draft.next_definition)) throw new Error('The form templates route stored a different draft than the one reviewed — open it in the form builder');
+    return { template_id: id };
+  }
+  if (draft.kind === 'form.template.meta.v1') {
+    const t = result.template || {};
+    if (Number(t.id) !== id || String(t.title) !== draft.meta.title_to) throw new Error('The form templates route did not confirm the reviewed title');
+    return { template_id: id };
+  }
   if (draft.kind === 'form.template.publish.v1') {
     const p = draft.publish || {};
     if (Number(result.schema_version) !== Number(p.schema_version_after) || result.bumped !== !!p.bumped) {
@@ -4438,6 +4539,13 @@ function formTemplateAppliedMessage(draft, payload, replayed) {
   }
   if (draft.kind === 'form.template.visibility.v1') return `${name} is now ${draft.visibility.to}.`;
   if (draft.kind === 'form.template.restore.v1') return `Version ${draft.version.schema_version} of ${name} was restored into its draft — nothing is published until the draft is.`;
+  if (FORM_TEMPLATE_FIELD_KINDS.includes(draft.kind)) {
+    const f = (draft.op || {}).field || {};
+    const verb = draft.kind === 'form.template.field.add.v1' ? 'added to' : draft.kind === 'form.template.field.update.v1' ? 'changed in' : 'removed from';
+    return `Field "${f.label}" (${f.key}) was ${verb} the draft of ${name} — nothing is published until the draft is.`;
+  }
+  if (draft.kind === 'form.template.meta.v1') return `Form template #${payload.template_id} (${(draft.template || {}).form_key}) is now titled "${draft.meta.title_to}" (was "${draft.meta.title_from}").`;
+  if (draft.kind === 'form.template.create.v1') return `${name} was created as template #${payload.template_id} — never published and internal; publish it (a publish card, or the form builder) once its fields are right.`;
   return `${name} was deleted.`;
 }
 
@@ -4448,7 +4556,7 @@ function formTemplateOpenInfo(label) {
 
 function formTemplateEntity(draft) {
   const t = draft.template || {};
-  return { kind: 'form_template', id: String(t.template_id || ''), label: formTemplateName(draft) };
+  return { kind: 'form_template', id: String(t.template_id || draft.result_form_template_id || ''), label: formTemplateName(draft) };
 }
 
 function formTemplateOpen(draft) {
