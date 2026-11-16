@@ -1878,7 +1878,10 @@ the client's name", read `caption_adds_info` from `listCases` / `searchCases`.
 **Cases:** `case_number`/`case_number_full` opaque free text (docket parsing
 client-only). `case_judge`/`case_trustee` free text AUTHORITATIVE with
 `*_contact_id` twins (fill on match, NULL on miss, never block a write).
-Judge resolution keys on docket suffix → the judge role's `judge_3` attr; trustee
+Judge resolution keys on docket suffix → the judge role's `judge_3` attr (court
+NEFs never NAME the judge, so `courtExecutor` fills a BLANK `case_judge` + twin
+from the suffix before dispatch — `caseRoleResolver.judgeFromDocket`,
+change-logged/revertable; the Pabbly 341 UPDATE did this until 2026-10-12); trustee
 vocab = the contact roster (`contact_roles` role rows via `lib/trusteeRoster`;
 `fe-trustees` setting and `judges`/`trustees` tables removed 2026-09-24). `bk_*` columns deliberately
 loose (sheet parity) — don't tighten. `case_relate` links contacts

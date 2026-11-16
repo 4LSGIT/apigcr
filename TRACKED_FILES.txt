@@ -1480,6 +1480,7 @@ tests/courtexecutor.cancel.test.js
 tests/courtexecutor.convert.test.js
 tests/courtexecutor.eventlog.test.js
 tests/courtexecutor.fill.test.js
+tests/courtexecutor.judgefill.test.js
 tests/courtexecutor.trusteeland.test.js
 tests/courtexecutor.update.test.js
 tests/createTaskDedupe.test.js

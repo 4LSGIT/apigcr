@@ -68,6 +68,8 @@
 // ── update_case_fields COLUMN POLICY ──────────────────────────────────────
 //   fill_only  (write only if current NULL/''): case_file_date, case_judge, case_close_date,
 //                                               case_discharge_date
+//              (case_judge is also filled executor-side from the docket
+//               suffix before dispatch — NEFs never name the judge)
 //   overwrite  (write if new !== current)     : case_chapter, case_trustee, case_objection,
 //                                               show_cause (datetime — normally
 //                                               written executor-side on an OSC,
@@ -936,10 +938,12 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
   // Inside the dispatch try, before any action runs: a throw here (collision
   // check / UPDATE) must hit the HARDEN #1 audit-on-error catch below like
   // any dispatch failure.
+  let docketCollided = false; // judge fill below must not read a docket that was refused
   if (fillFull && !effectiveDryRun) {
     const { checkCaseNumberCollision } = require('./caseService'); // lazy, roleResolver pattern
     const conflict = await checkCaseNumberCollision(db, resolved.case_id, { case_number_full: fillFull });
     if (conflict) {
+      docketCollided = true;
       skipped.push({ type: 'fill_docket', reason: 'docket_collision',
                      conflict_case_id: conflict.case_id });
     } else {
@@ -970,6 +974,65 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
     }
   } else if (fillCaption && effectiveDryRun) {
     pushChange('case', resolved.case_id, 'case_caption', null, fillCaption); // plan row, dry_run=1
+  }
+
+  // Judge fill from the docket suffix (2026-11-16, DZ8G0HYT / 26-52466-lsg).
+  // Court NEFs never NAME the judge — the only judge signal is the docket
+  // suffix ('-lsg') — so update_case_fields' citation-gated case_judge
+  // essentially never fires (one live write ever). The Pabbly 341 UPDATE
+  // used to map suffix → name; disabling it 2026-10-12 left case_judge with
+  // NO writer, and every case filed since landed blank (e-sign `case.judge`
+  // prefill reads this column). Deterministic, NOT an AI action: the suffix
+  // is already grounded (S1's verbatim gate, or the case row itself) and the
+  // mapping is contact_roles attrs.judge_3 (caseRoleResolver.judgeFromDocket,
+  // suffix-only — a blank name has nothing to match, and a fill never
+  // guesses). fill_only posture, guarded in SQL; the change row makes revert
+  // restore '' (revertCourtActions then re-resolves the twin). Runs on every
+  // court email for the case, so a blank judge self-heals on the next notice.
+  // Same paths as the docket fill; no applied[] entry, no appliedOrIntended
+  // bump (a fill-only run stays 'none'). Non-fatal: a failed fill must not
+  // take the batch down.
+  //
+  // When the judge is already set and S1 filled the docket THIS run, only the
+  // twin is re-resolved: S1's raw UPDATE bypasses updateCase's twin hook, and
+  // the suffix is the resolver's primary key.
+  if (resolved.case_number_full && !docketCollided) {
+    try {
+      if (!curCaseRow) {
+        const [rows] = await db.query(
+          `SELECT ${CASE_ROW_SELECT} FROM cases WHERE case_id=? LIMIT 1`,
+          [resolved.case_id]
+        );
+        curCaseRow = rows[0] || {};
+      }
+      const roleResolver = require('../lib/caseRoleResolver'); // lazy (convention)
+      const curJudge = curCaseRow.case_judge == null ? '' : String(curCaseRow.case_judge).trim();
+      if (!curJudge) {
+        const hit = await roleResolver.judgeFromDocket(db, resolved.case_number_full);
+        if (hit && !effectiveDryRun) {
+          const [r] = await db.query(
+            `UPDATE cases SET case_judge=?, case_judge_contact_id=?
+              WHERE case_id=? AND (case_judge IS NULL OR case_judge='')`,
+            [hit.name, hit.contact_id, resolved.case_id]
+          );
+          if (r.affectedRows === 1) {
+            curCaseRow.case_judge = hit.name; // a later fill_only case_judge action sees it occupied
+            pushChange('case', resolved.case_id, 'case_judge', '', hit.name);
+          }
+        } else if (hit) {
+          pushChange('case', resolved.case_id, 'case_judge', '', hit.name); // plan row, dry_run=1
+        }
+      } else if (fillFull && !effectiveDryRun) {
+        const cid = await roleResolver.resolveJudge(db, {
+          case_number_full: resolved.case_number_full,
+          case_judge:       curJudge,
+        });
+        await db.query(`UPDATE cases SET case_judge_contact_id=? WHERE case_id=?`,
+          [cid, resolved.case_id]);
+      }
+    } catch (judgeErr) {
+      console.error('[courtExecutor] judge fill from docket failed (non-fatal):', judgeErr.message);
+    }
   }
 
   for (const i of dispatchOrder) {
@@ -1401,7 +1464,8 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       // case_chapter retriggers TRUSTEE resolution here — a Ch7→Ch13
       // conversion changes roster eligibility, and this executor is exactly
       // where conversions land. case_number_full is never written by this
-      // path; resolveJudge reads it from `resolved` (lib/courtResolve).
+      // loop (S1's fill and the judge fill run before dispatch — see the
+      // judge-fill block); resolveJudge reads it from `resolved`.
       if (!effectiveDryRun && roleColsWritten.size) {
         try {
           const roleResolver = require('../lib/caseRoleResolver');
