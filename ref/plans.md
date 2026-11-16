@@ -139,6 +139,9 @@ go-to-market (legal first). Principles, not commitments.
   skippable elsewhere.
 - **Driver pattern extends** beyond SMS/email/calendar (SaaS-readiness below)
   to payments, storage, e-sign, telephony.
+  Storage: `ref/DOCUMENTS_V3_DESIGN.md` — human-managed (mirrored) vs
+  app-owned providers, folders as a per-tenant setting, onboarding without
+  reorganizing a firm's tree, 4LSG-never-breaks gates per slice.
 - **Tools / landing-pages origin ruling (2026-10-05, supersedes the earlier
   "sandboxed plugin surface" note).** SU-authored tool pages stay same-origin
   with the existing `P.apiSend` contract — no sandbox, no postMessage bridge.
