@@ -1,0 +1,38 @@
+-- 2026-11-17 — storage-seam D1f-2: workflow definitions move from the dropbox_*
+-- automation functions to the storage_* ones (ref/DOCUMENTS_V3_DESIGN.md §9 D1f,
+-- §10 e: converted, never permanently aliased).
+--
+-- APPLIED BY scripts/storageSeamD1fStorageFunctions.js --apply (one connection,
+-- CHECK first, base asserted against tests/fixtures/storageReplay.workflowSteps.json,
+-- one transaction, read-back verified key-order-insensitively, resumable). This
+-- file is the dated RECORD of what it does; do not run it by hand.
+--
+-- Scope (verified 2026-11-17): workflow_steps.config only — 24 rows mention
+-- dropbox_ (21 call a dropbox_* function: workflows 1, 28, 48 across their
+-- versions; 3 are get_setting steps naming a dropbox_* SETTING key, which D2
+-- renames with the settings registry). sequence_steps.action_config,
+-- trigger_rule_actions.config, scheduled_jobs.data, tools.html and
+-- workflow_versions.test_input carry none; the script refuses if that changes.
+--
+-- Per row, the logical rewrite (values and every other config key untouched):
+--   function_name: dropbox_create_folder      → storage_ensure_folder      (params: share_link → with_link)
+--                  dropbox_get_shared_link    → storage_human_link
+--                  dropbox_list_folder        → storage_list               (shared_link → human_link)
+--                  dropbox_move               → storage_move               (from_shared_link → from_human_link)
+--                  dropbox_rename             → storage_rename             (shared_link → human_link)
+--                  dropbox_delete             → storage_delete             (shared_link → human_link)
+--                  dropbox_save_url           → storage_import_url         (shared_link → human_link)
+--                  dropbox_ensure_case_folder → storage_ensure_case_folder
+--   credential_id (the Dropbox credential override) is dropped wherever present
+--   (no live step carries it; the provider is the firm's — D2).
+--
+-- SET SESSION lock_wait_timeout = 5;
+-- START TRANSACTION;
+-- UPDATE workflow_steps
+--    SET config = CAST(? AS JSON)                      -- the migrated config
+--  WHERE id = ? AND JSON_UNQUOTE(JSON_EXTRACT(config, '$.function_name')) = ?;   -- the old name: exactly one row or ROLLBACK
+-- COMMIT;
+--
+-- Order: runs AFTER D1f-1 deployed (storage_* registered, dropbox_* aliased —
+-- 45768af) and BEFORE D1f-3 deploys (the aliases deleted). Between the two,
+-- rows in either shape execute.
