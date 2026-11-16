@@ -59,7 +59,11 @@
 
 'use strict';
 
-const dropboxService = require('./dropboxService');
+const sources = require('./documentSourceService');
+
+/** The storage provider the firm's documents live in (D2 makes this a per-tenant setting). */
+const SOURCE = 'dropbox';
+const storage = () => sources.get(SOURCE);
 const taskService    = require('./taskService');
 const { getSetting } = require('./settingsService');
 const { resolveAlertAssignee } = require('./esignAlertService');
@@ -168,7 +172,7 @@ async function _unsortedCaseFolderName(db, caseId) {
 /** Full Dropbox path of the case's unsorted-uploads subfolder. */
 async function unsortedCaseFolderPath(db, caseId) {
   const base = await _unsortedBasePath(db);
-  return dropboxService.joinPath(base, await _unsortedCaseFolderName(db, caseId));
+  return storage().joinPath(base, await _unsortedCaseFolderName(db, caseId));
 }
 
 /**
@@ -267,8 +271,8 @@ async function issueClientUploadLink(db, { caseId, filename }) {
       // destination into its commit ticket, and a rung that hid its path would
       // be the one rung that could not be committed against. Existing callers
       // destructure { link } and are unaffected.
-      const { link, path } = await dropboxService.getTemporaryUploadLink(db, {
-        sharedLink, filename, subfolder: SUBFOLDER,
+      const { url: link, path } = await storage().directUpload(db, {
+        humanLink: sharedLink, filename, subfolder: SUBFOLDER,
       });
       return { case_id: cid, link, placement, path };
     } catch (err) {
@@ -280,7 +284,7 @@ async function issueClientUploadLink(db, { caseId, filename }) {
   // ── rung 3: the unsorted client-uploads folder ────────────────────────────
   try {
     const path = await unsortedCaseFolderPath(db, cid);
-    const { link } = await dropboxService.getTemporaryUploadLink(db, { path, filename });
+    const { url: link } = await storage().directUpload(db, { path, filename });
     return { case_id: cid, link, placement: 'unsorted', path };
   } catch (err) {
     // ── rung 4: nothing worked ──────────────────────────────────────────────
@@ -312,8 +316,8 @@ async function inspectUploadDestination(db, caseId) {
   const sharedLink = (caseRow.case_dropbox && String(caseRow.case_dropbox).trim()) || '';
   if (sharedLink) {
     try {
-      const credentialId = await dropboxService._resolveCredential(db, {});
-      await dropboxService.resolveLocation(db, credentialId, { sharedLink, expectFolder: true });
+      const ctx = await storage().context(db);
+      await storage().resolveHumanLink(db, sharedLink, { expectFolder: true }, ctx);
       return { case_id: cid, placement: 'case', sharedLink };
     } catch (err) {
       console.warn(`[UPLOAD TARGET] ${cid}: case link did not resolve at complete time (${err.message}) — reporting unsorted placement`);
@@ -323,7 +327,7 @@ async function inspectUploadDestination(db, caseId) {
   const path = await unsortedCaseFolderPath(db, cid);
   let link = null;
   try {
-    link = await dropboxService.getOrCreateSharedLink(db, { path });
+    link = await storage().ensureSharedLink(db, path);
   } catch (err) {
     console.warn(`[UPLOAD TARGET] ${cid}: best-effort shared link for unsorted folder failed (${err.message})`);
   }

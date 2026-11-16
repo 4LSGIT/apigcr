@@ -56,6 +56,21 @@
  *       attribution strategies; the predicates below classify its errors.
  *   isCursorReset(err) / isNotFound(err) / isTransient(err) -> boolean
  *
+ * Per-request context and paths (D1b — learned from the first reroute):
+ *   context(db, opts?)                      -> opts' to pass to every later call
+ *       Resolves whatever the provider resolves per call ONCE (Dropbox: the
+ *       credential id — one app_settings read instead of one per operation,
+ *       which is what every writer did by hand with _resolveCredential).
+ *   resolveHumanLink(db, humanLink, { expectFolder? }, opts?) -> path
+ *       The folder a human link opens, as a provider path. Class A only; it
+ *       goes away for the writers once the binding row carries the handle (D3).
+ *   joinPath(base, ...segments)             -> path   (pure; the provider's path syntax)
+ *   ensureFolder's `externalId` is the handle when the provider learned it for
+ *   free (Dropbox: a folder it just CREATED) or when opts.handle === true (one
+ *   get_metadata more on an adopted folder); otherwise null. `path` is the
+ *   normalized DESTINATION path, never a case-corrected display path — the
+ *   writers compose the upload path from it and the provider is case-insensitive.
+ *
  * Declarations (data, not calls):
  *   capabilities  frozen { humanManaged, directUpload, humanLink, listChanges, changeNotify }
  *                 — the app CHECKS these; it never assumes a provider can do a thing.
@@ -284,7 +299,7 @@ const dropboxProvider = {
     let path;
     if (dest.path) {
       if (dest.parent || dest.name) throw new Error('document storage: give path OR parent + name, not both');
-      path = dropbox.normalizePath(dest.path);
+      path = dropbox.joinPath(dest.path);   // = normalizePath; joinPath is the one helper every writer's test mock carries
     } else {
       if (!dest.parent) throw new Error('document storage: ensureFolder needs path or parent + name');
       const name = _needName(dest, 'name');
@@ -292,13 +307,20 @@ const dropboxProvider = {
     }
     if (!path) throw new Error('document storage: ensureFolder refuses the root');
     const subfolders = Array.isArray(opts.subfolders) ? opts.subfolders : [];
-    const made = await dropbox.createFolderWithOptions(db, {
-      path, subfolders, shareLink: opts.humanLink === true, ..._dbxOpts(opts),
-    });
-    const meta = await dropbox.getMetadata(db, { path, ..._dbxOpts(opts) });
+    const plain = !subfolders.length && opts.humanLink !== true;
+    // The plain case is files/create_folder_v2 alone — the exact call the
+    // placement ladder makes for a case subfolder — and its reply carries the
+    // handle when the folder was created.
+    const made = plain
+      ? await dropbox.createFolder(db, { path, ..._dbxOpts(opts) })
+      : await dropbox.createFolderWithOptions(db, { path, subfolders, shareLink: opts.humanLink === true, ..._dbxOpts(opts) });
+    let externalId = (made.metadata && made.metadata.id) || null;
+    if (!externalId && opts.handle === true) {
+      externalId = (await dropbox.getMetadata(db, { path, ..._dbxOpts(opts) })).id;
+    }
     return {
-      externalId: meta.id,
-      path: meta.path_display || made.path,
+      externalId,
+      path: made.path,
       existed: made.existed,
       subfolders: made.subfolders_created || [],
       humanLink: made.shared_link || null,
@@ -346,6 +368,21 @@ const dropboxProvider = {
         })();
     return { entries: page.entries || [], cursor: page.cursor, hasMore: Boolean(page.has_more) };
   },
+
+  /** One credential read for a whole operation; every writer did this by hand. */
+  async context(db, opts = {}) {
+    return { credentialId: await dropbox._resolveCredential(db, _dbxOpts(opts)) };
+  },
+
+  async resolveHumanLink(db, humanLink, { expectFolder = false } = {}, opts = {}) {
+    if (!humanLink || typeof humanLink !== 'string') throw new Error('document storage: resolveHumanLink requires humanLink');
+    const credentialId = opts.credentialId != null
+      ? opts.credentialId
+      : await dropbox._resolveCredential(db, {});
+    return dropbox.resolveLocation(db, credentialId, { sharedLink: humanLink, expectFolder });
+  },
+
+  joinPath: dropbox.joinPath,
 
   isCursorReset: (err) => dropbox.isCursorResetError(err),
   isNotFound:    (err) => dropbox.isPathNotFoundError(err),

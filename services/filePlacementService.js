@@ -82,7 +82,11 @@
 
 'use strict';
 
-const dropboxService = require('./dropboxService');
+const sources = require('./documentSourceService');
+
+/** The storage provider the firm's documents live in (D2 makes this a per-tenant setting). */
+const SOURCE = 'dropbox';
+const storage = () => sources.get(SOURCE);
 const taskService = require('./taskService');
 const { getSetting } = require('./settingsService');
 const { resolveAlertAssignee } = require('./esignAlertService');
@@ -273,7 +277,7 @@ async function _unsortedCaseFolderPath(db, caseId, opts) {
   const name = await casePrimaryName(db, caseId, opts.logTag || DEFAULT_LOG_TAG);
   const parts = [sanitizeNameFragment(String(caseId), 40)];
   if (name) parts.push(sanitizeNameFragment(name, 60));
-  return dropboxService.joinPath(base, parts.join(' - '));
+  return storage().joinPath(base, parts.join(' - '));
 }
 
 /**
@@ -291,7 +295,8 @@ async function _preparePlacement(db, {
   unsortedPathKey, unsortedDefault, unsortedFilenamePrefix = '', unsortedSubfolder = '',
   artifactLabel, binLabel, taskSource, logTag,
 }) {
-  const credentialId = await dropboxService._resolveCredential(db, {});
+  const ctx = await storage().context(db);
+  const { credentialId } = ctx;
   const warnings = [];
   const binOpts = { unsortedPathKey, unsortedDefault, logTag };
 
@@ -342,14 +347,12 @@ async function _preparePlacement(db, {
     // ── rung 1 (possibly via rung 2): <case folder>/<subfolder> ────────────
     if (sharedLink) {
       try {
-        const caseFolder = await dropboxService.resolveLocation(db, credentialId, {
-          sharedLink, expectFolder: true,
-        });
+        const caseFolder = await storage().resolveHumanLink(db, sharedLink, { expectFolder: true }, ctx);
         // files/upload creates missing parents, but creating explicitly keeps
         // the failure legible (e-sign convention). Idempotent.
-        const created = await dropboxService.createFolder(db, {
-          credentialId, path: dropboxService.joinPath(caseFolder, subfolder),
-        });
+        const created = await storage().ensureFolder(db, {
+          path: storage().joinPath(caseFolder, subfolder),
+        }, ctx);
         return {
           credentialId, folderPath: created.path, filenamePrefix: '',
           placement: 'case', placementNote: null, warnings,
@@ -384,7 +387,7 @@ async function _preparePlacement(db, {
   const sub = unsortedSubfolder
     ? (sanitizeNameFragment(unsortedSubfolder, MAX_NAME_FRAGMENT, 'Unsorted').replace(/[. ]+$/, '') || 'Unsorted')
     : '';
-  const base = sub ? dropboxService.joinPath(root, sub) : root;
+  const base = sub ? storage().joinPath(root, sub) : root;
   const what = linkType === 'contact' ? `a contact (id ${linkId})`
     : linkType === 'appt' ? `an appointment (id ${linkId})`
       : 'nothing yet';
@@ -435,10 +438,10 @@ async function describePlacement(db, {
     const link = row && row.case_dropbox && String(row.case_dropbox).trim() !== '' ? String(row.case_dropbox) : null;
     if (link) {
       try {
-        const credentialId = await dropboxService._resolveCredential(db, {});
-        const caseFolder = await dropboxService.resolveLocation(db, credentialId, { sharedLink: link, expectFolder: true });
+        const ctx = await storage().context(db);
+        const caseFolder = await storage().resolveHumanLink(db, link, { expectFolder: true }, ctx);
         return {
-          rung: 'case', placement: 'case', folder_path: dropboxService.joinPath(caseFolder, subfolder), subfolder,
+          rung: 'case', placement: 'case', folder_path: storage().joinPath(caseFolder, subfolder), subfolder,
           filename_prefix: '', task: null, note: null, case_dropbox: link, reason: null,
         };
       } catch (err) {
@@ -473,7 +476,7 @@ async function describePlacement(db, {
   const sub = unsortedSubfolder
     ? (sanitizeNameFragment(unsortedSubfolder, MAX_NAME_FRAGMENT, 'Unsorted').replace(/[. ]+$/, '') || 'Unsorted')
     : '';
-  const base = sub ? dropboxService.joinPath(root, sub) : root;
+  const base = sub ? storage().joinPath(root, sub) : root;
   const what = linkType === 'contact' ? `a contact (id ${linkId})`
     : linkType === 'appt' ? `an appointment (id ${linkId})`
       : 'nothing yet';
@@ -515,16 +518,10 @@ async function placeAndRegister(db, {
   });
 
   // ── upload — the path Dropbox RETURNS is authoritative (autorename) ──────
-  const requested = dropboxService.joinPath(prep.folderPath, `${prep.filenamePrefix}${fileName}`);
+  const requested = storage().joinPath(prep.folderPath, `${prep.filenamePrefix}${fileName}`);
   let meta;
   try {
-    meta = await dropboxService.uploadFile(db, {
-      credentialId: prep.credentialId,
-      path: requested,
-      content,
-      mode: 'add',
-      autorename: true,
-    });
+    meta = await storage().upload(db, { path: requested }, content, { credentialId: prep.credentialId });
   } catch (err) {
     throw new Error(
       `could not upload the ${artifactLabel} to Dropbox (${requested}): ${err.message}` +
@@ -585,10 +582,8 @@ async function placeAndRegister(db, {
   let tempLink = null;
   const warnings = prep.warnings.slice();
   try {
-    const tl = await dropboxService.getTemporaryLink(db, {
-      credentialId: prep.credentialId, path: actualPath,
-    });
-    tempLink = tl.link;
+    const tl = await storage().tempViewUrl(db, actualPath, { credentialId: prep.credentialId });
+    tempLink = tl.url;
   } catch (err) {
     warnings.push(
       `The ${artifactLabel} was filed, but a temporary download link could not be created: ${err.message}. ` +

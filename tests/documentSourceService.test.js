@@ -48,6 +48,8 @@ const PATCHED = [
   'movePath', 'deletePath', 'getOrCreateSharedLink',
   // D1a
   'uploadFile', 'createFolderWithOptions', 'getTemporaryUploadLink', 'listFolderPage', 'listFolderContinue',
+  // D1b
+  'createFolder', '_resolveCredential', 'resolveLocation',
 ];
 const real = {};
 
@@ -67,6 +69,10 @@ beforeEach(() => {
   dropbox.getTemporaryUploadLink = jest.fn(async (db, o) => ({ link: 'https://content.dropboxapi.com/apitul/1/x', path: `${o.path || '<link>'}/${o.subfolder ? o.subfolder + '/' : ''}${o.filename}` }));
   dropbox.listFolderPage         = jest.fn(async () => ({ entries: [{ '.tag': 'file', id: 'id:a' }], cursor: 'c1', has_more: true }));
   dropbox.listFolderContinue     = jest.fn(async () => ({ entries: [], cursor: 'c2', has_more: false }));
+  // D1b
+  dropbox.createFolder           = jest.fn(async (db, o) => ({ path: o.path, existed: false, metadata: { '.tag': 'folder', id: 'id:MADE', path_display: o.path } }));
+  dropbox._resolveCredential     = jest.fn(async (db, o) => (o && o.credentialId != null ? o.credentialId : 8));
+  dropbox.resolveLocation        = jest.fn(async (db, cred, o) => '/  law office/   cases/  active cases/ case a');
 });
 
 afterEach(() => { jest.clearAllMocks(); });
@@ -96,7 +102,8 @@ describe('registry', () => {
   test('the dropbox provider implements the whole interface', () => {
     const p = sources.get('dropbox');
     for (const fn of ['stat', 'tempViewUrl', 'download', 'move', 'rename', 'remove', 'ensureSharedLink',
-      'upload', 'ensureFolder', 'directUpload', 'listChanges', 'isCursorReset', 'isNotFound', 'isTransient']) {
+      'upload', 'ensureFolder', 'directUpload', 'listChanges', 'isCursorReset', 'isNotFound', 'isTransient',
+      'context', 'resolveHumanLink', 'joinPath']) {
       expect(typeof p[fn]).toBe('function');
     }
     expect(p.capabilities).toEqual({ humanManaged: true, directUpload: true, humanLink: true, listChanges: true, changeNotify: false });
@@ -262,26 +269,53 @@ describe('dropbox provider — D1a writes and folders', () => {
     await expect(p().upload(DB, { name: 'a.pdf' }, 'x')).rejects.toThrow('needs path, folder or humanLink');
   });
 
-  test('ensureFolder by path: createFolderWithOptions + one get_metadata for the handle; link only when asked', async () => {
+  test('ensureFolder with subfolders or a link: createFolderWithOptions; the handle only on request (one get_metadata)', async () => {
     folderMeta();
     const r = await p().ensureFolder(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A/' }, { subfolders: ['Client Uploads', ' Docket'], humanLink: true, credentialId: 8 });
     expect(dropbox.createFolderWithOptions).toHaveBeenCalledWith(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A', subfolders: ['Client Uploads', ' Docket'], shareLink: true, credentialId: 8 });
-    expect(dropbox.getMetadata).toHaveBeenCalledWith(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A', credentialId: 8 });
+    expect(dropbox.getMetadata).not.toHaveBeenCalled();
     expect(r).toEqual({
-      externalId: FOLDER, path: '/  Law Office/   Cases/  Active Cases/ Case A', existed: false,
+      externalId: null, path: '/  Law Office/   Cases/  Active Cases/ Case A', existed: false,
       subfolders: [{ path: '/  Law Office/   Cases/  Active Cases/ Case A/Client Uploads', existed: false }, { path: '/  Law Office/   Cases/  Active Cases/ Case A/ Docket', existed: false }],
       humanLink: 'https://www.dropbox.com/scl/fo/new?dl=0',
     });
-    await p().ensureFolder(DB, { path: '/  Bin' });
-    expect(dropbox.createFolderWithOptions).toHaveBeenLastCalledWith(DB, { path: '/  Bin', subfolders: [], shareLink: false });
+    const h = await p().ensureFolder(DB, { path: '/  Bin' }, { subfolders: ['x'], handle: true });
+    expect(dropbox.getMetadata).toHaveBeenCalledWith(DB, { path: '/  Bin' });
+    expect(h.externalId).toBe(FOLDER);
   });
 
-  test('ensureFolder under a parent handle; an adopted folder reports existed and still returns its handle', async () => {
+  test('ensureFolder plain (no subfolders, no link) is files/create_folder_v2 alone — the ladder\'s exact call — and a created folder carries its handle for free', async () => {
+    const r = await p().ensureFolder(DB, { path: '/  Bin/ Forms' }, { credentialId: 8 });
+    expect(dropbox.createFolder).toHaveBeenCalledWith(DB, { path: '/  Bin/ Forms', credentialId: 8 });
+    expect(dropbox.createFolderWithOptions).not.toHaveBeenCalled();
+    expect(dropbox.getMetadata).not.toHaveBeenCalled();
+    expect(r).toEqual({ externalId: 'id:MADE', path: '/  Bin/ Forms', existed: false, subfolders: [], humanLink: null });
+  });
+
+  test('ensureFolder under a parent handle; an adopted folder reports existed, null handle unless asked, and the REQUESTED path (not a display path)', async () => {
     folderMeta();
-    dropbox.createFolderWithOptions = jest.fn(async (db, o) => ({ path: o.path, existed: true, subfolders_created: [], shared_link: null }));
+    dropbox.createFolder = jest.fn(async (db, o) => ({ path: o.path, existed: true }));
     const r = await p().ensureFolder(DB, { parent: FOLDER, name: ' Signed Documents' });
-    expect(dropbox.createFolderWithOptions).toHaveBeenCalledWith(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A/ Signed Documents', subfolders: [], shareLink: false });
-    expect(r).toMatchObject({ externalId: FOLDER, existed: true, humanLink: null, subfolders: [] });
+    expect(dropbox.createFolder).toHaveBeenCalledWith(DB, { path: '/  Law Office/   Cases/  Active Cases/ Case A/ Signed Documents' });
+    expect(r).toEqual({ externalId: null, path: '/  Law Office/   Cases/  Active Cases/ Case A/ Signed Documents', existed: true, humanLink: null, subfolders: [] });
+    const h = await p().ensureFolder(DB, { parent: FOLDER, name: ' Signed Documents' }, { handle: true });
+    expect(h.externalId).toBe(FOLDER);
+  });
+
+  test('context resolves the credential once; resolveHumanLink reuses it and never re-reads when given one', async () => {
+    const ctx = await p().context(DB);
+    expect(ctx).toEqual({ credentialId: 8 });
+    expect(dropbox._resolveCredential).toHaveBeenCalledWith(DB, {});
+    expect(await p().context(DB, { credentialId: 21 })).toEqual({ credentialId: 21 });
+    const path = await p().resolveHumanLink(DB, 'https://www.dropbox.com/scl/fo/a?dl=0', { expectFolder: true }, ctx);
+    expect(dropbox.resolveLocation).toHaveBeenCalledWith(DB, 8, { sharedLink: 'https://www.dropbox.com/scl/fo/a?dl=0', expectFolder: true });
+    expect(dropbox._resolveCredential).toHaveBeenCalledTimes(2);
+    expect(path).toBe('/  law office/   cases/  active cases/ case a');
+    await p().resolveHumanLink(DB, 'https://www.dropbox.com/scl/fo/a?dl=0');
+    expect(dropbox._resolveCredential).toHaveBeenCalledTimes(3);
+    expect(dropbox.resolveLocation).toHaveBeenLastCalledWith(DB, 8, { sharedLink: 'https://www.dropbox.com/scl/fo/a?dl=0', expectFolder: false });
+    await expect(p().resolveHumanLink(DB, '')).rejects.toThrow('requires humanLink');
+    expect(p().joinPath('/  A/', ' b', undefined, 'c.pdf')).toBe('/  A/ b/c.pdf');
   });
 
   test('ensureFolder refuses the root and ambiguous destinations', async () => {

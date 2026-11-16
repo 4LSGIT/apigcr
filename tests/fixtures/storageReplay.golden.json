@@ -5101,14 +5101,6 @@
      ]
     },
     {
-     "fn": "getMetadata",
-     "args": [
-      {
-       "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17"
-      }
-     ]
-    },
-    {
      "fn": "createFolderWithOptions",
      "args": [
       {
@@ -5122,32 +5114,13 @@
      "fn": "getMetadata",
      "args": [
       {
-       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13"
-      }
-     ]
-    },
-    {
-     "fn": "getMetadata",
-     "args": [
-      {
        "credentialId": 8,
        "path": "id:F0007"
       }
      ]
     },
     {
-     "fn": "createFolderWithOptions",
-     "args": [
-      {
-       "credentialId": 8,
-       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/ Signed Documents",
-       "shareLink": false,
-       "subfolders": []
-      }
-     ]
-    },
-    {
-     "fn": "getMetadata",
+     "fn": "createFolder",
      "args": [
       {
        "credentialId": 8,
@@ -5296,7 +5269,7 @@
     {
      "kind": "d1a.ensureFolder",
      "existed": false,
-     "externalId": "id:F0018",
+     "externalId": null,
      "humanLink": "https://www.dropbox.com/scl/fo/fake0002?dl=0",
      "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17",
      "subfolders": [
@@ -5309,7 +5282,7 @@
     {
      "kind": "d1a.ensureFolder",
      "existed": true,
-     "externalId": "id:F0007",
+     "externalId": null,
      "humanLink": "https://www.dropbox.com/scl/fo/fake0001?dl=0",
      "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13",
      "subfolders": []
