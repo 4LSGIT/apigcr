@@ -75,7 +75,11 @@
  */
 
 const { DateTime } = require('luxon');
-const dropboxService = require('./dropboxService');
+const sources = require('./documentSourceService');
+
+/** The storage provider the firm's documents live in (D2 makes this a per-tenant setting). */
+const SOURCE = 'dropbox';
+const storage = () => sources.get(SOURCE);
 const esignService = require('./esignService');
 const { getSetting } = require('./settingsService');
 
@@ -261,7 +265,8 @@ async function prepareUnsortedFolder(db, request) {
   let folderPath;
   let prefix;
   try {
-    credentialId = await dropboxService._resolveCredential(db, {});
+    const ctx = await storage().context(db);
+    credentialId = ctx.credentialId;
 
     let path = null;
     try {
@@ -276,7 +281,7 @@ async function prepareUnsortedFolder(db, request) {
     }
     if (!path) path = DEFAULT_UNSORTED_PATH;
 
-    const created = await dropboxService.createFolder(db, { credentialId, path });
+    const created = await storage().ensureFolder(db, { path }, ctx);
     folderPath = created.path;
     prefix = await _identityPrefix(db, request);
   } catch (err) {
@@ -359,16 +364,15 @@ async function prepareCaseFolder(db, request) {
   // ── rung 1 (possibly via rung 2): the case folder ─────────────────────────
   if (sharedLink) {
     try {
-      const credentialId = await dropboxService._resolveCredential(db, {});
-      const caseFolder = await dropboxService.resolveLocation(db, credentialId, {
-        sharedLink, expectFolder: true,
-      });
+      const ctx = await storage().context(db);
+      const { credentialId } = ctx;
+      const caseFolder = await storage().resolveHumanLink(db, sharedLink, { expectFolder: true }, ctx);
       // files/upload creates missing parents, but creating it explicitly keeps
       // the failure legible: "could not make the folder" beats a 409 buried in
       // an upload error. Idempotent — an existing folder returns existed:true.
-      const created = await dropboxService.createFolder(db, {
-        credentialId, path: dropboxService.joinPath(caseFolder, SUBFOLDER),
-      });
+      const created = await storage().ensureFolder(db, {
+        path: storage().joinPath(caseFolder, SUBFOLDER),
+      }, ctx);
       const folderPath = created.path;
 
       const nameBudget = Math.min(
@@ -420,14 +424,8 @@ async function prepareCaseFolder(db, request) {
  * response metadata is authoritative and is what gets persisted.
  */
 async function _upload(db, credentialId, folderPath, filename, content, request) {
-  const requested = dropboxService.joinPath(folderPath, filename);
-  const meta = await dropboxService.uploadFile(db, {
-    credentialId,
-    path: requested,
-    content,
-    mode: 'add',
-    autorename: true,
-  });
+  const requested = storage().joinPath(folderPath, filename);
+  const meta = await storage().upload(db, { path: requested }, content, { credentialId });
 
   // files/upload returns FileMetadata. path_display preserves the case the
   // user sees; path_lower is the canonical handle. Either is a valid path.
@@ -482,9 +480,7 @@ async function _annotateUnsorted(db, prep, out) {
   if (prep.placement !== 'unsorted') return;
   if (prep.placementNote) out.warnings.push(prep.placementNote);
   try {
-    const url = await dropboxService.getOrCreateSharedLink(db, {
-      credentialId: prep.credentialId, path: out.signedPdfPath,
-    });
+    const url = await storage().ensureSharedLink(db, out.signedPdfPath, { credentialId: prep.credentialId });
     if (url) out.warnings.push(`Direct link to the signed document: ${url}`);
   } catch (err) {
     console.warn(`[ESIGN FILING] could not create a shared link for ${out.signedPdfPath}: ${err.message}`);

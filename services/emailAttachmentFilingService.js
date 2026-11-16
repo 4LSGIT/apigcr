@@ -104,7 +104,8 @@ function codedError(code, message) {
 // Lazy requires (convention: services reached from internal_functions load
 // their heavy dependencies inside the call).
 const placement = () => require('./filePlacementService');
-const dropbox = () => require('./dropboxService');
+const SOURCE_PROVIDER = 'dropbox';   // the storage provider the firm's documents live in (D2: a per-tenant setting)
+const storage = () => require('./documentSourceService').get(SOURCE_PROVIDER);
 const docIngest = () => require('./documentIngestService');
 const uploadTarget = () => require('./uploadTargetService');
 const digest = () => require('./emailAttachmentDigestService');
@@ -181,19 +182,18 @@ async function alignCaseFolder(db, caseId, rel) {
     const [[c]] = await db.query('SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId]);
     const link = c && c.case_dropbox ? String(c.case_dropbox).trim() : '';
     if (!link) return rel;
-    const dbx = require('./dropboxService');                 // lazy (convention)
-    const cred = await dbx._resolveCredential(db, {});
-    let parent = await dbx.resolveLocation(db, cred, { sharedLink: link, expectFolder: true });
+    const ctx = await storage().context(db);
+    let parent = await storage().resolveHumanLink(db, link, { expectFolder: true }, ctx);
     const segs = rel.split('/');
     const out = [];
     for (let i = 0; i < segs.length; i++) {
-      const listing = await dbx.listFolder(db, { path: parent, credentialId: cred, maxEntries: 2000 });
+      const listing = await storage().list(db, { path: parent }, { max: 2000 }, ctx);
       const names = (listing.entries || []).filter(e => e && e['.tag'] === 'folder').map(e => String(e.name || ''));
       const want = segs[i].trim().toLowerCase();
       const hit = names.includes(segs[i]) ? segs[i] : names.find(n => n.trim().toLowerCase() === want);
       if (!hit) return [...out, ...segs.slice(i)].join('/');
       out.push(hit);
-      parent = dbx.joinPath(parent, hit);
+      parent = storage().joinPath(parent, hit);
     }
     return out.join('/');
   } catch (err) {
@@ -542,7 +542,7 @@ async function fileMessageAttachments(db, o = {}) {
   let folderLink = null;
   if (folderPath) {
     try {
-      folderLink = await dropbox().getOrCreateSharedLink(db, { path: folderPath });
+      folderLink = await storage().ensureSharedLink(db, folderPath);
     } catch (err) {
       warnings.push(`The files were filed, but a link to their folder could not be made: ${err.message}`);
     }
@@ -765,17 +765,14 @@ async function refileMessageAttachments(db, o = {}) {
     try {
       const handle = r.dropbox_id || r.dropbox_path;
       if (!handle) throw new Error('no Dropbox path or id recorded');
-      const meta = await dropbox().getMetadata(db, { credentialId: prep.credentialId, path: handle });
+      const meta = await storage().stat(db, handle, { credentialId: prep.credentialId });
       if (!meta || meta['.tag'] !== 'file') throw new Error('it is no longer a file in Dropbox');
       let entry = meta;
       const here = parentOf(meta.path_lower) === destLower;
       if (!here) {
-        const moved = await dropbox().movePath(db, {
-          credentialId: prep.credentialId,
-          fromPath: meta.id || meta.path_lower,
-          toPath: dropbox().joinPath(prep.folderPath, meta.name),
-          autorename: true,
-        });
+        const moved = await storage().move(db, meta.id || meta.path_lower,
+          storage().joinPath(prep.folderPath, meta.name),
+          { credentialId: prep.credentialId, autorename: true });
         entry = (moved && moved.metadata) || entry;
       }
       const reg = await docIngest().registerWrittenSafe(db, {
@@ -803,7 +800,7 @@ async function refileMessageAttachments(db, o = {}) {
   }
 
   try {
-    out.folder_link = await dropbox().getOrCreateSharedLink(db, { path: prep.folderPath });
+    out.folder_link = await storage().ensureSharedLink(db, prep.folderPath);
   } catch (err) {
     out.warnings.push(`Could not make a link to ${prep.folderPath}: ${err.message}`);
   }

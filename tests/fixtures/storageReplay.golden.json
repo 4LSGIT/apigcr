@@ -5201,10 +5201,67 @@
      ]
     },
     {
+     "fn": "listFolder",
+     "args": [
+      {
+       "credentialId": 8,
+       "maxEntries": 2000,
+       "path": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13"
+      }
+     ]
+    },
+    {
+     "fn": "listFolder",
+     "args": [
+      {
+       "credentialId": 8,
+       "maxEntries": 4000,
+       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13",
+       "recursive": true
+      }
+     ]
+    },
+    {
+     "fn": "listFolder",
+     "args": [
+      {
+       "sharedLink": "https://www.dropbox.com/scl/fo/fake0001?dl=0"
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "id:F0007"
+      }
+     ]
+    },
+    {
+     "fn": "listFolder",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13",
+       "recursive": true
+      }
+     ]
+    },
+    {
      "fn": "getMetadata",
      "args": [
       {
        "path": "id:f0001"
+      }
+     ]
+    },
+    {
+     "fn": "movePath",
+     "args": [
+      {
+       "autorename": true,
+       "credentialId": 8,
+       "fromPath": "id:f0001",
+       "toPath": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Forms/Form 121.pdf"
       }
      ]
     }
@@ -5362,6 +5419,350 @@
      "hasMore": false
     },
     {
+     "kind": "d1d2.list",
+     "count": 7,
+     "entries": [
+      {
+       ".tag": "folder",
+       "id": "id:F0020",
+       "name": " Signed Documents",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/ Signed Documents",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/ signed documents"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0011",
+       "name": "Client Docs - John Smith",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client docs - john smith"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0008",
+       "name": "Client Uploads",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client uploads"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0012",
+       "name": "Correspondence - John Smith",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Correspondence - John Smith",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/correspondence - john smith"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0009",
+       "name": "Docket - John Smith - Ch 13 - 26-44274",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Docket - John Smith - Ch 13 - 26-44274",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/docket - john smith - ch 13 - 26-44274"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0010",
+       "name": "Drafts - John Smith",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Drafts - John Smith",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/drafts - john smith"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0017",
+       "name": "Forms",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Forms",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/forms"
+      }
+     ],
+     "truncated": false
+    },
+    {
+     "kind": "d1d2.list",
+     "count": 11,
+     "entries": [
+      {
+       ".tag": "folder",
+       "id": "id:F0020",
+       "name": " Signed Documents",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/ Signed Documents",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/ signed documents"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0011",
+       "name": "Client Docs - John Smith",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client docs - john smith"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0008",
+       "name": "Client Uploads",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client uploads"
+      },
+      {
+       ".tag": "file",
+       "client_modified": "2026-11-17T12:00:03Z",
+       "content_hash": "69a1fc1670e9651ee58f395fc5e6a9e63273806f062e3a70d4c179146c2dc7ef",
+       "id": "id:f0003",
+       "is_downloadable": true,
+       "name": " W2 2025.pdf",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/ W2 2025.pdf",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client uploads/ w2 2025.pdf",
+       "rev": "rev000003",
+       "server_modified": "2026-11-17T12:00:03Z",
+       "size": 14
+      },
+      {
+       ".tag": "file",
+       "client_modified": "2026-11-17T12:00:01Z",
+       "content_hash": "c301a1eb81f95d2bd16f7eaec1c78ee685d8a5ddcaa6092dc964c4b22cb0dc2f",
+       "id": "id:f0001",
+       "is_downloadable": true,
+       "name": "2026-06-01 Intake.pdf",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/2026-06-01 Intake.pdf",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client uploads/2026-06-01 intake.pdf",
+       "rev": "rev000001",
+       "server_modified": "2026-11-17T12:00:01Z",
+       "size": 18
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0012",
+       "name": "Correspondence - John Smith",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Correspondence - John Smith",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/correspondence - john smith"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0009",
+       "name": "Docket - John Smith - Ch 13 - 26-44274",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Docket - John Smith - Ch 13 - 26-44274",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/docket - john smith - ch 13 - 26-44274"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0010",
+       "name": "Drafts - John Smith",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Drafts - John Smith",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/drafts - john smith"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0017",
+       "name": "Forms",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Forms",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/forms"
+      },
+      {
+       ".tag": "file",
+       "client_modified": "2026-11-17T12:00:05Z",
+       "content_hash": "ac1d9c52633e3c08374f1b0ab6f9b053bb402c2ffa8777045a48add7d6ab9ec7",
+       "id": "id:f0005",
+       "is_downloadable": true,
+       "name": "Form 121 (1).pdf",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Forms/Form 121 (1).pdf",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/forms/form 121 (1).pdf",
+       "rev": "rev000005",
+       "server_modified": "2026-11-17T12:00:05Z",
+       "size": 22
+      },
+      {
+       ".tag": "file",
+       "client_modified": "2026-11-17T12:00:04Z",
+       "content_hash": "e3b855e0599230d7cfc67541fff196ba26d2b49fbb68e5950f5e0666065a265f",
+       "id": "id:f0004",
+       "is_downloadable": true,
+       "name": "Form 121.pdf",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Forms/Form 121.pdf",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/forms/form 121.pdf",
+       "rev": "rev000004",
+       "server_modified": "2026-11-17T12:00:04Z",
+       "size": 16
+      }
+     ],
+     "truncated": false
+    },
+    {
+     "kind": "d1d2.list",
+     "count": 7,
+     "entries": [
+      {
+       ".tag": "folder",
+       "id": "id:F0020",
+       "name": " Signed Documents",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/ Signed Documents",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/ signed documents"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0011",
+       "name": "Client Docs - John Smith",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client docs - john smith"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0008",
+       "name": "Client Uploads",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client uploads"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0012",
+       "name": "Correspondence - John Smith",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Correspondence - John Smith",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/correspondence - john smith"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0009",
+       "name": "Docket - John Smith - Ch 13 - 26-44274",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Docket - John Smith - Ch 13 - 26-44274",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/docket - john smith - ch 13 - 26-44274"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0010",
+       "name": "Drafts - John Smith",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Drafts - John Smith",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/drafts - john smith"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0017",
+       "name": "Forms",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Forms",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/forms"
+      }
+     ],
+     "truncated": false
+    },
+    {
+     "kind": "d1d2.list",
+     "count": 11,
+     "entries": [
+      {
+       ".tag": "folder",
+       "id": "id:F0020",
+       "name": " Signed Documents",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/ Signed Documents",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/ signed documents"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0011",
+       "name": "Client Docs - John Smith",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client docs - john smith"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0008",
+       "name": "Client Uploads",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client uploads"
+      },
+      {
+       ".tag": "file",
+       "client_modified": "2026-11-17T12:00:03Z",
+       "content_hash": "69a1fc1670e9651ee58f395fc5e6a9e63273806f062e3a70d4c179146c2dc7ef",
+       "id": "id:f0003",
+       "is_downloadable": true,
+       "name": " W2 2025.pdf",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/ W2 2025.pdf",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client uploads/ w2 2025.pdf",
+       "rev": "rev000003",
+       "server_modified": "2026-11-17T12:00:03Z",
+       "size": 14
+      },
+      {
+       ".tag": "file",
+       "client_modified": "2026-11-17T12:00:01Z",
+       "content_hash": "c301a1eb81f95d2bd16f7eaec1c78ee685d8a5ddcaa6092dc964c4b22cb0dc2f",
+       "id": "id:f0001",
+       "is_downloadable": true,
+       "name": "2026-06-01 Intake.pdf",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/2026-06-01 Intake.pdf",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client uploads/2026-06-01 intake.pdf",
+       "rev": "rev000001",
+       "server_modified": "2026-11-17T12:00:01Z",
+       "size": 18
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0012",
+       "name": "Correspondence - John Smith",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Correspondence - John Smith",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/correspondence - john smith"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0009",
+       "name": "Docket - John Smith - Ch 13 - 26-44274",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Docket - John Smith - Ch 13 - 26-44274",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/docket - john smith - ch 13 - 26-44274"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0010",
+       "name": "Drafts - John Smith",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Drafts - John Smith",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/drafts - john smith"
+      },
+      {
+       ".tag": "folder",
+       "id": "id:F0017",
+       "name": "Forms",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Forms",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/forms"
+      },
+      {
+       ".tag": "file",
+       "client_modified": "2026-11-17T12:00:05Z",
+       "content_hash": "ac1d9c52633e3c08374f1b0ab6f9b053bb402c2ffa8777045a48add7d6ab9ec7",
+       "id": "id:f0005",
+       "is_downloadable": true,
+       "name": "Form 121 (1).pdf",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Forms/Form 121 (1).pdf",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/forms/form 121 (1).pdf",
+       "rev": "rev000005",
+       "server_modified": "2026-11-17T12:00:05Z",
+       "size": 22
+      },
+      {
+       ".tag": "file",
+       "client_modified": "2026-11-17T12:00:04Z",
+       "content_hash": "e3b855e0599230d7cfc67541fff196ba26d2b49fbb68e5950f5e0666065a265f",
+       "id": "id:f0004",
+       "is_downloadable": true,
+       "name": "Form 121.pdf",
+       "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Forms/Form 121.pdf",
+       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/forms/form 121.pdf",
+       "rev": "rev000004",
+       "server_modified": "2026-11-17T12:00:04Z",
+       "size": 16
+      }
+     ],
+     "truncated": false
+    },
+    {
+     "kind": "d1d2.move",
+     "metadata": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:01Z",
+      "content_hash": "c301a1eb81f95d2bd16f7eaec1c78ee685d8a5ddcaa6092dc964c4b22cb0dc2f",
+      "id": "id:f0001",
+      "is_downloadable": true,
+      "name": "Form 121 (2).pdf",
+      "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Forms/Form 121 (2).pdf",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/forms/form 121 (2).pdf",
+      "rev": "rev000001",
+      "server_modified": "2026-11-17T12:00:01Z",
+      "size": 18
+     }
+    },
+    {
      "kind": "d1a.declarations",
      "capabilities": {
       "changeNotify": false,
@@ -5419,11 +5820,6 @@
      "size": 14
     },
     {
-     "tag": "file",
-     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/2026-06-01 Intake.pdf",
-     "size": 18
-    },
-    {
      "tag": "folder",
      "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Correspondence - John Smith"
     },
@@ -5443,6 +5839,11 @@
      "tag": "file",
      "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Forms/Form 121 (1).pdf",
      "size": 22
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Forms/Form 121 (2).pdf",
+     "size": 18
     },
     {
      "tag": "file",

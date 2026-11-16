@@ -76,6 +76,7 @@ const NAME_TOKENS_MAX = 40;
 const FOLDERS_DEPTH = 4;         // levels of subfolders offered under the case folder
 const FOLDERS_MAX = 400;
 const FOLDERS_LIST_MAX = 4000;   // entries read (files too — list_folder has no folders-only mode)
+const SOURCE_PROVIDER = 'dropbox';   // the storage provider the firm's documents live in (D2: a per-tenant setting)
 const OPEN_STAGES = ['Open', 'Pending', 'Filed'];
 const BATCH_RE = /^[A-Za-z0-9_-]{8,30}$/;
 const CASE_ID_RE = /^[A-Za-z0-9_-]{1,20}$/;
@@ -304,13 +305,13 @@ async function caseFolders(db, userId, body) {
   if (!c) throw httpError(404, 'Case not found');
   const out = { case_id: c.case_id, folders: [], truncated: false, reason: null };
   if (!c.case_dropbox || !String(c.case_dropbox).trim()) return { ...out, reason: 'no_case_folder' };
-  const dbx = require('./dropboxService');                 // lazy (convention)
+  const storage = require('./documentSourceService').get(SOURCE_PROVIDER);   // lazy (convention)
   let listing;
   let root;
   try {
-    const cred = await dbx._resolveCredential(db, {});
-    root = String(await dbx.resolveLocation(db, cred, { sharedLink: String(c.case_dropbox).trim(), expectFolder: true }) || '');
-    listing = await dbx.listFolder(db, { path: root, recursive: true, maxEntries: FOLDERS_LIST_MAX, credentialId: cred });
+    const ctx = await storage.context(db);
+    root = String(await storage.resolveHumanLink(db, String(c.case_dropbox).trim(), { expectFolder: true }, ctx) || '');
+    listing = await storage.list(db, { path: root }, { recursive: true, max: FOLDERS_LIST_MAX }, ctx);
   } catch (err) {
     return { ...out, reason: 'unavailable', error: (err && err.message) || 'Dropbox did not answer' };
   }

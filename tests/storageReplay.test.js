@@ -367,8 +367,14 @@ scenario('13 documentSourceService D1a: upload, ensureFolder, directUpload, list
   e('d1a.listChanges', { ...first, entries: first.entries.map((x) => x.path_display) });
   const next = await p.listChanges(db, { cursor: first.cursor });
   e('d1a.listChanges', { ...next, entries: next.entries.length });
+  e('d1d2.list', await p.list(db, { path: W.CASE_A_FOLDER.toLowerCase() }, { max: 2000 }, { credentialId: 8 }));          // alignCaseFolder's call
+  e('d1d2.list', await p.list(db, { path: W.CASE_A_FOLDER }, { recursive: true, max: 4000 }, { credentialId: 8 }));          // the Comms picker's call
+  e('d1d2.list', await p.list(db, { humanLink: link }, {}));
+  e('d1d2.list', await p.list(db, { folder: caseA.id }, { recursive: true }));
+  const intake = fake.node(`${W.CASE_A_FOLDER}/Client Uploads/2026-06-01 Intake.pdf`).id;
+  await expect(p.ensureFolder(db, { parent: intake, name: 'x' })).rejects.toThrow('is not a folder');
+  e('d1d2.move', await p.move(db, intake, `${W.CASE_A_FOLDER}/Forms/Form 121.pdf`, { credentialId: 8, autorename: true }));   // a collision → "(1)"
   e('d1a.declarations', { capabilities: p.capabilities, nameRules: { ...p.nameRules, validateName: undefined } });
-  await expect(p.ensureFolder(db, { parent: fake.node(`${W.CASE_A_FOLDER}/Client Uploads/2026-06-01 Intake.pdf`).id, name: 'x' })).rejects.toThrow('is not a folder');
 });
 
 // ── coverage: every provider function a writer can reach is recorded somewhere

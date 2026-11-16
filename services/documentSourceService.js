@@ -65,6 +65,14 @@
  *       The folder a human link opens, as a provider path. Class A only; it
  *       goes away for the writers once the binding row carries the handle (D3).
  *   joinPath(base, ...segments)             -> path   (pure; the provider's path syntax)
+ *   list(db, dest, { recursive?, max? }, opts?) -> { entries, count, truncated }
+ *       A folder's children (one level, or the whole subtree with recursive),
+ *       bounded by max — a bounded READ for a UI picker or a name comparison,
+ *       not the sync engine's resumable listChanges. dest: { path } |
+ *       { folder: externalId } | { humanLink }. Entries are the provider's own
+ *       shape (D1d2; normalized with the attribution strategies in D4).
+ *   move(db, externalId, toPath, { autorename? }) — autorename lets the provider
+ *       pick "name (1)" on a collision instead of failing (the refile's contract).
  *   ensureFolder's `externalId` is the handle when the provider learned it for
  *   free (Dropbox: a folder it just CREATED) or when opts.handle === true (one
  *   get_metadata more on an adopted folder); otherwise null. `path` is the
@@ -216,7 +224,11 @@ const dropboxProvider = {
   },
 
   async move(db, externalId, toPath, opts = {}) {
-    return dropbox.movePath(db, { fromPath: externalId, toPath, ..._dbxOpts(opts) });
+    return dropbox.movePath(db, {
+      fromPath: externalId, toPath,
+      ...(opts.autorename === true ? { autorename: true } : {}),
+      ..._dbxOpts(opts),
+    });
   },
 
   /**
@@ -383,6 +395,19 @@ const dropboxProvider = {
   },
 
   joinPath: dropbox.joinPath,
+
+  /** A bounded read of a folder's children — the exact files/list_folder call the filers make. */
+  async list(db, dest = {}, { recursive, max } = {}, opts = {}) {
+    const bound = {
+      ...(recursive === true ? { recursive: true } : {}),
+      ...(Number(max) > 0 ? { maxEntries: Number(max) } : {}),
+      ..._dbxOpts(opts),
+    };
+    if (dest.humanLink) return dropbox.listFolder(db, { sharedLink: dest.humanLink, ...bound });
+    if (dest.folder) return dropbox.listFolder(db, { path: await _folderPath(db, dest.folder, opts), ...bound });
+    if (dest.path == null) throw new Error('document storage: list needs path, folder or humanLink');
+    return dropbox.listFolder(db, { path: dest.path, ...bound });
+  },
 
   isCursorReset: (err) => dropbox.isCursorResetError(err),
   isNotFound:    (err) => dropbox.isPathNotFoundError(err),
