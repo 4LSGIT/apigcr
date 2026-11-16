@@ -56,8 +56,8 @@ const EVIDENCE = [{ id: 'q1', purpose: 'case', rows: [{ case_id: CASE_ID, case_n
 let spies = [];
 let calls;
 function setup({ caseRow = {}, clients, missing = false, conflict = null, judge = null, judgeNames = { 41: 'Hon. Mark Example', 42: 'Hon. Other Judge' },
-  rules = [], evaluate, filed = { events: 0, log: 0 } } = {}) {
-  calls = { getCase: 0, collision: [], resolve: [], rules: [], filed: [] };
+  rules = [], evaluate, filed = { events: 0, log: 0 }, judgeFill = null } = {}) {
+  calls = { getCase: 0, collision: [], resolve: [], rules: [], filed: [], judgeFill: [] };
   const row = { case_id: CASE_ID, case_number: null, case_number_full: null, case_type: 'Bankruptcy', case_subtype: 'Chapter 7',
     case_caption: '', case_judge: '', case_judge_contact_id: null, case_notes: 'n', custom: '{}', ...caseRow };
   spies = [
@@ -69,6 +69,8 @@ function setup({ caseRow = {}, clients, missing = false, conflict = null, judge 
     }),
     jest.spyOn(caseService, 'checkCaseNumberCollision').mockImplementation(async (_db, id, vals) => { calls.collision.push([id, vals]); return conflict; }),
     jest.spyOn(roleResolver, 'resolveJudge').mockImplementation(async (_db, args) => { calls.resolve.push(args); return judge; }),
+    // caseService.judgeFillFromDocket's suffix lookup (the blank-judge fill).
+    jest.spyOn(roleResolver, 'judgeFromDocket').mockImplementation(async (_db, full) => { calls.judgeFill.push(full); return judgeFill; }),
     jest.spyOn(triggerService, 'listActiveRulesForEvent').mockImplementation(async (_db, ev) => { calls.rules.push(ev); return rules.map((r) => ({ ...r })); }),
   ];
   if (evaluate) spies.push(jest.spyOn(triggerService, 'evaluateDraft').mockImplementation(evaluate));
@@ -264,6 +266,48 @@ describe('the card: values, readers, the judge link, automation, expected', () =
       'Trigger rule #9 "Code rule" could not be evaluated for this docket adopt (GUEST_CODE_BUSY) — it MAY run: calls create_log',
     ] });
     expect(c.warnings).toEqual(['AUTOMATION: at least one trigger rule could not be evaluated for this docket adopt — read its line; it may run.']);
+  });
+});
+
+describe('the blank-judge fill a full number brings (caseService.judgeFillFromDocket, 2026-11-16)', () => {
+  const LSG = { contact_id: 41, name: 'Hon. Mark Example' };
+  test('blank judge + full number: the card predicts the fill, the link resolves from the filled text, the envelope carries it in updateCase order', async () => {
+    const seen = [];
+    const rules = [{ id: 7, name: 'Any', actions: [{ action_type: 'workflow', config: { workflow_id: 12 } }] }];
+    const c = await run(adopt({ case_number_full: '25-12345-abc' }), {
+      judge: 41, judgeFill: LSG, rules, evaluate: async (_r, env) => { seen.push(env); return { matched: false }; },
+    });
+    expect(calls.judgeFill).toEqual(['25-12345-abc']);
+    expect(c.judge_text).toEqual({ from: '', to: 'Hon. Mark Example' });
+    expect(c.effects).toContain('Judge: blank → "Hon. Mark Example" — the server fills a blank judge from the full case number\'s judge suffix (a judge already set is never changed).');
+    expect(calls.resolve).toEqual([{ case_number_full: '25-12345-abc', case_judge: 'Hon. Mark Example' }]);
+    expect(c.effects).toContain('Judge link: re-resolved from the full case number — none → Hon. Mark Example (contact #41).');
+    expect(seen[0].changes).toEqual({
+      case_number: { from: null, to: '25-12345' }, case_number_full: { from: null, to: '25-12345-abc' },
+      case_judge: { from: '', to: 'Hon. Mark Example' }, case_judge_contact_id: { from: null, to: 41 },
+    });
+    expect(seen[0].extra).toEqual({ updated_fields: ['case_number', 'case_number_full', 'case_judge', 'case_judge_contact_id'] });
+    expect(seen[0].data.case_judge).toBe('Hon. Mark Example');
+    // the click refuses if the judge is no longer blank
+    expect(c.expected).toMatchObject({ case_judge: '', case_judge_contact_id: null });
+  });
+  test('a CHANGED existing link on a blank judge says the text is filled, not untouched', async () => {
+    const c = await run(adopt({ case_number_full: '25-12345-xyz' }), { judge: 42, judgeFill: { contact_id: 42, name: 'Hon. Other Judge' }, caseRow: { case_judge_contact_id: 41 } });
+    expect(c.warnings).toEqual(['JUDGE LINK CHANGES: setting the full case number re-resolves the case\'s judge contact from its suffix (else from the judge text "Hon. Other Judge") — Hon. Mark Example (contact #41) → Hon. Other Judge (contact #42). The judge text is filled (above).']);
+  });
+  test('a set judge is never filled — the lookup is not even made', async () => {
+    const c = await run(adopt({ case_number_full: '25-12345-abc' }), { judge: 41, judgeFill: LSG, caseRow: { case_judge: 'Mark Example' } });
+    expect(calls.judgeFill).toEqual([]);
+    expect(c.judge_text).toBeNull();
+    expect(c.effects.some((e) => e.startsWith('Judge: '))).toBe(false);
+  });
+  test('a suffix that names no judge fills nothing; a bare number never looks', async () => {
+    const miss = await run(adopt({ case_number_full: '25-12345-abc' }), { judge: null, judgeFill: null });
+    expect(miss.judge_text).toBeNull();
+    expect(miss.effects).toContain('Judge link: re-resolved from the full case number — unchanged (none).');
+    const bare = await run(adopt(), { judgeFill: LSG });
+    expect(calls.judgeFill).toEqual([]);
+    expect(bare.judge_text).toBeNull();
   });
 });
 

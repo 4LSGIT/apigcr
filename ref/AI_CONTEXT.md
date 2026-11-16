@@ -1881,7 +1881,11 @@ client-only). `case_judge`/`case_trustee` free text AUTHORITATIVE with
 Judge resolution keys on docket suffix → the judge role's `judge_3` attr (court
 NEFs never NAME the judge, so `courtExecutor` fills a BLANK `case_judge` + twin
 from the suffix before dispatch — `caseRoleResolver.judgeFromDocket`,
-change-logged/revertable; the Pabbly 341 UPDATE did this until 2026-10-12); trustee
+change-logged/revertable; the Pabbly 341 UPDATE did this until 2026-10-12.
+`updateCase` does the same on any write carrying `case_number_full` onto a case
+with no judge — `caseService.judgeFillFromDocket`, which the Casey docket /
+case-fields / form-submit cards call to predict it — and `intakeCase` sets both
+on create; a set judge is never changed); trustee
 vocab = the contact roster (`contact_roles` role rows via `lib/trusteeRoster`;
 `fe-trustees` setting and `judges`/`trustees` tables removed 2026-09-24). `bk_*` columns deliberately
 loose (sheet parity) — don't tighten. `case_relate` links contacts

@@ -679,18 +679,22 @@ async function intakeCase(db, body = {}, { allowBlankType = false } = {}) {
     }
   }
 
-  // ── Role twin (slice 7): resolve the judge from the docket suffix ──
+  // ── Judge from the docket suffix: the NAME and its twin (slice 7; the name
+  // since 2026-11-16 — a new case has no judge text, and court notices never
+  // name the judge, so the suffix is the only source). judgeFromDocket is the
+  // suffix-only resolver (exactly one active judge role, else nothing) and
+  // never throws; the try/catch guards the require.
   let judgeContactId = null;
+  let judgeName = null;
   if (caseNumberFull !== null) {
     try {
       const roleResolver = require('../lib/caseRoleResolver'); // lazy (convention)
-      judgeContactId = await roleResolver.resolveJudge(db, {
-        case_number_full: caseNumberFull,
-        case_judge: null,
-      });
+      const hit = await roleResolver.judgeFromDocket(db, caseNumberFull);
+      if (hit) { judgeContactId = hit.contact_id; judgeName = hit.name; }
     } catch (err) {
-      console.error('intakeService.intakeCase: judge twin resolve failed (non-fatal):', err.message);
+      console.error('intakeService.intakeCase: judge resolve failed (non-fatal):', err.message);
       judgeContactId = null;
+      judgeName = null;
     }
   }
 
@@ -702,7 +706,7 @@ async function intakeCase(db, body = {}, { allowBlankType = false } = {}) {
   // NOT-NULL with no DB defaults, which works only because the session
   // sql_mode is non-strict (STRICT_TRANS_TABLES absent). Do NOT add strict
   // mode without giving these columns real defaults first; that is why the
-  // optional four are spread in rather than passed as nulls.
+  // optional columns are spread in rather than passed as nulls.
   const created = await caseService.createCase(db, {
     case_open_date: caseService.NOW_FIRM,
     case_type: caseType,
@@ -710,6 +714,7 @@ async function intakeCase(db, body = {}, { allowBlankType = false } = {}) {
     ...(caseNumber     !== null ? { case_number: caseNumber }               : {}),
     ...(caseNumberFull !== null ? { case_number_full: caseNumberFull }      : {}),
     ...(judgeContactId !== null ? { case_judge_contact_id: judgeContactId } : {}),
+    ...(judgeName      !== null ? { case_judge: judgeName }                 : {}),
   });
   const case_id = created.case_id;
 

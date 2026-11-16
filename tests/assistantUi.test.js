@@ -4677,6 +4677,13 @@ describe('A7c docket card (case.docket.adopt)', () => {
     expect(rb.P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Add full case number' });
     expect(rb.P.Swal.fire.mock.calls[0][0].text).toContain('Case number: already "25-12345" — not sent');
     expect(rb.P.Swal.fire.mock.calls[0][0].text).toContain('Writes: only the case\'s full case number (and the judge link it re-resolves)');
+    // A blank judge the full number fills (judge_text) is named on the Writes line; the body is still only the number.
+    const filled = adopt({ writes: { case_number_full: { from: null, to: '25-12345-abc' } }, kept: [{ column: 'case_number', value: '25-12345' }],
+      current: { case_number: '25-12345', case_number_full: null }, judge_text: { from: '', to: 'Hon. Mark Example' },
+      expected: { case_number: '25-12345', case_number_full: null, case_type: 'Bankruptcy', case_judge: '', case_judge_contact_id: null } });
+    const rf = await runDocket(filled, { write: adopted, read: reads({ got: caseGet({ case_number: '25-12345', case_number_full: null, case_judge: '', case_judge_contact_id: null }) }) });
+    expect(rf.writes[0].body).toEqual({ case_number_full: '25-12345-abc' });
+    expect(rf.P.Swal.fire.mock.calls[0][0].text).toContain('Writes: only the case\'s full case number (and the blank judge it fills, and the judge link it re-resolves), through the case-review docket adopt — no other case field.');
   });
 
   test('the builder fixes route, method and body; a bad card never reaches a read, the claim or the route', async () => {
@@ -4835,6 +4842,11 @@ describe('A7 groups B/C case fields card (case.fields.update)', () => {
       'Stale check: if any of these fields, the case type or subtype (or what a re-resolved link rests on) changes before you apply, nothing is written.']) {
       expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
     }
+    // A blank judge the server fills (judge_text) is named on the Writes line; the body is unchanged.
+    const filled = card({ judge_text: { from: 'blank', to: 'Hon. Ann Other' }, judge: { from: null, to: 42, from_label: 'none', to_label: 'Hon. Ann Other (contact #42)' } });
+    const rf = await runFields(filled, { write: saved });
+    expect(rf.writes[0].body).toEqual({ case_file_date: '2026-05-05', case_chapter: '13' });
+    expect(rf.P.Swal.fire.mock.calls[0][0].text).toContain('Writes: only the 2 columns above (and the blank judge the server fills) (and the link the server re-resolves), through the case page\'s own save — no other case field.');
   });
 
   test('a clear, a removal and a warning danger-style the card; a TEXT edit shows only the changed region', async () => {

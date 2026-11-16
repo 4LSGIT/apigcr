@@ -1509,7 +1509,7 @@ function caseFieldsText(draft) {
     if (acting.length) lines.push('Automation: what those actions cause in turn is not followed here.');
   }
   const n = (draft.writes || []).length;
-  lines.push(`Writes: only the ${n === 1 ? 'column' : `${n} columns`} above${draft.judge || draft.trustee ? ' (and the link the server re-resolves)' : ''}, through the case page's own save — no other case field.`,
+  lines.push(`Writes: only the ${n === 1 ? 'column' : `${n} columns`} above${draft.judge_text ? ' (and the blank judge the server fills)' : ''}${draft.judge || draft.trustee ? ' (and the link the server re-resolves)' : ''}, through the case page's own save — no other case field.`,
     'Stale check: if any of these fields, the case type or subtype (or what a re-resolved link rests on) changes before you apply, nothing is written.',
     ...((draft.writes || []).some((w) => CASE_DOCKET_FIELDS.includes(String(w.column).toLowerCase()) && typeof w.send === 'string' && w.send)
       ? ['Docket check: when you apply, the case numbers are searched again; if another case holds a number this card writes, nothing is written.'] : []),
@@ -3932,7 +3932,8 @@ function syncrootOpen() {
 // equality, never docket shape), an over-width value and a control character;
 // left out a column already holding exactly the value; named every reader of
 // the two columns (header, Cases list, portal, Documents, court email,
-// caption, the judge link a full number re-resolves); dry-ran case.updated
+// caption, the judge link a full number re-resolves, the blank judge name it
+// fills from the suffix); dry-ran case.updated
 // against the active trigger rules; and baked both columns as stored, the case
 // type and — with a full number — the judge text and link into `expected`.
 // The click re-reads GET /api/cases/:id and refuses on ANY difference BEFORE
@@ -3985,7 +3986,7 @@ function caseDocketText(draft) {
     : `Automation: no active trigger rule acts on this case.updated (${Number(a.rules_checked) || 0} checked).`);
   acting.forEach((x) => lines.push(`Automation: ${x}`));
   if (acting.length) lines.push('Automation: what those actions cause in turn is not followed here.');
-  lines.push(`Writes: only the case's ${Object.keys(w).map((f) => String(CASE_DOCKET_NAMES[f] || f).toLowerCase()).join(' and ')}${w.case_number_full ? ' (and the judge link it re-resolves)' : ''}, through the case-review docket adopt — no other case field.`,
+  lines.push(`Writes: only the case's ${Object.keys(w).map((f) => String(CASE_DOCKET_NAMES[f] || f).toLowerCase()).join(' and ')}${w.case_number_full ? (draft.judge_text ? ' (and the blank judge it fills, and the judge link it re-resolves)' : ' (and the judge link it re-resolves)') : ''}, through the case-review docket adopt — no other case field.`,
     'Replacing: never — this card only fills a blank number.',
     'Stale check: if either number, the case type or (for a full number) the judge changes before you apply, nothing is written; the route itself refuses a number another case took meanwhile.',
     'Other open pages: case pages and the Cases list refresh on their own.',

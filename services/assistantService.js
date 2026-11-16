@@ -4043,6 +4043,19 @@ async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = 
   const touched = (c) => Object.prototype.hasOwnProperty.call(nextFields, c);
   const docket = docketWrites.length ? await caseFieldsDocketReview(db, row, nextFields, found) : null;
   if (docket) { warnings.push(...docket.warnings); effects.push(...docket.effects); delete docket.warnings; delete docket.effects; }
+  // updateCase fills a BLANK judge name from the full case number's suffix
+  // when the write carries case_number_full (caseService.judgeFillFromDocket —
+  // the same function), before it re-resolves the link.
+  const judgeSent = touched('case_judge');
+  let judgeText = null;
+  const judgeFill = await caseSvc.judgeFillFromDocket(db, row, nextFields);
+  if (judgeFill) {
+    if (!judgeSent) updatedFields.push('case_judge');
+    nextFields.case_judge = judgeFill.name;
+    effective.case_judge = judgeFill.name;
+    judgeText = { from: caseFieldsShown('string', caseFieldsCanon('string', row.case_judge)), to: judgeFill.name };
+    effects.push(`Judge: blank → "${judgeFill.name.slice(0, 100)}" — the server fills a blank judge from the full case number's judge suffix (a judge already set is never changed).`);
+  }
   // updateCase re-resolves the judge link when case_judge OR case_number_full is written.
   if (touched('case_judge') || touched('case_number_full')) {
     const to = await resolver.resolveJudge(db, { case_number_full: effective.case_number_full, case_judge: effective.case_judge });
@@ -4072,7 +4085,7 @@ async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = 
       }
     };
     if (judge) {
-      link(judge, 'judge', touched('case_judge') ? 'the full case number\'s judge suffix, else the new judge text'
+      link(judge, 'judge', judgeSent ? 'the full case number\'s judge suffix, else the new judge text'
         : String(effective.case_number_full == null ? '' : effective.case_number_full).trim()
           ? 'the new full case number\'s judge suffix, else the judge text'
           : 'the judge text alone (the full case number is cleared, so it has no suffix)');
@@ -4201,7 +4214,7 @@ async function normalizeCaseFieldsAction(db, value, evidence, { currentUserId = 
       case_id: id, label: caseLabel, case_type: String(row.case_type || '').slice(0, 40), case_subtype: String(row.case_subtype || '').slice(0, 40),
       clients: clients.slice(0, 4),
     },
-    writes: writes.map((w) => ({ ...w })), kept, judge, trustee, docket,
+    writes: writes.map((w) => ({ ...w })), kept, judge, judge_text: judgeText, trustee, docket,
     automation: { events: Object.keys(envChanges).length ? ['case.updated'] : [], lines: automation.lines.map((l) => l.text), rules_checked: automation.rules_checked, quiet: automation.quiet },
     effects, warnings, expected, expected_kinds: expectedKinds, evidence: refs,
   };
@@ -7933,13 +7946,24 @@ async function normalizeCaseDocketAction(db, value, evidence, { currentUserId = 
   effects.push('Templates: {{cases.case_number}} / {{cases.case_number_full}} in letters, forms, emails and texts resolve to the new value from now on.');
 
   // A full number re-resolves the judge link (updateCase → caseRoleResolver),
-  // from the full number's suffix, else the judge text.
+  // from the full number's suffix, else the judge text — and, on a case with
+  // NO judge, first fills the judge name from the suffix (updateCase runs
+  // caseService.judgeFillFromDocket; the card runs the same function).
   const nextFields = {}; for (const [f, w] of Object.entries(writes)) nextFields[f] = w.to;
   const updatedFields = Object.keys(nextFields);
   let judge = null;
+  let judgeText = null;
   if (writes.case_number_full) {
     const resolver = require('../lib/caseRoleResolver'); // lazy (convention)
-    const to = await resolver.resolveJudge(db, { case_number_full: writes.case_number_full.to, case_judge: row.case_judge });
+    const fill = await caseSvc.judgeFillFromDocket(db, row, nextFields);
+    if (fill) {
+      judgeText = { from: caseDocketStored(row.case_judge), to: fill.name };
+      nextFields.case_judge = fill.name;
+      updatedFields.push('case_judge');
+      effects.push(`Judge: blank → "${fill.name.slice(0, 100)}" — the server fills a blank judge from the full case number's judge suffix (a judge already set is never changed).`);
+    }
+    const judgeNow = fill ? fill.name : row.case_judge;
+    const to = await resolver.resolveJudge(db, { case_number_full: writes.case_number_full.to, case_judge: judgeNow });
     const from = row.case_judge_contact_id == null ? null : Number(row.case_judge_contact_id);
     const toId = to == null ? null : Number(to);
     const ids = [...new Set([from, toId].filter((n) => n != null))];
@@ -7955,9 +7979,9 @@ async function normalizeCaseDocketAction(db, value, evidence, { currentUserId = 
     if (from === toId) {
       effects.push(`Judge link: re-resolved from the full case number — unchanged (${who(from)}).`);
     } else if (from != null) {
-      warnings.push(`JUDGE LINK CHANGES: setting the full case number re-resolves the case's judge contact from its suffix (else from the judge text "${String(row.case_judge || '').slice(0, 100)}") — ${who(from)} → ${who(toId)}. The judge text itself is untouched.`);
+      warnings.push(`JUDGE LINK CHANGES: setting the full case number re-resolves the case's judge contact from its suffix (else from the judge text "${String(judgeNow || '').slice(0, 100)}") — ${who(from)} → ${who(toId)}.${fill ? ' The judge text is filled (above).' : ' The judge text itself is untouched.'}`);
     } else {
-      effects.push(`Judge link: re-resolved from the full case number — none → ${who(toId)} (the judge text is untouched).`);
+      effects.push(`Judge link: re-resolved from the full case number — none → ${who(toId)}${fill ? '' : ' (the judge text is untouched)'}.`);
     }
   }
 
@@ -7978,7 +8002,7 @@ async function normalizeCaseDocketAction(db, value, evidence, { currentUserId = 
       clients: clients.slice(0, 4),
     },
     current: { case_number: caseDocketStored(row.case_number), case_number_full: caseDocketStored(row.case_number_full) },
-    writes, kept, judge,
+    writes, kept, judge, judge_text: judgeText,
     displays: { before, after: now },
     automation: { events: ['case.updated'], lines: automation.lines.map((l) => l.text), rules_checked: automation.rules_checked, quiet: automation.quiet },
     effects, warnings,
@@ -9062,6 +9086,13 @@ async function normalizeFormSubmit(db, value, evidence, currentUserId) {
       }
       const visible = columns.filter((c) => c.client_visible).map((c) => c.column);
       if (visible.length) warnings.push(`CLIENT-VISIBLE COLUMNS: the submit writes ${visible.join(', ')} on the case — the client portal shows ${visible.length > 1 ? 'them' : 'it'} (each column's readers are listed).`);
+      // updateCase fills a BLANK judge name from the full case number's suffix
+      // (caseService.judgeFillFromDocket — the same function) before the link.
+      const judgeFill = await caseSvc.judgeFillFromDocket(db, raw, nextFields);
+      if (judgeFill) {
+        nextFields.case_judge = judgeFill.name;
+        effects.push(`Judge: blank → "${judgeFill.name.slice(0, 100)}" — the server fills a blank judge from the full case number's judge suffix (a judge already set is never changed).`);
+      }
       const relinks = [];
       if (Object.prototype.hasOwnProperty.call(nextFields, 'case_judge') || Object.prototype.hasOwnProperty.call(nextFields, 'case_number_full')) relinks.push('the judge link (from the full case number\'s judge suffix, else the judge text)');
       if (Object.prototype.hasOwnProperty.call(nextFields, 'case_trustee')) relinks.push('the trustee link (from the trustee text and the chapter)');

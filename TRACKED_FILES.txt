@@ -1314,6 +1314,7 @@ tests/caseColumns.s4.test.js
 tests/caseDocketGuard.test.js
 tests/caseEventService.test.js
 tests/caseId.test.js
+tests/caseJudgeFill.test.js
 tests/caseMergeShapes.test.js
 tests/casePanelCss.test.js
 tests/caseTypeMultiFilter.test.js

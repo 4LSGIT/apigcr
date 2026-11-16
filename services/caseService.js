@@ -540,7 +540,7 @@ const NOW_FIRM = Object.freeze({ __firmNow: true });
  *   (measured on 8.4.11 under prod's exact mode, 2026-09-25 — non-strict
  *   coerces truncating and out-of-range values, it does not swallow a NULL).
  *   Omitting is the only way to get the implicit default, which is why
- *   `intakeCase` spreads its four optional columns in rather than passing
+ *   `intakeCase` spreads its optional columns in rather than passing
  *   nulls.
  * @param {object} [opts]
  * @param {number} [opts.attempts=10]  id-collision retries.
@@ -744,12 +744,25 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
   //     didn't match;
   //   - clearing a source field re-resolves from what remains (an emptied
   //     case_judge with a live docket suffix still resolves — the suffix IS
-  //     the primary key).
+  //     the primary key);
+  //   - a docket write onto a case with NO judge also fills the judge NAME
+  //     from the suffix (judgeFillFromDocket) — the text the twin then
+  //     resolves from. A set judge is never changed, and an explicit clear
+  //     of a set judge is respected.
   // case_chapter alone does NOT retrigger trustee resolution here (spec: the
   // three named fields); courtExecutor's conversion path handles the real-
   // world chapter-flip case, and chapter+trustee arrive together anyway.
   {
     const touched = f => Object.prototype.hasOwnProperty.call(safeFields, f);
+    // Judge NAME fill (2026-11-16): a docket write onto a case with no judge
+    // fills case_judge from the full docket's suffix — see
+    // judgeFillFromDocket. Runs BEFORE the twin so the twin resolves from the
+    // filled post-state (same contact: the suffix is its primary key).
+    const judgeFill = await judgeFillFromDocket(db, priorRow, safeFields);
+    if (judgeFill) {
+      if (!touched('case_judge')) keys.push('case_judge');
+      safeFields.case_judge = judgeFill.name;
+    }
     const wantJudge   = (touched('case_judge') || touched('case_number_full'))
                         && !touched('case_judge_contact_id');
     const wantTrustee = touched('case_trustee') && !touched('case_trustee_contact_id');
@@ -1064,6 +1077,39 @@ const docketTooLongMessage = (tooLong) =>
   `${tooLong.map(([k, v]) => `${k} is ${[...v].length} characters`).join(', ')} — the column keeps ${DOCKET_MAX_CHARS}`;
 const docketConflictMessage = (conflict) =>
   `That docket already belongs to case ${conflict.case_id} (${conflict.case_number_full || conflict.case_number || conflict.case_id}).`;
+
+/**
+ * The judge NAME fill updateCase applies alongside a docket write
+ * (2026-11-16). Court notices never name the judge — only the full docket's
+ * suffix ('26-52466-lsg') does — so a case whose full number arrives with no
+ * judge gets the judge from the suffix (lib/caseRoleResolver.judgeFromDocket:
+ * exactly one ACTIVE judge role carrying attrs.judge_3, else nothing).
+ * courtExecutor fills the court path the same way through its raw writes.
+ *
+ * Fires only when ALL hold:
+ *   - the write carries case_number_full;
+ *   - the case's judge text is blank BEFORE the write (a set judge is never
+ *     changed — a suffix change on a set judge re-resolves only the link);
+ *   - the write leaves it blank (case_judge absent, or sent blank over blank —
+ *     a hand clear of a SET judge fails the first rule, so it is respected).
+ *
+ * Exported so the Ask Casey cards that predict updateCase (docket adopt, case
+ * fields, form submit) run the same rule, not a copy. Never throws.
+ *
+ * @param {object} db
+ * @param {object} priorRow  the case row before the write (case_judge read)
+ * @param {object} fields    the write (blank dates already normalized)
+ * @returns {Promise<{contact_id:number, name:string}|null>}
+ */
+async function judgeFillFromDocket(db, priorRow, fields) {
+  const has = (f) => !!fields && Object.prototype.hasOwnProperty.call(fields, f);
+  const blank = (v) => String(v == null ? '' : v).trim() === '';
+  if (!has('case_number_full')) return null;
+  if (!blank(priorRow && priorRow.case_judge)) return null;
+  if (has('case_judge') && !blank(fields.case_judge)) return null;
+  // Via the module object (not destructured) so tests can spy on it.
+  return require('../lib/caseRoleResolver').judgeFromDocket(db, fields.case_number_full);
+}
 
 /**
  * The docket guard for a generic column write (PATCH /api/cases/:id, the
@@ -2562,6 +2608,7 @@ module.exports = {
   getCaseContacts,
   searchCases,
   checkCaseNumberCollision,
+  judgeFillFromDocket,
   docketWriteRefusal,
   DOCKET_MAX_CHARS,
   docketTooLongMessage,

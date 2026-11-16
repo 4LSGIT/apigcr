@@ -105,8 +105,8 @@ const CASE_TYPES = { Bankruptcy: ['Chapter 7', 'Chapter 13'], 'Civil Litigation'
 let spies = [];
 let calls;
 function setup({ caseRow = {}, clients, missing = false, judge = null, trustee = null, names = { 41: 'Hon. Mark Example', 42: 'Hon. Ann Other', 51: 'Tom Trustee', 52: 'Una Trustee' },
-  rules = [], evaluate, scans = {}, extraColumns = [], caseTypes = CASE_TYPES, conflict = null, counts = () => 0 } = {}) {
-  calls = { getCase: 0, resolveJudge: [], resolveTrustee: [], rules: [], scans: [], queries: 0, stageLookups: [], collision: [], counts: [] };
+  rules = [], evaluate, scans = {}, extraColumns = [], caseTypes = CASE_TYPES, conflict = null, counts = () => 0, judgeFill = null } = {}) {
+  calls = { getCase: 0, resolveJudge: [], resolveTrustee: [], rules: [], scans: [], queries: 0, stageLookups: [], collision: [], counts: [], judgeFill: [] };
   const row = {
     case_id: CASE_ID, case_number: '25-12345', case_number_full: '25-12345-mex', case_type: 'Bankruptcy', case_subtype: 'Chapter 7',
     case_caption: 'In re Dana Debtor', case_chapter: '7', case_judge: 'Mark Example', case_judge_contact_id: 41,
@@ -125,6 +125,8 @@ function setup({ caseRow = {}, clients, missing = false, judge = null, trustee =
     }),
     jest.spyOn(roleResolver, 'resolveJudge').mockImplementation(async (_db, args) => { calls.resolveJudge.push(args); return judge; }),
     jest.spyOn(roleResolver, 'resolveTrustee').mockImplementation(async (_db, args) => { calls.resolveTrustee.push(args); return trustee; }),
+    // caseService.judgeFillFromDocket's suffix lookup (the blank-judge fill).
+    jest.spyOn(roleResolver, 'judgeFromDocket').mockImplementation(async (_db, full) => { calls.judgeFill.push(full); return judgeFill; }),
     jest.spyOn(triggerService, 'listActiveRulesForEvent').mockImplementation(async (_db, ev) => { calls.rules.push(ev); return rules.map((r) => ({ ...r })); }),
     jest.spyOn(caseService, 'checkCaseNumberCollision').mockImplementation(async (_db, id, vals) => { calls.collision.push([id, vals]); return conflict; }),
   ];
@@ -441,6 +443,49 @@ describe('who reads each column', () => {
     // docs_due_x is another word: not a hit for docs_due.
     expect(w(d, 'docs_due').readers).toEqual(['CLIENT PORTAL card #3 "docs — Docs" names it.', 'Templates: {{cases.docs_due}} in letters, forms, emails and texts resolves to the new value.']);
     expect(w(d, 'docs_due').client_visible).toBe(true);
+  });
+});
+
+describe('the blank-judge fill a full number brings (caseService.judgeFillFromDocket, 2026-11-16)', () => {
+  const FILL = { contact_id: 42, name: 'Hon. Ann Other' };
+  const blankJudge = { case_judge: '', case_judge_contact_id: null };
+  test('a new full number on a case with no judge: predicted fill, link from the filled text, envelope in updateCase order, judge in expected', async () => {
+    let seen;
+    const d = await run(edit({ case_number_full: '25-12345-aot' }), {
+      judge: 42, judgeFill: FILL, caseRow: blankJudge,
+      rules: [{ id: 5, name: 'Any', actions: [{ action_type: 'workflow', config: { workflow_id: 12 } }] }],
+      evaluate: async (_rule, env) => { seen = env; return { matched: false }; },
+    });
+    expect(calls.judgeFill).toEqual(['25-12345-aot']);
+    expect(d.judge_text).toEqual({ from: 'blank', to: 'Hon. Ann Other' });
+    expect(d.effects).toContain('Judge: blank → "Hon. Ann Other" — the server fills a blank judge from the full case number\'s judge suffix (a judge already set is never changed).');
+    expect(calls.resolveJudge).toEqual([{ case_number_full: '25-12345-aot', case_judge: 'Hon. Ann Other' }]);
+    // the link's source is still worded as a number change (the server filled the text; the user typed none)
+    expect(d.effects).toContain('Judge link: re-resolved from the new full case number\'s judge suffix, else the judge text — none → Hon. Ann Other (contact #42).');
+    expect(seen.extra).toEqual({ updated_fields: ['case_number_full', 'case_judge', 'case_judge_contact_id'] });
+    expect(seen.changes).toMatchObject({ case_judge: { from: '', to: 'Hon. Ann Other' }, case_judge_contact_id: { from: null, to: 42 } });
+    // the server derives the text — the card never sends it
+    expect(d.writes.map((x) => x.column)).toEqual(['case_number_full']);
+    expect(d.expected).toMatchObject({ case_judge: '' });
+  });
+  test('a judge sent blank over a blank judge is not a clear — it is left out and the fill still lands', async () => {
+    const d = await run(edit({ case_number_full: '25-12345-aot', case_judge: '' }), { judge: 42, judgeFill: FILL, caseRow: blankJudge });
+    expect(d.writes.map((x) => x.column)).toEqual(['case_number_full']);
+    expect(d.judge_text).toEqual({ from: 'blank', to: 'Hon. Ann Other' });
+  });
+  test('a set judge is never filled (the lookup is not made); clearing a set judge alongside the number stays a clear', async () => {
+    const kept = await run(edit({ case_number_full: '25-12345-aot' }), { judge: 42, judgeFill: FILL });
+    expect(calls.judgeFill).toEqual([]);
+    expect(kept.judge_text).toBeNull();
+    const cleared = await run(edit({ case_number_full: '25-12345-aot', case_judge: '' }), { judge: 42, judgeFill: FILL });
+    expect(calls.judgeFill).toEqual([]);
+    expect(cleared.judge_text).toBeNull();
+    expect(calls.resolveJudge).toEqual([{ case_number_full: '25-12345-aot', case_judge: '' }]);
+  });
+  test('no full number on the card → no lookup', async () => {
+    const d = await run(edit({ case_caption: 'In re X' }), { judgeFill: FILL, caseRow: blankJudge });
+    expect(calls.judgeFill).toEqual([]);
+    expect(d.judge_text).toBeNull();
   });
 });
 

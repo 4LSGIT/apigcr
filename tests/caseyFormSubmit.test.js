@@ -549,3 +549,34 @@ describe('the browser: the request, the re-reads, the result, the outcomes, the 
     expect(bt).toContain('Automation: no active rule on form.submitted would act (0 checked)');
   });
 });
+
+describe('the blank-judge fill a full number brings (caseService.judgeFillFromDocket, 2026-11-16)', () => {
+  const roleResolver = require(path.join(REPO, 'lib', 'caseRoleResolver'));
+  const fullDef = { ...DEF, sections: [{ rows: [{ fields: [{ name: 'full', label: 'Full number', type: 'text', apiColumn: 'case_number_full' }] }] }] };
+  const opts = (over = {}) => withDef(fullDef, {
+    rows: { 4530: draftRow({ data: JSON.stringify({ full: '25-12345-lsg' }) }) },
+    rules: [{ id: 11, ev: 'case.updated', name: 'Any', actions: [] }], ...over,
+  });
+  let lookups; let fillSpy;
+  // Own restore: setup() replaces the shared `spies` array when run() calls it.
+  beforeEach(() => {
+    lookups = [];
+    fillSpy = jest.spyOn(roleResolver, 'judgeFromDocket').mockImplementation(async (_db, full) => { lookups.push(full); return { contact_id: 2059, name: 'Lisa S. Gretchko' }; });
+  });
+  afterEach(() => fillSpy.mockRestore());
+
+  test('a case with no judge: the fill is an effect and rides the case.updated dry run', async () => {
+    const c = await run(submit(), opts());
+    expect(lookups).toEqual(['25-12345-lsg']);
+    expect(c.effects).toContain('Judge: blank → "Lisa S. Gretchko" — the server fills a blank judge from the full case number\'s judge suffix (a judge already set is never changed).');
+    const upd = calls.evaluated.find((e) => e[1] === 'case.updated')[2];
+    expect(upd.changes.case_judge).toEqual({ from: null, to: 'Lisa S. Gretchko' });
+    expect(upd.extra.updated_fields).toEqual(['case_number_full', 'case_judge']);
+  });
+
+  test('a case with a judge: no lookup, no fill', async () => {
+    const c = await run(submit(), opts({ caseRow: { ...CASE_ROW, case_judge: 'Mark A. Randon' } }));
+    expect(lookups).toEqual([]);
+    expect(c.effects.some((e) => e.startsWith('Judge: '))).toBe(false);
+  });
+});
