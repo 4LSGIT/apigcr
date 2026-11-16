@@ -7,7 +7,7 @@
 // neutralizes the historical payload disagreement between the two shells
 // (one sent FML, the other LFM). No shell edits required.
 //
-// Native, stage-aware replacement for the Pabbly 'dropbox_create_folder'
+// Native, stage-aware replacement for the Pabbly folder-create
 // bridge. Delegates to caseService.ensureCaseDropboxFolder:
 //   - case has a docket number → Active-tree convention + staff subfolders
 //   - otherwise → Potential-tree convention (+ Client Uploads)

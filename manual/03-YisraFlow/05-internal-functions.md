@@ -63,7 +63,7 @@ Of the 112: **17** are `uiHidden` (internal plumbing and the recurring sweepers,
 | calendar | `gcal_create_event`, `gcal_get_event`, `gcal_update_event`, `gcal_delete_event` |
 | documents | `documents_sync`, `documents_refresh_case_cache`, `documents_attribution_report`, `document_generate_from_template`* |
 | esign | `esign_send_from_template`, `esign_get_status`, `esign_recall` |
-| dropbox | `dropbox_create_folder`, `dropbox_get_shared_link`, `dropbox_list_folder`, `dropbox_move`, `dropbox_rename`, `dropbox_delete`, `dropbox_save_url`, `dropbox_ensure_case_folder` |
+| storage | `storage_ensure_folder`, `storage_human_link`, `storage_list`, `storage_move`, `storage_rename`, `storage_delete`, `storage_import_url`, `storage_ensure_case_folder` |
 | email | `email_case_match`, `email_attachments_file`*, `email_attachments_digest`*, `email_attachments_refile`* |
 | pdf | `parse_pdf`, `render_submission_pdf`* |
 | connections | `refresh_expiring_oauth_credentials`, `rc_renew_subscriptions`, `gcontacts_sync_pending` |
@@ -1975,12 +1975,15 @@ Once filed, the files are ordinary Dropbox documents: `parse_pdf`
 (`dropbox_path`), `query_ai` file inputs and `send_email` `attachment_urls`
 use them from there.
 
-### Dropbox
+### Storage
 
-Eight functions — `dropbox_ensure_case_folder`, `dropbox_create_folder`,
-`dropbox_save_url`, `dropbox_get_shared_link`, `dropbox_list_folder`,
-`dropbox_move`, `dropbox_rename`, `dropbox_delete` — all in
-`lib/internal_functions/dropbox.js`, all chainable via `{{this.output.*}}`.
+Eight functions — `storage_ensure_case_folder`, `storage_ensure_folder`,
+`storage_import_url`, `storage_human_link`, `storage_list`,
+`storage_move`, `storage_rename`, `storage_delete` — all in
+`lib/internal_functions/storage.js`, all chainable via `{{this.output.*}}`.
+They replaced the `dropbox_*` functions on 2026-11-17 (same bodies, provider-
+neutral names: a shared link is a `human_link`); the live workflows were
+migrated in place, output keys unchanged.
 
 They are documented with the service that backs them, including the stage-aware
 case-folder logic and the naming-convention templates:

@@ -21,8 +21,8 @@
  *      counts the five other config-bearing columns (sequence_steps.action_config,
  *      trigger_rule_actions.config, scheduled_jobs.data, tools.html,
  *      workflow_versions.test_input) — they must carry NONE (verified 2026-11-17);
- *   2. asserts the BASE: every row still to migrate is one the fixture
- *      tests/fixtures/storageReplay.workflowSteps.json captured — same id, same
+ *   2. asserts the BASE: every row still to migrate is one the frozen fixture
+ *      tests/fixtures/storageSeamD1f.before.json captured — same id, same
  *      function_name, same param KEYS (values differ by the fixture's
  *      sanitization, so keys are the comparison); a row this script does not
  *      know, or a fixture row that vanished, is NO-GO — refresh the fixture
@@ -68,7 +68,10 @@ const OTHER_COLUMNS = Object.freeze([
   ['workflow_versions', 'test_input'],
 ]);
 
-const FIXTURE_PATH = '../tests/fixtures/storageReplay.workflowSteps.json';
+// FROZEN (D1f-3): the base this migration asserted and rewrote on 2026-11-17. The
+// live fixture (storageReplay.workflowSteps.json) now carries the storage_* names
+// and moves on with the workflows; the migration's record does not.
+const FIXTURE_PATH = '../tests/fixtures/storageSeamD1f.before.json';
 
 const SQL = Object.freeze({
   lockWait: 'SET SESSION lock_wait_timeout = 5',

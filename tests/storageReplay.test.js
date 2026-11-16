@@ -116,7 +116,6 @@ const esignFiling = require('../services/esignFilingService');
 const uploadTarget = require('../services/uploadTargetService');
 const emailFiling = require('../services/emailAttachmentFilingService');
 const emailComms = require('../services/emailAttachmentCommsService');
-const dropboxFns = require('../lib/internal_functions/dropbox');
 const storageFns = require('../lib/internal_functions/storage');
 const sync = require('../services/documentSyncService');
 
@@ -275,7 +274,9 @@ scenario('9 email attachments: file to case / contact / unsorted, refile to the 
   await emailComms.caseFolders(db, 6, { case_id: 'k9PotLd2' });
 });
 
-// ── 10. the workflow engine's dropbox_* functions, with the LIVE step params ──
+// ── 10. the workflow engine's storage_* functions, with the LIVE step params ──
+// The fixture is the migrated live shape (D1f-2). The golden for these records
+// is D0's: the storage_* functions make the calls the dropbox_* ones made.
 const STEP_VALUES = {
   case_dropbox: null, active_path: W.CASE_A_FOLDER, contact_name: 'John Smith', case_subtype: 'Ch 13', case_number: '26-44274', case_id: 'hjSFMabb',
   jf_case_id: 'k9PotLd2', unsorted_path: W.BINS.forms, jf_submission_id: '6400000001', jf_form_id: '250001', JotformKey: 'FIXTURE', jf_filename: 'Detailed BK Questionnaire - Doe, Jane.pdf',
@@ -300,44 +301,17 @@ for (const wf of [...new Set(STEPS.steps.map((s) => `${s.workflow_id}:${s.versio
         effects.push({ kind: 'step.output', step_id: s.step_id, function_name: s.function_name, ...W.scrub({ output: o }) });
       }
     };
-    // D1f-1 ALIAS PROOF: the storage_* names, with the live params translated the
-    // way the alias translates them, must make the SAME provider calls and leave
-    // the SAME tree as the dropbox_* names. The storage run goes first on a fresh
-    // seed; the dropbox run (what the golden records) goes last, so scenario 10's
-    // golden stays byte-identical to D0's.
-    const recorded = world.effects;                 // the wrapper reads this array at the end
-    const storageEffects = [];
-    world.effects = storageEffects;                 // the registry recorder writes here during the storage run
-    await run((s, params, d) => storageFns[dropboxFns.__ALIASES[s.function_name]](dropboxFns.__translate(params), d), storageEffects);
-    const storageCalls = fake.calls.slice();
-    const storageState = fake.snapshot();
-    // a fresh world AND a fresh tree for the dropbox run: the storage run saved
-    // case links (UPDATE cases) and created folders the second run must redo
-    fake.reset(); world.effects = recorded; recorded.length = 0; world.cases = W.baseFixture().cases;
-    seedBase(world, { caseAUnder: workflowId === 28 ? 'potential' : 'active' });
-    await run((s, params, d) => dropboxFns[s.function_name](params, d), world.effects);
-    expect(storageCalls).toEqual(fake.calls);
-    expect(storageState).toEqual(fake.snapshot());
-    expect(storageEffects.map((e) => ({ ...e, function_name: undefined }))).toEqual(world.effects.map((e) => ({ ...e, function_name: undefined })));
+    await run((s, params, d) => storageFns[s.function_name](params, d), world.effects);
   }, { caseAUnder: workflowId === 28 ? 'potential' : 'active' });
 }
-scenario('10 internal functions: dropbox_rename, dropbox_delete, dropbox_list_folder by path (no live workflow uses them)', async ({ db, world }) => {
-  const steps = (link) => [
-    ['dropbox_rename', { shared_link: link, new_name: ' Smith, John - 26-44274' }],
-    ['dropbox_list_folder', { path: W.BINS.uploads, recursive: true, max_entries: 50 }],
-    ['dropbox_list_folder', { shared_link: link, subfolder: 'Client Uploads' }],
-    ['dropbox_delete', { path: `${W.CASE_A_FOLDER.replace(' hjSFMabb - Smith, John - 26-44274 - Ch 13', ' Smith, John - 26-44274')}/Drafts - John Smith` }],
-    ['dropbox_save_url', { url: 'https://example.invalid/slow.pdf', shared_link: link, filename: 'slow.pdf', wait: false }],
-    ['dropbox_create_folder', { path: `${W.BINS.uploads}/ Plain` }],
-  ];
-  // the storage_* names first (alias proof, as in the live-params scenarios), the dropbox_* names last
-  for (const [name, params] of steps(world.cases.hjSFMabb.case_dropbox)) await storageFns[dropboxFns.__ALIASES[name]](dropboxFns.__translate(params), db);
-  const storageCalls = fake.calls.slice();
-  const storageState = fake.snapshot();
-  fake.reset(); world.cases = W.baseFixture().cases; seedBase(world);
-  for (const [name, params] of steps(world.cases.hjSFMabb.case_dropbox)) await dropboxFns[name](params, db);
-  expect(storageCalls).toEqual(fake.calls);
-  expect(storageState).toEqual(fake.snapshot());
+scenario('10 internal functions: storage_rename, storage_delete, storage_list by path, storage_import_url, a plain storage_ensure_folder (no live workflow uses them)', async ({ db, world }) => {
+  const link = world.cases.hjSFMabb.case_dropbox;
+  await storageFns.storage_rename({ human_link: link, new_name: ' Smith, John - 26-44274' }, db);
+  await storageFns.storage_list({ path: W.BINS.uploads, recursive: true, max_entries: 50 }, db);
+  await storageFns.storage_list({ human_link: link, subfolder: 'Client Uploads' }, db);
+  await storageFns.storage_delete({ path: `${W.CASE_A_FOLDER.replace(' hjSFMabb - Smith, John - 26-44274 - Ch 13', ' Smith, John - 26-44274')}/Drafts - John Smith` }, db);
+  await storageFns.storage_import_url({ url: 'https://example.invalid/slow.pdf', human_link: link, filename: 'slow.pdf', wait: false }, db);
+  await storageFns.storage_ensure_folder({ path: `${W.BINS.uploads}/ Plain` }, db);
 });
 
 // ── 11. the sync engine's tick: backfill, then incremental with a move + delete

@@ -18,7 +18,7 @@
 const mysql = require('mysql2/promise');
 const { schemaFor } = require('./helpers/commsArchiveSchema');
 const mig = require('../scripts/storageSeamD1fStorageFunctions');
-const FIXTURE = require('./fixtures/storageReplay.workflowSteps.json');
+const FIXTURE = require('./fixtures/storageSeamD1f.before.json')   // the frozen BEFORE base (D1f-3);
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const suite = URL_ ? describe : describe.skip;

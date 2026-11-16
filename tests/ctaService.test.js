@@ -116,9 +116,7 @@ const EXPECTED_ELIGIBLE = [
   'create_appointment', 'create_event', 'create_log', 'create_task',
   'document_generate_from_template',
   'documents_attribution_report', 'documents_refresh_case_cache', 'documents_sync',
-  'dropbox_create_folder', 'dropbox_delete', 'dropbox_ensure_case_folder',
-  'dropbox_get_shared_link', 'dropbox_list_folder', 'dropbox_move', 'dropbox_rename',
-  'dropbox_save_url', 'email_attachments_file', 'email_attachments_refile',
+  'email_attachments_file', 'email_attachments_refile',
   'emit_calendar_approaching', 'emit_stage_aged', 'enroll_sequence',
   'esign_get_status', 'esign_recall', 'esign_reconcile', 'esign_remind',
   'esign_send_from_template', 'find_contact', 'find_live_calendar_item', 'format_string',
@@ -132,8 +130,8 @@ const EXPECTED_ELIGIBLE = [
   'run_error_sweep', 'run_event_digest', 'run_task_digest', 'send_email', 'send_mms',
   'send_sms', 'set_log_about', 'set_setting', 'set_system_alert_status', 'set_var',
   'start_workflow',
-  // storage-seam D1f-1: the storage_* names take the dropbox_* names' disposition
-  // (eligible); the dropbox_* aliases stay until D1f-3 deletes them.
+  // storage-seam D1f: the storage_* automation functions (eligible — the
+  // disposition their Dropbox-named predecessors had; those were deleted in D1f-3).
   'storage_delete', 'storage_ensure_case_folder', 'storage_ensure_folder', 'storage_human_link',
   'storage_import_url', 'storage_list', 'storage_move', 'storage_rename',
   'sweep_calendar_missed', 'sweep_trigger_executions', 'update_appointment', 'update_case',

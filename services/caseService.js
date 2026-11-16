@@ -1251,7 +1251,7 @@ async function searchCases(db, { q = '', limit = 20 } = {}) {
 //   - routes/internal/dropbox.js  (the case-page "Create Dropbox Folder"
 //                                  repair button — shown when case_dropbox
 //                                  is empty)
-//   - internal function dropbox_ensure_case_folder (workflows; e.g. the
+//   - internal function storage_ensure_case_folder (workflows; e.g. the
 //     Voluntary Petition pipeline for filed cases that never got a folder)
 //
 // STAGE-AWARE: a case with a docket number (case_number or case_number_full,

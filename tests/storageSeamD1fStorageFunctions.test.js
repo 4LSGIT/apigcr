@@ -16,7 +16,7 @@
 process.env.CREDENTIALS_ENCRYPTION_KEY = require('crypto').randomBytes(32).toString('base64');
 
 const mig = require('../scripts/storageSeamD1fStorageFunctions');
-const FIXTURE = require('./fixtures/storageReplay.workflowSteps.json');
+const FIXTURE = require('./fixtures/storageSeamD1f.before.json')   // the frozen BEFORE base (D1f-3);
 const registry = require('../lib/internal_functions');
 
 /** Live-shaped rows from the fixture: config = {function_name, params, set_vars?} as MySQL hands them back (objects). */
@@ -185,4 +185,8 @@ test('canonical() ignores key order at every level (MySQL re-orders JSON on writ
   expect(mig.migrateConfig({ function_name: 'storage_move', params: {} })).toBeNull();
   expect(mig.migrateConfig({ function_name: 'get_setting', params: { key: 'dropbox_unsorted_forms_path' } })).toBeNull();
   for (const m of Object.values(mig.MAPPING)) expect(typeof registry[m.to]).toBe('function');
+  // D1f-3: the old names are GONE from the registry — a row still carrying one would fail loudly
+  // ("Unknown internal function"), which is why the migration ran before this landed
+  for (const oldName of Object.keys(mig.MAPPING)) expect(registry[oldName]).toBeUndefined();
+  expect(Object.keys(registry).filter((n) => /^dropbox_/.test(n))).toEqual([]);
 });

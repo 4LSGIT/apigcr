@@ -25,14 +25,14 @@ routes/internal/dropbox.js        Case-page "Create Dropbox Folder" button → e
 services/caseService.js           ensureCaseDropboxFolder + folder-template machinery
 routes/api.intake.js              Calls ensure post-response on case creation
 routes/api.checklists.js          /api/public/get-upload-link (docReq client-direct upload)
-lib/internal_functions/dropbox.js dropbox_* action functions
+lib/internal_functions/storage.js storage_* action functions (provider-neutral; the dropbox_* names were retired 2026-11-17)
 ```
 
-Retired: `routes/dropbox.js` + `services/dropboxServiceLegacy.js` (env-var auth, zero traffic per legacy_route_log), and the Pabbly `create_dropbox_folder` / `dropbox_create_folder` workflows.
+Retired: `routes/dropbox.js` + `services/dropboxServiceLegacy.js` (env-var auth, zero traffic per legacy_route_log), and the Pabbly `create_dropbox_folder` workflows; the `dropbox_*` internal functions became `storage_*` (2026-11-17, storage-seam D1f — live workflows migrated by `scripts/storageSeamD1fStorageFunctions.js`).
 
 ### Auth model
 
-Standard Connections oauth2 credential — **credential 8 "DropBox"** by default, overridable per call via `credential_id` and globally via `app_settings.dropbox_credential_id`. Headers come from `buildHeadersForCredential` (the async builder; the sync one returns `{}` for oauth2). Token refresh, the 2-strike alert, and `refresh_failed` handling are all oauthService's job.
+Standard Connections oauth2 credential — **credential 8 "DropBox"** by default, overridable globally via `app_settings.dropbox_credential_id` (the per-call `credential_id` override left with the `dropbox_*` functions). Headers come from `buildHeadersForCredential` (the async builder; the sync one returns `{}` for oauth2). Token refresh, the 2-strike alert, and `refresh_failed` handling are all oauthService's job.
 
 The credential's `allowed_urls` must cover **both** API hosts or every call fails with a "no Authorization header" error:
 
@@ -51,7 +51,7 @@ The firm uses leading spaces in folder/file names as a manual sort mechanism (`/
 
 ### Stage-aware case folders — `caseService.ensureCaseDropboxFolder(db, caseId, {force})`
 
-The single operation behind intake, the case-page button, and the `dropbox_ensure_case_folder` internal function:
+The single operation behind intake, the case-page button, and the `storage_ensure_case_folder` internal function:
 
 1. No-op if `case_dropbox` is set (returns the existing link; `force: true` recreates and overwrites).
 2. Stage: `case_number` or `case_number_full` non-empty → **active**, else **potential**.
@@ -118,31 +118,31 @@ Plus `POST /internal/dropbox/create-folder` `{case_id}` — the case-page button
 
 ### Internal functions (automations)
 
-All in `lib/internal_functions/dropbox.js`, category `dropbox`, chainable via `{{this.output.*}}`:
+All in `lib/internal_functions/storage.js`, category `storage`, chainable via `{{this.output.*}}`. They are provider-neutral: a "human link" is a URL a person opens (today a Dropbox shared link), and the provider is the firm's. Output keys are unchanged from the `dropbox_*` functions they replaced (2026-11-17), so `set_vars` written against `shared_link`, `metadata.path_display` or `entries` keep working.
 
-#### `dropbox_ensure_case_folder`
+#### `storage_ensure_case_folder`
 `{ case_id, force? }` → `{ existed, stage, path, shared_link, ... }`. The workflow-facing wrapper over `ensureCaseDropboxFolder`. Use at the top of filing pipelines to guarantee a folder exists; capture `{{this.output.shared_link}}`.
 
-#### `dropbox_create_folder`
-`{ path, subfolders?, share_link? }` → `{ path, existed, shared_link }`. Raw folder creation for non-case-convention needs.
+#### `storage_ensure_folder`
+`{ path, subfolders?, with_link? }` → `{ path, existed, subfolders_created, shared_link }`. Raw folder creation for non-case-convention needs; `with_link: true` mints the human link.
 
-#### `dropbox_get_shared_link`
+#### `storage_human_link`
 `{ path }` → `{ shared_link }`.
 
-#### `dropbox_list_folder`
-`{ path | shared_link, subfolder?, recursive?, max_entries? }` → `{ entries, count, truncated }`. Branch on `{{this.output.count}}` for "did the client upload anything" checks (e.g. `shared_link: {{cases.case_dropbox}}, subfolder: Client Uploads`).
+#### `storage_list`
+`{ path | human_link, subfolder?, recursive?, max_entries? }` → `{ entries, count, truncated }`. Branch on `{{this.output.count}}` for "did the client upload anything" checks (e.g. `human_link: {{cases.case_dropbox}}, subfolder: Client Uploads`).
 
-#### `dropbox_move`
-`{ from_path | from_shared_link, to_path, autorename? }`. The filed-case relocation: `from_shared_link: {{cases.case_dropbox}}`, `to_path` = the Active-tree convention written with resolver placeholders in the workflow config.
+#### `storage_move`
+`{ from_path | from_human_link, to_path, autorename? }`. The filed-case relocation: `from_human_link: {{cases.case_dropbox}}`, `to_path` = the Active-tree convention written with resolver placeholders in the workflow config.
 
-#### `dropbox_rename`
-`{ path | shared_link, new_name }`. Same parent; `new_name` keeps leading spaces, no `/`.
+#### `storage_rename`
+`{ path | human_link, new_name }`. Same parent; `new_name` keeps leading spaces, no `/`.
 
-#### `dropbox_delete`
-`{ path | shared_link }`. Refuses root.
+#### `storage_delete`
+`{ path | human_link }`. Refuses root.
 
-#### `dropbox_save_url`
-`{ url, path | shared_link + filename, subfolder?, wait? }` → `{ status, path, async_job_id? }`. Pull email attachments / generated documents into the case folder by URL.
+#### `storage_import_url`
+`{ url, path | human_link + filename, subfolder?, wait?, timeout_ms?, case_id?, contact_id? }` → `{ status, path, metadata?, async_job_id? }`. Pull email attachments / generated documents into the case folder by URL (the transfer runs on the provider's side); registers the file, linked to the case or contact when given.
 
 ### Setup
 
@@ -180,9 +180,9 @@ intake creates case ──► ensureCaseDropboxFolder ──► Potential folder
                                                           │
 case page (no link) ──► Create Dropbox Folder button ─────┤  (stage-aware repair)
                                                           │
-petition filed (wf-23) ──► dropbox_move (from_shared_link) to Active tree
-                           + dropbox_create_folder (4 staff subfolders)
-                           — or dropbox_ensure_case_folder if no folder existed
+petition filed (wf-28) ──► storage_move (from_human_link) to Active tree
+                           + storage_ensure_folder (4 staff subfolders)
+                           — or storage_ensure_case_folder if no folder existed
                                                           │
 docReq.html client upload ──► /api/public/get-upload-link ─► browser PUTs into Client Uploads
 ```

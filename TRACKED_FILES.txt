@@ -86,7 +86,6 @@ lib/internal_functions/db.js
 lib/internal_functions/decisions.js
 lib/internal_functions/dev.js
 lib/internal_functions/documents.js
-lib/internal_functions/dropbox.js
 lib/internal_functions/emailAttachments.js
 lib/internal_functions/esign.js
 lib/internal_functions/events.js
@@ -1634,6 +1633,7 @@ tests/fixtures/storageReplay.golden.json
 tests/fixtures/storageReplay.mysql.golden.json
 tests/fixtures/storageReplay.routes.golden.json
 tests/fixtures/storageReplay.workflowSteps.json
+tests/fixtures/storageSeamD1f.before.json
 tests/formBuilderSimpleHandoff.test.js
 tests/formBuilder_phaseA.test.js
 tests/formBuilder_phaseB.test.js

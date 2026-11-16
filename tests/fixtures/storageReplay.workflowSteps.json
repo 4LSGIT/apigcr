@@ -1,6 +1,6 @@
 {
- "captured": "2026-11-17 from workflow_steps WHERE config LIKE '%dropbox\\_%' (24 rows; 20 call dropbox_* — the other 4 are get_setting rows naming a dropbox_* setting key)",
- "sanitized": "shared_link literals → {{case_dropbox}}; the court ECF url → {{court_doc_url}}; no credentials present",
+ "captured": "2026-11-17, AFTER the D1f-2 migration (scripts/storageSeamD1fStorageFunctions.js --apply, APPLIED — GO, 21 rows): workflow_steps rows whose function_name is a storage_* one. The BEFORE shape (the pre-migration names and params) is frozen in tests/fixtures/storageSeamD1f.before.json: the same 21 step ids, names and param keys as the migration's MAPPING records.",
+ "sanitized": "human_link / from_human_link literals → {{case_dropbox}}; the court ECF url → {{court_doc_url}}; no credentials present",
  "steps": [
   {
    "step_id": 223,
@@ -8,13 +8,13 @@
    "version": 1,
    "step_number": 8,
    "label": null,
-   "function_name": "dropbox_save_url",
+   "function_name": "storage_import_url",
    "params": {
     "url": "{{court_doc_url}}",
     "wait": true,
     "filename": "26-44274-mar \"Minute Entry. Hearing Adjourned (BK)\" Ch 13",
     "subfolder": "court docs",
-    "shared_link": "{{case_dropbox}}"
+    "human_link": "{{case_dropbox}}"
    }
   },
   {
@@ -23,10 +23,10 @@
    "version": 1,
    "step_number": 4,
    "label": null,
-   "function_name": "dropbox_move",
+   "function_name": "storage_move",
    "params": {
     "to_path": "{{active_path}}",
-    "from_shared_link": "{{case_dropbox}}"
+    "from_human_link": "{{case_dropbox}}"
    }
   },
   {
@@ -35,7 +35,7 @@
    "version": 1,
    "step_number": 5,
    "label": null,
-   "function_name": "dropbox_create_folder",
+   "function_name": "storage_ensure_folder",
    "params": {
     "path": "{{active_path}}",
     "subfolders": [
@@ -52,7 +52,7 @@
    "version": 1,
    "step_number": 7,
    "label": null,
-   "function_name": "dropbox_ensure_case_folder",
+   "function_name": "storage_ensure_case_folder",
    "params": {
     "case_id": "{{case_id}}"
    }
@@ -63,10 +63,10 @@
    "version": 2,
    "step_number": 4,
    "label": null,
-   "function_name": "dropbox_move",
+   "function_name": "storage_move",
    "params": {
     "to_path": "{{active_path}}",
-    "from_shared_link": "{{case_dropbox}}"
+    "from_human_link": "{{case_dropbox}}"
    }
   },
   {
@@ -75,7 +75,7 @@
    "version": 2,
    "step_number": 5,
    "label": null,
-   "function_name": "dropbox_create_folder",
+   "function_name": "storage_ensure_folder",
    "params": {
     "path": "{{active_path}}",
     "subfolders": [
@@ -92,7 +92,7 @@
    "version": 2,
    "step_number": 7,
    "label": null,
-   "function_name": "dropbox_ensure_case_folder",
+   "function_name": "storage_ensure_case_folder",
    "params": {
     "case_id": "{{case_id}}"
    }
@@ -103,7 +103,7 @@
    "version": 1,
    "step_number": 6,
    "label": "Case folder",
-   "function_name": "dropbox_ensure_case_folder",
+   "function_name": "storage_ensure_case_folder",
    "params": {
     "case_id": "{{jf_case_id}}"
    }
@@ -114,10 +114,10 @@
    "version": 1,
    "step_number": 8,
    "label": "Unsorted folder",
-   "function_name": "dropbox_create_folder",
+   "function_name": "storage_ensure_folder",
    "params": {
     "path": "{{unsorted_path}}",
-    "share_link": true
+    "with_link": true
    }
   },
   {
@@ -126,13 +126,13 @@
    "version": 1,
    "step_number": 9,
    "label": "Save PDF + register",
-   "function_name": "dropbox_save_url",
+   "function_name": "storage_import_url",
    "params": {
     "url": "https://www.jotform.com/server.php?action=getSubmissionPDF&sid={{jf_submission_id}}&formID={{jf_form_id}}&apikey={{JotformKey}}",
     "wait": true,
     "case_id": "{{jf_case_id}}",
     "filename": "{{jf_filename}}",
-    "shared_link": "{{dest_link}}"
+    "human_link": "{{dest_link}}"
    }
   },
   {
@@ -141,7 +141,7 @@
    "version": 1,
    "step_number": 11,
    "label": "Share link",
-   "function_name": "dropbox_get_shared_link",
+   "function_name": "storage_human_link",
    "params": {
     "path": "{{dbx_path}}"
    }
@@ -152,7 +152,7 @@
    "version": 2,
    "step_number": 6,
    "label": "Case folder",
-   "function_name": "dropbox_ensure_case_folder",
+   "function_name": "storage_ensure_case_folder",
    "params": {
     "case_id": "{{jf_case_id}}"
    }
@@ -163,10 +163,10 @@
    "version": 2,
    "step_number": 8,
    "label": "Unsorted folder",
-   "function_name": "dropbox_create_folder",
+   "function_name": "storage_ensure_folder",
    "params": {
     "path": "{{unsorted_path}}",
-    "share_link": true
+    "with_link": true
    }
   },
   {
@@ -175,14 +175,14 @@
    "version": 2,
    "step_number": 9,
    "label": "Save PDF + register",
-   "function_name": "dropbox_save_url",
+   "function_name": "storage_import_url",
    "params": {
     "url": "https://www.jotform.com/server.php?action=getSubmissionPDF&sid={{jf_submission_id}}&formID={{jf_form_id}}&apikey={{JotformKey}}",
     "wait": true,
     "case_id": "{{jf_case_id}}",
     "filename": "{{jf_filename}}",
-    "timeout_ms": 90000,
-    "shared_link": "{{dest_link}}"
+    "human_link": "{{dest_link}}",
+    "timeout_ms": 90000
    }
   },
   {
@@ -191,9 +191,9 @@
    "version": 2,
    "step_number": 12,
    "label": "Re-list folder",
-   "function_name": "dropbox_list_folder",
+   "function_name": "storage_list",
    "params": {
-    "shared_link": "{{dest_link}}"
+    "human_link": "{{dest_link}}"
    }
   },
   {
@@ -202,7 +202,7 @@
    "version": 2,
    "step_number": 15,
    "label": "Share link",
-   "function_name": "dropbox_get_shared_link",
+   "function_name": "storage_human_link",
    "params": {
     "path": "{{dbx_path}}"
    }
@@ -213,7 +213,7 @@
    "version": 3,
    "step_number": 6,
    "label": "Case folder",
-   "function_name": "dropbox_ensure_case_folder",
+   "function_name": "storage_ensure_case_folder",
    "params": {
     "case_id": "{{jf_case_id}}"
    }
@@ -224,10 +224,10 @@
    "version": 3,
    "step_number": 8,
    "label": "Unsorted folder",
-   "function_name": "dropbox_create_folder",
+   "function_name": "storage_ensure_folder",
    "params": {
     "path": "{{unsorted_path}}",
-    "share_link": true
+    "with_link": true
    }
   },
   {
@@ -236,14 +236,14 @@
    "version": 3,
    "step_number": 9,
    "label": "Save PDF + register",
-   "function_name": "dropbox_save_url",
+   "function_name": "storage_import_url",
    "params": {
     "url": "https://www.jotform.com/server.php?action=getSubmissionPDF&sid={{jf_submission_id}}&formID={{jf_form_id}}&apikey={{JotformKey}}",
     "wait": true,
     "case_id": "{{jf_case_id}}",
     "filename": "{{jf_filename}}",
-    "timeout_ms": 90000,
-    "shared_link": "{{dest_link}}"
+    "human_link": "{{dest_link}}",
+    "timeout_ms": 90000
    }
   },
   {
@@ -252,9 +252,9 @@
    "version": 3,
    "step_number": 12,
    "label": "Re-list folder",
-   "function_name": "dropbox_list_folder",
+   "function_name": "storage_list",
    "params": {
-    "shared_link": "{{dest_link}}"
+    "human_link": "{{dest_link}}"
    }
   },
   {
@@ -263,7 +263,7 @@
    "version": 3,
    "step_number": 15,
    "label": "Share link",
-   "function_name": "dropbox_get_shared_link",
+   "function_name": "storage_human_link",
    "params": {
     "path": "{{dbx_path}}"
    }

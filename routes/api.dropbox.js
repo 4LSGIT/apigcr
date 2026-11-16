@@ -95,7 +95,7 @@ function coerceCredId(v) {
  *
  * Callers who DO know the owner have two better doors, both of which link:
  * POST /api/documents/upload-link + /upload-commit (staff, from a case tab),
- * and the dropbox_save_url automation step's case_id / contact_id params.
+ * and the storage_import_url automation step's case_id / contact_id params.
  *
  * ⚠️ POST /api/dropbox/upload-link CANNOT BE HOOKED, and is the one write path
  * in the app that stays delta-only. It hands a temporary upload link to a

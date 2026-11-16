@@ -160,7 +160,7 @@
     }
    ]
   },
-  "2 placement: no case folder → ensureCaseDropboxFolder (potential, active, org contact)": {
+  "2 placement: no case folder \u2192 ensureCaseDropboxFolder (potential, active, org contact)": {
    "calls": [
     {
      "fn": "_resolveCredential",
@@ -670,7 +670,7 @@
     }
    ]
   },
-  "3 placement: dead case link → unsorted per-case folder + move task": {
+  "3 placement: dead case link \u2192 unsorted per-case folder + move task": {
    "calls": [
     {
      "fn": "_resolveCredential",
@@ -811,7 +811,7 @@
     },
     {
      "kind": "task.create",
-     "desc": "The generated document could not be filed to the case folder — Could not open the case's Dropbox folder: dropbox shared_link/not_found/.. (409) It was filed to the unsorted generated-documents folder instead (/  Law Office/   Cases/  Unsorted Generated Documents/deadLnk1 - Lee, Ann); move it into the correct case folder. File: /  Law Office/   Cases/  Unsorted Generated Documents/deadLnk1 - Lee, Ann/2026-11-17 Discharge Notice.pdf",
+     "desc": "The generated document could not be filed to the case folder \u2014 Could not open the case's Dropbox folder: dropbox shared_link/not_found/.. (409) It was filed to the unsorted generated-documents folder instead (/  Law Office/   Cases/  Unsorted Generated Documents/deadLnk1 - Lee, Ann); move it into the correct case folder. File: /  Law Office/   Cases/  Unsorted Generated Documents/deadLnk1 - Lee, Ann/2026-11-17 Discharge Notice.pdf",
      "from": 0,
      "link_id": "deadLnk1",
      "link_type": "case",
@@ -871,7 +871,7 @@
     },
     {
      "kind": "task.create",
-     "desc": "The generated document could not be filed to the case folder — Case \"noSuchCs\" was not found. It was filed to the unsorted generated-documents folder instead (/  Law Office/   Cases/  Unsorted Generated Documents/noSuchCs); move it into the correct case folder. File: /  Law Office/   Cases/  Unsorted Generated Documents/noSuchCs/2026-11-17 Discharge Notice.pdf",
+     "desc": "The generated document could not be filed to the case folder \u2014 Case \"noSuchCs\" was not found. It was filed to the unsorted generated-documents folder instead (/  Law Office/   Cases/  Unsorted Generated Documents/noSuchCs); move it into the correct case folder. File: /  Law Office/   Cases/  Unsorted Generated Documents/noSuchCs/2026-11-17 Discharge Notice.pdf",
      "from": 0,
      "link_id": "noSuchCs",
      "link_type": "case",
@@ -2442,7 +2442,7 @@
     {
      "kind": "step.output",
      "step_id": 223,
-     "function_name": "dropbox_save_url",
+     "function_name": "storage_import_url",
      "output": {
       "metadata": {
        ".tag": "file",
@@ -2575,7 +2575,7 @@
     {
      "kind": "step.output",
      "step_id": 206,
-     "function_name": "dropbox_move",
+     "function_name": "storage_move",
      "output": {
       "metadata": {
        ".tag": "folder",
@@ -2589,7 +2589,7 @@
     {
      "kind": "step.output",
      "step_id": 207,
-     "function_name": "dropbox_create_folder",
+     "function_name": "storage_ensure_folder",
      "output": {
       "existed": true,
       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13",
@@ -2617,7 +2617,7 @@
     {
      "kind": "step.output",
      "step_id": 209,
-     "function_name": "dropbox_ensure_case_folder",
+     "function_name": "storage_ensure_case_folder",
      "output": {
       "existed": true,
       "path": null,
@@ -2730,7 +2730,7 @@
     {
      "kind": "step.output",
      "step_id": 761,
-     "function_name": "dropbox_move",
+     "function_name": "storage_move",
      "output": {
       "metadata": {
        ".tag": "folder",
@@ -2744,7 +2744,7 @@
     {
      "kind": "step.output",
      "step_id": 762,
-     "function_name": "dropbox_create_folder",
+     "function_name": "storage_ensure_folder",
      "output": {
       "existed": true,
       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13",
@@ -2772,7 +2772,7 @@
     {
      "kind": "step.output",
      "step_id": 764,
-     "function_name": "dropbox_ensure_case_folder",
+     "function_name": "storage_ensure_case_folder",
      "output": {
       "existed": true,
       "path": null,
@@ -2930,7 +2930,7 @@
     {
      "kind": "step.output",
      "step_id": 583,
-     "function_name": "dropbox_ensure_case_folder",
+     "function_name": "storage_ensure_case_folder",
      "output": {
       "existed": false,
       "folder_existed": false,
@@ -2948,7 +2948,7 @@
     {
      "kind": "step.output",
      "step_id": 585,
-     "function_name": "dropbox_create_folder",
+     "function_name": "storage_ensure_folder",
      "output": {
       "existed": true,
       "path": "/  Law Office/   Cases/  Unsorted Form Submissions",
@@ -2983,7 +2983,7 @@
     {
      "kind": "step.output",
      "step_id": 586,
-     "function_name": "dropbox_save_url",
+     "function_name": "storage_import_url",
      "output": {
       "metadata": {
        ".tag": "file",
@@ -3005,7 +3005,7 @@
     {
      "kind": "step.output",
      "step_id": 588,
-     "function_name": "dropbox_get_shared_link",
+     "function_name": "storage_human_link",
      "output": {
       "shared_link": "https://www.dropbox.com/scl/fo/fake0004?dl=0"
      }
@@ -3167,7 +3167,7 @@
     {
      "kind": "step.output",
      "step_id": 613,
-     "function_name": "dropbox_ensure_case_folder",
+     "function_name": "storage_ensure_case_folder",
      "output": {
       "existed": false,
       "folder_existed": false,
@@ -3185,7 +3185,7 @@
     {
      "kind": "step.output",
      "step_id": 615,
-     "function_name": "dropbox_create_folder",
+     "function_name": "storage_ensure_folder",
      "output": {
       "existed": true,
       "path": "/  Law Office/   Cases/  Unsorted Form Submissions",
@@ -3220,7 +3220,7 @@
     {
      "kind": "step.output",
      "step_id": 616,
-     "function_name": "dropbox_save_url",
+     "function_name": "storage_import_url",
      "output": {
       "metadata": {
        ".tag": "file",
@@ -3242,7 +3242,7 @@
     {
      "kind": "step.output",
      "step_id": 619,
-     "function_name": "dropbox_list_folder",
+     "function_name": "storage_list",
      "output": {
       "count": 1,
       "entries": [
@@ -3266,7 +3266,7 @@
     {
      "kind": "step.output",
      "step_id": 622,
-     "function_name": "dropbox_get_shared_link",
+     "function_name": "storage_human_link",
      "output": {
       "shared_link": "https://www.dropbox.com/scl/fo/fake0004?dl=0"
      }
@@ -3428,7 +3428,7 @@
     {
      "kind": "step.output",
      "step_id": 651,
-     "function_name": "dropbox_ensure_case_folder",
+     "function_name": "storage_ensure_case_folder",
      "output": {
       "existed": false,
       "folder_existed": false,
@@ -3446,7 +3446,7 @@
     {
      "kind": "step.output",
      "step_id": 653,
-     "function_name": "dropbox_create_folder",
+     "function_name": "storage_ensure_folder",
      "output": {
       "existed": true,
       "path": "/  Law Office/   Cases/  Unsorted Form Submissions",
@@ -3481,7 +3481,7 @@
     {
      "kind": "step.output",
      "step_id": 654,
-     "function_name": "dropbox_save_url",
+     "function_name": "storage_import_url",
      "output": {
       "metadata": {
        ".tag": "file",
@@ -3503,7 +3503,7 @@
     {
      "kind": "step.output",
      "step_id": 657,
-     "function_name": "dropbox_list_folder",
+     "function_name": "storage_list",
      "output": {
       "count": 1,
       "entries": [
@@ -3527,7 +3527,7 @@
     {
      "kind": "step.output",
      "step_id": 660,
-     "function_name": "dropbox_get_shared_link",
+     "function_name": "storage_human_link",
      "output": {
       "shared_link": "https://www.dropbox.com/scl/fo/fake0004?dl=0"
      }
@@ -3618,7 +3618,7 @@
     }
    ]
   },
-  "10 internal functions: dropbox_rename, dropbox_delete, dropbox_list_folder by path (no live workflow uses them)": {
+  "10 internal functions: storage_rename, storage_delete, storage_list by path, storage_import_url, a plain storage_ensure_folder (no live workflow uses them)": {
    "calls": [
     {
      "fn": "renamePath",
