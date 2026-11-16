@@ -69,6 +69,13 @@ created" note and the root is added anyway.
 You cannot add a folder that sits inside a folder we already watch (or that
 contains one). Everything underneath would be read twice for no benefit.
 
+**From Ask Casey.** Casey can add a root, or switch one on or off, as a card
+you review (see [Ask Casey → Document sync roots](17-ask-yisracase.md)). It
+first reads the folder in Dropbox and the card tells you what the first walk
+will register — every file beneath the folder, in backfill mode — before you
+confirm; the same duplicate, nesting and file rules apply, in the same words.
+Casey never deletes a root (there is no delete) and never changes a path.
+
 ### Why there is no Delete button
 
 A document's registry entry does not remember which root found it. Delete a root

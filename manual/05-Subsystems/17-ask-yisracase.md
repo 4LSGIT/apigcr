@@ -884,18 +884,21 @@ for Monday", "add bank statements and the lease to the Smith docs list").
 The off switch for these cards is the `casey_checklists_enabled` setting (on
 unless set to 0).
 
-### Documents: title, type, tags, links and public links
+### Documents: title, type, tags, links, public links, generating and registering
 
 Casey can read the Documents registry (every file the Dropbox sync has seen,
 and which case or contact each is linked to), and it can **change one
 document's title, type or tags**, **link one document to one case or
-contact**, **unlink one document from one case or contact**, or **share one
-document** (its public link) — one change per card, through the same routes
-the Documents page's Edit, Links and Copy public link buttons use. Ask in
-plain words ("retitle the petition PDF on the Smith case to Chapter 7
+contact**, **unlink one document from one case or contact**, **share one
+document** (its public link), **generate one document from a contract
+template** for a case or contact, or **register one file** that is already in
+Dropbox — one change per card, through the same routes the Documents page's
+Edit, Links, Copy public link, Generate document and register controls use.
+Ask in plain words ("retitle the petition PDF on the Smith case to Chapter 7
 petition (filed)", "tag it court, filed", "link this paystub to Dana's
 contact", "unlink that scan from the Smith case", "get me a public link to the
-signed retainer").
+signed retainer", "generate the hearing notice for the Smith case, hearing
+December 4", "register the paystub in Dana's folder").
 
 - **An edit card** shows the document (file name, path, size, source), each
   field before and after, and every case or contact it is linked to — the
@@ -929,10 +932,38 @@ signed retainer").
   after you confirm, the card shows it (in this window only — it is not saved in
   the chat) with a **Copy public link** button. Later, copy it from the
   Documents page. Casey does not send it to anyone.
+- **A generate card** makes a PDF from one of the firm's contract templates
+  (the ones marked for generating — Casey reads that list first; a
+  signature-only template is refused, that is the Send for signature flow)
+  and **writes it into Dropbox**: into the case's folder (its "Generated
+  Documents" subfolder, or the template's own), or — for a contact — the
+  unsorted generated-documents folder. The card shows the template, the
+  record, the document name (the template's name and the debtor's last name
+  unless you gave one), the dated file name, **exactly where the file
+  lands**, every value the template fills in from the record and every value
+  you gave in your own words (Casey never invents one — a required value it
+  cannot find is asked for), which fields stay blank, and the link it makes.
+  If the case has no Dropbox folder yet, the card warns that **one is created
+  and a task raised**; if the case's folder cannot be opened, that the PDF
+  goes to the unsorted folder with a move task. A file of the same name is
+  never overwritten (Dropbox adds a counter). There is no undo: delete the
+  file in Dropbox. The new document is active and untitled — an edit card
+  titles it.
+- **A register card** puts one file that is already in Dropbox into the
+  registry (the sync normally does this; the card brings one file forward).
+  Casey must have **read the folder** the file is in first — the folder read
+  lists each file with its Dropbox id, and only a file from that listing can
+  be registered; a file already registered is named instead. The card says
+  whether the sync would link it to a case (it sits in a case's folder) or it
+  lands on the Unlinked list, whether any sync root watches it (under none,
+  the row never updates), and that nothing in Dropbox changes. No link is
+  made; a link card follows.
 - **Automation.** Editing a document can start rules on "document updated";
-  linking one, rules on "document linked". The card checks every active rule
-  and lists each that would run, and any whose test could not run — that one
-  **may** run. Sharing and unlinking start no rules.
+  linking one, rules on "document linked"; generating or registering one,
+  rules on "document created" (and, for a generate, "document linked"). The
+  card checks every active rule and lists each that would run, and any whose
+  test could not run — that one **may** run. Sharing and unlinking start no
+  rules.
 - **Staff only.** The client portal does not list registered documents.
 - **What Casey will not do, and says so:**
   - delete, restore or mark a document missing — no screen does that either;
@@ -944,12 +975,17 @@ signed retainer").
   - work on a document already linked to more than 20 records (it warns from
     5);
   - save a value longer than the field holds, or an edit that changes nothing;
-  - upload or generate documents, or register a new file — do those on the
-    Documents page.
+  - generate from a signature-only template, fill a template value you did
+    not give, or register a file whose folder it has not read;
+  - upload documents — do that on the Documents page.
 - **Freshness.** When you confirm, the card re-reads the document (and, for a
   link, the record). If the document was edited, renamed by the sync, deleted,
   shared, or gained or lost a link since the card was prepared, nothing is
-  written; ask Casey to prepare it again.
+  written; ask Casey to prepare it again. A generate card re-reads the
+  template and the record (a template edited or deactivated, a case folder
+  linked or re-linked, a contact renamed → nothing is generated); a register
+  card re-lists the folder (a file deleted, renamed or changed → nothing is
+  written; one registered meanwhile is reported as already registered).
 - Once applied, the card opens the case or contact (an edit to a document with
   no links points you to More → Documents; a share card's button copies the
   link). Open Documents pages and tabs showing the document refresh on their
@@ -957,6 +993,33 @@ signed retainer").
 
 The off switch for these cards is the `casey_documents_enabled` setting (on
 unless set to 0).
+
+#### Document sync roots
+
+Casey can also **add a sync root** (a Dropbox folder the document sync
+watches) or **switch one on or off** — the two controls of the Sync panel
+(More → Documents → Sync; see [Documents — Sync & Re-linking](06-documents.md)).
+These change the sync engine, not one document, so they have their own off
+switch, `casey_document_sync_roots_enabled` (on unless set to 0).
+
+- An add card takes its path only from a **folder read Casey made in the
+  same chat** — that read is the dry run: the card states what the folder
+  holds at the top level ("500 or more" when the listing stops there), how
+  many files are registered already, and that **every file beneath it is
+  registered on the root's first walk** in backfill mode (bulk, no automation
+  rules fire for them). It refuses what the panel refuses, in the same words
+  — a duplicate (capitalisation does not matter), a folder inside or
+  containing a watched folder, a path that is a file — and says when the
+  folder does not exist yet (the root is added anyway and starts when the
+  folder appears), whether the sync engine is on, and names the existing
+  roots. **There is no delete**: disabling a root is the undo.
+- An enable card re-checks nesting and says whether the root resumes where
+  it stopped or starts its first walk; a disable card says the root leaves
+  the rotation, nothing it registered changes, and Sync now still runs it by
+  hand. A root's path cannot be changed (disable it and add the right one).
+- **Freshness.** When you confirm, the card re-reads the roots; if any root
+  was added, enabled or disabled since the card was prepared, nothing is
+  written.
 
 ### A case's Dropbox folder
 
@@ -1727,8 +1790,13 @@ words) — the typed `document.relink.candidates` read (one case's Dropbox folde
 suggestions, the Documents re-link panel's own strict list, and the folder the
 case points at now), the typed `document.folder` read (one Dropbox folder path
 as the document sync sees it — does it exist, is it a folder, which sync root
-it sits under, what it holds, which case holds it or sits inside it; the read a
-typed folder on a case folder card must cite), the typed `esign.requests` read (one contact's or one
+it sits under, what it holds — each file and subfolder with its Dropbox id and
+whether it is registered — which case holds it or sits inside it; the read a
+typed folder on a case folder card, a register card's file and a sync root's
+path must cite), the typed `document.templates` read (the contract templates
+a document can be generated from, with the values each needs — never the
+template's text), the typed `document.sync_roots` read (the document sync's
+roots and whether the engine is on, as the Sync panel lists them), the typed `esign.requests` read (one contact's or one
 case's e-signature requests — status, document, dates, the person the
 reminders go to and whether reminders are running; never the signers' email
 addresses, the provider's records or any signing link) — and the typed automation reads —

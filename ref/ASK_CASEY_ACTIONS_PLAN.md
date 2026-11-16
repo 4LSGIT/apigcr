@@ -1778,10 +1778,10 @@ docs predicate's title fallback (native).
 Editing a registered document's staff metadata and linking a document to a
 case or contact come first. Upload bytes, signed upload URLs and provider
 credentials never become model output. Sharing and unlinking are A11.2, the
-case folder relink A11.1; registering by external id, generation,
-external-store sync, replacement and deletion stay separate sub-slices with
-exact destination, filename/template, overwrite, link, recipient and
-external-provider effects shown in review, and no screen changes a status.
+case folder relink A11.1; registering by external id, generation and the sync
+roots are A11X (released 2026-11-17, below) — each with its exact destination,
+filename / template, collision handling, link and provider effects shown in
+review; replacement and deletion stay deferred, and no screen changes a status.
 
 **What the routes guard.** Little. `PATCH /api/documents/:id` and `POST
 /api/documents/:id/links` (`routes/api.documents.js` → `documentService`) sit
@@ -1887,8 +1887,135 @@ relation?}).
   `tests/reportSchemaDenylist.test.js`.
 
 **Deferred** (`ref/plans.md`): share and unlink shipped as A11.2, the relink
-confirm as A11.1 (both below); what remains is A11.2's Deferred list, each with
-its reason.
+confirm as A11.1 (both below); generate, register and the sync roots as A11X
+(next); what remains is A11.2's Deferred list, each with its reason.
+
+**Released 2026-11-17 (A11X — Fred: "release means allow", 2026-11-15, and
+"all good, you can continue", 2026-11-16).** The three A11 / A11.2 deferrals
+shipped — two on the documents switch, the sync roots on a switch of their
+own. Twins: `tests/caseyDocumentsGenerate.mysql.test.js`,
+`tests/caseySyncRoots.mysql.test.js` (both on `yc_a11x_test`).
+
+- **Generate** `document.generate.v1` {template_id, linkable_type,
+  linkable_id, values?, document_name?} → POST `/api/documents/generate` (the
+  page's Generate document: `documentGenerateService.generateFromTemplate` —
+  the template rendered to a PDF, WRITTEN into Dropbox on
+  `filePlacementService`'s ladder, registered, linked). The card carries the
+  REQUEST (A0's rule — the change, never the rendered result) beside what the
+  server predicted READ-ONLY, in the service's own order and words: the
+  template refusals (`esignTemplateService.getTemplate`: gone / inactive /
+  purpose esign — "a fee agreement generated and filed instead of sent for
+  signature looks like success and leaves nothing signed" / a pdf template
+  with no source PDF); a gone record (stricter than the route, which files a
+  gone case's document into the bin); `templateRenderService
+  .resolveTemplateValues` (read-only — `resolvePrefills` reads the record) →
+  missing REQUIRED keys refuse in the service's sentence ("Required value(s)
+  are still empty: …"), `fillBlanks` → the optional BLANKS disclosed;
+  `defaultDocumentName` ("{template} – {debtor last name}") unless
+  `document_name` (≤ 100 characters — `sanitizeNameFragment` would cut a
+  longer one silently); the dated file name; and the DESTINATION the ladder
+  would pick — a NEW pure planner `filePlacementService.describePlacement`
+  (the same branches as `_preparePlacement`, nothing created or raised;
+  pinned rung by rung against the write path in
+  `tests/filePlacementService.test.js`): the case folder's subfolder
+  (`resolveLocation` is the one provider read), AUTO-CREATE + the task
+  (danger; the route's `ensureCaseDropboxFolder` makes the folder at the
+  click), the unsorted bin's per-case subfolder + the move task (danger; the
+  ladder's own reason), a contact's bin with its identity prefix (no task).
+  `values` — a key must be declared by the template and its text must appear
+  in the user's own words or a cited row (the forms rule, `documentValueNamedBy`)
+  — never authored. Disclosed: a FILE IS WRITTEN (danger, always; no undo —
+  the sync marks a deleted file's row after its grace window), a name
+  collision gets Dropbox's counter (`mode add` + `autorename` — nothing
+  overwritten), the row + ONE link with the relation the ingest writes
+  (`_relationFor`: "path" when the destination is under the case's cached
+  folder, else "upload"), the resolved values (an SSN-shaped key masked),
+  where it shows (`resolveRelatedTargets`, one hop), both events dry-run
+  (document.created, document.linked — on the predicted name and path).
+  Evidence: the template's row from the NEW typed read `document.templates`
+  {q?} (active, purpose generate / both, never the body; the prefill keys
+  split required / optional / resolved / given; `generate_ready`) and a row
+  carrying the case_id / contact_id. Freshness: `expected.template`
+  (updated_at, active, purpose, template_type, has_pdf) and
+  `expected.record` (the case's `case_dropbox` — the destination follows it —
+  or the contact's name); the click re-reads GET `/api/esign/templates/:id`
+  and GET `/api/cases/:id` / `/api/contacts/:id`. Outcomes: the route's coded
+  ESIGN_* 4xx (`GENERATE_ERROR_STATUS`) are refusals before anything is
+  rendered (`missing` named); a 5xx stays ambiguous — the file MAY be in
+  Dropbox (`ambiguousText` says where to look); `document_id` null on a
+  success is ambiguous too (the registry hiccuped; the sync's next pass
+  registers the file). Receipt: the `document_id` the route answers. Family
+  `docgenerate`. Sync: the route's matcher already existed (G2 —
+  `doclink:<type>:<id>` refetch).
+- **Register** `document.register.v1` {external_id} → POST
+  `/api/documents/register` (provider stat → `upsertFromEntry`, eventSource
+  manual, the user as actor). The one way the model learns a Dropbox id: the
+  `document.folder` read now lists one `entry` row per direct entry
+  (`entry_id`, name, paths, size, modified, `is_folder`,
+  `registered_document_id` via `documentService.mapExternalIds`), and the
+  card must cite that file's row — a typed id, a documents row's
+  `external_id`, a nested-folder row or a folder entry refuses by name
+  (Dropbox ids are case-sensitive: a re-cased id is not the read's). After
+  the read: the re-stat (gone; a folder in the route's own 400 words) and a
+  row already registered (a no-op naming the row and its status — the route
+  would answer 200 created:false). Disclosed: the row (no link, untitled),
+  the attribution the sync would make (`documentFolderCase` over
+  `case_folder_cache` — the sweep's "path" link on a later pass, silently; or
+  the Unlinked list), the enabled root it is under or UNDER NO SYNC ROOT
+  (danger: the row never updates), the kill switch, document.created
+  dry-run. Freshness: name / size / rev / parent path; the click re-lists the
+  parent through POST `/api/dropbox/list` (the read's own 500 cap) and
+  refuses on gone / renamed / resized; an entry not found in a TRUNCATED
+  listing falls through to the route's own stat. Outcomes: created:false is
+  "already registered" (a known outcome, never a success); Dropbox's
+  path/not_found through the route (409) is a refusal. Receipt: the row's id.
+  Family `docregister`. Sync: a NEW matcher — `POST /api/documents/register`
+  announces `document:<id>` with `yc_refetch` (the global Documents page's
+  Unlinked list is where the row lands; `registerGetter`, fail-closed).
+- **Sync roots** — two kinds on their OWN switch
+  `casey_document_sync_roots_enabled` (engine configuration with fan-out over
+  thousands of rows): `document.sync_root.add.v1` {path, note?} → POST
+  `/api/documents/sync-roots` and `document.sync_root.enable.v1` {root_id,
+  enabled} → PATCH `/api/documents/sync-roots/:id`; typed read
+  `document.sync_roots` (`listRoots` + `isSyncEnabled`, states as the panel
+  shows them, never `sync_cursor`). The add's `path` MUST be the folder row
+  of a `document.folder` read of that EXACT path (re-cased → "copy EXACTLY";
+  uncited → "Cite the folder row") — that read IS the dry run: the card
+  states the top-level files / subfolders ("500 or more" past the cap), the
+  files registered already, and that EVERY file beneath is registered on the
+  first walk in backfill mode (bulk, no rule emissions). Predicted read-only
+  in `addRoot`'s words: `_validateRootPath`, the case-insensitive duplicate
+  (a disabled dupe hints at the enable card), `_findNestingConflict` either
+  way, a file (the 400); a folder that does not exist yet is DISCLOSED (the
+  route's 201 + warning, carried onto the applied copy), never refused.
+  Refused by name: bulk keys, a delete key (NO delete, by design — disable is
+  the undo), a repoint key on the enable card (the route refuses any key but
+  `enabled`). Enable re-checks nesting (`setRootEnabled`'s words) and says
+  RESUMES (cursor kept) or FIRST WALK PENDING; disable says the root leaves
+  the rotation, nothing is unregistered, and a manual Sync now still runs it.
+  Danger on an add and an enable, never on a disable. Freshness: every root's
+  id / enabled / path_lower, sorted, SHA-256 over the page's canonical
+  (`formTemplateOps.canonical` on both sides) into `expected.roots_hash`; the
+  click re-reads GET `/api/documents/sync-roots`, hashes with `formDataHash`
+  and refuses on ANY change. Outcomes: the route's 409s (duplicate, nesting,
+  "cannot enable") are refusals before any row. Receipt: `root_id` (the add's
+  new row, the enable's reviewed row); ONE family `syncroot`. No bus matcher
+  (roots are not bus-watched; the panel reads them when opened).
+- Shared: the request detector learns generate / register / sync-root
+  phrasing; prompts plan 42→43, investigate 21→22, answer 45→46, repair
+  31→32; ledger 102→106 kinds; permissions matrix 102→106 kinds / 103→107 rows
+  / 87→91 mounts; READ_KINDS + document.templates, document.sync_roots.
+  Tests: `tests/caseyDocumentsGenerate.test.js`, `tests/caseySyncRoots.test.js`
+  (mocked; browser lifted by name), the two twins above,
+  `tests/assistantUi.test.js`, `tests/assistantPromptKinds.test.js`,
+  `tests/caseyActionPermissions.test.js`, `tests/ycSync.test.js`,
+  `tests/filePlacementService.test.js` (the planner), `tests/caseyRelink
+  .test.js` / `.mysql` (the folder read's entry rows).
+- **Still refused by name, unchanged:** `status` (delete / restore / missing
+  — the sync owns it; no screen sends one), unlinking a link type other than
+  case / contact, repointing a root's path (the route refuses it too),
+  deleting a root (no route exists, by design), upload (the page's own flow
+  with a browser → Dropbox transfer).
 
 #### A11.1: Case folder relink — shipped 2026-11-03
 
@@ -2031,7 +2158,9 @@ twin (`tests/caseyRelink.test.js`, `tests/caseyRelink.mysql.test.js`):
   `listed_folders` / `listing_truncated` / `newest_listed`,
   `registered_files`, `already_linked_to`, `inside_case_id`,
   `nested_case_ids`, `held_by`, `proposable`; one row per nested case
-  folder. The normalizer refuses from the read's row (not there, a file, under
+  folder, and (A11X, 2026-11-17) one `entry` row per direct entry of the
+  folder — `entry_id`, name, path, `is_folder`, size, `registered_document_id`
+  — the rows a register card cites. The normalizer refuses from the read's row (not there, a file, under
   no enabled root) and again from its own re-read at proposal (`caseFolderFacts`:
   gone, a file, no root, another case's — the route's 409 wording), then the
   card replaces the lane line with the Dropbox proof and carries the danger
@@ -2214,12 +2343,12 @@ on a real engine (`tests/caseyDocumentShare.mysql.test.js`, Dropbox stubbed at
 
 **Deferred** (`ref/plans.md`): a status change (delete / restore / missing) —
 no screen offers one: the edit dialog saves title / type / tags, and the
-Dropbox sync owns the status; register by external id, generate, upload,
-replacement and deletion — none is a control on an existing document's row
-(upload and generate are the page's own flows with a destination, a filename
-and an overwrite to review); sync roots and relink dismiss — the sync panel's
-engine configuration and queue, not per-document actions; a link type other
-than case / contact (no screen makes one; the Links dialog unlinks it).
+Dropbox sync owns the status; upload, replacement and deletion — none is a
+control on an existing document's row (upload is the page's own flow with a
+browser → Dropbox transfer); a link type other than case / contact (no screen
+makes one; the Links dialog unlinks it). Register by external id, generate
+and the sync roots shipped as A11X (2026-11-17, under A11 above); relink
+dismiss as A11.1X.
 
 #### A12: Forms — draft and submission link shipped 2026-11-02
 

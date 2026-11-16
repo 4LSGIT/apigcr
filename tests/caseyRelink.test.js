@@ -504,7 +504,10 @@ describe('A11.1X the typed read document.folder', () => {
       exists: 1, is_folder: 1, under_enabled_root: 1, root: '/law', listed_files: 3, listed_folders: 0, listing_truncated: 0, newest_listed: '2026-10-01T10:00:00.000Z',
       registered_files: 5, registered_newest: '2026-10-01T10:00:00.000Z', already_linked_to: null, inside_case_id: 'OUTER111', nested_case_ids: 'NEST1111', held_by: 'OTHER123 (2)', proposable: 1 });
     expect(r.rows[0].note).toMatch(/^A folder a case may be linked to \(case\.folder\.relink\.v1 with this exact "path", citing this row\) when it is this client's folder\. Read through the documents sync's own Dropbox account: exists yes, folder yes, enabled sync root "\/law"; 3 files and 0 subfolders listed directly; 5 registered files under it in YisraCase — files already carrying a case's sync link stay with that case \(2 on case OTHER123\); INSIDE case OUTER111's folder; 1 other case folder nested inside it \(rows below\)\. Whether it is a CANDIDATE/);
-    expect(r.rows.slice(1)).toEqual([{ row_type: 'nested_case_folder', case_id: 'NEST1111', path: `${TYPED}/nested - lee`, parent_path: TYPED, note: `Case NEST1111's cached folder sits inside "${TYPED}"; its files stay on that case after a re-link of the parent` }]);
+    expect(r.rows.filter((x) => x.row_type === 'nested_case_folder')).toEqual([{ row_type: 'nested_case_folder', case_id: 'NEST1111', path: `${TYPED}/nested - lee`, parent_path: TYPED, note: `Case NEST1111's cached folder sits inside "${TYPED}"; its files stay on that case after a re-link of the parent` }]);
+    // A11X: one entry row per direct entry follows (tests/caseyDocumentsGenerate.test.js pins their shape); the listing's files carry no id here.
+    expect(r.rows.map((x) => x.row_type)).toEqual(['folder', 'nested_case_folder', 'entry', 'entry', 'entry']);
+    expect(r.rows.slice(2).map((x) => [x.name, x.entry_id, x.is_folder, x.registered_document_id])).toEqual([['a.pdf', null, 0, null], ['b.pdf', null, 0, null], ['c.pdf', null, 0, null]]);
   });
   test('missing, a file, under no root, another case\'s folder, the account root — never proposable, each saying why', async () => {
     const missing = await documentFolderRead(setup(typedSetup({ meta: 'missing' })), TYPED);

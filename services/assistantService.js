@@ -938,18 +938,80 @@ const CHECKLIST_CARD_ITEMS = 30;
 //     COMES BACK danger when the Dropbox sync would re-add a case link (the
 //     file still sits in that case's folder — documentSyncService._matchCase
 //     over case_folder_cache). No event (document.unlinked is unregistered).
+// A11X (Fred, 2026-11-15 / 16: "release means allow") adds the Documents
+// page's two other writers, same switch:
+//   * document.generate.v1 → POST /api/documents/generate {template_id,
+//     linkable_type, linkable_id, values?, document_name?} (the page's
+//     Generate document: documentGenerateService.generateFromTemplate — the
+//     template rendered to a PDF, WRITTEN to Dropbox on filePlacementService's
+//     ladder, registered, linked). Predicted READ-ONLY, in the service's
+//     order and words: the template refusals (gone / inactive / esign-only /
+//     a pdf template with no source PDF), resolveTemplateValues (missing
+//     REQUIRED keys refuse; optional blanks are disclosed), the default name
+//     (defaultDocumentName), the file name's date-first shape, and the
+//     DESTINATION the ladder would pick (filePlacementService.describePlacement
+//     — the same branches as _preparePlacement, nothing created or raised).
+//     A `values` entry must be a declared prefill key AND appear in the
+//     user's own words or a cited row (the forms rule). Always danger.
+//   * document.register.v1 → POST /api/documents/register {external_id} (the
+//     provider stat → documentService.upsertFromEntry, eventSource 'manual').
+//     The id MUST be an `entry` row of a document.folder read in this chat
+//     (the read lists a folder's direct entries with their Dropbox ids since
+//     A11X) — "the model has no way to learn a Dropbox id it has not read",
+//     and now it has exactly one. Re-stat at proposal: a folder refuses with
+//     the route's own 400 text; a row already registered refuses as a no-op
+//     naming it (the route would answer 200 created:false).
 // NOT built: a status change (no screen sends one — the edit dialog saves
-// title / doc_type / tags only), register, generate, sync roots, relink
-// dismiss, replacement, deletion, upload (ref/ASK_CASEY_ACTIONS_PLAN A11.2).
+// title / doc_type / tags only), relink dismiss (A11.1X's family),
+// replacement, deletion, upload (ref/ASK_CASEY_ACTIONS_PLAN A11.2).
 // Receipts: the reviewed document_id (share — the route answers only the
-// link) and the reviewed document_link_id (unlink — the route echoes none).
-const DOCUMENT_ACTION_KINDS = new Set(['document.update.v1', 'document.link.v1', 'document.share.v1', 'document.unlink.v1']);
+// link), the reviewed document_link_id (unlink — the route echoes none), the
+// document_id the generate / register routes answer.
+const DOCUMENT_ACTION_KINDS = new Set(['document.update.v1', 'document.link.v1', 'document.share.v1', 'document.unlink.v1',
+  'document.generate.v1', 'document.register.v1']);
 const DOCUMENT_KEYS = {
   'document.update.v1': new Set(['kind', 'document_id', 'title', 'doc_type', 'tags', 'evidence']),
   'document.link.v1': new Set(['kind', 'document_id', 'link_type', 'link_id', 'relation', 'evidence']),
   'document.share.v1': new Set(['kind', 'document_id', 'evidence']),
   'document.unlink.v1': new Set(['kind', 'document_id', 'link_type', 'link_id', 'evidence']),
+  'document.generate.v1': new Set(['kind', 'template_id', 'linkable_type', 'linkable_id', 'values', 'document_name', 'evidence']),
+  'document.register.v1': new Set(['kind', 'external_id', 'evidence']),
 };
+// A11X — the documents sync's ROOTS (More → Documents → Sync), engine
+// configuration with fan-out over thousands of rows, so they have their OWN
+// switch, casey_document_sync_roots_enabled (on unless '0'):
+//   * document.sync_root.add.v1 {path, note?} → POST /api/documents/sync-roots
+//     (documentSyncService.addRoot). `path` MUST be the head row of a
+//     document.folder read of that EXACT path in this chat — that read IS the
+//     dry run (what the first walk would register). Predicted read-only in
+//     addRoot's own words: _validateRootPath, the case-insensitive duplicate,
+//     _findNestingConflict either way, a path that is a file (the 400); a
+//     folder that does not exist is the route's 201 + warning — disclosed,
+//     never refused. Danger ALWAYS; there is NO delete (disable is the undo).
+//   * document.sync_root.enable.v1 {root_id, enabled} → PATCH
+//     /api/documents/sync-roots/:id {enabled} (setRootEnabled — the ONLY
+//     mutable field; the route refuses any other key, so a repoint is
+//     refused here by name). Enabling re-checks nesting (its words); disabling
+//     takes the root out of the rotation, keeps its cursor, unregisters
+//     nothing, and a manual tick still runs it. Danger on enable.
+// Freshness: every root's id / enabled / path hashed into expected.roots_hash;
+// the click re-reads GET /api/documents/sync-roots and refuses on any change.
+// Receipt: root_id. No bus matcher (roots are not bus-watched).
+const DOCUMENT_SYNC_ROOT_ACTION_KINDS = new Set(['document.sync_root.add.v1', 'document.sync_root.enable.v1']);
+const DOCUMENT_SYNC_ROOT_KEYS = {
+  'document.sync_root.add.v1': new Set(['kind', 'path', 'note', 'evidence']),
+  'document.sync_root.enable.v1': new Set(['kind', 'root_id', 'enabled', 'evidence']),
+};
+// A repoint, a delete or a bulk key on a sync-root card — refused by name, in
+// the route's own words, before anything is read.
+const DOCUMENT_SYNC_ROOT_REPOINT_KEY = /^(?:path|new_path|folder|folder_path|dropbox_path|move|repoint)$/i;
+const DOCUMENT_SYNC_ROOT_DELETE_KEY = /delet|remov|drop|purge|destroy|forget/i;
+const DOCUMENT_SYNC_ROOT_BULK_KEY = /^(?:all|ids|root_ids|roots|paths|batch|bulk)$/i;
+// Existing roots listed on a card (there are 7 live, 2026-11-17).
+const DOCUMENT_SYNC_ROOT_CARD_ROOTS = 25;
+// documentGenerateService's longest document-name fragment: a longer name
+// would be cut short in the file name, silently.
+const DOCUMENT_GENERATE_NAME_MAX = 100;
 // Refused by name wherever they appear on a document card.
 const DOCUMENT_SYSTEM_KEYS = ['status', 'shared_link', 'name', 'path', 'external_id'];
 const DOCUMENT_FIELDS = ['title', 'doc_type', 'tags'];
@@ -6649,7 +6711,10 @@ function documentNorm(value) { return value == null ? '' : String(value).trim();
 function documentFoldId(value) { return String(value == null ? '' : value).trim().toLowerCase(); }
 
 function documentSystemKeys(value, kind) {
-  const hit = DOCUMENT_SYSTEM_KEYS.filter((k) => value && Object.prototype.hasOwnProperty.call(value, k));
+  // A register card TAKES external_id (the one key of its own): the by-name
+  // refusal covers the keys the kind does not take.
+  const takes = DOCUMENT_KEYS[kind] || new Set();
+  const hit = DOCUMENT_SYSTEM_KEYS.filter((k) => !takes.has(k) && value && Object.prototype.hasOwnProperty.call(value, k));
   if (!hit.length) return;
   const why = [];
   if (hit.includes('status')) why.push('STATUS refused: deleting, restoring or marking a document missing is not available to Casey — and no screen does it either: the Documents page\'s edit dialog saves only the title, type and tags, and the Dropbox sync sets the status (a file deleted in Dropbox becomes deleted after a short grace, and active again if it reappears)');
@@ -7166,7 +7231,516 @@ async function normalizeDocumentUnlink(db, value, evidence) {
   };
 }
 
-async function normalizeDocumentAction(db, value, evidence, { currentUserId = null } = {}) {
+// ── A11X: document generate / register, sync roots ───────────────────────
+// The generate card's facts come from the generate path's OWN pieces, read-only:
+// esignTemplateService.getTemplate (the row and has_pdf), templateRenderService
+// .resolveTemplateValues / fillBlanks / defaultDocumentName (the values, the
+// blanks, the name), filePlacementService.identityPrefixFor + describePlacement
+// (the ladder's decision — the same branches as _preparePlacement, nothing
+// created or raised). The register card re-stats through the provider
+// delegate (documentSourceService — the route's own) and reads the registry
+// (documentService.getByExternal). The sync-root cards call addRoot's /
+// setRootEnabled's own predicates (_validateRootPath, _findNestingConflict,
+// listRoots, isSyncEnabled, getMetadata) and write nothing. Real-engine twins:
+// tests/caseyDocumentsGenerate.mysql.test.js, tests/caseySyncRoots.mysql.test.js.
+
+function syncRootError(message) { return httpError(422, message); }
+function documentSources() { return require('./documentSourceService'); } // lazy (convention)
+
+// A row cited from a TYPED read of `kind` (the evidence item's kind) that
+// passes `test` — null when no cited row does.
+function documentReadRowCited(refs, evidence, kind, test) {
+  for (const ref of refs) {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    if (!query || query.kind !== kind) continue;
+    const row = Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    if (row && typeof row === 'object' && test(row)) return row;
+  }
+  return null;
+}
+
+// A generate card never authors a value of its own: a value given in
+// `values` must appear in the user's recent messages or in a cited row (the
+// form template rule, formTemplateNamedBy — same normalisation).
+function documentValueNamedBy(userText, refs, evidence) {
+  const norm = (s) => String(s == null ? '' : s).toLowerCase().replace(/[\s_]+/g, ' ').trim();
+  const pool = [norm(userText)];
+  for (const ref of refs) {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    if (row && typeof row === 'object') {
+      pool.push(norm(Object.values(row).map((v) => (v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))).join(' ')));
+    }
+  }
+  const text = pool.join('\n');
+  return (value) => { const n = norm(value); return n.length >= 1 && text.includes(n); };
+}
+
+// Values a card shows: an SSN-shaped key is masked (the conversational surface
+// never carries one — ASSISTANT_DENIED), everything else as resolved, short.
+function documentValueShown(key, value) {
+  if (/ssn|social|ein|tax_?id|dob|birth/i.test(String(key))) return value == null || value === '' ? '' : '(filled — not shown here)';
+  const text = Array.isArray(value) ? value.join(', ') : String(value == null ? '' : value);
+  return text.length > 80 ? `${text.slice(0, 77)}…` : text;
+}
+
+// The roots list as the click re-reads it (GET /api/documents/sync-roots):
+// id / enabled / path per root, sorted, hashed. The page hashes the same
+// signature with the same canonical (formDataHash — YCFormTemplateOps.canonical).
+function documentSyncRootsSignature(roots) {
+  return (Array.isArray(roots) ? roots : []).map((r) => `${Number(r.id)}:${Number(r.enabled) ? 1 : 0}:${String(r.path == null ? '' : r.path).toLowerCase()}`).sort();
+}
+function documentSyncRootsHash(roots) {
+  return crypto.createHash('sha256').update(formCanonical(documentSyncRootsSignature(roots))).digest('hex');
+}
+
+async function normalizeDocumentGenerate(db, value, evidence, currentUserId, userText) {
+  const esignTemplateService = require('./esignTemplateService');
+  const templateRenderService = require('./templateRenderService');
+  const filePlacementService = require('./filePlacementService');
+  const generate = require('./documentGenerateService');
+  const { resolveRelatedTargets } = require('./documentService');
+  const tid = Number(value.template_id);
+  if (!Number.isSafeInteger(tid) || tid < 1) throw documentError('A document generate card needs the template\'s exact positive template_id (read the templates first: document.templates)');
+  const linkType = String(value.linkable_type == null ? '' : value.linkable_type).trim().toLowerCase();
+  if (!DOCUMENT_LINK_TYPES.includes(linkType)) {
+    throw documentError(`A generated document is filed for a case (linkable_type "case", linkable_id = the exact case_id) or a contact (linkable_type "contact", linkable_id = the exact contact_id) — not ${linkType ? `"${linkType.slice(0, 40)}"` : 'nothing'}`);
+  }
+  let linkId;
+  if (linkType === 'case') {
+    linkId = String(value.linkable_id == null ? '' : value.linkable_id).trim();
+    if (!/^[A-Za-z0-9_-]{1,20}$/.test(linkId)) throw documentError('A case generate needs linkable_id = the case\'s exact case_id');
+  } else {
+    const n = Number(value.linkable_id);
+    if (!Number.isSafeInteger(n) || n < 1) throw documentError('A contact generate needs linkable_id = the contact\'s exact positive contact_id');
+    linkId = String(n);
+  }
+  let values = null;
+  if (value.values !== undefined && value.values !== null) {
+    if (typeof value.values !== 'object' || Array.isArray(value.values)) throw documentError('values must be an object mapping a prefill key to the text to use');
+    values = {};
+    for (const [k, v] of Object.entries(value.values)) {
+      if (!/^[a-z][a-z0-9_]{0,39}$/.test(k)) throw documentError(`values carries "${String(k).slice(0, 40)}", which is not a prefill key`);
+      if (v == null || v === '') continue;
+      if (typeof v !== 'string' && typeof v !== 'number') throw documentError(`values.${k} must be text or a number`);
+      const text = String(v).trim();
+      if (CASE_DOCKET_CONTROL.test(text) || documentChars(text) > 500) throw documentError(`values.${k} must be one line of at most 500 characters with no control characters`);
+      values[k] = text;
+    }
+    if (!Object.keys(values).length) values = null;
+  }
+  let documentName = null;
+  if (value.document_name !== undefined && value.document_name !== null && value.document_name !== '') {
+    if (typeof value.document_name !== 'string') throw documentError('document_name must be text');
+    documentName = value.document_name.trim() || null;
+    if (documentName && CASE_DOCKET_CONTROL.test(documentName)) throw documentError('document_name must be one line with no control characters');
+    if (documentName && documentChars(documentName) > DOCUMENT_GENERATE_NAME_MAX) {
+      throw documentError(`document_name is ${documentChars(documentName)} characters — the file name keeps ${DOCUMENT_GENERATE_NAME_MAX} of it and the rest would be cut off silently. Shorten it`);
+    }
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  const templateRow = documentReadRowCited(refs, evidence, 'document.templates', (row) => row.row_type === 'template' && Number(row.template_id) === tid);
+  if (!templateRow) {
+    throw documentError(`The generate evidence does not identify template #${tid} — cite its row from a document.templates read (read the templates first: only an active template whose purpose allows generating is listed)`);
+  }
+  const targetCited = linkType === 'case'
+    ? documentRowCited(refs, evidence, (row) => row.case_id != null && String(row.case_id) === linkId)
+    : documentRowCited(refs, evidence, (row) => Number(row.contact_id) === Number(linkId));
+  if (!targetCited) {
+    throw documentError(`The generate evidence does not identify ${linkType} ${linkId} — cite a row carrying its exact ${linkType === 'case' ? 'case_id' : 'contact_id'} (read the ${linkType} first)`);
+  }
+  // The template, in generateFromTemplate's order and words.
+  const template = await esignTemplateService.getTemplate(db, tid);
+  if (!template) throw documentError(`Template ${tid} not found. — it was deleted since the templates were read`);
+  if (!template.active) throw documentError(`Template "${template.name}" is inactive and cannot be used. Reactivate it, or pick another.`);
+  if (template.purpose === 'esign') {
+    throw documentError(`Template "${template.name}" is a signature-only template; set its purpose to generate or both. (A fee agreement generated and filed instead of sent for signature looks like success and leaves nothing signed — the route refuses it the same way; an e-signature request is the Send for signature flow's)`);
+  }
+  if (template.template_type === 'pdf' && !template.has_pdf) throw documentError(`Template "${template.name}" has no source PDF attached yet. Upload one first.`);
+  // The record: stricter than the route, which would file a gone case's
+  // document into the unsorted bin ("Case … was not found").
+  const target = await documentLinkRecord(db, linkType, linkId);
+  if (!target) throw documentError(`${linkType === 'case' ? 'Case' : 'Contact'} ${linkId} no longer exists — the route would file the document into the unsorted bin for a record it cannot find; nothing is proposed`);
+  const schema = Array.isArray(template.prefill_schema) ? template.prefill_schema : [];
+  const byKey = new Map(schema.map((e) => [e.key, e]));
+  if (values) {
+    const unknown = Object.keys(values).filter((k) => !byKey.has(k));
+    if (unknown.length) {
+      throw documentError(`values carries keys template "${template.name}" does not declare: ${unknown.join(', ')} — its prefill keys are ${[...byKey.keys()].join(', ') || 'none'} (the route would drop an undeclared key silently)`);
+    }
+    const named = documentValueNamedBy(userText, refs, evidence);
+    for (const [k, v] of Object.entries(values)) {
+      if (!named(v)) {
+        throw documentError(`values.${k} = "${v.slice(0, 80)}" is not a value the user gave — a generate card fills a key only with text that appears in the user's own words or in a cited row; leave it out and the template resolves it from ${target.label}, or ask for it`);
+      }
+    }
+  }
+  // READ-ONLY: resolvePrefills reads the record; nothing is rendered.
+  const resolved = await templateRenderService.resolveTemplateValues(db, template, { linkableType: linkType, linkableId: linkId, values });
+  if (resolved.missingRequired.length) {
+    throw documentError(`Required value(s) are still empty: ${resolved.missingRequired.join(', ')}. Fill them in and send again. — the template could not resolve ${resolved.missingRequired.length === 1 ? 'it' : 'them'} from ${target.label}; give each in "values" (in the user's words) or ask for ${resolved.missingRequired.length === 1 ? 'it' : 'them'}`);
+  }
+  const { missing } = templateRenderService.fillBlanks(template, resolved.merged);
+  const docName = documentName || templateRenderService.defaultDocumentName(template.name, resolved.context);
+  const today = nowLocal().toFormat('yyyy-MM-dd');
+  const fileName = `${today} ${filePlacementService.sanitizeNameFragment(docName, DOCUMENT_GENERATE_NAME_MAX)}.pdf`;
+  const subfolder = template.file_subfolder || esignTemplateService.DEFAULT_FILE_SUBFOLDER;
+  const prefix = await filePlacementService.identityPrefixFor(db, { linkType, linkId }, generate.LOG_TAG);
+  const plan = await filePlacementService.describePlacement(db, {
+    linkType, linkId, subfolder,
+    unsortedPathKey: generate.UNSORTED_PATH_KEY, unsortedDefault: generate.DEFAULT_UNSORTED_PATH,
+    unsortedFilenamePrefix: prefix, artifactLabel: 'generated document', binLabel: 'unsorted generated-documents folder', logTag: generate.LOG_TAG,
+  });
+  // documentIngestService._relationFor: a case link is the sync's own "path"
+  // mark when the file lands under the case's CACHED folder, else "upload".
+  let relation = 'upload';
+  if (linkType === 'case' && plan.folder_path) {
+    const [cacheRows] = await db.query('SELECT path_lower FROM case_folder_cache WHERE case_id = ? LIMIT 1', [linkId]);
+    const cached = Array.isArray(cacheRows) && cacheRows[0] && cacheRows[0].path_lower ? String(cacheRows[0].path_lower) : null;
+    if (cached && caseFolderSync()._underRoot(String(plan.folder_path).toLowerCase(), cached)) relation = require('./documentService').RELATION_PATH;
+  }
+  const predictedPath = plan.folder_path ? caseFolderDropbox().joinPath(plan.folder_path, `${plan.filename_prefix}${fileName}`) : null;
+  const warnings = ['WRITES A FILE: applying renders the template and WRITES a new PDF into Dropbox, registers it and links it — there is no undo button (the file is deleted in Dropbox; the sync then marks the row deleted after its grace window).'];
+  const effects = [];
+  const destination = plan.rung === 'case'
+    ? `Destination: ${plan.folder_path}/${fileName} — ${target.label}'s Dropbox folder, subfolder "${subfolder}" (created if absent).`
+    : plan.rung === 'auto_create'
+      ? `Destination: (the case folder created at the click)/${subfolder}/${fileName}.`
+      : plan.rung === 'unsorted'
+        ? `Destination: ${plan.folder_path}/${fileName} — the unsorted generated-documents folder's per-case subfolder.`
+        : `Destination: ${plan.folder_path}/${plan.filename_prefix}${fileName} — the unsorted generated-documents folder (a contact has no case folder; the name carries the contact's identity prefix); no task is raised.`;
+  effects.push(destination);
+  if (plan.rung === 'auto_create') {
+    warnings.push(`AUTO-CREATE: ${target.label} has no Dropbox folder linked. Applying CREATES one (the firm's stage-aware case folder template), links it to the case, raises a task "${plan.task}" for the office-alerts assignee, then files the PDF under "${subfolder}" inside it. If the case already has a folder that was never linked, you will have two — merge them and re-link the original on the case page (a document.folder read + a case folder card does that).`);
+  } else if (plan.rung === 'unsorted') {
+    warnings.push(`UNSORTED: ${plan.reason} The PDF goes to ${plan.folder_path} instead, and a task "${plan.task}" is raised for the office-alerts assignee after the upload.`);
+  }
+  effects.push('Name collision: if a file of that name is already in the folder, Dropbox keeps it and names the new one with a counter ("… (1).pdf") — nothing is overwritten.');
+  effects.push(`Rendered: ${template.template_type === 'pdf' ? 'the template\'s source PDF with its text fields filled in' : 'the template\'s HTML rendered to a PDF by the firm\'s renderer (one rendering at a time)'}; the file name is dated ${today} (today in the firm\'s zone — the date at the click).`);
+  const resolvedRows = schema.map((e) => {
+    const v = resolved.merged[e.key];
+    const filled = !(v == null || v === '' || (Array.isArray(v) && v.length === 0));
+    return { key: e.key, label: String(e.label || e.key).slice(0, 80), required: !!e.required, filled, given: !!(values && values[e.key] !== undefined), value: filled ? documentValueShown(e.key, v) : '' };
+  });
+  if (values) {
+    for (const [k, v] of Object.entries(values)) effects.push(`Value given: ${k} = "${v}" — used instead of what the template would resolve from ${target.label}.`);
+  }
+  const fromRecord = resolvedRows.filter((r) => r.filled && !r.given);
+  if (fromRecord.length) effects.push(`Resolved from ${target.label}: ${fromRecord.slice(0, 12).map((r) => `${r.key} = "${r.value}"`).join('; ')}${fromRecord.length > 12 ? ` (+${fromRecord.length - 12} more)` : ''}.`);
+  if (missing.length) warnings.push(`BLANKS: ${missing.join(', ')} render as blank — the template could not resolve ${missing.length === 1 ? 'it' : 'them'} from ${target.label} and no value was given. A notice with a blank line is one a person can finish by hand; give the value in "values" to fill it.`);
+  effects.push(`Registers: one documents row (source dropbox, the file's Dropbox id, name, path, size) and ONE link to ${target.label} with relation "${relation}"${relation === 'path' ? ' (the file lands in the case\'s cached Dropbox folder — the Dropbox sync\'s own mark)' : ''}; the document starts active with no title, type or tags (a document.update card sets them).`);
+  // Where it shows: the target's Documents tab, and ONE hop under "Include related".
+  const related = await resolveRelatedTargets(db, linkType, target.link_id);
+  const hops = related.targets.filter((t) => !t.direct);
+  const hopLabel = await documentTargetLabels(db, hops.slice(0, DOCUMENT_CARD_LINKS));
+  const visibility = [`${target.label}'s Documents tab — listed directly, at once.`];
+  if (hops.length) {
+    const named = hops.slice(0, DOCUMENT_CARD_LINKS).map((t) => `${hopLabel(t)}${t.relate_type ? ` (${t.relate_type} on the case)` : ''}`);
+    visibility.push(`Under "Include related" (on by default): the Documents tab of ${linkType === 'case' ? 'each contact on this case' : 'each case this contact is on'} — ${named.join('; ')}${hops.length > named.length ? ` (+${hops.length - named.length} more)` : ''}${related.truncated ? ' (and more — the related set is capped)' : ''} — badged "via ${target.label}".`);
+  } else {
+    visibility.push(`Under "Include related": ${linkType === 'case' ? 'this case has no contacts' : 'this contact is on no case'}, so no other Documents tab gains it.`);
+  }
+  visibility.push('Staff only: the client portal does not list registered documents; Casey emails or texts it only through a separate send card.');
+  const actor = documentActor(currentUserId);
+  const data = { id: null, source: 'dropbox', external_id: null, name: fileName, path: predictedPath, doc_type: null, tags: null, status: 'active' };
+  const created = await documentAutomation(db, 'document.created', { source: generate.EVENT_SOURCE, ...(actor ? { actor } : {}), data }, 'this generated document');
+  const linked = await documentAutomation(db, 'document.linked', {
+    ...(linkType === 'case' ? { case_id: target.link_id } : { contact_id: Number(target.link_id) }),
+    source: generate.EVENT_SOURCE, ...(actor ? { actor } : {}),
+    data, extra: { link_type: linkType, link_id: target.link_id, relation },
+  }, 'its link');
+  const automation = { events: ['document.created', 'document.linked'], lines: [...created.lines, ...linked.lines], rules_checked: created.rules_checked + linked.rules_checked, quiet: created.quiet + linked.quiet };
+  if (automation.lines.some((l) => l.outcome === 'unknown')) warnings.push('AUTOMATION: at least one trigger rule could not be evaluated for this document — read its line; it may run.');
+  effects.push('Trigger events: document.created fires when the file is registered, then document.linked for the link — every active rule on either is listed below (the dry run uses the predicted name and path).');
+  effects.push(`Other open pages: ${target.label}'s Documents tab refreshes on its own (the generate route is on the live-update bus).`);
+  return {
+    draft_id: crypto.randomUUID(), kind: 'document.generate.v1', status: 'draft',
+    template: { template_id: Number(template.id), name: String(template.name), kind: String(template.kind || ''), template_type: String(template.template_type || 'html'), purpose: String(template.purpose || ''), file_subfolder: subfolder, has_pdf: !!template.has_pdf },
+    target,
+    request: { template_id: tid, linkable_type: linkType, linkable_id: linkId, values, document_name: documentName },
+    document_name: docName, file_name: fileName, predicted_path: predictedPath,
+    destination: { rung: plan.rung, placement: plan.placement, folder_path: plan.folder_path, subfolder: plan.subfolder, filename_prefix: plan.filename_prefix, task: plan.task, note: plan.note },
+    relation,
+    values: { given: values, resolved: resolvedRows, blanks: missing },
+    visibility,
+    automation: { events: automation.events, lines: automation.lines.map((l) => l.text), rules_checked: automation.rules_checked, quiet: automation.quiet },
+    effects, warnings,
+    expected: {
+      template: { updated_at: documentIso(template.updated_at), active: true, purpose: String(template.purpose || ''), template_type: String(template.template_type || 'html'), has_pdf: !!template.has_pdf },
+      record: linkType === 'case' ? { case_dropbox: plan.case_dropbox || null } : { contact_name: target.contact_name },
+    },
+    evidence: refs,
+  };
+}
+
+async function normalizeDocumentRegister(db, value, evidence, currentUserId) {
+  const sync = caseFolderSync(); const dropbox = caseFolderDropbox();
+  const extId = typeof value.external_id === 'string' ? value.external_id.trim() : '';
+  if (!extId || extId.length > 191 || CASE_DOCKET_CONTROL.test(extId)) {
+    throw documentError('A register card needs "external_id": the file\'s Dropbox id exactly as the entry row of a document.folder read lists it (its entry_id)');
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  const entry = documentReadRowCited(refs, evidence, 'document.folder', (row) => row.row_type === 'entry' && String(row.entry_id) === extId);
+  if (!entry) {
+    throw documentError(`"${extId.slice(0, 80)}" is not an entry a document.folder read listed in this investigation — Casey registers only a file whose Dropbox id it has read: read the folder the file is in (document.folder {"path": …}) and cite that file's entry row (its entry_id, copied exactly — Dropbox ids are case-sensitive). A typed id, a documents row's external_id or any other row is never proposable`);
+  }
+  if (String(entry.is_folder) === '1') throw documentError(`"${entry.name}" is a folder — register targets files, not folders (the route's own refusal)`);
+  // Re-stat, the route's own first step (provider.stat); then the registry.
+  let meta = null;
+  try { meta = await documentSources().get('dropbox').stat(db, extId); }
+  catch (e) { if (!dropbox.isPathNotFoundError(e)) throw e; }
+  if (!meta) throw documentError(`"${entry.name}" (${extId}) is no longer in Dropbox — it was deleted since the folder was read (a moved or renamed file keeps its id). Read the folder again`);
+  if (meta['.tag'] === 'folder') throw documentError('register targets files, not folders');
+  const existing = await require('./documentService').getByExternal(db, 'dropbox', extId);
+  if (existing) {
+    throw documentError(`"${meta.name}" is already registered as document #${existing.id}${existing.status === 'active' ? '' : ` (${existing.status} — the sync marks it active again when it sees the file)`} — nothing to register; the route would answer 200 created:false and only refresh that row. ${existing.status === 'active' ? 'To put it on a case, use a document.link card' : 'Read it as documents.id AS document_id'}`);
+  }
+  const name = String(meta.name || entry.name || '');
+  const pathDisplay = meta.path_display ? String(meta.path_display) : null;
+  const pathLower = meta.path_lower ? String(meta.path_lower).toLowerCase() : null;
+  const parentPath = pathDisplay ? pathDisplay.slice(0, pathDisplay.lastIndexOf('/')) : '';
+  const size = meta.size == null ? null : Number(meta.size);
+  const roots = (await sync.listRoots(db)).filter((r) => r && r.enabled);
+  const root = pathLower ? roots.find((r) => sync._underRoot(pathLower, String(r.path).toLowerCase())) || null : null;
+  const hit = pathLower ? await documentFolderCase(db, pathLower) : null;
+  const on = await sync.isSyncEnabled(db);
+  const warnings = []; const effects = [];
+  effects.push(`Registers: one documents row — source dropbox, id ${extId}, "${name}" (${size == null ? 'size unknown' : `${size} bytes`}), path ${pathDisplay || '(unknown)'} — active, untitled (a document.update card sets the title, type and tags); the event source is "manual" with you as the actor.`);
+  if (hit) {
+    effects.push(`Attribution: the file sits in case ${hit.case_id}'s cached Dropbox folder (${hit.path_lower}), so the Dropbox sync's attribution sweep links it to that case with its own "path" mark on a later pass — silently (no document.linked event) — ${on ? 'while the sync is on' : 'but the sync is switched OFF right now, so not until it is switched back on'}. The register itself writes NO link; a document.link card links it to a case or contact at once.`);
+  } else {
+    effects.push('Attribution: the file is under no case\'s cached Dropbox folder, so the sync never links it — it shows on the Documents page\'s Unlinked list until a document.link card (or the Links dialog) puts it on a case or contact.');
+  }
+  if (root) {
+    effects.push(`Sync root: the file is under the enabled root "${root.path}" — ${on ? 'the sync registers such files on its own as it walks or on a change; registering by hand only brings this one forward' : 'the sync is OFF, so nothing registers it until the engine is switched on; registering by hand brings it in now'}.`);
+  } else {
+    warnings.push(`UNDER NO SYNC ROOT: the file is under no enabled sync root, so the Dropbox sync will never see it — the row never updates when the file moves, renames or is deleted (it stays "active" with a stale name and path), and a re-register is the only refresh. If this folder should be watched, add a sync root for it (a document.sync_root.add card).`);
+  }
+  effects.push('Untouched: the file in Dropbox — register reads it and writes nothing there.',
+    'No undo: deleting the row is not available (the Dropbox sync owns a document\'s status); the registry keeps it.',
+    'Trigger event: document.created fires — every active rule on it is listed below (no document.linked: register writes no link).',
+    'Other open pages: the Documents page refreshes its list on its own; no case or contact tab changes (there is no link).');
+  const actor = documentActor(currentUserId);
+  const automation = await documentAutomation(db, 'document.created', {
+    source: 'manual', ...(actor ? { actor } : {}),
+    data: { id: null, source: 'dropbox', external_id: extId, name, path: pathDisplay, doc_type: null, tags: null, status: 'active' },
+  }, 'this registration');
+  if (automation.lines.some((l) => l.outcome === 'unknown')) warnings.push('AUTOMATION: at least one trigger rule could not be evaluated for this registration — read its line; it may run.');
+  return {
+    draft_id: crypto.randomUUID(), kind: 'document.register.v1', status: 'draft',
+    file: { external_id: extId, name, path: pathDisplay, path_lower: pathLower, parent_path: parentPath, size, server_modified: meta.server_modified ? documentIso(meta.server_modified) : null, rev: meta.rev == null ? null : String(meta.rev) },
+    folder_case: hit ? { case_id: String(hit.case_id), path_lower: String(hit.path_lower) } : null,
+    sync_root: root ? { root_id: Number(root.id), path: String(root.path) } : null,
+    sync_enabled: on,
+    automation: { events: automation.events, lines: automation.lines.map((l) => l.text), rules_checked: automation.rules_checked, quiet: automation.quiet },
+    effects, warnings,
+    expected: { external_id: extId, name, size, rev: meta.rev == null ? null : String(meta.rev), parent_path: parentPath },
+    evidence: refs,
+  };
+}
+
+async function normalizeDocumentSyncRootAdd(db, value, evidence) {
+  const sync = caseFolderSync(); const dropbox = caseFolderDropbox();
+  if (typeof value.path !== 'string' || !value.path.trim()) {
+    throw syncRootError('A sync root card needs "path": the full Dropbox folder path, exactly as the folder row of a document.folder read of it lists it');
+  }
+  const raw = value.path;
+  if (CASE_DOCKET_CONTROL.test(raw) || raw.length > CASE_FOLDER_PATH_MAX) throw syncRootError('path must be one line of at most 1024 characters with no control characters');
+  let note = null;
+  if (value.note !== undefined && value.note !== null && value.note !== '') {
+    if (typeof value.note !== 'string') throw syncRootError('note must be text');
+    note = value.note.trim() || null;
+    if (note && CASE_DOCKET_CONTROL.test(note)) throw syncRootError('note must be one line with no control characters');
+  }
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  const head = documentReadRowCited(refs, evidence, 'document.folder', (row) => row.row_type === 'folder' && row.path === raw);
+  if (!head) {
+    const folderRows = evidence.filter((q) => q && q.kind === 'document.folder' && Array.isArray(q.rows)).flatMap((q) => q.rows.filter((r) => r && r.row_type === 'folder'));
+    if (folderRows.some((r) => r.path === raw)) throw syncRootError(`Cite the folder row: the evidence must include the document.folder row whose path is "${raw.slice(0, 200)}"`);
+    const near = folderRows.some((r) => String(r.path || '').trim().toLowerCase() === raw.trim().toLowerCase());
+    throw syncRootError(near
+      ? `"${raw.slice(0, 200)}" differs from the path the document.folder read lists in capitalisation or spacing — copy "path" EXACTLY as that read lists it, and cite its folder row`
+      : `Read the folder first: a sync root card's path must be the "path" of a document.folder read's folder row in this investigation, cited — that read is the dry run (it shows what the root's first walk would register). A path typed or guessed is never proposable`);
+  }
+  // addRoot's own validation and guards, in its words, nothing written.
+  let path;
+  try { path = sync._validateRootPath(raw); } catch (e) { throw syncRootError(e.message); }
+  const existing = await sync.listRoots(db);
+  const dupe = existing.find((r) => String(r.path).toLowerCase() === path.toLowerCase());
+  if (dupe) throw syncRootError(`that path is already a sync root (root ${dupe.id})${dupe.enabled ? '' : ' — it is disabled; a document.sync_root.enable.v1 card switches it back on'}`);
+  const conflict = sync._findNestingConflict(existing, path);
+  if (conflict) {
+    throw syncRootError(conflict.direction === 'inside'
+      ? `this path sits INSIDE root ${conflict.row.id} ("${conflict.row.path}"), which already walks it recursively — every file underneath would be synced twice`
+      : `this path CONTAINS root ${conflict.row.id} ("${conflict.row.path}") — every file under that root would be synced twice. Disable it first, or pick a narrower path`);
+  }
+  let exists = true; let meta = null;
+  try { meta = await dropbox.getMetadata(db, { path }); }
+  catch (e) { if (dropbox.isPathNotFoundError(e)) exists = false; else throw e; }
+  if (meta && meta['.tag'] === 'file') throw syncRootError('that path is a file — a sync root must be a folder');
+  const on = await sync.isSyncEnabled(db);
+  const listedFiles = Number(head.listed_files) || 0; const listedFolders = Number(head.listed_folders) || 0;
+  const truncated = String(head.listing_truncated) === '1'; const registered = Number(head.registered_files) || 0;
+  const warnings = [`BACKFILL: EVERY file beneath "${path}" is registered on the root's first walk — ${truncated ? `${DOCUMENT_FOLDER_LIST_CAP} or more entries at the top level (the read stops counting there)` : `${listedFiles} file${listedFiles === 1 ? '' : 's'} and ${listedFolders} subfolder${listedFolders === 1 ? '' : 's'} at the top level`}, and everything inside those subfolders — in backfill mode: bulk writes, NO rule emissions (no document.created fires for them), over as many ticks as it takes (days for a large tree). ${registered} file${registered === 1 ? ' is' : 's are'} registered under it already.`];
+  if (!exists) warnings.push(`NOT IN DROPBOX YET: "${path}" does not exist now — the route still creates the root, enabled, with the warning "folder does not exist yet — will sync when created", and it starts syncing when the folder appears. Check the spelling (leading spaces in a segment count) if you expected it to exist.`);
+  if (!on) warnings.push('SYNC OFF: documents_sync_enabled is not "1" — the root is created, but nothing walks it until the engine is switched on (YisraCase Config → System → Switches).');
+  const effects = [
+    'No delete: a sync root cannot be deleted (its rows carry no root id — deleting one would strand every file it registered); DISABLING it is the undo, through a document.sync_root.enable.v1 card or the Sync panel.',
+    'Path is permanent: a root\'s path cannot be changed (its Dropbox cursor belongs to this folder) — a wrong path is disabled and the right one added.',
+    'Attribution: files under a case\'s cached Dropbox folder are linked to that case by the sync (relation "path"); every other file shows on the Documents page\'s Unlinked list.',
+    'Incremental after: once the first walk finishes (backfill_done), every change under the root registers one file at a time and fires document.created / document.updated / document.linked for the trigger rules.',
+    'Manual tick: More → Documents → Sync → Sync now runs one small batch against the root; the scheduled documents_sync job does the rest.',
+  ];
+  if (note && documentChars(note) > sync.ROOT_NOTE_MAX) effects.push(`Note: cut to ${sync.ROOT_NOTE_MAX} characters as stored.`);
+  const shown = existing.slice(0, DOCUMENT_SYNC_ROOT_CARD_ROOTS);
+  effects.push(`Existing roots (${existing.length}): ${shown.map((r) => `#${r.id} "${r.path}"${r.enabled ? '' : ' (disabled)'}${r.backfill_done ? '' : ' (backfilling)'}`).join('; ') || 'none'}${existing.length > shown.length ? ` (+${existing.length - shown.length} more)` : ''}.`);
+  effects.push('Other open pages: the Sync panel reads the roots when it is next opened (roots are not on the live-update bus).');
+  return {
+    draft_id: crypto.randomUUID(), kind: 'document.sync_root.add.v1', status: 'draft',
+    root: { path, note },
+    folder: { path_display: head.path_display == null ? null : String(head.path_display), exists, listed_files: listedFiles, listed_folders: listedFolders, listing_truncated: truncated, registered_files: registered },
+    roots: shown.map((r) => ({ root_id: Number(r.id), path: String(r.path), enabled: !!r.enabled, backfill_done: !!r.backfill_done })),
+    roots_total: existing.length, sync_enabled: on,
+    effects, warnings,
+    expected: { roots_hash: documentSyncRootsHash(existing) },
+    evidence: refs,
+  };
+}
+
+async function normalizeDocumentSyncRootEnable(db, value, evidence) {
+  const sync = caseFolderSync();
+  const id = Number(value.root_id);
+  if (!Number.isSafeInteger(id) || id < 1) throw syncRootError('A sync root card needs the root\'s exact positive root_id (read the roots first: document.sync_roots)');
+  if (typeof value.enabled !== 'boolean') throw syncRootError('enabled must be true (switch the root on) or false (switch it off)');
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  const cited = documentReadRowCited(refs, evidence, 'document.sync_roots', (row) => row.row_type === 'root' && Number(row.root_id) === id);
+  if (!cited) throw syncRootError(`The evidence does not identify root #${id} — cite its row from a document.sync_roots read (read the roots first)`);
+  const roots = await sync.listRoots(db);
+  const root = roots.find((r) => Number(r.id) === id) || null;
+  if (!root) throw syncRootError(`Sync root not found — root #${id} is gone`);
+  if (!!root.enabled === value.enabled) throw syncRootError(`Root #${id} ("${root.path}") is already ${value.enabled ? 'enabled' : 'disabled'} — that changes nothing`);
+  if (value.enabled) {
+    const conflict = sync._findNestingConflict(roots, String(root.path), id);
+    if (conflict) {
+      throw syncRootError(`cannot enable: this root ${conflict.direction === 'inside' ? 'sits inside' : 'contains'} root ${conflict.row.id} ("${conflict.row.path}") — every file underneath would be synced twice`);
+    }
+  }
+  const on = await sync.isSyncEnabled(db);
+  const warnings = []; const effects = [];
+  if (value.enabled) {
+    warnings.push(root.backfill_done
+      ? `RESUMES: root #${id} ("${root.path}") rejoins the sync rotation. It keeps its cursor, so the next tick asks Dropbox what changed under it since it was disabled and registers all of that one file at a time, firing document.created / document.updated / document.linked for every change.`
+      : `FIRST WALK PENDING: root #${id} ("${root.path}") rejoins the sync rotation with its first walk unfinished (backfill_done is 0), so the engine walks EVERY file beneath it in backfill mode — bulk writes, no rule emissions — before switching to incremental.`);
+    if (!on) warnings.push('SYNC OFF: documents_sync_enabled is not "1" — the root is enabled, but nothing walks it until the engine is switched on (YisraCase Config → System → Switches).');
+    effects.push('Nesting re-checked: enabling re-runs the nesting guard against the roots enabled now (passed at proposal; the route checks again at the click).');
+  } else {
+    effects.push(`Leaves the rotation: the scheduled sync skips root #${id} ("${root.path}"); its cursor and every row it registered stay exactly as they are — nothing is unregistered, unlinked or marked deleted. Files that change, move or are deleted under it are not seen until it is re-enabled.`,
+      'Manual tick still runs it: More → Documents → Sync → Sync now on a disabled root runs one batch anyway (the override for testing a fix) — it does not override the kill switch.',
+      'Re-enabling re-checks nesting against the roots enabled then (a document.sync_root.enable.v1 card with enabled true, or the panel).');
+  }
+  effects.push('Only this field: a root\'s path cannot be changed (the route refuses any other key) and a root cannot be deleted — disable is the only undo.');
+  effects.push('Other open pages: the Sync panel reads the roots when it is next opened (roots are not on the live-update bus).');
+  return {
+    draft_id: crypto.randomUUID(), kind: 'document.sync_root.enable.v1', status: 'draft',
+    root: { root_id: id, path: String(root.path), note: root.note == null ? null : String(root.note), enabled: !!root.enabled, backfill_done: !!root.backfill_done, has_cursor: !!root.has_cursor, last_sync_at: documentIso(root.last_sync_at), last_error: root.last_error == null ? null : String(root.last_error).slice(0, 255) },
+    enabled: value.enabled, sync_enabled: on,
+    roots_total: roots.length,
+    effects, warnings,
+    expected: { roots_hash: documentSyncRootsHash(roots), enabled: !!root.enabled },
+    evidence: refs,
+  };
+}
+
+async function normalizeDocumentSyncRootAction(db, value, evidence) {
+  // The engine-configuration switch: '0' and the sync-root kinds do not exist.
+  if (require('../lib/firmConfig').cfg('casey_document_sync_roots_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const kind = value.kind;
+  const keys = Object.keys(value);
+  const bulk = keys.filter((k) => DOCUMENT_SYNC_ROOT_BULK_KEY.test(k));
+  if (bulk.length) throw syncRootError(`BULK refused (${bulk.join(', ')}): a sync root card adds or switches ONE root — there is no bulk verb on sync roots`);
+  const del = keys.filter((k) => DOCUMENT_SYNC_ROOT_DELETE_KEY.test(k));
+  if (del.length) throw syncRootError(`DELETE refused (${del.join(', ')}): a sync root cannot be deleted, by design — its rows carry no root id, so deleting one would strand every file it registered with nothing marking them stale. Disable is the only undo (document.sync_root.enable.v1 with enabled false)`);
+  if (kind === 'document.sync_root.enable.v1') {
+    const repoint = keys.filter((k) => DOCUMENT_SYNC_ROOT_REPOINT_KEY.test(k));
+    if (repoint.length) {
+      throw syncRootError(`REPOINT refused (${repoint.join(', ')}): only "enabled" can be changed on a sync root — the route refuses any other key. A root's cursor belongs to its folder, so a path change is a different root: disable this one and add the correct path (document.sync_root.add.v1)`);
+    }
+  }
+  const allowed = DOCUMENT_SYNC_ROOT_KEYS[kind];
+  const unknown = keys.filter((k) => !allowed.has(k));
+  if (unknown.length) {
+    throw syncRootError(`A ${kind} card carries unsupported fields: ${unknown.join(', ')} — it takes ${[...allowed].filter((k) => k !== 'kind').join(', ')} only`);
+  }
+  if (kind === 'document.sync_root.add.v1') return normalizeDocumentSyncRootAdd(db, value, evidence);
+  return normalizeDocumentSyncRootEnable(db, value, evidence);
+}
+
+// The document.templates read (A11X): the templates a generate card may cite
+// — active, purpose generate / both — with the prefill keys the card has to
+// supply or the template resolves; never the HTML body. On the app pool
+// (contract_templates is outside the report manifest).
+async function documentTemplatesRead(db, q = '') {
+  const search = String(q == null ? '' : q).trim().toLowerCase();
+  const params = [];
+  let where = "t.active = 1 AND t.purpose IN ('generate', 'both')";
+  if (search) { where += ' AND LOWER(t.name) LIKE ?'; params.push(`%${caseFolderSync()._likeEscape(search)}%`); }
+  const [rows] = await db.query(
+    `SELECT t.id, t.name, t.kind, t.template_type, t.purpose, t.file_subfolder, t.updated_at, t.prefill_schema,
+            (p.template_id IS NOT NULL) AS has_pdf
+       FROM contract_templates t
+       LEFT JOIN contract_template_pdfs p ON p.template_id = t.id
+      WHERE ${where}
+      ORDER BY t.name ASC, t.id ASC
+      LIMIT 101`, params);
+  const list = (Array.isArray(rows) ? rows : []).slice(0, 100);
+  if (!list.length) {
+    return { rows: [{ row_type: 'none', note: search ? `No active template whose purpose allows generating has "${search.slice(0, 80)}" in its name` : 'No active template has purpose generate or both — nothing can be generated; the e-signature templates are the Send for signature flow\'s (purpose esign)' }], truncated: false };
+  }
+  const out = list.map((r) => {
+    let schema = r.prefill_schema;
+    if (typeof schema === 'string') { try { schema = JSON.parse(schema); } catch (_) { schema = []; } }
+    if (!Array.isArray(schema)) schema = [];
+    const keys = (pred) => schema.filter(pred).map((e) => e.key).join(', ') || null;
+    const type = String(r.template_type || 'html'); const hasPdf = !!Number(r.has_pdf);
+    const ready = type !== 'pdf' || hasPdf;
+    return {
+      row_type: 'template', template_id: Number(r.id), name: String(r.name), kind: String(r.kind || ''), template_type: type, purpose: String(r.purpose || ''),
+      file_subfolder: String(r.file_subfolder || ''), has_pdf: hasPdf ? 1 : 0, generate_ready: ready ? 1 : 0,
+      link_kinds: 'case, contact',
+      required_keys: keys((e) => e.required), optional_keys: keys((e) => !e.required),
+      resolved_keys: keys((e) => e.resolver != null), given_keys: keys((e) => e.resolver == null && (e.default == null || e.default === '')),
+      updated_at: documentIso(r.updated_at),
+      note: `${ready ? 'Generate-ready' : 'NOT READY: a pdf template with no source PDF attached — the route refuses it'}: a document.generate.v1 card with this template_id for ONE case (linkable_type "case") or contact (linkable_type "contact") renders it to a PDF, files it under "${String(r.file_subfolder || '')}" in the case's Dropbox folder (a contact's goes to the unsorted generated-documents folder), registers and links it. resolved_keys are filled from the record; given_keys have no resolver and no default, so each must come in "values" (in the user's words) — a required one left empty refuses. Never the template's text.`,
+    };
+  });
+  return { rows: out, truncated: rows.length > 100 };
+}
+
+// The document.sync_roots read (A11X): the Sync panel's own list — every root
+// (disabled ones included), its state, and the kill switch; never
+// sync_cursor. On the app pool (document_sync_roots is outside the manifest).
+async function documentSyncRootsRead(db) {
+  const sync = caseFolderSync();
+  const [roots, on] = await Promise.all([sync.listRoots(db), sync.isSyncEnabled(db)]);
+  const enabled = roots.filter((r) => r.enabled).length;
+  const head = {
+    row_type: 'engine', sync_enabled: on ? 1 : 0, roots: roots.length, enabled_roots: enabled,
+    note: `${on ? 'The documents sync engine is ON' : 'The documents sync engine is OFF (documents_sync_enabled is not "1"): no root is walked until it is switched on in YisraCase Config → System → Switches'}; ${roots.length} root${roots.length === 1 ? '' : 's'}, ${enabled} enabled. A root is added with a document.sync_root.add.v1 card (its path from a document.folder read of that folder) and switched on or off with a document.sync_root.enable.v1 card (root_id from a row below); there is NO delete and a path cannot be changed.`,
+  };
+  const rows = roots.slice(0, 50).map((r) => {
+    const state = !r.enabled ? 'disabled' : r.syncing_since ? 'running' : r.backfill_done ? 'incremental' : 'backfilling';
+    return {
+      row_type: 'root', root_id: Number(r.id), path: String(r.path), note: r.note == null ? null : String(r.note),
+      enabled: r.enabled ? 1 : 0, backfill_done: r.backfill_done ? 1 : 0, has_cursor: r.has_cursor ? 1 : 0, state,
+      last_sync_at: documentIso(r.last_sync_at), last_error: r.last_error == null ? null : String(r.last_error).slice(0, 255), created_at: documentIso(r.created_at),
+    };
+  });
+  return { rows: [head, ...rows], truncated: roots.length > 50 };
+}
+
+async function normalizeDocumentAction(db, value, evidence, { currentUserId = null, userText = '' } = {}) {
   // The per-family switch: '0' and the A11 kinds do not exist.
   if (require('../lib/firmConfig').cfg('casey_documents_enabled') === '0') {
     throw httpError(422, 'Action kind is unavailable');
@@ -7182,6 +7756,8 @@ async function normalizeDocumentAction(db, value, evidence, { currentUserId = nu
   if (kind === 'document.update.v1') return normalizeDocumentUpdate(db, value, evidence, currentUserId);
   if (kind === 'document.share.v1') return normalizeDocumentShare(db, value, evidence);
   if (kind === 'document.unlink.v1') return normalizeDocumentUnlink(db, value, evidence);
+  if (kind === 'document.generate.v1') return normalizeDocumentGenerate(db, value, evidence, currentUserId, userText);
+  if (kind === 'document.register.v1') return normalizeDocumentRegister(db, value, evidence, currentUserId);
   return normalizeDocumentLink(db, value, evidence, currentUserId);
 }
 
@@ -10671,6 +11247,9 @@ async function caseFolderFacts(db, pathRaw, selfCaseId = null) {
     listed_files: 0, listed_folders: 0, listing_truncated: false, newest_listed: null,
     registered_files: 0, registered_newest: null,
     already_linked_to: [], inside_case_id: null, nested_case_ids: [], nested_case_folders: [], held_by: [],
+    // A11X: the direct entries themselves (id, name, paths, size, modified) —
+    // the register card cites a file's entry row; the sync-root add card the head.
+    entries: [],
   };
   if (!lower) return out; // the account root is never a case folder
   const roots = (await sync.listRoots(db)).filter((r) => r && r.enabled).map((r) => String(r.path).toLowerCase());
@@ -10692,6 +11271,14 @@ async function caseFolderFacts(db, pathRaw, selfCaseId = null) {
           const t = e.server_modified ? Date.parse(String(e.server_modified)) : NaN;
           if (Number.isFinite(t) && t > newest) { newest = t; out.newest_listed = new Date(t).toISOString(); }
         } else if (tag === 'folder') out.listed_folders += 1;
+        if (tag === 'file' || tag === 'folder') {
+          out.entries.push({
+            id: e.id == null ? null : String(e.id), name: String(e.name == null ? '' : e.name), is_folder: tag === 'folder',
+            path_display: e.path_display == null ? null : String(e.path_display), path_lower: e.path_lower == null ? null : String(e.path_lower),
+            size: tag === 'file' && e.size != null ? Number(e.size) : null,
+            server_modified: tag === 'file' && e.server_modified ? String(e.server_modified) : null,
+          });
+        }
       }
       out.listing_truncated = !!(list && list.truncated);
     }
@@ -10748,7 +11335,25 @@ async function documentFolderRead(db, pathRaw) {
   };
   const rows = f.nested_case_folders.map((x) => ({ row_type: 'nested_case_folder', case_id: x.case_id, path: x.path, parent_path: f.path,
     note: `Case ${x.case_id}'s cached folder sits inside "${f.path}"; its files stay on that case after a re-link of the parent` }));
-  return { rows: [head, ...rows], truncated: false };
+  // A11X: one row per direct entry (files and subfolders, the listing's own
+  // order, capped by the listing at DOCUMENT_FOLDER_LIST_CAP), each with its
+  // Dropbox id — the only way a document.register.v1 card learns one — and
+  // whether the registry already holds it (documentService.mapExternalIds).
+  const ids = f.entries.map((e) => e.id).filter(Boolean);
+  const registered = ids.length ? await require('./documentService').mapExternalIds(db, 'dropbox', ids) : new Map();
+  const entries = f.entries.map((e) => {
+    const reg = e.id ? registered.get(e.id) : null;
+    return {
+      row_type: 'entry', entry_id: e.id, name: e.name, path: e.path_display, path_lower: e.path_lower, parent_path: f.path,
+      is_folder: e.is_folder ? 1 : 0, size: e.size, server_modified: e.server_modified ? documentIso(e.server_modified) : null,
+      registered_document_id: reg ? Number(reg.id) : null,
+      note: e.is_folder ? `A subfolder of "${f.path}" (never registered itself; read it with its own document.folder read)`
+        : reg ? `Registered already as document #${reg.id} (documents.id) — a register card has nothing to do; link it with a document.link card`
+          : e.id ? 'A file the registry does not hold — a document.register.v1 card with this exact entry_id registers it (cite this row)'
+            : 'A file with no Dropbox id in the listing — not registrable from here',
+    };
+  });
+  return { rows: [head, ...rows, ...entries], truncated: false };
 }
 function head_held(f) { return f.held_by.map((h) => `${h.n} on case ${h.case_id}`).join('; '); }
 
@@ -15872,7 +16477,8 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && CASE_PIPELINE_TRANSFER_ACTION_KINDS.has(value.kind)) return normalizeCasePipelineTransferAction(db, value, evidence, { currentUserId });
   if (value && CASE_REQUIREMENT_OVERRIDE_ACTION_KINDS.has(value.kind)) return normalizeCaseRequirementOverrideAction(db, value, evidence, { currentUserId });
   if (value && CHECKLIST_ACTION_KINDS.has(value.kind)) return normalizeChecklistAction(db, value, evidence, { currentUserId });
-  if (value && DOCUMENT_ACTION_KINDS.has(value.kind)) return normalizeDocumentAction(db, value, evidence, { currentUserId });
+  if (value && DOCUMENT_ACTION_KINDS.has(value.kind)) return normalizeDocumentAction(db, value, evidence, { currentUserId, userText: draftUserText(question, history) });
+  if (value && DOCUMENT_SYNC_ROOT_ACTION_KINDS.has(value.kind)) return normalizeDocumentSyncRootAction(db, value, evidence);
   if (value && CASE_DOCKET_ACTION_KINDS.has(value.kind)) return normalizeCaseDocketAction(db, value, evidence, { currentUserId });
   if (value && FORM_ACTION_KINDS.has(value.kind)) return normalizeFormAction(db, value, evidence, { currentUserId });
   if (value && FORM_TEMPLATE_ACTION_KINDS.has(value.kind)) return normalizeFormTemplateAction(db, value, evidence, { currentUserId, userText: draftUserText(question, history) });
@@ -16070,7 +16676,15 @@ function taskDraftRequested(question, history = []) {
   // verb an edit or link in a request message. A11.2: a share (a public /
   // shareable link) or an unlink from a case or contact.
   const documentEdit = /\b(?:documents?|pdfs?|scans?|scanned)\b/i.test(text) &&
-    /\b(?:draft|propose|prepare|retitle|re-?title|rename|title|tag|re-?tag|untag|classify|categori[sz]e|label|link|attach|associate|connect|file\b[^.?!\n]{0,40}\b(?:to|under|on|with)|set (?:the|its) (?:title|type|tags?)|change (?:the|its) (?:title|type|tags?)|share|(?:public|shared|shareable|sharing) link|un-?link|detach|disconnect|(?:remove|take)\b[^.?!\n]{0,60}\b(?:from|off))\b/i.test(request);
+    /\b(?:draft|propose|prepare|retitle|re-?title|rename|title|tag|re-?tag|untag|classify|categori[sz]e|label|link|attach|associate|connect|file\b[^.?!\n]{0,40}\b(?:to|under|on|with)|set (?:the|its) (?:title|type|tags?)|change (?:the|its) (?:title|type|tags?)|share|(?:public|shared|shareable|sharing) link|un-?link|detach|disconnect|(?:remove|take)\b[^.?!\n]{0,60}\b(?:from|off)|generate|register)\b/i.test(request);
+  // A11X: a document generated from a template ("generate the discharge
+  // notice for the Smith case", "make a hardship letter from the template"),
+  // a file registered ("register that file"), a sync root added or switched
+  // ("add a sync root for /Law Office/Closed", "disable the old root").
+  const documentGenerate = /\b(?:templates?|notices?|letters?|worksheets?|agreements?|generated?)\b/i.test(text) &&
+    /\b(?:generate|make|create|produce|prepare|draft|render|build|file)\b[^.?!\n]{0,80}\b(?:from|with|using|off)\b[^.?!\n]{0,40}\b(?:templates?)\b|\bgenerate\b/i.test(request);
+  const syncRoot = /\b(?:sync roots?|roots?|watched folders?|sync(?:ed|ing)? folders?|root folders?)\b/i.test(text) &&
+    /\b(?:add|create|watch|start watching|enable|re-?enable|disable|(?:switch|turn)\b[^.?!\n]{0,40}\b(?:on|off)|stop|pause|resume|propose|prepare|draft)\b/i.test(request);
   // A7c: a docket / case number being added to a case ("add the case number
   // 25-12345 to the Smith case", "put the docket on it"); A7e: replaced or
   // cleared on the case fields card ("change the case number to …", "clear the
@@ -16120,7 +16734,7 @@ function taskDraftRequested(question, history = []) {
   const caseFields = /\b(?:(?:open|file|filing|close|closing|discharge|objection|preference|341|show[ -]?cause|due|confirmation|hearing)\s+dates?|dates? (?:filed|opened|closed|discharged)|judge|trustee|chapter|caption|our role|lead source|case source|source ref|primary reason|341 (?:link|status|docs|amend\w*|notes)|show[ -]?cause|objection|preference|180|matrix|schedules|filing fee|final installment|docs (?:due|missing)|garnish\w*|reaffirm\w*|redemption|(?:1st|2nd|first|second) course|pre-?petition|post-?petition|fee (?:application|order|amounts?|due)|funding app|plan (?:filed|cos)|dismissal notice|outcome|follow-?up email|7 ?steps|custom fields?|case fields?|cf_\w+)\b/i.test(text) &&
     /\b(?:case|file|matter|debtor|client)s?\b/i.test(text) &&
     /\b(?:draft|propose|prepare|set|change|update|edit|correct|fix|enter|record|put|fill|mark|check|uncheck|clear|empty|remove|blank|switch|assign)\b/i.test(request);
-  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || requirementOverride || checklist || documentEdit || docketAdopt || caseFields || formWork || formTemplate || mailTriage || mailAttachments || folderRelink || folderQueue || job || workflow || hook || sequence || send || ingestRule ||
+  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || pipelineMove || requirementOverride || checklist || documentEdit || documentGenerate || syncRoot || docketAdopt || caseFields || formWork || formTemplate || mailTriage || mailAttachments || folderRelink || folderQueue || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 
@@ -16363,6 +16977,20 @@ function validateStep(query, index) {
     if (!/^[A-Za-z0-9_-]{1,20}$/.test(caseId)) throw httpError(422, `Step ${id} needs the case's exact case_id`);
     return { id, kind, purpose, case_id: caseId };
   }
+  // A11X — the contract templates a generate card may cite (typed:
+  // contract_templates is outside the curated schema; never the body).
+  if (kind === 'document.templates') {
+    const out = { id, kind, purpose };
+    if (query.q !== undefined && query.q !== null && String(query.q).trim() !== '') {
+      const q = String(query.q).trim();
+      if (q.length > 120 || CASE_DOCKET_CONTROL.test(q)) throw httpError(422, `Step ${id} document.templates q must be at most 120 characters on one line`);
+      out.q = q;
+    }
+    return out;
+  }
+  // A11X — the documents sync's roots and kill switch (typed:
+  // document_sync_roots is outside the curated schema; never sync_cursor).
+  if (kind === 'document.sync_roots') return { id, kind, purpose };
   // A11.1X — ONE Dropbox folder path as the documents sync sees it (typed: a
   // provider read through the sync's credential; never sql.read-able).
   if (kind === 'document.folder') {
@@ -16603,6 +17231,8 @@ function stepFingerprint(step) {
   if (kind === 'mail.attachments.preview') return `${kind}:${Number(step.mail_message_id)}:${String(step.case_id || '')}`;
   if (kind === 'document.relink.candidates') return `${kind}:${String(step.case_id || '')}`;
   if (kind === 'document.folder') return `${kind}:${String(step.path || '').toLowerCase()}`;
+  if (kind === 'document.templates') return `${kind}:${String(step.q || '').trim().toLowerCase()}`;
+  if (kind === 'document.sync_roots') return kind;
   if (kind === 'case.pipeline') return `${kind}:${String(step.case_id || '')}`;
   if (kind === 'esign.requests') return step.case_id != null ? `${kind}:case:${String(step.case_id)}` : `${kind}:contact:${Number(step.contact_id)}`;
   if (kind === 'automation.definition') return `${kind}:${recordFingerprint(step)}:${step.version === undefined ? 'current' : Number(step.version)}`;
@@ -16913,6 +17543,20 @@ async function executeReadStep(db, query, { auth, userId }) {
     // A11.1X: Dropbox through the documents sync's credential plus the app
     // pool (case_folder_cache and document_links stay outside the manifest).
     const out = await documentFolderRead(db, query.path);
+    rows = out.rows;
+    rowCount = rows.length;
+    truncated = out.truncated;
+  } else if (query.kind === 'document.templates') {
+    // A11X: on the app pool (contract_templates is outside the manifest);
+    // the generate picker's own filter, never the body.
+    const out = await documentTemplatesRead(db, query.q || '');
+    rows = out.rows;
+    rowCount = rows.length;
+    truncated = out.truncated;
+  } else if (query.kind === 'document.sync_roots') {
+    // A11X: on the app pool (document_sync_roots is outside the manifest);
+    // the Sync panel's own GET, never sync_cursor.
+    const out = await documentSyncRootsRead(db);
     rows = out.rows;
     rowCount = rows.length;
     truncated = out.truncated;
@@ -17505,7 +18149,7 @@ module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
-  normalizeActionDraft, contactRelationsRead, formTemplateRead, formTemplateStateRead, mailSearchRead, mailMessageRead, mailAttachmentsPreviewRead, relinkCandidatesRead, documentFolderRead, esignRequestsRead, casePipelineRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
+  normalizeActionDraft, contactRelationsRead, formTemplateRead, formTemplateStateRead, mailSearchRead, mailMessageRead, mailAttachmentsPreviewRead, relinkCandidatesRead, documentFolderRead, documentTemplatesRead, documentSyncRootsRead, esignRequestsRead, casePipelineRead, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
   repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan, answerSystemAppend, answerMaxTokens,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,

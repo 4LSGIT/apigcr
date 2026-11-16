@@ -1034,10 +1034,16 @@
        cannot serve either). Same move routes/api.appts.js made for
        POST /api/appts/cancel; see bodyIdGetter.
 
-       No matcher for `POST /api/documents/register`: its only callers are
-       admin/debug and the S2 smoke test, it announces a row nothing has open
-       yet, and the id it would address is one no current view is holding.
-       Add one the day a UI registers a document a user is looking at.
+       `POST /api/documents/register` had no matcher until A11X (2026-11-17):
+       its callers were admin/debug and the S2 smoke test, and the id it
+       would address was one no current view was holding. Ask Casey's
+       document.register.v1 card is a UI registering a document now, and the
+       view that must hear it is the GLOBAL Documents page — its Unlinked list
+       is where a hand-registered file lands — which subscribes to
+       `document:*` and refetches on a `yc_refetch` marker. So the matcher
+       announces `document:<new id>` with the marker (registerGetter: the
+       route's `document.id`, fail-closed without one): a refetch, never
+       field values, because a brand-new row is placed by the list query.
 
        ── THAT DAY ARRIVED (S4), AND IT IS STILL NOT `register`. ────────────
        `POST /api/documents/upload-commit` is a UI registering a document a
@@ -1076,6 +1082,13 @@
     // new row; see the note above. No capture group, so the getter's array
     // return is what addresses it (contract v2), as it is for the links pair.
     [/^\/api\/documents\/upload-commit$/, 'document', docLinkGetter, ['POST']],
+
+    // A11X — a document registered by hand (Ask Casey's register card). The
+    // row is NEW and unlinked, so the global Documents page's list is what
+    // changed: a refetch marker on the new row's own address (see the note
+    // above). created:false (the row existed — refreshed) announces too: the
+    // route re-wrote its name / path / size from Dropbox.
+    [/^\/api\/documents\/register$/, 'document', registerGetter, ['POST']],
 
     // Generate (G2) is upload-commit's twin and was missed when S4 added that
     // matcher: a UI (generateForm, esign sendForm, documents.html) filing a
@@ -1663,6 +1676,21 @@
     if (typeof t !== 'string' || !t) return null;
     if (i == null || i === '') return null;
     return [{ addr: 'doclink:' + t + ':' + i, fields: { yc_refetch: 1 } }];
+  }
+
+  /**
+   * Document register (A11X) — announce the NEW row by marker. The route
+   * answers `{status, created, document}`; the row's id is the address and
+   * the only thing read. Fails closed without a positive id.
+   *
+   * @param   {object} r `{status, created, document: {id, …}}`
+   * @returns {Array|null}
+   */
+  function registerGetter(r) {
+    var d = r && r.document;
+    var id = d && typeof d === 'object' ? Number(d.id) : NaN;
+    if (!(id > 0)) return null;
+    return [{ addr: 'document:' + id, fields: { yc_refetch: 1 } }];
   }
 
   /**

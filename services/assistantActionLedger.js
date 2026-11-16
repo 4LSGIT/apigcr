@@ -78,6 +78,15 @@ const KINDS = new Map([
   // row's id names what was removed).
   ['document.share.v1', 'document_id'],
   ['document.unlink.v1', 'document_link_id'],
+  // A11X: the generate receipts the document the route registered (it
+  // answers document_id — null when the registry hiccuped, read as ambiguous);
+  // the register receipts the row the POST answers (document.id). The two
+  // sync-root kinds receipt the root the route answers (root.id — the add's
+  // new row, the enable's reviewed row).
+  ['document.generate.v1', 'document_id'],
+  ['document.register.v1', 'document_id'],
+  ['document.sync_root.add.v1', 'root_id'],
+  ['document.sync_root.enable.v1', 'root_id'],
   // A12: both receipt the form_submissions row — the draft the POST upserted
   // (it returns the row id) and the submission the PATCH linked.
   ['form.draft.v1', 'submission_id'],

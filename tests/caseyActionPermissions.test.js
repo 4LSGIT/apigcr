@@ -173,6 +173,11 @@ const KINDS = [
   // A11.2: the row's Copy public link and the Links dialog's Unlink.
   { kind: 'document.share.v1', method: 'POST', path: '/api/documents/1/share' },
   { kind: 'document.unlink.v1', method: 'DELETE', path: '/api/documents/1/links' },
+  // A11X: the page's Generate document and the register smoke route; the Sync panel's Add and Enable / Disable.
+  { kind: 'document.generate.v1', method: 'POST', path: '/api/documents/generate' },
+  { kind: 'document.register.v1', method: 'POST', path: '/api/documents/register' },
+  { kind: 'document.sync_root.add.v1', method: 'POST', path: '/api/documents/sync-roots' },
+  { kind: 'document.sync_root.enable.v1', method: 'PATCH', path: '/api/documents/sync-roots/1' },
   // A12: the Forms tab's draft autosave route and the Form Inbox's adopt route (routes/api.forms.js).
   { kind: 'form.draft.v1', method: 'POST', path: '/api/forms/draft' },
   { kind: 'form.submission.link.v1', method: 'PATCH', path: '/api/forms/submissions/1/link' },
@@ -330,10 +335,10 @@ describe('P2 — what the canonical write route gates on (all 100 shipped kinds)
 
   const app = appWith;
 
-  test('the 102 kinds (103 rows — email.send.v1 has two mounts) cover 87 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(103);
-    expect(new Set(KINDS.map((k) => k.kind)).size).toBe(102);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(87);
+  test('the 106 kinds (107 rows — email.send.v1 has two mounts) cover 91 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(107);
+    expect(new Set(KINDS.map((k) => k.kind)).size).toBe(106);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(91);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -341,7 +346,7 @@ describe('P2 — what the canonical write route gates on (all 100 shipped kinds)
     expect([...new Set(KINDS.map((k) => k.kind))].sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 102', async () => {
+  test('no token: every kind is 401 — authentication is required for all 106', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -496,7 +501,10 @@ describe('P2 — what the canonical write route gates on (all 100 shipped kinds)
       expect(src).toContain(mount);
     }
     const a = app();
-    for (const k of KINDS.filter((x) => x.kind.startsWith('document.'))) {
+    // The per-document kinds answer the stub db's 404; the A11X kinds (no :id
+    // in the path) answer their own 400 on the stub body — pinned reached above.
+    const A11X = new Set(['document.generate.v1', 'document.register.v1', 'document.sync_root.add.v1', 'document.sync_root.enable.v1']);
+    for (const k of KINDS.filter((x) => x.kind.startsWith('document.') && !A11X.has(x.kind))) {
       const res = await call(a, k, bearer(token({ roles: ['staff'] })), k.method === 'PATCH' ? { title: 'T' } : { link_type: 'case', link_id: 'A' });
       expect({ kind: k.kind, status: res.status, gated: [401, 403].includes(res.status) }).toEqual({ kind: k.kind, status: 404, gated: false });
     }
@@ -664,6 +672,44 @@ describe('P2 — what the canonical write route gates on (all 100 shipped kinds)
       expect({ roles: roles.join(',') || 'none', status: res.status, result: res.body.result })
         .toEqual({ roles: roles.join(',') || 'none', status: 200, result: { skipped: true, reason: 'documents_sync_enabled is not "1"' } });
     }
+  });
+
+  // A11X: the generate, register and sync-root mounts are jwtOrApiKey only
+  // (api.documents.js, pinned capability-free above). A roleless staff token
+  // reaches each handler: the service behind it is spied, so the route answers
+  // its own shape, never 401 / 403.
+  test('A11X routes: a roleless staff token reaches the generate, register and sync-root handlers', async () => {
+    const src = read('routes/api.documents.js');
+    for (const mount of ["router.post('/api/documents/generate', jwtOrApiKey, async", "router.post('/api/documents/register', jwtOrApiKey, async",
+      "router.post('/api/documents/sync-roots', jwtOrApiKey, async", "router.patch('/api/documents/sync-roots/:id', jwtOrApiKey, async"]) {
+      expect(src).toContain(mount);
+    }
+    const generate = require(path.join(REPO, 'services', 'documentGenerateService'));
+    const sources = require(path.join(REPO, 'services', 'documentSourceService'));
+    const documents = require(path.join(REPO, 'services', 'documentService'));
+    const sync = require(path.join(REPO, 'services', 'documentSyncService'));
+    const spies = [
+      jest.spyOn(generate, 'generateFromTemplate').mockImplementation(async () => ({ document_id: 9, path: '/x/y.pdf', template_id: 1, link_type: 'case', link_id: 'A' })),
+      jest.spyOn(sources, 'get').mockImplementation(() => ({ stat: async () => ({ '.tag': 'file', id: 'id:X', name: 'x.pdf' }) })),
+      jest.spyOn(documents, 'upsertFromEntry').mockImplementation(async () => ({ row: { id: 9 }, created: true })),
+      jest.spyOn(sync, 'addRoot').mockImplementation(async () => ({ root: { id: 3, path: '/x', enabled: true }, warning: null })),
+      jest.spyOn(sync, 'setRootEnabled').mockImplementation(async () => ({ id: 1, path: '/x', enabled: false })),
+    ];
+    try {
+      const rows = [
+        ['document.generate.v1', { template_id: 1, linkable_type: 'case', linkable_id: 'A' }, 200, (b) => b.document_id],
+        ['document.register.v1', { external_id: 'id:X' }, 201, (b) => b.document && b.document.id],
+        ['document.sync_root.add.v1', { path: '/x' }, 201, (b) => b.root && b.root.id],
+        ['document.sync_root.enable.v1', { enabled: false }, 200, (b) => b.root && b.root.id],
+      ];
+      for (const [kind, body, status, pick] of rows) {
+        const k = KINDS.find((x) => x.kind === kind);
+        for (const roles of [['staff'], [], ['attorney']]) {
+          const res = await call(app(), k, bearer(token({ roles })), body);
+          expect({ kind, roles: roles.join(',') || 'none', status: res.status, id: pick(res.body) }).toEqual({ kind, roles: roles.join(',') || 'none', status, id: kind === 'document.sync_root.add.v1' ? 3 : kind === 'document.sync_root.enable.v1' ? 1 : 9 });
+        }
+      }
+    } finally { spies.forEach((s) => s.mockRestore()); }
   });
 
   // A6: the relation routes mount no capability gate at all; the role routes'

@@ -428,7 +428,8 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
     dropboxHolds(T, '/elsewhere/x');
     // The read: real registered count (t1 and sub/t2), the enabled root, no owner, Dropbox's listing.
     const read = await documentFolderRead(pool, T);
-    expect(read.rows).toHaveLength(1);
+    // A11X: the head row, then one entry row per listed entry (the stub lists a file and a subfolder).
+    expect(read.rows.map((r) => r.row_type)).toEqual(['folder', 'entry', 'entry']);
     expect(read.rows[0]).toMatchObject({ row_type: 'folder', path: T, path_lower: T, exists: 1, is_folder: 1, under_enabled_root: 1, root: ROOT, listed_files: 1, listed_folders: 1, listing_truncated: 0,
       newest_listed: '2026-10-02T10:00:00.000Z', registered_files: 2, registered_newest: '2026-10-01T10:00:00.000Z', already_linked_to: null, inside_case_id: null, nested_case_ids: null, held_by: null, proposable: 1 });
     expect(dropbox.getMetadata.mock.calls.map((c) => c[1])).toEqual([{ path: T }]);

@@ -2189,16 +2189,26 @@ describe('_sniff — documents matchers', () => {
     expect(seen).toEqual([]);
   });
 
-  test('POST /api/documents/register announces nothing', () => {
-    // Deliberate: its callers are admin/debug and the S2 smoke test, and the
-    // row it creates is one no open view is holding.
+  test('POST /api/documents/register announces the NEW row by marker (A11X); no id → nothing', () => {
+    // Ask Casey's register card is a UI registering a document now; the global
+    // Documents page (its Unlinked list) subscribes to document:* and refetches
+    // on the marker. No link set is announced: register writes no link.
     const w = mkWindow();
-    const seen = [];
-    ['document:*', 'doclink:*', 'case:*', 'contact:*'].forEach(a =>
-      w.YC.on(a, '*', (f, m) => seen.push(m.addr)));
+    const docSeen = spy(w, 'document:*');
+    const other = [];
+    ['doclink:*', 'case:*', 'contact:*'].forEach(a => w.YC.on(a, '*', (f, m) => other.push(m.addr)));
     w.YC._sniff('POST', '/api/documents/register',
                 { status: 'success', created: true, document: { id: 9, title: null, doc_type: null, tags: null, status: 'active' } });
-    expect(seen).toEqual([]);
+    expect(docSeen.map(s => [s.addr, s.fields, s.origin])).toEqual([['document:9', { yc_refetch: 1 }, 'auto:POST /api/documents/register']]);
+    expect(other).toEqual([]);
+    // created:false (the row existed — refreshed from Dropbox) announces too.
+    w.YC._sniff('POST', '/api/documents/register', { status: 'success', created: false, document: { id: 12 } });
+    expect(docSeen.map(s => s.addr)).toEqual(['document:9', 'document:12']);
+    // Fail-closed: no document, no positive id → nothing.
+    w.YC._sniff('POST', '/api/documents/register', { status: 'success', created: true });
+    w.YC._sniff('POST', '/api/documents/register', { status: 'success', created: true, document: { id: 0 } });
+    w.YC._sniff('GET', '/api/documents/register', { status: 'success', created: true, document: { id: 9 } });
+    expect(docSeen.length).toBe(2);
   });
 
   test('GET on any documents path is dropped by the gate', () => {

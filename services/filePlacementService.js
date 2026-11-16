@@ -400,6 +400,92 @@ async function _preparePlacement(db, {
 }
 
 /**
+ * The ladder's DECISION, read-only — what placeAndRegister WOULD do with these
+ * bytes, said before any of it happens (Ask Casey's generate card, A11X).
+ *
+ * Same branches as _preparePlacement, same bin and name helpers, and NOTHING
+ * created, raised or uploaded: rung 2 is reported as "auto_create" instead of
+ * calling ensureCaseDropboxFolder (which makes the folder and raises the task
+ * the moment it runs), rung 1 does not create the subfolder, rung 3 names the
+ * move task instead of raising it. The one provider call is resolveLocation
+ * (sharing/get_shared_link_metadata — a read): a dead link is reported the
+ * way the ladder would degrade on it. A change to _preparePlacement's
+ * branching belongs here too; tests/filePlacementService.test.js pins the
+ * two against each other rung by rung.
+ *
+ * @returns {Promise<{rung:'case'|'auto_create'|'unsorted'|'bin', placement:'case'|'unsorted',
+ *                    folder_path:?string, subfolder:?string, filename_prefix:string,
+ *                    task:?string, note:?string, case_dropbox:?string, reason:?string}>}
+ */
+async function describePlacement(db, {
+  linkType, linkId, subfolder,
+  unsortedPathKey, unsortedDefault, unsortedFilenamePrefix = '', unsortedSubfolder = '',
+  artifactLabel = 'file', binLabel = 'unsorted folder', logTag = DEFAULT_LOG_TAG,
+} = {}) {
+  const binOpts = { unsortedPathKey, unsortedDefault, logTag };
+
+  if (linkType === 'case') {
+    const caseId = String(linkId);
+    let row = null; let reason = null;
+    try {
+      [[row]] = await db.query('SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId]);
+    } catch (err) {
+      reason = `Could not read the case row: ${err.message}`;
+    }
+    const link = row && row.case_dropbox && String(row.case_dropbox).trim() !== '' ? String(row.case_dropbox) : null;
+    if (link) {
+      try {
+        const credentialId = await dropboxService._resolveCredential(db, {});
+        const caseFolder = await dropboxService.resolveLocation(db, credentialId, { sharedLink: link, expectFolder: true });
+        return {
+          rung: 'case', placement: 'case', folder_path: dropboxService.joinPath(caseFolder, subfolder), subfolder,
+          filename_prefix: '', task: null, note: null, case_dropbox: link, reason: null,
+        };
+      } catch (err) {
+        reason = `Could not open the case's Dropbox folder: ${err.message}`;
+      }
+    } else if (row) {
+      // Rung 2: the ladder creates the case folder through
+      // caseService.ensureCaseDropboxFolder (stage-aware template) and raises
+      // the staff task at create time. Reported, not done.
+      return {
+        rung: 'auto_create', placement: 'case', folder_path: null, subfolder,
+        filename_prefix: '', case_dropbox: null, reason: null,
+        task: `Dropbox folder auto-created for case ${caseId}`,
+        note: `Case "${caseId}" has no Dropbox folder linked, so one is created automatically and linked to the case; ` +
+          'if this case already has a folder that was never linked, the two must be merged and the original re-linked on the case page.',
+      };
+    } else if (!reason) {
+      reason = `Case "${caseId}" was not found.`;
+    }
+    const folderPath = await _unsortedCaseFolderPath(db, caseId, binOpts);
+    return {
+      rung: 'unsorted', placement: 'unsorted', folder_path: folderPath, subfolder: null,
+      filename_prefix: '', case_dropbox: link, reason,
+      task: `Move ${artifactLabel} for case ${caseId} out of Unsorted`,
+      note: `The ${artifactLabel} could not be filed to the case folder \u2014 ${reason} ` +
+        `It was filed to the ${binLabel} instead (${folderPath}); ` +
+        'move it into the correct case folder.',
+    };
+  }
+
+  const root = await _unsortedBasePath(db, binOpts);
+  const sub = unsortedSubfolder
+    ? (sanitizeNameFragment(unsortedSubfolder, MAX_NAME_FRAGMENT, 'Unsorted').replace(/[. ]+$/, '') || 'Unsorted')
+    : '';
+  const base = sub ? dropboxService.joinPath(root, sub) : root;
+  const what = linkType === 'contact' ? `a contact (id ${linkId})`
+    : linkType === 'appt' ? `an appointment (id ${linkId})`
+      : 'nothing yet';
+  return {
+    rung: 'bin', placement: 'unsorted', folder_path: base, subfolder: null,
+    filename_prefix: unsortedFilenamePrefix || '', task: null, case_dropbox: null, reason: null,
+    note: `This ${artifactLabel} is linked to ${what}, so there is no case folder to file into. ` +
+      `It went to the ${binLabel} (${base}).`,
+  };
+}
+
+/**
  * Place bytes on the ladder, upload them, register the result, and report.
  *
  * @param {object} db
@@ -532,6 +618,8 @@ async function placeAndRegister(db, {
 
 module.exports = {
   placeAndRegister,
+  // The ladder's decision WITHOUT any write (Ask Casey's generate card).
+  describePlacement,
   // The ladder WITHOUT the upload: resolve (and, on rung 2, create) where a
   // file belongs. emailAttachmentFilingService's refile moves files that are
   // already in Dropbox to that destination. Same function as _preparePlacement

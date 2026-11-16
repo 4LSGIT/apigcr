@@ -1327,17 +1327,15 @@ version restore and delete in A12.4 (ASK_CASEY_ACTIONS_PLAN A12.2–A12.4).
 
 ## From the Ask Casey arc — A11 / A11.2 documents (2026-11-02, 2026-11-11) — deferred
 
-Share and unlink shipped as A11.2 (ASK_CASEY_ACTIONS_PLAN).
+Share and unlink shipped as A11.2 (ASK_CASEY_ACTIONS_PLAN). Register by
+external id, generate and the sync roots shipped as A11X (2026-11-17, Fred:
+"release means allow"; plan doc A11 "Released 2026-11-17"): the
+`document.folder` read lists a folder's entries with their Dropbox ids, so a
+register card cites the file's entry row; the generate card predicts the
+filing ladder read-only through `filePlacementService.describePlacement`; the
+sync-root cards sit behind their own switch `casey_document_sync_roots_enabled`.
+Still deferred:
 
-- **Register by external id** (POST `/api/documents/register` {external_id}).
-  The model has no way to learn a Dropbox id it has not read, and every synced
-  file is already a row; a card would register only what sync has missed.
-- **Generate** (POST `/api/documents/generate` — a contract template filed
-  into a case's Dropbox folder) — writes a file: destination, filename,
-  template and overwrite all need review.
-- **Sync roots** (POST / PATCH `/api/documents/sync-roots`) — engine
-  configuration with fan-out over thousands of rows. (The relink confirm
-  shipped as A11.1 — its own deferred list is above.)
 - **Status changes, replacement and deletion** (PATCH {status} — delete /
   restore / missing) — no screen offers them: the Documents page's edit dialog
   sends title / type / tags only, and the Dropbox sync owns the status (a file

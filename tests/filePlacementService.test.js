@@ -607,3 +607,86 @@ describe('sanitizeNameFragment', () => {
     expect(formPdfService.sanitizeNameFragment('')).toBe('form');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// describePlacement (A11X) — the ladder's DECISION without any write. Pinned
+// against _preparePlacement rung by rung: same folder, same placement, same
+// note shape, and NOTHING created, raised or uploaded. A branch added to one
+// and not the other fails here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('describePlacement — the ladder without the write (A11X)', () => {
+  const OPTS = {
+    linkType: 'case', linkId: 'hjSFMabb', subfolder: 'Notices',
+    unsortedPathKey: BIN_KEY, unsortedDefault: BIN_DEFAULT,
+    artifactLabel: 'generated document', binLabel: 'unsorted generated-documents folder', logTag: '[DOC GEN]',
+  };
+  const untouched = () => {
+    expect(dropboxService.uploadFile).not.toHaveBeenCalled();
+    expect(dropboxService.createFolder).not.toHaveBeenCalled();
+    expect(dropboxService.getTemporaryLink).not.toHaveBeenCalled();
+    expect(caseService.ensureCaseDropboxFolder).not.toHaveBeenCalled();
+    expect(taskService.createTask).not.toHaveBeenCalled();
+    expect(ingest.registerWrittenSafe).not.toHaveBeenCalled();
+  };
+
+  test('rung 1 — the live case link: the same folder _preparePlacement resolves, placement case, no task', async () => {
+    const plan = await fp.describePlacement(db, OPTS);
+    expect(plan).toEqual({ rung: 'case', placement: 'case', folder_path: '/Clients/Smith, John/Notices', subfolder: 'Notices', filename_prefix: '', task: null, note: null, case_dropbox: 'https://www.dropbox.com/sh/case-link', reason: null });
+    expect(dropboxService.resolveLocation).toHaveBeenCalledWith(db, 8, { sharedLink: 'https://www.dropbox.com/sh/case-link', expectFolder: true });
+    untouched();
+    const prep = await fp._preparePlacement(db, OPTS);
+    expect([prep.folderPath, prep.placement, prep.placementNote, prep.moveTaskAfterUpload]).toEqual([plan.folder_path, plan.placement, plan.note, false]);
+  });
+
+  test('rung 2 — no case_dropbox: reported as auto_create with the task TITLE the ladder raises; ensureCaseDropboxFolder is NOT called', async () => {
+    db.query.mockImplementation(async (sql) => {
+      if (/case_dropbox/.test(sql)) return [[{ case_dropbox: null }]];
+      if (/contact_lfm_name/.test(sql)) return [[{ contact_lfm_name: 'Smith, John' }]];
+      return [[]];
+    });
+    const plan = await fp.describePlacement(db, OPTS);
+    expect(plan).toMatchObject({ rung: 'auto_create', placement: 'case', folder_path: null, subfolder: 'Notices', task: 'Dropbox folder auto-created for case hjSFMabb', case_dropbox: null, reason: null });
+    expect(plan.note).toContain('Case "hjSFMabb" has no Dropbox folder linked, so one is created automatically');
+    expect(dropboxService.resolveLocation).not.toHaveBeenCalled();
+    untouched();
+    // The write path on the same row raises exactly that task.
+    caseService.ensureCaseDropboxFolder.mockResolvedValue({ existed: false, path: '/Clients/Smith, John', shared_link: 'https://www.dropbox.com/sh/new-link' });
+    await fp._preparePlacement(db, OPTS);
+    expect(taskService.createTask).toHaveBeenCalledWith(db, expect.objectContaining({ title: plan.task }));
+  });
+
+  test('rung 3 — a dead link: the ladder\'s own reason, the per-case bin subfolder, the move task named, not raised', async () => {
+    dropboxService.resolveLocation.mockRejectedValue(new Error('link revoked'));
+    const plan = await fp.describePlacement(db, OPTS);
+    expect(plan).toEqual({ rung: 'unsorted', placement: 'unsorted', folder_path: `${BIN_DEFAULT}/hjSFMabb - Smith, John`, subfolder: null, filename_prefix: '',
+      task: 'Move generated document for case hjSFMabb out of Unsorted', case_dropbox: 'https://www.dropbox.com/sh/case-link', reason: 'Could not open the case\'s Dropbox folder: link revoked',
+      note: `The generated document could not be filed to the case folder — Could not open the case's Dropbox folder: link revoked It was filed to the unsorted generated-documents folder instead (${BIN_DEFAULT}/hjSFMabb - Smith, John); move it into the correct case folder.` });
+    untouched();
+    const prep = await fp._preparePlacement(db, OPTS);
+    expect([prep.folderPath, prep.placement, prep.placementNote, prep.moveTaskAfterUpload]).toEqual([plan.folder_path, plan.placement, plan.note, true]);
+  });
+
+  test('rung 3 — the case row gone, and a case read that throws', async () => {
+    db.query.mockImplementation(async (sql) => { if (/case_dropbox/.test(sql)) return [[]]; return [[]]; });
+    const gone = await fp.describePlacement(db, OPTS);
+    expect([gone.rung, gone.reason, gone.folder_path]).toEqual(['unsorted', 'Case "hjSFMabb" was not found.', `${BIN_DEFAULT}/hjSFMabb`]);
+    db.query.mockImplementation(async (sql) => { if (/case_dropbox/.test(sql)) throw new Error('db down'); return [[]]; });
+    const broken = await fp.describePlacement(db, OPTS);
+    expect(broken.reason).toBe('Could not read the case row: db down');
+    untouched();
+  });
+
+  test('contact / appt / unlinked — the bin root, the identity prefix, the caller\'s subfolder; the bin from the setting', async () => {
+    const plan = await fp.describePlacement(db, { ...OPTS, linkType: 'contact', linkId: '1001', unsortedFilenamePrefix: 'contact 1001 - Doe, Jane - ' });
+    expect(plan).toEqual({ rung: 'bin', placement: 'unsorted', folder_path: BIN_DEFAULT, subfolder: null, filename_prefix: 'contact 1001 - Doe, Jane - ', task: null, case_dropbox: null, reason: null,
+      note: `This generated document is linked to a contact (id 1001), so there is no case folder to file into. It went to the unsorted generated-documents folder (${BIN_DEFAULT}).` });
+    const prep = await fp._preparePlacement(db, { ...OPTS, linkType: 'contact', linkId: '1001', unsortedFilenamePrefix: 'contact 1001 - Doe, Jane - ' });
+    expect([prep.folderPath, prep.placement, prep.placementNote, prep.filenamePrefix]).toEqual([plan.folder_path, plan.placement, plan.note, plan.filename_prefix]);
+    const sub = await fp.describePlacement(db, { ...OPTS, linkType: null, linkId: null, unsortedSubfolder: 'Emailed 261117, Inc.' });
+    expect([sub.folder_path, sub.note]).toEqual([`${BIN_DEFAULT}/Emailed 261117, Inc`, `This generated document is linked to nothing yet, so there is no case folder to file into. It went to the unsorted generated-documents folder (${BIN_DEFAULT}/Emailed 261117, Inc).`]);
+    getSetting.mockImplementation(async () => '/Bin\n');
+    expect((await fp.describePlacement(db, { ...OPTS, linkType: 'appt', linkId: '450' })).folder_path).toBe('/Bin');
+    untouched();
+  });
+});

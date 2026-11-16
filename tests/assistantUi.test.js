@@ -98,6 +98,12 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'docshareLabel', 'docunlinkLabel', 'documentHeadLines', 'documentLinksLine', 'docshareText', 'docunlinkText', 'docshareRequest',
   'docunlinkBody', 'docunlinkRequest', 'docsharePrecheck', 'docunlinkPrecheck', 'docshareResult', 'docunlinkResult',
   'docshareKnownOutcome', 'docunlinkKnownOutcome', 'docshareAppliedWarning', 'docshareCopy', 'docunlinkEntity', 'docunlinkOpen',
+  // A11X: the generate, register and sync-root families (tests/caseyDocumentsGenerate.test.js, tests/caseySyncRoots.test.js drive them).
+  'docgenerateLabel', 'docgenerateTargetLabel', 'docgenerateText', 'docgenerateBody', 'docgenerateRequest', 'docgeneratePrecheck', 'docgenerateResult',
+  'docgenerateKnownOutcome', 'docgenerateAmbiguousText', 'docgenerateAppliedWarning', 'docgenerateEntity',
+  'docregisterLabel', 'docregisterText', 'docregisterBody', 'docregisterRequest', 'docregisterPrecheck', 'docregisterResult', 'docregisterKnownOutcome',
+  'syncrootIsAdd', 'syncrootLabel', 'syncrootTitle', 'syncrootPath', 'syncrootText', 'syncrootBody', 'syncrootId', 'syncrootRequest', 'syncrootSignature',
+  'syncrootPrecheck', 'syncrootResult', 'syncrootKnownOutcome', 'syncrootAppliedWarning', 'syncrootOpen',
   'caseDocketLabel', 'caseDocketCaseLabel', 'caseDocketAfterLabel', 'caseDocketShown', 'caseDocketText', 'caseDocketBody', 'caseDocketRequest',
   'caseDocketPrecheck', 'caseDocketResult', 'caseDocketKnownOutcome',
   'caseFieldsLabel', 'caseFieldsCaseLabel', 'caseFieldsCanon', 'caseFieldsText', 'caseFieldsDanger', 'caseFieldsBody', 'caseFieldsRequest',
@@ -171,6 +177,8 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CHECKLIST_REORDER_ACTION_KINDS'), constSrc(html, 'CHECKLIST_UPSERT_ACTION_KINDS'),
     constSrc(html, 'DOCUMENT_ACTION_KINDS'), constSrc(html, 'DOCLINK_ACTION_KINDS'), constSrc(html, 'DOCUMENT_FIELD_MAX'),
     constSrc(html, 'DOCSHARE_ACTION_KINDS'), constSrc(html, 'DOCUNLINK_ACTION_KINDS'), constSrc(html, 'DOCSHARE_LINK_MAX'),
+    constSrc(html, 'DOCGENERATE_ACTION_KINDS'), constSrc(html, 'DOCREGISTER_ACTION_KINDS'), constSrc(html, 'SYNCROOT_ACTION_KINDS'),
+    constSrc(html, 'DOCREGISTER_LIST_MAX'), constSrc(html, 'DOCGENERATE_NAME_MAX'),
     constSrc(html, 'CASE_DOCKET_ACTION_KINDS'), constSrc(html, 'CASE_DOCKET_FIELDS'), constSrc(html, 'CASE_DOCKET_NAMES'),
     constSrc(html, 'CASE_DOCKET_MAX'), constSrc(html, 'CASE_DOCKET_CONTROL'),
     constSrc(html, 'CASE_FIELDS_ACTION_KINDS'), constSrc(html, 'CASE_FIELDS_MAX'), constSrc(html, 'CASE_FIELDS_REFUSED_NAMES'), constSrc(html, 'CASE_FIELDS_COLUMN'),
@@ -4591,7 +4599,16 @@ describe('A11 document cards (document.update / document.link)', () => {
     const unlinks = box.actionFamily({ kind: 'document.unlink.v1' });
     expect([[...shares.kinds], shares.idField, shares.appliedKey, !!shares.stringReceipt]).toEqual([['document.share.v1'], 'document_id', 'result_docshare_document_id', false]);
     expect([[...unlinks.kinds], unlinks.idField, unlinks.appliedKey, !!unlinks.stringReceipt]).toEqual([['document.unlink.v1'], 'document_link_id', 'result_docunlink_id', false]);
-    for (const kind of ['document.status.v1', 'document.delete.v1', 'document.register.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    // A11X: generate, register and the sync-root pair are their own families (one receipt field each); no status / delete / upload kind.
+    const gen = box.actionFamily({ kind: 'document.generate.v1' });
+    const reg = box.actionFamily({ kind: 'document.register.v1' });
+    const roots = box.actionFamily({ kind: 'document.sync_root.add.v1' });
+    expect([gen.id, [...gen.kinds], gen.idField, gen.appliedKey, !!gen.stringReceipt, gen.danger({})]).toEqual(['docgenerate', ['document.generate.v1'], 'document_id', 'result_docgenerate_document_id', false, true]);
+    expect([reg.id, [...reg.kinds], reg.idField, reg.appliedKey, !!reg.stringReceipt, reg.danger({}), reg.danger({ warnings: ['x'] })]).toEqual(['docregister', ['document.register.v1'], 'document_id', 'result_docregister_document_id', false, false, true]);
+    expect([roots.id, [...roots.kinds], roots.idField, roots.appliedKey, !!roots.stringReceipt, typeof roots.title]).toEqual(['syncroot', ['document.sync_root.add.v1', 'document.sync_root.enable.v1'], 'root_id', 'result_syncroot_root_id', false, 'function']);
+    expect(box.actionFamily({ kind: 'document.sync_root.enable.v1' }).id).toBe('syncroot');
+    expect([roots.danger({ kind: 'document.sync_root.add.v1' }), roots.danger({ kind: 'document.sync_root.enable.v1', enabled: true }), roots.danger({ kind: 'document.sync_root.enable.v1', enabled: false })]).toEqual([true, true, false]);
+    for (const kind of ['document.status.v1', 'document.delete.v1', 'document.upload.v1', 'document.sync_root.delete.v1', 'document.sync_root.update.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
   });
 });

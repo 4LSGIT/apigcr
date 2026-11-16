@@ -27,6 +27,47 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **A11X — Casey generates / registers documents and manages the sync roots
+  (11-17, Fred: "release means allow"):** three A11 deferrals released.
+  `document.generate.v1` {template_id, linkable_type, linkable_id, values?,
+  document_name?} → POST `/api/documents/generate` and
+  `document.register.v1` {external_id} → POST `/api/documents/register` on
+  `casey_documents_enabled`; `document.sync_root.add.v1` {path, note?} →
+  POST `/api/documents/sync-roots` and `document.sync_root.enable.v1`
+  {root_id, enabled} → PATCH `/api/documents/sync-roots/:id` on a NEW switch
+  `casey_document_sync_roots_enabled` (engine configuration). Invariants: the
+  generate card predicts READ-ONLY with the service's own pieces (getTemplate,
+  resolveTemplateValues, fillBlanks, defaultDocumentName) and a NEW pure
+  planner `filePlacementService.describePlacement` — the same branches as
+  `_preparePlacement`, nothing created or raised, pinned rung by rung — the
+  card carrying the request (A0's rule), never the rendered PDF; `values`
+  only on declared keys and only in the user's words (`documentValueNamedBy`);
+  a FILE IS WRITTEN (danger always), collisions get Dropbox's counter. The
+  `document.folder` read now lists one `entry` row per direct entry
+  (`entry_id`, `is_folder`, `registered_document_id`) — the only way a
+  register card learns a Dropbox id (a typed id or any other row refuses by
+  name); the sync-root add's path must be a folder read's head row (that read
+  is the dry run — the BACKFILL warning from its counts); `addRoot` /
+  `setRootEnabled` predicates run read-only in their words (duplicate,
+  nesting, a file; a missing folder is disclosed, not refused); NO delete,
+  no repoint. Freshness: template + record (generate: GET esign template /
+  case / contact), the file's name / size / rev via POST `/api/dropbox/list`
+  of the parent (register), `expected.roots_hash` = SHA-256 of the sorted
+  `id:enabled:path_lower` signature over `formTemplateOps.canonical`, the
+  page hashing the real GET with `formDataHash` (roots). Outcomes: the
+  route's coded ESIGN_* 4xx are refusals; a generate 5xx or `document_id`
+  null is ambiguous (the file may be in Dropbox); register created:false is
+  "already registered"; the sync-root 409s are refusals. Receipts:
+  `document_id` (generate, register), `root_id` (roots — ONE family
+  `syncroot`). Sync: NEW matcher — POST `/api/documents/register` announces
+  `document:<id>` with `yc_refetch` (`registerGetter`); generate had one;
+  roots have none (not bus-watched). Typed reads `document.templates` {q?}
+  (never the body) and `document.sync_roots` (never `sync_cursor`). Prompts
+  plan 43 / investigate 22 / answer 46 / repair 32; ledger 106 kinds;
+  matrix 106 kinds / 107 rows / 91 mounts. Tests:
+  `tests/caseyDocumentsGenerate.test.js` (+ `.mysql`, on `yc_a11x_test`),
+  `tests/caseySyncRoots.test.js` (+ `.mysql`); plan: ASK_CASEY_ACTIONS_PLAN
+  A11 "Released 2026-11-17".
 - **A12Y — Casey template cards carry the CHANGE, not the result (11-16,
   Fred: "such large cards are kind of pointless … casey needs to be able to
   edit it" — the dbkq questionnaire's 85 KB draft made every A12X field card

@@ -1349,6 +1349,8 @@ tests/caseyDocumentShare.mysql.test.js
 tests/caseyDocumentShare.test.js
 tests/caseyDocuments.mysql.test.js
 tests/caseyDocuments.test.js
+tests/caseyDocumentsGenerate.mysql.test.js
+tests/caseyDocumentsGenerate.test.js
 tests/caseyFormDiscardPdf.mysql.test.js
 tests/caseyFormDiscardPdf.test.js
 tests/caseyFormSubmit.mysql.test.js
@@ -1391,6 +1393,8 @@ tests/caseySequencePublish.mysql.test.js
 tests/caseySequencePublish.test.js
 tests/caseySequenceStep.mysql.test.js
 tests/caseySequenceStep.test.js
+tests/caseySyncRoots.mysql.test.js
+tests/caseySyncRoots.test.js
 tests/caseyWorkflowDraft.test.js
 tests/caseyWorkflowPublish.test.js
 tests/caseyWorkflowQueryWebhook.test.js

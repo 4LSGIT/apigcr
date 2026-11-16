@@ -1224,7 +1224,7 @@ describe('A11.1 — every stage teaches the case folder card, the candidates rea
     expect(answerPrompt).toContain('(there is NO bulk re-link, no bulk undo and no bulk dismiss through Casey, on purpose)');
     expect(answerPrompt).toContain('suggestions behind a second confirmation, and has no typed-path field.');
     expect(answerPrompt).toContain('that there is NO\n    UNDO BUTTON');
-    expect(answerPrompt).toContain('ingest-rule/report-draft/case-docket/form/mail-triage/case-folder actions.');
+    expect(answerPrompt).toContain('ingest-rule/report-draft/case-docket/form/mail-triage/case-folder/sync-root actions.');
     expect(repairPrompt).toContain('case.folder.relink.v1: kind,case_id,folder_path,evidence — folder_path is EXACTLY the "path" of a candidate row');
     expect(repairPrompt).toContain('never a dismiss / undo /\n  unlink / weak / force key');
   });
@@ -1257,6 +1257,49 @@ describe('A11.1X — every stage teaches the typed path, the folder read, the di
   test('no stage still teaches the retired exclusions', () => {
     for (const [name, text] of [['plan', planPrompt], ['investigate', investigatePrompt], ['answer', answerPrompt], ['repair', repairPrompt]]) {
       for (const old of ['dismissing a case from the relink queue,\n  unlinking', 'no screen takes a typed path', 'dismissing or un-dismissing a case in the relink queue, undoing a\n    re-link']) {
+        expect({ name, old, present: text.includes(old) }).toEqual({ name, old, present: false });
+      }
+    }
+  });
+});
+
+// A11X (released 2026-11-17): generate, register, the sync-root pair and the
+// two typed reads (document.templates, document.sync_roots) plus the folder
+// read's entry rows — taught to every stage, and no stage still says
+// generating or registering is unavailable.
+describe('A11X — every stage teaches the generate, register and sync-root cards and the two reads', () => {
+  test('the plan and investigate stages name the reads and the three families', () => {
+    expect(planPrompt).toContain('GENERATE\n  ONE document from a contract template for ONE case or contact (document.generate');
+    expect(planPrompt).toContain('REGISTER ONE file already in Dropbox (document.register');
+    expect(planPrompt).toContain('document.templates ({"q":"retainer"} or {} — the contract templates a generate card may use');
+    expect(planPrompt).toContain('document.sync_roots ({} — the documents sync\'s roots as the Sync panel lists them');
+    expect(planPrompt).toContain('Reviewed document sync root actions are available (A11X');
+    expect(planPrompt).toContain('its entry rows list each file\'s Dropbox id (entry_id)');
+    expect(investigatePrompt).toContain('document generate proposals, which\n  need a document.templates read naming the template');
+    expect(investigatePrompt).toContain('document register proposals, which need a document.folder read of\n  the folder the file is in');
+    expect(investigatePrompt).toContain('sync root proposals, which need a document.sync_roots read');
+    expect(investigatePrompt).toContain('document.templates ({"q"?} — the contract templates a\n  generate card may use');
+    expect(investigatePrompt).toContain('document.sync_roots ({} — the documents sync\'s roots and kill switch');
+  });
+  test('the answer and repair stages teach the shapes, the values rule, the entry-row rule, the backfill and the refusals', () => {
+    for (const kind of ['document.generate.v1', 'document.register.v1', 'document.sync_root.add.v1', 'document.sync_root.enable.v1']) {
+      expect({ kind, answer: answerPrompt.includes(`{"kind":"${kind}"`), repair: repairPrompt.includes(`- ${kind}: kind,`) }).toEqual({ kind, answer: true, repair: true });
+    }
+    expect(answerPrompt).toContain('ONLY keys the template read lists and ONLY values the user gave in\n    their own words (or a cited row) — never invent one');
+    expect(answerPrompt).toContain('Say plainly that a FILE IS WRITTEN and\n    that there is no undo');
+    expect(answerPrompt).toContain('"external_id" is EXACTLY the entry_id of an entry row of a document.folder read in this investigation');
+    expect(answerPrompt).toContain('Sync root rules (A11X');
+    expect(answerPrompt).toContain('EVERY file beneath it is registered on the root\'s first walk in\n    backfill mode (bulk, NO rule emissions)');
+    expect(answerPrompt).toContain('DELETING a root (there is no delete, by\n    design');
+    expect(answerPrompt).toContain('/case-folder/sync-root actions.');
+    expect(repairPrompt).toContain('values maps ONLY keys that read lists to text the user gave\n  (never invented');
+    expect(repairPrompt).toContain('external_id is EXACTLY the entry_id of a document.folder read\'s\n  entry row (cited; case-sensitive)');
+    expect(repairPrompt).toContain('path is EXACTLY the "path" of a document.folder read\'s\n  folder row (cited; never retyped or re-cased)');
+    expect(repairPrompt).toContain('enabled is true or false (never a string); never path / new_path');
+  });
+  test('no stage still teaches the retired exclusions', () => {
+    for (const [name, text] of [['plan', planPrompt], ['investigate', investigatePrompt], ['answer', answerPrompt], ['repair', repairPrompt]]) {
+      for (const old of ['generating, uploading and registering documents are not available', 'Generating, uploading and registering documents are not available']) {
         expect({ name, old, present: text.includes(old) }).toEqual({ name, old, present: false });
       }
     }

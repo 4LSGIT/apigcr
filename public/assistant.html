@@ -3500,6 +3500,429 @@ function docunlinkOpen(draft) {
   openEntity(e.kind, e.id, e.label);
 }
 
+// Documents A11X — generate, register, sync roots (Fred, 2026-11-15 / 16:
+// "release means allow"). The Documents page's remaining writers, and the
+// Sync panel's two controls, through their own routes:
+//   * document.generate.v1 → POST /api/documents/generate {template_id,
+//     linkable_type, linkable_id, values?, document_name?} — the card carries
+//     exactly that request (draft.request) beside what the server predicted
+//     read-only: the resolved values and blanks, the default name, the file
+//     name, and the DESTINATION the filing ladder picks (case folder /
+//     auto-created folder + task / the unsorted bin + move task / the bin for
+//     a contact). A PDF is WRITTEN into Dropbox: always danger. The click
+//     re-reads GET /api/esign/templates/:id and the record (GET /api/cases/:id
+//     or /api/contacts/:id) and refuses before the claim if the template
+//     (updated_at / active / purpose / type / source PDF) or the case's
+//     Dropbox link / the contact's name moved. The route's coded 4xx (the
+//     ESIGN_* codes, 404 / 400 / 409) are refusals written before the file;
+//     a 5xx stays ambiguous — the file MAY be in Dropbox (an upload failure
+//     throws; the registry hiccup answers document_id null). Receipt: the
+//     document_id the route answers.
+//   * document.register.v1 → POST /api/documents/register {external_id} —
+//     the id came from a document.folder read's entry row (the server
+//     checked). The click re-lists the parent folder (POST /api/dropbox/list,
+//     the read's own cap) and refuses if the entry is gone, renamed or
+//     resized; an entry not in a TRUNCATED listing falls through to the route's
+//     own stat. The route answers 200 created:false for a row that already
+//     existed: read as "already registered" (nothing new; the row refreshed).
+//     Receipt: document.id.
+//   * document.sync_root.add.v1 → POST /api/documents/sync-roots {path, note?}
+//     and document.sync_root.enable.v1 → PATCH /api/documents/sync-roots/:id
+//     {enabled} — ONE family (one receipt field, root_id). Always danger on an
+//     add and an enable (a walk over thousands of rows), never on a disable.
+//     The click re-reads GET /api/documents/sync-roots, hashes every root's
+//     id / enabled / path the way the server did (formDataHash over the same
+//     signature) and refuses on ANY change. The route's 409s (a duplicate, a
+//     nesting conflict, "cannot enable") and 400 (a file) are refusals written
+//     before the row; the 201's `warning` (the folder does not exist yet) is
+//     carried onto the applied copy. No bus matcher: roots are not bus-watched.
+const DOCGENERATE_ACTION_KINDS = new Set(['document.generate.v1']);
+const DOCREGISTER_ACTION_KINDS = new Set(['document.register.v1']);
+const SYNCROOT_ACTION_KINDS = new Set(['document.sync_root.add.v1', 'document.sync_root.enable.v1']);
+// The folder read's own listing cap — the register precheck re-lists the parent with it.
+const DOCREGISTER_LIST_MAX = 500;
+// documentGenerateService's longest name fragment (the server refused longer).
+const DOCGENERATE_NAME_MAX = 100;
+
+function docgenerateLabel(draft) {
+  return ((draft && draft.target) || {}).link_type === 'contact' ? 'Generate document for contact' : 'Generate document for case';
+}
+
+function docgenerateTargetLabel(draft) {
+  const t = (draft && draft.target) || {};
+  return String(t.label || (t.link_type === 'case' ? t.case_id : t.contact_name) || t.link_id || 'the record');
+}
+
+function docgenerateText(draft) {
+  const t = draft.template || {}; const d = draft.destination || {}; const v = draft.values || {};
+  const lines = ['Document generate proposal — not applied', `Action: ${docgenerateLabel(draft)}`,
+    `Template: #${t.template_id} "${t.name}" (${t.template_type === 'pdf' ? 'a PDF form filled in' : 'HTML rendered to PDF'}; purpose ${t.purpose})`,
+    `For: ${docgenerateTargetLabel(draft)}`,
+    `Document name: "${draft.document_name}"${draft.request && draft.request.document_name ? ' (as given)' : ' (the template\'s default: its name and the debtor\'s last name)'}`,
+    `File name: ${draft.file_name}`,
+    `Filed to: ${d.rung === 'case' ? `${d.folder_path} (the case folder's "${d.subfolder}" subfolder)` : d.rung === 'auto_create' ? `a case folder CREATED at the click, subfolder "${d.subfolder}"` : `${d.folder_path} (the unsorted generated-documents folder)`}${d.task ? ` — task raised: "${d.task}"` : ''}`,
+    `Link: ${docgenerateTargetLabel(draft)} (relation "${draft.relation}")`];
+  const given = v.given && typeof v.given === 'object' ? Object.entries(v.given) : [];
+  if (given.length) lines.push(`Values given: ${given.map(([k, x]) => `${k} = "${x}"`).join('; ')}`);
+  const resolved = (v.resolved || []).filter((r) => r.filled && !r.given);
+  if (resolved.length) lines.push(`Values resolved from the record: ${resolved.map((r) => `${r.key} = "${r.value}"`).join('; ')}`);
+  if ((v.blanks || []).length) lines.push(`Blank in the document: ${v.blanks.join(', ')}`);
+  (draft.visibility || []).forEach((x) => lines.push(`Shows on: ${x}`));
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  const a = draft.automation || {}; const acting = a.lines || [];
+  if ((a.events || []).length) {
+    lines.push(acting.length
+      ? `Automation: ${Number(a.rules_checked) || 0} active trigger rule(s) on ${a.events.join(' / ')} checked; ${acting.length} would act:`
+      : `Automation: no active trigger rule acts on ${a.events.join(' / ')} (${Number(a.rules_checked) || 0} checked).`);
+    acting.forEach((x) => lines.push(`Automation: ${x}`));
+    if (acting.length) lines.push('Automation: what those actions cause in turn is not followed here.');
+  }
+  lines.push('Writes: a NEW PDF in Dropbox at the destination above (a name collision gets a counter — nothing is overwritten); one documents row; one link to the record; the task named above, if any.',
+    'Stale check: if the template is edited, deactivated or re-purposed, or the case\'s Dropbox link / the contact changes before you apply, nothing is written.',
+    'Notification: Casey sends nothing itself; the trigger rules above are the only follow-on effects.');
+  return lines.join('\n');
+}
+
+// The request EXACTLY as the server validated it (draft.request), re-checked
+// for shape only: a card that cannot be sent is never read.
+function docgenerateBody(draft) {
+  const r = draft.request || {};
+  const tid = Number(r.template_id);
+  if (!Number.isSafeInteger(tid) || tid < 1) throw new Error('This card has no usable template id.');
+  if (r.linkable_type !== 'case' && r.linkable_type !== 'contact') throw new Error('This card has no usable record.');
+  const linkId = typeof r.linkable_id === 'string' ? r.linkable_id : '';
+  if (!(r.linkable_type === 'case' ? /^[A-Za-z0-9_-]{1,20}$/ : /^[1-9]\d{0,19}$/).test(linkId)) throw new Error('This card has no usable record id.');
+  const body = { template_id: tid, linkable_type: r.linkable_type, linkable_id: linkId };
+  if (r.values != null) {
+    if (typeof r.values !== 'object' || Array.isArray(r.values)) throw new Error('This card\'s values are unusable.');
+    const values = {};
+    for (const [k, x] of Object.entries(r.values)) {
+      if (!/^[a-z][a-z0-9_]{0,39}$/.test(k) || typeof x !== 'string' || x !== x.trim() || !x || /[\u0000-\u001f\u007f]/.test(x)) throw new Error('This card\'s values are unusable.');
+      values[k] = x;
+    }
+    if (Object.keys(values).length) body.values = values;
+  }
+  if (r.document_name != null) {
+    if (typeof r.document_name !== 'string' || !r.document_name || r.document_name !== r.document_name.trim() || Array.from(r.document_name).length > DOCGENERATE_NAME_MAX) throw new Error('This card\'s document name is unusable.');
+    body.document_name = r.document_name;
+  }
+  return body;
+}
+
+function docgenerateRequest(draft) {
+  return { path: '/api/documents/generate', method: 'POST', body: docgenerateBody(draft) };
+}
+
+async function docgeneratePrecheck(draft) {
+  const body = docgenerateBody(draft); // a card that cannot be sent is never read
+  const x = draft.expected || {}; const xt = x.template || {}; const xr = x.record || {};
+  const t = draft.template || {};
+  let got;
+  try { got = await api(`/api/esign/templates/${body.template_id}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `Template "${t.name}" no longer exists. Nothing was generated.`; throw e; }
+  const tpl = got && got.template;
+  if (!tpl || Number(tpl.id) !== body.template_id) throw new Error('the template could not be read');
+  const iso = (v) => { const d = new Date(v); return v == null || Number.isNaN(d.getTime()) ? (v == null ? null : String(v)) : d.toISOString(); };
+  if (tpl.active !== true) return `Template "${t.name}" is inactive now. Nothing was generated.`;
+  if (String(tpl.purpose) !== String(xt.purpose) || String(tpl.template_type) !== String(xt.template_type) || !!tpl.has_pdf !== !!xt.has_pdf || iso(tpl.updated_at) !== (xt.updated_at == null ? null : String(xt.updated_at))) {
+    return `Template "${t.name}" changed since this card was prepared (it was edited, re-purposed or its source PDF changed). Nothing was generated. Ask Casey to prepare it again.`;
+  }
+  const label = docgenerateTargetLabel(draft);
+  if (body.linkable_type === 'case') {
+    let c;
+    try { c = await api(`/api/cases/${encodeURIComponent(body.linkable_id)}`, null, 'GET'); }
+    catch (e) { if (e && e.status === 404) return `${label} no longer exists. Nothing was generated.`; throw e; }
+    const row = c && c.case;
+    if (!row || String(row.case_id) !== body.linkable_id) throw new Error('the case could not be read');
+    const link = row.case_dropbox && String(row.case_dropbox).trim() !== '' ? String(row.case_dropbox) : null;
+    if (link !== (xr.case_dropbox || null)) {
+      return `The Dropbox folder of ${label} changed since this card was prepared (its link was ${link ? 'set or re-linked' : 'removed'}), so the document would be filed somewhere else than the card says. Nothing was generated. Ask Casey to prepare it again.`;
+    }
+  } else {
+    let c;
+    try { c = await api(`/api/contacts/${encodeURIComponent(body.linkable_id)}`, null, 'GET'); }
+    catch (e) { if (e && e.status === 404) return `${label} no longer exists. Nothing was generated.`; throw e; }
+    const row = c && c.contact;
+    if (!row || String(row.contact_id) !== body.linkable_id) throw new Error('the contact could not be read');
+    if (String(row.contact_name == null ? '' : row.contact_name) !== String(xr.contact_name == null ? '' : xr.contact_name)) {
+      return `${label} was renamed since this card was prepared (the document's default name and file name follow the contact's name). Nothing was generated. Ask Casey to prepare it again.`;
+    }
+  }
+  return '';
+}
+
+function docgenerateResult(draft, result) {
+  const body = docgenerateBody(draft);
+  if (!result || result.status !== 'success' || Number(result.template_id) !== body.template_id
+      || String(result.link_type) !== body.linkable_type || String(result.link_id) !== body.linkable_id) {
+    throw new Error('The documents route did not confirm the generated document');
+  }
+  if (typeof result.path !== 'string' || !result.path) throw new Error('The documents route did not report where the file was written');
+  const id = Number(result.document_id);
+  if (!Number.isSafeInteger(id) || id < 1) {
+    // The file is in Dropbox (the route answered success with its path) but
+    // the registry write hiccuped: no document_id, no link. Ambiguous on
+    // purpose — the sync's next pass registers the file, the link is a card.
+    throw Object.assign(new Error(`the PDF was written to ${result.path} but could not be registered (the route answered no document id)`), { docgenerateUnregistered: true });
+  }
+  // Kept for the applied copy: where it landed, and the route's own warnings.
+  Object.defineProperty(draft, '__docgenerateOutcome', { value: { path: result.path, placement: result.placement, warnings: Array.isArray(result.warnings) ? result.warnings.map(String) : [], missing_optional: Array.isArray(result.missing_optional) ? result.missing_optional.map(String) : [] }, configurable: true });
+  return { document_id: id };
+}
+
+// The route's CODED answers written before the file (GENERATE_ERROR_STATUS):
+// the ESIGN_* codes on 404 / 400 / 409 are refusals — nothing rendered or
+// written. A 500 (an upload failure, the renderer) stays ambiguous.
+function docgenerateKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const code = e && e.body && typeof e.body.code === 'string' ? e.body.code : '';
+  const message = String((e && e.message) || (e && e.body && e.body.message) || '');
+  if (e && e.status >= 400 && e.status < 500 && /^ESIGN_/.test(code)) {
+    const missing = Array.isArray(e.body.missing) && e.body.missing.length ? ` (${e.body.missing.join(', ')})` : '';
+    return { status: 'Refused — nothing generated', text: `Refused — nothing generated: the documents route refused before rendering anything (${message.slice(0, 240)}${missing}). Ask Casey to prepare it again.` };
+  }
+  return null;
+}
+
+function docgenerateAmbiguousText(detail, draft) {
+  const label = docgenerateTargetLabel(draft);
+  return `This may already have been applied: the server claimed the request but did not confirm the document (${detail || 'no result recorded'}). A PDF MAY have been written to Dropbox for ${label} — open its Documents tab and the destination folder and check before asking Casey to prepare it again. Do not apply this card again.`;
+}
+
+function docgenerateAppliedWarning(draft) {
+  const o = draft.__docgenerateOutcome;
+  const label = docgenerateTargetLabel(draft);
+  if (!o) return `"${draft.document_name}" was generated for ${label} and registered as document #${draft.result_docgenerate_document_id}, using your signed-in account. The file is in Dropbox; find it on ${label}'s Documents tab.`;
+  const extra = o.warnings.length ? ` The route reported: ${o.warnings.join(' ')}` : '';
+  const blanks = o.missing_optional.length ? ` Blank in the document: ${o.missing_optional.join(', ')}.` : '';
+  return `"${draft.document_name}" was generated for ${label}, written to ${o.path}${o.placement === 'unsorted' ? ' (the UNSORTED folder — move it into the case folder)' : ''} and registered as document #${draft.result_docgenerate_document_id}, using your signed-in account.${blanks}${extra}${(draft.automation || {}).lines && draft.automation.lines.length ? ' The trigger rules listed above run from this change.' : ''}`;
+}
+
+function docgenerateEntity(draft) {
+  const t = draft.target || {};
+  if (t.link_type === 'case') return { kind: 'case', id: String(t.case_id || t.link_id), label: String(t.case_number || t.case_id || t.link_id) };
+  return { kind: 'contact', id: String(t.contact_id || t.link_id), label: String(t.contact_name || t.link_id) };
+}
+
+// ── register ──
+function docregisterLabel() { return 'Register file in the Documents registry'; }
+
+function docregisterText(draft) {
+  const f = draft.file || {};
+  const lines = ['Document register proposal — not applied', `Action: ${docregisterLabel()}`,
+    `File: "${f.name}" (${documentSize(f.size)}${f.server_modified ? `, modified ${String(f.server_modified).slice(0, 10)}` : ''})`,
+    `Path: ${f.path || '(unknown)'}`, `Dropbox id: ${f.external_id}`,
+    `Case folder: ${draft.folder_case ? `inside case ${draft.folder_case.case_id}'s cached folder` : 'none — under no case\'s cached folder'}`,
+    `Sync root: ${draft.sync_root ? `under "${draft.sync_root.path}" (root #${draft.sync_root.root_id})` : 'NONE — under no enabled sync root'}; sync engine ${draft.sync_enabled ? 'on' : 'OFF'}`];
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  const a = draft.automation || {}; const acting = a.lines || [];
+  if ((a.events || []).length) {
+    lines.push(acting.length
+      ? `Automation: ${Number(a.rules_checked) || 0} active trigger rule(s) on ${a.events.join(' / ')} checked; ${acting.length} would act:`
+      : `Automation: no active trigger rule acts on ${a.events.join(' / ')} (${Number(a.rules_checked) || 0} checked).`);
+    acting.forEach((x) => lines.push(`Automation: ${x}`));
+    if (acting.length) lines.push('Automation: what those actions cause in turn is not followed here.');
+  }
+  lines.push('Writes: one documents row (active, untitled, no link) — the file in Dropbox is untouched.',
+    'Stale check: if the file is deleted, renamed or changed in Dropbox before you apply, nothing is written; a file registered meanwhile is reported as already registered.',
+    'Notification: Casey sends nothing itself; the trigger rules above are the only follow-on effects.');
+  return lines.join('\n');
+}
+
+function docregisterBody(draft) {
+  const id = draft.file && typeof draft.file.external_id === 'string' ? draft.file.external_id : '';
+  if (!id || id !== id.trim() || id.length > 191 || /[\u0000-\u001f\u007f]/.test(id)) throw new Error('This card has no usable Dropbox id.');
+  return { external_id: id };
+}
+
+function docregisterRequest(draft) {
+  return { path: '/api/documents/register', method: 'POST', body: docregisterBody(draft) };
+}
+
+// Re-list the parent folder the way the document.folder read did (the same
+// cap) and find the entry by id: gone (not listed, listing complete) → refused;
+// renamed or resized → refused; not found in a TRUNCATED listing → the route's
+// own stat decides (nothing can be proved from here).
+async function docregisterPrecheck(draft) {
+  const body = docregisterBody(draft); // a card that cannot be sent is never read
+  const x = draft.expected || {}; const f = draft.file || {};
+  const parent = typeof x.parent_path === 'string' ? x.parent_path : (typeof f.parent_path === 'string' ? f.parent_path : null);
+  if (parent == null) throw new Error('this card has no folder to re-read');
+  let got;
+  try { got = await api('/api/dropbox/list', { path: parent, recursive: false, max_entries: DOCREGISTER_LIST_MAX }, 'POST'); }
+  catch (e) {
+    if (e && (e.status === 404 || e.status === 409)) return `The folder "${parent || '/'}" is gone from Dropbox (or is no longer a folder), so "${f.name}" cannot be where this card says. Nothing was written. Ask Casey to read the folder again.`;
+    throw e;
+  }
+  if (!got || !Array.isArray(got.entries)) throw new Error('the folder could not be listed');
+  const entry = got.entries.find((e) => e && String(e.id) === body.external_id);
+  if (!entry) {
+    if (got.truncated === true) return '';
+    return `"${f.name}" is no longer in "${parent || '/'}" — it was deleted or moved since this card was prepared. Nothing was written. Ask Casey to read the folder again.`;
+  }
+  if (entry['.tag'] === 'folder') return `"${f.name}" is a folder now, not a file. Nothing was written.`;
+  const s = (v) => (v == null ? null : String(v));
+  if (s(entry.name) !== s(x.name) || (entry.size != null && x.size != null && Number(entry.size) !== Number(x.size)) || (entry.rev != null && x.rev != null && s(entry.rev) !== s(x.rev))) {
+    return `"${f.name}" changed in Dropbox since this card was prepared (its name, size or revision). Nothing was written. Ask Casey to read the folder again.`;
+  }
+  return '';
+}
+
+function docregisterResult(draft, result) {
+  const body = docregisterBody(draft);
+  const doc = result && result.document;
+  if (!result || result.status !== 'success' || !doc || typeof doc !== 'object' || String(doc.external_id) !== body.external_id) {
+    throw new Error('The documents route did not confirm the registered file');
+  }
+  const id = Number(doc.id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('The documents route did not return the new document');
+  // The row existed (created:false): the route refreshed it and wrote
+  // nothing new — "already registered", never a success of this card.
+  if (result.created !== true) throw Object.assign(new Error('already registered'), { documentRegisterNoop: true, documentRegisterId: id });
+  return { document_id: id };
+}
+
+// Before any row: the route's 400 (a folder), Dropbox's path/not_found (a 409
+// from files/get_metadata — the file is gone), and the row that already
+// existed (created:false — the route refreshed it from Dropbox, nothing new).
+function docregisterKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  if (e && e.documentRegisterNoop === true) {
+    return { status: 'Refused — already registered', text: `Refused — already registered: that file was registered (by someone, or by the Dropbox sync) between this card being prepared and applied, as document #${e.documentRegisterId}; the route refreshed that row from Dropbox and made nothing new. Read it as documents.id AS document_id, or link it with a document.link card.` };
+  }
+  const message = String((e && e.message) || (e && e.body && e.body.message) || '');
+  if (e && e.status === 409 && /^dropbox: POST \/2\/files\/get_metadata → 409:/.test(message)) {
+    return { status: 'Refused — nothing written', text: `Refused — nothing written: Dropbox no longer has that file (${message.slice(0, 200)}), so there was nothing to register. Ask Casey to read the folder again.` };
+  }
+  return null;
+}
+
+// ── sync roots ──
+function syncrootIsAdd(draft) { return !!draft && draft.kind === 'document.sync_root.add.v1'; }
+
+function syncrootLabel(draft) {
+  if (syncrootIsAdd(draft)) return 'Add document sync root';
+  return draft && draft.enabled === true ? 'Enable document sync root' : 'Disable document sync root';
+}
+
+function syncrootTitle(draft) { return syncrootIsAdd(draft) ? 'Sync root' : (draft && draft.enabled === true ? 'Sync root' : 'Sync root'); }
+
+function syncrootPath(draft) { return String(((draft && draft.root) || {}).path || ''); }
+
+function syncrootText(draft) {
+  const r = draft.root || {};
+  const lines = ['Document sync root proposal — not applied', `Action: ${syncrootLabel(draft)}`];
+  if (syncrootIsAdd(draft)) {
+    const f = draft.folder || {};
+    lines.push(`Root path: ${r.path}${r.note ? ` — note "${r.note}"` : ''}`,
+      `Folder in Dropbox: ${f.exists ? `exists${f.path_display ? ` (shown as "${f.path_display}")` : ''}; ${f.listing_truncated ? `${DOCREGISTER_LIST_MAX} or more entries` : `${Number(f.listed_files) || 0} file(s) and ${Number(f.listed_folders) || 0} subfolder(s)`} at the top level; ${Number(f.registered_files) || 0} registered already` : 'does NOT exist yet'}`,
+      `Sync engine: ${draft.sync_enabled ? 'on' : 'OFF'}; existing roots: ${Number(draft.roots_total) || 0}`);
+  } else {
+    lines.push(`Root: #${r.root_id} "${r.path}"${r.note ? ` — note "${r.note}"` : ''}`,
+      `Now: ${r.enabled ? 'enabled' : 'disabled'}${r.backfill_done ? ', first walk done' : ', first walk NOT done'}${r.last_sync_at ? `, last synced ${String(r.last_sync_at).slice(0, 10)}` : ', never synced'}${r.last_error ? `, last error "${r.last_error}"` : ''}`,
+      `After: ${draft.enabled ? 'enabled' : 'disabled'}; sync engine ${draft.sync_enabled ? 'on' : 'OFF'}`);
+  }
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  lines.push(syncrootIsAdd(draft)
+    ? 'Writes: one document_sync_roots row (enabled, first walk pending) through the Sync panel\'s own route — nothing in Dropbox, no document row yet (the walk writes those).'
+    : 'Writes: the root\'s enabled flag only (its path, cursor and every registered row stay) through the Sync panel\'s own route — nothing in Dropbox.',
+    'Stale check: if any sync root is added, enabled or disabled before you apply, nothing is written.',
+    'Notification: none. No trigger rule runs from this card (the walk a root makes fires events only after its first walk is done).');
+  return lines.join('\n');
+}
+
+function syncrootBody(draft) {
+  const r = draft.root || {};
+  if (syncrootIsAdd(draft)) {
+    const p = typeof r.path === 'string' ? r.path : '';
+    if (!p.startsWith('/') || p === '/' || p.length > 512 || /[\u0000-\u001f\u007f]/.test(p)) throw new Error('This card has no usable root path.');
+    const body = { path: p };
+    if (r.note != null) {
+      if (typeof r.note !== 'string' || !r.note || /[\u0000-\u001f\u007f]/.test(r.note)) throw new Error('This card\'s note is unusable.');
+      body.note = r.note;
+    }
+    return body;
+  }
+  if (typeof draft.enabled !== 'boolean') throw new Error('This card has no usable enabled flag.');
+  return { enabled: draft.enabled };
+}
+
+function syncrootId(draft) {
+  const id = Number(((draft && draft.root) || {}).root_id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('This card has no usable root id.');
+  return id;
+}
+
+function syncrootRequest(draft) {
+  if (syncrootIsAdd(draft)) return { path: '/api/documents/sync-roots', method: 'POST', body: syncrootBody(draft) };
+  return { path: `/api/documents/sync-roots/${syncrootId(draft)}`, method: 'PATCH', body: syncrootBody(draft) };
+}
+
+// The server's signature of the roots list, hashed with the page's canonical
+// SHA-256 (formDataHash) — id:enabled:path_lower per root, sorted.
+function syncrootSignature(roots) {
+  return (Array.isArray(roots) ? roots : []).map((r) => `${Number(r.id)}:${r.enabled ? 1 : 0}:${String(r.path == null ? '' : r.path).toLowerCase()}`).sort();
+}
+
+async function syncrootPrecheck(draft) {
+  const req = syncrootRequest(draft); // a card that cannot be sent is never read
+  const x = draft.expected || {};
+  const got = await api('/api/documents/sync-roots', null, 'GET');
+  if (!got || !Array.isArray(got.roots)) throw new Error('the sync roots could not be read');
+  const hash = await formDataHash(syncrootSignature(got.roots));
+  if (typeof x.roots_hash !== 'string' || hash !== x.roots_hash) {
+    return `The sync roots changed since this card was prepared (one was added, enabled or disabled). Nothing was written. Ask Casey to prepare it again.`;
+  }
+  if (!syncrootIsAdd(draft)) {
+    const id = syncrootId(draft);
+    const root = got.roots.find((r) => Number(r.id) === id);
+    if (!root) return `Sync root #${id} no longer exists. Nothing was written.`;
+    if (!!root.enabled === req.body.enabled) return `Sync root #${id} is already ${req.body.enabled ? 'enabled' : 'disabled'}. Nothing was written.`;
+  }
+  return '';
+}
+
+function syncrootResult(draft, result) {
+  const root = result && result.status === 'success' ? result.root : null;
+  const id = Number(root && root.id);
+  if (!root || !Number.isSafeInteger(id) || id < 1) throw new Error('The sync-roots route did not confirm the root');
+  if (syncrootIsAdd(draft)) {
+    if (String(root.path).toLowerCase() !== syncrootPath(draft).toLowerCase() || root.enabled !== true) throw new Error('The sync-roots route did not confirm the new root');
+    Object.defineProperty(draft, '__syncrootWarning', { value: typeof result.warning === 'string' ? result.warning : '', configurable: true });
+    return { root_id: id };
+  }
+  if (id !== syncrootId(draft) || root.enabled !== draft.enabled) throw new Error('The sync-roots route did not confirm the change');
+  return { root_id: id };
+}
+
+// Before any row: the route's 409s (a duplicate, a nesting conflict either way,
+// "cannot enable"), its 400s (a file, a bad path, a key other than enabled)
+// and the 404 of a gone root.
+function syncrootKnownOutcome(e) {
+  if (e && e.body && e.body.idempotency) return null;
+  const message = String((e && e.message) || (e && e.body && e.body.message) || '');
+  if (e && e.status === 409 && /^(?:that path is already a sync root|this path sits INSIDE root|this path CONTAINS root|cannot enable: )/.test(message)) {
+    return { status: 'Refused — nothing written', text: `Refused — nothing written: the sync-roots route refused before writing anything (${message.slice(0, 240)}). Ask Casey to read the roots again.` };
+  }
+  return null;
+}
+
+function syncrootAppliedWarning(draft) {
+  if (syncrootIsAdd(draft)) {
+    const w = draft.__syncrootWarning;
+    return `Sync root #${draft.result_syncroot_root_id} "${syncrootPath(draft)}" was added, enabled, using your signed-in account.${w ? ` The route warned: ${w}.` : ''} Its first walk registers every file beneath it in backfill mode over the coming ticks${draft.sync_enabled ? '' : ' — once the sync engine is switched on'}. There is no delete: disable it to undo.`;
+  }
+  return `Sync root #${draft.result_syncroot_root_id} "${syncrootPath(draft)}" is now ${draft.enabled ? 'enabled' : 'disabled'}, using your signed-in account. ${draft.enabled ? 'It rejoins the sync rotation on the next tick.' : 'The scheduled sync skips it; nothing it registered changes, and Sync now still runs it by hand.'}`;
+}
+
+function syncrootOpen() {
+  try { P.Swal?.fire({ icon: 'info', title: 'Sync roots', text: 'Find the roots under More → Documents → Sync.', heightAuto: false }); }
+  catch (_) { /* outside the shell the chat line already names the root */ }
+}
+
 // Case docket adopt (A7c). Fill ONE case's BLANK case number and/or full case
 // number with the number exactly as the user gave it, through the court-review
 // adopt flow's own route: PATCH /api/cases/:id/docket {case_number?,
@@ -7745,6 +8168,70 @@ const ACTION_FAMILIES = [
     }),
     reviewWarning: 'Review the document, the link that goes, what is left and every Documents tab it leaves — it leaves them the moment it is applied, and there is no undo button. Nothing is sent. Canceling writes nothing.',
     open: docunlinkOpen,
+  },
+  {
+    // A11X: the generate receipts the document the route registered (document_id).
+    id: 'docgenerate', kinds: DOCGENERATE_ACTION_KINDS, title: 'Document generate', noun: 'document', errorNoun: 'document generate',
+    label: docgenerateLabel, text: docgenerateText, request: docgenerateRequest, result: docgenerateResult,
+    idField: 'document_id', appliedKey: 'result_docgenerate_document_id',
+    // Always: a new file is written into Dropbox and there is no undo button.
+    danger: () => true,
+    precheck: docgeneratePrecheck,
+    knownOutcome: docgenerateKnownOutcome,
+    ambiguousText: docgenerateAmbiguousText,
+    refusalText: (detail) => `Refused — nothing generated (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `document #${payload.document_id}`,
+    entity: (draft) => docgenerateEntity(draft),
+    failure: 'The document could not be generated.',
+    appliedCopy: (draft) => ({
+      status: `Applied — document #${draft.result_docgenerate_document_id} generated`,
+      warning: docgenerateAppliedWarning(draft),
+      button: `Open ${docgenerateEntity(draft).label}`,
+    }),
+    reviewWarning: 'Review the template, every value, the destination folder, whether a case folder is created and a task raised, and every trigger rule it runs — a PDF is written into Dropbox the moment you apply, and there is no undo button. Nothing is sent by Casey itself. Canceling writes nothing.',
+    open: (draft) => { const e = docgenerateEntity(draft); openEntity(e.kind, e.id, e.label); },
+  },
+  {
+    // A11X: the register receipts the row the POST answers (document.id).
+    id: 'docregister', kinds: DOCREGISTER_ACTION_KINDS, title: 'Document register', noun: 'document', errorNoun: 'document register',
+    label: docregisterLabel, text: docregisterText, request: docregisterRequest, result: docregisterResult,
+    idField: 'document_id', appliedKey: 'result_docregister_document_id',
+    // A file under no sync root, or a rule that could not be evaluated.
+    danger: (draft) => (draft.warnings || []).length > 0,
+    precheck: docregisterPrecheck,
+    knownOutcome: docregisterKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `document #${payload.document_id}`,
+    entity: (draft) => ({ kind: 'document', id: String(draft.result_docregister_document_id || ''), label: String((draft.file || {}).name || 'document') }),
+    failure: 'The file could not be registered.',
+    appliedCopy: (draft) => ({
+      status: `Applied — document #${draft.result_docregister_document_id} registered`,
+      warning: `"${(draft.file || {}).name}" is registered as document #${draft.result_docregister_document_id}, using your signed-in account — active, untitled, linked to nothing${draft.folder_case ? ` (the sync's sweep links it to case ${draft.folder_case.case_id} on a later pass)` : ''}. Find it under More → Documents; a document.update card titles it and a document.link card puts it on a record.${(draft.automation || {}).lines && draft.automation.lines.length ? ' The trigger rules listed above run from this change.' : ''}`,
+      button: 'Where is it?',
+    }),
+    reviewWarning: 'Review the file, where it sits and whether the sync would ever see it. Nothing in Dropbox changes; one registry row is written. Nothing is sent. Canceling writes nothing.',
+    open: (draft) => documentOpenInfo(String((draft.file || {}).name || 'Document')),
+  },
+  {
+    // A11X: both sync-root kinds receipt the root the route answers (root.id) — one family, one receipt field.
+    id: 'syncroot', kinds: SYNCROOT_ACTION_KINDS, title: syncrootTitle, noun: 'sync root', errorNoun: 'sync root change',
+    label: syncrootLabel, text: syncrootText, request: syncrootRequest, result: syncrootResult,
+    idField: 'root_id', appliedKey: 'result_syncroot_root_id',
+    // An add and an enable start a walk over every file beneath; a disable never.
+    danger: (draft) => syncrootIsAdd(draft) || draft.enabled === true,
+    precheck: syncrootPrecheck,
+    knownOutcome: syncrootKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to read the roots again.`,
+    resultText: (payload) => `sync root #${payload.root_id}`,
+    entity: (draft) => ({ kind: 'document', id: String(draft.result_syncroot_root_id || ''), label: `sync root ${syncrootPath(draft)}` }),
+    failure: 'The sync root could not be changed.',
+    appliedCopy: (draft) => ({
+      status: syncrootIsAdd(draft) ? `Applied — sync root #${draft.result_syncroot_root_id} added` : `Applied — sync root #${draft.result_syncroot_root_id} ${draft.enabled ? 'enabled' : 'disabled'}`,
+      warning: syncrootAppliedWarning(draft),
+      button: 'Where is it?',
+    }),
+    reviewWarning: 'Review the folder, what its first walk registers, the kill switch and the existing roots — a root cannot be deleted, only disabled, and its path cannot be changed. Nothing is sent. Canceling writes nothing.',
+    open: syncrootOpen,
   },
   {
     // A7c: the receipt is the STRING case_id — the docket route returns the case.
