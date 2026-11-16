@@ -1,18 +1,27 @@
-# The land gate's test run. local/land.sh pushes the rebased, amended slice
-# commit to a land/<slug>-<sha> branch, waits for THIS workflow's run on that
-# exact SHA, and fast-forwards main to it only when the run is green. Pushes to
-# main run it again (same SHA after a land; the only test a direct push gets).
+# The land gate's test run. local/land.sh (and Fred's local/go.sh) push the
+# rebased, amended slice commit to a land/<slug>-<sha> branch, wait for THIS
+# workflow's run on that exact SHA, and fast-forward main to it only when the
+# run is green. Branch protection on main requires a green check named `test`
+# on the pushed SHA, so a bare push to main is refused (GH006).
 #
 # The runner sees committed files only: no .env, no Cloud SQL proxy, no GCP
 # credential — nothing here can reach production. Suites gated on
 # YC_TEST_MYSQL_URL / PUPPETEER_EXECUTABLE_PATH / YC_TEST_IMAP_* skip, exactly
-# as they do in a local land. The job is named `test` with no matrix, so its
-# check name stays `test` — the name branch protection on main will require.
+# as they do in a local land.
+#
+# SHARDED (2026-11-17): one runner took 8–11 minutes per run on 2026-11-16 (the
+# suite is ~2.5 min on a 10-core laptop), and every land waited for it. Three
+# `shard` jobs each run a third of the test FILES (`jest --shard=i/3` — a
+# partition by file, no file in two shards, every file in one), and the `test`
+# job — the one name branch protection requires — passes only when all three
+# did. No run on pushes to main any more: the land/ run has already tested the
+# very SHA that lands, so the main run was the same tree tested twice; the
+# deploy (Cloud Build) never waited for it. PRs and the manual trigger stay.
 name: Node.js CI
 
 on:
   push:
-    branches: [ "main", "land/**" ]
+    branches: [ "land/**" ]
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
@@ -21,9 +30,13 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  shard:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     env:
       TZ: UTC
     steps:
@@ -38,4 +51,18 @@ jobs:
       # load-sensitive async suites hit the 5 s test timeout on clean commits:
       # configShellAccess, commsArchiveService, clioTool, three land NO-GOs on
       # 2026-10-27, each passing locally on the same SHA.
-      - run: npx jest --ci --maxWorkers=2 --workerIdleMemoryLimit=1G
+      - run: npx jest --ci --maxWorkers=2 --workerIdleMemoryLimit=1G --shard=${{ matrix.shard }}/3
+
+  # The check branch protection requires: green only when every shard is.
+  # `if: always()` so a failed shard still produces a (red) `test` check
+  # instead of a skipped one that a push could never satisfy.
+  test:
+    runs-on: ubuntu-latest
+    needs: shard
+    if: always()
+    timeout-minutes: 5
+    steps:
+      - name: all shards green
+        run: |
+          echo "shards: ${{ needs.shard.result }}"
+          test "${{ needs.shard.result }}" = "success"
