@@ -101,6 +101,7 @@ describe('classification snapshot', () => {
     "documents_sweep_watermark": "state system state console number",
     "documents_sync_enabled": "system system switches ui bool",
     "dropbox_case_folder_templates": "firm firm dropbox ui json",
+    "storage_folders": "firm firm dropbox console json",
     "dropbox_credential_id": "system system integrations ui credential",
     "dropbox_unsorted_esign_path": "firm firm dropbox ui string",
     "dropbox_unsorted_court_docs_path": "firm firm dropbox ui string",

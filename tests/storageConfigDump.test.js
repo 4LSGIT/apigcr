@@ -27,6 +27,8 @@ const EXPECTED_DEFAULTS = {
     uploads:   { code_default: '/  Law Office/   Cases/  Unsorted Client Uploads',      key: 'dropbox_unsorted_uploads_path',   source: 'code_default', value: '/  Law Office/   Cases/  Unsorted Client Uploads' },
   },
   dropbox_unreachable: null,
+  // D3c-1: the v3 tree; no row → the platform default is only reported (the writers fall to the legacy chain), contact null
+  storage_folders: { source: 'code_default', code_default: require('../lib/storageDefaults').STORAGE_DEFAULTS.storage_folders, row: null, contact: null },
 };
 const POTENTIAL = {
   default: '/  Law Office/   Cases/  Potential Cases/  Potential - {{case_type}}/ {{lfm_name}} - {{case_id}} - {{date}}',
@@ -50,7 +52,7 @@ test('defaults: no rows → every value is the code default the services export,
   });
   expect(dump.KEYS).toEqual([
     'dropbox_credential_id', 'dropbox_unsorted_generated_path', 'dropbox_unsorted_uploads_path',
-    'dropbox_unsorted_forms_path', 'dropbox_unsorted_esign_path', 'dropbox_unsorted_court_docs_path', 'dropbox_case_folder_templates', 'dropbox_unreachable',
+    'dropbox_unsorted_forms_path', 'dropbox_unsorted_esign_path', 'dropbox_unsorted_court_docs_path', 'dropbox_case_folder_templates', 'storage_folders', 'dropbox_unreachable',
   ]);
 });
 
@@ -88,4 +90,21 @@ test('render is byte-stable: key order does not change the bytes, and the sha fo
   expect(a).toBe('{\n  "a": {\n    "c": "x",\n    "d": [\n      {\n        "y": 2,\n        "z": 1\n      }\n    ]\n  },\n  "b": 1\n}\n');
   expect(dump.sha256(a)).toMatch(/^[0-9a-f]{64}$/);
   expect(dump.sha256(a)).not.toBe(dump.sha256(a + ' '));
+});
+
+test('D3c-1: the legacy row stays authoritative while it exists (the editor writes it); without it storage_folders.case gives the same effective templates; a tree without a case block falls through; the contact block is reported', async () => {
+  const stages = { active: { 'Bankruptcy:Ch 7': '/  X/ 7 - {{lfm_name}}', default: '/  X/ {{case_id}}', subfolders: [' A'] }, potential: { default: '/  Y/ {{case_id}}', subfolders: [] } };
+  const viaOld = await dump.collect(dbWith([{ key: 'dropbox_case_folder_templates', value: JSON.stringify(stages) }]));
+  const viaNew = await dump.collect(dbWith([{ key: 'storage_folders', value: JSON.stringify({ case: stages, contact: null }) }]));
+  expect(viaNew.case_folder_templates.effective).toEqual(viaOld.case_folder_templates.effective);
+  expect(viaNew.case_folder_templates.source).toBe('app_settings:storage_folders.case');
+  expect(viaNew.storage_folders).toEqual({ source: 'app_settings', code_default: EXPECTED_DEFAULTS.storage_folders.code_default, row: { case: stages, contact: null }, contact: null });
+  const both = await dump.collect(dbWith([{ key: 'storage_folders', value: JSON.stringify({ case: { active: { default: '/  COPY', subfolders: [] } }, contact: null }) }, { key: 'dropbox_case_folder_templates', value: JSON.stringify(stages) }]));
+  expect(both.case_folder_templates.source).toBe('app_settings');
+  expect(both.case_folder_templates.effective).toEqual(viaOld.case_folder_templates.effective);
+  const noCase = await dump.collect(dbWith([{ key: 'storage_folders', value: JSON.stringify({ contact: { default: '/Clients/{{lfm_name}}', subfolders: [] } }) }]));
+  expect(noCase.case_folder_templates.source).toBe('code_default');
+  expect(noCase.storage_folders.contact).toEqual({ default: '/Clients/{{lfm_name}}', subfolders: [] });
+  const bad = await dump.collect(dbWith([{ key: 'storage_folders', value: '{nope' }]));
+  expect(bad.storage_folders.source).toBe('app_settings:invalid_json→code_default');
 });

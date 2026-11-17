@@ -22,6 +22,7 @@ const dropbox = require('../services/dropboxService');
 const STORAGE_KEYS = [
   'dropbox_unsorted_uploads_path', 'dropbox_unsorted_forms_path', 'dropbox_unsorted_generated_path',
   'dropbox_unsorted_esign_path', 'dropbox_unsorted_court_docs_path', 'dropbox_case_folder_templates',
+  'storage_folders',   // D3c-1: the v3 tree — the PLATFORM default (nested contact → case); 4LSG's row is seeded case-only
 ];
 
 test('the registry default of every storage key IS the leaf value, frozen; the credential has none', () => {
@@ -31,6 +32,13 @@ test('the registry default of every storage key IS the leaf value, frozen; the c
   }
   expect(Object.isFrozen(STORAGE_DEFAULTS)).toBe(true);
   expect(Object.isFrozen(STORAGE_DEFAULTS.dropbox_case_folder_templates.active.subfolders)).toBe(true);
+  expect(Object.isFrozen(STORAGE_DEFAULTS.storage_folders.case.active)).toBe(true);
+  // D3c-1: the platform default is the nested tree (design §6; Fred 2026-11-17: {{case_type_full}}, contact /Clients/{{lfm_name}}) — NOT 4LSG's layout
+  expect(STORAGE_DEFAULTS.storage_folders).toEqual({
+    case: { potential: { default: '{{contact_folder}}/{{number}} - {{case_type_full}}', subfolders: [] }, active: { default: '{{contact_folder}}/{{number}} - {{case_type_full}}', subfolders: [] } },
+    contact: { default: '/Clients/{{lfm_name}}', subfolders: [] },
+  });
+  expect(registry.get('storage_folders')).toMatchObject({ kind: 'firm', home: 'firm', section: 'dropbox', type: 'json', edit: 'console' });
   expect(registry.defaultOf('dropbox_credential_id')).toBeUndefined();
   expect(registry.defaultOf('no_such_key')).toBeUndefined();
   expect(registry.get('dropbox_unsorted_court_docs_path')).toMatchObject({ kind: 'firm', home: 'firm', section: 'dropbox', type: 'string' });

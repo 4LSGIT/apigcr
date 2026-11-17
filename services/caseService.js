@@ -1333,7 +1333,28 @@ function _substituteTemplate(template, values) {
   );
 }
 
+/**
+ * {{case_type_full}} (Fred, 2026-11-17): "Bankruptcy: Ch 12" when both type and
+ * subtype are set, the type alone without a subtype, "unknown" without a type.
+ * The raw columns — not the "Other" the path template substitutes for a blank
+ * case_type — so a template author sees the honest word.
+ */
+function caseTypeFull(caseType, caseSubtype) {
+  const t = caseType == null ? '' : String(caseType).trim();
+  const s = caseSubtype == null ? '' : String(caseSubtype).trim();
+  if (!t) return 'unknown';
+  return s ? `${t}: ${s}` : t;
+}
+
 async function _loadCaseFolderTemplates(db) {
+  // D3c-1 (expand): the legacy row dropbox_case_folder_templates stays
+  // AUTHORITATIVE while it exists — the firm page's "Folder templates" editor
+  // writes it, and an edit there must keep taking effect. When it is absent,
+  // the v3 setting's case block — storage_folders = { case: { <stage>: … },
+  // contact: { … } | null } (design §6), the same shape this map always had.
+  // D3c-3 (contract) re-copies the legacy row into storage_folders.case, deletes
+  // the legacy row and points the editor at the new key. Then {} so each stage
+  // falls to the code default below.
   try {
     const [[row]] = await db.query(
       "SELECT `value` FROM app_settings WHERE `key` = 'dropbox_case_folder_templates' LIMIT 1"
@@ -1343,7 +1364,18 @@ async function _loadCaseFolderTemplates(db) {
       if (map && typeof map === 'object') return map;
     }
   } catch (err) {
-    console.warn(`[CASE_DROPBOX] dropbox_case_folder_templates lookup failed, using defaults: ${err.message}`);
+    console.warn(`[CASE_DROPBOX] dropbox_case_folder_templates lookup failed, trying storage_folders: ${err.message}`);
+  }
+  try {
+    const [[sf]] = await db.query(
+      "SELECT `value` FROM app_settings WHERE `key` = 'storage_folders' LIMIT 1"
+    );
+    if (sf?.value) {
+      const tree = JSON.parse(sf.value);
+      if (tree && typeof tree === 'object' && tree.case && typeof tree.case === 'object' && !Array.isArray(tree.case)) return tree.case;
+    }
+  } catch (err) {
+    console.warn(`[CASE_DROPBOX] storage_folders lookup failed, using defaults: ${err.message}`);
   }
   return {};
 }
@@ -1404,6 +1436,7 @@ async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
     case_number:      shortNum,
     case_number_full: fullNum,
     number:           fullNum || shortNum || caseRow.case_id,
+    case_type_full:   caseTypeFull(caseRow.case_type, caseRow.case_subtype),
     lfm_name:         contact?.contact_lfm_name || 'Unknown',
     contact_name:     contact?.contact_name || 'Unknown',
     date:             nowLocal().toFormat('yyyy-LL-dd'),
@@ -2645,6 +2678,8 @@ module.exports = {
   // the code defaults behind app_settings dropbox_case_folder_templates —
   // read by scripts/storageConfigDump.js so the dump never retypes a path
   DEFAULT_CASE_FOLDER_TEMPLATES,
+  caseTypeFull,
+  _loadCaseFolderTemplates,
   listCaseSequences,
   listCaseWorkflows,
   mergeCases

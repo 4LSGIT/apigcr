@@ -37,6 +37,7 @@ const KEYS = Object.freeze([
   'dropbox_unsorted_esign_path',
   'dropbox_unsorted_court_docs_path',   // D2: freelook's fallback, formerly a literal
   'dropbox_case_folder_templates',
+  'storage_folders',                    // D3c-1: the v3 tree; its case block is read before the key above
   'dropbox_unreachable',
 ]);
 
@@ -95,18 +96,37 @@ async function collect(db) {
     ? { value: String(credRaw), source: 'app_settings', code_default: null }
     : { value: null, source: 'MISSING — every storage operation refuses until the row exists', code_default: null };
 
-  // templates: caseService._loadCaseFolderTemplates → {} on a missing/invalid row;
-  // per stage, a key on the row wins and absent keys fall back to the code default
+  // templates: caseService._loadCaseFolderTemplates → dropbox_case_folder_templates
+  // while that row exists (the editor writes it; authoritative until D3c-3), else
+  // storage_folders.case (D3c-1), then {} (missing/invalid rows); per stage, a key
+  // on the map wins and absent keys fall back to the code default
   let map = {};
   let templatesSource = 'code_default';
+  let tree = null;
+  let treeSource = 'code_default';
+  if (row.storage_folders) {
+    try {
+      const parsed = JSON.parse(row.storage_folders);
+      if (parsed && typeof parsed === 'object') { tree = parsed; treeSource = 'app_settings'; }
+      else treeSource = 'app_settings:not_an_object→code_default';
+    } catch (err) {
+      treeSource = 'app_settings:invalid_json→code_default';
+    }
+  }
+  let legacyParsed = null;
   if (row.dropbox_case_folder_templates) {
     try {
       const parsed = JSON.parse(row.dropbox_case_folder_templates);
-      if (parsed && typeof parsed === 'object') { map = parsed; templatesSource = 'app_settings'; }
+      if (parsed && typeof parsed === 'object') legacyParsed = parsed;
       else templatesSource = 'app_settings:not_an_object→code_default';
     } catch (err) {
       templatesSource = 'app_settings:invalid_json→code_default';
     }
+  }
+  if (legacyParsed) {
+    map = legacyParsed; templatesSource = 'app_settings';
+  } else if (tree && tree.case && typeof tree.case === 'object' && !Array.isArray(tree.case)) {
+    map = tree.case; templatesSource = 'app_settings:storage_folders.case';
   }
   const TEMPLATE_DEFAULTS = registry.defaultOf('dropbox_case_folder_templates');
   const effective = {};
@@ -121,6 +141,7 @@ async function collect(db) {
     credential,
     unsorted,
     case_folder_templates: { source: templatesSource, code_default: TEMPLATE_DEFAULTS, row: map, effective },
+    storage_folders: { source: treeSource, code_default: registry.defaultOf('storage_folders'), row: tree, contact: tree ? (tree.contact === undefined ? null : tree.contact) : null },
     dropbox_unreachable: row.dropbox_unreachable == null ? null : String(row.dropbox_unreachable),
   };
 }

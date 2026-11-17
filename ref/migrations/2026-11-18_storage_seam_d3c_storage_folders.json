@@ -1,0 +1,5 @@
+{
+  "_record": "storage-seam D3c-1 (2026-11-18): the app_settings row `storage_folders` seeded for 4LSG by scripts/storageSeamD3cStorageFolders.js — its `case` block is the firm's live `dropbox_case_folder_templates` row at that moment (frozen in tests/fixtures/storageSeamD3c.templates.before.json), `contact` is null: 4LSG keeps NO contact folders (design §6 — the PLATFORM default is the nested contact → case tree; this row is why 4LSG does not get it). The script builds the payload from the live row and refuses if that row is not the frozen one; this file is the record of what it wrote.",
+  "key": "storage_folders",
+  "value_shape": { "case": "<the dropbox_case_folder_templates row, verbatim>", "contact": null }
+}

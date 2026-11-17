@@ -10,7 +10,7 @@ YisraCase talks to the firm's Dropbox directly (no Pabbly in the middle). Three 
    - Case number present (filed) → under **Active Cases**, with the four staff subfolders (Docket / Drafts / Client Docs / Correspondence).
 3. **Leading spaces in folder names are deliberate** — they control sort order in Dropbox. The system preserves them exactly. Don't "fix" them, and when editing naming conventions (below), count the spaces carefully: one wrong space creates a parallel folder tree.
 
-Folder naming conventions are editable without a deploy in **YisraCase Config → Firm → Dropbox filing** (the folder templates editor, `dropbox_case_folder_templates`; admin, IT or SU). A per-case-type key (`"Bankruptcy:Chapter 7"`) shows there read-only and is changed from the SU console.
+Folder naming conventions are editable without a deploy in **YisraCase Config → Firm → Dropbox filing** (the folder templates editor, `dropbox_case_folder_templates`; admin, IT or SU). Beside it sits the read-only **Folder tree (v3)** setting (`storage_folders`): the same case templates plus a `contact` block (`null` for this firm — no contact folders). While the folder templates row exists it is the one that counts; the v3 key takes over when the templates move into it (storage-seam D3c). A per-case-type key (`"Bankruptcy:Chapter 7"`) shows there read-only and is changed from the SU console.
 
 ---
 

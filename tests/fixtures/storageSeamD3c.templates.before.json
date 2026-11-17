@@ -1,0 +1,21 @@
+{
+  "active": {
+    "Bankruptcy:Chapter 11": "/  Law Office/   Cases/  Active Cases/  Active - {{case_type}}/ 11 - {{lfm_name}} - {{number}} - {{case_subtype}}",
+    "Bankruptcy:Chapter 12": "/  Law Office/   Cases/  Active Cases/  Active - {{case_type}}/ 12 - {{lfm_name}} - {{number}} - {{case_subtype}}",
+    "Bankruptcy:Chapter 13": "/  Law Office/   Cases/  Active Cases/  Active - {{case_type}}/ 13 - {{lfm_name}} - {{number}} - {{case_subtype}}",
+    "Bankruptcy:Chapter 7": "/  Law Office/   Cases/  Active Cases/  Active - {{case_type}}/ 7 - {{lfm_name}} - {{number}} - {{case_subtype}}",
+    "default": "/  Law Office/   Cases/  Active Cases/  Active - {{case_type}}/ {{case_id}} - {{lfm_name}} - {{number}} - {{case_subtype}}",
+    "subfolders": [
+      " Docket - {{contact_name}} - {{case_subtype}} - {{case_number}}",
+      " Drafts - {{contact_name}}",
+      " Client Docs - {{contact_name}}",
+      " Correspondence - {{contact_name}}"
+    ]
+  },
+  "potential": {
+    "default": "/  Law Office/   Cases/  Potential Cases/  Potential - {{case_type}}/ {{lfm_name}} - {{case_id}} - {{date}}",
+    "subfolders": [
+      "Client Uploads"
+    ]
+  }
+}

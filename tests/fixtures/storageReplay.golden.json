@@ -6672,6 +6672,684 @@
      "path": "/  Law Office/   Cases/  Unsorted Generated Documents"
     }
    ]
+  },
+  "17a D3c-1 the live templates row under dropbox_case_folder_templates": {
+   "calls": [
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17"
+      }
+     ]
+    },
+    {
+     "fn": "createFolderWithOptions",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17",
+       "shareLink": true,
+       "subfolders": [
+        "Client Uploads"
+       ]
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7"
+      }
+     ]
+    },
+    {
+     "fn": "createFolderWithOptions",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7",
+       "shareLink": true,
+       "subfolders": [
+        " Docket - Bob Brown - Ch 7 - 26-50001",
+        " Drafts - Bob Brown",
+        " Client Docs - Bob Brown",
+        " Correspondence - Bob Brown"
+       ]
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13"
+      }
+     ]
+    },
+    {
+     "fn": "createFolderWithOptions",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13",
+       "shareLink": true,
+       "subfolders": [
+        " Docket - Legacy Signature Properties, Inc. - Chapter 13 - 26-70001",
+        " Drafts - Legacy Signature Properties, Inc",
+        " Client Docs - Legacy Signature Properties, Inc",
+        " Correspondence - Legacy Signature Properties, Inc"
+       ]
+      }
+     ]
+    }
+   ],
+   "effects": [
+    {
+     "kind": "cases.case_dropbox",
+     "case_dropbox": "https://www.dropbox.com/scl/fo/fake0002?dl=0",
+     "case_id": "k9PotLd2"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "k9PotLd2",
+      "dropbox",
+      "id:F0017",
+      "/  law office/   cases/  potential cases/  potential - bankruptcy/ doe, jane - k9potld2 - 2026-11-17",
+      "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17",
+      "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+     ]
+    },
+    {
+     "kind": "cases.case_dropbox",
+     "case_dropbox": "https://www.dropbox.com/scl/fo/fake0003?dl=0",
+     "case_id": "aCtv7Num"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "aCtv7Num",
+      "dropbox",
+      "id:F0019",
+      "/  law office/   cases/  active cases/  active - bankruptcy/ actv7num - brown, bob - 26-50001-lsg - ch 7",
+      "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7",
+      "https://www.dropbox.com/scl/fo/fake0003?dl=0"
+     ]
+    },
+    {
+     "kind": "cases.case_dropbox",
+     "case_dropbox": "https://www.dropbox.com/scl/fo/fake0004?dl=0",
+     "case_id": "orgCase1"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "orgCase1",
+      "dropbox",
+      "id:F0024",
+      "/  law office/   cases/  active cases/  active - bankruptcy/ 13 - legacy signature properties, inc. - 26-70001 - chapter 13",
+      "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13",
+      "https://www.dropbox.com/scl/fo/fake0004?dl=0"
+     ]
+    }
+   ],
+   "provider_state": [
+    {
+     "tag": "folder",
+     "path": "/  Law Office"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13/ Client Docs - Legacy Signature Properties, Inc"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13/ Correspondence - Legacy Signature Properties, Inc"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13/ Docket - Legacy Signature Properties, Inc. - Chapter 13 - 26-70001"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13/ Drafts - Legacy Signature Properties, Inc"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7/ Client Docs - Bob Brown"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7/ Correspondence - Bob Brown"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7/ Docket - Bob Brown - Ch 7 - 26-50001"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7/ Drafts - Bob Brown"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads"
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/2026-06-01 Intake.pdf",
+     "size": 18
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Correspondence - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Docket - John Smith - Ch 13 - 26-44274"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Drafts - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17/Client Uploads"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted E-Signed Documents"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Form Submissions"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Generated Documents"
+    }
+   ]
+  },
+  "17c D3c-1 {{case_type_full}} in a template: type + subtype, type alone, no type → \"unknown\"": {
+   "calls": [
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Active Cases/ Bankruptcy: Ch 7 - aCtv7Num"
+      }
+     ]
+    },
+    {
+     "fn": "createFolderWithOptions",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Active Cases/ Bankruptcy: Ch 7 - aCtv7Num",
+       "shareLink": true,
+       "subfolders": []
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Potential Cases/ Bankruptcy - k9PotLd2"
+      }
+     ]
+    },
+    {
+     "fn": "createFolderWithOptions",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Potential Cases/ Bankruptcy - k9PotLd2",
+       "shareLink": true,
+       "subfolders": []
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Potential Cases/ unknown - orgCase1"
+      }
+     ]
+    },
+    {
+     "fn": "createFolderWithOptions",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Potential Cases/ unknown - orgCase1",
+       "shareLink": true,
+       "subfolders": []
+      }
+     ]
+    }
+   ],
+   "effects": [
+    {
+     "kind": "cases.case_dropbox",
+     "case_dropbox": "https://www.dropbox.com/scl/fo/fake0002?dl=0",
+     "case_id": "aCtv7Num"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "aCtv7Num",
+      "dropbox",
+      "id:F0017",
+      "/  law office/   cases/  active cases/ bankruptcy: ch 7 - actv7num",
+      "/  Law Office/   Cases/  Active Cases/ Bankruptcy: Ch 7 - aCtv7Num",
+      "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+     ]
+    },
+    {
+     "kind": "cases.case_dropbox",
+     "case_dropbox": "https://www.dropbox.com/scl/fo/fake0003?dl=0",
+     "case_id": "k9PotLd2"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "k9PotLd2",
+      "dropbox",
+      "id:F0018",
+      "/  law office/   cases/  potential cases/ bankruptcy - k9potld2",
+      "/  Law Office/   Cases/  Potential Cases/ Bankruptcy - k9PotLd2",
+      "https://www.dropbox.com/scl/fo/fake0003?dl=0"
+     ]
+    },
+    {
+     "kind": "cases.case_dropbox",
+     "case_dropbox": "https://www.dropbox.com/scl/fo/fake0004?dl=0",
+     "case_id": "orgCase1"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "orgCase1",
+      "dropbox",
+      "id:F0019",
+      "/  law office/   cases/  potential cases/ unknown - orgcase1",
+      "/  Law Office/   Cases/  Potential Cases/ unknown - orgCase1",
+      "https://www.dropbox.com/scl/fo/fake0004?dl=0"
+     ]
+    }
+   ],
+   "provider_state": [
+    {
+     "tag": "folder",
+     "path": "/  Law Office"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads"
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/2026-06-01 Intake.pdf",
+     "size": 18
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Correspondence - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Docket - John Smith - Ch 13 - 26-44274"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Drafts - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/ Bankruptcy: Ch 7 - aCtv7Num"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/ Bankruptcy - k9PotLd2"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/ unknown - orgCase1"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted E-Signed Documents"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Form Submissions"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Generated Documents"
+    }
+   ]
+  },
+  "17b D3c-1 the same row as storage_folders.case with the legacy key gone (D3c-3's state) — byte-identical provider calls": {
+   "calls": [
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17"
+      }
+     ]
+    },
+    {
+     "fn": "createFolderWithOptions",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17",
+       "shareLink": true,
+       "subfolders": [
+        "Client Uploads"
+       ]
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7"
+      }
+     ]
+    },
+    {
+     "fn": "createFolderWithOptions",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7",
+       "shareLink": true,
+       "subfolders": [
+        " Docket - Bob Brown - Ch 7 - 26-50001",
+        " Drafts - Bob Brown",
+        " Client Docs - Bob Brown",
+        " Correspondence - Bob Brown"
+       ]
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13"
+      }
+     ]
+    },
+    {
+     "fn": "createFolderWithOptions",
+     "args": [
+      {
+       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13",
+       "shareLink": true,
+       "subfolders": [
+        " Docket - Legacy Signature Properties, Inc. - Chapter 13 - 26-70001",
+        " Drafts - Legacy Signature Properties, Inc",
+        " Client Docs - Legacy Signature Properties, Inc",
+        " Correspondence - Legacy Signature Properties, Inc"
+       ]
+      }
+     ]
+    }
+   ],
+   "effects": [
+    {
+     "kind": "cases.case_dropbox",
+     "case_dropbox": "https://www.dropbox.com/scl/fo/fake0002?dl=0",
+     "case_id": "k9PotLd2"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "k9PotLd2",
+      "dropbox",
+      "id:F0017",
+      "/  law office/   cases/  potential cases/  potential - bankruptcy/ doe, jane - k9potld2 - 2026-11-17",
+      "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17",
+      "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+     ]
+    },
+    {
+     "kind": "cases.case_dropbox",
+     "case_dropbox": "https://www.dropbox.com/scl/fo/fake0003?dl=0",
+     "case_id": "aCtv7Num"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "aCtv7Num",
+      "dropbox",
+      "id:F0019",
+      "/  law office/   cases/  active cases/  active - bankruptcy/ actv7num - brown, bob - 26-50001-lsg - ch 7",
+      "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7",
+      "https://www.dropbox.com/scl/fo/fake0003?dl=0"
+     ]
+    },
+    {
+     "kind": "cases.case_dropbox",
+     "case_dropbox": "https://www.dropbox.com/scl/fo/fake0004?dl=0",
+     "case_id": "orgCase1"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "orgCase1",
+      "dropbox",
+      "id:F0024",
+      "/  law office/   cases/  active cases/  active - bankruptcy/ 13 - legacy signature properties, inc. - 26-70001 - chapter 13",
+      "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13",
+      "https://www.dropbox.com/scl/fo/fake0004?dl=0"
+     ]
+    }
+   ],
+   "provider_state": [
+    {
+     "tag": "folder",
+     "path": "/  Law Office"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13/ Client Docs - Legacy Signature Properties, Inc"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13/ Correspondence - Legacy Signature Properties, Inc"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13/ Docket - Legacy Signature Properties, Inc. - Chapter 13 - 26-70001"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ 13 - Legacy Signature Properties, Inc. - 26-70001 - Chapter 13/ Drafts - Legacy Signature Properties, Inc"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7/ Client Docs - Bob Brown"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7/ Correspondence - Bob Brown"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7/ Docket - Bob Brown - Ch 7 - 26-50001"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7/ Drafts - Bob Brown"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads"
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/2026-06-01 Intake.pdf",
+     "size": 18
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Correspondence - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Docket - John Smith - Ch 13 - 26-44274"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Drafts - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17/Client Uploads"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted E-Signed Documents"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Form Submissions"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Generated Documents"
+    }
+   ]
   }
  }
 }
