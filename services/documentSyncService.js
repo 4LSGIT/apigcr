@@ -146,6 +146,7 @@
 
 const dropbox   = require('./dropboxService');
 const documents = require('./documentService');
+const entityFolders = () => require('./entityFolderService');   // lazy (convention); D3a: the binding row this engine dual-writes
 
 /** documents.source for everything this engine writes. */
 const SOURCE = 'dropbox';
@@ -418,6 +419,7 @@ async function refreshCaseFolderCache(db, opts = {}) {
            resolved_at   = NOW()`,
         [c.case_id, _clamp(err.message, RESOLVE_ERROR_MAX)],
       );
+      await entityFolders().setError(db, { kind: 'case', id: c.case_id, humanLink: c.case_dropbox, error: _clamp(err.message, RESOLVE_ERROR_MAX) });   // D3a dual-write
       continue;
     }
 
@@ -438,6 +440,7 @@ async function refreshCaseFolderCache(db, opts = {}) {
            resolved_at   = NOW()`,
         [c.case_id, 'shared link metadata has no path_lower'],
       );
+      await entityFolders().setError(db, { kind: 'case', id: c.case_id, humanLink: c.case_dropbox, error: 'shared link metadata has no path_lower' });   // D3a dual-write
       continue;
     }
 
@@ -458,6 +461,10 @@ async function refreshCaseFolderCache(db, opts = {}) {
         meta.path_display != null ? String(meta.path_display) : null,
       ],
     );
+    await entityFolders().setResolved(db, {   // D3a dual-write
+      kind: 'case', id: c.case_id, externalId: meta.id ? _clamp(meta.id, 191) : null,
+      pathLower, pathDisplay: meta.path_display != null ? String(meta.path_display) : null, humanLink: c.case_dropbox,
+    });
     resolved++;
 
     if (!rootPaths.some(rp => _underRoot(pathLower, rp)) && outOfRoot.length < REPORT_CAP) {
@@ -676,6 +683,7 @@ async function syncRoot(db, root, opts = {}) {
             WHERE case_id = ?`,
           [newLower, f.path_display != null ? String(f.path_display) : null, cached.case_id],
         );
+        await entityFolders().setPaths(db, { kind: 'case', id: cached.case_id, pathLower: newLower, pathDisplay: f.path_display != null ? String(f.path_display) : null });   // D3a dual-write
         // Keep the in-memory map coherent for the REST of this run.
         cache.byPath.delete(cached.path_lower);
         cache.byPath.set(newLower, { case_id: cached.case_id, path_lower: newLower });
@@ -2498,6 +2506,7 @@ async function setRelinkDismissed(db, caseIds, opts = {}) {
       WHERE case_id IN (?)`,
     [dismissed ? (opts.actorUserId ?? null) : null, ids],
   );
+  await entityFolders().setRelinkDismissed(db, { kind: 'case', ids, dismissed, by: dismissed ? (opts.actorUserId ?? null) : null });   // D3a dual-write
 
   return { updated: res ? res.affectedRows : 0, case_ids: ids, dismissed };
 }
@@ -2768,6 +2777,7 @@ async function applyRelink(db, caseId, folderPath, opts = {}) {
       WHERE case_id = ?`,
     [caseId],
   );
+  await entityFolders().setRelinkDismissed(db, { kind: 'case', ids: [caseId], dismissed: false, by: null });   // D3a dual-write
 
   // House log conventions, matched to caseService.mergeCases: type 'update',
   // link_type 'case', a one-line subject, a prose message, and the machine

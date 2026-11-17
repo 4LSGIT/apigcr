@@ -1416,9 +1416,11 @@ async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
   // is not derivable from the case row — but it does stop this function from
   // being the thing that creates the duplicate.
   let existingLink = null;
+  let existingMeta = null;
   try {
     const meta = await storage.stat(db, path);
     if (meta && (meta['.tag'] === 'folder' || meta.folderish || meta.id)) {
+      existingMeta = meta;
       existingLink = await storage.ensureSharedLink(db, path);
       console.log(`[CASE_DROPBOX] adopted pre-existing folder for case ${caseId}: ${path}`);
     }
@@ -1429,10 +1431,10 @@ async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
   }
 
   const result = existingLink
-    ? { path, existed: true, subfolders_created: [], shared_link: existingLink }
+    ? { path, existed: true, subfolders_created: [], shared_link: existingLink, external_id: existingMeta && existingMeta.id ? String(existingMeta.id) : null }
     : await (async () => {
         const made = await storage.ensureFolder(db, { path }, { subfolders, humanLink: true });
-        return { path: made.path, existed: made.existed, subfolders_created: made.subfolders, shared_link: made.humanLink };
+        return { path: made.path, existed: made.existed, subfolders_created: made.subfolders, shared_link: made.humanLink, external_id: made.externalId || null };
       })();
   if (!result.shared_link) {
     throw new Error(`ensureCaseDropboxFolder: folder created at "${result.path}" but no shared link returned`);
@@ -1442,6 +1444,14 @@ async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
     'UPDATE cases SET case_dropbox = ? WHERE case_id = ?',
     [result.shared_link, caseId]
   );
+  // D3a dual-write: the binding row (ref/DOCUMENTS_V3_DESIGN.md §3). The handle
+  // comes free from the create reply or the adopt probe; the path is the one
+  // the folder was made at. Best-effort behind the primary write above.
+  await require('./entityFolderService').setResolved(db, {   // deferred require (convention)
+    kind: 'case', id: caseId, externalId: result.external_id || null,
+    pathLower: result.path ? String(result.path).toLowerCase() : null, pathDisplay: result.path || null,
+    humanLink: result.shared_link,
+  });
 
   console.log(`[CASE_DROPBOX] ${stage} folder ensured for case ${caseId}: ${result.path}${result.existed ? ' (folder pre-existed)' : ''}`);
   return {
@@ -2239,6 +2249,13 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
       null,
       { countSql: `SELECT COUNT(*) AS c FROM case_folder_cache WHERE case_id <> ? AND case_id = ?`,
         sql:      `DELETE FROM case_folder_cache WHERE case_id <> ? AND case_id = ?` }],
+    // D3a: the binding row follows the same rule as the cache it generalizes —
+    // DELETE-only, never repointed, never the survivor's.
+    ['entity_folders',
+      `SELECT COUNT(*) AS c FROM entity_folders WHERE entity_kind = 'case' AND entity_id = ?`,
+      null,
+      { countSql: `SELECT COUNT(*) AS c FROM entity_folders WHERE entity_kind = 'case' AND entity_id <> ? AND entity_id = ?`,
+        sql:      `DELETE FROM entity_folders WHERE entity_kind = 'case' AND entity_id <> ? AND entity_id = ?` }],
 
     // Client-access audit trail (plain id PK, no unique on case_id) — it
     // stays attached to the case that survives, or it stops being an audit

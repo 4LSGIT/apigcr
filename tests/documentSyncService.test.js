@@ -97,6 +97,7 @@ function makeDb({
   for (const d of docs.values()) nextId = Math.max(nextId, d.id + 1);
 
   const db = {
+    entityFolderWrites: [],
     calls,
     docs,
     roots,
@@ -187,6 +188,9 @@ function makeDb({
       if (/FROM case_folder_cache/.test(flat)) return [cache];
       if (/^INSERT INTO case_folder_cache/.test(flat)) return [{ affectedRows: 1 }];
       if (/^UPDATE case_folder_cache/.test(flat)) return [{ affectedRows: 1 }];
+      // D3a: the binding row the engine dual-writes beside the cache
+      if (/^INSERT INTO entity_folders/.test(flat)) { db.entityFolderWrites.push(['insert', params]); return [{ affectedRows: 1 }]; }
+      if (/^UPDATE entity_folders/.test(flat)) { db.entityFolderWrites.push(['update', params]); return [{ affectedRows: 1 }]; }
 
       // ── cases (refreshCaseFolderCache candidate scan) ──────────────────
       if (/FROM cases c/.test(flat)) return [db.caseRows || []];

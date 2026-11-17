@@ -23,6 +23,7 @@ const dump = fs.readFileSync(path.join(__dirname, '..', 'ref', 'database.sql'), 
 const BIN_COLUMNS = [
   ['documents',         'external_id'],
   ['case_folder_cache', 'folder_external_id'],
+  ['entity_folders',    'external_id'],   // storage-seam D3a: the binding row's handle (ref/migrations/2026-11-17_storage_seam_d3a_entity_folders.sql)
   // Bearer-token columns (2026-10-05): lib/token mints case-SENSITIVE base62,
   // and under general_ci a mixed-case alphabet never buys the entropy it
   // appears to — the DB collapses case (lib/caseId.js hit exactly this).

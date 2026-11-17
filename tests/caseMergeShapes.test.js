@@ -266,6 +266,7 @@ const M1_TABLES = [
   'case_requirement_overrides',
   'case_stage_aged_emitted',
   'case_folder_cache',
+  'entity_folders',
   'portal_access_log',
   'trigger_executions',
 ];

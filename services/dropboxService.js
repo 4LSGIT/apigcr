@@ -677,7 +677,8 @@ async function createFolderWithOptions(db, opts = {}) {
     });
   }
 
-  return { path, existed: base.existed, subfolders_created, shared_link };
+  // metadata: files/create_folder_v2's reply (the folder's id) when it was CREATED; absent when adopted
+  return { path, existed: base.existed, subfolders_created, shared_link, metadata: base.metadata };
 }
 
 // ─────────────────────────────────────────────────────────────

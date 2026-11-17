@@ -46,7 +46,11 @@ const sync = require('../services/documentSyncService');
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const suite = URL_ ? describe : describe.skip;
-const TABLES = ['documents', 'document_links', 'case_folder_cache', 'document_sync_roots', 'cases'];
+const TABLES = ['documents', 'document_links', 'case_folder_cache', 'document_sync_roots', 'cases', 'case_relate', 'contacts'];   // the last two: ensureCaseDropboxFolder names the primary contact (D3a)
+// D3a: the binding row, built by the migration script itself (its CREATE comes from the record file)
+const d3a = require('../scripts/storageSeamD3aEntityFolders');
+const entityFolders = require('../services/entityFolderService');
+const caseService = require('../services/caseService');
 const GOLDEN = path.join(__dirname, 'fixtures', 'storageReplay.mysql.golden.json');
 const WRITE = process.env.STORAGE_GOLDEN_WRITE === '1';
 if (WRITE && process.env.CI) throw new Error('STORAGE_GOLDEN_WRITE is refused under CI');
@@ -69,11 +73,16 @@ suite('storage replay on real MySQL', () => {
     if (creates.length !== TABLES.length) throw new Error(`schemaFor found ${creates.length} of ${TABLES.length}`);
     for (const s of creates) await q(s);
     for (const s of alters) await q(s);
+    await q('DROP TABLE IF EXISTS entity_folders');   // D3a's scenario creates it through the migration
   });
   afterAll(async () => {
-    if (db) { await q('SET FOREIGN_KEY_CHECKS = 0'); for (const t of TABLES) await q(`DROP TABLE IF EXISTS \`${t}\``); await db.end(); }
+    if (db) { await q('SET FOREIGN_KEY_CHECKS = 0'); for (const t of [...TABLES, 'entity_folders']) await q(`DROP TABLE IF EXISTS \`${t}\``); await db.end(); }
     if (WRITE) fs.writeFileSync(GOLDEN, JSON.stringify({ ...golden, scenarios: { ...golden.scenarios, ...records } }, null, 1) + '\n');
   });
+
+  async function bindings() {
+    return q("SELECT entity_kind, entity_id, source, external_id, path_lower, path_display, human_link, resolve_error, resolved_at IS NOT NULL AS resolved, relink_dismissed_at IS NOT NULL AS dismissed, relink_dismissed_by FROM entity_folders ORDER BY entity_kind, entity_id");
+  }
 
   async function snapshot() {
     const docs = await q('SELECT id, external_id, name, path, path_lower, size, status, pending_delete_at, rev FROM documents ORDER BY external_id');
@@ -126,6 +135,58 @@ suite('storage replay on real MySQL', () => {
     fake.simulateUpload(`${W.CASE_A_FOLDER}/Client Docs - John Smith/Scan.pdf`, '%PDF scan');
     out.push(await ingest.registerWritten(db, { path: `${W.CASE_A_FOLDER}/Client Docs - John Smith/Scan.pdf`, links: [{ type: 'case', id: 'hjSFMabb' }], eventSource: 'upload' }));
     return { results: out.map((r) => ({ document: r.document.external_id, links: r.links })), folder_refused: safe };
+  });
+
+  test('D3a: the migration creates + backfills entity_folders equal to the pair, re-runs as ALREADY APPLIED, sees drift; then the writers dual-write it on real tables', async () => {
+    const a = await reset();
+    await q('DROP TABLE IF EXISTS entity_folders');
+    // a second case with a link but no cache row, and a cache row carrying an error
+    await q('INSERT INTO cases (case_id, case_dropbox) VALUES (?, ?)', ['k9PotLd2', 'https://www.dropbox.com/scl/fo/nocache?dl=0']);
+    await q('INSERT INTO case_folder_cache (case_id, resolve_error, relink_dismissed_at, relink_dismissed_by) VALUES (?, ?, NOW(), 6)', ['deadLnk1', 'dropbox shared_link/not_found/.. (409)']);
+    const conn = await db.getConnection();
+    try {
+      expect((await d3a.run(conn, { log: () => {} })).line).toMatch(/^CHECK OK — GO\. entity_folders will be created and 3 bindings backfilled/);
+      const applied = await d3a.run(conn, { apply: true, log: () => {} });
+      expect(applied).toEqual({ ok: true, created: true, backfilled: 3, line: expect.stringMatching(/^APPLIED — GO\. Table created; 3 bindings backfilled and verified/) });
+      const linkA = (await q('SELECT case_dropbox FROM cases WHERE case_id = ?', ['hjSFMabb']))[0].case_dropbox;
+      const rows = await bindings();
+      expect(rows.map((r) => [r.entity_id, r.external_id, r.human_link, r.resolve_error, !!r.resolved, !!r.dismissed, r.relink_dismissed_by])).toEqual([
+        ['deadLnk1', null, 'https://www.dropbox.com/scl/fo/gone0000?dl=0', 'dropbox shared_link/not_found/.. (409)', true, true, 6],
+        ['hjSFMabb', a.id, linkA, null, true, false, null],
+        ['k9PotLd2', null, 'https://www.dropbox.com/scl/fo/nocache?dl=0', null, false, false, null],
+      ]);
+      expect(rows.find((r) => r.entity_id === 'hjSFMabb').path_display).toBe(a.path_display);
+      expect((await d3a.run(conn, { apply: true, log: () => {} })).line).toMatch(/^ALREADY APPLIED — GO/);
+      // drift in ONE column of ONE row is seen by the <=> comparison, and --apply resyncs it
+      await q("UPDATE entity_folders SET path_display = 'x' WHERE entity_id = 'hjSFMabb'");
+      expect((await d3a.run(conn, { log: () => {} })).line).toMatch(/^CHECK OK — GO\. The table exists; 1 binding\(s\) to \(re\)sync/);
+      expect((await d3a.run(conn, { apply: true, log: () => {} })).line).toMatch(/^APPLIED — GO\. 3 bindings backfilled and verified/);
+      expect((await bindings()).find((r) => r.entity_id === 'hjSFMabb').path_display).toBe(a.path_display);
+
+      // DUAL-WRITE on real tables: the sync refresh (resolved + error paths) mirrors the cache
+      await sync.refreshCaseFolderCache(db, { caseIds: ['hjSFMabb', 'deadLnk1', 'k9PotLd2'] });
+      const after = await bindings();
+      const cache = await q('SELECT case_id, folder_external_id, path_lower, path_display, resolve_error FROM case_folder_cache ORDER BY case_id');
+      for (const c of cache) {
+        const b = after.find((r) => r.entity_id === c.case_id);
+        expect([c.case_id, b.external_id, b.path_lower, b.path_display, b.resolve_error]).toEqual([c.case_id, c.folder_external_id, c.path_lower, c.path_display, c.resolve_error]);
+      }
+      expect(after.find((r) => r.entity_id === 'deadLnk1').resolve_error).toMatch(/not_found/);
+      // the heal, relink dismissal, remove
+      await entityFolders.setPaths(db, { kind: 'case', id: 'hjSFMabb', pathLower: '/  moved', pathDisplay: '/  Moved' }, { strict: true });
+      await entityFolders.setRelinkDismissed(db, { kind: 'case', ids: ['hjSFMabb'], dismissed: true, by: 6 }, { strict: true });
+      const h = (await bindings()).find((r) => r.entity_id === 'hjSFMabb');
+      expect([h.path_display, !!h.dismissed, h.relink_dismissed_by]).toEqual(['/  Moved', true, 6]);
+      await entityFolders.remove(db, { kind: 'case', id: 'k9PotLd2' }, { strict: true });
+      expect((await bindings()).map((r) => r.entity_id)).toEqual(['deadLnk1', 'hjSFMabb']);
+      // ensureCaseDropboxFolder on a folderless case: the create's handle lands in the binding with the link — no extra provider call
+      await q("INSERT INTO cases (case_id, case_type, case_subtype, case_number, case_number_full) VALUES ('newCase1', 'Bankruptcy', 'Ch 7', '26-90001', '26-90001-lsg')");
+      fake.calls.length = 0;
+      const made = await caseService.ensureCaseDropboxFolder(db, 'newCase1');
+      const nb = (await bindings()).find((r) => r.entity_id === 'newCase1');
+      expect([nb.human_link, nb.external_id, nb.path_display]).toEqual([made.shared_link, fake.node(made.path).id, made.path]);
+      expect(fake.calls.map((c) => c.fn)).toEqual(['getMetadata', 'createFolderWithOptions']);   // the probe + the create; nothing added for the handle
+    } finally { conn.release(); }
   });
 
   scenario('B2 sync: backfill page, incremental page with a move and a deletion, then the cache refresh', async (a) => {

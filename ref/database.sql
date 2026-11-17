@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-16T15:48:41.118Z
+-- Generated: 2026-11-17T21:29:18.406Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:44789e83bb202eff6c3672710c239904
+-- Fingerprint: sha256:74fa5206f364a1a5ea5bf9379d9e31b6
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2131,6 +2131,29 @@ CREATE TABLE `entitlement_denies` (
   `created_by` tinyint NOT NULL COMMENT 'users.user of the writer; 0 = an x-api-key caller',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Launcher entitlement DENIES (access-control A5). Deny-only: absent = allowed; any matching row denies. Visibility-only in v2 — no route enforcement.';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `entity_folders`
+--
+
+DROP TABLE IF EXISTS `entity_folders`;
+CREATE TABLE `entity_folders` (
+  `entity_kind` enum('case','contact') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'which table entity_id names: cases.case_id or contacts.contact_id (as a string)',
+  `entity_id` varchar(20) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'cases.case_id (Crockford or legacy) or contacts.contact_id, per entity_kind',
+  `source` varchar(20) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'dropbox' COMMENT 'documents.source vocabulary — the storage provider the folder lives in (documentSourceService)',
+  `external_id` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'utf8mb4_bin ON PURPOSE — the provider''s move-stable folder handle (Dropbox id:…, case-sensitive); pairs with documents.external_id. NULL until the link resolved once',
+  `path_lower` text COLLATE utf8mb4_general_ci COMMENT 'the folder''s path as the provider lowercases it — the attribution key the sync engine walks (path-prefix strategy)',
+  `path_display` text COLLATE utf8mb4_general_ci COMMENT 'the folder''s path as displayed (every leading space kept)',
+  `human_link` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the URL a person opens for the folder (Dropbox shared link). The value cases.case_dropbox held; D3b makes that column a read-through alias of this',
+  `resolve_error` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'last error resolving human_link to a handle/path (prior path columns survive, as case_folder_cache did); NULL when resolved',
+  `resolved_at` datetime DEFAULT NULL COMMENT 'UTC. last successful or failed resolution',
+  `relink_dismissed_at` datetime DEFAULT NULL COMMENT 'UTC. staff dismissed the relink suggestion for this entity (documentSyncService relink)',
+  `relink_dismissed_by` tinyint DEFAULT NULL COMMENT 'users.user who dismissed',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'UTC',
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'UTC'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='One row per (entity, storage source): the folder the entity''s documents file into — handle, path, human link. Generalizes cases.case_dropbox + case_folder_cache (storage-seam D3a, 2026-11-17)';
 
 -- --------------------------------------------------------
 
@@ -5020,6 +5043,13 @@ ALTER TABLE `email_log`
 ALTER TABLE `entitlement_denies`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `uq_entitlement_denies_scope_item` (`scope`,`scope_ref`,`item_key`);
+
+--
+-- Indexes for table `entity_folders`
+--
+ALTER TABLE `entity_folders`
+  ADD PRIMARY KEY (`entity_kind`,`entity_id`,`source`),
+  ADD KEY `idx_entity_folders_ext` (`source`,`external_id`);
 
 --
 -- Indexes for table `events`

@@ -159,6 +159,9 @@ function makeDb(w) {
     if (/FROM case_folder_cache WHERE path_lower IS NOT NULL/.test(s)) return rows(w.caseFolderCache.map((r) => ({ ...r })));
     if (/FROM case_folder_cache WHERE case_id = \?/.test(s)) return rows(w.caseFolderCache.filter((r) => r.case_id === String(params[0])).map((r) => ({ ...r })));
     if (/^UPDATE case_folder_cache/.test(s)) { effect('case_folder_cache.update', { params }); return ok(1); }
+    if (/^INSERT INTO entity_folders/.test(s)) { effect('entity_folders.upsert', { params }); return ok(1); }
+    if (/^UPDATE entity_folders/.test(s)) { effect('entity_folders.update', { params }); return ok(1); }
+    if (/^DELETE FROM entity_folders/.test(s)) { effect('entity_folders.delete', { params }); return ok(1); }
     if (/^INSERT INTO case_folder_cache/.test(s)) { effect('case_folder_cache.upsert', { params }); return ok(1); }
     if (/FROM document_sync_roots WHERE enabled = 1/.test(s)) return rows([]);
     // ── anything else ─────────────────────────────────────────────────────

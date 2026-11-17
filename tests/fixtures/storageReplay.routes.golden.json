@@ -184,6 +184,18 @@
      "case_id": "k9PotLd2"
     },
     {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "k9PotLd2",
+      "dropbox",
+      "id:F0013",
+      "/  law office/   cases/  potential cases/  potential - bankruptcy/ doe, jane - k9potld2 - 2026-11-17",
+      "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17",
+      "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+     ]
+    },
+    {
      "kind": "task.create",
      "desc": "Case k9PotLd2 had no Dropbox folder linked, so one was created automatically when a client uploaded documents: https://www.dropbox.com/scl/fo/fake0002?dl=0\n\nIf this case already had a folder that was never linked, move its contents into the new folder (or move the uploads into the old one and re-link it on the case page).",
      "from": 0,

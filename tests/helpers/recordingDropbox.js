@@ -285,7 +285,7 @@ function factory() {
         const r = mkFolder(joinPath(path, sub));
         subfolders_created.push({ path: joinPath(path, sub), existed: r.existed });
       }
-      return { path, existed, subfolders_created, shared_link };
+      return { path, existed, subfolders_created, shared_link, ...(existed ? {} : { metadata: meta(node) }) };
     },
     async getOrCreateSharedLink(db, opts = {}) {
       rec('getOrCreateSharedLink', opts);

@@ -399,6 +399,18 @@
      "case_id": "k9PotLd2"
     },
     {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "k9PotLd2",
+      "dropbox",
+      "id:F0017",
+      "/  law office/   cases/  potential cases/  potential - bankruptcy/ doe, jane - k9potld2 - 2026-11-17",
+      "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17",
+      "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+     ]
+    },
+    {
      "kind": "task.create",
      "desc": "Case \"k9PotLd2\" had no Dropbox folder linked, so one was created automatically: https://www.dropbox.com/scl/fo/fake0002?dl=0 If this case already had a folder that was never linked, merge the two and re-link the original on the case page.",
      "from": 0,
@@ -437,6 +449,18 @@
      "kind": "cases.case_dropbox",
      "case_dropbox": "https://www.dropbox.com/scl/fo/fake0003?dl=0",
      "case_id": "aCtv7Num"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "aCtv7Num",
+      "dropbox",
+      "id:F0020",
+      "/  law office/   cases/  active cases/  active - bankruptcy/ actv7num - brown, bob - 26-50001-lsg - ch 7",
+      "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7",
+      "https://www.dropbox.com/scl/fo/fake0003?dl=0"
+     ]
     },
     {
      "kind": "task.create",
@@ -479,6 +503,18 @@
      "case_id": "orgCase1"
     },
     {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "orgCase1",
+      "dropbox",
+      "id:F0027",
+      "/  law office/   cases/  active cases/  active - litigation/ orgcase1 - legacy signature properties, inc. - 26-70001 -",
+      "/  Law Office/   Cases/  Active Cases/  Active - Litigation/ orgCase1 - Legacy Signature Properties, Inc. - 26-70001 -",
+      "https://www.dropbox.com/scl/fo/fake0004?dl=0"
+     ]
+    },
+    {
      "kind": "task.create",
      "desc": "Case \"orgCase1\" had no Dropbox folder linked, so one was created automatically: https://www.dropbox.com/scl/fo/fake0004?dl=0 If this case already had a folder that was never linked, merge the two and re-link the original on the case page.",
      "from": 0,
@@ -517,6 +553,18 @@
      "kind": "cases.case_dropbox",
      "case_dropbox": "https://www.dropbox.com/scl/fo/fake0003?dl=0",
      "case_id": "aCtv7Num"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "aCtv7Num",
+      "dropbox",
+      "id:F0020",
+      "/  law office/   cases/  active cases/  active - bankruptcy/ actv7num - brown, bob - 26-50001-lsg - ch 7",
+      "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001-lsg - Ch 7",
+      "https://www.dropbox.com/scl/fo/fake0003?dl=0"
+     ]
     }
    ],
    "provider_state": [
@@ -1884,6 +1932,18 @@
      "case_id": "k9PotLd2"
     },
     {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "k9PotLd2",
+      "dropbox",
+      "id:F0018",
+      "/  law office/   cases/  potential cases/  potential - bankruptcy/ doe, jane - k9potld2 - 2026-11-17",
+      "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17",
+      "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+     ]
+    },
+    {
      "kind": "registry.registerWrittenSafe",
      "createdBy": null,
      "credentialId": 8,
@@ -2312,6 +2372,18 @@
      "kind": "cases.case_dropbox",
      "case_dropbox": "https://www.dropbox.com/scl/fo/fake0002?dl=0",
      "case_id": "k9PotLd2"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "k9PotLd2",
+      "dropbox",
+      "id:F0017",
+      "/  law office/   cases/  potential cases/  potential - bankruptcy/ doe, jane - k9potld2 - 2026-11-17",
+      "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17",
+      "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+     ]
     },
     {
      "kind": "task.create",
@@ -2928,6 +3000,18 @@
      "case_id": "k9PotLd2"
     },
     {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "k9PotLd2",
+      "dropbox",
+      "id:F0017",
+      "/  law office/   cases/  potential cases/  potential - bankruptcy/ doe, jane - k9potld2 - 2026-11-17",
+      "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17",
+      "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+     ]
+    },
+    {
      "kind": "step.output",
      "step_id": 583,
      "function_name": "storage_ensure_case_folder",
@@ -3163,6 +3247,18 @@
      "kind": "cases.case_dropbox",
      "case_dropbox": "https://www.dropbox.com/scl/fo/fake0002?dl=0",
      "case_id": "k9PotLd2"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "k9PotLd2",
+      "dropbox",
+      "id:F0017",
+      "/  law office/   cases/  potential cases/  potential - bankruptcy/ doe, jane - k9potld2 - 2026-11-17",
+      "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17",
+      "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+     ]
     },
     {
      "kind": "step.output",
@@ -3424,6 +3520,18 @@
      "kind": "cases.case_dropbox",
      "case_dropbox": "https://www.dropbox.com/scl/fo/fake0002?dl=0",
      "case_id": "k9PotLd2"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "k9PotLd2",
+      "dropbox",
+      "id:F0017",
+      "/  law office/   cases/  potential cases/  potential - bankruptcy/ doe, jane - k9potld2 - 2026-11-17",
+      "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17",
+      "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+     ]
     },
     {
      "kind": "step.output",
@@ -4776,9 +4884,31 @@
      ]
     },
     {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "hjSFMabb",
+      "dropbox",
+      "id:F0007",
+      "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13",
+      "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13",
+      "https://www.dropbox.com/scl/fo/fake0001?dl=0"
+     ]
+    },
+    {
      "kind": "case_folder_cache.upsert",
      "params": [
       "deadLnk1",
+      "dropbox shared_link/not_found/.. (409)"
+     ]
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "deadLnk1",
+      "dropbox",
+      "https://www.dropbox.com/scl/fo/gone0000?dl=0",
       "dropbox shared_link/not_found/.. (409)"
      ]
     },
@@ -5370,7 +5500,7 @@
     {
      "kind": "d1a.ensureFolder",
      "existed": false,
-     "externalId": null,
+     "externalId": "id:F0018",
      "humanLink": "https://www.dropbox.com/scl/fo/fake0002?dl=0",
      "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy/ Doe, Jane - k9PotLd2 - 2026-11-17",
      "subfolders": [
