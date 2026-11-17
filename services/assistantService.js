@@ -7420,7 +7420,11 @@ async function normalizeDocumentGenerate(db, value, evidence, currentUserId, use
       ? `Destination: (the case folder created at the click)/${subfolder}/${fileName}.`
       : plan.rung === 'unsorted'
         ? `Destination: ${plan.folder_path}/${fileName} — the unsorted generated-documents folder's per-case subfolder.`
-        : `Destination: ${plan.folder_path}/${plan.filename_prefix}${fileName} — the unsorted generated-documents folder (a contact has no case folder; the name carries the contact's identity prefix); no task is raised.`;
+        : plan.rung === 'contact'
+          ? `Destination: ${plan.folder_path}/${fileName} — ${target.label}'s own folder, subfolder "${subfolder}" (created if absent); no task is raised.`
+          : plan.rung === 'contact_create'
+            ? `Destination: (the contact folder created at the click)/${subfolder}/${fileName} — the firm keeps a folder per contact; this contact's is made from the contact-folder template and bound to the contact.`
+            : `Destination: ${plan.folder_path}/${plan.filename_prefix}${fileName} — the unsorted generated-documents folder (a contact has no case folder; the name carries the contact's identity prefix); no task is raised.`;
   effects.push(destination);
   if (plan.rung === 'auto_create') {
     warnings.push(`AUTO-CREATE: ${target.label} has no Dropbox folder linked. Applying CREATES one (the firm's stage-aware case folder template), links it to the case, raises a task "${plan.task}" for the office-alerts assignee, then files the PDF under "${subfolder}" inside it. If the case already has a folder that was never linked, you will have two — merge them and re-link the original on the case page (a document.folder read + a case folder card does that).`);

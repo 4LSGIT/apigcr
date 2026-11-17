@@ -1992,6 +1992,7 @@ tests/storageSeamD1fStorageFunctions.mysql.test.js
 tests/storageSeamD1fStorageFunctions.test.js
 tests/storageSeamD3aEntityFolders.test.js
 tests/storageSeamD3bCaseLinkDualWrite.test.js
+tests/storageSeamD3cContactFolders.test.js
 tests/storageSeamD3cStorageFolders.test.js
 tests/su.stepup.test.js
 tests/systemAlertStatusFn.test.js

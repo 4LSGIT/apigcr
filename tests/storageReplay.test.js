@@ -458,6 +458,36 @@ scenario('17c D3c-1 {{case_type_full}} in a template: type + subtype, type alone
   await caseService.ensureCaseDropboxFolder(db, 'orgCase1');                                // unknown
 });
 
+// ── 18. D3c-2: contact folders on the PLATFORM default tree (a tenant that is not 4LSG) ──
+scenario('18 D3c-2 the platform-default tree: a contact-linked file makes and uses the contact folder; a case folder nests under it via {{contact_folder}}; the contact binding is reused; contact: null refuses a template that names it', async ({ db, world }) => {
+  const { STORAGE_DEFAULTS } = require('../lib/storageDefaults');
+  world.settings.storage_folders = JSON.stringify(STORAGE_DEFAULTS.storage_folders);   // the row provisioning writes for a new firm
+  fake.seed({ folders: ['/Clients'] });
+  // a contact-linked generated document → /Clients/Doe, Jane (created, bound) / Notices / file; no task; placement 'contact'
+  const v1 = await placement.placeAndRegister(db, generateShaped({ linkType: 'contact', linkId: 502 }));
+  world.effects.push({ kind: 'verdict', ...W.scrub({ placement: v1.placement, path: v1.path, warnings: v1.warnings }) });
+  // the same contact again → the binding is reused (no second create / probe of the contact folder)
+  const v2 = await placement.placeAndRegister(db, generateShaped({ linkType: 'contact', linkId: 502, fileName: '2026-11-17 Second.pdf' }));
+  world.effects.push({ kind: 'verdict', ...W.scrub({ placement: v2.placement, path: v2.path, warnings: v2.warnings }) });
+  // Casey's read-only preview: the bound contact → rung 'contact'; an unbound contact → 'contact_create' (nothing created)
+  world.effects.push({ kind: 'describe', ...W.scrub(await placement.describePlacement(db, { linkType: 'contact', linkId: 502, subfolder: 'Notices', unsortedPathKey: generate.UNSORTED_PATH_KEY, unsortedDefault: generate.DEFAULT_UNSORTED_PATH })) });
+  world.effects.push({ kind: 'describe', ...W.scrub(await placement.describePlacement(db, { linkType: 'contact', linkId: 503, subfolder: 'Notices', unsortedPathKey: generate.UNSORTED_PATH_KEY, unsortedDefault: generate.DEFAULT_UNSORTED_PATH })) });
+  // a case of that contact: {{contact_folder}}/{{number}} - {{case_type_full}} → /Clients/Doe, Jane/k9PotLd2 - Bankruptcy (potential: number = case_id); the contact binding reused
+  const made = await caseService.ensureCaseDropboxFolder(db, 'k9PotLd2');
+  world.effects.push({ kind: 'case.folder', ...W.scrub({ path: made.path, existed: made.existed }) });
+  // a case whose contact has no folder yet: the contact folder is created on the way (Brown, Bob → aCtv7Num, active: 26-50001-lsg - Bankruptcy: Ch 7)
+  const made2 = await caseService.ensureCaseDropboxFolder(db, 'aCtv7Num');
+  world.effects.push({ kind: 'case.folder', ...W.scrub({ path: made2.path, existed: made2.existed }) });
+  world.effects.push({ kind: 'bindings', ...W.scrub({ entityFolders: world.entityFolders }) });
+  // contact: null with a case template that names {{contact_folder}} → refused, named; a contact-linked file with contact folders off → the bin, no provider probe
+  world.settings.storage_folders = JSON.stringify({ case: STORAGE_DEFAULTS.storage_folders.case, contact: null });
+  let refused = null;
+  try { await caseService.ensureCaseDropboxFolder(db, 'orgCase1'); } catch (err) { refused = err.message; }
+  world.effects.push({ kind: 'refused', refused });
+  const v3 = await placement.placeAndRegister(db, generateShaped({ linkType: 'contact', linkId: 504 }));
+  world.effects.push({ kind: 'verdict', ...W.scrub({ placement: v3.placement, path: v3.path, warnings: v3.warnings }) });
+});
+
 // ── coverage: every provider function a writer can reach is recorded somewhere
 test('coverage: every dropboxService export is hit by a scenario here or in the routes golden, or is a listed exclusion', () => {
   const actual = jest.requireActual('../services/dropboxService');

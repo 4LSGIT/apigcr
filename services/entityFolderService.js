@@ -227,6 +227,23 @@ async function casePathLower(db, caseId, { source, resolvedOnly = false } = {}) 
   return String(b.path_lower);
 }
 
+/**
+ * A contact's folder binding (D3c-2). Contacts have no legacy column: the
+ * binding IS the record. `bound` false = no row or no link.
+ * @returns {Promise<{bound:boolean, link:string|null, externalId:string|null, pathLower:string|null, pathDisplay:string|null}>}
+ */
+async function contactFolder(db, contactId, { source } = {}) {
+  const b = await get(db, { kind: 'contact', id: contactId, source });
+  const link = b && b.human_link != null ? String(b.human_link).trim() : '';
+  return {
+    bound: !!link,
+    link: link || null,
+    externalId: b && b.external_id ? String(b.external_id) : null,
+    pathLower: b && b.path_lower ? String(b.path_lower) : null,
+    pathDisplay: b && b.path_display ? String(b.path_display) : null,
+  };
+}
+
 /** The binding row, or null. */
 async function get(db, { kind, id, source }) {
   const k = _key({ kind, id, source });
@@ -237,4 +254,4 @@ async function get(db, { kind, id, source }) {
   return row || null;
 }
 
-module.exports = { setResolved, setError, setPaths, setHumanLink, setRelinkDismissed, remove, get, caseFolderLink, casePathLower, KINDS, DEFAULT_SOURCE, RESOLVE_ERROR_MAX, EXTERNAL_ID_MAX, HUMAN_LINK_MAX };
+module.exports = { setResolved, setError, setPaths, setHumanLink, setRelinkDismissed, remove, get, caseFolderLink, casePathLower, contactFolder, KINDS, DEFAULT_SOURCE, RESOLVE_ERROR_MAX, EXTERNAL_ID_MAX, HUMAN_LINK_MAX };

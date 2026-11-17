@@ -46,7 +46,7 @@ const sync = require('../services/documentSyncService');
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const suite = URL_ ? describe : describe.skip;
-const TABLES = ['documents', 'document_links', 'case_folder_cache', 'document_sync_roots', 'cases', 'case_relate', 'contacts', 'field_defs'];   // case_relate + contacts: ensureCaseDropboxFolder names the primary contact (D3a); field_defs: createCase reads the custom-field defs (D3b-1)
+const TABLES = ['documents', 'document_links', 'case_folder_cache', 'document_sync_roots', 'cases', 'case_relate', 'contacts', 'field_defs', 'app_settings'];   // app_settings: storage_folders for the D3c-2 contact-folder test   // case_relate + contacts: ensureCaseDropboxFolder names the primary contact (D3a); field_defs: createCase reads the custom-field defs (D3b-1)
 // D3a: the binding row, built by the migration script itself (its CREATE comes from the record file)
 const d3a = require('../scripts/storageSeamD3aEntityFolders');
 const entityFolders = require('../services/entityFolderService');
@@ -254,6 +254,29 @@ suite('storage replay on real MySQL', () => {
     expect([out.candidates, out.scanned]).toEqual([1, 1]);
     expect(fake.calls.filter((c) => c.fn === 'getSharedLinkMetadata').map((c) => c.args[0].url)).toEqual([hand]);   // NULL-first on the binding, not oldest-first on the cache
     expect((await bindings()).find((r) => r.entity_id === 'byHand01').resolved).toBeTruthy();
+  });
+
+  test('D3c-2: contact folders on real tables — off without the row; on with the platform tree: created + bound (kind contact), reused, the case folder nested under it via {{contact_folder}}', async () => {
+    await reset();
+    const { STORAGE_DEFAULTS } = require('../lib/storageDefaults');
+    await q("INSERT INTO contacts (contact_id, contact_kind, contact_name, contact_lfm_name) VALUES (502, 'person', 'Jane Doe', 'Doe, Jane')");
+    await q("INSERT INTO cases (case_id, case_type, case_subtype) VALUES ('k9PotLd2', 'Bankruptcy', '')");
+    await q("INSERT INTO case_relate (case_relate_id, case_relate_case_id, case_relate_client_id, case_relate_type) VALUES (9001, 'k9PotLd2', 502, 'Primary')");
+    fake.seed({ folders: ['/Clients'] });
+    expect(await caseService.ensureContactFolder(db, 502)).toEqual({ enabled: false });            // no row: no contact folders
+    await q("INSERT INTO app_settings (`key`, `value`) VALUES ('storage_folders', ?)", [JSON.stringify(STORAGE_DEFAULTS.storage_folders)]);
+    fake.calls.length = 0;
+    const made = await caseService.ensureContactFolder(db, 502);
+    expect(made).toMatchObject({ enabled: true, existed: false, path: '/Clients/Doe, Jane', folder_existed: false });
+    expect(fake.calls.map((c) => c.fn)).toEqual(['getMetadata', 'createFolderWithOptions']);        // the probe + the create
+    const b = (await bindings()).find((r) => r.entity_kind === 'contact' && r.entity_id === '502');
+    expect([b.human_link, b.external_id, b.path_display, b.path_lower]).toEqual([made.shared_link, fake.node('/Clients/Doe, Jane').id, '/Clients/Doe, Jane', '/clients/doe, jane']);
+    fake.calls.length = 0;
+    expect(await caseService.ensureContactFolder(db, 502)).toEqual({ enabled: true, existed: true, path: '/Clients/Doe, Jane', shared_link: made.shared_link });
+    expect(fake.calls).toEqual([]);                                                                 // the binding answers; no provider call
+    const cf = await caseService.ensureCaseDropboxFolder(db, 'k9PotLd2');
+    expect(cf.path).toBe('/Clients/Doe, Jane/k9PotLd2 - Bankruptcy');
+    expect((await bindings()).map((r) => `${r.entity_kind}:${r.entity_id}`).sort()).toEqual(['case:deadLnk1', 'case:hjSFMabb', 'case:k9PotLd2', 'contact:502']);
   });
 
   scenario('B2 sync: backfill page, incremental page with a move and a deletion, then the cache refresh', async (a) => {

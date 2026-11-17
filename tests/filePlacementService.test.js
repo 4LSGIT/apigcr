@@ -54,7 +54,7 @@ jest.mock('../services/settingsService', () => ({
   getSettings: jest.fn(async () => ({})),
 }));
 
-jest.mock('../services/caseService', () => ({ ensureCaseDropboxFolder: jest.fn() }));
+jest.mock('../services/caseService', () => ({ ensureCaseDropboxFolder: jest.fn(), contactFolderTemplates: jest.fn(async () => null), ensureContactFolder: jest.fn(async () => ({ enabled: false })) }));   // D3c-2: this world keeps no contact folders (4LSG)
 jest.mock('../services/taskService', () => ({ createTask: jest.fn(async () => ({ task_id: 77 })) }));
 jest.mock('../services/esignAlertService', () => ({ resolveAlertAssignee: jest.fn(async () => 22) }));
 jest.mock('../services/documentIngestService', () => ({

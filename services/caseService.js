@@ -1346,6 +1346,107 @@ function caseTypeFull(caseType, caseSubtype) {
   return s ? `${t}: ${s}` : t;
 }
 
+/** The v3 folder tree — app_settings storage_folders parsed to an object, or null (absent / invalid). */
+async function _loadFolderTree(db) {
+  try {
+    const [[sf]] = await db.query(
+      "SELECT `value` FROM app_settings WHERE `key` = 'storage_folders' LIMIT 1"
+    );
+    if (sf?.value) {
+      const tree = JSON.parse(sf.value);
+      if (tree && typeof tree === 'object' && !Array.isArray(tree)) return tree;
+    }
+  } catch (err) {
+    console.warn(`[CASE_DROPBOX] storage_folders lookup failed: ${err.message}`);
+  }
+  return null;
+}
+
+/**
+ * Contact-folder templates (D3c-2): storage_folders.contact = { default, subfolders }
+ * when the firm keeps contact folders, else null. `null` in the row, a row
+ * without the block, and NO row all mean none: the platform default (the
+ * nested contact → case tree, lib/storageDefaults.js) reaches a tenant through
+ * the row provisioning writes, never through this code — 4LSG's row says
+ * contact: null, and a test world with no rows behaves as 4LSG does.
+ */
+async function contactFolderTemplates(db) {
+  const tree = await _loadFolderTree(db);
+  const c = tree ? tree.contact : null;
+  return c && typeof c === 'object' && !Array.isArray(c) && typeof c.default === 'string' && c.default.trim() ? c : null;
+}
+
+/**
+ * Ensure a contact has a provider folder + human link, bound in entity_folders
+ * (kind 'contact') — the contact half of the v3 tree (design §6). Lazy: called
+ * on first need (a contact-linked file, a case template naming
+ * {{contact_folder}}). Idempotent: a bound contact returns its binding. Same
+ * adopt-before-create probe as the case folder. Returns { enabled:false } when
+ * the firm keeps no contact folders.
+ * @returns {Promise<{enabled:boolean, existed?:boolean, path?:string|null, shared_link?:string|null, folder_existed?:boolean, subfolders_created?:Array}>}
+ */
+async function ensureContactFolder(db, contactId, { force = false } = {}) {
+  const templates = await contactFolderTemplates(db);
+  if (!templates) return { enabled: false };
+  const storage = require('./documentSourceService').get(STORAGE_SOURCE);   // deferred require (convention)
+  const entityFolders = require('./entityFolderService');                   // deferred require (convention)
+  const { nowLocal } = require('./timezoneService');
+
+  const bound = await entityFolders.contactFolder(db, contactId);
+  if (bound.bound && !force) {
+    const path = bound.pathDisplay || bound.pathLower
+      || await storage.resolveHumanLink(db, bound.link, { expectFolder: true }, await storage.context(db));
+    return { enabled: true, existed: true, path, shared_link: bound.link };
+  }
+
+  const [[contact]] = await db.query(
+    'SELECT contact_id, contact_name, contact_lfm_name FROM contacts WHERE contact_id = ? LIMIT 1',
+    [contactId]
+  );
+  if (!contact) throw new Error(`ensureContactFolder: contact ${contactId} not found`);
+
+  const values = {
+    contact_id:   String(contact.contact_id),
+    lfm_name:     contact.contact_lfm_name || 'Unknown',
+    contact_name: contact.contact_name || 'Unknown',
+    date:         nowLocal().toFormat('yyyy-LL-dd'),
+  };
+  const path       = _substituteTemplate(templates.default, values);
+  const subfolders = (Array.isArray(templates.subfolders) ? templates.subfolders : []).map((t) => _substituteTemplate(t, values));
+
+  // adopt before create (the case folder's rule, same reasons)
+  let existingLink = null;
+  let existingMeta = null;
+  try {
+    const meta = await storage.stat(db, path);
+    if (meta && (meta['.tag'] === 'folder' || meta.folderish || meta.id)) {
+      existingMeta = meta;
+      existingLink = await storage.ensureSharedLink(db, path);
+      console.log(`[CONTACT_FOLDER] adopted pre-existing folder for contact ${contactId}: ${path}`);
+    }
+  } catch (err) {
+    if (!storage.isNotFound(err)) {
+      console.warn(`[CONTACT_FOLDER] pre-existing folder probe failed for ${contactId}, creating: ${err.message}`);
+    }
+  }
+  const result = existingLink
+    ? { path, existed: true, subfolders_created: [], shared_link: existingLink, external_id: existingMeta && existingMeta.id ? String(existingMeta.id) : null }
+    : await (async () => {
+        const made = await storage.ensureFolder(db, { path }, { subfolders, humanLink: true });
+        return { path: made.path, existed: made.existed, subfolders_created: made.subfolders, shared_link: made.humanLink, external_id: made.externalId || null };
+      })();
+  if (!result.shared_link) {
+    throw new Error(`ensureContactFolder: folder created at "${result.path}" but no shared link returned`);
+  }
+  await entityFolders.setResolved(db, {
+    kind: 'contact', id: String(contactId), externalId: result.external_id || null,
+    pathLower: result.path ? String(result.path).toLowerCase() : null, pathDisplay: result.path || null,
+    humanLink: result.shared_link,
+  });
+  console.log(`[CONTACT_FOLDER] folder ensured for contact ${contactId}: ${result.path}${result.existed ? ' (folder pre-existed)' : ''}`);
+  return { enabled: true, existed: false, path: result.path, shared_link: result.shared_link, folder_existed: result.existed, subfolders_created: result.subfolders_created };
+}
+
 async function _loadCaseFolderTemplates(db) {
   // D3c-1 (expand): the legacy row dropbox_case_folder_templates stays
   // AUTHORITATIVE while it exists — the firm page's "Folder templates" editor
@@ -1416,7 +1517,7 @@ async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
   }
 
   const [[contact]] = await db.query(
-    `SELECT c.contact_name, c.contact_lfm_name
+    `SELECT c.contact_id, c.contact_name, c.contact_lfm_name
        FROM case_relate cr
        JOIN contacts c ON c.contact_id = cr.case_relate_client_id
       WHERE cr.case_relate_case_id = ?
@@ -1451,6 +1552,21 @@ async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
   const subTemplates = Array.isArray(stageMap.subfolders)
     ? stageMap.subfolders
     : DEFAULT_CASE_FOLDER_TEMPLATES[stage].subfolders;
+
+  // D3c-2: {{contact_folder}} = the primary contact's bound folder PATH (the
+  // nested contact → case tree; created on demand), resolved only when a
+  // template names it — a firm whose templates never do (4LSG) makes no
+  // contact-folder call here.
+  if (/\{\{contact_folder\}\}/.test([template, ...subTemplates].join('\n'))) {
+    if (!contact || contact.contact_id == null) {
+      throw new Error(`ensureCaseDropboxFolder: the folder template names {{contact_folder}} but case ${caseId} has no related contact`);
+    }
+    const cf = await ensureContactFolder(db, contact.contact_id);
+    if (!cf.enabled) {
+      throw new Error('ensureCaseDropboxFolder: the folder template names {{contact_folder}} but storage_folders.contact is null (the firm keeps no contact folders)');
+    }
+    values.contact_folder = cf.path;
+  }
 
   const path       = _substituteTemplate(template, values);
   const subfolders = subTemplates.map((t) => _substituteTemplate(t, values));
@@ -2680,6 +2796,8 @@ module.exports = {
   DEFAULT_CASE_FOLDER_TEMPLATES,
   caseTypeFull,
   _loadCaseFolderTemplates,
+  contactFolderTemplates,
+  ensureContactFolder,
   listCaseSequences,
   listCaseWorkflows,
   mergeCases

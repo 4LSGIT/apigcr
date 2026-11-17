@@ -7350,6 +7350,578 @@
      "path": "/  Law Office/   Cases/  Unsorted Generated Documents"
     }
    ]
+  },
+  "18 D3c-2 the platform-default tree: a contact-linked file makes and uses the contact folder; a case folder nests under it via {{contact_folder}}; the contact binding is reused; contact: null refuses a template that names it": {
+   "calls": [
+    {
+     "fn": "_resolveCredential",
+     "args": [
+      {}
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/Clients/Doe, Jane"
+      }
+     ]
+    },
+    {
+     "fn": "createFolderWithOptions",
+     "args": [
+      {
+       "path": "/Clients/Doe, Jane",
+       "shareLink": true,
+       "subfolders": []
+      }
+     ]
+    },
+    {
+     "fn": "resolveLocation",
+     "args": [
+      8,
+      {
+       "expectFolder": true,
+       "sharedLink": "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+      }
+     ]
+    },
+    {
+     "fn": "createFolder",
+     "args": [
+      {
+       "credentialId": 8,
+       "path": "/clients/doe, jane/Notices"
+      }
+     ]
+    },
+    {
+     "fn": "uploadFile",
+     "args": [
+      {
+       "autorename": true,
+       "content": {
+        "bytes": 15,
+        "sha256": "7599b8332e586935114e4ad53d85de7e5a13143968dfbba38d3927fc7bc4aa7f"
+       },
+       "credentialId": 8,
+       "mode": "add",
+       "path": "/clients/doe, jane/Notices/2026-11-17 Discharge Notice.pdf"
+      }
+     ]
+    },
+    {
+     "fn": "getTemporaryLink",
+     "args": [
+      {
+       "credentialId": 8,
+       "path": "/clients/doe, jane/Notices/2026-11-17 Discharge Notice.pdf"
+      }
+     ]
+    },
+    {
+     "fn": "_resolveCredential",
+     "args": [
+      {}
+     ]
+    },
+    {
+     "fn": "resolveLocation",
+     "args": [
+      8,
+      {
+       "expectFolder": true,
+       "sharedLink": "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+      }
+     ]
+    },
+    {
+     "fn": "createFolder",
+     "args": [
+      {
+       "credentialId": 8,
+       "path": "/clients/doe, jane/Notices"
+      }
+     ]
+    },
+    {
+     "fn": "uploadFile",
+     "args": [
+      {
+       "autorename": true,
+       "content": {
+        "bytes": 15,
+        "sha256": "7599b8332e586935114e4ad53d85de7e5a13143968dfbba38d3927fc7bc4aa7f"
+       },
+       "credentialId": 8,
+       "mode": "add",
+       "path": "/clients/doe, jane/Notices/2026-11-17 Second.pdf"
+      }
+     ]
+    },
+    {
+     "fn": "getTemporaryLink",
+     "args": [
+      {
+       "credentialId": 8,
+       "path": "/clients/doe, jane/Notices/2026-11-17 Second.pdf"
+      }
+     ]
+    },
+    {
+     "fn": "_resolveCredential",
+     "args": [
+      {}
+     ]
+    },
+    {
+     "fn": "resolveLocation",
+     "args": [
+      8,
+      {
+       "expectFolder": true,
+       "sharedLink": "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/Clients/Doe, Jane/k9PotLd2 - Bankruptcy"
+      }
+     ]
+    },
+    {
+     "fn": "createFolderWithOptions",
+     "args": [
+      {
+       "path": "/Clients/Doe, Jane/k9PotLd2 - Bankruptcy",
+       "shareLink": true,
+       "subfolders": []
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/Clients/Brown, Bob"
+      }
+     ]
+    },
+    {
+     "fn": "createFolderWithOptions",
+     "args": [
+      {
+       "path": "/Clients/Brown, Bob",
+       "shareLink": true,
+       "subfolders": []
+      }
+     ]
+    },
+    {
+     "fn": "getMetadata",
+     "args": [
+      {
+       "path": "/Clients/Brown, Bob/26-50001-lsg - Bankruptcy: Ch 7"
+      }
+     ]
+    },
+    {
+     "fn": "createFolderWithOptions",
+     "args": [
+      {
+       "path": "/Clients/Brown, Bob/26-50001-lsg - Bankruptcy: Ch 7",
+       "shareLink": true,
+       "subfolders": []
+      }
+     ]
+    },
+    {
+     "fn": "_resolveCredential",
+     "args": [
+      {}
+     ]
+    },
+    {
+     "fn": "uploadFile",
+     "args": [
+      {
+       "autorename": true,
+       "content": {
+        "bytes": 15,
+        "sha256": "7599b8332e586935114e4ad53d85de7e5a13143968dfbba38d3927fc7bc4aa7f"
+       },
+       "credentialId": 8,
+       "mode": "add",
+       "path": "/  Law Office/   Cases/  Unsorted Generated Documents/2026-11-17 Discharge Notice.pdf"
+      }
+     ]
+    },
+    {
+     "fn": "getTemporaryLink",
+     "args": [
+      {
+       "credentialId": 8,
+       "path": "/  Law Office/   Cases/  Unsorted Generated Documents/2026-11-17 Discharge Notice.pdf"
+      }
+     ]
+    }
+   ],
+   "effects": [
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "contact",
+      "502",
+      "dropbox",
+      "id:F0018",
+      "/clients/doe, jane",
+      "/Clients/Doe, Jane",
+      "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+     ]
+    },
+    {
+     "kind": "registry.registerWrittenSafe",
+     "createdBy": 6,
+     "credentialId": 8,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:02Z",
+      "content_hash": "7599b8332e586935114e4ad53d85de7e5a13143968dfbba38d3927fc7bc4aa7f",
+      "id": "id:f0002",
+      "is_downloadable": true,
+      "name": "2026-11-17 Discharge Notice.pdf",
+      "path_display": "/clients/doe, jane/Notices/2026-11-17 Discharge Notice.pdf",
+      "path_lower": "/clients/doe, jane/notices/2026-11-17 discharge notice.pdf",
+      "rev": "rev000002",
+      "server_modified": "2026-11-17T12:00:02Z",
+      "size": 15
+     },
+     "eventSource": "generated_doc",
+     "links": [
+      {
+       "id": 502,
+       "type": "contact"
+      }
+     ]
+    },
+    {
+     "kind": "verdict",
+     "path": "/clients/doe, jane/Notices/2026-11-17 Discharge Notice.pdf",
+     "placement": "contact",
+     "warnings": [
+      "Contact \"502\" had no folder, so one was created automatically: https://www.dropbox.com/scl/fo/fake0002?dl=0"
+     ]
+    },
+    {
+     "kind": "registry.registerWrittenSafe",
+     "createdBy": 6,
+     "credentialId": 8,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:03Z",
+      "content_hash": "7599b8332e586935114e4ad53d85de7e5a13143968dfbba38d3927fc7bc4aa7f",
+      "id": "id:f0003",
+      "is_downloadable": true,
+      "name": "2026-11-17 Second.pdf",
+      "path_display": "/clients/doe, jane/Notices/2026-11-17 Second.pdf",
+      "path_lower": "/clients/doe, jane/notices/2026-11-17 second.pdf",
+      "rev": "rev000003",
+      "server_modified": "2026-11-17T12:00:03Z",
+      "size": 15
+     },
+     "eventSource": "generated_doc",
+     "links": [
+      {
+       "id": 502,
+       "type": "contact"
+      }
+     ]
+    },
+    {
+     "kind": "verdict",
+     "path": "/clients/doe, jane/Notices/2026-11-17 Second.pdf",
+     "placement": "contact",
+     "warnings": []
+    },
+    {
+     "kind": "describe",
+     "case_dropbox": null,
+     "filename_prefix": "",
+     "folder_path": "/clients/doe, jane/Notices",
+     "note": null,
+     "placement": "contact",
+     "reason": null,
+     "rung": "contact",
+     "subfolder": "Notices",
+     "task": null
+    },
+    {
+     "kind": "describe",
+     "case_dropbox": null,
+     "filename_prefix": "",
+     "folder_path": null,
+     "note": "Contact \"503\" has no folder yet, so one is created from the firm's contact-folder template and bound to the contact.",
+     "placement": "contact",
+     "reason": null,
+     "rung": "contact_create",
+     "subfolder": "Notices",
+     "task": null
+    },
+    {
+     "kind": "cases.case_dropbox",
+     "case_dropbox": "https://www.dropbox.com/scl/fo/fake0003?dl=0",
+     "case_id": "k9PotLd2"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "k9PotLd2",
+      "dropbox",
+      "id:F0020",
+      "/clients/doe, jane/k9potld2 - bankruptcy",
+      "/Clients/Doe, Jane/k9PotLd2 - Bankruptcy",
+      "https://www.dropbox.com/scl/fo/fake0003?dl=0"
+     ]
+    },
+    {
+     "kind": "case.folder",
+     "existed": false,
+     "path": "/Clients/Doe, Jane/k9PotLd2 - Bankruptcy"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "contact",
+      "503",
+      "dropbox",
+      "id:F0021",
+      "/clients/brown, bob",
+      "/Clients/Brown, Bob",
+      "https://www.dropbox.com/scl/fo/fake0004?dl=0"
+     ]
+    },
+    {
+     "kind": "cases.case_dropbox",
+     "case_dropbox": "https://www.dropbox.com/scl/fo/fake0005?dl=0",
+     "case_id": "aCtv7Num"
+    },
+    {
+     "kind": "entity_folders.upsert",
+     "params": [
+      "case",
+      "aCtv7Num",
+      "dropbox",
+      "id:F0022",
+      "/clients/brown, bob/26-50001-lsg - bankruptcy: ch 7",
+      "/Clients/Brown, Bob/26-50001-lsg - Bankruptcy: Ch 7",
+      "https://www.dropbox.com/scl/fo/fake0005?dl=0"
+     ]
+    },
+    {
+     "kind": "case.folder",
+     "existed": false,
+     "path": "/Clients/Brown, Bob/26-50001-lsg - Bankruptcy: Ch 7"
+    },
+    {
+     "kind": "bindings",
+     "entityFolders": {
+      "aCtv7Num": {
+       "external_id": "id:F0022",
+       "human_link": "https://www.dropbox.com/scl/fo/fake0005?dl=0",
+       "path_display": "/Clients/Brown, Bob/26-50001-lsg - Bankruptcy: Ch 7",
+       "path_lower": "/clients/brown, bob/26-50001-lsg - bankruptcy: ch 7",
+       "resolve_error": null
+      },
+      "contact:502": {
+       "external_id": "id:F0018",
+       "human_link": "https://www.dropbox.com/scl/fo/fake0002?dl=0",
+       "path_display": "/Clients/Doe, Jane",
+       "path_lower": "/clients/doe, jane",
+       "resolve_error": null
+      },
+      "contact:503": {
+       "external_id": "id:F0021",
+       "human_link": "https://www.dropbox.com/scl/fo/fake0004?dl=0",
+       "path_display": "/Clients/Brown, Bob",
+       "path_lower": "/clients/brown, bob",
+       "resolve_error": null
+      },
+      "deadLnk1": {
+       "external_id": null,
+       "human_link": "https://www.dropbox.com/scl/fo/gone0000?dl=0",
+       "path_display": null,
+       "path_lower": null,
+       "resolve_error": null
+      },
+      "hjSFMabb": {
+       "external_id": null,
+       "human_link": "https://www.dropbox.com/scl/fo/fake0001?dl=0",
+       "path_display": null,
+       "path_lower": null,
+       "resolve_error": null
+      },
+      "k9PotLd2": {
+       "external_id": "id:F0020",
+       "human_link": "https://www.dropbox.com/scl/fo/fake0003?dl=0",
+       "path_display": "/Clients/Doe, Jane/k9PotLd2 - Bankruptcy",
+       "path_lower": "/clients/doe, jane/k9potld2 - bankruptcy",
+       "resolve_error": null
+      }
+     }
+    },
+    {
+     "kind": "refused",
+     "refused": "ensureCaseDropboxFolder: the folder template names {{contact_folder}} but storage_folders.contact is null (the firm keeps no contact folders)"
+    },
+    {
+     "kind": "registry.registerWrittenSafe",
+     "createdBy": 6,
+     "credentialId": 8,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:04Z",
+      "content_hash": "7599b8332e586935114e4ad53d85de7e5a13143968dfbba38d3927fc7bc4aa7f",
+      "id": "id:f0004",
+      "is_downloadable": true,
+      "name": "2026-11-17 Discharge Notice.pdf",
+      "path_display": "/  Law Office/   Cases/  Unsorted Generated Documents/2026-11-17 Discharge Notice.pdf",
+      "path_lower": "/  law office/   cases/  unsorted generated documents/2026-11-17 discharge notice.pdf",
+      "rev": "rev000004",
+      "server_modified": "2026-11-17T12:00:04Z",
+      "size": 15
+     },
+     "eventSource": "generated_doc",
+     "links": [
+      {
+       "id": 504,
+       "type": "contact"
+      }
+     ]
+    },
+    {
+     "kind": "verdict",
+     "path": "/  Law Office/   Cases/  Unsorted Generated Documents/2026-11-17 Discharge Notice.pdf",
+     "placement": "unsorted",
+     "warnings": [
+      "This generated document is linked to a contact (id 504), so there is no case folder to file into. It went to the unsorted generated-documents folder (/  Law Office/   Cases/  Unsorted Generated Documents)."
+     ]
+    }
+   ],
+   "provider_state": [
+    {
+     "tag": "folder",
+     "path": "/  Law Office"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads"
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/2026-06-01 Intake.pdf",
+     "size": 18
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Correspondence - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Docket - John Smith - Ch 13 - 26-44274"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Drafts - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted E-Signed Documents"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Form Submissions"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Generated Documents"
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Unsorted Generated Documents/2026-11-17 Discharge Notice.pdf",
+     "size": 15
+    },
+    {
+     "tag": "folder",
+     "path": "/Clients"
+    },
+    {
+     "tag": "folder",
+     "path": "/Clients/Brown, Bob"
+    },
+    {
+     "tag": "folder",
+     "path": "/Clients/Brown, Bob/26-50001-lsg - Bankruptcy: Ch 7"
+    },
+    {
+     "tag": "folder",
+     "path": "/Clients/Doe, Jane"
+    },
+    {
+     "tag": "folder",
+     "path": "/Clients/Doe, Jane/k9PotLd2 - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/clients/doe, jane/Notices"
+    },
+    {
+     "tag": "file",
+     "path": "/clients/doe, jane/Notices/2026-11-17 Discharge Notice.pdf",
+     "size": 15
+    },
+    {
+     "tag": "file",
+     "path": "/clients/doe, jane/Notices/2026-11-17 Second.pdf",
+     "size": 15
+    }
+   ]
   }
  }
 }

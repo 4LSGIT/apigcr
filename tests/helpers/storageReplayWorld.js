@@ -47,7 +47,7 @@ function baseFixture() {
       505: { contact_id: 505, contact_name: 'Legacy Signature Properties, Inc.', contact_lfm_name: 'Legacy Signature Properties, Inc.' },
     },
     primary: { hjSFMabb: 501, k9PotLd2: 502, aCtv7Num: 503, deadLnk1: 504, orgCase1: 505 },
-    settings: {},                       // app_settings rows; absent = the code default
+    settings: { storage_folders: JSON.stringify({ contact: null }) },   // app_settings rows; absent = the code default. D3c-2: the 4LSG-shaped world keeps NO contact folders (its live row says so; the case block falls to the code default)
     messages: {
       9001: {
         id: 9001, mailbox_id: 1, folder: 'INBOX', uid: 10, message_id: '<m1@example.com>', provider_id: null,
@@ -100,7 +100,7 @@ function makeDb(w) {
     if (/FROM case_relate cr JOIN contacts c ON/.test(s)) {
       const cid = w.primary[String(params[0])];
       const c = cid ? w.contacts[cid] : null;
-      return rows(c ? [{ contact_name: c.contact_name, contact_lfm_name: c.contact_lfm_name }] : []);
+      return rows(c ? [{ contact_id: c.contact_id, contact_name: c.contact_name, contact_lfm_name: c.contact_lfm_name }] : []);
     }
     if (/^SELECT .* FROM contacts WHERE contact_id = \?/.test(s)) {
       const c = w.contacts[Number(params[0])];
@@ -159,7 +159,7 @@ function makeDb(w) {
     if (/^UPDATE document_sync_roots/.test(s)) { effect('document_sync_roots.update', { sql: s.slice(0, 60), params }); return ok(1); }
     // D3b-2: the sync engine's reads are on the binding, aliased to the cache's column names
     if (/^SELECT entity_id AS case_id, external_id AS folder_external_id, path_lower FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND path_lower IS NOT NULL/.test(s)) {
-      return rows(Object.entries(w.entityFolders).filter(([, b]) => b.path_lower).map(([id, b]) => ({ case_id: id, folder_external_id: b.external_id ?? null, path_lower: b.path_lower })));
+      return rows(Object.entries(w.entityFolders).filter(([id, b]) => b.path_lower && !id.includes(':')).map(([id, b]) => ({ case_id: id, folder_external_id: b.external_id ?? null, path_lower: b.path_lower })));
     }
     if (/^SELECT path_lower FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id = \?/.test(s)) {
       const b = w.entityFolders[String(params[0])];
@@ -167,41 +167,43 @@ function makeDb(w) {
     }
     if (/^UPDATE case_folder_cache/.test(s)) { effect('case_folder_cache.update', { params }); return ok(1); }
     // ── entity_folders (D3b-1): modelled as state so a later read sees an earlier write, as MySQL would ──
+    // keyed by case_id for kind 'case' (the sync reads list them by case) and 'contact:<id>' for kind 'contact' (D3c-2)
+    const efKey = (kind, id) => (kind === 'case' ? String(id) : `${kind}:${id}`);
     if (/^SELECT external_id, path_lower, human_link FROM entity_folders WHERE entity_kind = \? AND entity_id = \? AND source = \?/.test(s)) {
-      const b = params[0] === 'case' ? w.entityFolders[String(params[1])] : null;
+      const b = w.entityFolders[efKey(params[0], params[1])];
       return rows(b ? [{ external_id: b.external_id ?? null, path_lower: b.path_lower ?? null, human_link: b.human_link ?? null }] : []);
     }
     if (/^SELECT path_lower, resolve_error FROM entity_folders WHERE entity_kind = \? AND entity_id = \? AND source = \?/.test(s)) {
-      const b = params[0] === 'case' ? w.entityFolders[String(params[1])] : null;
+      const b = w.entityFolders[efKey(params[0], params[1])];
       return rows(b ? [{ path_lower: b.path_lower ?? null, resolve_error: b.resolve_error ?? null }] : []);
     }
     if (/^SELECT \* FROM entity_folders WHERE entity_kind = \?/.test(s)) {
-      const b = params[0] === 'case' ? w.entityFolders[String(params[1])] : null;
-      return rows(b ? [{ entity_kind: 'case', entity_id: String(params[1]), source: 'dropbox', ...b }] : []);
+      const b = w.entityFolders[efKey(params[0], params[1])];
+      return rows(b ? [{ entity_kind: params[0], entity_id: String(params[1]), source: 'dropbox', ...b }] : []);
     }
     if (/^INSERT INTO entity_folders \(entity_kind, entity_id, source, external_id, path_lower, path_display, human_link, resolve_error, resolved_at\)/.test(s)) {   // setResolved
       const [kind, id, , ext, pl, pd, link] = params;
-      if (kind === 'case') { const b = w.entityFolders[String(id)] || {}; w.entityFolders[String(id)] = { external_id: ext ?? b.external_id ?? null, path_lower: pl ?? b.path_lower ?? null, path_display: pd ?? b.path_display ?? null, human_link: link ?? b.human_link ?? null, resolve_error: null }; }
+      { const k = efKey(kind, id); const b = w.entityFolders[k] || {}; w.entityFolders[k] = { external_id: ext ?? b.external_id ?? null, path_lower: pl ?? b.path_lower ?? null, path_display: pd ?? b.path_display ?? null, human_link: link ?? b.human_link ?? null, resolve_error: null }; }
       effect('entity_folders.upsert', { params }); return ok(1);
     }
     if (/^INSERT INTO entity_folders \(entity_kind, entity_id, source, human_link, resolve_error, resolved_at\)/.test(s)) {   // setError
       const [kind, id, , link, error] = params;
-      if (kind === 'case') { const b = w.entityFolders[String(id)] || {}; w.entityFolders[String(id)] = { ...b, human_link: link ?? b.human_link ?? null, resolve_error: error }; }
+      { const k = efKey(kind, id); const b = w.entityFolders[k] || {}; w.entityFolders[k] = { ...b, human_link: link ?? b.human_link ?? null, resolve_error: error }; }
       effect('entity_folders.upsert', { params }); return ok(1);
     }
     if (/^INSERT INTO entity_folders \(entity_kind, entity_id, source, human_link\)/.test(s)) {   // setHumanLink
       const [kind, id, , link] = params;
-      if (kind === 'case') { const b = w.entityFolders[String(id)]; w.entityFolders[String(id)] = b && b.human_link === link ? b : { external_id: null, path_lower: null, path_display: null, human_link: link, resolve_error: null }; }
+      { const k = efKey(kind, id); const b = w.entityFolders[k]; w.entityFolders[k] = b && b.human_link === link ? b : { external_id: null, path_lower: null, path_display: null, human_link: link, resolve_error: null }; }
       effect('entity_folders.upsert', { params }); return ok(1);
     }
     if (/^INSERT INTO entity_folders/.test(s)) { effect('entity_folders.upsert', { params }); return ok(1); }
     if (/^UPDATE entity_folders SET path_lower = \?, path_display = \?/.test(s)) {   // setPaths
       const [pl, pd, kind, id] = params;
-      if (kind === 'case' && w.entityFolders[String(id)]) Object.assign(w.entityFolders[String(id)], { path_lower: pl, path_display: pd, resolve_error: null });
+      if (w.entityFolders[efKey(kind, id)]) Object.assign(w.entityFolders[efKey(kind, id)], { path_lower: pl, path_display: pd, resolve_error: null });
       effect('entity_folders.update', { params }); return ok(1);
     }
     if (/^UPDATE entity_folders/.test(s)) { effect('entity_folders.update', { params }); return ok(1); }
-    if (/^DELETE FROM entity_folders/.test(s)) { if (params[0] === 'case') delete w.entityFolders[String(params[1])]; effect('entity_folders.delete', { params }); return ok(1); }
+    if (/^DELETE FROM entity_folders/.test(s)) { delete w.entityFolders[efKey(params[0], params[1])]; effect('entity_folders.delete', { params }); return ok(1); }
     if (/^INSERT INTO case_folder_cache/.test(s)) { effect('case_folder_cache.upsert', { params }); return ok(1); }
     if (/FROM document_sync_roots WHERE enabled = 1/.test(s)) return rows([]);
     // ── anything else ─────────────────────────────────────────────────────

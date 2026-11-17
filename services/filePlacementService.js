@@ -376,6 +376,35 @@ async function _preparePlacement(db, {
   }
 
   // ── contact / appt / unlinked: the bin root, loose file w/ identity ──────
+  // ── contact rung (D3c-2): a bound contact folder, created on first need ──
+  // storage_folders.contact null (4LSG, and every firm without the row) → the
+  // bin as ever, with no provider call. A failure past that point is a warning
+  // and the bin, like the case rung's.
+  if (linkType === 'contact') {
+    try {
+      const caseService = require('./caseService');   // deferred require (convention)
+      const cf = await caseService.ensureContactFolder(db, String(linkId));
+      if (cf.enabled && cf.shared_link) {
+        if (!cf.existed) {
+          warnings.push(`Contact "${linkId}" had no folder, so one was created automatically: ${cf.shared_link}`);
+          console.log(`${logTag} auto-created contact folder for ${linkId}: ${cf.path || '(pre-existing)'}`);
+        }
+        const contactFolder = await storage().resolveHumanLink(db, cf.shared_link, { expectFolder: true }, ctx);
+        const created = await storage().ensureFolder(db, {
+          path: storage().joinPath(contactFolder, subfolder),
+        }, ctx);
+        return {
+          credentialId, folderPath: created.path, filenamePrefix: '',
+          placement: 'contact', placementNote: null, warnings,
+          moveTaskAfterUpload: false,
+        };
+      }
+    } catch (err) {
+      warnings.push(`Could not file into the contact's folder (${err.message}); it went to the ${binLabel} instead.`);
+      console.warn(`${logTag} contact folder unusable for ${linkId}: ${err.message}`);
+    }
+  }
+
   const root = await _unsortedBasePath(db, binOpts);
   // A caller-named folder inside the bin (email attachments: one per day and
   // sender). One generated segment — sanitized, never a path the caller can
@@ -469,6 +498,42 @@ async function describePlacement(db, {
         `It was filed to the ${binLabel} instead (${folderPath}); ` +
         'move it into the correct case folder.',
     };
+  }
+
+  // ── contact rung (D3c-2), READ-ONLY: a bound folder is named; one the
+  // ladder would create is reported, never created here (as auto_create).
+  if (linkType === 'contact') {
+    let reason = null;
+    try {
+      const caseService = require('./caseService');   // deferred require (convention)
+      const templates = await caseService.contactFolderTemplates(db);
+      if (templates) {
+        const bound = await entityFolders().contactFolder(db, String(linkId));
+        if (bound.bound) {
+          const ctx = await storage().context(db);
+          const contactFolder = await storage().resolveHumanLink(db, bound.link, { expectFolder: true }, ctx);
+          return {
+            rung: 'contact', placement: 'contact', folder_path: storage().joinPath(contactFolder, subfolder), subfolder,
+            filename_prefix: '', task: null, note: null, case_dropbox: null, reason: null,
+          };
+        }
+        return {
+          rung: 'contact_create', placement: 'contact', folder_path: null, subfolder,
+          filename_prefix: '', task: null, case_dropbox: null, reason: null,
+          note: `Contact "${linkId}" has no folder yet, so one is created from the firm's contact-folder template and bound to the contact.`,
+        };
+      }
+    } catch (err) {
+      reason = `Could not open the contact's folder: ${err.message}`;
+    }
+    if (reason) {
+      const root = await _unsortedBasePath(db, binOpts);
+      return {
+        rung: 'bin', placement: 'unsorted', folder_path: root, subfolder: null,
+        filename_prefix: unsortedFilenamePrefix || '', task: null, case_dropbox: null, reason,
+        note: `This ${artifactLabel} is linked to a contact (id ${linkId}) whose folder could not be opened — ${reason} It goes to the ${binLabel} (${root}).`,
+      };
+    }
   }
 
   const root = await _unsortedBasePath(db, binOpts);
