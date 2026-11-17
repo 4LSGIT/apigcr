@@ -11,7 +11,7 @@ A hook is a recipe with four parts:
 3. **Transform** — reshape the incoming payload into a canonical shape we control
 4. **Targets** — what to do with the result (one or many)
 
-Each hook has a unique slug. The receiver URL is `/hooks/<slug>`.
+Each hook has a unique slug. The receiver URL is `/hooks/<slug>`. The slug is the endpoint, so for a hook without sender auth it should be hard to guess: the **Generate** button beside the slug box appends a random 10-character ending to whatever you typed (`quo-call-` → `quo-call-x7k2m9pq3f`, a `-` is added if the prefix lacks one), fills an empty box with a bare random slug, and re-rolls the ending on a second press.
 
 You'd reach for a hook when:
 - An outside service should kick off internal automation

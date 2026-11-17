@@ -1732,6 +1732,7 @@ tests/hookTransformFailure.mysql.test.js
 tests/hookTransformFailure.test.js
 tests/hookTransforms.test.js
 tests/hooksGate.test.js
+tests/hooksSlugGenerate.test.js
 tests/iconPickerS6a.test.js
 tests/impersonation.test.js
 tests/ingestCodeGate.routes.test.js

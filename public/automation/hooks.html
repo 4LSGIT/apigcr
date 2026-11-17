@@ -207,8 +207,10 @@
       font-size: 12px;
     }
     .fg .hint { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
-    .fg .hint.slug-url-row { display: flex; align-items: center; gap: 6px; }
-    .slug-url-row .slug-url { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+    /* Wraps: in a narrow Slug column (two-up .fg-row at phone widths) the two
+       fixed-width buttons drop under the URL instead of widening the editor. */
+    .fg .hint.slug-url-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .slug-url-row .slug-url { flex: 1 1 120px; min-width: 0; overflow-wrap: anywhere; }
     .slug-url-row .btn { flex: 0 0 auto; padding: 2px 8px; font-size: 11px; }
     .slug-url-row .btn:disabled { opacity: .5; cursor: default; }
     .fg-row { display: flex; gap: 12px; }
@@ -415,9 +417,13 @@
             </div>
             <div class="fg">
               <label>Slug</label>
-              <input id="f-slug" placeholder="e.g. calendly-new-lead" class="mono">
+              <input id="f-slug" placeholder="e.g. calendly-new-lead" class="mono" maxlength="100">
               <div class="hint slug-url-row">
                 <span id="slug-preview" class="mono slug-url">…</span>
+                <button type="button" class="btn btn-outline" id="slug-gen-btn"
+                        onclick="window.hookGenerateSlug()" title="Append a random, hard-to-guess ending (or fill an empty slug)">
+                  <i class="fa-solid fa-rotate"></i> Generate
+                </button>
                 <button type="button" class="btn btn-outline" id="slug-copy-btn"
                         onclick="window.hookCopyUrl(this)" title="Copy hook URL" disabled>
                   <i class="fa-solid fa-copy"></i> Copy
@@ -891,6 +897,43 @@ window.togglePanelLeft = togglePanelLeft;
     const slug = E('f-slug').value.trim();
     E('slug-preview').textContent = hookUrlFor(slug || '…');
     E('slug-copy-btn').disabled = !slug;
+  }
+
+  // The slug IS the inbound endpoint (/hooks/:slug): with auth 'none' a
+  // guessable slug is a forgery risk, so the generated ending is a CSPRNG
+  // draw, not Math.random. 10 chars of [a-z0-9] (~52 bits); rejection
+  // sampling keeps the draw unbiased (256 is not a multiple of 36).
+  // Lowercase only — the column is case-insensitive (utf8mb4_general_ci).
+  const SLUG_TAIL_LEN = 10;
+  function randomSlugTail() {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    const limit = 256 - (256 % chars.length);   // 252
+    let out = '';
+    while (out.length < SLUG_TAIL_LEN) {
+      const buf = new Uint8Array(32);
+      crypto.getRandomValues(buf);
+      for (const b of buf) {
+        if (b < limit && out.length < SLUG_TAIL_LEN) out += chars[b % chars.length];
+      }
+    }
+    return out;
+  }
+
+  // Generate APPENDS a random ending to what is typed (Fred, 2026-11-17:
+  // type `quo-call-`, press Generate, get `quo-call-x7k2m9pq3f`), adding a
+  // `-` when the prefix doesn't already end in a separator; an empty box
+  // gets a bare random slug. Pressing it again re-rolls the ending instead
+  // of stacking a second one: the last generated value remembers its prefix.
+  let lastGeneratedSlug = null;   // { prefix, value }
+  function generateSlug() {
+    const input = E('f-slug');
+    const current = input.value.trim();
+    let prefix = (lastGeneratedSlug && current === lastGeneratedSlug.value) ? lastGeneratedSlug.prefix : current;
+    if (prefix && !/[-_]$/.test(prefix)) prefix += '-';
+    const value = prefix + randomSlugTail();
+    lastGeneratedSlug = { prefix, value };
+    input.value = value;
+    renderSlugPreview();
   }
 
   function hookCopyUrl(btn) {
@@ -3210,6 +3253,7 @@ async function runLiveTest() {
 
   window.hookSwitchTab            = hookSwitchTab;
   window.hookCopyUrl              = hookCopyUrl;
+  window.hookGenerateSlug         = generateSlug;
   window.hookToggleAuthFields     = toggleAuthFields;
   window.hookGenerateApiKey       = generateApiKey;
   window.hookGenerateHmacSecret   = generateHmacSecret;
