@@ -24,9 +24,17 @@ on a phone.
 ## Creating a redirect
 
 1. Click **+ New** (or the equivalent add button).
-2. **Slug** — the short, memorable end of the URL (e.g. `smith-retainer`). Click
-   **Randomize** if you just want a random one. Allowed characters: letters,
-   numbers, hyphens, and underscores, up to 64 characters.
+2. **Slug** — the short, memorable end of the URL (e.g. `smith-retainer`).
+   **Randomize** adds random words after whatever you typed, until the slug has
+   five parts — but always at least three random words, within 64 characters:
+   - nothing typed → `blue-potato-hammer-meld-tulip`
+   - `smith` → `smith-blue-potato-hammer-tulip`
+   - `smith-tax` → `smith-tax-blue-potato-hammer`
+
+   Click it again for different words on the same start. If what you typed is
+   too long to leave room for three words, it says so and changes nothing. The
+   result is only a suggestion — edit it however you like. Allowed characters:
+   letters, numbers, hyphens, and underscores, up to 64 characters.
 3. **Destination URL** — the real link you're shortening (e.g. a Clio payment
    link). Must start with `http://` or `https://`.
 4. **Label** — an optional note to yourself so you can find it later (e.g.
@@ -67,6 +75,15 @@ error. So an old or mistyped link still looks professional.
 Two redirects can't share a slug. If you try to reuse one, the system tells you
 it's taken. (This is case-insensitive too — `Payment` and `payment` count as
 the same slug.)
+
+### Random words keep a private link private
+
+Anyone who guesses a slug lands on its destination. For a link to something
+private — a Clio share link, a client's documents — the random words are the
+protection: three or more can't realistically be guessed. A name on its own,
+like `smith-tax`, can be guessed by anyone who knows the client, so use
+**Randomize** for anything private. For public pages (a class signup, a
+holiday calendar) a plain memorable slug is fine.
 
 ### Don't put anything secret in the slug
 

@@ -383,6 +383,7 @@ public/js/mascot/skins/ufo.js
 public/js/optoutAck.js
 public/js/phoneSendable.js
 public/js/reportCharts.js
+public/js/slugPhrase.js
 public/js/vendor/purify-3.4.16.min.js
 public/js/vendor/sweetalert2-11.26.25.all.min.js
 public/js/versionGuard.js
@@ -1969,6 +1970,7 @@ tests/sharedValues.test.js
 tests/sharedValuesHistoryMigrate.test.js
 tests/sharedValuesMigrate.test.js
 tests/sharedValuesPage.test.js
+tests/slugPhrase.test.js
 tests/smtpAdapter.deliveryInfo.test.js
 tests/sqlGuard.secretTables.test.js
 tests/ssnModifiers.test.js

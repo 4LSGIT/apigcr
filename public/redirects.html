@@ -6,6 +6,7 @@
 <title>Redirects</title>
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
+<script src="/js/slugPhrase.js"></script>
 <style>
   /* Palette matches connections.html / dbConsole.html — admin tools share this. */
   *, *::before, *::after { box-sizing: border-box; }
@@ -150,8 +151,8 @@
     <div class="field">
       <label for="f-slug">Slug</label>
       <div class="slug-row">
-        <input type="text" id="f-slug" placeholder="smith-retainer" autocomplete="off" spellcheck="false">
-        <button class="btn small" id="f-randomize" type="button" title="Generate a random slug">Randomize</button>
+        <input type="text" id="f-slug" placeholder="smith-retainer" autocomplete="off" spellcheck="false" maxlength="64">
+        <button class="btn small" id="f-randomize" type="button" title="Add random words after what you typed (or fill an empty slug)">Randomize</button>
       </div>
       <div class="hint">Letters, numbers, <code>_</code> and <code>-</code> only. Case-insensitive when visited.</div>
     </div>
@@ -244,11 +245,20 @@ async function copyLink(slug) {
   }
 }
 
-function randomSlug() {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let s = '';
-  for (let i = 0; i < 7; i++) s += chars[Math.floor(Math.random() * chars.length)];
-  return s;
+// Randomize appends random WORDS to what is typed (public/js/slugPhrase.js:
+// up to five parts, never fewer than three random words, ≤ 64 chars); a second
+// press re-rolls the words on the same prefix. The words are what keep a link
+// to a private page unguessable, so a prefix too long for three is refused
+// rather than given a weaker tail. The result is a suggestion — edit freely.
+const rollSlug = window.YCSlugPhrase.createRoller();
+function randomizeSlug() {
+  const r = rollSlug(E('f-slug').value);
+  if (!r.ok) {
+    showErr(`No room for random words: shorten the slug to ${r.maxTyped} characters or fewer, or type the whole slug yourself.`);
+    return;
+  }
+  hideErr();
+  E('f-slug').value = r.value;
 }
 
 // ── List render ─────────────────────────────────────────────
@@ -425,7 +435,7 @@ async function deleteRedirect(id, slug) {
 // ── Wire modal controls ─────────────────────────────────────
 E('f-cancel').addEventListener('click', closeEditor);
 E('f-save').addEventListener('click', saveRedirect);
-E('f-randomize').addEventListener('click', () => { E('f-slug').value = randomSlug(); });
+E('f-randomize').addEventListener('click', randomizeSlug);
 E('modal-backdrop').addEventListener('click', e => {
   if (e.target === E('modal-backdrop')) closeEditor();
 });
