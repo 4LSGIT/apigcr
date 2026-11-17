@@ -74,7 +74,7 @@
  *   move(db, from, toPath, { autorename? }) — autorename lets the provider pick
  *       "name (1)" on a collision instead of failing (the refile's contract); a
  *       boolean is sent as given (the automation functions send false explicitly).
- *   move / rename / remove take `from` as an externalId, a path, or { humanLink }
+ *   download / move / rename / remove take `from` as an externalId, a path, or { humanLink }
  *       (D1f: the automation functions address a case folder by the link in
  *       cases.case_dropbox until the binding row exists, D3). rename by a path or
  *       a human link delegates to the provider's rename; only an "id:" handle takes
@@ -240,8 +240,9 @@ const dropboxProvider = {
     return { url: r.link, metadata: r.metadata || null };
   },
 
-  async download(db, externalId, opts = {}) {
-    return dropbox.downloadFile(db, { path: externalId, ..._dbxOpts(opts) });
+  /** Bytes by externalId / path, or from { humanLink } (D1g: parse_pdf / query_ai read a file by its link). */
+  async download(db, from, opts = {}) {
+    return dropbox.downloadFile(db, { ..._from(from), ..._dbxOpts(opts) });
   },
 
   async move(db, from, toPath, opts = {}) {

@@ -7412,7 +7412,7 @@ async function normalizeDocumentGenerate(db, value, evidence, currentUserId, use
     const cached = Array.isArray(cacheRows) && cacheRows[0] && cacheRows[0].path_lower ? String(cacheRows[0].path_lower) : null;
     if (cached && caseFolderSync()._underRoot(String(plan.folder_path).toLowerCase(), cached)) relation = require('./documentService').RELATION_PATH;
   }
-  const predictedPath = plan.folder_path ? caseFolderDropbox().joinPath(plan.folder_path, `${plan.filename_prefix}${fileName}`) : null;
+  const predictedPath = plan.folder_path ? caseFolderStorage().joinPath(plan.folder_path, `${plan.filename_prefix}${fileName}`) : null;
   const warnings = ['WRITES A FILE: applying renders the template and WRITES a new PDF into Dropbox, registers it and links it — there is no undo button (the file is deleted in Dropbox; the sync then marks the row deleted after its grace window).'];
   const effects = [];
   const destination = plan.rung === 'case'
@@ -7487,7 +7487,7 @@ async function normalizeDocumentGenerate(db, value, evidence, currentUserId, use
 }
 
 async function normalizeDocumentRegister(db, value, evidence, currentUserId) {
-  const sync = caseFolderSync(); const dropbox = caseFolderDropbox();
+  const sync = caseFolderSync(); const storage = caseFolderStorage();
   const extId = typeof value.external_id === 'string' ? value.external_id.trim() : '';
   if (!extId || extId.length > 191 || CASE_DOCKET_CONTROL.test(extId)) {
     throw documentError('A register card needs "external_id": the file\'s Dropbox id exactly as the entry row of a document.folder read lists it (its entry_id)');
@@ -7501,7 +7501,7 @@ async function normalizeDocumentRegister(db, value, evidence, currentUserId) {
   // Re-stat, the route's own first step (provider.stat); then the registry.
   let meta = null;
   try { meta = await documentSources().get('dropbox').stat(db, extId); }
-  catch (e) { if (!dropbox.isPathNotFoundError(e)) throw e; }
+  catch (e) { if (!storage.isNotFound(e)) throw e; }
   if (!meta) throw documentError(`"${entry.name}" (${extId}) is no longer in Dropbox — it was deleted since the folder was read (a moved or renamed file keeps its id). Read the folder again`);
   if (meta['.tag'] === 'folder') throw documentError('register targets files, not folders');
   const existing = await require('./documentService').getByExternal(db, 'dropbox', extId);
@@ -7553,7 +7553,7 @@ async function normalizeDocumentRegister(db, value, evidence, currentUserId) {
 }
 
 async function normalizeDocumentSyncRootAdd(db, value, evidence) {
-  const sync = caseFolderSync(); const dropbox = caseFolderDropbox();
+  const sync = caseFolderSync(); const storage = caseFolderStorage();
   if (typeof value.path !== 'string' || !value.path.trim()) {
     throw syncRootError('A sync root card needs "path": the full Dropbox folder path, exactly as the folder row of a document.folder read of it lists it');
   }
@@ -7588,8 +7588,8 @@ async function normalizeDocumentSyncRootAdd(db, value, evidence) {
       : `this path CONTAINS root ${conflict.row.id} ("${conflict.row.path}") — every file under that root would be synced twice. Disable it first, or pick a narrower path`);
   }
   let exists = true; let meta = null;
-  try { meta = await dropbox.getMetadata(db, { path }); }
-  catch (e) { if (dropbox.isPathNotFoundError(e)) exists = false; else throw e; }
+  try { meta = await storage.stat(db, path); }
+  catch (e) { if (storage.isNotFound(e)) exists = false; else throw e; }
   if (meta && meta['.tag'] === 'file') throw syncRootError('that path is a file — a sync root must be a folder');
   const on = await sync.isSyncEnabled(db);
   const listedFiles = Number(head.listed_files) || 0; const listedFolders = Number(head.listed_folders) || 0;
@@ -11244,7 +11244,7 @@ async function normalizeMailAttachmentsAction(db, value, evidence, { currentUser
 function caseFolderError(message) { return httpError(422, message); }
 
 function caseFolderSync() { return require('./documentSyncService'); } // lazy (convention)
-function caseFolderDropbox() { return require('./dropboxService'); } // lazy (convention)
+function caseFolderStorage() { return require('./documentSourceService').get('dropbox'); } // lazy (convention); D1g: the seam, not the provider module
 
 // The cases whose SYNC link (relation 'path') the active files under a folder
 // already carry — the files applyRelink's add-only step 7 skips. `like` is the
@@ -11272,8 +11272,8 @@ async function caseFolderHeldBy(db, like) {
 // (_loadFolderOwners — the 409 guard's own index). `selfCaseId` is left out
 // of the owner / nesting answers (a case's own folder is not another case's).
 async function caseFolderFacts(db, pathRaw, selfCaseId = null) {
-  const sync = caseFolderSync(); const dropbox = caseFolderDropbox();
-  const path = dropbox.normalizePath(String(pathRaw == null ? '' : pathRaw));
+  const sync = caseFolderSync(); const storage = caseFolderStorage();
+  const path = storage.joinPath(String(pathRaw == null ? '' : pathRaw));
   const lower = String(path).toLowerCase();
   const out = {
     path, path_lower: lower, path_display: null, exists: false, is_folder: false, root: null,
@@ -11288,14 +11288,14 @@ async function caseFolderFacts(db, pathRaw, selfCaseId = null) {
   const roots = (await sync.listRoots(db)).filter((r) => r && r.enabled).map((r) => String(r.path).toLowerCase());
   out.root = roots.find((r) => lower !== r && sync._underRoot(lower, r)) || null;
   let meta = null;
-  try { meta = await dropbox.getMetadata(db, { path }); }
-  catch (e) { if (!dropbox.isPathNotFoundError(e)) throw e; }
+  try { meta = await storage.stat(db, path); }
+  catch (e) { if (!storage.isNotFound(e)) throw e; }
   if (meta) {
     out.exists = true;
     out.is_folder = meta['.tag'] === 'folder';
     out.path_display = meta.path_display ? String(meta.path_display) : null;
     if (out.is_folder) {
-      const list = await dropbox.listFolder(db, { path, recursive: false, maxEntries: DOCUMENT_FOLDER_LIST_CAP });
+      const list = await storage.list(db, { path }, { recursive: false, max: DOCUMENT_FOLDER_LIST_CAP });
       let newest = 0;
       for (const e of (list && Array.isArray(list.entries) ? list.entries : [])) {
         const tag = e && e['.tag'];

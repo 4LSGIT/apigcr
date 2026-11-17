@@ -69,6 +69,12 @@ const documents = require('../services/documentService');
 const dropbox   = require('../services/dropboxService');
 const sources   = require('../services/documentSourceService');
 const ingest    = require('../services/documentIngestService');
+// storage-seam D1g: registerLandedInFolder lists the folder through the provider
+// seam. The REAL provider's context / resolveHumanLink / joinPath / list, bound
+// to the dropboxService mock above, so the assertions below keep pinning the
+// Dropbox-level calls (resolveLocation, listFolder's path + cap) unchanged.
+const realProvider = jest.requireActual('../services/documentSourceService').dropboxProvider;
+const seam = { context: realProvider.context, resolveHumanLink: realProvider.resolveHumanLink, joinPath: realProvider.joinPath, list: realProvider.list };
 
 /** A db whose case_folder_cache answer is scripted per case id. */
 function mkDb(cache = {}, opts = {}) {
@@ -95,6 +101,7 @@ function fileRow(over = {}) {
 }
 
 beforeEach(() => {
+  sources.get.mockReturnValue(seam);
   jest.clearAllMocks();
   documents.upsertFromEntry.mockResolvedValue({ row: fileRow(), created: true, changes: {} });
   documents.link.mockResolvedValue({ linked: true, created: true, row: fileRow() });

@@ -160,7 +160,7 @@
     }
    ]
   },
-  "2 placement: no case folder \u2192 ensureCaseDropboxFolder (potential, active, org contact)": {
+  "2 placement: no case folder → ensureCaseDropboxFolder (potential, active, org contact)": {
    "calls": [
     {
      "fn": "_resolveCredential",
@@ -670,7 +670,7 @@
     }
    ]
   },
-  "3 placement: dead case link \u2192 unsorted per-case folder + move task": {
+  "3 placement: dead case link → unsorted per-case folder + move task": {
    "calls": [
     {
      "fn": "_resolveCredential",
@@ -811,7 +811,7 @@
     },
     {
      "kind": "task.create",
-     "desc": "The generated document could not be filed to the case folder \u2014 Could not open the case's Dropbox folder: dropbox shared_link/not_found/.. (409) It was filed to the unsorted generated-documents folder instead (/  Law Office/   Cases/  Unsorted Generated Documents/deadLnk1 - Lee, Ann); move it into the correct case folder. File: /  Law Office/   Cases/  Unsorted Generated Documents/deadLnk1 - Lee, Ann/2026-11-17 Discharge Notice.pdf",
+     "desc": "The generated document could not be filed to the case folder — Could not open the case's Dropbox folder: dropbox shared_link/not_found/.. (409) It was filed to the unsorted generated-documents folder instead (/  Law Office/   Cases/  Unsorted Generated Documents/deadLnk1 - Lee, Ann); move it into the correct case folder. File: /  Law Office/   Cases/  Unsorted Generated Documents/deadLnk1 - Lee, Ann/2026-11-17 Discharge Notice.pdf",
      "from": 0,
      "link_id": "deadLnk1",
      "link_type": "case",
@@ -871,7 +871,7 @@
     },
     {
      "kind": "task.create",
-     "desc": "The generated document could not be filed to the case folder \u2014 Case \"noSuchCs\" was not found. It was filed to the unsorted generated-documents folder instead (/  Law Office/   Cases/  Unsorted Generated Documents/noSuchCs); move it into the correct case folder. File: /  Law Office/   Cases/  Unsorted Generated Documents/noSuchCs/2026-11-17 Discharge Notice.pdf",
+     "desc": "The generated document could not be filed to the case folder — Case \"noSuchCs\" was not found. It was filed to the unsorted generated-documents folder instead (/  Law Office/   Cases/  Unsorted Generated Documents/noSuchCs); move it into the correct case folder. File: /  Law Office/   Cases/  Unsorted Generated Documents/noSuchCs/2026-11-17 Discharge Notice.pdf",
      "from": 0,
      "link_id": "noSuchCs",
      "link_type": "case",
@@ -5299,6 +5299,15 @@
        "wait": false
       }
      ]
+    },
+    {
+     "fn": "downloadFile",
+     "args": [
+      {
+       "credentialId": 8,
+       "sharedLink": "https://www.dropbox.com/scl/fo/fake0003?dl=0"
+      }
+     ]
     }
    ],
    "effects": [
@@ -5822,6 +5831,10 @@
      "status": "in_progress"
     },
     {
+     "kind": "d1g.download",
+     "bytes": 16
+    },
+    {
      "kind": "d1a.declarations",
      "capabilities": {
       "changeNotify": false,
@@ -5943,6 +5956,256 @@
      "tag": "file",
      "path": "/  Law Office/   Cases/  Unsorted Client Uploads/ loose.pdf",
      "size": 17
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted E-Signed Documents"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Form Submissions"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Generated Documents"
+    }
+   ]
+  },
+  "15 documentIngestService.registerLandedInFolder: by folder path and by human link, the landing window": {
+   "calls": [
+    {
+     "fn": "_resolveCredential",
+     "args": [
+      {}
+     ]
+    },
+    {
+     "fn": "resolveLocation",
+     "args": [
+      8,
+      {
+       "expectFolder": true,
+       "sharedLink": "https://www.dropbox.com/scl/fo/fake0001?dl=0"
+      }
+     ]
+    },
+    {
+     "fn": "listFolder",
+     "args": [
+      {
+       "credentialId": 8,
+       "maxEntries": 200,
+       "path": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/Client Uploads"
+      }
+     ]
+    },
+    {
+     "fn": "_resolveCredential",
+     "args": [
+      {
+       "credentialId": 8
+      }
+     ]
+    },
+    {
+     "fn": "listFolder",
+     "args": [
+      {
+       "credentialId": 8,
+       "maxEntries": 200,
+       "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads"
+      }
+     ]
+    },
+    {
+     "fn": "_resolveCredential",
+     "args": [
+      {}
+     ]
+    },
+    {
+     "fn": "resolveLocation",
+     "args": [
+      8,
+      {
+       "expectFolder": true,
+       "sharedLink": "https://www.dropbox.com/scl/fo/gone0000?dl=0"
+      }
+     ]
+    }
+   ],
+   "effects": [
+    {
+     "kind": "documents.upsert",
+     "changes": {},
+     "created": true,
+     "emit": true,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:01Z",
+      "content_hash": "c301a1eb81f95d2bd16f7eaec1c78ee685d8a5ddcaa6092dc964c4b22cb0dc2f",
+      "id": "id:f0001",
+      "is_downloadable": true,
+      "name": "2026-06-01 Intake.pdf",
+      "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/2026-06-01 Intake.pdf",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client uploads/2026-06-01 intake.pdf",
+      "rev": "rev000001",
+      "server_modified": "2026-11-17T12:00:01Z",
+      "size": 18
+     },
+     "eventSource": "upload",
+     "source": "dropbox"
+    },
+    {
+     "kind": "document_links.link",
+     "documentId": 101,
+     "eventSource": "upload",
+     "linkId": "hjSFMabb",
+     "linkType": "case",
+     "relation": "upload"
+    },
+    {
+     "kind": "documents.upsert",
+     "changes": {},
+     "created": true,
+     "emit": true,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:03Z",
+      "content_hash": "a750b832e7e43df612cb87dfd74e68ec5321b859a45fb5c08e9610deea096cbd",
+      "id": "id:f0003",
+      "is_downloadable": true,
+      "name": "Lease.pdf",
+      "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/Lease.pdf",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client uploads/lease.pdf",
+      "rev": "rev000003",
+      "server_modified": "2026-11-17T12:00:03Z",
+      "size": 10
+     },
+     "eventSource": "upload",
+     "source": "dropbox"
+    },
+    {
+     "kind": "document_links.link",
+     "documentId": 102,
+     "eventSource": "upload",
+     "linkId": "hjSFMabb",
+     "linkType": "case",
+     "relation": "upload"
+    },
+    {
+     "kind": "documents.upsert",
+     "changes": {},
+     "created": true,
+     "emit": true,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:02Z",
+      "content_hash": "aa7aa52888f0eb5dd74cc467f144a49a729da5ce63e663c2f056ea8717b85dfc",
+      "id": "id:f0002",
+      "is_downloadable": true,
+      "name": "W2.pdf",
+      "path_display": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/W2.pdf",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/client uploads/w2.pdf",
+      "rev": "rev000002",
+      "server_modified": "2026-11-17T12:00:02Z",
+      "size": 7
+     },
+     "eventSource": "upload",
+     "source": "dropbox"
+    },
+    {
+     "kind": "document_links.link",
+     "documentId": 103,
+     "eventSource": "upload",
+     "linkId": "hjSFMabb",
+     "linkType": "case",
+     "relation": "upload"
+    },
+    {
+     "kind": "landed",
+     "a": {
+      "registered": 3,
+      "scanned": 3
+     },
+     "b": {
+      "registered": 0,
+      "scanned": 3
+     },
+     "c": {
+      "documents": [],
+      "registered": 0,
+      "scanned": 0
+     }
+    }
+   ],
+   "provider_state": [
+    {
+     "tag": "folder",
+     "path": "/  Law Office"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads"
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/2026-06-01 Intake.pdf",
+     "size": 18
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/Lease.pdf",
+     "size": 10
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/W2.pdf",
+     "size": 7
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Correspondence - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Docket - John Smith - Ch 13 - 26-44274"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Drafts - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads"
     },
     {
      "tag": "folder",

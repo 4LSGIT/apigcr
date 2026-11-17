@@ -385,7 +385,21 @@ scenario('13 documentSourceService D1a: upload, ensureFolder, directUpload, list
   fake.seed({ saveUrlBodies: { 'https://court.example/doc1/0007.pdf': PDF('court7') } });
   e('d1f.importUrl', await p.importUrl(db, { humanLink: link, name: ' Order.pdf', subfolder: 'court docs' }, 'https://court.example/doc1/0007.pdf', { wait: true, timeoutMs: 90000 }));
   e('d1f.importUrl', await p.importUrl(db, { path: `${W.BINS.uploads}/ slow.pdf` }, 'https://example.invalid/slow.pdf', { wait: false }));
+  e('d1g.download', { bytes: (await p.download(db, { humanLink: fake.linkFor(`${W.CASE_A_FOLDER}/Forms/Form 121.pdf`) }, { credentialId: 8 })).buffer.length });
   e('d1a.declarations', { capabilities: p.capabilities, nameRules: { ...p.nameRules, validateName: undefined } });
+});
+
+// ── 15. D1g readers: registering what a browser landed in a folder (docReq / portal) ──
+scenario('15 documentIngestService.registerLandedInFolder: by folder path and by human link, the landing window', async ({ db, world }) => {
+  const ingest = jest.requireActual('../services/documentIngestService');
+  fake.simulateUpload(`${W.CASE_A_FOLDER}/Client Uploads/W2.pdf`, '%PDF w2');
+  fake.simulateUpload(`${W.CASE_A_FOLDER}/Client Uploads/Lease.pdf`, '%PDF lease');
+  const link = world.cases.hjSFMabb.case_dropbox;
+  // the fake's clock sits at 12:00Z; the test's now is 15:00Z, so the default 2 h window sees nothing — once with a 24 h window, once with the default
+  const a = await ingest.registerLandedInFolder(db, { sharedLink: link, subfolder: 'Client Uploads', links: [{ type: 'case', id: 'hjSFMabb' }], createdBy: 6, eventSource: 'upload', sinceMs: 24 * 3600 * 1000 });
+  const b = await ingest.registerLandedInFolder(db, { folderPath: `${W.CASE_A_FOLDER}/Client Uploads`, links: [{ type: 'case', id: 'hjSFMabb' }], credentialId: 8 });
+  const c = await ingest.registerLandedInFolder(db, { sharedLink: 'https://www.dropbox.com/scl/fo/gone0000?dl=0', links: [] });
+  world.effects.push({ kind: 'landed', ...W.scrub({ a: { scanned: a.scanned, registered: a.registered }, b: { scanned: b.scanned, registered: b.registered }, c }) });
 });
 
 // ── coverage: every provider function a writer can reach is recorded somewhere

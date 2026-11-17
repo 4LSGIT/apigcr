@@ -1975,6 +1975,7 @@ tests/ssnModifiers.test.js
 tests/startupInit.maintenance.test.js
 tests/storageConfigDump.test.js
 tests/storageDefaults.test.js
+tests/storageReaders.test.js
 tests/storageReplay.mysql.test.js
 tests/storageReplay.routes.test.js
 tests/storageReplay.test.js

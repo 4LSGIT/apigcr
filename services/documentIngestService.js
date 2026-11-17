@@ -334,19 +334,18 @@ async function registerLandedInFolder(db, o = {}) {
   const out = { registered: 0, scanned: 0, documents: [] };
 
   try {
-    const dropbox = require('./dropboxService');           // deferred (convention)
-    const credId  = await dropbox._resolveCredential(db, credentialId != null ? { credentialId } : {});
+    const storage = require('./documentSourceService').get(SOURCE);   // deferred (convention); D1g: the seam
+    const ctx = await storage.context(db, credentialId != null ? { credentialId } : {});
+    const credId = ctx.credentialId;
 
     let listPath = folderPath;
     if (listPath == null && sharedLink) {
-      listPath = await dropbox.resolveLocation(db, credId, { sharedLink, expectFolder: true });
+      listPath = await storage.resolveHumanLink(db, sharedLink, { expectFolder: true }, ctx);
     }
     if (listPath == null) throw new Error('registerLandedInFolder requires folderPath or sharedLink');
-    if (subfolder) listPath = dropbox.joinPath(listPath, subfolder);
+    if (subfolder) listPath = storage.joinPath(listPath, subfolder);
 
-    const listing = await dropbox.listFolder(db, {
-      path: listPath, credentialId: credId, maxEntries: LANDING_MAX_ENTRIES,
-    });
+    const listing = await storage.list(db, { path: listPath }, { max: LANDING_MAX_ENTRIES }, ctx);
 
     const cutoff = Date.now() - Math.max(0, Number(sinceMs) || 0);
     const entries = (listing && listing.entries) || [];

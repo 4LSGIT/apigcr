@@ -402,6 +402,17 @@ describe('dropbox provider — D1a writes and folders', () => {
     await expect(p().remove(DB, '')).rejects.toThrow('a source is required');
   });
 
+  test('D1g: download by a human link or a path delegates the resolution to dropboxService; a handle still goes in the path slot', async () => {
+    const link = 'https://www.dropbox.com/scl/fo/a?dl=0';
+    await p().download(DB, { humanLink: link }, { credentialId: 8 });
+    expect(dropbox.downloadFile).toHaveBeenLastCalledWith(DB, { sharedLink: link, credentialId: 8 });
+    await p().download(DB, '/  Active/ Case A/x.pdf');
+    expect(dropbox.downloadFile).toHaveBeenLastCalledWith(DB, { path: '/  Active/ Case A/x.pdf' });
+    await p().download(DB, FID);
+    expect(dropbox.downloadFile).toHaveBeenLastCalledWith(DB, { path: FID });
+    await expect(p().download(DB, { nope: 1 })).rejects.toThrow('needs humanLink');
+  });
+
   test('D1f: importUrl by path or inside a human link; wait and timeout only when given', async () => {
     const link = 'https://www.dropbox.com/scl/fo/a?dl=0';
     const r = await p().importUrl(DB, { humanLink: link, name: ' x.pdf', subfolder: 'court docs' }, 'https://court.example/1.pdf', { wait: true, timeoutMs: 90000 });
