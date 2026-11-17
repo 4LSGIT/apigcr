@@ -322,7 +322,7 @@ scenario('10 internal functions: storage_rename, storage_delete, storage_list by
 // ── 11. the sync engine's tick: backfill, then incremental with a move + delete
 scenario('11 sync engine: backfill page, incremental page with a moved file and a deletion, folder-cache refresh', async ({ db, world }) => {
   const aFolder = fake.node(W.CASE_A_FOLDER);
-  world.caseFolderCache.push({ case_id: 'hjSFMabb', folder_external_id: aFolder.id, path_lower: aFolder.path_lower });
+  Object.assign(world.entityFolders.hjSFMabb, { external_id: aFolder.id, path_lower: aFolder.path_lower, path_display: aFolder.path_display });   // D3b-2: the engine reads the binding (a resolved one, as the sweep leaves it)
   const file = (id, p, size) => ({ '.tag': 'file', id, name: p.slice(p.lastIndexOf('/') + 1), path_display: p, path_lower: p.toLowerCase(), size, rev: `r${id}`, content_hash: `h${id}`, server_modified: '2026-11-10T10:00:00Z' });
   fake.seed({ pages: [
     [{ '.tag': 'folder', id: aFolder.id, name: aFolder.name, path_display: aFolder.path_display, path_lower: aFolder.path_lower },

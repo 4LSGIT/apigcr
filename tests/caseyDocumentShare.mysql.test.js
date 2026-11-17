@@ -71,7 +71,7 @@ const URL_ = process.env.YC_TEST_MYSQL_URL;
 const d = URL_ ? describe : describe.skip;
 // Production SESSION sql_mode (verified live 2026-09-25; CLAUDE.md "SQL mode is relaxed").
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
-const TABLES = ['cases', 'contacts', 'case_relate', 'documents', 'document_links', 'case_folder_cache', 'app_settings'];
+const TABLES = ['cases', 'contacts', 'case_relate', 'documents', 'document_links', 'case_folder_cache', 'entity_folders', 'app_settings'];   // entity_folders: the sync engine and Casey read the binding (D3b-2)
 
 function schemaFor(tables) {
   const lines = fs.readFileSync(path.join(__dirname, '..', 'ref', 'database.sql'), 'utf8').split('\n');
@@ -171,6 +171,8 @@ d('the Casey document share / unlink cards on real MySQL (A11.2)', () => {
       (601, 81, 'case', ?, 'path', NULL), (602, 81, 'contact', '7001', 'upload', 6), (603, 81, 'contact', '7003', NULL, 6),
       (604, 83, 'case', ?, NULL, 6)`, [C1, C2]);
     await q(`INSERT INTO case_folder_cache (case_id, path_lower) VALUES (?, '/active/debtor, dana'), (?, '/active/other, client')`, [C1, C2]);
+    // D3b-2: the binding is what the sweep and the cards read — seeded equal to the cache, as the D3a backfill made it
+    await q(`INSERT INTO entity_folders (entity_kind, entity_id, source, path_lower, resolved_at) VALUES ('case', ?, 'dropbox', '/active/debtor, dana', NOW()), ('case', ?, 'dropbox', '/active/other, client', NOW())`, [C1, C2]);
     await q("INSERT INTO app_settings (`key`, `value`) VALUES ('documents_sync_enabled', '1')");
   }
   const ev = [

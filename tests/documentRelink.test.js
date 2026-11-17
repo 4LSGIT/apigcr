@@ -143,19 +143,20 @@ function makeDb({
       if (/^SELECT LEFT\(path_lower/.test(flat)) return [dirs];
       if (/^SELECT id, path FROM document_sync_roots/.test(flat)) return [roots];
 
-      if (/^SELECT case_id, path_lower FROM case_folder_cache/.test(flat)) return [cache];
-      if (/^SELECT case_id, folder_external_id, path_lower/.test(flat)) {
+      // D3b-2: every read is on the binding (entity_folders), aliased to the cache's column names
+      if (/^SELECT entity_id AS case_id, path_lower FROM entity_folders/.test(flat)) return [cache];
+      if (/^SELECT entity_id AS case_id, external_id AS folder_external_id, path_lower/.test(flat)) {
         return [cache.filter(c => c.path_lower)];
       }
-      if (/^SELECT case_id, path_lower, path_display, resolved_at, resolve_error/.test(flat)) {
+      if (/^SELECT entity_id AS case_id, path_lower, path_display, resolved_at, resolve_error/.test(flat)) {
         const want = new Set((params[0] || []).map(String));
         return [cache.filter(c => want.has(String(c.case_id)))];
       }
-      if (/^SELECT path_lower FROM case_folder_cache WHERE case_id/.test(flat)) {
+      if (/^SELECT path_lower FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id = \?/.test(flat)) {
         const hit = cache.find(c => String(c.case_id) === String(params[0]));
         return [hit ? [hit] : []];
       }
-      if (/FROM case_folder_cache f LEFT JOIN document_links/.test(flat)) {
+      if (/FROM entity_folders f LEFT JOIN document_links/.test(flat)) {
         return [zero || []];
       }
       if (/^UPDATE case_folder_cache/.test(flat)) {

@@ -133,8 +133,7 @@ function makeDb(over = {}) {
       if (params[0] === 'dropbox_unsorted_generated_path') return [over.binPath ? [{ value: over.binPath }] : []];
       return [[]];
     }
-    if (flat === 'SELECT path_lower FROM case_folder_cache WHERE case_id = ? LIMIT 1') { const p = Object.entries(folders).find(([, id]) => id === params[0]); return [p ? [{ path_lower: p[0] }] : []]; }
-    if (flat === 'SELECT case_id, path_lower FROM case_folder_cache WHERE path_lower IN (?)') return [params[0].filter((p) => folders[p]).map((p) => ({ case_id: folders[p], path_lower: p }))];
+    if (flat === "SELECT entity_id AS case_id, path_lower FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND path_lower IN (?)") return [params[0].filter((p) => folders[p]).map((p) => ({ case_id: folders[p], path_lower: p }))];
     if (flat === 'SELECT case_relate_client_id AS rel_id, case_relate_type AS rel_type FROM case_relate WHERE case_relate_case_id = ?') return [relate.filter((r) => r.case_id === params[0]).map((r) => ({ rel_id: r.contact_id, rel_type: r.type }))];
     if (flat === 'SELECT case_relate_case_id AS rel_id, case_relate_type AS rel_type FROM case_relate WHERE case_relate_client_id = ?') return [relate.filter((r) => r.contact_id === params[0]).map((r) => ({ rel_id: r.case_id, rel_type: r.type }))];
     if (flat === "SELECT case_id, COALESCE(NULLIF(case_number_full, ''), NULLIF(case_number, ''), case_id) AS label FROM cases WHERE case_id IN (?)") return [params[0].filter((id) => id.toLowerCase() === CASE_ID.toLowerCase()).map(() => ({ case_id: CASE_ID, label: '25-12345-abc' }))];

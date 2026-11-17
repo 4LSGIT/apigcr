@@ -89,7 +89,7 @@ function makeDb(over = {}) {
       const d = docs[Number(params[0])];
       return [d ? [{ path_lower: d.path == null ? null : d.path.toLowerCase() }] : []];
     }
-    if (flat === 'SELECT case_id, path_lower FROM case_folder_cache WHERE path_lower IN (?)') {
+    if (flat === "SELECT entity_id AS case_id, path_lower FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND path_lower IN (?)") {   // D3b-2: the binding
       return [params[0].filter((p) => folders[p]).map((p) => ({ case_id: folders[p], path_lower: p }))];
     }
     if (flat === 'SELECT `value` FROM app_settings WHERE `key` = ? LIMIT 1') {

@@ -1496,7 +1496,7 @@ One bounded increment of the Dropbox → documents sync. Walks enabled sync root
 
 #### `documents_refresh_case_cache`
 
-Resolve cases.case_dropbox shared links into case_folder_cache (folder path + Dropbox id), oldest-first, so the sync engine can attribute documents to cases by path. A failed resolution records resolve_error and LEAVES THE PRIOR PATH INTACT — a revoked link must not unfile a case. Returns out_of_root: cases whose folder sits under no enabled sync root, whose documents would therefore never be registered. Bounded by BOTH a case count and a wall clock; hitting either is a normal outcome (timed_out in the output), and the next run resumes at the unreached tail. Fail-closed on app_settings documents_sync_enabled != "1".
+Resolve cases.case_dropbox shared links into the entity_folders binding (folder path + Dropbox id; case_folder_cache is still written beside it until D3d), oldest-first, so the sync engine can attribute documents to cases by path. A failed resolution records resolve_error and LEAVES THE PRIOR PATH INTACT — a revoked link must not unfile a case. Returns out_of_root: cases whose folder sits under no enabled sync root, whose documents would therefore never be registered. Bounded by BOTH a case count and a wall clock; hitting either is a normal outcome (timed_out in the output), and the next run resumes at the unreached tail. Fail-closed on app_settings documents_sync_enabled != "1".
 
 | Param | Type | Required | Description |
 |---|---|---|---|

@@ -207,6 +207,9 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
     await q(`INSERT INTO case_folder_cache (case_id, folder_external_id, path_lower, path_display, relink_dismissed_at, relink_dismissed_by) VALUES
       (?, 'id:old', ?, '/Law/Potential/Smith, Dana', '2026-09-01 10:00:00', 6), (?, 'id:c', ?, NULL, NULL, NULL),
       (?, 'id:d', ?, NULL, NULL, NULL), (?, 'id:n', ?, NULL, NULL, NULL)`, [R1, OLD, R2, C, R3, D, RN, `${A}/joint - lee`]);
+    // D3b-2: the engine and the cards READ the binding — seeded equal to the cache, as the D3a backfill made it
+    await q(`INSERT INTO entity_folders (entity_kind, entity_id, source, external_id, path_lower, path_display, resolved_at, relink_dismissed_at, relink_dismissed_by)
+      SELECT 'case', case_id, 'dropbox', folder_external_id, path_lower, path_display, resolved_at, relink_dismissed_at, relink_dismissed_by FROM case_folder_cache`);
     const docs = [
       [101, `${A}/p1.pdf`], [102, `${A}/p2.pdf`], [103, `${A}/sub/p3.pdf`], [104, `${A}/joint - lee/x.pdf`], [105, `${A}/p5.pdf`],
       [111, `${B}/b1.pdf`], [112, `${B}/b2.pdf`],
@@ -409,6 +412,7 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
   test('a case with NO folder and no link (outside the panel\'s queue) gets candidates; its card says so; a gone case 404s on the click\'s re-read', async () => {
     await q("UPDATE cases SET case_dropbox = NULL WHERE case_id = ?", [R1]);
     await q('DELETE FROM case_folder_cache WHERE case_id = ?', [R1]);
+    await q("DELETE FROM entity_folders WHERE entity_kind = 'case' AND entity_id = ?", [R1]);   // D3b-2: the binding is what is read
     await q("DELETE FROM document_links WHERE link_id = ?", [R1]);
     sync._clearInventoryCache();
     const c = await card(R1, A);

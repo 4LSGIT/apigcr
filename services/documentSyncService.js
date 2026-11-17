@@ -266,10 +266,15 @@ function _underRoot(pathLower, rootLower) {
  * `null` key swallow lookups.
  */
 async function _loadCaseFolderCache(db) {
+  // D3b-2: read from the binding (entity_folders — the engine walks Dropbox,
+  // so source = 'dropbox'; D4 dispatches by source). The row shape the callers
+  // and the heal see is unchanged. case_folder_cache is still WRITTEN beside
+  // it until D3d drops the table.
   const [rows] = await db.query(
-    `SELECT case_id, folder_external_id, path_lower
-       FROM case_folder_cache
-      WHERE path_lower IS NOT NULL AND path_lower <> ''`,
+    `SELECT entity_id AS case_id, external_id AS folder_external_id, path_lower
+       FROM entity_folders
+      WHERE entity_kind = 'case' AND source = 'dropbox'
+        AND path_lower IS NOT NULL AND path_lower <> ''`,
   );
   const byPath  = new Map();
   const byExtId = new Map();
@@ -374,11 +379,13 @@ async function refreshCaseFolderCache(db, opts = {}) {
       [caseIds],
     );
   } else {
-    // Oldest-first; rows absent from the cache sort ahead of every resolved one.
+    // Oldest-first; rows absent from the binding (or never resolved — a
+    // hand-written link, setHumanLink) sort ahead of every resolved one. D3b-2:
+    // the ordering reads entity_folders.
     [cases] = await db.query(
       `SELECT c.case_id, c.case_dropbox
          FROM cases c
-         LEFT JOIN case_folder_cache f ON f.case_id = c.case_id
+         LEFT JOIN entity_folders f ON f.entity_kind = 'case' AND f.source = 'dropbox' AND f.entity_id = c.case_id
         WHERE c.case_dropbox IS NOT NULL AND c.case_dropbox <> ''
         ORDER BY (f.resolved_at IS NULL) DESC, f.resolved_at ASC
         LIMIT ${limit}`,
@@ -1195,17 +1202,19 @@ async function attributionReport(db, opts = {}) {
   // Cached folders with NO case link anywhere. Cheap: idx_dl_target is
   // (link_type, link_id), which is exactly this join.
   const [zeroRows] = await db.query(
-    `SELECT f.case_id, f.path_lower, f.resolved_at
-       FROM case_folder_cache f
+    `SELECT f.entity_id AS case_id, f.path_lower, f.resolved_at
+       FROM entity_folders f
        LEFT JOIN document_links dl
-         ON dl.link_type = 'case' AND dl.link_id = f.case_id
-      WHERE f.path_lower IS NOT NULL AND f.path_lower <> ''
+         ON dl.link_type = 'case' AND dl.link_id = f.entity_id
+      WHERE f.entity_kind = 'case' AND f.source = 'dropbox'
+        AND f.path_lower IS NOT NULL AND f.path_lower <> ''
         AND dl.id IS NULL`,
   );
 
   const [[totals]] = await db.query(
-    `SELECT COUNT(*) AS cached FROM case_folder_cache
-      WHERE path_lower IS NOT NULL AND path_lower <> ''`,
+    `SELECT COUNT(*) AS cached FROM entity_folders
+      WHERE entity_kind = 'case' AND source = 'dropbox'
+        AND path_lower IS NOT NULL AND path_lower <> ''`,
   );
 
   const base = {
@@ -2086,9 +2095,10 @@ async function _buildFolderInventory(db, opts = {}) {
  */
 async function _loadFolderOwners(db) {
   const [rows] = await db.query(
-    `SELECT case_id, path_lower
-       FROM case_folder_cache
-      WHERE path_lower IS NOT NULL AND path_lower <> ''`,
+    `SELECT entity_id AS case_id, path_lower
+       FROM entity_folders
+      WHERE entity_kind = 'case' AND source = 'dropbox'
+        AND path_lower IS NOT NULL AND path_lower <> ''`,
   );
 
   const owners = new Map();   // path  -> Set(case_id)
@@ -2366,10 +2376,10 @@ async function relinkCandidatesBatch(db, caseIds, opts = {}) {
   );
 
   const [cacheRows] = await db.query(
-    `SELECT case_id, path_lower, path_display, resolved_at, resolve_error,
+    `SELECT entity_id AS case_id, path_lower, path_display, resolved_at, resolve_error,
             relink_dismissed_at, relink_dismissed_by
-       FROM case_folder_cache
-      WHERE case_id IN (?)`,
+       FROM entity_folders
+      WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id IN (?)`,
     [ids],
   );
 
@@ -2436,12 +2446,13 @@ async function relinkQueue(db, opts = {}) {
   const includeDismissed = !!opts.includeDismissed;
 
   const [rows] = await db.query(
-    `SELECT f.case_id, f.path_lower, f.path_display, f.resolved_at,
+    `SELECT f.entity_id AS case_id, f.path_lower, f.path_display, f.resolved_at,
             f.relink_dismissed_at, f.relink_dismissed_by
-       FROM case_folder_cache f
+       FROM entity_folders f
        LEFT JOIN document_links dl
-         ON dl.link_type = 'case' AND dl.link_id = f.case_id
-      WHERE f.path_lower IS NOT NULL AND f.path_lower <> ''
+         ON dl.link_type = 'case' AND dl.link_id = f.entity_id
+      WHERE f.entity_kind = 'case' AND f.source = 'dropbox'
+        AND f.path_lower IS NOT NULL AND f.path_lower <> ''
         AND dl.id IS NULL`,
   );
 
@@ -2641,7 +2652,7 @@ async function applyRelink(db, caseId, folderPath, opts = {}) {
   }
 
   const [[priorCache]] = await db.query(
-    'SELECT path_lower FROM case_folder_cache WHERE case_id = ? LIMIT 1', [caseId],
+    "SELECT path_lower FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id = ? LIMIT 1", [caseId],
   );
   const oldPath = priorCache ? (priorCache.path_lower || null) : null;
 
@@ -2738,7 +2749,7 @@ async function applyRelink(db, caseId, folderPath, opts = {}) {
   // ── 5. TARGETED REFRESH ─────────────────────────────────────────────────
   const cacheResult = await refreshCaseFolderCache(db, { caseIds: [caseId], ...credOpt });
   const [[freshCache]] = await db.query(
-    'SELECT path_lower FROM case_folder_cache WHERE case_id = ? LIMIT 1', [caseId],
+    "SELECT path_lower FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id = ? LIMIT 1", [caseId],
   );
   const resolved = freshCache && freshCache.path_lower ? String(freshCache.path_lower) : null;
 

@@ -117,7 +117,7 @@ function setup({ out = freshOut(), enabled = true, prior = {}, predict = {}, rul
   const query = jest.fn(async (sql, params) => {
     const flat = sql.replace(/\s+/g, ' ').trim();
     calls.queries.push([flat, params]);
-    if (flat.startsWith('SELECT path_lower, path_display, resolved_at, resolve_error, relink_dismissed_at, relink_dismissed_by FROM case_folder_cache')) return [cacheRow ? [{ ...cacheRow }] : []];
+    if (flat.startsWith('SELECT path_lower, path_display, resolved_at, resolve_error, relink_dismissed_at, relink_dismissed_by FROM entity_folders')) return [cacheRow ? [{ ...cacheRow }] : []];   // D3b-2: the binding
     if (flat.startsWith("SELECT EXISTS(SELECT 1 FROM document_links WHERE link_type = 'case' AND link_id = ?) AS linked")) return [[{ linked: linked ? 1 : 0 }]];
     if (flat.startsWith('SELECT log_id, log_type, log_link_type, log_link_id, log_by, log_subject, log_extra,')) return [logRow && Number(params[0]) === Number(logRow.log_id) ? [{ ...logRow }] : []];
     if (flat.startsWith("SELECT log_id, DATE_FORMAT(log_date, '%Y-%m-%d %H:%i') AS at_text FROM log WHERE log_link_type = 'case'")) return [latestLog ? [{ ...latestLog }] : []];
@@ -127,7 +127,7 @@ function setup({ out = freshOut(), enabled = true, prior = {}, predict = {}, rul
     if (flat.startsWith('SELECT COUNT(*) AS total,')) return [[{ total: p.total, held: p.held }]];
     if (flat.startsWith('SELECT dl.link_id AS case_id, COUNT(DISTINCT d.id) AS n')) return [p.heldBy];
     if (flat.startsWith('SELECT d.id, d.path_lower FROM documents d LEFT JOIN document_links dl')) return [p.unattached];
-    if (flat.startsWith('SELECT case_id, folder_external_id, path_lower FROM case_folder_cache')) return [cache];
+    if (flat.startsWith('SELECT entity_id AS case_id, external_id AS folder_external_id, path_lower FROM entity_folders')) return [cache];   // D3b-2: the binding
     if (flat.startsWith('SELECT COUNT(*) AS n FROM document_links dl JOIN documents d')) return [[{ n: p.detach }]];
     if (flat.startsWith("SELECT COUNT(*) AS n FROM document_links WHERE link_type = 'case' AND link_id = ? AND NOT")) return [[{ n: p.kept }]];
     if (flat.startsWith('SELECT case_id, COALESCE(NULLIF(case_number_full')) {

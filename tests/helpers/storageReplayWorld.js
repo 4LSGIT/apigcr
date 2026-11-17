@@ -157,8 +157,14 @@ function makeDb(w) {
     if (/checklist/i.test(s)) return rows([]);
     // ── sync engine rows ──────────────────────────────────────────────────
     if (/^UPDATE document_sync_roots/.test(s)) { effect('document_sync_roots.update', { sql: s.slice(0, 60), params }); return ok(1); }
-    if (/FROM case_folder_cache WHERE path_lower IS NOT NULL/.test(s)) return rows(w.caseFolderCache.map((r) => ({ ...r })));
-    if (/FROM case_folder_cache WHERE case_id = \?/.test(s)) return rows(w.caseFolderCache.filter((r) => r.case_id === String(params[0])).map((r) => ({ ...r })));
+    // D3b-2: the sync engine's reads are on the binding, aliased to the cache's column names
+    if (/^SELECT entity_id AS case_id, external_id AS folder_external_id, path_lower FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND path_lower IS NOT NULL/.test(s)) {
+      return rows(Object.entries(w.entityFolders).filter(([, b]) => b.path_lower).map(([id, b]) => ({ case_id: id, folder_external_id: b.external_id ?? null, path_lower: b.path_lower })));
+    }
+    if (/^SELECT path_lower FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id = \?/.test(s)) {
+      const b = w.entityFolders[String(params[0])];
+      return rows(b ? [{ path_lower: b.path_lower ?? null }] : []);
+    }
     if (/^UPDATE case_folder_cache/.test(s)) { effect('case_folder_cache.update', { params }); return ok(1); }
     // ── entity_folders (D3b-1): modelled as state so a later read sees an earlier write, as MySQL would ──
     if (/^SELECT external_id, path_lower, human_link FROM entity_folders WHERE entity_kind = \? AND entity_id = \? AND source = \?/.test(s)) {

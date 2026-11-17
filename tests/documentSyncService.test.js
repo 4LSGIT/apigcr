@@ -176,7 +176,7 @@ function makeDb({
       if (/LEFT JOIN document_links dl ON dl\.link_type = 'case'/.test(flat)) {
         return [db.zeroAttribution || []];
       }
-      if (/^SELECT COUNT\(\*\) AS cached FROM case_folder_cache/.test(flat)) {
+      if (/^SELECT COUNT\(\*\) AS cached FROM (?:case_folder_cache|entity_folders)/.test(flat)) {
         return [[{ cached: (db.cacheRows || []).length }]];
       }
       if (/^SELECT d\.id, d\.path_lower, d\.status/.test(flat)) {
@@ -184,8 +184,8 @@ function makeDb({
         return [(db.scanRows || []).filter(r => r.id > after)];
       }
 
-      // ── case_folder_cache ──────────────────────────────────────────────
-      if (/FROM case_folder_cache/.test(flat)) return [cache];
+      // ── the binding (D3b-2: every read) and case_folder_cache (writes only) ──
+      if (/FROM entity_folders/.test(flat)) return [cache];
       if (/^INSERT INTO case_folder_cache/.test(flat)) return [{ affectedRows: 1 }];
       if (/^UPDATE case_folder_cache/.test(flat)) return [{ affectedRows: 1 }];
       // D3a: the binding row the engine dual-writes beside the cache
@@ -1061,7 +1061,7 @@ describe('syncAll', () => {
 
     await sync.syncAll(db);
 
-    expect(db.all('FROM case_folder_cache').length).toBe(1);
+    expect(db.all('FROM entity_folders').length).toBe(1);   // D3b-2: the loader reads the binding
   });
 
   test('one failing root does not abort the others, and the failure alerts', async () => {
@@ -1365,11 +1365,13 @@ describe('refreshCaseFolderCache', () => {
     ]);
   });
 
-  test('oldest-first, never-resolved first', async () => {
+  test('oldest-first, never-resolved first — ordered by the BINDING (D3b-2), not the cache', async () => {
     const db = cacheDb([]);
     await sync.refreshCaseFolderCache(db);
-    expect(db.find('FROM cases c').sql)
-      .toContain('ORDER BY (f.resolved_at IS NULL) DESC, f.resolved_at ASC');
+    const sql = db.find('FROM cases c').sql;
+    expect(sql).toContain("LEFT JOIN entity_folders f ON f.entity_kind = 'case' AND f.source = 'dropbox' AND f.entity_id = c.case_id");
+    expect(sql).not.toMatch(/case_folder_cache/);
+    expect(sql).toContain('ORDER BY (f.resolved_at IS NULL) DESC, f.resolved_at ASC');
   });
 
   test('a FAILED resolution records the error and LEAVES THE PRIOR PATH INTACT', async () => {

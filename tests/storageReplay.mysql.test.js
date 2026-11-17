@@ -238,6 +238,24 @@ suite('storage replay on real MySQL', () => {
     expect(r.links.map((l) => l.relation)).toEqual(['path']);
   });
 
+  test('D3b-2: the refresh queue is ordered by the BINDING — a hand-written link (resolved_at NULL in entity_folders, an old resolved_at in the cache) is refreshed first', async () => {
+    await reset();
+    const f = `${W.ACTIVE_ROOT}/  Active - Bankruptcy`;
+    const links = fake.seed({ folders: [`${f}/ byHand01 - Hand, Ann`, `${f}/ oldest01 - Old, Bob`], links: [`${f}/ byHand01 - Hand, Ann`, `${f}/ oldest01 - Old, Bob`] });
+    const hand = links[`${f}/ byHand01 - Hand, Ann`]; const old = links[`${f}/ oldest01 - Old, Bob`];
+    await q('INSERT INTO cases (case_id, case_dropbox) VALUES (?, ?), (?, ?)', ['byHand01', hand, 'oldest01', old]);
+    // the cache says byHand01 was resolved yesterday and oldest01 a year ago (the cache's ordering would pick oldest01);
+    // the binding says byHand01 was never resolved (setHumanLink: a hand-written link) and oldest01 yesterday
+    await q("INSERT INTO case_folder_cache (case_id, path_lower, resolved_at) VALUES (?, '/x', NOW() - INTERVAL 1 DAY), (?, '/y', NOW() - INTERVAL 365 DAY)", ['byHand01', 'oldest01']);
+    await q("INSERT INTO entity_folders (entity_kind, entity_id, source, human_link, resolved_at) VALUES ('case', ?, 'dropbox', ?, NULL), ('case', ?, 'dropbox', ?, NOW() - INTERVAL 1 DAY)", ['byHand01', hand, 'oldest01', old]);
+    await q("UPDATE entity_folders SET resolved_at = NOW() - INTERVAL 2 DAY WHERE entity_id IN ('hjSFMabb', 'deadLnk1')");
+    fake.calls.length = 0;
+    const out = await sync.refreshCaseFolderCache(db, { limit: 1 });
+    expect([out.candidates, out.scanned]).toEqual([1, 1]);
+    expect(fake.calls.filter((c) => c.fn === 'getSharedLinkMetadata').map((c) => c.args[0].url)).toEqual([hand]);   // NULL-first on the binding, not oldest-first on the cache
+    expect((await bindings()).find((r) => r.entity_id === 'byHand01').resolved).toBeTruthy();
+  });
+
   scenario('B2 sync: backfill page, incremental page with a move and a deletion, then the cache refresh', async (a) => {
     await q('INSERT INTO document_sync_roots (id, path, enabled, backfill_done) VALUES (1, ?, 1, 0)', [W.ACTIVE_ROOT]);
     fake.seed({ pages: [

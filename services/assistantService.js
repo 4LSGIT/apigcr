@@ -7114,7 +7114,7 @@ async function documentFolderCase(db, pathLower) {
   const ancestors = [];
   for (let i = p.lastIndexOf('/'); i > 0; i = p.lastIndexOf('/', i - 1)) ancestors.push(p.slice(0, i));
   if (!ancestors.length) return null;
-  const [rows] = await db.query('SELECT case_id, path_lower FROM case_folder_cache WHERE path_lower IN (?)', [ancestors]);
+  const [rows] = await db.query("SELECT entity_id AS case_id, path_lower FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND path_lower IN (?)", [ancestors]);   // D3b-2: the binding
   const byPath = new Map();
   for (const r of (Array.isArray(rows) ? rows : [])) if (r.path_lower) byPath.set(String(r.path_lower), { case_id: r.case_id, path_lower: r.path_lower });
   return caseFolderSync()._matchCase(byPath, p);
@@ -11436,7 +11436,7 @@ async function normalizeCaseFolderDismissAction(db, value, evidence, { currentUs
   // (setRelinkDismissed's docblock — the queue is DERIVED from the cache).
   const [[cache]] = await db.query(
     `SELECT path_lower, path_display, resolved_at, resolve_error, relink_dismissed_at, relink_dismissed_by
-       FROM case_folder_cache WHERE case_id = ? LIMIT 1`, [id]);
+       FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id = ? LIMIT 1`, [id]);   // D3b-2: the binding
   if (!cache) {
     throw caseFolderError(`Case ${label} has no folder-cache row — it has never been in the relink queue (the queue is the cache's rows), and the dismiss route would stamp nothing. There is nothing to ${undo ? 'un-dismiss' : 'dismiss'}`);
   }

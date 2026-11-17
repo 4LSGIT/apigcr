@@ -1322,8 +1322,8 @@ body. Governing migrations in `ref/migrations/`.*
   unlink discloses it. Unlink names the tabs it leaves
   (`resolveRelatedTargets` of the removed link minus what the remaining links
   reach), LINKED TO NOTHING, the triage effect, and COMES BACK when the sync
-  re-adds a case link (`documentSyncService._matchCase` over
-  `case_folder_cache` for the file's ancestors — the incremental path on any
+  re-adds a case link (`documentSyncService._matchCase` over the
+  `entity_folders` binding for the file's ancestors — the incremental path on any
   change, `attributeUnlinked` when no case path link is left). Neither emits
   an event. Freshness: GET `/api/documents/:id` (status, link presence, name /
   title / type, links). Outcomes: share 404 + Dropbox's sharing 409 and unlink
@@ -1446,7 +1446,7 @@ body. Governing migrations in `ref/migrations/`.*
   `documents` named `LIKE '%(#<id>)%.pdf'` (the default core) as an ALREADY
   FILED danger warning, never a refusal; it predicts formPdfService's file name
   (firm-local date) and the placement ladder read-only (case folder from
-  `case_folder_cache.path_lower` — the cache never holds `path_display`; a case
+  the `entity_folders` binding's `path_lower` — never `path_display`; a case
   with no folder gets one created; contact / appt / unlinked → the unsorted
   bin with `_identityPrefix`); the draft render refusal is a 500 with an exact
   message before any upload; the verdict's `temp_link` is never kept. Both A12
