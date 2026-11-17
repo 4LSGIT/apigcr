@@ -620,6 +620,14 @@ async function createCase(db, fields = {}, { attempts = 10 } = {}) {
     throw new Error(`Failed to generate unique case ID after ${attempts} attempts`);
   }
 
+  // D3b-1: a folder link given at create time binds the case (see updateCase).
+  {
+    const linkKey = boundKeys.find(k => k.toLowerCase() === 'case_dropbox');
+    if (linkKey && safe[linkKey] != null && String(safe[linkKey]).trim() !== '') {
+      await require('./entityFolderService').setHumanLink(db, { kind: 'case', id: caseId, humanLink: safe[linkKey] });   // deferred require (convention)
+    }
+  }
+
   // The stamped values in the COLUMN's shape, for the caller's envelope — so
   // `case.created.data.cf_x` and `contact.created.data.cf_x` agree for every
   // type (S4's rule; the contact side gets this free from its `SELECT *`).
@@ -806,6 +814,17 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
 
   if (result.affectedRows === 0) {
     throw new Error(`Case ${caseId} not found`);
+  }
+
+  // D3b-1: a hand-written folder link (PATCH /api/cases/:id, the relink flow)
+  // reaches the binding too — the filing paths read entity_folders first, so a
+  // link that lived only in the column would be invisible to them until the
+  // sweep. Best-effort behind the row write (entityFolderService's posture).
+  {
+    const linkKey = keys.find(k => k.toLowerCase() === 'case_dropbox');
+    if (linkKey) {
+      await require('./entityFolderService').setHumanLink(db, { kind: 'case', id: caseId, humanLink: safeFields[linkKey] });   // deferred require (convention)
+    }
   }
 
   // Trigger: case.updated (fire-and-forget) — only when something actually
@@ -1357,8 +1376,11 @@ async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
   );
   if (!caseRow) throw new Error(`ensureCaseDropboxFolder: case ${caseId} not found`);
 
-  if (caseRow.case_dropbox && !force) {
-    return { existed: true, stage: null, path: null, shared_link: caseRow.case_dropbox };
+  // D3b-1: "already has a folder" is the binding's word (the legacy column
+  // through the helper's fallback, until D3d).
+  const bound = await require('./entityFolderService').caseFolderLink(db, caseId, { caseRow });   // deferred require (convention)
+  if (bound.link && !force) {
+    return { existed: true, stage: null, path: null, shared_link: bound.link };
   }
 
   const [[contact]] = await db.query(

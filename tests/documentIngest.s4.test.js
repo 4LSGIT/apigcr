@@ -76,16 +76,16 @@ const ingest    = require('../services/documentIngestService');
 const realProvider = jest.requireActual('../services/documentSourceService').dropboxProvider;
 const seam = { context: realProvider.context, resolveHumanLink: realProvider.resolveHumanLink, joinPath: realProvider.joinPath, list: realProvider.list };
 
-/** A db whose case_folder_cache answer is scripted per case id. */
+/** A db whose entity_folders answer (the bound folder's path — D3b-1) is scripted per case id. */
 function mkDb(cache = {}, opts = {}) {
   return {
     queries: [],
     async query(sql, params) {
       this.queries.push({ sql, params });
-      if (opts.throwOnCache) throw new Error('cache table is on fire');
-      if (/case_folder_cache/.test(sql)) {
-        const hit = cache[String(params[0])];
-        return [hit ? [{ path_lower: hit }] : []];
+      if (opts.throwOnCache) throw new Error('binding table is on fire');
+      if (/FROM entity_folders/.test(sql)) {
+        const hit = cache[String(params[1])];
+        return [hit ? [{ path_lower: hit, resolve_error: null }] : []];
       }
       return [[]];
     },
@@ -212,7 +212,7 @@ describe('relation choice — INTENT vs LOCATION', () => {
   });
 
   test('case comparison is case-insensitive — the cache is lowercase, metadata is not', async () => {
-    // case_folder_cache.path_lower is lowercase (path_display is NULL for
+    // entity_folders.path_lower is lowercase (path_display is NULL for
     // every row in production — Dropbox omits it on shared-link metadata), so
     // a mixed-case path_lower from any other source must still match.
     const db = mkDb({ SMITH1: '/cases/smith' });

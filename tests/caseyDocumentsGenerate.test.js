@@ -119,7 +119,14 @@ function makeDb(over = {}) {
     if (flat.startsWith('SELECT c.contact_lfm_name FROM case_relate cr JOIN contacts c ON c.contact_id = cr.case_relate_client_id WHERE cr.case_relate_case_id = ?')) {
       const r = relate.find((x) => x.case_id === params[0] && x.type === 'Primary') || relate.find((x) => x.case_id === params[0]); return [r ? [{ contact_lfm_name: contacts[r.contact_id].contact_lfm_name }] : []];
     }
-    if (flat === 'SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1') return [caseRow ? [{ case_dropbox: caseRow.case_dropbox }] : []];
+    // D3b-1: the filing paths read the binding first (this world's binding = the case's link + its folder from `folders`, as the backfill would hold), the legacy column second
+    if (flat === 'SELECT external_id, path_lower, human_link FROM entity_folders WHERE entity_kind = ? AND entity_id = ? AND source = ? LIMIT 1') {
+      const p = Object.entries(folders).find(([, id]) => id === params[1]);
+      const link = caseRow && String(params[1]) === CASE_ID ? caseRow.case_dropbox : null;
+      return [(p || link) ? [{ external_id: null, path_lower: p ? p[0] : null, human_link: link || null }] : []];
+    }
+    if (flat === 'SELECT path_lower, resolve_error FROM entity_folders WHERE entity_kind = ? AND entity_id = ? AND source = ? LIMIT 1') { const p = Object.entries(folders).find(([, id]) => id === params[1]); return [p ? [{ path_lower: p[0], resolve_error: null }] : []]; }
+    if (flat === 'SELECT case_id, case_dropbox FROM cases WHERE case_id = ? LIMIT 1') return [caseRow && String(params[0]) === CASE_ID ? [{ case_id: CASE_ID, case_dropbox: caseRow.case_dropbox }] : []];
     if (flat === "SELECT `value` FROM app_settings WHERE `key` = 'dropbox_credential_id' LIMIT 1") return [[{ value: '8' }]];
     if (flat === 'SELECT `value` FROM app_settings WHERE `key` = ? LIMIT 1') {
       if (params[0] === 'documents_sync_enabled') return [[{ value: over.syncOff ? '0' : '1' }]];

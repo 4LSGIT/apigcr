@@ -304,13 +304,14 @@ async function caseFolders(db, userId, body) {
   const [[c]] = await db.query('SELECT case_id, case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId]);
   if (!c) throw httpError(404, 'Case not found');
   const out = { case_id: c.case_id, folders: [], truncated: false, reason: null };
-  if (!c.case_dropbox || !String(c.case_dropbox).trim()) return { ...out, reason: 'no_case_folder' };
+  const link = (await require('./entityFolderService').caseFolderLink(db, c.case_id, { caseRow: c })).link;   // lazy (convention); D3b-1: the binding, then the legacy column
+  if (!link) return { ...out, reason: 'no_case_folder' };
   const storage = require('./documentSourceService').get(SOURCE_PROVIDER);   // lazy (convention)
   let listing;
   let root;
   try {
     const ctx = await storage.context(db);
-    root = String(await storage.resolveHumanLink(db, String(c.case_dropbox).trim(), { expectFolder: true }, ctx) || '');
+    root = String(await storage.resolveHumanLink(db, link, { expectFolder: true }, ctx) || '');
     listing = await storage.list(db, { path: root }, { recursive: true, max: FOLDERS_LIST_MAX }, ctx);
   } catch (err) {
     return { ...out, reason: 'unavailable', error: (err && err.message) || 'Dropbox did not answer' };

@@ -1433,7 +1433,10 @@ router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => 
         `<p><strong>Note:</strong> this case has no working Dropbox folder — the files were ` +
         `placed in the ${where}. Please move them into the case's folder.</p>`;
     } else {
-      const dropboxLink = (dest && dest.sharedLink) || caseRow.case_dropbox || '';
+      // D3b-1: the case folder's binding, then the legacy column (the row in hand).
+      const dropboxLink = (dest && dest.sharedLink)
+        || (await require('../services/entityFolderService').caseFolderLink(req.db, caseRow.case_id, { caseRow })).link   // lazy (convention)
+        || '';
       dropboxHtml = dropboxLink
         ? `<p><a href="${escapeHtml(dropboxLink)}">Open Dropbox Folder</a> — review, rename, and move files from the "Client Uploads" subfolder.</p>`
         : '<p><em>No Dropbox link on file for this case.</em></p>';

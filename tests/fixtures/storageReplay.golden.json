@@ -6350,6 +6350,328 @@
      "path": "/  Law Office/   Cases/  Unsorted Generated Documents"
     }
    ]
+  },
+  "16 D3b-1 entity_folders is what the filing paths read: the binding's link beats a stale legacy column; a legacy-only link still files": {
+   "calls": [
+    {
+     "fn": "_resolveCredential",
+     "args": [
+      {}
+     ]
+    },
+    {
+     "fn": "resolveLocation",
+     "args": [
+      8,
+      {
+       "expectFolder": true,
+       "sharedLink": "https://www.dropbox.com/scl/fo/fake0001?dl=0"
+      }
+     ]
+    },
+    {
+     "fn": "createFolder",
+     "args": [
+      {
+       "credentialId": 8,
+       "path": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/Notices"
+      }
+     ]
+    },
+    {
+     "fn": "uploadFile",
+     "args": [
+      {
+       "autorename": true,
+       "content": {
+        "bytes": 15,
+        "sha256": "7599b8332e586935114e4ad53d85de7e5a13143968dfbba38d3927fc7bc4aa7f"
+       },
+       "credentialId": 8,
+       "mode": "add",
+       "path": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/Notices/2026-11-17 Discharge Notice.pdf"
+      }
+     ]
+    },
+    {
+     "fn": "getTemporaryLink",
+     "args": [
+      {
+       "credentialId": 8,
+       "path": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/Notices/2026-11-17 Discharge Notice.pdf"
+      }
+     ]
+    },
+    {
+     "fn": "getTemporaryUploadLink",
+     "args": [
+      {
+       "filename": "W2.pdf",
+       "sharedLink": "https://www.dropbox.com/scl/fo/fake0001?dl=0",
+       "subfolder": "Client Uploads"
+      }
+     ]
+    },
+    {
+     "fn": "_resolveCredential",
+     "args": [
+      {}
+     ]
+    },
+    {
+     "fn": "resolveLocation",
+     "args": [
+      8,
+      {
+       "expectFolder": true,
+       "sharedLink": "https://www.dropbox.com/scl/fo/fake0001?dl=0"
+      }
+     ]
+    },
+    {
+     "fn": "listFolder",
+     "args": [
+      {
+       "credentialId": 8,
+       "maxEntries": 4000,
+       "path": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13",
+       "recursive": true
+      }
+     ]
+    },
+    {
+     "fn": "_resolveCredential",
+     "args": [
+      {}
+     ]
+    },
+    {
+     "fn": "resolveLocation",
+     "args": [
+      8,
+      {
+       "expectFolder": true,
+       "sharedLink": "https://www.dropbox.com/scl/fo/fake0002?dl=0"
+      }
+     ]
+    },
+    {
+     "fn": "createFolder",
+     "args": [
+      {
+       "credentialId": 8,
+       "path": "/  law office/   cases/  active cases/  active - bankruptcy/ actv7num - brown, bob - 26-50001 - ch 7/Notices"
+      }
+     ]
+    },
+    {
+     "fn": "uploadFile",
+     "args": [
+      {
+       "autorename": true,
+       "content": {
+        "bytes": 15,
+        "sha256": "7599b8332e586935114e4ad53d85de7e5a13143968dfbba38d3927fc7bc4aa7f"
+       },
+       "credentialId": 8,
+       "mode": "add",
+       "path": "/  law office/   cases/  active cases/  active - bankruptcy/ actv7num - brown, bob - 26-50001 - ch 7/Notices/2026-11-17 Discharge Notice.pdf"
+      }
+     ]
+    },
+    {
+     "fn": "getTemporaryLink",
+     "args": [
+      {
+       "credentialId": 8,
+       "path": "/  law office/   cases/  active cases/  active - bankruptcy/ actv7num - brown, bob - 26-50001 - ch 7/Notices/2026-11-17 Discharge Notice.pdf"
+      }
+     ]
+    }
+   ],
+   "effects": [
+    {
+     "kind": "registry.registerWrittenSafe",
+     "createdBy": 6,
+     "credentialId": 8,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:02Z",
+      "content_hash": "7599b8332e586935114e4ad53d85de7e5a13143968dfbba38d3927fc7bc4aa7f",
+      "id": "id:f0002",
+      "is_downloadable": true,
+      "name": "2026-11-17 Discharge Notice.pdf",
+      "path_display": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/Notices/2026-11-17 Discharge Notice.pdf",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/notices/2026-11-17 discharge notice.pdf",
+      "rev": "rev000002",
+      "server_modified": "2026-11-17T12:00:02Z",
+      "size": 15
+     },
+     "eventSource": "generated_doc",
+     "links": [
+      {
+       "id": "hjSFMabb",
+       "type": "case"
+      }
+     ]
+    },
+    {
+     "kind": "esign.target",
+     "ok": true,
+     "sharedLink": "https://www.dropbox.com/scl/fo/fake0001?dl=0"
+    },
+    {
+     "kind": "comms.folders",
+     "case_id": "hjSFMabb",
+     "folders": [
+      "Client Docs - John Smith",
+      "Client Uploads",
+      "Correspondence - John Smith",
+      "Docket - John Smith - Ch 13 - 26-44274",
+      "Drafts - John Smith",
+      "Notices"
+     ],
+     "reason": null,
+     "truncated": false
+    },
+    {
+     "kind": "registry.registerWrittenSafe",
+     "createdBy": 6,
+     "credentialId": 8,
+     "entry": {
+      ".tag": "file",
+      "client_modified": "2026-11-17T12:00:03Z",
+      "content_hash": "7599b8332e586935114e4ad53d85de7e5a13143968dfbba38d3927fc7bc4aa7f",
+      "id": "id:f0003",
+      "is_downloadable": true,
+      "name": "2026-11-17 Discharge Notice.pdf",
+      "path_display": "/  law office/   cases/  active cases/  active - bankruptcy/ actv7num - brown, bob - 26-50001 - ch 7/Notices/2026-11-17 Discharge Notice.pdf",
+      "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ actv7num - brown, bob - 26-50001 - ch 7/notices/2026-11-17 discharge notice.pdf",
+      "rev": "rev000003",
+      "server_modified": "2026-11-17T12:00:03Z",
+      "size": 15
+     },
+     "eventSource": "generated_doc",
+     "links": [
+      {
+       "id": "aCtv7Num",
+       "type": "case"
+      }
+     ]
+    },
+    {
+     "kind": "bindings",
+     "entityFolders": {
+      "deadLnk1": {
+       "external_id": null,
+       "human_link": "https://www.dropbox.com/scl/fo/gone0000?dl=0",
+       "path_display": null,
+       "path_lower": null,
+       "resolve_error": null
+      },
+      "hjSFMabb": {
+       "external_id": null,
+       "human_link": "https://www.dropbox.com/scl/fo/fake0001?dl=0",
+       "path_display": null,
+       "path_lower": null,
+       "resolve_error": null
+      }
+     }
+    }
+   ],
+   "provider_state": [
+    {
+     "tag": "folder",
+     "path": "/  Law Office"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001 - Ch 7"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001 - Ch 7/Notices"
+    },
+    {
+     "tag": "file",
+     "path": "/  law office/   cases/  active cases/  active - bankruptcy/ actv7num - brown, bob - 26-50001 - ch 7/Notices/2026-11-17 Discharge Notice.pdf",
+     "size": 15
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Docs - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads"
+    },
+    {
+     "tag": "file",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Client Uploads/2026-06-01 Intake.pdf",
+     "size": 18
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Correspondence - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Docket - John Smith - Ch 13 - 26-44274"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Active Cases/  Active - Bankruptcy/ hjSFMabb - Smith, John - 26-44274 - Ch 13/Drafts - John Smith"
+    },
+    {
+     "tag": "folder",
+     "path": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/Notices"
+    },
+    {
+     "tag": "file",
+     "path": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/Notices/2026-11-17 Discharge Notice.pdf",
+     "size": 15
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Potential Cases/  Potential - Bankruptcy"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Client Uploads"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted E-Signed Documents"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Form Submissions"
+    },
+    {
+     "tag": "folder",
+     "path": "/  Law Office/   Cases/  Unsorted Generated Documents"
+    }
+   ]
   }
  }
 }

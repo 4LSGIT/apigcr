@@ -161,6 +161,8 @@ maybe('email attachments S1/S2 on real MySQL', () => {
     if (!Number(t.n)) throw new Error('apply ref/migrations/2026-11-06_mail_attachment_filings.sql to the test database first');
     const [[t2]] = await pool.query("SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mail_attachment_notices'");
     if (!Number(t2.n)) throw new Error('apply ref/migrations/2026-11-09_mail_attachment_notices.sql to the test database first');
+    const [[t3]] = await pool.query("SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'entity_folders'");
+    if (!Number(t3.n)) throw new Error('apply ref/migrations/2026-11-17_storage_seam_d3a_entity_folders.sql to the test database first (D3b-1: the filers read the binding)');
   });
   afterAll(async () => { if (pool) await pool.end(); });
 

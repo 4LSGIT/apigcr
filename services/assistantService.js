@@ -7408,8 +7408,7 @@ async function normalizeDocumentGenerate(db, value, evidence, currentUserId, use
   // mark when the file lands under the case's CACHED folder, else "upload".
   let relation = 'upload';
   if (linkType === 'case' && plan.folder_path) {
-    const [cacheRows] = await db.query('SELECT path_lower FROM case_folder_cache WHERE case_id = ? LIMIT 1', [linkId]);
-    const cached = Array.isArray(cacheRows) && cacheRows[0] && cacheRows[0].path_lower ? String(cacheRows[0].path_lower) : null;
+    const cached = await entityFolderBinding().casePathLower(db, String(linkId));   // D3b-1: the binding's path, as _relationFor reads it
     if (cached && caseFolderSync()._underRoot(String(plan.folder_path).toLowerCase(), cached)) relation = require('./documentService').RELATION_PATH;
   }
   const predictedPath = plan.folder_path ? caseFolderStorage().joinPath(plan.folder_path, `${plan.filename_prefix}${fileName}`) : null;
@@ -8805,17 +8804,16 @@ async function formPdfPlacement(db, sub, fileName) {
     return clean || pdf.DEFAULT_UNSORTED_PATH;
   };
   if (sub.link_type === 'case') {
-    const [rows] = await db.query('SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [String(sub.link_id)]);
-    const c = Array.isArray(rows) ? rows[0] : null;
-    if (c && String(c.case_dropbox || '').trim() !== '') {
-      // path_lower, never path_display (documentIngestService's header: the
-      // cache never holds path_display) — and the upload destination is built
-      // from the same lowercased path (dropboxService.resolveLocation).
-      const [cache] = await db.query('SELECT path_lower FROM case_folder_cache WHERE case_id = ? AND resolve_error IS NULL LIMIT 1', [String(sub.link_id)]);
-      const p = Array.isArray(cache) && cache[0] && cache[0].path_lower ? String(cache[0].path_lower) : null;
+    const c = await entityFolderBinding().caseFolderLink(db, String(sub.link_id));   // D3b-1: the binding, then the legacy column
+    if (c.link) {
+      // path_lower, never path_display (documentIngestService's header) — and
+      // the upload destination is built from the same lowercased path
+      // (dropboxService.resolveLocation). A row carrying a resolve_error names
+      // no path.
+      const p = await entityFolderBinding().casePathLower(db, String(sub.link_id), { resolvedOnly: true });
       return { rung: 'case', folder: p ? `${p}/${pdf.SUBFOLDER}` : `the case's linked Dropbox folder, subfolder ${pdf.SUBFOLDER}`, file_name: fileName };
     }
-    if (c) return { rung: 'case_create', folder: `a NEW Dropbox folder for the case, subfolder ${pdf.SUBFOLDER}`, file_name: fileName };
+    if (c.found) return { rung: 'case_create', folder: `a NEW Dropbox folder for the case, subfolder ${pdf.SUBFOLDER}`, file_name: fileName };
     return { rung: 'unsorted_case', folder: `${await bin()}/<case ${sub.link_id} subfolder>`, file_name: fileName };
   }
   return { rung: 'unsorted', folder: await bin(), file_name: `${await pdf._identityPrefix(db, sub)}${fileName}` };
@@ -11062,8 +11060,7 @@ async function normalizeMailAttachmentsFile(db, value, evidence, currentUserId) 
     throw mailError(`Nothing to file — "parts" is empty${mv ? ` and the move is off (what this email filed on another case moves only when the card says "move": true)` : ''}. Name the attachments to file`);
   }
 
-  const [[cd]] = await db.query('SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId]);
-  const caseFolderLinked = !!(cd && cd.case_dropbox && String(cd.case_dropbox).trim());
+  const caseFolderLinked = !!(await entityFolderBinding().caseFolderLink(db, caseId)).link;   // D3b-1: the binding, then the legacy column
   const effects = []; const warnings = [];
   const files = parts.map((part) => byPart.get(part));
 
@@ -11245,6 +11242,7 @@ function caseFolderError(message) { return httpError(422, message); }
 
 function caseFolderSync() { return require('./documentSyncService'); } // lazy (convention)
 function caseFolderStorage() { return require('./documentSourceService').get('dropbox'); } // lazy (convention); D1g: the seam, not the provider module
+function entityFolderBinding() { return require('./entityFolderService'); } // lazy (convention); D3b-1: the case folder's binding row
 
 // The cases whose SYNC link (relation 'path') the active files under a folder
 // already carry — the files applyRelink's add-only step 7 skips. `like` is the

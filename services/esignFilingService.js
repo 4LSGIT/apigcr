@@ -80,6 +80,7 @@ const sources = require('./documentSourceService');
 /** The storage provider the firm's documents live in (D2 makes this a per-tenant setting). */
 const SOURCE = 'dropbox';
 const storage = () => sources.get(SOURCE);
+const entityFolders = () => require('./entityFolderService');   // deferred require (convention); D3b-1: the case folder's binding
 const esignService = require('./esignService');
 const { getSetting } = require('./settingsService');
 
@@ -188,31 +189,28 @@ async function resolveTarget(db, request) {
     };
   }
 
-  let row;
+  let bound;
   try {
-    [[row]] = await db.query(
-      'SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1',
-      [String(request.linkable_id)]
-    );
+    bound = await entityFolders().caseFolderLink(db, String(request.linkable_id));   // the binding, then the legacy column
   } catch (err) {
     return { ok: false, reason: 'db_error', note: `Could not read the case row: ${err.message}` };
   }
 
-  if (!row) {
+  if (!bound.found) {
     return {
       ok: false,
       reason: 'case_not_found',
       note: `Case "${request.linkable_id}" was not found, so the signed document could not be filed.`,
     };
   }
-  if (!row.case_dropbox || String(row.case_dropbox).trim() === '') {
+  if (!bound.link) {
     return {
       ok: false,
       reason: 'no_case_dropbox',
       note: `Case "${request.linkable_id}" has no Dropbox folder link (cases.case_dropbox is empty).`,
     };
   }
-  return { ok: true, sharedLink: String(row.case_dropbox) };
+  return { ok: true, sharedLink: bound.link };
 }
 
 /**

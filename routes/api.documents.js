@@ -502,13 +502,12 @@ router.post('/api/documents/upload-link', jwtOrApiKey, async (req, res) => {
     let note = null;
 
     if (caseId) {
-      const [[caseRow]] = await req.db.query(
-        'SELECT case_id, case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId],
-      );
-      if (!caseRow) {
+      // D3b-1: the case folder's binding, then the legacy column.
+      const bound = await require('../services/entityFolderService').caseFolderLink(req.db, caseId);   // lazy (convention)
+      if (!bound.found) {
         return res.status(404).json({ status: 'error', message: 'Case not found' });
       }
-      const sharedLink = (caseRow.case_dropbox && String(caseRow.case_dropbox).trim()) || '';
+      const sharedLink = bound.link || '';
 
       if (sharedLink) {
         try {

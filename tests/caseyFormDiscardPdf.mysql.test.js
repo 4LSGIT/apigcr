@@ -94,7 +94,7 @@ const d = URL_ ? describe : describe.skip;
 // Production SESSION sql_mode (verified live 2026-09-25; CLAUDE.md "SQL mode is relaxed").
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
 const TABLES = ['cases', 'contacts', 'case_relate', 'contact_phones', 'contact_emails', 'users', 'log', 'appts', 'form_templates',
-  'form_template_versions', 'form_submissions', 'documents', 'document_links', 'case_folder_cache', 'app_settings', 'trigger_rules'];
+  'form_template_versions', 'form_submissions', 'documents', 'document_links', 'case_folder_cache', 'entity_folders', 'app_settings', 'trigger_rules'];
 
 function schemaFor(tables) {
   const lines = fs.readFileSync(path.join(__dirname, '..', 'ref', 'database.sql'), 'utf8').split('\n');
@@ -197,6 +197,8 @@ d('the Casey form discard and PDF cards on real MySQL (A12.2)', () => {
       (8001, 'person', 'Dana Q. Debtor', 'Dana', 'Debtor', '3135551212', 'dana@example.com')`);
     await q("INSERT INTO case_relate (case_relate_id, case_relate_case_id, case_relate_client_id, case_relate_type) VALUES (961, ?, 8001, 'Primary')", [C1]);
     await q("INSERT INTO case_folder_cache (case_id, path_lower) VALUES (?, '/active cases/debtor, dana')", [C1]);
+    // D3b-1: the binding as the backfill made it (the filing path and the preview read it first)
+    await q("INSERT INTO entity_folders (entity_kind, entity_id, source, path_lower, human_link, resolved_at) VALUES ('case', ?, 'dropbox', '/active cases/debtor, dana', 'https://www.dropbox.com/sh/a122case', NOW())", [C1]);
     await q(`INSERT INTO appts (appt_id, appt_client_id, appt_case_id, appt_type, appt_date, appt_length, appt_platform, appt_status, appt_with)
       VALUES (8812, 8001, '', 'Consultation', '2026-11-20 14:30:00', 30, 'Zoom', 'Scheduled', 6)`);
     await q(`INSERT INTO form_templates (id, form_key, title, link_type, schema_version, definition, draft_definition, published_at, visibility) VALUES

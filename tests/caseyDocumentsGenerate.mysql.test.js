@@ -97,7 +97,7 @@ const URL_ = process.env.YC_TEST_MYSQL_URL;
 const d = URL_ ? describe : describe.skip;
 // Production SESSION sql_mode (verified live 2026-09-25; CLAUDE.md "SQL mode is relaxed").
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
-const TABLES = ['cases', 'contacts', 'case_relate', 'documents', 'document_links', 'case_folder_cache', 'document_sync_roots', 'app_settings',
+const TABLES = ['cases', 'contacts', 'case_relate', 'documents', 'document_links', 'case_folder_cache', 'entity_folders', 'document_sync_roots', 'app_settings',
   'contract_templates', 'contract_template_pdfs', 'trigger_rules', 'trigger_rule_actions'];
 
 function schemaFor(tables) {
@@ -211,8 +211,10 @@ d('the Casey document generate / register cards on real MySQL (A11X)', () => {
       ['dropbox', 'id:A11XPET001', 'Petition.pdf', `${FOLDER1}/Petition.pdf`, lower(`${FOLDER1}/Petition.pdf`), 'pdf', 2048, 'active']);
     await q('INSERT INTO document_links (id, document_id, link_type, link_id, relation, created_by) VALUES (601, 81, ?, ?, ?, NULL)', ['case', C1, 'path']);
     await q('INSERT INTO case_folder_cache (case_id, folder_external_id, path_lower, path_display) VALUES (?, ?, ?, ?)', [C1, 'id:A11XFOLD01', lower(FOLDER1), FOLDER1]);
+    // D3b-1: the binding as the backfill made it (the filing paths and the preview read it first)
+    await q("INSERT INTO entity_folders (entity_kind, entity_id, source, external_id, path_lower, path_display, human_link, resolved_at) VALUES ('case', ?, 'dropbox', ?, ?, ?, ?, NOW())", [C1, 'id:A11XFOLD01', lower(FOLDER1), FOLDER1, LINK1]);
     await q('INSERT INTO document_sync_roots (id, path, enabled, backfill_done) VALUES (1, ?, 1, 1)', [ROOT]);
-    await q("INSERT INTO app_settings (`key`, `value`) VALUES ('documents_sync_enabled', '1')");
+    await q("INSERT INTO app_settings (`key`, `value`) VALUES ('documents_sync_enabled', '1'), ('dropbox_credential_id', '8')");   // D2: no row = STORAGE_CREDENTIAL_MISSING (fails closed); this twin had none and was red since D2 — found by D3b-1
     await q(`INSERT INTO contract_templates (id, name, kind, template_type, purpose, file_subfolder, body, prefill_schema, placement_json, active) VALUES
       (14, 'Hearing Notice', 'notice', 'html', 'generate', 'Notices', '<p>{{client_name}} / {{docket}} / {{hearing_date}}</p>',
        '[{"key":"client_name","label":"Client name","type":"text","resolver":"case.case_name","required":true},{"key":"docket","label":"Docket","type":"text","resolver":"case.docket","required":false},{"key":"hearing_date","label":"Hearing date","type":"text","required":false}]', '{"fields":[]}', 1),

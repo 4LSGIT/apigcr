@@ -179,8 +179,7 @@ function exactFolder(raw) {
 async function alignCaseFolder(db, caseId, rel) {
   if (!caseId || !rel) return rel;
   try {
-    const [[c]] = await db.query('SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId]);
-    const link = c && c.case_dropbox ? String(c.case_dropbox).trim() : '';
+    const link = (await require('./entityFolderService').caseFolderLink(db, caseId)).link || '';   // deferred (convention); D3b-1: the binding, then the legacy column
     if (!link) return rel;
     const ctx = await storage().context(db);
     let parent = await storage().resolveHumanLink(db, link, { expectFolder: true }, ctx);

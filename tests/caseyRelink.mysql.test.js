@@ -93,7 +93,7 @@ const URL_ = process.env.YC_TEST_MYSQL_URL;
 const d = URL_ ? describe : describe.skip;
 // Production SESSION sql_mode (verified live 2026-09-25; CLAUDE.md "SQL mode is relaxed").
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
-const TABLES = ['cases', 'contacts', 'case_relate', 'documents', 'document_links', 'case_folder_cache', 'document_sync_roots',
+const TABLES = ['cases', 'contacts', 'case_relate', 'documents', 'document_links', 'case_folder_cache', 'entity_folders', 'document_sync_roots',
   'app_settings', 'log', 'trigger_rules', 'trigger_rule_actions', 'users'];
 
 function schemaFor(tables) {

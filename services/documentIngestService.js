@@ -151,16 +151,15 @@ function _under(pathLower, folderLower) {
 async function _relationFor(db, linkType, linkId, pathLower) {
   if (linkType !== 'case' || !pathLower) return RELATION_UPLOAD;
   try {
-    const [[row]] = await db.query(
-      'SELECT path_lower FROM case_folder_cache WHERE case_id = ? LIMIT 1',
-      [String(linkId)],
-    );
-    const folder = row && row.path_lower ? String(row.path_lower) : null;
+    // D3b-1: the bound folder's path from entity_folders (ensureCaseDropboxFolder
+    // fills it at create time, where case_folder_cache waited for the sweep — a
+    // file landing in a just-created case folder is 'path' at once).
+    const folder = await require('./entityFolderService').casePathLower(db, String(linkId));   // deferred (convention)
     return _under(String(pathLower).toLowerCase(), folder) ? documents.RELATION_PATH : RELATION_UPLOAD;
   } catch (err) {
-    // A cache read that failed is not evidence of location. Same asymmetry as
+    // A binding read that failed is not evidence of location. Same asymmetry as
     // above: guess 'upload' and lose nothing, guess 'path' and lose the link.
-    console.warn(`[DOC INGEST] case_folder_cache lookup failed for ${linkId}: ${err.message}`);
+    console.warn(`[DOC INGEST] entity_folders lookup failed for ${linkId}: ${err.message}`);
     return RELATION_UPLOAD;
   }
 }

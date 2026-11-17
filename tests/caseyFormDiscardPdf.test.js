@@ -125,8 +125,10 @@ function setup({ tpls = { '341_notes': TPL, appt_prep: APPT_TPL, intake: CLIENT_
     if (flat.startsWith('SELECT a.appt_id, a.appt_type')) {
       return [record && params[0] === 812 ? [{ appt_id: 812, appt_type: 'Consultation', appt_date_local: '2026-11-20 14:30', appt_status: 'Scheduled', appt_client_id: 1309, contact_name: 'Dana Debtor' }] : []];
     }
-    if (flat === 'SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1') return [params[0] === CASE_ID ? [{ case_dropbox: caseDropbox }] : []];
-    if (flat.startsWith('SELECT path_lower FROM case_folder_cache')) return [cachePath ? [{ path_lower: cachePath }] : []];
+    // D3b-1: the filing path reads the binding first (link + the bound folder's path, as the backfill would hold them), the legacy column second
+    if (flat === 'SELECT external_id, path_lower, human_link FROM entity_folders WHERE entity_kind = ? AND entity_id = ? AND source = ? LIMIT 1') return [params[1] === CASE_ID && (caseDropbox || cachePath) ? [{ external_id: null, path_lower: cachePath || null, human_link: caseDropbox || null }] : []];
+    if (flat === 'SELECT path_lower, resolve_error FROM entity_folders WHERE entity_kind = ? AND entity_id = ? AND source = ? LIMIT 1') return [params[1] === CASE_ID && cachePath ? [{ path_lower: cachePath, resolve_error: null }] : []];
+    if (flat === 'SELECT case_id, case_dropbox FROM cases WHERE case_id = ? LIMIT 1') return [params[0] === CASE_ID ? [{ case_id: CASE_ID, case_dropbox: caseDropbox }] : []];
     if (flat === 'SELECT contact_lfm_name FROM contacts WHERE contact_id = ? LIMIT 1') return [[{ contact_lfm_name: 'Debtor, Dana' }]];
     if (flat.startsWith("SELECT COUNT(*) AS n FROM documents WHERE status = 'active' AND name LIKE ?")) {
       calls.like = params[0];
@@ -281,10 +283,10 @@ describe('the PDF filing', () => {
     await refuse(pdf(), 'Submission #4521 is linked to a "bill"', { rows: { 4521: subRow({ link_type: 'bill', link_id: '9' }) } });
     await refuse(pdf(), 'The route cannot render submission #4521: No template exists for form_key "341_notes"',
       { renderFail: Object.assign(new Error('No template exists for form_key "341_notes"'), { status: 404 }) });
-    expect(calls.sql.some((q) => q.startsWith('SELECT case_dropbox'))).toBe(false);
+    expect(calls.sql.some((q) => /FROM entity_folders|case_dropbox/.test(q))).toBe(false);   // a refusal never reads the case folder (binding or column)
   });
 
-  test('a case with a linked folder: the folder from the cache, the default name in FIRM time, no copies, registration, rules, expected', async () => {
+  test('a case with a linked folder: the folder from the binding, the default name in FIRM time, no copies, registration, rules, expected', async () => {
     const c = await run(pdf(), { rules: [{ ev: 'document.created', id: 31, name: 'Tag new PDFs' }] });
     // created_at 2026-10-30T03:30Z is 2026-10-29 in Detroit.
     expect([c.file_name, c.filename, c.placement]).toEqual(['2026-10-29 341 Notes (#4521).pdf', null, { rung: 'case', folder: '/active cases/debtor, dana/Forms' }]);

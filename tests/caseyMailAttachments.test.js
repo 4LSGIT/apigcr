@@ -109,7 +109,9 @@ function setup({ pv = PV(), pvError = null, folders = null, msg = MSG(), visible
   const query = jest.fn(async (sql, params) => {
     const flat = sql.replace(/\s+/g, ' ').trim();
     calls.sql.push(flat);
-    if (flat === 'SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1') return [[{ case_dropbox: caseDropbox }]];
+    // D3b-1: the "folder linked?" read goes to the binding first (no row here), the legacy column second
+    if (flat === 'SELECT external_id, path_lower, human_link FROM entity_folders WHERE entity_kind = ? AND entity_id = ? AND source = ? LIMIT 1') return [[]];
+    if (flat === 'SELECT case_id, case_dropbox FROM cases WHERE case_id = ? LIMIT 1') return [[{ case_id: params[0], case_dropbox: caseDropbox }]];
     if (flat === 'SELECT case_id, case_number, case_number_full FROM cases WHERE case_id IN (?)') {
       return [params[0].map((id) => ({ case_id: id, case_number: id === OTHER ? '24-99999' : null, case_number_full: null }))];
     }

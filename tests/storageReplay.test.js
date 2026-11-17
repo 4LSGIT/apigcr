@@ -154,6 +154,11 @@ function seedBase(world, { caseAUnder = 'active' } = {}) {
     links: [aFolder],
   });
   world.cases.hjSFMabb.case_dropbox = links[aFolder];
+  // D3b-1: the bindings as the D3a backfill made them from cases ⨝ case_folder_cache —
+  // this world's cache is EMPTY, so a backfilled binding carries the link and no path
+  // (the sweep fills paths; ensureCaseDropboxFolder fills them at create time).
+  world.entityFolders.hjSFMabb = { external_id: null, path_lower: null, path_display: null, human_link: links[aFolder], resolve_error: null };
+  world.entityFolders.deadLnk1 = { external_id: null, path_lower: null, path_display: null, human_link: world.cases.deadLnk1.case_dropbox, resolve_error: null };
   return links[aFolder];
 }
 
@@ -400,6 +405,23 @@ scenario('15 documentIngestService.registerLandedInFolder: by folder path and by
   const b = await ingest.registerLandedInFolder(db, { folderPath: `${W.CASE_A_FOLDER}/Client Uploads`, links: [{ type: 'case', id: 'hjSFMabb' }], credentialId: 8 });
   const c = await ingest.registerLandedInFolder(db, { sharedLink: 'https://www.dropbox.com/scl/fo/gone0000?dl=0', links: [] });
   world.effects.push({ kind: 'landed', ...W.scrub({ a: { scanned: a.scanned, registered: a.registered }, b: { scanned: b.scanned, registered: b.registered }, c }) });
+});
+
+// ── 16. D3b-1: the binding is the filing paths' word ─────────────────────────
+scenario('16 D3b-1 entity_folders is what the filing paths read: the binding\'s link beats a stale legacy column; a legacy-only link still files', async ({ db, world }) => {
+  // case A: the legacy column points at a dead link, the binding at the live folder → the live folder is used (placement + upload link + e-sign target + the Comms listing)
+  world.cases.hjSFMabb.case_dropbox = 'https://www.dropbox.com/scl/fo/stale000?dl=0';
+  await placement.placeAndRegister(db, generateShaped({}));
+  await uploadTarget.issueClientUploadLink(db, { caseId: 'hjSFMabb', filename: 'W2.pdf' });
+  world.effects.push({ kind: 'esign.target', ...W.scrub(await esignFiling.resolveTarget(db, { linkable_type: 'case', linkable_id: 'hjSFMabb' })) });
+  world.effects.push({ kind: 'comms.folders', ...W.scrub(await emailComms.caseFolders(db, 6, { case_id: 'hjSFMabb' })) });
+  // case C: a legacy link and NO binding (a link written before D3a's backfill ran, or by hand through a path that never bound) → the column still files; no folder is created
+  const cFolder = `${W.ACTIVE_ROOT}/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001 - Ch 7`;
+  const cLinks = fake.seed({ folders: [cFolder, `${cFolder}/Notices`], links: [cFolder] });
+  world.cases.aCtv7Num.case_dropbox = cLinks[cFolder];
+  await placement.placeAndRegister(db, generateShaped({ linkId: 'aCtv7Num' }));
+  // (the relation decision — _relationFor on the binding's path — sits behind the recorded registerWrittenSafe boundary here; the real-engine twin proves it)
+  world.effects.push({ kind: 'bindings', ...W.scrub({ entityFolders: world.entityFolders }) });
 });
 
 // ── coverage: every provider function a writer can reach is recorded somewhere

@@ -87,6 +87,7 @@ const sources = require('./documentSourceService');
 /** The storage provider the firm's documents live in (D2 makes this a per-tenant setting). */
 const SOURCE = 'dropbox';
 const storage = () => sources.get(SOURCE);
+const entityFolders = () => require('./entityFolderService');   // deferred require (convention); D3b-1: the case folder's binding
 const taskService = require('./taskService');
 const { getSetting } = require('./settingsService');
 const { resolveAlertAssignee } = require('./esignAlertService');
@@ -305,18 +306,16 @@ async function _preparePlacement(db, {
     let sharedLink = null;
     let fallbackNote = null;
 
-    let row = null;
+    let bound = null;
     try {
-      [[row]] = await db.query(
-        'SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId]
-      );
+      bound = await entityFolders().caseFolderLink(db, caseId);   // the binding, then the legacy column
     } catch (err) {
       fallbackNote = `Could not read the case row: ${err.message}`;
     }
 
-    if (row && row.case_dropbox && String(row.case_dropbox).trim() !== '') {
-      sharedLink = String(row.case_dropbox);
-    } else if (row) {
+    if (bound && bound.link) {
+      sharedLink = bound.link;
+    } else if (bound && bound.found) {
       // ── rung 2: auto-create the case folder ─────────────────────────────
       try {
         const caseService = require('./caseService');   // deferred require (convention)
@@ -429,13 +428,13 @@ async function describePlacement(db, {
 
   if (linkType === 'case') {
     const caseId = String(linkId);
-    let row = null; let reason = null;
+    let bound = null; let reason = null;
     try {
-      [[row]] = await db.query('SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId]);
+      bound = await entityFolders().caseFolderLink(db, caseId);   // the binding, then the legacy column
     } catch (err) {
       reason = `Could not read the case row: ${err.message}`;
     }
-    const link = row && row.case_dropbox && String(row.case_dropbox).trim() !== '' ? String(row.case_dropbox) : null;
+    const link = bound && bound.link ? bound.link : null;
     if (link) {
       try {
         const ctx = await storage().context(db);
@@ -447,7 +446,7 @@ async function describePlacement(db, {
       } catch (err) {
         reason = `Could not open the case's Dropbox folder: ${err.message}`;
       }
-    } else if (row) {
+    } else if (bound && bound.found) {
       // Rung 2: the ladder creates the case folder through
       // caseService.ensureCaseDropboxFolder (stage-aware template) and raises
       // the staff task at create time. Reported, not done.

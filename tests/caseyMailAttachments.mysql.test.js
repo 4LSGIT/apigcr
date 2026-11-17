@@ -115,7 +115,7 @@ const d = URL_ ? describe : describe.skip;
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
 const TABLES = ['users', 'cases', 'contacts', 'case_relate', 'contact_emails', 'portal_access_log', 'log',
   'mailboxes', 'channel_grants', 'mail_messages', 'mail_read_state', 'email_ingest_executions', 'mail_sends', 'mail_image_senders',
-  'mail_attachment_filings', 'mail_attachment_notices', 'documents', 'document_links', 'case_folder_cache',
+  'mail_attachment_filings', 'mail_attachment_notices', 'documents', 'document_links', 'case_folder_cache', 'entity_folders',
   'checklists', 'checkitems', 'trigger_rules', 'trigger_rule_actions', 'domain_event_queue'];
 
 function schemaFor(tables) {

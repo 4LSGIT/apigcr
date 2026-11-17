@@ -64,6 +64,7 @@ const sources = require('./documentSourceService');
 /** The storage provider the firm's documents live in (D2 makes this a per-tenant setting). */
 const SOURCE = 'dropbox';
 const storage = () => sources.get(SOURCE);
+const entityFolders = () => require('./entityFolderService');   // deferred require (convention); D3b-1: the case folder's binding
 const taskService    = require('./taskService');
 const { getSetting } = require('./settingsService');
 const { resolveAlertAssignee } = require('./esignAlertService');
@@ -234,7 +235,7 @@ async function issueClientUploadLink(db, { caseId, filename }) {
   }
   const cid = caseRow.case_id;
 
-  let sharedLink = (caseRow.case_dropbox && String(caseRow.case_dropbox).trim()) || '';
+  let sharedLink = (await entityFolders().caseFolderLink(db, cid, { caseRow })).link || '';   // the binding, then the legacy column
   let placement  = 'case';
   let ladderNote = null;
 
@@ -313,7 +314,7 @@ async function inspectUploadDestination(db, caseId) {
   if (!caseRow) return null;
   const cid = caseRow.case_id;
 
-  const sharedLink = (caseRow.case_dropbox && String(caseRow.case_dropbox).trim()) || '';
+  const sharedLink = (await entityFolders().caseFolderLink(db, cid, { caseRow })).link || '';   // the binding, then the legacy column
   if (sharedLink) {
     try {
       const ctx = await storage().context(db);

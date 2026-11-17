@@ -63,6 +63,7 @@ function baseFixture() {
     },
     filings: [],                        // mail_attachment_filings rows
     caseFolderCache: [],
+    entityFolders: {},                  // entity_folders rows by case_id (D3b-1: the filing readers' source); seeded by the test as the backfill would
     nextId: 1,
     effects: [],
   };
@@ -159,9 +160,42 @@ function makeDb(w) {
     if (/FROM case_folder_cache WHERE path_lower IS NOT NULL/.test(s)) return rows(w.caseFolderCache.map((r) => ({ ...r })));
     if (/FROM case_folder_cache WHERE case_id = \?/.test(s)) return rows(w.caseFolderCache.filter((r) => r.case_id === String(params[0])).map((r) => ({ ...r })));
     if (/^UPDATE case_folder_cache/.test(s)) { effect('case_folder_cache.update', { params }); return ok(1); }
+    // ── entity_folders (D3b-1): modelled as state so a later read sees an earlier write, as MySQL would ──
+    if (/^SELECT external_id, path_lower, human_link FROM entity_folders WHERE entity_kind = \? AND entity_id = \? AND source = \?/.test(s)) {
+      const b = params[0] === 'case' ? w.entityFolders[String(params[1])] : null;
+      return rows(b ? [{ external_id: b.external_id ?? null, path_lower: b.path_lower ?? null, human_link: b.human_link ?? null }] : []);
+    }
+    if (/^SELECT path_lower, resolve_error FROM entity_folders WHERE entity_kind = \? AND entity_id = \? AND source = \?/.test(s)) {
+      const b = params[0] === 'case' ? w.entityFolders[String(params[1])] : null;
+      return rows(b ? [{ path_lower: b.path_lower ?? null, resolve_error: b.resolve_error ?? null }] : []);
+    }
+    if (/^SELECT \* FROM entity_folders WHERE entity_kind = \?/.test(s)) {
+      const b = params[0] === 'case' ? w.entityFolders[String(params[1])] : null;
+      return rows(b ? [{ entity_kind: 'case', entity_id: String(params[1]), source: 'dropbox', ...b }] : []);
+    }
+    if (/^INSERT INTO entity_folders \(entity_kind, entity_id, source, external_id, path_lower, path_display, human_link, resolve_error, resolved_at\)/.test(s)) {   // setResolved
+      const [kind, id, , ext, pl, pd, link] = params;
+      if (kind === 'case') { const b = w.entityFolders[String(id)] || {}; w.entityFolders[String(id)] = { external_id: ext ?? b.external_id ?? null, path_lower: pl ?? b.path_lower ?? null, path_display: pd ?? b.path_display ?? null, human_link: link ?? b.human_link ?? null, resolve_error: null }; }
+      effect('entity_folders.upsert', { params }); return ok(1);
+    }
+    if (/^INSERT INTO entity_folders \(entity_kind, entity_id, source, human_link, resolve_error, resolved_at\)/.test(s)) {   // setError
+      const [kind, id, , link, error] = params;
+      if (kind === 'case') { const b = w.entityFolders[String(id)] || {}; w.entityFolders[String(id)] = { ...b, human_link: link ?? b.human_link ?? null, resolve_error: error }; }
+      effect('entity_folders.upsert', { params }); return ok(1);
+    }
+    if (/^INSERT INTO entity_folders \(entity_kind, entity_id, source, human_link\)/.test(s)) {   // setHumanLink
+      const [kind, id, , link] = params;
+      if (kind === 'case') { const b = w.entityFolders[String(id)]; w.entityFolders[String(id)] = b && b.human_link === link ? b : { external_id: null, path_lower: null, path_display: null, human_link: link, resolve_error: null }; }
+      effect('entity_folders.upsert', { params }); return ok(1);
+    }
     if (/^INSERT INTO entity_folders/.test(s)) { effect('entity_folders.upsert', { params }); return ok(1); }
+    if (/^UPDATE entity_folders SET path_lower = \?, path_display = \?/.test(s)) {   // setPaths
+      const [pl, pd, kind, id] = params;
+      if (kind === 'case' && w.entityFolders[String(id)]) Object.assign(w.entityFolders[String(id)], { path_lower: pl, path_display: pd, resolve_error: null });
+      effect('entity_folders.update', { params }); return ok(1);
+    }
     if (/^UPDATE entity_folders/.test(s)) { effect('entity_folders.update', { params }); return ok(1); }
-    if (/^DELETE FROM entity_folders/.test(s)) { effect('entity_folders.delete', { params }); return ok(1); }
+    if (/^DELETE FROM entity_folders/.test(s)) { if (params[0] === 'case') delete w.entityFolders[String(params[1])]; effect('entity_folders.delete', { params }); return ok(1); }
     if (/^INSERT INTO case_folder_cache/.test(s)) { effect('case_folder_cache.upsert', { params }); return ok(1); }
     if (/FROM document_sync_roots WHERE enabled = 1/.test(s)) return rows([]);
     // ── anything else ─────────────────────────────────────────────────────

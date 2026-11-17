@@ -56,6 +56,67 @@ test('setPaths (the folder heal) moves the paths by key and clears the error; se
   expect(db.calls[3]).toEqual(['DELETE FROM entity_folders WHERE entity_kind = ? AND entity_id = ? AND source = ?', ['case', 'loser1', 'dropbox']]);
 });
 
+test('setHumanLink: a changed link keeps ONLY the link — every other column goes NULL through <=> IFs, human_link assigned LAST; a blank link is a DELETE', async () => {
+  const db = DB();
+  await svc.setHumanLink(db, { kind: 'case', id: 'c1', humanLink: '  https://x/y  ' });
+  const [sql, params] = db.calls[0];
+  expect(sql).toMatch(/^INSERT INTO entity_folders \(entity_kind, entity_id, source, human_link\) VALUES \(\?, \?, \?, \?\) AS new ON DUPLICATE KEY UPDATE/);
+  for (const col of ['external_id', 'path_lower', 'path_display', 'resolve_error', 'resolved_at']) {
+    expect(sql).toContain(`${col} = IF(entity_folders.human_link <=> new.human_link, entity_folders.${col}, NULL)`);
+  }
+  expect(sql).toMatch(/human_link = new\.human_link$/);   // last: MySQL evaluates the assignments left to right
+  expect(params).toEqual(['case', 'c1', 'dropbox', 'https://x/y']);
+  const db2 = DB();
+  await svc.setHumanLink(db2, { kind: 'case', id: 'c1', humanLink: '   ' });
+  expect(db2.calls[0][0]).toMatch(/^DELETE FROM entity_folders WHERE/);
+  const db3 = DB();
+  await svc.setHumanLink(db3, { kind: 'case', id: 'c1', humanLink: null });
+  expect(db3.calls[0][0]).toMatch(/^DELETE FROM entity_folders WHERE/);
+});
+
+test('caseFolderLink: the binding first (trimmed), the legacy column second — read only when the binding has no link and no row was given; found/link/via semantics', async () => {
+  const scripted = (bindingRow, caseRow) => {
+    const calls = [];
+    return { calls, query: jest.fn(async (sql, params) => { calls.push(sql.replace(/\s+/g, ' ').trim()); return /FROM entity_folders/.test(sql) ? [bindingRow ? [bindingRow] : []] : [caseRow ? [caseRow] : []]; }) };
+  };
+  // the binding wins, whatever the column says; one query
+  let db = scripted({ external_id: 'id:1', path_lower: '/a', human_link: ' https://b ' }, { case_id: 'c1', case_dropbox: 'https://stale' });
+  expect(await svc.caseFolderLink(db, 'c1')).toEqual({ found: true, link: 'https://b', via: 'binding', externalId: 'id:1', pathLower: '/a' });
+  expect(db.calls).toHaveLength(1);
+  expect(db.calls[0]).toBe('SELECT external_id, path_lower, human_link FROM entity_folders WHERE entity_kind = ? AND entity_id = ? AND source = ? LIMIT 1');
+  // no binding → the column, trimmed
+  db = scripted(null, { case_id: 'c1', case_dropbox: ' https://legacy ' });
+  expect(await svc.caseFolderLink(db, 'c1')).toEqual({ found: true, link: 'https://legacy', via: 'case', externalId: null, pathLower: null });
+  expect(db.calls[1]).toBe('SELECT case_id, case_dropbox FROM cases WHERE case_id = ? LIMIT 1');
+  // a binding row without a link (setError on a never-resolved case) still falls to the column and keeps what it knows
+  db = scripted({ external_id: null, path_lower: null, human_link: null }, { case_id: 'c1', case_dropbox: 'https://legacy' });
+  expect(await svc.caseFolderLink(db, 'c1')).toMatchObject({ link: 'https://legacy', via: 'case' });
+  // the case exists with no folder; the case does not exist
+  db = scripted(null, { case_id: 'c1', case_dropbox: '' });
+  expect(await svc.caseFolderLink(db, 'c1')).toEqual({ found: true, link: null, via: null, externalId: null, pathLower: null });
+  db = scripted(null, null);
+  expect(await svc.caseFolderLink(db, 'c1')).toEqual({ found: false, link: null, via: null, externalId: null, pathLower: null });
+  // a caller holding the row (or knowing it is absent) pays no fallback query
+  db = scripted(null, { case_id: 'c1', case_dropbox: 'https://from-db' });
+  expect((await svc.caseFolderLink(db, 'c1', { caseRow: { case_id: 'c1', case_dropbox: 'https://in-hand' } })).link).toBe('https://in-hand');
+  expect((await svc.caseFolderLink(db, 'c1', { caseRow: null })).found).toBe(false);
+  expect(db.calls).toHaveLength(2);
+  expect(db.calls.every((q) => /FROM entity_folders/.test(q))).toBe(true);
+  await expect(svc.caseFolderLink(db, '')).rejects.toThrow(/id is required/);
+});
+
+test('casePathLower: the bound path or null; resolvedOnly drops a row carrying a resolve_error', async () => {
+  const one = (row) => dbStub([row ? [row] : []]);
+  expect(await svc.casePathLower(one({ path_lower: '/a/b', resolve_error: null }), 'c1')).toBe('/a/b');
+  expect(await svc.casePathLower(one({ path_lower: '/a/b', resolve_error: 'gone' }), 'c1')).toBe('/a/b');
+  expect(await svc.casePathLower(one({ path_lower: '/a/b', resolve_error: 'gone' }), 'c1', { resolvedOnly: true })).toBeNull();
+  expect(await svc.casePathLower(one({ path_lower: null, resolve_error: null }), 'c1')).toBeNull();
+  expect(await svc.casePathLower(one(null), 'c1')).toBeNull();
+  const db = one({ path_lower: '/a', resolve_error: null });
+  await svc.casePathLower(db, 'c9', { source: 'gcs' });
+  expect(db.calls[0]).toEqual(['SELECT path_lower, resolve_error FROM entity_folders WHERE entity_kind = ? AND entity_id = ? AND source = ? LIMIT 1', ['case', 'c9', 'gcs']]);
+});
+
 test('get returns the row or null; bad keys are refused before any SQL', async () => {
   const db = dbStub([[{ entity_id: 'x', external_id: 'id:1' }]]);
   expect(await svc.get(db, { kind: 'case', id: 'x' })).toEqual({ entity_id: 'x', external_id: 'id:1' });

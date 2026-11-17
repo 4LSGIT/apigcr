@@ -46,7 +46,7 @@ const sync = require('../services/documentSyncService');
 
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const suite = URL_ ? describe : describe.skip;
-const TABLES = ['documents', 'document_links', 'case_folder_cache', 'document_sync_roots', 'cases', 'case_relate', 'contacts'];   // the last two: ensureCaseDropboxFolder names the primary contact (D3a)
+const TABLES = ['documents', 'document_links', 'case_folder_cache', 'document_sync_roots', 'cases', 'case_relate', 'contacts', 'field_defs'];   // case_relate + contacts: ensureCaseDropboxFolder names the primary contact (D3a); field_defs: createCase reads the custom-field defs (D3b-1)
 // D3a: the binding row, built by the migration script itself (its CREATE comes from the record file)
 const d3a = require('../scripts/storageSeamD3aEntityFolders');
 const entityFolders = require('../services/entityFolderService');
@@ -73,7 +73,8 @@ suite('storage replay on real MySQL', () => {
     if (creates.length !== TABLES.length) throw new Error(`schemaFor found ${creates.length} of ${TABLES.length}`);
     for (const s of creates) await q(s);
     for (const s of alters) await q(s);
-    await q('DROP TABLE IF EXISTS entity_folders');   // D3a's scenario creates it through the migration
+    await q('DROP TABLE IF EXISTS entity_folders');
+    await q(d3a.createTableSql());   // D3b-1: the filing readers read it from the first scenario on; the D3a test drops and recreates it through the migration
   });
   afterAll(async () => {
     if (db) { await q('SET FOREIGN_KEY_CHECKS = 0'); for (const t of [...TABLES, 'entity_folders']) await q(`DROP TABLE IF EXISTS \`${t}\``); await db.end(); }
@@ -106,6 +107,10 @@ suite('storage replay on real MySQL', () => {
     await q('INSERT INTO cases (case_id, case_dropbox) VALUES (?, ?), (?, ?)', ['hjSFMabb', links[W.CASE_A_FOLDER], 'deadLnk1', 'https://www.dropbox.com/scl/fo/gone0000?dl=0']);
     const a = fake.node(W.CASE_A_FOLDER);
     await q('INSERT INTO case_folder_cache (case_id, folder_external_id, path_lower, path_display) VALUES (?, ?, ?, ?)', ['hjSFMabb', a.id, a.path_lower, a.path_display]);
+    // D3b-1: the bindings as the backfill made them (cases ⨝ case_folder_cache)
+    await q('TRUNCATE TABLE entity_folders');
+    await q("INSERT INTO entity_folders (entity_kind, entity_id, source, external_id, path_lower, path_display, human_link, resolved_at) VALUES ('case', ?, 'dropbox', ?, ?, ?, ?, NOW()), ('case', ?, 'dropbox', NULL, NULL, NULL, ?, NULL)",
+      ['hjSFMabb', a.id, a.path_lower, a.path_display, links[W.CASE_A_FOLDER], 'deadLnk1', 'https://www.dropbox.com/scl/fo/gone0000?dl=0']);
     return a;
   }
 
@@ -187,6 +192,50 @@ suite('storage replay on real MySQL', () => {
       expect([nb.human_link, nb.external_id, nb.path_display]).toEqual([made.shared_link, fake.node(made.path).id, made.path]);
       expect(fake.calls.map((c) => c.fn)).toEqual(['getMetadata', 'createFolderWithOptions']);   // the probe + the create; nothing added for the handle
     } finally { conn.release(); }
+  });
+
+  test('D3b-1: caseFolderLink reads the binding first and the legacy column second on real rows; setHumanLink keeps only the link when it changes; updateCase / createCase carry a hand-written link into the binding', async () => {
+    const a = await reset();
+    const live = (await q('SELECT case_dropbox FROM cases WHERE case_id = ?', ['hjSFMabb']))[0].case_dropbox;
+    // precedence: the column is stale, the binding is live → the binding's link, with the handle and path it holds
+    await q("UPDATE cases SET case_dropbox = 'https://www.dropbox.com/scl/fo/stale000?dl=0' WHERE case_id = 'hjSFMabb'");
+    expect(await entityFolders.caseFolderLink(db, 'hjSFMabb')).toEqual({ found: true, link: live, via: 'binding', externalId: a.id, pathLower: a.path_lower });
+    // legacy only: a case with a link and no binding row
+    await q("INSERT INTO cases (case_id, case_dropbox) VALUES ('legacy01', ' https://www.dropbox.com/scl/fo/legacy01?dl=0 ')");
+    expect(await entityFolders.caseFolderLink(db, 'legacy01')).toEqual({ found: true, link: 'https://www.dropbox.com/scl/fo/legacy01?dl=0', via: 'case', externalId: null, pathLower: null });
+    // a case with neither; a case that does not exist; the row passed in saves the fallback read
+    await q("INSERT INTO cases (case_id) VALUES ('bare0001')");
+    expect(await entityFolders.caseFolderLink(db, 'bare0001')).toEqual({ found: true, link: null, via: null, externalId: null, pathLower: null });
+    expect(await entityFolders.caseFolderLink(db, 'noSuchCs')).toEqual({ found: false, link: null, via: null, externalId: null, pathLower: null });
+    expect((await entityFolders.caseFolderLink(db, 'noSuchCs', { caseRow: null })).found).toBe(false);
+    expect(await entityFolders.casePathLower(db, 'hjSFMabb')).toBe(a.path_lower);
+    await q("UPDATE entity_folders SET resolve_error = 'x' WHERE entity_id = 'hjSFMabb'");
+    expect(await entityFolders.casePathLower(db, 'hjSFMabb', { resolvedOnly: true })).toBeNull();
+    expect(await entityFolders.casePathLower(db, 'hjSFMabb')).toBe(a.path_lower);
+    await q("UPDATE entity_folders SET resolve_error = NULL WHERE entity_id = 'hjSFMabb'");
+    // setHumanLink: the same link is a no-op (handle + path kept); a changed link keeps ONLY the link; blank removes
+    await entityFolders.setHumanLink(db, { kind: 'case', id: 'hjSFMabb', humanLink: live }, { strict: true });
+    let b = (await bindings()).find((r) => r.entity_id === 'hjSFMabb');
+    expect([b.external_id, b.path_lower, b.human_link, !!b.resolved]).toEqual([a.id, a.path_lower, live, true]);
+    await entityFolders.setHumanLink(db, { kind: 'case', id: 'hjSFMabb', humanLink: 'https://www.dropbox.com/scl/fo/moved001?dl=0' }, { strict: true });
+    b = (await bindings()).find((r) => r.entity_id === 'hjSFMabb');
+    expect([b.external_id, b.path_lower, b.path_display, b.resolve_error, b.human_link, !!b.resolved]).toEqual([null, null, null, null, 'https://www.dropbox.com/scl/fo/moved001?dl=0', false]);
+    await entityFolders.setHumanLink(db, { kind: 'case', id: 'legacy01', humanLink: 'https://www.dropbox.com/scl/fo/legacy01?dl=0' }, { strict: true });   // a first binding for a legacy-only case
+    expect((await entityFolders.caseFolderLink(db, 'legacy01')).via).toBe('binding');
+    await entityFolders.setHumanLink(db, { kind: 'case', id: 'legacy01', humanLink: '  ' }, { strict: true });
+    expect((await bindings()).map((r) => r.entity_id)).toEqual(['deadLnk1', 'hjSFMabb']);
+    // the house write paths: updateCase and createCase carrying case_dropbox bind the case (mysql2 answers information_schema for writableColumns on these real tables)
+    await caseService.updateCase(db, 'bare0001', { case_dropbox: 'https://www.dropbox.com/scl/fo/byhand01?dl=0' }, { userId: 6, source: 'manual' });
+    expect(await entityFolders.caseFolderLink(db, 'bare0001')).toMatchObject({ link: 'https://www.dropbox.com/scl/fo/byhand01?dl=0', via: 'binding' });
+    await caseService.updateCase(db, 'bare0001', { case_dropbox: '' }, { userId: 6, source: 'manual' });
+    expect((await bindings()).map((r) => r.entity_id)).toEqual(['deadLnk1', 'hjSFMabb']);
+    const made = await caseService.createCase(db, { case_type: 'Bankruptcy', case_dropbox: 'https://www.dropbox.com/scl/fo/atcreate?dl=0' });
+    expect(await entityFolders.caseFolderLink(db, made.case_id)).toMatchObject({ link: 'https://www.dropbox.com/scl/fo/atcreate?dl=0', via: 'binding' });
+    // _relationFor reads the binding's path: a file under case A's folder is 'path' even with the cache row gone
+    await q('TRUNCATE TABLE case_folder_cache');
+    await entityFolders.setResolved(db, { kind: 'case', id: 'hjSFMabb', externalId: a.id, pathLower: a.path_lower, pathDisplay: a.path_display, humanLink: live }, { strict: true });
+    const r = await ingest.registerWritten(db, { entry: entry('id:d3b0001', `${W.CASE_A_FOLDER}/Client Uploads/Bound.pdf`, 10), links: [{ type: 'case', id: 'hjSFMabb' }], createdBy: 6, eventSource: 'upload' });
+    expect(r.links.map((l) => l.relation)).toEqual(['path']);
   });
 
   scenario('B2 sync: backfill page, incremental page with a move and a deletion, then the cache refresh', async (a) => {

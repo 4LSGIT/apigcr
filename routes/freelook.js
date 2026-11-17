@@ -172,8 +172,10 @@ router.post('/api/court/free-look', jwtOrApiKey, async (req, res) => {
     if (!rows || rows.length === 0)  fallbackReason = 'no_case_row';
     else {
       caseId = rows[0].case_id;
-      if (!rows[0].case_dropbox)     fallbackReason = 'no_case_dropbox';
-      else                           caseDropbox = rows[0].case_dropbox;
+      // D3b-1: the case folder's binding, then the legacy column (the row in hand).
+      const bound = await require('../services/entityFolderService').caseFolderLink(db, caseId, { caseRow: rows[0] });   // lazy (convention)
+      if (!bound.link)               fallbackReason = 'no_case_dropbox';
+      else                           caseDropbox = bound.link;
     }
   } catch (e) {
     console.error('[free-look] case lookup failed:', e.message);

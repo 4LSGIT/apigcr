@@ -1988,6 +1988,7 @@ tests/storageReplay.test.js
 tests/storageSeamD1fStorageFunctions.mysql.test.js
 tests/storageSeamD1fStorageFunctions.test.js
 tests/storageSeamD3aEntityFolders.test.js
+tests/storageSeamD3bCaseLinkDualWrite.test.js
 tests/su.stepup.test.js
 tests/systemAlertStatusFn.test.js
 tests/taskCreate.badInput400.test.js
