@@ -171,7 +171,6 @@ describe('classification snapshot', () => {
     "phone_delivery_failed_workflow_id": "firm comms comms ui number",
     "phone_delivery_sync_enabled": "firm comms comms ui bool",
     "portal_callback_task_to": "firm portal portal ui user required",
-    "portal_docs_notify_to": "firm portal portal ui email",
     "portal_email_from": "firm portal portal ui email required",
     "portal_favicon_url": "firm portal portal ui url",
     "portal_live": "firm portal portal ui bool",
@@ -449,7 +448,6 @@ describe('validators', () => {
     expect(reg.validate('portal_email_from', '  ')).toMatch(/cannot be blank/);
     expect(reg.validate('portal_callback_task_to', '')).toMatch(/cannot be blank/);
     expect(reg.validate('portal_callback_task_to', '1')).toBe(true);
-    expect(reg.validate('portal_docs_notify_to', '')).toBe(true);     // blank = upload emails off, by design
     expect(reg.validate('default_task_assignee', '')).toBe(true);
     expect(reg.validateByType('email', '')).toBe(true);               // the type alone never refuses blank
   });

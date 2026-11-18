@@ -63,11 +63,7 @@
 
 'use strict';
 
-const emailService = require('./emailService');
-const logService   = require('./logService');
 const uploadTarget = require('./uploadTargetService');
-const { getSetting } = require('./settingsService');
-const { cfg } = require('../lib/firmConfig');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LIMITS (S3 — proposed values, enforced server-side; see slice report)
@@ -92,19 +88,10 @@ const MAX_UPLOAD_FILES    = 50;
 const MAX_UPLOAD_FILENAME = 255;
 const MAX_UPLOAD_COMMENT  = 2000;
 
-// Notification recipient — resolved from app_settings at send time (R1,
-// 2026-08-09; previously hardcoded here). The SENDER is the firm-wide
-// automations address, cfg('email_automations') — the same source
-// taskService / featureRequests / auth.password use — so one Email-category
-// setting moves every automation sender together; the per-feature
-// portal_docs_notify_from key was dropped in the 2026-08 upload-fallback
-// change as a duplicate of it. The public upload-complete route
-// (api.checklists.js) reads the SAME recipient key (exported below), so
-// editing it retargets BOTH upload surfaces.
-// Blank/missing recipient ⇒ the email is SKIPPED with a console warning
-// (the case-log entry still writes) — the apptService office_alerts_to
-// "empty ⇒ feature off" precedent, deliberate staff off-switch semantics.
-const NOTIFY_TO_KEY = 'portal_docs_notify_to';
+// Notification recipient: `email_attachments_reviewer` (services/docsReviewerService)
+// since 2026-11-19 — the same person every docs door tells. The upload pages'
+// own `portal_docs_notify_to` is retired (ref/migrations/2026-11-19_docs_reviewer.sql).
+// Unset ⇒ the email is skipped with a console warning; the case-log row still writes.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
@@ -408,188 +395,27 @@ async function completeUpload(db, contactId, caseId, { files, comment } = {}) {
 }
 
 /**
- * The email + case-log side effects for a validated batch. Called by the
- * route AFTER the 200 (public-route parity); each effect self-catches so
- * one failing never blocks the other. Returns the settled promise for
- * tests.
+ * The side effects for a validated batch, AFTER the 200 (public-route parity):
+ * services/clientUploadCompletionService — the ONE post-upload phase both
+ * upload pages share since 2026-11-19 (where the files went, what landed,
+ * the reviewer's notice with per-file links + the Docs Needed block, the
+ * `docs` case-log row, the unsorted task). Self-catching; the route's .catch
+ * is a dead-man's brake only. Returns the service's result for tests.
  *
- * The email's recipient resolves from app_settings (NOTIFY_TO_KEY) per
- * send and its sender from cfg('email_automations') — live edits apply to
- * the next upload, no restart. A failed settings read, or a blank/missing
- * recipient, SKIPS the email (warning logged) and never blocks the
- * case-log entry; the route's .catch stays a dead-man's brake only.
- *
- * Escaping discipline (public-route parity): EVERY value interpolated into
- * the HTML body is escaped — filenames and comment are client input, and
- * DB-derived values (item names are staff free-text; dropboxLink sits in
- * an href) are escaped as defence in depth. The subject is a MIME header,
- * not HTML — deliberately NOT escaped (repo convention).
+ * ctx.dropboxLink is no longer read (the service derives the folder itself);
+ * it stays on the context for page-contract compatibility.
  */
 async function sendUploadNotifications(db, ctx) {
-  const {
-    case_id, contact_id, clientName, caseDisplay, dropboxLink,
-    fileCount, omittedCount, files, comment,
-  } = ctx;
-
-  // Where did the batch land? Re-derived server-side — nothing trustworthy
-  // travels from link issuance through the client (see uploadTargetService,
-  // complete-time inspection). We run post-200 (route sequencing), so the
-  // client never waits on this. An inspection ERROR (or null — case row
-  // vanished) degrades to the legacy ctx.dropboxLink wording below.
-  let dest = null;
-  try {
-    dest = await uploadTarget.inspectUploadDestination(db, case_id);
-  } catch (err) {
-    console.warn('[portal] upload destination inspection failed:', err.message);
-  }
-
-  // Group files: per-item sections first (checklist encounter order not
-  // guaranteed — insertion order of the batch), general files last.
-  const byItem = new Map();     // item_name → [file names]
-  const general = [];
-  for (const f of files) {
-    if (f.item_name) {
-      if (!byItem.has(f.item_name)) byItem.set(f.item_name, []);
-      byItem.get(f.item_name).push(f.name);
-    } else {
-      general.push(f.name);
-    }
-  }
-
-  let sectionsHtml = '';
-  for (const [itemName, names] of byItem) {
-    sectionsHtml +=
-      `<p style="margin-bottom:2px;"><strong>${escapeHtml(itemName)}</strong></p>\n` +
-      `<ul>\n${names.map(n => `<li>${escapeHtml(n)}</li>`).join('\n')}\n</ul>\n`;
-  }
-  if (general.length) {
-    sectionsHtml +=
-      (byItem.size ? `<p style="margin-bottom:2px;"><strong>Other documents</strong></p>\n` : '') +
-      `<ul>\n${general.map(n => `<li>${escapeHtml(n)}</li>`).join('\n')}\n</ul>\n`;
-  }
-  const omittedHtml = omittedCount > 0
-    ? `<p><em>\u2026 and ${omittedCount} more file${omittedCount > 1 ? 's' : ''} not listed</em></p>\n`
-    : '';
-  const commentBlock = comment
-    ? `<p><strong>Client comment:</strong> ${escapeHtml(comment)}</p>\n`
-    : '';
-
-  // Subject parity with the public route's shape (MIME header — unescaped).
-  const subject = `New Documents Uploaded \u2014 ${clientName} (${caseDisplay})`;
-  const html = `
-    <p><strong>${escapeHtml(clientName)}</strong> uploaded <strong>${fileCount}</strong> document${fileCount > 1 ? 's' : ''} to case <strong>${escapeHtml(caseDisplay)}</strong> via the client portal.</p>
-
-    <p><strong>Files:</strong></p>
-    ${sectionsHtml}${omittedHtml}
-    ${commentBlock}
-    ${(() => {
-      if (dest && dest.placement === 'unsorted') {
-        const where = dest.link
-          ? `<a href="${escapeHtml(dest.link)}">unsorted client uploads folder</a>`
-          : `unsorted client uploads folder (<code>${escapeHtml(dest.path)}</code>)`;
-        return `<p><strong>Note:</strong> this case has no working Dropbox folder \u2014 the files were placed in the ${where}. Please move them into the case's folder.</p>`;
-      }
-      const caseLink = (dest && dest.sharedLink) || dropboxLink || '';
-      return caseLink
-        ? `<p><a href="${escapeHtml(caseLink)}">Open Dropbox Folder</a> \u2014 review, rename, and move files from the "Client Uploads" subfolder.</p>`
-        : '<p><em>No Dropbox link on file for this case.</em></p>';
-    })()}
-  `.trim();
-
-  // Recipient from app_settings; sender = firm automations address (see the
-  // NOTIFY_TO_KEY comment). Read failure or blank/missing recipient → skip
-  // the email (loudly), never the log entry below.
-  let notifyTo = '';
-  try {
-    notifyTo = String((await getSetting(db, NOTIFY_TO_KEY)) ?? '').trim();
-  } catch (err) {
-    console.error('[portal] upload notification settings read failed — email skipped:', err.message);
-  }
-  const notifyFrom = cfg('email_automations') || 'automations@4lsg.com';
-
-  const emailP = notifyTo
-    ? emailService.sendEmail(db, {
-        from: notifyFrom,
-        to:   notifyTo,
-        subject,
-        html,
-      }).catch(err => console.error('[portal] upload notification email failed:', err.message))
-    : Promise.resolve().then(() => {
-        console.warn(
-          `[portal] upload notification email skipped — ` +
-          `${NOTIFY_TO_KEY} unset or blank (blank = notifications off)`
-        );
-      });
-
-  const logP = logService.createLogEntry(db, {
-    type:      'docs',
-    link_type: 'case',
-    link_id:   case_id,
-    by:        0,          // log_by is a users id — client actions log as 0
-    data:      JSON.stringify({
-      action:     'client_upload',
-      source:     'portal',
-      contact_id,
-      files:      files.map(f => ({ name: f.name, item_id: f.item_id, item_name: f.item_name })),
-      file_count: fileCount,
-      comment:    comment || null,
-    }),
-    subject:   `Client uploaded ${fileCount} document${fileCount > 1 ? 's' : ''} via portal`,
-    direction: 'incoming',
-  }).catch(err => console.error('[portal] upload log entry failed:', err.message));
-
-  // Unsorted placement is easy to lose in an inbox — raise a staff task
-  // (best-effort; the service self-catches and never throws).
-  const taskP = (dest && dest.placement === 'unsorted')
-    ? uploadTarget.raiseUnsortedUploadTask(db, {
-        caseId:     case_id,
-        clientName,
-        fileCount,
-        path:       dest.path,
-        link:       dest.link,
-      })
-    : Promise.resolve();
-
-  // ── REGISTER WHAT LANDED (Documents S4) ────────────────────────────────────
-  //
-  // Additive, self-catching, and post-200 like everything else in this
-  // function — the bytes are already in Dropbox, so a registration failure
-  // costs a delay (the delta finds the file) and must never cost the client an
-  // error or this batch its notification.
-  //
-  // TWO LINKS, and the second is the portal's advantage over the public flow:
-  // this upload was made by an AUTHENTICATED contact, so we know who uploaded
-  // it and not merely which case it concerns. The public route can only guess
-  // the Primary contact and correctly declines to. A spouse's upload therefore
-  // shows up on the spouse's contact record here.
-  //
-  // Both are relation 'upload' unless the file landed under the case's cached
-  // folder — documentIngestService decides that per file, per link; a contact
-  // link is never a 'path' link because contacts have no folder.
-  //
-  // By folder, not by the reported names: this service also receives names
-  // only, and autorename makes them unreliable. See registerLandedInFolder.
-  const ingest = require('./documentIngestService');   // deferred (convention)
-  const target = (dest && dest.placement === 'unsorted')
-    ? { folderPath: dest.path }
-    : { sharedLink: (dest && dest.sharedLink) || dropboxLink, subfolder: 'Client Uploads' };
-  const ingestP = (dest || dropboxLink)
-    ? ingest.registerLandedInFolder(db, {
-        ...target,
-        links: [
-          { type: 'case',    id: case_id },
-          { type: 'contact', id: contact_id },
-        ],
-        createdBy:   null,              // a client acted; log_by/created_by have no user
-        eventSource: 'portal_upload',
-      }).then(r => {
-        if (r.registered) {
-          console.log(`[portal] registered ${r.registered} document(s) for case ${case_id}`);
-        }
-      })
-    : Promise.resolve();
-
-  return Promise.all([emailP, logP, taskP, ingestP]);
+  const { case_id, contact_id, clientName, fileCount, files, comment } = ctx;
+  return require('./clientUploadCompletionService').completeClientUpload(db, {   // lazy (convention)
+    source: 'portal',
+    caseId: case_id,
+    contactId: contact_id,
+    clientName,
+    files,
+    fileCount,
+    comment: comment || null,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -607,9 +433,6 @@ module.exports = {
   MAX_UPLOAD_FILES,
   MAX_UPLOAD_FILENAME,
   MAX_UPLOAD_COMMENT,
-  // Notify-recipient settings key — shared with the public upload-complete
-  // route (api.checklists.js) so both surfaces read one setting.
-  NOTIFY_TO_KEY,
   // Exposed for tests (repo pattern).
   _escapeHtml: escapeHtml,
   _sanitizeFilename: sanitizeFilename,

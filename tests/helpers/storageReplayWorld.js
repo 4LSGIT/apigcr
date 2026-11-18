@@ -199,6 +199,18 @@ function makeDb(w) {
     if (/^UPDATE entity_folders/.test(s)) { effect('entity_folders.update', { params }); return ok(1); }
     if (/^DELETE FROM entity_folders/.test(s)) { delete w.entityFolders[efKey(params[0], params[1])]; effect('entity_folders.delete', { params }); return ok(1); }
     if (/FROM document_sync_roots WHERE enabled = 1/.test(s)) return rows([]);
+    // ── the case log (logService.createLogEntry — e.g. services/docsIntakeLog's
+    // `docs` row, written by the email filing service since 2026-11-18). Params
+    // follow createLogEntry's INSERT with the default (NOW-based) log_date:
+    // type, log_link, link_type, link_id, about_type, about_id, by, data,
+    // extra, from, to, subject, message, direction.
+    if (/^INSERT INTO log\s/.test(s)) {
+      const [type, , linkType, linkId, aboutType, aboutId, by, data, , , , subject, , direction] = params;
+      let parsed = data;
+      try { parsed = JSON.parse(data); } catch { /* not JSON — record as written */ }
+      effect('log.create', { type, link_type: linkType, link_id: linkId, about_type: aboutType, about_id: aboutId, by, subject, direction, data: parsed });
+      return ok(1, 0);   // insertId unused by these writers; nextId stays the filings' own sequence
+    }
     // ── anything else ─────────────────────────────────────────────────────
     if (/^(INSERT|UPDATE|DELETE)/.test(s)) { effect('db.write.unmodelled', { sql: s.slice(0, 120) }); return ok(1); }
     throw new Error(`storageReplayWorld: unmodelled SELECT — ${s.slice(0, 160)}`);

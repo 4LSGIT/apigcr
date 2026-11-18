@@ -54,6 +54,40 @@ name, listing the outstanding documents, and an **Upload Your Documents**
 section. When they pick a file, it uploads directly to Dropbox. Large or
 multiple files are fine — each file gets its own direct upload link.
 
+## What staff see when files arrive
+
+Every way a client's documents reach the firm leaves the **same kind of line in
+the case's log** (log type **docs**), so a case reads the same however the files
+came in:
+
+| How they came in | The log line |
+|---|---|
+| This document-request page | "Client uploaded 3 documents" |
+| Client portal → Documents | "Client uploaded 3 documents via portal" |
+| Emailed to docs@4lsg.com (the docs@ automation files them) | "Jane Doe emailed 3 documents to docs@4lsg.com" |
+| Filed from an email in Comms (File attachments) | "Fred filed 3 emailed documents from Comms" |
+| Moved into the case afterwards (a "which case?" answer, or Comms' move) | "3 emailed documents moved to this case" |
+
+Open the line for the details: each file's name and where it landed, the
+client's comment (upload pages), whether the files went to the case folder or
+to Unsorted, and — for email — which email they came from and any file that
+could not be filed.
+
+### The notice
+
+Every door also emails the same person — the **Client documents review** user
+(`email_attachments_reviewer`, YisraCase Config → Firm → Routing) — the same
+kind of notice: where the files went (with the Dropbox folder, the case and the
+Docs Needed list one click away), each file linked to itself, the client's
+comment, and the case's still-open Docs Needed items so the reviewer can check
+them off. An upload notice's subject starts "Client upload — "; an emailed
+one's "New email to Docs@4LSG.com — " (docs@) or "Filed from Comms — ". Unset
+the reviewer and no notice goes anywhere; the log line still writes.
+
+Emailed files that went to **Unsorted** because no case could be picked are
+logged on the **client's contact** when the sender is a known client; files from
+an unknown sender get their line when someone moves them into a case.
+
 ---
 
 ## A few things to know

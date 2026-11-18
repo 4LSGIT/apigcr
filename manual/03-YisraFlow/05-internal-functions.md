@@ -64,7 +64,7 @@ Of the 112: **17** are `uiHidden` (internal plumbing and the recurring sweepers,
 | documents | `documents_sync`, `documents_refresh_case_cache`, `documents_attribution_report`, `document_generate_from_template`* |
 | esign | `esign_send_from_template`, `esign_get_status`, `esign_recall` |
 | storage | `storage_ensure_folder`, `storage_human_link`, `storage_list`, `storage_move`, `storage_rename`, `storage_delete`, `storage_import_url`, `storage_ensure_case_folder` |
-| email | `email_case_match`, `email_attachments_file`*, `email_attachments_digest`*, `email_attachments_refile`* |
+| email | `email_case_match`, `email_attachments_file`*, `email_attachments_digest`*, `email_attachments_refile`*, `docs_reviewer` |
 | pdf | `parse_pdf`, `render_submission_pdf`* |
 | connections | `refresh_expiring_oauth_credentials`, `rc_renew_subscriptions`, `gcontacts_sync_pending` |
 | general | `query_db`, `update_db`, `insert_db` |
@@ -1927,6 +1927,14 @@ rule: `{{mailbox.message_row_id}}`), or `mailbox_id` + `folder` + `uid`, or
   email domains, or a YisraCase mailbox) is nobody's client: only a case the
   email names matches (flag `firm_sender` otherwise). Read-only; output `case_id` (null = undecided),
   `method`, `flag`, `reason`, `contact`, `candidates`. Denied to CTA links.
+- **`docs_reviewer`** (both engines; denied to CTA links) — who reviews client
+  documents: the user in the firm setting `email_attachments_reviewer`
+  (YisraCase Config → Firm → Routing → "Client documents review"), the one
+  person the Documents Needed page, the client portal and Comms filing
+  notify. Read-only; output `set` (false = blank setting, or an inactive user
+  / no email — skip the send), `user_id`, `name`, `email`. The docs@ intake
+  workflow runs it first (`output_var: reviewer`) and sends to
+  `{{reviewer.email}}`.
 - **`email_attachments_file`** (workflow only) — files the attachments to
   Dropbox, **once each**: a re-run files only what is missing. With a case:
   `<case folder>/Client Uploads/Emailed YYMMDD` (the email's date,

@@ -275,6 +275,10 @@ async function digestOutput(db, rows) {
 /**
  * Move every unsorted email of a burst into a case (refileMessageAttachments
  * per email). The burst's case-filed emails stay where they are.
+ *
+ * CASE LOG: ONE `docs` row (docsIntakeLog, action 'email_refiled') for the
+ * whole burst — the per-email refiles are told not to log — so a 26-email
+ * burst moved by one decision reads as one line on the case, as its notice did.
  * @returns {Promise<{case_id, mail_message_ids, moved, already_there, failed, warnings, folder_path, folder_link, folders}>}
  */
 async function refileDigest(db, o = {}) {
@@ -293,11 +297,14 @@ async function refileDigest(db, o = {}) {
     out.warnings.push('Nothing in this notice was left unsorted.');
     return out;
   }
+  const placements = new Set();
   for (const r of targets) {
     const one = await filing.refileMessageAttachments(db, {
       mailMessageId: r.mail_message_id, caseId: o.caseId, subfolder: o.subfolder, filedBy: o.filedBy,
+      log: false,   // the burst writes ONE row below
     });
     out.case_id = one.case_id;
+    if (one.placement) placements.add(one.placement);
     const tag = (x) => ({ ...x, mail_message_id: r.mail_message_id });
     out.moved.push(...one.moved.map(tag));
     out.already_there.push(...one.already_there.map(tag));
@@ -308,6 +315,21 @@ async function refileDigest(db, o = {}) {
   const lastFolder = out.folders[out.folders.length - 1] || {};
   out.folder_path = lastFolder.path || null;
   out.folder_link = lastFolder.link || null;
+
+  if (out.moved.length && out.case_id) {
+    const from = (targets[0].result && targets[0].result.from) || {};
+    await require('./docsIntakeLog').logDocsIntake(db, {   // lazy (convention); self-catching
+      action: 'email_refiled',
+      source: 'email',
+      caseId: out.case_id,
+      files: out.moved.map(m => ({ name: m.path ? String(m.path).split('/').pop() : m.filename, path: m.path })),
+      placement: placements.has('unsorted') ? 'unsorted' : 'case',
+      folderPath: out.folder_path,
+      failed: out.failed,
+      email: { mail_message_id: of, from: from.name || null, from_email: from.email || null },
+      by: o.filedBy,
+    });
+  }
   return out;
 }
 

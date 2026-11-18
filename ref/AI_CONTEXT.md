@@ -1937,9 +1937,10 @@ lib/capabilities routeAllowed / can). Everything requires it except the public s
 `POST /api/public/get-upload-link` (30/min),
 `POST /api/public/upload-complete` (10/min; trusts only the body's
 `case_id` — nothing ties it to an issued link; `files[]`/`comment` capped and
-HTML-escaped; answers first, then emails staff, writes a case log row, and
-registers documents from the SERVER-derived upload folder, never the reported
-names — routes/api.checklists.js), `POST /hooks/:slug` (120/min per
+HTML-escaped; answers first, then the shared post-upload phase
+services/clientUploadCompletionService — the reviewer's notice, the case's
+`docs` log row (source 'docreq'), documents registered from the SERVER-derived
+upload folder, never the reported names — routes/api.checklists.js), `POST /hooks/:slug` (120/min per
 slug+IP), `GET /r/:slug` (60/min), `GET /auth/oauth/callback`, external
 forms, portal routes. Login limiter still 100/15min (tighten to 10 —
 ref/plans.md).
@@ -3612,6 +3613,23 @@ aligned with the case folder's existing names (`alignCaseFolder`: exact, else
 trimmed + case-blind; no firm names in code). Filed state rides
 every Comms attachment (`attachFiled` — own row, else any copy by RFC
 Message-ID); the `not_filed` list filter uses the same copy rule.
+**Case log (2026-11-18):** every docs door — docReq, portal, docs@, Comms —
+writes the same `docs` log row through `services/docsIntakeLog.js` (actions
+client_upload / email_filed / email_refiled; source docreq / portal / email /
+comms; link case, else contact, else none; never throws). The filing service
+logs only what a run newly filed; `refileDigest` writes one row per burst.
+**One reviewer, one notice shape (2026-11-19):** every door notifies the user in
+`email_attachments_reviewer` (`services/docsReviewerService.resolveReviewer`;
+SB; `portal_docs_notify_to` retired — ref/migrations/2026-11-19_docs_reviewer.sql;
+the docs@ workflow's step 1 is the `docs_reviewer` function, set_vars
+notify_email = {{reviewer.email}}). The two upload pages share
+`services/clientUploadCompletionService.completeClientUpload` (post-200:
+inspectUploadDestination → registerLandedInFolder, which now returns
+`folder_path` → `emailAttachmentNotice.render({kind:'upload'})` — the email
+notice's frame with upload nouns, per-file `preview=` links on the listed
+folder's shared link, the Docs Needed block — → the reviewer → docsIntakeLog →
+the unsorted task). Subject "Client upload — <client> (N files) — filed to
+case X | UNSORTED, needs a case".
 
 ### Direction & firm-to-firm
 `from.email` domain ∈ `EMAIL_DOMAINS` → `outgoing`, else `incoming`.

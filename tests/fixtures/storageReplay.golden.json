@@ -4317,6 +4317,45 @@
      "placement": "case"
     },
     {
+     "kind": "log.create",
+     "about_id": null,
+     "about_type": null,
+     "by": 6,
+     "data": {
+      "action": "email_filed",
+      "comment": null,
+      "contact_id": 501,
+      "email": {
+       "from": "john@example.com",
+       "mail_message_id": 9001,
+       "subject": "Pay stubs",
+       "to": "docs@4lsg.com"
+      },
+      "file_count": 2,
+      "files": [
+       {
+        "document_id": 901,
+        "name": "paystub.pdf",
+        "path": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/Client Uploads/Emailed 261115/paystub.pdf"
+       },
+       {
+        "document_id": 902,
+        "name": "logo.png",
+        "path": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/Client Uploads/Emailed 261115/logo.png"
+       }
+      ],
+      "folder_path": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/Client Uploads/Emailed 261115",
+      "placement": "case",
+      "source": "email",
+      "subject": "John Smith emailed 2 documents to docs@4lsg.com"
+     },
+     "direction": "incoming",
+     "link_id": "hjSFMabb",
+     "link_type": "case",
+     "subject": "John Smith emailed 2 documents to docs@4lsg.com",
+     "type": "docs"
+    },
+    {
      "kind": "registry.registerWrittenSafe",
      "createdBy": null,
      "credentialId": 8,
@@ -4385,6 +4424,45 @@
      "link_type": "contact",
      "match_method": "explicit",
      "placement": "unsorted"
+    },
+    {
+     "kind": "log.create",
+     "about_id": null,
+     "about_type": null,
+     "by": 0,
+     "data": {
+      "action": "email_filed",
+      "comment": null,
+      "contact_id": 502,
+      "email": {
+       "from": "john@example.com",
+       "mail_message_id": 9001,
+       "subject": "Pay stubs",
+       "to": "docs@4lsg.com"
+      },
+      "file_count": 2,
+      "files": [
+       {
+        "document_id": 903,
+        "name": "paystub.pdf",
+        "path": "/  Law Office/   Cases/  Unsorted Client Uploads/Emailed 261115 - Doe, Jane/paystub.pdf"
+       },
+       {
+        "document_id": 904,
+        "name": "logo.png",
+        "path": "/  Law Office/   Cases/  Unsorted Client Uploads/Emailed 261115 - Doe, Jane/logo.png"
+       }
+      ],
+      "folder_path": "/  Law Office/   Cases/  Unsorted Client Uploads/Emailed 261115 - Doe, Jane",
+      "placement": "unsorted",
+      "source": "email",
+      "subject": "John Smith emailed 2 documents to docs@4lsg.com"
+     },
+     "direction": "incoming",
+     "link_id": "502",
+     "link_type": "contact",
+     "subject": "John Smith emailed 2 documents to docs@4lsg.com",
+     "type": "docs"
     },
     {
      "kind": "registry.registerWrittenSafe",
@@ -4457,6 +4535,45 @@
      "placement": "unsorted"
     },
     {
+     "kind": "log.create",
+     "about_id": null,
+     "about_type": null,
+     "by": 0,
+     "data": {
+      "action": "email_filed",
+      "comment": null,
+      "contact_id": 501,
+      "email": {
+       "from": "john@example.com",
+       "mail_message_id": 9001,
+       "subject": "Pay stubs",
+       "to": "docs@4lsg.com"
+      },
+      "file_count": 2,
+      "files": [
+       {
+        "document_id": 905,
+        "name": "paystub.pdf",
+        "path": "/  Law Office/   Cases/  Unsorted Client Uploads/Emailed 261115 - Smith, John/paystub.pdf"
+       },
+       {
+        "document_id": 906,
+        "name": "logo.png",
+        "path": "/  Law Office/   Cases/  Unsorted Client Uploads/Emailed 261115 - Smith, John/logo.png"
+       }
+      ],
+      "folder_path": "/  Law Office/   Cases/  Unsorted Client Uploads/Emailed 261115 - Smith, John",
+      "placement": "unsorted",
+      "source": "email",
+      "subject": "John Smith emailed 2 documents to docs@4lsg.com"
+     },
+     "direction": "incoming",
+     "link_id": "501",
+     "link_type": "contact",
+     "subject": "John Smith emailed 2 documents to docs@4lsg.com",
+     "type": "docs"
+    },
+    {
      "kind": "registry.registerWrittenSafe",
      "createdBy": 6,
      "credentialId": 8,
@@ -4521,6 +4638,43 @@
      "id": 4,
      "link_id": "hjSFMabb",
      "placement": "case"
+    },
+    {
+     "kind": "log.create",
+     "about_id": null,
+     "about_type": null,
+     "by": 6,
+     "data": {
+      "action": "email_refiled",
+      "comment": null,
+      "contact_id": null,
+      "email": {
+       "from": "john@example.com",
+       "mail_message_id": 9001,
+       "subject": "Pay stubs",
+       "to": "docs@4lsg.com"
+      },
+      "file_count": 2,
+      "files": [
+       {
+        "name": "paystub (1).pdf",
+        "path": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/Client Uploads/Emailed 261115/paystub (1).pdf"
+       },
+       {
+        "name": "logo (1).png",
+        "path": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/Client Uploads/Emailed 261115/logo (1).png"
+       }
+      ],
+      "folder_path": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13/Client Uploads/Emailed 261115",
+      "placement": "case",
+      "source": "email",
+      "subject": "2 emailed documents moved to this case"
+     },
+     "direction": "incoming",
+     "link_id": "hjSFMabb",
+     "link_type": "case",
+     "subject": "2 emailed documents moved to this case",
+     "type": "docs"
     }
    ],
    "provider_state": [
@@ -6203,6 +6357,7 @@
      },
      "c": {
       "documents": [],
+      "folder_path": null,
       "registered": 0,
       "scanned": 0
      }

@@ -128,7 +128,6 @@
 //                           staff only; a stored inactive / unknown id
 //                           stays listed, selected and labelled (the D3b
 //                           keep-current rule) — never silently swapped.
-//   portal_docs_notify_to   recipient of the client-upload notification
 //                           email — portal uploads AND checklist upload
 //                           links (portalDocsService). Blank = those
 //                           emails off; the case log entry still writes.
@@ -187,7 +186,7 @@ function notSet(key) {
 }
 const NOT_SET_TAG = '<span class="not-set">not set</span>';
 const PORTAL_KEYS = ['portal_live', 'portal_email_from', 'portal_sms_monthly_cap', 'portal_callback_task_to',
-  'portal_docs_notify_to', 'portal_logo_url', 'portal_favicon_url', 'portal_logo_href'];
+  'portal_logo_url', 'portal_favicon_url', 'portal_logo_href'];
 const rowVal = (key) => {
   const row = settings[key];
   return row && row.value != null ? String(row.value) : '';
@@ -330,18 +329,10 @@ function render() {
         (<code>portal_callback_task_to</code>). Active staff only. Not set = callback requests fail.
       </div>
 
-      <div class="brand-row" style="margin-top:14px">
-        <div>
-          <label for="pf-notify-to">Upload notification recipient${notSet('portal_docs_notify_to') ? NOT_SET_TAG : ''}</label>
-          <input type="text" id="pf-notify-to" inputmode="email" autocomplete="off"
-                 value="${esc(rowVal('portal_docs_notify_to'))}" placeholder="Blank = no upload emails"${disIfRo('portal_docs_notify_to')}>
-        </div>
-        ${saveBtnHtml('portal_docs_notify_to', "savePortalEmail('notifyTo')")}
-      </div>
-      <div class="hint">
-        Emailed when a client uploads documents — through the portal or a checklist upload link
-        (<code>portal_docs_notify_to</code>). Blank = those emails are off; the case log entry is
-        still written.
+      <div class="hint" style="margin-top:14px">
+        Upload notifications go to the <b>Client documents review</b> person
+        (<code>email_attachments_reviewer</code>, YisraCase Config → Firm → Routing) — the same
+        person told about documents emailed to docs@ or filed from Comms.
       </div>
     </div>
 
@@ -490,14 +481,13 @@ async function saveCap() {
 }
 window.saveCap = saveCap;
 
-// ── portal_email_from / portal_docs_notify_to ──────────────────
+// ── portal_email_from ──────────────────────────────────────────
 
 // Mirror of the registry's email check (lib/settingsRegistry.js
 // TYPE_VALIDATORS.email) — a hint only; the PUT validates again.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const EMAIL_FIELDS = {
   emailFrom: { key: 'portal_email_from',     input: 'pf-email-from', toast: 'Login-code sender saved',             blankOk: false },
-  notifyTo:  { key: 'portal_docs_notify_to', input: 'pf-notify-to',  toast: 'Upload notification recipient saved', blankOk: true },
 };
 
 async function savePortalEmail(kind) {

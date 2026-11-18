@@ -15,17 +15,9 @@
 //                                 graph entirely.
 //   services/emailService         sendEmail
 //   services/logService           createLogEntry
-//   services/settingsService      getSetting  ← SINGULAR (getSettings is
-//                                 mocked as a throwing tripwire). The service calls
-//                                 getSetting(db, key) once per key, NOT
-//                                 getSettings(db, [keys]). A `getSettings`
-//                                 mock leaves `getSetting` undefined, which
-//                                 makes the notification path throw into its
-//                                 own try/catch and SKIP the email — the
-//                                 "email not sent" assertions below would then
-//                                 pass for the wrong reason. Hence the
-//                                 explicit happy-path test that asserts the
-//                                 email IS sent.
+//   services/settingsService      getSetting / getSettings — neither is read by
+//                                 this service any more (the shared completion
+//                                 phase resolves the recipient); both mocked.
 //   lib/firmConfig                cfg('email_automations') — the SENDER. The
 //                                 per-feature portal_docs_notify_from key was
 //                                 dropped in the 2026-08 upload-fallback
@@ -47,19 +39,10 @@ jest.mock('../services/logService', () => ({
 }));
 jest.mock('../services/settingsService', () => ({
   getSetting: jest.fn(),
-  // TRIPWIRE, not a working mock. If a future edit reintroduces a
-  // getSettings(db, [keys]) call here, the service's own try/catch would
-  // swallow it and silently skip the email again — exactly the failure this
-  // suite was blind to. The throw makes the cause legible in the console; the
-  // `expect(getSettings).not.toHaveBeenCalled()` assertion in the happy-path
-  // test is what actually fails the run, since an assertion can't be caught
-  // by production code.
-  getSettings: jest.fn(() => {
-    throw new Error(
-      'settingsService.getSettings is not the portal-docs contract — ' +
-      'the service reads ONE key via getSetting(db, NOTIFY_TO_KEY)'
-    );
-  }),
+  // Since 2026-11-19 this service reads NO setting itself: the recipient
+  // (email_attachments_reviewer) is resolved by the shared completion phase.
+  // Both stay mocked so a regression that reads one here is visible.
+  getSettings: jest.fn(() => { throw new Error('settingsService.getSettings: not the portal-docs contract'); }),
 }));
 jest.mock('../services/uploadTargetService', () => ({
   issueClientUploadLink:   jest.fn(),
@@ -84,8 +67,6 @@ const { scriptGuard } = require('./helpers/scriptGuard');
 // Live app_settings / firm-config values as they actually stand (verified
 // against app_settings 2026-08-07). portal_docs_notify_from is GONE — the
 // sender is the firm-wide automations address. Keep in sync.
-const SEEDED_NOTIFY_TO   = 'rena@4lsg.com';
-const SEEDED_SENDER      = 'automations@4lsg.com';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stubs / fixtures
@@ -465,201 +446,40 @@ function destCase(over = {}) {
 }
 
 describe('sendUploadNotifications', () => {
-  beforeEach(() => {
-    emailService.sendEmail.mockResolvedValue({});
-    logService.createLogEntry.mockResolvedValue({});
-    uploadTarget.inspectUploadDestination.mockResolvedValue(destCase());
-    uploadTarget.raiseUnsortedUploadTask.mockResolvedValue({ ok: true, taskId: 1 });
-    // Live defaults: recipient from app_settings, sender from firm config.
-    getSetting.mockImplementation(async (db, key) =>
-      key === svc.NOTIFY_TO_KEY ? SEEDED_NOTIFY_TO : null);
-    cfg.mockImplementation(key =>
-      key === 'email_automations' ? SEEDED_SENDER : null);
-  });
+  // Since 2026-11-19 the side effects are services/clientUploadCompletionService
+  // (shared with the public docReq route — tests/clientUploadCompletion.test.js
+  // owns the notice, the reviewer, the log row and the task). This suite pins
+  // the hand-off: the portal passes its AUTHENTICATED uploader and the resolved
+  // item names, and nothing else of the old context is relied on.
+  const completion = require('../services/clientUploadCompletionService');
+  let spy;
+  beforeEach(() => { spy = jest.spyOn(completion, 'completeClientUpload').mockResolvedValue({ sent: true }); });
+  afterEach(() => spy.mockRestore());
 
-  // ── recipient / sender resolution ─────────────────────────────────────────
-
-  test('POSITIVE: happy path SENDS the email — recipient from app_settings, sender from firm config', async () => {
-    // The contrast case for the two skip tests below. Without this, a broken
-    // settings mock makes "sendEmail was not called" pass everywhere and the
-    // off-switch assertions prove nothing.
-    await svc.sendUploadNotifications({}, ctxFixture());
-
-    expect(getSetting).toHaveBeenCalledTimes(1);
-    expect(getSetting).toHaveBeenCalledWith({}, svc.NOTIFY_TO_KEY);
-    expect(getSettings).not.toHaveBeenCalled();      // singular, one key — see mock
-    expect(svc.NOTIFY_TO_KEY).toBe('portal_docs_notify_to');
-    expect(cfg).toHaveBeenCalledWith('email_automations');
-
-    expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
-    const arg = emailService.sendEmail.mock.calls[0][1];
-    expect(arg.to).toBe(SEEDED_NOTIFY_TO);
-    expect(arg.from).toBe(SEEDED_SENDER);
-    expect(arg.subject).toBe('New Documents Uploaded \u2014 Jane Doe (24-40226-mlo)');
-    expect(logService.createLogEntry).toHaveBeenCalledTimes(1);
-  });
-
-  test('edited recipient setting retargets the email — no hardcoded recipient left', async () => {
-    getSetting.mockImplementation(async (db, key) =>
-      key === svc.NOTIFY_TO_KEY ? 'shoshana@4lsg.com' : null);
-    await svc.sendUploadNotifications({}, ctxFixture());
-    expect(emailService.sendEmail.mock.calls[0][1].to).toBe('shoshana@4lsg.com');
-  });
-
-  test('sender follows cfg(email_automations) — one firm-wide setting moves every automation', async () => {
-    cfg.mockImplementation(key => key === 'email_automations' ? 'office@4lsg.com' : null);
-    await svc.sendUploadNotifications({}, ctxFixture());
-    expect(emailService.sendEmail.mock.calls[0][1].from).toBe('office@4lsg.com');
-  });
-
-  test('sender falls back to the hardcoded automations address when firm config is unset', async () => {
-    cfg.mockReturnValue(null);
-    await svc.sendUploadNotifications({}, ctxFixture());
-    expect(emailService.sendEmail.mock.calls[0][1].from).toBe('automations@4lsg.com');
-  });
-
-  test('blank/missing recipient → email SKIPPED (off-switch), log entry still written', async () => {
-    getSetting.mockResolvedValue('   ');                 // blank = off
-    await expect(svc.sendUploadNotifications({}, ctxFixture())).resolves.toBeDefined();
-    expect(getSetting).toHaveBeenCalledTimes(1);          // the mock IS live
-    expect(emailService.sendEmail).not.toHaveBeenCalled();
-    expect(logService.createLogEntry).toHaveBeenCalledTimes(1);
-
-    getSetting.mockResolvedValue(null);                   // key absent
-    await svc.sendUploadNotifications({}, ctxFixture());
-    expect(emailService.sendEmail).not.toHaveBeenCalled();
-    expect(logService.createLogEntry).toHaveBeenCalledTimes(2);
-  });
-
-  test('settings read failure → email skipped self-caught, log entry still written', async () => {
-    getSetting.mockRejectedValueOnce(new Error('db down'));
-    await expect(svc.sendUploadNotifications({}, ctxFixture())).resolves.toBeDefined();
-    expect(getSetting).toHaveBeenCalledTimes(1);          // the mock IS live
-    expect(emailService.sendEmail).not.toHaveBeenCalled();
-    expect(logService.createLogEntry).toHaveBeenCalledTimes(1);
-  });
-
-  // ── placement wording (complete-time re-inspection) ───────────────────────
-
-  test('placement is re-derived server-side at complete time, not carried from issuance', async () => {
-    await svc.sendUploadNotifications({}, ctxFixture());
-    expect(uploadTarget.inspectUploadDestination).toHaveBeenCalledWith({}, 'AbCdEf12');
-    const { html } = emailService.sendEmail.mock.calls[0][1];
-    expect(html).toContain('Open Dropbox Folder');
-    expect(uploadTarget.raiseUnsortedUploadTask).not.toHaveBeenCalled();
-  });
-
-  test('unsorted placement → warning wording, unsorted link, and a staff task', async () => {
-    uploadTarget.inspectUploadDestination.mockResolvedValue({
-      case_id: 'AbCdEf12',
-      placement: 'unsorted',
-      path: '/  Law Office/   Cases/  Unsorted Client Uploads/AbCdEf12 - Doe, Jane',
-      link: 'https://www.dropbox.com/sh/unsorted',
-    });
-    await svc.sendUploadNotifications({}, ctxFixture());
-
-    const { html } = emailService.sendEmail.mock.calls[0][1];
-    expect(html).toContain('no working Dropbox folder');
-    expect(html).toContain('href="https://www.dropbox.com/sh/unsorted"');
-    expect(html).not.toContain('Open Dropbox Folder');
-
-    expect(uploadTarget.raiseUnsortedUploadTask).toHaveBeenCalledTimes(1);
-    expect(uploadTarget.raiseUnsortedUploadTask.mock.calls[0][1]).toEqual({
-      caseId: 'AbCdEf12',
-      clientName: 'Jane Doe',
-      fileCount: 2,
-      path: '/  Law Office/   Cases/  Unsorted Client Uploads/AbCdEf12 - Doe, Jane',
-      link: 'https://www.dropbox.com/sh/unsorted',
+  test('hands the batch to the shared completion phase as source portal, with the uploader', async () => {
+    await expect(svc.sendUploadNotifications({ db: 1 }, ctxFixture())).resolves.toEqual({ sent: true });
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [db, o] = spy.mock.calls[0];
+    expect(db).toEqual({ db: 1 });
+    expect(o).toEqual({
+      source: 'portal', caseId: 'AbCdEf12', contactId: 42, clientName: 'Jane Doe',
+      files: [{ name: 'a.pdf', item_id: 7, item_name: 'Pay stubs' }, { name: 'b.pdf', item_id: null, item_name: null }],
+      fileCount: 2, comment: null,
     });
   });
 
-  test('unsorted with no shared link → the path is shown instead, escaped', async () => {
-    uploadTarget.inspectUploadDestination.mockResolvedValue({
-      case_id: 'AbCdEf12',
-      placement: 'unsorted',
-      path: '/Unsorted/<AbCdEf12>',
-      link: null,
-    });
-    await svc.sendUploadNotifications({}, ctxFixture());
-    const { html } = emailService.sendEmail.mock.calls[0][1];
-    expect(html).toContain('<code>/Unsorted/&lt;AbCdEf12&gt;</code>');
-    expect(html).not.toContain('<code>/Unsorted/<AbCdEf12>');
+  test('the client comment and the true count travel; the legacy dropboxLink does not', async () => {
+    await svc.sendUploadNotifications({}, ctxFixture({ comment: 'two months', fileCount: 52, omittedCount: 50, dropboxLink: 'https://old' }));
+    const o = spy.mock.calls[0][1];
+    expect(o).toMatchObject({ comment: 'two months', fileCount: 52 });
+    expect(o).not.toHaveProperty('dropboxLink');
+    expect(o).not.toHaveProperty('omittedCount');
   });
 
-  test('inspection failure or null degrades to the ctx dropboxLink — never blocks the email', async () => {
-    uploadTarget.inspectUploadDestination.mockRejectedValueOnce(new Error('dropbox down'));
-    await expect(svc.sendUploadNotifications({}, ctxFixture())).resolves.toBeDefined();
-    expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
-    expect(emailService.sendEmail.mock.calls[0][1].html).toContain('Open Dropbox Folder');
-    expect(uploadTarget.raiseUnsortedUploadTask).not.toHaveBeenCalled();
-
-    uploadTarget.inspectUploadDestination.mockResolvedValueOnce(null);
-    await svc.sendUploadNotifications({}, ctxFixture({ dropboxLink: '' }));
-    expect(emailService.sendEmail.mock.calls[1][1].html)
-      .toContain('No Dropbox link on file for this case.');
-  });
-
-  // ── body construction ─────────────────────────────────────────────────────
-
-  test('EVERY interpolated HTML value is escaped — hostile filename, comment, item name, href', async () => {
-    await svc.sendUploadNotifications({}, ctxFixture({
-      clientName: 'Jane <b>Doe</b>',
-      files: [{ name: '<img src=x onerror=alert(1)>.pdf', item_id: 7, item_name: 'Stubs <script>' }],
-      fileCount: 1,
-      comment: '"><script>steal()</script>',
-    }));
-    const { subject, html } = emailService.sendEmail.mock.calls[0][1];
-
-    expect(html).not.toContain('<img src=x');
-    expect(html).not.toContain('<script>');
-    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;.pdf');
-    expect(html).toContain('Stubs &lt;script&gt;');
-    expect(html).toContain('&quot;&gt;&lt;script&gt;steal()&lt;/script&gt;');
-    // The folder link sits in an href — the quote must not break the attribute.
-    expect(html).toContain('href="https://www.dropbox.com/sh/abc&quot;123"');
-    // Subject is a MIME header — deliberately NOT escaped (repo convention).
-    expect(subject).toContain('Jane <b>Doe</b>');
-  });
-
-  test('files group under DB item names; unmatched files under Other documents', async () => {
-    await svc.sendUploadNotifications({}, ctxFixture());
-    const { html } = emailService.sendEmail.mock.calls[0][1];
-    expect(html).toContain('<strong>Pay stubs</strong>');
-    expect(html).toContain('<strong>Other documents</strong>');
-    expect(html.indexOf('Pay stubs')).toBeLessThan(html.indexOf('Other documents'));
-    expect(html).toContain('via the client portal');
-  });
-
-  test('omitted files are acknowledged rather than silently dropped', async () => {
-    await svc.sendUploadNotifications({}, ctxFixture({ fileCount: 52, omittedCount: 2 }));
-    expect(emailService.sendEmail.mock.calls[0][1].html)
-      .toContain('and 2 more files not listed');
-  });
-
-  test('case log entry: type docs on the case, by 0, incoming, portal-tagged data', async () => {
-    await svc.sendUploadNotifications({}, ctxFixture());
-    const arg = logService.createLogEntry.mock.calls[0][1];
-    expect(arg).toMatchObject({
-      type: 'docs',
-      link_type: 'case',
-      link_id: 'AbCdEf12',
-      by: 0,
-      direction: 'incoming',
-      subject: 'Client uploaded 2 documents via portal',
-    });
-    const data = JSON.parse(arg.data);
-    expect(data).toMatchObject({ action: 'client_upload', source: 'portal', contact_id: 42, file_count: 2 });
-    expect(data.files[0]).toEqual({ name: 'a.pdf', item_id: 7, item_name: 'Pay stubs' });
-  });
-
-  test('one failing side effect never blocks the other (self-caught)', async () => {
-    emailService.sendEmail.mockRejectedValueOnce(new Error('smtp down'));
-    await expect(svc.sendUploadNotifications({}, ctxFixture())).resolves.toBeDefined();
-    expect(logService.createLogEntry).toHaveBeenCalledTimes(1);
-
-    logService.createLogEntry.mockRejectedValueOnce(new Error('db down'));
-    await expect(svc.sendUploadNotifications({}, ctxFixture())).resolves.toBeDefined();
-    expect(emailService.sendEmail).toHaveBeenCalledTimes(2);
+  test('the old recipient key is gone from the service (uploads notify the docs reviewer)', () => {
+    expect(svc.NOTIFY_TO_KEY).toBeUndefined();
+    expect(getSettings).not.toHaveBeenCalled();
+    expect(getSetting).not.toHaveBeenCalled();
   });
 });
 

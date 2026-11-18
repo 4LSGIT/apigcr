@@ -80,7 +80,7 @@ const OPEN_STAGES = ['Open', 'Pending', 'Filed'];
 const BATCH_RE = /^[A-Za-z0-9_-]{8,30}$/;
 const CASE_ID_RE = /^[A-Za-z0-9_-]{1,20}$/;
 const PART_RE = /^\d{1,4}(?:\.\d{1,4}){0,15}$/;
-const REVIEWER_SETTING = 'email_attachments_reviewer';
+const { REVIEWER_SETTING } = require('./docsReviewerService');
 const NOTICE_PREFIX = 'Filed from Comms — ';
 const BATCH_KEY = (batch) => `comms-${batch}`;
 
@@ -163,17 +163,9 @@ async function userName(db, userId) {
   return (u && u.user_name) || `user ${userId}`;
 }
 
-/** The review-notice recipient: the setting's user, active, with an email — else null. */
-async function resolveReviewer(db) {
-  const { getSettings } = require('./settingsService');   // lazy (convention)
-  const vals = await getSettings(db, [REVIEWER_SETTING]);
-  const id = parseInt(String(vals[REVIEWER_SETTING] ?? '').trim(), 10);
-  if (!Number.isInteger(id) || id <= 0) return null;
-  const [[u]] = await db.query(
-    "SELECT user, user_name, email FROM users WHERE user = ? AND user_auth LIKE 'authorized%' LIMIT 1", [id]);
-  if (!u || !u.email || !String(u.email).includes('@')) return null;
-  return { user_id: Number(u.user), name: u.user_name || `user ${u.user}`, email: String(u.email).trim() };
-}
+/** The review-notice recipient: the setting's user, active, with an email — else null.
+ *  Lives in services/docsReviewerService since 2026-11-19 (every docs door reads it); re-exported here. */
+const resolveReviewer = (db) => require('./docsReviewerService').resolveReviewer(db);   // lazy (convention)
 
 function messageText(msg) {
   return require('./mailbox/mailboxIngestService').emitText(msg.body_text, msg.body_html).text;   // lazy (convention)
@@ -547,7 +539,10 @@ async function fileOne(db, userId, messageId, body) {
   const F = filing();
   let refiled = null;
   if (move && elsewhere.length) {
-    const r = await F.refileMessageAttachments(db, { mailMessageId: msg.id, caseId: cs.case_id, filedBy: Number(userId), folder: folder || undefined });
+    const r = await F.refileMessageAttachments(db, {
+      mailMessageId: msg.id, caseId: cs.case_id, filedBy: Number(userId), folder: folder || undefined,
+      logSource: 'comms', logActor: name,   // the case-log row (docsIntakeLog) names the person
+    });
     refiled = { moved: r.moved.length, already_there: r.already_there.length, failed: r.failed, warnings: r.warnings };
   }
 
@@ -566,6 +561,8 @@ async function fileOne(db, userId, messageId, body) {
     digestKey: batch ? BATCH_KEY(batch) : undefined,
     noticeSubjectPrefix: NOTICE_PREFIX,
     noticeTitle: `Filed by ${name}`,
+    logSource: 'comms',   // the case-log row (docsIntakeLog): "<name> filed N emailed documents from Comms"
+    logActor: name,
   });
 
   let linked = false;

@@ -21,7 +21,7 @@
  *
  * The three public routes above are UNAUTHENTICATED (case_id is the only
  * capability). Treat every value off req.body/req.params as hostile: bind it
- * into SQL, and escapeHtml() it before it reaches an email body.
+ * into SQL; the notice renderer escapes everything it prints.
  *
  * IDENTITY: the case docs checklist is identified by tag='docs_needed', NOT by
  * title — titles are staff-editable from checklistView.html. The same predicate
@@ -80,11 +80,10 @@ const { isSuperuser } = require('../lib/auth.superuser');
 const { computeAndSaveStatus } = require('../lib/checklistStatus');
 const { checkNoteLengths } = require('../lib/noteLimits');
 const domainEvents = require('../lib/domainEvents'); // Trigger T4
-const emailService = require('../services/emailService');
-const logService   = require('../services/logService');
+// emailService / logService / settingsService / firmConfig: no longer required
+// here — the upload-complete side effects live in
+// services/clientUploadCompletionService (the one phase every upload door runs).
 const uploadTarget = require('../services/uploadTargetService');
-const { getSetting } = require('../services/settingsService');
-const { cfg } = require('../lib/firmConfig');
 const { escapeLike } = require('../lib/escapeLike');
 const { withTransaction } = require('../lib/withTransaction');
 // R1.5: services/pipelineService and lib/alerting were required here ONLY for
@@ -92,7 +91,6 @@ const { withTransaction } = require('../lib/withTransaction');
 // is now a trigger rule (see the note at its former site), and grep confirms
 // neither module has another user in this file — so both requires are gone.
 const {
-  NOTIFY_TO_KEY,
   // ONE rule set, shared with the authenticated portal upload path
   // (services/portalDocsService.createUploadLink). Do not fork these.
   ALLOWED_EXTENSIONS,
@@ -102,29 +100,8 @@ const {
 
 // ─── Helpers ────────────────────────────────────────────────────
 
-/**
- * HTML-escape a value for interpolation into notification email bodies.
- *
- * Deliberately file-local rather than imported — matches the existing repo
- * convention (services/taskService.js, services/eventService.js and
- * services/esignSendService.js each carry their own copy). Keep in sync.
- *
- * Covers text nodes AND double-quoted attribute values (both quote forms are
- * escaped), which is what the upload notification needs: the folder link lands
- * inside an href.
- *
- * MIME subject headers must NOT be escaped — escaping a mail header puts a
- * literal &amp; in the recipient's inbox. Only HTML bodies go through this.
- */
-function escapeHtml(str) {
-  if (str == null) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+// escapeHtml: gone (2026-11-19) — this file no longer builds an email body;
+// the upload notice is rendered by services/emailAttachmentNotice.
 
 // Caps on client-supplied input reaching the public upload-complete route.
 // This route is UNAUTHENTICATED — everything in req.body is hostile until
@@ -1350,8 +1327,9 @@ router.post('/api/public/get-upload-link', uploadRateLimit, async (req, res) => 
  * POST /api/public/upload-complete
  * Body: { case_id, files: string[], comment?: string }
  *
- * Called after client finishes uploading. Logs the event
- * and emails the team with the file list + Dropbox link.
+ * Called after client finishes uploading. Answers first; then the shared
+ * completion phase (services/clientUploadCompletionService): the reviewer's
+ * notice, the `docs` case-log row, document registration, the unsorted task.
  */
 router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => {
   try {
@@ -1368,189 +1346,29 @@ router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => 
     const safeFiles   = files
       .slice(0, MAX_UPLOAD_FILES)
       .map(f => String(f ?? '').slice(0, MAX_UPLOAD_FILENAME));
-    const omittedCount = fileCount - safeFiles.length;
     const safeComment = comment == null ? '' : String(comment).slice(0, MAX_UPLOAD_COMMENT);
  
     // Respond first, then handle side effects
     res.json({ status: 'success', message: 'Notification received. Thank you!' });
  
     // ── Side effects (non-blocking) ──────────────────────
- 
-    // Fetch case info for the email
-    const [[caseRow]] = await req.db.query(
-      `SELECT c.case_id,
-              COALESCE(c.case_number_full, c.case_number, c.case_id) AS case_display
-       FROM cases c
-       WHERE c.case_id = ?`,
-      [case_id]
-    );
-    if (!caseRow) return; // case vanished — nothing to notify about
- 
-    // Get primary client name
-    const [[primary]] = await req.db.query(
-      `SELECT co.contact_fname, co.contact_lname, co.contact_name
-       FROM contacts co
-       JOIN case_relate cr ON co.contact_id = cr.case_relate_client_id
-       WHERE cr.case_relate_case_id = ? AND cr.case_relate_type = 'Primary'
-       LIMIT 1`,
-      [case_id]
-    );
-    const clientName = primary?.contact_name || 'Unknown client';
- 
-    // Where did the batch land? Re-derived server-side — nothing trustworthy
-    // travels from link issuance through the client (see uploadTargetService,
-    // complete-time inspection). Null (case vanished) already handled above;
-    // an inspection ERROR degrades to the legacy wording below.
-    let dest = null;
-    try {
-      dest = await uploadTarget.inspectUploadDestination(req.db, case_id);
-    } catch (e) {
-      console.warn('Upload destination inspection failed:', e.message);
-    }
-
-    // Build file list for email. EVERY interpolated value is escaped: the
-    // filenames and comment are attacker-controlled (public route), and the
-    // DB-derived values are escaped as defence in depth — the folder link in
-    // particular sits inside an href, where an unescaped quote breaks out of
-    // the attribute.
-    const fileListHtml = safeFiles.map(f => `<li>${escapeHtml(f)}</li>`).join('\n');
-    const omittedHtml = omittedCount > 0
-      ? `\n        <li><em>… and ${omittedCount} more file${omittedCount > 1 ? 's' : ''} not listed</em></li>`
-      : '';
-    const commentBlock = safeComment
-      ? `<p><strong>Client comment:</strong> ${escapeHtml(safeComment)}</p>`
-      : '';
-
-    // Placement-aware Dropbox paragraph. Unsorted placement gets a loud note
-    // + a staff task (below); dest === null (inspection error) degrades to
-    // the legacy case-folder wording.
-    let dropboxHtml;
-    if (dest && dest.placement === 'unsorted') {
-      const where = dest.link
-        ? `<a href="${escapeHtml(dest.link)}">unsorted client uploads folder</a>`
-        : `unsorted client uploads folder (<code>${escapeHtml(dest.path)}</code>)`;
-      dropboxHtml =
-        `<p><strong>Note:</strong> this case has no working Dropbox folder — the files were ` +
-        `placed in the ${where}. Please move them into the case's folder.</p>`;
-    } else {
-      // D3b-1: the case folder's binding, then the legacy column (the row in hand).
-      const dropboxLink = (dest && dest.sharedLink)
-        || (await require('../services/entityFolderService').caseFolderLink(req.db, caseRow.case_id)).link   // lazy (convention); the binding (the record, D3d-2)
-        || '';
-      dropboxHtml = dropboxLink
-        ? `<p><a href="${escapeHtml(dropboxLink)}">Open Dropbox Folder</a> — review, rename, and move files from the "Client Uploads" subfolder.</p>`
-        : '<p><em>No Dropbox link on file for this case.</em></p>';
-    }
- 
-    // Subject is a MIME header, not HTML — deliberately NOT escaped
-    // (matches services/taskService.js convention).
-    const subject = `New Documents Uploaded — ${clientName} (${caseRow.case_display})`;
-    const html = `
-      <p><strong>${escapeHtml(clientName)}</strong> uploaded <strong>${fileCount}</strong> document${fileCount > 1 ? 's' : ''} to case <strong>${escapeHtml(caseRow.case_display)}</strong>.</p>
- 
-      <p><strong>Files:</strong></p>
-      <ul>
-        ${fileListHtml}${omittedHtml}
-      </ul>
- 
-      ${commentBlock}
- 
-      ${dropboxHtml}
-    `.trim();
- 
-    // Recipient from app_settings — the SAME key the portal flow reads
-    // (services/portalDocsService.js NOTIFY_TO_KEY), so editing the setting
-    // retargets BOTH upload surfaces. Sender = the firm-wide automations
-    // address (cfg('email_automations'), AUTO_EMAIL env fallback — the
-    // taskService / featureRequests / auth.password convention).
-    // Blank/missing recipient ⇒ email skipped with a warning (the case-log
-    // entry below still writes) — deliberate staff off-switch semantics.
-    let notifyTo = '';
-    try {
-      notifyTo = String((await getSetting(req.db, NOTIFY_TO_KEY)) ?? '').trim();
-    } catch (e) {
-      console.error('Upload notification settings read failed — email skipped:', e.message);
-    }
-    if (notifyTo) {
-      emailService.sendEmail(req.db, {
-        from: cfg('email_automations') || 'automations@4lsg.com',
-        to:   notifyTo,
-        subject,
-        html
-      }).catch(err => console.error('Upload notification email failed:', err.message));
-    } else {
-      console.warn(
-        `Upload notification email skipped — ${NOTIFY_TO_KEY} unset or blank ` +
-        `(blank = notifications off)`
-      );
-    }
-
-    // ── REGISTER WHAT LANDED (Documents S4) ────────────────────────────────
     //
-    // Without this the client's file is invisible to the documents registry
-    // until the next Dropbox delta, and — when it landed in the unsorted bin
-    // because this case has no working folder — it is invisible to the CASE
-    // forever, because no path under Unsorted supports a case link.
-    //
-    // Registration is an ADDITION here and nothing above it changes: the 200
-    // has already gone out, the email and the log are untouched, and a failure
-    // inside registerLandedInFolder is swallowed by the service rather than
-    // surfacing. That is deliberate — the bytes are in Dropbox either way, the
-    // sync's delta will find them, and a bookkeeping failure must not cost the
-    // client an error on an upload that actually worked.
-    //
-    // WHY BY FOLDER AND NOT BY THE REPORTED FILENAMES: this route receives
-    // names, never paths, and every upload link commits with autorename, so a
-    // second "statement.pdf" is on disk as "statement (1).pdf" and the name it
-    // reported matches nothing. See documentIngestService.registerLandedInFolder.
-    //
-    // `dest` is the SERVER's re-derivation of where the batch went (the same
-    // one the email wording uses), so no client input steers this.
-    if (dest) {
-      const ingest = require('../services/documentIngestService');
-      const target = dest.placement === 'unsorted'
-        ? { folderPath: dest.path }
-        : { sharedLink: dest.sharedLink, subfolder: 'Client Uploads' };
-      ingest.registerLandedInFolder(req.db, {
-        ...target,
-        links:       [{ type: 'case', id: case_id }],
-        createdBy:   null,              // a client acted; there is no user
-        eventSource: 'client_upload',
-      }).then(r => {
-        if (r.registered) {
-          console.log(`[UPLOAD] registered ${r.registered} document(s) for case ${case_id}`);
-        }
-      });
-    }
+    // services/clientUploadCompletionService — the ONE post-upload phase both
+    // upload pages share since 2026-11-19: where the files went (the server's
+    // own answer, never the client's), what landed (registered from the
+    // folder, never the reported names), the reviewer's notice
+    // (`email_attachments_reviewer`, per-file links + the Docs Needed block),
+    // the `docs` case-log row, the unsorted task. Self-catching; a case that
+    // vanished is a no-op. No contact_id: this public route does not know
+    // WHICH client uploaded (it only knows the case).
+    await require('../services/clientUploadCompletionService').completeClientUpload(req.db, {   // lazy (convention)
+      source:    'docreq',
+      caseId:    case_id,
+      files:     safeFiles,
+      fileCount,
+      comment:   safeComment || null,
+    });
 
-    // Unsorted placement is easy to lose in an inbox — raise a staff task
-    // (best-effort, self-caught in the service) so the files get moved.
-    if (dest && dest.placement === 'unsorted') {
-      uploadTarget.raiseUnsortedUploadTask(req.db, {
-        caseId:     case_id,
-        clientName,
-        fileCount,
-        path:       dest.path,
-        link:       dest.link,
-      });
-    }
- 
-    // Log the upload event on the case
-    logService.createLogEntry(req.db, {
-      type:      'docs',
-      link_type: 'case',
-      link_id:   case_id,
-      by:        0,  // system / client action
-      data:      JSON.stringify({
-        action:     'client_upload',
-        files:      safeFiles,
-        file_count: fileCount,
-        comment:    safeComment || null
-      }),
-      subject:   `Client uploaded ${fileCount} document${fileCount > 1 ? 's' : ''}`,
-      direction: 'incoming'
-    }).catch(err => console.error('Upload log entry failed:', err.message));
- 
   } catch (err) {
     console.error('POST /api/public/upload-complete error:', err);
     // Response already sent — just log

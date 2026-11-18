@@ -43,6 +43,7 @@ const SKIP_REASON = Object.freeze({
   type_not_allowed: 'file type not filed',
   too_large: 'too large to file',
   not_selected: 'left out by the person who filed these',
+  not_listed: 'reported but not listed (over the page\'s limit)',   // an upload page's "… and N more"
 });
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"'[\]]/g, (c) => (
@@ -121,7 +122,8 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const statusText = (f) => (f.status === 'already_filed' ? 'filed earlier'
   : f.status === 'in_progress' ? 'being filed by another run'
-    : f.status === 'failed' ? `NOT filed — ${f.error || 'error'}` : '');
+    : f.status === 'failed' ? `NOT filed — ${f.error || 'error'}`
+      : (f.note ? String(f.note) : ''));   // a caller's note on a filed file (the portal's Docs Needed item)
 const fileRow = (name, size, note, noteColor, href) => {
   const t = typeOf(name);
   return '<tr>' +
@@ -181,7 +183,30 @@ function candidatesHtml(cands, appUrl) {
 const candidateLine = (c) => `  possible case: ${c.case_id} — ${[c.case_number, c.case_type, c.case_stage].filter(Boolean).join(' · ')}`;
 
 /** The outer frame: header (title + headline), the given rows, footer. */
-function frame(title, headline, rowsHtml) {
+/**
+ * The wording that differs between an EMAIL (the default) and a client UPLOAD
+ * (docReq / the portal, services/clientUploadCompletionService.js, 2026-11-19 —
+ * Fred: the upload notices should look like the email ones). Same frame, same
+ * file rows, same Docs Needed block; only the nouns change.
+ */
+const KINDS = Object.freeze({
+  email: Object.freeze({
+    defaultTitle: 'Emailed documents', from: 'From', when: 'Received', subjectRow: true,
+    files: 'Attachments', message: 'Message', noMessage: 'No message — attachments only.',
+    footer: 'Sent automatically by YisraCase. The original email is in YisraCase → Comms.',
+    nothingHeadline: 'New email (no attachments)', noneHead: 'No attachments', noneBody: 'This email carried no files.',
+    notFiledBody: 'None of the attachments could be filed (listed below). Open the email in YisraCase → Comms or Gmail and save them by hand.',
+  }),
+  upload: Object.freeze({
+    defaultTitle: 'Uploaded documents', from: 'Client', when: 'Uploaded', subjectRow: false,
+    files: 'Files', message: 'Client comment', noMessage: 'No comment.',
+    footer: 'Sent automatically by YisraCase.',
+    nothingHeadline: 'Upload (no files)', noneHead: 'No files', noneBody: 'No files were reported.',
+    notFiledBody: 'None of the files could be found where they should have landed. Check the Dropbox folder.',
+  }),
+});
+
+function frame(title, headline, rowsHtml, footer = KINDS.email.footer) {
   return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>' +
     '<body style="margin:0;padding:0;background:#f2f4f7;">' +
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f2f4f7;"><tr><td align="center" style="padding:24px 12px;">' +
@@ -193,7 +218,7 @@ function frame(title, headline, rowsHtml) {
     '</td></tr>' +
     rowsHtml +
     `<tr><td style="background:#f8f9fb;border-top:1px solid #eef0f4;border-radius:0 0 10px 10px;padding:12px 24px;">` +
-      `<div style="${F}font-size:11px;line-height:1.5;color:#8a92a3;">Sent automatically by YisraCase. The original email is in YisraCase → Comms.</div>` +
+      `<div style="${F}font-size:11px;line-height:1.5;color:#8a92a3;">${esc(footer)}</div>` +
     '</td></tr>' +
     '</table></td></tr></table></body></html>';
 }
@@ -221,7 +246,9 @@ const TONE = Object.freeze({
  * @param {boolean} [o.withOptions] put [[options_html]] in the where-box (request_decision email_html)
  * @returns {{subject: string, html: string, text: string}}
  */
-function render({ result, subjectPrefix = 'Emailed files — ', title = 'Emailed documents', withOptions = false } = {}) {
+function render({ result, subjectPrefix = 'Emailed files — ', title, withOptions = false, kind = 'email' } = {}) {
+  const K = KINDS[kind] || KINDS.email;
+  if (title == null || title === '') title = K.defaultTitle;
   const r = result || {};
   const from = r.from || {};
   const who = from.name || from.email || 'Unknown sender';
@@ -252,12 +279,12 @@ function render({ result, subjectPrefix = 'Emailed files — ', title = 'Emailed
   let tone;
   if (!nAll) {
     tone = TONE.none;
-    whereHead = 'No attachments';
-    whereBody = 'This email carried no files.';
+    whereHead = K.noneHead;
+    whereBody = K.noneBody;
   } else if (!landed.length) {
     tone = TONE.failed;
     whereHead = 'Nothing was filed';
-    whereBody = 'None of the attachments could be filed (listed below). Open the email in YisraCase → Comms or Gmail and save them by hand.';
+    whereBody = K.notFiledBody;
   } else if (caseId && !unsorted) {
     tone = TONE.case;
     whereHead = `Filed to case ${caseId}`;
@@ -289,9 +316,9 @@ function render({ result, subjectPrefix = 'Emailed files — ', title = 'Emailed
 
   const bodyHtml = ex.body
     ? esc(ex.body).replace(/\n/g, '<br>')
-    : `<span style="color:#8a92a3;font-style:italic;">${nAll ? 'No message — attachments only.' : '(empty message)'}</span>`;
+    : `<span style="color:#8a92a3;font-style:italic;">${nAll ? K.noMessage : '(empty message)'}</span>`;
 
-  const html = frame(title, nAll ? `${landed.length} of ${nAll} file${nAll === 1 ? '' : 's'} filed` : 'New email (no attachments)',
+  const html = frame(title, nAll ? `${landed.length} of ${nAll} file${nAll === 1 ? '' : 's'} filed` : K.nothingHeadline,
     // where
     whereBox(tone, whereHead, whereBody, candHtml + folderLine + dlHtml +
       (withOptions
@@ -299,31 +326,33 @@ function render({ result, subjectPrefix = 'Emailed files — ', title = 'Emailed
         : '')) +
     (links.length ? `<tr><td style="padding:12px 24px 0;">${links.join('')}</td></tr>` : '') +
     // sender
-    `<tr><td style="padding:16px 24px 4px;">${label('From')}` +
+    `<tr><td style="padding:16px 24px 4px;">${label(K.from)}` +
       `<div style="${F}font-size:16px;font-weight:600;color:#1d2433;">${esc(who)}</div>` +
       (from.email && who !== from.email ? `<div style="${F}font-size:13px;color:#475467;margin-top:2px;">${esc(from.email)}</div>` : '') +
       (when ? `<div style="${F}font-size:12px;color:#8a92a3;margin-top:4px;">${esc(when)}</div>` : '') +
     '</td></tr>' +
-    `<tr><td style="padding:16px 24px 4px;">${label('Subject')}` +
-      `<div style="${F}font-size:15px;color:#1d2433;">${r.subject ? esc(r.subject) : '<span style="color:#8a92a3;font-style:italic;">(no subject)</span>'}</div>` +
-    '</td></tr>' +
+    (K.subjectRow
+      ? `<tr><td style="padding:16px 24px 4px;">${label('Subject')}` +
+        `<div style="${F}font-size:15px;color:#1d2433;">${r.subject ? esc(r.subject) : '<span style="color:#8a92a3;font-style:italic;">(no subject)</span>'}</div>` +
+        '</td></tr>'
+      : '') +
     // files
-    `<tr><td style="padding:18px 24px 4px;">${label(`Attachments (${nAll})`)}` +
+    `<tr><td style="padding:18px 24px 4px;">${label(`${K.files} (${nAll})`)}` +
       (rows.length
         ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rows.join(sep)}</table>`
         : `<div style="${F}font-size:14px;color:#8a92a3;font-style:italic;">None</div>`) +
     '</td></tr>' +
     // message
-    `<tr><td style="padding:18px 24px 22px;">${label('Message')}` +
+    `<tr><td style="padding:18px 24px 22px;">${label(K.message)}` +
       `<div style="${F}font-size:14px;line-height:1.5;color:#1d2433;background:#f8f9fb;border:1px solid #eef0f4;border-radius:8px;padding:12px 14px;">${bodyHtml}` +
         (ex.trimmed ? '<div style="font-size:12px;color:#8a92a3;margin-top:10px;">— earlier messages in the thread trimmed —</div>' : '') +
         (ex.cut ? `<div style="font-size:12px;color:#8a92a3;margin-top:10px;">— message shortened (${ex.cut} more characters) —</div>` : '') +
       '</div>' +
-    '</td></tr>');
+    '</td></tr>', K.footer);
 
   // ── plain text ──
   const t = [];
-  t.push(nAll ? `${landed.length} of ${nAll} file${nAll === 1 ? '' : 's'} filed` : 'New email (no attachments)');
+  t.push(nAll ? `${landed.length} of ${nAll} file${nAll === 1 ? '' : 's'} filed` : K.nothingHeadline);
   t.push('');
   t.push(`${whereHead}. ${whereBody}`);
   for (const c of cands) t.push(candidateLine(c));
@@ -332,16 +361,16 @@ function render({ result, subjectPrefix = 'Emailed files — ', title = 'Emailed
   if (caseId && r.case_link) t.push(`Case: ${r.case_link}`);
   if (dn) t.push(...dn.text);
   t.push('');
-  t.push(`From: ${who}${from.email && who !== from.email ? ` <${from.email}>` : ''}`);
-  if (when) t.push(`Received: ${when}`);
-  t.push(`Subject: ${r.subject || '(no subject)'}`);
+  t.push(`${K.from}: ${who}${from.email && who !== from.email ? ` <${from.email}>` : ''}`);
+  if (when) t.push(`${K.when}: ${when}`);
+  if (K.subjectRow) t.push(`Subject: ${r.subject || '(no subject)'}`);
   t.push('');
-  t.push(`Attachments (${nAll}):`);
+  t.push(`${K.files} (${nAll}):`);
   if (!nAll) t.push('  none');
   t.push(...fileLines(files, skipped));
   t.push('');
-  t.push('Message:');
-  t.push(ex.body || (nAll ? '(no message — attachments only)' : '(empty message)'));
+  t.push(`${K.message}:`);
+  t.push(ex.body || (nAll ? `(${K.noMessage.replace(/\.$/, '').toLowerCase()})` : '(empty message)'));
   if (ex.trimmed) t.push('— earlier messages in the thread trimmed —');
   if (ex.cut) t.push(`— message shortened (${ex.cut} more characters) —`);
 
@@ -548,4 +577,4 @@ function caseLinkOf(appUrl, caseId) {
   return require('../lib/shellLinks').caseLink(appUrl, caseId);   // lazy (convention)
 }
 
-module.exports = { render, renderDigest, messageExcerpt, fmtBytes, MAX_BODY, DIGEST_BODY_MAX };
+module.exports = { render, renderDigest, messageExcerpt, fmtBytes, MAX_BODY, DIGEST_BODY_MAX, KINDS };

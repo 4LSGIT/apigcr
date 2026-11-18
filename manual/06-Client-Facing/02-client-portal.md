@@ -259,7 +259,7 @@ first time.
 | `portal_email_from` | Sender for PIN emails. **Cannot be blank** — the server refuses it: the default sender applies only when the setting is missing, never when it is blank, so a blank one would break every PIN email |
 | `portal_sms_monthly_cap` | Ceiling on PIN texts per month |
 | `portal_sms_counter` | `{ym, count, alerted_ym}` — the running total; machine-managed, shown read-only to IT / SU |
-| `portal_docs_notify_to` | Who hears about a client upload (portal and checklist upload links). Blank = upload emails off; the case-log entry still writes. The sender is the firm's automations address |
+| `email_attachments_reviewer` | Who hears about a client upload (portal and the Documents Needed page) — the same **Client documents review** person told about documents emailed to docs@ or filed from Comms (YisraCase Config → Firm → Routing). Unset = upload emails off; the case-log entry still writes. The sender is the firm's automations address. (Replaced `portal_docs_notify_to`, 2026-11-19.) |
 | `portal_callback_task_to` | Who gets the task from "Need a call?". **Cannot be blank** (callback requests fail without one); the picker offers active staff and keeps a stored inactive person selected, labelled |
 
 ### Tables

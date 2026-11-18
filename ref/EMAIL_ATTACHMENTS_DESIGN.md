@@ -163,6 +163,19 @@ Failure posture: throws only when there is nothing to report on (`BAD_REF`,
 `MESSAGE_NOT_STORED`, `CASE_NOT_FOUND`, `CONTACT_NOT_FOUND`, `BAD_TARGET`).
 Per-file failures are results, listed in the notice; one fetch retry each.
 
+**Case log (2026-11-18, `services/docsIntakeLog.js`).** The `docs` log row every
+docs door writes — docReq, the portal, and this service for docs@ and Comms
+(Fred: "they should all do the same thing more or less"). A run that files
+anything NEW writes ONE row, action `email_filed`, on the case — else the
+sender's contact (Unsorted, known sender) — else none (an unknown sender's
+Unsorted files get theirs on refile). Source `email`, or `comms` when
+`logSource:'comms'` (+ `logActor`, the person, for the subject). Only `filed`
+parts are listed: an `already_filed` re-run logs nothing. A refile that MOVES
+files writes `email_refiled` on the case; `refileDigest` passes `log:false`
+per email and writes ONE row for the burst. The subject's sender is the
+matcher's contact for the From address (not the target contact), else the
+display name, else the address; "to" is the first To address. Never throws.
+
 **Refile** (`refileMessageAttachments`): every 'filed' part of a message →
 the case's `Client Uploads/Emailed {yymmdd}`, moved BY DROPBOX ID (follows
 staff renames/moves), keeping the current name; re-linked to the case
@@ -171,6 +184,14 @@ already in the destination is only re-linked. The emptied unsorted folder is
 left in place.
 
 ## 5. The notice — `emailAttachmentNotice`
+
+**`kind` (2026-11-19).** `render({ kind: 'upload' })` is the same notice for a
+client UPLOAD (docReq / the portal — `services/clientUploadCompletionService`):
+the frame, the file rows (with `files[].link` and a per-file `note`, the
+portal's Docs Needed item), the Docs Needed block and the where-box are shared;
+only the nouns change (Client / Uploaded / Files / Client comment, no Subject
+row, a plain footer — `KINDS`). The default `kind: 'email'` output is
+byte-identical to before. One recipient for every door: `docsReviewerService`.
 
 Pure renderer, ported from the docs@ digest transform's layout (Outlook-safe
 tables). Outputs `notice_subject`, `notice_html`, `notice_text`, and — when

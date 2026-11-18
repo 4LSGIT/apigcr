@@ -199,6 +199,10 @@ maybe('email attachments S1/S2 on real MySQL', () => {
     return r.insertId;
   }
   const pdf = (part, filename = `doc${part}.pdf`, size = 4000) => ({ part: String(part), filename, mime: 'application/pdf', size });
+  /** The `docs` case-log rows (services/docsIntakeLog), oldest first. */
+  const docsRows = async () => (await q(
+    "SELECT log_link_type, log_link_id, log_by, log_subject, log_direction, log_data FROM log WHERE log_type = 'docs' ORDER BY log_id"))
+    .map(r => ({ link: `${r.log_link_type}:${r.log_link_id}`, by: Number(r.log_by), subject: r.log_subject, direction: r.log_direction, data: JSON.parse(r.log_data) }));
   /** fetchPart answers with the part id as the file's bytes. */
   function serveParts({ fail = {} } = {}) {
     transport.fetchPart.mockImplementation(async (row, folder, uid, part) => {
@@ -213,6 +217,7 @@ maybe('email attachments S1/S2 on real MySQL', () => {
     for (const t of ['mail_attachment_notices', 'mail_attachment_filings', 'mail_messages', 'mailboxes', 'case_relate', 'contact_emails', 'contacts', 'cases', 'documents', 'checkitems', 'checklists', 'entity_folders']) {
       await q(`DELETE FROM ${t}`);
     }
+    await q("DELETE FROM log WHERE log_type = 'docs'");   // docsIntakeLog rows (2026-11-18) — the only log rows these tests assert by type
     await q(`INSERT INTO mailboxes (id, address, domain, imap_host, imap_user, emit_source_name, emit_id_kind, ingest_state)
              VALUES (2, 'stuart@4lsg.com', '4lsg.com', 'imap.test', 'u', 'gmail-firm', 'provider', ?),
                     (3, 'it@mdbl.test', 'mdbl.test', 'imap.test', 'u', NULL, NULL, ?)`,
@@ -394,11 +399,28 @@ maybe('email attachments S1/S2 on real MySQL', () => {
       expect(r.notice_subject).toBe('New email to Docs@4LSG.com — Kiara Bentley (2 files) — filed to case PVXC1RMM');
       expect(r.needs_decision).toBe(false);
       expect(r.notice_html_decision).toBeNull();
+      // THE CASE LOG ROW (docsIntakeLog): one, on the case, naming the sender and the docs@ address
+      const logged = await docsRows();
+      expect(logged).toEqual([{
+        link: 'case:PVXC1RMM', by: 0, direction: 'incoming',
+        subject: 'Kiara Bentley emailed 2 documents to docs@4lsg.com',
+        data: expect.objectContaining({
+          action: 'email_filed', source: 'email', contact_id: c, file_count: 2, placement: 'case',
+          folder_path: '/cases/bentley/Client Uploads/Emailed 261105',
+          files: [
+            { name: 'stub 1.pdf', path: '/cases/bentley/Client Uploads/Emailed 261105/stub 1.pdf', document_id: rows[0].document_id },
+            { name: 'stub 2.pdf', path: '/cases/bentley/Client Uploads/Emailed 261105/stub 2.pdf', document_id: rows[1].document_id },
+          ],
+          email: { mail_message_id: mid, from: 'kiara@x.com', to: 'docs@4lsg.com', subject: 'paystubs' },
+        }),
+      }]);
+      expect(logged[0].data.failed).toBeUndefined();
 
       const again = await filing.fileMessageAttachments(pool, { ref: { mail_message_id: mid } });
       expect(mockDbx.uploads).toHaveLength(2);
       expect(again.files.map(f => f.status)).toEqual(['already_filed', 'already_filed']);
       expect(again.counts).toMatchObject({ filed: 0, already_filed: 2 });
+      expect(await docsRows()).toHaveLength(1);   // a re-run that files nothing new logs nothing
     });
 
     test('each filed file links to itself (the folder link opened on it); the case\'s Docs Needed list is linked, its open items named', async () => {
@@ -778,9 +800,21 @@ maybe('email attachments S1/S2 on real MySQL', () => {
       expect(s.notice_html_decision).toContain('Every unsorted file in this notice moves there when you choose.');
       expect(s.unsorted_folder_path).toBe(`${BIN}/Emailed 261105 - Sims, Tristan`);
 
+      // each email logged as it was filed: the conflicts on the sender's contact, the one to his case on the case
+      expect((await docsRows()).map(x => [x.link, x.data.action, x.data.file_count])).toEqual([
+        [`contact:${c}`, 'email_filed', 1], ['case:PVXC1RMM', 'email_filed', 1], [`contact:${c}`, 'email_filed', 2],
+      ]);
       mockDbx.moves.length = 0;
       const r = await fns.email_attachments_refile({ digest_key: KEY, digest_of: s.digest_of, case_id: 'CF8ZT7VE', output_var: 'refiled' }, pool);
       const out = r.output;
+      // the burst's one decision → ONE row on the chosen case for all three moved files (not one per email)
+      const refiledRows = (await docsRows()).filter(x => x.data.action === 'email_refiled');
+      expect(refiledRows).toEqual([{
+        link: 'case:CF8ZT7VE', by: 0, direction: 'incoming', subject: '3 emailed documents moved to this case',
+        // CF8ZT7VE has no folder → the refile lands in the bin's per-case folder, and the row says so
+        data: expect.objectContaining({ source: 'email', file_count: 3, placement: 'unsorted', folder_path: `${BIN}/CF8ZT7VE`, email: expect.objectContaining({ mail_message_id: s.digest_of, from: 'sims@x.com' }) }),
+      }]);
+      expect(refiledRows[0].data.files.map(f => f.name)).toEqual(['a.pdf', 'c.pdf', 'd.pdf']);
       expect(out).toMatchObject({ case_id: 'CF8ZT7VE', mail_message_ids: [u1, u2], failed: [] });
       expect(out.moved.map(m => [m.mail_message_id, m.filename])).toEqual([[u1, 'a.pdf'], [u2, 'c.pdf'], [u2, 'd.pdf']]);
       expect(mockDbx.moves).toHaveLength(3);                        // b.pdf (filed to his case) stays put
@@ -1040,8 +1074,13 @@ maybe('email attachments S1/S2 on real MySQL', () => {
       const mid = await message({ from: 'mom@y.com', attachments: [pdf(2, 'tax.pdf'), file(3, 'pics.zip', 'application/zip', 900)] });
       await filing.fileMessageAttachments(pool, { ref: { mail_message_id: mid } });      // docs@: no case → Unsorted
       expect((await regRows(mid)).map(x => x.placement)).toEqual(['unsorted']);
+      expect(await docsRows()).toEqual([]);   // an unknown sender's Unsorted files: nothing to hang a row on — yet
       const moveOnly = await comms.fileOne(pool, FRED, mid, { case_id: 'PVXC1RMM', parts: [], move: true });
       expect(moveOnly.refiled).toMatchObject({ moved: 1, already_there: 0, failed: [] });
+      expect(await docsRows()).toEqual([expect.objectContaining({
+        link: 'case:PVXC1RMM', by: FRED, subject: '1 emailed document moved to this case by Fred',
+        data: expect.objectContaining({ action: 'email_refiled', source: 'comms', file_count: 1, files: [expect.objectContaining({ name: 'tax.pdf' })] }),
+      })]);
       expect(moveOnly.files.map(f => [f.part, f.status])).toEqual([['2', 'already_filed']]);
       expect(mockDbx.moves.map(m => m.to)).toEqual(['/cases/bentley/Client Uploads/Emailed 261105/tax.pdf']);
       expect(await regRows(mid)).toEqual([expect.objectContaining({ part: '2', link_type: 'case', link_id: 'PVXC1RMM', placement: 'case', filed_by: FRED })]);
@@ -1051,6 +1090,12 @@ maybe('email attachments S1/S2 on real MySQL', () => {
       const r = await comms.fileOne(pool, FRED, mid, { case_id: 'PVXC1RMM', parts: ['3'], confirm: ['3'] });
       expect(r.files.map(f => [f.part, f.status])).toEqual([['3', 'filed']]);
       expect(r.refiled).toBeNull();
+      const rows = await docsRows();
+      expect(rows).toHaveLength(2);   // the move's row above + this pick's — the already-filed tax.pdf is not logged twice
+      expect(rows[1]).toMatchObject({
+        link: 'case:PVXC1RMM', by: FRED, subject: 'Fred filed 1 emailed document from Comms',
+        data: expect.objectContaining({ action: 'email_filed', source: 'comms', file_count: 1, files: [expect.objectContaining({ name: 'pics.zip' })] }),
+      });
     });
 
     test('access: anyone who can READ the email files it; no read access = 404 and nothing happens; SU reads every box', async () => {
@@ -1101,6 +1146,25 @@ maybe('email attachments S1/S2 on real MySQL', () => {
       expect(lg).toMatchObject({ log_type: 'email', log_by: FRED });
       const [about] = await q('SELECT * FROM log WHERE log_id = ?', [m.log_id]);
       expect(JSON.stringify(about)).toContain('PVXC1RMM');
+    });
+
+    test('docs_reviewer (2026-11-19): the setting\'s active user with an email, for every docs door; blank / inactive / no email → set:false', async () => {
+      const reviewer = require('../services/docsReviewerService');
+      expect(await reviewer.resolveReviewer(pool)).toEqual({ user_id: SB, name: 'Shana', email: 'sb@4lsg.com' });
+      const r = await fns.docs_reviewer({ output_var: 'reviewer' }, pool);
+      expect(r.output).toEqual({ set: true, user_id: SB, name: 'Shana', email: 'sb@4lsg.com' });
+      expect(r.set_vars.reviewer).toBe(r.output);
+      SET = {};
+      expect((await fns.docs_reviewer({}, pool)).output).toEqual({ set: false, user_id: null, name: null, email: null });
+      SET = { email_attachments_reviewer: String(RG) };
+      await q("UPDATE users SET user_auth = 'inactive' WHERE user = ?", [RG]);
+      expect((await fns.docs_reviewer({}, pool)).output.set).toBe(false);
+      SET = { email_attachments_reviewer: String(FRED) };
+      await q("UPDATE users SET email = '' WHERE user = ?", [FRED]);
+      expect((await fns.docs_reviewer({}, pool)).output.set).toBe(false);
+      // Comms still reaches the same resolver
+      expect(comms.resolveReviewer).toBeInstanceOf(Function);
+      expect(await comms.resolveReviewer(pool)).toBeNull();
     });
 
     test('the review notice: one per batch per sender, to the reviewer — not when the reviewer filed them, not without a reviewer', async () => {

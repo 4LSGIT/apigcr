@@ -18,8 +18,9 @@
  *
  * WHAT IS LOCKED
  *   Portal Settings
- *     - the three keys it did not edit before (portal_email_from,
- *       portal_callback_task_to, portal_docs_notify_to) load and save;
+ *     - the two keys it did not edit before (portal_email_from,
+ *       portal_callback_task_to) load and save (portal_docs_notify_to was
+ *       retired 2026-11-19 — uploads notify the firm's docs reviewer);
  *     - every save is a PUT — never a POST — including on a missing row (the
  *       old create-on-first-use POST is gone);
  *     - the callback picker: active staff only; a stored inactive / unknown /
@@ -225,7 +226,7 @@ async function bootPage(html, { api, firmData, url, swalConfirm = true }) {
 // ═════════════════════════════════════════════════════════════════════════
 const PORTAL_ROWS = {
   portal_live: '1', portal_sms_monthly_cap: '300', portal_email_from: 'portal@firm.test',
-  portal_callback_task_to: '2', portal_docs_notify_to: 'office@firm.test',
+  portal_callback_task_to: '2',
   portal_logo_url: '', portal_favicon_url: '', portal_logo_href: '',
   portal_sms_counter: '{"ym":"2026-10","count":4}',
 };
@@ -244,17 +245,18 @@ async function bootPortal({ rows = PORTAL_ROWS, caps, failPut, users = USERS, se
   return { ...t, S, calls: S.st.calls, settle, opts, setVal, saveOf };
 }
 
-describe('Portal Settings — the three new keys', () => {
+describe('Portal Settings — the two new keys', () => {
   test('load: values shown; the callback picker offers active staff only, the stored one selected', async () => {
     const t = await bootPortal();
     expect(t.calls[0]).toEqual({ endpoint: '/api/app-settings', method: 'GET', payload: null });
     expect(t.topbar[0]).toEqual({ refresh: true });
     expect(t.$('#pf-email-from').value).toBe('portal@firm.test');
-    expect(t.$('#pf-notify-to').value).toBe('office@firm.test');
+    expect(t.$('#pf-notify-to')).toBeNull();   // retired: uploads notify email_attachments_reviewer
+    expect(t.$('#wrap').textContent).toMatch(/Client documents review/);
     const sel = t.$('#pf-callback');
     expect(t.opts(sel)).toEqual(['1', '2']);   // not user 0, not the inactive user 3
     expect(sel.value).toBe('2');
-    expect(t.$$('#pf-senders option').map((o) => o.value)).toEqual(['portal@firm.test', 'office@firm.test']);
+    expect(t.$$('#pf-senders option').map((o) => o.value)).toEqual(['portal@firm.test', 'office@firm.test']);   // the SENDERS fixture, not the rows
     expect(t.$('.warn-note')).toBeNull();
     expect(t.$('.ro-note')).toBeNull();
     expect(t.$$('.not-set')).toEqual([]);
@@ -269,33 +271,27 @@ describe('Portal Settings — the three new keys', () => {
     t.setVal('pf-callback', '1');
     t.click(t.saveOf('pf-callback'));
     await t.settle();
-    t.setVal('pf-notify-to', 'intake@firm.test');
-    t.click(t.saveOf('pf-notify-to'));
-    await t.settle();
     expect(writesOf(t.calls)).toEqual([
       { endpoint: '/api/app-settings/portal_email_from', method: 'PUT', payload: { value: 'office@firm.test' } },
       { endpoint: '/api/app-settings/portal_callback_task_to', method: 'PUT', payload: { value: '1' } },
-      { endpoint: '/api/app-settings/portal_docs_notify_to', method: 'PUT', payload: { value: 'intake@firm.test' } },
     ]);
     expect(t.S.st.rows.portal_callback_task_to.value).toBe('1');
     expect(t.dialogs).toEqual([]);   // a known sender asks nothing
-    expect(t.toasts.map((x) => x.icon)).toEqual(['success', 'success', 'success']);
+    expect(t.toasts.map((x) => x.icon)).toEqual(['success', 'success']);
     expect(t.$('#pf-callback').value).toBe('1');   // reloaded from the server
   });
 
   test('missing rows: "not set", and the first save CREATES the row with PUT (no POST anywhere)', async () => {
     const t = await bootPortal({ rows: {} });
-    expect(t.$$('.not-set').length).toBeGreaterThanOrEqual(8);
+    expect(t.$$('.not-set').length).toBeGreaterThanOrEqual(7);
     expect(t.$('label[for="pf-email-from"] .not-set')).not.toBeNull();
     expect(t.$('label[for="pf-callback"] .not-set')).not.toBeNull();
-    expect(t.$('label[for="pf-notify-to"] .not-set')).not.toBeNull();
     const sel = t.$('#pf-callback');
     expect(sel.value).toBe('');
     expect(sel.options[sel.selectedIndex].textContent).toBe('— not set —');
 
     t.setVal('pf-email-from', 'portal@firm.test'); t.click(t.saveOf('pf-email-from')); await t.settle();
     t.setVal('pf-callback', '2');                  t.click(t.saveOf('pf-callback'));   await t.settle();
-    t.setVal('pf-notify-to', 'office@firm.test');  t.click(t.saveOf('pf-notify-to'));  await t.settle();
     // and the pre-existing fields, on missing rows too
     t.w.setLive(false); await t.settle();
     t.$('#sms-cap').value = '120'; t.w.saveCap(); await t.settle();
@@ -304,11 +300,11 @@ describe('Portal Settings — the three new keys', () => {
     expect(t.calls.filter((c) => c.method === 'POST')).toEqual([]);
     expect(writesOf(t.calls).map((c) => c.endpoint)).toEqual([
       '/api/app-settings/portal_email_from', '/api/app-settings/portal_callback_task_to',
-      '/api/app-settings/portal_docs_notify_to', '/api/app-settings/portal_live',
+      '/api/app-settings/portal_live',
       '/api/app-settings/portal_sms_monthly_cap', '/api/app-settings/portal_logo_url',
     ]);
     expect(Object.fromEntries(Object.entries(t.S.st.rows).map(([k, r]) => [k, r.value]))).toEqual({
-      portal_email_from: 'portal@firm.test', portal_callback_task_to: '2', portal_docs_notify_to: 'office@firm.test',
+      portal_email_from: 'portal@firm.test', portal_callback_task_to: '2',
       portal_live: '0', portal_sms_monthly_cap: '120', portal_logo_url: 'https://cdn.example/logo.png',
     });
     expect(t.$$('.not-set').length).toBeGreaterThanOrEqual(2);   // the untouched ones still say so
@@ -316,12 +312,13 @@ describe('Portal Settings — the three new keys', () => {
     expect(t.errors).toEqual([]);
   });
 
-  test('blank upload recipient is allowed (emails off) and saved as ""', async () => {
+  test('the retired upload-recipient field is gone: no input, no save handler, nothing written', async () => {
     const t = await bootPortal();
-    t.setVal('pf-notify-to', '   ');
-    t.click(t.saveOf('pf-notify-to'));
+    expect(t.$('#pf-notify-to')).toBeNull();
+    t.w.savePortalEmail('notifyTo');   // the old handler key: a no-op now
     await t.settle();
-    expect(writesOf(t.calls)).toEqual([{ endpoint: '/api/app-settings/portal_docs_notify_to', method: 'PUT', payload: { value: '' } }]);
+    expect(writesOf(t.calls)).toEqual([]);
+    expect(t.errors).toEqual([]);
   });
 });
 
@@ -329,7 +326,6 @@ describe('Portal Settings — client checks (no write when refused)', () => {
   test.each([
     ['a blank sender', 'pf-email-from', '', /cannot be blank/],
     ['a malformed sender', 'pf-email-from', 'portal@firm', /valid email/],
-    ['a malformed recipient', 'pf-notify-to', 'office at firm', /valid email address — or blank/],
   ])('%s', async (_n, id, v, msg) => {
     const t = await bootPortal();
     t.setVal(id, v);
@@ -371,11 +367,11 @@ describe('Portal Settings — client checks (no write when refused)', () => {
   });
 
   test('the server\'s refusal is shown verbatim, no success toast, no reload', async () => {
-    const t = await bootPortal({ failPut: { portal_docs_notify_to: [400, 'Upload notification to must be a valid email address'] } });
-    t.setVal('pf-notify-to', 'ok@firm.test');
-    t.click(t.saveOf('pf-notify-to'));
+    const t = await bootPortal({ failPut: { portal_email_from: [400, 'Login-code sender must be a valid email address'] } });
+    t.setVal('pf-email-from', 'ok@firm.test');
+    t.click(t.saveOf('pf-email-from'));
     await t.settle();
-    expect(t.toasts).toEqual([{ icon: 'error', title: 'Upload notification to must be a valid email address' }]);
+    expect(t.toasts).toEqual([{ icon: 'error', title: 'Login-code sender must be a valid email address' }]);
     expect(t.calls.filter((c) => c.method === 'GET')).toHaveLength(1);
     expect(t.errors).toEqual([]);
   });

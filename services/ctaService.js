@@ -155,6 +155,9 @@ const CTA_FN_DENYLIST = Object.freeze([
   // Email attachments S2d (design §8): workflow plumbing — it claims a
   // sender's queued notices, and only that email's own execution may.
   'email_attachments_digest',
+  // Docs reviewer (2026-11-19): a read of a firm setting (who reviews client
+  // documents) — a public link has no use for it.
+  'docs_reviewer',
 ]);
 
 /** Chromium-backed functions: eligible, but a public repeatable link fans out load. */

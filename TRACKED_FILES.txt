@@ -683,6 +683,7 @@ ref/migrations/2026-11-17_storage_seam_d3a_entity_folders.sql
 ref/migrations/2026-11-18_storage_seam_d3c3_contract.sql
 ref/migrations/2026-11-18_storage_seam_d3c_storage_folders.json
 ref/migrations/2026-11-18_storage_seam_d3d1_case_folder_link.json
+ref/migrations/2026-11-19_docs_reviewer.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -1100,6 +1101,7 @@ services/campaignSegmentService.js
 services/campaignService.js
 services/caseEventService.js
 services/caseService.js
+services/clientUploadCompletionService.js
 services/commsArchiveAdmin.js
 services/commsArchiveCommon.js
 services/commsArchiveMediaSweep.js
@@ -1128,6 +1130,8 @@ services/courtExecutor.js
 services/courtRerun.js
 services/credentialService.js
 services/ctaService.js
+services/docsIntakeLog.js
+services/docsReviewerService.js
 services/documentGenerateService.js
 services/documentIngestService.js
 services/documentService.js
@@ -1424,6 +1428,7 @@ tests/checklistView.autoGrow.test.js
 tests/checklistView.sync.test.js
 tests/checklists.s1notes.test.js
 tests/checklistsViewBrowse.sync.test.js
+tests/clientUploadCompletion.test.js
 tests/clioTool.test.js
 tests/clioTool2.test.js
 tests/codeBodyParity.test.js
@@ -1525,6 +1530,8 @@ tests/dbTransientRetry.test.js
 tests/dbkqV12Polish.test.js
 tests/dbmigrateParity.test.js
 tests/decisionResume.order.test.js
+tests/docReqUploadComplete.test.js
+tests/docsIntakeLog.test.js
 tests/documentGenerateFn.test.js
 tests/documentGenerateService.test.js
 tests/documentIngest.s4.test.js

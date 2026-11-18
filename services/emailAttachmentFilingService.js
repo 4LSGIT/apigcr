@@ -25,6 +25,11 @@
  *      (emailAttachmentNotice), and — when no case was chosen but candidates
  *      exist — ready request_decision options so a workflow can ask staff
  *      which case.
+ *   5. the case-log row             services/docsIntakeLog — the `docs` row every
+ *                                   docs door writes (docReq, portal, this
+ *                                   service for the docs@ rule and for Comms):
+ *                                   action 'email_filed' for what THIS run filed,
+ *                                   'email_refiled' when a refile moves files in
  *   digestKey: the email also joins its sender's BURST (a row in
  *      mail_attachment_notices before step 3, its result after step 4) and
  *      the workflow sends the burst's one notice later —
@@ -108,6 +113,13 @@ const storage = () => { const s = require('./documentSourceService'); return s.g
 const docIngest = () => require('./documentIngestService');
 const uploadTarget = () => require('./uploadTargetService');
 const digest = () => require('./emailAttachmentDigestService');
+const docsLog = () => require('./docsIntakeLog');
+
+/** The `source` this service writes on its case-log rows (docsIntakeLog): automation unless a caller says otherwise. */
+const LOG_SOURCES = Object.freeze(['email', 'comms']);
+function logSourceOf(v) {
+  return LOG_SOURCES.includes(v) ? v : 'email';
+}
 
 function appUrl() {
   return (require('../lib/firmConfig').cfg('app_url') || 'https://app.4lsg.com').replace(/\/+$/, '');
@@ -403,7 +415,15 @@ async function _fetchWithRetry(db, msg, part, maxBytes) {
  *                                          .blockedExtensions — the setting)
  * @param {string} [o.reason]               the match reason an explicit target reports
  *                                          (default: "as the automation directed")
+ * @param {string} [o.logSource]            the case-log row's source: 'email' (default — an
+ *                                          automation) | 'comms' (a person in Comms)
+ * @param {string} [o.logActor]             the acting person's name, for the row's subject
  * @returns {Promise<object>} the result (see the internal function's __meta)
+ *
+ * CASE LOG (services/docsIntakeLog.js): when this run files anything NEW, one
+ * `docs` row — action 'email_filed' — on the case (else the sender's contact;
+ * else none). A re-run that finds everything already filed writes nothing,
+ * so a retried step never doubles the row.
  */
 async function fileMessageAttachments(db, o = {}) {
   const target = o.target == null || o.target === '' ? 'auto' : String(o.target);
@@ -624,6 +644,34 @@ async function fileMessageAttachments(db, o = {}) {
     }).html
     : null;
   result.digest_key = digestKey;
+
+  // THE CASE LOG ROW (docsIntakeLog): only what THIS run filed — 'already_filed'
+  // parts were logged by the run that filed them. Self-catching (never throws).
+  const newlyFiled = files.filter(f => f.status === 'filed');
+  if (newlyFiled.length) {
+    await docsLog().logDocsIntake(db, {
+      action: 'email_filed',
+      source: logSourceOf(o.logSource),
+      caseId: dest.caseId,
+      contactId: dest.contact ? dest.contact.contact_id : null,
+      files: newlyFiled.map(f => ({ name: f.filed_name || f.filename, path: f.path, document_id: f.document_id })),
+      placement: unsorted ? 'unsorted' : 'case',
+      folderPath,
+      failed: files.filter(f => f.status === 'failed').map(f => ({ name: f.filename, error: f.error })),
+      email: {
+        mail_message_id: msg.id,
+        // The SENDER's name: the matcher's contact for the From address — not
+        // dest.contact, which for target 'contact' is whoever the files were filed FOR.
+        from: (dest.match && dest.match.contact && dest.match.contact.name) || displayName(msg.from_addr),
+        from_email: fromEmail,
+        to: msg.to_addrs,
+        subject: msg.subject,
+      },
+      by: filedBy,
+      actor: o.logActor,
+    });
+  }
+
   if (digestKey) {
     // What the burst's notice is built from: this result, the sender's words
     // (cut as the notice cuts them) instead of the raw body, and the wording.
@@ -719,7 +767,15 @@ async function _stampDropboxIds(db, mailMessageId) {
  * @param {string} [o.subfolder]    case-rung template (default as filing)
  * @param {string} [o.folder]       case-rung folder taken EXACTLY (exactFolder; wins)
  * @param {number} [o.filedBy]
+ * @param {boolean} [o.log=true]    write the case-log row (docsIntakeLog). The burst
+ *                                  form (emailAttachmentDigestService.refileDigest)
+ *                                  passes false and writes ONE row for the burst.
+ * @param {string} [o.logSource]    'email' (default) | 'comms'
+ * @param {string} [o.logActor]     the acting person's name, for the row's subject
  * @returns {Promise<{case_id, placement, folder_path, folder_link, moved, already_there, failed, warnings}>}
+ *
+ * CASE LOG: one `docs` row — action 'email_refiled' — on the case for the files
+ * actually MOVED here (already_there ones were logged when they arrived).
  */
 async function refileMessageAttachments(db, o = {}) {
   const mid = Number(o.mailMessageId);
@@ -802,6 +858,27 @@ async function refileMessageAttachments(db, o = {}) {
   } catch (err) {
     out.warnings.push(`Could not make a link to ${prep.folderPath}: ${err.message}`);
   }
+
+  if (o.log !== false && out.moved.length) {
+    await docsLog().logDocsIntake(db, {   // self-catching (never throws)
+      action: 'email_refiled',
+      source: logSourceOf(o.logSource),
+      caseId: cs.case_id,
+      files: out.moved.map(m => ({ name: m.path ? String(m.path).split('/').pop() : m.filename, path: m.path })),   // its CURRENT name (renames are followed)
+      placement: prep.placement,
+      folderPath: prep.folderPath,
+      failed: out.failed,
+      email: msg ? {
+        mail_message_id: mid,
+        from: displayName(msg.from_addr),
+        from_email: senderAddress(msg.from_addr),
+        to: msg.to_addrs,
+        subject: msg.subject,
+      } : { mail_message_id: mid },
+      by: filedBy,
+      actor: o.logActor,
+    });
+  }
   return out;
 }
 
@@ -815,6 +892,7 @@ module.exports = {
   STALE_CLAIM_MIN,
   SOURCE,
   TARGETS,
+  LOG_SOURCES,
   exactFolder,
   alignCaseFolder,
   FOLDER_MAX_DEPTH,

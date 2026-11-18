@@ -324,7 +324,9 @@ async function registerWrittenSafe(db, o = {}) {
  * @param {number} [o.sinceMs]       window, default LANDING_WINDOW_MS
  * @param {number} [o.createdBy]     null for client uploads
  * @param {string} [o.eventSource]
- * @returns {Promise<{registered: number, scanned: number, documents: Array}>}
+ * @returns {Promise<{registered: number, scanned: number, documents: Array, folder_path: string|null}>}
+ *          folder_path = the folder actually listed (resolved link + subfolder),
+ *          for callers that want a link to it (the upload notice, 2026-11-19)
  */
 async function registerLandedInFolder(db, o = {}) {
   const {
@@ -332,7 +334,7 @@ async function registerLandedInFolder(db, o = {}) {
     sinceMs = LANDING_WINDOW_MS, eventSource = 'upload', credentialId,
   } = o;
 
-  const out = { registered: 0, scanned: 0, documents: [] };
+  const out = { registered: 0, scanned: 0, documents: [], folder_path: null };
 
   try {
     const storage = sources.get(sources.configured());   // D1g: the seam; D3e: the configured provider
@@ -345,6 +347,7 @@ async function registerLandedInFolder(db, o = {}) {
     }
     if (listPath == null) throw new Error('registerLandedInFolder requires folderPath or sharedLink');
     if (subfolder) listPath = storage.joinPath(listPath, subfolder);
+    out.folder_path = listPath;
 
     const listing = await storage.list(db, { path: listPath }, { max: LANDING_MAX_ENTRIES }, ctx);
 

@@ -362,6 +362,19 @@ describe('registerLandedInFolder — claim by window, never by reported name', (
 
     expect(out.registered).toBe(1);
     expect(documents.upsertFromEntry.mock.calls.map(c => c[2].id)).toEqual(['id:NEW']);
+    expect(out.folder_path).toBe('/bin');   // the folder it listed — what the upload notice links to (2026-11-19)
+    expect(out.documents).toHaveLength(1);
+  });
+
+  test('folder_path is the RESOLVED folder: the link\'s folder plus the subfolder; null when nothing could be listed', async () => {
+    listing([]);
+    const out = await ingest.registerLandedInFolder(mkDb({}), { folderPath: '/cases/x', subfolder: 'Client Uploads', links: [] });
+    expect(out.folder_path).toBe('/cases/x/Client Uploads');
+    dropbox.listFolder.mockRejectedValueOnce(new Error('down'));
+    const bad = await ingest.registerLandedInFolder(mkDb({}), { folderPath: '/cases/y', links: [] });
+    expect(bad).toMatchObject({ registered: 0, scanned: 0, folder_path: '/cases/y' });   // listed (and failed) — the path is still known
+    const none = await ingest.registerLandedInFolder(mkDb({}), { links: [] });            // neither path nor link
+    expect(none.folder_path).toBeNull();
   });
 
   test('an AUTORENAMED file is claimed — its name matches nothing the client reported', async () => {
