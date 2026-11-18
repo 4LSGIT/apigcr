@@ -1,0 +1,23 @@
+-- storage-seam D3c-3 (2026-11-18) — CONTRACT of the folder-templates key.
+-- Applied by scripts/storageSeamD3c3Contract.js (one connection, CHECK / --apply,
+-- resumable); this file is the record of what it does, not a script to paste.
+--
+-- Before: app_settings holds BOTH
+--   dropbox_case_folder_templates = { <stage>: { default, subfolders, "Type:Subtype"… } }   (the legacy key; the editor wrote it)
+--   storage_folders               = { case: <a copy taken by D3c-1>, contact: null }      (the v3 tree)
+-- After:  storage_folders.case = the legacy row's CURRENT value (re-copied, so an edit
+--         made after D3c-1's seed is kept), the legacy row deleted, the registry key
+--         retired (lib/settingsRegistry.js), the editor on storage_folders.
+--
+-- Step 1 (idempotent): re-copy the legacy row's case templates into the tree
+--   UPDATE app_settings SET `value` = JSON_SET(`value`, '$.case', CAST(<legacy value> AS JSON)) WHERE `key` = 'storage_folders';
+--   (the script does the merge in node and writes the whole document, key order kept: { ...tree, case: <legacy> })
+-- Step 2: verify storage_folders.case equals the legacy row (key-order-insensitive), contact unchanged
+-- Step 3: DELETE FROM app_settings WHERE `key` = 'dropbox_case_folder_templates';
+--
+-- Runs BEFORE the D3c-3 backend deploys (SQL → backend): the D3c-2 code reads the
+-- legacy row while it exists, else storage_folders.case — so the deleted row is
+-- read-through to the same templates on either side of the deploy. Between the
+-- delete and the deploy the firm page's editor shows the legacy key as blank; a
+-- save there in that window would recreate the row and be ignored after the
+-- deploy (minutes; accepted).

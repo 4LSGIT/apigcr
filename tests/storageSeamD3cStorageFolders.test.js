@@ -111,13 +111,14 @@ describe('caseTypeFull', () => {
 describe('_loadCaseFolderTemplates', () => {
   const dbWith = (rows) => ({ query: jest.fn(async (sql) => { const m = sql.match(/`key` = '([a-z_]+)'/); const v = rows[m[1]]; return [v == null ? [] : [{ value: v }], []]; }) });
   const stages = { active: { default: '/  A/ {{case_id}}', subfolders: [] } };
-  test('the legacy row is authoritative while it exists (the editor writes it): storage_folders is not even read', async () => {
-    const legacy = { active: { default: '/  EDITED', subfolders: [] } };
+  test('D3c-3: storage_folders.case is the one source — a leftover dropbox_case_folder_templates row is never read', async () => {
+    const legacy = { active: { default: '/  STALE', subfolders: [] } };
     const db = dbWith({ storage_folders: JSON.stringify({ case: stages, contact: null }), dropbox_case_folder_templates: JSON.stringify(legacy) });
-    expect(await caseService._loadCaseFolderTemplates(db)).toEqual(legacy);
+    expect(await caseService._loadCaseFolderTemplates(db)).toEqual(stages);
     expect(db.query).toHaveBeenCalledTimes(1);
+    expect(db.query.mock.calls[0][0]).toMatch(/`key` = 'storage_folders'/);
   });
-  test('without the legacy row: storage_folders.case; a tree without a case block (or not an object, or an array, or bad JSON) → {}', async () => {
+  test('storage_folders.case; a tree without a case block (or not an object, or an array, or bad JSON) → {}', async () => {
     expect(await caseService._loadCaseFolderTemplates(dbWith({ storage_folders: JSON.stringify({ case: stages, contact: null }) }))).toEqual(stages);
     expect(await caseService._loadCaseFolderTemplates(dbWith({ storage_folders: JSON.stringify({ contact: { default: '/C', subfolders: [] } }) }))).toEqual({});
     expect(await caseService._loadCaseFolderTemplates(dbWith({ storage_folders: JSON.stringify({ case: ['x'] }) }))).toEqual({});

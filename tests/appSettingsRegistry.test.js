@@ -409,7 +409,7 @@ describe('GET /api/app-settings — per caller', () => {
   test('enum options, editor, console posture and state rows (it)', async () => {
     const r = byKey(await call(world({ rows: ROWS() }), 'GET', '/api/app-settings', { headers: IT }));
     expect(r.alert_email_min_severity).toMatchObject({ type: 'enum', options: ['error', 'warn', 'info'], value: 'error', can_edit: true });
-    expect(r.dropbox_case_folder_templates).toMatchObject({ editor: 'dropboxTemplates', exists: false });
+    expect(r.storage_folders).toMatchObject({ editor: 'storageFolders', exists: false });   // D3c-3: the folder templates' key
     expect(r.app_url).toMatchObject({ edit: 'console', can_edit: false, value: 'https://app.example.com', category: 'Platform' });
     expect(r.clio_login_code).toMatchObject({ kind: 'state', edit: 'console', can_edit: false, category: 'Runtime state (read-only)' });
     // ADMIN writes Lead sources through firm.settings → also_write null (its tab's handshake governs)

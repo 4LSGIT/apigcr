@@ -1281,7 +1281,7 @@ async function searchCases(db, { q = '', limit = 20 } = {}) {
 // Active-tree convention + the four staff subfolders; otherwise 'potential'.
 // This replaces the old Pabbly behavior of always creating in Potential-BK.
 //
-// Templates live in app_settings 'dropbox_case_folder_templates' — a JSON
+// Templates live in app_settings 'storage_folders' (its `case` block) — a JSON
 // map keyed by stage, each stage holding per-case_type templates, a
 // "default", and a "subfolders" array:
 //   {
@@ -1448,36 +1448,14 @@ async function ensureContactFolder(db, contactId, { force = false } = {}) {
 }
 
 async function _loadCaseFolderTemplates(db) {
-  // D3c-1 (expand): the legacy row dropbox_case_folder_templates stays
-  // AUTHORITATIVE while it exists — the firm page's "Folder templates" editor
-  // writes it, and an edit there must keep taking effect. When it is absent,
-  // the v3 setting's case block — storage_folders = { case: { <stage>: … },
-  // contact: { … } | null } (design §6), the same shape this map always had.
-  // D3c-3 (contract) re-copies the legacy row into storage_folders.case, deletes
-  // the legacy row and points the editor at the new key. Then {} so each stage
-  // falls to the code default below.
-  try {
-    const [[row]] = await db.query(
-      "SELECT `value` FROM app_settings WHERE `key` = 'dropbox_case_folder_templates' LIMIT 1"
-    );
-    if (row?.value) {
-      const map = JSON.parse(row.value);
-      if (map && typeof map === 'object') return map;
-    }
-  } catch (err) {
-    console.warn(`[CASE_DROPBOX] dropbox_case_folder_templates lookup failed, trying storage_folders: ${err.message}`);
-  }
-  try {
-    const [[sf]] = await db.query(
-      "SELECT `value` FROM app_settings WHERE `key` = 'storage_folders' LIMIT 1"
-    );
-    if (sf?.value) {
-      const tree = JSON.parse(sf.value);
-      if (tree && typeof tree === 'object' && tree.case && typeof tree.case === 'object' && !Array.isArray(tree.case)) return tree.case;
-    }
-  } catch (err) {
-    console.warn(`[CASE_DROPBOX] storage_folders lookup failed, using defaults: ${err.message}`);
-  }
+  // D3c-3 (contract): the case block of the v3 tree — storage_folders =
+  // { case: { <stage>: { default, subfolders, "Type:Subtype"… } }, contact: … }
+  // (design §6; the firm page's "Folder templates" editor writes it). The
+  // legacy key dropbox_case_folder_templates is gone (its row was copied here
+  // and deleted by scripts/storageSeamD3c3Contract.js). {} when the row or its
+  // case block is absent, so each stage falls to the code default below.
+  const tree = await _loadFolderTree(db);
+  if (tree && tree.case && typeof tree.case === 'object' && !Array.isArray(tree.case)) return tree.case;
   return {};
 }
 
@@ -2791,7 +2769,7 @@ module.exports = {
   docketTooLongMessage,
   docketConflictMessage,
   ensureCaseDropboxFolder,
-  // the code defaults behind app_settings dropbox_case_folder_templates —
+  // the code defaults behind app_settings storage_folders.case —
   // read by scripts/storageConfigDump.js so the dump never retypes a path
   DEFAULT_CASE_FOLDER_TEMPLATES,
   caseTypeFull,

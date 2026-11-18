@@ -163,6 +163,8 @@
       margin: 3px 0 0 2px; white-space: pre-wrap; overflow-wrap: anywhere;
     }
     .fm-dt-prev[hidden] { display: none; }
+    .fm-dt-switch { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+    .fm-dt-switch input { width: auto; margin: 0; }
     .fm-dt-dot { color: var(--warn); }
     .fm-var-add h3 { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
     .fm-var-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin-bottom: 8px; }
@@ -1558,8 +1560,8 @@ const WhoSection = {
 // server's sentence is shown). Workflows read them with get_setting /
 // get_settings and may write them with set_setting.
 //
-// Dropbox folder templates (dropbox_case_folder_templates, editor
-// 'dropboxTemplates'): dropboxTemplatesEditor below, ported from settings.html.
+// Folder templates (storage_folders, editor 'storageFolders'):
+// storageFoldersEditor below — settings.html's stage editor plus the contact card.
 
 // lib/settingsRegistry.js SECTIONS.firm, in order (tests/firmTab.test.js pins
 // this copy to it: the page cannot require server code).
@@ -1608,27 +1610,51 @@ function variableRow(s) {
     ...s, label: s.label || s.key, value: typeof s.value === 'string' ? s.value : '', type: s.type || 'string' };
 }
 
-// ── Dropbox folder templates (editor 'dropboxTemplates') ──
-// Ported from settings.html (dtRender / dtBind / dtSave / dtInit, dotPreview):
-// { <stage>: { default: <path template>, subfolders: [<name>, …] } }. Stage
-// keys are a code contract (looked up by name): fixed here — add or remove a
-// stage from the DB console. WHITESPACE IS LOAD-BEARING (manual sort order):
-// values are kept byte for byte and every space is previewed as a dot. A
-// stored value of any other shape → null → the row falls back to its json
-// textarea (settings.html's raw fallback). A stage's other fields — the
-// per-case-type templates services/caseService.js resolves first
-// (stage["Type:Subtype"], stage["Type"]) — are shown read-only and ride
-// through a save untouched (settings.html's save rebuilt each stage as
-// { default, subfolders } and dropped them). Untouched, the editor hands back
-// the stored string.
-function dtParse(raw) {
-  let map;
-  try { map = JSON.parse(raw); } catch (_) { return null; }
+// ── Folder templates (editor 'storageFolders', app_settings storage_folders) ──
+// The v3 folder tree (storage-seam D3c, ref/DOCUMENTS_V3_DESIGN.md §6):
+//   { case: { <stage>: { default: <path template>, subfolders: [<name>, …], "Type:Subtype": … } },
+//     contact: { default, subfolders } | null, …other keys kept }
+// The case half is settings.html's stage editor as it always was (dtRender /
+// dtBind / dtSave / dtInit, dotPreview): stage keys are a code contract (looked up
+// by name) — fixed here, add or remove a stage from the DB console; a stage's
+// per-case-type templates (stage["Type:Subtype"], stage["Type"]) are shown
+// read-only and ride through a save untouched. The contact half is ONE card
+// with an on/off switch: off = `contact: null` = the firm keeps no contact
+// folders (4LSG); on = a path template + subfolders, created on first need, and
+// a case template may then name {{contact_folder}} (the editor refuses the save
+// when a case template names it while contact folders are off). WHITESPACE IS
+// LOAD-BEARING (manual sort order): values are kept byte for byte and every
+// space is previewed as a dot. A stored value of any other shape → null → the
+// row falls back to its json textarea (settings.html's raw fallback). Untouched,
+// the editor hands back the stored string.
+function dtParseMap(map) {
   if (!isObj(map) || !Object.keys(map).length) return null;
   const ok = Object.keys(map).every((k) => isObj(map[k]) && typeof map[k].default === 'string'
     && (map[k].subfolders === undefined || (Array.isArray(map[k].subfolders) && map[k].subfolders.every((x) => typeof x === 'string'))));
   if (!ok) return null;
   return { map, stages: Object.keys(map).map((stage) => ({ stage, path: map[stage].default, subs: (map[stage].subfolders || []).slice() })) };
+}
+/** A stage map as a stored string (the legacy shape; kept for the tests' contract and the case half). */
+function dtParse(raw) {
+  let map;
+  try { map = JSON.parse(raw); } catch (_) { return null; }
+  return dtParseMap(map);
+}
+/** The tree: { case: <stage map>, contact: { default, subfolders } | null | absent }. */
+function sfParse(raw) {
+  let tree;
+  try { tree = JSON.parse(raw); } catch (_) { return null; }
+  if (!isObj(tree)) return null;
+  const cases = dtParseMap(tree.case);
+  if (!cases) return null;
+  const c = tree.contact;
+  const contactOk = c === null || c === undefined
+    || (isObj(c) && typeof c.default === 'string' && (c.subfolders === undefined || (Array.isArray(c.subfolders) && c.subfolders.every((x) => typeof x === 'string'))));
+  if (!contactOk) return null;
+  return {
+    tree, stages: cases.stages,
+    contact: c ? { on: true, path: c.default, subs: (c.subfolders || []).slice() } : { on: false, path: '', subs: [] },
+  };
 }
 /** v drawn into el with every space as a dot — DOM nodes, never markup. */
 function dotPreviewInto(el, v) {
@@ -1639,43 +1665,53 @@ function dotPreviewInto(el, v) {
   });
 }
 const DT_NOTABLE_SPACING = /^\s|\s\s|\s$/;   // a subfolder's preview shows only then (settings.html)
+const CONTACT_FOLDER_TOKEN = /\{\{contact_folder\}\}/;
 
-function dropboxTemplatesEditor(row, ctx) {
-  const parsed = dtParse(row.value);
+function storageFoldersEditor(row, ctx) {
+  const parsed = sfParse(row.value);
   if (!parsed) return null;
-  const orig = parsed.map, stages = parsed.stages, pre = ctx.id;
+  const orig = parsed.tree, pre = ctx.id;
+  // the cards: every case stage, then the contact card (index = stages.length)
+  const cards = parsed.stages.map((st) => ({ ...st, kind: 'case' }));
+  const CONTACT_IDX = cards.length;
+  cards.push({ stage: 'Contact folders', kind: 'contact', on: parsed.contact.on, path: parsed.contact.path, subs: parsed.contact.subs });
   const box = document.createElement('div');
   box.className = 'fm-dt';
   box.innerHTML = `<span class="yc-hint fm-dt-warn">Spaces in folder names are <b>load-bearing</b> (manual sort order) and
       are shown under each name as <span class="fm-dt-dot">·</span> dots. They are kept exactly on save.</span>
-    <span class="yc-hint">Placeholders like <code>{{case_type}}</code> are filled in when the folder is created. Stage names
-      are fixed — add or remove a stage from the DB console.</span>
+    <span class="yc-hint">Placeholders like <code>{{case_type}}</code>, <code>{{case_type_full}}</code> and <code>{{contact_folder}}</code>
+      are filled in when the folder is created. Stage names are fixed — add or remove a stage from the DB console.</span>
     <div class="fm-dt-list"></div>`;
   const list = box.querySelector('.fm-dt-list');
 
   function render(focusSel) {
     list.textContent = '';
-    stages.forEach((st, si) => {
+    cards.forEach((st, si) => {
       const card = document.createElement('div');
-      card.className = 'fm-dt-stage';
+      card.className = 'fm-dt-stage' + (st.kind === 'contact' ? ' fm-dt-contact' : '');
+      const contactOff = st.kind === 'contact' && !st.on;
       card.innerHTML = `<h4></h4>
-        <label class="yc-flabel" for="${pre}-p${si}">Folder path template</label>
+        ${st.kind === 'contact' ? `<label class="fm-dt-switch"><input type="checkbox" data-dt-contact-on ${st.on ? 'checked' : ''}> Keep a folder per contact</label>
+        <span class="yc-hint">Off: contact-linked files go to the unsorted folder, as case files with no case folder do. On: a folder per contact from the template below, created on first need; a case template may then nest under it with <code>{{contact_folder}}</code>.</span>` : ''}
+        ${contactOff ? '' : `<label class="yc-flabel" for="${pre}-p${si}">Folder path template</label>
         <input type="text" class="ycsr-mono" id="${pre}-p${si}" data-dt-path="${si}" spellcheck="false" autocomplete="off">
         <div class="fm-dt-prev" data-dt-pathprev="${si}"></div>
         <span class="yc-flabel fm-dt-subs-label">Subfolders</span>
         <div class="fm-dt-subs"></div>
-        <button type="button" class="btn btn-outline btn-sm" data-dt-addsub="${si}"><i class="fa-solid fa-plus"></i> Subfolder</button>`;
+        <button type="button" class="btn btn-outline btn-sm" data-dt-addsub="${si}"><i class="fa-solid fa-plus"></i> Subfolder</button>`}`;
       card.querySelector('h4').textContent = st.stage;
+      if (contactOff) { list.appendChild(card); return; }
       card.querySelector('[data-dt-path]').value = st.path;            // verbatim, never markup
       dotPreviewInto(card.querySelector('[data-dt-pathprev]'), st.path);
-      const extras = Object.keys(orig[st.stage]).filter((k) => k !== 'default' && k !== 'subfolders');
+      const origBlock = st.kind === 'contact' ? (orig.contact || {}) : orig.case[st.stage];
+      const extras = Object.keys(origBlock).filter((k) => k !== 'default' && k !== 'subfolders');
       if (extras.length) {
         const ex = document.createElement('div');
         ex.className = 'fm-dt-extra';
         ex.innerHTML = `<span class="yc-flabel">Per case type</span>
           <span class="yc-hint">Used instead of the path above for these case types. Kept exactly as they are — change them from the DB console.</span>`;
         extras.forEach((k) => {
-          const v = orig[st.stage][k];
+          const v = origBlock[k];
           const line = document.createElement('div');
           line.className = 'fm-dt-prev';
           line.setAttribute('data-dt-extra', k);
@@ -1714,17 +1750,24 @@ function dropboxTemplatesEditor(row, ctx) {
     const t = ev.target;
     if (t.dataset.dtPath !== undefined) {
       const si = Number(t.dataset.dtPath);
-      stages[si].path = t.value;                                        // verbatim — no trim
+      cards[si].path = t.value;                                         // verbatim — no trim
       dotPreviewInto(list.querySelector(`[data-dt-pathprev="${si}"]`), t.value);
       ctx.changed();
     } else if (t.dataset.dtSub !== undefined) {
       const [si, bi] = t.dataset.dtSub.split(':').map(Number);
-      stages[si].subs[bi] = t.value;                                    // verbatim — no trim
+      cards[si].subs[bi] = t.value;                                     // verbatim — no trim
       const prev = list.querySelector(`[data-dt-subprev="${si}:${bi}"]`);
       prev.hidden = !DT_NOTABLE_SPACING.test(t.value);
       dotPreviewInto(prev, t.value);
       ctx.changed();
     }
+  });
+  list.addEventListener('change', (ev) => {
+    const t = ev.target;
+    if (t.dataset.dtContactOn === undefined) return;
+    cards[CONTACT_IDX].on = !!t.checked;
+    render(t.checked ? `[data-dt-path="${CONTACT_IDX}"]` : '[data-dt-contact-on]');
+    ctx.changed();
   });
   list.addEventListener('click', (ev) => {
     const b = ev.target.closest('button');
@@ -1735,34 +1778,41 @@ function dropboxTemplatesEditor(row, ctx) {
     let focus = null;
     if (d.dtAddsub !== undefined) {
       const si = Number(d.dtAddsub);
-      stages[si].subs.push('');
-      focus = `[data-dt-sub="${si}:${stages[si].subs.length - 1}"]`;
+      cards[si].subs.push('');
+      focus = `[data-dt-sub="${si}:${cards[si].subs.length - 1}"]`;
     } else if (d.dtSubup !== undefined) {
       const [si, bi] = at(d.dtSubup);
-      if (!swap(stages[si].subs, bi, bi - 1)) return;
+      if (!swap(cards[si].subs, bi, bi - 1)) return;
       focus = `[data-dt-sub="${si}:${bi - 1}"]`;
     } else if (d.dtSubdown !== undefined) {
       const [si, bi] = at(d.dtSubdown);
-      if (!swap(stages[si].subs, bi, bi + 1)) return;
+      if (!swap(cards[si].subs, bi, bi + 1)) return;
       focus = `[data-dt-sub="${si}:${bi + 1}"]`;
     } else if (d.dtSubdel !== undefined) {
       const [si, bi] = at(d.dtSubdel);
-      stages[si].subs.splice(bi, 1);
+      cards[si].subs.splice(bi, 1);
     } else return;
     render(focus);
     ctx.changed();
   });
 
-  /** The editor → the stored shape: each stage's own fields kept, its path and
-   *  subfolders from the form (subfolders written when it had them, or has some). */
+  /** The editor → the stored shape: the tree's other keys kept; each stage's own
+   *  fields kept, its path and subfolders from the form (subfolders written when it
+   *  had them, or has some); contact: null when off. */
   function build() {
-    const out = {};
-    stages.forEach((st) => {
-      const o = { ...orig[st.stage], default: st.path };
-      if (st.subs.length || Object.prototype.hasOwnProperty.call(orig[st.stage], 'subfolders')) o.subfolders = st.subs.slice();
-      out[st.stage] = o;
+    const cases = {};
+    cards.filter((c) => c.kind === 'case').forEach((st) => {
+      const o = { ...orig.case[st.stage], default: st.path };
+      if (st.subs.length || Object.prototype.hasOwnProperty.call(orig.case[st.stage], 'subfolders')) o.subfolders = st.subs.slice();
+      cases[st.stage] = o;
     });
-    return out;
+    const ct = cards[CONTACT_IDX];
+    let contact = null;
+    if (ct.on) {
+      contact = { ...(orig.contact || {}), default: ct.path };
+      if (ct.subs.length || (orig.contact && Object.prototype.hasOwnProperty.call(orig.contact, 'subfolders'))) contact.subfolders = ct.subs.slice();
+    }
+    return { ...orig, case: cases, contact };
   }
   render();
   return {
@@ -1772,10 +1822,17 @@ function dropboxTemplatesEditor(row, ctx) {
     // changed → pretty-printed, so the row stays readable in the DB console.
     get() { const o = build(); return canonical(o) === canonical(orig) ? row.value : JSON.stringify(o, null, 2); },
     problem() {
-      for (const st of stages) {
-        if (!st.path.trim()) return `Path for "${st.stage}" cannot be empty`;
-        if (st.subs.some((x) => !x.trim())) return `Subfolder names cannot be empty (under "${st.stage}")`;
-        if (new Set(st.subs).size !== st.subs.length) return `Duplicate subfolders under "${st.stage}"`;
+      const ct = cards[CONTACT_IDX];
+      for (const st of cards) {
+        if (st.kind === 'contact' && !st.on) continue;
+        const who = st.kind === 'contact' ? 'contact folders' : `"${st.stage}"`;
+        if (!st.path.trim()) return `Path for ${who} cannot be empty`;
+        if (st.subs.some((x) => !x.trim())) return `Subfolder names cannot be empty (under ${who})`;
+        if (new Set(st.subs).size !== st.subs.length) return `Duplicate subfolders under ${who}`;
+      }
+      if (!ct.on) {
+        const names = cards.filter((c) => c.kind === 'case').find((st) => CONTACT_FOLDER_TOKEN.test(st.path) || st.subs.some((x) => CONTACT_FOLDER_TOKEN.test(x)));
+        if (names) return `"${names.stage}" names {{contact_folder}}, but contact folders are off`;
       }
       return null;
     },
@@ -1819,7 +1876,7 @@ function settingsSection(def) {
       this.view = window.ycSettingRows.create({
         container: this.body.querySelector('.fm-set-rows'),
         rows, api, users: firmUsers, lookups: lookups || undefined,
-        editors: { dropboxTemplates: dropboxTemplatesEditor },
+        editors: { storageFolders: storageFoldersEditor },
         confirm: (title, text) => ask(title, text, 'Restore'),
         empty: this.id === 'variables' ? 'No automation variables yet.' : 'Nothing to set here.',
         onDirty: () => { this.status(); Page.syncTopbar(); },
@@ -1998,8 +2055,8 @@ window.addEventListener('beforeunload', (e) => {
 window.FirmPage = { Page, SECTIONS, LauncherSection, canonical, makeId, slugOf, formFromDoc, docFromForm,
   relabelRow, formProblems, placeErrors, launcherCatalog, refreshShell, firmIdsIn, SESSION_MSG, CONFLICT_MSG, layoutParts,
   RegistryDoc, WhoSection, whoCatalog, visFromDoc, visApply, STORE_ROLES, ROLE_LABELS, SU_TIP,
-  SettingsData, SETTINGS_SECTIONS, FIRM_SETTING_SECTIONS, SETTING_TYPES, variableRow, dtParse, dotPreviewInto,
-  dropboxTemplatesEditor };
+  SettingsData, SETTINGS_SECTIONS, FIRM_SETTING_SECTIONS, SETTING_TYPES, variableRow, dtParse, sfParse, dotPreviewInto,
+  storageFoldersEditor };
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {

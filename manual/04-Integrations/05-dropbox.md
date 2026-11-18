@@ -10,7 +10,7 @@ YisraCase talks to the firm's Dropbox directly (no Pabbly in the middle). Three 
    - Case number present (filed) → under **Active Cases**, with the four staff subfolders (Docket / Drafts / Client Docs / Correspondence).
 3. **Leading spaces in folder names are deliberate** — they control sort order in Dropbox. The system preserves them exactly. Don't "fix" them, and when editing naming conventions (below), count the spaces carefully: one wrong space creates a parallel folder tree.
 
-Folder naming conventions are editable without a deploy in **YisraCase Config → Firm → Dropbox filing** (the folder templates editor, `dropbox_case_folder_templates`; admin, IT or SU). Beside it sits the read-only **Folder tree (v3)** setting (`storage_folders`): the same case templates plus a `contact` block (`null` for this firm — no contact folders). While the folder templates row exists it is the one that counts; the v3 key takes over when the templates move into it (storage-seam D3c). A per-case-type key (`"Bankruptcy:Chapter 7"`) shows there read-only and is changed from the SU console.
+Folder naming conventions are editable without a deploy in **YisraCase Config → Firm → Dropbox filing** (the **Folder templates** editor, setting `storage_folders`; admin, IT or SU): one card per case stage, and a **Contact folders** card with an on/off switch — off for this firm (`contact: null`), which is why contact-linked files go to the unsorted folder. Switched on, every contact gets a folder from its own template on first need, and a case template may nest under it with `{{contact_folder}}`. (`dropbox_case_folder_templates`, the key this editor wrote until 2026-11-18, is retired; its row was copied into `storage_folders.case` and deleted.) A per-case-type key (`"Bankruptcy:Chapter 7"`) shows there read-only and is changed from the SU console.
 
 ---
 
@@ -147,26 +147,29 @@ All in `lib/internal_functions/storage.js`, category `storage`, chainable via `{
 ### Setup
 
 1. Connections: credential 8 `oauth_status = connected`, `allowed_urls` covering both hosts (above). Token type `offline` so refresh works.
-2. `app_settings.dropbox_credential_id` = `8` (seeded; the hardcoded default matches).
+2. `app_settings.dropbox_credential_id` = `8` (seeded; there is NO code default — every storage operation refuses until the row exists).
 3. Optional convention seed — **verify leading spaces against the live tree first** (`/api/dropbox/shared-link-metadata` on an existing `case_dropbox` link → `metadata.path_display`):
 
 ```sql
 REPLACE INTO app_settings (`key`, `value`) VALUES (
-  'dropbox_case_folder_templates',
+  'storage_folders',
   '{
-  "potential": {
-    "default": "/  Law Office/   Cases/  Potential Cases/  Potential - {{case_type}}/ {{lfm_name}} - {{case_id}} - {{date}}",
-    "subfolders": ["Client Uploads"]
+  "case": {
+    "potential": {
+      "default": "/  Law Office/   Cases/  Potential Cases/  Potential - {{case_type}}/ {{lfm_name}} - {{case_id}} - {{date}}",
+      "subfolders": ["Client Uploads"]
+    },
+    "active": {
+      "default": "/  Law Office/   Cases/  Active Cases/  Active - {{case_type}}/ {{case_id}} - {{lfm_name}} - {{number}} - {{case_subtype}}",
+      "subfolders": [
+        "Docket - {{contact_name}} - {{case_subtype}} - {{case_number}}",
+        "Drafts - {{contact_name}}",
+        "Client Docs - {{contact_name}}",
+        "Correspondence - {{contact_name}}"
+      ]
+    }
   },
-  "active": {
-    "default": "/  Law Office/   Cases/  Active Cases/  Active - {{case_type}}/ {{case_id}} - {{lfm_name}} - {{number}} - {{case_subtype}}",
-    "subfolders": [
-      "Docket - {{contact_name}} - {{case_subtype}} - {{case_number}}",
-      "Drafts - {{contact_name}}",
-      "Client Docs - {{contact_name}}",
-      "Correspondence - {{contact_name}}"
-    ]
-  }
+  "contact": null
 }'
 );
 ```

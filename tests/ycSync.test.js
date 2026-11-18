@@ -515,11 +515,11 @@ describe('_sniff — app_settings', () => {
   test('KEY CHARSET: dots, hyphens and underscores all round-trip in the address', () => {
     const w = mkWindow();
     const seen = spy(w, 'setting:*');
-    for (const key of ['dropbox_case_folder_templates', 'fe-firm_site_url', 'some.dotted.key']) {
+    for (const key of ['storage_folders', 'fe-firm_site_url', 'some.dotted.key']) {
       w.YC._sniff('PUT', '/api/app-settings/' + key, { setting: { key, value: 'v' } });
     }
     expect(seen.map(s => s.addr)).toEqual([
-      'setting:dropbox_case_folder_templates',
+      'setting:storage_folders',
       'setting:fe-firm_site_url',
       'setting:some.dotted.key',
     ]);

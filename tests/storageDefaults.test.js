@@ -21,8 +21,8 @@ const dropbox = require('../services/dropboxService');
 
 const STORAGE_KEYS = [
   'dropbox_unsorted_uploads_path', 'dropbox_unsorted_forms_path', 'dropbox_unsorted_generated_path',
-  'dropbox_unsorted_esign_path', 'dropbox_unsorted_court_docs_path', 'dropbox_case_folder_templates',
-  'storage_folders',   // D3c-1: the v3 tree — the PLATFORM default (nested contact → case); 4LSG's row is seeded case-only
+  'dropbox_unsorted_esign_path', 'dropbox_unsorted_court_docs_path',
+  'storage_folders',   // D3c: the v3 tree — the PLATFORM default (nested contact → case); 4LSG's row is seeded case-only. dropbox_case_folder_templates is no longer a registry key (D3c-3); its leaf stays as the code default behind storage_folders.case
 ];
 
 test('the registry default of every storage key IS the leaf value, frozen; the credential has none', () => {
@@ -38,7 +38,9 @@ test('the registry default of every storage key IS the leaf value, frozen; the c
     case: { potential: { default: '{{contact_folder}}/{{number}} - {{case_type_full}}', subfolders: [] }, active: { default: '{{contact_folder}}/{{number}} - {{case_type_full}}', subfolders: [] } },
     contact: { default: '/Clients/{{lfm_name}}', subfolders: [] },
   });
-  expect(registry.get('storage_folders')).toMatchObject({ kind: 'firm', home: 'firm', section: 'dropbox', type: 'json', edit: 'console' });
+  expect(registry.get('storage_folders')).toMatchObject({ kind: 'firm', home: 'firm', section: 'dropbox', type: 'json', editor: 'storageFolders' });
+  expect(registry.get('storage_folders').edit).not.toBe('console');   // D3c-3: a UI row (the editor), no longer console-only
+  expect(registry.get('dropbox_case_folder_templates')).toBeFalsy();   // D3c-3: retired (the registry answers null for an unknown key)
   expect(registry.defaultOf('dropbox_credential_id')).toBeUndefined();
   expect(registry.defaultOf('no_such_key')).toBeUndefined();
   expect(registry.get('dropbox_unsorted_court_docs_path')).toMatchObject({ kind: 'firm', home: 'firm', section: 'dropbox', type: 'string' });

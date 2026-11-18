@@ -71,14 +71,15 @@ const strip = (html) => html.replace(ROWS_TAG, () => `<script>${ROWS_SRC}</scrip
 // Stored as a person typed it in the DB console: compact, one stage's keys in
 // another order — never what the editor would write — so "untouched hands
 // back the stored string byte for byte" is observable.
-const DT_VALUE = '{"open": {"subfolders": [" Docs", "Court  Filings"], "default": "  01 Open {{case_type}} "},'
+const DT_STAGES = '{"open": {"subfolders": [" Docs", "Court  Filings"], "default": "  01 Open {{case_type}} "},'
   + ' "closed": {"default": "Z Closed", "subfolders": []},'
   + ' "archive": {"default": "Archive", "Bankruptcy": "  BK {{case_number}}"}}';   // a per-case-type template (caseService)
+const DT_VALUE = `{"case": ${DT_STAGES}, "contact": null}`;   // D3c-3: the v3 tree — storage_folders; contact null = no contact folders
 const SETTING_VALUES = {
   firm_name: 'Acme Law PLLC', firm_email: 'office@acme.example', 'fe-firm_phone': '3135551212',
   firm_address: '["123 Main St.", "Detroit, MI 48201"]', email_automations: 'auto@acme.example',
   office_alerts_to: '1,9', billing_tasks_to: '9', manage_cutoff_min: '120', manage_allow_cancel: '1',
-  dropbox_case_folder_templates: DT_VALUE, dropbox_unsorted_uploads_path: ' 00 Unsorted ',
+  storage_folders: DT_VALUE, dropbox_unsorted_uploads_path: ' 00 Unsorted ',
   esign_test_mode: '1', esign_reminder_seq_id: '4',
 };
 const VARIABLES = [{ key: 'intake_greeting', value: 'Hi {{first}},\nthanks for calling.', type: 'template', label: 'Intake greeting' }];
@@ -1327,13 +1328,14 @@ describe('settings arc: the firm settings sections', () => {
     expect(t.backend.st.settings.value('first_var')).toBe('');
   });
 
-  test('Dropbox folder templates: settings.html\'s editor — stage names fixed, spaces as dots, kept byte for byte; untouched is clean', async () => {
+  test('Folder templates: settings.html\'s editor on storage_folders — stage names fixed, spaces as dots, kept byte for byte; untouched is clean; the contact card off', async () => {
     const t = await boot({ users: USERS });
-    const r = () => srow(t, 'dropbox_case_folder_templates');
-    expect([...r().querySelectorAll('.fm-dt-stage h4')].map((h) => h.textContent)).toEqual(['open', 'closed', 'archive']);
-    // stage names are text, not inputs: every input is a path or a subfolder
-    expect([...r().querySelectorAll('input')].map((i) => (i.dataset.dtPath !== undefined ? 'path' : i.dataset.dtSub !== undefined ? 'sub' : 'other')))
-      .toEqual(['path', 'sub', 'sub', 'path', 'path']);
+    const r = () => srow(t, 'storage_folders');
+    expect([...r().querySelectorAll('.fm-dt-stage h4')].map((h) => h.textContent)).toEqual(['open', 'closed', 'archive', 'Contact folders']);
+    // stage names are text, not inputs: every input is a path or a subfolder — plus the contact switch, off (contact: null), with no path input while off
+    expect([...r().querySelectorAll('input')].map((i) => (i.dataset.dtPath !== undefined ? 'path' : i.dataset.dtSub !== undefined ? 'sub' : i.dataset.dtContactOn !== undefined ? 'switch' : 'other')))
+      .toEqual(['path', 'sub', 'sub', 'path', 'path', 'switch']);
+    expect(r().querySelector('[data-dt-contact-on]').checked).toBe(false);
     expect(r().querySelector('[data-dt-path="0"]').value).toBe('  01 Open {{case_type}} ');
     const prev0 = r().querySelector('[data-dt-pathprev="0"]');
     expect([prev0.textContent, prev0.querySelectorAll('.fm-dt-dot').length]).toEqual(['··01·Open·{{case_type}}·', 5]);
@@ -1342,12 +1344,12 @@ describe('settings arc: the firm settings sections', () => {
     expect(r().querySelector('label.yc-flabel').htmlFor).toBe(r().querySelector('[data-dt-path="0"]').id);
     // a stage's per-case-type template: shown (read-only), carried through every save untouched
     expect([...r().querySelectorAll('[data-dt-extra]')].map((e) => e.textContent)).toEqual(['Bankruptcy: ··BK·{{case_number}}']);
-    expect([t.F.Page.dirty(), section(t, 'dropbox').view.value('dropbox_case_folder_templates')]).toEqual([false, DT_VALUE]);
+    expect([t.F.Page.dirty(), section(t, 'dropbox').view.value('storage_folders')]).toEqual([false, DT_VALUE]);
     // an edit and its revert: clean again (the stored string, byte for byte)
     t.setVal(r().querySelector('[data-dt-path="2"]'), 'Archive2');
     expect(t.F.Page.dirty()).toBe(true);
     t.setVal(r().querySelector('[data-dt-path="2"]'), 'Archive');
-    expect([t.F.Page.dirty(), section(t, 'dropbox').view.value('dropbox_case_folder_templates')]).toEqual([false, DT_VALUE]);
+    expect([t.F.Page.dirty(), section(t, 'dropbox').view.value('storage_folders')]).toEqual([false, DT_VALUE]);
     // edits: a trailing space on closed's path, a subfolder for closed, a reorder in open
     t.setVal(r().querySelector('[data-dt-path="1"]'), 'Z Closed ');
     t.fire(r().querySelector('[data-dt-addsub="1"]'), 'click');
@@ -1357,36 +1359,76 @@ describe('settings arc: the firm settings sections', () => {
     t.fire(r().querySelector('[data-dt-subdown="0:0"]'), 'click');
     expect([...r().querySelectorAll('[data-dt-sub^="0:"]')].map((i) => i.value)).toEqual(['Court  Filings', ' Docs']);
     await save(t);
-    const want = JSON.stringify({                       // each stage's keys keep their stored order
-      open: { subfolders: ['Court  Filings', ' Docs'], default: '  01 Open {{case_type}} ' },
-      closed: { default: 'Z Closed ', subfolders: ['  Old  files'] },
-      archive: { default: 'Archive', Bankruptcy: '  BK {{case_number}}' },
+    const want = JSON.stringify({                       // the tree's keys and each stage's keys keep their stored order; contact stays null
+      case: {
+        open: { subfolders: ['Court  Filings', ' Docs'], default: '  01 Open {{case_type}} ' },
+        closed: { default: 'Z Closed ', subfolders: ['  Old  files'] },
+        archive: { default: 'Archive', Bankruptcy: '  BK {{case_number}}' },
+      },
+      contact: null,
     }, null, 2);
-    expect(puts(t.backend).map((c) => [c.endpoint, c.payload.value])).toEqual([['/api/app-settings/dropbox_case_folder_templates', want]]);
-    expect(t.backend.st.settings.value('dropbox_case_folder_templates')).toBe(want);
-    expect([t.F.Page.dirty(), r().querySelector('[data-dt-path="1"]').value, sstatus(t, 'dropbox_case_folder_templates')]).toEqual([false, 'Z Closed ', 'Saved']);
+    expect(puts(t.backend).map((c) => [c.endpoint, c.payload.value])).toEqual([['/api/app-settings/storage_folders', want]]);
+    expect(t.backend.st.settings.value('storage_folders')).toBe(want);
+    expect([t.F.Page.dirty(), r().querySelector('[data-dt-path="1"]').value, sstatus(t, 'storage_folders')]).toEqual([false, 'Z Closed ', 'Saved']);
   });
 
-  test('Dropbox folder templates: settings.html\'s checks block the save (the reason on the row); another shape gets the raw JSON textarea', async () => {
+  test('Folder templates: the contact card — switched on it asks for a path (and subfolders), saves { contact: { default, subfolders } }; switched off it saves contact: null; a case template naming {{contact_folder}} needs it on', async () => {
     const t = await boot({ users: USERS });
-    const r = () => srow(t, 'dropbox_case_folder_templates');
+    const r = () => srow(t, 'storage_folders');
+    const CI = 3;                                                       // the contact card follows the three stages
+    const sw = () => r().querySelector('[data-dt-contact-on]');
+    sw().checked = true; t.fire(sw(), 'change');
+    expect(sw().checked).toBe(true);
+    expect(t.firm.document.activeElement).toBe(r().querySelector(`[data-dt-path="${CI}"]`));
+    await save(t);
+    expect([puts(t.backend).length, sstatus(t, 'storage_folders')]).toEqual([0, 'Path for contact folders cannot be empty']);
+    t.setVal(r().querySelector(`[data-dt-path="${CI}"]`), '/Clients/{{lfm_name}}');
+    t.fire(r().querySelector(`[data-dt-addsub="${CI}"]`), 'click');
+    t.setVal(r().querySelector(`[data-dt-sub="${CI}:0"]`), ' Intake');
+    await save(t);
+    const want = JSON.stringify({ case: JSON.parse(DT_STAGES), contact: { default: '/Clients/{{lfm_name}}', subfolders: [' Intake'] } }, null, 2);
+    expect(puts(t.backend).map((c) => [c.endpoint, c.payload.value])).toEqual([['/api/app-settings/storage_folders', want]]);
+    expect([t.F.Page.dirty(), sstatus(t, 'storage_folders')]).toEqual([false, 'Saved']);
+    // a case template nesting under the contact folder is fine while contact folders are on …
+    t.setVal(r().querySelector('[data-dt-path="0"]'), '{{contact_folder}}/{{number}}');
+    await save(t);
+    expect(sstatus(t, 'storage_folders')).toBe('Saved');
+    // … and refused once they are switched off (the save would otherwise be refused at folder-creation time, by name)
+    sw().checked = false; t.fire(sw(), 'change');
+    expect(r().querySelector(`[data-dt-path="${CI}"]`)).toBeNull();
+    await save(t);
+    expect([puts(t.backend).length, sstatus(t, 'storage_folders')]).toEqual([2, '"open" names {{contact_folder}}, but contact folders are off']);
+    t.setVal(r().querySelector('[data-dt-path="0"]'), '  01 Open {{case_type}} ');
+    await save(t);
+    expect(JSON.parse(t.backend.st.settings.value('storage_folders')).contact).toBeNull();
+    expect(sstatus(t, 'storage_folders')).toBe('Saved');
+  });
+
+  test('Folder templates: settings.html\'s checks block the save (the reason on the row); another shape gets the raw JSON textarea', async () => {
+    const t = await boot({ users: USERS });
+    const r = () => srow(t, 'storage_folders');
     t.fire(r().querySelector('[data-dt-addsub="0"]'), 'click');
     await save(t);
-    expect([puts(t.backend).length, sstatus(t, 'dropbox_case_folder_templates')]).toEqual([0, 'Subfolder names cannot be empty (under "open")']);
+    expect([puts(t.backend).length, sstatus(t, 'storage_folders')]).toEqual([0, 'Subfolder names cannot be empty (under "open")']);
     expect(t.$('#fm-banner').textContent).toBe('Dropbox filing: a setting was not saved — the reason is on it.');
     t.setVal(r().querySelector('[data-dt-sub="0:2"]'), ' Docs');
     await save(t);
-    expect(sstatus(t, 'dropbox_case_folder_templates')).toBe('Duplicate subfolders under "open"');
+    expect(sstatus(t, 'storage_folders')).toBe('Duplicate subfolders under "open"');
     t.fire(r().querySelector('[data-dt-subdel="0:2"]'), 'click');
     t.setVal(r().querySelector('[data-dt-path="1"]'), '  ');
     await save(t);
-    expect([puts(t.backend).length, sstatus(t, 'dropbox_case_folder_templates')]).toEqual([0, 'Path for "closed" cannot be empty']);
-    // a stored value of another shape: the row's json textarea, verbatim
-    const t2 = await boot({ users: USERS, settings: { values: { ...SETTING_VALUES, dropbox_case_folder_templates: ' ["not", "stages"] ' } } });
-    const el = sctl(t2, 'dropbox_case_folder_templates');
-    expect([el.tagName, el.value, srow(t2, 'dropbox_case_folder_templates').querySelector('.fm-dt')]).toEqual(['TEXTAREA', ' ["not", "stages"] ', null]);
-    expect(t2.F.dtParse('{"a":{"default":"x","subfolders":[1]}}')).toBeNull();
-    expect(t2.F.dtParse('{}')).toBeNull();
+    expect([puts(t.backend).length, sstatus(t, 'storage_folders')]).toEqual([0, 'Path for "closed" cannot be empty']);
+    // a stored value of another shape: the row's json textarea, verbatim — a bare stage map (the retired key's shape) included
+    for (const bad of [' ["not", "stages"] ', DT_STAGES, '{"case": {}, "contact": null}', '{"case": {"a": {"default": "x"}}, "contact": "x"}']) {
+      const t2 = await boot({ users: USERS, settings: { values: { ...SETTING_VALUES, storage_folders: bad } } });
+      const el = sctl(t2, 'storage_folders');
+      expect([el.tagName, el.value, srow(t2, 'storage_folders').querySelector('.fm-dt')]).toEqual(['TEXTAREA', bad, null]);
+    }
+    const t3 = await boot({ users: USERS });
+    expect(t3.F.dtParse('{"a":{"default":"x","subfolders":[1]}}')).toBeNull();
+    expect(t3.F.dtParse('{}')).toBeNull();
+    expect(t3.F.sfParse('{"case": {"a": {"default": "x"}}}')).toMatchObject({ contact: { on: false, path: '', subs: [] } });   // no contact key = off
+    expect(t3.F.sfParse('{"case": {"a": {"default": "x"}}, "contact": {"default": "/C", "subfolders": [" I"]}}')).toMatchObject({ contact: { on: true, path: '/C', subs: [' I'] } });
   });
 
   test('the settings GET failing: each settings section says so (403 → the session message); the Launcher still loads and saves', async () => {

@@ -99,11 +99,11 @@ describe('applyFeSetting — the fe- prefix rule', () => {
   });
 
   test('a NON-fe key returns false and writes nothing', () => {
-    // dropbox_case_folder_templates is a real editable row, and it is a SERVER
-    // setting. It rides the bus like any other, and every frontend subscriber
-    // must ignore it rather than inventing a firmData.settings entry for it.
+    // storage_folders is a real editable row, and it is a SERVER setting. It
+    // rides the bus like any other, and every frontend subscriber must ignore
+    // it rather than inventing a firmData.settings entry for it.
     const w = mkWindow({ settings: { case_types: { A: [] } } });
-    expect(w.applyFeSetting('dropbox_case_folder_templates', '{"x":1}')).toBe(false);
+    expect(w.applyFeSetting('storage_folders', '{"x":1}')).toBe(false);
     expect(w.firmData.settings).toEqual({ case_types: { A: [] } });
   });
 

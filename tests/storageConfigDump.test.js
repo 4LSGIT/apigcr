@@ -52,7 +52,7 @@ test('defaults: no rows → every value is the code default the services export,
   });
   expect(dump.KEYS).toEqual([
     'dropbox_credential_id', 'dropbox_unsorted_generated_path', 'dropbox_unsorted_uploads_path',
-    'dropbox_unsorted_forms_path', 'dropbox_unsorted_esign_path', 'dropbox_unsorted_court_docs_path', 'dropbox_case_folder_templates', 'storage_folders', 'dropbox_unreachable',
+    'dropbox_unsorted_forms_path', 'dropbox_unsorted_esign_path', 'dropbox_unsorted_court_docs_path', 'storage_folders', 'dropbox_unreachable',
   ]);
 });
 
@@ -62,14 +62,14 @@ test('rows win, exactly as the writers read them: CR/LF stripped, an empty row i
     { key: 'dropbox_unsorted_uploads_path', value: '/  Firm/ Uploads\r\n' },
     { key: 'dropbox_unsorted_forms_path', value: '' },
     { key: 'dropbox_unreachable', value: '1' },
-    { key: 'dropbox_case_folder_templates', value: JSON.stringify({ active: { 'Bankruptcy:Ch 7': '/  X/ {{case_id}}', subfolders: [' A'] }, closed: { default: '/  Closed/ {{case_id}}' } }) },
+    { key: 'storage_folders', value: JSON.stringify({ case: { active: { 'Bankruptcy:Ch 7': '/  X/ {{case_id}}', subfolders: [' A'] }, closed: { default: '/  Closed/ {{case_id}}' } }, contact: null }) },
   ]));
   expect(doc.credential).toEqual({ value: '21', source: 'app_settings', code_default: null });
   expect(doc.unsorted.uploads.value).toBe('/  Firm/ Uploads');
   expect(doc.unsorted.uploads.source).toBe('app_settings');
   expect(doc.unsorted.forms).toEqual({ ...EXPECTED_DEFAULTS.unsorted.forms });
   expect(doc.dropbox_unreachable).toBe('1');
-  expect(doc.case_folder_templates.source).toBe('app_settings');
+  expect(doc.case_folder_templates.source).toBe('app_settings:storage_folders.case');
   expect(doc.case_folder_templates.effective).toEqual({
     potential: POTENTIAL,
     active: { ...ACTIVE, 'Bankruptcy:Ch 7': '/  X/ {{case_id}}', subfolders: [' A'] },
@@ -77,10 +77,13 @@ test('rows win, exactly as the writers read them: CR/LF stripped, an empty row i
   });
 });
 
-test('invalid template JSON resolves to the code defaults, as caseService does', async () => {
-  const doc = await dump.collect(dbWith([{ key: 'dropbox_case_folder_templates', value: '{not json' }]));
-  expect(doc.case_folder_templates.source).toBe('app_settings:invalid_json→code_default');
+test('invalid tree JSON resolves to the code defaults, as caseService does; a leftover dropbox_case_folder_templates row is ignored (D3c-3: retired)', async () => {
+  const doc = await dump.collect(dbWith([{ key: 'storage_folders', value: '{not json' }]));
+  expect(doc.storage_folders.source).toBe('app_settings:invalid_json→code_default');
+  expect(doc.case_folder_templates.source).toBe('code_default');
   expect(doc.case_folder_templates.effective).toEqual({ potential: POTENTIAL, active: ACTIVE });
+  const stale = await dump.collect(dbWith([{ key: 'dropbox_case_folder_templates', value: JSON.stringify({ active: { default: '/  STALE', subfolders: [] } }) }]));
+  expect(stale.case_folder_templates).toEqual({ source: 'code_default', code_default: { potential: POTENTIAL, active: ACTIVE }, row: {}, effective: { potential: POTENTIAL, active: ACTIVE } });
 });
 
 test('render is byte-stable: key order does not change the bytes, and the sha follows the bytes', () => {
@@ -92,16 +95,12 @@ test('render is byte-stable: key order does not change the bytes, and the sha fo
   expect(dump.sha256(a)).not.toBe(dump.sha256(a + ' '));
 });
 
-test('D3c-1: the legacy row stays authoritative while it exists (the editor writes it); without it storage_folders.case gives the same effective templates; a tree without a case block falls through; the contact block is reported', async () => {
+test('D3c: storage_folders.case is the templates\' one source — per stage a key on the map wins; a tree without a case block falls to the code default; the contact block is reported', async () => {
   const stages = { active: { 'Bankruptcy:Ch 7': '/  X/ 7 - {{lfm_name}}', default: '/  X/ {{case_id}}', subfolders: [' A'] }, potential: { default: '/  Y/ {{case_id}}', subfolders: [] } };
-  const viaOld = await dump.collect(dbWith([{ key: 'dropbox_case_folder_templates', value: JSON.stringify(stages) }]));
   const viaNew = await dump.collect(dbWith([{ key: 'storage_folders', value: JSON.stringify({ case: stages, contact: null }) }]));
-  expect(viaNew.case_folder_templates.effective).toEqual(viaOld.case_folder_templates.effective);
+  expect(viaNew.case_folder_templates.effective).toEqual({ potential: { ...POTENTIAL, ...stages.potential }, active: { ...ACTIVE, ...stages.active } });
   expect(viaNew.case_folder_templates.source).toBe('app_settings:storage_folders.case');
   expect(viaNew.storage_folders).toEqual({ source: 'app_settings', code_default: EXPECTED_DEFAULTS.storage_folders.code_default, row: { case: stages, contact: null }, contact: null });
-  const both = await dump.collect(dbWith([{ key: 'storage_folders', value: JSON.stringify({ case: { active: { default: '/  COPY', subfolders: [] } }, contact: null }) }, { key: 'dropbox_case_folder_templates', value: JSON.stringify(stages) }]));
-  expect(both.case_folder_templates.source).toBe('app_settings');
-  expect(both.case_folder_templates.effective).toEqual(viaOld.case_folder_templates.effective);
   const noCase = await dump.collect(dbWith([{ key: 'storage_folders', value: JSON.stringify({ contact: { default: '/Clients/{{lfm_name}}', subfolders: [] } }) }]));
   expect(noCase.case_folder_templates.source).toBe('code_default');
   expect(noCase.storage_folders.contact).toEqual({ default: '/Clients/{{lfm_name}}', subfolders: [] });

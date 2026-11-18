@@ -36,8 +36,7 @@ const KEYS = Object.freeze([
   'dropbox_unsorted_forms_path',
   'dropbox_unsorted_esign_path',
   'dropbox_unsorted_court_docs_path',   // D2: freelook's fallback, formerly a literal
-  'dropbox_case_folder_templates',
-  'storage_folders',                    // D3c-1: the v3 tree; its case block is read before the key above
+  'storage_folders',                    // D3c: the v3 tree — case templates (its case block) + contact folders
   'dropbox_unreachable',
 ]);
 
@@ -96,10 +95,9 @@ async function collect(db) {
     ? { value: String(credRaw), source: 'app_settings', code_default: null }
     : { value: null, source: 'MISSING — every storage operation refuses until the row exists', code_default: null };
 
-  // templates: caseService._loadCaseFolderTemplates → dropbox_case_folder_templates
-  // while that row exists (the editor writes it; authoritative until D3c-3), else
-  // storage_folders.case (D3c-1), then {} (missing/invalid rows); per stage, a key
-  // on the map wins and absent keys fall back to the code default
+  // templates: caseService._loadCaseFolderTemplates → storage_folders.case (D3c-3:
+  // the one source), else {} (a missing/invalid row or no case block); per stage, a
+  // key on the map wins and absent keys fall back to the code default
   let map = {};
   let templatesSource = 'code_default';
   let tree = null;
@@ -113,22 +111,10 @@ async function collect(db) {
       treeSource = 'app_settings:invalid_json→code_default';
     }
   }
-  let legacyParsed = null;
-  if (row.dropbox_case_folder_templates) {
-    try {
-      const parsed = JSON.parse(row.dropbox_case_folder_templates);
-      if (parsed && typeof parsed === 'object') legacyParsed = parsed;
-      else templatesSource = 'app_settings:not_an_object→code_default';
-    } catch (err) {
-      templatesSource = 'app_settings:invalid_json→code_default';
-    }
-  }
-  if (legacyParsed) {
-    map = legacyParsed; templatesSource = 'app_settings';
-  } else if (tree && tree.case && typeof tree.case === 'object' && !Array.isArray(tree.case)) {
+  if (tree && tree.case && typeof tree.case === 'object' && !Array.isArray(tree.case)) {
     map = tree.case; templatesSource = 'app_settings:storage_folders.case';
   }
-  const TEMPLATE_DEFAULTS = registry.defaultOf('dropbox_case_folder_templates');
+  const TEMPLATE_DEFAULTS = require('../lib/storageDefaults').STORAGE_DEFAULTS.dropbox_case_folder_templates;   // the code default behind storage_folders.case (no longer a registry key)
   const effective = {};
   for (const stage of Object.keys(TEMPLATE_DEFAULTS)) {
     effective[stage] = { ...TEMPLATE_DEFAULTS[stage], ...(map[stage] && typeof map[stage] === 'object' ? map[stage] : {}) };

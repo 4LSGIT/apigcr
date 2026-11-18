@@ -154,7 +154,7 @@ nowhere to carry it) — clear it and add it on the case afterwards.
 **The Dropbox folder is stage-aware.** A case that already carries a docket
 number is treated as *active* and gets the Active-tree naming convention plus
 the four staff subfolders; anything else is *potential*. The naming templates
-live in the `dropbox_case_folder_templates` setting rather than in code, so
+live in the `storage_folders` setting (its `case` block) rather than in code, so
 changing the convention is a settings edit, not a deploy. If a case ends up
 without a folder, the case page shows a **Create Dropbox Folder** repair button
 that runs the same operation. See

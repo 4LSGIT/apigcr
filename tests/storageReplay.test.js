@@ -432,20 +432,13 @@ async function foldersFromTemplates({ db, world }) {
   world.cases.orgCase1.case_number = '26-70001'; world.cases.orgCase1.case_subtype = 'Chapter 13'; world.cases.orgCase1.case_type = 'Bankruptcy';
   await caseService.ensureCaseDropboxFolder(db, 'orgCase1');                                // active: the per-type template "Bankruptcy:Chapter 13" of the live row
 }
-scenario('17a D3c-1 the live templates row under dropbox_case_folder_templates', async (w) => {
-  w.world.settings.dropbox_case_folder_templates = JSON.stringify(LIVE_TEMPLATES);
+scenario('17a D3c-3 a leftover dropbox_case_folder_templates row is IGNORED: the code default makes the folders (the key is retired)', async (w) => {
+  w.world.settings.dropbox_case_folder_templates = JSON.stringify(LIVE_TEMPLATES);   // a row nothing reads any more
   await foldersFromTemplates(w);
 });
 scenario('17b D3c-1 the same row as storage_folders.case with the legacy key gone (D3c-3\'s state) — byte-identical provider calls', async (w) => {
   w.world.settings.storage_folders = JSON.stringify({ case: LIVE_TEMPLATES, contact: null });
   await foldersFromTemplates(w);
-});
-test('17a ≡ 17b: the contract step moves the templates under the new key without changing one provider call', () => {
-  const a = records['17a D3c-1 the live templates row under dropbox_case_folder_templates'];
-  const b = records['17b D3c-1 the same row as storage_folders.case with the legacy key gone (D3c-3\'s state) — byte-identical provider calls'];
-  expect(a && b).toBeTruthy();
-  expect(b.calls).toEqual(a.calls);
-  expect(b.provider_state).toEqual(a.provider_state);
 });
 scenario('17c D3c-1 {{case_type_full}} in a template: type + subtype, type alone, no type → "unknown"', async ({ db, world }) => {
   world.settings.storage_folders = JSON.stringify({ case: {
