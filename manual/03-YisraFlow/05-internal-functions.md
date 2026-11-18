@@ -961,6 +961,7 @@ JSON-descriptor SQL query against a whitelisted set of tables. Replaces the unsa
 | Param | Type | Required | Description |
 |---|---|---|---|
 | `select` | array | yes | Columns to select. `["*"]` for all from `from`. e.g. `["contacts.contact_name", "appts.appt_date"]` |
+|   | | | One **virtual** column may be selected like a real one: `cases.case_folder_link` (or `<alias>.case_folder_link` on a cases alias) — the case folder's link, read from its binding (`entity_folders`) for the firm's storage provider. Select only; it cannot be filtered or sorted on. It replaced `cases.case_dropbox` in every workflow on 2026-11-18. |
 | `from` | string | yes | Base table name (whitelisted). |
 | `join` | array | optional | JOIN clauses: `{ type, table, alias?, on: {left, right} }` |
 | `where` | array | optional | Each: `{ column, op, value? }`. Placeholders OK in `value`. |

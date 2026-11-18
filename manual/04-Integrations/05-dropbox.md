@@ -133,7 +133,7 @@ All in `lib/internal_functions/storage.js`, category `storage`, chainable via `{
 `{ path | human_link, subfolder?, recursive?, max_entries? }` → `{ entries, count, truncated }`. Branch on `{{this.output.count}}` for "did the client upload anything" checks (e.g. `human_link: {{cases.case_dropbox}}, subfolder: Client Uploads`).
 
 #### `storage_move`
-`{ from_path | from_human_link, to_path, autorename? }`. The filed-case relocation: `from_human_link: {{cases.case_dropbox}}`, `to_path` = the Active-tree convention written with resolver placeholders in the workflow config.
+`{ from_path | from_human_link, to_path, autorename? }`. The filed-case relocation: `from_human_link: {{case_folder_link}}` (the case folder's link, read by the step before it with `query_db`'s virtual column `cases.case_folder_link` — the binding's link; the retiring `cases.case_dropbox` column is no longer named by any workflow), `to_path` = the Active-tree convention written with resolver placeholders in the workflow config.
 
 #### `storage_rename`
 `{ path | human_link, new_name }`. Same parent; `new_name` keeps leading spaces, no `/`.

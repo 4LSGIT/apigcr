@@ -1,0 +1,6 @@
+{
+  "_record": "storage-seam D3d-1 (2026-11-18): the nine workflow_steps rows that named the retiring column cases.case_dropbox were rewritten by scripts/storageSeamD3d1CaseFolderLink.js — the token case_dropbox → case_folder_link wherever it appears in their config (13 occurrences: query_db select entries cases.case_dropbox → cases.case_folder_link, the virtual column; the set_vars key and its {{this.output.…}} placeholder; evaluate_condition's variable; storage_move's from_human_link placeholder; a custom_code field read). The base is frozen in tests/fixtures/storageSeamD3d.steps.before.json. Ran AFTER the D3d-1 deploy (the virtual column must exist before a step selects it) and before D3d-2 drops the column.",
+  "rows": [203, 205, 206, 222, 288, 289, 758, 760, 761],
+  "workflows": { "1": "v1 step 7 (a query_db test step)", "28": "v1 + v2 steps 1, 3, 4 (lead → case folder move)", "32": "v1 steps 14, 15 (unified e-sign: the case link in the task + email)" },
+  "rename": { "from": "case_dropbox", "to": "case_folder_link" }
+}

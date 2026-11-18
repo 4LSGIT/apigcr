@@ -296,7 +296,7 @@ for (const wf of [...new Set(STEPS.steps.map((s) => `${s.workflow_id}:${s.versio
       [vars.court_doc_url]: PDF('court'),
     } });
     const run = async (byName, effects) => {
-      const vars = { ...STEP_VALUES, case_dropbox: world.cases.hjSFMabb.case_dropbox };
+      const vars = { ...STEP_VALUES, case_dropbox: world.cases.hjSFMabb.case_dropbox, case_folder_link: world.cases.hjSFMabb.case_dropbox };   // D3d-1: wf 28's variable is case_folder_link; case_dropbox stays the sanitization token of wf 1's literal link
       seedBodies(vars);
       for (const s of steps) {
         const out = await byName(s, W.substitute(s.params, vars), db);

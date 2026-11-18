@@ -279,6 +279,25 @@ suite('storage replay on real MySQL', () => {
     expect((await bindings()).map((r) => `${r.entity_kind}:${r.entity_id}`).sort()).toEqual(['case:deadLnk1', 'case:hjSFMabb', 'case:k9PotLd2', 'contact:502']);
   });
 
+  test('D3d-1: query_db\'s virtual cases.case_folder_link is the binding\'s link on real tables — wf 28 step 1\'s shape (a join to the primary contact) and wf 32 step 14\'s (an aliased join); a case with no binding reads NULL', async () => {
+    const a = await reset();
+    const dbFns = require('../lib/internal_functions/db');
+    await q("INSERT INTO contacts (contact_id, contact_kind, contact_name, contact_lfm_name) VALUES (501, 'person', 'John Smith', 'Smith, John')");
+    await q("INSERT INTO case_relate (case_relate_id, case_relate_case_id, case_relate_client_id, case_relate_type) VALUES (8001, 'hjSFMabb', 501, 'Primary'), (8002, 'deadLnk1', 501, 'Secondary')");
+    await q("INSERT INTO cases (case_id) VALUES ('noBind01')");
+    const live = (await q('SELECT case_dropbox FROM cases WHERE case_id = ?', ['hjSFMabb']))[0].case_dropbox;
+    const first = await dbFns.query_db({ from: 'cases', join: [{ type: 'left', table: 'case_relate', on: { left: 'cases.case_id', right: 'case_relate.case_relate_case_id' } }, { type: 'left', table: 'contacts', on: { left: 'case_relate.case_relate_client_id', right: 'contacts.contact_id' } }],
+      where: [{ op: '=', value: 'hjSFMabb', column: 'cases.case_id' }, { op: '=', value: 'Primary', column: 'case_relate.case_relate_type' }], format: 'first',
+      select: ['cases.case_id', 'cases.case_type', 'cases.case_number_full', 'cases.case_folder_link', 'contacts.contact_name', 'contacts.contact_lfm_name'] }, db);
+    expect(first.output).toMatchObject({ case_id: 'hjSFMabb', case_folder_link: live, contact_lfm_name: 'Smith, John' });
+    expect(first.output.case_folder_link).toBe(a.path_display ? live : live);
+    const list = await dbFns.query_db({ from: 'cases', join: [{ on: { left: 'cases.case_id', right: 'cr.case_relate_case_id' }, type: 'inner', alias: 'cr', table: 'case_relate' }], limit: 50,
+      where: [{ op: '=', value: 501, column: 'cr.case_relate_client_id' }], format: 'raw', select: ['cases.case_id', 'cases.case_number', 'cases.case_folder_link'], order_by: [{ dir: 'desc', column: 'cr.case_relate_id' }] }, db);
+    expect(list.output.map((r) => [r.case_id, r.case_folder_link])).toEqual([['deadLnk1', 'https://www.dropbox.com/scl/fo/gone0000?dl=0'], ['hjSFMabb', live]]);
+    const none = await dbFns.query_db({ from: 'cases', where: [{ op: '=', value: 'noBind01', column: 'cases.case_id' }], format: 'first', select: ['cases.case_folder_link', 'cases.case_id'] }, db);
+    expect(none.output).toEqual({ case_folder_link: null, case_id: 'noBind01' });
+  });
+
   scenario('B2 sync: backfill page, incremental page with a move and a deletion, then the cache refresh', async (a) => {
     await q('INSERT INTO document_sync_roots (id, path, enabled, backfill_done) VALUES (1, ?, 1, 0)', [W.ACTIVE_ROOT]);
     fake.seed({ pages: [

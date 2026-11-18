@@ -1,0 +1,304 @@
+{
+ "_note": "storage-seam D3d-1 (2026-11-18): the nine live workflow_steps rows whose config names case_dropbox, frozen as the base scripts/storageSeamD3d1CaseFolderLink.js asserts before rewriting the token case_dropbox → case_folder_link (query_db select column, set_vars key + placeholder, evaluate_condition variable, storage_move placeholder, custom_code field). No secrets: {{case_id}} / {{contactId}} / {{active_path}} are workflow variables; the wf 1 step 7 docket is a test value.",
+ "rows": [
+  {
+   "id": 203,
+   "workflow_id": 28,
+   "version": 1,
+   "step_number": 1,
+   "type": "internal_function",
+   "label": null,
+   "config": {
+    "params": {
+     "from": "cases",
+     "join": [
+      {
+       "on": {
+        "left": "cases.case_id",
+        "right": "case_relate.case_relate_case_id"
+       },
+       "type": "left",
+       "table": "case_relate"
+      },
+      {
+       "on": {
+        "left": "case_relate.case_relate_client_id",
+        "right": "contacts.contact_id"
+       },
+       "type": "left",
+       "table": "contacts"
+      }
+     ],
+     "where": [
+      {
+       "op": "=",
+       "value": "{{case_id}}",
+       "column": "cases.case_id"
+      },
+      {
+       "op": "=",
+       "value": "Primary",
+       "column": "case_relate.case_relate_type"
+      }
+     ],
+     "format": "first",
+     "select": [
+      "cases.case_id",
+      "cases.case_type",
+      "cases.case_subtype",
+      "cases.case_number",
+      "cases.case_number_full",
+      "cases.case_dropbox",
+      "contacts.contact_name",
+      "contacts.contact_lfm_name"
+     ],
+     "output_var": "caseRow"
+    },
+    "set_vars": {
+     "lfm_name": "{{this.output.contact_lfm_name}}",
+     "case_type": "{{this.output.case_type}}",
+     "case_number": "{{this.output.case_number}}",
+     "case_dropbox": "{{this.output.case_dropbox}}",
+     "case_subtype": "{{this.output.case_subtype}}",
+     "contact_name": "{{this.output.contact_name}}",
+     "case_number_full": "{{this.output.case_number_full}}"
+    },
+    "function_name": "query_db"
+   }
+  },
+  {
+   "id": 205,
+   "workflow_id": 28,
+   "version": 1,
+   "step_number": 3,
+   "type": "internal_function",
+   "label": null,
+   "config": {
+    "params": {
+     "else": 4,
+     "then": 7,
+     "operator": "is_empty",
+     "variable": "case_dropbox"
+    },
+    "function_name": "evaluate_condition"
+   }
+  },
+  {
+   "id": 206,
+   "workflow_id": 28,
+   "version": 1,
+   "step_number": 4,
+   "type": "internal_function",
+   "label": null,
+   "config": {
+    "params": {
+     "to_path": "{{active_path}}",
+     "from_human_link": "{{case_dropbox}}"
+    },
+    "function_name": "storage_move"
+   }
+  },
+  {
+   "id": 222,
+   "workflow_id": 1,
+   "version": 1,
+   "step_number": 7,
+   "type": "internal_function",
+   "label": null,
+   "config": {
+    "params": {
+     "from": "cases",
+     "where": [
+      {
+       "op": "=",
+       "value": "12-34567",
+       "column": "cases.case_number"
+      }
+     ],
+     "select": [
+      "cases.case_dropbox",
+      "cases.case_id"
+     ]
+    },
+    "function_name": "query_db"
+   }
+  },
+  {
+   "id": 288,
+   "workflow_id": 32,
+   "version": 1,
+   "step_number": 14,
+   "type": "internal_function",
+   "label": null,
+   "config": {
+    "params": {
+     "from": "cases",
+     "join": [
+      {
+       "on": {
+        "left": "cases.case_id",
+        "right": "cr.case_relate_case_id"
+       },
+       "type": "inner",
+       "alias": "cr",
+       "table": "case_relate"
+      }
+     ],
+     "limit": 50,
+     "where": [
+      {
+       "op": "=",
+       "value": "{{contactId}}",
+       "column": "cr.case_relate_client_id"
+      }
+     ],
+     "format": "raw",
+     "select": [
+      "cases.case_id",
+      "cases.case_number",
+      "cases.case_number_full",
+      "cases.case_dropbox"
+     ],
+     "order_by": [
+      {
+       "dir": "desc",
+       "column": "cr.case_relate_id"
+      }
+     ],
+     "count_var": "caseCount",
+     "output_var": "cases"
+    },
+    "function_name": "query_db"
+   }
+  },
+  {
+   "id": 289,
+   "workflow_id": 32,
+   "version": 1,
+   "step_number": 15,
+   "type": "custom_code",
+   "label": null,
+   "config": {
+    "code": "// unified e-sign wf, step 15 — pick the case link, build matched-branch\n// task description + email html. Generalized from wf30 step 13.\nvar NL = String.fromCharCode(10);\nvar cases = Array.isArray(input.cases) ? input.cases : [];\nvar n = cases.length;\nvar linkType, linkId, caseNote = '', caseRef = '', dropboxUrl = '';\n\nif (n > 0) {\n  var c0 = cases[0] || {};\n  linkType = 'case';\n  linkId   = String(c0.case_id || '');\n  caseRef  = String(c0.case_number_full || c0.case_number || '').trim();\n  dropboxUrl = String(c0.case_dropbox || '').trim();\n  caseNote = n > 1\n    ? ('NOTE: client has ' + n + ' cases on file; linked to the most recent (case '\n       + linkId + (caseRef ? ' / ' + caseRef : '') + '). Verify this is the right case.')\n    : '';\n} else {\n  linkType = 'contact';\n  linkId   = String(input.contactId || '');\n  caseNote = 'No case on file for this client - linked to the contact. Attach to a case manually if needed.';\n}\n\nvar pl       = String(input.providerLabel || 'e-sign');\nvar loc      = String(input.docLocation || 'the provider inbox');\nvar dl       = String(input.downloadUrl || '');\nvar matter   = String(input.matterName || '');\nvar nameNote = String(input.nameNote || '');\n\nvar lines = [\n  'A signed document was received via ' + pl + '.',\n  '',\n  'Signer: '       + (input.signerName    || '(unknown)'),\n  'Client email: ' + (input.clientEmail   || '(none in email)'),\n  'Agreement: '    + (input.agreementName || '(unknown)')\n];\nif (matter)   lines.push('Matter: ' + matter);\nif (caseRef)  lines.push('Case: ' + caseRef);\nif (nameNote) lines.push(nameNote);\nif (caseNote) lines.push(caseNote);\nlines.push('');\nlines.push('Action: verify & file the signed PDF (' + loc + ') to Dropbox.');\nif (dropboxUrl) {\n  lines.push('Dropbox folder: ' + dropboxUrl);\n} else if (n > 0) {\n  lines.push('(No Dropbox folder link on file for this case - locate it manually.)');\n}\nif (dl) lines.push('Download: ' + dl);\nvar taskDesc = lines.join(NL);\n\nfunction esc(s) {\n  return String(s == null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\nvar H = [];\nH.push('<div style=\"font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#222\">');\nH.push('<p>A signed document was received via <strong>' + esc(pl) + '</strong>.</p>');\nH.push('<ul style=\"margin:0 0 8px;padding-left:20px\">');\nH.push('<li><strong>Signer:</strong> '       + (input.signerName    ? esc(input.signerName)    : '<em>unknown</em>') + '</li>');\nH.push('<li><strong>Client email:</strong> ' + (input.clientEmail   ? esc(input.clientEmail)   : '<em>none in email</em>') + '</li>');\nH.push('<li><strong>Agreement:</strong> '    + (input.agreementName ? esc(input.agreementName) : '<em>unknown</em>') + '</li>');\nif (matter)  H.push('<li><strong>Matter:</strong> ' + esc(matter) + '</li>');\nif (caseRef) H.push('<li><strong>Case:</strong> ' + esc(caseRef) + '</li>');\nH.push('</ul>');\nif (nameNote) {\n  H.push('<p style=\"margin:8px 0;padding:8px 10px;background:#dbeafe;border-left:3px solid #2563eb;color:#1e3a8a\">' + esc(nameNote) + '</p>');\n}\nif (caseNote) {\n  H.push('<p style=\"margin:8px 0;padding:8px 10px;background:#fef3c7;border-left:3px solid #f59e0b;color:#92400e\">' + esc(caseNote) + '</p>');\n}\nif (dl) H.push('<p style=\"margin:8px 0\"><a href=\"' + esc(dl) + '\">Download the signed document</a></p>');\nif (dropboxUrl) {\n  H.push('<p style=\"margin:8px 0\"><a href=\"' + esc(dropboxUrl) + '\">Open the Dropbox folder for this case</a></p>');\n} else if (n > 0) {\n  H.push('<p style=\"margin:8px 0;color:#92400e\">No Dropbox folder link on file for this case - locate it manually.</p>');\n}\nH.push('<p style=\"margin:12px 0 0\">Verify &amp; file the signed PDF (' + esc(loc) + ') to Dropbox.</p>');\nH.push('</div>');\nvar hitHtml = H.join('');\n\n({\n  linkType:   linkType,\n  linkId:     linkId,\n  caseNote:   caseNote,\n  caseRef:    caseRef,\n  dropboxUrl: dropboxUrl,\n  taskDesc:   taskDesc,\n  hitHtml:    hitHtml\n});\n",
+    "input": {
+     "cases": "{{cases}}",
+     "nameNote": "{{nameNote}}",
+     "contactId": "{{contactId}}",
+     "matterName": "{{matterName}}",
+     "signerName": "{{signerName}}",
+     "clientEmail": "{{clientEmail}}",
+     "docLocation": "{{docLocation}}",
+     "downloadUrl": "{{downloadUrl}}",
+     "agreementName": "{{agreementName}}",
+     "providerLabel": "{{providerLabel}}"
+    },
+    "set_vars": {
+     "linkId": "{{this.linkId}}",
+     "caseRef": "{{this.caseRef}}",
+     "hitHtml": "{{this.hitHtml}}",
+     "caseNote": "{{this.caseNote}}",
+     "linkType": "{{this.linkType}}",
+     "taskDesc": "{{this.taskDesc}}",
+     "dropboxUrl": "{{this.dropboxUrl}}"
+    }
+   }
+  },
+  {
+   "id": 758,
+   "workflow_id": 28,
+   "version": 2,
+   "step_number": 1,
+   "type": "internal_function",
+   "label": null,
+   "config": {
+    "params": {
+     "from": "cases",
+     "join": [
+      {
+       "on": {
+        "left": "cases.case_id",
+        "right": "case_relate.case_relate_case_id"
+       },
+       "type": "left",
+       "table": "case_relate"
+      },
+      {
+       "on": {
+        "left": "case_relate.case_relate_client_id",
+        "right": "contacts.contact_id"
+       },
+       "type": "left",
+       "table": "contacts"
+      }
+     ],
+     "where": [
+      {
+       "op": "=",
+       "value": "{{case_id}}",
+       "column": "cases.case_id"
+      },
+      {
+       "op": "=",
+       "value": "Primary",
+       "column": "case_relate.case_relate_type"
+      }
+     ],
+     "format": "first",
+     "select": [
+      "cases.case_id",
+      "cases.case_type",
+      "cases.case_subtype",
+      "cases.case_number",
+      "cases.case_number_full",
+      "cases.case_dropbox",
+      "contacts.contact_name",
+      "contacts.contact_lfm_name"
+     ],
+     "output_var": "caseRow"
+    },
+    "set_vars": {
+     "lfm_name": "{{this.output.contact_lfm_name}}",
+     "case_type": "{{this.output.case_type}}",
+     "case_number": "{{this.output.case_number}}",
+     "case_dropbox": "{{this.output.case_dropbox}}",
+     "case_subtype": "{{this.output.case_subtype}}",
+     "contact_name": "{{this.output.contact_name}}",
+     "case_number_full": "{{this.output.case_number_full}}"
+    },
+    "function_name": "query_db"
+   }
+  },
+  {
+   "id": 760,
+   "workflow_id": 28,
+   "version": 2,
+   "step_number": 3,
+   "type": "internal_function",
+   "label": null,
+   "config": {
+    "params": {
+     "else": 4,
+     "then": 7,
+     "operator": "is_empty",
+     "variable": "case_dropbox"
+    },
+    "function_name": "evaluate_condition"
+   }
+  },
+  {
+   "id": 761,
+   "workflow_id": 28,
+   "version": 2,
+   "step_number": 4,
+   "type": "internal_function",
+   "label": null,
+   "config": {
+    "params": {
+     "to_path": "{{active_path}}",
+     "from_human_link": "{{case_dropbox}}"
+    },
+    "function_name": "storage_move"
+   }
+  }
+ ]
+}

@@ -399,7 +399,7 @@ async function completeUpload(db, contactId, caseId, { files, comment } = {}) {
     contact_id: contactId,
     clientName: uploader?.contact_name || 'Client',
     caseDisplay: caseRow.case_display,
-    dropboxLink: caseRow.case_dropbox || '',
+    dropboxLink: (await require('./entityFolderService').caseFolderLink(db, cid, { caseRow })).link || '',   // D3d-1: the binding, then the legacy column (deferred require, convention)
     fileCount,
     omittedCount,
     files: safeFiles,             // [{ name, item_id, item_name }]
