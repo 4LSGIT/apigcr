@@ -135,10 +135,9 @@ describe('the sections: one GET, the registry\'s sections, every row in its own'
     expect(t.row('app_url').querySelector('.ycsr-ro').textContent).toBe('https://app.acme.example');
     expect([t.ctl('cloud_tasks_enabled').type, t.ctl('cloud_tasks_enabled').checked]).toEqual(['checkbox', true]);
     expect([...t.ctl('alert_email_min_severity').options].map((o) => o.value)).toEqual(['', 'error', 'warn', 'info']);
-    expect([...t.ctl('esign_credential_id').options].map((o) => o.textContent))
+    expect([...t.ctl('dropbox_credential_id').options].map((o) => o.textContent))
       .toEqual(['— none —', 'Dropbox (#3, oauth2)', 'Zoho Sign (#7, oauth2)', 'Google (#12, oauth2)']);
-    expect(t.ctl('esign_credential_id').value).toBe('7');
-    expect(t.row('dropbox_credential_id')).toBeFalsy();   // D3e: the Dropbox credential lives on the Firm tab's Document storage section now
+    expect([t.ctl('dropbox_credential_id').value, t.ctl('esign_credential_id').value]).toEqual(['3', '7']);
     expect(t.fake.st.calls.filter((c) => c.endpoint === '/api/credentials')).toHaveLength(1);
     for (const k of ['cloud_tasks_enabled', 'alert_cooldown_hours', 'gcal_calendar_id', 'comms_transcribe_mode']) {
       expect([k, !!t.row(k).querySelector('[data-ycsr="history"]')]).toEqual([k, true]);

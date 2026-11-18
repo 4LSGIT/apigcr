@@ -127,7 +127,7 @@ const TRANSIENT_NET_CODES = new Set([
 // Credential 8 = "DropBox" (oauth2, connected). Prefer the app_settings
 // binding ('dropbox_credential_id') so this can change without a deploy.
 /** The error every operation raises when no credential is configured — named so a caller can tell config from outage. */
-const CREDENTIAL_MISSING = 'storage credential not configured — set app_settings dropbox_credential_id (YisraCase Config → Firm → Document storage)';
+const CREDENTIAL_MISSING = 'storage credential not configured — set app_settings dropbox_credential_id (YisraCase Config → System → Integrations)';
 
 // saveUrl polling defaults (files/save_url is async on Dropbox's side)
 const SAVE_URL_POLL_MS    = 1500;

@@ -44,9 +44,10 @@ test('the registry default of every storage key IS the leaf value, frozen; the c
   expect(registry.defaultOf('dropbox_credential_id')).toBeUndefined();
   expect(registry.defaultOf('no_such_key')).toBeUndefined();
   expect(registry.get('dropbox_unsorted_court_docs_path')).toMatchObject({ kind: 'firm', home: 'firm', section: 'storage', type: 'string' });
-  // D3e: the provider and the credential live in the same section — one place to say where the documents live
+  // D3e: the provider is the firm's choice (Document storage); D3e-2 (Fred, 2026-11-18): the credential it connects
+  // with is platform wiring and lives with the other integration credentials on System → Integrations
   expect(registry.get('storage_provider')).toMatchObject({ kind: 'firm', home: 'firm', section: 'storage', type: 'enum', options: ['dropbox'], default: 'dropbox' });
-  expect(registry.get('dropbox_credential_id')).toMatchObject({ kind: 'firm', home: 'firm', section: 'storage', type: 'credential' });
+  expect(registry.get('dropbox_credential_id')).toMatchObject({ kind: 'system', home: 'system', section: 'integrations', type: 'credential' });
 });
 
 test('every writer exports the registry default as its DEFAULT — the literal left the services', () => {

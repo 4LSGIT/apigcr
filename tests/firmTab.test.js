@@ -1168,7 +1168,7 @@ describe('settings arc: the firm settings sections', () => {
     // the sequence list once (the E-Sign reminder row); this tab has no credential row
     expect(sctl(t, 'esign_reminder_seq_id').value).toBe('4');
     expect(t.backend.st.calls.filter((c) => c.endpoint === '/sequences/templates')).toHaveLength(1);
-    expect(t.backend.st.calls.filter((c) => c.endpoint === '/api/credentials')).toHaveLength(1);   // D3e: the Document storage section's credential row loads the credentials list once
+    expect(t.backend.st.calls.filter((c) => c.endpoint === '/api/credentials')).toHaveLength(0);   // D3e-2: the Dropbox credential is back on System → Integrations; no credential row here
     expect([t.F.Page.dirty(), t.saveBtnShown(), t.$('#fm-sec-identity .fm-sec-status').textContent]).toEqual([false, false, 'All changes saved']);
     // a clean Refresh: one more GET, no question asked
     t.firm.confirm = () => { throw new Error('asked'); };
