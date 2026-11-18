@@ -82,7 +82,7 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const documents   = require('../services/documentService');
 const sources     = require('../services/documentSourceService');
 
-const DEFAULT_SOURCE = 'dropbox';
+const DEFAULT_SOURCE = () => sources.configured();   // D3e: the configured provider (app_settings storage_provider)
 
 // ─────────────────────────────────────────────────────────────
 // /raw — inline byte proxy limits (S3)
@@ -266,7 +266,7 @@ async function loadOr404(req, res) {
 // provider.stat → documentService.upsertFromEntry → row.
 router.post('/api/documents/register', jwtOrApiKey, async (req, res) => {
   try {
-    const { source = DEFAULT_SOURCE, external_id } = req.body || {};
+    const { source = DEFAULT_SOURCE(), external_id } = req.body || {};
     if (!external_id) {
       return res.status(400).json({ status: 'error', message: 'external_id is required' });
     }
@@ -477,7 +477,7 @@ function parentLower(p) {
  */
 router.post('/api/documents/upload-link', jwtOrApiKey, async (req, res) => {
   try {
-    const storage     = sources.get(DEFAULT_SOURCE);
+    const storage     = sources.get(DEFAULT_SOURCE());
     const uploadTarget = require('../services/uploadTargetService');
     const tickets     = require('../lib/uploadTicket');
 
@@ -589,7 +589,7 @@ router.post('/api/documents/upload-commit', jwtOrApiKey, async (req, res) => {
     const b = req.body || {};
     const claim = tickets.verify(b.ticket);   // throws 400 on anything wrong
 
-    const source   = b.source || DEFAULT_SOURCE;
+    const source   = b.source || DEFAULT_SOURCE();
     const provider = sources.get(source);
     const locator  = (b.external_id && String(b.external_id)) || claim.path;
 

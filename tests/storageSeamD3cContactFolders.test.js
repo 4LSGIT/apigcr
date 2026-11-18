@@ -22,7 +22,7 @@ jest.mock('../services/documentSourceService', () => {
     stat: jest.fn(), ensureSharedLink: jest.fn(), ensureFolder: jest.fn(), resolveHumanLink: jest.fn(),
     isNotFound: (e) => !!(e && e.notFound),
   };
-  return { get: () => provider, __provider: provider };
+  return { get: () => provider, configured: () => 'dropbox', __provider: provider };   // D3e: the configured provider
 });
 jest.mock('../services/timezoneService', () => ({ nowLocal: () => ({ toFormat: () => '2026-11-18' }) }));
 

@@ -1307,7 +1307,7 @@ async function searchCases(db, { q = '', limit = 20 } = {}) {
 // pass through literally (visible in the folder name — easy to spot).
 
 /** The storage provider the firm's documents live in (D2 makes this a per-tenant setting). */
-const STORAGE_SOURCE = 'dropbox';
+const STORAGE_SOURCE = () => require('./documentSourceService').configured();   // D3e: the configured provider (app_settings storage_provider); deferred require (convention)
 
 const DEFAULT_CASE_FOLDER_TEMPLATES = require('../lib/storageDefaults').STORAGE_DEFAULTS.dropbox_case_folder_templates;   // D2: the literals live in ONE place
 
@@ -1388,7 +1388,7 @@ async function contactFolderTemplates(db) {
 async function ensureContactFolder(db, contactId, { force = false } = {}) {
   const templates = await contactFolderTemplates(db);
   if (!templates) return { enabled: false };
-  const storage = require('./documentSourceService').get(STORAGE_SOURCE);   // deferred require (convention)
+  const storage = require('./documentSourceService').get(STORAGE_SOURCE());   // deferred require (convention)
   const entityFolders = require('./entityFolderService');                   // deferred require (convention)
   const { nowLocal } = require('./timezoneService');
 
@@ -1477,7 +1477,7 @@ async function _loadCaseFolderTemplates(db) {
  * @throws on unknown case, Dropbox failure, or missing shared link
  */
 async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
-  const storage = require('./documentSourceService').get(STORAGE_SOURCE);   // deferred require (convention)
+  const storage = require('./documentSourceService').get(STORAGE_SOURCE());   // deferred require (convention)
   const { nowLocal } = require('./timezoneService');
 
   const [[caseRow]] = await db.query(

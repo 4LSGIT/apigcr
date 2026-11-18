@@ -328,6 +328,7 @@ async function writeValue(req, key, gate, valueFor, via) {
   // Same-instance firmConfig consumers pick up the change immediately;
   // other instances converge within the firmConfig TTL.
   if (out.changed) firmConfig.invalidate();
+  if (out.changed && key === 'storage_provider') await require('../services/documentSourceService').refreshConfigured(req.db);   // D3e: the writers read the cached value
   return out;
 }
 

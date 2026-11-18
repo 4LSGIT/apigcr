@@ -38,12 +38,15 @@ test('the registry default of every storage key IS the leaf value, frozen; the c
     case: { potential: { default: '{{contact_folder}}/{{number}} - {{case_type_full}}', subfolders: [] }, active: { default: '{{contact_folder}}/{{number}} - {{case_type_full}}', subfolders: [] } },
     contact: { default: '/Clients/{{lfm_name}}', subfolders: [] },
   });
-  expect(registry.get('storage_folders')).toMatchObject({ kind: 'firm', home: 'firm', section: 'dropbox', type: 'json', editor: 'storageFolders' });
+  expect(registry.get('storage_folders')).toMatchObject({ kind: 'firm', home: 'firm', section: 'storage', type: 'json', editor: 'storageFolders' });
   expect(registry.get('storage_folders').edit).not.toBe('console');   // D3c-3: a UI row (the editor), no longer console-only
   expect(registry.get('dropbox_case_folder_templates')).toBeFalsy();   // D3c-3: retired (the registry answers null for an unknown key)
   expect(registry.defaultOf('dropbox_credential_id')).toBeUndefined();
   expect(registry.defaultOf('no_such_key')).toBeUndefined();
-  expect(registry.get('dropbox_unsorted_court_docs_path')).toMatchObject({ kind: 'firm', home: 'firm', section: 'dropbox', type: 'string' });
+  expect(registry.get('dropbox_unsorted_court_docs_path')).toMatchObject({ kind: 'firm', home: 'firm', section: 'storage', type: 'string' });
+  // D3e: the provider and the credential live in the same section — one place to say where the documents live
+  expect(registry.get('storage_provider')).toMatchObject({ kind: 'firm', home: 'firm', section: 'storage', type: 'enum', options: ['dropbox'], default: 'dropbox' });
+  expect(registry.get('dropbox_credential_id')).toMatchObject({ kind: 'firm', home: 'firm', section: 'storage', type: 'credential' });
 });
 
 test('every writer exports the registry default as its DEFAULT — the literal left the services', () => {

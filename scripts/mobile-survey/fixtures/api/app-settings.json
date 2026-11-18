@@ -27,8 +27,8 @@
         "icon": "calendar-check"
       },
       {
-        "id": "dropbox",
-        "title": "Dropbox filing",
+        "id": "storage",
+        "title": "Document storage",
         "icon": "folder-tree"
       },
       {
@@ -763,7 +763,7 @@
       "registered": true,
       "kind": "firm",
       "home": "firm",
-      "section": "dropbox",
+      "section": "storage",
       "type": "json",
       "options": null,
       "label": "Folder templates",
@@ -774,7 +774,7 @@
       "env": null,
       "required": false,
       "can_edit": true,
-      "category": "Dropbox filing"
+      "category": "Document storage"
     },
     {
       "key": "dropbox_unsorted_uploads_path",
@@ -784,7 +784,7 @@
       "registered": true,
       "kind": "firm",
       "home": "firm",
-      "section": "dropbox",
+      "section": "storage",
       "type": "string",
       "options": null,
       "label": "Unsorted client uploads folder",
@@ -795,7 +795,7 @@
       "env": null,
       "required": false,
       "can_edit": true,
-      "category": "Dropbox filing"
+      "category": "Document storage"
     },
     {
       "key": "dropbox_unsorted_forms_path",
@@ -805,7 +805,7 @@
       "registered": true,
       "kind": "firm",
       "home": "firm",
-      "section": "dropbox",
+      "section": "storage",
       "type": "string",
       "options": null,
       "label": "Unsorted form submissions folder",
@@ -816,7 +816,7 @@
       "env": null,
       "required": false,
       "can_edit": true,
-      "category": "Dropbox filing"
+      "category": "Document storage"
     },
     {
       "key": "dropbox_unsorted_generated_path",
@@ -826,7 +826,7 @@
       "registered": true,
       "kind": "firm",
       "home": "firm",
-      "section": "dropbox",
+      "section": "storage",
       "type": "string",
       "options": null,
       "label": "Unsorted generated documents folder",
@@ -837,7 +837,7 @@
       "env": null,
       "required": false,
       "can_edit": true,
-      "category": "Dropbox filing"
+      "category": "Document storage"
     },
     {
       "key": "dropbox_unsorted_esign_path",
@@ -847,7 +847,7 @@
       "registered": true,
       "kind": "firm",
       "home": "firm",
-      "section": "dropbox",
+      "section": "storage",
       "type": "string",
       "options": null,
       "label": "Unsorted e-signed documents folder",
@@ -858,7 +858,7 @@
       "env": null,
       "required": false,
       "can_edit": true,
-      "category": "Dropbox filing"
+      "category": "Document storage"
     },
     {
       "key": "esign_test_mode",
@@ -1516,25 +1516,48 @@
       "category": "Alert thresholds"
     },
     {
-      "key": "dropbox_credential_id",
-      "value": "8",
+      "key": "storage_provider",
+      "value": "dropbox",
       "updated_at": "{{TODAY}}T08:00:00.000Z",
       "exists": true,
       "registered": true,
-      "kind": "system",
-      "home": "system",
-      "section": "integrations",
-      "type": "credential",
-      "options": null,
-      "label": "Dropbox credential",
-      "description": "Connections credential the Dropbox integration authenticates with.",
-      "sort_order": 10,
+      "kind": "firm",
+      "home": "firm",
+      "section": "storage",
+      "type": "enum",
+      "options": [
+        "dropbox"
+      ],
+      "label": "Documents live in",
+      "description": "The storage provider every case and contact folder, upload, generated document and e-signed copy goes to. Dropbox is the one provider today (storage-seam D5 adds a Google Cloud bucket). Read once at start-up and again when this row changes.",
+      "sort_order": 1,
       "edit": "ui",
       "editor": null,
       "env": null,
       "required": false,
       "can_edit": true,
-      "category": "Integrations"
+      "category": "Document storage"
+    },
+    {
+      "key": "dropbox_credential_id",
+      "value": "8",
+      "updated_at": "{{TODAY}}T08:00:00.000Z",
+      "exists": true,
+      "registered": true,
+      "kind": "firm",
+      "home": "firm",
+      "section": "storage",
+      "type": "credential",
+      "options": null,
+      "label": "Dropbox credential",
+      "description": "Connections credential the Dropbox integration authenticates with. Required: with no credential every storage operation refuses.",
+      "sort_order": 2,
+      "edit": "ui",
+      "editor": null,
+      "env": null,
+      "required": false,
+      "can_edit": true,
+      "category": "Document storage"
     },
     {
       "key": "esign_credential_id",

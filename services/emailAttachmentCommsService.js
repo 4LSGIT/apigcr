@@ -76,7 +76,6 @@ const NAME_TOKENS_MAX = 40;
 const FOLDERS_DEPTH = 4;         // levels of subfolders offered under the case folder
 const FOLDERS_MAX = 400;
 const FOLDERS_LIST_MAX = 4000;   // entries read (files too — list_folder has no folders-only mode)
-const SOURCE_PROVIDER = 'dropbox';   // the storage provider the firm's documents live in (D2: a per-tenant setting)
 const OPEN_STAGES = ['Open', 'Pending', 'Filed'];
 const BATCH_RE = /^[A-Za-z0-9_-]{8,30}$/;
 const CASE_ID_RE = /^[A-Za-z0-9_-]{1,20}$/;
@@ -306,7 +305,8 @@ async function caseFolders(db, userId, body) {
   const out = { case_id: c.case_id, folders: [], truncated: false, reason: null };
   const link = (await require('./entityFolderService').caseFolderLink(db, c.case_id, { caseRow: c })).link;   // lazy (convention); D3b-1: the binding, then the legacy column
   if (!link) return { ...out, reason: 'no_case_folder' };
-  const storage = require('./documentSourceService').get(SOURCE_PROVIDER);   // lazy (convention)
+  const sources = require('./documentSourceService');   // lazy (convention)
+  const storage = sources.get(sources.configured());   // D3e: the configured provider
   let listing;
   let root;
   try {

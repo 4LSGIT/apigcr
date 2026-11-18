@@ -18,8 +18,7 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const sources     = require('../services/documentSourceService');
 
 /** The storage provider the firm's documents live in (D2 makes this a per-tenant setting). */
-const SOURCE      = 'dropbox';
-const storage     = () => sources.get(SOURCE);
+const storage     = () => sources.get(sources.configured());   // D3e: the configured provider (app_settings storage_provider)
 
 // ── Config ───────────────────────────────────────────────────────────────────
 // Where docs we can't file on their case land: app_settings

@@ -89,7 +89,9 @@
 const documents = require('./documentService');
 
 /** documents.source for everything this module registers. */
-const SOURCE = 'dropbox';
+const sources = require('./documentSourceService');
+/** The configured provider's name — documents.source for every row this module registers (D3e: app_settings storage_provider). */
+const SOURCE = () => sources.configured();
 
 /**
  * The relation for a link built from KNOWN CONTEXT rather than from a path.
@@ -213,7 +215,7 @@ function _normalizeLinks(links) {
  */
 async function registerWritten(db, o = {}) {
   const {
-    entry: given, path, source = SOURCE, links, createdBy = null,
+    entry: given, path, source = SOURCE(), links, createdBy = null,
     eventSource = 'upload', credentialId,
   } = o;
 
@@ -333,7 +335,7 @@ async function registerLandedInFolder(db, o = {}) {
   const out = { registered: 0, scanned: 0, documents: [] };
 
   try {
-    const storage = require('./documentSourceService').get(SOURCE);   // deferred (convention); D1g: the seam
+    const storage = sources.get(sources.configured());   // D1g: the seam; D3e: the configured provider
     const ctx = await storage.context(db, credentialId != null ? { credentialId } : {});
     const credId = ctx.credentialId;
 

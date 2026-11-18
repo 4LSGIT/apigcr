@@ -222,7 +222,7 @@ describe('pickers: active staff offered, the current value kept (D3b)', () => {
     expect(t.view.isDirty()).toBe(false);
     t.type(t.ctl('dropbox_credential_id'), '7');
     t.type(t.ctl('esign_reminder_seq_id'), '4');
-    expect(t.view.dirtyKeys()).toEqual(['esign_reminder_seq_id', 'dropbox_credential_id']);
+    expect(t.view.dirtyKeys()).toEqual(['dropbox_credential_id', 'esign_reminder_seq_id']);   // row order: D3e put the credential in Document storage (sort 2), ahead of E-Sign's rows
     // one GET per list, though two rows read the credentials list; a list that fails → an id input
     const fakeCalls = [];
     const t3 = await mount({ wrapApi: (api) => (p, m, b) => { fakeCalls.push(p); return /^\/sequences/.test(p) ? Promise.reject(Object.assign(new Error('down'), { status: 500 })) : api(p, m, b); } });

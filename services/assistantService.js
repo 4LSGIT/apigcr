@@ -7503,7 +7503,7 @@ async function normalizeDocumentRegister(db, value, evidence, currentUserId) {
   if (String(entry.is_folder) === '1') throw documentError(`"${entry.name}" is a folder — register targets files, not folders (the route's own refusal)`);
   // Re-stat, the route's own first step (provider.stat); then the registry.
   let meta = null;
-  try { meta = await documentSources().get('dropbox').stat(db, extId); }
+  try { meta = await documentSources().get(documentSources().configured()).stat(db, extId); }   // D3e: the configured provider
   catch (e) { if (!storage.isNotFound(e)) throw e; }
   if (!meta) throw documentError(`"${entry.name}" (${extId}) is no longer in Dropbox — it was deleted since the folder was read (a moved or renamed file keeps its id). Read the folder again`);
   if (meta['.tag'] === 'folder') throw documentError('register targets files, not folders');
@@ -11245,7 +11245,7 @@ async function normalizeMailAttachmentsAction(db, value, evidence, { currentUser
 function caseFolderError(message) { return httpError(422, message); }
 
 function caseFolderSync() { return require('./documentSyncService'); } // lazy (convention)
-function caseFolderStorage() { return require('./documentSourceService').get('dropbox'); } // lazy (convention); D1g: the seam, not the provider module
+function caseFolderStorage() { const s = require('./documentSourceService'); return s.get(s.configured()); } // lazy (convention); D1g: the seam, not the provider module; D3e: the configured provider
 function entityFolderBinding() { return require('./entityFolderService'); } // lazy (convention); D3b-1: the case folder's binding row
 
 // The cases whose SYNC link (relation 'path') the active files under a folder

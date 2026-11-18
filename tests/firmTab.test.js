@@ -1168,7 +1168,7 @@ describe('settings arc: the firm settings sections', () => {
     // the sequence list once (the E-Sign reminder row); this tab has no credential row
     expect(sctl(t, 'esign_reminder_seq_id').value).toBe('4');
     expect(t.backend.st.calls.filter((c) => c.endpoint === '/sequences/templates')).toHaveLength(1);
-    expect(t.backend.st.calls.filter((c) => c.endpoint === '/api/credentials')).toHaveLength(0);
+    expect(t.backend.st.calls.filter((c) => c.endpoint === '/api/credentials')).toHaveLength(1);   // D3e: the Document storage section's credential row loads the credentials list once
     expect([t.F.Page.dirty(), t.saveBtnShown(), t.$('#fm-sec-identity .fm-sec-status').textContent]).toEqual([false, false, 'All changes saved']);
     // a clean Refresh: one more GET, no question asked
     t.firm.confirm = () => { throw new Error('asked'); };
@@ -1344,12 +1344,12 @@ describe('settings arc: the firm settings sections', () => {
     expect(r().querySelector('label.yc-flabel').htmlFor).toBe(r().querySelector('[data-dt-path="0"]').id);
     // a stage's per-case-type template: shown (read-only), carried through every save untouched
     expect([...r().querySelectorAll('[data-dt-extra]')].map((e) => e.textContent)).toEqual(['Bankruptcy: ··BK·{{case_number}}']);
-    expect([t.F.Page.dirty(), section(t, 'dropbox').view.value('storage_folders')]).toEqual([false, DT_VALUE]);
+    expect([t.F.Page.dirty(), section(t, 'storage').view.value('storage_folders')]).toEqual([false, DT_VALUE]);
     // an edit and its revert: clean again (the stored string, byte for byte)
     t.setVal(r().querySelector('[data-dt-path="2"]'), 'Archive2');
     expect(t.F.Page.dirty()).toBe(true);
     t.setVal(r().querySelector('[data-dt-path="2"]'), 'Archive');
-    expect([t.F.Page.dirty(), section(t, 'dropbox').view.value('storage_folders')]).toEqual([false, DT_VALUE]);
+    expect([t.F.Page.dirty(), section(t, 'storage').view.value('storage_folders')]).toEqual([false, DT_VALUE]);
     // edits: a trailing space on closed's path, a subfolder for closed, a reorder in open
     t.setVal(r().querySelector('[data-dt-path="1"]'), 'Z Closed ');
     t.fire(r().querySelector('[data-dt-addsub="1"]'), 'click');
@@ -1410,7 +1410,7 @@ describe('settings arc: the firm settings sections', () => {
     t.fire(r().querySelector('[data-dt-addsub="0"]'), 'click');
     await save(t);
     expect([puts(t.backend).length, sstatus(t, 'storage_folders')]).toEqual([0, 'Subfolder names cannot be empty (under "open")']);
-    expect(t.$('#fm-banner').textContent).toBe('Dropbox filing: a setting was not saved — the reason is on it.');
+    expect(t.$('#fm-banner').textContent).toBe('Document storage: a setting was not saved — the reason is on it.');
     t.setVal(r().querySelector('[data-dt-sub="0:2"]'), ' Docs');
     await save(t);
     expect(sstatus(t, 'storage_folders')).toBe('Duplicate subfolders under "open"');

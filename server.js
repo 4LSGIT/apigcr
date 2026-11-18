@@ -9,6 +9,8 @@ const { alert } = require("./lib/alerting");
 const appBuild = require("./lib/appBuild");
 const { processAlertMeta } = require("./lib/processAlertMeta");
 const db = require("./startup/db");
+// D3e: which storage provider the firm's documents live in (app_settings storage_provider) — cached in the process, re-read when the row changes (routes/api.appSettings.js)
+require('./services/documentSourceService').refreshConfigured(db).catch(() => {});
 
 const app = express();
 // exposedHeaders: lets a cross-origin caller read the build headers. Same-origin

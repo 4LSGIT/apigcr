@@ -71,6 +71,7 @@ jest.mock('../services/documentService', () => ({
 
 jest.mock('../services/documentSourceService', () => ({
   get: jest.fn(),
+  configured: () => 'dropbox',   // D3e: the configured provider
 }));
 
 // The S3.2 ops routes are as thin as the rest of this file — every rule and

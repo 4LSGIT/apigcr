@@ -30,6 +30,7 @@
 const crypto = require('crypto');
 
 const KEYS = Object.freeze([
+  'storage_provider',                   // D3e: which provider the documents live in
   'dropbox_credential_id',
   'dropbox_unsorted_generated_path',
   'dropbox_unsorted_uploads_path',
@@ -123,7 +124,13 @@ async function collect(db) {
     if (!(stage in effective) && map[stage] && typeof map[stage] === 'object') effective[stage] = { ...map[stage] };
   }
 
+  const providerRaw = row.storage_provider;
+  const provider = providerRaw != null && String(providerRaw).trim() !== ''
+    ? { value: String(providerRaw).trim(), source: 'app_settings', code_default: 'dropbox' }
+    : { value: 'dropbox', source: 'code_default', code_default: 'dropbox' };
+
   return {
+    provider,
     credential,
     unsorted,
     case_folder_templates: { source: templatesSource, code_default: TEMPLATE_DEFAULTS, row: map, effective },

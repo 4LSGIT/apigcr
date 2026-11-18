@@ -1997,6 +1997,7 @@ tests/storageSeamD3bCaseLinkDualWrite.test.js
 tests/storageSeamD3c3Contract.test.js
 tests/storageSeamD3cContactFolders.test.js
 tests/storageSeamD3cStorageFolders.test.js
+tests/storageSeamD3eConfiguredProvider.test.js
 tests/su.stepup.test.js
 tests/systemAlertStatusFn.test.js
 tests/taskCreate.badInput400.test.js

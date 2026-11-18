@@ -55,7 +55,7 @@ jest.mock('../services/documentService', () => ({
   update: jest.fn(), list: jest.fn(), setSharedLink: jest.fn(),
   upsertFromEntry: jest.fn(),
 }));
-jest.mock('../services/documentSourceService', () => ({ get: jest.fn() }));
+jest.mock('../services/documentSourceService', () => ({ get: jest.fn(), configured: () => 'dropbox' }));   // D3e: the configured provider
 jest.mock('../services/documentSyncService', () => ({}));
 jest.mock('../services/documentIngestService', () => ({ registerWritten: jest.fn() }));
 jest.mock('../services/dropboxService', () => ({

@@ -151,6 +151,53 @@ function list() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// The CONFIGURED provider (D3e): app_settings storage_provider
+// ─────────────────────────────────────────────────────────────
+//
+// Where the firm's documents live — the one setting every writer and reader
+// consults (`sources.get(sources.configured())`). The value is cached in the
+// process: read at boot (server.js) and again when the row changes (the
+// settings API's write path); the default is 'dropbox' until the first read
+// resolves, and whenever the row is absent. A value naming no registered
+// provider is REFUSED (logged, the previous value kept): a typo in the row
+// must not turn every filing into an "unknown document source" throw. Sync
+// by design — the ~80 call sites are inside sync getters; a per-call DB read
+// would also cost every filing a round trip for a value that changes once a
+// tenant lifetime.
+const CONFIGURED_KEY = 'storage_provider';
+const CONFIGURED_DEFAULT = 'dropbox';
+let _configured = CONFIGURED_DEFAULT;
+
+/** The configured source name (sync; the cached value). */
+function configured() {
+  return _configured;
+}
+
+/** Set the configured source from a raw row value; false (and a warning) when it names no registered provider. */
+function _setConfigured(raw) {
+  const name = raw == null ? '' : String(raw).trim();
+  const next = name || CONFIGURED_DEFAULT;
+  if (!providers.has(next)) {
+    console.warn(`[documentSourceService] storage_provider "${name}" names no registered provider (${[...providers.keys()].join(', ')}); keeping "${_configured}"`);
+    return false;
+  }
+  _configured = next;
+  return true;
+}
+
+/** Re-read app_settings storage_provider (boot, and after the row changes). Never throws: a failed read keeps the current value. */
+async function refreshConfigured(db) {
+  try {
+    const { getSetting } = require('./settingsService');   // deferred require (convention)
+    const raw = await getSetting(db, CONFIGURED_KEY);
+    return _setConfigured(raw);
+  } catch (err) {
+    console.warn(`[documentSourceService] storage_provider read failed; keeping "${_configured}": ${err && err.message}`);
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // Built-in: dropbox
 // ─────────────────────────────────────────────────────────────
 
@@ -462,6 +509,7 @@ const dropboxProvider = {
 register('dropbox', dropboxProvider);
 
 module.exports = {
+  configured, refreshConfigured, _setConfigured, CONFIGURED_KEY, CONFIGURED_DEFAULT,
   register,
   get,
   list,

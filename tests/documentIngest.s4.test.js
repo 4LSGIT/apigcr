@@ -63,7 +63,7 @@ jest.mock('../services/dropboxService', () => ({
   joinPath: (base, ...segs) => [base, ...segs.filter(Boolean)].join('/'),
 }));
 
-jest.mock('../services/documentSourceService', () => ({ get: jest.fn() }));
+jest.mock('../services/documentSourceService', () => ({ get: jest.fn(), configured: () => 'dropbox' }));   // D3e: the configured provider
 
 const documents = require('../services/documentService');
 const dropbox   = require('../services/dropboxService');

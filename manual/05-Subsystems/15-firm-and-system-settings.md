@@ -18,7 +18,7 @@ Every setting has exactly one place where it is changed:
 
 | Where | What |
 |---|---|
-| Config → **Firm** | Firm identity, senders, notifications & routing, client self-service & booking, Dropbox filing, E-Sign, marketing email & consent, and the firm's automation variables |
+| Config → **Firm** | Firm identity, senders, notifications & routing, client self-service & booking, document storage, E-Sign, marketing email & consent, and the firm's automation variables |
 | Portal Manager → **Settings** | The client portal's switch, branding, senders and assignees — see [the client portal](../06-Client-Facing/02-client-portal.md) |
 | Config → **Lists** | The lead sources offered on a case, and the legacy event-type list |
 | Config → **Types & Subtypes** | Case types (with usage checks and pipeline repointing) |
@@ -44,7 +44,7 @@ first.
 | **Senders** | The automations address, the default sender, the firm's email domains, the default and staff text lines |
 | **Notifications & routing** | Where IT and system alerts go, the catch-all inbox, and who gets office alerts, billing tasks, appointment follow-ups, the events digest and the review notice for documents filed from Comms (*Emailed documents review*); the payment-failure drip cooldown |
 | **Client self-service & booking** | What a client may do from their manage link (cancel, reschedule, rebook), the cutoff and horizon, the texts sent, and the Shabbos booking window |
-| **Dropbox filing** | The case folder templates and the "unsorted" folders for uploads, forms, generated and signed documents; what Comms' File attachments may file (below) |
+| **Document storage** | Where the firm's documents live (*Documents live in* — Dropbox today) and the credential it connects with; the folder templates (a case folder per stage; optionally a folder per contact) and the "unsorted" folders for uploads, forms, generated and signed documents and unfiled court documents; what Comms' File attachments may file (below) |
 | **E-Sign** | Test mode, the default reminder sequence, and the credit balance and its low-credit alert |
 | **Marketing email & consent** | Who gets consent follow-up tasks (unsubscribe-page notes, clients who opted out of texts, possible text opt-outs), the marketing footer's advertisement label and debt-relief-agency statement, the marketing reply-to address, and the campaign cap and paced rate — see [Email unsubscribe](../06-Client-Facing/07-email-unsubscribe.md) and [Text opt-outs](../01-YisraCase-overview/17-text-opt-outs.md) |
 | **Automation variables** | Settings the firm made for its own workflows (below) |
@@ -61,7 +61,7 @@ marketing send), *Operational campaign recipient cap* and *Paced send rate*
 marketing footer also reads the firm's name, mailing address, phone and
 signing attorney from **Firm identity**.
 
-**Email attachments** (Dropbox filing) — what a person may file with Comms'
+**Email attachments** (Document storage) — what a person may file with Comms'
 **File attachments** ([Mailboxes → Reading mail](../08-Admin-Tools/08-mailboxes.md#reading-mail--comms)):
 *Email attachments: never filed* — file types (extensions, like `exe, bat`)
 no one can file; blank means the built-in list of programs, scripts,

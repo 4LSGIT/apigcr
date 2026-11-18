@@ -78,8 +78,7 @@ const { DateTime } = require('luxon');
 const sources = require('./documentSourceService');
 
 /** The storage provider the firm's documents live in (D2 makes this a per-tenant setting). */
-const SOURCE = 'dropbox';
-const storage = () => sources.get(SOURCE);
+const storage = () => sources.get(sources.configured());   // D3e: the configured provider (app_settings storage_provider)
 const entityFolders = () => require('./entityFolderService');   // deferred require (convention); D3b-1: the case folder's binding
 const esignService = require('./esignService');
 const { getSetting } = require('./settingsService');

@@ -104,8 +104,7 @@ function codedError(code, message) {
 // Lazy requires (convention: services reached from internal_functions load
 // their heavy dependencies inside the call).
 const placement = () => require('./filePlacementService');
-const SOURCE_PROVIDER = 'dropbox';   // the storage provider the firm's documents live in (D2: a per-tenant setting)
-const storage = () => require('./documentSourceService').get(SOURCE_PROVIDER);
+const storage = () => { const s = require('./documentSourceService'); return s.get(s.configured()); };   // D3e: the configured provider (app_settings storage_provider)
 const docIngest = () => require('./documentIngestService');
 const uploadTarget = () => require('./uploadTargetService');
 const digest = () => require('./emailAttachmentDigestService');

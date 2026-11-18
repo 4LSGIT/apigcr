@@ -39,7 +39,8 @@
 'use strict';
 
 const KINDS = Object.freeze(['case', 'contact']);
-const DEFAULT_SOURCE = 'dropbox';
+/** The binding's source when the caller names none: the configured provider (D3e). */
+const DEFAULT_SOURCE = () => require('./documentSourceService').configured();   // deferred require (convention)
 const RESOLVE_ERROR_MAX = 255;
 const EXTERNAL_ID_MAX = 191;
 const HUMAN_LINK_MAX = 512;
@@ -53,7 +54,7 @@ function _clamp(v, n) {
 function _key({ kind, id, source }) {
   if (!KINDS.includes(kind)) throw new Error(`entityFolderService: kind must be ${KINDS.join(' | ')}, got ${JSON.stringify(kind)}`);
   if (id == null || String(id) === '') throw new Error('entityFolderService: id is required');
-  return { kind, id: String(id), source: source || DEFAULT_SOURCE };
+  return { kind, id: String(id), source: source || DEFAULT_SOURCE() };
 }
 
 async function _run(db, strict, label, fn) {
@@ -133,7 +134,7 @@ async function setRelinkDismissed(db, { kind, ids, source, dismissed, by }, { st
           SET relink_dismissed_at = ${dismissed ? 'NOW()' : 'NULL'},
               relink_dismissed_by = ?
         WHERE entity_kind = ? AND source = ? AND entity_id IN (?)`,
-      [dismissed ? (by ?? null) : null, kind, source || DEFAULT_SOURCE, list],
+      [dismissed ? (by ?? null) : null, kind, source || DEFAULT_SOURCE(), list],
     );
     return r;
   });

@@ -17,6 +17,8 @@ const dump = require('../scripts/storageConfigDump');
 const dbWith = (rows) => ({ query: jest.fn(async () => [rows, []]) });
 
 const EXPECTED_DEFAULTS = {
+  // D3e: the provider — no row = dropbox
+  provider: { value: 'dropbox', source: 'code_default', code_default: 'dropbox' },
   // D2: no credential default — a missing row is a refusal, and the dump says so
   credential: { code_default: null, source: 'MISSING — every storage operation refuses until the row exists', value: null },
   unsorted: {
@@ -51,7 +53,7 @@ test('defaults: no rows → every value is the code default the services export,
     case_folder_templates: { source: 'code_default', code_default: { potential: POTENTIAL, active: ACTIVE }, row: {}, effective: { potential: POTENTIAL, active: ACTIVE } },
   });
   expect(dump.KEYS).toEqual([
-    'dropbox_credential_id', 'dropbox_unsorted_generated_path', 'dropbox_unsorted_uploads_path',
+    'storage_provider', 'dropbox_credential_id', 'dropbox_unsorted_generated_path', 'dropbox_unsorted_uploads_path',
     'dropbox_unsorted_forms_path', 'dropbox_unsorted_esign_path', 'dropbox_unsorted_court_docs_path', 'storage_folders', 'dropbox_unreachable',
   ]);
 });
@@ -65,6 +67,7 @@ test('rows win, exactly as the writers read them: CR/LF stripped, an empty row i
     { key: 'storage_folders', value: JSON.stringify({ case: { active: { 'Bankruptcy:Ch 7': '/  X/ {{case_id}}', subfolders: [' A'] }, closed: { default: '/  Closed/ {{case_id}}' } }, contact: null }) },
   ]));
   expect(doc.credential).toEqual({ value: '21', source: 'app_settings', code_default: null });
+  expect((await dump.collect(dbWith([{ key: 'storage_provider', value: ' dropbox ' }]))).provider).toEqual({ value: 'dropbox', source: 'app_settings', code_default: 'dropbox' });
   expect(doc.unsorted.uploads.value).toBe('/  Firm/ Uploads');
   expect(doc.unsorted.uploads.source).toBe('app_settings');
   expect(doc.unsorted.forms).toEqual({ ...EXPECTED_DEFAULTS.unsorted.forms });
