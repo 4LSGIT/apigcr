@@ -120,7 +120,8 @@ test('a DROP that fails throws (the caller prints NO-GO; the ✓ lines say what 
   expect(r.line).toMatch(/^NO-GO — after the drop: cases\.case_dropbox STILL EXISTS, case_folder_cache gone\. Re-run to finish\./);
 });
 
-test('manifestNamesColumn reads the real manifest (D3d-2: still listed — the drop waits for D3d-2b)', () => {
+test('manifestNamesColumn reads the real manifest (D3d-2b: no longer listed — the manifest gate is open)', () => {
   const { TABLES } = require('../lib/reportSchema/manifest');
-  expect(script.manifestNamesColumn()).toBe(!!TABLES.cases.columns.case_dropbox);
+  expect(TABLES.cases.columns.case_dropbox).toBeUndefined();
+  expect(script.manifestNamesColumn()).toBe(false);
 });

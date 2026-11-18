@@ -2562,7 +2562,10 @@ email_ingest_sources, the assistant chat tables, backups/junk) get no grant;
   obligation left.
 - **Maintenance coupling:** a new allowlisted table or a newly denied column
   means re-running `--apply` (the grant set is generated, not hand-maintained).
-  Note this where the manifest is edited.
+  Note this where the manifest is edited. Exercised 2026-11-18 (storage-seam
+  D3d-2b): `entity_folders` joined the manifest, so the regrant ran before that
+  deploy; the retired `cases.case_dropbox` leaves an orphaned grant once D3d-3
+  drops it — the regrant runs again after the drop (next bullet).
 - **A dropped column leaves an orphaned grant** (proved on 8.4.11, opt-out
   drop 2026-10-27). The grant set is read from the LIVE schema, so the
   manifest's column list does not drive it, and a `DROP COLUMN` does NOT fail

@@ -161,11 +161,14 @@ describe('cases.case_dropbox — the widened column keeps every other attribute'
     expect(sync.CASE_DROPBOX_MAX).toBe(width);
   });
 
-  test('the curated report manifest declares the same type', () => {
+  test('the curated report manifest no longer lists the column; its successor declares the same type', () => {
     // manifest.js is prose the AI report author reads as fact. Nothing
     // validates it against the schema, so it drifts silently unless something
-    // like this asks.
+    // like this asks. Since storage-seam D3d-2b the link lives on
+    // entity_folders.human_link (same width); cases.case_dropbox is retired
+    // and must not be advertised — the D3d-3 drop refuses while it is.
     const { TABLES } = require('../lib/reportSchema/manifest');
-    expect(TABLES.cases.columns.case_dropbox.type).toBe('varchar(512)');
+    expect(TABLES.cases.columns.case_dropbox).toBeUndefined();
+    expect(TABLES.entity_folders.columns.human_link.type).toBe('varchar(512)');
   });
 });

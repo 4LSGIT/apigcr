@@ -1206,7 +1206,13 @@ describe('A13b — every stage teaches the attachment filing card, the preview r
 describe('A11.1 — every stage teaches the case folder card, the candidates read and its refusals', () => {
   test('the plan carries the read kind and the family bullet', () => {
     expect(planPrompt).toContain('document.relink.candidates ({"case_id":"7KQ2M9XA"} — ONE\n  case\'s Dropbox folder candidates');
-    expect(planPrompt).toContain('case_folder_cache is NOT in the curated schema, so never sql.read it');
+    // D3d-2b: case_folder_cache is retired; the link lives on entity_folders (in the curated schema), the
+    // candidates still come only from the typed read, and the sql.read the cards need spells the join.
+    expect(planPrompt).toContain('entity_folders holds the folder each case points at, never the\n  candidates');
+    expect(planPrompt).toContain('entity_folders holds the link a case points at, never its candidates');
+    expect(planPrompt.match(/entity_folders\.human_link AS\s+case_dropbox — LEFT JOIN entity_folders\s+ON entity_kind = 'case' AND entity_id = case_id AND source = 'dropbox'; cases\s+has no case_dropbox column/g)).toHaveLength(2);
+    expect(planPrompt).not.toMatch(/case_folder_cache/);
+    expect(planPrompt).not.toMatch(/case_number(?:_full)?,? and case_dropbox/);
     expect(planPrompt).toContain('Reviewed case folder actions are available: link ONE case to ONE Dropbox folder');
     expect(planPrompt).toContain('a folder it lists can be proposed, copied\n  exactly');
     expect(planPrompt).toContain('several\n  cases or folders at once (there is no bulk re-link)');

@@ -144,6 +144,21 @@ describe('documents / document_links are readable; shared_link is a capability, 
     }
   });
 
+  test('entity_folders is readable (D3d-2b) and the retired case folder pair is not advertised', () => {
+    // The case folder link moved to entity_folders.human_link (storage-seam
+    // D3d-2); case_folder_cache was never allowlisted and cases.case_dropbox is
+    // retired. GRANTS FOLLOW THIS FILE: adding the table here is what made the
+    // yc_report regrant part of this slice's deploy order.
+    expect([isAllowedTable('entity_folders'), isAllowedTable('case_folder_cache')]).toEqual([true, false]);
+    expect(Object.keys(TABLES.entity_folders.columns)).toEqual(['entity_kind', 'entity_id', 'source', 'human_link', 'path_display', 'path_lower', 'resolve_error', 'resolved_at']);
+    expect(Object.keys(TABLES.cases.columns)).not.toContain('case_dropbox');
+    expect(ok(
+      "SELECT c.case_id, c.case_number, f.human_link AS case_dropbox FROM cases c " +
+      "LEFT JOIN entity_folders f ON f.entity_kind = 'case' AND f.entity_id = c.case_id AND f.source = 'dropbox' LIMIT 20"
+    )).toBe(true);
+    expect(ok('SELECT path_lower FROM case_folder_cache LIMIT 1')).toBe(false);
+  });
+
   test('the checklists entry describes what it holds: kind, body, and every link_type', () => {
     expect(Object.keys(TABLES.checklists.columns)).toEqual(expect.arrayContaining(['kind', 'body']));
     expect(TABLES.checklists.columns.link_type.type).toBe("enum('contact','case','bill','appt','task','user','event')");
