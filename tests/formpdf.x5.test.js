@@ -126,7 +126,8 @@ beforeEach(() => {
   db.query.mockReset();
   // Default: case row with a live folder link; name lookups find John Smith.
   db.query.mockImplementation(async (sql) => {
-    if (/case_dropbox/.test(sql)) return [[{ case_dropbox: 'https://www.dropbox.com/sh/case-link' }]];
+    if (/FROM entity_folders/.test(sql)) return [[{ external_id: null, path_lower: null, human_link: 'https://www.dropbox.com/sh/case-link' }]];   // D3d-2: the binding is the record
+    if (/FROM cases/.test(sql)) return [[{ case_id: 'hjSFMabb' }]];
     if (/contact_lfm_name/.test(sql)) return [[{ contact_lfm_name: 'Smith, John' }]];
     return [[]];
   });
@@ -424,7 +425,8 @@ describe('fileSubmissionPdf — placement ladder', () => {
   test('rung 2: no case_dropbox → ensureCaseDropboxFolder + merge task, then case placement', async () => {
     formService.getSubmissionForRender.mockResolvedValue(makeBundle());
     db.query.mockImplementation(async (sql) => {
-      if (/case_dropbox/.test(sql)) return [[{ case_dropbox: null }]];
+      if (/FROM entity_folders/.test(sql)) return [[]];
+      if (/FROM cases/.test(sql)) return [[{ case_id: 'hjSFMabb' }]];
       if (/contact_lfm_name/.test(sql)) return [[{ contact_lfm_name: 'Smith, John' }]];
       return [[]];
     });

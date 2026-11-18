@@ -11,7 +11,7 @@
 // bridge. Delegates to caseService.ensureCaseDropboxFolder:
 //   - case has a docket number → Active-tree convention + staff subfolders
 //   - otherwise → Potential-tree convention (+ Client Uploads)
-//   - case_dropbox already set → returns the existing link, touches nothing
+//   - the case already bound to a folder → returns the existing link, touches nothing
 // The shared link is awaited and returned (errors now surface to the
 // case-page Swal instead of vanishing inside Pabbly).
 //

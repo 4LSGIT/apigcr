@@ -264,7 +264,7 @@ describe('the card', () => {
     expect(d.effects).toEqual([
       'Matched on: the docket lane — the case number "25-12345" appears in the folder\'s name.',
       'Now points at: "/Law/Potential/Smith".',
-      'Case link: the case\'s Dropbox link (cases.case_dropbox) is REWRITTEN — from https://www.dropbox.com/scl/fo/old — to the folder\'s permanent Dropbox shared link: Dropbox\'s existing link for it, else a NEW one created with public visibility (anyone holding it can open the folder). The old link is kept only in the audit entry.',
+      'Case link: the case\'s Dropbox link (case_dropbox) is REWRITTEN — from https://www.dropbox.com/scl/fo/old — to the folder\'s permanent Dropbox shared link: Dropbox\'s existing link for it, else a NEW one created with public visibility (anyone holding it can open the folder). The old link is kept only in the audit entry.',
       'Attaches NOW: 12 registered files of the 12 under this folder get the sync\'s link to this case and show on its Documents tab at once — silently: no document.linked event fires for them.',
       'Detaches: nothing — the case holds no sync-made link to a file outside this folder. Links people made are never touched (2 on this case).',
       'Documents tab: the case\'s Documents tab lists the folder\'s files from now on (staff only — the client portal lists no documents).',
@@ -294,7 +294,7 @@ describe('the card', () => {
       { out, cache, predict: { total: cap + 9, held: 9, heldBy: [{ case_id: 'OUTER111', n: 7 }, { case_id: CASE_ID, n: 2 }], unattached, detach: 4, kept: 1, labels: { OUTER111: '24-99999' } } });
     expect(d.effects[0]).toBe('Matched on: the name lane — every required word of the client name "Smith, Dana" (surname and first given name) appears in the folder\'s name.');
     expect(d.effects[1]).toBe('Now points at: no folder.');
-    expect(d.effects[2]).toMatch(/^Case link: the case's Dropbox link \(cases\.case_dropbox\) is REWRITTEN — from blank — to/);
+    expect(d.effects[2]).toMatch(/^Case link: the case's Dropbox link \(case_dropbox\) is REWRITTEN — from blank — to/);
     expect(d.effects[3]).toBe(`Attaches NOW: at least ${(cap - 3).toLocaleString('en-US')} registered files of the ${(cap + 9).toLocaleString('en-US')} under this folder get the sync's link to this case and show on its Documents tab at once — silently: no document.linked event fires for them. 9 files already carry the sync's link to a case and stay as they are (7 files on case 24-99999; 2 files on this case already). 3 files sit inside another case's folder nested here and stay with that case.`);
     expect(d.warnings).toEqual([
       'DETACHES 4 DOCUMENTS: 4 of this case\'s links the sync made to files OUTSIDE the new folder are deleted, and those files leave the case\'s Documents tab. Only machine links go — 1 link a person made (or with another relation) stays.',
@@ -651,8 +651,8 @@ describe('A11.1X case.folder.relink.undo.v1 — the latest re-link, undone throu
     await refuseUndo(undo(), `A NEWER RE-LINK EXISTS for case 25-12345: entry #48300 (2026-11-12 08:00 firm time) is the latest. Only the latest re-link can be undone — undo that one first (one step at a time; each undo is itself a re-link with its own entry)`, { latestLog: { log_id: 48300, at_text: '2026-11-12 08:00' } });
     await refuseUndo(undo(), `Entry #${LOG_ID} recorded no previous folder (the case had no cached folder before that re-link, only a link that never resolved) — there is nothing to re-link back to. To clear the case's folder, unlink its documents one by one and clear the Dropbox link by hand`, { logRow: AUDIT({ relink: { old_path: null } }) });
     await refuseUndo(undo(), /^THE DOCUMENT SYNC IS SWITCHED OFF/, { enabled: false });
-    await refuseUndo(undo(), `Case 25-12345's Dropbox link is no longer the one entry #${LOG_ID} wrote — someone changed it since, so that entry is not what the case's current state came from. Nothing to undo from it`, { prior: { case_dropbox: 'https://www.dropbox.com/scl/fo/moved-on' } });
-    await refuseUndo(undo(), `Case 25-12345's Dropbox link is no longer the one entry #${LOG_ID} wrote (it is blank now)`, { prior: { case_dropbox: null } });
+    await refuseUndo(undo(), `Case 25-12345's Dropbox link is no longer the one entry #${LOG_ID} wrote — someone changed it since, so that entry is not what the case's current state came from. Nothing to undo from it`, { out: freshOut({ current_link: 'https://www.dropbox.com/scl/fo/moved-on' }) });
+    await refuseUndo(undo(), `Case 25-12345's Dropbox link is no longer the one entry #${LOG_ID} wrote (it is blank now)`, { out: freshOut({ current_link: null }) });   // D3d-2: the link is the binding's (the candidates read), not a cases column
     await refuseUndo(undo(), `That changes nothing — case 25-12345 already points at "${FOLDER}"`, { out: freshOut({ current_path: FOLDER }) });
     expect(calls.dropbox).toEqual([]);
   });
@@ -672,7 +672,7 @@ describe('A11.1X case.folder.relink.undo.v1 — the latest re-link, undone throu
       `Paths: before that re-link "${FOLDER}" → now "/Law/Potential/Smith" → back to "${FOLDER}".`,
       `Old folder: still in Dropbox (shown as "/Law/Active/ 7 - Smith, Dana - 25-12345"), under the sync root "/law", 2 files directly (newest 2026-10-01) and 1 subfolder; 12 registered files are under it.`,
       'Matched on: the docket lane — the case number "25-12345" appears in the folder\'s name (the old folder is one of the panel\'s candidates today).',
-      'Case link: the case\'s Dropbox link (cases.case_dropbox) is REWRITTEN — from https://www.dropbox.com/scl/fo/old — to the old folder\'s permanent Dropbox shared link: Dropbox\'s existing link for it (usually the one the entry recorded, https://www.dropbox.com/scl/fo/older), else a NEW one created with public visibility (anyone holding it can open the folder).',
+      'Case link: the case\'s Dropbox link (case_dropbox) is REWRITTEN — from https://www.dropbox.com/scl/fo/old — to the old folder\'s permanent Dropbox shared link: Dropbox\'s existing link for it (usually the one the entry recorded, https://www.dropbox.com/scl/fo/older), else a NEW one created with public visibility (anyone holding it can open the folder).',
       'Attaches NOW: 12 registered files of the 12 under the old folder get the sync\'s link to this case again and show on its Documents tab at once — silently: no document.linked event fires for them.',
     ]);
     expect(d.warnings).toEqual(['DETACHES 3 DOCUMENTS: 3 of this case\'s links the sync made to files OUTSIDE the old folder — the files the re-link being undone attached, among them — are deleted, and those files leave the case\'s Documents tab. Only machine links go — 1 link a person made (or with another relation) stays.']);
@@ -698,7 +698,7 @@ describe('A11.1X case.folder.relink.undo.v1 — the latest re-link, undone throu
       predict: { total: 4, unattached: Array.from({ length: 4 }, (_, i) => ({ id: i + 1, path_lower: `${OLD}/f${i}.pdf` })) }, registered: { n: 4, newest: null } });
     expect(d.effects[0]).toBe(`Audit entry: #${LOG_ID} on 2026-11-10 09:30 firm time by Automations re-linked the case from "${OLD}" to "/law/potential/smith" (detached 2, attached 3). It is the case's latest re-link.`);
     // No lane line: the "Matched on" slot is the danger warning instead, so the link line is next.
-    expect(d.effects[3]).toBe('Case link: the case\'s Dropbox link (cases.case_dropbox) is REWRITTEN — from https://www.dropbox.com/scl/fo/old — to the old folder\'s permanent Dropbox shared link: Dropbox\'s existing link for it (usually the one the entry recorded), else a NEW one created with public visibility (anyone holding it can open the folder).');
+    expect(d.effects[3]).toBe('Case link: the case\'s Dropbox link (case_dropbox) is REWRITTEN — from https://www.dropbox.com/scl/fo/old — to the old folder\'s permanent Dropbox shared link: Dropbox\'s existing link for it (usually the one the entry recorded), else a NEW one created with public visibility (anyone holding it can open the folder).');
     expect(d.warnings).toEqual([
       `NOT A CANDIDATE: neither the case number nor a client's name (Smith, Dana; Smith, Lee) is in the old folder's name (" old smith") — the panel would not suggest it. The entry says the case pointed there once; nothing else ties it to this client. Be sure the undo is right.`,
       'INSIDE ANOTHER CASE\'S FOLDER: the old folder sits inside case OUTER111\'s folder. Its files that already carry that case\'s sync link stay there and do not attach here (counted above); files added later attach to THIS case. Joint debtors can make this right — make sure it is.',

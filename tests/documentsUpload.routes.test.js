@@ -89,7 +89,11 @@ const CASE_FOLDER = '/  law office/   cases/ smith - c1';
 const UNSORTED    = '/  Law Office/   Cases/  Unsorted Client Uploads';
 
 let dbRows = [];                                // what `SELECT … FROM cases` returns
-const DB = { query: async (sql) => (/FROM entity_folders/.test(sql) ? [[]] : [dbRows]) };   // D3b-1: no binding row here → the legacy column (dbRows)
+// D3d-2: the binding is the record (dbRows[0].case_dropbox stands in for its human_link); the case PK read answers from dbRows
+const DB = { query: async (sql) => {
+  if (/FROM entity_folders/.test(sql)) return [dbRows.length && dbRows[0].case_dropbox ? [{ external_id: null, path_lower: null, human_link: dbRows[0].case_dropbox }] : []];
+  return [dbRows.map((r) => ({ case_id: r.case_id }))];
+} };
 
 const app = express();
 app.use(express.json());

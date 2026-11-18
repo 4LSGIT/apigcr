@@ -194,20 +194,21 @@ suite('storage replay on real MySQL', () => {
     } finally { conn.release(); }
   });
 
-  test('D3b-1: caseFolderLink reads the binding first and the legacy column second on real rows; setHumanLink keeps only the link when it changes; updateCase / createCase carry a hand-written link into the binding', async () => {
+  test('D3b-1 → D3d-2: caseFolderLink reads the binding ALONE on real rows (the retired column is never consulted); setHumanLink keeps only the link when it changes; updateCase / createCase carry a hand-written link into the binding', async () => {
     const a = await reset();
-    const live = (await q('SELECT case_dropbox FROM cases WHERE case_id = ?', ['hjSFMabb']))[0].case_dropbox;
-    // precedence: the column is stale, the binding is live → the binding's link, with the handle and path it holds
+    const live = (await bindings()).find((r) => r.entity_id === 'hjSFMabb').human_link;
+    // the column is stale, the binding is live → the binding's link, with the handle and path it holds
     await q("UPDATE cases SET case_dropbox = 'https://www.dropbox.com/scl/fo/stale000?dl=0' WHERE case_id = 'hjSFMabb'");
     expect(await entityFolders.caseFolderLink(db, 'hjSFMabb')).toEqual({ found: true, link: live, via: 'binding', externalId: a.id, pathLower: a.path_lower });
-    // legacy only: a case with a link and no binding row
+    expect((await caseService.getCase(db, 'hjSFMabb')).case.case_dropbox).toBe(live);   // the API alias reads the binding, not the stale column
+    // column only (no binding row): UNBOUND, the case found — production has no such case (1105 = 1105, 2026-11-18)
     await q("INSERT INTO cases (case_id, case_dropbox) VALUES ('legacy01', ' https://www.dropbox.com/scl/fo/legacy01?dl=0 ')");
-    expect(await entityFolders.caseFolderLink(db, 'legacy01')).toEqual({ found: true, link: 'https://www.dropbox.com/scl/fo/legacy01?dl=0', via: 'case', externalId: null, pathLower: null });
-    // a case with neither; a case that does not exist; the row passed in saves the fallback read
+    expect(await entityFolders.caseFolderLink(db, 'legacy01')).toEqual({ found: true, link: null, via: null, externalId: null, pathLower: null });
+    expect((await caseService.getCase(db, 'legacy01')).case.case_dropbox).toBeNull();
+    // a case with neither (found, unbound); a case that does not exist (not found)
     await q("INSERT INTO cases (case_id) VALUES ('bare0001')");
     expect(await entityFolders.caseFolderLink(db, 'bare0001')).toEqual({ found: true, link: null, via: null, externalId: null, pathLower: null });
     expect(await entityFolders.caseFolderLink(db, 'noSuchCs')).toEqual({ found: false, link: null, via: null, externalId: null, pathLower: null });
-    expect((await entityFolders.caseFolderLink(db, 'noSuchCs', { caseRow: null })).found).toBe(false);
     expect(await entityFolders.casePathLower(db, 'hjSFMabb')).toBe(a.path_lower);
     await q("UPDATE entity_folders SET resolve_error = 'x' WHERE entity_id = 'hjSFMabb'");
     expect(await entityFolders.casePathLower(db, 'hjSFMabb', { resolvedOnly: true })).toBeNull();
@@ -220,17 +221,20 @@ suite('storage replay on real MySQL', () => {
     await entityFolders.setHumanLink(db, { kind: 'case', id: 'hjSFMabb', humanLink: 'https://www.dropbox.com/scl/fo/moved001?dl=0' }, { strict: true });
     b = (await bindings()).find((r) => r.entity_id === 'hjSFMabb');
     expect([b.external_id, b.path_lower, b.path_display, b.resolve_error, b.human_link, !!b.resolved]).toEqual([null, null, null, null, 'https://www.dropbox.com/scl/fo/moved001?dl=0', false]);
-    await entityFolders.setHumanLink(db, { kind: 'case', id: 'legacy01', humanLink: 'https://www.dropbox.com/scl/fo/legacy01?dl=0' }, { strict: true });   // a first binding for a legacy-only case
+    await entityFolders.setHumanLink(db, { kind: 'case', id: 'legacy01', humanLink: 'https://www.dropbox.com/scl/fo/legacy01?dl=0' }, { strict: true });   // a first binding for a column-only case
     expect((await entityFolders.caseFolderLink(db, 'legacy01')).via).toBe('binding');
     await entityFolders.setHumanLink(db, { kind: 'case', id: 'legacy01', humanLink: '  ' }, { strict: true });
     expect((await bindings()).map((r) => r.entity_id)).toEqual(['deadLnk1', 'hjSFMabb']);
-    // the house write paths: updateCase and createCase carrying case_dropbox bind the case (mysql2 answers information_schema for writableColumns on these real tables)
-    await caseService.updateCase(db, 'bare0001', { case_dropbox: 'https://www.dropbox.com/scl/fo/byhand01?dl=0' }, { userId: 6, source: 'manual' });
+    // the house write paths: updateCase and createCase carrying case_dropbox bind the case and leave the column ALONE (mysql2 answers information_schema for writableColumns on these real tables)
+    const r1 = await caseService.updateCase(db, 'bare0001', { case_dropbox: 'https://www.dropbox.com/scl/fo/byhand01?dl=0' }, { userId: 6, source: 'manual' });
+    expect(r1.changes).toEqual({ case_dropbox: { from: null, to: 'https://www.dropbox.com/scl/fo/byhand01?dl=0' } });
     expect(await entityFolders.caseFolderLink(db, 'bare0001')).toMatchObject({ link: 'https://www.dropbox.com/scl/fo/byhand01?dl=0', via: 'binding' });
+    expect((await q('SELECT case_dropbox FROM cases WHERE case_id = ?', ['bare0001']))[0].case_dropbox).toBeNull();   // the column is not written any more
     await caseService.updateCase(db, 'bare0001', { case_dropbox: '' }, { userId: 6, source: 'manual' });
     expect((await bindings()).map((r) => r.entity_id)).toEqual(['deadLnk1', 'hjSFMabb']);
     const made = await caseService.createCase(db, { case_type: 'Bankruptcy', case_dropbox: 'https://www.dropbox.com/scl/fo/atcreate?dl=0' });
     expect(await entityFolders.caseFolderLink(db, made.case_id)).toMatchObject({ link: 'https://www.dropbox.com/scl/fo/atcreate?dl=0', via: 'binding' });
+    expect((await q('SELECT case_dropbox FROM cases WHERE case_id = ?', [made.case_id]))[0].case_dropbox).toBeNull();
     // _relationFor reads the binding's path: a file under case A's folder is 'path' even with the cache row gone
     await q('TRUNCATE TABLE case_folder_cache');
     await entityFolders.setResolved(db, { kind: 'case', id: 'hjSFMabb', externalId: a.id, pathLower: a.path_lower, pathDisplay: a.path_display, humanLink: live }, { strict: true });
@@ -244,9 +248,7 @@ suite('storage replay on real MySQL', () => {
     const links = fake.seed({ folders: [`${f}/ byHand01 - Hand, Ann`, `${f}/ oldest01 - Old, Bob`], links: [`${f}/ byHand01 - Hand, Ann`, `${f}/ oldest01 - Old, Bob`] });
     const hand = links[`${f}/ byHand01 - Hand, Ann`]; const old = links[`${f}/ oldest01 - Old, Bob`];
     await q('INSERT INTO cases (case_id, case_dropbox) VALUES (?, ?), (?, ?)', ['byHand01', hand, 'oldest01', old]);
-    // the cache says byHand01 was resolved yesterday and oldest01 a year ago (the cache's ordering would pick oldest01);
-    // the binding says byHand01 was never resolved (setHumanLink: a hand-written link) and oldest01 yesterday
-    await q("INSERT INTO case_folder_cache (case_id, path_lower, resolved_at) VALUES (?, '/x', NOW() - INTERVAL 1 DAY), (?, '/y', NOW() - INTERVAL 365 DAY)", ['byHand01', 'oldest01']);
+    // the binding says byHand01 was never resolved (setHumanLink: a hand-written link) and oldest01 yesterday (D3d-2: the binding is the only record; the column rows above are inert)
     await q("INSERT INTO entity_folders (entity_kind, entity_id, source, human_link, resolved_at) VALUES ('case', ?, 'dropbox', ?, NULL), ('case', ?, 'dropbox', ?, NOW() - INTERVAL 1 DAY)", ['byHand01', hand, 'oldest01', old]);
     await q("UPDATE entity_folders SET resolved_at = NOW() - INTERVAL 2 DAY WHERE entity_id IN ('hjSFMabb', 'deadLnk1')");
     fake.calls.length = 0;
@@ -254,6 +256,45 @@ suite('storage replay on real MySQL', () => {
     expect([out.candidates, out.scanned]).toEqual([1, 1]);
     expect(fake.calls.filter((c) => c.fn === 'getSharedLinkMetadata').map((c) => c.args[0].url)).toEqual([hand]);   // NULL-first on the binding, not oldest-first on the cache
     expect((await bindings()).find((r) => r.entity_id === 'byHand01').resolved).toBeTruthy();
+  });
+
+  test('D3d-2 REHEARSAL OF THE DROP: with cases.case_dropbox GONE from the table, getCase / updateCase / createCase / ensureCaseDropboxFolder / refresh / dismiss all run on the binding alone', async () => {
+    const a = await reset();
+    await q('ALTER TABLE cases DROP COLUMN case_dropbox');
+    try {
+      const live = (await bindings()).find((r) => r.entity_id === 'hjSFMabb').human_link;
+      expect((await caseService.getCase(db, 'hjSFMabb')).case.case_dropbox).toBe(live);
+      await q("INSERT INTO cases (case_id, case_type, case_subtype) VALUES ('bare0002', 'Bankruptcy', 'Ch 7')");
+      expect((await caseService.getCase(db, 'bare0002')).case.case_dropbox).toBeNull();
+      // the alias key passes the information_schema gate without the column
+      const r = await caseService.updateCase(db, 'bare0002', { case_dropbox: 'https://www.dropbox.com/scl/fo/nocolumn?dl=0', case_notes: 'n' }, { userId: 6, source: 'manual' });
+      expect(r.updated_fields).toEqual(['case_notes', 'case_dropbox']);
+      expect(r.changes.case_dropbox).toEqual({ from: null, to: 'https://www.dropbox.com/scl/fo/nocolumn?dl=0' });
+      expect((await caseService.getCase(db, 'bare0002')).case.case_dropbox).toBe('https://www.dropbox.com/scl/fo/nocolumn?dl=0');
+      await caseService.updateCase(db, 'bare0002', { case_dropbox: '' }, { userId: 6 });
+      expect((await caseService.getCase(db, 'bare0002')).case.case_dropbox).toBeNull();
+      const made = await caseService.createCase(db, { case_type: 'Bankruptcy', case_dropbox: 'https://www.dropbox.com/scl/fo/created1?dl=0' });
+      expect((await caseService.getCase(db, made.case_id)).case.case_dropbox).toBe('https://www.dropbox.com/scl/fo/created1?dl=0');
+      // ensureCaseDropboxFolder: creates + binds (no column write to fail on); a second call returns the binding
+      await q("INSERT INTO contacts (contact_id, contact_kind, contact_name, contact_lfm_name) VALUES (503, 'person', 'Carl Case', 'Case, Carl')");
+      await q("INSERT INTO case_relate (case_relate_id, case_relate_case_id, case_relate_client_id, case_relate_type) VALUES (8003, 'bare0002', 503, 'Primary')");
+      const made1 = await caseService.ensureCaseDropboxFolder(db, 'bare0002');
+      expect(made1.existed).toBe(false);
+      expect(await entityFolders.caseFolderLink(db, 'bare0002')).toMatchObject({ link: made1.shared_link, via: 'binding', pathLower: made1.path.toLowerCase() });
+      expect(await caseService.ensureCaseDropboxFolder(db, 'bare0002')).toEqual({ existed: true, stage: null, path: null, shared_link: made1.shared_link });
+      // the sync engine's refresh and the relink dismissal on the binding
+      fake.calls.length = 0;
+      const refresh = await sync.refreshCaseFolderCache(db, { caseIds: ['hjSFMabb', 'deadLnk1', 'bare0002'] });
+      expect([refresh.resolved, refresh.failed]).toEqual([2, 1]);
+      expect(fake.calls.filter((c) => c.fn === 'getSharedLinkMetadata')).toHaveLength(3);
+      const out = await sync.setRelinkDismissed(db, ['hjSFMabb'], { actorUserId: 6 });
+      expect(out.updated).toBe(1);
+      expect((await bindings()).find((r) => r.entity_id === 'hjSFMabb').relink_dismissed_by).toBe(6);
+      expect((await q('SELECT COUNT(*) AS c FROM case_folder_cache'))[0].c).toBe(1);   // never written: still the seed's one row
+      void a;
+    } finally {
+      await q('ALTER TABLE cases ADD COLUMN case_dropbox VARCHAR(512) NULL');   // the schema the other tests seed
+    }
   });
 
   test('D3c-2: contact folders on real tables — off without the row; on with the platform tree: created + bound (kind contact), reused, the case folder nested under it via {{contact_folder}}', async () => {

@@ -31,12 +31,12 @@
 //          --raw    full payloads in --verify.
 //
 // ─── WHY --send USES A REAL CASE ─────────────────────────────────────────────
-// The filing path resolves cases.case_dropbox and files into that folder. A
+// The filing path resolves the case folder link (entity_folders) and files into that folder. A
 // fake case id would exercise the skip branch, which is not the branch that
 // needs proving. Pick a real case you do not mind a test PDF appearing in —
 // it lands in "<case folder>/Signed Documents/".
 //
-// 69 of 1066 live cases have no case_dropbox. If you want to check the SKIP
+// 69 of 1066 live cases had no folder link (2026-10). If you want to check the SKIP
 // path instead, pass one of those: expect status signed, no PDF path, and a
 // "File signed doc manually" task.
 
@@ -197,15 +197,17 @@ async function runSend() {
   section('PRE-FLIGHT');
 
   const [[caseRow]] = await db.query(
-    'SELECT case_id, case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId]
+    'SELECT case_id FROM cases WHERE case_id = ? LIMIT 1', [caseId]
   );
   if (!caseRow) {
     check(`case ${caseId} exists`, false, 'No such case. Pass a real case_id.');
     return 1;
   }
   check(`case ${caseId} exists`, true);
+  // D3d-2: the folder link is the entity_folders binding's (the column is retired)
+  caseRow.case_dropbox = (await require('../services/entityFolderService').caseFolderLink(db, caseRow.case_id)).link;
   check('case has a Dropbox folder',
-    Boolean(caseRow.case_dropbox), 
+    Boolean(caseRow.case_dropbox),
     caseRow.case_dropbox
       ? String(caseRow.case_dropbox).slice(0, 90)
       : 'EMPTY — filing will SKIP and raise a manual-filing task. That is a valid path to test, just not the main one.');
@@ -342,14 +344,15 @@ async function runVerify() {
   // ── filing ────────────────────────────────────────────────────────────────
   section('DROPBOX FILING');
 
-  const [[caseRow]] = request.linkable_type === 'case'
-    ? await db.query('SELECT case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [request.linkable_id])
-    : [[null]];
-  const expectFiling = Boolean(caseRow && caseRow.case_dropbox);
+  // D3d-2: the folder link is the entity_folders binding's (the column is retired)
+  const filedLink = request.linkable_type === 'case'
+    ? (await require('../services/entityFolderService').caseFolderLink(db, request.linkable_id)).link
+    : null;
+  const expectFiling = Boolean(filedLink);
 
   if (!expectFiling) {
     check('filing correctly SKIPPED (no case folder)', !request.signed_pdf_path,
-      'This case has no case_dropbox, so the skip path is what should have run. ' +
+      'This case has no folder link, so the skip path is what should have run. ' +
       'Confirm a "File signed doc manually" task exists.');
   } else {
     check('signed_pdf_path recorded', Boolean(request.signed_pdf_path), request.signed_pdf_path || 'NULL');

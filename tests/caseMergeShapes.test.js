@@ -265,7 +265,6 @@ const M1_TABLES = [
   'case_stage_log',
   'case_requirement_overrides',
   'case_stage_aged_emitted',
-  'case_folder_cache',
   'entity_folders',
   'portal_access_log',
   'trigger_executions',
@@ -287,26 +286,27 @@ describe('M1 — every case-keyed table is repointed', () => {
     }
   });
 
-  test('case_folder_cache is DELETE-ONLY — never repointed, and never the survivor', async () => {
-    // PK is case_id, so a repoint collides outright when the survivor has a
-    // row — but the real reason is that this caches a Dropbox folder, and
-    // case_dropbox is survivor-wins. Moving the loser's cache row would hand
-    // the survivor a resolved folder its own case_dropbox contradicts.
+  test('entity_folders is DELETE-ONLY — never repointed, and never the survivor (D3d-2: case_folder_cache is gone from the ledger)', async () => {
+    // The PK is the entity, so a repoint collides outright when the survivor
+    // has a row — but the real reason is that this binds a folder, and the
+    // folder link is survivor-wins. Moving the loser's row would hand the
+    // survivor a resolved folder its own link contradicts.
     const db = stubDb();
     const plan = await caseService.mergeCases(db, SURVIVOR, LOSER);
 
-    expect(db.calls.some(c => /^UPDATE case_folder_cache/i.test(c.sql))).toBe(false);
+    expect(db.calls.some(c => /^UPDATE entity_folders/i.test(c.sql))).toBe(false);
+    expect(db.calls.some(c => /case_folder_cache/i.test(c.sql))).toBe(false);
 
-    const del = oneCall(db, /^DELETE FROM case_folder_cache/i);
-    expect(del.sql).toBe('DELETE FROM case_folder_cache WHERE case_id <> ? AND case_id = ?');
-    // The `<> ?` guard is structural, not decoration: the survivor's own cache
-    // row can never be the one this statement removes.
+    const del = oneCall(db, /^DELETE FROM entity_folders/i);
+    expect(del.sql).toBe("DELETE FROM entity_folders WHERE entity_kind = 'case' AND entity_id <> ? AND entity_id = ?");
+    // The `<> ?` guard is structural, not decoration: the survivor's own row
+    // can never be the one this statement removes.
     expect(del.params).toEqual([SURVIVOR, LOSER]);
 
     // Reported at 0 moved (with its rows under `_dropped`), so the label still
     // appears in the merge note like every other child table.
-    expect(plan.children.case_folder_cache).toBe(0);
-    expect(plan.children).toHaveProperty('case_folder_cache_dropped');
+    expect(plan.children.entity_folders).toBe(0);
+    expect(plan.children).toHaveProperty('entity_folders_dropped');
   });
 
   test('SURVIVOR-WINS overrides: the collider is dropped, the rest repointed, both counted', async () => {
@@ -385,7 +385,7 @@ describe('M1 — every case-keyed table is repointed', () => {
     const entry = logService.createLogEntry.mock.calls[0][1];
     for (const t of M1_TABLES) expect(entry.message).toContain(`${t}=`);
     expect(entry.message).toContain('case_requirement_overrides_dropped=');
-    expect(entry.message).toContain('case_folder_cache_dropped=');
+    expect(entry.message).toContain('entity_folders_dropped=');
     // The snapshot's children block is the recoverable copy of the same thing.
     expect(entry.extra.merge.children).toEqual(plan.children);
   });
@@ -396,14 +396,14 @@ describe('M1 — every case-keyed table is repointed', () => {
     const db = stubDb({
       answers: [
         [/FROM case_requirement_overrides lo JOIN/i, [[{ c: 2 }]]],
-        [/SELECT COUNT\(\*\) AS c FROM case_folder_cache WHERE case_id <> \?/i, [[{ c: 1 }]]],
-        [/SELECT COUNT\(\*\) AS c FROM case_folder_cache WHERE case_id = \?/i, [[{ c: 1 }]]],
+        [/SELECT COUNT\(\*\) AS c FROM entity_folders WHERE entity_kind = 'case' AND entity_id <> \?/i, [[{ c: 1 }]]],
+        [/SELECT COUNT\(\*\) AS c FROM entity_folders WHERE entity_kind = 'case' AND entity_id = \?/i, [[{ c: 1 }]]],
       ],
     });
     const plan = await caseService.mergeCases(db, SURVIVOR, LOSER, { dryRun: true });
 
-    expect(plan.children.case_folder_cache).toBe(0);          // never repointed
-    expect(plan.children.case_folder_cache_dropped).toBe(1);
+    expect(plan.children.entity_folders).toBe(0);          // never repointed
+    expect(plan.children.entity_folders_dropped).toBe(1);
     expect(plan.children.case_requirement_overrides_dropped).toBe(2);
     for (const t of M1_TABLES) expect(plan.children).toHaveProperty(t);
     // Still writes nothing (the premise the sync bus stays silent on).

@@ -30,7 +30,7 @@
  * values are significant and passed through untouched.
  *
  * Location addressing: ops accept `path` OR `shared_link` (the case-folder
- * handle stored in cases.case_dropbox) — see the service header.
+ * handle stored as the case folder link, entity_folders.human_link) — see the service header.
  *
  * credential_id is accepted everywhere as an optional override; omit to use
  * the app_settings binding ('dropbox_credential_id') — no service default since D2

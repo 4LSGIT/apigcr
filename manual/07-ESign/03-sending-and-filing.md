@@ -115,7 +115,7 @@ webhook and the reconciliation job alert differently for identical outcomes.
 
 **The fallback ladder:**
 
-1. Case with a live `case_dropbox` link → `<case folder>/Signed Documents`.
+1. Case with a live folder link (its `entity_folders` binding; `case_dropbox` on the case payload) → `<case folder>/Signed Documents`.
 2. Case with none → `caseService.ensureCaseDropboxFolder` (the same stage-aware
    creator intake and the case-page repair button use), then (1). **Always
    warns.**

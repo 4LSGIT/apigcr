@@ -208,8 +208,10 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
       (?, 'id:old', ?, '/Law/Potential/Smith, Dana', '2026-09-01 10:00:00', 6), (?, 'id:c', ?, NULL, NULL, NULL),
       (?, 'id:d', ?, NULL, NULL, NULL), (?, 'id:n', ?, NULL, NULL, NULL)`, [R1, OLD, R2, C, R3, D, RN, `${A}/joint - lee`]);
     // D3b-2: the engine and the cards READ the binding — seeded equal to the cache, as the D3a backfill made it
-    await q(`INSERT INTO entity_folders (entity_kind, entity_id, source, external_id, path_lower, path_display, resolved_at, relink_dismissed_at, relink_dismissed_by)
-      SELECT 'case', case_id, 'dropbox', folder_external_id, path_lower, path_display, resolved_at, relink_dismissed_at, relink_dismissed_by FROM case_folder_cache`);
+    // (D3d-2: the binding carries the LINK too — cases.case_dropbox is inert; the seed mirrors the D3a backfill, cases ⨝ case_folder_cache)
+    await q(`INSERT INTO entity_folders (entity_kind, entity_id, source, external_id, path_lower, path_display, resolved_at, relink_dismissed_at, relink_dismissed_by, human_link)
+      SELECT 'case', f.case_id, 'dropbox', f.folder_external_id, f.path_lower, f.path_display, f.resolved_at, f.relink_dismissed_at, f.relink_dismissed_by, NULLIF(TRIM(c.case_dropbox), '')
+        FROM case_folder_cache f JOIN cases c ON c.case_id = f.case_id`);
     const docs = [
       [101, `${A}/p1.pdf`], [102, `${A}/p2.pdf`], [103, `${A}/sub/p3.pdf`], [104, `${A}/joint - lee/x.pdf`], [105, `${A}/p5.pdf`],
       [111, `${B}/b1.pdf`], [112, `${B}/b2.pdf`],
@@ -252,6 +254,7 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
     return normalizeActionDraft(pool, { kind: 'case.folder.relink.v1', case_id: caseId, folder_path: folder,
       evidence: [{ query_id: 'q1', row_number: 1 }, { query_id: 'q2', row_number: n || 1 }] }, ev, { currentUserId: 6 });
   }
+  const r1Link = async () => { const r = await q("SELECT human_link FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id = ?", [R1]); return r.length ? r[0].human_link : null; };   // D3d-2: the case's link IS the binding's
   const r1Links = async () => (await q(`SELECT dl.document_id, dl.relation, dl.created_by FROM document_links dl
      WHERE dl.link_type = 'case' AND dl.link_id = ? ORDER BY dl.document_id`, [R1])).map((r) => [Number(r.document_id), r.relation, r.created_by]);
 
@@ -364,8 +367,8 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
     expect(await r1Links()).toEqual([[101, 'path', null], [103, 'path', null], [105, 'path', null], [142, 'path', 6]]);
     expect((await q("SELECT document_id, link_id FROM document_links WHERE document_id IN (102, 104) AND link_type = 'case' ORDER BY document_id"))
       .map((r) => [Number(r.document_id), r.link_id])).toEqual([[102, R2]]);
-    expect((await q('SELECT case_dropbox FROM cases WHERE case_id = ?', [R1]))[0].case_dropbox).toBe(linkFor(A));
-    expect(await q('SELECT path_lower, relink_dismissed_at, relink_dismissed_by FROM case_folder_cache WHERE case_id = ?', [R1]))
+    expect(await r1Link()).toBe(linkFor(A));
+    expect(await q("SELECT path_lower, relink_dismissed_at, relink_dismissed_by FROM entity_folders WHERE entity_kind = 'case' AND entity_id = ?", [R1]))
       .toEqual([{ path_lower: A, relink_dismissed_at: null, relink_dismissed_by: null }]);
     const [log] = await q("SELECT log_type, log_link_type, log_link_id, log_by, log_extra FROM log WHERE log_link_id = ?", [R1]);
     const extra = typeof log.log_extra === 'string' ? JSON.parse(log.log_extra) : log.log_extra;
@@ -385,7 +388,7 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
     expect([owners.get(C) && [...owners.get(C)], owners.has(DS), owners.get(D) && [...owners.get(D)]]).toEqual([[R2], false, [R3]]);
     const res = await call(app, 'POST', '/api/documents/relink', { case_id: R1, folder_path: C });
     expect([res.status, res.body.message]).toEqual([409, `that folder is already linked to case ${R2} — linking it here as well would put both clients' documents on both cases`]);
-    expect([(await q('SELECT case_dropbox FROM cases WHERE case_id = ?', [R1]))[0].case_dropbox, await r1Links(), domainEvents.emit.mock.calls.length,
+    expect([await r1Link(), await r1Links(), domainEvents.emit.mock.calls.length,
       dropbox.getOrCreateSharedLink.mock.calls.length]).toEqual([OLD_LINK, [[141, 'path', null], [142, 'path', 6], [143, 'path', null]], 0, 0]);
     // The browser reads the real 409 as a refusal written before any write.
     expect(browser.caseFolderKnownOutcome(Object.assign(new Error(res.body.message), { status: 409, body: res.body })))
@@ -402,7 +405,7 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
     await expect(card(R1, A)).rejects.toThrow(/^THE DOCUMENT SYNC IS SWITCHED OFF/);
     const res = await call(app, 'POST', '/api/documents/relink', browser.caseFolderRequest(c).body);
     expect([res.status, res.body]).toEqual([200, { status: 'success', result: { skipped: true, reason: 'documents_sync_enabled is not "1"' } }]);
-    expect([(await q('SELECT case_dropbox FROM cases WHERE case_id = ?', [R1]))[0].case_dropbox, (await r1Links()).length, domainEvents.emit.mock.calls.length]).toEqual([OLD_LINK, 3, 0]);
+    expect([await r1Link(), (await r1Links()).length, domainEvents.emit.mock.calls.length]).toEqual([OLD_LINK, 3, 0]);
     let thrown = null;
     try { browser.caseFolderResult(c, res.body); } catch (e) { thrown = e; }
     expect(browser.caseFolderKnownOutcome(thrown)).toEqual({ status: 'Refused — nothing written',
@@ -457,7 +460,7 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
     expect([res.body.result.linked_docs, res.body.result.detached_docs, res.body.result.new_path]).toEqual([2, 2, T]);
     expect(browser.caseFolderResult(c, res.body)).toEqual({ case_id: R1 });
     expect(await r1Links()).toEqual([[142, 'path', 6], [161, 'path', null], [162, 'path', null]]);
-    expect((await q('SELECT case_dropbox FROM cases WHERE case_id = ?', [R1]))[0].case_dropbox).toBe(linkFor(T));
+    expect(await r1Link()).toBe(linkFor(T));
     // Gone from Dropbox before the click: the browser refuses through the real route's 409.
     dropboxHolds();
     expect(await browser.caseFolderPrecheck({ ...c, expected: { ...c.expected, case_dropbox: linkFor(T), current_path: T } })).toMatch(/^The folder ".*" is no longer in Dropbox, or is not a folder any more \(dropbox: POST \/2\/files\/get_metadata → 409: path\/not_found\/\.\.\)\. Nothing was written\./);
@@ -498,10 +501,10 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
     const res = await call(app, rq.method, rq.path, rq.body);
     expect([res.status, res.body]).toEqual([200, { status: 'success', updated: 1, case_ids: [R1], dismissed: false }]);
     expect(browser.caseFolderDismissResult(un, res.body)).toEqual({ case_id: R1 });
-    expect(await q('SELECT relink_dismissed_at, relink_dismissed_by FROM case_folder_cache WHERE case_id = ?', [R1])).toEqual([{ relink_dismissed_at: null, relink_dismissed_by: null }]);
+    expect(await q("SELECT relink_dismissed_at, relink_dismissed_by FROM entity_folders WHERE entity_kind = 'case' AND entity_id = ?", [R1])).toEqual([{ relink_dismissed_at: null, relink_dismissed_by: null }]);
     // Nothing else moved: no link, no case column, no log entry, no event.
     expect(await r1Links()).toEqual([[141, 'path', null], [142, 'path', 6], [143, 'path', null]]);
-    expect((await q('SELECT case_dropbox FROM cases WHERE case_id = ?', [R1]))[0].case_dropbox).toBe(OLD_LINK);
+    expect(await r1Link()).toBe(OLD_LINK);
     expect([(await q('SELECT COUNT(*) AS n FROM log'))[0].n, domainEvents.emit.mock.calls.length]).toEqual([0, 0]);
     // The stale card's re-read refuses now (someone un-dismissed it); the state already equal refuses at proposal.
     expect(await browser.caseFolderDismissPrecheck(un)).toBe('The relink-queue dismissal of case 25-12345 changed since this card was prepared (someone un-dismissed it). Nothing was written. Ask Casey to prepare it again.');
@@ -515,7 +518,7 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
     const r2 = await call(app, 'POST', '/api/documents/relink/dismiss', browser.caseFolderDismissRequest(d2).body);
     expect(r2.body).toEqual({ status: 'success', updated: 1, case_ids: [R2], dismissed: true });
     expect(browser.caseFolderDismissResult(d2, r2.body)).toEqual({ case_id: R2 });
-    const [row] = await q('SELECT relink_dismissed_at, relink_dismissed_by FROM case_folder_cache WHERE case_id = ?', [R2]);
+    const [row] = await q("SELECT relink_dismissed_at, relink_dismissed_by FROM entity_folders WHERE entity_kind = 'case' AND entity_id = ?", [R2]);
     expect([row.relink_dismissed_at instanceof Date, row.relink_dismissed_by]).toEqual([true, 6]);
     // RN sits in the QUEUE (a resolved folder, no attributed document) and has candidates? none (no contacts, no docket): the queue line says shown.
     const dn = await dismissCard(RN, false);
@@ -563,8 +566,8 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
     expect(browser.caseFolderResult(c, res.body)).toEqual({ case_id: R1 });
     // End state: back on the old folder, o1 / o3 re-attached by the sync, o2 kept, the re-link's attachments gone; p2 stays R2's.
     expect(await r1Links()).toEqual([[141, 'path', null], [142, 'path', 6], [143, 'path', null]]);
-    expect((await q('SELECT case_dropbox FROM cases WHERE case_id = ?', [R1]))[0].case_dropbox).toBe(linkFor(OLD));
-    expect(await q('SELECT path_lower FROM case_folder_cache WHERE case_id = ?', [R1])).toEqual([{ path_lower: OLD }]);
+    expect(await r1Link()).toBe(linkFor(OLD));
+    expect(await q("SELECT path_lower FROM entity_folders WHERE entity_kind = 'case' AND entity_id = ?", [R1])).toEqual([{ path_lower: OLD }]);
     // Two entries now; the second records the undo as a re-link A → OLD; the first is no longer the latest.
     const rows2 = await auditRows(R1);
     expect(rows2).toHaveLength(2);
@@ -583,7 +586,7 @@ d('the Casey case folder card on real MySQL (A11.1)', () => {
     await expect(undo2()).rejects.toThrow(`THE OLD FOLDER IS GONE: "${A}" no longer exists in Dropbox (moved, renamed or deleted since ${rows2[0].log_date.slice(0, 16)})`);
     // Citing an entry of ANOTHER case, or a non-relink entry, is refused; so is a link that moved on.
     await expect(undo2({ log_id: 999999 })).rejects.toThrow(/^Cite the audit entry/);
-    await q("UPDATE cases SET case_dropbox = 'https://www.dropbox.com/scl/fo/moved-by-hand' WHERE case_id = ?", [R1]);
+    await q("UPDATE entity_folders SET human_link = 'https://www.dropbox.com/scl/fo/moved-by-hand' WHERE entity_kind = 'case' AND entity_id = ?", [R1]);   // D3d-2: a hand-move of the link is a binding write
     dropboxHolds(OLD, A);
     await expect(undo2()).rejects.toThrow(`Case 25-12345's Dropbox link is no longer the one entry #${Number(rows2[0].log_id)} wrote — someone changed it since`);
   });

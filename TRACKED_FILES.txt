@@ -1040,6 +1040,7 @@ scripts/storageSeamD3aEntityFolders.js
 scripts/storageSeamD3c3Contract.js
 scripts/storageSeamD3cStorageFolders.js
 scripts/storageSeamD3d1CaseFolderLink.js
+scripts/storageSeamD3d3Drop.js
 scripts/sweep_validate_live.js
 scripts/test_availability.js
 scripts/test_court_revert.js
@@ -1996,11 +1997,12 @@ tests/storageReplay.test.js
 tests/storageSeamD1fStorageFunctions.mysql.test.js
 tests/storageSeamD1fStorageFunctions.test.js
 tests/storageSeamD3aEntityFolders.test.js
-tests/storageSeamD3bCaseLinkDualWrite.test.js
 tests/storageSeamD3c3Contract.test.js
 tests/storageSeamD3cContactFolders.test.js
 tests/storageSeamD3cStorageFolders.test.js
 tests/storageSeamD3d1CaseFolderLink.test.js
+tests/storageSeamD3d2Contract.test.js
+tests/storageSeamD3d3Drop.test.js
 tests/storageSeamD3eConfiguredProvider.test.js
 tests/su.stepup.test.js
 tests/systemAlertStatusFn.test.js

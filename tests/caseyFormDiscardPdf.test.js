@@ -125,10 +125,10 @@ function setup({ tpls = { '341_notes': TPL, appt_prep: APPT_TPL, intake: CLIENT_
     if (flat.startsWith('SELECT a.appt_id, a.appt_type')) {
       return [record && params[0] === 812 ? [{ appt_id: 812, appt_type: 'Consultation', appt_date_local: '2026-11-20 14:30', appt_status: 'Scheduled', appt_client_id: 1309, contact_name: 'Dana Debtor' }] : []];
     }
-    // D3b-1: the filing path reads the binding first (link + the bound folder's path, as the backfill would hold them), the legacy column second
+    // the filing path reads the binding (link + the bound folder's path, as the backfill would hold them); D3d-2: nothing else
     if (flat === 'SELECT external_id, path_lower, human_link FROM entity_folders WHERE entity_kind = ? AND entity_id = ? AND source = ? LIMIT 1') return [params[1] === CASE_ID && (caseDropbox || cachePath) ? [{ external_id: null, path_lower: cachePath || null, human_link: caseDropbox || null }] : []];
     if (flat === 'SELECT path_lower, resolve_error FROM entity_folders WHERE entity_kind = ? AND entity_id = ? AND source = ? LIMIT 1') return [params[1] === CASE_ID && cachePath ? [{ path_lower: cachePath, resolve_error: null }] : []];
-    if (flat === 'SELECT case_id, case_dropbox FROM cases WHERE case_id = ? LIMIT 1') return [params[0] === CASE_ID ? [{ case_id: CASE_ID, case_dropbox: caseDropbox }] : []];
+    if (flat === 'SELECT case_id FROM cases WHERE case_id = ? LIMIT 1') return [params[0] === CASE_ID ? [{ case_id: CASE_ID }] : []];   // D3d-2: the PK read behind an unbound case
     if (flat === 'SELECT contact_lfm_name FROM contacts WHERE contact_id = ? LIMIT 1') return [[{ contact_lfm_name: 'Debtor, Dana' }]];
     if (flat.startsWith("SELECT COUNT(*) AS n FROM documents WHERE status = 'active' AND name LIKE ?")) {
       calls.like = params[0];

@@ -26,8 +26,8 @@
  * ── THE FALLBACK LADDER ─────────────────────────────────────────────────────
  * Target resolution now degrades instead of stopping:
  *
- *   1. case with a live case_dropbox link      → <case folder>/Signed Documents
- *   2. case with NO case_dropbox               → caseService.ensureCaseDropboxFolder
+ *   1. case with a live folder link (binding)  → <case folder>/Signed Documents
+ *   2. case with NO folder link                → caseService.ensureCaseDropboxFolder
  *      (the same stage-aware creator intake and the case-page repair button
  *      use), then (1). The auto-create ALWAYS emits a warning — 69 live cases
  *      have no linked folder and some of those have a hand-made folder that
@@ -173,7 +173,7 @@ function buildFilename({ completedAt, documentName, suffix, ext, nameBudget = MA
  * ladder; this stays exported with its original reason vocabulary because the
  * reasons feed event payloads and are asserted by tests.
  *
- * 69 of 1066 live cases have no case_dropbox at all (measured), so the empty
+ * 69 of 1066 live cases had no folder link at all (measured 2026-10), so the empty
  * branch is a real, regularly-exercised path rather than a theoretical one.
  *
  * @returns {Promise<{ok:boolean, sharedLink?:string, reason?:string, note?:string}>}
@@ -206,7 +206,7 @@ async function resolveTarget(db, request) {
     return {
       ok: false,
       reason: 'no_case_dropbox',
-      note: `Case "${request.linkable_id}" has no Dropbox folder link (cases.case_dropbox is empty).`,
+      note: `Case "${request.linkable_id}" has no Dropbox folder link (case_dropbox is empty).`,
     };
   }
   return { ok: true, sharedLink: bound.link };

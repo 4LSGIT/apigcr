@@ -594,7 +594,7 @@ describe('handleZohoWebhook — the signed path', () => {
   test('a failed filing raises a task naming the reason and the tracking id', async () => {
     esignFilingService.fileSignedDocuments.mockResolvedValue({
       filed: false, skipped: true, reason: 'no_case_dropbox',
-      note: 'Case "AbC12dEf" has no Dropbox folder link (cases.case_dropbox is empty).',
+      note: 'Case "AbC12dEf" has no Dropbox folder link (case_dropbox is empty).',
       signedPdfPath: null, certPdfPath: null, warnings: [],
     });
 

@@ -5,7 +5,8 @@
  * D3a), over a scripted db: a resolved write sets handle + paths and clears the
  * error but never erases a known handle with NULL; an error write keeps prior
  * paths; the heal moves paths only; relink dismissal by ids; remove; get. And the
- * posture: best-effort behind the primary write unless strict.
+ * posture (D3d-2): every write throws — the binding is the record; strict: false
+ * is the explicit best-effort opt-out. caseFolderLink reads the binding alone.
  */
 
 'use strict';
@@ -74,35 +75,44 @@ test('setHumanLink: a changed link keeps ONLY the link — every other column go
   expect(db3.calls[0][0]).toMatch(/^DELETE FROM entity_folders WHERE/);
 });
 
-test('caseFolderLink: the binding first (trimmed), the legacy column second — read only when the binding has no link and no row was given; found/link/via semantics', async () => {
-  const scripted = (bindingRow, caseRow) => {
+test('caseFolderLink: the binding is the ONLY record of the link (D3d-2); `found` still means the case exists — a PK read of cases only when there is no binding row, never the column', async () => {
+  const scripted = (bindingRow, caseExists = true) => {
     const calls = [];
-    return { calls, query: jest.fn(async (sql, params) => { calls.push(sql.replace(/\s+/g, ' ').trim()); return /FROM entity_folders/.test(sql) ? [bindingRow ? [bindingRow] : []] : [caseRow ? [caseRow] : []]; }) };
+    return { calls, query: jest.fn(async (sql) => { calls.push(sql.replace(/\s+/g, ' ').trim()); return /FROM entity_folders/.test(sql) ? [bindingRow ? [bindingRow] : []] : [caseExists ? [{ case_id: 'c1' }] : []]; }) };
   };
-  // the binding wins, whatever the column says; one query
-  let db = scripted({ external_id: 'id:1', path_lower: '/a', human_link: ' https://b ' }, { case_id: 'c1', case_dropbox: 'https://stale' });
+  let db = scripted({ external_id: 'id:1', path_lower: '/a', human_link: ' https://b ' });
   expect(await svc.caseFolderLink(db, 'c1')).toEqual({ found: true, link: 'https://b', via: 'binding', externalId: 'id:1', pathLower: '/a' });
-  expect(db.calls).toHaveLength(1);
-  expect(db.calls[0]).toBe('SELECT external_id, path_lower, human_link FROM entity_folders WHERE entity_kind = ? AND entity_id = ? AND source = ? LIMIT 1');
-  // no binding → the column, trimmed
-  db = scripted(null, { case_id: 'c1', case_dropbox: ' https://legacy ' });
-  expect(await svc.caseFolderLink(db, 'c1')).toEqual({ found: true, link: 'https://legacy', via: 'case', externalId: null, pathLower: null });
-  expect(db.calls[1]).toBe('SELECT case_id, case_dropbox FROM cases WHERE case_id = ? LIMIT 1');
-  // a binding row without a link (setError on a never-resolved case) still falls to the column and keeps what it knows
-  db = scripted({ external_id: null, path_lower: null, human_link: null }, { case_id: 'c1', case_dropbox: 'https://legacy' });
-  expect(await svc.caseFolderLink(db, 'c1')).toMatchObject({ link: 'https://legacy', via: 'case' });
-  // the case exists with no folder; the case does not exist
-  db = scripted(null, { case_id: 'c1', case_dropbox: '' });
+  expect(db.calls).toEqual(['SELECT external_id, path_lower, human_link FROM entity_folders WHERE entity_kind = ? AND entity_id = ? AND source = ? LIMIT 1']);
+  // a binding row without a link (setError on a never-resolved case): found, no link, what it knows kept
+  db = scripted({ external_id: 'id:2', path_lower: '/p', human_link: null });
+  expect(await svc.caseFolderLink(db, 'c1')).toEqual({ found: true, link: null, via: null, externalId: 'id:2', pathLower: '/p' });
+  db = scripted({ external_id: null, path_lower: null, human_link: '   ' });
   expect(await svc.caseFolderLink(db, 'c1')).toEqual({ found: true, link: null, via: null, externalId: null, pathLower: null });
-  db = scripted(null, null);
+  // no binding row: the case exists → unbound (the auto-create rung); the case does not exist → not found (the bin)
+  db = scripted(null, true);
+  expect(await svc.caseFolderLink(db, 'c1')).toEqual({ found: true, link: null, via: null, externalId: null, pathLower: null });
+  expect(db.calls).toEqual([
+    'SELECT external_id, path_lower, human_link FROM entity_folders WHERE entity_kind = ? AND entity_id = ? AND source = ? LIMIT 1',
+    'SELECT case_id FROM cases WHERE case_id = ? LIMIT 1',   // the PK, never the retired column
+  ]);
+  db = scripted(null, false);
   expect(await svc.caseFolderLink(db, 'c1')).toEqual({ found: false, link: null, via: null, externalId: null, pathLower: null });
-  // a caller holding the row (or knowing it is absent) pays no fallback query
-  db = scripted(null, { case_id: 'c1', case_dropbox: 'https://from-db' });
-  expect((await svc.caseFolderLink(db, 'c1', { caseRow: { case_id: 'c1', case_dropbox: 'https://in-hand' } })).link).toBe('https://in-hand');
-  expect((await svc.caseFolderLink(db, 'c1', { caseRow: null })).found).toBe(false);
-  expect(db.calls).toHaveLength(2);
-  expect(db.calls.every((q) => /FROM entity_folders/.test(q))).toBe(true);
   await expect(svc.caseFolderLink(db, '')).rejects.toThrow(/id is required/);
+});
+
+test('writes THROW by default (D3d-2: the binding is the record); strict: false restores the logged best-effort posture', async () => {
+  const boom = { query: jest.fn(async () => { throw new Error('binding table is on fire'); }) };
+  await expect(svc.setHumanLink(boom, { kind: 'case', id: 'c1', humanLink: 'https://x' })).rejects.toThrow('binding table is on fire');
+  await expect(svc.setResolved(boom, { kind: 'case', id: 'c1', externalId: 'id:1', pathLower: '/a', pathDisplay: '/A', humanLink: 'https://x' })).rejects.toThrow('on fire');
+  await expect(svc.setError(boom, { kind: 'case', id: 'c1', humanLink: 'https://x', error: 'e' })).rejects.toThrow('on fire');
+  await expect(svc.setPaths(boom, { kind: 'case', id: 'c1', pathLower: '/a', pathDisplay: '/A' })).rejects.toThrow('on fire');
+  await expect(svc.setRelinkDismissed(boom, { kind: 'case', ids: ['c1'], dismissed: true, by: 6 })).rejects.toThrow('on fire');
+  await expect(svc.remove(boom, { kind: 'case', id: 'c1' })).rejects.toThrow('on fire');
+  const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    expect(await svc.setHumanLink(boom, { kind: 'case', id: 'c1', humanLink: 'https://x' }, { strict: false })).toBeNull();
+    expect(warn.mock.calls.some((c) => /\[ENTITY FOLDERS\] setHumanLink case c1 failed/.test(String(c[0])))).toBe(true);
+  } finally { warn.mockRestore(); }
 });
 
 test('casePathLower: the bound path or null; resolvedOnly drops a row carrying a resolve_error', async () => {
@@ -126,12 +136,12 @@ test('get returns the row or null; bad keys are refused before any SQL', async (
   expect(db.calls).toHaveLength(1);
 });
 
-test('best-effort by default — a failing write is logged and swallowed so the primary write stands; strict throws', async () => {
+test('strict: false — a failing write is logged and swallowed (the explicit best-effort opt-out); the default throws', async () => {
   const failing = { query: jest.fn(async () => { throw new Error("Table 'entity_folders' doesn't exist"); }) };
   const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
   try {
-    expect(await svc.setResolved(failing, { kind: 'case', id: 'x', humanLink: 'l' })).toBeNull();
+    expect(await svc.setResolved(failing, { kind: 'case', id: 'x', humanLink: 'l' }, { strict: false })).toBeNull();
     expect(warn).toHaveBeenCalledWith(expect.stringMatching(/\[ENTITY FOLDERS\] setResolved case x failed .*doesn't exist/));
-    await expect(svc.setResolved(failing, { kind: 'case', id: 'x' }, { strict: true })).rejects.toThrow("doesn't exist");
+    await expect(svc.setResolved(failing, { kind: 'case', id: 'x' })).rejects.toThrow("doesn't exist");
   } finally { warn.mockRestore(); }
 });

@@ -278,13 +278,13 @@ body. Governing migrations in `ref/migrations/`.*
   undo?} → POST `/api/documents/relink/dismiss`, ONE case (bulk keys refused by
   name — the array form is the panel's), refused with no cache row or a state
   already equal; never danger; no event, no log entry, NO bus matcher
-  (`case_folder_cache` is not bus-watched); `updated: 0` = refusal; family
+  (the relink state on `entity_folders` is not bus-watched); `updated: 0` = refusal; family
   `case_folder_dismiss`. (3) `case.folder.relink.undo.v1` {case_id, log_id} →
   the SAME POST `/api/documents/relink` with the audit entry's `old_path`
   (no new write route): the entry is cited from a `sql.read` of `log`
   (`log_extra` is outside the manifest — the server reads it), must be the
   case's LATEST "Case Dropbox folder re-linked" entry, `old_path` non-null,
-  and `cases.case_dropbox` must still equal its `new_link`; the old folder is
+  and the case's folder link (the `entity_folders` binding; `case_dropbox` on the payload) must still equal its `new_link`; the old folder is
   proved like a typed path; the undo writes its own entry. Browser prechecks for
   typed / undo: the candidates GET (case link + cached path) + POST
   `/api/dropbox/list` {path, max_entries:1} (409 / 404 → refused before the
@@ -1502,7 +1502,7 @@ body. Governing migrations in `ref/migrations/`.*
   `folder_path` must equal byte for byte the `path` of a cited candidate row of
   a typed read `document.relink.candidates` {case_id} of the SAME case
   (`relinkCandidates` on the app pool, NEVER `includeWeak` — surname-only is a
-  different client nearly every time; `case_folder_cache` stays out of the
+  different client nearly every time; the relink state stays out of the
   report manifest), plus a `sql.read` row with the exact case_id. The panel
   has no typed-path field and lists only its queue's cases; the read works for
   any case. Refused by name first: bulk (quoting the route header), dismiss /
@@ -1519,7 +1519,7 @@ body. Governing migrations in `ref/migrations/`.*
   outside the folder); plus files held by other cases, nested-case files,
   person-made links kept, the `case_dropbox` REWRITE (Dropbox's existing
   direct link, else a new public one), FILING (portal / public uploads, form
-  PDFs, e-sign filings, `{{case_dropbox}}` steps follow the link), the
+  PDFs, e-sign filings, `{{case_folder_link}}` steps follow the link), the
   dismissal it clears, and NO UNDO (re-link the right folder, or unlink + clear
   by hand; the log entry keeps old path + link). `case.updated` (source
   `documents_relink`, `changes.case_dropbox`, the link a stand-in) dry-run on

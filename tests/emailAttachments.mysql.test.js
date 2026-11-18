@@ -184,6 +184,8 @@ maybe('email attachments S1/S2 on real MySQL', () => {
     await q(`INSERT INTO cases (case_id, case_stage, pipeline_phase, case_type, case_number, case_number_full, case_dropbox, case_open_date)
              VALUES (?, ?, ?, 'Bankruptcy', ?, ?, ?, ?)`,
     [id, stage, phase, number, numberFull === undefined ? `26-${id.slice(0, 5)}` : numberFull, dropbox, opened]);
+    // D3d-2: the binding IS the case folder link (the column above is inert; it goes in D3d-3)
+    if (dropbox) await q("INSERT INTO entity_folders (entity_kind, entity_id, source, human_link) VALUES ('case', ?, 'dropbox', ?)", [id, dropbox]);
   }
   const relate = (caseId, contactId, type = 'Primary') =>
     q('INSERT INTO case_relate (case_relate_case_id, case_relate_client_id, case_relate_type) VALUES (?, ?, ?)', [caseId, contactId, type]);
@@ -208,7 +210,7 @@ maybe('email attachments S1/S2 on real MySQL', () => {
   beforeEach(async () => {
     jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'warn').mockImplementation(() => {});
-    for (const t of ['mail_attachment_notices', 'mail_attachment_filings', 'mail_messages', 'mailboxes', 'case_relate', 'contact_emails', 'contacts', 'cases', 'documents', 'checkitems', 'checklists']) {
+    for (const t of ['mail_attachment_notices', 'mail_attachment_filings', 'mail_messages', 'mailboxes', 'case_relate', 'contact_emails', 'contacts', 'cases', 'documents', 'checkitems', 'checklists', 'entity_folders']) {
       await q(`DELETE FROM ${t}`);
     }
     await q(`INSERT INTO mailboxes (id, address, domain, imap_host, imap_user, emit_source_name, emit_id_kind, ingest_state)
@@ -950,7 +952,7 @@ maybe('email attachments S1/S2 on real MySQL', () => {
       await filing.fileMessageAttachments(pool, { ref: { mail_message_id: binned } });
       // filed to ANOTHER case
       const other = await message({ from: 'mom@y.com', subject: 'case CF8ZT7VE', date: '2026-11-03 20:00:00', attachments: [pdf(2, 'deed.pdf')] });
-      await q("UPDATE cases SET case_dropbox = 'https://dbx/case-PVXC1RMM' WHERE case_id = 'CF8ZT7VE'");
+      await q("INSERT INTO entity_folders (entity_kind, entity_id, source, human_link) VALUES ('case', 'CF8ZT7VE', 'dropbox', 'https://dbx/case-PVXC1RMM') ON DUPLICATE KEY UPDATE human_link = VALUES(human_link)");   // D3d-2: the link lives on the binding
       await filing.fileMessageAttachments(pool, { ref: { mail_message_id: other } });
       // the same paystub again (case-blind name, same encoded size) + one sent twice in this selection
       const again = await message({ from: 'michele@x.com', date: '2026-11-04 20:00:00', attachments: [pdf(2, 'paystub.PDF', 4000), pdf(3, 'w2.pdf', 5000)] });

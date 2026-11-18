@@ -1101,7 +1101,7 @@
     /* GUIDED RE-LINK (A11.1). `POST /api/documents/relink {case_id,
        folder_path}` — the Documents relink panel's confirm, and Ask Casey's
        folder card — changes TWO things about one case, so it is the array
-       shape: the case's `case_dropbox` column (rewritten through updateCase
+       shape: the case's `case_dropbox` field (the folder link, rewritten through updateCase
        with the folder's shared link — a real VALUE: the answer carries it as
        `result.shared_link`, and case.html merges it like any case column) and
        the case's DOCUMENT SET (the sync's links outside the folder detached,

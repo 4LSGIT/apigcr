@@ -74,8 +74,12 @@ function makeDb({ caseDropbox = 'https://www.dropbox.com/scl/fo/abc/Smith?dl=0',
       if (/FROM case_relate/i.test(sql) || /FROM contacts/i.test(sql)) {
         return [contactLfm ? [{ contact_lfm_name: contactLfm }] : []];
       }
+      // D3d-2: the binding is the record, then the case PK when unbound. caseDropbox null = no such case; '' = the case exists, unbound
+      if (/FROM entity_folders/i.test(sql)) {
+        return [caseDropbox ? [{ external_id: null, path_lower: null, human_link: caseDropbox }] : []];
+      }
       if (/FROM cases/i.test(sql)) {
-        return [caseDropbox === null ? [] : [{ case_dropbox: caseDropbox }]];
+        return [caseDropbox === null ? [] : [{ case_id: 'AbC12dEf' }]];
       }
       return [[]];
     }),

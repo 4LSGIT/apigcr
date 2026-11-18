@@ -49,7 +49,7 @@
  *                                 drags the file to another case gets the
  *                                 normal retract-and-relink, which is right.
  *
- * Picked PER WRITE by comparing the landing path against case_folder_cache
+ * Picked PER WRITE by comparing the landing path against the entity_folders binding
  * (see _relationFor). When the two coexist — an upload-linked file that staff
  * later move INTO the case folder — the sweep adds the 'path' row alongside
  * and the unique key (document_id, link_type, link_id) collapses them to one
@@ -66,7 +66,7 @@
  * signal this system produces. Every registration here emits, and S5's
  * classification triggers are the intended consumer.
  *
- * ── case_folder_cache.path_display IS NULL, ALWAYS. USE path_lower ────────
+ * ── the binding's path_display MAY BE NULL. USE path_lower ────────────────
  * The column exists and refreshCaseFolderCache writes it — from
  * `meta.path_display` on a sharing/get_shared_link_metadata response, which
  * DROPBOX DOES NOT SEND for a shared link. Measured 2026-08-27: 1,005 cached
@@ -154,7 +154,7 @@ async function _relationFor(db, linkType, linkId, pathLower) {
   if (linkType !== 'case' || !pathLower) return RELATION_UPLOAD;
   try {
     // D3b-1: the bound folder's path from entity_folders (ensureCaseDropboxFolder
-    // fills it at create time, where case_folder_cache waited for the sweep — a
+    // fills it at create time, where the old cache waited for the sweep — a
     // file landing in a just-created case folder is 'path' at once).
     const folder = await require('./entityFolderService').casePathLower(db, String(linkId));   // deferred (convention)
     return _under(String(pathLower).toLowerCase(), folder) ? documents.RELATION_PATH : RELATION_UPLOAD;

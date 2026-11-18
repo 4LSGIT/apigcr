@@ -68,8 +68,8 @@
  * ── ATTRIBUTION ───────────────────────────────────────────────────────────
  * A document acquires an owner through document_links, and the only signal
  * available at sync time is the PATH: a file living under a case's Dropbox
- * folder belongs to that case. case_folder_cache maps case → folder path (one
- * shared-link resolution per case, refreshed on its own schedule), and each
+ * folder belongs to that case. The entity_folders binding maps case → folder
+ * path (one link resolution per case, refreshed on its own schedule), and each
  * file is matched by walking UP its own directory chain — see _matchCase.
  *
  * Two attribution passes, on purpose:
@@ -195,7 +195,7 @@ const DEFAULT_MAX_RUNTIME_MS = 8 * 60 * 1000;
  */
 const DEFAULT_CACHE_RUNTIME_MS = 4 * 60 * 1000;
 
-/** case_folder_cache.resolve_error is VARCHAR(255); no STRICT_TRANS_TABLES here. */
+/** entity_folders.resolve_error is VARCHAR(255); no STRICT_TRANS_TABLES here. */
 const RESOLVE_ERROR_MAX = 255;
 
 /** Cap on the out_of_root / failures report lists so job_results stays readable. */
@@ -266,10 +266,9 @@ function _underRoot(pathLower, rootLower) {
  * `null` key swallow lookups.
  */
 async function _loadCaseFolderCache(db) {
-  // D3b-2: read from the binding (entity_folders — the engine walks Dropbox,
-  // so source = 'dropbox'; D4 dispatches by source). The row shape the callers
-  // and the heal see is unchanged. case_folder_cache is still WRITTEN beside
-  // it until D3d drops the table.
+  // The binding (entity_folders — the engine walks Dropbox, so source =
+  // 'dropbox'; D4 dispatches by source). The row shape the callers and the
+  // heal see is the old cache's; the name stays until D4 renames the engine's.
   const [rows] = await db.query(
     `SELECT entity_id AS case_id, external_id AS folder_external_id, path_lower
        FROM entity_folders
@@ -310,12 +309,12 @@ function _alert(db, opts) {
 /**
  * Resolve case → Dropbox folder path, oldest-first, in bounded batches.
  *
- * `cases.case_dropbox` holds a SHARED LINK, not a path — that is the whole
- * point of the shared-link-as-handle pattern (staff move and rename case
- * folders constantly; the link keeps resolving). Resolving one costs an API
- * call, and 1,009 API calls is not something to do per sync tick, so the
- * results are cached in case_folder_cache and refreshed on their own slower
- * schedule.
+ * The case folder link (entity_folders.human_link) is a SHARED LINK, not a
+ * path — that is the whole point of the shared-link-as-handle pattern (staff
+ * move and rename case folders constantly; the link keeps resolving).
+ * Resolving one costs an API call, and 1,009 API calls is not something to do
+ * per sync tick, so the results are kept on the same binding row (external_id,
+ * path_lower, path_display) and refreshed on their own slower schedule.
  *
  * Oldest-first with never-resolved counting as oldest, so a fresh install
  * fills the cache over successive runs and a steady state re-checks the
@@ -371,22 +370,24 @@ async function refreshCaseFolderCache(db, opts = {}) {
         limit, targeted: true, timed_out: false, elapsed_ms: Date.now() - startedAt,
       };
     }
+    // D3d-2: the link lives on the binding — the row is both the candidate list
+    // and the record the resolution writes back to.
     [cases] = await db.query(
-      `SELECT c.case_id, c.case_dropbox
-         FROM cases c
-        WHERE c.case_id IN (?)
-          AND c.case_dropbox IS NOT NULL AND c.case_dropbox <> ''`,
+      `SELECT f.entity_id AS case_id, f.human_link AS link
+         FROM entity_folders f
+        WHERE f.entity_kind = 'case' AND f.source = 'dropbox'
+          AND f.entity_id IN (?)
+          AND f.human_link IS NOT NULL AND f.human_link <> ''`,
       [caseIds],
     );
   } else {
-    // Oldest-first; rows absent from the binding (or never resolved — a
-    // hand-written link, setHumanLink) sort ahead of every resolved one. D3b-2:
-    // the ordering reads entity_folders.
+    // Oldest-first; never-resolved rows (a hand-written link, setHumanLink)
+    // sort ahead of every resolved one.
     [cases] = await db.query(
-      `SELECT c.case_id, c.case_dropbox
-         FROM cases c
-         LEFT JOIN entity_folders f ON f.entity_kind = 'case' AND f.source = 'dropbox' AND f.entity_id = c.case_id
-        WHERE c.case_dropbox IS NOT NULL AND c.case_dropbox <> ''
+      `SELECT f.entity_id AS case_id, f.human_link AS link
+         FROM entity_folders f
+        WHERE f.entity_kind = 'case' AND f.source = 'dropbox'
+          AND f.human_link IS NOT NULL AND f.human_link <> ''
         ORDER BY (f.resolved_at IS NULL) DESC, f.resolved_at ASC
         LIMIT ${limit}`,
     );
@@ -409,7 +410,7 @@ async function refreshCaseFolderCache(db, opts = {}) {
     let meta = null;
     try {
       meta = await dropbox.getSharedLinkMetadata(db, {
-        url: c.case_dropbox,
+        url: c.link,
         ...(credentialId != null ? { credentialId } : {}),
       });
     } catch (err) {
@@ -418,15 +419,7 @@ async function refreshCaseFolderCache(db, opts = {}) {
         failures.push({ case_id: c.case_id, error: _clamp(err.message, 160) });
       }
       // Prior paths survive — only the error field and the timestamp move.
-      await db.query(
-        `INSERT INTO case_folder_cache (case_id, resolve_error, resolved_at)
-         VALUES (?, ?, NOW()) AS new
-         ON DUPLICATE KEY UPDATE
-           resolve_error = new.resolve_error,
-           resolved_at   = NOW()`,
-        [c.case_id, _clamp(err.message, RESOLVE_ERROR_MAX)],
-      );
-      await entityFolders().setError(db, { kind: 'case', id: c.case_id, humanLink: c.case_dropbox, error: _clamp(err.message, RESOLVE_ERROR_MAX) });   // D3a dual-write
+      await entityFolders().setError(db, { kind: 'case', id: c.case_id, humanLink: c.link, error: _clamp(err.message, RESOLVE_ERROR_MAX) });
       continue;
     }
 
@@ -439,38 +432,13 @@ async function refreshCaseFolderCache(db, opts = {}) {
       if (failures.length < REPORT_CAP) {
         failures.push({ case_id: c.case_id, error: 'shared link metadata has no path_lower' });
       }
-      await db.query(
-        `INSERT INTO case_folder_cache (case_id, resolve_error, resolved_at)
-         VALUES (?, ?, NOW()) AS new
-         ON DUPLICATE KEY UPDATE
-           resolve_error = new.resolve_error,
-           resolved_at   = NOW()`,
-        [c.case_id, 'shared link metadata has no path_lower'],
-      );
-      await entityFolders().setError(db, { kind: 'case', id: c.case_id, humanLink: c.case_dropbox, error: 'shared link metadata has no path_lower' });   // D3a dual-write
+      await entityFolders().setError(db, { kind: 'case', id: c.case_id, humanLink: c.link, error: 'shared link metadata has no path_lower' });
       continue;
     }
 
-    await db.query(
-      `INSERT INTO case_folder_cache
-         (case_id, folder_external_id, path_lower, path_display, resolve_error, resolved_at)
-       VALUES (?, ?, ?, ?, NULL, NOW()) AS new
-       ON DUPLICATE KEY UPDATE
-         folder_external_id = new.folder_external_id,
-         path_lower         = new.path_lower,
-         path_display       = new.path_display,
-         resolve_error      = NULL,
-         resolved_at        = NOW()`,
-      [
-        c.case_id,
-        meta.id ? _clamp(meta.id, 191) : null,
-        pathLower,
-        meta.path_display != null ? String(meta.path_display) : null,
-      ],
-    );
-    await entityFolders().setResolved(db, {   // D3a dual-write
+    await entityFolders().setResolved(db, {
       kind: 'case', id: c.case_id, externalId: meta.id ? _clamp(meta.id, 191) : null,
-      pathLower, pathDisplay: meta.path_display != null ? String(meta.path_display) : null, humanLink: c.case_dropbox,
+      pathLower, pathDisplay: meta.path_display != null ? String(meta.path_display) : null, humanLink: c.link,
     });
     resolved++;
 
@@ -684,13 +652,7 @@ async function syncRoot(db, root, opts = {}) {
         const newLower = f.path_lower != null ? String(f.path_lower) : null;
         if (!newLower || newLower === cached.path_lower) continue;
 
-        await db.query(
-          `UPDATE case_folder_cache
-              SET path_lower = ?, path_display = ?, resolve_error = NULL, resolved_at = NOW()
-            WHERE case_id = ?`,
-          [newLower, f.path_display != null ? String(f.path_display) : null, cached.case_id],
-        );
-        await entityFolders().setPaths(db, { kind: 'case', id: cached.case_id, pathLower: newLower, pathDisplay: f.path_display != null ? String(f.path_display) : null });   // D3a dual-write
+        await entityFolders().setPaths(db, { kind: 'case', id: cached.case_id, pathLower: newLower, pathDisplay: f.path_display != null ? String(f.path_display) : null });
         // Keep the in-memory map coherent for the REST of this run.
         cache.byPath.delete(cached.path_lower);
         cache.byPath.set(newLower, { case_id: cached.case_id, path_lower: newLower });
@@ -1142,7 +1104,7 @@ const REPORT_SAMPLE = 50;
  *
  * ── WHY THIS EXISTS ───────────────────────────────────────────────────────
  * `out_of_root` (refreshCaseFolderCache) answers "is this folder watched?".
- * It cannot catch the failure that actually bit us: `cases.case_dropbox` still
+ * It cannot catch the failure that actually bit us: the case's folder link still
  * holds the shared link minted at INTAKE, staff later moved the case's
  * contents into a NEW working folder, and nobody re-pointed the case record.
  * The intake folder is watched perfectly — it is simply empty — so out_of_root
@@ -1178,7 +1140,7 @@ const REPORT_SAMPLE = 50;
  * PRIMARY, uq_source_ext, path_hash, type, status, updated, server_modified,
  * ft_docs — nothing on path_lower). So "documents under this folder" cannot
  * be an indexed lookup. The obvious SQL —
- *     JOIN case_folder_cache f ON d.path_lower LIKE CONCAT(f.path_lower,'/%')
+ *     JOIN entity_folders f ON d.path_lower LIKE CONCAT(f.path_lower,'/%')
  * — is a 986 × 153k cross join and TIMES OUT on the readonly endpoint. It is
  * done here instead: one paged pass over documents, matched in memory against
  * a Set holding only the zero-attribution paths, using the same segment-safe
@@ -1820,7 +1782,7 @@ async function latestJobReports(db, functionNames = DIAGNOSTIC_FUNCTIONS) {
 // ── WHY THE FOLDER INVENTORY IS ONE GROUPED QUERY ─────────────────────────
 // attributionReport's docblock warns that "documents under this folder" cannot
 // be an indexed lookup (path_lower is TEXT with no index) and that the
-// correlated form — JOIN case_folder_cache ON d.path_lower LIKE CONCAT(f.path_lower,'/%')
+// correlated form — JOIN entity_folders ON d.path_lower LIKE CONCAT(f.path_lower,'/%')
 // — is a 986 x 153k cross join that times out. That warning is about the
 // CORRELATION, not about touching the table: one UNcorrelated GROUP BY over
 // the same rows collapses 153,149 documents into 8,423 directories in 800ms,
@@ -1843,7 +1805,7 @@ const RELINK_TOKEN_MIN = 3;
  *
  * Safe because the inventory is derived ENTIRELY from `documents.path_lower`,
  * which only ever changes when the sync engine walks a root. A confirm writes
- * `document_links` and `cases.case_dropbox` — neither of which the inventory
+ * `document_links` and the case's folder binding — neither of which the inventory
  * reads — so no action taken through this surface can invalidate it. The
  * window exists because the panel asks for the whole queue at once and then
  * re-asks per case after each confirm.
@@ -1875,7 +1837,7 @@ const RELINK_BATCH_CAP = 500;
 const TYPE_LEVEL_MIN_CASES = 2;
 
 /**
- * cases.case_dropbox is VARCHAR(512). See the reject-don't-clamp note below.
+ * entity_folders.human_link is VARCHAR(512) (as cases.case_dropbox was). See the reject-don't-clamp note below.
  *
  * It was 255 when S3.3 shipped, which made the guard a live risk rather than a
  * formality — the longest link in production is 125 characters, but a Dropbox
@@ -2356,7 +2318,7 @@ async function relinkCandidatesBatch(db, caseIds, opts = {}) {
   if (!ids.length) return out;
 
   const [caseRows] = await db.query(
-    `SELECT case_id, case_number, case_number_full, case_dropbox,
+    `SELECT case_id, case_number, case_number_full,
             case_stage, pipeline_phase, case_type, case_subtype
        FROM cases
       WHERE case_id IN (?)`,
@@ -2377,7 +2339,7 @@ async function relinkCandidatesBatch(db, caseIds, opts = {}) {
 
   const [cacheRows] = await db.query(
     `SELECT entity_id AS case_id, path_lower, path_display, resolved_at, resolve_error,
-            relink_dismissed_at, relink_dismissed_by
+            relink_dismissed_at, relink_dismissed_by, human_link
        FROM entity_folders
       WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id IN (?)`,
     [ids],
@@ -2410,7 +2372,7 @@ async function relinkCandidatesBatch(db, caseIds, opts = {}) {
       // What staff are moving AWAY from. The stale intake link, said plainly.
       current_path: cached ? (cached.path_lower || null) : null,
       current_path_display: cached ? (cached.path_display || null) : null,
-      current_link: row.case_dropbox || null,
+      current_link: cached ? (cached.human_link || null) : null,
       resolve_error: cached ? (cached.resolve_error || null) : null,
       dismissed_at: cached ? (cached.relink_dismissed_at || null) : null,
       dismissed_by: cached ? (cached.relink_dismissed_by ?? null) : null,
@@ -2492,7 +2454,7 @@ async function relinkQueue(db, opts = {}) {
  * Stamp (or clear) the dismissal columns.
  *
  * ── WHY BULK IS SAFE HERE AND NOWHERE ELSE IN THIS SECTION ────────────────
- * Dismissal writes two columns on case_folder_cache. It changes no
+ * Dismissal writes two columns on the entity_folders binding. It changes no
  * document_link, no cases row, and touches no provider — it is a note on the
  * queue, not an assertion about a document. The ONE RULE governs LINK changes;
  * this is not one. Given that ~394 of the 418 have no candidate to confirm,
@@ -2500,8 +2462,8 @@ async function relinkQueue(db, opts = {}) {
  * make-work that guarantees the queue is never cleared and therefore never
  * watched.
  *
- * A plain UPDATE, not an upsert: the queue is DERIVED from case_folder_cache,
- * so the row always exists. Inserting one would mean inventing a cache row
+ * A plain UPDATE, not an upsert: the queue is DERIVED from entity_folders,
+ * so the row always exists. Inserting one would mean inventing a binding row
  * with no path and a fictional resolved_at.
  */
 async function setRelinkDismissed(db, caseIds, opts = {}) {
@@ -2510,14 +2472,7 @@ async function setRelinkDismissed(db, caseIds, opts = {}) {
     .slice(0, RELINK_DISMISS_CAP);
   if (!ids.length) return { updated: 0, case_ids: [], dismissed };
 
-  const [res] = await db.query(
-    `UPDATE case_folder_cache
-        SET relink_dismissed_at = ${dismissed ? 'NOW()' : 'NULL'},
-            relink_dismissed_by = ?
-      WHERE case_id IN (?)`,
-    [dismissed ? (opts.actorUserId ?? null) : null, ids],
-  );
-  await entityFolders().setRelinkDismissed(db, { kind: 'case', ids, dismissed, by: dismissed ? (opts.actorUserId ?? null) : null });   // D3a dual-write
+  const res = await entityFolders().setRelinkDismissed(db, { kind: 'case', ids, dismissed, by: dismissed ? (opts.actorUserId ?? null) : null });
 
   return { updated: res ? res.affectedRows : 0, case_ids: ids, dismissed };
 }
@@ -2590,8 +2545,9 @@ async function _attributeUnderFolder(db, caseId, folderLower, cache) {
  *   1. re-run the cross-link guard SERVER-SIDE (the UI grey-out is not it)
  *   2. prove the folder is real
  *   3. mint the permanent shared link
- *   4. rewrite cases.case_dropbox through caseService (house write path)
- *   5. refresh THIS case's folder cache, targeted
+ *   4. rewrite the case's folder link through caseService (house write path —
+ *      updateCase's `case_dropbox` field, the entity_folders binding)
+ *   5. refresh THIS case's folder binding, targeted
  *   6. RETRACT the path-links the new folder no longer supports
  *   7. attribute what is under it, silently, with engine parity
  *   8. clear any dismissal, and write the audit entry
@@ -2645,16 +2601,17 @@ async function applyRelink(db, caseId, folderPath, opts = {}) {
   }
 
   const [[caseRow]] = await db.query(
-    'SELECT case_id, case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId],
+    'SELECT case_id FROM cases WHERE case_id = ? LIMIT 1', [caseId],
   );
   if (!caseRow) {
     const e = new Error(`Case ${caseId} not found`); e.status = 404; throw e;
   }
 
   const [[priorCache]] = await db.query(
-    "SELECT path_lower FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id = ? LIMIT 1", [caseId],
+    "SELECT path_lower, human_link FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id = ? LIMIT 1", [caseId],
   );
   const oldPath = priorCache ? (priorCache.path_lower || null) : null;
+  const oldLink = priorCache ? (priorCache.human_link || null) : null;
 
   // A folder no root walks would leave the case looking repaired while its
   // documents stayed unregistered forever — the failure out_of_root exists to
@@ -2718,7 +2675,7 @@ async function applyRelink(db, caseId, folderPath, opts = {}) {
   // The second sanctioned place a permanent shared link is created, and the
   // only one that mints one for a FOLDER — /api/documents/:id/share mints them
   // for documents. This mirrors exactly what intake minted originally, which
-  // is what makes the resulting case_dropbox indistinguishable from a
+  // is what makes the resulting folder link indistinguishable from a
   // correctly-created one to everything downstream.
   const sharedLink = await dropbox.getOrCreateSharedLink(db, { path, ...credOpt });
   if (!sharedLink) {
@@ -2732,7 +2689,7 @@ async function applyRelink(db, caseId, folderPath, opts = {}) {
   if (String(sharedLink).length > CASE_DROPBOX_MAX) {
     const e = new Error(
       `the shared link is ${String(sharedLink).length} characters; ` +
-      `cases.case_dropbox holds ${CASE_DROPBOX_MAX}. Refusing to store a truncated link.`);
+      `the case folder link (entity_folders.human_link) holds ${CASE_DROPBOX_MAX}. Refusing to store a truncated link.`);
     e.status = 500; throw e;
   }
 
@@ -2782,13 +2739,7 @@ async function applyRelink(db, caseId, folderPath, opts = {}) {
   }
 
   // ── 7. UNDISMISS + AUDIT ────────────────────────────────────────────────
-  await db.query(
-    `UPDATE case_folder_cache
-        SET relink_dismissed_at = NULL, relink_dismissed_by = NULL
-      WHERE case_id = ?`,
-    [caseId],
-  );
-  await entityFolders().setRelinkDismissed(db, { kind: 'case', ids: [caseId], dismissed: false, by: null });   // D3a dual-write
+  await entityFolders().setRelinkDismissed(db, { kind: 'case', ids: [caseId], dismissed: false, by: null });
 
   // House log conventions, matched to caseService.mergeCases: type 'update',
   // link_type 'case', a one-line subject, a prose message, and the machine
@@ -2810,7 +2761,7 @@ async function applyRelink(db, caseId, folderPath, opts = {}) {
       extra: {
         relink: {
           old_path: oldPath,
-          old_link: caseRow.case_dropbox || null,
+          old_link: oldLink,
           new_path: resolved || lower,
           requested_path: path,
           new_link: sharedLink,

@@ -1497,7 +1497,7 @@ One bounded increment of the Dropbox → documents sync. Walks enabled sync root
 
 #### `documents_refresh_case_cache`
 
-Resolve cases.case_dropbox shared links into the entity_folders binding (folder path + Dropbox id; case_folder_cache is still written beside it until D3d), oldest-first, so the sync engine can attribute documents to cases by path. A failed resolution records resolve_error and LEAVES THE PRIOR PATH INTACT — a revoked link must not unfile a case. Returns out_of_root: cases whose folder sits under no enabled sync root, whose documents would therefore never be registered. Bounded by BOTH a case count and a wall clock; hitting either is a normal outcome (timed_out in the output), and the next run resumes at the unreached tail. Fail-closed on app_settings documents_sync_enabled != "1".
+Resolve the case folder links (entity_folders.human_link) to the folder path + Dropbox id on the same binding row, oldest-first, so the sync engine can attribute documents to cases by path. A failed resolution records resolve_error and LEAVES THE PRIOR PATH INTACT — a revoked link must not unfile a case. Returns out_of_root: cases whose folder sits under no enabled sync root, whose documents would therefore never be registered. Bounded by BOTH a case count and a wall clock; hitting either is a normal outcome (timed_out in the output), and the next run resumes at the unreached tail. Fail-closed on app_settings documents_sync_enabled != "1".
 
 | Param | Type | Required | Description |
 |---|---|---|---|
@@ -1506,7 +1506,7 @@ Resolve cases.case_dropbox shared links into the entity_folders binding (folder 
 
 #### `documents_attribution_report`
 
-READ-ONLY diagnostic. Lists cases whose Dropbox folder resolved cleanly but hold ZERO attributed documents — the signature of a stale cases.case_dropbox left pointing at the intake folder after a case was filed and its contents moved elsewhere. For each, counts registered documents still under the cached path, split into deleted / active-linked-to-another-case / active-unlinked. Returns a verdict on whether the one-folder-per-case model holds. Writes nothing and emits nothing. Scans the whole documents table, so run it deliberately rather than on a schedule. Fail-closed on documents_sync_enabled != "1".
+READ-ONLY diagnostic. Lists cases whose Dropbox folder resolved cleanly but hold ZERO attributed documents — the signature of a stale case folder link left pointing at the intake folder after a case was filed and its contents moved elsewhere. For each, counts registered documents still under the cached path, split into deleted / active-linked-to-another-case / active-unlinked. Returns a verdict on whether the one-folder-per-case model holds. Writes nothing and emits nothing. Scans the whole documents table, so run it deliberately rather than on a schedule. Fail-closed on documents_sync_enabled != "1".
 
 | Param | Type | Required | Description |
 |---|---|---|---|

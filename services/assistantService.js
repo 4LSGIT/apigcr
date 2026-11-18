@@ -937,7 +937,7 @@ const CHECKLIST_CARD_ITEMS = 30;
 //     the removed link minus the remaining ones), the triage effect, and a
 //     COMES BACK danger when the Dropbox sync would re-add a case link (the
 //     file still sits in that case's folder — documentSyncService._matchCase
-//     over case_folder_cache). No event (document.unlinked is unregistered).
+//     over entity_folders). No event (document.unlinked is unregistered).
 // A11X (Fred, 2026-11-15 / 16: "release means allow") adds the Documents
 // page's two other writers, same switch:
 //   * document.generate.v1 → POST /api/documents/generate {template_id,
@@ -1356,8 +1356,8 @@ const MAIL_ATTACHMENT_CONFIRM = { type: 'not a usual document type', size: 'a la
 // (surname-only suggestions are a different client nearly every time; the
 // service header records the measurement) — copied byte for byte; a folder
 // that is not a candidate is linked by the user in the panel (free-typed
-// paths are deferred). case_folder_cache stays outside the report manifest:
-// the typed read runs on the app pool. The normalizer refuses a folder
+// paths are deferred). The relink state (entity_folders' dismissal columns)
+// stays outside the report manifest: the typed read runs on the app pool. The normalizer refuses a folder
 // another case's cache already holds (the route's own 409 predicate), the
 // case's current folder (a no-op), a gone case and a switched-off sync engine
 // (the route answers `skipped`); it predicts, with applyRelink's own
@@ -1383,7 +1383,7 @@ const CASE_FOLDER_LINK_STANDIN = 'https://www.dropbox.com/(the folder shared lin
 // A11.1X (Fred, 2026-11-15: "release means allow") — two more kinds and one
 // more typed read on the SAME switch.
 //   · case.folder.dismiss.v1 {case_id, undo?} → POST /api/documents/relink/dismiss
-//     (setRelinkDismissed: two columns on case_folder_cache — no link, no cases
+//     (setRelinkDismissed: two columns on entity_folders — no link, no cases
 //     row, no provider call, no event, no log entry). ONE case per card: the
 //     route's array form is the PANEL's bulk, and a bulk Casey dismiss over
 //     cases the queue never lists is a bulk re-link's ask in disguise.
@@ -7108,7 +7108,7 @@ async function normalizeDocumentShare(db, value, evidence) {
 
 // The case a file's path files it under, the way the Dropbox sync decides it:
 // documentSyncService._matchCase (innermost cached case folder) over the
-// case_folder_cache rows for the path's own ancestors. null = no case folder.
+// entity_folders rows for the path's own ancestors. null = no case folder.
 async function documentFolderCase(db, pathLower) {
   const p = String(pathLower || '');
   const ancestors = [];
@@ -11570,6 +11570,7 @@ async function normalizeCaseFolderUndoAction(db, value, evidence, { currentUserI
   }
   const [[prior]] = await db.query('SELECT * FROM cases WHERE case_id = ? LIMIT 1', [id]);
   if (!prior) throw caseFolderError(`Case ${caseId} no longer exists`);
+  prior.case_dropbox = fresh.current_link || null;   // D3d-2: the folder link is the binding's (the API field updateCase diffs)
   const newLink = relink.new_link ? String(relink.new_link) : null;
   if (!newLink || String(prior.case_dropbox || '') !== newLink) {
     throw caseFolderError(`Case ${label}'s Dropbox link is no longer the one entry #${logId} wrote${prior.case_dropbox ? '' : ' (it is blank now)'} — someone changed it since, so that entry is not what the case's current state came from. Nothing to undo from it`);
@@ -11607,7 +11608,7 @@ async function normalizeCaseFolderUndoAction(db, value, evidence, { currentUserI
   } else {
     warnings.push(`NOT A CANDIDATE: neither the case number nor a client's name${clients.length ? ` (${clients.join('; ')})` : ''} is in the old folder's name ("${String(facts.path.slice(facts.path.lastIndexOf('/') + 1)).slice(0, 160)}") — the panel would not suggest it. The entry says the case pointed there once; nothing else ties it to this client. Be sure the undo is right.`);
   }
-  effects.push(`Case link: the case's Dropbox link (cases.case_dropbox) is REWRITTEN — from ${newLink.slice(0, 300)} — to the old folder's permanent Dropbox shared link: Dropbox's existing link for it (usually the one the entry recorded${relink.old_link ? `, ${String(relink.old_link).slice(0, 300)}` : ''}), else a NEW one created with public visibility (anyone holding it can open the folder).`);
+  effects.push(`Case link: the case's Dropbox link (case_dropbox) is REWRITTEN — from ${newLink.slice(0, 300)} — to the old folder's permanent Dropbox shared link: Dropbox's existing link for it (usually the one the entry recorded${relink.old_link ? `, ${String(relink.old_link).slice(0, 300)}` : ''}), else a NEW one created with public visibility (anyone holding it can open the folder).`);
   const heldNamed = p.held_by.map((h) => `${n(h.n, 'file', 'files')} on ${String(h.case_id) === id ? 'this case already' : caseName(h.case_id)}`);
   effects.push(`Attaches NOW: ${p.truncated ? 'at least ' : ''}${n(p.attach, 'registered file', 'registered files')} of the ${p.under_total.toLocaleString('en-US')} under the old folder get the sync's link to this case again and show on its Documents tab at once — silently: no document.linked event fires for them.${p.held_total ? ` ${n(p.held_total, 'file already carries', 'files already carry')} the sync's link to a case and stay${p.held_total === 1 ? 's' : ''} as ${p.held_total === 1 ? 'it is' : 'they are'} (${heldNamed.join('; ')}${p.held_total > p.held_by.reduce((s, h) => s + h.n, 0) ? '; …' : ''}).` : ''}${p.nested ? ` ${n(p.nested, 'file sits', 'files sit')} inside another case's folder nested there and stay${p.nested === 1 ? 's' : ''} with that case.` : ''}`);
   if (p.detach) {
@@ -11887,6 +11888,7 @@ async function normalizeCaseFolderAction(db, value, evidence, { currentUserId = 
   }
   const [[prior]] = await db.query('SELECT * FROM cases WHERE case_id = ? LIMIT 1', [id]);
   if (!prior) throw caseFolderError(`Case ${caseId} no longer exists`);
+  prior.case_dropbox = fresh.current_link || null;   // D3d-2: the folder link is the binding's (the API field updateCase diffs)
 
   const p = await caseFolderPredict(db, id, folderLower);
   const heldLabels = await documentTargetLabels(db, p.held_by.map((h) => ({ link_type: 'case', link_id: h.case_id })));
@@ -11906,7 +11908,7 @@ async function normalizeCaseFolderAction(db, value, evidence, { currentUserId = 
   effects.push(fresh.current_path
     ? `Now points at: "${String(fresh.current_path_display || fresh.current_path).slice(0, 300)}"${fresh.resolve_error ? ` (its last resolve failed: ${String(fresh.resolve_error).slice(0, 160)})` : ''}.`
     : `Now points at: no folder${fresh.current_link ? ` (the case has a Dropbox link, but it has never resolved to a folder${fresh.resolve_error ? `: ${String(fresh.resolve_error).slice(0, 160)}` : ''})` : ''}.`);
-  effects.push(`Case link: the case's Dropbox link (cases.case_dropbox) is REWRITTEN — ${fresh.current_link ? `from ${String(fresh.current_link).slice(0, 300)}` : 'from blank'} — to the folder's permanent Dropbox shared link: Dropbox's existing link for it, else a NEW one created with public visibility (anyone holding it can open the folder). The old link is kept only in the audit entry.`);
+  effects.push(`Case link: the case's Dropbox link (case_dropbox) is REWRITTEN — ${fresh.current_link ? `from ${String(fresh.current_link).slice(0, 300)}` : 'from blank'} — to the folder's permanent Dropbox shared link: Dropbox's existing link for it, else a NEW one created with public visibility (anyone holding it can open the folder). The old link is kept only in the audit entry.`);
   const heldNamed = p.held_by.map((h) => `${n(h.n, 'file', 'files')} on ${String(h.case_id) === id ? 'this case already' : caseName(h.case_id)}`);
   effects.push(`Attaches NOW: ${p.truncated ? 'at least ' : ''}${n(p.attach, 'registered file', 'registered files')} of the ${p.under_total.toLocaleString('en-US')} under this folder get the sync's link to this case and show on its Documents tab at once — silently: no document.linked event fires for them.${p.held_total ? ` ${n(p.held_total, 'file already carries', 'files already carry')} the sync's link to a case and stay${p.held_total === 1 ? 's' : ''} as ${p.held_total === 1 ? 'it is' : 'they are'} (${heldNamed.join('; ')}${p.held_total > p.held_by.reduce((s, h) => s + h.n, 0) ? '; …' : ''}).` : ''}${p.nested ? ` ${n(p.nested, 'file sits', 'files sit')} inside another case's folder nested here and stay${p.nested === 1 ? 's' : ''} with that case.` : ''}`);
   if (p.detach) {
@@ -17006,7 +17008,7 @@ function validateStep(query, index) {
     return out;
   }
   // A11.1 — ONE case's Dropbox folder candidates, the relink panel's own list
-  // (typed: case_folder_cache is outside the curated schema; never weak matches).
+  // (typed: the relink state is outside the curated schema; never weak matches).
   if (kind === 'document.relink.candidates') {
     const caseId = typeof query.case_id === 'string' ? query.case_id.trim() : '';
     if (!/^[A-Za-z0-9_-]{1,20}$/.test(caseId)) throw httpError(422, `Step ${id} needs the case's exact case_id`);
@@ -17568,7 +17570,7 @@ async function executeReadStep(db, query, { auth, userId }) {
     rowCount = rows.length;
     truncated = out.truncated;
   } else if (query.kind === 'document.relink.candidates') {
-    // A11.1: on the app pool (case_folder_cache stays outside the report
+    // A11.1: on the app pool (the relink state stays outside the report
     // manifest); the panel's own read, never with weak matches.
     const out = await relinkCandidatesRead(db, query.case_id);
     rows = out.rows;
@@ -17576,7 +17578,7 @@ async function executeReadStep(db, query, { auth, userId }) {
     truncated = out.truncated;
   } else if (query.kind === 'document.folder') {
     // A11.1X: Dropbox through the documents sync's credential plus the app
-    // pool (case_folder_cache and document_links stay outside the manifest).
+    // pool (the relink state and document_links stay outside the manifest).
     const out = await documentFolderRead(db, query.path);
     rows = out.rows;
     rowCount = rows.length;

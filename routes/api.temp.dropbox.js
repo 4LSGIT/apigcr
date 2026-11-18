@@ -55,7 +55,7 @@
 //     body: { path: "/  Law Office/   Cases", recursive: false, limit: 200 } }
 //   { path: "/2/files/list_folder/continue", body: { cursor: "..." } }
 //   { path: "/2/files/get_metadata", body: { path: "id:xxxx" } }
-//   { path: "/2/sharing/get_shared_link_metadata", body: { url: "<case_dropbox>" } }
+//   { path: "/2/sharing/get_shared_link_metadata", body: { url: "<case folder link>" } }
 
 const express = require('express');
 const router = express.Router();

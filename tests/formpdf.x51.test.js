@@ -96,7 +96,8 @@ beforeEach(() => {
   taskService.createTask.mockImplementation(async () => ({ task_id: 77 }));
   db.query.mockReset();
   db.query.mockImplementation(async (sql) => {
-    if (/case_dropbox/.test(sql)) return [[{ case_dropbox: 'https://www.dropbox.com/sh/case-link' }]];
+    if (/FROM entity_folders/.test(sql)) return [[{ external_id: null, path_lower: null, human_link: 'https://www.dropbox.com/sh/case-link' }]];   // D3d-2: the binding is the record
+    if (/FROM cases/.test(sql)) return [[{ case_id: 'hjSFMabb' }]];
     if (/contact_lfm_name/.test(sql)) return [[{ contact_lfm_name: 'Smith, John' }]];
     return [[]];
   });
@@ -147,7 +148,7 @@ describe('form-PDF unsorted bin', () => {
     formService.getSubmissionForRender.mockResolvedValue(makeBundle());
     dropboxService.resolveLocation.mockRejectedValue(new Error('link revoked'));
     db.query.mockImplementation(async (sql) => {
-      if (/case_dropbox/.test(sql)) return [[{ case_dropbox: 'https://www.dropbox.com/sh/x' }]];
+      if (/FROM entity_folders/.test(sql)) return [[{ external_id: null, path_lower: null, human_link: 'https://www.dropbox.com/sh/x' }]];
       throw new Error('contacts unavailable');
     });
 

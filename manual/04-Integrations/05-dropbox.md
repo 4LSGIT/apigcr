@@ -47,16 +47,16 @@ The firm uses leading spaces in folder/file names as a manual sort mechanism (`/
 
 ### Shared-link-as-handle
 
-`cases.case_dropbox` stores a public shared link created when the folder is born. Because shared links survive moves and renames, every location-taking operation accepts **either** `path` **or** `shared_link` (resolved via `sharing/get_shared_link_metadata` → `path_lower`, one extra API call). Workflows should prefer `{{cases.case_dropbox}}` over hardcoded paths.
+The case's folder binding (`entity_folders.human_link`; the case payload's `case_dropbox` field) stores a public shared link created when the folder is born. Because shared links survive moves and renames, every location-taking operation accepts **either** `path` **or** `shared_link` (resolved via `sharing/get_shared_link_metadata` → `path_lower`, one extra API call). Workflows should prefer `{{cases.case_dropbox}}` over hardcoded paths.
 
 ### Stage-aware case folders — `caseService.ensureCaseDropboxFolder(db, caseId, {force})`
 
 The single operation behind intake, the case-page button, and the `storage_ensure_case_folder` internal function:
 
-1. No-op if `case_dropbox` is set (returns the existing link; `force: true` recreates and overwrites).
+1. No-op if the case is already bound to a folder (returns the binding's link; `force: true` recreates and overwrites).
 2. Stage: `case_number` or `case_number_full` non-empty → **active**, else **potential**.
 3. Names from the **Primary** contact (`case_relate_type = 'Primary'`, falling back to lowest contact id).
-4. Path + subfolders from the template map; folder created with a shared link; link written to `cases.case_dropbox`.
+4. Path + subfolders from the template map; folder created with a shared link; the handle, path and link written to the case's `entity_folders` binding (the one record — the old `cases.case_dropbox` column and `case_folder_cache` table are retired).
 
 Template resolution per stage, most-specific first: `map[stage]["Type:Subtype"]` → `map[stage]["Type"]` → `map[stage].default` → hardcoded default in caseService. Composite keys use a colon (`"Bankruptcy:Chapter 13"`) and are only needed when the path *structure* differs by subtype — within one template `{{case_subtype}}` already varies per case. Subfolders: `map[stage].subfolders` → hardcoded (stage-level only, not per-key).
 
@@ -148,7 +148,7 @@ All in `lib/internal_functions/storage.js`, category `storage`, chainable via `{
 
 1. Connections: credential 8 `oauth_status = connected`, `allowed_urls` covering both hosts (above). Token type `offline` so refresh works.
 2. `app_settings.dropbox_credential_id` = `8` (seeded; there is NO code default — every storage operation refuses until the row exists).
-3. Optional convention seed — **verify leading spaces against the live tree first** (`/api/dropbox/shared-link-metadata` on an existing `case_dropbox` link → `metadata.path_display`):
+3. Optional convention seed — **verify leading spaces against the live tree first** (`/api/dropbox/shared-link-metadata` on an existing case folder link → `metadata.path_display`):
 
 ```sql
 REPLACE INTO app_settings (`key`, `value`) VALUES (

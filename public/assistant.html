@@ -5825,7 +5825,7 @@ function caseFolderAppliedMessage(draft, payload, replayed) {
 // and refuses on any difference BEFORE the claim. The route answers
 // {updated, case_ids, dismissed}: updated 0 (the row vanished) is a refusal,
 // never a success. Receipt: the STRING case_id. The route is on no bus:
-// case_folder_cache is not a bus-watched entity and no open page shows it.
+// the relink state (entity_folders' dismissal columns) is not a bus-watched entity and no open page shows it.
 const CASE_FOLDER_DISMISS_ACTION_KINDS = new Set(['case.folder.dismiss.v1']);
 
 function caseFolderDismissLabel(draft) { return draft && draft.undo ? 'Return case to relink queue' : 'Dismiss case from relink queue'; }

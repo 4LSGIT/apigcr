@@ -100,6 +100,10 @@ function seedBase(world) {
     links: [W.CASE_A_FOLDER],
   });
   world.cases.hjSFMabb.case_dropbox = links[W.CASE_A_FOLDER];
+  // the bindings as the D3a backfill made them (link only; the sweep fills paths) — since D3d-2 the binding IS the
+  // record (the column above is inert), so without these rows the routes would see every case as unbound
+  world.entityFolders.hjSFMabb = { external_id: null, path_lower: null, path_display: null, human_link: links[W.CASE_A_FOLDER], resolve_error: null };
+  world.entityFolders.deadLnk1 = { external_id: null, path_lower: null, path_display: null, human_link: world.cases.deadLnk1.case_dropbox, resolve_error: null };
 }
 
 // ── 14. the free-look court-document capture: into the case folder, else the fallback folder

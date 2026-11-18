@@ -165,14 +165,14 @@ router.post('/api/court/free-look', jwtOrApiKey, async (req, res) => {
     // reveal whose case it is, so the registry link has to be made from what
     // we knew here. Selecting it costs nothing — same row, same query.
     const [rows] = await db.query(
-      'SELECT case_id, case_dropbox FROM cases WHERE case_number = ? LIMIT 1',
+      'SELECT case_id FROM cases WHERE case_number = ? LIMIT 1',
       [case_number]
     );
     if (!rows || rows.length === 0)  fallbackReason = 'no_case_row';
     else {
       caseId = rows[0].case_id;
-      // D3b-1: the case folder's binding, then the legacy column (the row in hand).
-      const bound = await require('../services/entityFolderService').caseFolderLink(db, caseId, { caseRow: rows[0] });   // lazy (convention)
+      // The case folder's binding (entity_folders — the record, D3d-2).
+      const bound = await require('../services/entityFolderService').caseFolderLink(db, caseId);   // lazy (convention)
       if (!bound.link)               fallbackReason = 'no_case_dropbox';
       else                           caseDropbox = bound.link;
     }

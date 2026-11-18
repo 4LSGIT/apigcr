@@ -291,7 +291,7 @@ async function subjectNameCases(db, subject) {
 
 /**
  * The case folder's subfolders, for the dialog's folder choice: ONE recursive
- * Dropbox listing of the case's folder (cases.case_dropbox — the shared link
+ * Dropbox listing of the case's folder (its entity_folders binding — the shared link
  * every upload resolves), folders only, relative to the case folder, at most
  * FOLDERS_DEPTH levels, names exactly as Dropbox shows them (leading spaces
  * kept). Any staff member: the same listing /api/dropbox/list gives.
@@ -300,10 +300,10 @@ async function subjectNameCases(db, subject) {
 async function caseFolders(db, userId, body) {
   onlyKeys(body, ['case_id']);
   const caseId = caseIdOf(body.case_id, { required: true });
-  const [[c]] = await db.query('SELECT case_id, case_dropbox FROM cases WHERE case_id = ? LIMIT 1', [caseId]);
+  const [[c]] = await db.query('SELECT case_id FROM cases WHERE case_id = ? LIMIT 1', [caseId]);
   if (!c) throw httpError(404, 'Case not found');
   const out = { case_id: c.case_id, folders: [], truncated: false, reason: null };
-  const link = (await require('./entityFolderService').caseFolderLink(db, c.case_id, { caseRow: c })).link;   // lazy (convention); D3b-1: the binding, then the legacy column
+  const link = (await require('./entityFolderService').caseFolderLink(db, c.case_id)).link;   // lazy (convention); the binding (the record, D3d-2)
   if (!link) return { ...out, reason: 'no_case_folder' };
   const sources = require('./documentSourceService');   // lazy (convention)
   const storage = sources.get(sources.configured());   // D3e: the configured provider

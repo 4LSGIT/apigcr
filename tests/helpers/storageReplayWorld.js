@@ -78,19 +78,14 @@ function makeDb(w) {
     const s = String(sql).replace(/\s+/g, ' ').trim();
 
     // ── cases ─────────────────────────────────────────────────────────────
-    if (/^UPDATE cases SET case_dropbox = \? WHERE case_id = \?/.test(s)) {
-      const c = w.cases[String(params[1])];
-      if (c) c.case_dropbox = params[0];
-      effect('cases.case_dropbox', { case_id: params[1], case_dropbox: params[0] });
-      return ok(c ? 1 : 0);
-    }
-    if (/^SELECT c\.case_id, c\.case_dropbox FROM cases c WHERE c\.case_id IN \(\?\) AND c\.case_dropbox IS NOT NULL/.test(s)) {
+    // D3d-2: the refresh's candidates are the bindings' links (the column is retired)
+    if (/^SELECT f\.entity_id AS case_id, f\.human_link AS link FROM entity_folders f WHERE f\.entity_kind = 'case' AND f\.source = 'dropbox' AND f\.entity_id IN \(\?\)/.test(s)) {
       const ids = (params[0] || []).map(String);
-      return rows(Object.values(w.cases).filter((c) => ids.includes(c.case_id) && c.case_dropbox).map((c) => ({ case_id: c.case_id, case_dropbox: c.case_dropbox })));
+      return rows(Object.entries(w.entityFolders).filter(([k, b]) => !k.includes(':') && ids.includes(k) && b.human_link).map(([k, b]) => ({ case_id: k, link: b.human_link })));
     }
-    if (/^SELECT case_id, case_dropbox FROM cases WHERE case_number = \?/.test(s)) {
+    if (/^SELECT case_id FROM cases WHERE case_number = \?/.test(s)) {
       const c = Object.values(w.cases).find((x) => x.case_number === String(params[0]));
-      return rows(c ? [{ case_id: c.case_id, case_dropbox: c.case_dropbox }] : []);
+      return rows(c ? [{ case_id: c.case_id }] : []);
     }
     if (/^SELECT .* FROM cases(?: c)? WHERE (?:c\.)?case_id = \?/.test(s)) {
       const c = w.cases[String(params[0])];
@@ -161,11 +156,10 @@ function makeDb(w) {
     if (/^SELECT entity_id AS case_id, external_id AS folder_external_id, path_lower FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND path_lower IS NOT NULL/.test(s)) {
       return rows(Object.entries(w.entityFolders).filter(([id, b]) => b.path_lower && !id.includes(':')).map(([id, b]) => ({ case_id: id, folder_external_id: b.external_id ?? null, path_lower: b.path_lower })));
     }
-    if (/^SELECT path_lower FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id = \?/.test(s)) {
+    if (/^SELECT path_lower(?:, human_link)? FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id = \?/.test(s)) {
       const b = w.entityFolders[String(params[0])];
-      return rows(b ? [{ path_lower: b.path_lower ?? null }] : []);
+      return rows(b ? [{ path_lower: b.path_lower ?? null, human_link: b.human_link ?? null }] : []);
     }
-    if (/^UPDATE case_folder_cache/.test(s)) { effect('case_folder_cache.update', { params }); return ok(1); }
     // ── entity_folders (D3b-1): modelled as state so a later read sees an earlier write, as MySQL would ──
     // keyed by case_id for kind 'case' (the sync reads list them by case) and 'contact:<id>' for kind 'contact' (D3c-2)
     const efKey = (kind, id) => (kind === 'case' ? String(id) : `${kind}:${id}`);
@@ -204,7 +198,6 @@ function makeDb(w) {
     }
     if (/^UPDATE entity_folders/.test(s)) { effect('entity_folders.update', { params }); return ok(1); }
     if (/^DELETE FROM entity_folders/.test(s)) { delete w.entityFolders[efKey(params[0], params[1])]; effect('entity_folders.delete', { params }); return ok(1); }
-    if (/^INSERT INTO case_folder_cache/.test(s)) { effect('case_folder_cache.upsert', { params }); return ok(1); }
     if (/FROM document_sync_roots WHERE enabled = 1/.test(s)) return rows([]);
     // ── anything else ─────────────────────────────────────────────────────
     if (/^(INSERT|UPDATE|DELETE)/.test(s)) { effect('db.write.unmodelled', { sql: s.slice(0, 120) }); return ok(1); }

@@ -44,8 +44,8 @@
  * ladder already solved save-location for non-case entities):
  *
  *   case-linked submission:
- *     1. live cases.case_dropbox → <case folder>/Forms/   (created if absent)
- *     2. no case_dropbox → caseService.ensureCaseDropboxFolder, then (1),
+ *     1. live case folder link (entity_folders) → <case folder>/Forms/   (created if absent)
+ *     2. no folder link → caseService.ensureCaseDropboxFolder, then (1),
  *        always with a staff task.
  *     3. dead link / create failure / case row gone → the UNSORTED FORM
  *        SUBMISSIONS bin (X5.1: its own bin, app_settings

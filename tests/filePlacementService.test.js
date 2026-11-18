@@ -112,7 +112,8 @@ beforeEach(() => {
   ingest.registerWrittenSafe.mockImplementation(async () => ({ ok: true, document: { id: 909 }, links: [] }));
   db.query.mockReset();
   db.query.mockImplementation(async (sql) => {
-    if (/case_dropbox/.test(sql)) return [[{ case_dropbox: 'https://www.dropbox.com/sh/case-link' }]];
+    if (/FROM entity_folders/.test(sql)) return [[{ external_id: null, path_lower: null, human_link: 'https://www.dropbox.com/sh/case-link' }]];   // D3d-2: the binding is the record
+    if (/FROM cases/.test(sql)) return [[{ case_id: 'hjSFMabb' }]];
     if (/contact_lfm_name/.test(sql)) return [[{ contact_lfm_name: 'Smith, John' }]];
     return [[]];
   });
@@ -174,7 +175,8 @@ describe('rung 1 — live case link', () => {
 describe('rung 2 — no case_dropbox', () => {
   beforeEach(() => {
     db.query.mockImplementation(async (sql) => {
-      if (/case_dropbox/.test(sql)) return [[{ case_dropbox: null }]];
+      if (/FROM entity_folders/.test(sql)) return [[]];                    // unbound …
+      if (/FROM cases/.test(sql)) return [[{ case_id: 'hjSFMabb' }]];      // … but the case exists → rung 2
       if (/contact_lfm_name/.test(sql)) return [[{ contact_lfm_name: 'Smith, John' }]];
       return [[]];
     });
@@ -290,7 +292,7 @@ describe('rung 3 — case rung unreachable', () => {
 
   test('a name-lookup failure degrades the subfolder to the bare case id', async () => {
     db.query.mockImplementation(async (sql) => {
-      if (/case_dropbox/.test(sql)) return [[{ case_dropbox: 'https://www.dropbox.com/sh/x' }]];
+      if (/FROM entity_folders/.test(sql)) return [[{ external_id: null, path_lower: null, human_link: 'https://www.dropbox.com/sh/x' }]];
       throw new Error('contacts unavailable');
     });
     await call();
@@ -299,7 +301,7 @@ describe('rung 3 — case rung unreachable', () => {
 
   test('a missing case row lands here too, saying so', async () => {
     db.query.mockImplementation(async (sql) => {
-      if (/case_dropbox/.test(sql)) return [[]];
+      if (/FROM entity_folders|FROM cases/.test(sql)) return [[]];        // no binding, no case row
       if (/contact_lfm_name/.test(sql)) return [[{ contact_lfm_name: 'Smith, John' }]];
       return [[]];
     });
@@ -641,7 +643,8 @@ describe('describePlacement — the ladder without the write (A11X)', () => {
 
   test('rung 2 — no case_dropbox: reported as auto_create with the task TITLE the ladder raises; ensureCaseDropboxFolder is NOT called', async () => {
     db.query.mockImplementation(async (sql) => {
-      if (/case_dropbox/.test(sql)) return [[{ case_dropbox: null }]];
+      if (/FROM entity_folders/.test(sql)) return [[]];
+      if (/FROM cases/.test(sql)) return [[{ case_id: 'hjSFMabb' }]];
       if (/contact_lfm_name/.test(sql)) return [[{ contact_lfm_name: 'Smith, John' }]];
       return [[]];
     });
@@ -668,10 +671,10 @@ describe('describePlacement — the ladder without the write (A11X)', () => {
   });
 
   test('rung 3 — the case row gone, and a case read that throws', async () => {
-    db.query.mockImplementation(async (sql) => { if (/case_dropbox/.test(sql)) return [[]]; return [[]]; });
+    db.query.mockImplementation(async () => [[]]);   // no binding, no case row
     const gone = await fp.describePlacement(db, OPTS);
     expect([gone.rung, gone.reason, gone.folder_path]).toEqual(['unsorted', 'Case "hjSFMabb" was not found.', `${BIN_DEFAULT}/hjSFMabb`]);
-    db.query.mockImplementation(async (sql) => { if (/case_dropbox/.test(sql)) throw new Error('db down'); return [[]]; });
+    db.query.mockImplementation(async (sql) => { if (/FROM entity_folders/.test(sql)) throw new Error('db down'); return [[]]; });
     const broken = await fp.describePlacement(db, OPTS);
     expect(broken.reason).toBe('Could not read the case row: db down');
     untouched();

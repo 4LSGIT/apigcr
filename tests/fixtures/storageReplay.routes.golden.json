@@ -179,11 +179,6 @@
      "source": "dropbox"
     },
     {
-     "kind": "cases.case_dropbox",
-     "case_dropbox": "https://www.dropbox.com/scl/fo/fake0002?dl=0",
-     "case_id": "k9PotLd2"
-    },
-    {
      "kind": "entity_folders.upsert",
      "params": [
       "case",

@@ -282,6 +282,8 @@ d('the Casey document generate / register cards on real MySQL (A11X)', () => {
       if (method === 'GET' && (m = /^\/api\/cases\/([^/]+)$/.exec(p))) {
         const row = (await q('SELECT * FROM cases WHERE case_id = ?', [decodeURIComponent(m[1])]))[0];
         if (!row) throw Object.assign(new Error('Case not found'), { status: 404 });
+        // the real route's getCase fills case_dropbox from the binding (D3d-2)
+        row.case_dropbox = (await require('../services/entityFolderService').caseFolderLink(pool, row.case_id)).link;
         return { case: row };
       }
       if (method === 'GET' && (m = /^\/api\/contacts\/(\d+)$/.exec(p))) {
@@ -381,7 +383,7 @@ d('the Casey document generate / register cards on real MySQL (A11X)', () => {
     expect([c.relation, c.document_name, c.expected.record]).toEqual(['upload', 'Hearing Notice – Client', { case_dropbox: null }]);
     expect(c.values.blanks).toEqual(['hearing_date']);
     caseService.ensureCaseDropboxFolder.mockImplementation(async (db, caseId) => {
-      await db.query('UPDATE cases SET case_dropbox = ? WHERE case_id = ?', ['https://www.dropbox.com/scl/fo/c2/new?rlkey=2', caseId]);
+      await db.query("INSERT INTO entity_folders (entity_kind, entity_id, source, human_link) VALUES ('case', ?, 'dropbox', ?)", [caseId, 'https://www.dropbox.com/scl/fo/c2/new?rlkey=2']);   // D3d-2: the real one binds, never the column
       tree.set(lower(`${ROOT}/ 13 - Client, Other - 25-70002`), []);
       return { existed: false, stage: 'active', path: `${ROOT}/ 13 - Client, Other - 25-70002`, shared_link: 'https://www.dropbox.com/scl/fo/c2/new?rlkey=2' };
     });

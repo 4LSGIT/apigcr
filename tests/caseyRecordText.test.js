@@ -50,6 +50,8 @@ function makeDb(over = {}) {
     contact_ssn: SECRET_SSN, ...(over.contact || {}) } };
   const query = jest.fn(async (sql, params = []) => {
     const flat = sql.replace(/\s+/g, ' ').trim();
+    if (flat === 'SELECT external_id, path_lower, human_link FROM entity_folders WHERE entity_kind = ? AND entity_id = ? AND source = ? LIMIT 1') return [[]];   // D3d-2: getCase fills case_dropbox from the binding (unbound here)
+    if (flat === 'SELECT case_id FROM cases WHERE case_id = ? LIMIT 1') return [[{ case_id: params[0] }]];   // the PK read behind an unbound case
     if (flat === 'SELECT * FROM cases WHERE case_id = ?') {
       // utf8mb4_general_ci: a differently-cased id finds the row.
       const row = Object.values(cases).find((c) => c.case_id.toLowerCase() === String(params[0]).toLowerCase());

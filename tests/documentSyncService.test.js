@@ -184,16 +184,14 @@ function makeDb({
         return [(db.scanRows || []).filter(r => r.id > after)];
       }
 
-      // ── the binding (D3b-2: every read) and case_folder_cache (writes only) ──
+      // ── the binding (entity_folders): every read AND every write (D3d-2) ──
+      // the refresh's candidate scan: the bindings' links (the test seeds them as db.caseRows {case_id, case_dropbox})
+      if (/^SELECT f\.entity_id AS case_id, f\.human_link AS link FROM entity_folders f/.test(flat)) {
+        return [(db.caseRows || []).map(r => ({ case_id: r.case_id, link: r.case_dropbox }))];
+      }
       if (/FROM entity_folders/.test(flat)) return [cache];
-      if (/^INSERT INTO case_folder_cache/.test(flat)) return [{ affectedRows: 1 }];
-      if (/^UPDATE case_folder_cache/.test(flat)) return [{ affectedRows: 1 }];
-      // D3a: the binding row the engine dual-writes beside the cache
       if (/^INSERT INTO entity_folders/.test(flat)) { db.entityFolderWrites.push(['insert', params]); return [{ affectedRows: 1 }]; }
       if (/^UPDATE entity_folders/.test(flat)) { db.entityFolderWrites.push(['update', params]); return [{ affectedRows: 1 }]; }
-
-      // ── cases (refreshCaseFolderCache candidate scan) ──────────────────
-      if (/FROM cases c/.test(flat)) return [db.caseRows || []];
 
       // ── documents ──────────────────────────────────────────────────────
       if (/^SELECT \* FROM documents WHERE source = \? AND external_id = \?/.test(flat)) {
@@ -973,9 +971,10 @@ describe('syncRoot — folder entries', () => {
 
     const out = await sync.syncRoot(db, root());
 
-    const heal = db.find('UPDATE case_folder_cache');
+    const heal = db.find('UPDATE entity_folders');   // setPaths: [pathLower, pathDisplay, kind, id, source]
     expect(heal.params[0]).toBe('/r/  closed/  case a');
-    expect(heal.params[2]).toBe('CASEA');
+    expect(heal.params.slice(2)).toEqual(['case', 'CASEA', 'dropbox']);
+    expect(db.sqls().some(s => /case_folder_cache/.test(s))).toBe(false);
     expect(out.folder_heals).toBe(1);
     // And the heal applies WITHIN the same page: the file attributes.
     expect(out.linked).toBe(1);
@@ -994,7 +993,7 @@ describe('syncRoot — folder entries', () => {
 
     const out = await sync.syncRoot(db, root());
     expect(out.folder_heals).toBe(0);
-    expect(db.all('UPDATE case_folder_cache').length).toBe(0);
+    expect(db.all('UPDATE entity_folders').length).toBe(0);
   });
 });
 
@@ -1345,7 +1344,7 @@ describe('refreshCaseFolderCache', () => {
     return db;
   }
 
-  test('resolves shared links and upserts path + dropbox id, clearing resolve_error', async () => {
+  test('resolves the binding\'s link and writes path + dropbox id back onto the SAME row, clearing resolve_error (D3d-2: entity_folders is the record; no case_folder_cache)', async () => {
     const db = cacheDb([{ case_id: 'CASEA', case_dropbox: 'https://db.com/scl/fo/a' }]);
     dropbox.getSharedLinkMetadata.mockResolvedValue({
       '.tag': 'folder', id: 'id:fA',
@@ -1356,21 +1355,23 @@ describe('refreshCaseFolderCache', () => {
     const out = await sync.refreshCaseFolderCache(db);
 
     expect(out).toMatchObject({ resolved: 1, failed: 0, out_of_root: [] });
-    const up = db.find('INSERT INTO case_folder_cache');
+    const up = db.find('INSERT INTO entity_folders');   // setResolved: [kind, id, source, externalId, pathLower, pathDisplay, humanLink]
     expect(up.sql).toContain('resolve_error = NULL');
     expect(up.params).toEqual([
-      'CASEA', 'id:fA',
+      'case', 'CASEA', 'dropbox', 'id:fA',
       '/  law office/   cases/  active cases/  case a',
       '/  Law Office/   Cases/  Active Cases/  Case A',
+      'https://db.com/scl/fo/a',
     ]);
+    expect(db.sqls().some(s => /case_folder_cache|FROM cases/.test(s))).toBe(false);
   });
 
-  test('oldest-first, never-resolved first — ordered by the BINDING (D3b-2), not the cache', async () => {
+  test('oldest-first, never-resolved first — the candidates ARE the binding rows, ordered by their resolved_at', async () => {
     const db = cacheDb([]);
     await sync.refreshCaseFolderCache(db);
-    const sql = db.find('FROM cases c').sql;
-    expect(sql).toContain("LEFT JOIN entity_folders f ON f.entity_kind = 'case' AND f.source = 'dropbox' AND f.entity_id = c.case_id");
-    expect(sql).not.toMatch(/case_folder_cache/);
+    const sql = db.find('FROM entity_folders f').sql;
+    expect(sql).toMatch(/^SELECT f\.entity_id AS case_id, f\.human_link AS link FROM entity_folders f WHERE f\.entity_kind = 'case' AND f\.source = 'dropbox' AND f\.human_link IS NOT NULL AND f\.human_link <> ''/);
+    expect(sql).not.toMatch(/case_folder_cache|FROM cases/);
     expect(sql).toContain('ORDER BY (f.resolved_at IS NULL) DESC, f.resolved_at ASC');
   });
 
@@ -1383,9 +1384,9 @@ describe('refreshCaseFolderCache', () => {
     const out = await sync.refreshCaseFolderCache(db);
 
     expect(out).toMatchObject({ resolved: 0, failed: 1 });
-    const write = db.find('INSERT INTO case_folder_cache');
-    expect(write.sql).not.toContain('path_lower');
-    expect(write.params[1]).toMatch(/shared_link_not_found/);
+    const write = db.find('INSERT INTO entity_folders');   // setError: [kind, id, source, humanLink, error]
+    expect(write.sql).not.toMatch(/path_lower\s*=/);
+    expect(write.params[4]).toMatch(/shared_link_not_found/);
     expect(out.failures[0].case_id).toBe('CASEA');
   });
 
@@ -1394,7 +1395,7 @@ describe('refreshCaseFolderCache', () => {
     dropbox.getSharedLinkMetadata.mockRejectedValue(new Error('E'.repeat(900)));
 
     await sync.refreshCaseFolderCache(db);
-    expect(db.find('INSERT INTO case_folder_cache').params[1].length).toBe(255);
+    expect(db.find('INSERT INTO entity_folders').params[4].length).toBe(255);
   });
 
   test('a link resolving without a path_lower counts as failed, not resolved', async () => {
@@ -1471,11 +1472,11 @@ describe('refreshCaseFolderCache', () => {
   test('limit is clamped and inlined as a validated integer', async () => {
     const db = cacheDb([]);
     await sync.refreshCaseFolderCache(db, { limit: 99999 });
-    expect(db.find('FROM cases c').sql).toContain('LIMIT 2000');
+    expect(db.find('FROM entity_folders f').sql).toContain('LIMIT 2000');
 
     const db2 = cacheDb([]);
     await sync.refreshCaseFolderCache(db2, { limit: '1); DROP TABLE cases; --' });
-    expect(db2.find('FROM cases c').sql).toContain('LIMIT 300');
+    expect(db2.find('FROM entity_folders f').sql).toContain('LIMIT 300');
   });
 });
 

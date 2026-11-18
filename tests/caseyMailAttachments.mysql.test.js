@@ -220,6 +220,8 @@ d('the Casey attachment-filing card on real MySQL (A13b)', () => {
     await q("INSERT INTO channel_grants (id, user, channel_type, channel_id, can_read, granted_by) VALUES (1, 7, 'mailbox', 1, 1, 5), (2, 5, 'mailbox', 1, 1, 5)");
     await q(`INSERT INTO cases (case_id, case_number, case_type, case_stage, pipeline_phase, case_dropbox) VALUES
       (?, '25-70001', 'Bankruptcy', 'Open', 'case', 'https://dbx/case-1'), (?, '25-70002', 'Bankruptcy', 'Open', 'case', 'https://dbx/case-2')`, [C1, C2]);
+    // D3d-2: the binding IS the case folder link (the column above is inert) — seeded as the D3a backfill made it
+    await q("INSERT INTO entity_folders (entity_kind, entity_id, source, human_link) SELECT 'case', case_id, 'dropbox', case_dropbox FROM cases WHERE case_dropbox IS NOT NULL");
     await q(`INSERT INTO contacts (contact_id, contact_kind, contact_type, contact_name, contact_fname, contact_lname, contact_email) VALUES
       (7001, 'person', 'Client', 'Dana Debtor', 'Dana', 'Debtor', 'dana@example.com')`);
     await q("INSERT INTO case_relate (case_relate_id, case_relate_case_id, case_relate_client_id, case_relate_type) VALUES (951, ?, 7001, 'Primary')", [C1]);
@@ -259,7 +261,8 @@ d('the Casey attachment-filing card on real MySQL (A13b)', () => {
     browser = (user = 7) => browserFns(async (p, body, method) => {
       const caseRoute = /^\/api\/cases\/([^/]+)$/.exec(p);
       if (caseRoute && method === 'GET') {
-        const rows = await q('SELECT case_id, case_dropbox FROM cases WHERE case_id = ?', [decodeURIComponent(caseRoute[1])]);
+        // the payload's case_dropbox is the binding's link (caseService.getCase's alias, D3d-2)
+        const rows = await q("SELECT c.case_id, (SELECT e.human_link FROM entity_folders e WHERE e.entity_kind = 'case' AND e.source = 'dropbox' AND e.entity_id = c.case_id) AS case_dropbox FROM cases c WHERE c.case_id = ?", [decodeURIComponent(caseRoute[1])]);
         if (!rows.length) throw Object.assign(new Error('Case not found'), { status: 404 });
         return { case: rows[0] };
       }

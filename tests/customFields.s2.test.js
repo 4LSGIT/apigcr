@@ -206,6 +206,9 @@ function world({ defs = DEFS(), cases = {}, contacts = {} } = {}) {
     }
 
     // ── cases ──
+    // D3d-2: the chokepoint reads the case folder's binding for the envelope's case_dropbox (unbound here), then the case PK behind an unbound case
+    if (/^SELECT external_id, path_lower, human_link FROM entity_folders WHERE entity_kind = \? AND entity_id = \? AND source = \? LIMIT 1$/.test(s)) return [[], []];
+    if (/^SELECT case_id FROM cases WHERE case_id = \? LIMIT 1$/.test(s)) return [[{ case_id: params[0] }], []];
     if (/^SELECT \* FROM cases WHERE case_id = \?$/.test(s)) {
       const r = state.cases[params[0]];
       return [r ? [clone(r)] : []];

@@ -45,7 +45,7 @@
  *
  * SHARED-LINK-AS-HANDLE PATTERN
  *   When a case folder is created, a public shared link is generated and
- *   stored on the case row (cases.case_dropbox). Staff freely move/rename
+ *   stored on the case's entity_folders binding (human_link). Staff freely move/rename
  *   folders; the shared link keeps resolving to the folder. So every
  *   location-taking operation here accepts EITHER:
  *     opts.path        — a literal Dropbox path, OR
@@ -635,7 +635,7 @@ async function getSharedLinkMetadata(db, opts = {}) {
  * One-call case-folder bootstrap: create folder (+ optional subfolders),
  * optionally create/reuse a public shared link. This is the native
  * replacement for the Pabbly 'create_dropbox_folder' flow — the returned
- * shared_link is what gets stored in cases.case_dropbox.
+ * shared_link is what gets stored as the case folder link (entity_folders.human_link).
  *
  * @param {object} opts — { path, subfolders?, shareLink?, credentialId? }
  * @returns {Promise<{path, existed, subfolders_created, shared_link}>}
@@ -650,7 +650,7 @@ async function createFolderWithOptions(db, opts = {}) {
   // ORDER MATTERS — the share link comes BEFORE the subfolders.
   //
   // It used to come last, and the caller (caseService.ensureCaseDropboxFolder)
-  // writes cases.case_dropbox only after this function returns a link. So any
+  // writes the case folder link only after this function returns a link. So any
   // throw inside createSubfolders killed the link step too, and the folder was
   // left on disk with NOTHING in the database pointing at it — invisible to the
   // app, and invisible to ensureCaseDropboxFolder's own idempotency guard (which

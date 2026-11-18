@@ -320,6 +320,10 @@ async function getCase(db, caseId, include = '', {
     [caseId]
   );
   if (!caseRow) return null;
+  // D3d-2: `case_dropbox` on the payload is the case folder's link — an API
+  // alias of the entity_folders binding (the column it was named for is
+  // retired; the pages, yc-sync and Casey keep the field name).
+  caseRow.case_dropbox = await _folderLink(db, caseId);
 
   const result = { case: caseRow };
 
@@ -492,6 +496,34 @@ async function getCase(db, caseId, include = '', {
 
 
 // ─────────────────────────────────────────────────────────────
+// The case folder link — `case_dropbox` as an API FIELD (storage-seam D3d-2)
+// ─────────────────────────────────────────────────────────────
+//
+// `case_dropbox` is the name the case payload, PATCH /api/cases/:id, the
+// case.updated envelope, yc-sync's relink payload and Casey's cards use for
+// the case folder's link. It WAS a column; since D3d-2 it is an alias of the
+// entity_folders binding (entityFolderService.caseFolderLink / setHumanLink),
+// and D3d-3 drops the column. Renaming the field is D5's dropbox_* rename.
+// Lower-cased match: MySQL column names were case-insensitive, so a client
+// sending `Case_Dropbox` reached the column — it reaches the binding too.
+
+const FOLDER_LINK_FIELD = 'case_dropbox';
+
+/** Remove the folder-link key from `fields` (any casing) and return its value; undefined when absent. */
+function _takeFolderLink(fields) {
+  let out;
+  for (const k of Object.keys(fields)) {
+    if (k.toLowerCase() === FOLDER_LINK_FIELD) { out = fields[k]; delete fields[k]; }
+  }
+  return out;
+}
+
+/** The binding's link for the payload / the diff (null when unbound). */
+async function _folderLink(db, caseId) {
+  return (await require('./entityFolderService').caseFolderLink(db, caseId)).link;   // deferred require (convention)
+}
+
+// ─────────────────────────────────────────────────────────────
 // createCase — THE case INSERT (custom-fields S6-B, 2026-09-25)
 // ─────────────────────────────────────────────────────────────
 
@@ -566,6 +598,11 @@ async function createCase(db, fields = {}, { attempts = 10 } = {}) {
     throw e;
   }
 
+  // D3d-2: the folder link is not a column — it is written to the binding
+  // after the INSERT (below). Split off before the column gate.
+  const folderLink = _takeFolderLink(given);
+  const folderLinkGiven = folderLink !== undefined && folderLink != null && String(folderLink).trim() !== '';
+
   // The `updateCase` gate, for the same reason: an unknown key would otherwise
   // reach MySQL as ER_BAD_FIELD_ERROR — a 500 carrying SQL text.
   const keys = Object.keys(given);
@@ -620,12 +657,10 @@ async function createCase(db, fields = {}, { attempts = 10 } = {}) {
     throw new Error(`Failed to generate unique case ID after ${attempts} attempts`);
   }
 
-  // D3b-1: a folder link given at create time binds the case (see updateCase).
-  {
-    const linkKey = boundKeys.find(k => k.toLowerCase() === 'case_dropbox');
-    if (linkKey && safe[linkKey] != null && String(safe[linkKey]).trim() !== '') {
-      await require('./entityFolderService').setHumanLink(db, { kind: 'case', id: caseId, humanLink: safe[linkKey] });   // deferred require (convention)
-    }
+  // A folder link given at create time binds the case (the binding is the
+  // record — D3d-2; see updateCase).
+  if (folderLinkGiven) {
+    await require('./entityFolderService').setHumanLink(db, { kind: 'case', id: caseId, humanLink: folderLink });   // deferred require (convention)
   }
 
   // The stamped values in the COLUMN's shape, for the caller's envelope — so
@@ -691,6 +726,14 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
   const { coreFields, customSets, customRemoves, customKeys } =
     await fieldDefs.splitCustomFields(db, 'case', fields);
 
+  // D3d-2: `case_dropbox` is the case folder's link — a VIRTUAL key written to
+  // the entity_folders binding (setHumanLink), never a column in the UPDATE.
+  // Split off before the column gate (information_schema stops listing the
+  // column once D3d-3 drops it). `changes` / `data` / updated_fields keep the
+  // field name: the pages, yc-sync and rule authors read `case_dropbox`.
+  const folderLink = _takeFolderLink(coreFields);
+  const folderLinkGiven = folderLink !== undefined;
+
   // Block only the PK among real columns. Lower-cased: MySQL column names are
   // case-insensitive, so `CASE_ID` names the PK too.
   const BLOCKED = new Set(['case_id']);
@@ -741,6 +784,9 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
   if (!priorRow) {
     throw new Error(`Case ${caseId} not found`);
   }
+  // The folder link's prior value is the binding's (the diff and the envelope
+  // read `case_dropbox` from priorRow like any field).
+  priorRow.case_dropbox = await _folderLink(db, caseId);
 
   // ── contact-role twins (slice 6) ────────────────────────────────────────
   // When a write touches case_judge / case_number_full / case_trustee, the
@@ -807,24 +853,25 @@ async function updateCase(db, caseId, fields, { userId = null, source = null } =
     values.push(...customSql.params);
   }
 
-  const [result] = await db.query(
-    `UPDATE cases SET ${setClauses.join(', ')} WHERE case_id = ?`,
-    [...values, caseId]
-  );
-
-  if (result.affectedRows === 0) {
-    throw new Error(`Case ${caseId} not found`);
+  // A write carrying only the folder link runs no UPDATE on cases (the pre-read
+  // above is the not-found check); anything else is one statement as before.
+  if (setClauses.length) {
+    const [result] = await db.query(
+      `UPDATE cases SET ${setClauses.join(', ')} WHERE case_id = ?`,
+      [...values, caseId]
+    );
+    if (result.affectedRows === 0) {
+      throw new Error(`Case ${caseId} not found`);
+    }
   }
 
-  // D3b-1: a hand-written folder link (PATCH /api/cases/:id, the relink flow)
-  // reaches the binding too — the filing paths read entity_folders first, so a
-  // link that lived only in the column would be invisible to them until the
-  // sweep. Best-effort behind the row write (entityFolderService's posture).
-  {
-    const linkKey = keys.find(k => k.toLowerCase() === 'case_dropbox');
-    if (linkKey) {
-      await require('./entityFolderService').setHumanLink(db, { kind: 'case', id: caseId, humanLink: safeFields[linkKey] });   // deferred require (convention)
-    }
+  // The folder link (PATCH /api/cases/:id, the relink flow's step 4): the
+  // binding IS the record (D3d-2) — a failure here is the write's failure. A
+  // blank link removes the binding (setHumanLink's contract).
+  if (folderLinkGiven) {
+    await require('./entityFolderService').setHumanLink(db, { kind: 'case', id: caseId, humanLink: folderLink });   // deferred require (convention)
+    safeFields.case_dropbox = folderLink == null ? null : (String(folderLink).trim() || null);
+    keys.push('case_dropbox');
   }
 
   // Trigger: case.updated (fire-and-forget) — only when something actually
@@ -1268,10 +1315,10 @@ async function searchCases(db, { q = '', limit = 20 } = {}) {
 // ─────────────────────────────────────────────────────────────
 //
 // One operation — ensureCaseDropboxFolder — guarantees a case has a Dropbox
-// folder and a shared link saved in cases.case_dropbox. Called from:
+// folder and a shared link saved on the entity_folders binding. Called from:
 //   - routes/api.intake.js        (post-response, after case creation)
 //   - routes/internal/dropbox.js  (the case-page "Create Dropbox Folder"
-//                                  repair button — shown when case_dropbox
+//                                  repair button — shown when the folder link
 //                                  is empty)
 //   - internal function storage_ensure_case_folder (workflows; e.g. the
 //     Voluntary Petition pipeline for filed cases that never got a folder)
@@ -1460,9 +1507,9 @@ async function _loadCaseFolderTemplates(db) {
 }
 
 /**
- * Ensure a case has a Dropbox folder + shared link in cases.case_dropbox.
+ * Ensure a case has a Dropbox folder + shared link on its entity_folders binding.
  * Stage-aware (potential vs active by docket-number presence). Idempotent:
- * if case_dropbox is already set, returns it without touching Dropbox
+ * if the case is already bound to a folder, returns its link without touching Dropbox
  * (pass force: true to create anyway and overwrite the saved link).
  *
  * Names come from the case's PRIMARY contact (case_relate_type 'Primary',
@@ -1481,15 +1528,14 @@ async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
   const { nowLocal } = require('./timezoneService');
 
   const [[caseRow]] = await db.query(
-    `SELECT case_id, case_type, case_subtype, case_number, case_number_full, case_dropbox
+    `SELECT case_id, case_type, case_subtype, case_number, case_number_full
        FROM cases WHERE case_id = ?`,
     [caseId]
   );
   if (!caseRow) throw new Error(`ensureCaseDropboxFolder: case ${caseId} not found`);
 
-  // D3b-1: "already has a folder" is the binding's word (the legacy column
-  // through the helper's fallback, until D3d).
-  const bound = await require('./entityFolderService').caseFolderLink(db, caseId, { caseRow });   // deferred require (convention)
+  // "Already has a folder" is the binding's word (entity_folders — the record).
+  const bound = await require('./entityFolderService').caseFolderLink(db, caseId);   // deferred require (convention)
   if (bound.link && !force) {
     return { existed: true, stage: null, path: null, shared_link: bound.link };
   }
@@ -1551,8 +1597,8 @@ async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
 
   // ADOPT AN EXISTING FOLDER BEFORE CREATING ONE.
   //
-  // The guard at the top of this function tests cases.case_dropbox — the DB
-  // column — not Dropbox. A case whose folder was made by hand under the firm's
+  // The guard at the top of this function tests the binding — the DB
+  // row — not Dropbox. A case whose folder was made by hand under the firm's
   // older naming convention therefore looks folderless, and we would build a
   // second folder beside a full one. That happened on 2026-07-15 to 16 cases
   // whose legacy folders held 114-340 documents apiece.
@@ -1589,13 +1635,9 @@ async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
     throw new Error(`ensureCaseDropboxFolder: folder created at "${result.path}" but no shared link returned`);
   }
 
-  await db.query(
-    'UPDATE cases SET case_dropbox = ? WHERE case_id = ?',
-    [result.shared_link, caseId]
-  );
-  // D3a dual-write: the binding row (ref/DOCUMENTS_V3_DESIGN.md §3). The handle
-  // comes free from the create reply or the adopt probe; the path is the one
-  // the folder was made at. Best-effort behind the primary write above.
+  // The binding row IS the record (ref/DOCUMENTS_V3_DESIGN.md §3; D3d-2). The
+  // handle comes free from the create reply or the adopt probe; the path is the
+  // one the folder was made at.
   await require('./entityFolderService').setResolved(db, {   // deferred require (convention)
     kind: 'case', id: caseId, externalId: result.external_id || null,
     pathLower: result.path ? String(result.path).toLowerCase() : null, pathDisplay: result.path || null,
@@ -1831,9 +1873,10 @@ async function listCaseWorkflows(db, caseId, {
  *     these differ on virtually every real merge pair (Open lead vs Filed
  *     case), so they are survivor-wins BY DESIGN — reported, never blocking.
  *   - case_notes / case_alerts: concatenated with a provenance separator.
- *   - case_dropbox: folders can't be merged server-side. Survivor keeps its
- *     own; a differing loser folder URL is appended to case_notes so the
- *     link is never lost.
+ *   - case_dropbox (the folder link — the entity_folders binding, D3d-2):
+ *     folders can't be merged server-side. Survivor keeps its own; an
+ *     UNBOUND survivor adopts the loser's link; a differing loser link is
+ *     appended to case_notes so it is never lost.
  *
  * CHILD REPOINTS (loser case_id → survivor case_id), all in one InnoDB
  * transaction:
@@ -1885,9 +1928,9 @@ async function listCaseWorkflows(db, caseId, {
  *                                so no collision is possible. Deleting these
  *                                instead would re-arm already-emitted aged
  *                                thresholds.
- *   case_folder_cache          — DELETE-ONLY, never repointed. PK is case_id,
- *                                and it caches a Dropbox folder that
- *                                case_dropbox (survivor-wins) contradicts.
+ *   entity_folders             — DELETE-ONLY, never repointed. The PK is the
+ *                                entity, and it binds a folder the survivor's
+ *                                own (survivor-wins) would contradict.
  *   portal_access_log          — case_id. Client-access audit follows the
  *                                surviving case.
  *   trigger_executions         — the case_id COLUMN ONLY. The stored event
@@ -2039,6 +2082,10 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
     e.code = 'MERGE_NOT_FOUND';
     throw e;
   }
+  // D3d-2: the folder link rides the rows under its API name, from the binding
+  // (the loser's snapshot in the merge log keeps it; the plan below reads it).
+  survivor.case_dropbox = await _folderLink(db, survivorId);
+  loser.case_dropbox    = await _folderLink(db, loserId);
 
   // Generated columns (custom-fields S3's cf_ VIRTUAL columns, and any future
   // one) ride along in `SELECT *` but cannot be written — `UPDATE` on one is
@@ -2186,10 +2233,15 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
   if (!isEmpty(loser.case_notes))  notesAppend  += sep('notes')  + loser.case_notes;
   if (!isEmpty(loser.case_alerts)) alertsAppend += sep('alerts') + loser.case_alerts;
 
+  // The folder link is survivor-wins: an unbound survivor takes the loser's LINK
+  // (the binding, link only — the sweep re-resolves it, exactly what copying the
+  // column did); a bound survivor keeps its own and the loser's link goes into
+  // the notes. Written to entity_folders in step 3, never to a cases column.
   let dropboxNoted = false;
+  let folderLinkFill = null;
   if (!isEmpty(loser.case_dropbox)) {
     if (isEmpty(survivor.case_dropbox)) {
-      filled.case_dropbox = loser.case_dropbox;
+      folderLinkFill = loser.case_dropbox;
     } else if (!same(survivor.case_dropbox, loser.case_dropbox)) {
       notesAppend += sep('dropbox folder') + loser.case_dropbox;
       dropboxNoted = true;
@@ -2280,7 +2332,7 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
   //   moveSql  — always [survivorId, loserId] (the 'log' label is the one
   //              special case: it binds three, see the repoint loop). NULL
   //              means "this table is never repointed" — the pre-statement is
-  //              the whole operation (M1: case_folder_cache).
+  //              the whole operation (M1: entity_folders).
   //   pre      — OPTIONAL { countSql, sql }, both bound [survivorId, loserId].
   //              A DELETE run FIRST, inside the transaction, immediately
   //              before this entry's move. It exists for loser rows that
@@ -2384,22 +2436,14 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
       `SELECT COUNT(*) AS c FROM case_stage_aged_emitted WHERE case_id = ?`,
       `UPDATE case_stage_aged_emitted SET case_id = ? WHERE case_id = ?`],
 
-    // DELETE-ONLY, never repointed. PRIMARY KEY = case_id, so a repoint
+    // DELETE-ONLY, never repointed. The PK is (kind, id, source), so a repoint
     // collides outright whenever the survivor has a row — but the deeper
-    // reason is that this is a CACHE of a case's Dropbox folder, and
-    // case_dropbox is survivor-wins (the loser's folder URL is preserved into
-    // case_notes above, not adopted). Moving the loser's cache row would
-    // hand the survivor a resolved folder its own case_dropbox contradicts.
-    // The survivor keeps its own mapping; if it has none, the sync rebuilds
-    // one. `case_id <> ?` is a structural guard that the survivor's row can
-    // never be the one deleted.
-    ['case_folder_cache',
-      `SELECT COUNT(*) AS c FROM case_folder_cache WHERE case_id = ?`,
-      null,
-      { countSql: `SELECT COUNT(*) AS c FROM case_folder_cache WHERE case_id <> ? AND case_id = ?`,
-        sql:      `DELETE FROM case_folder_cache WHERE case_id <> ? AND case_id = ?` }],
-    // D3a: the binding row follows the same rule as the cache it generalizes —
-    // DELETE-only, never repointed, never the survivor's.
+    // reason is that this is the case's FOLDER, and the folder link is
+    // survivor-wins (the loser's link is adopted only by an UNBOUND survivor —
+    // link only, via setHumanLink in step 3 — else preserved into case_notes
+    // above). Moving the loser's row would hand the survivor a resolved folder
+    // its own link contradicts. `entity_id <> ?` is a structural guard that
+    // the survivor's row can never be the one deleted.
     ['entity_folders',
       `SELECT COUNT(*) AS c FROM entity_folders WHERE entity_kind = 'case' AND entity_id = ?`,
       null,
@@ -2483,7 +2527,7 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
 
   // Every fill decided (core + dropbox + custom keys) — built here, after the
   // dropbox plan above can still add to `filled`.
-  const filledList = [...Object.keys(filled), ...Object.keys(customFills).map(k => `custom.${k}`)];
+  const filledList = [...Object.keys(filled), ...(folderLinkFill ? [FOLDER_LINK_FIELD] : []), ...Object.keys(customFills).map(k => `custom.${k}`)];
 
   const plan = {
     dry_run: dryRun,
@@ -2621,7 +2665,7 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
         const [d] = await conn.query(pre.sql, [survivorId, loserId]);
         plan.children[`${label}_dropped`] = d.affectedRows;
       }
-      // Never-repointed table (case_folder_cache): the pre-statement above
+      // Never-repointed table (entity_folders): the pre-statement above
       // WAS the operation. Still reported at 0 so the label appears in the
       // merge note like every other child table.
       if (!moveSql) { plan.children[label] = 0; continue; }
@@ -2706,6 +2750,12 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
         `UPDATE cases SET ${setParts.join(', ')} WHERE case_id = ?`,
         [...setVals, survivorId]
       );
+    }
+    // 3b. the folder link an unbound survivor adopts from the loser — the
+    //     binding row, link only (D3d-2). The loser's own row was deleted in
+    //     step 2 (entity_folders is DELETE-only there), so this never collides.
+    if (folderLinkFill) {
+      await require('./entityFolderService').setHumanLink(conn, { kind: 'case', id: survivorId, humanLink: folderLinkFill });   // deferred require (convention)
     }
 
     // 4. snapshot the loser onto the survivor's log (full row in log_extra —

@@ -152,35 +152,50 @@ function makeDb({
         const want = new Set((params[0] || []).map(String));
         return [cache.filter(c => want.has(String(c.case_id)))];
       }
-      if (/^SELECT path_lower FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id = \?/.test(flat)) {
+      if (/^SELECT path_lower(?:, human_link)? FROM entity_folders WHERE entity_kind = 'case' AND source = 'dropbox' AND entity_id = \?/.test(flat)) {
         const hit = cache.find(c => String(c.case_id) === String(params[0]));
-        return [hit ? [hit] : []];
+        // D3d-2: the binding carries the link; this world's bindings hold the case fixture's link
+        const kase_ = cases.find(c => String(c.case_id) === String(params[0]));
+        return [hit ? [{ ...hit, human_link: hit.human_link ?? (kase_ ? kase_.case_dropbox : null) }] : []];
+      }
+      if (/^SELECT external_id, path_lower, human_link FROM entity_folders WHERE entity_kind = \? AND entity_id = \? AND source = \?/.test(flat)) {
+        const hit = cache.find(c => String(c.case_id) === String(params[1]));
+        const kase_ = cases.find(c => String(c.case_id) === String(params[1]));
+        const link = (hit && hit.human_link) || (kase_ ? kase_.case_dropbox : null);
+        return [(hit || link) ? [{ external_id: hit ? hit.folder_external_id || null : null, path_lower: hit ? hit.path_lower : null, human_link: link || null }] : []];
       }
       if (/FROM entity_folders f LEFT JOIN document_links/.test(flat)) {
         return [zero || []];
       }
-      if (/^UPDATE case_folder_cache/.test(flat)) {
-        const ids = new Set((Array.isArray(params[1]) ? params[1] : [params[1]]).map(String));
+      // D3d-2: the dismissal stamp is on the binding (setRelinkDismissed: [by, kind, source, ids])
+      if (/^UPDATE entity_folders SET relink_dismissed_at/.test(flat)) {
+        const ids = new Set((Array.isArray(params[3]) ? params[3] : [params[3]]).map(String));
         let n = 0;
         for (const c of cache) if (ids.has(String(c.case_id))) { n++; c.touched = true; }
         return [{ affectedRows: n }];
       }
-      // APPLIED, NOT MERELY ACKNOWLEDGED. refreshCaseFolderCache upserts the
-      // resolved path here and applyRelink then READS IT BACK to decide what to
-      // attribute. A stub that returned affectedRows without moving the row
-      // would let the confirm assert green while attributing against the stale
-      // intake path — which is the bug this whole slice exists to fix.
-      if (/^INSERT INTO case_folder_cache/.test(flat)) {
-        const id = String(params[0]);
+      // APPLIED, NOT MERELY ACKNOWLEDGED. refreshCaseFolderCache writes the
+      // resolved path onto the binding and applyRelink then READS IT BACK to
+      // decide what to attribute. A stub that returned affectedRows without
+      // moving the row would let the confirm assert green while attributing
+      // against the stale intake path — which is the bug this whole slice
+      // exists to fix. setResolved: [kind, id, source, externalId, pathLower,
+      // pathDisplay, humanLink]; setError: [kind, id, source, humanLink, error].
+      if (/^INSERT INTO entity_folders/.test(flat)) {
+        const id = String(params[1]);
         let row = cache.find(c => String(c.case_id) === id);
         if (!row) { row = { case_id: id }; cache.push(row); }
-        if (params.length >= 4) {                    // the success upsert
-          row.folder_external_id = params[1];
-          row.path_lower   = params[2];
-          row.path_display = params[3];
+        if (params.length >= 7) {                    // setResolved
+          row.folder_external_id = params[3];
+          row.path_lower   = params[4];
+          row.path_display = params[5];
+          row.human_link   = params[6];
           row.resolve_error = null;
-        } else {                                     // the failure upsert
-          row.resolve_error = params[1];             // prior paths survive
+        } else if (params.length === 5) {            // setError
+          row.human_link = params[3];
+          row.resolve_error = params[4];             // prior paths survive
+        } else {                                     // setHumanLink (4 params)
+          row.human_link = params[3];
         }
         return [{ affectedRows: 1 }];
       }
@@ -189,21 +204,23 @@ function makeDb({
         const want = new Set((params[0] || []).map(String));
         return [cases.filter(c => want.has(String(c.case_id)))];
       }
-      if (/^SELECT case_id, case_dropbox FROM cases WHERE case_id/.test(flat)) {
+      if (/^SELECT case_id FROM cases WHERE case_id/.test(flat)) {
         const hit = cases.find(c => String(c.case_id) === String(params[0]));
-        return [hit ? [hit] : []];
+        return [hit ? [{ case_id: hit.case_id }] : []];
       }
       if (/FROM case_relate cr JOIN contacts ct/.test(flat)) {
         const want = new Set((params[0] || []).map(String));
         return [contacts.filter(c => want.has(String(c.case_id)))];
       }
-      // refreshCaseFolderCache candidate scans (both modes)
-      if (/FROM cases c/.test(flat)) {
-        if (/c\.case_id IN \(\?\)/.test(flat)) {
+      // refreshCaseFolderCache candidate scans (both modes) — the bindings' links (D3d-2);
+      // this world's bindings hold the case fixture's link
+      if (/^SELECT f\.entity_id AS case_id, f\.human_link AS link FROM entity_folders f/.test(flat)) {
+        const linkOf = c => { const b = cache.find(x => String(x.case_id) === String(c.case_id)); return (b && b.human_link) || c.case_dropbox; };
+        if (/f\.entity_id IN \(\?\)/.test(flat)) {
           const want = new Set((params[0] || []).map(String));
-          return [cases.filter(c => want.has(String(c.case_id)) && c.case_dropbox)];
+          return [cases.filter(c => want.has(String(c.case_id)) && linkOf(c)).map(c => ({ case_id: c.case_id, link: linkOf(c) }))];
         }
-        return [cases.filter(c => c.case_dropbox)];
+        return [cases.filter(c => linkOf(c)).map(c => ({ case_id: c.case_id, link: linkOf(c) }))];
       }
 
       // The targeted-attribution scan. Filtered for real — status, the prefix,
@@ -633,17 +650,17 @@ describe('setRelinkDismissed', () => {
     const out = await sync.setRelinkDismissed(db, ['c1'], { actorUserId: 9 });
     expect(out.updated).toBe(1);
 
-    const w = db.find('UPDATE case_folder_cache');
+    const w = db.find('UPDATE entity_folders');
     expect(w.sql).toMatch(/relink_dismissed_at = NOW\(\)/);
     expect(w.params[0]).toBe(9);
-    expect(db.sqls().some(s => /document_links|UPDATE cases/.test(s))).toBe(false);
+    expect(db.sqls().some(s => /document_links|UPDATE cases|case_folder_cache/.test(s))).toBe(false);
     expect(dropbox.getOrCreateSharedLink).not.toHaveBeenCalled();
   });
 
   test('undo clears both columns', async () => {
     const db = makeDb({ cache });
     await sync.setRelinkDismissed(db, ['c1'], { dismissed: false, actorUserId: 9 });
-    const w = db.find('UPDATE case_folder_cache');
+    const w = db.find('UPDATE entity_folders');
     expect(w.sql).toMatch(/relink_dismissed_at = NULL/);
     expect(w.params[0]).toBeNull();
   });
@@ -654,13 +671,13 @@ describe('setRelinkDismissed', () => {
     const db = makeDb({ cache: many.map(id => ({ case_id: id, path_lower: '/x/' + id })) });
     const out = await sync.setRelinkDismissed(db, [...many, 'id0']);
     expect(out.case_ids).toHaveLength(sync.RELINK_DISMISS_CAP);
-    expect(db.all('UPDATE case_folder_cache')).toHaveLength(1);
+    expect(db.all('UPDATE entity_folders')).toHaveLength(1);
   });
 
   test('an empty list is a no-op, not an UPDATE with an empty IN()', async () => {
     const db = makeDb({ cache });
     expect((await sync.setRelinkDismissed(db, [])).updated).toBe(0);
-    expect(db.all('UPDATE case_folder_cache')).toHaveLength(0);
+    expect(db.all('UPDATE entity_folders')).toHaveLength(0);
   });
 });
 
@@ -711,7 +728,7 @@ describe('applyRelink', () => {
   test('the targeted cache refresh runs for THIS case only', async () => {
     const db = confirmDb();
     await sync.applyRelink(db, 'c1', TARGET, { actorUserId: 9 });
-    const scan = db.find('c.case_id IN (?)');
+    const scan = db.find('f.entity_id IN (?)');
     expect(scan).toBeTruthy();
     expect(scan.params[0]).toEqual(['c1']);
     // and NOT the oldest-first sweep the recurring job runs
@@ -1077,7 +1094,7 @@ describe('refreshCaseFolderCache — targeted mode is additive', () => {
   test('NO-ARG behaviour is untouched: oldest-first, limited', async () => {
     const db = makeDb({ cases: [kase('c1'), kase('c2')] });
     const out = await sync.refreshCaseFolderCache(db, { limit: 7 });
-    const scan = db.find('FROM cases c');
+    const scan = db.find('FROM entity_folders f');
     expect(scan.sql).toMatch(/ORDER BY \(f\.resolved_at IS NULL\) DESC, f\.resolved_at ASC/);
     expect(scan.sql).toMatch(/LIMIT 7/);
     expect(out.targeted).toBeUndefined();
@@ -1086,7 +1103,7 @@ describe('refreshCaseFolderCache — targeted mode is additive', () => {
   test('caseIds resolves EXACTLY those, ignoring staleness and the limit', async () => {
     const db = makeDb({ cases: [kase('c1'), kase('c2'), kase('c3')] });
     const out = await sync.refreshCaseFolderCache(db, { caseIds: ['c2', 'c2', 'c3'], limit: 1 });
-    const scan = db.find('FROM cases c');
+    const scan = db.find('FROM entity_folders f');
     expect(scan.sql).not.toMatch(/ORDER BY/);
     expect(scan.params[0]).toEqual(['c2', 'c3']);      // deduped
     expect(out.resolved).toBe(2);                      // the limit of 1 did not apply
@@ -1097,7 +1114,7 @@ describe('refreshCaseFolderCache — targeted mode is additive', () => {
     const db = makeDb({ cases: [kase('c1')] });
     const out = await sync.refreshCaseFolderCache(db, { caseIds: [] });
     expect(out.scanned).toBe(0);
-    expect(db.all('FROM cases c')).toHaveLength(0);
+    expect(db.all('FROM entity_folders f')).toHaveLength(0);
     expect(dropbox.getSharedLinkMetadata).not.toHaveBeenCalled();
   });
 });

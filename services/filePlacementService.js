@@ -18,8 +18,8 @@
  *
  * ── THE LADDER ──────────────────────────────────────────────────────────────
  * Unchanged from X5 (Fred's ruling 2026-08-14). For a CASE-linked file:
- *   1. live cases.case_dropbox → <case folder>/<subfolder>   (created if absent)
- *   2. no case_dropbox → caseService.ensureCaseDropboxFolder (the same
+ *   1. live case folder link (entity_folders) → <case folder>/<subfolder>   (created if absent)
+ *   2. no folder link → caseService.ensureCaseDropboxFolder (the same
  *      stage-aware creator intake / e-sign / client-upload use), then (1). The
  *      auto-create ALWAYS raises a staff task — a silently-created duplicate
  *      next to a hand-made never-linked folder is worse than the task. Raised

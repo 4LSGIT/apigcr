@@ -110,7 +110,7 @@ const {
  * services/esignSendService.js each carry their own copy). Keep in sync.
  *
  * Covers text nodes AND double-quoted attribute values (both quote forms are
- * escaped), which is what the upload notification needs: case_dropbox lands
+ * escaped), which is what the upload notification needs: the folder link lands
  * inside an href.
  *
  * MIME subject headers must NOT be escaped — escaping a mail header puts a
@@ -1378,7 +1378,7 @@ router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => 
  
     // Fetch case info for the email
     const [[caseRow]] = await req.db.query(
-      `SELECT c.case_id, c.case_dropbox,
+      `SELECT c.case_id,
               COALESCE(c.case_number_full, c.case_number, c.case_id) AS case_display
        FROM cases c
        WHERE c.case_id = ?`,
@@ -1410,7 +1410,7 @@ router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => 
 
     // Build file list for email. EVERY interpolated value is escaped: the
     // filenames and comment are attacker-controlled (public route), and the
-    // DB-derived values are escaped as defence in depth — case_dropbox in
+    // DB-derived values are escaped as defence in depth — the folder link in
     // particular sits inside an href, where an unescaped quote breaks out of
     // the attribute.
     const fileListHtml = safeFiles.map(f => `<li>${escapeHtml(f)}</li>`).join('\n');
@@ -1423,7 +1423,7 @@ router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => 
 
     // Placement-aware Dropbox paragraph. Unsorted placement gets a loud note
     // + a staff task (below); dest === null (inspection error) degrades to
-    // the legacy case_dropbox wording.
+    // the legacy case-folder wording.
     let dropboxHtml;
     if (dest && dest.placement === 'unsorted') {
       const where = dest.link
@@ -1435,7 +1435,7 @@ router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => 
     } else {
       // D3b-1: the case folder's binding, then the legacy column (the row in hand).
       const dropboxLink = (dest && dest.sharedLink)
-        || (await require('../services/entityFolderService').caseFolderLink(req.db, caseRow.case_id, { caseRow })).link   // lazy (convention)
+        || (await require('../services/entityFolderService').caseFolderLink(req.db, caseRow.case_id)).link   // lazy (convention); the binding (the record, D3d-2)
         || '';
       dropboxHtml = dropboxLink
         ? `<p><a href="${escapeHtml(dropboxLink)}">Open Dropbox Folder</a> — review, rename, and move files from the "Client Uploads" subfolder.</p>`

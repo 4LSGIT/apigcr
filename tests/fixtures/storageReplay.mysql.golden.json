@@ -368,13 +368,6 @@
     ],
     "case_folder_cache": [
      {
-      "case_id": "deadLnk1",
-      "folder_external_id": null,
-      "path_lower": null,
-      "path_display": null,
-      "resolve_error": "dropbox shared_link/not_found/.. (409)"
-     },
-     {
       "case_id": "hjSFMabb",
       "folder_external_id": "id:F0005",
       "path_lower": "/  law office/   cases/  active cases/  active - bankruptcy/ hjsfmabb - smith, john - 26-44274 - ch 13",

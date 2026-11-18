@@ -408,19 +408,21 @@ scenario('15 documentIngestService.registerLandedInFolder: by folder path and by
 });
 
 // ── 16. D3b-1: the binding is the filing paths' word ─────────────────────────
-scenario('16 D3b-1 entity_folders is what the filing paths read: the binding\'s link beats a stale legacy column; a legacy-only link still files', async ({ db, world }) => {
-  // case A: the legacy column points at a dead link, the binding at the live folder → the live folder is used (placement + upload link + e-sign target + the Comms listing)
+scenario('16 D3d-2 entity_folders is THE record the filing paths read: the binding\'s link is used whatever the retired column says; a column-only link is unbound — the ladder adopts the existing folder and binds it', async ({ db, world }) => {
+  // case A: the retired column points at a dead link, the binding at the live folder → the live folder is used (placement + upload link + e-sign target + the Comms listing); the column is never read
   world.cases.hjSFMabb.case_dropbox = 'https://www.dropbox.com/scl/fo/stale000?dl=0';
   await placement.placeAndRegister(db, generateShaped({}));
   await uploadTarget.issueClientUploadLink(db, { caseId: 'hjSFMabb', filename: 'W2.pdf' });
   world.effects.push({ kind: 'esign.target', ...W.scrub(await esignFiling.resolveTarget(db, { linkable_type: 'case', linkable_id: 'hjSFMabb' })) });
   world.effects.push({ kind: 'comms.folders', ...W.scrub(await emailComms.caseFolders(db, 6, { case_id: 'hjSFMabb' })) });
-  // case C: a legacy link and NO binding (a link written before D3a's backfill ran, or by hand through a path that never bound) → the column still files; no folder is created
+  // case C: a link ONLY in the retired column and NO binding (production has none: 1105 = 1105, 0 mismatches, 2026-11-18) → unbound; the auto-create rung's
+  // adopt-before-create probe finds the folder the link pointed at (templated to the same path) and BINDS it — no second folder, and the case is bound from here on
   const cFolder = `${W.ACTIVE_ROOT}/  Active - Bankruptcy/ aCtv7Num - Brown, Bob - 26-50001 - Ch 7`;
   const cLinks = fake.seed({ folders: [cFolder, `${cFolder}/Notices`], links: [cFolder] });
   world.cases.aCtv7Num.case_dropbox = cLinks[cFolder];
   await placement.placeAndRegister(db, generateShaped({ linkId: 'aCtv7Num' }));
-  // (the relation decision — _relationFor on the binding's path — sits behind the recorded registerWrittenSafe boundary here; the real-engine twin proves it)
+  // the payload field reads the binding (the API alias): A's live link, not the stale column; C bound by the adopt
+  world.effects.push({ kind: 'getCase.case_dropbox', ...W.scrub({ A: (await caseService.getCase(db, 'hjSFMabb')).case.case_dropbox, C: (await caseService.getCase(db, 'aCtv7Num')).case.case_dropbox }) });
   world.effects.push({ kind: 'bindings', ...W.scrub({ entityFolders: world.entityFolders }) });
 });
 

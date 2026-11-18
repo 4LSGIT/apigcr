@@ -376,7 +376,7 @@ describe('completeUpload', () => {
     const files = [];
     for (let i = 0; i < 52; i++) files.push({ name: 'f' + i + '.pdf' });
     files[0].name = 'x'.repeat(400) + '.pdf';
-    const db = stubDb([[scopeRow()], [{ contact_name: 'Jane Doe' }], []]);   // + the binding read (D3d-1): no row → the scoped row's link
+    const db = stubDb([[scopeRow()], [{ contact_name: 'Jane Doe' }], [], [{ case_id: 'AbCdEf12' }]]);   // + the binding read (no row) and the case PK read behind it (D3d-2: unbound → no link)
 
     const ctx = await svc.completeUpload(db, 42, 'AbCdEf12',
       { files, comment: 'c'.repeat(3000) });
@@ -402,7 +402,8 @@ describe('completeUpload', () => {
       [scopeRow()],
       [item(7, 'Pay stubs (DB name)')],          // item map: only 7 resolves
       [{ contact_name: 'Jane Doe' }],
-      [],                                        // the binding read (D3d-1): no row → the scoped row's link
+      [],                                        // the binding read: no row (D3d-2: the scoped row's column is no fallback)
+      [{ case_id: 'AbCdEf12' }],                 // the case PK read behind an unbound case
     ]);
     const ctx = await svc.completeUpload(db, 42, 'AbCdEf12', {
       files: [
@@ -417,13 +418,14 @@ describe('completeUpload', () => {
   });
 
   test('uploader is the AUTHENTICATED contact (fallback "Client")', async () => {
-    const db1 = stubDb([[scopeRow()], [{ contact_name: 'Sam Secondary' }], []]);   // + the binding read (D3d-1)
+    const db1 = stubDb([[scopeRow()], [{ contact_name: 'Sam Secondary' }], [], [{ case_id: 'AbCdEf12' }]]);   // + the binding read (no row) + the PK read (D3d-2)
     const ctx1 = await svc.completeUpload(db1, 77, 'AbCdEf12', { files: [{ name: 'a.pdf' }] });
+    expect(ctx1.dropboxLink).toBe('');   // D3d-2: unbound — the scoped row's retired column is no fallback
     expect(ctx1.clientName).toBe('Sam Secondary');
     expect(ctx1.contact_id).toBe(77);
     expect(db1.calls[1].params).toEqual([77]);
 
-    const db2 = stubDb([[scopeRow()], [], [{ external_id: null, path_lower: null, human_link: 'https://www.dropbox.com/sh/bound' }]]);   // the binding WINS over the scoped row's column (D3d-1)
+    const db2 = stubDb([[scopeRow()], [], [{ external_id: null, path_lower: null, human_link: 'https://www.dropbox.com/sh/bound' }]]);   // the binding is the link (D3d-2)
     const ctx2 = await svc.completeUpload(db2, 77, 'AbCdEf12', { files: [{ name: 'a.pdf' }] });
     expect(ctx2.dropboxLink).toBe('https://www.dropbox.com/sh/bound');
     expect(ctx2.clientName).toBe('Client');

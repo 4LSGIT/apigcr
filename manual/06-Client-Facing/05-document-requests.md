@@ -38,7 +38,7 @@ their list.
 
 ### 2. The case must have a Dropbox folder
 
-Uploads go to the folder linked on the case (`case_dropbox`). If the case has no
+Uploads go to the folder linked on the case (its `entity_folders` binding — the `case_dropbox` field on the case page). If the case has no
 Dropbox folder linked, the upload step can't issue a link and the client will be
 told there's nowhere to put files — so link the folder first.
 

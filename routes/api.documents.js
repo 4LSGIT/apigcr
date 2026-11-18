@@ -1008,7 +1008,7 @@ router.post('/api/documents/relink', jwtOrApiKey, async (req, res) => {
  *                                      + { undo: true } to un-dismiss
  *
  * ── WHY THIS ONE TAKES AN ARRAY WHEN /relink DELIBERATELY DOES NOT ────────
- * Dismissal stamps two columns on case_folder_cache. It changes no
+ * Dismissal stamps two columns on the entity_folders binding. It changes no
  * document_link, no cases row, and touches no provider — it says "I looked at
  * this and there is nothing to do", which is a note about the QUEUE, not an
  * assertion about a document. The ONE RULE governs link changes; this is not
@@ -1310,7 +1310,7 @@ router.get('/api/documents/:id/raw', jwtOrApiKey, async (req, res) => {
 // The one other sanctioned minting site is the S3.3 re-link confirm, and the
 // distinction is the object, not the permission: this mints a link to a FILE
 // and stores it on documents.shared_link; that one mints a link to a FOLDER and
-// stores it on cases.case_dropbox, mirroring exactly what intake minted when
+// stores it as the case folder link (entity_folders.human_link), mirroring exactly what intake minted when
 // the case was created. Neither is a general-purpose link factory.
 router.post('/api/documents/:id/share', jwtOrApiKey, async (req, res) => {
   try {

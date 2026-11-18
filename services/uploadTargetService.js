@@ -10,15 +10,15 @@
  *   services/portalDocsService.js  createUploadLink                  (portal)
  *
  * ── THE LADDER (issueClientUploadLink) ──────────────────────────────────────
- *   1. case with a live case_dropbox link → temp upload link into
+ *   1. case with a live folder link (its entity_folders binding) → temp upload link into
  *      <case folder>/Client Uploads (unchanged legacy behavior).
- *   2. case with NO case_dropbox → caseService.ensureCaseDropboxFolder (the
+ *   2. case with NO folder link → caseService.ensureCaseDropboxFolder (the
  *      same stage-aware creator that intake, the case-page repair button and
  *      the e-sign filing ladder use), then (1). A successful auto-create
  *      ALWAYS raises a staff task — some unlinked cases have a hand-made
  *      folder that was simply never linked, and a silently-created duplicate
  *      next to the real one is worse than the task. Idempotent per case: the
- *      first file of a batch pays for the create; the rest see case_dropbox
+ *      first file of a batch pays for the create; the rest see the link
  *      set and take rung 1 (both upload pages loop files sequentially).
  *   3. dead/revoked link, link-is-a-file, or auto-create failure → temp link
  *      into the UNSORTED CLIENT UPLOADS folder (app_settings
@@ -39,7 +39,7 @@
  * Link issuance (per file) and upload-complete (per batch) are separate HTTP
  * moments, and nothing trustworthy travels between them through the client.
  * So the completion notification re-derives placement server-side:
- * case_dropbox set AND resolvable → the batch went to the case folder;
+ * folder link set AND resolvable → the batch went to the case folder;
  * otherwise it went to unsorted. One shared-link metadata call per completed
  * batch; the rare link-died-mid-batch race resolves to the truthful side at
  * the moment the wording is built. Runs in the callers' post-200 side-effect
@@ -224,7 +224,7 @@ async function issueClientUploadLink(db, { caseId, filename }) {
   if (!filename) throw new Error('issueClientUploadLink requires filename');
 
   const [[caseRow]] = await db.query(
-    'SELECT case_id, case_dropbox FROM cases WHERE case_id = ?',
+    'SELECT case_id FROM cases WHERE case_id = ?',
     [String(caseId)]
   );
   if (!caseRow) {
@@ -234,7 +234,7 @@ async function issueClientUploadLink(db, { caseId, filename }) {
   }
   const cid = caseRow.case_id;
 
-  let sharedLink = (await entityFolders().caseFolderLink(db, cid, { caseRow })).link || '';   // the binding, then the legacy column
+  let sharedLink = (await entityFolders().caseFolderLink(db, cid)).link || '';   // the binding (the record, D3d-2)
   let placement  = 'case';
   let ladderNote = null;
 
@@ -247,7 +247,7 @@ async function issueClientUploadLink(db, { caseId, filename }) {
       placement  = 'created';
       console.log(`[UPLOAD TARGET] auto-created case folder for ${cid}: ${ensured.path || '(pre-existing)'}`);
       // Fire-and-forget: the merge warning must not delay the client's
-      // upload. Once per case — the next file sees case_dropbox set.
+      // upload. Once per case — the next file sees the binding set.
       _raiseTask(db, {
         title: `Review auto-created Dropbox folder: ${cid}`,
         desc:
@@ -307,13 +307,13 @@ async function issueClientUploadLink(db, { caseId, filename }) {
  */
 async function inspectUploadDestination(db, caseId) {
   const [[caseRow]] = await db.query(
-    'SELECT case_id, case_dropbox FROM cases WHERE case_id = ?',
+    'SELECT case_id FROM cases WHERE case_id = ?',
     [String(caseId)]
   );
   if (!caseRow) return null;
   const cid = caseRow.case_id;
 
-  const sharedLink = (await entityFolders().caseFolderLink(db, cid, { caseRow })).link || '';   // the binding, then the legacy column
+  const sharedLink = (await entityFolders().caseFolderLink(db, cid)).link || '';   // the binding (the record, D3d-2)
   if (sharedLink) {
     try {
       const ctx = await storage().context(db);

@@ -76,7 +76,7 @@
  *       boolean is sent as given (the automation functions send false explicitly).
  *   download / move / rename / remove take `from` as an externalId, a path, or { humanLink }
  *       (D1f: the automation functions address a case folder by the link in
- *       cases.case_dropbox until the binding row exists, D3). rename by a path or
+ *       the entity_folders binding's human_link). rename by a path or
  *       a human link delegates to the provider's rename; only an "id:" handle takes
  *       the resolve-then-move detour (the handle-chop trap below).
  *   importUrl(db, dest, url, { wait?, timeoutMs? }) -> { status, path, metadata? | async_job_id }

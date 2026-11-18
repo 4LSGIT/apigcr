@@ -13,7 +13,7 @@
  *     file bytes straight to Dropbox via files/get_temporary_upload_link.
  *     File bytes never transit this instance (Cloud Run posture).
  *   - WHERE they land is the upload-target ladder, SHARED with the public
- *     flow (services/uploadTargetService.js): the case's case_dropbox
+ *     flow (services/uploadTargetService.js): the case's folder link
  *     folder (subfolder 'Client Uploads') → an auto-created case folder →
  *     the unsorted client-uploads folder. A client always has a way to
  *     upload; the old "uploads aren't available" dead end is gone.
@@ -45,7 +45,7 @@
  *     (staff annotation), position, checklist_id, dates, and every
  *     checklist-level column (created_by is an internal user id, title,
  *     tag, status) stay server-side.
- *   - case_dropbox NEVER leaves the server — the client gets a boolean
+ *   - the case folder link NEVER leaves the server — the client gets a boolean
  *     has_upload; the Dropbox shared link itself is staff-facing.
  *     has_upload is now ALWAYS true (the ladder guarantees a destination);
  *     the field survives for page-contract compatibility.
@@ -166,7 +166,7 @@ function clientStatus(status) {
 // historical, works, leave it alone). Projection whitelist ONLY.
 async function _scopedCaseRow(db, contactId, caseId) {
   const [[row]] = await db.query(
-    `SELECT c.case_id, c.case_dropbox,
+    `SELECT c.case_id,
             COALESCE(c.case_number_full, c.case_number, c.case_id) AS case_display
        FROM case_relate cr
        JOIN cases c ON c.case_id = cr.case_relate_case_id
@@ -260,7 +260,7 @@ async function _caseItemMap(db, canonicalCaseId, itemIds) {
 
 /**
  * Scope + limit gate, then a Dropbox temporary upload link (same mechanics
- * as the public route: sharedLink = case_dropbox, subfolder
+ * as the public route: sharedLink = the case folder link, subfolder
  * 'Client Uploads'; the browser POSTs the bytes straight to Dropbox).
  *
  * @param {object} opts
@@ -399,7 +399,7 @@ async function completeUpload(db, contactId, caseId, { files, comment } = {}) {
     contact_id: contactId,
     clientName: uploader?.contact_name || 'Client',
     caseDisplay: caseRow.case_display,
-    dropboxLink: (await require('./entityFolderService').caseFolderLink(db, cid, { caseRow })).link || '',   // D3d-1: the binding, then the legacy column (deferred require, convention)
+    dropboxLink: (await require('./entityFolderService').caseFolderLink(db, cid)).link || '',   // the binding (the record, D3d-2; deferred require, convention)
     fileCount,
     omittedCount,
     files: safeFiles,             // [{ name, item_id, item_name }]
