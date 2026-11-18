@@ -5,6 +5,7 @@
 <title>Session Keys</title>
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
+<script src="/js/ycSubTab.js"></script>
 <style>
   * { box-sizing: border-box; }
   html, body {
@@ -100,9 +101,43 @@
     padding: 6px 8px; font-size: 11px; line-height: 1.5; margin: 8px 0; word-break: break-word;
   }
   .notice code { word-break: break-all; }
+  /* Renewal requests (key-renew-req): one card per request, so a phone never
+     needs a wide table. A pending card carries the TTL choice + Approve / Deny;
+     the one the email link names is outlined (.rr-focus). */
+  .rr-card {
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin: 8px 0;
+    background: var(--page-bg); min-width: 0; word-break: break-word;
+  }
+  .rr-card.rr-decided { opacity: 0.7; padding: 6px 10px; }
+  .rr-card.rr-focus { border: 2px solid var(--accent); }
+  .rr-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+  .rr-reason { margin: 6px 0; font-size: 13px; }
+  .rr-meta { color: var(--text-muted); font-size: 11px; line-height: 1.6; }
+  .rr-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+  .rr-actions select { background: var(--page-bg); color: var(--text); border: 1px solid var(--border);
+    padding: 5px 6px; border-radius: 4px; font-size: 12px; max-width: 100%; }
+  .badge.pending  { background: var(--warn-soft); color: var(--warn-on-soft); }
+  .badge.approved { background: var(--ok-soft); color: var(--ok-on-soft); }
+  .badge.denied   { background: var(--surface-2); color: var(--text-muted); }
 </style>
 </head>
 <body>
+
+<div class="panel" id="rrPanel">
+  <h2>
+    Renewal requests
+    <button class="ghost" style="float:right;font-size:11px;padding:3px 8px;" onclick="loadRequests()">Refresh</button>
+    <label style="float:right;font-size:11px;margin-right:8px;color:var(--text-muted);">
+      <input type="checkbox" id="rrPendingOnly" onchange="loadRequests()"> pending only
+    </label>
+  </h2>
+  <div class="muted">
+    A session whose key expired asks its creator to renew it (POST /api/readonly/renewal-request). Approving
+    renews the same key — its secret does not change, so the session simply retries.
+  </div>
+  <div id="rrNotice"></div>
+  <div id="rrList"><div class="muted" style="padding:12px 0;">Loading…</div></div>
+</div>
 
 <div class="panel">
   <h2>Create a session key</h2>
@@ -196,6 +231,10 @@
 
 <script>
   const P = window.parent;
+  // Declared before the boot below: init() runs SYNCHRONOUSLY when the shell's
+  // apiSend is already there, and reads these (a later `let` is still in its TDZ).
+  let rrFocusId = null;      // the request the email link names (renew-<id>), or null
+  const rrById = {};
 
   // Wait for parent's apiSend to be ready, then init.
   (function waitForParent() {
@@ -204,6 +243,11 @@
   })();
 
   function init() {
+    // The email link's rest: ?open=tabPanel~adminReadonlyKeys~renew-<id> (routes/api.keyRenewalRequests.js).
+    const held = window.ycSubTab ? ycSubTab.leaf.take() : null;
+    const m = /^renew-(\d{1,12})$/.exec(String(held || ""));
+    rrFocusId = m ? Number(m[1]) : null;
+    loadRequests();
     loadKeys();
   }
 
@@ -496,6 +540,109 @@
     } catch (err) {
       alert("Renew failed: " + err.message);
     }
+  }
+
+  // ── renewal requests (key-renew-req) ─────────────────────────────────────
+  // The server judges (renewKey's caps); the card only offers choices within
+  // the caps it sent (r.caps). Pending first, newest first (the server's order).
+  function rrNotice(html) { document.getElementById("rrNotice").innerHTML = `<div class="notice">${html}</div>`; }
+  function fmtMin(min) {
+    const m = Number(min);
+    if (!Number.isFinite(m) || m <= 0) return String(min);
+    const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), r = m % 60;
+    const part = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+    const out = [];
+    if (d) out.push(part(d, "day"));
+    if (h) out.push(part(h, "hour"));
+    if (r) out.push(part(r, "minute"));
+    return out.join(" ");
+  }
+  /** The TTL choices for a pending request: asked, default, 4h, 1 day, max — within the max, deduped. */
+  function rrChoices(r) {
+    const max = r.caps.max_minutes, def = r.caps.default_minutes;
+    const vals = [r.requested_ttl_min, def, 240, 1440, max].filter(v => Number.isInteger(v) && v > 0 && v <= max);
+    return [...new Set(vals)].sort((a, b) => a - b).map(v => ({
+      v,
+      label: fmtMin(v) + [v === r.requested_ttl_min ? "asked" : "", v === def ? "default" : "", v === max ? "max" : ""]
+        .filter(Boolean).map(t => ` (${t})`).join(""),
+    }));
+  }
+  function rrCard(r) {
+    rrById[r.id] = r;
+    const pending = r.status === "pending";
+    const keyDead = !!r.key_revoked_at;
+    const expired = new Date(r.key_expires_at).getTime() < new Date(r.requested_at).getTime();
+    const head = `<div class="rr-head">
+        <span class="badge ${esc(r.status)}">${esc(r.status)}</span>
+        <strong>Key #${r.key_id} "${esc(r.key_label)}"</strong>
+        <code>${esc(r.key_prefix)}…</code>
+        <span class="muted">request #${r.id}</span>
+      </div>`;
+    if (!pending) {
+      const what = r.status === "approved"
+        ? `approved by ${esc(r.decided_by_username || r.decided_by)} ${fmtDate(r.decided_at)} — ${esc(fmtMin(r.granted_ttl_min))}, until ${fmtDate(r.new_expires_at)}`
+        : `denied by ${esc(r.decided_by_username || r.decided_by)} ${fmtDate(r.decided_at)}`;
+      return `<div class="rr-card rr-decided${r.id === rrFocusId ? " rr-focus" : ""}" id="rr-${r.id}">${head}
+        <div class="rr-meta">“${esc(r.reason)}” · asked ${fmtDate(r.requested_at)} · ${what}</div></div>`;
+    }
+    const choices = rrChoices(r);
+    const pick = choices.some(c => c.v === r.requested_ttl_min) ? r.requested_ttl_min : r.caps.default_minutes;
+    return `<div class="rr-card${r.id === rrFocusId ? " rr-focus" : ""}" id="rr-${r.id}">${head}
+      <div class="rr-reason">“${esc(r.reason)}”</div>
+      <div class="rr-meta">
+        ${expired ? "Expired" : "Expires"} ${fmtDate(r.key_expires_at)} · last used ${fmtDate(r.key_last_used_at)}<br>
+        Scopes: ${scopesCell(r.key_scopes)}${r.caps.sensitive ? ' <span class="warn-text">(sensitive — 24h max)</span>' : ""}<br>
+        Asked ${fmtDate(r.requested_at)} from ${esc(r.request_ip || "unknown")} for
+        ${r.requested_ttl_min == null ? "the default" : esc(fmtMin(r.requested_ttl_min))}
+        · max ${esc(fmtMin(r.caps.max_minutes))} · emailed ${esc(r.notify_username || r.notify_user)}
+        ${r.email_error ? `<br><span class="warn-text">The email failed: ${esc(r.email_error)}</span>` : ""}
+        ${keyDead ? `<br><span class="warn-text">This key was revoked — it cannot be renewed; deny the request.</span>` : ""}
+      </div>
+      <div class="rr-actions">
+        ${keyDead ? "" : `<select id="rrTtl-${r.id}" aria-label="TTL for request ${r.id}">${choices.map(c =>
+          `<option value="${c.v}"${c.v === pick ? " selected" : ""}>${esc(c.label)}</option>`).join("")}</select>
+        <button class="rr-approve" onclick="approveRequest(${r.id})">Approve</button>`}
+        <button class="ghost rr-deny" onclick="denyRequest(${r.id})">Deny</button>
+      </div></div>`;
+  }
+  async function loadRequests() {
+    const list = document.getElementById("rrList");
+    try {
+      const pendingOnly = document.getElementById("rrPendingOnly").checked;
+      const data = await P.apiSend(`/api/readonly-keys/renewal-requests?status=${pendingOnly ? "pending" : "all"}&limit=50`, "GET");
+      let rows = data.requests || [];
+      // The linked request is shown even when it is past the list's window or filtered out.
+      if (rrFocusId && !rows.some(r => r.id === rrFocusId)) {
+        const one = await P.apiSend(`/api/readonly-keys/renewal-requests?id=${rrFocusId}`, "GET");
+        rows = (one.requests || []).concat(rows);
+      }
+      list.innerHTML = rows.length ? rows.map(rrCard).join("") : `<div class="muted" style="padding:12px 0;">No renewal requests.</div>`;
+      const f = rrFocusId && document.getElementById(`rr-${rrFocusId}`);
+      if (f && f.scrollIntoView) f.scrollIntoView({ block: "center" });
+    } catch (err) {
+      list.innerHTML = `<div style="color:var(--danger);padding:12px 0;">Error: ${esc(err.message)}</div>`;
+    }
+  }
+  async function approveRequest(id) {
+    const sel = document.getElementById(`rrTtl-${id}`);
+    const ttlMinutes = sel ? Number(sel.value) : undefined;
+    try {
+      const data = await P.apiSend(`/api/readonly-keys/renewal-requests/${id}/approve`, "POST", ttlMinutes ? { ttlMinutes } : {});
+      rrNotice(`Request #${id} approved: key #${data.keyId} renewed for ${esc(fmtMin(data.ttlMinutes))}, until ${fmtDate(data.expiresAt)}. The session retries with the same key.`);
+    } catch (err) {
+      alert("Approve failed: " + err.message);
+    }
+    loadRequests();
+    loadKeys();
+  }
+  async function denyRequest(id) {
+    try {
+      await P.apiSend(`/api/readonly-keys/renewal-requests/${id}/deny`, "POST", {});
+      rrNotice(`Request #${id} denied. That key cannot ask again for an hour.`);
+    } catch (err) {
+      alert("Deny failed: " + err.message);
+    }
+    loadRequests();
   }
 
   async function revokeKey(id) {

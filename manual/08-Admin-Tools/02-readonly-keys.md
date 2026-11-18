@@ -139,6 +139,39 @@ at once, and so does a manager key losing a scope its child held. A key can only
 see itself. A dead key gets the usual 401, and each call appears in the key's
 usage log.
 
+## When a key expires: renewal requests
+
+A session whose key has expired (or is about to) can ask for it back instead of
+stopping. It calls, with the same key:
+
+```
+POST /api/readonly/renewal-request
+{ "reason": "finishing the docs review arc", "ttlMinutes": 240 }
+```
+
+- `reason` is required: one short line, 10–200 characters, saying why.
+- `ttlMinutes` is optional and must be within the key's limits (below); left out,
+  the request asks for the default.
+
+The person who **created** the key gets an email naming the key, when it expired,
+when it was last used, the reason, the lifetime asked for and the most it may get,
+and a link. The link opens this pane at that request (sign in as an SU if asked).
+Pick the lifetime and press **Approve** — or **Deny**.
+
+Approving renews the same key, so its secret doesn't change: the session checks
+`GET /api/readonly/renewal-request` and, once it reads `approved`, carries on with
+the key it already has. An expired key's refusal tells the session about this route,
+so it can find it without having read this page.
+
+- One request per key waits at a time: asking again returns the waiting request
+  and sends no second email (unless the first email failed — then it is retried).
+- After a **Deny**, that key can't ask again for an hour.
+- A **child key** can't ask — its manager key renews it.
+- If the email fails, the request still waits in the pane, marked so.
+
+The **Renewal requests** panel at the top of this pane lists every request,
+waiting ones first, with who decided and what was granted.
+
 ## Manager keys and child keys
 
 Tick **`keys.mint`** to make a **manager key**: a key for a session that runs
@@ -233,10 +266,13 @@ What to know:
   only a hint either way).
 - **Revoked is final.** A revoked key can't be edited or renewed — issue a
   new one.
+- **Renewal requests** (top panel): approve or deny what sessions asked for —
+  see [When a key expires](#when-a-key-expires-renewal-requests).
 
 ## Guardrails
 
-- SU-only, humans-only.
+- SU-only, humans-only. The one thing a key does here is *ask*: the renewal-request
+  routes are the only ones an expired key reaches, and only an SU can approve.
 - Key create and revoke — child keys included — are audited to
   `admin_audit_log` (`tool='readonlyKeys'`).
 - Every query a `sql.ro.sensitive` key runs is flagged in its usage log

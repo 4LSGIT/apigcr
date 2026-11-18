@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-16T11:37:46.367Z_  
-_860 routes total — DELETE: 72, GET: 352, PATCH: 61, POST: 331, PUT: 41, _ALL: 3_
+_Generated 2026-11-18T23:44:50.789Z_  
+_865 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 334, PUT: 41, _ALL: 3_
 
 ## Global middleware chain
 
@@ -612,6 +612,11 @@ _860 routes total — DELETE: 72, GET: 352, PATCH: 61, POST: 331, PUT: 41, _ALL:
 | POST | `/api/readonly-keys/children` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | DELETE | `/api/readonly-keys/children/:id` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | POST | `/api/readonly-keys/children/:id/renew` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| GET | `/api/readonly-keys/renewal-requests` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| POST | `/api/readonly-keys/renewal-requests/:id/approve` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| POST | `/api/readonly-keys/renewal-requests/:id/deny` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| GET | `/api/readonly/renewal-request` | `readonlyApiKeyAuthAllowExpired` | — |
+| POST | `/api/readonly/renewal-request` | `readonlyApiKeyAuthAllowExpired` | — |
 | GET | `/api/readonly/settings` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | POST | `/api/readonly/sql` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | GET | `/api/readonly/whoami` | `readonlyApiKeyAuth` | — |
@@ -1140,4 +1145,4 @@ _860 routes total — DELETE: 72, GET: 352, PATCH: 61, POST: 331, PUT: 41, _ALL:
 
 ---
 
-_860 routes total — DELETE: 72, GET: 352, PATCH: 61, POST: 331, PUT: 41, _ALL: 3_
+_865 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 334, PUT: 41, _ALL: 3_

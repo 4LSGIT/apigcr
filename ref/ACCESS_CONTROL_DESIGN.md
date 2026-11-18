@@ -717,6 +717,31 @@ scope, and the key manages only what it created.
   path is untouched on either schema (createTask names the column only for a
   key's task).
 
+### 5.11 Renewal requests (key-renew-req, Fred's go 2026-11-19)
+
+**Why.** A session whose key expired could only stop and wait for Fred to
+open the pane. Now it asks; Fred gets an email and approves in two clicks.
+Rulings (2026-11-19): the link opens the app (SU sign-in + elevation, as any
+renew) — never a GET that renews, since mail scanners follow links; children
+are refused (their manager renews them); the email goes to the key's creator
+only (an SU re-points `created_by` in the DB console if ever needed); no limit
+on how long ago the key expired, but a required short reason and an email
+that names the key and its expiry.
+
+- **The one exception to "expired = refused"**: `readonlyApiKeyAuthAllowExpired`
+  proves possession by the same hash lookup and refuses revoked / unknown /
+  a child of a revoked parent; it skips only the expiry checks, sets
+  `req.auth.expired`, and bumps no usage counter. Mounted on exactly
+  `POST|GET /api/readonly/renewal-request` (pinned in tests/keyScopes.test.js).
+  No surface scope: asking about yourself reaches no surface.
+- **Abuse bounds**: one pending request per key, enforced by the database
+  (UNIQUE on a STORED generated `pending_key`), so a repeat or a burst sends
+  one email; a denial blocks the key for 60 minutes. A leaked expired key can
+  at most ask — the email never carries the key, and approving needs an SU.
+- **Approval is the ordinary renew** (`renewKey`, one copy of the caps): the
+  same ordinary 1 d / 3 d, sensitive 4 h / 24 h limits, a revoked key 409,
+  audited `renewed` with `via_request`. The secret never changes.
+
 ### 5.6 Slice plan — Phase B (post-ratification)
 
 - **B1** `scopes` column (both tables, one migration) + `keyAllows()` +

@@ -21,6 +21,8 @@
 //   GET    /api/readonly-keys/:id/log  ?limit=N&offset=N
 //   PATCH  /api/readonly-keys/:id      body { scopes } — full replace (D2)
 //   POST   /api/readonly-keys/:id/renew body { ttlMinutes? } (D2)
+//   …/renewal-requests                 renewal requests — routes/api.keyRenewalRequests.js
+//                                      (key-renew-req; approve calls renewKey below)
 //
 // EDIT + RENEW (access-control D2, ACCESS_CONTROL_DESIGN §5.9): scopes and
 // expiry are no longer frozen at mint. Both reuse the mint's rules (one copy,
@@ -667,29 +669,52 @@ router.patch("/api/readonly-keys/:id", ...superuserOnlyFor("readonlyKeys"), asyn
 // this key's kind (ordinary / sensitive / child); over a cap is a 400, never a
 // clamp. Works on an expired, unrevoked key. The key's advisory stamp goes
 // stale: the reply carries expiresStamp so the holder can rewrite its suffix.
+//
+// renewKey is the ONE renew — this route and the renewal-request approve
+// (routes/api.keyRenewalRequests.js) both call it; the caller audits. `db` may
+// be a transaction's connection. Throws a Refusal. → { id, before (Date),
+// expiresAt (Date), ttlMinutes (a root key's granted TTL; null for a child) }.
+async function renewKey(db, id, ttlMinutes) {
+  const row = await loadForEdit(db, id);
+  let expiresAt, ttl = null;
+  if (row.parent_key_id != null) {
+    if (row.parent_revoked_at) {
+      throw new Refusal(409, { error: "its parent key is revoked, so this child is dead for good — mint a new one" });
+    }
+    expiresAt = childExpiresAt(ttlMinutes, new Date(row.parent_expires_at).getTime());
+  } else {
+    ttl = rootTtlMinutes(ttlMinutes, { sensitive: isSensitiveColumn(row.scopes), strict: true });
+    expiresAt = new Date(Math.floor((Date.now() + ttl * 60_000) / 1000) * 1000);
+  }
+  const [r] = await db.query(
+    `UPDATE readonly_api_keys SET expires_at = ? WHERE id = ? AND revoked_at IS NULL`, [expiresAt, id]);
+  if (!r.affectedRows) throw REVOKED();
+  return { id, before: new Date(row.expires_at), expiresAt, ttlMinutes: ttl };
+}
+
+/** Does a stored scopes column hold the sensitive scope? (NULL = legacy = no.) */
+function isSensitiveColumn(scopesColumn) {
+  const own = scopesFromColumn(scopesColumn);
+  return Array.isArray(own) && own.includes(SENSITIVE_SCOPE);
+}
+
+/** A ROOT key's renew caps from its stored scopes: { default_minutes, max_minutes, sensitive }. */
+function rootTtlCaps(scopesColumn) {
+  const sensitive = isSensitiveColumn(scopesColumn);
+  return sensitive
+    ? { default_minutes: SENSITIVE_DEFAULT_TTL_MIN, max_minutes: SENSITIVE_MAX_TTL_MIN, sensitive }
+    : { default_minutes: DEFAULT_TTL_MIN, max_minutes: MAX_TTL_MINUTES, sensitive };
+}
+
 router.post("/api/readonly-keys/:id/renew", ...superuserOnlyFor("readonlyKeys"), async (req, res) => {
   const started = Date.now();
   try {
     const id = idParam(req);
     const { ttlMinutes } = req.body || {};
-    const row = await loadForEdit(req.db, id);
-    let expiresAt;
-    if (row.parent_key_id != null) {
-      if (row.parent_revoked_at) {
-        throw new Refusal(409, { error: "its parent key is revoked, so this child is dead for good — mint a new one" });
-      }
-      expiresAt = childExpiresAt(ttlMinutes, new Date(row.parent_expires_at).getTime());
-    } else {
-      const own = scopesFromColumn(row.scopes);
-      const ttl = rootTtlMinutes(ttlMinutes, { sensitive: Array.isArray(own) && own.includes(SENSITIVE_SCOPE), strict: true });
-      expiresAt = new Date(Math.floor((Date.now() + ttl * 60_000) / 1000) * 1000);
-    }
-    const [r] = await req.db.query(
-      `UPDATE readonly_api_keys SET expires_at = ? WHERE id = ? AND revoked_at IS NULL`, [expiresAt, id]);
-    if (!r.affectedRows) throw REVOKED();
+    const { before, expiresAt } = await renewKey(req.db, id, ttlMinutes);
     await suAudit(req, "renewed", {
       key_id: id,
-      before: { expires_at: new Date(row.expires_at).toISOString() },
+      before: { expires_at: before.toISOString() },
       after: { expires_at: expiresAt.toISOString() },
     }, started);
     res.json({ ok: true, id, expiresAt: expiresAt.toISOString(), expiresStamp: stampExpiry(expiresAt) });
@@ -734,3 +759,8 @@ module.exports.CHILD_MAX_TTL_MIN = CHILD_MAX_TTL_MIN;
 module.exports.CHILD_MINTS_PER_HOUR = CHILD_MINTS_PER_HOUR;
 // The shared rules (D2), for their unit tests.
 module.exports._rules = { Refusal, sessionScopes, rootTtlMinutes, childExpiresAt, childScopesWithin, stampExpiry };
+// The one renew + the caps it applies — routes/api.keyRenewalRequests.js (key-renew-req).
+module.exports.renewKey = renewKey;
+module.exports.rootTtlCaps = rootTtlCaps;
+module.exports.isSensitiveColumn = isSensitiveColumn;
+module.exports.Refusal = Refusal;

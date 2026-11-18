@@ -492,3 +492,45 @@ describe('yck_ keys: scopes attached (B1), ENFORCED since B2', () => {
     expect(await run(mw, baseReq(keyDb(['firm.settings'])))).toEqual({ via: 'next' });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The ONE auth that admits an EXPIRED key (key-renew-req, 2026-11-19) — pinned
+// ─────────────────────────────────────────────────────────────────────────────
+// readonlyApiKeyAuthAllowExpired lets a session whose key expired ask its
+// creator for a renewal. It is invisible to the sweep above (that one finds
+// readonlyApiKeyAuth), so it is pinned here: exactly these two routes, at any
+// handler position, and no router.use() of it. A new mount is a decision —
+// change this list deliberately, never to make the test pass.
+describe('the expired-key auth is mounted on exactly the renewal-request routes', () => {
+  const { readonlyApiKeyAuthAllowExpired } = require('../lib/auth.readonly');
+  const ALLOW_EXPIRED_MOUNTS = ['get /api/readonly/renewal-request', 'post /api/readonly/renewal-request'];
+
+  test('route-layer sweep over every routes file that names it', () => {
+    const found = [];
+    for (const f of fs.readdirSync(path.join(ROOT, 'routes')).filter(n => n.endsWith('.js'))) {
+      const src = fs.readFileSync(path.join(ROOT, 'routes', f), 'utf8');
+      if (!/readonlyApiKeyAuthAllowExpired/.test(src)) continue;
+      const router = require(path.join(ROOT, 'routes', f));
+      for (const l of router.stack || []) {
+        if (!l.route) {
+          expect({ f, routerUse: l.handle === readonlyApiKeyAuthAllowExpired }).toEqual({ f, routerUse: false });
+          continue;
+        }
+        for (const s of l.route.stack) {
+          if (s.handle === readonlyApiKeyAuthAllowExpired) found.push(`${f} ${s.method} ${l.route.path}`);
+        }
+      }
+    }
+    expect(found.sort()).toEqual(ALLOW_EXPIRED_MOUNTS.map(m => `api.keyRenewalRequests.js ${m}`).sort());
+  });
+
+  test('source scan: no other file under routes/, lib/ or services/ names it', () => {
+    const hits = [];
+    for (const dir of ['routes', 'lib', 'services']) {
+      for (const f of fs.readdirSync(path.join(ROOT, dir)).filter(n => n.endsWith('.js'))) {
+        if (/readonlyApiKeyAuthAllowExpired/.test(fs.readFileSync(path.join(ROOT, dir, f), 'utf8'))) hits.push(`${dir}/${f}`);
+      }
+    }
+    expect(hits.sort()).toEqual(['lib/auth.readonly.js', 'routes/api.keyRenewalRequests.js']);
+  });
+});

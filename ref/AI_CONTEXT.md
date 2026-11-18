@@ -3972,6 +3972,24 @@ the key's kind, 400 over (never clamped), works on an expired key, replies
 invalidateCache() locally; other instances ≤60s (old scopes / old expiry).
 Audited before/after.
 
+**Renewal requests (key-renew-req, design §5.11).** An expired (or expiring)
+ROOT key asks its creator to renew it: `POST /api/readonly/renewal-request
+{reason (10–200 chars), ttlMinutes?}` + `GET` (status) on
+`readonlyApiKeyAuthAllowExpired` — the ONE auth that admits an expired key
+(revoked / unknown still 401; no usage bump), pinned to those two routes by
+`tests/keyScopes.test.js`. A child → 409 (its manager renews it). Table
+`key_renewal_requests`; one pending row per key, DB-enforced (UNIQUE on the
+STORED `pending_key`); denied → 429 for 60 min. The email (synchronous; a
+failure keeps the row pending, 502, retried on the next ask) goes to
+`created_by`'s users.email only and links
+`?open=tabPanel~adminReadonlyKeys~renew-<id>`. SU approve
+(`/api/readonly-keys/renewal-requests/:id/approve {ttlMinutes?}`) = the ONE
+`renewKey` (routes/api.readonlyKeys.js, shared with `/:id/renew`) in a
+transaction with the request row FOR UPDATE — a double click renews once;
+`/deny`; `GET …/renewal-requests` lists with each key's caps. The secret never
+changes: the session retries with the same key. The ordinary expired 401
+carries a `renewal` hint for root keys.
+
 **Session-key tasks (D3, design §5.10) — the first app-table write.**
 `tasks.own` (explicit; never a child's) → `/api/key-tasks` (POST, GET,
 GET|PATCH /:id, PATCH /:id/complete|reopen|delete), all through

@@ -684,6 +684,7 @@ ref/migrations/2026-11-18_storage_seam_d3c3_contract.sql
 ref/migrations/2026-11-18_storage_seam_d3c_storage_folders.json
 ref/migrations/2026-11-18_storage_seam_d3d1_case_folder_link.json
 ref/migrations/2026-11-19_docs_reviewer.sql
+ref/migrations/2026-11-19_key_renewal_requests.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -767,6 +768,7 @@ routes/api.intake.js
 routes/api.intake.petition.js
 routes/api.issueReports.js
 routes/api.jwt.js
+routes/api.keyRenewalRequests.js
 routes/api.keyTasks.js
 routes/api.log.js
 routes/api.mail.js
@@ -932,6 +934,7 @@ scripts/hookAsyncReceiverS0.js
 scripts/hookDedupS3.js
 scripts/hookExecutionsHeaderScrub.js
 scripts/ingestRuleEditStampAndChangeLog.js
+scripts/keyRenewalRequestsMigrate.js
 scripts/launcherC3MoreAdminPages.js
 scripts/launcherL5ToolsVisibleTo.js
 scripts/leadListImport.js
@@ -1778,6 +1781,8 @@ tests/keyEditRenew.test.js
 tests/keyExpiry.mysql.test.js
 tests/keyExpiryPicker.test.js
 tests/keyFormat.test.js
+tests/keyRenewalRequests.mysql.test.js
+tests/keyRenewalRequests.test.js
 tests/keyScopes.mysql.test.js
 tests/keyScopes.test.js
 tests/keyTasks.mysql.test.js
