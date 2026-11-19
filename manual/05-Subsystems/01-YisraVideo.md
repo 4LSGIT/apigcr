@@ -37,7 +37,7 @@ A "+ New Video" button in the top of the list pane creates a new video. A refres
    - **Contact-only** — the URL only works when it carries a `?ct=<contact_token>` parameter belonging to a real contact. Without it, the page returns 404. Useful for testimonials or gated content.
 8. Add **Action Buttons** — the row of clickable buttons that appears below the video on the landing page. For each button:
    - **Label** — what the button says ("Book My 341 Prep Call")
-   - **URL** — where it goes. Use `{{c}}` anywhere in the URL to insert the viewer's contact token — e.g. `https://app.4lsg.com/book?c={{c}}`. When a viewer arrives without a token, `{{c}}` becomes empty. Use `{{ca}}` to insert the case id — e.g. `https://app.4lsg.com/docReq?case={{ca}}` for a button that opens the client's document upload page.
+   - **URL** — where it goes. Use `{{c}}` anywhere in the URL to insert the viewer's contact token — e.g. `https://4lsg.com/b/consult?c={{c}}` (a booking page, which pre-fills the viewer's details). When a viewer arrives without a token, `{{c}}` becomes empty. Use `{{ca}}` to insert the case id — e.g. `https://app.4lsg.com/docReq?case={{ca}}` for a button that opens the client's document upload page.
    - **Style** — Primary (filled), Secondary (outlined), or Ghost (text-only)
    - The ↑ ↓ buttons reorder them; ✕ removes one.
 9. **Related Videos** — pick up to 3 videos that should appear at the bottom of this video's landing page. The picker searches your published videos. If you pick fewer than 3, the system fills the rest by matching tags.
