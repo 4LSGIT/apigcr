@@ -1,16 +1,15 @@
 /**
  * Redirect after booking (Fred, 2026-11-19).
  *
- * A booking view may carry booking_views.redirect_url (https only). On success
- * the widget ALWAYS shows thankyou_html first — fail-safe — then:
- *   - embedded: posts { type:'yc-booking', event:'booked', slug, redirect_url }
- *     to its parent and tries to move the top window (a cross-origin frame may
- *     do that only with a recent click, so it can be blocked);
- *   - full page: waits a beat, then goes.
- * The Booking Manager's "Embed help" popup hands out the host-page listener
- * that performs the redirect on the message (the guaranteed path on another
- * site, e.g. a landing page on Cloudflare), and a short brief for an AI
- * assistant that builds the same thing.
+ * On success the widget ALWAYS shows thankyou_html first — fail-safe — then:
+ *   - embedded: only posts { type:'yc-booking', event:'booked', slug,
+ *     redirect_url } to its host; the host's embed code (Booking Manager →
+ *     Embed help) goes to its own THANK_YOU, else the view's https
+ *     redirect_url. The script trusts only its own iframe and names no domain.
+ *   - full page: after a beat, the view's own redirect_url — never a page
+ *     named in the link (?ty= would make a 4lsg.com link an open redirect,
+ *     and a came-from rule still passes through t.co; Fred, 2026-11-19).
+ * Embed help also hands out the plain link and a brief for an AI assistant.
  *
  * Covered here: the route's validation and storage (routes/api.bookingViews.js,
  * same in-memory harness as unifiedEventsU5.booking), the ONE success shape
@@ -171,13 +170,13 @@ describe('routes/booking.js — the one success shape', () => {
 describe('public/book.html — afterBooked', () => {
   const SRC = read('book.html');
 
-  function run(url, { framed, topThrows = false, navThrows = false } = {}) {
+  // search = the booking page's own query string; referrer = where the visitor came from
+  function run(url, { framed, topThrows = false, search = '', referrer = '' } = {}) {
     const posted = [];
     const timers = [];
     const self = {};
     const top = framed ? {} : self;
     const topLoc = {};
-    if (navThrows) Object.defineProperty(topLoc, 'href', { set() { throw new Error('SecurityError'); } });
     top.location = topLoc;
     const win = {
       self,
@@ -187,56 +186,59 @@ describe('public/book.html — afterBooked', () => {
     if (topThrows) Object.defineProperty(win, 'top', { get() { throw new Error('blocked'); } });
     else win.top = top;
     if (!framed) self.location = win.location;
-    const ctx = { window: win, slug: 'consult', REDIRECT_BEAT_MS: 1500, setTimeout: (fn, ms) => timers.push([fn, ms]) };
+    const ctx = { window: win, document: { referrer }, slug: 'consult', REDIRECT_BEAT_MS: 1500,
+      qs: new URLSearchParams(search), URL, setTimeout: (fn, ms) => timers.push([fn, ms]) };
     vm.createContext(ctx);
-    vm.runInContext(fnSrc(SRC, 'afterBooked'), ctx);
+    vm.runInContext(['afterBooked', 'httpsUrl'].map((n) => fnSrc(SRC, n)).join('\n'), ctx);
     ctx.afterBooked(url);
-    return { posted, timers, win, topLoc };
+    return { posted, timers, win, topLoc, go: () => { timers.forEach(([fn]) => fn()); return win.assigned; } };
   }
+  const TY = '?ty=' + encodeURIComponent('https://landing.example.com/thank-you.html');
 
-  test('embedded: tells the host page, then moves the top window', () => {
-    const r = run('https://landing.example.com/thank-you.html', { framed: true });
-    expect(r.posted).toEqual([[{ type: 'yc-booking', event: 'booked', slug: 'consult',
-      redirect_url: 'https://landing.example.com/thank-you.html' }, '*']]);
-    expect(r.topLoc.href).toBe('https://landing.example.com/thank-you.html');
-    expect(r.timers).toEqual([]);   // no delay: the click's activation must still be live
+  describe('embedded: the host page decides', () => {
+    test('tells the host booked, with the view default; never moves the host page', () => {
+      const r = run('https://firm.example.com/default', { framed: true, search: TY, referrer: 'https://landing.example.com/' });
+      expect(r.posted).toEqual([[{ type: 'yc-booking', event: 'booked', slug: 'consult',
+        redirect_url: 'https://firm.example.com/default' }, '*']]);
+      expect(r.topLoc.href).toBeUndefined();
+      expect(r.timers).toEqual([]);
+    });
+
+    test('no view default → redirect_url null; non-https defaults are dropped', () => {
+      for (const v of [null, 'javascript:alert(1)', 'http://x.example.com/', 42]) {
+        expect([v, run(v, { framed: true }).posted[0][0].redirect_url]).toEqual([v, null]);
+      }
+    });
+
+    test('an unreadable window.top counts as embedded', () => {
+      const r = run('https://firm.example.com/d', { framed: true, topThrows: true });
+      expect(r.posted).toHaveLength(1);
+      expect(r.timers).toEqual([]);
+    });
   });
 
-  test('embedded, browser blocks the top navigation: nothing escapes, the message still went', () => {
-    const r = run('https://landing.example.com/t', { framed: true, navThrows: true });
-    expect(r.posted).toHaveLength(1);
-  });
+  describe('full page: the view\'s own redirect, never a page named in the link', () => {
+    test('the view redirect, after the beat', () => {
+      const r = run('https://firm.example.com/default', { framed: false });
+      expect(r.posted).toEqual([]);
+      expect(r.timers.map(([, ms]) => ms)).toEqual([1500]);
+      expect(r.win.assigned).toBeUndefined();
+      expect(r.go()).toBe('https://firm.example.com/default');
+    });
 
-  test('embedded with no redirect: the host page still hears booked (redirect_url null); no navigation', () => {
-    const r = run(null, { framed: true });
-    expect(r.posted[0][0]).toEqual({ type: 'yc-booking', event: 'booked', slug: 'consult', redirect_url: null });
-    expect(r.topLoc.href).toBeUndefined();
-  });
+    test('a ?ty= in the link is ignored — even from the same site (open redirect; t.co passes any referrer rule)', () => {
+      for (const referrer of ['', 'https://landing.example.com/', 'https://t.co/']) {
+        expect([referrer, run('https://firm.example.com/default', { framed: false, search: TY, referrer }).go()])
+          .toEqual([referrer, 'https://firm.example.com/default']);
+        expect([referrer, run(null, { framed: false, search: TY, referrer }).timers]).toEqual([referrer, []]);
+      }
+    });
 
-  test('non-https targets are dropped on the client too', () => {
-    for (const bad of ['javascript:alert(1)', 'http://x.example.com/', 42, {}]) {
-      const r = run(bad, { framed: true });
-      expect([bad, r.posted[0][0].redirect_url, r.topLoc.href]).toEqual([bad, null, undefined]);
-    }
-  });
-
-  test('an unreadable window.top counts as embedded', () => {
-    const r = run('https://landing.example.com/t', { framed: true, topThrows: true });
-    expect(r.posted).toHaveLength(1);
-  });
-
-  test('full page: the thank-you shows for a beat, then the visitor goes', () => {
-    const r = run('https://landing.example.com/thank-you.html', { framed: false });
-    expect(r.posted).toEqual([]);
-    expect(r.timers.map(([, ms]) => ms)).toEqual([1500]);
-    expect(r.win.assigned).toBeUndefined();
-    r.timers[0][0]();
-    expect(r.win.assigned).toBe('https://landing.example.com/thank-you.html');
-  });
-
-  test('full page with no redirect: nothing happens (today\'s behaviour)', () => {
-    const r = run(null, { framed: false });
-    expect([r.posted, r.timers]).toEqual([[], []]);
+    test('no view redirect, or a non-https one → stay on the thank-you', () => {
+      for (const v of [null, '', 'http://firm.example.com/d', 'javascript:alert(1)']) {
+        expect([v, run(v, { framed: false }).timers]).toEqual([v, []]);
+      }
+    });
   });
 
   test('the page never sends its own URL (and a ?c= token) as a Referer', () => {
@@ -254,77 +256,118 @@ describe('public/book.html — afterBooked', () => {
     expect(shown).toBeGreaterThan(-1);
     expect(after).toBeGreaterThan(shown);
   });
+
+  test('qs is the page\'s own query string', () => {
+    expect(SRC).toContain('var qs = new URLSearchParams(location.search);');
+  });
 });
 
 // ── public/bookingviewsmanager.html ────────────────────────────────────────
 describe('bookingviewsmanager.html — Embed help + the redirect field', () => {
   const SRC = read('bookingviewsmanager.html');
-  const ORIGIN = 'https://4lsg.com';
   const ctx = (() => {
-    const win = { location: { origin: 'https://app.4lsg.com' }, top: { firmData: { publicUrl: ORIGIN } } };
+    const win = { location: { origin: 'https://app.4lsg.com' }, top: { firmData: { publicUrl: 'https://4lsg.com' } } };
     const c = { window: win };
     vm.createContext(c);
-    vm.runInContext(['publicOrigin', 'publicUrl', 'embedSnippet', 'embedListenerScript', 'embedHelpSnippet',
-      'embedLlmBlurb', 'clientValidate'].map((n) => fnSrc(SRC, n)).join('\n'), c);
+    vm.runInContext(['publicOrigin', 'publicUrl', 'embedFrameId', 'embedHelpFrame', 'embedListenerScript',
+      'embedHelpSnippet', 'embedHelpLink', 'embedLlmBlurb', 'clientValidate'].map((n) => fnSrc(SRC, n)).join('\n'), c);
     return c;
   })();
   const VIEW = { id: 1, slug: 'consult', title: 'Free Consultation' };
 
-  // Run the pasted listener in a stand-in host page and dispatch messages at it.
-  function hostPage() {
+  // Run the pasted script in a stand-in host page (on any domain) holding the
+  // booking iframe, optionally with THANK_YOU filled in the way a person would.
+  function hostPage(thankYou = '') {
     const listeners = [];
-    const page = { location: { href: 'https://landing.example.com/' },
-      addEventListener: (t, fn) => { if (t === 'message') listeners.push(fn); } };
-    const code = ctx.embedListenerScript().replace(/^<script>/, '').replace(/<\/script>$/, '');
-    const c = { window: page };
+    const frameWin = {};
+    const page = {
+      location: { href: 'https://vanity.example.net/' },
+      addEventListener: (t, fn) => { if (t === 'message') listeners.push(fn); },
+    };
+    const frameSrc = ctx.embedHelpFrame(VIEW).match(/src="([^"]+)"/)[1];
+    const doc = { getElementById: (id) => (id === 'yc-booking-consult' ? { contentWindow: frameWin, src: frameSrc } : null) };
+    let code = ctx.embedListenerScript(VIEW).replace(/^<script>/, '').replace(/<\/script>$/, '');
+    if (thankYou) {
+      const blank = "var THANK_YOU = '';";
+      if (code.split(blank).length !== 2) throw new Error('THANK_YOU line not found exactly once');
+      code = code.replace(blank, `var THANK_YOU = '${thankYou}';`);
+    }
+    const c = { window: page, document: doc, location: page.location, URL };
     vm.createContext(c);
     vm.runInContext(code, c);
-    return { page, fire: (e) => listeners.forEach((fn) => fn(e)), count: () => listeners.length };
+    const booked = (over = {}) => ({ source: frameWin, origin: new URL(frameSrc).origin,
+      data: { type: 'yc-booking', event: 'booked', slug: 'consult', redirect_url: null, ...over } });
+    return { page, frameWin, booked, fire: (e) => listeners.forEach((fn) => fn(e)), count: () => listeners.length };
   }
-  const booked = (over = {}) => ({ origin: ORIGIN,
-    data: { type: 'yc-booking', event: 'booked', slug: 'consult', redirect_url: 'https://landing.example.com/thank-you.html', ...over } });
 
-  test('the snippet is the iframe on the landing host plus a real closing script tag', () => {
+  test('the snippet: an iframe with its id on the landing host, one script, a real closing tag', () => {
     const s = ctx.embedHelpSnippet(VIEW);
-    expect(s.startsWith('<!-- 4LSG booking: consult -->\n<iframe src="https://4lsg.com/b/consult"')).toBe(true);
+    expect(s.startsWith('<!-- 4LSG booking: consult -->\n<iframe id="yc-booking-consult" src="https://4lsg.com/b/consult"')).toBe(true);
     expect(s.trimEnd().endsWith('</script>')).toBe(true);
     expect(s.match(/<script>/g)).toHaveLength(1);
   });
 
-  test('the listener redirects on a booked message from the landing origin', () => {
-    const h = hostPage();
-    expect(h.count()).toBe(1);
-    h.fire(booked());
-    expect(h.page.location.href).toBe('https://landing.example.com/thank-you.html');
+  test('the script names no domain: it trusts its own iframe, on the address the iframe holds', () => {
+    const script = ctx.embedListenerScript(VIEW);
+    expect(script).not.toMatch(/4lsg/i);
+    expect(script).toContain('e.source !== f.contentWindow');
+    expect(script).toContain('e.origin !== new URL(f.src, location.href).origin');
   });
 
-  test('…and ignores everything else', () => {
-    for (const [why, e] of [
-      ['other origin', { ...booked(), origin: 'https://evil.example.com' }],
-      ['app origin', { ...booked(), origin: 'https://app.4lsg.com' }],
-      ['http target', booked({ redirect_url: 'http://landing.example.com/t' })],
-      ['javascript target', booked({ redirect_url: 'javascript:alert(1)' })],
-      ['no target', booked({ redirect_url: null })],
-      ['other type', booked({ type: 'something' })],
-      ['other event', booked({ event: 'opened' })],
-      ['string data', { origin: ORIGIN, data: 'booked' }],
-      ['no data', { origin: ORIGIN, data: null }],
-    ]) {
-      const h = hostPage();
-      h.fire(e);
-      expect([why, h.page.location.href]).toEqual([why, 'https://landing.example.com/']);
+  test('THANK_YOU filled in → the host\'s own page (relative allowed), whatever the view default', () => {
+    const h = hostPage('/thank-you.html');
+    expect(h.count()).toBe(1);
+    h.fire(h.booked({ redirect_url: 'https://firm.example.com/default' }));
+    expect(h.page.location.href).toBe('/thank-you.html');
+  });
+
+  test('THANK_YOU empty → the view default when https; else stay', () => {
+    const h = hostPage();
+    h.fire(h.booked({ redirect_url: 'https://firm.example.com/default' }));
+    expect(h.page.location.href).toBe('https://firm.example.com/default');
+    for (const bad of [null, 'http://firm.example.com/d', 'javascript:alert(1)']) {
+      const h2 = hostPage();
+      h2.fire(h2.booked({ redirect_url: bad }));
+      expect([bad, h2.page.location.href]).toEqual([bad, 'https://vanity.example.net/']);
     }
   });
 
-  test('the AI brief names the iframe, the origin rule, the https rule and the plain link', () => {
+  test('ignores every message not from its own booking box, or not a booked event', () => {
+    for (const [why, mk] of [
+      ['another window', (h) => ({ ...h.booked(), source: {} })],
+      ['its box, navigated to a third-party page', (h) => ({ ...h.booked(), origin: 'https://third-party.example.com' })],
+      ['no source', (h) => ({ ...h.booked(), source: null })],
+      ['other type', (h) => h.booked({ type: 'something' })],
+      ['other event', (h) => h.booked({ event: 'opened' })],
+      ['string data', (h) => ({ source: h.frameWin, data: 'booked' })],
+      ['no data', (h) => ({ source: h.frameWin, data: null })],
+    ]) {
+      const h = hostPage('/thank-you.html');
+      h.fire(mk(h));
+      expect([why, h.page.location.href]).toEqual([why, 'https://vanity.example.net/']);
+    }
+  });
+
+  test('two embeds on one page keep their own THANK_YOU (the script is wrapped)', () => {
+    expect(ctx.embedListenerScript(VIEW)).toMatch(/^<script>\n\(function \(\) \{[\s\S]*\}\)\(\);\n<\/script>$/);
+  });
+
+  test('the standalone link is the plain booking link (no page named in it)', () => {
+    expect(ctx.embedHelpLink(VIEW)).toBe('https://4lsg.com/b/consult');
+  });
+
+  test('the AI brief covers both ways', () => {
     const b = ctx.embedLlmBlurb(VIEW);
     expect(b).toContain('"Free Consultation"');
-    expect(b).toContain('<iframe src="https://4lsg.com/b/consult"');
-    expect(b).toContain('event.origin is not exactly https://4lsg.com');
+    expect(b).toContain('<iframe id="yc-booking-consult" src="https://4lsg.com/b/consult"');
+    expect(b).toContain('event.source is not the contentWindow of the iframe with id "yc-booking-consult"');
     expect(b).toContain('event.data.type === "yc-booking"');
-    expect(b).toContain('starting with https://');
     expect(b).toContain('do not add a sandbox attribute');
-    expect(b).toContain('use https://4lsg.com/b/consult');
+    expect(b).toContain('https://4lsg.com/b/consult — after booking');
+    expect(b).toContain('a link cannot choose a different one');
+    expect(b).not.toContain('ty=');
+    expect(b).toContain('event.origin is not the origin of that iframe\'s src');
+    expect(b).toContain('at most once per page');
   });
 
   test('client validation mirrors the server: https only', () => {
@@ -347,7 +390,7 @@ describe('bookingviewsmanager.html — Embed help + the redirect field', () => {
     expect(list.indexOf('id="eh-btn"')).toBeGreaterThan(-1);
     expect(list.indexOf('id="eh-btn"')).toBeLessThan(list.indexOf('id="new-btn"'));
     expect(list).toContain("E('eh-btn').addEventListener('click', openEmbedHelp);");
-    for (const id of ['eh-backdrop', 'eh-view', 'eh-snippet', 'eh-llm', 'eh-copy-snippet', 'eh-copy-llm', 'eh-close']) {
+    for (const id of ['eh-backdrop', 'eh-view', 'eh-snippet', 'eh-link', 'eh-llm', 'eh-copy-snippet', 'eh-copy-link', 'eh-copy-llm', 'eh-close']) {
       expect([id, SRC.includes(`id="${id}"`)]).toEqual([id, true]);
     }
   });

@@ -405,7 +405,7 @@
     <div class="field">
       <label for="f-redirect">Redirect after booking (optional)</label>
       <input type="url" id="f-redirect" placeholder="https://example.com/thank-you.html" maxlength="500">
-      <div class="hint">After the thank-you shows, send the visitor to this page (https only). On another website, paste the code from Embed help so the redirect always works.</div>
+      <div class="hint">Optional (https only): where visitors go after booking on this page. An embed may name its own — see Embed help.</div>
     </div>
     <div class="field">
       <label for="f-footer">Footer (optional)</label>
@@ -431,9 +431,14 @@
     </div>
 
     <h4>Embed code</h4>
-    <div class="hint">Paste where the booking form should appear. The script sends the visitor to the view's "Redirect after booking" page; with none set, they stay on the thank-you message.</div>
+    <div class="hint">Paste where the booking form should appear, and put your thank-you page in <code>THANK_YOU</code>. Left empty, the view's own redirect applies, or the visitor stays on its thank-you message.</div>
     <pre class="eh-pre" id="eh-snippet"></pre>
     <button class="btn" id="eh-copy-snippet" type="button">Copy code</button>
+
+    <h4>Link instead</h4>
+    <div class="hint">After booking, a visitor who came by link goes to this view's own "Redirect after booking" (or stays on its thank-you message). A site that needs a different thank-you page gets its own view.</div>
+    <pre class="eh-pre" id="eh-link"></pre>
+    <button class="btn" id="eh-copy-link" type="button">Copy link</button>
 
     <h4>Instructions for an AI assistant</h4>
     <div class="hint">When an AI builds the page, paste this into it instead.</div>
@@ -522,40 +527,62 @@ function embedSnippet(v) {
 }
 
 // ── Embed help (Fred, 2026-11-19) ───────────────────────────
-// The host-page half of redirect-after-booking. public/book.html posts
-// { type:'yc-booking', event:'booked', slug, redirect_url } to its parent;
-// this listener, pasted beside the iframe, performs the redirect — the
-// guaranteed path on another site, where the widget's own top-window
-// navigation needs a recent click. It trusts ONLY the landing origin and only
-// an https target. The closing tag is written <\/script> so it cannot end
-// THIS page's inline script.
-function embedListenerScript() {
+// Two ways onto a website, each ending on the site's own thank-you page:
+//   EMBED — public/book.html, framed, only posts { type:'yc-booking',
+//     event:'booked', slug, redirect_url } to its host. The host's script
+//     below decides: its own THANK_YOU (may be relative — it is the host's own
+//     page), else the view's https redirect_url, else the visitor stays on the
+//     thank-you. It trusts only messages from ITS OWN iframe (e.source) while
+//     that iframe is still on the address it was given (e.origin vs the
+//     iframe's own src — a link inside the box may navigate it to a third-party
+//     page, and contentWindow survives that). Read from the iframe at run time,
+//     so the script names no domain. One embed per view per page: the iframe id
+//     is per slug.
+//   LINK — /b/<slug>; after a booking the page goes to the VIEW's redirect_url
+//     (no page named in the link: that is an open redirect — book.html
+//     afterBooked). A site with its own thank-you page gets its own view.
+// The closing tag is written <\/script> so it cannot end THIS page's script.
+function embedFrameId(v) { return `yc-booking-${v.slug}`; }
+function embedHelpFrame(v) {
+  return `<iframe id="${embedFrameId(v)}" src="${publicUrl(v)}" style="width:100%;height:700px;border:0"></iframe>`;
+}
+function embedListenerScript(v) {
   return [
     '<script>',
-    '  // 4LSG booking: after a booking, go to the page set in Booking Manager.',
+    '(function () {',
+    "  // Your thank-you page, e.g. '/thank-you.html'. Leave '' to use the",
+    "  // booking view's own redirect, or none (the visitor stays on its thank-you).",
+    "  var THANK_YOU = '';",
     "  window.addEventListener('message', function (e) {",
-    "    if (e.origin !== '" + publicOrigin() + "') return;",
+    "    var f = document.getElementById('" + embedFrameId(v) + "');",
+    '    if (!f || e.source !== f.contentWindow) return;   // only our booking box,',
+    '    if (e.origin !== new URL(f.src, location.href).origin) return;   // still on its own page',
     '    var d = e.data;',
-    "    if (d && d.type === 'yc-booking' && d.event === 'booked' &&",
-    "        typeof d.redirect_url === 'string' && /^https:\\/\\//.test(d.redirect_url)) {",
-    '      window.location.href = d.redirect_url;',
-    '    }',
+    "    if (!d || d.type !== 'yc-booking' || d.event !== 'booked') return;",
+    "    if (THANK_YOU) { window.location.href = THANK_YOU; return; }",
+    "    if (typeof d.redirect_url === 'string' && /^https:\\/\\//.test(d.redirect_url)) window.location.href = d.redirect_url;",
     '  });',
+    '})();',
     '<\/script>',
   ].join('\n');
 }
 function embedHelpSnippet(v) {
-  return `<!-- 4LSG booking: ${v.slug} -->\n${embedSnippet(v)}\n${embedListenerScript()}`;
+  return `<!-- 4LSG booking: ${v.slug} -->\n${embedHelpFrame(v)}\n${embedListenerScript(v)}`;
+}
+function embedHelpLink(v) {
+  return publicUrl(v);
 }
 function embedLlmBlurb(v) {
   return [
-    `Add the 4LSG booking form "${v.title || v.slug}" to this web page.`,
+    `Add the 4LSG booking form "${v.title || v.slug}" to this website, sending visitors to our own thank-you page after they book.`,
     '',
-    `1. Where the form should appear, insert exactly: ${embedSnippet(v)}`,
-    '   Keep the src URL unchanged and do not add a sandbox attribute.',
-    `2. Add one script that listens for window "message" events. Ignore any event whose event.origin is not exactly ${publicOrigin()}. When event.data.type === "yc-booking" and event.data.event === "booked" and event.data.redirect_url is a string starting with https://, set window.location.href to event.data.redirect_url. Do nothing else with the message.`,
-    '3. The page visitors go to after booking is chosen in 4LSG (Booking Manager, "Redirect after booking"), not on this page, so do not hard-code one. With none set, the form shows its own thank-you message.',
-    `4. For a plain link instead of an embed, use ${publicUrl(v)} — after booking, the visitor goes to the same page.`,
+    'EITHER embed it:',
+    `1. Where the form should appear, insert exactly: ${embedHelpFrame(v)}`,
+    '   Keep the id and src unchanged and do not add a sandbox attribute.',
+    `2. Add a script that listens for window "message" events and ignores any whose event.source is not the contentWindow of the iframe with id "${embedFrameId(v)}", or whose event.origin is not the origin of that iframe's src. When event.data.type === "yc-booking" and event.data.event === "booked", set window.location.href to our thank-you page. Embed this form at most once per page.`,
+    '',
+    'OR link to it:',
+    `   ${embedHelpLink(v)} — after booking, the visitor goes to the thank-you page set for this form in 4LSG (if any); a link cannot choose a different one.`,
   ].join('\n');
 }
 function renderEmbedHelp() {
@@ -563,11 +590,13 @@ function renderEmbedHelp() {
   const none = !v;
   E('eh-copy-snippet').disabled = none;
   E('eh-copy-llm').disabled = none;
+  E('eh-copy-link').disabled = none;
   E('eh-snippet').textContent = none ? 'Create a booking view first.' : embedHelpSnippet(v);
+  E('eh-link').textContent = none ? '' : embedHelpLink(v);
   E('eh-llm').textContent = none ? '' : embedLlmBlurb(v);
   E('eh-redirect-note').textContent = none ? '' : (v.redirect_url
-    ? `After booking, visitors go to ${v.redirect_url}`
-    : 'This view has no redirect: visitors stay on its thank-you message. Set one in the view\u2019s Thank-you section.');
+    ? `After booking by link (or an embed with THANK_YOU empty), visitors go to ${v.redirect_url}`
+    : 'This view has no redirect: by link (or an embed with THANK_YOU empty), visitors stay on its thank-you message.');
 }
 function openEmbedHelp() {
   const sel = E('eh-view');
@@ -1121,6 +1150,7 @@ function init() {
   E('eh-view').addEventListener('change', renderEmbedHelp);
   E('eh-copy-snippet').addEventListener('click', () => copyText(E('eh-snippet').textContent, 'Embed code copied'));
   E('eh-copy-llm').addEventListener('click', () => copyText(E('eh-llm').textContent, 'Instructions copied'));
+  E('eh-copy-link').addEventListener('click', () => copyText(E('eh-link').textContent, 'Link copied'));
   E('mint-btn').addEventListener('click', mintLink);
   E('mint-copy').addEventListener('click', () => copyText(E('mint-url').textContent, 'Booking link copied'));
 

@@ -862,28 +862,39 @@
     updateBookBtn();
   }
 
-  // After a booking — the thank-you is ALREADY on screen, so every failure
-  // below leaves the visitor on it (fail-safe, Fred 2026-11-19).
-  //   Embedded (iframe): tell the host page { type:'yc-booking', event:'booked',
-  //     slug, redirect_url } — the Booking Manager's embed snippet listens for
-  //     it, which is the guaranteed path on another site — then try to move
-  //     the top window ourselves. A cross-origin frame may navigate the top
-  //     only with a recent click, so no delay here; a block throws or is
-  //     ignored, and the thank-you stays.
-  //   Full page: a short beat on the thank-you, then go.
-  // redirect_url is https-only on save and again in the response; re-checked.
+  // After a booking — the thank-you is ALREADY on screen, so every path
+  // below that does not navigate leaves the visitor on it (fail-safe, Fred
+  // 2026-11-19).
+  //   Embedded (iframe): only tell the host page { type:'yc-booking',
+  //     event:'booked', slug, redirect_url } — the host decides where to go
+  //     (the Booking Manager's embed code: its own THANK_YOU, else the view's
+  //     redirect_url). The widget never moves the host page itself.
+  //   Full page: after a beat, go to the view's own redirect_url, if it has
+  //     one. Deliberately NOT a page named in the link (a ?ty= parameter): that
+  //     makes a genuine 4lsg.com link an open redirect ("book here" → a
+  //     lookalike "pay your deposit" page), and a came-from (referrer) rule
+  //     still passes through redirector sites such as t.co (review + Fred,
+  //     2026-11-19). A site wanting its own thank-you page gets its own view,
+  //     or embeds this one.
+  // The target is https-only; redirect_url is also checked on save and in the
+  // response.
   function afterBooked(url) {
-    var go = (typeof url === 'string' && /^https:\/\//i.test(url)) ? url : null;
+    var viewTarget = httpsUrl(url);
     var framed;
     try { framed = window.top !== window.self; } catch (e) { framed = true; }
     if (framed) {
       try {
-        window.parent.postMessage({ type: 'yc-booking', event: 'booked', slug: slug, redirect_url: go }, '*');
+        window.parent.postMessage({ type: 'yc-booking', event: 'booked', slug: slug, redirect_url: viewTarget }, '*');
       } catch (e) {}
-      if (go) { try { window.top.location.href = go; } catch (e) {} }
       return;
     }
-    if (go) setTimeout(function () { window.location.assign(go); }, REDIRECT_BEAT_MS);
+    if (viewTarget) setTimeout(function () { window.location.assign(viewTarget); }, REDIRECT_BEAT_MS);
+  }
+
+  // An absolute https URL string, or null.
+  function httpsUrl(v) {
+    if (typeof v !== 'string' || !/^https:\/\//i.test(v)) return null;
+    try { return new URL(v).href; } catch (e) { return null; }
   }
 
   function handleBookResponse(r) {
