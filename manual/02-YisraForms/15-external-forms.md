@@ -228,7 +228,7 @@ no logo, phone number, or firm context. The **host page** wraps it: a landing
 page that carries the LSG chrome and iframes the form.
 
 ```
-https://app.4lsg.com/p/form?f=intake&case_id=ABC12345&src=facebook
+https://4lsg.com/p/form?f=intake&case_id=ABC12345&src=facebook
 ```
 
 One page record hosts **every** public form. Params it owns — consumed, never

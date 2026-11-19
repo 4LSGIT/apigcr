@@ -826,9 +826,14 @@
 // Public host for the /v/ landing links this UI mints (2026-08-17
 // origin-separation slice). Staff run this page on app.4lsg.com, but every
 // copied landing URL / embed snippet is destined for a CLIENT, and the
-// public video surface lives on the landing host. Hard-coded — same pattern
-// as the booking/manage link defaults in scripts.js and campaign.html.
-const PUBLIC_VIDEO_ORIGIN = 'https://4lsg.com';
+// public video surface lives on the landing host: firmData.publicUrl
+// (routes/api.firmData.js → lib/firmConfig publicUrl() = landing_hosts[0]),
+// read per call so it is never the shell's pre-boot placeholder. The literal
+// is the fallback when firmData has not arrived.
+function publicVideoOrigin() {
+  try { return (window.top.firmData && window.top.firmData.publicUrl) || 'https://4lsg.com'; }
+  catch (_) { return 'https://4lsg.com'; }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Parent bridge — JSON traffic goes through P.apiSend; multipart upload
@@ -2133,7 +2138,7 @@ async function copyText(text, label) {
 function copyLandingUrl() {
   // Always use the canonical (saved) slug, not whatever's typed in the form.
   const slug = state.form._originalSlug;
-  const url  = PUBLIC_VIDEO_ORIGIN + '/v/' + slug;
+  const url  = publicVideoOrigin() + '/v/' + slug;
   copyText(url, 'Landing URL');
 }
 
@@ -2171,7 +2176,7 @@ async function copyLandingUrlForContact() {
     Swal.fire('No token', 'Contact ' + r.value + ' has no contact_token and one could not be minted.', 'error');
     return;
   }
-  const url = PUBLIC_VIDEO_ORIGIN + '/v/' + state.form._originalSlug + '?ct=' + token;
+  const url = publicVideoOrigin() + '/v/' + state.form._originalSlug + '?ct=' + token;
   copyText(url, 'Landing URL for contact ' + r.value);
 }
 
@@ -2183,7 +2188,7 @@ function copyEmbed(variant) {
     Swal.fire('Not available', 'Add a ' + variant + ' first.', 'info');
     return;
   }
-  const origin = PUBLIC_VIDEO_ORIGIN;
+  const origin = publicVideoOrigin();
   // The placeholder stays literal — campaign resolverService substitutes it
   // per-recipient at send time, and |default: keeps a contact with no token
   // from being sent the placeholder itself. Switched from contact_id to
@@ -2214,7 +2219,7 @@ async function copyAsImageLink(variant) {
     Swal.fire('Not available', 'Add a ' + variant + ' first.', 'info');
     return;
   }
-  const linkUrl = PUBLIC_VIDEO_ORIGIN + '/v/' + slug;
+  const linkUrl = publicVideoOrigin() + '/v/' + slug;
   const altText = title || 'Watch the video';
 
   // HTML version — anchor wrapping the image.

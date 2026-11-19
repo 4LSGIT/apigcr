@@ -35,6 +35,10 @@
  *                  GET /api/ui-config): { firm: { <config_key>: config },
  *                  user: { … } }. user only for a staff JWT caller ({} for an
  *                  x-api-key one). Fail-SOFT to { firm: {}, user: {} }.
+ *   publicUrl    — the client-facing origin (lib/firmConfig publicUrl():
+ *                  https://<landing_hosts[0]>, else app_url). Panes that copy
+ *                  a public link (/b/, /p/, /f/, /v/) build it on this, never
+ *                  on their own location.origin — that is the staff host.
  *
  * This replaces the need for separate calls to:
  *   GET /api/phone-lines
@@ -51,6 +55,7 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const { loadTrusteeRoster } = require('../lib/trusteeRoster');
 const { deniedFor } = require('../services/entitlementService');
 const { readFor: uiConfigFor } = require('../services/uiConfigService');
+const { publicUrl } = require('../lib/firmConfig');
 
 // Fields to strip from the current user response
 const USER_STRIP = ['password', 'password_hash', 'reset_token', 'reset_expires'];
@@ -162,7 +167,8 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
       settings,
       denied,
       ui,
-      firmTimezone: process.env.FIRM_TIMEZONE || 'America/Detroit'
+      firmTimezone: process.env.FIRM_TIMEZONE || 'America/Detroit',
+      publicUrl: publicUrl()
     });
   } catch (err) {
     console.error('GET /api/firm-data error:', err);

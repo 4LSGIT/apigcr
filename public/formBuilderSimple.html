@@ -2700,8 +2700,14 @@ function colorProp(label, value, onInput) {
   ]);
 }
 
+// The client-facing origin (firmData.publicUrl = the landing host), never this
+// staff page's own; the fallback still works via the app host's 302.
+function publicOrigin() {
+  return (P.firmData && P.firmData.publicUrl) || location.origin;
+}
+
 function shareRows() {
-  const origin = location.origin;
+  const origin = publicOrigin();
   const links = [
     { label:'Send this to a client',
       url: origin + '/p/form?f=' + ROW.form_key,
@@ -2849,7 +2855,7 @@ async function makeLive() {
         html: el('div', { style:'text-align:left; font-size:13.5px; line-height:1.6;' }, [
           el('div', { text:'Share this link with clients:' }),
           el('div', { class:'mono', style:'margin-top:8px; word-break:break-all; background:var(--surface-2); padding:9px; border-radius:6px;',
-            text: location.origin + '/p/form?f=' + ROW.form_key }),
+            text: publicOrigin() + '/p/form?f=' + ROW.form_key }),
         ]),
         confirmButtonText:'Done', confirmButtonColor:'var(--accent)', width: 520,
       });

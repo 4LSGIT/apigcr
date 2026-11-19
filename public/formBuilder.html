@@ -3232,7 +3232,9 @@ function insSettings(ins) {
   //    Informational only — never touches MODEL. Served from the PUBLISHED
   //    definition, and only while visibility is portal/public.
   ins.appendChild((() => {
-    const origin = location.origin;
+    // The client-facing origin (firmData.publicUrl = the landing host), never
+    // this staff page's own; the fallback still works via the app host's 302.
+    const origin = (P.firmData && P.firmData.publicUrl) || location.origin;
     const links = [
       { label: 'Direct form',
         url: origin + '/f/' + FKEY,

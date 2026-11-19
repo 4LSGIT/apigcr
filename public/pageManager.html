@@ -333,8 +333,17 @@ async function copyText(text, okMsg) {
     document.body.removeChild(ta);
   }
 }
+// The client-facing origin for every link this page copies: firmData.publicUrl
+// (routes/api.firmData.js → lib/firmConfig publicUrl() = landing_hosts[0]).
+// Staff run this pane on app.4lsg.com; a copied link goes to a client, so it
+// must name the landing host. Falls back to this page's origin, which the app
+// host 302s to the landing host — a working link, just the wrong text.
+function publicOrigin() {
+  try { return (window.top.firmData && window.top.firmData.publicUrl) || window.location.origin; }
+  catch (_) { return window.location.origin; }
+}
 function publicUrl(p) {
-  return `${window.location.origin}/p/${p.slug}`;
+  return `${publicOrigin()}/p/${p.slug}`;
 }
 function statusBadge(p) {
   return p.status === 'live'

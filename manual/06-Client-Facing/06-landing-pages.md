@@ -9,7 +9,8 @@ so a new lead can create a contact, fire a text, or anything else a hook can do.
 ## What you can do with it
 
 - **Host a page** — paste in the page's HTML and publish it. It goes live at
-  `app.4lsg.com/p/<slug>`.
+  `4lsg.com/p/<slug>` — the firm's public site. Copy Link always gives that
+  address.
 - **Use a custom domain** — pin a page to one of the firm's registered
   public domains (e.g. `4lsg.com/ch7`) so the URL has no `/p/` in it.
 - **Capture form submissions** — a form on the page sends its fields into a
@@ -77,12 +78,12 @@ the others forward visitors to the first one before pins are checked. The
 ## Hosting a YisraForm on a page
 
 A landing page is also how a **public YisraForm** gets the firm's branding. The
-form itself lives at `app.4lsg.com/f/<form_key>`, which renders it on a bare
+form itself lives at `4lsg.com/f/<form_key>`, which renders it on a bare
 page — no logo, no phone number. The host page (slug `form`) wraps it in the LSG
 header and footer:
 
 ```
-app.4lsg.com/p/form?f=intake&case_id=ABC12345&src=facebook
+4lsg.com/p/form?f=intake&case_id=ABC12345&src=facebook
 ```
 
 One page record handles every public form: `f` picks which one, and everything
@@ -120,5 +121,5 @@ hand-off is fire-and-forget by design.
 ### Custom domains can take a moment to recognize a new page
 
 When you publish or change a page on a custom domain, it can take up to a minute
-for every server to pick up the change. The `app.4lsg.com/p/<slug>` URL is
+for every server to pick up the change. The `4lsg.com/p/<slug>` URL is
 always immediate.

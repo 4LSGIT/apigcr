@@ -8358,6 +8358,10 @@ async function loadFirmData() {
   // overlay (hidden / renames / firm items) is applied by the same
   // applyAccess call. ycLauncher re-validates everything in it.
   window.firmData.ui          = (data.ui && typeof data.ui === 'object') ? data.ui : { firm: {}, user: {} };
+  // The client-facing origin (lib/firmConfig publicUrl() = the landing host).
+  // Panes that COPY a public link (/b/, /p/, /f/, /v/) build on it; '' makes
+  // them fall back to their own origin, which the app host 302s.
+  window.firmData.publicUrl   = (typeof data.publicUrl === 'string') ? data.publicUrl : '';
   if (!window.firmData.currentUser) throw new Error("No user data returned");
 }
 

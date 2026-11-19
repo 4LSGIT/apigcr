@@ -43,6 +43,10 @@ them removes the slot.
 6. Decide what happens after: confirmation SMS and/or email, an optional
    YisraHook, and a `source_tag` that lands on the appointment.
 
+The Booking Manager's **Link**, **Embed** and **Mint** buttons always copy the
+public short form, `4lsg.com/b/<slug>`, even though you are working in
+`app.4lsg.com`.
+
 ### Two ways a visitor is identified
 
 - **`public`** — anyone can book; the page collects name and contact details.

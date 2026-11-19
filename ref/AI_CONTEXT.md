@@ -2059,7 +2059,10 @@ Operator view: `manual/01-YisraCase-overview/09-users-and-staff.md`.
 Full inventory: `ref/routes.md` (auto-generated — middleware + handler per
 route). Conventions:
 - `GET /api/firm-data` → `{currentUser, phoneLines, emailFrom, users,
-  settings, denied, ui, firmTimezone}` (field notes: the route's header).
+  settings, denied, ui, firmTimezone, publicUrl}` (field notes: the route's
+  header). `publicUrl` is the landing origin: a pane that copies a public link
+  builds on it, never on its own `location.origin` (the staff host). The shell's
+  `loadFirmData` copies fields one by one — a new field must be added there too.
   `users` includes user 0 — filtering is the CONSUMER's job (§12 pattern).
 - List endpoints: `?q, limit, offset, sort_by, sort_dir` → `{data, total}`.
   Detail endpoints take `?include=` and return only what's requested.

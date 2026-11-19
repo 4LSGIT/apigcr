@@ -240,7 +240,7 @@
       <div class="field">
         <label for="f-slug">Slug</label>
         <input type="text" id="f-slug" placeholder="consult" autocomplete="off" spellcheck="false">
-        <div class="hint">Public URL: /book/&lt;slug&gt;. Letters, numbers, _ and - only.</div>
+        <div class="hint">Public URL: /b/&lt;slug&gt;. Letters, numbers, _ and - only.</div>
       </div>
       <div class="field">
         <label for="f-title">Title</label>
@@ -465,8 +465,18 @@ async function copyText(text, okMsg) {
     document.body.removeChild(ta);
   }
 }
+// The client-facing origin for every link this page copies: firmData.publicUrl
+// (routes/api.firmData.js → lib/firmConfig publicUrl() = landing_hosts[0]).
+// Staff run this pane on app.4lsg.com; a copied link goes to a client, so it
+// must name the landing host. Falls back to this page's origin, which the app
+// host 302s to the landing host — a working link, just the wrong text.
+function publicOrigin() {
+  try { return (window.top.firmData && window.top.firmData.publicUrl) || window.location.origin; }
+  catch (_) { return window.location.origin; }
+}
+// /b/<slug> is the permanent short alias of /book/<slug> (routes/booking.js).
 function publicUrl(v) {
-  return `${window.location.origin}/book/${v.slug}`;
+  return `${publicOrigin()}/b/${v.slug}`;
 }
 function embedSnippet(v) {
   return `<iframe src="${publicUrl(v)}" style="width:100%;height:700px;border:0"></iframe>`;
@@ -940,7 +950,7 @@ async function mintLink() {
   btn.disabled = true;
   try {
     const data = await api(`/api/contacts/${contactId}/booking-link`, 'POST', {});
-    const url = `${window.location.origin}/book/${viewSlug}?c=${data.token}`;
+    const url = `${publicOrigin()}/b/${viewSlug}?c=${data.token}`;
     E('mint-url').textContent = url;
     E('mint-result').classList.add('show');
   } catch (err) {
