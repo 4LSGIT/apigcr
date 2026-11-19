@@ -6,8 +6,9 @@
  *
  * PUBLIC (no auth):
  *   GET  /p/:slug   — serve a live page's stored HTML. Draft/missing → 404.
- *   POST /p/:slug   — accept a form submission, forward to the page's
- *                     YisraHook (direct executeHook call, no HTTP self-call),
+ *   POST /p/:slug   — accept a form submission, QUEUE it for the page's
+ *                     YisraHook (the ack-first receiver's record + doorbell,
+ *                     no HTTP self-call — see queueSubmission), then
  *                     303-redirect to the thank-you target. ALWAYS 303 —
  *                     never an error page, never a render on POST.
  *
@@ -50,6 +51,7 @@ const express = require('express');
 const router = express.Router();
 const pageService = require('../services/pageService');
 const hookService = require('../services/hookService');
+const taskQueue = require('../lib/taskQueue');
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -134,10 +136,61 @@ function thankyouLocation(page, req) {
 }
 
 /**
+ * Hand a submission to the page's hook the way the ack-first receiver hands
+ * it a webhook (routes/api.hooks.js, 2026-10-27): write the hook_executions
+ * row QUEUED (status 'received', claimed_at NULL), AWAIT the Cloud Tasks
+ * doorbell, and only then let the caller answer. lib/hookDrain runs the
+ * pipeline in its own request at full CPU, re-queues a filter/transform that
+ * found the code sandbox busy, and the 60 s cron drains a row whose doorbell
+ * never landed.
+ *
+ * Until 2026-11-19 this called executeHook detached and answered at once: the
+ * pipeline then ran in the post-response tail Cloud Run throttles, and a BUSY
+ * failure on that path is final — only the drain retries one — so a lead
+ * could end 'failed' with nothing delivered.
+ *
+ * Kept from the receiver, for the same reasons:
+ *   - capture mode runs synchronously (it is one UPDATE + INSERT; the hook
+ *     needs the receive-time decision, which a queued row skips);
+ *   - `hook_async_ack` = '0' is the rollback: the old detached call;
+ *   - no dedup (a form post has no provider event id).
+ * A missing or inactive hook stores nothing, as before — logged as an error.
+ * Never throws past the caller's catch; the visitor always gets the 303.
+ */
+async function queueSubmission(db, page, input) {
+  const slug = page.hook_slug;
+  const hook = await hookService.getHookBySlug(db, slug);
+  if (!hook) {
+    console.error(`[pages] page "${page.slug}": hook "${slug}" is missing or inactive — submission NOT recorded`);
+    return;
+  }
+  if (hook.capture_mode === 'capturing') {
+    await hookService.executeHook(db, slug, input, { hook });
+    return;
+  }
+  if (!asyncAckEnabled()) {
+    hookService.executeHook(db, slug, input, { hook }).catch(err => {
+      console.error(`[pages] hook pipeline error (page=${page.slug}, hook=${slug}):`, err);
+    });
+    return;
+  }
+  const rec = await hookService.recordExecution(db, hook, slug, input);
+  await taskQueue.enqueueHookExecutionDispatch(rec.executionId);
+}
+
+// The receiver's kill switch (routes/api.hooks.js asyncAckEnabled): only an
+// explicit '0' selects the old path; unset, blank or anything else queues.
+function asyncAckEnabled() {
+  const { cfg } = require('../lib/firmConfig');
+  return cfg('hook_async_ack') !== '0';
+}
+
+/**
  * Handle a form POST for an already-resolved live page.
  * Contract: ALWAYS responds 303 (drops are silent). Never errors to client.
+ * The 303 is sent AFTER the submission is recorded and the doorbell rung.
  */
-function handleSubmit(req, res, page) {
+async function handleSubmit(req, res, page) {
   const location = thankyouLocation(page, req);
 
   try {
@@ -166,11 +219,11 @@ function handleSubmit(req, res, page) {
     };
 
     if (page.hook_slug) {
-      // Direct internal call — fire-and-forget. Respond before the pipeline
-      // finishes; hook_executions carries the audit trail.
-      hookService.executeHook(req.db, page.hook_slug, input).catch(err => {
-        console.error(`[pages] hook pipeline error (page=${page.slug}, hook=${page.hook_slug}):`, err);
-      });
+      try {
+        await queueSubmission(req.db, page, input);
+      } catch (err) {
+        console.error(`[pages] submission hand-off failed (page=${page.slug}, hook=${page.hook_slug}) — nothing queued for the drain:`, err);
+      }
     } else {
       console.warn(`[pages] submission received for page "${page.slug}" with no hook_slug — payload discarded`);
     }
@@ -212,7 +265,7 @@ router.post('/p/:slug', async (req, res) => {
     if (!page || page.status !== 'live') {
       return deadPage(res, { post: true });
     }
-    return handleSubmit(req, res, page);
+    return await handleSubmit(req, res, page);
   } catch (err) {
     console.error('POST /p/:slug error:', err);
     return deadPage(res, { post: true });
@@ -708,7 +761,7 @@ function pageHostMiddleware(db) {
           if (req.method === 'GET' || req.method === 'HEAD') return servePage(res, pinned);
           if (req.method === 'POST') {
             if (!req.db) req.db = db;
-            return handleSubmit(req, res, pinned);
+            return await handleSubmit(req, res, pinned);
           }
           return res.status(405).set('Allow', 'GET, HEAD, POST').type('text').send('Method Not Allowed');
         }
@@ -727,7 +780,7 @@ function pageHostMiddleware(db) {
         if (page && page.status === 'live') {
           if (req.method === 'POST') {
             if (!req.db) req.db = db;
-            return handleSubmit(req, res, page);
+            return await handleSubmit(req, res, page);
           }
           return servePage(res, page);
         }

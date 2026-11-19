@@ -115,8 +115,16 @@ doesn't know it was caught. Real submissions go through to your hook.
 ### Submitting always lands on the thank-you page
 
 After someone submits the form, they're always sent to your thank-you target —
-they never see an error page, even if something downstream hiccups. The form
-hand-off is fire-and-forget by design.
+they never see an error page, even if something downstream hiccups.
+
+Before the visitor is redirected, the submission is saved in the hook's
+**Logs** as *received* and handed to the same queue that runs incoming
+webhooks. The hook's filter, transform and targets run a moment later, in the
+background. If the automation is briefly too busy to run a code filter or
+transform, the submission is retried automatically (up to three tries), so a
+lead isn't lost to a busy moment. If the page's hook has been deleted or
+switched off, the submission is **not** saved anywhere — keep a live page's
+hook active.
 
 ### Custom domains can take a moment to recognize a new page
 

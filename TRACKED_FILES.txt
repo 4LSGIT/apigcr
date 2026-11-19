@@ -1900,6 +1900,8 @@ tests/optoutContactColumnsDrop.test.js
 tests/orphanAdoptDialog.opts.test.js
 tests/pageLanding.landingAssets.test.js
 tests/pageLanding.originsep.test.js
+tests/pageLanding.submitQueue.test.js
+tests/pageLandingSubmit.mysql.test.js
 tests/pageService.hostBinding.test.js
 tests/paramsMappingBareScalar.test.js
 tests/paramsMappingCsvList.test.js
