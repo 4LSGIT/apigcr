@@ -91,6 +91,22 @@ describe('the row', () => {
   });
 });
 
+describe('upload batches (docs intake S3)', () => {
+  const up = (over) => docsLog.logDocsIntake({}, { action: 'client_upload', source: 'docreq', caseId: 'AbCdEf12', files: ['a.pdf'], ...over });
+  test('batchKey → data.batch_key (capped); closedBy sweep|client → data.closed_by', async () => {
+    await up({ batchKey: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6', closedBy: 'sweep' });
+    expect(data()).toMatchObject({ batch_key: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6', closed_by: 'sweep' });
+    jest.clearAllMocks();
+    await up({ batchKey: 'k'.repeat(60), closedBy: 'client' });
+    expect(data()).toMatchObject({ batch_key: 'k'.repeat(40), closed_by: 'client' });
+  });
+  test('absent or junk → no such keys (rows from the other doors are unchanged)', async () => {
+    await up({ closedBy: 'tab-closed' });
+    expect(data()).not.toHaveProperty('batch_key');
+    expect(data()).not.toHaveProperty('closed_by');
+  });
+});
+
 describe('where the row hangs', () => {
   test('no case → the contact', async () => {
     await docsLog.logDocsIntake({}, { action: 'email_filed', source: 'email', contactId: 16, files: ['a.pdf'], placement: 'unsorted' });

@@ -192,6 +192,9 @@ portal's Docs Needed item), the Docs Needed block and the where-box are shared;
 only the nouns change (Client / Uploaded / Files / Client comment, no Subject
 row, a plain footer — `KINDS`). The default `kind: 'email'` output is
 byte-identical to before. One recipient for every door: `docsReviewerService`.
+The upload doors' lost-batch recovery (a page closed mid-upload is still
+reported, ~10 min after its last file) is the upload side's own:
+`services/clientUploadBatchService` (docs intake S3) — the email doors need none.
 
 Pure renderer, ported from the docs@ digest transform's layout (Outlook-safe
 tables). Outputs `notice_subject`, `notice_html`, `notice_text`, and — when

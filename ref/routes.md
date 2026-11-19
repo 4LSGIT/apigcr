@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-18T23:44:50.789Z_  
-_865 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 334, PUT: 41, _ALL: 3_
+_Generated 2026-11-19T01:03:49.716Z_  
+_867 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 336, PUT: 41, _ALL: 3_
 
 ## Global middleware chain
 
@@ -593,6 +593,7 @@ _865 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 334, PUT: 41, _ALL:
 | GET | `/api/portal/cases/:caseId` | `contactMiddleware` | — |
 | GET | `/api/portal/cases/:caseId/docs` | `contactMiddleware` | — |
 | POST | `/api/portal/cases/:caseId/docs/upload-complete` | `contactMiddleware` | — |
+| POST | `/api/portal/cases/:caseId/docs/upload-landed` | `contactMiddleware` | — |
 | POST | `/api/portal/cases/:caseId/docs/upload-link` | `contactMiddleware` | — |
 | GET | `/api/portal/home` | `contactMiddleware` | — |
 | POST | `/api/portal/logout` | `contactMiddleware` | — |
@@ -602,6 +603,7 @@ _865 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 334, PUT: 41, _ALL:
 | GET | `/api/public/docs/:caseId` | `<anonymous>` | — |
 | POST | `/api/public/get-upload-link` | `<anonymous>` | — |
 | POST | `/api/public/upload-complete` | `<anonymous>` | — |
+| POST | `/api/public/upload-landed` | `<anonymous>` | — |
 | GET | `/api/readonly-keys` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/readonly-keys` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | DELETE | `/api/readonly-keys/:id` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
@@ -1145,4 +1147,4 @@ _865 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 334, PUT: 41, _ALL:
 
 ---
 
-_865 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 334, PUT: 41, _ALL: 3_
+_867 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 336, PUT: 41, _ALL: 3_

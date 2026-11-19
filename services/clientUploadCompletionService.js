@@ -39,10 +39,13 @@
  * they said they sent, capped by the route), never the folder's — a staffer's
  * own file in the same folder must not appear as the client's.
  *
- * Per-file reporting + lost-batch recovery (the client closing the tab before
- * upload-complete — Turner, 2026-07-28) is the next slice; it will call
- * completeClientUpload with the server's own file list. The shape here is
- * ready for that: `files` is whatever the caller trusts.
+ * Per-file reporting + lost-batch recovery (docs intake S3 — the client
+ * closing the tab before upload-complete, Turner 2026-07-28):
+ * services/clientUploadBatchService calls this with the server's own list —
+ * the landed files merged with the page's (the page finished, closedBy
+ * 'client'), or what had landed when the batch went quiet (closedBy 'sweep':
+ * the notice says the page closed early). `files` is whatever the caller
+ * trusts; `batchKey` rides into the log row for forensics.
  */
 
 'use strict';
@@ -78,6 +81,9 @@ const lower = (v) => String(v == null ? '' : v).trim().toLowerCase();
  * @param {Array}  o.files              [{ name, item_id?, item_name? }] — the client's list, already capped
  * @param {number} [o.fileCount]        the true count when the list was capped
  * @param {string} [o.comment]          the client's note
+ * @param {'client'|'sweep'} [o.closedBy]  'sweep' = the page never finished (a lost batch the
+ *                                      cron reported) — the notice and the log row say so
+ * @param {string} [o.batchKey]         the upload run's key (clientUploadBatchService) — log data only
  * @returns {Promise<{dest, registered, reviewer, sent: boolean, subject: string|null, log, warnings: string[]}>}
  */
 async function completeClientUpload(db, o = {}) {
@@ -90,6 +96,7 @@ async function completeClientUpload(db, o = {}) {
   const fileCount = Number.isInteger(o.fileCount) && o.fileCount >= files.length ? o.fileCount : files.length;
   const omitted = fileCount - files.length;
   const comment = o.comment == null ? '' : String(o.comment);
+  const swept = o.closedBy === 'sweep';
   const warnings = [];
   const out = { dest: null, registered: null, reviewer: null, sent: false, subject: null, log: null, warnings };
 
@@ -154,7 +161,12 @@ async function completeClientUpload(db, o = {}) {
     subject: null,
     date: new Date(),
     text: comment,
-    match: { reason: src.reason, candidates: [] },
+    match: {
+      reason: swept
+        ? `${src.reason} The client's page closed before it finished — this is what had landed by then.`
+        : src.reason,
+      candidates: [],
+    },
     placement: unsorted ? 'unsorted' : 'case',
     case_id: caseId,
     folder_path: folderPath,
@@ -199,6 +211,8 @@ async function completeClientUpload(db, o = {}) {
     comment: comment || null,
     placement: dest ? dest.placement : null,
     folderPath: unsorted ? dest.path : null,
+    batchKey: o.batchKey || undefined,
+    closedBy: swept ? 'sweep' : undefined,
   });
 
   // ── 6. the task ──

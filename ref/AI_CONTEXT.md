@@ -1935,6 +1935,9 @@ names it carries; NULL scopes = everything (access-control B2,
 lib/capabilities routeAllowed / can). Everything requires it except the public surface:
 `GET /isWorkday`, `GET /api/public/docs/:caseId` (10/min),
 `POST /api/public/get-upload-link` (30/min),
+`POST /api/public/upload-landed` (60/min; docs intake S3 — one call per file
+as it lands in Dropbox, appended to the run's `client_upload_batches` row;
+answers AFTER the upsert; 404 for an unknown case),
 `POST /api/public/upload-complete` (10/min; trusts only the body's
 `case_id` — nothing ties it to an issued link; `files[]`/`comment` capped and
 HTML-escaped; answers first, then the shared post-upload phase
@@ -3630,6 +3633,20 @@ notice's frame with upload nouns, per-file `preview=` links on the listed
 folder's shared link, the Docs Needed block — → the reviewer → docsIntakeLog →
 the unsorted task). Subject "Client upload — <client> (N files) — filed to
 case X | UNSORTED, needs a case".
+**Per-file reporting + lost-batch recovery (S3, 2026-11-19):** both upload
+pages mint a batch key per run and report each file as it lands
+(`upload-landed`, fetch keepalive) into `client_upload_batches`
+(ref/migrations/2026-11-19_client_upload_batches.sql), and send the key on
+upload-complete. `services/clientUploadBatchService`: `finishByClient` closes
+the row (page list merged with the landed one, landed first) and runs the
+completion ONCE; `sweepLostBatches` — /process-jobs housekeeping, before the
+job claim — completes a row quiet 10 min after its last file with
+`closedBy:'sweep'` (the notice says the page closed early; log data
+`closed_by`/`batch_key`), and retries a closed row whose completion died after
+the 200 (claim stale at 15 min). Exactly once per row: both paths row-lock and
+claim; the sweep closes at claim, so a late landed call is refused; the one
+sanctioned second notice is a file still uploading when the sweep fired
+(`lateFiles`). No key / a malformed one → the pre-S3 path exactly.
 
 ### Direction & firm-to-firm
 `from.email` domain ∈ `EMAIL_DOMAINS` → `outgoing`, else `incoming`.

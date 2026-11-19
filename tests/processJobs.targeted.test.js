@@ -56,7 +56,7 @@ const express = require('express');
 // returns (targeted or batch). Every statement (pool or transaction
 // connection) lands in `calls` for assertion.
 
-function makeDb({ claimRows = [], hookClaimThrows = false } = {}) {
+function makeDb({ claimRows = [], hookClaimThrows = false, batchSweepThrows = false } = {}) {
   const calls = [];
   async function query(sql, params) {
     calls.push({ sql, params });
@@ -86,6 +86,12 @@ function makeDb({ claimRows = [], hookClaimThrows = false } = {}) {
     // by default; the claim can be made to throw (a DB blip → 500 → retry).
     if (s.includes('hook_executions')) {
       if (hookClaimThrows && s.startsWith('UPDATE hook_executions SET claimed_at')) throw new Error('ER_LOCK_WAIT_TIMEOUT: simulated');
+      return s.startsWith('SELECT') ? [[]] : [{ affectedRows: 0 }];
+    }
+    // Docs intake S3: the lost-batch sweep's candidate read (nothing due by
+    // default). Can be made to throw — the poll cycle must survive it.
+    if (s.includes('client_upload_batches')) {
+      if (batchSweepThrows) throw new Error('ER_NO_SUCH_TABLE: client_upload_batches (simulated)');
       return s.startsWith('SELECT') ? [[]] : [{ affectedRows: 0 }];
     }
     return [{ affectedRows: 1, insertId: 1 }];
@@ -341,5 +347,55 @@ describe('hook executions: cron fallback on the batch path, targeted route for t
       expect(res.status).toBe(500);
       expect(await res.json()).toMatchObject({ error: 'Failed to claim hook execution' });
     } finally { err.mockRestore(); }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Docs intake S3 — the lost upload-batch sweep (services/clientUploadBatchService)
+// ─────────────────────────────────────────────────────────────
+const batchSql = (db) => db.calls.map((c) => c.sql.replace(/\s+/g, ' ')).filter((q) => q.includes('client_upload_batches'));
+
+describe('client upload batches: the lost-batch sweep rides the batch path housekeeping', () => {
+  test('runs on every tick, BEFORE the job claim (after the batch it would run almost never)', async () => {
+    currentDb = makeDb({ claimRows: [] });
+    const res = await post('/process-jobs');
+    expect(res.status).toBe(200);
+    const sweep = batchSql(currentDb);
+    expect(sweep).toHaveLength(1);   // nothing due → the candidate read only
+    expect(sweep[0]).toMatch(/^SELECT id FROM client_upload_batches WHERE notified_at IS NULL/);
+    const all = currentDb.calls.map((c) => c.sql.replace(/\s+/g, ' '));
+    const sweepIdx = all.findIndex((q) => q.includes('client_upload_batches'));
+    const lastHook = all.map((q) => q.includes('hook_executions')).lastIndexOf(true);
+    const jobClaim = all.findIndex((q) => q.startsWith('SELECT id FROM scheduled_jobs'));
+    expect(lastHook).toBeGreaterThan(-1);
+    expect(jobClaim).toBeGreaterThan(-1);
+    expect(sweepIdx).toBeGreaterThan(lastHook);   // after the hook drain …
+    expect(sweepIdx).toBeLessThan(jobClaim);      // … before the job claim
+  });
+
+  test('also on a tick WITH due jobs (same position), and the batch still dispatches', async () => {
+    currentDb = makeDb({ claimRows: [RESUME_JOB] });
+    const res = await post('/process-jobs');
+    expect((await res.json()).processed).toBe(1);
+    const all = currentDb.calls.map((c) => c.sql.replace(/\s+/g, ' '));
+    expect(all.findIndex((q) => q.includes('client_upload_batches'))).toBeLessThan(all.findIndex((q) => q.includes('FROM scheduled_jobs') && q.includes('FOR UPDATE')));
+  });
+
+  test('the TARGETED job route does NOT run it (per-task housekeeping multiplies load)', async () => {
+    currentDb = makeDb({ claimRows: [] });
+    await post('/process-job/50');
+    expect(batchSql(currentDb)).toEqual([]);
+  });
+
+  test('a sweep that fails never breaks the poll cycle: jobs are still claimed, the heartbeat stamped', async () => {
+    currentDb = makeDb({ claimRows: [], batchSweepThrows: true });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const res = await post('/process-jobs');
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ processed: 0, results: [] });
+      expect(heartbeatCalls(currentDb)).toHaveLength(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('[UPLOAD BATCH] sweep claim failed'));
+    } finally { warn.mockRestore(); }
   });
 });

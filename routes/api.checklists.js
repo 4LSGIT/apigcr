@@ -17,9 +17,10 @@
  * Public (no auth):
  * GET    /api/public/docs/:caseId             rate-limited, returns name + incomplete docs items
  * POST   /api/public/get-upload-link          rate-limited, Dropbox temp upload link
+ * POST   /api/public/upload-landed            rate-limited, one file landed (docs intake S3)
  * POST   /api/public/upload-complete          rate-limited, notifies staff + logs
  *
- * The three public routes above are UNAUTHENTICATED (case_id is the only
+ * The four public routes above are UNAUTHENTICATED (case_id is the only
  * capability). Treat every value off req.body/req.params as hostile: bind it
  * into SQL; the notice renderer escapes everything it prints.
  *
@@ -84,6 +85,9 @@ const domainEvents = require('../lib/domainEvents'); // Trigger T4
 // here — the upload-complete side effects live in
 // services/clientUploadCompletionService (the one phase every upload door runs).
 const uploadTarget = require('../services/uploadTargetService');
+// Docs intake S3: per-file reporting + lost-batch recovery (the batch row the
+// landed route appends to and upload-complete closes).
+const uploadBatches = require('../services/clientUploadBatchService');
 const { escapeLike } = require('../lib/escapeLike');
 const { withTransaction } = require('../lib/withTransaction');
 // R1.5: services/pipelineService and lib/alerting were required here ONLY for
@@ -1238,6 +1242,13 @@ const notifyRateLimit = rateLimit({
   max: 10,
   message: { status: 'error', message: 'Too many requests, please try again shortly.' }
 });
+
+// One call per landed file — a 50-file run is legitimate.
+const landedRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: { status: 'error', message: 'Too many requests, please try again shortly.' }
+});
  
 /**
  * POST /api/public/get-upload-link
@@ -1324,16 +1335,60 @@ router.post('/api/public/get-upload-link', uploadRateLimit, async (req, res) => 
  
  
 /**
+ * POST /api/public/upload-landed
+ * Body: { case_id, batch, file: { name, size? }, comment? }
+ *
+ * Docs intake S3 — the page reports each file the moment its Dropbox PUT
+ * succeeds (fetch keepalive, so a closing tab still delivers it), appending it
+ * to the run's client_upload_batches row (services/clientUploadBatchService).
+ * If the page never sends upload-complete, the /process-jobs sweep reports the
+ * batch ~10 min after its last file. Answers AFTER the write — it is one upsert,
+ * and a write lost behind an early 200 would defeat the slice. A refused call
+ * (the batch already closed, or the key names another case's batch) still
+ * answers success: the page has nothing to do about it.
+ */
+router.post('/api/public/upload-landed', landedRateLimit, async (req, res) => {
+  try {
+    const { case_id, batch, file, comment } = req.body || {};
+    const name = file && typeof file === 'object' ? String(file.name ?? '').slice(0, MAX_UPLOAD_FILENAME) : '';
+    if (!case_id || !uploadBatches.isBatchKey(batch) || !name.trim()) {
+      return res.status(400).json({ status: 'error', message: 'case_id, batch and file.name are required' });
+    }
+    const [[kase]] = await req.db.query('SELECT case_id FROM cases WHERE case_id = ?', [String(case_id)]);
+    if (!kase) return res.status(404).json({ status: 'error', message: 'Case not found' });
+
+    await uploadBatches.landed(req.db, {
+      source:  'docreq',
+      batchKey: batch,
+      caseId:  kase.case_id,   // canonical
+      file:    { name },
+      comment: comment == null ? null : String(comment).slice(0, MAX_UPLOAD_COMMENT),
+    });
+    res.json({ status: 'success' });
+  } catch (err) {
+    console.error('POST /api/public/upload-landed error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to record the upload' });
+  }
+});
+
+
+/**
  * POST /api/public/upload-complete
- * Body: { case_id, files: string[], comment?: string }
+ * Body: { case_id, files: string[], comment?: string, batch?: string }
  *
  * Called after client finishes uploading. Answers first; then the shared
  * completion phase (services/clientUploadCompletionService): the reviewer's
  * notice, the `docs` case-log row, document registration, the unsorted task.
+ *
+ * `batch` (docs intake S3, optional): the run's key from upload-landed. With
+ * it, the batch row is closed and the completion runs ONCE on the landed list
+ * merged with this one (clientUploadBatchService.finishByClient). Without it —
+ * or malformed — today's behaviour exactly: old page builds are in the wild,
+ * and a notice is never dropped over a bad key.
  */
 router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => {
   try {
-    const { case_id, files, comment } = req.body;
+    const { case_id, files, comment, batch } = req.body;
  
     if (!case_id || !files || !Array.isArray(files) || !files.length) {
       return res.status(400).json({ status: 'error', message: 'case_id and files array are required' });
@@ -1361,6 +1416,18 @@ router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => 
     // the `docs` case-log row, the unsorted task. Self-catching; a case that
     // vanished is a no-op. No contact_id: this public route does not know
     // WHICH client uploaded (it only knows the case).
+    if (uploadBatches.isBatchKey(batch)) {
+      // S3: close the batch row, merge, complete once, stamp notified_at.
+      await uploadBatches.finishByClient(req.db, {
+        source:   'docreq',
+        batchKey: batch,
+        caseId:   case_id,
+        files:    safeFiles,
+        fileCount,
+        comment:  safeComment || null,
+      });
+      return;
+    }
     await require('../services/clientUploadCompletionService').completeClientUpload(req.db, {   // lazy (convention)
       source:    'docreq',
       caseId:    case_id,

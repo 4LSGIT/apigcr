@@ -88,6 +88,21 @@ Emailed files that went to **Unsorted** because no case could be picked are
 logged on the **client's contact** when the sender is a known client; files from
 an unknown sender get their line when someone moves them into a case.
 
+### When the client closes the page mid-upload
+
+The upload pages (this one and the portal's Documents page) report each file to
+YisraCase the moment it lands in Dropbox, not only at the end. So if the client
+closes the tab, loses signal, or locks their phone before the upload finishes,
+the files that made it are still reported: about **10 minutes after the last
+file landed**, the reviewer gets the usual notice and the case gets its **docs**
+log line, covering what had landed by then. The notice says so — "The client's
+page closed before it finished — this is what had landed by then." — so check
+with the client whether anything is missing. (Before this, such files sat in
+Client Uploads with no notice and no log line until someone happened to look.)
+
+In the rare case a single very large file was still uploading when that notice
+went out and then finished, it arrives in a second, short notice of its own.
+
 ---
 
 ## A few things to know

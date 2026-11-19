@@ -7,6 +7,7 @@
 //
 //   GET  /api/portal/cases/:caseId/docs                — checklist + statuses
 //   POST /api/portal/cases/:caseId/docs/upload-link    — Dropbox temp link
+//   POST /api/portal/cases/:caseId/docs/upload-landed  — one file landed (docs intake S3)
 //   POST /api/portal/cases/:caseId/docs/upload-complete — notify + case log
 //
 // The public docReq surface (routes/api.checklists.js /api/public/*) stays
@@ -30,6 +31,8 @@
 //     numbers: upload-link 30/min (each file needs a link; big batches are
 //     legitimate), upload-complete 10/min. lib/rateLimiter.js semantics
 //     (fixed window, per-instance, XFF-LAST keying — do not change).
+//   - upload-landed (S3): 60/min — one call per landed file, so a 50-file
+//     run is legitimate.
 
 'use strict';
 
@@ -45,6 +48,7 @@ const RATE_LIMITED = { status: 'error', message: 'Too many requests. Please try 
 
 const uploadLinkLimited     = makeLimiter(60 * 1000, 30);  // 30 / min / IP
 const uploadCompleteLimited = makeLimiter(60 * 1000, 10);  // 10 / min / IP
+const uploadLandedLimited   = makeLimiter(60 * 1000, 60);  // 60 / min / IP
 
 /** Shared error → response mapping for the two POST routes. */
 function respondError(res, req, err, label) {
@@ -109,8 +113,39 @@ router.post(
   }
 );
 
+// ── POST /api/portal/cases/:caseId/docs/upload-landed ───────────────────────
+// Body: { batch, file: { name, item_id? }, comment? }
+//
+// Docs intake S3: the page reports each file the moment its Dropbox PUT
+// succeeds (fetch keepalive), appending it to the run's batch row. Answers
+// AFTER the write (one upsert — a write lost behind an early 200 would defeat
+// the slice). A refused append (batch already closed) is still a success to the
+// page; it has nothing to do about it.
+
+router.post(
+  '/api/portal/cases/:caseId/docs/upload-landed',
+  requireAuth({ audience: 'contact' }),
+  async (req, res) => {
+    if (uploadLandedLimited(getClientIp(req))) {
+      return res.status(429).json(RATE_LIMITED);
+    }
+    try {
+      const { batch, file, comment } = req.body || {};
+      const result = await portalDocs.recordLanded(
+        req.db, req.auth.contactId, req.params.caseId, { batch, file, comment }
+      );
+      if (!result) return res.status(404).json(NOT_FOUND);
+
+      req.portalCaseId = result.case_id;
+      res.json({ status: 'success' });
+    } catch (err) {
+      respondError(res, req, err, 'upload-landed');
+    }
+  }
+);
+
 // ── POST /api/portal/cases/:caseId/docs/upload-complete ─────────────────────
-// Body: { files: [{ name, item_id? }], comment? }
+// Body: { files: [{ name, item_id? }], comment?, batch? }
 //
 // Respond-first sequencing (public-route parity): validation + resolution
 // happen before the 200; the email + case-log side effects fire AFTER it,
@@ -124,9 +159,9 @@ router.post(
       return res.status(429).json(RATE_LIMITED);
     }
     try {
-      const { files, comment } = req.body || {};
+      const { files, comment, batch } = req.body || {};
       const ctx = await portalDocs.completeUpload(
-        req.db, req.auth.contactId, req.params.caseId, { files, comment }
+        req.db, req.auth.contactId, req.params.caseId, { files, comment, batch }
       );
       if (!ctx) return res.status(404).json(NOT_FOUND);
 

@@ -8,6 +8,7 @@ const { executeJob, JOB_DEFER } = require("../lib/job_executor");
 const { executeStep }     = require("../lib/sequenceEngine");
 const domainEventDrain    = require("../lib/domainEventDrain");
 const hookDrain           = require("../lib/hookDrain");
+const clientUploadBatches = require("../services/clientUploadBatchService");
 
 
 /**
@@ -305,6 +306,24 @@ async function runJobPass(db, { jobId = null, batchSize = 10 } = {}) {
       }
     } catch (drainErr) {
       console.warn(`[PROCESS-JOBS] hook execution batch drain failed (non-fatal): ${drainErr.message}`);
+    }
+    // ── Client upload batches — LOST-BATCH RECOVERY (docs intake S3, 2026-11-19)
+    //
+    // Same position argument as the two blocks above: housekeeping, BEFORE the
+    // job claim, so it runs on every tick (after the batch it would run almost
+    // never). An upload page that closed mid-batch never sent upload-complete;
+    // its batch row (filled per file by upload-landed) goes quiet and is
+    // reported here ~10 min after its last file — the notice says the page
+    // closed early. The same sweep retries a batch the page closed whose
+    // completion died after the 200. Rare (most ticks find nothing: one indexed
+    // read). sweepLostBatches never throws; the catch is a dead-man's brake.
+    try {
+      const swept = await clientUploadBatches.sweepLostBatches(db);
+      if (swept.claimed > 0) {
+        console.log(`[PROCESS-JOBS] client upload batches: ${swept.notified} lost batch(es) reported, ${swept.failed} failed`);
+      }
+    } catch (sweepErr) {
+      console.warn(`[PROCESS-JOBS] client upload batch sweep failed (non-fatal): ${sweepErr.message}`);
     }
   }
 

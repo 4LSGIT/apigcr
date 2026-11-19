@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-18T23:50:04.115Z
+-- Generated: 2026-11-19T01:03:56.853Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:7cb5a0507f93d79c6b734de06f51c243
+-- Fingerprint: sha256:17e963c40ccc385860032365f5a293c6
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -927,6 +927,30 @@ CREATE TABLE `checklists1` (
   `checklist_link` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `checklist_status` enum('complete','incomplete') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'incomplete'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `client_upload_batches`
+--
+
+DROP TABLE IF EXISTS `client_upload_batches`;
+CREATE TABLE `client_upload_batches` (
+  `id` bigint unsigned NOT NULL,
+  `batch_key` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'minted by the upload page once per run, ^[A-Za-z0-9_-]{16,40}$. utf8mb4_bin ON PURPOSE (case-sensitive key, the lib/token convention). Not a capability: source + case_id + contact_id must match on every call',
+  `source` enum('docreq','portal') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'docreq = public/docReq.html; portal = public/portal/docs.html. App-validated (sql_mode is not strict)',
+  `case_id` varchar(20) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'cases.case_id, canonical (no FK on purpose: a merged/deleted case keeps its batch history)',
+  `contact_id` int unsigned DEFAULT NULL COMMENT 'portal: the authenticated uploader (contacts.contact_id); docreq: NULL (the public page does not know who)',
+  `comment` text COLLATE utf8mb4_general_ci COMMENT 'the last non-blank client note seen for the batch (landed calls and the final upload-complete)',
+  `files` mediumtext COLLATE utf8mb4_general_ci NOT NULL COMMENT 'JSON array [{name, item_id, item_name, landed_at}], one entry per landed call, capped at 200 (file_count keeps counting). The page''s close rewrites it as the merged list (landed first, then names only the page reported)',
+  `file_count` int unsigned NOT NULL DEFAULT '0' COMMENT 'files reported for the batch — keeps counting past the files cap',
+  `opened_at` datetime NOT NULL COMMENT 'UTC. First landed call (or the close, when every landed call was lost)',
+  `last_landed_at` datetime NOT NULL COMMENT 'UTC. The quiet clock: an unclosed row quiet for 10 min is swept as lost',
+  `closed_at` datetime DEFAULT NULL COMMENT 'UTC. Set by the page''s upload-complete, or by the sweep when it claims a lost row. A closed row refuses further landed calls (the page mints a new key per run)',
+  `closed_by` enum('client','sweep') COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'client = the page finished (its upload-complete arrived); sweep = the page never finished — the notice says so',
+  `claimed_at` datetime DEFAULT NULL COMMENT 'UTC. The completion claim (page close or sweep); older than 15 min without notified_at = the claimer died, re-claimable by the sweep',
+  `notified_at` datetime DEFAULT NULL COMMENT 'UTC. The completion phase ran (notice + `docs` log row) — the exactly-once guard'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Upload-page batches (docs intake S3): files reported as they land, closed by the page or swept as lost after 10 quiet minutes — one completion (notice + docs log row) per row. services/clientUploadBatchService';
 
 -- --------------------------------------------------------
 
@@ -4705,6 +4729,14 @@ ALTER TABLE `checklists1`
   ADD PRIMARY KEY (`checklist_id`);
 
 --
+-- Indexes for table `client_upload_batches`
+--
+ALTER TABLE `client_upload_batches`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_client_upload_batch_key` (`batch_key`),
+  ADD KEY `idx_client_upload_batch_sweep` (`notified_at`,`closed_at`,`last_landed_at`);
+
+--
 -- Indexes for table `comm_consent_events`
 --
 ALTER TABLE `comm_consent_events`
@@ -6030,6 +6062,12 @@ ALTER TABLE `checklists`
 --
 ALTER TABLE `checklists1`
   MODIFY `checklist_id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `client_upload_batches`
+--
+ALTER TABLE `client_upload_batches`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `comm_consent_events`

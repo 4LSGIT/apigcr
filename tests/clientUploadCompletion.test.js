@@ -203,6 +203,33 @@ describe('the log row', () => {
   });
 });
 
+describe('a lost batch (docs intake S3 — closedBy, batchKey)', () => {
+  const LOST = "The client's page closed before it finished — this is what had landed by then.";
+  test("closedBy 'sweep': the notice says the page closed early; the log row says closed_by sweep and carries the key", async () => {
+    await run({ closedBy: 'sweep', batchKey: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6' });
+    expect(sent().text).toContain(`Uploaded through the Documents Needed page. ${LOST}`);
+    expect(sent().html).toContain('page closed before it finished');
+    expect(logged()).toMatchObject({ closedBy: 'sweep', batchKey: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6' });
+  });
+
+  test('…in the unsorted wording too, and for the portal', async () => {
+    uploadTarget.inspectUploadDestination.mockResolvedValue(DEST_UNSORTED);
+    await run({ source: 'portal', contactId: 42, clientName: 'Jane', closedBy: 'sweep' });
+    expect(sent().text).toContain(`Uploaded through the client portal. ${LOST}`);
+  });
+
+  test("closedBy 'client' (or absent): the ordinary notice; no closed_by in the row; the key still rides along", async () => {
+    await run({ closedBy: 'client', batchKey: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6' });
+    expect(sent().text).not.toContain('page closed');
+    expect(logged().closedBy).toBeUndefined();
+    expect(logged().batchKey).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6');
+    jest.clearAllMocks();
+    await run();
+    expect(sent().text).not.toContain('page closed');
+    expect(logged().batchKey).toBeUndefined();
+  });
+});
+
 describe('degraded worlds', () => {
   test('destination inspection fails → no registration, the notice still goes (no folder link), the row says placement unknown', async () => {
     uploadTarget.inspectUploadDestination.mockRejectedValue(new Error('dropbox down'));

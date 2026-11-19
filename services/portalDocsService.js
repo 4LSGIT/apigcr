@@ -17,6 +17,10 @@
  *     folder (subfolder 'Client Uploads') → an auto-created case folder →
  *     the unsorted client-uploads folder. A client always has a way to
  *     upload; the old "uploads aren't available" dead end is gone.
+ *   - Per-file reporting (docs intake S3): the page reports each file as it
+ *     lands (recordLanded → services/clientUploadBatchService.landed) under
+ *     a batch key minted per run, and sends the key on upload-complete; a
+ *     batch the page never finished is reported by the /process-jobs sweep.
  *   - Completion is a NOTIFICATION step (email + case log). It does NOT
  *     mutate checkitem status — checkitems.status is enum
  *     ('incomplete','complete') and 'complete' is a STAFF verdict (staff
@@ -64,6 +68,8 @@
 'use strict';
 
 const uploadTarget = require('./uploadTargetService');
+// Lazy (convention: the batch service lazy-requires the completion phase).
+const uploadBatches = () => require('./clientUploadBatchService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LIMITS (S3 — proposed values, enforced server-side; see slice report)
@@ -320,6 +326,50 @@ async function createUploadLink(db, contactId, caseId, opts = {}) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// recordLanded (docs intake S3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One file of a batch landed in Dropbox — append it to the run's batch row
+ * (services/clientUploadBatchService.landed). Same scope rule as every other
+ * call here. The item association is resolved from the DB now (the name never
+ * comes from the client); a foreign/unknown item_id is filed as general, the
+ * completeUpload way — the bytes already landed, rejecting would only lose the
+ * report.
+ *
+ * @param {object} opts  { batch, file: { name, item_id? }, comment? }
+ * @returns {Promise<{case_id:string, accepted:boolean}|null>} null = out of scope.
+ *   Throws .status 400 for a bad body.
+ */
+async function recordLanded(db, contactId, caseId, { batch, file, comment } = {}) {
+  const caseRow = await _scopedCaseRow(db, contactId, caseId);
+  if (!caseRow) return null;
+  const cid = caseRow.case_id;
+
+  if (!uploadBatches().isBatchKey(batch)) throw httpError(400, 'batch is required', cid);
+  const name = file && typeof file === 'object' ? String(file.name ?? '').slice(0, MAX_UPLOAD_FILENAME) : '';
+  if (!name.trim()) throw httpError(400, 'file.name is required', cid);
+
+  let itemId = null;
+  let itemName = null;
+  const idNum = Number(file.item_id);
+  if (file.item_id != null && Number.isInteger(idNum) && idNum > 0) {
+    const map = await _caseItemMap(db, cid, [idNum]);
+    if (map.has(idNum)) { itemId = idNum; itemName = map.get(idNum); }
+  }
+
+  const r = await uploadBatches().landed(db, {
+    source: 'portal',
+    batchKey: batch,
+    caseId: cid,
+    contactId,
+    file: { name, item_id: itemId, item_name: itemName },
+    comment: comment == null ? null : String(comment).slice(0, MAX_UPLOAD_COMMENT),
+  });
+  return { case_id: cid, accepted: !!r.accepted };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // completeUpload + sendUploadNotifications
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -338,10 +388,15 @@ async function createUploadLink(db, contactId, caseId, opts = {}) {
  *
  * NO checkitem status mutation — see header (staff verdict).
  *
+ * batch (docs intake S3, optional): the run's key from upload-landed; a valid
+ * one rides the context so sendUploadNotifications closes the batch row. Absent
+ * or malformed → null → the pre-S3 path exactly (old page builds; a notice is
+ * never dropped over a bad key).
+ *
  * @returns {Promise<object|null>} null = out of scope; else the
  *   notification context for sendUploadNotifications.
  */
-async function completeUpload(db, contactId, caseId, { files, comment } = {}) {
+async function completeUpload(db, contactId, caseId, { files, comment, batch } = {}) {
   const caseRow = await _scopedCaseRow(db, contactId, caseId);
   if (!caseRow) return null;
   const cid = caseRow.case_id;
@@ -391,6 +446,7 @@ async function completeUpload(db, contactId, caseId, { files, comment } = {}) {
     omittedCount,
     files: safeFiles,             // [{ name, item_id, item_name }]
     comment: safeComment,
+    batch: uploadBatches().isBatchKey(batch) ? batch : null,
   };
 }
 
@@ -404,9 +460,24 @@ async function completeUpload(db, contactId, caseId, { files, comment } = {}) {
  *
  * ctx.dropboxLink is no longer read (the service derives the folder itself);
  * it stays on the context for page-contract compatibility.
+ *
+ * ctx.batch (S3): close the batch row and complete ONCE on the landed list
+ * merged with this one (clientUploadBatchService.finishByClient).
  */
 async function sendUploadNotifications(db, ctx) {
   const { case_id, contact_id, clientName, fileCount, files, comment } = ctx;
+  if (ctx.batch) {
+    return uploadBatches().finishByClient(db, {
+      source: 'portal',
+      batchKey: ctx.batch,
+      caseId: case_id,
+      contactId: contact_id,
+      clientName,
+      files,
+      fileCount,
+      comment: comment || null,
+    });
+  }
   return require('./clientUploadCompletionService').completeClientUpload(db, {   // lazy (convention)
     source: 'portal',
     caseId: case_id,
@@ -425,6 +496,7 @@ async function sendUploadNotifications(db, ctx) {
 module.exports = {
   listDocs,
   createUploadLink,
+  recordLanded,
   completeUpload,
   sendUploadNotifications,
   // Limits — exported so the route/tests reference one source of truth.

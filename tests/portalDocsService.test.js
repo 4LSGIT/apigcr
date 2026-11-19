@@ -128,6 +128,8 @@ describe('scope gate', () => {
       { filename: 'a.pdf', size: 100 })).toBeNull();
     expect(await svc.completeUpload(stubDb([[]]), 42, 'NotYours1',
       { files: [{ name: 'a.pdf' }] })).toBeNull();
+    expect(await svc.recordLanded(stubDb([[]]), 42, 'NotYours1',
+      { batch: 'b'.repeat(32), file: { name: 'a.pdf' } })).toBeNull();
     // Scope failure must short-circuit BEFORE the upload-target ladder.
     expect(uploadTarget.issueClientUploadLink).not.toHaveBeenCalled();
   });
@@ -413,6 +415,80 @@ describe('completeUpload', () => {
   });
 });
 
+describe('completeUpload — the batch key (docs intake S3)', () => {
+  const KEY = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+  const run = (batch) => svc.completeUpload(
+    stubDb([[scopeRow()], [{ contact_name: 'Jane Doe' }], [], [{ case_id: 'AbCdEf12' }]]),
+    42, 'AbCdEf12', { files: [{ name: 'a.pdf' }], batch });
+  test('a valid key rides the context; absent or malformed → null (the pre-S3 path)', async () => {
+    expect((await run(KEY)).batch).toBe(KEY);
+    for (const bad of [undefined, null, '', 'short', 'has spaces in the key!!', 42, { k: KEY }, 'x'.repeat(41)]) {
+      expect((await run(bad)).batch).toBeNull();
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// recordLanded (docs intake S3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('recordLanded', () => {
+  const batches = require('../services/clientUploadBatchService');
+  const KEY = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+  let landed;
+  beforeEach(() => { landed = jest.spyOn(batches, 'landed').mockResolvedValue({ accepted: true, id: 5, opened: true }); });
+  afterEach(() => landed.mockRestore());
+
+  test('appends to the batch under the CANONICAL case id and the authenticated contact; no item → general', async () => {
+    const db = stubDb([[scopeRow()]]);
+    const r = await svc.recordLanded(db, 42, 'abcdef12', { batch: KEY, file: { name: 'W2.pdf', size: 99 }, comment: 'c'.repeat(3000) });
+    expect(r).toEqual({ case_id: 'AbCdEf12', accepted: true });
+    expect(landed).toHaveBeenCalledTimes(1);
+    expect(landed.mock.calls[0][0]).toBe(db);
+    expect(landed.mock.calls[0][1]).toEqual({
+      source: 'portal', batchKey: KEY, caseId: 'AbCdEf12', contactId: 42,
+      file: { name: 'W2.pdf', item_id: null, item_name: null },
+      comment: 'c'.repeat(2000),
+    });
+    expect(db.calls).toHaveLength(1);   // scope only — no item read without an item
+  });
+
+  test('the item NAME comes from the DB; a foreign item id is filed as general, not rejected', async () => {
+    const db = stubDb([[scopeRow()], [item(7, 'Pay stubs (DB name)')]]);
+    await svc.recordLanded(db, 42, 'AbCdEf12', { batch: KEY, file: { name: 'a.pdf', item_id: 7, item_name: 'client says' } });
+    expect(landed.mock.calls[0][1].file).toEqual({ name: 'a.pdf', item_id: 7, item_name: 'Pay stubs (DB name)' });
+    expect(db.calls[1].params).toEqual([[7], 'AbCdEf12']);
+
+    const db2 = stubDb([[scopeRow()], []]);
+    await svc.recordLanded(db2, 42, 'AbCdEf12', { batch: KEY, file: { name: 'b.pdf', item_id: 999 } });
+    expect(landed.mock.calls[1][1].file).toEqual({ name: 'b.pdf', item_id: null, item_name: null });
+  });
+
+  test('a refused append is still a normal answer (accepted:false), not an error', async () => {
+    landed.mockResolvedValue({ accepted: false, reason: 'closed' });
+    expect(await svc.recordLanded(stubDb([[scopeRow()]]), 42, 'AbCdEf12', { batch: KEY, file: { name: 'a.pdf' } }))
+      .toEqual({ case_id: 'AbCdEf12', accepted: false });
+  });
+
+  test('a bad body → 400 carrying portalCaseId; nothing appended; the filename is capped', async () => {
+    for (const body of [
+      { file: { name: 'a.pdf' } },
+      { batch: 'short', file: { name: 'a.pdf' } },
+      { batch: KEY },
+      { batch: KEY, file: 'a.pdf' },
+      { batch: KEY, file: { name: '  ' } },
+      undefined,
+    ]) {
+      const err = await svc.recordLanded(stubDb([[scopeRow()]]), 42, 'AbCdEf12', body).catch(e => e);
+      expect(err.status).toBe(400);
+      expect(err.portalCaseId).toBe('AbCdEf12');
+    }
+    expect(landed).not.toHaveBeenCalled();
+    await svc.recordLanded(stubDb([[scopeRow()]]), 42, 'AbCdEf12', { batch: KEY, file: { name: 'n'.repeat(400) } });
+    expect(landed.mock.calls[0][1].file.name).toHaveLength(255);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // sendUploadNotifications — routing, placement wording, parity + escaping
 // ─────────────────────────────────────────────────────────────────────────────
@@ -474,6 +550,25 @@ describe('sendUploadNotifications', () => {
     expect(o).toMatchObject({ comment: 'two months', fileCount: 52 });
     expect(o).not.toHaveProperty('dropboxLink');
     expect(o).not.toHaveProperty('omittedCount');
+  });
+
+  test('with a batch key: the batch closes and completes through finishByClient (S3) — never directly', async () => {
+    const batches = require('../services/clientUploadBatchService');
+    const fin = jest.spyOn(batches, 'finishByClient').mockResolvedValue({ status: 'owned', result: { sent: true } });
+    try {
+      const KEY = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+      await expect(svc.sendUploadNotifications({ db: 2 }, ctxFixture({ batch: KEY, comment: 'note' }))).resolves.toEqual({ status: 'owned', result: { sent: true } });
+      expect(spy).not.toHaveBeenCalled();
+      expect(fin).toHaveBeenCalledWith({ db: 2 }, {
+        source: 'portal', batchKey: KEY, caseId: 'AbCdEf12', contactId: 42, clientName: 'Jane Doe',
+        files: [{ name: 'a.pdf', item_id: 7, item_name: 'Pay stubs' }, { name: 'b.pdf', item_id: null, item_name: null }],
+        fileCount: 2, comment: 'note',
+      });
+      // batch null (absent / malformed upstream) → the direct hand-off
+      await svc.sendUploadNotifications({}, ctxFixture({ batch: null }));
+      expect(fin).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally { fin.mockRestore(); }
   });
 
   test('the old recipient key is gone from the service (uploads notify the docs reviewer)', () => {

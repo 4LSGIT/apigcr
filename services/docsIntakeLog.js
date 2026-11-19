@@ -37,7 +37,12 @@
  *                     files: [{ name, path?, document_id?, item_id?, item_name? }],
  *                     comment, placement, folder_path,
  *                     failed?: [{ name, error }],
- *                     email?: { mail_message_id, from, to, subject } }
+ *                     email?: { mail_message_id, from, to, subject },
+ *                     batch_key?, closed_by? }
+ *                   batch_key: the upload run's key (upload pages, docs intake
+ *                   S3 — client_upload_batches.batch_key); closed_by: 'sweep'
+ *                   when the page never finished and the cron reported what
+ *                   had landed (services/clientUploadBatchService).
  *                   action: 'client_upload' (docreq, portal) | 'email_filed'
  *                   (email, comms) | 'email_refiled' (moved to the case later).
  *                   logService folds the subject into log_data.subject as for
@@ -64,6 +69,8 @@ const MAX_NAME = 255;
 const MAX_PATH = 512;
 const MAX_COMMENT = 2000;
 const MAX_ERROR = 300;
+const MAX_BATCH_KEY = 40;
+const CLOSED_BY = Object.freeze(['client', 'sweep']);
 
 const plural = (n) => (n === 1 ? '' : 's');
 const str = (v, max) => (v == null ? null : String(v).slice(0, max));
@@ -127,6 +134,8 @@ function subjectFor({ action, source, count, actor, from, to }) {
  * @param {object} [o.email]          { mail_message_id, from (display or address), from_email, to, subject }
  * @param {number} [o.by]             the acting user id (0 / null = client or automation)
  * @param {string} [o.actor]          the acting person's name, for the subject (comms / refile)
+ * @param {string} [o.batchKey]       upload pages: the run's batch key → data.batch_key
+ * @param {string} [o.closedBy]       upload pages: 'sweep' (a lost batch) → data.closed_by
  * @returns {Promise<{log_id:number}|null>}
  */
 async function logDocsIntake(db, o = {}) {
@@ -164,6 +173,8 @@ async function logDocsIntake(db, o = {}) {
       .map(f => ({ name: str(f && (f.name ?? f.filename), MAX_NAME), error: str(f && f.error, MAX_ERROR) }))
       .filter(f => f.name);
     if (failed.length) data.failed = failed.slice(0, MAX_FILES);
+    if (o.batchKey) data.batch_key = str(o.batchKey, MAX_BATCH_KEY);
+    if (CLOSED_BY.includes(o.closedBy)) data.closed_by = o.closedBy;
     if (email) {
       data.email = {
         mail_message_id: email.mail_message_id != null ? Number(email.mail_message_id) : null,

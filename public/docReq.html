@@ -295,6 +295,10 @@ uploadForm.addEventListener('submit', async (e) => {
 async function startUpload(files, comment) {
   const successFiles = [];
   let completed = 0;
+  // One key per run ("Upload More Documents" starts a new one). Each landed
+  // file is reported under it as it lands; if this tab closes before the end,
+  // the server reports what landed (docs intake S3).
+  const batch = mintBatchKey();
 
   const overallBar  = document.getElementById('overall-progress-bar');
   const overallText = document.getElementById('overall-progress-text');
@@ -354,6 +358,7 @@ async function startUpload(files, comment) {
       row.percentEl.textContent = '100%';
       row.barEl.style.background = '#4caf50';
       successFiles.push(file.name);
+      reportLanded(caseId, batch, file, comment);
 
     } catch (err) {
       console.error(`Upload failed for ${file.name}:`, err);
@@ -371,7 +376,7 @@ async function startUpload(files, comment) {
 
   // Notify team (only for successfully uploaded files)
   if (successFiles.length) {
-    await notifyTeam(caseId, successFiles, comment);
+    await notifyTeam(caseId, successFiles, comment, batch);
   }
 
   // Final result
@@ -417,8 +422,42 @@ function uploadWithProgress(url, file, onProgress) {
   });
 }
 
+// ── Per-file report (docs intake S3) ────────────────
+// Fire-and-forget, keepalive: the request outlives a tab or phone that closes
+// right after the file lands — that flag is the point. The server appends the
+// file to the run's batch and, if upload-complete never arrives, reports the
+// batch itself ~10 minutes after the last file.
+function reportLanded(caseId, batch, file, comment) {
+  try {
+    fetch('/api/public/upload-landed', {
+      method: 'POST',
+      keepalive: true,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        case_id: caseId,
+        batch,
+        file: { name: file.name, size: file.size },
+        comment: comment || null
+      })
+    }).catch(() => {});
+  } catch (e) { /* best-effort — upload-complete still reports the file */ }
+}
+
+// A run's key: 32 hex chars (the server accepts ^[A-Za-z0-9_-]{16,40}$).
+function mintBatchKey() {
+  const c = window.crypto;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID().replace(/-/g, '');
+  if (c && typeof c.getRandomValues === 'function') {
+    const b = c.getRandomValues(new Uint8Array(16));
+    return Array.from(b, x => x.toString(16).padStart(2, '0')).join('');
+  }
+  let k = '';
+  while (k.length < 32) k += Math.floor(Math.random() * 16).toString(16);
+  return k;
+}
+
 // ── Notify Team ─────────────────────────────────────
-async function notifyTeam(caseId, files, comment) {
+async function notifyTeam(caseId, files, comment, batch) {
   try {
     await fetch('/api/public/upload-complete', {
       method: 'POST',
@@ -426,7 +465,8 @@ async function notifyTeam(caseId, files, comment) {
       body: JSON.stringify({
         case_id: caseId,
         files,
-        comment: comment || null
+        comment: comment || null,
+        batch
       })
     });
   } catch (e) {

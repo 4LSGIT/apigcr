@@ -21,7 +21,11 @@
 //     sendUploadNotifications, and a rejected side-effect promise must not
 //     surface as an unhandled rejection
 //   • the per-IP limiters, driven through the REAL lib/rateLimiter (30/min
-//     upload-link, 10/min upload-complete) including XFF-LAST keying
+//     upload-link, 10/min upload-complete, 60/min upload-landed) including
+//     XFF-LAST keying
+//   • upload-landed (docs intake S3): ANSWERS AFTER the write (one upsert —
+//     a write lost behind an early 200 would defeat the slice), the envelope,
+//     the same 404/400/500 mapping; upload-complete passes `batch` through
 //
 // DRIVEN OVER REAL HTTP. routes/portal.docs.js exports only the router — no
 // internals — so unlike tests/portalAccessAdmin.test.js there is no exported
@@ -47,6 +51,7 @@ const CONTACT_ID = 4242;
 jest.mock('../services/portalDocsService', () => ({
   listDocs: jest.fn(),
   createUploadLink: jest.fn(),
+  recordLanded: jest.fn(),
   completeUpload: jest.fn(),
   sendUploadNotifications: jest.fn(),
 }));
@@ -132,6 +137,8 @@ async function call(method, path, { body, ip = freshIp(), xffPrefix = '198.51.10
 const DOCS_URL     = '/api/portal/cases/AbCdEf12/docs';
 const LINK_URL     = '/api/portal/cases/AbCdEf12/docs/upload-link';
 const COMPLETE_URL = '/api/portal/cases/AbCdEf12/docs/upload-complete';
+const LANDED_URL   = '/api/portal/cases/AbCdEf12/docs/upload-landed';
+const KEY          = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
 
 const NOT_FOUND = { status: 'error', message: 'Not found' };
 
@@ -148,7 +155,7 @@ describe('mounting', () => {
   test('every route sits behind requireAuth({audience:"contact"})', () => {
     // The staff audience must never appear here — a portal route authenticated
     // as staff would hand any logged-in employee a client session shape.
-    expect(requireAuth).toHaveBeenCalledTimes(3);
+    expect(requireAuth).toHaveBeenCalledTimes(4);
     for (const c of requireAuth.mock.calls) {
       expect(c[0]).toEqual({ audience: 'contact' });
     }
@@ -395,6 +402,76 @@ describe('POST /api/portal/cases/:caseId/docs/upload-complete', () => {
   });
 });
 
+describe('POST /api/portal/cases/:caseId/docs/upload-complete — the batch key (S3)', () => {
+  test('`batch` is handed to the service with the rest of the body', async () => {
+    portalDocs.completeUpload.mockResolvedValue({ case_id: 'AbCdEf12', batch: KEY });
+    portalDocs.sendUploadNotifications.mockResolvedValue({ status: 'owned' });
+    const files = [{ name: 'a.pdf', item_id: 7 }];
+    const res = await call('POST', COMPLETE_URL, { body: { files, comment: 'x', batch: KEY } });
+    expect(res.status).toBe(200);
+    expect(portalDocs.completeUpload).toHaveBeenCalledWith(DB, CONTACT_ID, 'AbCdEf12', { files, comment: 'x', batch: KEY });
+    expect(portalDocs.sendUploadNotifications).toHaveBeenCalledWith(DB, { case_id: 'AbCdEf12', batch: KEY });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /docs/upload-landed (docs intake S3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('POST /api/portal/cases/:caseId/docs/upload-landed', () => {
+  const body = { batch: KEY, file: { name: 'W2.pdf', item_id: 7 }, comment: 'taxes' };
+
+  test('success → EXACTLY { status }; the service gets (db, authed contact, raw :caseId, body fields); case attributed', async () => {
+    portalDocs.recordLanded.mockResolvedValue({ case_id: 'AbCdEf12', accepted: true });
+    const res = await call('POST', LANDED_URL.replace('AbCdEf12', 'abcdef12'), { body: { ...body, contact_id: 999, extra: 1 } });
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({ status: 'success' });
+    expect(portalDocs.recordLanded).toHaveBeenCalledWith(DB, CONTACT_ID, 'abcdef12', { batch: KEY, file: body.file, comment: 'taxes' });
+    expect(finished[0].portalCaseId).toBe('AbCdEf12');
+  });
+
+  test('a refused append is still a success to the page (it has nothing to do about it)', async () => {
+    portalDocs.recordLanded.mockResolvedValue({ case_id: 'AbCdEf12', accepted: false });
+    const res = await call('POST', LANDED_URL, { body });
+    expect(res).toEqual({ status: 200, json: { status: 'success' } });
+  });
+
+  test('ANSWERS AFTER THE WRITE: the 200 waits on recordLanded', async () => {
+    let release;
+    portalDocs.recordLanded.mockReturnValue(new Promise(r => { release = r; }));
+    let timer;
+    const pending = call('POST', LANDED_URL, { body });
+    const outcome = await Promise.race([pending, new Promise(r => { timer = setTimeout(() => r('BLOCKED'), 200); })]);
+    clearTimeout(timer);
+    expect(outcome).toBe('BLOCKED');                 // no early 200
+    release({ case_id: 'AbCdEf12', accepted: true });
+    expect((await pending).status).toBe(200);
+  });
+
+  test('out of scope → the uniform 404; a .status 400 passes its message; anything else → 500, swallowed', async () => {
+    portalDocs.recordLanded.mockResolvedValue(null);
+    const r1 = await call('POST', LANDED_URL, { body });
+    expect(r1).toEqual({ status: 404, json: NOT_FOUND });
+
+    const bad = Object.assign(new Error('batch is required'), { status: 400, portalCaseId: 'AbCdEf12' });
+    portalDocs.recordLanded.mockRejectedValue(bad);
+    const r2 = await call('POST', LANDED_URL, { body: {} });
+    expect(r2).toEqual({ status: 400, json: { status: 'error', message: 'batch is required' } });
+    expect(finished[1].portalCaseId).toBe('AbCdEf12');
+
+    portalDocs.recordLanded.mockRejectedValue(new Error('ER_NO_SUCH_TABLE client_upload_batches'));
+    const r3 = await call('POST', LANDED_URL, { body });
+    expect(r3).toEqual({ status: 500, json: { status: 'error', message: 'Server error' } });
+  });
+
+  test('a bodyless POST does not crash — the service rules on undefineds', async () => {
+    portalDocs.recordLanded.mockResolvedValue({ case_id: 'AbCdEf12', accepted: false });
+    const res = await call('POST', LANDED_URL);
+    expect(res.status).toBe(200);
+    expect(portalDocs.recordLanded).toHaveBeenCalledWith(DB, CONTACT_ID, 'AbCdEf12', { batch: undefined, file: undefined, comment: undefined });
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Rate limiting (real lib/rateLimiter)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -459,6 +536,23 @@ describe('rate limiting', () => {
     }
     const over = await call('POST', COMPLETE_URL, { body: b, ip, xffPrefix: '203.0.113.99' });
     expect(over.status).toBe(429);
+  });
+
+  test('upload-landed: 60/min/IP (one call per landed file), then 429 without touching the service; its own bucket', async () => {
+    portalDocs.recordLanded.mockResolvedValue({ case_id: 'AbCdEf12', accepted: true });
+    portalDocs.completeUpload.mockResolvedValue({ case_id: 'AbCdEf12' });
+    portalDocs.sendUploadNotifications.mockResolvedValue([]);
+    const ip = freshIp();
+    const b = { batch: KEY, file: { name: 'a.pdf' } };
+    for (let i = 0; i < 60; i++) {
+      expect((await call('POST', LANDED_URL, { body: b, ip })).status).toBe(200);
+    }
+    const over = await call('POST', LANDED_URL, { body: b, ip });
+    expect(over.status).toBe(429);
+    expect(over.json).toEqual({ status: 'error', message: 'Too many requests. Please try again later.' });
+    expect(portalDocs.recordLanded).toHaveBeenCalledTimes(60);
+    // a 60-file run must not starve its own upload-complete
+    expect((await call('POST', COMPLETE_URL, { body: { files: [{ name: 'a.pdf' }] }, ip })).status).toBe(200);
   });
 
   test('GET docs carries no limiter — authed reads are unlimited (S2 precedent)', async () => {
