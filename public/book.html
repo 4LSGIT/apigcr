@@ -3,6 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Never send this page's URL as a Referer: a prefill link carries the
+     contact's bearer token (?c=), and the page now navigates on its own
+     (redirect after booking) — often to a 4lsg.com page, where the default
+     policy would send the full URL. Origin only, and nothing over http. -->
+<meta name="referrer" content="strict-origin">
 <title>Book an Appointment</title>
 <!-- Firm favicon (same assets as manage.html): 32 = browser tab/bookmark,
      192 = Android home screen / PWA, apple-touch-icon 180 = iOS
@@ -343,6 +348,7 @@
   var qs = new URLSearchParams(location.search);
   var token = qs.get('c') || '';
 
+  var REDIRECT_BEAT_MS = 1500;      // full page: how long the thank-you shows before redirect_url
   var FIRM_TZ = 'America/New_York'; // matches the server's FIRM_TZ; label says Eastern
 
   // ── State ───────────────────────────────────────────────────
@@ -856,6 +862,30 @@
     updateBookBtn();
   }
 
+  // After a booking — the thank-you is ALREADY on screen, so every failure
+  // below leaves the visitor on it (fail-safe, Fred 2026-11-19).
+  //   Embedded (iframe): tell the host page { type:'yc-booking', event:'booked',
+  //     slug, redirect_url } — the Booking Manager's embed snippet listens for
+  //     it, which is the guaranteed path on another site — then try to move
+  //     the top window ourselves. A cross-origin frame may navigate the top
+  //     only with a recent click, so no delay here; a block throws or is
+  //     ignored, and the thank-you stays.
+  //   Full page: a short beat on the thank-you, then go.
+  // redirect_url is https-only on save and again in the response; re-checked.
+  function afterBooked(url) {
+    var go = (typeof url === 'string' && /^https:\/\//i.test(url)) ? url : null;
+    var framed;
+    try { framed = window.top !== window.self; } catch (e) { framed = true; }
+    if (framed) {
+      try {
+        window.parent.postMessage({ type: 'yc-booking', event: 'booked', slug: slug, redirect_url: go }, '*');
+      } catch (e) {}
+      if (go) { try { window.top.location.href = go; } catch (e) {} }
+      return;
+    }
+    if (go) setTimeout(function () { window.location.assign(go); }, REDIRECT_BEAT_MS);
+  }
+
   function handleBookResponse(r) {
     if (r.ok && r.body && r.body.success) {
       // thankyou_html is trusted admin content (booking_views.thankyou_html).
@@ -863,6 +893,7 @@
       hide('main');
       show('thankyou');
       try { window.scrollTo(0, 0); } catch (e) {}
+      afterBooked(r.body.redirect_url);
       return;
     }
 

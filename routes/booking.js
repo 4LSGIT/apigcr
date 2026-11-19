@@ -50,8 +50,9 @@
  *       bad sig          → 400 invalid_request (tampered)
  *       stale (>2h)      → 400 stale_form (legit user with an old tab —
  *                          recoverable: "refresh the page")
- *   "Silent fake success" returns the normal { success, thankyou_html }
- *   response without creating anything — bots can't distinguish it.
+ *   "Silent fake success" returns the normal { success, thankyou_html,
+ *   redirect_url } response (successBody) without creating anything — bots
+ *   can't distinguish it.
  *   Client IP = lib/rateLimiter.getClientIp — the LAST X-Forwarded-For
  *   element (the GFE-appended peer). NOT cf-connecting-ip: app.4lsg.com is
  *   direct Cloud Run, so that header is client-suppliable and keying on it
@@ -612,10 +613,29 @@ router.get('/api/book/:slug/slots', async (req, res) => {
  * client's perspective; used for honeypot / too-fast / POST-rate-limit drops.
  */
 function fakeSuccess(res, view) {
-  return res.json({
+  return res.json(successBody(view));
+}
+
+/**
+ * The ONE success shape, real or fake. redirect_url (booking_views.redirect_url,
+ * https-validated on save) tells public/book.html where to send the visitor
+ * after it has shown thankyou_html; null = stay on the thank-you. Re-checked
+ * here so a hand-edited row can never hand the widget a javascript: or http:
+ * target.
+ */
+function successBody(view) {
+  let redirect = null;
+  if (view.redirect_url) {
+    try {
+      const u = new URL(String(view.redirect_url));
+      if (u.protocol === 'https:' && u.hostname) redirect = u.href;
+    } catch { /* not a URL: no redirect */ }
+  }
+  return {
     success: true,
     thankyou_html: view.thankyou_html || DEFAULT_THANKYOU_HTML,
-  });
+    redirect_url: redirect,
+  };
 }
 
 /**
@@ -974,11 +994,8 @@ router.post('/api/book/:slug', async (req, res) => {
       apptId: booked.apptId, contactId, providerId, start,
     });
 
-    // ── 8. Response: nothing but success + thank-you HTML ──
-    return res.json({
-      success: true,
-      thankyou_html: view.thankyou_html || DEFAULT_THANKYOU_HTML,
-    });
+    // ── 8. Response: nothing but success + thank-you HTML + redirect ──
+    return res.json(successBody(view));
   } catch (err) {
     console.error('POST /api/book/:slug error:', err);
     return res.status(500).json({ status: 'error', message: 'Internal error' });
@@ -1026,4 +1043,4 @@ router.post('/api/contacts/:id/booking-link', jwtOrApiKey, async (req, res) => {
 module.exports = router;
 // Test-only surface (tests/optout.mysql.test.js): the post-create side effects
 // (the confirmation's opted-out skip). Rides along on the router export.
-module.exports._test = { fireSideEffects };
+module.exports._test = { fireSideEffects, successBody };

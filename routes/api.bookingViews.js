@@ -59,7 +59,7 @@ const FIELDS = [
   'identity_mode', 'source_tag', 'collect_note',
   'confirm_template', 'confirm_sms', 'confirm_email', 'hook_id',
   'title', 'subtitle', 'accent_color', 'logo_url', 'logo_link_url', 'thankyou_html',
-  'footer_html',
+  'footer_html', 'redirect_url',
 ];
 
 // ─────────────────────────────────────────────────────────────
@@ -85,6 +85,14 @@ function intIn(v, min, max) {
 
 function bool01(v) {
   return (v === true || v === 1 || v === '1') ? 1 : 0;
+}
+
+/** True for an absolute https URL with a host (the redirect_url rule). */
+function isHttpsUrl(s) {
+  try {
+    const u = new URL(String(s));
+    return u.protocol === 'https:' && !!u.hostname;
+  } catch { return false; }
 }
 
 function trimOrNull(v, max) {
@@ -313,6 +321,20 @@ async function validateView(db, v, { isCreate = false } = {}) {
   }
   if (out.logo_link_url && !/^https?:\/\//i.test(out.logo_link_url)) {
     return { error: 'logo_link_url must be an http(s) URL.' };
+  }
+
+  // redirect_url — where the widget sends the visitor after a booking
+  // (routes/booking.js successBody; public/book.html afterBooked). https only:
+  // it becomes a top-level navigation of the visitor's browser, often on
+  // another site (a landing page on a vanity domain). Rejected, never
+  // truncated, past 500 — trimOrNull's slice would store a broken URL.
+  const redirect = v.redirect_url == null ? '' : String(v.redirect_url).trim();
+  if (!redirect) {
+    out.redirect_url = null;
+  } else {
+    if (redirect.length > 500) return { error: 'redirect_url is longer than 500 characters.' };
+    if (!isHttpsUrl(redirect)) return { error: 'redirect_url must be an https:// URL.' };
+    out.redirect_url = redirect;
   }
 
   return { values: out };

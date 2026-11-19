@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-19T01:03:56.853Z
+-- Generated: 2026-11-19T09:21:50.889Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:17e963c40ccc385860032365f5a293c6
+-- Fingerprint: sha256:f105b903adb380f64f6519b63fa27324
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -378,6 +378,7 @@ CREATE TABLE `booking_views` (
   `logo_url` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `logo_link_url` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `thankyou_html` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `redirect_url` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'https URL the booking widget sends the visitor to after a booking, once the thank-you has shown; in an iframe the host page redirects via the embed snippet. NULL = stay on the thank-you. https-only, app-validated (routes/api.bookingViews.js)',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   `page_windows` json DEFAULT NULL,

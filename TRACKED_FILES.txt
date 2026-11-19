@@ -683,6 +683,7 @@ ref/migrations/2026-11-17_storage_seam_d3a_entity_folders.sql
 ref/migrations/2026-11-18_storage_seam_d3c3_contract.sql
 ref/migrations/2026-11-18_storage_seam_d3c_storage_folders.json
 ref/migrations/2026-11-18_storage_seam_d3d1_case_folder_link.json
+ref/migrations/2026-11-19_booking_views_redirect_url.sql
 ref/migrations/2026-11-19_client_upload_batches.sql
 ref/migrations/2026-11-19_docs_reviewer.sql
 ref/migrations/2026-11-19_key_renewal_requests.sql
@@ -877,6 +878,7 @@ scripts/backfillAppts.js
 scripts/backfillCampaignContacts.js
 scripts/backfillCaseRoleIds.js
 scripts/backfill_court_event_calendars_2026_08.js
+scripts/bookingRedirectColumn.js
 scripts/buildFaIconCatalog.js
 scripts/calendarTypeOptionsSeed.js
 scripts/calendarTypeSeed.js
@@ -1299,6 +1301,8 @@ tests/auditShape.test.js
 tests/autoGrow.test.js
 tests/automationRead.test.js
 tests/automationReadIngest.mysql.test.js
+tests/bookingRedirect.test.js
+tests/bookingRedirectColumn.mysql.test.js
 tests/calendarColumns.test.js
 tests/calendarEvents.appt.test.js
 tests/calendarEvents.event.test.js

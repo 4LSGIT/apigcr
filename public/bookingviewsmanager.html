@@ -202,6 +202,14 @@
     opacity: 0; transition: opacity 0.2s; pointer-events: none;
   }
   .toast.show { opacity: 1; }
+
+  /* ── Embed help modal ──────────────────────────────────────── */
+  .eh-pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px;
+    padding: 8px 10px; margin: 6px 0; max-height: 260px; overflow: auto;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
 </style>
 </head>
 <body>
@@ -395,6 +403,11 @@
       <div class="hint">Rendered as trusted HTML in the widget after a successful booking.</div>
     </div>
     <div class="field">
+      <label for="f-redirect">Redirect after booking (optional)</label>
+      <input type="url" id="f-redirect" placeholder="https://example.com/thank-you.html" maxlength="500">
+      <div class="hint">After the thank-you shows, send the visitor to this page (https only). On another website, paste the code from Embed help so the redirect always works.</div>
+    </div>
+    <div class="field">
       <label for="f-footer">Footer (optional)</label>
       <textarea id="f-footer" rows="3"></textarea>
       <div class="hint">Text or HTML, shown at the bottom of the public booking page.</div>
@@ -403,6 +416,32 @@
     <div class="modal-actions">
       <button class="btn" id="f-cancel" type="button">Cancel</button>
       <button class="btn primary" id="f-save" type="button">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Embed help modal -->
+<div class="modal-backdrop" id="eh-backdrop">
+  <div class="modal">
+    <h3>Put a booking page on a website</h3>
+    <div class="field">
+      <label for="eh-view">Booking view</label>
+      <select id="eh-view"></select>
+      <div class="hint" id="eh-redirect-note"></div>
+    </div>
+
+    <h4>Embed code</h4>
+    <div class="hint">Paste where the booking form should appear. The script sends the visitor to the view's "Redirect after booking" page; with none set, they stay on the thank-you message.</div>
+    <pre class="eh-pre" id="eh-snippet"></pre>
+    <button class="btn" id="eh-copy-snippet" type="button">Copy code</button>
+
+    <h4>Instructions for an AI assistant</h4>
+    <div class="hint">When an AI builds the page, paste this into it instead.</div>
+    <pre class="eh-pre" id="eh-llm"></pre>
+    <button class="btn" id="eh-copy-llm" type="button">Copy instructions</button>
+
+    <div class="modal-actions">
+      <button class="btn" id="eh-close" type="button">Close</button>
     </div>
   </div>
 </div>
@@ -480,6 +519,69 @@ function publicUrl(v) {
 }
 function embedSnippet(v) {
   return `<iframe src="${publicUrl(v)}" style="width:100%;height:700px;border:0"></iframe>`;
+}
+
+// ── Embed help (Fred, 2026-11-19) ───────────────────────────
+// The host-page half of redirect-after-booking. public/book.html posts
+// { type:'yc-booking', event:'booked', slug, redirect_url } to its parent;
+// this listener, pasted beside the iframe, performs the redirect — the
+// guaranteed path on another site, where the widget's own top-window
+// navigation needs a recent click. It trusts ONLY the landing origin and only
+// an https target. The closing tag is written <\/script> so it cannot end
+// THIS page's inline script.
+function embedListenerScript() {
+  return [
+    '<script>',
+    '  // 4LSG booking: after a booking, go to the page set in Booking Manager.',
+    "  window.addEventListener('message', function (e) {",
+    "    if (e.origin !== '" + publicOrigin() + "') return;",
+    '    var d = e.data;',
+    "    if (d && d.type === 'yc-booking' && d.event === 'booked' &&",
+    "        typeof d.redirect_url === 'string' && /^https:\\/\\//.test(d.redirect_url)) {",
+    '      window.location.href = d.redirect_url;',
+    '    }',
+    '  });',
+    '<\/script>',
+  ].join('\n');
+}
+function embedHelpSnippet(v) {
+  return `<!-- 4LSG booking: ${v.slug} -->\n${embedSnippet(v)}\n${embedListenerScript()}`;
+}
+function embedLlmBlurb(v) {
+  return [
+    `Add the 4LSG booking form "${v.title || v.slug}" to this web page.`,
+    '',
+    `1. Where the form should appear, insert exactly: ${embedSnippet(v)}`,
+    '   Keep the src URL unchanged and do not add a sandbox attribute.',
+    `2. Add one script that listens for window "message" events. Ignore any event whose event.origin is not exactly ${publicOrigin()}. When event.data.type === "yc-booking" and event.data.event === "booked" and event.data.redirect_url is a string starting with https://, set window.location.href to event.data.redirect_url. Do nothing else with the message.`,
+    '3. The page visitors go to after booking is chosen in 4LSG (Booking Manager, "Redirect after booking"), not on this page, so do not hard-code one. With none set, the form shows its own thank-you message.',
+    `4. For a plain link instead of an embed, use ${publicUrl(v)} — after booking, the visitor goes to the same page.`,
+  ].join('\n');
+}
+function renderEmbedHelp() {
+  const v = state.views.find(x => String(x.id) === E('eh-view').value);
+  const none = !v;
+  E('eh-copy-snippet').disabled = none;
+  E('eh-copy-llm').disabled = none;
+  E('eh-snippet').textContent = none ? 'Create a booking view first.' : embedHelpSnippet(v);
+  E('eh-llm').textContent = none ? '' : embedLlmBlurb(v);
+  E('eh-redirect-note').textContent = none ? '' : (v.redirect_url
+    ? `After booking, visitors go to ${v.redirect_url}`
+    : 'This view has no redirect: visitors stay on its thank-you message. Set one in the view\u2019s Thank-you section.');
+}
+function openEmbedHelp() {
+  const sel = E('eh-view');
+  const keep = sel.value;
+  sel.innerHTML = state.views.map(v =>
+    `<option value="${v.id}">${esc(v.slug)}${v.active ? '' : ' (inactive)'}</option>`).join('');
+  const first = state.views.find(v => v.active) || state.views[0];
+  if (keep && state.views.some(v => String(v.id) === keep)) sel.value = keep;
+  else if (first) sel.value = String(first.id);
+  renderEmbedHelp();
+  E('eh-backdrop').classList.add('open');
+}
+function closeEmbedHelp() {
+  E('eh-backdrop').classList.remove('open');
 }
 function statusBadge(v) {
   return v.active
@@ -585,6 +687,7 @@ function renderList() {
     <div class="list-header">
       <h2>Booking Views</h2>
       <div class="right">
+        <button class="btn" id="eh-btn" type="button">Embed help</button>
         <button class="btn primary" id="new-btn">+ New View</button>
       </div>
     </div>
@@ -605,6 +708,7 @@ function renderList() {
   `;
 
   E('new-btn').addEventListener('click', () => openEditor(null));
+  E('eh-btn').addEventListener('click', openEmbedHelp);
 
   region.querySelectorAll('tr[data-id]').forEach(tr => {
     const id = Number(tr.dataset.id);
@@ -799,6 +903,7 @@ function openEditor(id) {
   E('f-confirm-email').checked  = v ? !!v.confirm_email : false;
   renderHookSelect(v ? v.hook_id : null);
   E('f-thankyou').value = v ? (v.thankyou_html || '') : DEFAULT_THANKYOU_HTML;
+  E('f-redirect').value = v ? (v.redirect_url || '') : '';
   E('f-footer').value   = v ? (v.footer_html || '')   : DEFAULT_FOOTER_HTML;
 
   hideErr();
@@ -851,6 +956,7 @@ function collectPayload() {
     confirm_email:    E('f-confirm-email').checked ? 1 : 0,
     hook_id:          E('f-hook').value ? Number(E('f-hook').value) : null,
     thankyou_html:    E('f-thankyou').value.trim() || null,
+    redirect_url:     E('f-redirect').value.trim() || null,
     footer_html:      E('f-footer').value.trim() || null,
   };
 }
@@ -861,6 +967,9 @@ function clientValidate(p) {
     return 'Slug may contain only letters, numbers, _ and - (max 100).';
   }
   if (!p.title) return 'Title is required.';
+  if (p.redirect_url && !/^https:\/\/[^\s/]+/i.test(p.redirect_url)) {
+    return 'Redirect after booking must be an https:// URL.';
+  }
   if (!p.type_key) return 'Appointment type is required.';
   if (!p.appt_type) return 'Display label is required.';
   if (!Number.isInteger(p.appt_length) || p.appt_length < 1 || p.appt_length > 127) {
@@ -1003,7 +1112,15 @@ function init() {
   });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && E('modal-backdrop').classList.contains('open')) closeEditor();
+    if (e.key === 'Escape' && E('eh-backdrop').classList.contains('open')) closeEmbedHelp();
   });
+  E('eh-backdrop').addEventListener('click', e => {
+    if (e.target === E('eh-backdrop')) closeEmbedHelp();
+  });
+  E('eh-close').addEventListener('click', closeEmbedHelp);
+  E('eh-view').addEventListener('change', renderEmbedHelp);
+  E('eh-copy-snippet').addEventListener('click', () => copyText(E('eh-snippet').textContent, 'Embed code copied'));
+  E('eh-copy-llm').addEventListener('click', () => copyText(E('eh-llm').textContent, 'Instructions copied'));
   E('mint-btn').addEventListener('click', mintLink);
   E('mint-copy').addEventListener('click', () => copyText(E('mint-url').textContent, 'Booking link copied'));
 

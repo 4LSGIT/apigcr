@@ -47,6 +47,42 @@ The Booking Manager's **Link**, **Embed** and **Mint** buttons always copy the
 public short form, `4lsg.com/b/<slug>`, even though you are working in
 `app.4lsg.com`.
 
+### After booking: thank-you, then an optional redirect
+
+The visitor always sees the view's **thank-you message** first. If the view has
+a **Redirect after booking** URL (Thank-you section of the editor, `https://`
+only), the visitor is then sent there:
+
+- **On the booking page itself** (`4lsg.com/b/<slug>`), after a short pause.
+- **Embedded in another website**, the whole page moves, not just the box.
+  Browsers allow that reliably only when the website has the embed script from
+  **Embed help** (below). Without it the move usually works but can be blocked,
+  and then the visitor simply stays on the thank-you message. Nothing breaks.
+
+With no redirect set, the visitor stays on the thank-you message.
+
+### Putting a booking page on another website
+
+**Embed help** (next to **+ New View**) opens a popup for one view with two
+things to copy:
+
+- **Embed code** — the booking box plus a short script. Paste both where the
+  form should appear. The script moves the page to the view's redirect after a
+  booking, and listens only to `4lsg.com`.
+- **Instructions for an AI assistant** — the same thing as plain instructions,
+  for when an AI builds the page.
+
+The redirect URL lives in the view, not in the website's code, so changing it
+in the Booking Manager takes effect everywhere the view is embedded.
+
+### Counting bookings per page
+
+Every appointment booked through a view records which view it came from
+(`appts.appt_view_id`), whatever the slug is later renamed to. That is the
+column to count by. `appts.appt_source` only holds the view's **source tag**,
+and is empty when the view has none. Neither records which website the visitor
+was on, and page visits are not counted.
+
 ### Two ways a visitor is identified
 
 - **`public`** — anyone can book; the page collects name and contact details.
@@ -201,9 +237,39 @@ identifies contacts on video landing pages. The route path
 | `hook_id` | Fires a YisraHook on booking |
 | `confirm_sms`, `confirm_email`, `confirm_template` | Confirmations |
 | `title`, `subtitle`, `accent_color`, `logo_url`, `logo_link_url`, `thankyou_html`, `footer_html` | Branding |
+| `redirect_url` | Optional `https://` page to send the visitor to after the thank-you (NULL = stay) |
 
 Appointments booked through a view carry `appt_view_id`, which is how you tell
-self-booked appointments from staff-entered ones.
+self-booked appointments from staff-entered ones, and how bookings are counted
+per view.
+
+### Redirect after booking
+
+`POST /api/book/:slug` answers every success, real or the anti-abuse fake,
+through one function, `successBody` in `routes/booking.js`:
+`{ success, thankyou_html, redirect_url }`. `redirect_url` is https-validated on
+save (`routes/api.bookingViews.js`, refused past 500 characters, never
+truncated) and again here, so a hand-edited row cannot hand the widget an
+`http:` or `javascript:` target.
+
+`public/book.html` `afterBooked` runs once the thank-you is on screen:
+
+- **Framed:** posts `{ type: 'yc-booking', event: 'booked', slug, redirect_url }`
+  to `window.parent` (target `'*'`, no personal data), then sets
+  `window.top.location` straight away. A cross-origin frame may navigate the top
+  window only with recent user activation, which is why there is no delay; a
+  block throws or is ignored and the thank-you stays.
+- **Top level:** `location.assign(redirect_url)` after `REDIRECT_BEAT_MS`.
+
+`book.html` sets `<meta name="referrer" content="strict-origin">`: a prefill
+link's URL carries the contact's bearer token (`?c=`), and a redirect to a
+`4lsg.com` page would otherwise send that full URL as the Referer.
+
+The host-page half is the listener the Booking Manager's Embed help hands out
+(`embedListenerScript`): it accepts a message only from the landing origin
+(`firmData.publicUrl`), and only an `https://` target. A landing page on any
+other domain is cross-origin to the widget, so that listener is the guaranteed
+path there.
 
 ### API
 
