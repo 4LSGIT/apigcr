@@ -78,6 +78,28 @@ describe('the email', () => {
     }
   });
 
+  test('the HTML part: the same rows, one button into the pane, the plain link as a fallback', () => {
+    const { html } = T.buildEmail({ request, key, caps, now: Date.parse('2026-11-19T16:00:00Z') });
+    const link = 'https://app.4lsg.com/?open=tabPanel~adminReadonlyKeys~renew-57';
+    const buttons = html.match(/<a href="[^"]*" style="display:inline-block[^"]*">[^<]*<\/a>/g);
+    expect(buttons).toEqual([`<a href="${link}" style="display:inline-block;padding:10px 22px;background:#2563eb;border:1px solid #2563eb;border-radius:6px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none">Review &amp; renew key #34</a>`]);
+    expect(html).toContain(`Button not working? <a href="${link}"`);
+    for (const label of ['Key', 'Scopes', 'Expired', 'Last used', 'Reason', 'Asked for', 'From IP']) expect(html).toContain(`>${label}</td>`);
+    expect(html).toMatch(/font-weight:600;">finishing the docs review arc<\/td>/);
+    expect(html).toContain('4 hours — the max for this key is 3 days');
+  });
+
+  test('the HTML part escapes the label and the reason', () => {
+    const { html, text } = T.buildEmail({
+      request: { ...request, reason: 'need it <img src=x onerror=alert(1)> & "now"' },
+      key: { ...key, label: '<script>x</script>' }, caps,
+    });
+    expect(html).not.toMatch(/<script>|<img/);
+    expect(html).toContain('&lt;script&gt;x&lt;/script&gt;');
+    expect(html).toContain('need it &lt;img src=x onerror=alert(1)&gt; &amp; &quot;now&quot;');
+    expect(text).toContain('Reason:     need it <img src=x onerror=alert(1)> & "now"');   // text-only: emailService escapes
+  });
+
   test('fmtMinutes', () => {
     expect([30, 90, 240, 1440, 1800, 4320, 1441].map(T.fmtMinutes))
       .toEqual(['30 minutes', '1 hour 30 minutes', '4 hours', '1 day', '1 day 6 hours', '3 days', '1 day 1 minute']);
@@ -247,6 +269,48 @@ const pendingReq = (over = {}) => ({
 });
 
 describe('readonlyKeys.html — renewal requests', () => {
+  test('the boot is the script\'s LAST statement (a boot above a top-level const read it in its TDZ, twice)', () => {
+    const html = fs.readFileSync(path.join(ROOT, 'public', 'readonlyKeys.html'), 'utf8');
+    const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0]).toMatch(/\(function waitForParent\(\) \{\s*if \(P && P\.apiSend\) return init\(\);\s*setTimeout\(waitForParent, 100\);\s*\}\)\(\);\s*$/);
+    expect(scripts[0].match(/waitForParent\(\)/g)).toHaveLength(1);
+  });
+
+  test('waiting requests open; past ones folded in a CLOSED "Past requests (N)"', async () => {
+    const { d } = bootPane({ requests: [pendingReq(),
+      pendingReq({ id: 50, status: 'approved', decided_by_username: 'IT', decided_at: '2026-11-18T10:00:00Z', granted_ttl_min: 60, new_expires_at: '2026-11-18T11:00:00Z' }),
+      pendingReq({ id: 49, status: 'denied', decided_by_username: 'IT', decided_at: '2026-11-17T10:00:00Z' })] });
+    await flush(); await flush();
+    expect([...d.querySelectorAll('#rrList .rr-card')].map(c => c.id)).toEqual(['rr-57']);   // waiting ones only
+    const hist = d.getElementById('rrHistory');
+    expect([hist.style.display, hist.open]).toEqual(['', false]);
+    expect(d.getElementById('rrHistorySum').textContent).toBe('Past requests (2)');
+    expect([...d.querySelectorAll('#rrHistoryList .rr-card')].map(c => c.id)).toEqual(['rr-50', 'rr-49']);
+  });
+
+  test('nothing waiting → one line; no past → no fold; a full page says so', async () => {
+    let p = bootPane({ requests: [] });
+    await flush(); await flush();
+    expect(p.d.getElementById('rrList').textContent.trim()).toBe('No requests waiting.');
+    expect(p.d.getElementById('rrHistory').style.display).toBe('none');
+    const many = Array.from({ length: 50 }, (_, i) => pendingReq({ id: 100 + i, status: 'denied', decided_at: '2026-11-01T00:00:00Z' }));
+    p = bootPane({ requests: many });
+    await flush(); await flush();
+    expect(p.d.getElementById('rrHistorySum').textContent).toBe('Past requests (50+, newest shown)');
+  });
+
+  test('a link to a DECIDED request opens the fold', async () => {
+    const past = pendingReq({ id: 50, status: 'approved', decided_by_username: 'IT', decided_at: '2026-11-18T10:00:00Z', granted_ttl_min: 60, new_expires_at: '2026-11-18T11:00:00Z' });
+    let p = bootPane({ requests: [pendingReq(), past], held: 'renew-50' });
+    await flush(); await flush();
+    expect(p.d.getElementById('rrHistory').open).toBe(true);
+    expect(p.d.getElementById('rr-50').classList.contains('rr-focus')).toBe(true);
+    p = bootPane({ requests: [pendingReq(), past], held: 'renew-57' });   // a waiting one: the fold stays shut
+    await flush(); await flush();
+    expect(p.d.getElementById('rrHistory').open).toBe(false);
+  });
+
   test('a pending card: choices within the cap, the asked TTL preselected, the reason escaped', async () => {
     const { d } = bootPane({ requests: [pendingReq()] });
     await flush(); await flush();

@@ -127,16 +127,18 @@
   <h2>
     Renewal requests
     <button class="ghost" style="float:right;font-size:11px;padding:3px 8px;" onclick="loadRequests()">Refresh</button>
-    <label style="float:right;font-size:11px;margin-right:8px;color:var(--text-muted);">
-      <input type="checkbox" id="rrPendingOnly" onchange="loadRequests()"> pending only
-    </label>
   </h2>
   <div class="muted">
-    A session whose key expired asks its creator to renew it (POST /api/readonly/renewal-request). Approving
-    renews the same key — its secret does not change, so the session simply retries.
+    A session whose key expired asks its creator to renew it. Approving renews the same key — its secret
+    does not change, so the session simply retries.
   </div>
   <div id="rrNotice"></div>
-  <div id="rrList"><div class="muted" style="padding:12px 0;">Loading…</div></div>
+  <!-- Waiting requests stay open; decided ones fold away (closed by default) so the panel stays one line when nothing waits. -->
+  <div id="rrList"><div class="muted" style="padding:8px 0;">Loading…</div></div>
+  <details id="rrHistory" style="display:none;">
+    <summary id="rrHistorySum">Past requests</summary>
+    <div id="rrHistoryList"></div>
+  </details>
 </div>
 
 <div class="panel">
@@ -231,16 +233,10 @@
 
 <script>
   const P = window.parent;
-  // Declared before the boot below: init() runs SYNCHRONOUSLY when the shell's
-  // apiSend is already there, and reads these (a later `let` is still in its TDZ).
   let rrFocusId = null;      // the request the email link names (renew-<id>), or null
   const rrById = {};
+  const RR_LIMIT = 50;       // newest requests fetched; waiting ones sort first (the server's order)
 
-  // Wait for parent's apiSend to be ready, then init.
-  (function waitForParent() {
-    if (P && P.apiSend) return init();
-    setTimeout(waitForParent, 100);
-  })();
 
   function init() {
     // The email link's rest: ?open=tabPanel~adminReadonlyKeys~renew-<id> (routes/api.keyRenewalRequests.js).
@@ -608,15 +604,22 @@
   async function loadRequests() {
     const list = document.getElementById("rrList");
     try {
-      const pendingOnly = document.getElementById("rrPendingOnly").checked;
-      const data = await P.apiSend(`/api/readonly-keys/renewal-requests?status=${pendingOnly ? "pending" : "all"}&limit=50`, "GET");
+      const data = await P.apiSend(`/api/readonly-keys/renewal-requests?status=all&limit=${RR_LIMIT}`, "GET");
       let rows = data.requests || [];
+      const capped = rows.length >= RR_LIMIT;
       // The linked request is shown even when it is past the list's window or filtered out.
       if (rrFocusId && !rows.some(r => r.id === rrFocusId)) {
         const one = await P.apiSend(`/api/readonly-keys/renewal-requests?id=${rrFocusId}`, "GET");
         rows = (one.requests || []).concat(rows);
       }
-      list.innerHTML = rows.length ? rows.map(rrCard).join("") : `<div class="muted" style="padding:12px 0;">No renewal requests.</div>`;
+      const waiting = rows.filter(r => r.status === "pending"), past = rows.filter(r => r.status !== "pending");
+      list.innerHTML = waiting.length ? waiting.map(rrCard).join("") : `<div class="muted" style="padding:8px 0;">No requests waiting.</div>`;
+      const hist = document.getElementById("rrHistory");
+      hist.style.display = past.length ? "" : "none";
+      document.getElementById("rrHistorySum").textContent = `Past requests (${past.length}${capped ? "+, newest shown" : ""})`;
+      document.getElementById("rrHistoryList").innerHTML = past.map(rrCard).join("");
+      // a link to a decided request opens the fold; otherwise it stays as the user left it (closed at first)
+      if (rrFocusId && past.some(r => r.id === rrFocusId)) hist.open = true;
       const f = rrFocusId && document.getElementById(`rr-${rrFocusId}`);
       if (f && f.scrollIntoView) f.scrollIntoView({ block: "center" });
     } catch (err) {
@@ -680,6 +683,15 @@
       tbody.innerHTML = `<tr><td colspan="6" style="color:var(--danger);padding:20px;">Error: ${esc(err.message)}</td></tr>`;
     }
   }
+
+  // Boot LAST: init() runs SYNCHRONOUSLY when the shell's apiSend is already
+  // there, so every top-level const / let above must exist first — a boot
+  // placed above them read one in its TDZ and blanked the renewal panel, twice
+  // (key-renew-req). tests/keyRenewalRequests.test.js pins it as the last statement.
+  (function waitForParent() {
+    if (P && P.apiSend) return init();
+    setTimeout(waitForParent, 100);
+  })();
 </script>
 </body>
 </html>

@@ -2,7 +2,8 @@
 //
 // SESSION-KEY RENEWAL REQUESTS (key-renew-req, 2026-11-19). A Claude session
 // whose ycro_ key expired (or is about to) asks the key's CREATOR to renew it:
-// one email with a link into the Session Keys pane, where an SU approves with a
+// one email (an HTML "Review & renew" button, the plain link in the text part)
+// into the Session Keys pane, where an SU approves with a
 // TTL or denies. Approval runs the ordinary renew (routes/api.readonlyKeys.js
 // renewKey — one copy of the caps), so the key's secret never changes: the
 // session polls GET and retries with the same key once it reads `approved`.
@@ -94,32 +95,55 @@ function requestLink(id) {
   return `${base}/?open=tabPanel~adminReadonlyKeys~renew-${id}`;
 }
 
-/** The notification email — pure, plain text (emailService escapes it). */
+const escHtml = (s) => String(s ?? "")
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+/**
+ * The notification email — pure. `text` for plain-text clients; `html` the
+ * same rows in a table plus one button into the pane (inline styles, the
+ * lib/alerting digest-button idiom). Every value is escaped: the label is
+ * SU-set, the reason is the session's own words.
+ */
 function buildEmail({ request, key, caps, now = Date.now() }) {
   const expMs = new Date(key.expires_at).getTime();
   const scopes = scopesFromColumn(key.scopes);
   const asked = request.requested_ttl_min == null
     ? `the default (${fmtMinutes(caps.default_minutes)})`
     : fmtMinutes(request.requested_ttl_min);
+  const link = requestLink(request.id);
   const subject = `[YisraCase] Session key #${key.id} "${key.label}" asks to be renewed`;
+  const rows = [
+    ["Key", `#${key.id} "${key.label}" (${key.key_prefix}…)`],
+    ["Scopes", scopes === null ? "legacy (full historical surface)" : scopes.join(", ")],
+    [expMs <= now ? "Expired" : "Expires", fmtFirm(key.expires_at)],
+    ["Last used", fmtFirm(key.last_used_at)],
+    ["Reason", request.reason],
+    ["Asked for", `${asked} — the max for this key is ${fmtMinutes(caps.max_minutes)}`],
+    ["From IP", request.request_ip || "unknown"],
+  ];
+  const lead = "A Claude session asks you to renew a session key you minted.";
+  const foot = "The key's secret does not change: once approved, the session retries with the same key.";
   const text = [
-    "A Claude session asks you to renew a session key you minted.",
-    "",
-    `Key:        #${key.id} "${key.label}" (${key.key_prefix}…)`,
-    `Scopes:     ${scopes === null ? "legacy (full historical surface)" : scopes.join(", ")}`,
-    `${expMs <= now ? "Expired:   " : "Expires:   "} ${fmtFirm(key.expires_at)}`,
-    `Last used:  ${fmtFirm(key.last_used_at)}`,
-    `Reason:     ${request.reason}`,
-    `Asked for:  ${asked} — the max for this key is ${fmtMinutes(caps.max_minutes)}`,
-    `From IP:    ${request.request_ip || "unknown"}`,
+    lead, "",
+    ...rows.map(([l, v]) => `${(l + ":").padEnd(12)}${v}`),
     "",
     "Approve (choose the TTL) or deny — SU sign-in required:",
-    requestLink(request.id),
-    "",
-    "The key's secret does not change: once approved, the session retries with the same key.",
+    link, "",
+    foot,
     `Request #${request.id}.`,
   ].join("\n");
-  return { subject, text };
+  const td = "padding:3px 14px 3px 0;color:#6b7280;white-space:nowrap;vertical-align:top";
+  const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;line-height:1.45;color:#111827;max-width:560px">
+  <p style="margin:0 0 12px">${escHtml(lead)}</p>
+  <table cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:collapse;font-size:13px;margin:0 0 18px">
+${rows.map(([l, v]) => `    <tr><td style="${td}">${escHtml(l)}</td><td style="padding:3px 0;${l === "Reason" ? "font-weight:600;" : ""}">${escHtml(v)}</td></tr>`).join("\n")}
+  </table>
+  <a href="${escHtml(link)}" style="display:inline-block;padding:10px 22px;background:#2563eb;border:1px solid #2563eb;border-radius:6px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none">Review &amp; renew key #${escHtml(key.id)}</a>
+  <p style="margin:14px 0 0;font-size:12px;color:#6b7280">Opens the request in YisraCase — choose the TTL, then Approve or Deny (SU sign-in required). ${escHtml(foot)} Request #${escHtml(request.id)}.</p>
+  <p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Button not working? <a href="${escHtml(link)}" style="color:#6b7280">${escHtml(link)}</a></p>
+</div>`;
+  return { subject, text, html };
 }
 
 /** The session's view of a request row. */
@@ -155,10 +179,10 @@ async function notify(db, request, key, caps) {
     }
     const from = ((await getSetting(db, "alert_from_email")) || "").trim() || cfg("email_automations") || "";
     if (!from) throw new Error("no sender configured (alert_from_email setting / email_automations / AUTO_EMAIL env)");
-    const { subject, text } = buildEmail({ request, key, caps });
+    const { subject, text, html } = buildEmail({ request, key, caps });
     // Lazy require — circular-dep safety convention (see lib/alerting.js).
     const emailService = require("../services/emailService");
-    await emailService.sendEmail(db, { from, to, subject, text });
+    await emailService.sendEmail(db, { from, to, subject, text, html });
   } catch (err) {
     error = String(err.message || err).slice(0, 500);
   }

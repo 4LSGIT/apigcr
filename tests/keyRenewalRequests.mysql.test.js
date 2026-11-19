@@ -170,6 +170,7 @@ d('key renewal requests on real MySQL', () => {
     expect(mockSent[0].text).toContain('Reason:     finishing the docs review arc');
     expect(mockSent[0].text).toContain('Asked for:  4 hours — the max for this key is 3 days');
     expect(mockSent[0].text).toContain(`/?open=tabPanel~adminReadonlyKeys~renew-${rows[0].id}`);
+    expect(mockSent[0].html).toContain(`<a href="https://app.4lsg.com/?open=tabPanel~adminReadonlyKeys~renew-${rows[0].id}" style="display:inline-block`);
     const after = await keyRow(k.id);
     expect([after.use_count, after.last_used_at.getTime()]).toEqual([before.use_count, before.last_used_at.getTime()]);
     const a = (await audits('renewal_requested')).pop();

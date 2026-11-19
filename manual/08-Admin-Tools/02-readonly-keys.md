@@ -155,8 +155,9 @@ POST /api/readonly/renewal-request
 
 The person who **created** the key gets an email naming the key, when it expired,
 when it was last used, the reason, the lifetime asked for and the most it may get,
-and a link. The link opens this pane at that request (sign in as an SU if asked).
-Pick the lifetime and press **Approve** — or **Deny**.
+and a **Review & renew** button. The button opens this pane at that request (sign in
+as an SU if asked); the lifetime asked for is already picked — press **Approve**, or
+**Deny**.
 
 Approving renews the same key, so its secret doesn't change: the session checks
 `GET /api/readonly/renewal-request` and, once it reads `approved`, carries on with
@@ -169,8 +170,10 @@ so it can find it without having read this page.
 - A **child key** can't ask — its manager key renews it.
 - If the email fails, the request still waits in the pane, marked so.
 
-The **Renewal requests** panel at the top of this pane lists every request,
-waiting ones first, with who decided and what was granted.
+The **Renewal requests** panel at the top of this pane shows the requests that are
+waiting. Decided ones fold into **Past requests**, closed until you open it (the
+newest 50, with who decided and what was granted); following an email's button to a
+request that was already decided opens it there.
 
 ## Manager keys and child keys
 
