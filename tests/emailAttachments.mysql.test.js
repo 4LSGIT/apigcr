@@ -1148,23 +1148,22 @@ maybe('email attachments S1/S2 on real MySQL', () => {
       expect(JSON.stringify(about)).toContain('PVXC1RMM');
     });
 
-    test('docs_reviewer (2026-11-19): the setting\'s active user with an email, for every docs door; blank / inactive / no email → set:false', async () => {
+    test('docsReviewerService (2026-11-19): the setting\'s active user with an email, for every docs door; blank / inactive / no email → null', async () => {
       const reviewer = require('../services/docsReviewerService');
       expect(await reviewer.resolveReviewer(pool)).toEqual({ user_id: SB, name: 'Shana', email: 'sb@4lsg.com' });
-      const r = await fns.docs_reviewer({ output_var: 'reviewer' }, pool);
-      expect(r.output).toEqual({ set: true, user_id: SB, name: 'Shana', email: 'sb@4lsg.com' });
-      expect(r.set_vars.reviewer).toBe(r.output);
       SET = {};
-      expect((await fns.docs_reviewer({}, pool)).output).toEqual({ set: false, user_id: null, name: null, email: null });
+      expect(await reviewer.resolveReviewer(pool)).toBeNull();
       SET = { email_attachments_reviewer: String(RG) };
       await q("UPDATE users SET user_auth = 'inactive' WHERE user = ?", [RG]);
-      expect((await fns.docs_reviewer({}, pool)).output.set).toBe(false);
+      expect(await reviewer.resolveReviewer(pool)).toBeNull();
       SET = { email_attachments_reviewer: String(FRED) };
       await q("UPDATE users SET email = '' WHERE user = ?", [FRED]);
-      expect((await fns.docs_reviewer({}, pool)).output.set).toBe(false);
-      // Comms still reaches the same resolver
+      expect(await reviewer.resolveReviewer(pool)).toBeNull();
+      // Comms still reaches the same resolver; the docs@ workflow reads the same setting
+      // with the generic pair get_setting → lookup_user (no function of its own).
       expect(comms.resolveReviewer).toBeInstanceOf(Function);
       expect(await comms.resolveReviewer(pool)).toBeNull();
+      expect(fns.docs_reviewer).toBeUndefined();
     });
 
     test('the review notice: one per batch per sender, to the reviewer — not when the reviewer filed them, not without a reviewer', async () => {

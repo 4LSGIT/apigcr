@@ -3,7 +3,8 @@
 /**
  * THE DOCS REVIEWER — the one person told when client documents arrive, by
  * any door: the docReq page, the client portal, an email to docs@ (through
- * the docs@ workflow's `docs_reviewer` step), or a person filing from Comms.
+ * the docs@ workflow, which reads the same setting with get_setting → lookup_user),
+ * or a person filing from Comms.
  * Fred, 2026-11-19: one recipient setting for all four, `email_attachments_reviewer`
  * (lib/settingsRegistry.js), set to SB. The retired `portal_docs_notify_to`
  * (a bare address) was the upload pages' own recipient until then.

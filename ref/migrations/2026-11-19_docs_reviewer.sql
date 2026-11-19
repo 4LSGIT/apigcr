@@ -16,12 +16,16 @@
 -- row below is read the moment the new code is up.
 --
 -- Then, by hand in the workflow builder (not SQL — the builder owns the step
--- rows): workflow 55 "docs@ intake", step 1 — function `docs_reviewer`,
--- output_var `reviewer`, and set_vars
---   notify_email   {{reviewer.email}}
---   notify_user_id {{reviewer.user_id}}
--- replacing the hardcoded address. Steps 4, 8, 10, 14 keep reading
--- {{notify_email}} unchanged.
+-- rows): workflow 55 "docs@ intake" — replace the hardcoded address in step 1
+-- with the generic pair:
+--   step 1  get_setting   key: email_attachments_reviewer   output_var: reviewer_id
+--   step 2  lookup_user   user: {{reviewer_id}}  match: id  missing_ok: true
+--                         fields: user,user_name,email,user_auth  output_var: reviewer
+--           set_vars  notify_email {{reviewer.email}}   notify_user_id {{reviewer.user}}
+-- The later steps (send notice / digest) keep reading {{notify_email}}
+-- unchanged. missing_ok keeps a blank or stale setting from stopping the
+-- filing steps; a disabled user still resolves (user_auth tells) — the send
+-- step's `to` is then whatever the row holds, as with any staff address.
 
 INSERT INTO app_settings (`key`, `value`, is_secret)
 VALUES ('email_attachments_reviewer', '5', 0)

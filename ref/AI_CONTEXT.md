@@ -3624,8 +3624,8 @@ logs only what a run newly filed; `refileDigest` writes one row per burst.
 **One reviewer, one notice shape (2026-11-19):** every door notifies the user in
 `email_attachments_reviewer` (`services/docsReviewerService.resolveReviewer`;
 SB; `portal_docs_notify_to` retired — ref/migrations/2026-11-19_docs_reviewer.sql;
-the docs@ workflow's step 1 is the `docs_reviewer` function, set_vars
-notify_email = {{reviewer.email}}). The two upload pages share
+the docs@ workflow reads it with the generic pair get_setting → lookup_user,
+set_vars notify_email = {{reviewer.email}} — no function of its own). The two upload pages share
 `services/clientUploadCompletionService.completeClientUpload` (post-200:
 inspectUploadDestination → registerLandedInFolder, which now returns
 `folder_path` → `emailAttachmentNotice.render({kind:'upload'})` — the email
