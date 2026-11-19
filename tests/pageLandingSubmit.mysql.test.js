@@ -15,7 +15,11 @@
  *   - THE REASON FOR THE CHANGE: a landing row whose code filter finds the
  *     sandbox busy is RE-QUEUED by the drain and delivered on the next one.
  *     On the old detached executeHook path that BUSY was final — the
- *     execution read 'failed' and the lead was never delivered.
+ *     execution read 'failed' and the lead was never delivered;
+ *   - CATCH-ALL (Fred, 2026-11-19): a page whose hook is switched off
+ *     (active = 0) queues the lead on `_catchall` — hook_id the catch-all's,
+ *     slug the page's hook slug, `_unmatched: true` in raw_input — and the
+ *     drain delivers it to the catch-all's target.
  * Real route, real hookService, real guest engine, real drain. Mocked at the
  * boundary: actionDispatchers.dispatch (a recorder — nothing starts a
  * workflow) and taskQueue.enqueueHookExecutionDispatch (a recorder — no Cloud
@@ -163,6 +167,31 @@ maybe('a landing-page submission on real MySQL', () => {
       const second = await hookDrain.drainOne(pool, queued.id);
       expect(second).toEqual({ processed: 1, results: [{ id: queued.id, status: 'delivered' }] });
       expect(mockDispatched).toEqual([{ type: 'workflow', target_id: 50, output: expect.objectContaining({ name: 'Bo Ray', _page: 'ch7' }) }]);
+    } finally { warn.mockRestore(); log.mockRestore(); }
+  });
+
+  test('a switched-off page hook: the lead is queued on _catchall under the page hook slug and the drain delivers it there', async () => {
+    const hookDrain = require('../lib/hookDrain');
+    await q(`UPDATE hooks SET active = 0 WHERE id = 5`);
+    await q(`INSERT INTO hooks (id, slug, name, auth_type) VALUES (1, '_catchall', 'catch-all', 'none')`);
+    await q(`INSERT INTO hook_targets (id, hook_id, target_type, name, position, config) VALUES (10, 1, 'workflow', 'review', 0, ?)`,
+      [JSON.stringify({ workflow_id: 9 })]);
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const res = await submit('ch7', 'name=Di+Fox&_unmatched=0');
+      expect(res.status).toBe(303);
+      expect(res.headers.get('location')).toBe('/p/thanks');
+      const rows = await q('SELECT id, hook_id, slug, status, claimed_at, raw_input FROM hook_executions');
+      expect(rows).toHaveLength(1);
+      const [row] = rows;
+      expect(row).toMatchObject({ hook_id: 1, slug: 'lp-ch7', status: 'received', claimed_at: null });
+      const raw = typeof row.raw_input === 'string' ? JSON.parse(row.raw_input) : row.raw_input;
+      expect(raw).toMatchObject({ name: 'Di Fox', _page: 'ch7', _unmatched: true });
+      expect(mockRung).toEqual([row.id]);
+
+      expect(await hookDrain.drainOne(pool, row.id)).toEqual({ processed: 1, results: [{ id: row.id, status: 'delivered' }] });
+      expect(mockDispatched).toEqual([{ type: 'workflow', target_id: 10, output: expect.objectContaining({ name: 'Di Fox', _unmatched: true }) }]);
     } finally { warn.mockRestore(); log.mockRestore(); }
   });
 

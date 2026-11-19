@@ -24,8 +24,11 @@
  *      row of ours, no doorbell.
  *   6. Capture mode → executeHook awaited (the capture is a receive-time
  *      decision a queued row would skip).
- *   7. Missing/inactive hook, honeypot, rate limit, no hook_slug → nothing
- *      recorded, still the 303.
+ *   7. CATCH-ALL (Fred, 2026-11-19): a missing/inactive hook falls back to
+ *      `_catchall` — the row keeps the page's hook slug, the envelope gains
+ *      `_unmatched: true`; no `_catchall` either → nothing recorded. A form
+ *      cannot set `_unmatched` on a matched submission.
+ *   7b. Honeypot, rate limit, no hook_slug → nothing recorded, still the 303.
  *   8. The landing-host paths (root slug, host+path pin) queue the same way.
  *
  * Run: npx jest tests/pageLanding.submitQueue.test.js
@@ -48,6 +51,9 @@ const firmConfig = require('../lib/firmConfig');
 const pageService = require('../services/pageService');
 
 const HOOK = { id: 31, slug: 'lp-ch7', auth_type: 'none', capture_mode: 'off', targets: [] };
+const CATCHALL = { id: 1, slug: '_catchall', auth_type: 'none', capture_mode: 'off', targets: [] };
+// getHookBySlug stand-in: only the slugs listed resolve (null = missing/inactive)
+const hooksBySlug = (map) => async (_db, slug) => (Object.prototype.hasOwnProperty.call(map, slug) ? map[slug] : null);
 
 const PAGES = {
   ch7: { id: 1, slug: 'ch7', host: null, path: null, status: 'live', hook_slug: 'lp-ch7', thankyou_url: 'thanks', html: '<h1>CH7</h1>' },
@@ -229,18 +235,62 @@ describe('the receiver rules this path keeps', () => {
   });
 });
 
-describe('nothing to record — still the 303', () => {
-  test('missing/inactive hook: nothing recorded, logged as an error', async () => {
-    hookService.getHookBySlug.mockResolvedValue(null);
+describe('catch-all — a missing or inactive hook keeps the lead', () => {
+  test('falls back to _catchall: queued under the page hook slug, marked _unmatched, rung', async () => {
+    hookService.getHookBySlug.mockImplementation(hooksBySlug({ _catchall: CATCHALL }));
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const res = await post('/p/ch7', 'name=Lost+Lead');
+      expect(res.status).toBe(303);
+      expect(res.headers.get('location')).toBe('/p/thanks');
+      expect(hookService.getHookBySlug.mock.calls.map(c => c[1])).toEqual(['lp-ch7', '_catchall']);
+      expect(hookService.recordExecution).toHaveBeenCalledTimes(1);
+      const [, rhook, rslug, input] = hookService.recordExecution.mock.calls[0];
+      expect(rhook).toBe(CATCHALL);
+      expect(rslug).toBe('lp-ch7'); // the row is reviewable under the page's own hook slug
+      expect(input).toMatchObject({ name: 'Lost Lead', _page: 'ch7', _unmatched: true });
+      expect(taskQueue.enqueueHookExecutionDispatch).toHaveBeenCalledWith(777);
+      expect(warn.mock.calls.some(a => /page "ch7": hook "lp-ch7" is missing or inactive — submission routed to _catchall/.test(a[0]))).toBe(true);
+    } finally { warn.mockRestore(); }
+  });
+
+  test('no _catchall either: nothing recorded, logged as an error', async () => {
+    hookService.getHookBySlug.mockImplementation(hooksBySlug({}));
     const err = jest.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const res = await post('/p/ch7');
       expect(res.status).toBe(303);
       expect(hookService.recordExecution).not.toHaveBeenCalled();
       expect(hookService.executeHook).not.toHaveBeenCalled();
-      expect(err.mock.calls.some(a => /page "ch7": hook "lp-ch7" is missing or inactive — submission NOT recorded/.test(a[0]))).toBe(true);
+      expect(taskQueue.enqueueHookExecutionDispatch).not.toHaveBeenCalled();
+      expect(err.mock.calls.some(a => /page "ch7": hook "lp-ch7" is missing or inactive and there is no _catchall hook — submission NOT recorded/.test(a[0]))).toBe(true);
     } finally { err.mockRestore(); }
   });
+
+  test('a form cannot mark a matched submission _unmatched', async () => {
+    await post('/p/ch7', 'name=X&_unmatched=1');
+    const input = hookService.recordExecution.mock.calls[0][3];
+    expect(hookService.recordExecution.mock.calls[0][1]).toBe(HOOK);
+    expect(input).not.toHaveProperty('_unmatched');
+  });
+
+  test("kill switch '0' + missing hook: the detached call runs the catch-all under the page hook slug", async () => {
+    process.env.HOOK_ASYNC_ACK = '0';
+    firmConfig._test({ resetCache: true });
+    hookService.getHookBySlug.mockImplementation(hooksBySlug({ _catchall: CATCHALL }));
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect((await post('/p/ch7')).status).toBe(303);
+      const [, slug, input, opts] = hookService.executeHook.mock.calls[0];
+      expect(slug).toBe('lp-ch7');
+      expect(opts).toEqual({ hook: CATCHALL });
+      expect(input._unmatched).toBe(true);
+      expect(hookService.recordExecution).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
+  });
+});
+
+describe('nothing to record — still the 303', () => {
 
   test('honeypot filled: silent drop', async () => {
     const res = await post('/p/ch7', 'name=bot&website=spam.example');

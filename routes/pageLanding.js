@@ -35,7 +35,10 @@
  *   Hook filters/mappers for landing pages therefore use bare paths
  *   ("website", "_page"), not "body.website". A hook wired to a landing page
  *   that ALSO receives direct POSTs at /hooks/<slug> will see two different
- *   shapes — don't share slugs between the two ingest styles.
+ *   shapes — don't share slugs between the two ingest styles. The one
+ *   deliberate exception is `_catchall`: a submission whose page hook is
+ *   missing or inactive lands there FLAT, marked `_unmatched: true`, beside
+ *   the receiver's unmatched webhooks (see queueSubmission).
  *
  * Anti-spam (this slice, all in-memory / per-instance):
  *   - Honeypot: non-empty `website` field → silently drop, still 303.
@@ -135,6 +138,9 @@ function thankyouLocation(page, req) {
   return base + '?submitted=1';
 }
 
+// The receiver's reserved fallback slug (routes/api.hooks.js, lib/hookDrain.js).
+const CATCHALL_SLUG = '_catchall';
+
 /**
  * Hand a submission to the page's hook the way the ack-first receiver hands
  * it a webhook (routes/api.hooks.js, 2026-10-27): write the hook_executions
@@ -153,16 +159,31 @@ function thankyouLocation(page, req) {
  *   - capture mode runs synchronously (it is one UPDATE + INSERT; the hook
  *     needs the receive-time decision, which a queued row skips);
  *   - `hook_async_ack` = '0' is the rollback: the old detached call;
- *   - no dedup (a form post has no provider event id).
- * A missing or inactive hook stores nothing, as before — logged as an error.
+ *   - no dedup (a form post has no provider event id);
+ *   - the CATCH-ALL (Fred, 2026-11-19): a page whose hook is missing or
+ *     inactive falls back to the reserved `_catchall` hook, so the lead is
+ *     stored and reviewable instead of dropped. The row keeps the page's
+ *     hook_slug (recordExecution stores the slug argument), the envelope gains
+ *     `_unmatched: true` — the flat shape's version of the receiver's
+ *     meta.unmatched — and the drain resolves the row the same way
+ *     (lib/hookDrain: slug first, then `_catchall`). A form cannot set
+ *     `_unmatched` itself on a matched submission. No `_catchall` either →
+ *     nothing stored, logged as an error.
  * Never throws past the caller's catch; the visitor always gets the 303.
  */
 async function queueSubmission(db, page, input) {
   const slug = page.hook_slug;
-  const hook = await hookService.getHookBySlug(db, slug);
+  let hook = await hookService.getHookBySlug(db, slug);
+  const { _unmatched: _ignored, ...fields } = input;
+  input = fields;
   if (!hook) {
-    console.error(`[pages] page "${page.slug}": hook "${slug}" is missing or inactive — submission NOT recorded`);
-    return;
+    hook = await hookService.getHookBySlug(db, CATCHALL_SLUG);
+    if (!hook) {
+      console.error(`[pages] page "${page.slug}": hook "${slug}" is missing or inactive and there is no ${CATCHALL_SLUG} hook — submission NOT recorded`);
+      return;
+    }
+    console.warn(`[pages] page "${page.slug}": hook "${slug}" is missing or inactive — submission routed to ${CATCHALL_SLUG}`);
+    input = { ...input, _unmatched: true };
   }
   if (hook.capture_mode === 'capturing') {
     await hookService.executeHook(db, slug, input, { hook });

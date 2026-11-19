@@ -2567,7 +2567,9 @@ cron (`sweepStale` + `drainBatch`, after a 20 s doorbell grace) when the
 doorbell never landed. Landing-page form posts take the same record + doorbell
 path before their 303 (`routes/pageLanding.js` `queueSubmission`, 11-19: the
 FLAT envelope, no dedup, capture as here; `hook_async_ack`='0' falls back to
-the old detached executeHook; a missing or inactive hook stores nothing). The row is the scheduling authority, the task a
+the old detached executeHook; a missing or inactive hook falls back to
+`_catchall` like the receiver — the row keeps the page's hook slug, the
+envelope gains `_unmatched: true`). The row is the scheduling authority, the task a
 doorbell — the `domain_event_queue` pattern (§T1). Claim = ONE conditional
 UPDATE (`status='received' AND claimed_at IS NULL`, `attempts+1`); Cloud
 Tasks is at-least-once and the loser does nothing. Synchronous runs

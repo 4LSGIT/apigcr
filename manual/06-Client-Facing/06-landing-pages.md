@@ -122,9 +122,17 @@ Before the visitor is redirected, the submission is saved in the hook's
 webhooks. The hook's filter, transform and targets run a moment later, in the
 background. If the automation is briefly too busy to run a code filter or
 transform, the submission is retried automatically (up to three tries), so a
-lead isn't lost to a busy moment. If the page's hook has been deleted or
-switched off, the submission is **not** saved anywhere — keep a live page's
-hook active.
+lead isn't lost to a busy moment.
+
+If the page's hook has been deleted or switched off, the submission goes to
+the firm's **catch-all hook** (`_catchall`, under **Automation → Hooks**)
+instead, the same place unmatched webhooks land, and shows up in that hook's
+**Logs**. Open the entry: its raw input names the page (`_page`) and carries
+`_unmatched: true`. A landing submission has a different shape from a webhook
+(no `body` or `meta`), so if the catch-all's filter or alerts read those
+fields, the submission is stored but may not alert anyone — check the Logs.
+Only if there is no active catch-all hook either is the submission lost.
+Either way, fix or re-enable the page's hook.
 
 ### Custom domains can take a moment to recognize a new page
 
