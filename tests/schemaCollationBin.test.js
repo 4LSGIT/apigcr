@@ -48,6 +48,7 @@ const BIN_COLUMNS = [
   // Email attachments (2026-11-06) — the refile handle; Dropbox ids are
   // case-sensitive. ref/migrations/2026-11-06_mail_attachment_filings.sql.
   ['mail_attachment_filings', 'dropbox_id'],
+  ['client_upload_batches','batch_key'],
 ];
 
 /**
