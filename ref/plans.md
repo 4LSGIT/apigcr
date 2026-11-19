@@ -2680,3 +2680,28 @@ the model at didOpen and merge unknown-to-the-dialog keys on save the way
 keptOn does. Related: after a FAILED defs fetch, a save keeps the turned-on
 cf keys (keptOn) but drops them from cols_order — they reappear at the right
 edge; position-only loss, accepted.
+
+## From the booking public-links + thank-you arc (2026-11-19, arc closed) — deferred
+
+- **Per-site booking stats.** Bookings count per view by `appts.appt_view_id`
+  (manual 06-Client-Facing/04 "Counting bookings per page"). Not recorded:
+  which website sent the visitor, and page visits, so there is no
+  visits-to-bookings rate. A view per site is today's answer; a referrer/UTM
+  column on the appointment, or a page-view beacon like YisraVideo's, if Fred
+  wants funnel numbers.
+- **One embed per view per page.** The embed code's iframe id is
+  `yc-booking-<slug>`, so a second box for the same view on one page is never
+  heard. Fix shape if it bites: a per-copy suffix shared by the snippet and
+  the AI brief.
+- **Embed help popup is not a mobile-survey surface.** Checked once at
+  320/375/1200 with a one-off script (2026-11-19); a `panel:bookingDiv:embed-help`
+  sub-surface in `scripts/mobile-survey/survey.js` (fixture views with a long
+  title and redirect) would keep it checked.
+- **Embed codes and a change of public host.** The host script matches the
+  message's origin to its iframe's `src`; after a `landing_hosts[0]` change an
+  old code's iframe redirects and never matches (fails safe: the visitor stays
+  on the thank-you). Re-copy codes from Embed help after any such change.
+- **A link may never name its post-booking target.** `?ty=` was built and
+  dropped: honoured from anywhere it is an open redirect, and a referrer rule
+  still passes through redirectors (X's `t.co` becomes the referrer). Don't
+  re-add it without a firm-curated allowlist.
