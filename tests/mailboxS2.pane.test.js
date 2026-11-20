@@ -753,15 +753,15 @@ describe('comms hub pane', () => {
     expect(doc.getElementById('tab-email-n').textContent).toBe('3');
     // one row per readable box: ticked, its colour, name + address, unread —
     // D.6: the R·S·M badge is gone; only a box the caller cannot SEND from is tagged
-    expect(bitems().map((b) => [b.getAttribute('aria-pressed'), b.querySelector('.nm').textContent, (b.querySelector('.acc') || {}).textContent || null, (b.querySelector('.cnt') || {}).textContent]))
+    expect(bitems().map((b) => [b.querySelector('.btick').getAttribute('aria-pressed'), b.querySelector('.nm').textContent, (b.querySelector('.acc') || {}).textContent || null, (b.querySelector('.cnt') || {}).textContent]))
       .toEqual([['true', 'Billingbilling@firm.test', null, '2'], ['true', 'intake@firm.test', 'read-only', '1']]);
     expect(bitems()[1].querySelector('.mdot').style.getPropertyValue('--mbc-l')).toBe(MC.variants('#fff3bf').light);
     // untick a box: the list narrows (same as the picker), the picker agrees, the view is now "unsaved"
-    bitems()[1].click();
+    bitems()[1].querySelector('.btick').click();
     await tick(window);
     expect(lastList()).toMatchObject({ mailbox_ids: '1', client_only: 1, has_files: 1 });
     expect(doc.querySelector('#mb-panel input[data-id="2"]').checked).toBe(false);
-    expect(bitems().map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'false']);
+    expect(bitems().map((b) => b.querySelector('.btick').getAttribute('aria-pressed'))).toEqual(['true', 'false']);
     expect(vitems().some((b) => b.classList.contains('on'))).toBe(false);
     expect(doc.getElementById('rail-dirty').textContent).toBe('Unsaved changesSave as viewUpdate “Client docs”');
     // Update writes the screen into the active view; the rail is clean again
@@ -1187,8 +1187,136 @@ describe('alias boxes in the totals (S3-R)', () => {
     expect(doc.querySelector('#rail-views .vitem').textContent).toMatch(/All mail\s*3$/);
     expect(doc.getElementById('mb-label').textContent).toBe('All mailboxes (3)');
     // the alias alone (its parent unticked) is its own list: it counts in full
-    for (const id of [2, 8]) doc.querySelector(`#rail-boxes .bitem[data-id="${id}"]`).click();
+    for (const id of [2, 8]) doc.querySelector(`#rail-boxes .bitem[data-id="${id}"] .btick`).click();
     await tick(window);
     expect(doc.getElementById('mb-label').textContent).toMatch(/\(5\)$/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fred, 2026-11-20: a quick way to read ONE mailbox — a mailbox row is two
+// controls: the tick (+ dot) combines as before, the NAME shows that box
+// alone (the name of the box already alone brings every box back) — in the
+// rail and the picker panel; and a way to put the open message away (the × in
+// the conversation head, wide screens; phones keep Back).
+describe('comms hub: a mailbox name shows that box alone + close the open message', () => {
+  const MB3 = [...MB, { id: 3, address: 'shoshana@mdbl.test', display_name: null, color: null, active: true, can_send: true, can_manage: false, inbox_total: 4, inbox_unread: 4 }];
+  const three = (over = {}) => standard({ 'GET /api/mail/mailboxes': () => ({ mailboxes: fresh(MB3), viewer: { su: false, role: null }, inbox_unread_distinct: 7 }), ...over });
+
+  test('rail: the name shows that box alone, again → every box; the tick still combines', async () => {
+    const { window, doc, calls, errors } = await boot({ handler: three() });
+    const lastList = () => calls.filter((c) => c.url === '/api/mail/messages').pop().payload;
+    const pressedNow = () => [...doc.querySelectorAll('#rail-boxes .btick')].map((b) => b.getAttribute('aria-pressed'));
+    const nameOf = (id) => doc.querySelector(`#rail-boxes .bitem[data-id="${id}"] .bname`);
+    expect(doc.querySelector('#rail-boxes .bitem[data-id="2"] .btick').getAttribute('aria-label')).toBe('Include intake@firm.test');
+    expect(nameOf(2).title).toBe('Show only intake@firm.test');
+    nameOf(2).click();
+    await tick(window);
+    expect(lastList().mailbox_ids).toBe('2');
+    expect(pressedNow()).toEqual(['false', 'true', 'false']);
+    expect(doc.getElementById('mb-label').textContent).toBe('intake@firm.test (1)');
+    expect(nameOf(2).title).toBe('Show every mailbox again');
+    // from one box straight to another
+    nameOf(3).click();
+    await tick(window);
+    expect(lastList().mailbox_ids).toBe('3');
+    expect(pressedNow()).toEqual(['false', 'false', 'true']);
+    // the tick still combines, as before
+    doc.querySelector('#rail-boxes .bitem[data-id="1"] .btick').click();
+    await tick(window);
+    expect(lastList().mailbox_ids).toBe('1,3');
+    // a name inside a combination: that box alone (not "every box")
+    nameOf(1).click();
+    await tick(window);
+    expect(lastList().mailbox_ids).toBe('1');
+    // the name of the box already alone: every box again
+    nameOf(1).click();
+    await tick(window);
+    expect(lastList()).not.toHaveProperty('mailbox_ids'); // every readable box = no list sent
+    expect(pressedNow()).toEqual(['true', 'true', 'true']);
+    expect(doc.getElementById('mb-label').textContent).toMatch(/^All mailboxes/);
+    expect(errors).toEqual([]);
+  });
+
+  test('picker panel: the name shows that box alone and closes the panel; the checkbox still combines', async () => {
+    const { window, doc, calls } = await boot({ handler: three() });
+    const lastList = () => calls.filter((c) => c.url === '/api/mail/messages').pop().payload;
+    const checks = () => [...doc.querySelectorAll('#mb-panel input[data-id]')].map((i) => i.checked);
+    doc.getElementById('mb-btn').click();
+    expect(doc.getElementById('mb-panel').hidden).toBe(false);
+    expect(doc.querySelector('#mb-panel input[data-id="1"]').getAttribute('aria-label')).toBe('Include Billing — billing@firm.test');
+    doc.querySelector('#mb-panel .mb-name[data-id="1"]').click();
+    await tick(window);
+    expect(lastList().mailbox_ids).toBe('1');
+    expect(doc.getElementById('mb-panel').hidden).toBe(true);
+    expect(doc.getElementById('mb-btn').getAttribute('aria-expanded')).toBe('false');
+    expect(checks()).toEqual([true, false, false]);
+    // the checkbox (not the name) adds a box back
+    doc.getElementById('mb-btn').click();
+    const b3 = doc.querySelector('#mb-panel input[data-id="3"]');
+    b3.checked = true; b3.dispatchEvent(new window.Event('change'));
+    await tick(window);
+    expect(lastList().mailbox_ids).toBe('1,3');
+    expect(doc.getElementById('mb-panel').hidden).toBe(false);
+    // the name of the box already alone → every box
+    doc.querySelector('#mb-panel .mb-name[data-id="3"]').click();
+    await tick(window);
+    doc.getElementById('mb-btn').click();
+    doc.querySelector('#mb-panel .mb-name[data-id="3"]').click();
+    await tick(window);
+    expect(lastList()).not.toHaveProperty('mailbox_ids'); // every readable box = no list sent
+    expect(checks()).toEqual([true, true, true]);
+  });
+
+  test('one readable mailbox: its name changes nothing', async () => {
+    const { window, doc, calls } = await boot({ handler: standard({ 'GET /api/mail/mailboxes': () => ({ mailboxes: fresh([MB[0]]), viewer: { su: false, role: null } }) }) });
+    const n = calls.filter((c) => c.url === '/api/mail/messages').length;
+    doc.querySelector('#rail-boxes .bname').click();
+    await tick(window);
+    expect(calls.filter((c) => c.url === '/api/mail/messages').length).toBe(n);
+    expect(doc.querySelector('#rail-boxes .btick').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  test('× closes the open message: empty pane, no row selected, head + related strip hidden', async () => {
+    const { window, doc, errors } = await boot({ handler: standard({ 'GET /api/mail/messages/11/related': () => ({ contacts: [{ contact_id: 5, name: 'Ann', cases: [] }] }) }) });
+    doc.querySelector('#msg-list .msg[data-id="11"]').click();
+    await tick(window, 80);
+    expect(doc.getElementById('thread-head').hidden).toBe(false);
+    expect(doc.querySelector('#msg-list .msg.selected').dataset.id).toBe('11');
+    expect(doc.getElementById('thread-empty')).toBeNull();
+    doc.getElementById('close-thread').click();
+    expect(doc.getElementById('thread-head').hidden).toBe(true);
+    expect(doc.getElementById('thread-empty').textContent).toBe('Select a message to read it.');
+    expect(doc.querySelectorAll('#msg-list .msg.selected').length).toBe(0);
+    expect(doc.getElementById('thread-related').hidden).toBe(true);
+    expect(doc.getElementById('email').classList.contains('show-thread')).toBe(false);
+    // the list re-renders without bringing the selection back
+    doc.getElementById('refresh-btn').click();
+    await tick(window, 80);
+    expect(doc.querySelectorAll('#msg-list .msg.selected').length).toBe(0);
+    // and a message opens again normally
+    doc.querySelector('#msg-list .msg[data-id="12"]').click();
+    await tick(window, 80);
+    expect(doc.getElementById('thread-head').hidden).toBe(false);
+    expect(doc.getElementById('thread-body').textContent).toMatch(/From: a@b\.test/);
+    expect(errors).toEqual([]);
+  });
+
+  test('× while a message is still loading: the late answer lands nowhere', async () => {
+    let release;
+    const { window, doc } = await boot({ handler: standard({ 'GET /api/mail/messages/12': () => new Promise((r) => { release = () => r({ thread_key: null, subject: 'Threadless', messages: [{ ...ROWS[1], body_text: 'only text', body_html: null, attachments: [], copies: [] }] }); }) }) });
+    doc.querySelector('#msg-list .msg[data-id="12"]').click();
+    await tick(window);
+    expect(typeof release).toBe('function');
+    doc.getElementById('close-thread').click();
+    release();
+    await tick(window, 80);
+    expect(doc.getElementById('thread-head').hidden).toBe(true);
+    expect(doc.getElementById('thread-body').textContent).toBe('Select a message to read it.');
+  });
+
+  test('phones keep Back; the × is a wide-screen control', () => {
+    const css = HTML.match(/stacked navigation ── \*\/\n  @media \(max-width: 768px\) \{([\s\S]*?)\n  \}/)[1];
+    expect(css).toMatch(/\.close-thread \{ display: none; \}/);
   });
 });

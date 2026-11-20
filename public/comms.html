@@ -141,7 +141,15 @@
     width: 15px; height: 15px; border-radius: 4px; border: 1.5px solid var(--border-strong); background: var(--surface);
     display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; font-size: 9px; color: transparent;
   }
-  .bitem[aria-pressed="true"] .tickbox { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  /* A mailbox row is TWO controls (Fred, 2026-11-20): the tick (+ colour dot)
+     adds / removes the box from the combination; the name shows that box
+     alone (soloBox) — the name of the box already alone brings every box
+     back. The tick's hit area is the row's full height, not the 15px box. */
+  .bitem { padding: 0; cursor: default; align-items: stretch; }
+  .btick, .bname { border: 0; background: transparent; font: inherit; color: inherit; cursor: pointer; display: flex; align-items: center; min-width: 0; }
+  .btick { flex: 0 0 auto; gap: 8px; padding: 7px 4px 7px 12px; min-height: 34px; }
+  .bname { flex: 1 1 auto; gap: 8px; padding: 7px 12px 7px 4px; text-align: left; }
+  .btick[aria-pressed="true"] .tickbox { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
   .rail .cnt { font-size: 11.5px; font-weight: 700; color: var(--accent-2); flex: 0 0 auto; }
   .rail .acc { font-family: var(--mono); font-size: 10px; padding: 1px 5px; border-radius: 4px; background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); white-space: nowrap; flex: 0 0 auto; }
   .rail .dirty { margin: 6px 12px 2px; padding: 6px 8px; border: 1px dashed var(--accent-2); border-radius: 6px; font-size: 11.5px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--text-2); }
@@ -223,6 +231,12 @@
   .mb-dots { display: inline-flex; gap: 2px; flex: 0 0 auto; }
   .mb-panel { display: flex; flex-wrap: wrap; gap: 2px 14px; padding: 6px 10px 8px; border-bottom: 1px solid var(--border); background: var(--surface); }
   .mb-opt { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; min-width: 0; max-width: 100%; padding: 3px 0; }
+  /* the panel's row: the tick (+ dot) combines, the name shows that box alone (as the rail) */
+  .mb-row { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; }
+  .mb-row .mb-opt { padding: 3px 4px 3px 0; min-height: 32px; }
+  .mb-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; border: 0; background: transparent; font: inherit; font-size: 12px; color: inherit; cursor: pointer; padding: 3px 0; text-align: left; }
+  .mb-name .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mb-name .n { color: var(--text-muted); font-size: 11px; }
   .mb-opt .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mb-opt .n { color: var(--text-muted); font-size: 11px; }
   .vw-sum { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: -4px 0 10px; font-size: 11.5px; color: var(--text-muted); min-width: 0; }
@@ -241,6 +255,7 @@
   /* the phone head's actions: a wrapping group that never widens the column (comms-polish-2) */
   .ph-acts { display: flex; flex-wrap: wrap; gap: 6px; flex: 0 1 auto; min-width: 0; justify-content: flex-end; }
   .back-btn { display: none; }
+  .close-thread { flex: 0 0 auto; } /* × — wide screens; phones use Back (below) */
   .thread-body { overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: 6px 8px 20px; }
   .thread-note { font-size: 10.5px; color: var(--text-muted); margin: 0 2px 5px; }
   .mcard { border: 1px solid var(--border); border-radius: 6px; background: var(--page-bg); margin-bottom: 6px; min-width: 0; }
@@ -698,6 +713,7 @@
     .phone.show-thread .list-col { display: none; }
     .bub { max-width: 92%; }
     .back-btn { display: inline-flex; }
+    .close-thread { display: none; }
     #ph-head { flex-wrap: wrap; }                 /* the actions take a row of their own under the title */
     #ph-head .ph-acts { flex: 1 1 100%; justify-content: flex-start; }
     .chip { max-width: 120px; }
@@ -746,7 +762,7 @@
       <div id="rail-dirty"></div>
       <div class="ph">Mailboxes</div>
       <div id="rail-boxes" role="group" aria-label="Mailboxes in this list"></div>
-      <div class="hint">Tick mailboxes to combine them in one list. Unread counts are yours alone.</div>
+      <div class="hint">Tick mailboxes to combine them in one list; click a name to read just that one (click it again for all). Unread counts are yours alone.</div>
     </aside>
 
     <!-- ── List ── -->
@@ -798,6 +814,7 @@
       <div class="thread-head" id="thread-head" hidden>
         <button class="btn icon back-btn" type="button" id="back-btn" title="Back to messages"><i class="fa-solid fa-arrow-left"></i></button>
         <h2 id="thread-subject"></h2>
+        <button class="btn icon close-thread" type="button" id="close-thread" title="Close this message" aria-label="Close this message"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
       </div>
       <div class="related" id="thread-related" aria-label="Contacts and cases in this conversation" hidden></div>
       <div class="thread-body" id="thread-body">
@@ -1407,13 +1424,33 @@ function renderMailboxPicker() {
     h('label', { className: 'mb-opt' }, h('input', {
       type: 'checkbox', checked: !sel, onchange: () => { state.boxSel = null; renderMailboxPicker(); loadList(); },
     }), 'All'),
-    ...state.mailboxes.map((m) => h('label', { className: 'mb-opt', title: m.address },
-      h('input', { type: 'checkbox', checked: !sel || sel.includes(m.id), dataset: { id: String(m.id) }, onchange: (e) => toggleBox(m.id, e.target.checked) }),
-      boxDot(m.id),
-      h('span', { className: 'nm' }, `${m.display_name || m.address}${m.active ? '' : ' (inactive)'}`),
-      m.inbox_unread ? h('span', { className: 'n' }, String(m.inbox_unread)) : null)),
+    ...state.mailboxes.map((m) => h('span', { className: 'mb-row' },
+      h('label', { className: 'mb-opt', title: m.address },
+        h('input', { type: 'checkbox', checked: !sel || sel.includes(m.id), dataset: { id: String(m.id) }, 'aria-label': `Include ${boxLabel(m)}`, onchange: (e) => toggleBox(m.id, e.target.checked) }),
+        boxDot(m.id)),
+      h('button', {
+        className: 'mb-name', type: 'button', dataset: { id: String(m.id) }, title: soloTitle(m),
+        onclick: () => { soloBox(m.id); toggleBoxPanel(false); },
+      },
+        h('span', { className: 'nm' }, `${m.display_name || m.address}${m.active ? '' : ' (inactive)'}`),
+        m.inbox_unread ? h('span', { className: 'n' }, String(m.inbox_unread)) : null))),
   );
   renderRail();
+}
+
+const aloneIs = (id) => { const sel = selectedIds(); return !!(sel && sel.length === 1 && sel[0] === id); };
+const soloTitle = (m) => (aloneIs(m.id) ? 'Show every mailbox again' : `Show only ${m.address}`);
+
+/**
+ * A mailbox's NAME (rail + panel, Fred 2026-11-20): the list shows that box
+ * alone — one click out of any combination. The name of the box that is
+ * already alone brings every box back. Its tick still combines (toggleBox).
+ */
+function soloBox(id) {
+  if (!multiBox()) return;
+  state.boxSel = aloneIs(id) ? null : new Set([id]);
+  renderMailboxPicker();
+  loadList();
 }
 
 function toggleBox(id, on) {
@@ -1511,16 +1548,18 @@ function renderRail() {
   const sel = selectedIds();
   E('rail-boxes').replaceChildren(...state.mailboxes.map((m) => {
     const on = !sel || sel.includes(m.id);
-    return h('button', {
-      className: 'bitem', type: 'button', 'aria-pressed': on ? 'true' : 'false', dataset: { id: String(m.id) }, title: m.address,
-      onclick: () => toggleBox(m.id, !on),
-    },
-      h('span', { className: 'tickbox', 'aria-hidden': 'true' }, icon('fa-check')),
-      boxDot(m.id),
-      h('span', { className: 'nm' }, `${m.display_name || m.address}${m.active ? '' : ' (inactive)'}`, m.display_name ? h('span', { className: 'sub' }, m.address) : null),
-      // D.6: the R·S·M badge is gone — a tag only where the caller cannot send
-      m.can_send ? null : h('span', { className: 'acc', title: 'You can read this mailbox but not send from it' }, 'read-only'),
-      m.inbox_unread ? h('span', { className: 'cnt' }, String(m.inbox_unread)) : null);
+    return h('div', { className: 'bitem', dataset: { id: String(m.id) } },
+      h('button', {
+        className: 'btick', type: 'button', 'aria-pressed': on ? 'true' : 'false', 'aria-label': `Include ${boxLabel(m)}`,
+        title: on ? 'Leave this mailbox out of the list' : 'Add this mailbox to the list', onclick: () => toggleBox(m.id, !on),
+      },
+        h('span', { className: 'tickbox', 'aria-hidden': 'true' }, icon('fa-check')),
+        boxDot(m.id)),
+      h('button', { className: 'bname', type: 'button', title: soloTitle(m), onclick: () => soloBox(m.id) },
+        h('span', { className: 'nm' }, `${m.display_name || m.address}${m.active ? '' : ' (inactive)'}`, m.display_name ? h('span', { className: 'sub' }, m.address) : null),
+        // D.6: the R·S·M badge is gone — a tag only where the caller cannot send
+        m.can_send ? null : h('span', { className: 'acc', title: 'You can read this mailbox but not send from it' }, 'read-only'),
+        m.inbox_unread ? h('span', { className: 'cnt' }, String(m.inbox_unread)) : null));
   }));
 }
 async function updateActiveView() {
@@ -1848,6 +1887,30 @@ async function openMessage(m) {
 
 function closeThread() {
   E('email').classList.remove('show-thread');
+}
+
+/**
+ * The × in the conversation head (wide screens): put the open conversation
+ * away — the pane goes back to "Select a message", no row stays selected.
+ * A reply box closes with its draft kept, as when another conversation
+ * opens; one still sending keeps the conversation open (closeComposer says
+ * no). threadSeq moves on so an open still loading lands nowhere.
+ */
+function clearThread() {
+  const cmp = state.composer;
+  if (cmp && cmp.kind === 'reply' && !closeComposer(cmp, { keepDraft: true })) { toast('Wait for the reply to finish sending.'); return; }
+  stopSentWatch();
+  state.threadSeq++;
+  state.thread = null;
+  state.selectedId = null;
+  state.related = [];
+  state.unmatched = [];
+  for (const li of E('msg-list').querySelectorAll('.msg.selected')) li.classList.remove('selected');
+  renderRelated();
+  E('thread-head').hidden = true;
+  E('thread-subject').textContent = '';
+  E('thread-body').replaceChildren(h('div', { className: 'empty', id: 'thread-empty' }, 'Select a message to read it.'));
+  closeThread();
 }
 
 // ── Related: the client's file, straight from the mail ──────
@@ -4259,6 +4322,7 @@ async function init() {
   E('refresh-btn').addEventListener('click', refreshNow);
   E('readall-btn').addEventListener('click', markAllRead);
   E('back-btn').addEventListener('click', closeThread);
+  E('close-thread').addEventListener('click', clearThread);
   E('views-btn').addEventListener('click', openViews);
   E('views-close').addEventListener('click', closeViews);
   E('vw-save').addEventListener('click', saveView);

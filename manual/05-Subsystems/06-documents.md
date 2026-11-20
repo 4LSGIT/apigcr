@@ -7,6 +7,9 @@ folder.
 **Where:** More → **Documents**. The **Sync** button in the toolbar opens the
 operations panel; it is collapsed until you open it and only exists on the full
 Documents page — the Documents tab inside a case or contact never shows it.
+That tab lists the record's own documents (**Include related** adds those of
+its related cases or contacts, badged) and has the full page's search box:
+name, title and tags, within that list.
 
 **Not SU-gated, on purpose.** Any signed-in staff member can open this page and
 the Sync panel, including the re-link workflow that rewrites a case's Dropbox

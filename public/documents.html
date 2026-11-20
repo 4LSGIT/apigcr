@@ -80,6 +80,15 @@
       cursor: pointer; user-select: none; white-space: nowrap;
     }
     #scopedHead .toggle input { margin: 0; cursor: pointer; }
+    /* Search on a record's list (Fred, 2026-11-20) — the global toolbar's box,
+       sized for a tab panel: takes the free width up to a limit, never forces
+       the line wider than the frame (the head wraps under it on a phone). */
+    #scopedHead .sc-search { position: relative; flex: 1 1 160px; min-width: 0; max-width: 340px; }
+    #scopedHead .sc-search i {
+      position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+      color: var(--text-muted); font-size: var(--fs-sm); pointer-events: none;
+    }
+    #scopedHead .sc-search input { padding-left: 28px; }
 
     /* One muted line above the list saying WHOSE documents got mixed in. */
     .rel-note {
@@ -559,6 +568,15 @@
            onchange="onRelatedChange(this.checked)">
     Include related
   </label>
+  <!-- SEARCH — the global page's box on this record's list: the same handler
+       (onSearchInput → q), so it matches name, title and tags exactly as the
+       Documents tab does, inside this record (and its related records while
+       Include related is ticked — the server ANDs q with the scope). -->
+  <div class="search sc-search">
+    <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+    <input type="text" id="sc-search" placeholder="Search name, title, tags…"
+      aria-label="Search these documents" oninput="onSearchInput(this.value)">
+  </div>
   <div class="spacer"></div>
   <span class="count" id="scopedCount"></span>
   <!-- G3 — the other way a document gets onto this record: render one from a
@@ -1041,6 +1059,14 @@ function emptyStateHtml() {
          + '<div class="sub">Nothing is waiting to be filed.</div>';
   }
   if (filtered) {
+    // A record's list has only the search box — no filters to point at.
+    if (SCOPED) {
+      return '<i class="fa-solid fa-filter-circle-xmark"></i>'
+           + 'No documents match your search.'
+           + '<div class="sub">Try another word, or clear the search'
+           + (state.related ? '' : ', or tick Include related')
+           + '.</div>';
+    }
     return '<i class="fa-solid fa-filter-circle-xmark"></i>'
          + 'No documents match your filters.'
          + '<div class="sub">Try clearing the search or filters.</div>';

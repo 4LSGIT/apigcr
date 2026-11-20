@@ -328,7 +328,8 @@ Comms](#phone-lines--comms), below).
   colour (the stripe on the left of a message and the dot on its mailbox
   tag), the same for everyone — chosen in Admin → Mailboxes (Colour, above).
   Narrow it with the **mailbox picker** (tick
-  any combination of boxes — say shoshana@ and billing@ together), the
+  any combination of boxes — say shoshana@ and billing@ together — or click a
+  box's name to read just that one; click that name again for every box), the
   search (words in the email — subject or body, every word you type as the
   start of a word in it, two-letter words and "the"-type words aside — or
   part of the sender address or subject; type **from:court.gov** in it to
@@ -343,7 +344,8 @@ Comms](#phone-lines--comms), below).
   menus stay put.
 - **On a wide screen** your saved views and the mailboxes sit in a column
   on the left instead of the two menus: click a view (or **All mail** — every
-  box, no filters) to show it; tick mailboxes to combine them. Each box shows
+  box, no filters) to show it; tick mailboxes to combine them, or click a
+  box's name to read just that one (its name again brings every box back). Each box shows
   your unread count, and a **read-only** tag when you cannot send as it; each view
   shows how many unread Inbox messages it holds under its own filters (the
   same count appears in the view menu; a view of **Sent** shows none — sent
@@ -353,7 +355,9 @@ Comms](#phone-lines--comms), below).
   **«** hides the column (the menus come back above the list, and the
   conversation gets the room); the column button next to the menus brings it
   back, and your browser remembers which you chose. The Email tab shows your
-  unread total.
+  unread total. **×** at the top right of an open conversation closes it (a
+  reply you started comes back when you reopen it, while the page stays open); on a phone, **←** goes back to the
+  list.
   - **Client mail** keeps mail to or from a client — someone who is Primary or
     Secondary on a case — by its sender or one of its first five recipients
     (To, then Cc). The firm's own addresses never count, even when a staff

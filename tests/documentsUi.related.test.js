@@ -641,3 +641,67 @@ test('the page boots clean in both modes', async () => {
   const global = await boot({ query: '' });
   expect(global.errors).toEqual([]);
 });
+
+// ─────────────────────────────────────────────────────────────
+// Search on a record's list (Fred, 2026-11-20): the global page's box in the
+// scoped head — same handler, so the server gets q ANDed with the scope.
+// ─────────────────────────────────────────────────────────────
+
+describe('search — the scoped widget', () => {
+  const type = (window, v) => {
+    const el = window.document.getElementById('sc-search');
+    el.value = v;
+    el.dispatchEvent(new window.Event('input'));
+  };
+
+  test('the box sits in the scoped head and sends q WITH the scope and related, from page 1', async () => {
+    const many = { documents: [doc(1)], total: 500, limit: 25, offset: 0 };
+    const { window, calls, errors } = await boot({ responses: [many] });
+    const box = window.document.getElementById('sc-search');
+    expect(box.closest('#scopedHead')).not.toBeNull();
+    expect(box.getAttribute('aria-label')).toBe('Search these documents');
+    window.gotoPage(6);
+    await tick(window, 30);
+    expect(listCalls(calls).pop().params.offset).toBe(125);
+
+    type(window, '  petition ');
+    await tick(window, 330);   // the box debounces (280 ms)
+    expect(listCalls(calls).pop().params).toMatchObject({ q: 'petition', link_type: 'case', link_id: CASE_ID, related: 1, offset: 0 });
+
+    // cleared → q omitted again, scope kept
+    type(window, '');
+    await tick(window, 330);
+    const p = listCalls(calls).pop().params;
+    expect(p).not.toHaveProperty('q');
+    expect(p).toMatchObject({ link_type: 'case', link_id: CASE_ID });
+    expect(errors).toEqual([]);
+  });
+
+  test('no match says so in a record\'s words — the search, not "filters"', async () => {
+    const none = { documents: [], total: 0, limit: 25, offset: 0 };
+    const { window } = await boot({ responses: [none] });
+    type(window, 'zzz');
+    await tick(window, 330);
+    const text = () => window.document.getElementById('listWrap').textContent.replace(/\s+/g, ' ');
+    expect(text()).toMatch(/No documents match your search\. ?Try another word, or clear the search\./);
+    expect(text()).not.toMatch(/filters/);
+    // with Include related OFF, the widening is offered
+    const cb = window.document.getElementById('tb-related');
+    cb.checked = false;
+    cb.dispatchEvent(new window.Event('change'));
+    await tick(window, 30);
+    expect(text()).toMatch(/or clear the search, or tick Include related\./);
+  });
+
+  test('the GLOBAL page still says "filters" for a search with no match', async () => {
+    const none = { documents: [], total: 0, limit: 25, offset: 0 };
+    const { window, calls } = await boot({ responses: [none], query: '' });
+    const el = window.document.getElementById('tb-search');
+    el.value = 'zzz';
+    el.dispatchEvent(new window.Event('input'));
+    await tick(window, 330);
+    expect(listCalls(calls).pop().params).toMatchObject({ q: 'zzz' });
+    expect(listCalls(calls).pop().params).not.toHaveProperty('link_type');
+    expect(window.document.getElementById('listWrap').textContent).toMatch(/No documents match your filters\./);
+  });
+});
