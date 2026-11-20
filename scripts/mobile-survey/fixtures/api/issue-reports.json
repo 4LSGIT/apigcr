@@ -1,0 +1,63 @@
+{
+ "rows": [
+  {
+   "id": 14,
+   "user_id": 5,
+   "user_name": "Shoshana Beitner",
+   "kind": "problem",
+   "note": "The export button on the Contacts tab does nothing when I click it after filtering by a custom field; also this path breaks: /api/contacts/export?filter=custom_field_with_a_really_long_unbroken_identifier_name_123456789",
+   "page_url": "https://app.4lsg.com/?files=cABCD2345",
+   "emailed_at": "2026-11-20T10:00:00.000Z",
+   "email_error": null,
+   "resolved_at": null,
+   "resolved_by": null,
+   "resolution": null,
+   "replied_at": null,
+   "reply_error": null,
+   "created_at": "2026-11-20T09:58:00.000Z"
+  },
+  {
+   "id": 13,
+   "user_id": 1,
+   "user_name": "Stuart Sandweiss",
+   "kind": "idea",
+   "note": "Sort the contacts list by any column",
+   "page_url": null,
+   "emailed_at": "2026-11-19T10:00:00.000Z",
+   "email_error": null,
+   "resolved_at": "2026-11-19T12:00:00.000Z",
+   "resolved_by": "IT",
+   "resolution": "planned",
+   "replied_at": "2026-11-19T12:00:00.000Z",
+   "reply_error": null,
+   "created_at": "2026-11-19T09:00:00.000Z"
+  },
+  {
+   "id": 12,
+   "user_id": 6,
+   "user_name": "Fred Ross",
+   "kind": "question",
+   "note": "Where do I change my signature?",
+   "page_url": null,
+   "emailed_at": "2026-11-18T10:00:00.000Z",
+   "email_error": null,
+   "resolved_at": null,
+   "resolved_by": null,
+   "resolution": "answered",
+   "replied_at": null,
+   "reply_error": "Gmail API: invalid_grant — the credential needs reconnecting",
+   "created_at": "2026-11-18T09:00:00.000Z"
+  }
+ ],
+ "total": 3,
+ "limit": 50,
+ "offset": 0,
+ "counts": {
+  "open_total": 2,
+  "open_problem": 1,
+  "open_idea": 0,
+  "open_question": 1,
+  "resolved_7d": 1,
+  "never_emailed": 0
+ }
+}

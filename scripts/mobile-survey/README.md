@@ -210,7 +210,11 @@ the In call transcripts group from `comms-archive/search`,
 System Alerts pane's Comms archive section (`comms-archive/health`,
 `panel:systemAlertsDiv:comms-archive`), YisraVideo's editor and Views tab
 (`videos`, `videos/1`, `videos/1/analytics`, `videos/views`;
-`panel:videoManagerDiv:editor`, `panel:videoManagerDiv:views`), the Calendar tab's list
+`panel:videoManagerDiv:editor`, `panel:videoManagerDiv:views`), the Support Inbox
+(`issue-reports`, `issue-reports/14` — a long unbroken note, a long reply
+address, a reply-failed row; report 14 expanded, `panel:issueReportsDiv:detail`,
+then its Respond dialog on the problem kind's five outcomes,
+`panel:issueReportsDiv:respond`), the Calendar tab's list
 (`calendar-range` — one row per action-cell shape, surveyed as
 `tab:tabCalendar:list`; Grid is `tab:tabCalendar:grid`, against an empty
 `calendar-feed`), the

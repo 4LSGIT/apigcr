@@ -625,6 +625,18 @@ async function walk(page, W, record) {
         await fr.evaluate(() => { const d = document.getElementById('caHealth'); if (d) d.open = true; }); await sleep(1200);
         await record('panel:systemAlertsDiv:comms-archive', await measure(page, fr), await shot('panel_system_alerts_comms_archive'));
       }
+      // Support Inbox → report 14 expanded, then its Respond dialog on the widest
+      // outcome row (problem: five pills), fixtures/api/issue-reports[/14].json —
+      // a long unbroken note and a long reply address. Called bare: a dialog
+      // that has gone away must fail the run, not pass unmeasured.
+      if (id === 'issueReportsDiv' && fr) {
+        await fr.evaluate(() => document.querySelector('tr.row[data-id="14"]').click()); await sleep(1000);
+        await record('panel:issueReportsDiv:detail', await measure(page, fr), await shot('panel_issue_reports_detail'));
+        await fr.evaluate(() => openRespond(14, 'cant_reproduce')); await sleep(800);
+        if (!await fr.evaluate(() => document.querySelectorAll('#rdOuts input').length === 5)) throw new Error('issueReportsDiv: the Respond dialog did not draw its 5 outcomes');
+        await record('panel:issueReportsDiv:respond', await measure(page, fr), await shot('panel_issue_reports_respond'));
+        await fr.evaluate(() => closeRespond());
+      }
       // Users → Edit (the roles checkbox row, access-control A3), fixtures/api/admin/users.json
       if (id === 'usersDiv' && fr) {
         await fr.evaluate(() => openForm(3)); await sleep(1000);

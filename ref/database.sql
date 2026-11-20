@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-11-19T09:21:50.889Z
+-- Generated: 2026-11-20T13:37:28.412Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:f105b903adb380f64f6519b63fa27324
+-- Fingerprint: sha256:32e364d7dada5d989c37b152cf3303eb
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2549,6 +2549,11 @@ CREATE TABLE `issue_reports` (
   `email_error` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `resolved_at` datetime DEFAULT NULL,
   `resolved_by` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `resolution` varchar(24) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'outcome key of the last reply that went out to the reporter (services/issueReportService.js OUTCOMES — app-validated per kind); NULL = never replied (a silent resolve leaves it NULL)',
+  `reply_message` text COLLATE utf8mb4_general_ci COMMENT 'the personal note in the last reply that went out, plain text (escaped into the email); NULL = generic text only',
+  `replied_at` datetime DEFAULT NULL COMMENT 'UTC — when the last reply to the reporter went out; written only after the send succeeds',
+  `reply_error` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'why the last reply ATTEMPT failed; NULL once a reply goes out. A failure writes only this — an earlier reply record (resolution / replied_at) stands',
+  `reply_claimed_at` datetime DEFAULT NULL COMMENT 'UTC — set while a reply send is in flight (respond() claim), NULL otherwise; blocks a second send; older than 15 min = abandoned and may be taken over',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 

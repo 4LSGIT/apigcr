@@ -1,0 +1,52 @@
+{
+ "row": {
+  "id": 14,
+  "user_id": 5,
+  "user_name": "Shoshana Beitner",
+  "kind": "problem",
+  "note": "The export button on the Contacts tab does nothing when I click it after filtering by a custom field; also this path breaks: /api/contacts/export?filter=custom_field_with_a_really_long_unbroken_identifier_name_123456789",
+  "page_url": "https://app.4lsg.com/?files=cABCD2345",
+  "emailed_at": "2026-11-20T10:00:00.000Z",
+  "email_error": null,
+  "resolved_at": null,
+  "resolved_by": null,
+  "resolution": null,
+  "replied_at": null,
+  "reply_error": null,
+  "created_at": "2026-11-20T09:58:00.000Z",
+  "context": "{\"build\":\"e136396\",\"active_tab\":{\"label\":\"Contacts\"},\"browser\":{\"viewport\":\"320x640\"}}"
+ },
+ "reply_to": "shoshana.beitner.longaddress@metrodetroitbankruptcylaw.com",
+ "outcomes": [
+  {
+   "key": "fixed",
+   "label": "Fixed",
+   "text": "Thanks for reporting this — it's fixed. Reload the page to pick up the fix; if you still see it after that, reply to this email.",
+   "needs_message": false
+  },
+  {
+   "key": "cant_reproduce",
+   "label": "Can't reproduce",
+   "text": "Thanks for reporting this. We tried, and couldn't make it happen. If it comes back, send another report from the screen where it happens — that captures what we need to track it down.",
+   "needs_message": false
+  },
+  {
+   "key": "by_design",
+   "label": "Working as designed",
+   "text": "Thanks for reporting this. We looked into it, and this is how it is designed to work.",
+   "needs_message": false
+  },
+  {
+   "key": "already_done",
+   "label": "Already implemented",
+   "text": "Thanks for reporting this — it had already been taken care of by the time your report reached us. Reload the page if you still see it.",
+   "needs_message": false
+  },
+  {
+   "key": "other",
+   "label": "Other",
+   "text": "",
+   "needs_message": true
+  }
+ ]
+}

@@ -4,9 +4,19 @@
  * Issue Reports API — the "Help & Support" button in the shell.
  * routes/api.issueReports.js
  *
- *   POST  /api/issue-reports          any authed staff — file a report
- *   GET   /api/issue-reports          admin — list (default: unresolved)
- *   PATCH /api/issue-reports/:id      admin — resolve / reopen
+ *   POST  /api/issue-reports              any authed staff — file a report
+ *   GET   /api/issue-reports              admin — list (default: unresolved)
+ *   POST  /api/issue-reports/resolve      admin — bulk resolve / reopen (no reply)
+ *   GET   /api/issue-reports/:id          admin — full row + its reply outcomes
+ *   POST  /api/issue-reports/:id/respond  admin — reply to the filer (+ resolve)
+ *
+ * THE EMAIL'S BUTTONS ARE DEEP LINKS, NOT TOKENS
+ *   The notification carries one button per reply outcome for the report's
+ *   kind (services/issueReportService.js OUTCOMES). Each opens the Support
+ *   Inbox in the app — ?open=tabPanel~adminSupportInbox~r<id>~<outcome> — with
+ *   that report expanded and the reply dialog preselected. Nothing happens on
+ *   the click itself: a login and the dialog's Send stand between the email
+ *   and the reply (Fred, 2026-11-20: deep link, not a /c/ CTA link).
  *
  * WHAT THIS IS FOR, AND HOW IT DIFFERS FROM FEATURE REQUESTS
  *   routes/api.featureRequests.js is a deliberate, public, votable board: you
@@ -41,6 +51,7 @@ const { cfg }      = require('../lib/firmConfig');
 const { makeLimiter, getClientIp } = require('../lib/rateLimiter');
 const emailService = require('../services/emailService');
 const { escapeLike } = require('../lib/escapeLike');
+const issueReportService = require('../services/issueReportService');
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -165,6 +176,26 @@ function renderFacts(facts) {
   return `<table style="border-collapse:collapse;font-size:13px;margin:4px 0 0">${rows}</table>`;
 }
 
+/** The Support Inbox deep link (public/issueReports.html reads the rest). */
+function inboxLink(id, outcomeKey) {
+  return `${APP_URL()}/?open=tabPanel~adminSupportInbox~r${Number(id)}${outcomeKey ? `~${outcomeKey}` : ''}`;
+}
+
+function renderActions(id, kind, hasEmail) {
+  const btn = (href, label, primary) =>
+    `<a href="${esc(href)}" style="display:inline-block;margin:0 6px 6px 0;padding:7px 13px;border-radius:5px;`
+    + `font-size:13px;text-decoration:none;${primary
+      ? 'background:#1d4ed8;color:#ffffff;border:1px solid #1d4ed8'
+      : 'background:#ffffff;color:#1d4ed8;border:1px solid #93c5fd'}">${esc(label)}</a>`;
+  const replies = hasEmail
+    ? issueReportService.outcomesFor(kind).map((o) => btn(inboxLink(id, o.key), `Reply: ${o.label}`, false)).join('')
+    : '<div style="font-size:12px;color:#b45309;margin:0 0 6px">The filer has no email address on file — no reply can be sent.</div>';
+  return `<div style="margin:0 0 18px">
+            ${replies}${btn(inboxLink(id, null), 'Open in Support Inbox', true)}
+            <div style="font-size:11px;color:#9ca3af">Each button opens the report in YisraCase; nothing is sent until you press Send there.</div>
+          </div>`;
+}
+
 function buildEmail({ id, kind, note, userLabel, userEmail, pageUrl, context }) {
   const meta = KIND_META[kind] || KIND_META.problem;
   const ctx  = context || {};
@@ -205,6 +236,8 @@ function buildEmail({ id, kind, note, userLabel, userEmail, pageUrl, context }) 
 
       <div style="margin:0 0 18px;padding:14px 16px;background:${meta.bg};border-left:4px solid ${meta.color};border-radius:4px;font-size:15px;line-height:1.55;white-space:pre-wrap">${esc(note)}</div>
 
+      ${renderActions(id, kind, !!userEmail)}
+
       <h3 style="margin:0 0 4px;font-size:14px;color:#374151">Where they were</h3>
       ${renderFacts(facts)}
 
@@ -224,6 +257,8 @@ function buildEmail({ id, kind, note, userLabel, userEmail, pageUrl, context }) 
     `Report #${id}`,
     '',
     note,
+    '',
+    `Respond: ${inboxLink(id, null)}`,
     '',
     '--- where they were ---',
     ...facts.filter(([, v]) => v != null && v !== '').map(([k, v]) => `${k}: ${v}`),
@@ -351,7 +386,8 @@ router.get('/api/issue-reports', jwtOrApiKey, requireAdmin, async (req, res) => 
     // fetches the single row instead.
     const [rows] = await req.db.query(
       `SELECT id, user_id, user_name, kind, note, page_url,
-              emailed_at, email_error, resolved_at, resolved_by, created_at
+              emailed_at, email_error, resolved_at, resolved_by,
+              resolution, replied_at, reply_error, created_at
          FROM issue_reports
          ${whereSql}
         ORDER BY id DESC
@@ -435,10 +471,44 @@ router.get('/api/issue-reports/:id', jwtOrApiKey, requireAdmin, async (req, res)
       'SELECT * FROM issue_reports WHERE id = ? LIMIT 1', [id]
     );
     if (!row) return res.status(404).json({ error: 'Not found' });
-    res.json({ row });
+
+    // Whether a reply can reach the filer — the dialog says so up front
+    // rather than letting Send fail. Read fresh: the users row is the
+    // authority (user_name on the report is a denormalized label).
+    let replyTo = null;
+    if (row.user_id != null) {
+      const [[u]] = await req.db.query('SELECT email FROM users WHERE user = ? LIMIT 1', [row.user_id]);
+      replyTo = u && u.email ? String(u.email).trim() || null : null;
+    }
+    res.json({ row, reply_to: replyTo, outcomes: issueReportService.outcomesFor(row.kind) });
   } catch (err) {
     console.error('GET /api/issue-reports/:id error:', err);
     res.status(500).json({ error: 'Failed to fetch report' });
+  }
+});
+
+// ── POST /api/issue-reports/:id/respond (admin) — reply to the filer ──────────
+//
+// body { outcome, message?, resolve? }. 200 { ok:true, resolved, to } when the
+// reply went out; 200 { ok:false, resolved, reply_error } when the send failed
+// (the claim was undone — see services/issueReportService.js respond()).
+// 400 bad outcome/message · 404 · 409 a reply went out seconds ago · 422 no
+// address to send to or from.
+
+router.post('/api/issue-reports/:id/respond', jwtOrApiKey, requireAdmin, async (req, res) => {
+  try {
+    const out = await issueReportService.respond(req.db, {
+      id: req.params.id,
+      outcome: req.body?.outcome,
+      message: req.body?.message,
+      resolve: req.body?.resolve === true,
+      by: req.auth?.username || `#${req.auth?.userId}`,
+    });
+    res.json(out);
+  } catch (err) {
+    if (err && err.status) return res.status(err.status).json({ error: err.message });
+    console.error('POST /api/issue-reports/:id/respond error:', err);
+    res.status(500).json({ error: 'Failed to send the reply' });
   }
 });
 

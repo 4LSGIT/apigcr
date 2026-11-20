@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-11-19T01:03:49.716Z_  
-_867 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 336, PUT: 41, _ALL: 3_
+_Generated 2026-11-20T13:37:19.775Z_  
+_868 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 337, PUT: 41, _ALL: 3_
 
 ## Global middleware chain
 
@@ -442,6 +442,7 @@ _867 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 336, PUT: 41, _ALL:
 | GET | `/api/issue-reports` | `jwtOrApiKey`, `requireAdmin` | — |
 | POST | `/api/issue-reports` | `jwtOrApiKey` | — |
 | GET | `/api/issue-reports/:id` | `jwtOrApiKey`, `requireAdmin` | — |
+| POST | `/api/issue-reports/:id/respond` | `jwtOrApiKey`, `requireAdmin` | — |
 | POST | `/api/issue-reports/resolve` | `jwtOrApiKey`, `requireAdmin` | — |
 | GET | `/api/judges` | `jwtOrApiKey` | — |
 | GET | `/api/key-tasks` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
@@ -1147,4 +1148,4 @@ _867 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 336, PUT: 41, _ALL:
 
 ---
 
-_867 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 336, PUT: 41, _ALL: 3_
+_868 routes total — DELETE: 72, GET: 354, PATCH: 61, POST: 337, PUT: 41, _ALL: 3_

@@ -687,6 +687,7 @@ ref/migrations/2026-11-19_booking_views_redirect_url.sql
 ref/migrations/2026-11-19_client_upload_batches.sql
 ref/migrations/2026-11-19_docs_reviewer.sql
 ref/migrations/2026-11-19_key_renewal_requests.sql
+ref/migrations/2026-11-20_support_reply_columns.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -985,6 +986,8 @@ scripts/mobile-survey/fixtures/api/cta/2/executions.json
 scripts/mobile-survey/fixtures/api/documents.json
 scripts/mobile-survey/fixtures/api/entitlements.json
 scripts/mobile-survey/fixtures/api/field-defs.json
+scripts/mobile-survey/fixtures/api/issue-reports.json
+scripts/mobile-survey/fixtures/api/issue-reports/14.json
 scripts/mobile-survey/fixtures/api/mail/attachments/preview.json
 scripts/mobile-survey/fixtures/api/mail/first-seen.json
 scripts/mobile-survey/fixtures/api/mail/identities.json
@@ -1048,6 +1051,7 @@ scripts/storageSeamD3c3Contract.js
 scripts/storageSeamD3cStorageFolders.js
 scripts/storageSeamD3d1CaseFolderLink.js
 scripts/storageSeamD3d3Drop.js
+scripts/supportReplyColumns.js
 scripts/sweep_validate_live.js
 scripts/test_availability.js
 scripts/test_court_revert.js
@@ -1194,6 +1198,7 @@ services/hookTransforms.js
 services/ingestRuleChangeLog.js
 services/ingestRulePreviewService.js
 services/intakeService.js
+services/issueReportService.js
 services/logService.js
 services/mailEventService.js
 services/mailbox/imapTransport.js
@@ -1780,6 +1785,8 @@ tests/internalFn.cancelCaseAppts.test.js
 tests/internalFn.enrollSkipIfEnrolled.test.js
 tests/internal_functions.meta.test.js
 tests/issnCodebtor.test.js
+tests/issueReportRespond.mysql.test.js
+tests/issueReportRespond.test.js
 tests/jest.setup.js
 tests/jsonFieldStream.test.js
 tests/keyDelegation.mysql.test.js

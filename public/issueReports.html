@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
 <script src="/js/ycPager.js"></script>
+<script src="/js/ycSubTab.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <!-- Diagnostics ring buffer. This page is a triage tool for the reports that
      buffer produces, but it is also just another page — an error in here is
@@ -99,6 +100,38 @@
   .row-actions button { background:var(--surface-2); color:var(--text); border:1px solid var(--border);
     border-radius:4px; padding:4px 10px; cursor:pointer; font-size:11px; }
   .row-actions button:hover { border-color:var(--accent); }
+
+  .row-actions button.primary { border-color:var(--accent); color:var(--accent); }
+  .reply-ok { color:var(--ok); } .reply-bad { color:var(--warn); }
+
+  /* Respond dialog (services/issueReportService.js OUTCOMES). Inside the pane,
+     so it covers the pane only; width capped to the frame at phone widths. */
+  .rd-back { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:flex-start;
+    justify-content:center; padding:24px 12px; z-index:50; overflow:auto; }
+  .rd { background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:8px;
+    width:100%; max-width:560px; box-sizing:border-box; padding:14px 16px 16px; box-shadow:0 8px 30px rgba(0,0,0,.3); }
+  .rd h3 { margin:0 0 2px; font-size:15px; }
+  .rd .rd-sub { font-size:11px; color:var(--text-muted); margin-bottom:10px; overflow-wrap:anywhere; }
+  .rd .rd-note { margin:0 0 12px; padding:8px 10px; background:var(--page-bg); border-left:3px solid var(--border);
+    border-radius:4px; font-size:12px; white-space:pre-wrap; word-break:break-word; max-height:120px; overflow:auto; }
+  .rd .rd-lbl { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); margin:10px 0 4px; }
+  .rd .rd-outs { display:flex; flex-wrap:wrap; gap:6px; }
+  .rd .rd-outs label { display:flex; align-items:center; gap:5px; padding:5px 10px; border:1px solid var(--border);
+    border-radius:999px; cursor:pointer; font-size:12px; background:var(--surface-2); }
+  .rd .rd-outs label.on { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+  .rd .rd-outs input { margin:0; }
+  .rd .rd-generic { margin:8px 0 0; padding:8px 10px; background:var(--page-bg); border-radius:4px; font-size:12px;
+    line-height:1.5; color:var(--text-muted); white-space:pre-wrap; }
+  .rd textarea { width:100%; box-sizing:border-box; min-height:90px; resize:vertical; background:var(--surface-2);
+    color:var(--text); border:1px solid var(--border); border-radius:4px; padding:7px 8px; font:inherit; font-size:13px; }
+  .rd .rd-check { display:flex; align-items:center; gap:6px; font-size:12px; margin-top:10px; cursor:pointer; }
+  .rd .rd-msg { font-size:12px; margin-top:10px; min-height:1em; }
+  .rd .rd-msg.err { color:var(--danger); } .rd .rd-msg.ok { color:var(--ok); }
+  .rd .rd-btns { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; flex-wrap:wrap; }
+  .rd .rd-btns button { background:var(--surface-2); color:var(--text); border:1px solid var(--border);
+    border-radius:4px; padding:6px 14px; cursor:pointer; font-size:12px; }
+  .rd .rd-btns button.send { border-color:var(--accent); background:var(--accent); color:var(--fill-text); }
+  .rd .rd-btns button:disabled { opacity:.5; cursor:not-allowed; }
 
   .empty { padding:30px; color:var(--text-muted); text-align:center; }
   /* Pager buttons/text come from the shared pager (/js/ycPager.js); this
@@ -253,7 +286,7 @@ function render() {
       <td style="text-align:center">${mail}</td>
       <td class="nowrap">${done
         ? `<span class="state resv">resolved</span> <span class="muted">${esc(r.resolved_by || "")}</span>`
-        : '<span class="state open">open</span>'}</td>`;
+        : '<span class="state open">open</span>'}${replyMark(r)}</td>`;
     tr.addEventListener("click", () => toggleDetail(r.id));
     tb.appendChild(tr);
     if (expanded === r.id) tb.appendChild(detailRow(r));
@@ -272,6 +305,15 @@ function render() {
     persistKey: 'issueReports',
     onLimit: (n) => { LIMIT = n; offset = 0; load(); },
   });
+}
+
+// The reply state, from the list row: ↩✗ when the last ATTEMPT failed (it
+// wins — reply_error is cleared by the next reply that goes out), else ↩ when
+// a reply went out (outcome key as the tooltip). Nothing when none was tried.
+function replyMark(r) {
+  if (r.reply_error) return ` <span class="reply-bad" title="${esc(`reply failed: ${r.reply_error}`)}">↩✗</span>`;
+  if (r.replied_at) return ` <span class="reply-ok" title="${esc(`replied: ${r.resolution || ""} · ${r.replied_at}`)}">↩</span>`;
+  return "";
 }
 
 function parseCtx(raw) {
@@ -333,6 +375,10 @@ function detailRow(listRow) {
                        ? `${dig(ctx, "session.jwt_expires_in_min")} min` : null],
     ["emailed",      full.emailed_at || `NOT SENT — ${full.email_error || "unknown error"}`],
     ["resolved",     full.resolved_at ? `${full.resolved_at} by ${full.resolved_by || "?"}` : null],
+    ["reply",        full.replied_at
+                       ? `${outcomeLabel(full)} — sent ${full.replied_at}${full.reply_message ? " (with a message)" : ""}`
+                       : null],
+    ["last attempt", full.reply_error ? `FAILED — ${full.reply_error}` : null],
   ].filter(([, v]) => v != null && v !== "");
 
   td.innerHTML = `
@@ -344,6 +390,7 @@ function detailRow(listRow) {
     ${renderErrors(ctx?.errors)}
     ${ctxJson ? `<div class="sub-h">Full context</div><pre class="blk">${esc(ctxJson)}</pre>` : ""}
     <div class="row-actions">
+      <button class="primary" onclick="openRespond(${full.id})"><i class="fa-solid fa-reply"></i> Respond to sender</button>
       ${full.resolved_at
         ? `<button onclick="doResolve([${full.id}], false)">Reopen</button>`
         : `<button onclick="doResolve([${full.id}], true)">Resolve</button>`}
@@ -360,7 +407,7 @@ async function toggleDetail(id) {
   if (detailCache.has(id)) { render(); return; }
   try {
     const d = await api(`/api/issue-reports/${id}`, "GET");
-    detailCache.set(id, d.row);
+    detailCache.set(id, { ...d.row, _outcomes: d.outcomes || [], _reply_to: d.reply_to || null });
   } catch (err) {
     detailCache.set(id, { ...rows.find((r) => r.id === id), context: null,
                           note: `(detail fetch failed: ${err.message || "error"})` });
@@ -427,6 +474,145 @@ async function doResolve(ids, resolved) {
 }
 window.doResolve = doResolve;
 
+// ── respond to sender ────────────────────────────────────────────────────────
+// POST /api/issue-reports/:id/respond (services/issueReportService.js). The
+// outcomes and their generic texts come from the server with the detail row,
+// so the preview here is the text the email will carry.
+function outcomeLabel(full) {
+  const o = (full._outcomes || []).find((x) => x.key === full.resolution);
+  return o ? o.label : (full.resolution || "?");
+}
+
+async function fetchDetail(id) {
+  const d = await api(`/api/issue-reports/${id}`, "GET");
+  const full = { ...d.row, _outcomes: d.outcomes || [], _reply_to: d.reply_to || null };
+  detailCache.set(id, full);
+  return full;
+}
+
+function closeRespond() {
+  const el = E("rdBack");
+  if (el) el.remove();
+}
+window.closeRespond = closeRespond;
+
+async function openRespond(id, preselect) {
+  closeRespond();
+  let full = detailCache.get(id);
+  if (!full || !full._outcomes) {
+    try { full = await fetchDetail(id); }
+    catch (err) { setStatus(`<span class="err">✗ report #${Number(id)}: ${esc(err.message || "not found")}</span>`); return; }
+  }
+  const outs = full._outcomes || [];
+  const pre = outs.some((o) => o.key === preselect) ? preselect : (outs[0] && outs[0].key);
+  const back = document.createElement("div");
+  back.className = "rd-back";
+  back.id = "rdBack";
+  back.innerHTML = `
+    <div class="rd" role="dialog" aria-modal="true" aria-labelledby="rdTitle">
+      <h3 id="rdTitle">Respond to ${esc(full.user_name || "the sender")}</h3>
+      <div class="rd-sub">Report #${Number(full.id)} · ${esc(full.kind)} · ${full._reply_to
+        ? `to ${esc(full._reply_to)}` : '<span style="color:var(--danger)">no email address on file</span>'}${full.resolved_at ? " · already resolved" : ""}</div>
+      <div class="rd-note">${esc(full.note)}</div>
+      <div class="rd-lbl">Outcome</div>
+      <div class="rd-outs" id="rdOuts">${outs.map((o) => `
+        <label data-key="${esc(o.key)}"><input type="radio" name="rdOut" value="${esc(o.key)}"${o.key === pre ? " checked" : ""}> ${esc(o.label)}</label>`).join("")}
+      </div>
+      <div class="rd-generic" id="rdGeneric"></div>
+      <div class="rd-lbl" id="rdMsgLbl">Message</div>
+      <textarea id="rdMsg" maxlength="2000"></textarea>
+      <label class="rd-check"><input type="checkbox" id="rdResolve"${full.resolved_at ? " checked disabled" : " checked"}> Resolve the report</label>
+      <div class="rd-msg" id="rdStatus"></div>
+      <div class="rd-btns">
+        <button type="button" id="rdCancel">Cancel</button>
+        <button type="button" class="send" id="rdSend"${full._reply_to ? "" : " disabled"}><i class="fa-solid fa-paper-plane"></i> Send reply</button>
+      </div>
+    </div>`;
+  document.body.appendChild(back);
+
+  const sync = () => {
+    const key = (back.querySelector('input[name="rdOut"]:checked') || {}).value;
+    const o = outs.find((x) => x.key === key);
+    back.querySelectorAll(".rd-outs label").forEach((l) => l.classList.toggle("on", l.dataset.key === key));
+    E("rdGeneric").textContent = o && o.text ? o.text : "No generic text for this outcome — your message is the reply.";
+    E("rdMsgLbl").textContent = o && o.needs_message ? "Message (required)" : "Message (optional)";
+    E("rdMsg").placeholder = o && o.needs_message ? "Write the reply…" : "Added under the text above…";
+  };
+  back.querySelectorAll('input[name="rdOut"]').forEach((r) => r.addEventListener("change", sync));
+  sync();
+  // While a send is in flight the dialog stays up: closing it would offer a
+  // fresh Send for a reply that may still go out (the server refuses a second
+  // claim anyway — this keeps the admin from being told "already sending").
+  const closable = () => !back.dataset.sending;
+  E("rdCancel").addEventListener("click", () => { if (closable()) closeRespond(); });
+  back.addEventListener("click", (e) => { if (e.target === back && closable()) closeRespond(); });
+  back.addEventListener("keydown", (e) => { if (e.key === "Escape" && closable()) closeRespond(); });
+  E("rdSend").addEventListener("click", () => sendRespond(full));
+  E("rdMsg").focus();
+}
+window.openRespond = openRespond;
+
+async function sendRespond(full) {
+  const btn = E("rdSend"), st = E("rdStatus");
+  const outcome = (document.querySelector('#rdOuts input[name="rdOut"]:checked') || {}).value;
+  const o = (full._outcomes || []).find((x) => x.key === outcome);
+  const message = E("rdMsg").value.trim();
+  st.className = "rd-msg";
+  if (!o) { st.className = "rd-msg err"; st.textContent = "Pick an outcome."; return; }
+  if (o.needs_message && !message) { st.className = "rd-msg err"; st.textContent = `"${o.label}" needs a message.`; return; }
+  const back = E("rdBack");
+  btn.disabled = true;
+  E("rdCancel").disabled = true;
+  back.dataset.sending = "1";
+  st.textContent = "Sending…";
+  let r;
+  try {
+    r = await api(`/api/issue-reports/${full.id}/respond`, "POST",
+      { outcome, message, resolve: E("rdResolve").checked && !full.resolved_at });
+  } catch (err) {
+    st.className = "rd-msg err";
+    st.textContent = `Not sent: ${err.message || "error"}`;
+    btn.disabled = false;
+    return;
+  } finally {
+    delete back.dataset.sending;
+    E("rdCancel").disabled = false;
+  }
+  detailCache.delete(full.id);   // resolution / replied_at are now stale
+  if (r && r.ok) {
+    closeRespond();
+    await load();                  // first: load() rewrites the status line
+    setStatus(`<span class="ok">✓ reply sent to ${esc(r.to || "the sender")}${r.resolved ? " · resolved" : ""}</span>`);
+  } else {
+    st.className = "rd-msg err";
+    st.textContent = `The reply did NOT go out: ${(r && r.reply_error) || "unknown error"}. Nothing else changed — the report is ${r && r.resolved ? "resolved" : "open"}.`;
+    btn.disabled = false;
+    await load();
+  }
+}
+
+// The email's deep link: ?open=tabPanel~adminSupportInbox~r<id>[~<outcome>]
+// (routes/api.issueReports.js inboxLink). Widens the list to every status so a
+// RECENT resolved report is on the first page and expanded there; an older one
+// is off the page, but the dialog opens on it either way. The rest is cleared
+// at once: a reload must not reopen the dialog.
+async function openFromRest() {
+  const held = window.ycSubTab ? ycSubTab.leaf.take() : null;
+  const segs = window.ycSubTab ? (ycSubTab.parse(held) || []) : [];
+  const m = /^r(\d{1,12})$/.exec(String(segs[0] || ""));
+  if (!m) return false;
+  if (window.ycSubTab) ycSubTab.leaf.report("");
+  const id = Number(m[1]);
+  E("fStatus").value = "all"; E("fKind").value = ""; E("fQ").value = "";
+  document.querySelectorAll(".card").forEach((c) => c.classList.remove("active"));
+  expanded = id;
+  await load();
+  try { await fetchDetail(id); } catch (_) { /* openRespond reports it */ }
+  if (expanded === id) render();
+  await openRespond(id, segs[1] || null);
+  return true;
+}
+
 // ── wiring ───────────────────────────────────────────────────────────────────
 ["fStatus", "fKind"].forEach((id) =>
   E(id).addEventListener("change", () => { offset = 0; load(); }));
@@ -456,7 +642,9 @@ document.querySelectorAll(".card").forEach((card) => {
   });
 });
 
-function bootAuthed() { load(); }
+async function bootAuthed() {
+  if (!(await openFromRest())) load();
+}
 </script>
 </body>
 </html>
