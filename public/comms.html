@@ -255,7 +255,7 @@
   /* the phone head's actions: a wrapping group that never widens the column (comms-polish-2) */
   .ph-acts { display: flex; flex-wrap: wrap; gap: 6px; flex: 0 1 auto; min-width: 0; justify-content: flex-end; }
   .back-btn { display: none; }
-  .close-thread { flex: 0 0 auto; } /* × — wide screens; phones use Back (below) */
+  .close-thread { flex: 0 0 auto; } /* × (email + phone heads) — wide screens; phones use Back (below) */
   .thread-body { overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: 6px 8px 20px; }
   .thread-note { font-size: 10.5px; color: var(--text-muted); margin: 0 2px 5px; }
   .mcard { border: 1px solid var(--border); border-radius: 6px; background: var(--page-bg); margin-bottom: 6px; min-width: 0; }
@@ -863,6 +863,7 @@
           <button class="btn small" type="button" id="ph-unread" hidden title="Mark this conversation unread (read state is yours alone)"><i class="fa-regular fa-envelope" aria-hidden="true"></i> Mark unread</button>
         </span>
         <button class="btn small" type="button" id="ph-addc" hidden title="Attach this number to a contact, or create a new contact with it"><i class="fa-solid fa-user-plus" aria-hidden="true"></i> Add to contact</button>
+        <button class="btn icon close-thread" type="button" id="ph-close" title="Close this conversation" aria-label="Close this conversation"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
       </div>
       <div class="thread-body" id="ph-body">
         <div class="empty">Select a conversation to read it.</div>
@@ -5950,6 +5951,12 @@ function closePhoneThread() {
   for (const li of E('ph-list').querySelectorAll('.msg.selected')) li.classList.remove('selected');
 }
 
+/** The × in the conversation head (wide screens; phones use Back): as Back, but not while a text is still sending — its toast and echo watch belong to this conversation. */
+function phCloseX() {
+  if (ph.sending) { toast('Wait for the text to finish sending.'); return; }
+  closePhoneThread();
+}
+
 function phCount() {
   const n = E('ph-text').value.length;
   const c = E('ph-count');
@@ -6078,6 +6085,7 @@ function wirePhone() {
   });
   E('ph-refresh').addEventListener('click', () => { phCountsRefresh(); phoneLoad(); if (ph.party) openConversation(ph.party, ph.thread && ph.thread.contact, { silent: true }); });
   E('ph-back').addEventListener('click', closePhoneThread);
+  E('ph-close').addEventListener('click', phCloseX);
   E('ph-text').addEventListener('input', phCount);
   E('ph-text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) phoneSend(); });
   E('ph-send').addEventListener('click', phoneSend);

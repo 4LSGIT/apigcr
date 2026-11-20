@@ -790,6 +790,8 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   conversation's header creates a task from it, like the Email tab's: the
   title and description start from the latest texts and calls, **Link**
   offers the cases its items are on (the newest pre-picked) and the contact.
+  **×** at the top right of an open conversation closes it (not while a
+  text is still sending); on a phone, **←** goes back to the list.
 - **Texts** is the same list for texts only: a number that only ever called
   is not in it, and each row shows its latest text. It filters the list, not
   the conversation — opening a number still shows its calls among the texts.

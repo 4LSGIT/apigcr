@@ -649,6 +649,71 @@ describe('comms.html — Phone tab', () => {
     expect(doc.getElementById('phone').classList.contains('show-thread')).toBe(false);
   });
 
+  test('wide screens: the × puts the open conversation away — empty pane, no row selected, compose gone', async () => {
+    const env = await bootComms();
+    await openPhone(env);
+    const { doc, window, errors } = env;
+    doc.querySelector('#ph-list .msg[data-party="3135550001"]').click();
+    await tick(window, 60);
+    expect(doc.getElementById('ph-head').hidden).toBe(false);
+    expect(doc.getElementById('ph-compose').hidden).toBe(false);
+    expect(doc.getElementById('ph-close').closest('#ph-head')).toBeTruthy();
+    doc.getElementById('ph-close').click();
+    expect(doc.getElementById('ph-head').hidden).toBe(true);
+    expect(doc.getElementById('ph-compose').hidden).toBe(true);
+    expect(doc.getElementById('ph-body').textContent).toBe('Select a conversation to read it.');
+    expect(doc.querySelectorAll('#ph-list .msg.selected')).toHaveLength(0);
+    expect(window.eval('ph.party')).toBe(null);
+    // the same row opens again
+    doc.querySelector('#ph-list .msg[data-party="3135550001"]').click();
+    await tick(window, 60);
+    expect(doc.getElementById('ph-head').hidden).toBe(false);
+    expect(doc.getElementById('ph-body').textContent).toMatch(/line two/);
+    expect(errors).toEqual([]);
+  });
+
+  test('× while a conversation is still loading: the late answer lands nowhere', async () => {
+    let release;
+    const env = await bootComms({ over: { 'GET /api/phone-lines/1/conversations/3135550001': () => new Promise((r) => { release = () => r(fresh(MSGS)); }) } });
+    await openPhone(env);
+    const { doc, window } = env;
+    doc.querySelector('#ph-list .msg[data-party="3135550001"]').click();
+    await tick(window);
+    expect(typeof release).toBe('function');
+    doc.getElementById('ph-close').click();
+    release();
+    await tick(window, 80);
+    expect(doc.getElementById('ph-head').hidden).toBe(true);
+    expect(doc.getElementById('ph-body').textContent).toBe('Select a conversation to read it.');
+  });
+
+  test('× while a text is still sending: the conversation stays open and says why', async () => {
+    let release;
+    const env = await bootComms({ over: { 'POST /api/phone-lines/1/sms': (p) => new Promise((r) => { release = () => r({ status: 'success', to: p.to }); }) } });
+    await openPhone(env);
+    const { doc, window } = env;
+    doc.querySelector('#ph-list .msg[data-party="3135550001"]').click();
+    await tick(window, 60);
+    doc.getElementById('ph-text').value = 'On my way';
+    doc.getElementById('ph-send').click();
+    await tick(window);
+    expect(typeof release).toBe('function');
+    doc.getElementById('ph-close').click();
+    expect(doc.getElementById('ph-head').hidden).toBe(false);
+    expect(window.eval('ph.party')).toBe('3135550001');
+    expect(doc.getElementById('toast').textContent).toBe('Wait for the text to finish sending.');
+    release();
+    await tick(window, 40);
+    doc.getElementById('ph-close').click();
+    expect(doc.getElementById('ph-head').hidden).toBe(true);
+  });
+
+  test('phones keep Back; the phone ×, like the email one, is a wide-screen control', () => {
+    expect(COMMS).toMatch(/<button class="btn icon close-thread" type="button" id="ph-close"/);
+    const css = COMMS.match(/stacked navigation ── \*\/\n  @media \(max-width: 768px\) \{([\s\S]*?)\n  \}/)[1];
+    expect(css).toMatch(/\.close-thread \{ display: none; \}/);
+  });
+
   test('comms-polish-2: All communications opens the contact on their Communications tab; Task… opens the task dialog over the conversation', async () => {
     const env = await bootComms({ over: { 'GET /api/phone-lines/1/conversations/22395': () => fresh(MIXED) } }); // 22395: no contact, nothing logged
     await openPhone(env);
