@@ -1592,7 +1592,8 @@ body. Governing migrations in `ref/migrations/`.*
   - **Case-link is the ONE cross-source log match** (`mailReadService.priorLogId`):
     before creating a log row for stored mail it reuses any live log row an
     `email_ingest_executions` row carries under the RFC Message-ID or a
-    provider id (gmail-firm keys Workspace mail by Gmail id = `provider_id`).
+    provider id (`gmail-firm` keyed Workspace mail by Gmail id = `provider_id`
+    until dedup-A, 2026-11-20).
     The pipeline itself still dedupes per source only (§27).
   - **A Content-ID does not make an attachment inline** — Gmail gives every
     attachment one. Inline = an image the HTML body references as `cid:`
@@ -3443,8 +3444,9 @@ contact_unlinked/court_processed/trustee_validated`,
 api-key auth against `email_ingest_sources`. Adapters normalize and push:
 SiteGround PHP (domain mailboxes). The Google Apps Script that fed the Gmail
 firm account (`gmail-firm`) is RETIRED (trigger deleted 2026-11-06,
-`ref/MAILBOX_GMAIL_PARITY.md` §4): `gmail-firm` is fed by the IMAP worker
-alone (mailbox 2, below). Its source stays at `ref/gas.js` (code comments
+`ref/MAILBOX_GMAIL_PARITY.md` §4); mailbox 2 then emitted as `gmail-firm`
+alone until the dedup-A console switch (2026-11-20) moved it to
+`mailbox-imap` (below). The row stays active: it is the switch's rollback. Its source stays at `ref/gas.js` (code comments
 cite it by FUNCTION name, never line number) and carries no secrets — the
 ingest key and Pabbly URL live in its Script Properties (`INGEST_API_KEY`,
 `PABBLY_DOCS_RELAY_URL`); the key was committed here 2026-06-03 → rotated 2026-10-08.
@@ -3454,27 +3456,36 @@ ingest key and Pabbly URL live in its Script Properties (`INGEST_API_KEY`,
 Scheduler every 2 min — every 5 until the step-6 kit, 2026-11) calls `ingestEmail` directly — no HTTP, no key (the
 row's key is unpresentable by construction; ref/migrations/2026-10-08_mailbox_s1.sql).
 It emits only folders flagged `emit_to_rules`, and only mail arriving after a
-folder's first poll (history is stored, never emitted). Its
-`headers.message_id` is the RFC Message-ID; `gmail-firm` posts Gmail's
-INTERNAL id. **Dedupe is per source** — `(source, message_id)` — so one email
-reaching both sources is logged twice and Layer 3 fires twice: never emit a
-mailbox whose mail is already forwarded into the Workspace inbox. Inactive
-source row = emit kill switch for every mailbox emitting under it.
+folder's first poll (history is stored, never emitted). **Dedupe is per
+source** — `(source, message_id)` — so every mailbox emits under
+`mailbox-imap` (the Workspace box too since dedup-A) and one email reaching
+YC through two mailboxes is logged once. Its `headers.message_id` is the RFC
+Message-ID, **content-aware** (dedup-A): the first message a source logs
+with an id keeps the bare id; a later one with the same id and the same
+normalized subject is a `duplicate`, one with a DIFFERENT subject is keyed
+`<id>#s:<12 hex sha1(subject)>` — CM/ECF's "Docket Entry #N has been
+updated" reuses the corrected notice's Message-ID, and court_extract's
+processed marker keys on `message_id`. Readers resolving a key back to a
+stored row split the suffix (`mailboxIngestService.splitContentKey`;
+`mailAttachmentService.resolveMessage` matches the tag against the copy's
+subject). Contract: worker header CONTENT-AWARE RFC KEY. Inactive source row
+= emit kill switch for every mailbox emitting under it.
 **Emission override (S1-G):** `mailboxes.emit_source_name` + `emit_id_kind`
 (SU PATCH only, as a pair, active source, `provider` never under
 `mailbox-imap`, one provider-keyed mailbox per source) let a mailbox emit
-under another source — the Gmail mailbox emits as `gmail-firm` keyed by
-`mail_messages.provider_id` = hex(X-GM-MSGID), the Apps Script's own key, so
-both feeders collide into one log row. A provider-keyed message without a
+under another source, keyed by the RFC id or by `mail_messages.provider_id`
+= hex(X-GM-MSGID) — how the Gmail mailbox emitted as `gmail-firm` (the Apps
+Script's own key) until dedup-A, and its rollback. `resolveMessage` still
+resolves a historic `gmail-firm` key by provider id once no box emits it
+(`HISTORIC_PROVIDER_SOURCES`). A provider-keyed message without a
 provider id is stored + alerted, NEVER emitted under the RFC id. In-process
 emission reads source `id`/`name`/`active` only — never `api_key`, never
 stamps `last_used_at` (that column = last HTTP post). Feeder tell in
 `email_ingest_executions`: `remote_ip` NULL = worker, set = HTTP adapter.
 **Gmail = `[Gmail]/All Mail` as the ONLY folder** (ruling 2026-10-11): one
 copy of inbound, sent and label-filed mail; never All Mail ALONGSIDE other
-folders (double store — `GET /api/mailboxes/:id/folders` warns). A
-provider-id mailbox emits its sent mail too (as the Apps Script did — design
-§4.1 amendment). **Drafts are never stored nor emitted** (worker DRAFT
+folders (double store — `GET /api/mailboxes/:id/folders` warns). The
+Workspace box emits its sent mail too (All Mail; design §4.1 amendment). **Drafts are never stored nor emitted** (worker DRAFT
 GUARD: the `\Draft` flag OR the Gmail `\Draft` label — Gmail does not flag
 drafts in All Mail — and Gmail re-creates drafts per autosave). Gmail labels
 (X-GM-LABELS) are stored per row as a snapshot for the comms hub

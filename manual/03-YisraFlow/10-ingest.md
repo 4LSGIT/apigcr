@@ -11,7 +11,7 @@ Two pipelines, identical in shape:
 
 | | Email | Phone |
 |---|---|---|
-| Fed by | external adapters (Gmail via Apps Script, SiteGround PHP) | RingCentral / Quo phone events |
+| Fed by | the mailbox worker, in-process (every mailbox as `mailbox-imap` — Admin → Mailboxes); HTTP adapters through `POST /api/email/ingest` | RingCentral / Quo phone events |
 | Forensic record | `email_log` | `phone_event_log` |
 | Management UI | More → Automations → **Email Ingest** | More → Automations → **Phone Ingest** |
 
@@ -43,16 +43,18 @@ status tells you which path it took:
 | Status | Means | Email | Phone |
 |---|---|---|---|
 | `logged` | Wrote a structured log entry | ✓ | ✓ |
-| `duplicate` | The provider sent it again; already terminal, so nothing re-ran | ✓ | ✓ |
+| `duplicate` | Seen before under this source — re-sent, or the same email through another mailbox; nothing re-ran | ✓ | ✓ |
 | `skipped_suppression` / `suppressed` | A suppression rule matched; no log entry | ✓ | ✓ |
 | `skipped_firm_to_firm` | Every address was on a firm domain | ✓ | — |
 | `auth_failed` | Bad or missing source key | ✓ | — |
 | `validation_failed` | Envelope didn't parse | ✓ | — |
 | `error` | Something threw — usually a bad link id | ✓ | ✓ |
 
-`duplicate` being the **largest** bucket on email is normal and healthy: the
-Gmail adapter re-presents messages it has already handed over, and the dedup
-precheck stops them before any rule fires.
+`duplicate` on email is normal and healthy: the same email reaching
+YisraCase through a second mailbox, or as another recipient's copy of a court
+notice (same Message-ID and subject — [Mailboxes](../08-Admin-Tools/08-mailboxes.md#folders)),
+is stopped by the dedup precheck before any rule fires. The same Message-ID
+with a different subject is a different email and is processed on its own.
 
 Phone has no `skipped_firm_to_firm` status on purpose. Firm-to-firm is exposed
 as a match field (`extra.firmToFirm`) instead, so you can choose to suppress it
@@ -116,8 +118,10 @@ and **200 for everything else, including `status:'error'` in the body**. On a
 Per-source API key in `X-Email-Ingest-Key`, one row per adapter in
 `email_ingest_sources`, constant-time compared. Deliberately **not** behind the
 app JWT — the adapters (a PHP forwarder piped from Exim, an Apps Script bound
-to a Gmail account) can't carry one. Two sources are live: `gmail-firm` and
-`siteground-php`.
+to a Gmail account) can't carry one. No HTTP adapter posts today: the Apps
+Script (`gmail-firm`) was retired on 2026-11-06 and `siteground-php` last
+posted in May 2026. The mailbox worker calls the pipeline in-process and
+presents no key.
 
 Auth failures write an `auth_failed` execution row rather than dropping
 silently, so a credential-guessing pattern shows up in the table.

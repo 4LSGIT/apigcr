@@ -44,13 +44,41 @@
  * sources (AI_CONTEXT §27). So the identity a message is emitted under is the
  * whole dedupe story:
  *   default (emit_source_name NULL)  source 'mailbox-imap', key = the RFC
- *                                    Message-ID.
+ *                                    Message-ID (CONTENT-AWARE, below). Every
+ *                                    mailbox, the Google inbox included since
+ *                                    2026-11-20 (dedup-A), so one email that
+ *                                    reaches YC through two mailboxes (a
+ *                                    forward, a CC, a double delivery) is
+ *                                    logged once.
  *   override (SU PATCH, both set)    source = emit_source_name, key = the RFC
- *                                    Message-ID ('rfc') or the provider id
- *                                    ('provider': Gmail's X-GM-MSGID in hex —
- *                                    the key the Apps Script `gmail-firm`
- *                                    adapter has always posted, so both
- *                                    feeders collide into one log row).
+ *                                    Message-ID ('rfc', content-aware too) or
+ *                                    the provider id ('provider': Gmail's
+ *                                    X-GM-MSGID in hex — the key the retired
+ *                                    Apps Script `gmail-firm` adapter posted;
+ *                                    the Google inbox emitted that way until
+ *                                    dedup-A, and its rollback is that pair).
+ *
+ * CONTENT-AWARE RFC KEY (rfcEmitKey, dedup-A). A Message-ID is not always one
+ * email: CM/ECF sends "Docket Entry #N has been updated" under the SAME
+ * Message-ID as the notice it corrects (3 of 3 such pairs in the Google
+ * inbox, 2026-10/11 — one said "PLEASE DISREGARD, ENTERED IN ERROR"). Keyed
+ * on the bare id the correction would be a `duplicate`: no rules, no log, and
+ * court_extract's processed marker (keyed on message_id) would skip it. So:
+ * the first message emitted under a source with a given RFC id keeps the bare
+ * id — every RFC-keyed reader (case linking, court_ai_log, executions) sees
+ * what it always saw. A later one with the same id is compared by SUBJECT
+ * (subjectNorm: whitespace collapsed, trimmed, lower-cased) against that
+ * first email_log row: same subject → the bare id → `duplicate` (a forward,
+ * a CC, a per-recipient ECF copy — their bodies differ, each carries its own
+ * PACER free-look link, so the body is no test); different subject → the
+ * key `<id>#s:<12 hex of sha1(subjectNorm)>` — its own log row, its own
+ * rules, and the same key again for its own copies. The Date header is no
+ * test either (ECF stamps each recipient's copy apart). Race-safe because
+ * every emission runs inside one worker run under the ingest LOCK, mailbox
+ * after mailbox, and ingestEmail writes the email_log row before it returns;
+ * email_log's UNIQUE(source, message_id) still refuses a second row for any
+ * one key. A subject a path rewrites (a list tag, a spam marker) makes the
+ * copies two log rows — the failure is a double, never a loss.
  * A 'provider' mailbox message WITHOUT a provider id is stored and NEVER
  * emitted — falling back to the RFC id under a provider-keyed source would
  * mint a second identity for the same mail and fire Layer 3 twice. It is
@@ -191,6 +219,7 @@
 
 'use strict';
 
+const crypto = require('crypto');
 const transport = require('./imapTransport');
 const emailIngestService = require('../emailIngestService');
 const { withTransaction } = require('../../lib/withTransaction');
@@ -340,6 +369,40 @@ function emissionConfig(mb) {
 function emitKeyOf(kind, m) {
   if (kind === 'provider') return (m && m.providerId) || null;
   return (m && m.envelope && m.envelope.messageId) || null;
+}
+
+/** A subject as the CONTENT-AWARE RFC KEY compares it: whitespace collapsed, trimmed, lower-cased. */
+function subjectNorm(subject) {
+  return String(subject == null ? '' : subject).replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** The `#s:` suffix of a content-aware key: 12 hex of sha1(subjectNorm). */
+function subjectTag(subject) {
+  return crypto.createHash('sha1').update(subjectNorm(subject), 'utf8').digest('hex').slice(0, 12);
+}
+
+const CONTENT_KEY_RE = /^(.+)#s:([0-9a-f]{12})$/;
+
+/** A content-aware key → { rfc, tag } (tag null for a bare id). */
+function splitContentKey(key) {
+  const m = CONTENT_KEY_RE.exec(String(key == null ? '' : key));
+  return m ? { rfc: m[1], tag: m[2] } : { rfc: key == null ? null : String(key), tag: null };
+}
+
+/**
+ * The CONTENT-AWARE RFC KEY (header) a message with RFC id `rfc` and this
+ * subject is emitted under, by `sourceName`: the bare id unless that source
+ * already logged the bare id for a DIFFERENT subject. Only for RFC-keyed
+ * emission; the caller holds the ingest lock.
+ */
+async function rfcEmitKey(db, sourceName, rfc, subject) {
+  const id = rfc == null ? '' : String(rfc).trim().replace(/^<|>$/g, '');
+  if (!id) return null;
+  const [[first]] = await db.query(
+    'SELECT subject FROM email_log WHERE source = ? AND message_id = ? LIMIT 1', [sourceName, id]
+  );
+  if (!first || subjectNorm(first.subject) === subjectNorm(subject)) return id;
+  return `${id}#s:${subjectTag(subject)}`;
 }
 
 /**
@@ -597,7 +660,7 @@ function emitText(text, html) {
  * (same shape the Apps Script adapter posts — ref/gas.js
  * buildCanonicalEnvelope), plus a `mailbox` provenance block.
  */
-function buildEnvelope({ source, mailbox, folder, uidValidity, m, receivedAt, idKind = 'rfc', rowId = null }) {
+function buildEnvelope({ source, mailbox, folder, uidValidity, m, receivedAt, idKind = 'rfc', rowId = null, emitKey }) {
   const hdr = parseHeaderBlock(m.headerBlock);
   const env = m.envelope || {};
   const warnings = [];
@@ -674,10 +737,11 @@ function buildEnvelope({ source, mailbox, folder, uidValidity, m, receivedAt, id
     },
     headers: {
       // This source's (source, message_id) dedupe key in email_log — the
-      // EMISSION IDENTITY above: the RFC Message-ID ('rfc'), or the provider
-      // id ('provider') with the RFC id still in headers.all['message-id']
-      // and mailbox.rfc_message_id. emitKeyOf is the one place it is chosen.
-      message_id: emitKeyOf(idKind, m),
+      // EMISSION IDENTITY above: the RFC Message-ID ('rfc', content-aware:
+      // processMessage passes rfcEmitKey's answer as emitKey), or the
+      // provider id ('provider'), with the RFC id still in
+      // headers.all['message-id'] and mailbox.rfc_message_id.
+      message_id: emitKey !== undefined ? emitKey : emitKeyOf(idKind, m),
       in_reply_to: firstHeader(hdr, 'in-reply-to'),
       references: firstHeader(hdr, 'references'),
       content_type: firstHeader(hdr, 'content-type'),
@@ -1002,7 +1066,7 @@ async function processMessage(ctx, mb, folder, cfg, st, m, pass, existing) {
   const em = mb._emit || { source: null, kind: 'rfc' };
   const source = em.source;
   const mid = m.envelope && m.envelope.messageId;
-  const key = emitKeyOf(em.kind, m);
+  let key = emitKeyOf(em.kind, m);
   let rowId = existing ? existing.id : null;
   let logIdNull = existing ? existing.log_id == null : true;
   let inserted = false;
@@ -1011,19 +1075,24 @@ async function processMessage(ctx, mb, folder, cfg, st, m, pass, existing) {
     // Secondary dedupe: the same message already stored in this folder under
     // another UID (duplicate delivery, a client re-append). A provider id is
     // the message's identity where the server has one (two Gmail messages
-    // can share a Message-ID and the Apps Script adapter logs both); the
-    // Message-ID otherwise.
-    const [[dup]] = m.providerId
-      ? await db.query(
-          'SELECT id FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND provider_id = ? LIMIT 1',
-          [mb.id, folder, String(m.providerId).slice(0, 64)]
-        )
-      : mid
-        ? await db.query(
-            'SELECT id FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND message_id = ? LIMIT 1',
-            [mb.id, folder, String(mid).slice(0, 512)]
-          )
-        : [[null]];
+    // can share a Message-ID); elsewhere the Message-ID AND the subject
+    // (subjectNorm — the CONTENT-AWARE RFC KEY's test: ECF's "Docket Entry
+    // has been updated" reuses the corrected notice's Message-ID and must be
+    // stored, not dropped as a copy).
+    let dup = null;
+    if (m.providerId) {
+      [[dup]] = await db.query(
+        'SELECT id FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND provider_id = ? LIMIT 1',
+        [mb.id, folder, String(m.providerId).slice(0, 64)]
+      );
+    } else if (mid) {
+      const [same] = await db.query(
+        'SELECT id, subject FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND message_id = ? LIMIT 50',
+        [mb.id, folder, String(mid).slice(0, 512)]
+      );
+      const want = subjectNorm(m.envelope && m.envelope.subject);
+      dup = same.find(r => subjectNorm(r.subject) === want) || null;
+    }
     if (dup) { summary.duplicates++; ctx.folderStats.duplicates++; return 'duplicate'; }
     const id = await insertRow(db, buildRow(mb.id, folder, m));
     if (id) {
@@ -1071,10 +1140,16 @@ async function processMessage(ctx, mb, folder, cfg, st, m, pass, existing) {
     return 'unemittable';
   }
 
+  // The CONTENT-AWARE RFC KEY: decided here, once, for the emission and the
+  // bridge below alike (both look the message up under this source).
+  if (em.kind === 'rfc' && key && source && (emit || inserted)) {
+    key = await rfcEmitKey(db, source.name, key, m.envelope && m.envelope.subject);
+  }
+
   if (emit) {
     const envelope = buildEnvelope({
       source, mailbox: mb, folder, uidValidity: st.uidvalidity, m,
-      receivedAt: new Date(ctx.now()).toISOString(), idKind: em.kind, rowId,
+      receivedAt: new Date(ctx.now()).toISOString(), idKind: em.kind, rowId, emitKey: key,
     });
     let result;
     try {
@@ -1105,8 +1180,7 @@ async function processMessage(ctx, mb, folder, cfg, st, m, pass, existing) {
   } else if (inserted && key && source) {
     // Not emitted from here, but the same message may already be in the log
     // under this mailbox's emit identity (another mailbox / folder of this
-    // source, or — for a provider-keyed Gmail box — the Apps Script adapter)
-    // — bridge to it.
+    // source) — bridge to it, by the same content-aware key.
     const logId = await recoverLogId(db, source.id, key);
     if (logId) await stampLogId(db, rowId, logId);
   }
@@ -1830,6 +1904,8 @@ async function previewEmission(db, mailboxId, messageRowId) {
   const c = emissionConfig(mb);
   const cfg = folderConfig(mb.ingest_folders)
     .find(([f]) => String(f).toLowerCase() === String(row.folder).toLowerCase());
+  // The bare key: a repeat of an RFC id under a different subject is emitted
+  // as <id>#s:<tag> (CONTENT-AWARE RFC KEY), which needs the log — not shown here.
   const key = c.kind === 'provider' ? (row.provider_id || null) : (row.message_id || null);
   const t = emitText(row.body_text, row.body_html);
   return {
@@ -1868,6 +1944,10 @@ module.exports = {
   buildEnvelope,
   emitText,
   emitKeyOf,
+  rfcEmitKey,
+  subjectNorm,
+  subjectTag,
+  splitContentKey,
   emissionConfig,
   isDraft,
   htmlToText,

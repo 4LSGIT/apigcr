@@ -226,15 +226,50 @@ describe('idempotency and delivery', () => {
     expect(W.state(id).INBOX.last_uid).toBe(2);
   });
 
-  test('secondary dedupe: same Message-ID under a new UID in the folder is neither stored nor emitted', async () => {
-    S.addFolder('INBOX', 9, [msg(1)]);
+  test('secondary dedupe: same Message-ID AND subject under a new UID in the folder is neither stored nor emitted', async () => {
+    S.addFolder('INBOX', 9, [msg(1, { subject: 'Order  entered' })]);
     const id = primed(undefined, { INBOX: { uidvalidity: 9, last_uid: 0 } });
     await run();
-    S.deliver('INBOX', msg(2, { messageId: 'm1@example.com' }));
+    // the subject compares whitespace-collapsed and case-folded (subjectNorm)
+    S.deliver('INBOX', msg(2, { messageId: 'm1@example.com', subject: ' order entered ' }));
     const s = await run();
     expect(s).toMatchObject({ stored: 0, emitted: 0, duplicates: 1 });
     expect(W.rows(id, 'INBOX')).toHaveLength(1);
     expect(W.state(id).INBOX.last_uid).toBe(2);
+  });
+
+  test('dedup-A: same Message-ID, DIFFERENT subject (ECF "Docket Entry updated") is stored and emitted under <id>#s:<tag>; its own copy is a duplicate', async () => {
+    S.addFolder('INBOX', 9, []);
+    const id = primed(undefined, { INBOX: { uidvalidity: 9, last_uid: 0 } });
+    S.deliver('INBOX', msg(1, { messageId: '74463508@mieb.uscourts.gov', subject: '26-51058-lsg "Meeting of Creditors Chapter 13" Ch 13' }));
+    await run();
+    S.deliver('INBOX', msg(2, { messageId: '74463508@mieb.uscourts.gov', subject: '26-51058-lsg  Docket Entry #18 has been updated' }));
+    const s = await run();
+    expect(s).toMatchObject({ stored: 1, emitted: 1, duplicates: 0 });
+    const tag = svc.subjectTag('26-51058-lsg docket entry #18 has been updated');
+    expect(emittedMids()).toEqual(['74463508@mieb.uscourts.gov', `74463508@mieb.uscourts.gov#s:${tag}`]);
+    expect(s.pipeline).toEqual({ logged: 1 });
+    const rows = W.rows(id, 'INBOX');
+    expect(rows).toHaveLength(2);
+    expect(rows[1].log_id).not.toBeNull();
+    expect(rows[1].log_id).not.toBe(rows[0].log_id);
+  });
+
+  test('dedup-A: a different-subject repeat in ANOTHER mailbox gets the suffixed key; a same-subject copy there is a duplicate bridged to the first', async () => {
+    S.addFolder('INBOX', 9, []);
+    const a = primed(undefined, { INBOX: { uidvalidity: 9, last_uid: 0 } });
+    const b = primed({ Other: { emit_to_rules: true } }, { Other: { uidvalidity: 4, last_uid: 0 } });
+    S.addFolder('Other', 4, []);
+    S.deliver('INBOX', msg(1, { messageId: 'n@court', subject: 'Notice' }));
+    await run();
+    S.deliver('Other', msg(1, { messageId: 'n@court', subject: 'NOTICE' }));
+    S.deliver('Other', msg(2, { messageId: 'n@court', subject: 'Docket Entry #4 has been updated' }));
+    const s = await run();
+    expect(s.pipeline).toEqual({ duplicate: 1, logged: 1 });
+    expect(emittedMids().slice(1)).toEqual(['n@court', `n@court#s:${svc.subjectTag('docket entry #4 has been updated')}`]);
+    const [copy, upd] = W.rows(b, 'Other');
+    expect(copy.log_id).toBe(W.rows(a, 'INBOX')[0].log_id);
+    expect(upd.log_id).not.toBe(copy.log_id);
   });
 
   test('the same message in two mailboxes: one log row, both copies bridged to it', async () => {
@@ -247,6 +282,22 @@ describe('idempotency and delivery', () => {
     const la = W.rows(a, 'INBOX')[0].log_id;
     expect(la).not.toBeNull();
     expect(W.rows(b, 'INBOX')[0].log_id).toBe(la);
+  });
+
+  test('dedup-A: a store-only copy of the different-subject repeat is bridged to ITS log row, not the first one', async () => {
+    S.addFolder('INBOX', 9, []);
+    S.addFolder('Sent', 8, []);
+    const a = primed(undefined, { INBOX: { uidvalidity: 9, last_uid: 0 } });
+    const b = primed({ Sent: { emit_to_rules: false } }, { Sent: { uidvalidity: 8, last_uid: 0 } });
+    S.deliver('INBOX', msg(1, { messageId: 'x@court', subject: 'Order' }));
+    S.deliver('INBOX', msg(2, { messageId: 'x@court', subject: 'Docket Entry #9 has been updated' }));
+    await run();
+    S.deliver('Sent', msg(1, { messageId: 'x@court', subject: 'Docket Entry #9 has been updated' }));
+    await run();
+    expect(P.envelopes).toHaveLength(2);
+    const [nef, upd] = W.rows(a, 'INBOX');
+    expect(upd.log_id).not.toBe(nef.log_id);
+    expect(W.rows(b, 'Sent')[0].log_id).toBe(upd.log_id);
   });
 
   test('a store-only folder copy is bridged to an already-logged message', async () => {

@@ -44,11 +44,10 @@
  *
  * ── WHAT A SEND WRITES (carry #1) ────────────────────────────────────────────
  * Nothing to the log tier. The adapters keep writing their one 'outbound-*'
- * email_log row (FAILED-… on a refusal), and that is all: for a Gmail-fed
- * mailbox the ingested All-Mail copy, emitted under gmail-firm, IS the log
- * path (the same Gmail id twins the outbound-gmail row); an RFC mailbox's
- * Sent stays store-only (§4.1). A send-time log row would log every hub reply
- * twice. The response carries the adapter's email_log id (looked up — the
+ * email_log row (FAILED-… on a refusal), and that is all: for the Gmail box
+ * the ingested All-Mail copy, emitted under its source (mailbox-imap since
+ * dedup-A, gmail-firm before), IS the log path; another mailbox's Sent stays
+ * store-only (§4.1). A send-time log row would log every hub reply twice. The response carries the adapter's email_log id (looked up — the
  * adapters write it fire-and-forget).
  *
  * ── SENT APPEND (carry #2) ───────────────────────────────────────────────────

@@ -157,8 +157,11 @@ function makeWorld() {
       return [msgRowsIn(p[0], p[1]).filter(r => r.uid != null && set.has(Number(r.uid)))
         .map(r => ({ id: r.id, uid: r.uid, log_id: r.log_id }))];
     }
-    if (sql === 'SELECT id FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND message_id = ? LIMIT 1') {
-      return [msgRowsIn(p[0], p[1]).filter(r => r.message_id != null && ci(r.message_id, p[2])).slice(0, 1).map(r => ({ id: r.id }))];
+    // dedup-A: the non-provider secondary dedupe reads the subject too (the
+    // worker compares it); LIMIT honoured.
+    if (sql === 'SELECT id, subject FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND message_id = ? LIMIT 50') {
+      return [msgRowsIn(p[0], p[1]).filter(r => r.message_id != null && ci(r.message_id, p[2])).slice(0, 50)
+        .map(r => ({ id: r.id, subject: r.subject ?? null }))];
     }
     if (sql === 'SELECT id FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND provider_id = ? LIMIT 1') {
       return [msgRowsIn(p[0], p[1]).filter(r => r.provider_id != null && ci(r.provider_id, p[2])).slice(0, 1).map(r => ({ id: r.id }))];
@@ -263,6 +266,13 @@ function makeWorld() {
         r.uid = next;
       }
       return [{ affectedRows: ids.size }];
+    }
+
+    // ── email_log (dedup-A: the CONTENT-AWARE RFC KEY's first-row lookup) ──
+    // Rows are written by makePipeline on a first sighting; message_id
+    // compares case-insensitively (utf8mb4_general_ci).
+    if (sql === 'SELECT subject FROM email_log WHERE source = ? AND message_id = ? LIMIT 1') {
+      return [(T.email_log || []).filter(r => ci(r.source, p[0]) && ci(r.message_id, p[1])).slice(0, 1).map(r => ({ subject: r.subject }))];
     }
 
     // ── executions (worker's error row + recoverLogId) ──
@@ -518,6 +528,8 @@ function makePipeline(world) {
       const status = (pipeline.statusFor && pipeline.statusFor(envelope)) || 'logged';
       const logId = status === 'logged' ? ++nextLog : null;
       seen.set(key, { logId });
+      // the email_log row the real pipeline writes before Layer 3 (dedup-A reads its subject)
+      (T.email_log = T.email_log || []).push({ source: source.name, message_id: mid, subject: envelope.subject == null ? '' : String(envelope.subject) });
       return { status, executionId: exec({ status, log_id: logId }), logId, emailLogId: 1 };
     },
   };

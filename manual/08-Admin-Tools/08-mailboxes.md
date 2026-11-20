@@ -81,13 +81,28 @@ Untick **Ingest enabled** to stop polling a box entirely.
   run into Gmail's daily download limit and swell the database): only mail
   arriving after the first read is stored. It is decided at that first read;
   ticking it later does not go back for the old mail.
-- **Never tick Emit to rules on a box whose mail already reaches YisraCase
-  another way** — for example a SiteGround address that forwards into the
-  Google inbox the Apps Script ingest reads. The pipeline only recognises a
-  repeat **within one source**, so every message would be logged twice and
-  every rule would fire twice. Store-only (Emit unticked) is always safe.
-- The same message in two YisraCase mailboxes (To: one, Cc: the other) is
-  logged once; both stored copies link to that log entry.
+- **One email reaching YisraCase through two mailboxes is logged once** —
+  a forward from one box into another, a To: and a Cc:, a court notice
+  delivered to two of the firm's addresses. Every mailbox feeds rules as the
+  same source (`mailbox-imap`) and a repeat is recognised by its
+  **Message-ID and subject**: the same Message-ID with the same subject
+  (spacing and capitals aside) is the same email, so it is logged and fed to
+  rules once, and every stored copy links to that one log entry. This holds
+  only while the Message-ID survives the path — a forward that re-sends the
+  mail as a NEW message (Gmail's Forward button, an Outlook forward) gets a
+  new Message-ID and is a second email; a server-side forward or redirect
+  keeps it.
+- **The same Message-ID with a DIFFERENT subject is a different email.**
+  The court's *"Docket Entry #N has been updated"* notice reuses the
+  Message-ID of the notice it corrects (one said *PLEASE DISREGARD, ENTERED
+  IN ERROR*), so it is stored, logged and fed to rules on its own. A path
+  that rewrites subjects (a mailing-list tag, a spam marker) therefore logs
+  that email twice — a repeat is never silently dropped.
+- **Never tick Emit to rules on a box whose mail also reaches YisraCase
+  through another source** (an HTTP ingest adapter, or a mailbox emitting
+  under an override — next section). The pipeline only recognises a repeat
+  **within one source**, so each message would be logged twice and every rule
+  would fire twice. Store-only (Emit unticked) is always safe.
 - **Drafts are never copied** — not stored, not fed to rules — in any folder.
   They are unsent, and Gmail saves a new copy of a draft every few seconds
   while you type. The message you finally send is copied normally.
@@ -98,31 +113,39 @@ Untick **Ingest enabled** to stop polling a box entirely.
   folders: every labelled email would be stored twice (the superuser folder
   listing warns about it).
 
-## Emitting as another source (the Google inbox)
+## The Google inbox, and emitting as another source
 
-A mailbox normally feeds rules as the `mailbox-imap` source, identified by
-each message's Message-ID. The Google inbox is different: the older Apps
-Script ingest already feeds the same mail as `gmail-firm`, identified by
-Google's own message id. So that mailbox is switched to **emit as
-`gmail-firm` (provider id)** — the same identity — and the two feeds land on
-one log entry instead of two.
+Every mailbox feeds rules as the `mailbox-imap` source, identified by each
+message's Message-ID (above) — the Google inbox (stuart@4lsg.com) too, since
+the **dedup-A switch** (a superuser console step, 2026-11-20). Before it, that
+box emitted as **`gmail-firm` (provider id)**, keyed by Google's own message
+id, to match the Apps Script ingest that fed the same mail until it was
+retired on 2026-11-06. Keyed that way it logged a court notice delivered to
+two of the firm's addresses twice, and could never recognise a copy arriving
+through another mailbox; on `mailbox-imap` it does.
 
-- The switch is a superuser **console** step from the pilot checklist
-  (`ref/MAILBOX_GMAIL_PARITY.md`), not a form field, because it only becomes
-  safe after a live check. The mailbox list shows it read-only:
-  *emits as gmail-firm (provider id)*.
-- A message that arrives without a Google id is **stored but not fed to
-  rules**, and a warning is recorded — it is never fed under a different id.
+- The switch, its undo and a follow-up check are console snippets a
+  superuser pastes into the main YisraCase window — each checks the box's
+  state first, refuses if an ingest run is mid-way or a message is still
+  being fed to rules, and ends on one **GO** / **NO-GO** line. The undo puts
+  the box back on `gmail-firm` (provider id); mail logged in between stays
+  where it is, and an email whose copies arrive in the minute of a switch can
+  be logged twice. Do **not** turn the `gmail-firm` source off while the box
+  might be rolled back onto it.
+- **Emitting as another source** stays possible: a box can be set to emit
+  under any active `email_ingest_sources` row, keyed by Message-ID or by the
+  provider's own id. It is a console step, not a form field, because it is
+  only safe after a live check; the mailbox list shows it read-only
+  (*emits as gmail-firm (provider id)*). A provider-keyed box stores, but
+  never feeds to rules, a message that arrives without a provider id (a
+  warning is recorded) — it is never fed under a different id.
 - The Google inbox reads **All Mail only**, so its **sent** mail feeds rules
-  and the log too — as the Apps Script ingest always did (replies to clients
-  land on their timelines); firm-to-firm mail is skipped as usual.
+  and the log too (replies to clients land on their timelines); firm-to-firm
+  mail is skipped as usual.
 - In the **Comms hub**, that mailbox reads like Gmail: its Inbox is what
   Google had in the Inbox when each email arrived, its sent mail is tagged
   **Sent**, and mail Google filed away or archived is tagged **Archived** and
   shows under **All folders** only (Google labels, below).
-- To undo it, set both values back to empty in one save together with Emit
-  to rules off on All Mail (the checklist has the exact call). Do **not** turn
-  the `gmail-firm` source off: that also cuts off the Apps Script ingest.
 - Superusers can list a mailbox's folders from the console
   (`GET /api/mailboxes/<id>/folders`): exact folder names, message counts,
   whether each configured folder exists, whether it is All Mail (with a
@@ -237,8 +260,8 @@ The folder's record keeps its last 20 quarantined messages
 (`ingest_state.<folder>.quarantined`).
 
 **Emergency stop for rules:** setting the `mailbox-imap` row in
-`email_ingest_sources` to inactive stops every mailbox from emitting on the
-next run. Mail is still stored; mail stored while it is off is never emitted
+`email_ingest_sources` to inactive stops every mailbox emitting under it (all
+of them, unless one emits under an override) on the next run. Mail is still stored; mail stored while it is off is never emitted
 afterwards.
 
 ## Access

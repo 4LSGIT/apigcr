@@ -59,8 +59,8 @@
  * ── NEVER APPEND TO GMAIL (S3) ───────────────────────────────────────────────
  * Gmail files mail sent through the account into Sent by itself, and an
  * APPENDed copy is a SECOND message with its own X-GM-MSGID: a second row in
- * All Mail and — for a mailbox emitting under a provider-keyed source
- * (gmail-firm) — a second email_log emission of the same send. So appendSent
+ * All Mail and — for a mailbox emitting under a provider-keyed source — a
+ * second email_log emission of the same send. So appendSent
  * refuses any server advertising X-GM-EXT-1 ('gmail_server') before it lists
  * a folder. The send service already skips Gmail-API sends without
  * connecting; this is the second, independent layer.
@@ -74,7 +74,8 @@
  * Gmail's X-GM-MSGID is a 64-bit unsigned decimal whose lowercase hex is the
  * id the Gmail web UI, the Gmail API and Apps Script GmailMessage.getId() use
  * (developers.google.com/workspace/gmail/imap/imap-extensions) — the id the
- * `gmail-firm` source has keyed email_log on since 2025. imapflow 2.3.0 adds
+ * `gmail-firm` source keyed email_log on from 2025 until dedup-A (2026-11-20).
+ * imapflow 2.3.0 adds
  * X-GM-MSGID to EVERY fetch when the server advertises X-GM-EXT-1 and surfaces
  * it as `emailId` — UNLESS the server also advertises OBJECTID, in which case
  * it asks for RFC 8474 EMAILID instead and `emailId` is an opaque objectid,

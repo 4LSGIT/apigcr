@@ -1840,6 +1840,7 @@ tests/machineKeyScopes.test.js
 tests/mailEventHook.routes.test.js
 tests/mailEventIngest.mysql.test.js
 tests/mailFtSearch.test.js
+tests/mailboxContentKey.mysql.test.js
 tests/mailboxFetchMerge.test.js
 tests/mailboxGmailParity.console.test.js
 tests/mailboxIngestStateComment.test.js

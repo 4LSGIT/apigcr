@@ -366,6 +366,34 @@ maybe('email attachments S1/S2 on real MySQL', () => {
       expect(await att.resolveMessage(pool, { source: 'gmail-firm', message_id: 'rfc-b@x' })).toBeNull();
       expect((await att.resolveMessage(pool, { mail_message_id: a })).attachments).toEqual([]);
     });
+    test('after the Google inbox moves to the default identity (dedup-A): gmail-firm keys still resolve by provider id; nothing else widens', async () => {
+      await q('UPDATE mailboxes SET emit_source_name = NULL, emit_id_kind = NULL WHERE id = 2');
+      const a = await message({ from: 'a@x.com', provider: '1a1adf9addfe3141', rfc: 'rfc-a@x' });
+      // the envelope emitted before the switch (gmail-firm + Gmail id) — any letter case
+      expect((await att.resolveMessage(pool, { source: 'gmail-firm', message_id: '1A1ADF9ADDFE3141' })).id).toBe(a);
+      // the envelope emitted after it (mailbox-imap + RFC Message-ID)
+      expect((await att.resolveMessage(pool, { source: 'mailbox-imap', message_id: '<rfc-a@x>' })).id).toBe(a);
+      // a provider id never resolves under the default source, nor under a source never provider-keyed
+      expect(await att.resolveMessage(pool, { source: 'mailbox-imap', message_id: '1a1adf9addfe3141' })).toBeNull();
+      expect(await att.resolveMessage(pool, { source: 'siteground-php', message_id: '1a1adf9addfe3141' })).toBeNull();
+      // an RFC id never resolves under the retired provider source
+      expect(await att.resolveMessage(pool, { source: 'gmail-firm', message_id: 'rfc-a@x' })).toBeNull();
+    });
+    test('a content-aware key (<id>#s:<tag>) resolves to the stored copy whose subject carries the tag; the bare id to the first', async () => {
+      await q('UPDATE mailboxes SET emit_source_name = NULL, emit_id_kind = NULL WHERE id = 2');
+      const nef = await message({ from: 'ecf@x.com', subject: 'Order entered', provider: '1a00000000000001', rfc: 'n@court' });
+      const upd = await message({ from: 'ecf@x.com', subject: 'Docket Entry #4 has been updated', provider: '1a00000000000002', rfc: 'n@court' });
+      const ingest = require('../services/mailbox/mailboxIngestService');
+      const key = `n@court#s:${ingest.subjectTag('docket entry  #4 has been UPDATED')}`;
+      expect((await att.resolveMessage(pool, { source: 'mailbox-imap', message_id: key })).id).toBe(upd);
+      expect((await att.resolveMessage(pool, { source: 'mailbox-imap', message_id: 'n@court' })).id).toBe(nef);
+      expect(await att.resolveMessage(pool, { source: 'mailbox-imap', message_id: `n@court#s:${ingest.subjectTag('something else')}` })).toBeNull();
+    });
+    test('while a mailbox still emits as gmail-firm (provider), only that mailbox answers for it — the fallback does not widen it', async () => {
+      // a provider id stored by ANOTHER box (a second Gmail account) is not the gmail-firm box's message
+      await message({ from: 'c@x.com', mailboxId: 3, provider: '2b2b2b2b2b2b2b2b' });
+      expect(await att.resolveMessage(pool, { source: 'gmail-firm', message_id: '2b2b2b2b2b2b2b2b' })).toBeNull();
+    });
     test('no usable reference → BAD_REF', async () => {
       await expect(att.resolveMessage(pool, {})).rejects.toMatchObject({ code: 'BAD_REF' });
       await expect(att.resolveMessage(pool, { mail_message_id: 'x' })).rejects.toMatchObject({ code: 'BAD_REF' });

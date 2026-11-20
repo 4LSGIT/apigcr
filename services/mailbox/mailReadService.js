@@ -125,9 +125,10 @@
  * on the message's log row. A message with no stamped log_id first looks for
  * a log row that ALREADY carries this email: a copy's stamp, else any ingest
  * source's execution row keyed by the RFC Message-ID or by a provider id —
- * the Apps Script source (gmail-firm) logs Workspace mail under Gmail's id,
- * which the worker stores as provider_id, while that mailbox is store-only
- * (design §2: no cross-source dedupe exists anywhere else). Only when none
+ * `gmail-firm` (the retired Apps Script, then the Workspace box itself until
+ * dedup-A, 2026-11-20) logged Workspace mail under Gmail's id, which the
+ * worker stores as provider_id (design §2: no cross-source dedupe exists
+ * anywhere else). Only when none
  * exists is a log row created, via logService.createLogEntry in the shape the
  * email pipeline writes (type/link 'email', the other party, From/To/Subject/
  * Message), dated when the mail was sent (never later than it was stored — a
@@ -135,8 +136,8 @@
  * message. Refused (409) while another writer may still log it: the ingest
  * worker's own emission (its stamp would lose the race and the pipeline's row
  * would orphan), or — for a store-only folder — STORE_ONLY_GRACE_MIN after
- * the worker stored it, the window in which another source (the ~5-min Apps
- * Script cadence) can still post the same email.
+ * the worker stored it, the window in which another mailbox or source can
+ * still log the same email.
  *
  * UNLINK (A13X, 2026-11-16): caseUnlink resolves the log row with the SAME
  * lookups in the same order (existingLogId — shared, never a second copy) and
@@ -172,7 +173,8 @@ const VIEW_IDS_MAX = 50;
 const Q_MAX = 200;
 const LOG_MESSAGE_SOFT_CAP = 50000; // emailIngestService._bodyForLog
 // Case-link on a store-only folder waits this long after the worker stored the
-// message: two ~5-min pollers (the worker, the Apps Script source) plus margin.
+// message: another mailbox (or source) logging the same email gets a poll or
+// two to do it first, plus margin.
 const STORE_ONLY_GRACE_MIN = 10;
 const RELATED_ADDR_MAX = 50;             // outside addresses looked up per conversation
 const RELATED_CASES_PER_CONTACT = 10;
@@ -2255,9 +2257,11 @@ async function priorLogId(conn, msg) {
  * The log row that ALREADY carries an unstamped message, or null — caseLink's
  * resolution after the stamp, in its order: the lowest-id COPY of the same
  * mail (another mailbox or folder) carrying a stamp — link THAT row rather
- * than logging the email twice — else another source's row (priorLogId: the
- * Apps Script source logs the Workspace inbox while this mailbox stores it
- * store-only). Shared by caseLink and caseUnlink (A13X), and mirrored
+ * than logging the email twice — else another source's row (priorLogId:
+ * e.g. the `gmail-firm` rows logged under Gmail's id before dedup-A).
+ * Subject-blind, like the copy rule: a different email that reuses the
+ * Message-ID (the CONTENT-AWARE RFC KEY's case) is found only when it has no
+ * stamp of its own. Shared by caseLink and caseUnlink (A13X), and mirrored
  * read-only by the Casey cards (assistantService.mailResolvedLog).
  */
 async function existingLogId(conn, msg) {

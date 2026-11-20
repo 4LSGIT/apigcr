@@ -5,7 +5,10 @@ Status: LIVING RUNBOOK — 2026-10-09; All-Mail ruling 2026-10-11; first close c
 step-6 kit (*/2 cadence + time-based failure streaks, AI_CONTEXT §27 wording,
 this file + the console script → `ref/archive/`) is ruled and not built. Opened
 by slice S1-G of the mailbox arc (`ref/MAILBOX_SYSTEM_DESIGN.md`). Companion
-script: `ref/MAILBOX_GMAIL_PARITY.console.js`.
+script: `ref/MAILBOX_GMAIL_PARITY.console.js`. **Since dedup-A (2026-11-20, a
+console switch) the box emits as `mailbox-imap` + content-aware RFC key, not
+`gmail-firm`** (design §4.1, manual 08-mailboxes); the body below is the
+record of the pilot, and its step-4 rollback is no longer the undo.
 
 The Workspace account is ingested over Gmail IMAP by the mailbox worker and,
 once verified, emits under the **`gmail-firm`** source keyed by

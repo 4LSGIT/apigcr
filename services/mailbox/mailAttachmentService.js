@@ -136,6 +136,18 @@ function parseJson(v) {
   try { return JSON.parse(v); } catch (_) { return null; }
 }
 
+/**
+ * Sources a mailbox once emitted under with emit_id_kind 'provider' and no
+ * longer does — so an envelope emitted back then (a stored workflow's
+ * init_data, a re-run, a queued step) still names a message by its provider
+ * id. `gmail-firm`: the Google inbox (mailbox 2) emitted as gmail-firm keyed
+ * by Gmail's id until 2026-11-20, when it moved to the default identity
+ * (mailbox-imap + RFC Message-ID — design §4.1 "Emission identity"); the
+ * retired Apps Script feeder used the same key. resolveMessage falls back to
+ * them only when nothing emits under the source as 'provider' today.
+ */
+const HISTORIC_PROVIDER_SOURCES = Object.freeze(new Set(['gmail-firm']));
+
 function stripBrackets(id) {
   return String(id == null ? '' : id).trim().replace(/^<|>$/g, '');
 }
@@ -158,8 +170,16 @@ const MESSAGE_COLS =
  *                                   the mailbox(es) emitting under that source,
  *                                   keyed the way they emit — provider id or
  *                                   RFC Message-ID (mailboxIngestService
- *                                   emissionConfig). The only form an Apps
- *                                   Script envelope can resolve through.
+ *                                   emissionConfig; a content-aware
+ *                                   `<id>#s:<tag>` key picks the copy whose
+ *                                   subject carries the tag). The only form
+ *                                   an Apps Script envelope can resolve
+ *                                   through.
+ *                                   A HISTORIC_PROVIDER_SOURCES name that no
+ *                                   mailbox emits as 'provider' today
+ *                                   (gmail-firm since 2026-11-20) resolves by
+ *                                   provider id across every mailbox, so an
+ *                                   envelope emitted under it still resolves.
  * @returns {Promise<object|null>} the row (attachments parsed), or null
  * @throws BAD_REF when no usable form is given
  */
@@ -200,9 +220,28 @@ async function resolveMessage(db, ref = {}) {
       );
     }
     if (!rows.length && rfc.length) {
+      // A content-aware key (<id>#s:<tag> — mailboxIngestService CONTENT-AWARE
+      // RFC KEY) names the stored copy of that id whose subject carries the tag.
+      const { rfc: base, tag } = ingest().splitContentKey(key);
+      if (tag) {
+        const [same] = await db.query(
+          `SELECT ${MESSAGE_COLS} FROM mail_messages WHERE mailbox_id IN (?) AND message_id = ? ORDER BY id ASC LIMIT 50`,
+          [rfc, base]
+        );
+        rows = same.filter(r => ingest().subjectTag(r.subject) === tag).slice(0, 1);
+      } else {
+        [rows] = await db.query(
+          `SELECT ${MESSAGE_COLS} FROM mail_messages WHERE mailbox_id IN (?) AND message_id = ? ORDER BY id ASC LIMIT 1`,
+          [rfc, key]
+        );
+      }
+    }
+    // A retired provider identity: its keys are provider ids, held by
+    // whichever mailbox stored the message (only Gmail boxes have any).
+    if (!rows.length && !provider.length && HISTORIC_PROVIDER_SOURCES.has(source) && boxes.length) {
       [rows] = await db.query(
-        `SELECT ${MESSAGE_COLS} FROM mail_messages WHERE mailbox_id IN (?) AND message_id = ? ORDER BY id ASC LIMIT 1`,
-        [rfc, key]
+        `SELECT ${MESSAGE_COLS} FROM mail_messages WHERE mailbox_id IN (?) AND provider_id = ? ORDER BY id ASC LIMIT 1`,
+        [boxes.map(b => Number(b.id)), key.toLowerCase()]
       );
     }
   } else {
