@@ -2705,3 +2705,20 @@ edge; position-only loss, accepted.
   dropped: honoured from anywhere it is an open redirect, and a referrer rule
   still passes through redirectors (X's `t.co` becomes the referrer). Don't
   re-add it without a firm-curated allowlist.
+
+## From the Casey v2 arc — S0 review (2026-11-22)
+
+- **Mount-prefix read truncates a multi-segment prefix.** `scripts/updateRoutes.js`
+  `extractMountPath` and its copy `lib/routeCatalog.js` `mountPrefix` read a
+  mounted router's prefix from `layer.regexp.source` with
+  `/^\^\\\/([^\\$?]+)/`, which stops at the first escaped slash: a router
+  mounted at `/api/pref` reports its routes under `/api/...`. Harmless today —
+  no `routes/` file mounts a sub-router under a prefix — but the day one does,
+  both `ref/routes.md` and the Casey catalog carry wrong paths. Fix both at
+  once (unescape `\/` in the source, or read `layer.path` where Express sets
+  it) and add a probe router to `tests/routeCatalog.test.js`.
+- **`GET /db-jwt` (routes/db.jwt.js) runs arbitrary SQL, writes included, on
+  the MAIN pool behind any staff JWT or machine key** — the SU DB console
+  without the SU check, elevation or `admin_audit_log`. Found by the S0 review;
+  Casey never reaches it (never-proposable), every staff login does. Awaiting
+  Fred's ruling: retire, or gate `superuserOnlyFor`.

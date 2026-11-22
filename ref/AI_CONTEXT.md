@@ -27,6 +27,16 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey v2 S0 — route catalog + sensitivity (11-22):** `lib/routeCatalog.js`
+  classifies every live route (six auth classes from identity, the new
+  `authMeta` stamps on the auth factories in `lib/auth.*`, and a pinned
+  name table of route-local gates — an unknown gate fails
+  `tests/routeCatalog.test.js` by name); `lib/caseySensitivity.js` gives each
+  a tier T0–T3, `proposable`, `autoGet`; `GET /api/casey/catalog` (SU) reads
+  it. A NEW auth middleware joins `LOCAL_GATES` or stamps `authMeta` in the
+  same slice. Design and as-built: `ref/CASEY_V2_DESIGN.md` §8–9. v1 (§33)
+  is frozen, deleted at S6.
+
 - **A11X — Casey generates / registers documents and manages the sync roots
   (11-17, Fred: "release means allow"):** three A11 deferrals released.
   `document.generate.v1` {template_id, linkable_type, linkable_id, values?,

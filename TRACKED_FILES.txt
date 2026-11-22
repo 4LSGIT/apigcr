@@ -41,6 +41,7 @@ lib/caseCaption.js
 lib/caseId.js
 lib/caseRoleResolver.js
 lib/caseyAutomationAllowlist.js
+lib/caseySensitivity.js
 lib/checklistStatus.js
 lib/codeStepGate.js
 lib/complianceFooter.js
@@ -127,6 +128,7 @@ lib/reportSchema/manifest.js
 lib/reportSchema/validator.js
 lib/requestIdempotency.js
 lib/responseObserver.js
+lib/routeCatalog.js
 lib/routeFamilies.js
 lib/safeCodeRunner.js
 lib/schemaDump.js
@@ -733,6 +735,7 @@ routes/api.calendarTypes.js
 routes/api.calendarTypesAdmin.js
 routes/api.caseEvents.js
 routes/api.cases.js
+routes/api.casey.js
 routes/api.checklists.js
 routes/api.codeBox.js
 routes/api.commsArchive.js
@@ -1421,6 +1424,7 @@ tests/caseyRequirementOverride.test.js
 tests/caseySend.routes.test.js
 tests/caseySendAction.mysql.test.js
 tests/caseySendAction.test.js
+tests/caseySensitivity.test.js
 tests/caseySequenceEnroll.mysql.test.js
 tests/caseySequenceEnroll.test.js
 tests/caseySequenceEnrollEsign.mysql.test.js
@@ -1975,6 +1979,7 @@ tests/requestIdempotency.mysql.test.js
 tests/requestIdempotency.test.js
 tests/requirementService.test.js
 tests/resolverPseudoTables.test.js
+tests/routeCatalog.test.js
 tests/safeCodeMode.test.js
 tests/scheduleResume.accel.test.js
 tests/scheduledJobs.codeGate.test.js
