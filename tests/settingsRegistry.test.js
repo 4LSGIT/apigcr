@@ -52,6 +52,7 @@ describe('classification snapshot', () => {
     "casey_code_actions_enabled": "system system casey ui bool",
     "casey_v2_enabled": "system system casey ui bool",
     "casey_v2_model": "system system casey ui enum",
+    "casey_v2_models": "system system casey ui csv",
     "casey_v2_effort": "system system casey ui enum",
     "casey_contact_relations_enabled": "system system casey ui bool",
     "casey_document_relink_enabled": "system system casey ui bool",
@@ -217,6 +218,8 @@ describe('shape invariants', () => {
     expect(reg.SECTIONS[e.home].map((s) => s.id)).toContain(e.section);
     expect(reg.TYPES).toContain(e.type);
     if (e.type === 'enum') {
+      expect(Array.isArray(e.options) && e.options.length > 0).toBe(true);
+    } else if (e.type === 'csv' && e.options !== undefined) {   // S3a-2: a csv may carry options — each entry is validated against them
       expect(Array.isArray(e.options) && e.options.length > 0).toBe(true);
     } else {
       expect(e.options).toBeUndefined();
@@ -462,5 +465,18 @@ describe('validators', () => {
     expect(() => reg.validate('intake_banner_text', '6')).toThrow(/unregistered/);
     expect(reg.validate('payment_failed_cooldown_days', '6')).toBe(true);
     expect(reg.validate('payment_failed_cooldown_days', 'six')).toMatch(/number/);
+  });
+});
+
+// S3a-2: a csv with `options` validates each entry against them (casey_v2_models) — an admin's typo is refused at save,
+// not silently dropped into a menu that then includes the dearest model. A csv without options stays free text.
+describe('csv with options', () => {
+  test('each entry must be one of the options; blank passes; the generic csv rule still runs first; a csv without options is free text', () => {
+    expect(reg.validate('casey_v2_models', '')).toBe(true);
+    expect(reg.validate('casey_v2_models', 'claude-sonnet-5-5, claude-opus-5-5')).toBe(true);
+    expect(reg.validate('casey_v2_models', 'claude-sonnet-5-5, sonnet')).toMatch(/unknown: sonnet/);
+    expect(reg.validate('casey_v2_models', 'claude-sonnet-5.5')).toMatch(/must be one of: claude-opus-5-5, claude-sonnet-5-5, claude-fable-5-1/);
+    expect(reg.validate('casey_v2_models', 'claude-sonnet-5-5,,claude-opus-5-5')).toMatch(/no empty entries/);
+    expect(reg.validate('email_domains', 'anything.example, else.example')).toBe(true);
   });
 });

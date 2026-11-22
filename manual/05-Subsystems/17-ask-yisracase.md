@@ -21,7 +21,12 @@ chapter describes. The new Casey answers by looking things up as you — it runs
 searches, reads records through the app's own routes and reads the app's code
 and manual — and shows every step it took as a trail above the answer (click a
 step for the exact query or request). Pick an earlier chat from the list at the
-top, start a new one with **+**, delete one with the bin. **Stop** ends a turn
+top, start a new one with **+**, delete one with the bin. Starting a new
+chat, the dropdown at the top picks the model it will run on (your
+administrator chooses which models are offered and which one is preselected;
+a chat keeps its model, and every new chat starts back at the preselected
+one — except that a first message that failed keeps your pick for the
+retry). **Stop** ends a turn
 that is taking too long; **Keep going** appears when Casey hit the per-turn
 limit before finishing. The **current view** chip tells Casey which case,
 contact or tab you are looking at ("this case" means that one); remove it to

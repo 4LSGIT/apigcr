@@ -18,10 +18,10 @@ const jwt = require('jsonwebtoken');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'casey-turn-route-secret';
 
-const flags = { v2: null };
+const flags = { v2: null, models: null };
 jest.mock('../lib/firmConfig', () => {
   const actual = jest.requireActual('../lib/firmConfig');
-  return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_enabled' ? flags.v2 : k === 'casey_v2_model' ? 'claude-opus-5-5' : k === 'casey_v2_effort' ? null : k === 'internal_api_key' ? 'yci_TESTINTERNALKEYFORCASEY00' : k === 'internal_api_key_prev' ? null : actual.cfg(k))) };   // secret-scan: allow (a test constant)
+  return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_enabled' ? flags.v2 : k === 'casey_v2_models' ? flags.models : k === 'casey_v2_model' ? 'claude-opus-5-5' : k === 'casey_v2_effort' ? null : k === 'internal_api_key' ? 'yci_TESTINTERNALKEYFORCASEY00' : k === 'internal_api_key_prev' ? null : actual.cfg(k))) };   // secret-scan: allow (a test constant)
 });
 const mockStore = { chats: new Map(), messages: new Map(), nextChat: 1, nextMsg: 1 };
 jest.mock('../services/casey/chats', () => {
@@ -114,7 +114,7 @@ beforeAll(async () => {
   process.env.PORT = String(port);    // ctxFromRequest reads it: api_get loops back to THIS app
 });
 afterAll(async () => { await new Promise((r) => server.close(r)); delete process.env.PORT; });
-beforeEach(() => { flags.v2 = null; apiScript = []; apiBodies = []; aiRows.length = 0; spendState.cap = null; spendState.spent = 0; mockStore.chats.clear(); mockStore.messages.clear(); mockStore.nextChat = 1; mockStore.nextMsg = 1; });
+beforeEach(() => { flags.v2 = null; flags.models = null; apiScript = []; apiBodies = []; aiRows.length = 0; spendState.cap = null; spendState.spent = 0; mockStore.chats.clear(); mockStore.messages.clear(); mockStore.nextChat = 1; mockStore.nextMsg = 1; });
 
 const su = jwt.sign({ sub: 6, username: 'IT', user_auth: 'authorized', roles: ['su'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
 const staff = jwt.sign({ sub: 7, username: 'rena', user_auth: 'authorized', roles: ['admin'], aud: 'staff' }, process.env.JWT_SECRET, { expiresIn: '5m' });
@@ -157,6 +157,11 @@ test('S3a gate: any signed-in staff person, no elevation; a machine key and no t
   expect(boot.status).toBe(200);
   expect(boot.body).toMatchObject({ status: 'success', enabled: false, model: 'claude-opus-5-5', effort: 'medium', limits: { text_max: 4000, max_tool_calls: 40, max_turn_ms: 300000 } });
   expect(typeof boot.body.continue_text).toBe('string');
+  expect(boot.body.models).toEqual([   // S3a-2: the menu for a new chat, the default marked
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', hint: expect.any(String), default: true },
+    { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: expect.any(String), default: false },
+    { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: expect.any(String), default: false },
+  ]);
   flags.v2 = null;
   expect((await call('GET', '/api/casey/boot', { token: staff, elevate: false })).body.enabled).toBe(true);
   expect((await call('GET', '/api/casey/boot', { token: null })).status).toBe(401);
@@ -219,6 +224,25 @@ test('plain JSON refusals before the stream: 400, 404, 409, 429', async () => {
   expect(global.fetch).not.toHaveBeenCalled();
   expect(mockStore.chats.size).toBe(2);   // no chat created for a refused turn
   expect(await turn({ text: 'hi', context: 'x' })).toMatchObject({ status: 400, body: { message: 'context must be an object' } });
+});
+
+test('S3a-2 the model pick: boot lists the firm\'s menu; a new chat is created on the pick and the model called with it; a non-string, an off-menu id or a pick with a chat_id is a 400 before the stream', async () => {
+  flags.models = 'claude-sonnet-5-5, claude-opus-5-5';
+  expect((await call('GET', '/api/casey/boot', { token: staff, elevate: false })).body.models.map((m) => [m.id, m.default])).toEqual([['claude-opus-5-5', true], ['claude-sonnet-5-5', false]]);
+  expect(await turn({ text: 'hi', model: 7 })).toMatchObject({ status: 400, body: { status: 'error', message: 'model must be a string' } });
+  expect(await turn({ text: 'hi', model: 'claude-fable-5-1' })).toMatchObject({ status: 400, body: { message: 'That model is not on the menu' } });
+  expect(mockStore.chats.size).toBe(0);
+  expect(apiBodies).toHaveLength(0);
+  apiScript = [streamResponse(sse([{ type: 'text', text: 'ok' }], 'end_turn'))];
+  const r = await turn({ text: 'hi', model: 'claude-sonnet-5-5' });
+  expect(r.status).toBe(200);
+  expect(r.lines[0]).toMatchObject({ type: 'chat', id: 1, model: 'claude-sonnet-5-5', effort: 'medium', created: true });
+  expect(apiBodies).toHaveLength(1);
+  expect(apiBodies[0].model).toBe('claude-sonnet-5-5');
+  expect(r.lines[r.lines.length - 1]).toMatchObject({ type: 'final', body: { chat_id: 1, model: 'claude-sonnet-5-5' } });
+  expect(mockStore.chats.get(1).model).toBe('claude-sonnet-5-5');
+  expect(await turn({ text: 'again', chat_id: 1, model: 'claude-sonnet-5-5' })).toMatchObject({ status: 400, body: { message: expect.stringMatching(/new chat only/) } });
+  expect(apiBodies).toHaveLength(1);
 });
 
 test('a whole turn as NDJSON: headers, event order, tools run as the SU over loopback, the final; then the chat routes', async () => {

@@ -24,7 +24,9 @@
 //       casey_v2_enabled is '0' (lib/firmConfig; on unless '0', like every
 //       casey_* switch — Fred seeds '0' before the deploy so v2 starts dark),
 //       404 for an unknown tool name, 400 for a non-object input.
-//   POST /api/casey/turn {chat_id?, text}
+//   POST /api/casey/turn {chat_id?, text, context?, model?}
+//     model (S3a-2): the user's pick for a NEW chat, one of boot.models; 400 off
+//     the menu, 400 with a chat_id (an open chat keeps its model).
 //     → 200 application/x-ndjson, one JSON object per line (the shape v1's
 //       answer stream uses, read through apiSend(…, {responseType:'response'})):
 //       {type:'chat', id, title, model, effort, created, prompt_version}
@@ -187,6 +189,7 @@ router.get('/api/casey/boot', ...staff, (req, res) => {
   const loop = require('../services/casey/loop');   // lazy require (convention)
   res.json({
     status: 'success', enabled: v2Enabled(), model: loop.settingModel(), effort: loop.settingEffort(),
+    models: loop.modelMenu(),   // the menu for a new chat (S3a-2): [{id, label, hint, default}]
     limits: { text_max: loop.TEXT_MAX, max_tool_calls: loop.MAX_TOOL_CALLS, max_turn_ms: loop.MAX_TURN_MS },
     continue_text: loop.CONTINUE_TEXT,
   });
@@ -209,6 +212,9 @@ router.post('/api/casey/turn', ...staff, async (req, res) => {
   if (body.context !== undefined && body.context !== null && (typeof body.context !== 'object' || Array.isArray(body.context))) {
     return res.status(400).json({ status: 'error', message: 'context must be an object' });
   }
+  if (body.model !== undefined && body.model !== null && typeof body.model !== 'string') {
+    return res.status(400).json({ status: 'error', message: 'model must be a string' });
+  }
   let streaming = false;
   const send = (event) => {
     if (res.writableEnded || res.destroyed) return;
@@ -220,6 +226,7 @@ router.post('/api/casey/turn', ...staff, async (req, res) => {
       chatId,
       text: body.text,
       context: body.context || null,
+      model: body.model || null,
       send,
       begin() {
         streaming = true;

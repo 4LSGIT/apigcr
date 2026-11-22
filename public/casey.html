@@ -30,7 +30,7 @@
   #top { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--sidebar-bg, var(--page-bg)); flex-wrap: wrap; }
   #top h1 { font-size: 15px; margin: 0; flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #top .chip { font-size: 11px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px; white-space: nowrap; }
-  #chatPick { max-width: 100%; min-width: 0; font: inherit; font-size: 12px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface, var(--page-bg)); color: var(--text); }
+  #chatPick, #modelPick { max-width: 100%; min-width: 0; font: inherit; font-size: 12px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface, var(--page-bg)); color: var(--text); }
 
   #log { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
   .msg { max-width: 100%; border-radius: 10px; padding: 8px 12px; word-wrap: break-word; overflow-wrap: anywhere; }
@@ -78,6 +78,7 @@
 <div id="top">
   <h1 id="title">Casey</h1>
   <span class="chip" id="modelChip" title="Model this chat runs on"></span>
+  <select id="modelPick" aria-label="Model for this new chat" title="Model for this new chat — a chat keeps its model" hidden></select>
   <select id="chatPick" aria-label="Recent chats"><option value="">New chat</option></select>
   <button type="button" id="newChat" title="Start a new chat"><i class="fa-solid fa-plus"></i></button>
   <button type="button" id="delChat" class="danger" title="Delete this chat" hidden><i class="fa-solid fa-trash"></i></button>
@@ -97,6 +98,7 @@ const P = window.parent;
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const E = (id) => document.getElementById(id);
 const CONTEXT_PREFIX = '[context — refreshed each turn]';
+const MENU_REFUSAL = 'That model is not on the menu';   // the loop's 400 for a pick the firm's menu no longer allows (S3a-2)
 
 // ── a small, safe markdown renderer: escape everything first, then mark up ──
 // headings, bold, inline code, fenced code, bullet / numbered lists, pipe tables.
@@ -141,7 +143,7 @@ let contextOn = true;       // the shell's workspace context is attached to the 
 let stopPending = false;    // Stop pressed before this turn's `chat` line (the claim is taken by then): posted when it lands
 let turnClaimed = false;    // this turn's `chat` line has arrived
 
-const log = E('log'), textEl = E('text'), sendBtn = E('send'), stopBtn = E('stop'), pick = E('chatPick'), chip = E('modelChip');
+const log = E('log'), textEl = E('text'), sendBtn = E('send'), stopBtn = E('stop'), pick = E('chatPick'), chip = E('modelChip'), modelPick = E('modelPick');
 
 function summarizeInput(input) {
   try { const s = JSON.stringify(input); return s.length > 140 ? s.slice(0, 140) + '…' : s; } catch (_) { return ''; }
@@ -271,21 +273,43 @@ async function loadChats() {
   const r = await P.apiSend('/api/casey/chats');
   chats = r.chats || [];
   // The open chat is gone (a failed opening turn is rolled back server-side before its stream ends; a delete in another tab): back to a new one.
-  if (chatId && !chats.some((c) => Number(c.id) === Number(chatId))) { chatId = null; E('delChat').hidden = true; E('title').textContent = 'Casey'; }
+  if (chatId && !chats.some((c) => Number(c.id) === Number(chatId))) { chatId = null; E('delChat').hidden = true; E('title').textContent = 'Casey'; setChip(boot ? boot.model : ''); showModelControl(); }   // the picker comes back with the pick kept — a retry is the likely next move
   pick.innerHTML = '<option value="">New chat</option>' + chats.map((c) => `<option value="${c.id}">${esc(c.title.length > 60 ? c.title.slice(0, 60) + '…' : c.title)}</option>`).join('');
   pick.value = chatId ? String(chatId) : '';
 }
+// The model menu for a NEW chat (S3a-2): boot.models — the firm's list, its default preselected. Rebuilt for every
+// new chat, so a pick never carries over (nobody pays the dearest model by forgetting). Without a menu: nothing to pick.
+function renderModelMenu() {
+  const menu = boot && Array.isArray(boot.models) ? boot.models : [];
+  modelPick.innerHTML = '';
+  for (const m of menu) {
+    const o = document.createElement('option'); o.value = m.id; o.textContent = m.label || m.id; if (m.hint) o.title = m.hint; o.selected = !!m.default;
+    modelPick.appendChild(o);
+  }
+}
+// The chip: the menu's label for the id when it has one (the id in the tooltip), else the id itself.
+function setChip(id) {
+  const m = boot && Array.isArray(boot.models) ? boot.models.find((x) => x.id === id) : null;
+  chip.textContent = m && m.label ? m.label : (id || '');
+  chip.title = id ? `Model this chat runs on: ${id}` : 'Model this chat runs on';
+}
+// A new chat with a choice shows the menu; once the chat exists (or when there is one model) the chip says what it runs on.
+function showModelControl() {
+  const choose = !chatId && modelPick.options.length > 1;
+  modelPick.hidden = !choose; chip.hidden = choose;
+}
+
 async function openChat(id) {
   chatId = id;
   E('delChat').hidden = !id;
-  if (!id) { log.innerHTML = '<div id="empty">Ask about cases, contacts, tasks, mail — or how the app works.<span class="yc-hint">Casey looks things up as you, and shows every step.</span></div>'; chip.textContent = boot ? boot.model : ''; E('title').textContent = 'Casey'; pick.value = ''; return; }
+  if (!id) { log.innerHTML = '<div id="empty">Ask about cases, contacts, tasks, mail — or how the app works.<span class="yc-hint">Casey looks things up as you, and shows every step.</span></div>'; setChip(boot ? boot.model : ''); E('title').textContent = 'Casey'; pick.value = ''; renderModelMenu(); showModelControl(); return; }
   try {
     const r = await P.apiSend(`/api/casey/chats/${id}`);
-    chip.textContent = r.chat.model; E('title').textContent = r.chat.title;
+    setChip(r.chat.model); E('title').textContent = r.chat.title; showModelControl();
     renderTranscript(r.messages || []);
     pick.value = String(id);
   } catch (err) {
-    chatId = null; E('delChat').hidden = true;
+    chatId = null; E('delChat').hidden = true; renderModelMenu(); setChip(boot ? boot.model : ''); showModelControl();   // back to a new chat: the firm's default again
     log.innerHTML = ''; addAssistant(err && err.status === 404 ? 'That chat is gone.' : (err && err.message) || 'Could not open the chat', { error: true });
     loadChats().catch(() => {});
   }
@@ -301,10 +325,10 @@ async function sendTurn(text) {
   let answer = null, answerText = '';
   const ctx = contextOn ? captureContext() : null;
   try {
-    const res = await P.apiSend('/api/casey/turn', 'POST', { ...(chatId ? { chat_id: chatId } : {}), text: q, ...(ctx ? { context: ctx } : {}) }, {}, { responseType: 'response' });
+    const res = await P.apiSend('/api/casey/turn', 'POST', { ...(chatId ? { chat_id: chatId } : {}), text: q, ...(ctx ? { context: ctx } : {}), ...(!chatId && !modelPick.hidden && modelPick.value ? { model: modelPick.value } : {}) }, {}, { responseType: 'response' });
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
     const onLine = (ev) => {
-      if (ev.type === 'chat') { if (!chatId) { chatId = ev.id; E('delChat').hidden = false; E('title').textContent = ev.title; } chip.textContent = ev.model; turnClaimed = true; if (stopPending) { stopPending = false; stopTurn(); } }
+      if (ev.type === 'chat') { if (!chatId) { chatId = ev.id; E('delChat').hidden = false; E('title').textContent = ev.title; } setChip(ev.model); showModelControl(); turnClaimed = true; if (stopPending) { stopPending = false; stopTurn(); } }
       else if (ev.type === 'tool_call') trailStep(trail, { id: ev.id, name: ev.name, input: ev.input, status: 'run' });
       else if (ev.type === 'tool_result') trailStep(trail, { id: ev.id, name: ev.name, input: undefined, ok: ev.ok, code: ev.code, ms: ev.ms, status: 'done' });
       else if (ev.type === 'thinking') { if (ev.text) trailThink(trail, ev.text); }
@@ -327,7 +351,10 @@ async function sendTurn(text) {
     }
     if (!answer) addAssistant('Casey returned nothing.', { error: true });
   } catch (err) {
-    addAssistant(err && err.message ? err.message : 'The request failed', { error: true });
+    // A pick the server no longer allows (the firm's menu changed since this pane booted): say so and re-read the menu.
+    const menuChanged = !turnClaimed && !chatId && err && err.status === 400 && err.message === MENU_REFUSAL;   // the loop's exact words (services/casey/loop.js), pinned in tests/caseyLoop.test.js
+    addAssistant(menuChanged ? 'The model menu changed since this pane opened — pick again.' : (err && err.message ? err.message : 'The request failed'), { error: true });
+    if (menuChanged) { try { boot = await P.apiSend('/api/casey/boot'); } catch (_) { /* keep the old menu */ } renderModelMenu(); setChip(boot ? boot.model : ''); showModelControl(); }
   } finally {
     stopPending = false; stopBtn.hidden = true;
     const think = trail.querySelector('.think:last-child'); if (think) think.dataset.closed = '1';
@@ -360,7 +387,7 @@ async function deleteChat() {
 async function start() {
   try { boot = await P.apiSend('/api/casey/boot'); } catch (_) { boot = null; }
   if (!boot || !boot.enabled) { log.innerHTML = '<div id="empty">Casey v2 is off.<span class="yc-hint">The shell loads the previous Casey when it is.</span></div>'; sendBtn.disabled = true; return; }
-  chip.textContent = boot.model;
+  renderModelMenu(); setChip(boot.model); showModelControl();
   textEl.maxLength = boot.limits && boot.limits.text_max || 4000;
   window.ycAssistantRefreshContext = renderContext;   // the shell calls this as files/tabs change (the same hook as v1's pane)
   renderContext();

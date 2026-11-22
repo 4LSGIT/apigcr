@@ -67,10 +67,20 @@ const { isSuperuser, verifyElevationToken, stepupEnabled } = require('../../lib/
 
 const FIRM_TZ = process.env.FIRM_TIMEZONE || 'America/Detroit';
 
-// The model menu (lib/settingsRegistry.js casey_v2_model's options — the same
-// list, pinned by tests/caseyLoop.test.js) and the effort menu.
+// Every model Casey v2 can run on (lib/settingsRegistry.js casey_v2_model's
+// options — the same list, pinned by tests/caseyLoop.test.js). The firm narrows
+// it to the MENU a user picks from for a NEW chat with casey_v2_models
+// (settingModels) and preselects one with casey_v2_model (settingModel) — S3a-2,
+// Fred 2026-11-22: "the user should be able to select the model for each new
+// chat, with a list chosen in settings". And the effort menu.
 const MODELS = Object.freeze(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1']);
 const DEFAULT_MODEL = 'claude-sonnet-5-5';   // S3a (checkpoint 2026-11-22): equal correctness at ~45 % of Opus's cost; Opus and Fable stay on the menu
+// What the page shows for each model (the id stays the value sent back): a label and a hint on depth and cost.
+const MODEL_LABELS = Object.freeze({
+  'claude-sonnet-5-5': Object.freeze({ label: 'Sonnet 5.5', hint: 'fast; the usual pick' }),
+  'claude-opus-5-5': Object.freeze({ label: 'Opus 5.5', hint: 'digs deeper on hard questions; about twice the cost' }),
+  'claude-fable-5-1': Object.freeze({ label: 'Fable 5.1', hint: 'the most capable; about five times the cost' }),
+});
 const EFFORTS = Object.freeze(['low', 'medium', 'high']);
 const DEFAULT_EFFORT = 'medium';
 
@@ -95,9 +105,26 @@ const STOPPED_NOTE = '[Stopped by the user.]';
 const CONTINUE_TEXT = 'Keep going from where you stopped: finish the lookups you had planned and answer.';
 const CONTEXT_MAX = 300;   // the page's own words about where the user is, cut
 
+/** The menu for a new chat: casey_v2_models (a csv of ids) ∩ MODELS, in MODELS order. Blank = all of MODELS; a
+ *  non-blank list with nothing valid in it = [DEFAULT_MODEL] alone (fail closed toward the cheapest, never toward all). */
+function settingModels() {
+  const v = require('../../lib/firmConfig').cfg('casey_v2_models'); // lazy require (convention)
+  const on = new Set(String(v == null ? '' : v).split(',').map((s) => s.trim()).filter(Boolean));
+  if (!on.size) return [...MODELS];
+  const menu = MODELS.filter((m) => on.has(m));
+  return menu.length ? menu : [DEFAULT_MODEL];
+}
+/** The model preselected for a new chat: casey_v2_model when it is on the menu, else DEFAULT_MODEL when that is, else the menu's first. */
 function settingModel() {
+  const menu = settingModels();
   const v = require('../../lib/firmConfig').cfg('casey_v2_model'); // lazy require (convention)
-  return MODELS.includes(v) ? v : DEFAULT_MODEL;
+  if (menu.includes(v)) return v;
+  return menu.includes(DEFAULT_MODEL) ? DEFAULT_MODEL : menu[0];
+}
+/** What boot hands the page: the menu as [{id, label, hint, default}]. */
+function modelMenu() {
+  const def = settingModel();
+  return settingModels().map((id) => ({ id, ...(MODEL_LABELS[id] || { label: id, hint: '' }), default: id === def }));
 }
 function settingEffort() {
   const v = require('../../lib/firmConfig').cfg('casey_v2_effort'); // lazy require (convention)
@@ -177,7 +204,7 @@ const addUsage = (sum, u) => { for (const k of ['input_tokens', 'output_tokens',
  * @throws httpError (status 400 / 404 / 409 / 429) BEFORE begin() — the route answers JSON
  */
 async function runTurn(db, {
-  ctx, chatId = null, text, context = null, send, begin = () => {},
+  ctx, chatId = null, text, context = null, model = null, send, begin = () => {},
   converse = aiService.converse, heartbeatMs = HEARTBEAT_MS,
   maxCalls = MAX_TOOL_CALLS, maxMs = MAX_TURN_MS, maxTokens = MAX_TOKENS, maxTokensRetry = MAX_TOKENS_RETRY,
   now = () => new Date(),
@@ -188,6 +215,9 @@ async function runTurn(db, {
   const auth = ctx && ctx.auth;
   if (!auth || auth.userId == null) throw spend.httpError(401, 'a signed-in user is required');
   const userId = auth.userId;
+  // The user's pick (S3a-2): a NEW chat only — an open chat keeps the model its thinking blocks are bound to — and only off the firm's menu.
+  if (model != null && chatId != null) throw spend.httpError(400, 'model applies to a new chat only; an open chat keeps the model it was created on');
+  if (model != null && !settingModels().includes(model)) throw spend.httpError(400, 'That model is not on the menu');
 
   const defs = tools.definitions();
   const sig = caseyPrompt.signature(defs);
@@ -203,7 +233,7 @@ async function runTurn(db, {
     if (!(await chats.claimTurn(db, chat.id, userId))) throw spend.httpError(409, 'A turn is already running in this chat');
   } else {
     await spend.assertSpendAllowed(db);
-    const id = await chats.createChat(db, { userId, text: userText, model: settingModel(), effort: settingEffort(), promptVersion: sig });
+    const id = await chats.createChat(db, { userId, text: userText, model: model || settingModel(), effort: settingEffort(), promptVersion: sig });
     chat = await chats.getChat(db, id, userId);
     created = true;
     if (!(await chats.claimTurn(db, chat.id, userId))) throw spend.httpError(409, 'A turn is already running in this chat');
@@ -371,7 +401,7 @@ async function runTurn(db, {
 }
 
 module.exports = {
-  runTurn, contextBlock, pageLine, sanitizeContext, stripThinking, orphanToolUses, settingModel, settingEffort,
-  MODELS, DEFAULT_MODEL, EFFORTS, DEFAULT_EFFORT, MAX_TOOL_CALLS, MAX_TURN_MS, MAX_TOKENS, MAX_TOKENS_RETRY, HEARTBEAT_MS, CALL_TIMEOUT_FLOOR_MS, TEXT_MAX, PROMPT_KEY,
+  runTurn, contextBlock, pageLine, sanitizeContext, stripThinking, orphanToolUses, settingModel, settingModels, modelMenu, settingEffort,
+  MODELS, MODEL_LABELS, DEFAULT_MODEL, EFFORTS, DEFAULT_EFFORT, MAX_TOOL_CALLS, MAX_TURN_MS, MAX_TOKENS, MAX_TOKENS_RETRY, HEARTBEAT_MS, CALL_TIMEOUT_FLOOR_MS, TEXT_MAX, PROMPT_KEY,
   BUDGET_NOTE, CUT_NOTE, DECLINED_NOTE, BUDGET_STOP_NOTE, EMPTY_NOTE, STOPPED_NOTE, CONTINUE_TEXT, CONTEXT_MAX, INTERRUPTED_RESULT, FIRM_TZ,
 };

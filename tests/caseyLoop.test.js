@@ -58,10 +58,10 @@ jest.mock('../services/casey/chats', () => {
     async deleteMessages(db, chatId, ids) { const list = mockStore.messages.get(Number(chatId)); const n = list.length; mockStore.messages.set(Number(chatId), list.filter((m) => !ids.includes(m.id))); return n - list.length; },
   };
 });
-const mockSettings = { model: null, effort: null };
+const mockSettings = { model: null, models: null, effort: null };
 jest.mock('../lib/firmConfig', () => {
   const actual = jest.requireActual('../lib/firmConfig');
-  return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_model' ? mockSettings.model : k === 'casey_v2_effort' ? mockSettings.effort : actual.cfg(k))) };
+  return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_model' ? mockSettings.model : k === 'casey_v2_models' ? mockSettings.models : k === 'casey_v2_effort' ? mockSettings.effort : actual.cfg(k))) };
 });
 
 const loop = require('../services/casey/loop');
@@ -101,7 +101,7 @@ beforeAll(async () => {
 afterAll(async () => { await new Promise((r) => server.close(r)); });
 beforeEach(() => {
   mockStore.chats.clear(); mockStore.messages.clear(); mockStore.nextChat = 1; mockStore.nextMsg = 1; mockStore.claimFails = false; mockStore.released.length = 0;
-  spendState.cap = null; spendState.spent = 0; mockSettings.model = null; mockSettings.effort = null; call = 0;
+  spendState.cap = null; spendState.spent = 0; mockSettings.model = null; mockSettings.models = null; mockSettings.effort = null; call = 0;
 });
 
 const SU = { type: 'jwt', userId: 6, username: 'IT', roles: ['su'] };
@@ -611,6 +611,56 @@ describe('settings and context', () => {
     mockSettings.model = null; mockSettings.effort = '';
     expect([loop.settingModel(), loop.settingEffort()]).toEqual(['claude-sonnet-5-5', 'medium']);
     expect(loop.DEFAULT_MODEL).toBe('claude-sonnet-5-5');   // the S2 checkpoint's pick (2026-11-22)
+  });
+
+  test('S3a-2 the menu: casey_v2_models narrows MODELS (MODELS order, junk dropped, blank or all-junk = all); the default follows the menu; modelMenu labels every model and marks the default', () => {
+    const all = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'];
+    expect(loop.settingModels()).toEqual(all);
+    mockSettings.models = ' claude-fable-5-1, claude-opus-4-1 ,claude-sonnet-5-5';
+    expect(loop.settingModels()).toEqual(['claude-sonnet-5-5', 'claude-fable-5-1']);
+    mockSettings.models = 'claude-opus-4-1, nope';
+    expect(loop.settingModels()).toEqual(['claude-sonnet-5-5']);          // a non-blank list with nothing valid fails CLOSED to the default, never to all three
+    expect(loop.settingModel()).toBe('claude-sonnet-5-5');
+    mockSettings.models = ' , ';
+    expect(loop.settingModels()).toEqual(all);                            // blank-ish is blank
+    mockSettings.models = 'claude-opus-5-5'; mockSettings.model = 'claude-sonnet-5-5';
+    expect(loop.settingModel()).toBe('claude-opus-5-5');                 // neither the setting nor Sonnet is on the menu → its first
+    mockSettings.models = 'claude-opus-5-5,claude-fable-5-1'; mockSettings.model = 'claude-fable-5-1';
+    expect(loop.settingModel()).toBe('claude-fable-5-1');
+    mockSettings.model = null;
+    expect(loop.settingModel()).toBe('claude-opus-5-5');
+    mockSettings.models = 'claude-sonnet-5-5,claude-opus-5-5'; mockSettings.model = 'claude-fable-5-1';
+    expect(loop.settingModel()).toBe('claude-sonnet-5-5');               // the setting is off the menu, Sonnet is on it
+    mockSettings.models = null; mockSettings.model = 'claude-fable-5-1';
+    expect(loop.modelMenu()).toEqual([
+      { id: 'claude-opus-5-5', label: 'Opus 5.5', hint: expect.any(String), default: false },
+      { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: expect.any(String), default: false },
+      { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: expect.any(String), default: true },
+    ]);
+    expect(loop.modelMenu().filter((m) => m.default)).toHaveLength(1);
+    expect(Object.keys(loop.MODEL_LABELS).sort()).toEqual([...loop.MODELS].sort());   // every model has a label
+  });
+
+  test('S3a-2 the pick: a new chat is created on the model the user picked when it is on the menu, and the model is called with it; off the menu, or on an existing chat, a 400 before begin(); no pick = the setting default', async () => {
+    mockSettings.models = 'claude-sonnet-5-5,claude-opus-5-5';
+    const cv = model([reply([T('ok')])]);
+    const r = await turn({ model: 'claude-opus-5-5', converse: cv });
+    expect(r.events[0]).toMatchObject({ type: 'chat', id: 1, model: 'claude-opus-5-5', created: true });
+    expect(mockStore.chats.get(1).model).toBe('claude-opus-5-5');
+    expect(cv.requests[0].model).toBe('claude-opus-5-5');
+    expect(r.res.ok).toBe(true);
+    const begin = jest.fn();
+    const bad = (o, re) => expect(loop.runTurn(db, { ctx: ctx(), text: 'q', send: () => { throw new Error('must not stream'); }, begin, converse: model([]), heartbeatMs: 0, ...o })).rejects.toMatchObject({ status: 400, message: re });
+    await bad({ model: 'claude-fable-5-1' }, 'That model is not on the menu');   // a real model, off this firm's menu — the EXACT words: public/casey.html compares against them (MENU_REFUSAL)
+    await bad({ model: 'gpt-5' }, /not on the menu/);
+    await bad({ model: 'claude-sonnet-5-5', chatId: 1 }, /new chat only/);
+    expect(begin).not.toHaveBeenCalled();
+    expect(mockStore.chats.size).toBe(1);                                 // no chat for a refused pick
+    mockSettings.model = 'claude-opus-5-5';
+    const r2 = await turn({ converse: model([reply([T('ok')])]) });
+    expect(r2.events[0]).toMatchObject({ type: 'chat', id: 2, model: 'claude-opus-5-5' });
+    const r3 = await turn({ chatId: 2, converse: model([reply([T('ok')])]) });   // the next turn on it: no model, keeps its own
+    expect(r3.events[0]).toMatchObject({ type: 'chat', id: 2, model: 'claude-opus-5-5', created: false });
   });
 
   test('contextBlock: firm-local time, UTC, identity, elevation; a machine key is named as one', () => {

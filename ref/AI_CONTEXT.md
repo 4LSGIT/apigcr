@@ -27,6 +27,13 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey v2 S3a-2 — the model picker (11-22):** the pane offers a model
+  dropdown while a NEW chat is being started; the firm's menu is the csv
+  setting `casey_v2_models` (blank = all three), `casey_v2_model` the one
+  preselected; `GET /api/casey/boot` → `models`, `POST /api/casey/turn` takes
+  `model` for a new chat only (400 off the menu or with a chat_id). A chat
+  keeps its model for life. Design §9 S3a-2.
+
 - **Casey v2 S3a — the page (11-22):** `public/casey.html` in the shell's
   `#caseyFrame` when `GET /api/casey/boot` says v2 is on (`openCasey` decides
   once per shell load; v1's `/assistant.html` otherwise). The turn / chat

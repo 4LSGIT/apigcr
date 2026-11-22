@@ -33,7 +33,8 @@ function ndjson(events) {
 }
 
 /** A pane with a fake parent: apiSend dispatches on method + path; `calls` records them. */
-async function pane({ boot = { status: 'success', enabled: true, model: 'claude-sonnet-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'Keep going from where you stopped.' }, chats = [], transcripts = {}, turn = null, context = null } = {}) {
+const MENU = [{ id: 'claude-opus-5-5', label: 'Opus 5.5', hint: 'deeper', default: false }, { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: 'fast', default: true }, { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: 'dearest', default: false }];
+async function pane({ boot = { status: 'success', enabled: true, model: 'claude-sonnet-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'Keep going from where you stopped.', models: MENU }, chats = [], transcripts = {}, turn = null, context = null } = {}) {
   const dom = new JSDOM(HTML.replace('<script src="/themeSync.js"></script>', ''), { runScripts: 'outside-only', url: 'https://app.test/casey.html', pretendToBeVisual: true });
   const w = dom.window;
   const calls = [];
@@ -64,7 +65,7 @@ test('the inline script is what runs: two anchored substitutions, nothing else d
 
 test('boot: the chip shows the model, the chat list fills, the composer is live; a dark boot disables sending', async () => {
   const p = await pane({ chats: [{ id: 3, title: 'How many contacts?' }, { id: 2, title: 'x'.repeat(80) }] });
-  expect(p.E('modelChip').textContent).toBe('claude-sonnet-5-5');
+  expect(p.E('modelChip').textContent).toBe('Sonnet 5.5'); expect(p.E('modelChip').title).toBe('Model this chat runs on: claude-sonnet-5-5');   // the menu's label, the id in the tooltip
   expect([...p.E('chatPick').options].map((o) => o.value)).toEqual(['', '3', '2']);
   expect(p.E('chatPick').options[2].textContent.endsWith('…')).toBe(true);
   expect(p.E('send').disabled).toBe(false);
@@ -100,9 +101,94 @@ test('a stored transcript renders: the context block hidden, tool_use + tool_res
   expect(ans.innerHTML).toContain('&lt;b&gt;x&lt;/b&gt;');                 // escaped, not markup
   expect([...ans.querySelectorAll('li')].map((l) => l.textContent)).toEqual(['one', 'two']);
   expect(ans.querySelector('.meta').textContent).toBe('2 tool calls · 9.6¢');   // the TURN's calls and cost, as the live final shows
-  expect(p.E('modelChip').textContent).toBe('claude-opus-5-5');
+  expect(p.E('modelChip').textContent).toBe('Opus 5.5');
   expect(p.E('title').textContent).toBe('Overdue tasks');
   expect(p.E('delChat').hidden).toBe(false);
+});
+
+test('S3a-2 the model picker: shown for a new chat with the menu and the default preselected; the pick rides the opening turn only; the chip takes over once the chat exists; an open chat shows its own model; a new chat starts at the default again; one model → the chip; no menu → nothing sent', async () => {
+  const bodies = [];
+  const scripted = (body) => { bodies.push(body); return ndjson([{ type: 'chat', id: body.chat_id || 8, title: 'q', model: body.model || 'claude-fable-5-1', created: !body.chat_id }, { type: 'final', body: { chat_id: body.chat_id || 8, text: 'ok', calls: 0, cost_cents: 0, ms: 1, limited: false, stopped: false } }]); };
+  const list = [{ id: 2, title: 'two' }];   // the list the server would show — the pane forgets a chat it does not list (S3a), so a created chat joins it
+  const p = await pane({ chats: list, transcripts: { 2: { status: 'success', chat: { id: 2, title: 'two', model: 'claude-fable-5-1' }, messages: [] } }, turn: (body) => { if (!body.chat_id && !list.some((c) => c.id === 8)) list.unshift({ id: 8, title: 'q' }); return scripted(body); } });
+  const mp = p.E('modelPick'), chip = p.E('modelChip');
+  expect(mp.hidden).toBe(false); expect(chip.hidden).toBe(true);
+  expect([...mp.options].map((o) => [o.value, o.textContent, o.selected])).toEqual([['claude-opus-5-5', 'Opus 5.5', false], ['claude-sonnet-5-5', 'Sonnet 5.5', true], ['claude-fable-5-1', 'Fable 5.1', false]]);
+  expect(mp.options[0].title).toBe('deeper');
+  p.E('chatPick').value = '2'; p.E('chatPick').dispatchEvent(new p.w.Event('change'));   // from the picker-visible state, opening an existing chat hides it and the chip shows that chat's model
+  await new Promise((r) => setTimeout(r, 100));
+  expect(mp.hidden).toBe(true); expect(chip.hidden).toBe(false); expect(chip.textContent).toBe('Fable 5.1'); expect(chip.title).toBe('Model this chat runs on: claude-fable-5-1');
+  p.E('newChat').click(); await p.tick();
+  expect(mp.hidden).toBe(false); expect(chip.hidden).toBe(true);
+  mp.value = 'claude-opus-5-5';
+  p.E('text').value = 'q'; p.E('send').click();
+  await new Promise((r) => setTimeout(r, 200));
+  expect(bodies[0]).toEqual({ text: 'q', model: 'claude-opus-5-5' });
+  expect(mp.hidden).toBe(true); expect(chip.hidden).toBe(false); expect(chip.textContent).toBe('Opus 5.5');
+  p.E('text').value = 'more'; p.E('send').click();   // the next turn on the same chat: no model
+  await new Promise((r) => setTimeout(r, 200));
+  expect(bodies[1]).toEqual({ chat_id: 8, text: 'more' });
+  p.E('chatPick').value = '2'; p.E('chatPick').dispatchEvent(new p.w.Event('change'));   // an existing chat: its own model, no picker
+  await new Promise((r) => setTimeout(r, 100));
+  expect(mp.hidden).toBe(true); expect(chip.hidden).toBe(false); expect(chip.textContent).toBe('Fable 5.1');
+  p.E('newChat').click(); await p.tick();              // a new chat: the picker is back at the DEFAULT, not the last pick
+  expect(mp.hidden).toBe(false); expect(chip.hidden).toBe(true); expect(mp.value).toBe('claude-sonnet-5-5');
+  const one = await pane({ boot: { status: 'success', enabled: true, model: 'claude-sonnet-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k', models: [MENU[1]] }, turn: scripted });
+  expect(one.E('modelPick').hidden).toBe(true); expect(one.E('modelChip').hidden).toBe(false); expect(one.E('modelChip').textContent).toBe('Sonnet 5.5');
+  one.E('text').value = 'q'; one.E('send').click(); await new Promise((r) => setTimeout(r, 200));
+  expect(bodies[2]).toEqual({ text: 'q' });   // one model: no choice shown, nothing sent — the server's CURRENT default decides, so a menu change never strands this pane
+  const none = await pane({ boot: { status: 'success', enabled: true, model: 'm', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k' }, turn: scripted });
+  expect(none.E('modelPick').hidden).toBe(true); expect(none.E('modelChip').hidden).toBe(false);
+  none.E('text').value = 'q'; none.E('send').click(); await new Promise((r) => setTimeout(r, 200));
+  expect(bodies[3]).toEqual({ text: 'q' });
+});
+
+test('S3a-2 the picker after failures: a 404 on open → a new chat at the default; an opening turn the server rolled back → the picker is back with the pick kept; a pick refused as off the menu → boot re-read, the menu rebuilt and shown', async () => {
+  const bodies = [];
+  const p = await pane({ chats: [{ id: 7, title: 'gone' }, { id: 2, title: 'two' }], transcripts: { 2: { status: 'success', chat: { id: 2, title: 'two', model: 'claude-fable-5-1' }, messages: [] } } });
+  const orig = p.w.__parent.apiSend;
+  p.w.__parent.apiSend = async (path, method, body, h, o) => { if (path === '/api/casey/chats/7') { const e = new Error('No such chat'); e.status = 404; throw e; } return orig(path, method, body, h, o); };
+  const mp = p.E('modelPick'), chip = p.E('modelChip');
+  mp.value = 'claude-fable-5-1';
+  p.E('chatPick').value = '2'; p.E('chatPick').dispatchEvent(new p.w.Event('change'));   // from an OPEN chat (picker hidden, chip Fable) …
+  await new Promise((r) => setTimeout(r, 100));
+  expect(mp.hidden).toBe(true); expect(chip.textContent).toBe('Fable 5.1');
+  p.E('chatPick').value = '7'; p.E('chatPick').dispatchEvent(new p.w.Event('change'));
+  await new Promise((r) => setTimeout(r, 100));
+  expect(p.d.querySelector('.msg.assistant.error').textContent).toBe('That chat is gone.');
+  expect(mp.hidden).toBe(false); expect(mp.value).toBe('claude-sonnet-5-5'); expect(chip.hidden).toBe(true); expect(chip.textContent).toBe('Sonnet 5.5');   // a new chat again, at the firm's default
+  const q = await pane({ chats: [], turn: (body) => { bodies.push(body); return ndjson([{ type: 'chat', id: 4, title: 'q', model: body.model, created: true }, { type: 'error', status: 502, message: 'The model call failed (api_error)' }]); } });
+  q.E('modelPick').value = 'claude-opus-5-5';
+  q.E('text').value = 'q'; q.E('send').click(); await new Promise((r) => setTimeout(r, 200));
+  expect(bodies[0]).toEqual({ text: 'q', model: 'claude-opus-5-5' });
+  expect(q.E('modelPick').hidden).toBe(false); expect(q.E('modelPick').value).toBe('claude-opus-5-5');   // the list never showed chat 4: a new chat again, the pick kept for the retry
+  expect(q.E('modelChip').hidden).toBe(true); expect(q.E('modelChip').textContent).toBe('Sonnet 5.5');
+  q.E('text').value = 'again'; q.E('send').click(); await new Promise((r) => setTimeout(r, 200));
+  expect(bodies[1]).toEqual({ text: 'again', model: 'claude-opus-5-5' });
+  let boots = 0;
+  // The pane booted with Opus preselected; the firm then narrowed the menu to Sonnet alone.
+  const wide = { status: 'success', enabled: true, model: 'claude-opus-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k', models: [{ ...MENU[0], default: true }, { ...MENU[1], default: false }, MENU[2]] };
+  const narrow = { status: 'success', enabled: true, model: 'claude-sonnet-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k', models: [MENU[1]] };
+  const r = await pane({ boot: wide, chats: [], turn: () => { const e = new Error('That model is not on the menu'); e.status = 400; throw e; } });
+  expect(r.E('modelChip').textContent).toBe('Opus 5.5');
+  const orig2 = r.w.__parent.apiSend;
+  r.w.__parent.apiSend = async (path, method, body, h, o) => { if (path === '/api/casey/boot') { boots++; return narrow; } return orig2(path, method, body, h, o); };
+  r.E('modelPick').value = 'claude-fable-5-1';
+  r.E('text').value = 'q'; r.E('send').click(); await new Promise((r2) => setTimeout(r2, 200));
+  expect(r.d.querySelector('.msg.assistant.error').textContent).toMatch(/menu changed/);
+  expect(boots).toBe(1);
+  expect([...r.E('modelPick').options].map((o) => o.value)).toEqual(['claude-sonnet-5-5']);
+  expect(r.E('modelPick').hidden).toBe(true); expect(r.E('modelChip').hidden).toBe(false); expect(r.E('modelChip').textContent).toBe('Sonnet 5.5');   // one entry now: the chip, reset to the NEW default
+  expect(r.E('send').disabled).toBe(false);
+  // Any OTHER 400 on a new chat is just an error bubble: no re-boot, the menu untouched.
+  let boots2 = 0;
+  const s = await pane({ chats: [], turn: () => { const e = new Error('text is longer than 4000 characters'); e.status = 400; throw e; } });
+  const orig3 = s.w.__parent.apiSend;
+  s.w.__parent.apiSend = async (path, method, body, h, o) => { if (path === '/api/casey/boot') boots2++; return orig3(path, method, body, h, o); };
+  s.E('modelPick').value = 'claude-fable-5-1';
+  s.E('text').value = 'q'; s.E('send').click(); await new Promise((r2) => setTimeout(r2, 200));
+  expect(s.d.querySelector('.msg.assistant.error').textContent).toBe('text is longer than 4000 characters');
+  expect(boots2).toBe(0); expect(s.E('modelPick').value).toBe('claude-fable-5-1');
 });
 
 test('a live turn: user bubble, trail rows as calls run, deltas, the final meta, Keep going on limited; Stop shown while running and posted', async () => {
@@ -124,7 +210,7 @@ test('a live turn: user bubble, trail rows as calls run, deltas, the final meta,
   p.E('send').click();
   await new Promise((r) => setTimeout(r, 200));
   expect(stopWhileRunning).toMatchObject({ stopHidden: false, sendDisabled: true });
-  expect(stopWhileRunning.body).toEqual({ text: 'How many contacts?', context: { label: 'Jones, Mary', case_id: 'ABC12' } });
+  expect(stopWhileRunning.body).toEqual({ text: 'How many contacts?', context: { label: 'Jones, Mary', case_id: 'ABC12' }, model: 'claude-sonnet-5-5' });   // a new chat carries the menu's default pick (S3a-2)
   expect(p.d.querySelector('.msg.user').textContent).toBe('How many contacts?');
   const step = p.d.querySelector('.trail .step');
   expect(step.className).toBe('step ok');
