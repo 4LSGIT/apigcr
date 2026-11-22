@@ -73,14 +73,16 @@ const FIRM_TZ = process.env.FIRM_TIMEZONE || 'America/Detroit';
 // (settingModels) and preselects one with casey_v2_model (settingModel) — S3a-2,
 // Fred 2026-11-22: "the user should be able to select the model for each new
 // chat, with a list chosen in settings". And the effort menu.
-const MODELS = Object.freeze(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1']);
+const MODELS = Object.freeze(['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1']);   // the built-in menu order (S3a-3): everyday → difficult → the most complex
 const DEFAULT_MODEL = 'claude-sonnet-5-5';   // S3a (checkpoint 2026-11-22): equal correctness at ~45 % of Opus's cost; Opus and Fable stay on the menu
-// What the page shows for each model (the id stays the value sent back): a label and a hint on depth and cost.
+// What the page shows for each model (the id stays the value sent back): a label and a note. The notes are
+// Fred's words (2026-11-22) and the built-in text; casey_v2_model_notes overrides them per model (settingModelNotes).
 const MODEL_LABELS = Object.freeze({
-  'claude-sonnet-5-5': Object.freeze({ label: 'Sonnet 5.5', hint: 'fast; the usual pick' }),
-  'claude-opus-5-5': Object.freeze({ label: 'Opus 5.5', hint: 'digs deeper on hard questions; about twice the cost' }),
-  'claude-fable-5-1': Object.freeze({ label: 'Fable 5.1', hint: 'the most capable; about five times the cost' }),
+  'claude-sonnet-5-5': Object.freeze({ label: 'Sonnet 5.5', hint: 'default model for basic needs' }),
+  'claude-opus-5-5': Object.freeze({ label: 'Opus 5.5', hint: 'for the difficult ones' }),
+  'claude-fable-5-1': Object.freeze({ label: 'Fable 5.1', hint: 'use sparingly — only for the most complex' }),
 });
+const NOTE_MAX = 160;   // a note longer than this is cut (the settings form refuses one at save)
 const EFFORTS = Object.freeze(['low', 'medium', 'high']);
 const DEFAULT_EFFORT = 'medium';
 
@@ -105,14 +107,30 @@ const STOPPED_NOTE = '[Stopped by the user.]';
 const CONTINUE_TEXT = 'Keep going from where you stopped: finish the lookups you had planned and answer.';
 const CONTEXT_MAX = 300;   // the page's own words about where the user is, cut
 
-/** The menu for a new chat: casey_v2_models (a csv of ids) ∩ MODELS, in MODELS order. Blank = all of MODELS; a
- *  non-blank list with nothing valid in it = [DEFAULT_MODEL] alone (fail closed toward the cheapest, never toward all). */
+/** The menu for a new chat: casey_v2_models (a csv of ids) ∩ MODELS, in the CSV's order — the list is the dropdown (S3a-3);
+ *  duplicates dropped. Blank = all of MODELS in the built-in order; a non-blank list with nothing valid in it = [DEFAULT_MODEL]
+ *  alone (fail closed toward the cheapest, never toward all). */
 function settingModels() {
   const v = require('../../lib/firmConfig').cfg('casey_v2_models'); // lazy require (convention)
   const on = new Set(String(v == null ? '' : v).split(',').map((s) => s.trim()).filter(Boolean));
   if (!on.size) return [...MODELS];
-  const menu = MODELS.filter((m) => on.has(m));
+  const menu = [...on].filter((m) => MODELS.includes(m));
   return menu.length ? menu : [DEFAULT_MODEL];
+}
+/** Per-model notes from casey_v2_model_notes (a JSON object id → text): known ids with a non-empty string, trimmed and cut
+ *  to NOTE_MAX. Anything else — invalid JSON, an unknown id, a non-string — is ignored; the code's note stands (an array has
+ *  no model-id key, so it falls out the same way; the registry's check refuses one at save). */
+function settingModelNotes() {
+  const v = require('../../lib/firmConfig').cfg('casey_v2_model_notes'); // lazy require (convention)
+  let parsed = null;
+  try { parsed = v ? JSON.parse(v) : null; } catch (_) { parsed = null; }
+  if (!parsed || typeof parsed !== 'object') return {};
+  const out = {};
+  for (const id of MODELS) {
+    const t = parsed[id];
+    if (typeof t === 'string' && t.trim()) out[id] = t.trim().slice(0, NOTE_MAX);
+  }
+  return out;
 }
 /** The model preselected for a new chat: casey_v2_model when it is on the menu, else DEFAULT_MODEL when that is, else the menu's first. */
 function settingModel() {
@@ -121,10 +139,11 @@ function settingModel() {
   if (menu.includes(v)) return v;
   return menu.includes(DEFAULT_MODEL) ? DEFAULT_MODEL : menu[0];
 }
-/** What boot hands the page: the menu as [{id, label, hint, default}]. */
+/** What boot hands the page: the menu as [{id, label, hint, default}] — the firm's note when it set one, else the code's. */
 function modelMenu() {
   const def = settingModel();
-  return settingModels().map((id) => ({ id, ...(MODEL_LABELS[id] || { label: id, hint: '' }), default: id === def }));
+  const notes = settingModelNotes();
+  return settingModels().map((id) => { const base = MODEL_LABELS[id] || { label: id, hint: '' }; return { id, label: base.label, hint: notes[id] || base.hint, default: id === def }; });
 }
 function settingEffort() {
   const v = require('../../lib/firmConfig').cfg('casey_v2_effort'); // lazy require (convention)
@@ -401,7 +420,7 @@ async function runTurn(db, {
 }
 
 module.exports = {
-  runTurn, contextBlock, pageLine, sanitizeContext, stripThinking, orphanToolUses, settingModel, settingModels, modelMenu, settingEffort,
-  MODELS, MODEL_LABELS, DEFAULT_MODEL, EFFORTS, DEFAULT_EFFORT, MAX_TOOL_CALLS, MAX_TURN_MS, MAX_TOKENS, MAX_TOKENS_RETRY, HEARTBEAT_MS, CALL_TIMEOUT_FLOOR_MS, TEXT_MAX, PROMPT_KEY,
+  runTurn, contextBlock, pageLine, sanitizeContext, stripThinking, orphanToolUses, settingModel, settingModels, settingModelNotes, modelMenu, settingEffort,
+  MODELS, MODEL_LABELS, NOTE_MAX, DEFAULT_MODEL, EFFORTS, DEFAULT_EFFORT, MAX_TOOL_CALLS, MAX_TURN_MS, MAX_TOKENS, MAX_TOKENS_RETRY, HEARTBEAT_MS, CALL_TIMEOUT_FLOOR_MS, TEXT_MAX, PROMPT_KEY,
   BUDGET_NOTE, CUT_NOTE, DECLINED_NOTE, BUDGET_STOP_NOTE, EMPTY_NOTE, STOPPED_NOTE, CONTINUE_TEXT, CONTEXT_MAX, INTERRUPTED_RESULT, FIRM_TZ,
 };

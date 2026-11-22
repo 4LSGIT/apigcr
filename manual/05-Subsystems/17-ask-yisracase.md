@@ -22,8 +22,9 @@ searches, reads records through the app's own routes and reads the app's code
 and manual — and shows every step it took as a trail above the answer (click a
 step for the exact query or request). Pick an earlier chat from the list at the
 top, start a new one with **+**, delete one with the bin. Starting a new
-chat, the dropdown at the top picks the model it will run on (your
-administrator chooses which models are offered and which one is preselected;
+chat, the dropdown at the top picks the model it will run on, each with a
+short note on when to use it (your administrator chooses which models are
+offered, in what order, the note beside each, and which one is preselected;
 a chat keeps its model, and every new chat starts back at the preselected
 one — except that a first message that failed keeps your pick for the
 retry). **Stop** ends a turn

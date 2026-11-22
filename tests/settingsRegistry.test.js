@@ -53,6 +53,7 @@ describe('classification snapshot', () => {
     "casey_v2_enabled": "system system casey ui bool",
     "casey_v2_model": "system system casey ui enum",
     "casey_v2_models": "system system casey ui csv",
+    "casey_v2_model_notes": "system system casey ui json",
     "casey_v2_effort": "system system casey ui enum",
     "casey_contact_relations_enabled": "system system casey ui bool",
     "casey_document_relink_enabled": "system system casey ui bool",
@@ -475,8 +476,24 @@ describe('csv with options', () => {
     expect(reg.validate('casey_v2_models', '')).toBe(true);
     expect(reg.validate('casey_v2_models', 'claude-sonnet-5-5, claude-opus-5-5')).toBe(true);
     expect(reg.validate('casey_v2_models', 'claude-sonnet-5-5, sonnet')).toMatch(/unknown: sonnet/);
-    expect(reg.validate('casey_v2_models', 'claude-sonnet-5.5')).toMatch(/must be one of: claude-opus-5-5, claude-sonnet-5-5, claude-fable-5-1/);
+    expect(reg.validate('casey_v2_models', 'claude-sonnet-5.5')).toMatch(/must be one of: claude-sonnet-5-5, claude-opus-5-5, claude-fable-5-1/);
     expect(reg.validate('casey_v2_models', 'claude-sonnet-5-5,,claude-opus-5-5')).toMatch(/no empty entries/);
     expect(reg.validate('email_domains', 'anything.example, else.example')).toBe(true);
+  });
+});
+
+// S3a-3: a key-specific `check` runs after the type's validator (blank always passes). casey_v2_model_notes is the first user.
+describe('key-specific check', () => {
+  test('casey_v2_model_notes: a JSON object of known ids to short text; blank passes; junk is named', () => {
+    expect(reg.validate('casey_v2_model_notes', '')).toBe(true);
+    expect(reg.validate('casey_v2_model_notes', '{"claude-opus-5-5": "for the difficult ones"}')).toBe(true);
+    expect(reg.validate('casey_v2_model_notes', '{nope')).toMatch(/valid JSON/);   // the json TYPE validator, which runs first (the check's own parse guard is unreachable through validate)
+    expect(reg.validate('casey_v2_model_notes', JSON.stringify({ 'claude-opus-5-5': 'y'.repeat(160) }))).toBe(true);           // exactly the ceiling passes
+    expect(reg.validate('casey_v2_model_notes', JSON.stringify({ 'claude-opus-5-5': '  ' + 'y'.repeat(160) + '  ' }))).toBe(true);   // padding is not counted (the reader trims the same way)
+    expect(reg.validate('casey_v2_model_notes', '["claude-opus-5-5"]')).toMatch(/JSON object from model id/);
+    expect(reg.validate('casey_v2_model_notes', '{"claude-haiku-5-5": "x"}')).toMatch(/unknown model id: claude-haiku-5-5/);
+    expect(reg.validate('casey_v2_model_notes', '{"claude-opus-5-5": 3}')).toMatch(/must be text/);
+    expect(reg.validate('casey_v2_model_notes', JSON.stringify({ 'claude-opus-5-5': 'y'.repeat(161) }))).toMatch(/longer than 160/);
+    expect(reg.validate('casey_v2_model', 'claude-opus-5-5')).toBe(true);   // a key without a check is unchanged
   });
 });

@@ -32,7 +32,10 @@ body. Governing migrations in `ref/migrations/`.*
   setting `casey_v2_models` (blank = all three), `casey_v2_model` the one
   preselected; `GET /api/casey/boot` → `models`, `POST /api/casey/turn` takes
   `model` for a new chat only (400 off the menu or with a chat_id). A chat
-  keeps its model for life. Design §9 S3a-2.
+  keeps its model for life. S3a-3 (same day): the csv's order is the
+  dropdown's, `casey_v2_model_notes` (json id → text) overrides the note shown
+  beside each model, and the registry gained a per-key `check` hook. Design
+  §9 S3a-2, S3a-3.
 
 - **Casey v2 S3a — the page (11-22):** `public/casey.html` in the shell's
   `#caseyFrame` when `GET /api/casey/boot` says v2 is on (`openCasey` decides

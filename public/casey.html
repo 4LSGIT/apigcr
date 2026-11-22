@@ -283,7 +283,7 @@ function renderModelMenu() {
   const menu = boot && Array.isArray(boot.models) ? boot.models : [];
   modelPick.innerHTML = '';
   for (const m of menu) {
-    const o = document.createElement('option'); o.value = m.id; o.textContent = m.label || m.id; if (m.hint) o.title = m.hint; o.selected = !!m.default;
+    const o = document.createElement('option'); o.value = m.id; o.textContent = m.hint ? `${m.label || m.id} — ${m.hint}` : (m.label || m.id); if (m.hint) o.title = m.hint; o.selected = !!m.default;
     modelPick.appendChild(o);
   }
 }

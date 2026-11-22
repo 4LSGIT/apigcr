@@ -21,7 +21,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'casey-turn-route-secret';
 const flags = { v2: null, models: null };
 jest.mock('../lib/firmConfig', () => {
   const actual = jest.requireActual('../lib/firmConfig');
-  return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_enabled' ? flags.v2 : k === 'casey_v2_models' ? flags.models : k === 'casey_v2_model' ? 'claude-opus-5-5' : k === 'casey_v2_effort' ? null : k === 'internal_api_key' ? 'yci_TESTINTERNALKEYFORCASEY00' : k === 'internal_api_key_prev' ? null : actual.cfg(k))) };   // secret-scan: allow (a test constant)
+  return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_enabled' ? flags.v2 : k === 'casey_v2_models' ? flags.models : k === 'casey_v2_model_notes' ? null : k === 'casey_v2_model' ? 'claude-opus-5-5' : k === 'casey_v2_effort' ? null : k === 'internal_api_key' ? 'yci_TESTINTERNALKEYFORCASEY00' : k === 'internal_api_key_prev' ? null : actual.cfg(k))) };   // secret-scan: allow (a test constant)
 });
 const mockStore = { chats: new Map(), messages: new Map(), nextChat: 1, nextMsg: 1 };
 jest.mock('../services/casey/chats', () => {
@@ -157,10 +157,10 @@ test('S3a gate: any signed-in staff person, no elevation; a machine key and no t
   expect(boot.status).toBe(200);
   expect(boot.body).toMatchObject({ status: 'success', enabled: false, model: 'claude-opus-5-5', effort: 'medium', limits: { text_max: 4000, max_tool_calls: 40, max_turn_ms: 300000 } });
   expect(typeof boot.body.continue_text).toBe('string');
-  expect(boot.body.models).toEqual([   // S3a-2: the menu for a new chat, the default marked
-    { id: 'claude-opus-5-5', label: 'Opus 5.5', hint: expect.any(String), default: true },
-    { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: expect.any(String), default: false },
-    { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: expect.any(String), default: false },
+  expect(boot.body.models).toEqual([   // S3a-2: the menu for a new chat, the default marked; S3a-3: the built-in order Sonnet, Opus, Fable, with the notes
+    { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: 'default model for basic needs', default: false },
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', hint: 'for the difficult ones', default: true },
+    { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: 'use sparingly — only for the most complex', default: false },
   ]);
   flags.v2 = null;
   expect((await call('GET', '/api/casey/boot', { token: staff, elevate: false })).body.enabled).toBe(true);
@@ -228,7 +228,7 @@ test('plain JSON refusals before the stream: 400, 404, 409, 429', async () => {
 
 test('S3a-2 the model pick: boot lists the firm\'s menu; a new chat is created on the pick and the model called with it; a non-string, an off-menu id or a pick with a chat_id is a 400 before the stream', async () => {
   flags.models = 'claude-sonnet-5-5, claude-opus-5-5';
-  expect((await call('GET', '/api/casey/boot', { token: staff, elevate: false })).body.models.map((m) => [m.id, m.default])).toEqual([['claude-opus-5-5', true], ['claude-sonnet-5-5', false]]);
+  expect((await call('GET', '/api/casey/boot', { token: staff, elevate: false })).body.models.map((m) => [m.id, m.default])).toEqual([['claude-sonnet-5-5', false], ['claude-opus-5-5', true]]);   // the csv's order (S3a-3)
   expect(await turn({ text: 'hi', model: 7 })).toMatchObject({ status: 400, body: { status: 'error', message: 'model must be a string' } });
   expect(await turn({ text: 'hi', model: 'claude-fable-5-1' })).toMatchObject({ status: 400, body: { message: 'That model is not on the menu' } });
   expect(mockStore.chats.size).toBe(0);

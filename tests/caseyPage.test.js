@@ -113,7 +113,7 @@ test('S3a-2 the model picker: shown for a new chat with the menu and the default
   const p = await pane({ chats: list, transcripts: { 2: { status: 'success', chat: { id: 2, title: 'two', model: 'claude-fable-5-1' }, messages: [] } }, turn: (body) => { if (!body.chat_id && !list.some((c) => c.id === 8)) list.unshift({ id: 8, title: 'q' }); return scripted(body); } });
   const mp = p.E('modelPick'), chip = p.E('modelChip');
   expect(mp.hidden).toBe(false); expect(chip.hidden).toBe(true);
-  expect([...mp.options].map((o) => [o.value, o.textContent, o.selected])).toEqual([['claude-opus-5-5', 'Opus 5.5', false], ['claude-sonnet-5-5', 'Sonnet 5.5', true], ['claude-fable-5-1', 'Fable 5.1', false]]);
+  expect([...mp.options].map((o) => [o.value, o.textContent, o.selected])).toEqual([['claude-opus-5-5', 'Opus 5.5 — deeper', false], ['claude-sonnet-5-5', 'Sonnet 5.5 — fast', true], ['claude-fable-5-1', 'Fable 5.1 — dearest', false]]);   // the note in the option text (S3a-3), the menu's order kept
   expect(mp.options[0].title).toBe('deeper');
   p.E('chatPick').value = '2'; p.E('chatPick').dispatchEvent(new p.w.Event('change'));   // from the picker-visible state, opening an existing chat hides it and the chip shows that chat's model
   await new Promise((r) => setTimeout(r, 100));
@@ -133,8 +133,9 @@ test('S3a-2 the model picker: shown for a new chat with the menu and the default
   expect(mp.hidden).toBe(true); expect(chip.hidden).toBe(false); expect(chip.textContent).toBe('Fable 5.1');
   p.E('newChat').click(); await p.tick();              // a new chat: the picker is back at the DEFAULT, not the last pick
   expect(mp.hidden).toBe(false); expect(chip.hidden).toBe(true); expect(mp.value).toBe('claude-sonnet-5-5');
-  const one = await pane({ boot: { status: 'success', enabled: true, model: 'claude-sonnet-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k', models: [MENU[1]] }, turn: scripted });
+  const one = await pane({ boot: { status: 'success', enabled: true, model: 'claude-sonnet-5-5', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k', models: [{ ...MENU[1], hint: '' }] }, turn: scripted });
   expect(one.E('modelPick').hidden).toBe(true); expect(one.E('modelChip').hidden).toBe(false); expect(one.E('modelChip').textContent).toBe('Sonnet 5.5');
+  expect(one.E('modelPick').options[0].textContent).toBe('Sonnet 5.5'); expect(one.E('modelPick').options[0].title).toBe('');   // no note: the label alone
   one.E('text').value = 'q'; one.E('send').click(); await new Promise((r) => setTimeout(r, 200));
   expect(bodies[2]).toEqual({ text: 'q' });   // one model: no choice shown, nothing sent — the server's CURRENT default decides, so a menu change never strands this pane
   const none = await pane({ boot: { status: 'success', enabled: true, model: 'm', effort: 'medium', limits: { text_max: 4000 }, continue_text: 'k' }, turn: scripted });

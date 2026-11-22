@@ -58,10 +58,10 @@ jest.mock('../services/casey/chats', () => {
     async deleteMessages(db, chatId, ids) { const list = mockStore.messages.get(Number(chatId)); const n = list.length; mockStore.messages.set(Number(chatId), list.filter((m) => !ids.includes(m.id))); return n - list.length; },
   };
 });
-const mockSettings = { model: null, models: null, effort: null };
+const mockSettings = { model: null, models: null, notes: null, effort: null };
 jest.mock('../lib/firmConfig', () => {
   const actual = jest.requireActual('../lib/firmConfig');
-  return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_model' ? mockSettings.model : k === 'casey_v2_models' ? mockSettings.models : k === 'casey_v2_effort' ? mockSettings.effort : actual.cfg(k))) };
+  return { ...actual, cfg: jest.fn((k) => (k === 'casey_v2_model' ? mockSettings.model : k === 'casey_v2_models' ? mockSettings.models : k === 'casey_v2_model_notes' ? mockSettings.notes : k === 'casey_v2_effort' ? mockSettings.effort : actual.cfg(k))) };
 });
 
 const loop = require('../services/casey/loop');
@@ -101,7 +101,7 @@ beforeAll(async () => {
 afterAll(async () => { await new Promise((r) => server.close(r)); });
 beforeEach(() => {
   mockStore.chats.clear(); mockStore.messages.clear(); mockStore.nextChat = 1; mockStore.nextMsg = 1; mockStore.claimFails = false; mockStore.released.length = 0;
-  spendState.cap = null; spendState.spent = 0; mockSettings.model = null; mockSettings.models = null; mockSettings.effort = null; call = 0;
+  spendState.cap = null; spendState.spent = 0; mockSettings.model = null; mockSettings.models = null; mockSettings.notes = null; mockSettings.effort = null; call = 0;
 });
 
 const SU = { type: 'jwt', userId: 6, username: 'IT', roles: ['su'] };
@@ -613,11 +613,12 @@ describe('settings and context', () => {
     expect(loop.DEFAULT_MODEL).toBe('claude-sonnet-5-5');   // the S2 checkpoint's pick (2026-11-22)
   });
 
-  test('S3a-2 the menu: casey_v2_models narrows MODELS (MODELS order, junk dropped, blank or all-junk = all); the default follows the menu; modelMenu labels every model and marks the default', () => {
-    const all = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'];
+  test('S3a-2/3 the menu: casey_v2_models narrows MODELS in the CSV\'s order (junk and duplicates dropped; blank = the built-in order Sonnet, Opus, Fable); the default follows the menu; modelMenu labels every model and marks the default', () => {
+    const all = ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1'];
+    expect(loop.MODELS).toEqual(all);
     expect(loop.settingModels()).toEqual(all);
-    mockSettings.models = ' claude-fable-5-1, claude-opus-4-1 ,claude-sonnet-5-5';
-    expect(loop.settingModels()).toEqual(['claude-sonnet-5-5', 'claude-fable-5-1']);
+    mockSettings.models = ' claude-fable-5-1, claude-opus-4-1 ,claude-sonnet-5-5, claude-fable-5-1';
+    expect(loop.settingModels()).toEqual(['claude-fable-5-1', 'claude-sonnet-5-5']);   // the csv's order, once each
     mockSettings.models = 'claude-opus-4-1, nope';
     expect(loop.settingModels()).toEqual(['claude-sonnet-5-5']);          // a non-blank list with nothing valid fails CLOSED to the default, never to all three
     expect(loop.settingModel()).toBe('claude-sonnet-5-5');
@@ -633,12 +634,36 @@ describe('settings and context', () => {
     expect(loop.settingModel()).toBe('claude-sonnet-5-5');               // the setting is off the menu, Sonnet is on it
     mockSettings.models = null; mockSettings.model = 'claude-fable-5-1';
     expect(loop.modelMenu()).toEqual([
-      { id: 'claude-opus-5-5', label: 'Opus 5.5', hint: expect.any(String), default: false },
-      { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: expect.any(String), default: false },
-      { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: expect.any(String), default: true },
+      { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: 'default model for basic needs', default: false },
+      { id: 'claude-opus-5-5', label: 'Opus 5.5', hint: 'for the difficult ones', default: false },
+      { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: 'use sparingly — only for the most complex', default: true },
     ]);
+    mockSettings.models = 'claude-opus-5-5, claude-sonnet-5-5';
+    expect(loop.modelMenu().map((m) => m.id)).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5']);   // the dropdown follows the csv
     expect(loop.modelMenu().filter((m) => m.default)).toHaveLength(1);
     expect(Object.keys(loop.MODEL_LABELS).sort()).toEqual([...loop.MODELS].sort());   // every model has a label
+    // The id list lives in four places (loop.MODELS, the two settings' options, the notes check): pinned to one.
+    const reg = require('../lib/settingsRegistry');
+    expect(reg.SETTINGS.casey_v2_model.options).toEqual([...loop.MODELS]);
+    expect(reg.SETTINGS.casey_v2_models.options).toEqual([...loop.MODELS]);
+    expect(reg.validate('casey_v2_model_notes', JSON.stringify(Object.fromEntries(loop.MODELS.map((m) => [m, 'x']))))).toBe(true);
+    expect(reg.validate('casey_v2_model_notes', JSON.stringify({ [loop.MODELS[0]]: 'y'.repeat(loop.NOTE_MAX) }))).toBe(true);        // the check's ceiling is NOTE_MAX
+    expect(reg.validate('casey_v2_model_notes', JSON.stringify({ [loop.MODELS[0]]: 'y'.repeat(loop.NOTE_MAX + 1) }))).toMatch(/longer/);
+  });
+
+  test('S3a-3 the notes: casey_v2_model_notes overrides the built-in note per model; a model left out keeps its own; junk (bad JSON, an array, unknown ids, non-strings, blanks) is ignored; a long note is cut', () => {
+    const hints = () => Object.fromEntries(loop.modelMenu().map((m) => [m.id, m.hint]));
+    mockSettings.notes = JSON.stringify({ 'claude-opus-5-5': '  for the hard ones  ', 'claude-fable-5-1': '', 'claude-haiku-5-5': 'x', 'claude-sonnet-5-5': 7 });
+    expect(loop.settingModelNotes()).toEqual({ 'claude-opus-5-5': 'for the hard ones' });
+    expect(hints()).toEqual({ 'claude-sonnet-5-5': 'default model for basic needs', 'claude-opus-5-5': 'for the hard ones', 'claude-fable-5-1': 'use sparingly — only for the most complex' });
+    mockSettings.notes = '{not json';
+    expect(loop.settingModelNotes()).toEqual({});
+    mockSettings.notes = '["claude-opus-5-5"]';
+    expect(loop.settingModelNotes()).toEqual({});
+    mockSettings.notes = JSON.stringify({ 'claude-sonnet-5-5': 'y'.repeat(500) });
+    expect(loop.settingModelNotes()['claude-sonnet-5-5']).toBe('y'.repeat(loop.NOTE_MAX));
+    mockSettings.notes = null;
+    expect(hints()['claude-opus-5-5']).toBe('for the difficult ones');
   });
 
   test('S3a-2 the pick: a new chat is created on the model the user picked when it is on the menu, and the model is called with it; off the menu, or on an existing chat, a 400 before begin(); no pick = the setting default', async () => {
