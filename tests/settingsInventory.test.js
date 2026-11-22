@@ -76,6 +76,9 @@ const ALLOW = {
   // the summaries render through, not an app_settings row. Its name matches
   // the constant idiom; nothing reads it from app_settings.
   comms_summary: 'ai prompt key (commsSummarizeSweep PROMPT_KEY), not a setting',
+  // services/casey/loop.js PROMPT_KEY — the ai_calls.prompt_key label of a
+  // Casey v2 turn (no registry entry: the prompt is lib/caseyPrompt.js).
+  casey_v2_turn: 'ai_calls prompt_key label (services/casey/loop.js PROMPT_KEY), not a setting',
 };
 
 /** (a) coverage — registered, non-retired keys the forward scan cannot see, and why. */

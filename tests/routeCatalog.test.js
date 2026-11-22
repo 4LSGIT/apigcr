@@ -313,7 +313,7 @@ describe('snapshots — a change here is a deliberate review', () => {
       'POST /api/ai/file', 'POST /api/api-keys', 'POST /api/api-keys/rotate-internal', 'POST /api/assistant/actions/:draftId/claim', 'POST /api/assistant/actions/:draftId/result', 'POST /api/assistant/actions/reconcile',
       'POST /api/assistant/chats', 'DELETE /api/assistant/chats/:id(\\d+)', 'PATCH /api/assistant/chats/:id(\\d+)', 'POST /api/assistant/chats/:id(\\d+)/messages',
       'POST /api/assistant/execute', 'POST /api/assistant/plan', 'POST /api/auth/change-password', 'POST /api/auth/update-profile',
-      'POST /api/casey/tools/:name',
+      'DELETE /api/casey/chats/:id', 'POST /api/casey/tools/:name', 'POST /api/casey/turn',
       'POST /api/esign/:id/resend', 'POST /api/esign/:id/satisfied-external', 'POST /api/esign/send', 'POST /api/esign/templates/:id/pdf',
       'POST /api/impersonation/exit', 'POST /api/impersonation/mode', 'POST /api/impersonation/users/:id/start', 'POST /api/pdf/parse',
       'POST /api/readonly-keys', 'POST /internal/dropbox/create-folder', 'POST /internal/email-test/send', 'POST /internal/email/send', 'POST /internal/hook-replay',
@@ -337,7 +337,7 @@ describe('snapshots — a change here is a deliberate review', () => {
     expect(suGets.every(r => r.autoGet === false && r.tier === 3)).toBe(true);
     expect(suGets.filter(r => !r.proposable).map(at)).toEqual([
       'GET /admin/api-tester/history', 'GET /admin/api-tester/saved', 'GET /admin/api-tester/saved/:id', 'GET /admin/db/saved-queries',
-      'GET /admin/db/schema', 'GET /admin/db/schema.sql', 'GET /api/casey/catalog', 'GET /api/casey/tools', 'GET /api/credentials/:id/reveal', 'GET /api/email-credentials/:id/reveal',
+      'GET /admin/db/schema', 'GET /admin/db/schema.sql', 'GET /api/casey/catalog', 'GET /api/casey/chats', 'GET /api/casey/chats/:id', 'GET /api/casey/tools', 'GET /api/credentials/:id/reveal', 'GET /api/email-credentials/:id/reveal',
     ]);
   });
 

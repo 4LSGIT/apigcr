@@ -41,6 +41,7 @@ lib/caseCaption.js
 lib/caseId.js
 lib/caseRoleResolver.js
 lib/caseyAutomationAllowlist.js
+lib/caseyPrompt.js
 lib/caseySensitivity.js
 lib/caseySqlRules.js
 lib/checklistStatus.js
@@ -692,6 +693,7 @@ ref/migrations/2026-11-19_client_upload_batches.sql
 ref/migrations/2026-11-19_docs_reviewer.sql
 ref/migrations/2026-11-19_key_renewal_requests.sql
 ref/migrations/2026-11-20_support_reply_columns.sql
+ref/migrations/2026-11-22_casey_v2_chats.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -890,6 +892,7 @@ scripts/calendarTypeSeed.js
 scripts/caseCaptionBackfill.js
 scripts/caseyP4Idempotency.js
 scripts/caseyP5Ledger.js
+scripts/caseyV2ChatsMigrate.js
 scripts/cfCourtBackfill.js
 scripts/checkThemePresets.js
 scripts/cleanup_court_event_dupes_2026_07.js
@@ -1115,6 +1118,9 @@ services/campaignSegmentService.js
 services/campaignService.js
 services/caseEventService.js
 services/caseService.js
+services/casey/chats.js
+services/casey/loop.js
+services/casey/spend.js
 services/casey/tools/api_get.js
 services/casey/tools/index.js
 services/casey/tools/index_error.js
@@ -1275,6 +1281,7 @@ tests/aiService.attachments.test.js
 tests/aiService.promptCache.test.js
 tests/aiService.stream.test.js
 tests/aiService.wai.test.js
+tests/aiServiceConverse.test.js
 tests/aimatch.service.test.js
 tests/alertingDigestCta.test.js
 tests/alertingSmsCooldown.test.js
@@ -1377,6 +1384,7 @@ tests/caseyCaseContacts.mysql.test.js
 tests/caseyCaseContacts.test.js
 tests/caseyCaseFields.mysql.test.js
 tests/caseyCaseFields.test.js
+tests/caseyChats.mysql.test.js
 tests/caseyChecklistEdit.mysql.test.js
 tests/caseyChecklistEdit.test.js
 tests/caseyChecklistOrder.mysql.test.js
@@ -1411,6 +1419,7 @@ tests/caseyHookCreate.test.js
 tests/caseyIngestRule.mysql.test.js
 tests/caseyIngestRule.test.js
 tests/caseyJobCodeAction.test.js
+tests/caseyLoop.test.js
 tests/caseyMailAttachments.mysql.test.js
 tests/caseyMailAttachments.test.js
 tests/caseyMailTriage.mysql.test.js
@@ -1422,6 +1431,7 @@ tests/caseyPipelineRead.mysql.test.js
 tests/caseyPipelineRead.test.js
 tests/caseyPipelineTransfer.mysql.test.js
 tests/caseyPipelineTransfer.test.js
+tests/caseyPrompt.test.js
 tests/caseyQueryDbColumns.mysql.test.js
 tests/caseyRecordText.test.js
 tests/caseyRelink.mysql.test.js
@@ -1448,6 +1458,7 @@ tests/caseySyncRoots.mysql.test.js
 tests/caseySyncRoots.test.js
 tests/caseyTools.test.js
 tests/caseyToolsRoute.test.js
+tests/caseyTurnRoute.test.js
 tests/caseyWorkflowDraft.test.js
 tests/caseyWorkflowPublish.test.js
 tests/caseyWorkflowQueryWebhook.test.js

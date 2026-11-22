@@ -51,6 +51,8 @@ describe('classification snapshot', () => {
     "casey_checklists_enabled": "system system casey ui bool",
     "casey_code_actions_enabled": "system system casey ui bool",
     "casey_v2_enabled": "system system casey ui bool",
+    "casey_v2_model": "system system casey ui enum",
+    "casey_v2_effort": "system system casey ui enum",
     "casey_contact_relations_enabled": "system system casey ui bool",
     "casey_document_relink_enabled": "system system casey ui bool",
     "casey_document_sync_roots_enabled": "system system casey ui bool",

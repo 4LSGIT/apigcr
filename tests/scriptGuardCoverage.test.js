@@ -67,6 +67,26 @@ const EXEMPT = {
     'answer stage only (an exhausted queue throws "unscripted answer call" — ' +
     'fail-loud by construction); investigate calls are fixed, not scripted. ' +
     'Its DB is the shared capDb() mock keyed on SQL text, with no script array.',
+  'aiServiceConverse.test.js':
+    'responses.shift() sequences stubbed provider FETCH RESPONSES for converse() ' +
+    '(SSE-bodied or JSON error), not DB rows; an exhausted queue returns undefined, ' +
+    'which fails the call under test loudly. Its DB stub matches on SQL text and ' +
+    'has no script array.',
+  'caseyLoop.test.js':
+    'script.shift() hands scripted MODEL REPLIES (aiService.converse return ' +
+    'values) to the loop under test; an exhausted script throws "script ' +
+    'exhausted" (fail-loud), and every test asserts the request count / the ' +
+    'stored rows. The casey store is an in-memory mock, the DB stub matches on ' +
+    'SQL text; neither has a script array.',
+  'caseyChats.mysql.test.js':
+    'script.shift() hands scripted MODEL REPLIES to one end-to-end loop turn on ' +
+    'a REAL MySQL twin; an exhausted script returns undefined and the turn fails ' +
+    'loudly (every stored row is asserted). The DB is real, not a stub.',
+  'caseyTurnRoute.test.js':
+    'apiScript.shift() sequences stubbed provider FETCH RESPONSES behind the ' +
+    'route under test (an exhausted queue throws "api script exhausted"); the ' +
+    'DB stub matches on SQL text and the casey store is an in-memory mock, ' +
+    'neither with a script array.',
   'unsubService.deadlockRetry.test.js':
     'db.__fail.shift() is a FAILURE-INJECTION queue for the mocked ' +
     'withTransaction — the error each attempt throws, not DB rows: an empty ' +

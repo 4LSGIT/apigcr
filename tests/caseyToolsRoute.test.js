@@ -101,6 +101,7 @@ test('unknown tool → 404; non-object input → 400; bad input → 200 with an 
 test('a tool that reads the catalog gets THIS app (req.app): lookup_routes finds the casey routes themselves', async () => {
   const r = await call('POST', '/api/casey/tools/lookup_routes', { body: { input: { q: '/api/casey' } } });
   expect(r.body.ok).toBe(true);
-  expect(r.body.data.rows.map((x) => `${x.method} ${x.path}`)).toEqual(['GET /api/casey/catalog', 'GET /api/casey/tools', 'POST /api/casey/tools/:name']);
+  expect(r.body.data.rows.map((x) => `${x.method} ${x.path}`)).toEqual([
+    'GET /api/casey/catalog', 'GET /api/casey/chats', 'DELETE /api/casey/chats/:id', 'GET /api/casey/chats/:id', 'GET /api/casey/tools', 'POST /api/casey/tools/:name', 'POST /api/casey/turn']);
   expect(r.body.data.rows.every((x) => x.auth === 'su' && x.tier === 'T3' && x.you.allowed === true)).toBe(true);
 });

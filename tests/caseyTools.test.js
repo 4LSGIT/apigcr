@@ -206,7 +206,7 @@ describe('lookup_routes', () => {
   });
   test('filters: q substring, family, method', async () => {
     const r = await tools.runTool('lookup_routes', ctx(STAFF), { q: 'casey', method: 'GET' });
-    expect(r.data.rows.map(x => x.path)).toEqual(['/api/casey/catalog', '/api/casey/tools']);
+    expect(r.data.rows.map(x => x.path)).toEqual(['/api/casey/catalog', '/api/casey/chats', '/api/casey/chats/:id', '/api/casey/tools']);
     expect(r.data.rows[0]).toMatchObject({ auth: 'su', superuser_tool: 'casey', tier: 'T3', proposable: false, auto_get: false });
     const f = await tools.runTool('lookup_routes', ctx(STAFF), { family: '/api/tasks' });
     expect(f.data.count).toBeGreaterThan(0);

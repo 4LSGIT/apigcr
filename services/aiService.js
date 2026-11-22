@@ -82,6 +82,11 @@
 // to the LAST byte (a non-streamed response's headers arrive with its body).
 // Absent → byte-identical to before.
 //
+// converse() (Casey v2, ref/CASEY_V2_DESIGN.md §4.6): the second primitive,
+// beside call() — a MESSAGE ARRAY with TOOLS, always streamed, one ai_calls
+// row per request, the assistant blocks returned verbatim for storage and
+// replay. Its contract is in its JSDoc below; call() is unchanged by it.
+//
 // async mode is intentionally unimplemented (see throw below) — it needs the
 // scheduled_jobs integration, scoped as its own later slice. No v1 consumer
 // needs it.
@@ -101,6 +106,11 @@ const TIMEOUT_MIN_MS          = 1000;         // clamp floor for opts.timeout_ms
 const TIMEOUT_MAX_MS          = 120000;       // clamp ceiling; raised from 60s for
                                               // multimodal calls (large PDFs are slow)
 const DEFAULT_MAX_TOKENS      = 1024;         // inline calls that omit max_tokens
+// converse() (Casey v2): a tool-use request streams for as long as the model
+// works, so its deadline is the TURN's scale, not call()'s 20 s.
+const CONVERSE_TIMEOUT_MS     = 300000;       // 5 min default (the loop's own turn ceiling)
+const CONVERSE_TIMEOUT_MAX_MS = 600000;       // clamp ceiling for converse opts.timeout_ms
+const CONVERSE_MAX_TOKENS     = 16000;        // thinking + answer per request, default
 
 // Attachment caps + allowed inline media types.
 const MAX_ATTACHMENTS          = 4;
@@ -123,6 +133,11 @@ const MODEL_PRICING = {
   // beyond; this map is flat, so a > 100K-token prompt is under-priced here.
   // S3's longest prompt (a ~4 h call) is ~55K.
   'claude-haiku-5-5':          { in: 0.1, out: 0.5 },
+  // Casey v2 (verified against the Claude API reference, 2026-11-22; design
+  // §8.8). Both read the prompt cache below the flat multiplier, so each
+  // carries its own `cacheRead` (a multiple of `in`; absent → CACHE_READ_MULTIPLIER).
+  'claude-opus-5-5':           { in: 4, out: 20, cacheRead: 0.05 },
+  'claude-fable-5-1':          { in: 10, out: 50, cacheRead: 0.025 },
 };
 // Legacy 2-arg computeCostCents(in, out) callers (no model) are priced at this
 // model's rates — sonnet was the only model when the signature was 2-arg, so
@@ -130,12 +145,12 @@ const MODEL_PRICING = {
 const DEFAULT_PRICING_MODEL = 'claude-sonnet-4-6';
 
 // Prompt-cache pricing, as multiples of the model's input rate (Claude API
-// pricing, verified 2026-10-28): a cache read 0.1x, a 5-minute cache write
-// 1.25x — true for every model in MODEL_PRICING (claude-opus-5: $0.50 read /
-// $6.25 write per MTok). NOT true of every model: Claude Opus 5.5 reads at
-// 0.05x and Claude Fable 5.1 at 0.025x — adding one of those to MODEL_PRICING
-// means giving it its own read multiplier here first. Only the default 5-minute
-// TTL is ever requested (a 1-hour write is 2x).
+// pricing, verified 2026-10-28 / 2026-11-22): a cache read 0.1x unless the
+// model's MODEL_PRICING entry names its own `cacheRead` (Claude Opus 5.5
+// 0.05x, Claude Fable 5.1 0.025x), a 5-minute cache write 1.25x for every
+// model. A model added here with a different read rate gets a `cacheRead`
+// in the same edit. Only the default 5-minute TTL is ever requested (a
+// 1-hour write is 2x).
 const CACHE_READ_MULTIPLIER  = 0.1;
 const CACHE_WRITE_MULTIPLIER = 1.25;
 const CACHE_CONTROL = { type: 'ephemeral' };
@@ -203,8 +218,9 @@ function computeCostCents(inputTokens, outputTokens, model, cache) {
   if (!cache) return cents;
   const r = Number(cache.cache_read_input_tokens) || 0;
   const w = Number(cache.cache_creation_input_tokens) || 0;
+  const readMultiplier = pricing.cacheRead != null ? pricing.cacheRead : CACHE_READ_MULTIPLIER;
   return cents
-    + (r / 1e6) * pricing.in * CACHE_READ_MULTIPLIER * 100
+    + (r / 1e6) * pricing.in * readMultiplier * 100
     + (w / 1e6) * pricing.in * CACHE_WRITE_MULTIPLIER * 100;
 }
 
@@ -354,13 +370,27 @@ function buildAttachmentBlocks(attachments) {
  * returns ({content, stop_reason, usage}). onText(text) per text delta.
  * Returns {envelope} or {failure:'stream_error'|'stream_incomplete', detail}.
  * Read errors (incl. AbortError) propagate to the caller's catch.
+ *
+ * Casey v2 (converse): every block type the API streams is accumulated so
+ * the envelope's `content` can be stored and replayed VERBATIM — `tool_use`
+ * (input_json_delta pieces joined and parsed at content_block_stop; a piece
+ * list that does not parse — a stream cut by max_tokens — leaves `input` as
+ * the start event gave it, `{}`, and names the block in envelope.partial),
+ * `thinking` (thinking_delta + signature_delta) and `redacted_thinking`
+ * (whole in the start event). onBlockEvent (optional) sees
+ * {type:'text'|'thinking', text} deltas and {type:'tool_use_start', id, name}
+ * / {type:'tool_use_end', id, name, input}; cosmetic, a throw is swallowed.
+ * call()'s text-only reading of the envelope is unchanged.
  */
-async function readMessageStream(resp, onText) {
+async function readMessageStream(resp, onText, onBlockEvent) {
   const blocks = [];
+  const partialJson = new Map();   // tool_use index → the input_json_delta pieces so far
+  const partial = [];
   let usage = {};
   let stopReason = null;
   let done = false;
   let failure = null;
+  const emit = (ev) => { if (typeof onBlockEvent === 'function') { try { onBlockEvent(ev); } catch (_) { /* cosmetic only */ } } };
   const onEvent = (data) => {
     let ev;
     try { ev = JSON.parse(data); } catch (_) { return; }
@@ -368,12 +398,35 @@ async function readMessageStream(resp, onText) {
     if (ev.type === 'message_start' && ev.message) {
       if (ev.message.usage && typeof ev.message.usage === 'object') usage = { ...ev.message.usage };
     } else if (ev.type === 'content_block_start' && Number.isInteger(ev.index) && ev.content_block) {
-      blocks[ev.index] = { ...ev.content_block, ...(ev.content_block.type === 'text' ? { text: String(ev.content_block.text || '') } : {}) };
+      const cb = ev.content_block;
+      blocks[ev.index] = { ...cb,
+        ...(cb.type === 'text' ? { text: String(cb.text || '') } : {}),
+        ...(cb.type === 'thinking' ? { thinking: String(cb.thinking || '') } : {}),
+        ...(cb.type === 'tool_use' ? { input: (cb.input && typeof cb.input === 'object') ? cb.input : {} } : {}) };
+      if (cb.type === 'tool_use') { partialJson.set(ev.index, ''); emit({ type: 'tool_use_start', id: cb.id, name: cb.name }); }
     } else if (ev.type === 'content_block_delta' && Number.isInteger(ev.index) && ev.delta) {
       const block = blocks[ev.index];
       if (block && block.type === 'text' && ev.delta.type === 'text_delta' && typeof ev.delta.text === 'string') {
         block.text += ev.delta.text;
         try { onText(ev.delta.text); } catch (_) { /* cosmetic only */ }
+        emit({ type: 'text', text: ev.delta.text });
+      } else if (block && block.type === 'thinking' && ev.delta.type === 'thinking_delta' && typeof ev.delta.thinking === 'string') {
+        block.thinking += ev.delta.thinking;
+        emit({ type: 'thinking', text: ev.delta.thinking });
+      } else if (block && block.type === 'thinking' && ev.delta.type === 'signature_delta' && typeof ev.delta.signature === 'string') {
+        block.signature = (block.signature || '') + ev.delta.signature;
+      } else if (block && block.type === 'tool_use' && ev.delta.type === 'input_json_delta' && typeof ev.delta.partial_json === 'string') {
+        partialJson.set(ev.index, (partialJson.get(ev.index) || '') + ev.delta.partial_json);
+      }
+    } else if (ev.type === 'content_block_stop' && Number.isInteger(ev.index)) {
+      const block = blocks[ev.index];
+      if (block && block.type === 'tool_use') {
+        const raw = partialJson.get(ev.index) || '';
+        if (raw.trim()) {
+          try { block.input = JSON.parse(raw); } catch (_) { partial.push(ev.index); }
+        }
+        partialJson.delete(ev.index);
+        emit({ type: 'tool_use_end', id: block.id, name: block.name, input: block.input });
       }
     } else if (ev.type === 'message_delta') {
       if (ev.delta && typeof ev.delta.stop_reason === 'string') stopReason = ev.delta.stop_reason;
@@ -421,7 +474,9 @@ async function readMessageStream(resp, onText) {
     return failure;
   }
   if (!done) return { failure: 'stream_incomplete', detail: { stop_reason: stopReason } };
-  return { envelope: { content: blocks.filter(Boolean), stop_reason: stopReason, usage } };
+  // A tool_use block whose stop never came (the stream ended first) is partial too.
+  for (const idx of partialJson.keys()) if (!partial.includes(idx)) partial.push(idx);
+  return { envelope: { content: blocks.filter(Boolean), stop_reason: stopReason, usage, partial } };
 }
 
 /**
@@ -904,4 +959,203 @@ async function call(db, {
   return { ok: false, error: 'json_parse', output: r2.text, usage: r2.usage, callId: r2.callId, stopReason: r2.stopReason };
 }
 
-module.exports = { call, computeCostCents, systemField };
+// ─────────────────────────────────────────────────────────────
+// converse() — Casey v2 (ref/CASEY_V2_DESIGN.md §4.6, §8.8)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * The messages with cache_control on a COPY of the last block of the last
+ * message (string content → one text block). The caller's arrays and blocks
+ * are not mutated: the stored history must stay the bytes the model produced.
+ * A last block that already carries cache_control, or a message with no
+ * blocks, is left alone.
+ */
+function withLastBlockCached(messages) {
+  const last = messages[messages.length - 1];
+  if (!last) return messages;
+  let content = last.content;
+  if (typeof content === 'string') content = [{ type: 'text', text: content }];
+  if (!Array.isArray(content) || content.length === 0) return messages;
+  const tail = content[content.length - 1];
+  if (!tail || typeof tail !== 'object' || tail.cache_control) return messages;
+  const cached = [...content.slice(0, -1), { ...tail, cache_control: { ...CACHE_CONTROL } }];
+  return [...messages.slice(0, -1), { ...last, content: cached }];
+}
+
+/**
+ * One Messages API request over a MESSAGE ARRAY with TOOLS, streamed, logged
+ * to ai_calls like call(). The caller owns the loop (services/casey/loop.js):
+ * this sends one request and hands back the assistant blocks VERBATIM, so
+ * they can be stored and replayed byte-for-byte (thinking blocks are bound to
+ * the model and to the exact prefix — a changed byte invalidates them).
+ *
+ * The body, in this key order: model, max_tokens, system (one text block with
+ * cache_control — or the caller's own block array, passed as is), tools (the
+ * caller's definitions; cache_control added to a COPY of the last one), messages
+ * (as given, except that the LAST block of the LAST message is sent as a COPY
+ * carrying cache_control — the multi-turn breakpoint, so each round of a tool
+ * loop re-reads the history from the cache instead of re-sending it; three
+ * breakpoints in all, the caller's arrays never touched), thinking
+ * {type:'adaptive'} (Opus 5.5 / Sonnet 5.5 / Fable 5.1 cannot turn thinking off;
+ * depth is output_config.effort), stream.
+ * No tool_choice: a forced choice is a 400 on these models — the system prompt
+ * instructs instead. Volatile text (the time, who is asking) belongs in the
+ * LAST user message, never in `system` or a tool description: it would break
+ * the cache prefix on every turn and the thinking binding on the next.
+ *
+ * @param {object} db
+ * @param {object} opts
+ * @param {Array}  opts.messages      the conversation, API shape, non-empty
+ * @param {string|Array} [opts.system] the system prompt (string → one cached block)
+ * @param {Array}  [opts.tools]       [{name, description, input_schema}]
+ * @param {string} opts.model         a MODEL_PRICING key (an unknown model logs cost NULL)
+ * @param {string} [opts.effort]      low|medium|high|xhigh|max (default medium)
+ * @param {number} [opts.max_tokens]  default CONVERSE_MAX_TOKENS
+ * @param {string} [opts.consumerRef] ai_calls.consumer_ref
+ * @param {string} [opts.promptKey]   ai_calls.prompt_key (a label; no registry lookup)
+ * @param {string} [opts.promptVersion] ai_calls.prompt_version
+ * @param {number} [opts.timeout_ms]  whole-request deadline, clamped 1 s – CONVERSE_TIMEOUT_MAX_MS
+ * @param {Function} [opts.onEvent]   readMessageStream's block events, as they arrive
+ * @param {boolean} [opts.logContent=true] false → the ai_calls row keeps no text
+ *                                    (lengths only), as the comms and Ask Casey rows do
+ * @returns {Promise<{ok:true, content:Array, stop_reason:string|null, usage:object,
+ *   cost_cents:number|null, callId:number|null, latency_ms:number, partial:number[]}
+ *   | {ok:false, error:'bad_request'|'no_auth'|'api_error'|'timeout', detail?:string,
+ *      status?:number, api?:{type:string|null, message:string|null}, callId:number|null}>}
+ * `api` is the provider's own error (its `error.type` / `error.message`) on a
+ * non-2xx — returned to the caller WHATEVER logContent is (it names the
+ * request's fault, never user content), so the loop can recognise a
+ * thinking-binding 400 while the ai_calls row keeps only `http_400`.
+ */
+async function converse(db, {
+  messages,
+  system,
+  tools = [],
+  model,
+  effort = 'medium',
+  max_tokens = CONVERSE_MAX_TOKENS,
+  consumerRef = null,
+  promptKey = null,
+  promptVersion = null,
+  timeout_ms,
+  onEvent,
+  logContent = true,
+} = {}) {
+  const omit = (v) => `[omitted: ${String(v == null ? '' : (typeof v === 'string' ? v : JSON.stringify(v))).length} chars]`;
+  const logText = (v) => (logContent ? v : omit(v));
+  const base = { prompt_key: promptKey ?? null, prompt_version: promptVersion ?? null, model: model ?? null, mode: 'sync', output_type: 'text', consumer_ref: consumerRef };
+
+  // ---- Validate (fail fast: one 'error' row, no API call) ----
+  let bad = null;
+  if (!Array.isArray(messages) || messages.length === 0) bad = 'messages must be a non-empty array';
+  else if (typeof model !== 'string' || !model) bad = 'model is required';
+  else if (!EFFORT_LEVELS.has(effort)) bad = `effort must be one of ${[...EFFORT_LEVELS].join(', ')}`;
+  else if (!Array.isArray(tools)) bad = 'tools must be an array';
+  else if (!Number.isInteger(max_tokens) || max_tokens < 1) bad = 'max_tokens must be a positive integer';
+  else if (system != null && typeof system !== 'string' && !Array.isArray(system)) bad = 'system must be a string or a block array';
+  if (bad) {
+    const callId = await logCall(db, { ...base, status: 'error', error: `bad_request: ${bad}` });
+    return { ok: false, error: 'bad_request', detail: bad, callId };
+  }
+
+  const nTimeout = Number(timeout_ms);
+  const resolvedTimeoutMs = (Number.isFinite(nTimeout) && nTimeout > 0)
+    ? Math.min(Math.max(nTimeout, TIMEOUT_MIN_MS), CONVERSE_TIMEOUT_MAX_MS)
+    : CONVERSE_TIMEOUT_MS;
+
+  // ---- The body ----
+  const body = { model, max_tokens };
+  if (typeof system === 'string' && system) body.system = [{ type: 'text', text: system, cache_control: { ...CACHE_CONTROL } }];
+  else if (Array.isArray(system) && system.length) body.system = system;
+  if (tools.length) {
+    body.tools = tools.map((t, i) => (i === tools.length - 1 ? { ...t, cache_control: { ...CACHE_CONTROL } } : t));
+  }
+  body.messages = withLastBlockCached(messages);
+  body.thinking = { type: 'adaptive' };
+  body.output_config = { effort };
+  body.stream = true;
+
+  // The logged request excerpt: the LAST user message's text blocks (a
+  // tool_result message is summarised by count) — never the system prompt,
+  // which is tens of KB and constant.
+  const last = messages[messages.length - 1];
+  let excerpt = '';
+  if (last && Array.isArray(last.content)) {
+    const texts = last.content.filter((b) => b && b.type === 'text').map((b) => b.text);
+    const results = last.content.filter((b) => b && b.type === 'tool_result').length;
+    excerpt = [results ? `[tool_result x${results}]` : null, ...texts].filter(Boolean).join('\n');
+  } else if (last && typeof last.content === 'string') {
+    excerpt = last.content;
+  }
+
+  // ---- Headers (auth must be present) ----
+  const credHeaders = await buildHeadersForCredential(db, ANTHROPIC_CREDENTIAL_ID, ANTHROPIC_URL);
+  if (!credHeaders || Object.keys(credHeaders).length === 0) {
+    const callId = await logCall(db, { ...base, status: 'error', error: 'no_auth', request_excerpt: logText(excerpt) });
+    return { ok: false, error: 'no_auth', callId };
+  }
+  const headers = { ...credHeaders, 'anthropic-version': ANTHROPIC_VERSION, 'content-type': 'application/json' };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), resolvedTimeoutMs);
+  const startedAt = Date.now();
+  try {
+    const resp = await fetch(ANTHROPIC_URL, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
+    let envelope = null;
+    let streamFailure = null;
+    if (resp.ok && resp.body && typeof resp.body.getReader === 'function') {
+      const read = await readMessageStream(resp, () => {}, onEvent);
+      if (read.failure) streamFailure = read; else envelope = read.envelope;
+    } else {
+      envelope = await resp.json().catch(() => null);
+    }
+    const latency = Date.now() - startedAt;
+
+    let errorMsg = null;
+    if (streamFailure) {
+      errorMsg = logContent ? `${streamFailure.failure}: ${truncate(streamFailure.detail, 500)}` : streamFailure.failure;
+    } else if (!resp.ok) {
+      errorMsg = logContent ? `http_${resp.status}: ${truncate(envelope, 500)}` : `http_${resp.status}`;
+    } else if (!envelope || !Array.isArray(envelope.content)) {
+      errorMsg = logContent ? `bad_envelope: ${truncate(envelope, 500)}` : 'bad_envelope';
+    }
+    if (errorMsg) {
+      const callId = await logCall(db, { ...base, status: 'error', error: errorMsg, latency_ms: latency, request_excerpt: logText(excerpt), response: logText(streamFailure ? streamFailure.detail : envelope) });
+      const apiErr = !streamFailure && envelope && envelope.error && typeof envelope.error === 'object' ? envelope.error : null;
+      return { ok: false, error: 'api_error', detail: errorMsg, status: resp.status, callId,
+        api: { type: apiErr && typeof apiErr.type === 'string' ? apiErr.type : null, message: apiErr && typeof apiErr.message === 'string' ? apiErr.message : null } };
+    }
+
+    const u = envelope.usage || {};
+    const inTok = u.input_tokens ?? null;
+    const outTok = u.output_tokens ?? null;
+    const cacheUsage = { cache_read_input_tokens: Number(u.cache_read_input_tokens) || 0, cache_creation_input_tokens: Number(u.cache_creation_input_tokens) || 0 };
+    const cost = (inTok != null || outTok != null) ? computeCostCents(inTok, outTok, model, cacheUsage) : null;
+    const loggedInTok = (Number(inTok) || 0) + cacheUsage.cache_read_input_tokens + cacheUsage.cache_creation_input_tokens;
+    const cacheLine = `[prompt_cache: read=${cacheUsage.cache_read_input_tokens} write=${cacheUsage.cache_creation_input_tokens} uncached=${inTok ?? 0}]`;
+    const text = envelope.content.filter((b) => b && b.type === 'text').map((b) => b.text).join('');
+    const toolLines = envelope.content.filter((b) => b && b.type === 'tool_use').map((b) => `[tool_use ${b.name} ${b.id}]`);
+    console.log(`[aiService] ${promptKey || 'converse'} ${model} ${cacheLine} out=${outTok ?? 0} stop=${envelope.stop_reason}`
+      + ` tools=${toolLines.length} cost=${cost == null ? 'null' : cost.toFixed(4)}c latency=${latency}ms`);
+    const callId = await logCall(db, {
+      ...base, status: 'ok', input_tokens: loggedInTok, output_tokens: outTok, cost_cents: cost, latency_ms: latency,
+      request_excerpt: `${cacheLine}\n${logText(excerpt)}`,
+      response: logText([text, ...toolLines].filter(Boolean).join('\n')),
+    });
+    return {
+      ok: true, content: envelope.content, stop_reason: envelope.stop_reason ?? null,
+      usage: { input_tokens: inTok, output_tokens: outTok, ...cacheUsage },
+      cost_cents: cost, callId, latency_ms: latency, partial: envelope.partial || [],
+    };
+  } catch (err) {
+    const latency = Date.now() - startedAt;
+    const aborted = err && err.name === 'AbortError';
+    const errorMsg = aborted ? `timeout after ${resolvedTimeoutMs}ms` : (logContent ? ((err && err.message) || String(err)) : 'network_error');
+    const callId = await logCall(db, { ...base, status: aborted ? 'timeout' : 'error', error: errorMsg, latency_ms: latency, request_excerpt: logText(excerpt) });
+    return { ok: false, error: aborted ? 'timeout' : 'api_error', detail: errorMsg, callId };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+module.exports = { call, converse, computeCostCents, systemField, MODEL_PRICING };

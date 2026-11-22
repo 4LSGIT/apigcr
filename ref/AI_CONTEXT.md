@@ -27,6 +27,20 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey v2 S2 — the loop (11-22):** `aiService.converse()` (messages + tools,
+  streamed, blocks verbatim, one `ai_calls` row, per-model cache-read pricing)
+  beside `call()`; `lib/caseyPrompt.js` (the system prompt as code; `signature`
+  over prompt + tools = a chat's `prompt_version`); `services/casey/loop.js`
+  `runTurn` (tool_use → `runTool` as the user → tool_result, until text; the
+  stops and the budget in design §9 S2); `services/casey/chats.js` over
+  `casey_chats` / `casey_messages` (the raw block array, user-private, one turn
+  per chat by a conditional claim); `POST /api/casey/turn` (NDJSON) + the chat
+  routes, SU only, dark while `casey_v2_enabled`='0'. Settings `casey_v2_model`
+  / `casey_v2_effort` are frozen on each chat. Volatile text (time, user) is the
+  first block of each user message, NEVER the system prompt — the prefix is the
+  cache key and the thinking binding. Migration
+  `ref/migrations/2026-11-22_casey_v2_chats.sql` (script `caseyV2ChatsMigrate.js`).
+
 - **Casey v2 S1 — the tool layer (11-22):** `services/casey/tools/` — `whoami`,
   `sql_read` (report pool + `lib/caseySqlRules.js`, v1's three rules), `api_get`
   (loopback as the user, catalog-gated by `routeCatalog.findRoute` + `autoGet`,

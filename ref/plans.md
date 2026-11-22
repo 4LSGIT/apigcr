@@ -2736,6 +2736,29 @@ edge; position-only loss, accepted.
   is a report-manifest column and carries the text of logged SMS and emails, so
   §4.1/§8.5's "no mail or phone content in the report pool" holds for the
   content TABLES only — the same exposure v1's `sql.read` has today, for every
-  staff user. Decide in S2 whether `sql_read` applies the channel grant
-  (`comms.read_all`) to `log_data` reads (a denied-name rule keyed on the
-  caller's capabilities), or whether the manifest drops the column.
+  staff user. S2 (2026-11-22) DECIDED: no channel rule — the column stays
+  readable as it is through v1 and through Reports for every staff user; the
+  v2 system prompt names `log.log_data` as message text to be quoted only as
+  data. Reopen only if Fred wants `sql_read` stricter than Reports.
+- **`routes/_aitest.js` is mounted in production** (found by the S0 smoke,
+  2026-11-22): `AITEST_ENABLED=1` is set on the Cloud Run service, so the
+  TEMPORARY `GET /_aitest` / `/_aitest/file` smoke routes (key-gated by
+  `X-Aitest-Key`) are live — two public-class rows in the catalog. They were
+  for the aiService foundation slice and have no caller. Remove the env var
+  from the service and delete the file + its routeCatalog expectations in one
+  slice; Fred undecided as of S2.
+- **Casey v2 S2 follow-ups** (2026-11-22): an abort on client disconnect (a
+  turn runs to its end today; S3's page may want a Stop); "Keep going" on
+  `final.limited` (S3); `page_context` as a real block (S3); the effort menu is
+  low / medium / high — `xhigh` / `max` wait for a reason; the S2 checkpoint
+  compares Opus 5.5, Sonnet 5.5 and Fable 5.1 on real questions and may
+  shorten the model menu. From the S2 review: chat length is UNBOUNDED (no
+  compaction) — a chat that outgrows the context window 400s on every turn
+  (the turn rolls back cleanly, but the chat is dead): S3 adds a size guard or
+  a "start a new chat" prompt; thinking `display` is the API default
+  (`omitted`) — Opus 5.5's between-tool progress notes arrive as thinking
+  blocks, so S3 picks `summarized` or `updates` (beta) for the trail; Fable
+  5.1 needs 30-day data retention on the org (a 400 otherwise) — confirm
+  before the checkpoint comparison; whether the firm's API account enforces
+  the preserved-thinking binding is unknown (accounts from 2026-08-31 do) —
+  the code is written for the enforced case either way.
