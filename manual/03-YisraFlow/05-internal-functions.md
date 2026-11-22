@@ -1930,8 +1930,11 @@ rule: `{{mailbox.message_row_id}}`), or `mailbox_id` + `folder` + `uid`, or
 - *Who reviews client documents* is not a function of its own: the docs@
   intake workflow reads it with the generic pair `get_setting`
   (`email_attachments_reviewer`) → `lookup_user` (`user: {{that value}}`,
-  `match: id`, `missing_ok: true`, `output_var: reviewer`) and sends to
-  `{{reviewer.email}}`. Code doors (the upload pages, Comms) use
+  `match: id`, `missing_ok: true`, `output_var: reviewer`); step 2's own
+  `set_vars` copy `{{this.output.email}}` / `{{this.output.user}}` into
+  `notify_email` / `notify_user_id` (inside a step's set_vars `this` is the
+  raw result — `{{reviewer.*}}` is only readable from the next step on).
+  Code doors (the upload pages, Comms) use
   `services/docsReviewerService`.
 - **`email_attachments_file`** (workflow only) — files the attachments to
   Dropbox, **once each**: a re-run files only what is missing. With a case:

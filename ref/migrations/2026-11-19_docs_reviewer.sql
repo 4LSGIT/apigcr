@@ -21,7 +21,10 @@
 --   step 1  get_setting   key: email_attachments_reviewer   output_var: reviewer_id
 --   step 2  lookup_user   user: {{reviewer_id}}  match: id  missing_ok: true
 --                         fields: user,user_name,email,user_auth  output_var: reviewer
---           set_vars  notify_email {{reviewer.email}}   notify_user_id {{reviewer.user}}
+--           set_vars  notify_email {{this.output.email}}   notify_user_id {{this.output.user}}
+--           (a step's own set_vars resolve before its output_var is merged and
+--           {{this}} is the raw {success,output} result — {{reviewer.*}} only
+--           works from step 3 on)
 -- The later steps (send notice / digest) keep reading {{notify_email}}
 -- unchanged. missing_ok keeps a blank or stale setting from stopping the
 -- filing steps; a disabled user still resolves (user_auth tells) — the send
